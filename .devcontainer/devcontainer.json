@@ -1,0 +1,30 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/typescript-node
+{
+  "name": "Node.js & TypeScript",
+  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:4-24-bookworm",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["svelte.svelte-vscode", "esbenp.prettier-vscode"]
+    }
+  },
+
+  "workspaceFolder": "/workspaces/phd-sverlin",
+
+  "features": {
+    "ghcr.io/devcontainers-extra/features/pnpm:2": {}
+  },
+
+  "forwardPorts": [5173],
+
+  "mounts": [
+    "type=volume,source=${localWorkspaceFolderBasename}-pnpm-store,target=/workspaces/phd-sverlin/.pnpm-store",
+    "type=volume,source=${localWorkspaceFolderBasename}-node-modules,target=/workspaces/phd-sverlin/node_modules"
+  ],
+
+  "remoteUser": "node",
+
+  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store"
+}
