@@ -8,10 +8,11 @@
     type Edge
   } from '@xyflow/svelte';
 
+  import type { NodeProps } from '@xyflow/svelte';
+
+  let { id, data }: NodeProps = $props();
+
   import CustomNode from './Node.svelte';
-
-  import '@xyflow/svelte/dist/style.css';
-
   import FloatingEdge from './Edge.svelte';
 
   const initialNodes: Node[] = [
@@ -69,14 +70,24 @@
   };
 </script>
 
-<SvelteFlow
-  bind:nodes
-  {nodeTypes}
-  bind:edges
-  {edgeTypes}
-  {defaultEdgeOptions}
-  connectionLineType={ConnectionLineType.Straight}
-  fitView
->
-  <Background />
-</SvelteFlow>
+<div class="graph-node">
+  <SvelteFlow
+    bind:nodes
+    {nodeTypes}
+    bind:edges
+    {edgeTypes}
+    {defaultEdgeOptions}
+    connectionLineType={ConnectionLineType.Straight}
+    fitView
+  ></SvelteFlow>
+</div>
+
+<style>
+  .graph-node {
+    width: 400px;
+    height: 400px;
+    border: 2px solid #222138;
+    border-radius: 8px;
+    background-color: #f9f9f9;
+  }
+</style>
