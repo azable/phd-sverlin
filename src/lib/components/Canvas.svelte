@@ -89,7 +89,7 @@
   // - https://www.eclipse.org/elk/reference/algorithms.html
   // - https://www.eclipse.org/elk/reference/options.html
   const elkOptions = {
-    'elk.algorithm': 'layered',
+    'elk.algorithm': 'mrtree',
     'elk.layered.spacing.nodeNodeBetweenLayers': '100',
     'elk.spacing.nodeNode': '80'
   };
@@ -159,9 +159,14 @@
   });
 
   function onConnect(conn: Connection) {
-    // Replace any existing edge FROM the same source handle
+    // Remove any existing edge with the same source and different target
     edges = edges.filter(
-      (e) => !(e.source === conn.source && e.sourceHandle === conn.sourceHandle)
+      (e) =>
+        !(
+          e.source === conn.source &&
+          e.sourceHandle === conn.sourceHandle &&
+          (e.target !== conn.target || e.targetHandle !== conn.targetHandle)
+        )
     );
   }
 </script>
@@ -183,8 +188,8 @@
     onLayout('DOWN');
   }}
   onconnect={(conn) => {
-    onLayout('DOWN');
     onConnect(conn);
+    onLayout('DOWN');
   }}
   onreconnect={() => {
     onLayout('DOWN');
