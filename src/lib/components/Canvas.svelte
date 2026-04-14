@@ -9,17 +9,34 @@
 
   interface IntNode {
     id: number;
+    annotations: string[];
     data: number;
     type: 'int';
   }
 
   interface ArrayNode<N extends AnyNode> {
     id: number;
+    annotations: string[];
     data: N[];
     type: 'array';
   }
 
   type AnyNode = IntNode | ArrayNode<AnyNode>;
+
+  const flatApplyNodes = <N extends AnyNode>(
+    nodes: N[],
+    fn: (node: AnyNode) => void = () => {}
+  ): AnyNode[] => {
+    let result: AnyNode[] = [];
+    for (const node of nodes) {
+      fn(node);
+      result.push(node);
+      if (node.type === 'array') {
+        result = result.concat(flatApplyNodes(node.data, fn));
+      }
+    }
+    return result;
+  };
 
   let nextId = 0;
 
@@ -28,7 +45,8 @@
       return {
         id: nextId++,
         data,
-        type: 'int'
+        type: 'int',
+        annotations: []
       };
     },
 
@@ -36,7 +54,8 @@
       return {
         id: nextId++,
         data,
-        type: 'array'
+        type: 'array',
+        annotations: []
       };
     }
   };
@@ -49,14 +68,15 @@
   let memory = $state({
     i: dt.int(0),
     j: dt.int(0),
-    arr: dt.array(dt.int(3), dt.int(2), dt.int(1), dt.int(5), dt.int(4)),
-    n: dt.int(5)
+    arr: dt.array(dt.int(7), dt.int(2), dt.int(5), dt.int(2), dt.int(4), dt.int(1)),
+    n: dt.int(6)
   });
 
   type Memory = typeof memory;
 
-  type Mutation = () => Generator<void, void, typeof memory>;
-  type Expression<T> = () => Generator<void, T, typeof memory>;
+  type ExecUnit<T> = () => Generator<void, T, typeof memory>;
+  type Mutation = ExecUnit<void>;
+  type Expression<T> = ExecUnit<T>;
 
   // type ValueOf<T> = T[keyof T];
 
@@ -69,7 +89,6 @@
     const _step = (f: (m: Memory) => void): Mutation =>
       function* () {
         f(memory);
-        yield;
       };
 
     const _set = <K extends keyof Memory>(
@@ -79,12 +98,10 @@
       function* () {
         const value = yield* valueExpr();
         memory[name].data = value;
-        yield;
       };
 
     const _value = <K extends keyof Memory>(name: K): Expression<Memory[K]['data']> =>
       function* () {
-        yield;
         return memory[name].data;
       };
 
@@ -101,13 +118,11 @@
     const _data = <N extends AnyNode>(nodeExpr: Expression<N>): Expression<N['data']> =>
       function* () {
         const node = yield* nodeExpr();
-        yield;
         return node.data;
       };
 
     const _literal = <T,>(value: T): Expression<T> =>
       function* () {
-        yield;
         return value;
       };
 
@@ -168,6 +183,31 @@
         }
       };
 
+    const _annotate = <T,>(
+      selections: Record<string, (m: Memory) => AnyNode[]>,
+      execUnit: ExecUnit<T>
+    ): ExecUnit<T> =>
+      function* () {
+        const revertFns: Array<() => void> = [];
+
+        Object.entries(selections).forEach(([key, fn]) => {
+          const nodes = fn(memory);
+          flatApplyNodes(nodes).forEach((node) => {
+            node.annotations.push(key);
+            revertFns.push(() => {
+              node.annotations.pop();
+            });
+          });
+        });
+
+        yield;
+        const result = yield* execUnit();
+
+        revertFns.forEach((revert) => revert());
+
+        return result;
+      };
+
     const run = (m: Mutation) => m();
 
     return yield* run(
@@ -175,23 +215,39 @@
         _set('i', _literal(1)),
         _lt(_value('i'), _value('n')),
         _set('i', _add(_value('i'), _literal(1))),
-        _sequence(
-          _set('j', _value('i')),
-          _while(
-            _and(
-              _gt(_value('j'), _literal(0)),
-              _lt(
-                _data(_at(_value('arr'), _value('j'))),
-                _data(_at(_value('arr'), _add(_value('j'), _literal(-1))))
+        _annotate(
+          {
+            sorted: (m) => m.arr.data.filter((_, idx) => idx < m.i.data),
+            unsorted: (m) => m.arr.data.filter((_, idx) => idx >= m.i.data)
+          },
+          _sequence(
+            _set('j', _value('i')),
+            _annotate(
+              {
+                current: (m) => [m.arr.data[m.i.data]]
+              },
+              _while(
+                _and(
+                  _gt(_value('j'), _literal(0)),
+                  _lt(
+                    _data(_at(_value('arr'), _value('j'))),
+                    _data(_at(_value('arr'), _add(_value('j'), _literal(-1))))
+                  )
+                ),
+                _sequence(
+                  _annotate(
+                    {
+                      comparing: (m) => [m.arr.data[m.j.data], m.arr.data[m.j.data - 1]]
+                    },
+                    _step((m) => {
+                      const tmp = m.arr.data[m.j.data];
+                      m.arr.data[m.j.data] = m.arr.data[m.j.data - 1];
+                      m.arr.data[m.j.data - 1] = tmp;
+                    })
+                  ),
+                  _set('j', _add(_value('j'), _literal(-1)))
+                )
               )
-            ),
-            _sequence(
-              _step((m) => {
-                const tmp = m.arr.data[m.j.data];
-                m.arr.data[m.j.data] = m.arr.data[m.j.data - 1];
-                m.arr.data[m.j.data - 1] = tmp;
-              }),
-              _set('j', _add(_value('j'), _literal(-1)))
             )
           )
         )
@@ -224,7 +280,9 @@
 {#snippet nodeView(node: AnyNode)}
   <div class="node">
     {#if node.type === 'int'}
-      <div class="dt-int">{node.data}</div>
+      <div class="dt-int {node.annotations.join(' ')}">
+        {node.data}
+      </div>
       <style>
         .dt-int {
           width: 50px;
@@ -233,6 +291,24 @@
           align-items: center;
           justify-content: center;
           border: 2px solid #333;
+          transition: background-color 0.5s ease;
+        }
+
+        .sorted {
+          background-color: #a0e0a0;
+        }
+
+        .unsorted {
+          background-color: #e0a0a0;
+        }
+
+        .current {
+          background-color: #a0a0e0;
+        }
+
+        .comparing {
+          background-color: #e0e0a0;
+          border: 4px solid #333;
         }
       </style>
     {/if}
