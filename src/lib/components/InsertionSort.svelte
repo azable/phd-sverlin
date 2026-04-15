@@ -237,7 +237,8 @@
                 _sequence(
                   _annotate(
                     {
-                      comparing: (m) => [m.arr.data[m.j.data], m.arr.data[m.j.data - 1]]
+                      unsorted: (m) => [m.arr.data[m.j.data], m.arr.data[m.j.data - 1]],
+                      current: (m) => [m.arr.data[m.j.data - 1]]
                     },
                     _step((m) => {
                       const tmp = m.arr.data[m.j.data];
@@ -303,12 +304,12 @@
         }
 
         .current {
-          background-color: #a0a0e0;
+          /* background-color: #a0a0e0; */
+          border-width: 4px;
         }
 
         .comparing {
           background-color: #e0e0a0;
-          border: 4px solid #333;
         }
       </style>
     {/if}
@@ -321,7 +322,7 @@
       <div
         animate:flip={{ duration: 500 }}
         class="item"
-        style:transform={`translateX(${idx * 70}px)`}
+        style:transform={`translate(${idx * 70}px)`}
       >
         {@render nodeView(node)}
       </div>
