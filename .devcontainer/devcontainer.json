@@ -7,14 +7,15 @@
 
   "customizations": {
     "vscode": {
-      "extensions": ["svelte.svelte-vscode", "esbenp.prettier-vscode"]
+      "extensions": ["svelte.svelte-vscode", "esbenp.prettier-vscode", "haskell.haskell"]
     }
   },
 
   "workspaceFolder": "/workspaces/phd-sverlin",
 
   "features": {
-    "ghcr.io/devcontainers-extra/features/pnpm:2": {}
+    "ghcr.io/devcontainers-extra/features/pnpm:2": {},
+    "ghcr.io/devcontainers-extra/features/haskell:2": {}
   },
 
   "forwardPorts": [5173],
