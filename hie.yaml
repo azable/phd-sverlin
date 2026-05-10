@@ -1,0 +1,4 @@
+cradle:
+  cabal:
+    - path: './compile/app'
+      component: 'compile:exe:compile-app'

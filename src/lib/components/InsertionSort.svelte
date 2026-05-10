@@ -235,17 +235,17 @@
                   )
                 ),
                 _sequence(
-                  _annotate(
-                    {
-                      unsorted: (m) => [m.arr.data[m.j.data], m.arr.data[m.j.data - 1]],
-                      current: (m) => [m.arr.data[m.j.data - 1]]
-                    },
-                    _step((m) => {
-                      const tmp = m.arr.data[m.j.data];
-                      m.arr.data[m.j.data] = m.arr.data[m.j.data - 1];
-                      m.arr.data[m.j.data - 1] = tmp;
-                    })
-                  ),
+                  // _annotate(
+                  //   {
+                  //     unsorted: (m) => [m.arr.data[m.j.data], m.arr.data[m.j.data - 1]],
+                  //     current: (m) => [m.arr.data[m.j.data - 1]]
+                  //   },
+                  _step((m) => {
+                    const tmp = m.arr.data[m.j.data];
+                    m.arr.data[m.j.data] = m.arr.data[m.j.data - 1];
+                    m.arr.data[m.j.data - 1] = tmp;
+                  }),
+                  // ),
                   _set('j', _add(_value('j'), _literal(-1)))
                 )
               )
@@ -300,7 +300,7 @@
         }
 
         .unsorted {
-          background-color: #e0a0a0;
+          background-color: #999;
         }
 
         .current {
