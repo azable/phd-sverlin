@@ -1,0 +1,184 @@
+import * as kiwi from '@lume/kiwi';
+
+export enum VariableStrength {
+  WEAK = 'weak',
+  MEDIUM = 'medium',
+  STRONG = 'strong',
+  REQUIRED = 'required'
+}
+
+export type Variable =
+  | {
+      _variable: kiwi.Variable;
+    }
+  | {
+      _variable: kiwi.Variable;
+      target: number;
+      strength: VariableStrength;
+    };
+
+export type NodeConfig = {
+  id: string;
+  style: Record<string, '?' | number | Variable>;
+};
+
+export type NodeView = {
+  nodeId: string;
+  style: Record<string, string>;
+};
+
+const defaultNodeStyle: Record<string, '?' | number | Variable> = {
+  width: '?',
+  height: '?',
+  left: '?',
+  top: '?'
+};
+
+const toCSSvalue = (key: string, value: number): string => {
+  const map: Record<string, (value: number) => string> = {
+    width: (v) => `${v}px`,
+    height: (v) => `${v}px`,
+    left: (v) => `${v}px`,
+    top: (v) => `${v}px`
+  };
+
+  if (key in map) {
+    return map[key](value);
+  }
+  throw new Error(`No mapping for CSS property: ${key}`);
+};
+
+export function createLayout(initialNodes: NodeConfig[] = []) {
+  const nodeConfigs = $state({} as Record<string, NodeConfig>);
+
+  const solver = new kiwi.Solver();
+
+  const addFreeVariable = (name: string) => {
+    const variable = new kiwi.Variable(name);
+    return { _variable: variable };
+  };
+
+  const addVariable = (name: string, strength: VariableStrength, target: number) => {
+    const variable = new kiwi.Variable(name);
+    const kiwiStrength = {
+      [VariableStrength.WEAK]: kiwi.Strength.weak,
+      [VariableStrength.MEDIUM]: kiwi.Strength.medium,
+      [VariableStrength.STRONG]: kiwi.Strength.strong,
+      [VariableStrength.REQUIRED]: kiwi.Strength.required
+    };
+    solver.addConstraint(
+      new kiwi.Constraint(variable, kiwi.Operator.Eq, target, kiwiStrength[strength])
+    );
+    return { _variable: variable, strength, target };
+  };
+
+  const addNode = (config: NodeConfig) => {
+    const resolvedConfig: NodeConfig = {
+      id: config.id,
+      style: {
+        ...defaultNodeStyle,
+        ...config.style
+      }
+    };
+
+    for (const [key, value] of Object.entries(resolvedConfig.style)) {
+      if (typeof value === 'string' && value === '?') {
+        // Variable can take any value, so we add it as a free
+        // variable to the solver
+        const variable = addFreeVariable(`${config.id}.${key}`);
+        resolvedConfig.style[key] = variable;
+      }
+      if (typeof value === 'number') {
+        // Specifed target value with required strength, so we
+        // add it as a variable with a constraint to the solver
+        const variable = addVariable(`${config.id}.${key}`, VariableStrength.REQUIRED, value);
+        resolvedConfig.style[key] = variable;
+        console.log(
+          `Added variable for ${config.id}.${key} with value ${value} and strength ${variable.strength}`
+        );
+      }
+    }
+
+    nodeConfigs[config.id] = resolvedConfig;
+
+    // Add constraints to ensure nodes stay within the container bounds
+    solver.addConstraint(
+      new kiwi.Constraint(resolvedConfig.style.left._variable, kiwi.Operator.Ge, 0)
+    );
+    solver.addConstraint(
+      new kiwi.Constraint(resolvedConfig.style.top._variable, kiwi.Operator.Ge, 0)
+    );
+
+    return resolvedConfig;
+  };
+
+  initialNodes.forEach(addNode);
+
+  const output = $state({
+    views: [] as NodeView[]
+  });
+
+  const solve = () => {
+    solver.updateVariables();
+
+    output.views = Object.values(nodeConfigs).map((config) => {
+      const style: Record<string, string> = {};
+      for (const [key, value] of Object.entries(config.style)) {
+        if (typeof value === 'object' && '_variable' in value) {
+          style[key] = toCSSvalue(key, value._variable.value());
+        } else {
+          style[key] = value.toString();
+        }
+      }
+      return { nodeId: config.id, style };
+    });
+  };
+
+  const applyNodePairs = (
+    nodeIds: string[],
+    callback: (nodeA: NodeConfig, nodeB: NodeConfig) => void
+  ) => {
+    for (let i = 0; i < nodeIds.length; i++) {
+      for (let j = i + 1; j < nodeIds.length; j++) {
+        const nodeA = nodeConfigs[nodeIds[i]];
+        const nodeB = nodeConfigs[nodeIds[j]];
+        if (nodeA && nodeB) {
+          callback(nodeA, nodeB);
+        }
+      }
+    }
+  };
+
+  return {
+    get views() {
+      return output.views;
+    },
+
+    get constraint() {
+      return {
+        nonOverlapping: (nodeIds: string[]) => {
+          applyNodePairs(nodeIds, (nodeA, nodeB) => {
+            solver.addConstraint(
+              new kiwi.Constraint(
+                new kiwi.Expression(nodeA.style.left._variable, nodeA.style.width._variable),
+                kiwi.Operator.Le,
+                new kiwi.Expression(nodeB.style.left._variable)
+              )
+            );
+            // solver.addConstraint(
+            //   new kiwi.Constraint(
+            //     new kiwi.Expression(nodeB.style.left._variable, nodeB.style.width._variable),
+            //     kiwi.Operator.Le,
+            //     new kiwi.Expression(nodeA.style.left._variable)
+            //   )
+            // );
+          });
+        }
+      };
+    },
+
+    addNode,
+    addVariable,
+    solve
+  };
+}
