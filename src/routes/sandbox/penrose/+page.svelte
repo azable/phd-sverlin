@@ -3,17 +3,19 @@
   import { createLayout } from '$lib/layout/index.svelte';
 
   const layout = createLayout({
-    rootWidth: 800,
-    rootHeight: 600
+    width: 1200,
+    height: 800
   });
 
-  layout.addNode('elem1', { width: 100, height: 100 });
-  layout.addNode('elem2', { width: 100, height: 100 });
-  layout.addNode('elem3', { width: 100, height: 100 });
+  const array = layout.addNode({ width: 300, height: 200 });
 
-  layout.constraint.disjoint('elem1', 'elem2');
-  layout.constraint.disjoint('elem1', 'elem3');
-  layout.constraint.disjoint('elem2', 'elem3');
+  const elem1 = array.addNode({ width: '$w', height: 100, y: '$y' });
+  const elem2 = array.addNode({ width: '$w', height: 100, y: '$y' });
+  const elem3 = array.addNode({ width: '$w', height: 100, y: '$y' });
+
+  layout.constraint.disjoint(elem1, elem2);
+  layout.constraint.disjoint(elem1, elem3);
+  layout.constraint.disjoint(elem2, elem3);
 
   onMount(async () => {
     await layout.solve();
