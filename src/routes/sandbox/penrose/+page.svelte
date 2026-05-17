@@ -9,11 +9,11 @@
 
   layout.addNode('elem1', { width: 100, height: 100 });
   layout.addNode('elem2', { width: 100, height: 100 });
-  // layout.addNode('elem3', { width: 100, height: 100 });
+  layout.addNode('elem3', { width: 100, height: 100 });
 
   layout.constraint.disjoint('elem1', 'elem2');
-  // layout.constraint.disjointBounds('elem1', 'elem3');
-  // layout.constraint.disjointBounds('elem2', 'elem3');
+  layout.constraint.disjoint('elem1', 'elem3');
+  layout.constraint.disjoint('elem2', 'elem3');
 
   onMount(async () => {
     await layout.solve();
@@ -30,14 +30,24 @@
 </script>
 
 <div style:width="100vw" style:height="100vh">
-  {#each layout.views as view (view.nodeId)}
-    <div class="node" id={view.nodeId} style={css(view.style)}>{view.nodeId}</div>
-  {/each}
+  <button class="solve-button" on:click={() => layout.solve()}>Solve</button>
+  <div class="canvas" style:position="relative">
+    {#each layout.views as view (view.nodeId)}
+      <div class="node" id={view.nodeId} style={css(view.style)}>{view.nodeId}</div>
+    {/each}
+  </div>
 </div>
 
 <style>
   .node {
     position: absolute;
     border: 3px solid black;
+  }
+
+  .solve-button {
+    width: 100px;
+    height: 30px;
+    background-color: lightblue;
+    margin-bottom: 10px;
   }
 </style>

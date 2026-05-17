@@ -1,8 +1,13 @@
 import * as p from '@penrose/core';
 
+type Interval = {
+  min: number;
+  max: number;
+};
+
 export type NodeConfig = {
   id: string;
-  style: Record<string, '?' | string | number>;
+  style: Record<string, string | number>;
 };
 
 type StyleValue =
@@ -59,6 +64,10 @@ export function createLayout(config: LayoutConfig = {}) {
   const { rootWidth, rootHeight } = config;
 
   const nodes = {} as Record<string, Node>;
+  const variables = [] as {
+    v: p.Var;
+    range: Interval;
+  }[];
   const constraints = [] as p.Num[];
   const output = $state({
     views: [] as NodeView[]
@@ -125,9 +134,10 @@ export function createLayout(config: LayoutConfig = {}) {
     }
   };
 
-  const addVariable = (initial = Math.random() * 100): p.Var => {
-    const v = p.variable(initial);
-    addConstraints([p.sub(0, v)]);
+  const addVariable = (min: number = -10000, max: number = 10000): p.Var => {
+    const v = p.variable(0);
+    variables.push({ v, range: { min, max } });
+    addConstraints([p.lessThan(min, v), p.lessThan(v, max)]);
     return v;
   };
 
@@ -135,10 +145,10 @@ export function createLayout(config: LayoutConfig = {}) {
     config = {
       id: config.id,
       style: {
-        width: '?',
-        height: '?',
-        left: '?',
-        top: '?',
+        width: `?`,
+        height: `?`,
+        left: `?`,
+        top: `?`,
         ...config.style
       }
     };
@@ -196,6 +206,12 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const solve = async () => {
     console.log('Solving layout with constraints:', constraints);
+
+    // Randomize initial variable values to help solver escape local minima
+    for (const { v, range } of variables) {
+      const randomValue = Math.random() * (range.max - range.min) + range.min;
+      v.val = randomValue;
+    }
 
     const problem = await p.problem({
       constraints: [...constraints]
