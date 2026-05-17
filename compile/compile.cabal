@@ -71,7 +71,8 @@ executable compile-app
                       random,
                       containers,
                       mtl,
-                      lens
+                      lens,
+                      dunai
 
     -- Directories containing source files.
     hs-source-dirs:   app
