@@ -1,4 +1,16 @@
 import * as p from '@penrose/core';
+import { tick } from 'svelte';
+
+const snapModulo = (x: p.Num, modulo: number, weight = 1): p.Num => {
+  return p.mul(weight, p.pow(p.sin(p.div(p.mul(Math.PI, x), modulo)), 2));
+};
+
+const lessThanWithPadding = (a: p.Num, b: p.Num, padding: p.Num): p.Num => {
+  const gap = p.add(p.sub(a, b), padding);
+  const violation = p.max(gap, 0);
+  const penalty = p.pow(violation, 2);
+  return penalty;
+};
 
 type Interval = {
   min: number;
@@ -6,16 +18,23 @@ type Interval = {
 };
 
 type VariableInfo = {
-  v: p.Var;
+  variable: p.Var;
   range: Interval;
 };
 
-type Scope = {
-  [key: string]: VariableInfo;
-};
+// type Scope = {
+//   variables: {
+//     [key: string]: VariableInfo;
+//   };
+//   localUniqId: (suffix: string) => string;
+// };
 
 export type NodeConfig = {
   style: Record<string, string | number>;
+};
+
+type ReactiveValue<T> = {
+  value: T;
 };
 
 type StyleValue =
@@ -32,18 +51,27 @@ type StyleValue =
       value: string;
     };
 
-type Node = {
+export type Node = {
   id: string;
   parent?: Node;
   children: Node[];
+  content?: NodeContent;
   style: Record<string, StyleValue>;
-  locals: Scope;
+  localUniqId: (suffix: string) => string;
+  setContent: (content: string) => Node;
   addNode: (style?: Record<string, '?' | string | number>) => Node;
 };
 
 export type NodeView = {
   nodeId: string;
   style: Record<string, string>;
+  content?: NodeContent;
+};
+
+type NodeContent = {
+  text: string;
+  clientWidth: ReactiveValue<number>;
+  clientHeight: ReactiveValue<number>;
 };
 
 const parseVariableName = (name: string): string => {
@@ -57,17 +85,41 @@ const parseVariableName = (name: string): string => {
   return name;
 };
 
-const toCSSvalue = (key: string, value: number): string => {
+const toCSSrule = (key: string, value: number | string): [string, string] => {
+  const kebabKey = key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+
+  if (typeof value === 'string') {
+    return [kebabKey, value];
+  }
+
   const map: Record<string, (value: number) => string> = {
+    backgroundColor: (v) => v.toString(),
+
     width: (v) => `${v}px`,
     height: (v) => `${v}px`,
     left: (v) => `${v}px`,
     top: (v) => `${v}px`,
-    'font-size': (v) => `${v}px`
+
+    minWidth: (v) => `${v}px`,
+    minHeight: (v) => `${v}px`,
+
+    padding: (v) => `${v}px`,
+    paddingTop: (v) => `${v}px`,
+    paddingBottom: (v) => `${v}px`,
+    paddingLeft: (v) => `${v}px`,
+    paddingRight: (v) => `${v}px`,
+
+    margin: (v) => `${v}px`,
+    marginTop: (v) => `${v}px`,
+    marginBottom: (v) => `${v}px`,
+    marginLeft: (v) => `${v}px`,
+    marginRight: (v) => `${v}px`,
+
+    fontSize: (v) => `${v}px`
   };
 
   if (key in map) {
-    return map[key](value);
+    return [kebabKey, map[key](value)];
   }
   throw new Error(`No CSS mapping for key: ${key}`);
 };
@@ -75,33 +127,45 @@ const toCSSvalue = (key: string, value: number): string => {
 type LayoutConfig = {
   width?: number;
   height?: number;
+  unitSize?: number;
 };
 
 export function createLayout(config: LayoutConfig = {}) {
-  const { width: rootWidth, height: rootHeight } = config;
+  const { width: rootWidth, height: rootHeight, unitSize } = config;
 
   const nodes = {} as Record<string, Node>;
-  const variables = [] as VariableInfo[];
-  const globals = {} as Scope;
-  const constraints = [] as p.Num[];
+
+  const constraints = {} as Record<string, p.Num>;
+  const variables = {} as Record<string, VariableInfo>;
+
+  const globals = {
+    byName: (name: string) => `global-${name}`
+  };
+
   const output = $state({
     views: [] as NodeView[]
   });
 
-  const addConstraints = (newConstraints: p.Num[]) => {
-    constraints.push(...newConstraints);
+  const setConstraints = (newConstraints: Record<string, p.Num>) => {
+    Object.assign(constraints, newConstraints);
   };
 
-  const num = (value: StyleValue): p.Num => {
-    if (value.type === 'variable') {
-      return value.value;
-    } else if (value.type === 'constant') {
-      return value.value;
+  const num = (value: StyleValue | ReactiveValue<number> | number): p.Num => {
+    if (typeof value === 'number') {
+      return value;
     }
-    throw new Error(`Cannot convert ${value.type} to number`);
+
+    if (typeof value === 'object' && 'value' in value) {
+      return (value as ReactiveValue<number>).value;
+    }
+
+    if ((value as StyleValue).type === 'variable' || (value as StyleValue).type === 'constant') {
+      return value as p.Num;
+    }
+    throw new Error(`Cannot convert ${(value as StyleValue).type} to number`);
   };
 
-  const boundingBox = (node: Node) => {
+  const bounds = (node: Node) => {
     const left = num(node.style.left);
     const top = num(node.style.top);
     const width = num(node.style.width);
@@ -115,57 +179,128 @@ export function createLayout(config: LayoutConfig = {}) {
   const constraint = {
     // Ensure node A is fully contained within node B
     contains: (containerNode: Node, node: Node) => {
-      const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = boundingBox(containerNode);
-      const { left, top, right, bottom } = boundingBox(node);
+      const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = bounds(containerNode);
+      const { left, top, right, bottom } = bounds(node);
 
-      addConstraints([p.lessThan(cLeft, left), p.lessThan(right, cRight)]);
-      addConstraints([p.lessThan(cTop, top), p.lessThan(bottom, cBottom)]);
+      setConstraints({
+        [containerNode.localUniqId(`contains-${node.localUniqId('left')}`)]: lessThanWithPadding(
+          cLeft,
+          left,
+          0
+        ),
+        [containerNode.localUniqId(`contains-${node.localUniqId('right')}`)]: lessThanWithPadding(
+          right,
+          cRight,
+          0
+        ),
+        [containerNode.localUniqId(`contains-${node.localUniqId('top')}`)]: lessThanWithPadding(
+          cTop,
+          top,
+          0
+        ),
+        [containerNode.localUniqId(`contains-${node.localUniqId('bottom')}`)]: lessThanWithPadding(
+          bottom,
+          cBottom,
+          0
+        )
+      });
     },
 
     // Ensure nodes A and B do not overlap
     disjoint: (nodeA: Node, nodeB: Node) => {
-      const { left: aLeft, top: aTop, right: aRight, bottom: aBottom } = boundingBox(nodeA);
-      const { left: bLeft, top: bTop, right: bRight, bottom: bBottom } = boundingBox(nodeB);
+      const {
+        left: aLeft,
+        top: aTop,
+        right: aRight,
+        bottom: aBottom,
+        width: aWidth,
+        height: aHeight
+      } = bounds(nodeA);
+      const {
+        left: bLeft,
+        top: bTop,
+        right: bRight,
+        bottom: bBottom,
+        width: bWidth,
+        height: bHeight
+      } = bounds(nodeB);
 
       const overlapX = p.max(0, p.sub(p.min(aRight, bRight), p.max(aLeft, bLeft)));
       const overlapY = p.max(0, p.sub(p.min(aBottom, bBottom), p.max(aTop, bTop)));
 
-      const normOverlapX = p.div(overlapX, 100);
-      const normOverlapY = p.div(overlapY, 100);
+      const normOverlapX = p.div(overlapX, p.max(1, p.min(aWidth, bWidth)));
+      const normOverlapY = p.div(overlapY, p.max(1, p.min(aHeight, bHeight)));
 
-      const overlapFraction = p.mul(normOverlapX, normOverlapY);
+      const overlapFraction = p.mul(100, p.mul(normOverlapX, normOverlapY));
 
-      addConstraints([p.absVal(overlapFraction)]);
+      setConstraints({
+        [nodeA.localUniqId(nodeB.localUniqId('disjoint'))]: p.absVal(overlapFraction)
+      });
+    },
+
+    // Neighbours
+    adjacentX: (nodeA: Node, nodeB: Node, padding = 0) => {
+      const { right: aRight } = bounds(nodeA);
+      const { left: bLeft } = bounds(nodeB);
+
+      setConstraints({
+        [nodeA.localUniqId(nodeB.localUniqId('adjacentX'))]: p.lessThan(
+          p.add(aRight, padding),
+          bLeft
+        )
+      });
     }
   };
 
-  const variable = (scope: Scope, name: string): p.Var => {
-    // Check if variable already exists in the current scope
-    if (name in scope) {
-      return scope[name].v;
+  const variable = (name: string): p.Var => {
+    // Check if variable already exists
+    if (name in variables) {
+      return variables[name].variable;
     }
 
     // Create new variable in the current scope
-    console.log(`Creating variable ${name}`);
+    console.log(`Creating new variable ${name}`);
+
     const varRange: Interval = { min: 1, max: 1000 };
-    const varInfo = { v: p.variable(0), range: varRange };
+    const varInfo = { variable: p.variable(0), range: varRange };
 
-    addConstraints([
-      p.lessThan(varInfo.range.min, varInfo.v),
-      p.lessThan(varInfo.v, varInfo.range.max)
-    ]);
+    setConstraints({
+      [`${name}-min`]: p.lessThan(varInfo.range.min, varInfo.variable),
+      [`${name}-max`]: p.lessThan(varInfo.variable, varInfo.range.max)
+    });
 
-    scope[name] = varInfo;
-    variables.push(varInfo);
+    if (unitSize) {
+      // Snap variable to nearest unit size using a soft constraint
+      setConstraints({
+        [`${name}-snap`]: snapModulo(varInfo.variable, unitSize, 0.1)
+      });
+    }
 
-    return varInfo.v;
+    variables[name] = varInfo;
+    return varInfo.variable;
   };
 
-  const addNode = (
-    config: NodeConfig = { style: {} },
-    parent: Node | null,
-    scope: Scope = globals
-  ) => {
+  const nodeContentClientWidths = $state({} as Record<string, ReactiveValue<number>>);
+  const nodeContentClientHeights = $state({} as Record<string, ReactiveValue<number>>);
+
+  const liveNodeContentClientWidth = (nodeId: string): { value: number } => {
+    if (!nodeContentClientWidths[nodeId]) {
+      nodeContentClientWidths[nodeId] = { value: 0 };
+    }
+    return nodeContentClientWidths[nodeId];
+  };
+
+  const liveNodeContentClientHeight = (nodeId: string): { value: number } => {
+    if (!nodeContentClientHeights[nodeId]) {
+      nodeContentClientHeights[nodeId] = { value: 0 };
+    }
+    return nodeContentClientHeights[nodeId];
+  };
+
+  const addNode = (config: NodeConfig = { style: {} }, parent: Node | null) => {
+    const siblingCount = parent ? parent.children.length : Object.keys(nodes).length;
+    const id = parent ? `${parent.id}-${siblingCount + 1}` : `root`;
+
     if (config.style.x !== undefined) {
       config.style.left = config.style.x;
       delete config.style.x;
@@ -178,22 +313,31 @@ export function createLayout(config: LayoutConfig = {}) {
 
     config = {
       style: {
-        width: `?`,
-        height: `?`,
+        width: `?<`,
+        height: `?<`,
         left: `?`,
         top: `?`,
         ...config.style
       }
     };
 
-    const siblingCount = parent ? parent.children.length : Object.keys(nodes).length;
+    const localUniqId = (suffix: string) => `${id}-${suffix}`;
 
     const node: Node = {
-      id: parent ? `${parent.id}-${siblingCount + 1}` : `root`,
+      id,
       parent: parent || undefined,
       children: [],
+      content: undefined,
       style: {},
-      locals: {},
+      localUniqId,
+      setContent: (content: string) => {
+        node.content = {
+          text: content,
+          clientWidth: liveNodeContentClientWidth(node.id),
+          clientHeight: liveNodeContentClientHeight(node.id)
+        };
+        return node;
+      },
       addNode: (style?: Record<string, string | number>) => addNode({ style: style ?? {} }, node)
     };
 
@@ -201,22 +345,33 @@ export function createLayout(config: LayoutConfig = {}) {
       if (typeof value === 'string' && value[0] === '?') {
         // Implicit variable (default)
         const varName = parseVariableName(key);
+        const varValue = variable(localUniqId(varName));
         node.style[key] = {
           type: 'variable',
-          value: variable(node.locals, varName)
+          value: varValue
         };
+        if (value.length > 1 && value[1] === '<') {
+          // Minimize variable ("?<")
+          setConstraints({
+            [node.localUniqId(`minimize-${key}`)]: p.log2(varValue)
+          });
+        }
       } else if (typeof value === 'string' && value[0] === '$') {
         // Explicit variable (e.g. "$width" -> variable named "width")
         const varName = parseVariableName(value.slice(1));
+        const varValue = variable(globals.byName(varName));
         node.style[key] = {
           type: 'variable',
-          value: variable(scope, varName)
+          value: varValue
         };
+        setConstraints({
+          [node.localUniqId(`minimize-${key}`)]: p.log2(varValue)
+        });
       } else if (typeof value === 'number') {
         // A number/string is treated as a constant CSS attribute
         node.style[key] = {
           type: 'constant',
-          value
+          value: value
         };
       } else if (typeof value === 'string') {
         node.style[key] = {
@@ -227,6 +382,24 @@ export function createLayout(config: LayoutConfig = {}) {
     }
 
     nodes[node.id] = node;
+
+    // Min width/height constraints based on content size
+    $effect(() => {
+      if (!node.content) {
+        return;
+      }
+
+      constraints[node.localUniqId('min-width')] = p.lessThan(
+        num(node.content.clientWidth),
+        num(node.style.width)
+      );
+      constraints[node.localUniqId('min-height')] = p.lessThan(
+        num(node.content.clientHeight),
+        num(node.style.height)
+      );
+
+      dirty = true;
+    });
 
     if (parent) {
       // Ensure child is tracked in parent's children list for traversal
@@ -251,43 +424,80 @@ export function createLayout(config: LayoutConfig = {}) {
     null
   );
 
+  let dirty = $state(true);
+
+  $effect(() => {
+    if (!dirty) {
+      return;
+    }
+    tick().then(() => {
+      solve();
+    });
+  });
+
   const solve = async () => {
-    console.log('Solving layout with constraints:', constraints);
-    console.log('Global variables:', globals);
+    console.log('====================== SOLVE ======================');
+    console.log('>>> Variables:', variables);
+    console.log('>>> Constraints:', constraints);
+
+    const roundToUnit = (value: number): number => {
+      // return value;
+      if (!unitSize) return value;
+      return Math.round(value / unitSize) * unitSize;
+    };
 
     // Randomize initial variable values to help solver escape local minima
-    for (const { v, range } of variables) {
+    for (const { variable, range } of Object.values(variables)) {
       const randomValue = Math.random() * (range.max - range.min) + range.min;
-      v.val = randomValue;
+      variable.val = randomValue;
     }
 
-    const problem = await p.problem({
-      constraints: [...constraints]
-    });
+    const solveIteration = async () => {
+      const problem = await p.problem({
+        constraints: [...Object.values(constraints)]
+      });
 
-    const result = problem.start({}).run({});
-    console.log('Solver result:', result);
+      const result = problem.start({}).run({});
+      console.log('Solver result:', result);
+
+      // Update values
+      for (const { variable } of Object.values(variables)) {
+        const solvedValue = result.vals.get(variable) as number;
+        variable.val = roundToUnit(solvedValue);
+      }
+    };
+
+    await solveIteration();
 
     output.views = Object.values(nodes).map((node) => {
       const style: Record<string, string> = {};
       for (const [key, value] of Object.entries(node.style)) {
         if (value.type === 'variable') {
-          // console.log(
-          //   `Getting value for variable ${key} of node ${node.id}:`,
-          //   result.vals.get(value.value)
-          // );
-          style[key] = toCSSvalue(key, result.vals.get(value.value) as number);
+          const [cssKey, cssValue] = toCSSrule(key, value.value.val);
+          style[cssKey] = cssValue;
         } else if (value.type === 'constant') {
-          style[key] = toCSSvalue(key, value.value);
+          const [cssKey, cssValue] = toCSSrule(key, roundToUnit(value.value));
+          style[cssKey] = cssValue;
         } else if (value.type === 'fixed') {
-          style[key] = value.value;
+          const [cssKey, cssValue] = toCSSrule(key, value.value);
+          style[cssKey] = cssValue;
         }
       }
-      return { nodeId: node.id, style };
+      return {
+        nodeId: node.id,
+        style,
+        content: node.content
+      } as NodeView;
     });
+
+    dirty = false;
   };
 
   return {
+    get ready(): boolean {
+      return !dirty;
+    },
+
     get views(): NodeView[] {
       return output.views;
     },
@@ -304,6 +514,7 @@ export function createLayout(config: LayoutConfig = {}) {
     get root() {
       return root;
     },
+
     addVariable: variable,
     solve
   };
