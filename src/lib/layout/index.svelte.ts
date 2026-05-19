@@ -2,6 +2,7 @@ import * as p from '@penrose/core';
 import { tick } from 'svelte';
 
 const snapModulo = (x: p.Num, modulo: number, weight = 1): p.Num => {
+  return 0;
   return p.mul(weight, p.pow(p.sin(p.div(p.mul(Math.PI, x), modulo)), 2));
 };
 
@@ -21,13 +22,6 @@ type VariableInfo = {
   variable: p.Var;
   range: Interval;
 };
-
-// type Scope = {
-//   variables: {
-//     [key: string]: VariableInfo;
-//   };
-//   localUniqId: (suffix: string) => string;
-// };
 
 export type NodeConfig = {
   style: Record<string, string | number>;
@@ -69,7 +63,7 @@ export type NodeView = {
 };
 
 type NodeContent = {
-  text: string;
+  text: ReactiveValue<string>;
   clientWidth: ReactiveValue<number>;
   clientHeight: ReactiveValue<number>;
 };
@@ -78,8 +72,8 @@ const parseVariableName = (name: string): string => {
   if (!name) {
     throw new Error(`Variable name cannot be empty`);
   }
-  // ensure all lowercase and underscores only
-  if (!/^[a-z_][a-z0-9_]*$/.test(name)) {
+  // ensure all lowercase and underscores/dashes only
+  if (!/^[a-z_][a-z0-9_-]*$/.test(name)) {
     throw new Error(`Invalid variable name: ${name}`);
   }
   return name;
@@ -115,7 +109,10 @@ const toCSSrule = (key: string, value: number | string): [string, string] => {
     marginLeft: (v) => `${v}px`,
     marginRight: (v) => `${v}px`,
 
-    fontSize: (v) => `${v}px`
+    fontSize: (v) => `${v}px`,
+
+    borderWidth: (v) => `${v}px`,
+    borderRadius: (v) => `${v}px`
   };
 
   if (key in map) {
@@ -131,7 +128,13 @@ type LayoutConfig = {
 };
 
 export function createLayout(config: LayoutConfig = {}) {
-  const { width: rootWidth, height: rootHeight, unitSize } = config;
+  const { width: rootWidth, height: rootHeight, unitSize = 1 } = config;
+
+  const roundToUnit = (value: number, f = Math.round): number => {
+    return value;
+    if (!unitSize) return value;
+    return f(value / unitSize) * unitSize;
+  };
 
   const nodes = {} as Record<string, Node>;
 
@@ -244,10 +247,40 @@ export function createLayout(config: LayoutConfig = {}) {
       const { left: bLeft } = bounds(nodeB);
 
       setConstraints({
-        [nodeA.localUniqId(nodeB.localUniqId('adjacentX'))]: p.lessThan(
-          p.add(aRight, padding),
-          bLeft
+        [nodeA.localUniqId(nodeB.localUniqId('adjacentX'))]: lessThanWithPadding(
+          aRight,
+          bLeft,
+          padding
         )
+      });
+    },
+
+    // Centering in container
+    centerX: (node: Node) => {
+      const { left: nLeft, right: nRight } = bounds(node);
+      const { left: cLeft, right: cRight } = bounds(node.parent!);
+
+      const distToLeft = p.sub(nLeft, cLeft);
+      const distToRight = p.sub(cRight, nRight);
+
+      const imbalance = p.absVal(p.sub(distToLeft, distToRight));
+
+      setConstraints({
+        [node.localUniqId(node.parent!.localUniqId('centerX'))]: p.log2(imbalance)
+      });
+    },
+
+    centerY: (node: Node) => {
+      const { top: nTop, bottom: nBottom } = bounds(node);
+      const { top: cTop, bottom: cBottom } = bounds(node.parent!);
+
+      const distToTop = p.sub(nTop, cTop);
+      const distToBottom = p.sub(cBottom, nBottom);
+
+      const imbalance = p.absVal(p.sub(distToTop, distToBottom));
+
+      setConstraints({
+        [node.localUniqId(node.parent!.localUniqId('centerY'))]: p.log2(imbalance)
       });
     }
   };
@@ -280,8 +313,16 @@ export function createLayout(config: LayoutConfig = {}) {
     return varInfo.variable;
   };
 
+  const nodeContentTexts = $state({} as Record<string, ReactiveValue<string>>);
   const nodeContentClientWidths = $state({} as Record<string, ReactiveValue<number>>);
   const nodeContentClientHeights = $state({} as Record<string, ReactiveValue<number>>);
+
+  const liveNodeContentText = (nodeId: string): { value: string } => {
+    if (!nodeContentTexts[nodeId]) {
+      nodeContentTexts[nodeId] = { value: '' };
+    }
+    return nodeContentTexts[nodeId];
+  };
 
   const liveNodeContentClientWidth = (nodeId: string): { value: number } => {
     if (!nodeContentClientWidths[nodeId]) {
@@ -299,7 +340,11 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const addNode = (config: NodeConfig = { style: {} }, parent: Node | null) => {
     const siblingCount = parent ? parent.children.length : Object.keys(nodes).length;
-    const id = parent ? `${parent.id}-${siblingCount + 1}` : `root`;
+    const id = parent
+      ? parent.id === 'root'
+        ? `node-${siblingCount + 1}`
+        : `${parent.id}-${siblingCount + 1}`
+      : `root`;
 
     if (config.style.x !== undefined) {
       config.style.left = config.style.x;
@@ -331,8 +376,10 @@ export function createLayout(config: LayoutConfig = {}) {
       style: {},
       localUniqId,
       setContent: (content: string) => {
+        liveNodeContentText(node.id).value = content;
+
         node.content = {
-          text: content,
+          text: liveNodeContentText(node.id),
           clientWidth: liveNodeContentClientWidth(node.id),
           clientHeight: liveNodeContentClientHeight(node.id)
         };
@@ -364,9 +411,9 @@ export function createLayout(config: LayoutConfig = {}) {
           type: 'variable',
           value: varValue
         };
-        setConstraints({
-          [node.localUniqId(`minimize-${key}`)]: p.log2(varValue)
-        });
+        // setConstraints({
+        //   [node.localUniqId(`minimize-${key}`)]: p.log2(varValue)
+        // });
       } else if (typeof value === 'number') {
         // A number/string is treated as a constant CSS attribute
         node.style[key] = {
@@ -383,18 +430,21 @@ export function createLayout(config: LayoutConfig = {}) {
 
     nodes[node.id] = node;
 
+    // Width/height should be minimised
+
     // Min width/height constraints based on content size
     $effect(() => {
       if (!node.content) {
         return;
       }
 
-      constraints[node.localUniqId('min-width')] = p.lessThan(
-        num(node.content.clientWidth),
+      constraints[node.localUniqId('at-least-content-width')] = p.lessThan(
+        num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
         num(node.style.width)
       );
-      constraints[node.localUniqId('min-height')] = p.lessThan(
-        num(node.content.clientHeight),
+
+      constraints[node.localUniqId('at-least-content-height')] = p.lessThan(
+        num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
         num(node.style.height)
       );
 
@@ -424,6 +474,8 @@ export function createLayout(config: LayoutConfig = {}) {
     null
   );
 
+  console.log('Created root node with id:', nodes);
+
   let dirty = $state(true);
 
   $effect(() => {
@@ -437,14 +489,8 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const solve = async () => {
     console.log('====================== SOLVE ======================');
-    console.log('>>> Variables:', variables);
-    console.log('>>> Constraints:', constraints);
-
-    const roundToUnit = (value: number): number => {
-      // return value;
-      if (!unitSize) return value;
-      return Math.round(value / unitSize) * unitSize;
-    };
+    console.log(`>>> Variables (n=${Object.keys(variables).length}):`, variables);
+    console.log(`>>> Constraints (n=${Object.keys(constraints).length}):`, constraints);
 
     // Randomize initial variable values to help solver escape local minima
     for (const { variable, range } of Object.values(variables)) {

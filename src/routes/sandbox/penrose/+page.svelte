@@ -9,30 +9,51 @@
 
   const layout = createLayout(config);
 
-  const int = (value: number): Node => {
-    return layout
+  const int = (value: number, parent: Node = layout.root): Node => {
+    return parent
       .addNode({
         width: '$isize',
         height: '$isize',
-        fontSize: 30,
-        backgroundColor: 'lightblue'
+        fontSize: 40,
+        backgroundColor: 'lightblue',
+        border: '2px solid black',
+        borderRadius: '10px'
       })
       .setContent(value.toString());
   };
 
-  // const array = layout.addNode();
+  const arrayOfInts = (values: number[], parent: Node = layout.root): Node => {
+    const array = parent.addNode({
+      width: '?<',
+      height: '?<',
+      backgroundColor: 'lightgray',
+      borderRadius: '10px',
+      outline: '20px solid lightgray'
+    });
+    let slots = values.map(() => array.addNode());
+    slots.forEach((slot, i) => {
+      int(values[i], slot);
+    });
+    for (let i = 0; i < slots.length - 1; i++) {
+      layout.constraint.adjacentX(slots[i], slots[i + 1], 20);
+    }
+    return array;
+  };
 
-  // const elem1 = array.addNode({ width: 100, height: 100, y: '$y' });
-  // const elem2 = array.addNode({ width: 100, height: 100, y: '$y' });
-  // const elem3 = array.addNode({ width: 100, height: 100, y: '$y' });
+  const array1 = arrayOfInts([1, 5, 2, 1, 33, 10, 2]);
+  const array2 = arrayOfInts([10, 11, 12, 13]);
 
-  const value1 = int(2);
-  const value2 = int(3);
+  layout.constraint.centerX(array1);
+  layout.constraint.centerX(array2);
 
-  layout.constraint.adjacentX(value1, value2, 20);
+  layout.constraint.disjoint(array1, array2);
 
-  // layout.constraint.adjacentX(elem1, elem2, 20);
-  // layout.constraint.adjacentX(elem2, elem3, 20);
+  const nextStep = () => {
+    // let tmp = value1.children[2].children[0];
+    // console.log('>>> Swapping', tmp, 'with', value1.children[3].children[0]);
+    // value1.children[2].children[0] = value1.children[3].children[0];
+    // value1.children[3].children[0] = tmp;
+  };
 
   const recomputeLayout = async () => {
     await layout.solve();
@@ -48,6 +69,7 @@
 
 <div class="page" style:width="100vw" style:height="100vh">
   <button class="solve-button" onclick={() => recomputeLayout()}>Solve</button>
+  <button class="solve-button" onclick={() => nextStep()}>Next Step</button>
   <div
     class="canvas"
     style:opacity={layout.ready ? 1 : 0}
@@ -60,10 +82,11 @@
       <div class="node" id={view.nodeId} style={css(view.style)}>
         {#if view.content}
           <div
+            class="node-content"
             bind:clientWidth={view.content.clientWidth.value}
             bind:clientHeight={view.content.clientHeight.value}
           >
-            {view.content.text}
+            {view.content.text.value}
           </div>
         {/if}
       </div>
@@ -78,9 +101,9 @@
 
   .canvas {
     background-color: rgb(220, 220, 220);
-    background-image:
+    /* background-image:
       linear-gradient(to right, #999 1px, transparent 1px),
-      linear-gradient(to bottom, #999 1px, transparent 1px);
+      linear-gradient(to bottom, #999 1px, transparent 1px); */
   }
 
   .node {
@@ -89,6 +112,10 @@
     justify-content: center;
     align-items: center;
     /* border: 3px solid black; */
+  }
+
+  .node-content {
+    user-select: none;
   }
 
   .solve-button {
