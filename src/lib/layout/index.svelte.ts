@@ -53,7 +53,7 @@ export type Node = {
   style: Record<string, StyleValue>;
   localUniqId: (suffix: string) => string;
   setContent: (content: string) => Node;
-  addNode: (style?: Record<string, '?' | string | number>) => Node;
+  addChild: (childNode: Node) => Node;
 };
 
 export type NodeView = {
@@ -112,7 +112,9 @@ const toCSSrule = (key: string, value: number | string): [string, string] => {
     fontSize: (v) => `${v}px`,
 
     borderWidth: (v) => `${v}px`,
-    borderRadius: (v) => `${v}px`
+    borderRadius: (v) => `${v}px`,
+
+    zIndex: (v) => v.toString()
   };
 
   if (key in map) {
@@ -338,13 +340,8 @@ export function createLayout(config: LayoutConfig = {}) {
     return nodeContentClientHeights[nodeId];
   };
 
-  const addNode = (config: NodeConfig = { style: {} }, parent: Node | null) => {
-    const siblingCount = parent ? parent.children.length : Object.keys(nodes).length;
-    const id = parent
-      ? parent.id === 'root'
-        ? `node-${siblingCount + 1}`
-        : `${parent.id}-${siblingCount + 1}`
-      : `root`;
+  const createNode = (config: NodeConfig = { style: {} }) => {
+    const id = `node-${Object.keys(nodes).length + 1}`;
 
     if (config.style.x !== undefined) {
       config.style.left = config.style.x;
@@ -370,7 +367,7 @@ export function createLayout(config: LayoutConfig = {}) {
 
     const node: Node = {
       id,
-      parent: parent || undefined,
+      parent: undefined,
       children: [],
       content: undefined,
       style: {},
@@ -385,7 +382,12 @@ export function createLayout(config: LayoutConfig = {}) {
         };
         return node;
       },
-      addNode: (style?: Record<string, string | number>) => addNode({ style: style ?? {} }, node)
+      addChild: (childNode: Node) => {
+        childNode.parent = node;
+        node.children.push(childNode);
+        constraint.contains(node, childNode);
+        return childNode;
+      }
     };
 
     for (const [key, value] of Object.entries(config.style)) {
@@ -451,28 +453,17 @@ export function createLayout(config: LayoutConfig = {}) {
       dirty = true;
     });
 
-    if (parent) {
-      // Ensure child is tracked in parent's children list for traversal
-      parent.children.push(node);
-
-      // Child element must be fully contained within parent
-      constraint.contains(parent, node);
-    }
-
     return node;
   };
 
-  const root = addNode(
-    {
-      style: {
-        width: rootWidth ?? '?',
-        height: rootHeight ?? '?',
-        left: 0,
-        top: 0
-      }
-    },
-    null
-  );
+  const root = createNode({
+    style: {
+      width: rootWidth ?? '?',
+      height: rootHeight ?? '?',
+      left: 0,
+      top: 0
+    }
+  });
 
   console.log('Created root node with id:', nodes);
 
@@ -552,9 +543,10 @@ export function createLayout(config: LayoutConfig = {}) {
       return constraint;
     },
 
-    get addNode() {
-      return (style?: Record<string, '?' | string | number>) =>
-        addNode({ style: style ?? {} }, root);
+    get createNode() {
+      return (style?: Record<string, '?' | string | number>) => {
+        return root.addChild(createNode({ style: style ?? {} }));
+      };
     },
 
     get root() {

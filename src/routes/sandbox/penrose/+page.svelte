@@ -9,39 +9,38 @@
 
   const layout = createLayout(config);
 
-  const int = (value: number, parent: Node = layout.root): Node => {
-    return parent
-      .addNode({
+  const int = (value: number): Node => {
+    return layout
+      .createNode({
         width: '$isize',
         height: '$isize',
         fontSize: 40,
         backgroundColor: 'lightblue',
         border: '2px solid black',
-        borderRadius: '10px'
+        borderRadius: '10px',
+        zIndex: 10
       })
       .setContent(value.toString());
   };
 
-  const arrayOfInts = (values: number[], parent: Node = layout.root): Node => {
-    const array = parent.addNode({
+  const array = (nodes: Node[]): Node => {
+    const arrayNode = layout.createNode({
       width: '?<',
       height: '?<',
       backgroundColor: 'lightgray',
       borderRadius: '10px',
-      outline: '20px solid lightgray'
+      outline: '20px solid lightgray',
+      zIndex: 2
     });
-    let slots = values.map(() => array.addNode());
-    slots.forEach((slot, i) => {
-      int(values[i], slot);
-    });
-    for (let i = 0; i < slots.length - 1; i++) {
-      layout.constraint.adjacentX(slots[i], slots[i + 1], 20);
+    nodes.forEach((node) => arrayNode.addChild(node));
+    for (let i = 0; i < nodes.length - 1; i++) {
+      layout.constraint.adjacentX(nodes[i], nodes[i + 1], 20);
     }
-    return array;
+    return arrayNode;
   };
 
-  const array1 = arrayOfInts([1, 5, 2, 1, 33, 10, 2]);
-  const array2 = arrayOfInts([10, 11, 12, 13]);
+  const array1 = array([int(1), int(5), int(2), int(1), int(33), int(10), int(2)]);
+  const array2 = array([int(10), int(11), int(12), int(13)]);
 
   layout.constraint.centerX(array1);
   layout.constraint.centerX(array2);
