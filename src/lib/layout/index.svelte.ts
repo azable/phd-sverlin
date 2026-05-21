@@ -1,10 +1,11 @@
 import * as p from '@penrose/core';
 import { tick } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 
-const snapModulo = (x: p.Num, modulo: number, weight = 1): p.Num => {
-  return 0;
-  return p.mul(weight, p.pow(p.sin(p.div(p.mul(Math.PI, x), modulo)), 2));
-};
+// const snapModulo = (x: p.Num, modulo: number, weight = 1): p.Num => {
+//   return 0;
+//   return p.mul(weight, p.pow(p.sin(p.div(p.mul(Math.PI, x), modulo)), 2));
+// };
 
 const lessThanWithPadding = (a: p.Num, b: p.Num, padding: p.Num): p.Num => {
   const gap = p.add(p.sub(a, b), padding);
@@ -34,7 +35,7 @@ type ReactiveValue<T> = {
 type StyleValue =
   | {
       type: 'variable';
-      value: p.Var;
+      varId: string;
     }
   | {
       type: 'constant';
@@ -50,6 +51,7 @@ export type Node = {
   parent?: Node;
   children: Node[];
   content?: NodeContent;
+  constraints: SvelteMap<string, p.Num>;
   style: Record<string, StyleValue>;
   localUniqId: (suffix: string) => string;
   setContent: (content: string) => Node;
@@ -138,10 +140,17 @@ export function createLayout(config: LayoutConfig = {}) {
     return f(value / unitSize) * unitSize;
   };
 
-  const nodes = {} as Record<string, Node>;
+  const nodes = $state({}) as Record<string, Node>;
 
-  const constraints = {} as Record<string, p.Num>;
+  const constraints = new SvelteMap<string, p.Num>();
   const variables = {} as Record<string, VariableInfo>;
+
+  const allConstraints = $derived.by<p.Num[]>(() => {
+    const nodeConstraints = Object.values(nodes).flatMap((node) =>
+      Object.values(node.constraints).map((constraint) => constraint)
+    );
+    return [...Array.from(constraints.values()), ...nodeConstraints];
+  });
 
   const globals = {
     byName: (name: string) => `global-${name}`
@@ -152,7 +161,10 @@ export function createLayout(config: LayoutConfig = {}) {
   });
 
   const setConstraints = (newConstraints: Record<string, p.Num>) => {
-    Object.assign(constraints, newConstraints);
+    Object.entries(newConstraints).forEach(([key, constraint]) => {
+      console.log(`Setting constraint ${key}:`, constraint);
+      constraints.set(key, constraint);
+    });
   };
 
   const num = (value: StyleValue | ReactiveValue<number> | number): p.Num => {
@@ -164,13 +176,25 @@ export function createLayout(config: LayoutConfig = {}) {
       return (value as ReactiveValue<number>).value;
     }
 
-    if ((value as StyleValue).type === 'variable' || (value as StyleValue).type === 'constant') {
-      return value as p.Num;
+    const styleValue = value as StyleValue;
+
+    if (styleValue.type === 'variable') {
+      const varId = styleValue.varId;
+      if (varId in variables) {
+        return variables[varId].variable;
+      } else {
+        throw new Error(`Variable ${varId} not found`);
+      }
     }
-    throw new Error(`Cannot convert ${(value as StyleValue).type} to number`);
+
+    if (styleValue.type === 'constant') {
+      return styleValue.value as p.Num;
+    }
+    throw new Error(`Cannot convert ${styleValue.type} to number`);
   };
 
   const bounds = (node: Node) => {
+    console.log(node.style);
     const left = num(node.style.left);
     const top = num(node.style.top);
     const width = num(node.style.width);
@@ -304,12 +328,12 @@ export function createLayout(config: LayoutConfig = {}) {
       [`${name}-max`]: p.lessThan(varInfo.variable, varInfo.range.max)
     });
 
-    if (unitSize) {
-      // Snap variable to nearest unit size using a soft constraint
-      setConstraints({
-        [`${name}-snap`]: snapModulo(varInfo.variable, unitSize, 0.1)
-      });
-    }
+    // if (unitSize) {
+    //   // Snap variable to nearest unit size using a soft constraint
+    //   setConstraints({
+    //     [`${name}-snap`]: snapModulo(varInfo.variable, unitSize, 0.1)
+    //   });
+    // }
 
     variables[name] = varInfo;
     return varInfo.variable;
@@ -371,6 +395,7 @@ export function createLayout(config: LayoutConfig = {}) {
       children: [],
       content: undefined,
       style: {},
+      constraints: new SvelteMap<string, p.Num>(),
       localUniqId,
       setContent: (content: string) => {
         liveNodeContentText(node.id).value = content;
@@ -383,6 +408,10 @@ export function createLayout(config: LayoutConfig = {}) {
         return node;
       },
       addChild: (childNode: Node) => {
+        if (childNode.parent) {
+          // Remove from previous parent
+          childNode.parent.children = childNode.parent.children.filter((c) => c !== childNode);
+        }
         childNode.parent = node;
         node.children.push(childNode);
         constraint.contains(node, childNode);
@@ -394,27 +423,29 @@ export function createLayout(config: LayoutConfig = {}) {
       if (typeof value === 'string' && value[0] === '?') {
         // Implicit variable (default)
         const varName = parseVariableName(key);
-        const varValue = variable(localUniqId(varName));
+        const varId = localUniqId(varName);
+        const varInstance = variable(varId);
         node.style[key] = {
           type: 'variable',
-          value: varValue
+          varId
         };
         if (value.length > 1 && value[1] === '<') {
           // Minimize variable ("?<")
           setConstraints({
-            [node.localUniqId(`minimize-${key}`)]: p.log2(varValue)
+            [node.localUniqId(`minimize-${key}`)]: p.log2(varInstance)
           });
         }
       } else if (typeof value === 'string' && value[0] === '$') {
         // Explicit variable (e.g. "$width" -> variable named "width")
         const varName = parseVariableName(value.slice(1));
-        const varValue = variable(globals.byName(varName));
+        const varId = globals.byName(varName);
+        variable(varId);
         node.style[key] = {
           type: 'variable',
-          value: varValue
+          varId
         };
         // setConstraints({
-        //   [node.localUniqId(`minimize-${key}`)]: p.log2(varValue)
+        //   [node.localUniqId(`minimize-${key}`)]: p.log2(varInstance)
         // });
       } else if (typeof value === 'number') {
         // A number/string is treated as a constant CSS attribute
@@ -440,14 +471,20 @@ export function createLayout(config: LayoutConfig = {}) {
         return;
       }
 
-      constraints[node.localUniqId('at-least-content-width')] = p.lessThan(
-        num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
-        num(node.style.width)
+      constraints.set(
+        node.localUniqId('at-least-content-width'),
+        p.lessThan(
+          num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
+          num(node.style.width)
+        )
       );
 
-      constraints[node.localUniqId('at-least-content-height')] = p.lessThan(
-        num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
-        num(node.style.height)
+      constraints.set(
+        node.localUniqId('at-least-content-height'),
+        p.lessThan(
+          num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
+          num(node.style.height)
+        )
       );
 
       dirty = true;
@@ -481,7 +518,7 @@ export function createLayout(config: LayoutConfig = {}) {
   const solve = async () => {
     console.log('====================== SOLVE ======================');
     console.log(`>>> Variables (n=${Object.keys(variables).length}):`, variables);
-    console.log(`>>> Constraints (n=${Object.keys(constraints).length}):`, constraints);
+    console.log(`>>> Constraints (n=${Object.keys(allConstraints).length}):`, allConstraints);
 
     // Randomize initial variable values to help solver escape local minima
     for (const { variable, range } of Object.values(variables)) {
@@ -489,9 +526,11 @@ export function createLayout(config: LayoutConfig = {}) {
       variable.val = randomValue;
     }
 
+    // const cons = $state.snapshot<Record<string, p.Num>>(constraints);
+
     const solveIteration = async () => {
       const problem = await p.problem({
-        constraints: [...Object.values(constraints)]
+        constraints: allConstraints
       });
 
       const result = problem.start({}).run({});
@@ -510,7 +549,11 @@ export function createLayout(config: LayoutConfig = {}) {
       const style: Record<string, string> = {};
       for (const [key, value] of Object.entries(node.style)) {
         if (value.type === 'variable') {
-          const [cssKey, cssValue] = toCSSrule(key, value.value.val);
+          const varValue = variables[value.varId].variable.val;
+          const [cssKey, cssValue] = toCSSrule(key, varValue);
+          if (node.id === 'node-2' || node.id === 'node-3') {
+            console.log(`Setting style ${cssKey} to ${cssValue} for node ${node.id}`);
+          }
           style[cssKey] = cssValue;
         } else if (value.type === 'constant') {
           const [cssKey, cssValue] = toCSSrule(key, roundToUnit(value.value));

@@ -32,26 +32,35 @@
       outline: '20px solid lightgray',
       zIndex: 2
     });
-    nodes.forEach((node) => arrayNode.addChild(node));
+    const slots = nodes.map(() =>
+      layout.createNode({
+        width: '?<',
+        height: '?<',
+        zIndex: 1
+      })
+    );
+    slots.forEach((slot, i) => {
+      arrayNode.addChild(slot);
+      slot.addChild(nodes[i]);
+    });
     for (let i = 0; i < nodes.length - 1; i++) {
-      layout.constraint.adjacentX(nodes[i], nodes[i + 1], 20);
+      layout.constraint.adjacentX(slots[i], slots[i + 1], 20);
     }
     return arrayNode;
   };
 
-  const array1 = array([int(1), int(5), int(2), int(1), int(33), int(10), int(2)]);
-  const array2 = array([int(10), int(11), int(12), int(13)]);
+  const array1 = array([int(1), int(5)]);
+  // const array2 = array([int(10), int(11), int(12), int(13)]);
 
   layout.constraint.centerX(array1);
-  layout.constraint.centerX(array2);
+  // layout.constraint.centerX(array2);
 
-  layout.constraint.disjoint(array1, array2);
+  // layout.constraint.disjoint(array1, array2);
 
   const nextStep = () => {
-    // let tmp = value1.children[2].children[0];
-    // console.log('>>> Swapping', tmp, 'with', value1.children[3].children[0]);
-    // value1.children[2].children[0] = value1.children[3].children[0];
-    // value1.children[3].children[0] = tmp;
+    console.log('>>> Next step', array1);
+    array1.children[0].children = [];
+    // array1.children[0].addChild(int(2));
   };
 
   const recomputeLayout = async () => {
@@ -64,6 +73,8 @@
       .map(([key, value]) => `${key}: ${value}`)
       .join('; ');
   };
+
+  $effect(() => console.log(layout.views));
 </script>
 
 <div class="page" style:width="100vw" style:height="100vh">
