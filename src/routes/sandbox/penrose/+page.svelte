@@ -32,34 +32,28 @@
       outline: '20px solid lightgray',
       zIndex: 2
     });
-    const slots = nodes.map(() =>
-      layout.createNode({
-        width: '?<',
-        height: '?<',
-        zIndex: 1
-      })
-    );
-    slots.forEach((slot, i) => {
-      arrayNode.addChild(slot);
-      slot.addChild(nodes[i]);
-    });
-    for (let i = 0; i < nodes.length - 1; i++) {
-      layout.constraint.adjacentX(slots[i], slots[i + 1], 20);
+
+    for (let i = 0; i < nodes.length; i++) {
+      if (i !== nodes.length - 1) {
+        layout.constraint.adjacentX(nodes[i], nodes[i + 1], 20);
+      }
+      layout.constraint.contains(arrayNode, nodes[i]);
     }
     return arrayNode;
   };
 
-  const array1 = array([int(1), int(5)]);
-  // const array2 = array([int(10), int(11), int(12), int(13)]);
+  const value1 = int(1);
+  const value2 = int(5);
+  const value3 = int(10);
 
-  layout.constraint.centerX(array1);
-  // layout.constraint.centerX(array2);
+  const array1 = array([value1, value2, value3]);
 
-  // layout.constraint.disjoint(array1, array2);
+  layout.constraint.centerX(layout.root, array1);
+  layout.constraint.contains(layout.root, array1);
 
   const nextStep = () => {
     console.log('>>> Next step', array1);
-    array1.children[0].children = [];
+    // array1.children[0].children = [];
     // array1.children[0].addChild(int(2));
   };
 

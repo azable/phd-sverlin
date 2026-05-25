@@ -48,14 +48,11 @@ type StyleValue =
 
 export type Node = {
   id: string;
-  parent?: Node;
-  children: Node[];
   content?: NodeContent;
   constraints: SvelteMap<string, p.Num>;
   style: Record<string, StyleValue>;
   localUniqId: (suffix: string) => string;
   setContent: (content: string) => Node;
-  addChild: (childNode: Node) => Node;
 };
 
 export type NodeView = {
@@ -282,9 +279,9 @@ export function createLayout(config: LayoutConfig = {}) {
     },
 
     // Centering in container
-    centerX: (node: Node) => {
+    centerX: (containerNode: Node, node: Node) => {
       const { left: nLeft, right: nRight } = bounds(node);
-      const { left: cLeft, right: cRight } = bounds(node.parent!);
+      const { left: cLeft, right: cRight } = bounds(containerNode);
 
       const distToLeft = p.sub(nLeft, cLeft);
       const distToRight = p.sub(cRight, nRight);
@@ -292,13 +289,13 @@ export function createLayout(config: LayoutConfig = {}) {
       const imbalance = p.absVal(p.sub(distToLeft, distToRight));
 
       setConstraints({
-        [node.localUniqId(node.parent!.localUniqId('centerX'))]: p.log2(imbalance)
+        [node.localUniqId(containerNode.localUniqId('centerX'))]: p.log2(imbalance)
       });
     },
 
-    centerY: (node: Node) => {
+    centerY: (containerNode: Node, node: Node) => {
       const { top: nTop, bottom: nBottom } = bounds(node);
-      const { top: cTop, bottom: cBottom } = bounds(node.parent!);
+      const { top: cTop, bottom: cBottom } = bounds(containerNode);
 
       const distToTop = p.sub(nTop, cTop);
       const distToBottom = p.sub(cBottom, nBottom);
@@ -306,7 +303,7 @@ export function createLayout(config: LayoutConfig = {}) {
       const imbalance = p.absVal(p.sub(distToTop, distToBottom));
 
       setConstraints({
-        [node.localUniqId(node.parent!.localUniqId('centerY'))]: p.log2(imbalance)
+        [node.localUniqId(containerNode.localUniqId('centerY'))]: p.log2(imbalance)
       });
     }
   };
@@ -391,8 +388,6 @@ export function createLayout(config: LayoutConfig = {}) {
 
     const node: Node = {
       id,
-      parent: undefined,
-      children: [],
       content: undefined,
       style: {},
       constraints: new SvelteMap<string, p.Num>(),
@@ -406,16 +401,6 @@ export function createLayout(config: LayoutConfig = {}) {
           clientHeight: liveNodeContentClientHeight(node.id)
         };
         return node;
-      },
-      addChild: (childNode: Node) => {
-        if (childNode.parent) {
-          // Remove from previous parent
-          childNode.parent.children = childNode.parent.children.filter((c) => c !== childNode);
-        }
-        childNode.parent = node;
-        node.children.push(childNode);
-        constraint.contains(node, childNode);
-        return childNode;
       }
     };
 
@@ -444,9 +429,6 @@ export function createLayout(config: LayoutConfig = {}) {
           type: 'variable',
           varId
         };
-        // setConstraints({
-        //   [node.localUniqId(`minimize-${key}`)]: p.log2(varInstance)
-        // });
       } else if (typeof value === 'number') {
         // A number/string is treated as a constant CSS attribute
         node.style[key] = {
@@ -462,8 +444,6 @@ export function createLayout(config: LayoutConfig = {}) {
     }
 
     nodes[node.id] = node;
-
-    // Width/height should be minimised
 
     // Min width/height constraints based on content size
     $effect(() => {
@@ -588,7 +568,7 @@ export function createLayout(config: LayoutConfig = {}) {
 
     get createNode() {
       return (style?: Record<string, '?' | string | number>) => {
-        return root.addChild(createNode({ style: style ?? {} }));
+        return createNode({ style: style ?? {} });
       };
     },
 
