@@ -11,12 +11,21 @@ importers:
       '@penrose/core':
         specifier: ^3.3.0
         version: 3.3.0
+      '@types/lodash-es':
+        specifier: ^4.17.12
+        version: 4.17.12
       '@xyflow/svelte':
         specifier: ^1.5.0
         version: 1.5.0(svelte@5.48.5)
       elkjs:
         specifier: ^0.11.0
         version: 0.11.0
+      install:
+        specifier: ^0.13.0
+        version: 0.13.0
+      lodash-es:
+        specifier: ^4.18.1
+        version: 4.18.1
     devDependencies:
       '@eslint/compat':
         specifier: ^2.0.1
@@ -744,6 +753,12 @@ packages:
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
 
+  '@types/lodash-es@4.17.12':
+    resolution: {integrity: sha512-0NgftHUcV4v34VhXm8QBSftKVXtbkBG3ViCjs6+eJ5a6y6Mi/jiFGPc1sC7QK+9BFhWrURE3EOggmWaSxL9OzQ==}
+
+  '@types/lodash@4.17.24':
+    resolution: {integrity: sha512-gIW7lQLZbue7lRSWEFql49QJJWThrTFFeIMJdp3eH4tKoxm1OvEPg02rm4wCCSHS0cL3/Fizimb35b7k8atwsQ==}
+
   '@types/node@24.10.9':
     resolution: {integrity: sha512-ne4A0IpG3+2ETuREInjPNhUGis1SFjv1d5asp8MzEAGtOZeTeHVDOYqOgqfhvseqg/iXty2hjBf1zAOb7RNiNw==}
 
@@ -1218,6 +1233,10 @@ packages:
     resolution: {integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==}
     engines: {node: '>=0.8.19'}
 
+  install@0.13.0:
+    resolution: {integrity: sha512-zDml/jzr2PKU9I8J/xyZBQn8rPCAY//UOYNmR01XwNwyfhEWObo2SWfSl1+0tm1u6PhxLwDnfsT/6jB7OUxqFA==}
+    engines: {node: '>= 0.10'}
+
   is-any-array@3.0.0:
     resolution: {integrity: sha512-o4h+tylWykC4BD1vaejp6gDxoM13bwW8FGuNs4yIKpj8xbBJcRxJx8vZpq0dCr7ZDEfeKjmsi/euolKhX6f/ww==}
 
@@ -1362,6 +1381,9 @@ packages:
   locate-path@6.0.0:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
+
+  lodash-es@4.18.1:
+    resolution: {integrity: sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==}
 
   lodash.merge@4.6.2:
     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
@@ -2452,6 +2474,12 @@ snapshots:
 
   '@types/json-schema@7.0.15': {}
 
+  '@types/lodash-es@4.17.12':
+    dependencies:
+      '@types/lodash': 4.17.24
+
+  '@types/lodash@4.17.24': {}
+
   '@types/node@24.10.9':
     dependencies:
       undici-types: 7.16.0
@@ -2996,6 +3024,8 @@ snapshots:
 
   imurmurhash@0.1.4: {}
 
+  install@0.13.0: {}
+
   is-any-array@3.0.0: {}
 
   is-extglob@2.1.1: {}
@@ -3121,6 +3151,8 @@ snapshots:
   locate-path@6.0.0:
     dependencies:
       p-locate: 5.0.0
+
+  lodash-es@4.18.1: {}
 
   lodash.merge@4.6.2: {}
 

@@ -1,6 +1,6 @@
 import * as p from '@penrose/core';
 import { tick } from 'svelte';
-import { SvelteMap } from 'svelte/reactivity';
+import { cloneDeep, zipWith, range, fromPairs } from 'lodash-es';
 
 // const snapModulo = (x: p.Num, modulo: number, weight = 1): p.Num => {
 //   return 0;
@@ -19,9 +19,13 @@ type Interval = {
   max: number;
 };
 
-type VariableInfo = {
-  variable: p.Var;
-  range: Interval;
+interface Variable extends p.Var {
+  uuid: string;
+  randomInit: Interval;
+}
+
+type Temporal<T> = {
+  at: Record<number, T>;
 };
 
 export type NodeConfig = {
@@ -49,11 +53,21 @@ type StyleValue =
 export type Node = {
   id: string;
   content?: NodeContent;
-  constraints: SvelteMap<string, p.Num>;
   style: Record<string, StyleValue>;
   localUniqId: (suffix: string) => string;
   setContent: (content: string) => Node;
 };
+
+// A value can be re-assigned to nodes (variables). It is treated as
+// immutable from the perspective of the layout system, but allows
+// users to keep track of the history of changes to a variable and
+// potentially use that for undo/redo or debugging.
+
+// export type Value<T> = {
+
+//   readonly value: T;
+//   readonly history: string[];
+// };
 
 export type NodeView = {
   nodeId: string;
@@ -137,34 +151,94 @@ export function createLayout(config: LayoutConfig = {}) {
     return f(value / unitSize) * unitSize;
   };
 
-  const nodes = $state({}) as Record<string, Node>;
+  const nodes = {} as Record<string, Node>;
 
-  const constraints = new SvelteMap<string, p.Num>();
-  const variables = {} as Record<string, VariableInfo>;
+  const constraintsAtTime = [{}] as Record<string, p.Num>[];
+  const constraints = () => constraintsAtTime[time];
 
-  const allConstraints = $derived.by<p.Num[]>(() => {
-    const nodeConstraints = Object.values(nodes).flatMap((node) =>
-      Object.values(node.constraints).map((constraint) => constraint)
-    );
-    return [...Array.from(constraints.values()), ...nodeConstraints];
-  });
+  const setConstraints = (newConstraints: Record<string, p.Num>) => {
+    for (const [key, value] of Object.entries(newConstraints)) {
+      constraints()[key] = value;
+    }
+  };
+
+  const defineConstraint = <Args extends unknown[]>(
+    consName: string,
+    constraintFn: (...args: Args) => Array<p.Num>
+  ) => {
+    return (...args: Args) => {
+      const nodes = args.filter((arg): arg is Node => typeof arg === 'object' && 'id' in arg!);
+      const vars = args.filter((arg): arg is Variable => typeof arg === 'object' && 'val' in arg!);
+      const nodeIdsConcat = nodes.map((n) => n.localUniqId('')).join('');
+      const varIdsConcat = vars.map((v) => v.uuid).join('-');
+      const constraintExprs = constraintFn(...args);
+      const constraintKeys = constraintExprs.map((_, i) => {
+        return `${consName}-${nodeIdsConcat}${varIdsConcat}${i}`;
+      });
+      const newConstraints: Record<string, p.Num> = {};
+      constraintKeys.forEach((key, i) => {
+        newConstraints[key] = constraintExprs[i];
+      });
+      setConstraints(newConstraints);
+    };
+  };
+
+  const variables = {} as Record<string, Temporal<Variable>>;
+
+  const variable = (name: string, t: number = time): Variable => {
+    // Return from store if variable already exists at the current time step
+    if (name in variables) {
+      return variables[name].at[t];
+    }
+
+    if (!(name in variables)) {
+      variables[name] = { at: {} };
+    }
+
+    // Create new variable in the current scope
+    console.log(`Creating new variable ${name} at time ${t}`);
+
+    const variable = {
+      ...p.variable(0),
+      uuid: crypto.randomUUID().slice(0, 8),
+      randomInit: { min: 1, max: 1000 }
+    } as Variable;
+
+    // TODO confirm necessary
+    // constraint.between(variable.val, variable.randomInit);
+
+    variables[name].at[t] = variable;
+    return variable;
+  };
+
+  let time = 0;
+  const addTimeStep = () => {
+    // deep copy variables from previous time step, add eq constraints to
+    // keep them the same unless explicitly changed
+    constraintsAtTime.push({});
+    console.log(`Adding time step ${time + 1}`);
+    // console.log(constraintsAtTime);
+    // for (const [name, temporalVar] of Object.entries(variables)) {
+    //   const prevVar = temporalVar.at[time];
+    //   if (prevVar) {
+    //     const newVar = { ...cloneDeep(prevVar), uuid: crypto.randomUUID().slice(0, 8) } as Variable;
+    //     // console.log(newVar, prevVar);
+    //     constraint.eq(newVar, prevVar);
+    //     variables[name].at[time + 1] = newVar;
+    //   }
+    // }
+    time += 1;
+  };
 
   const globals = {
     byName: (name: string) => `global-${name}`
   };
 
   const output = $state({
-    views: [] as NodeView[]
+    views: { at: { 0: [] } } as Temporal<NodeView[]>
   });
 
-  const setConstraints = (newConstraints: Record<string, p.Num>) => {
-    Object.entries(newConstraints).forEach(([key, constraint]) => {
-      console.log(`Setting constraint ${key}:`, constraint);
-      constraints.set(key, constraint);
-    });
-  };
-
-  const num = (value: StyleValue | ReactiveValue<number> | number): p.Num => {
+  const num = (value: StyleValue | ReactiveValue<number> | number, t = time): p.Num => {
     if (typeof value === 'number') {
       return value;
     }
@@ -177,25 +251,20 @@ export function createLayout(config: LayoutConfig = {}) {
 
     if (styleValue.type === 'variable') {
       const varId = styleValue.varId;
-      if (varId in variables) {
-        return variables[varId].variable;
-      } else {
-        throw new Error(`Variable ${varId} not found`);
-      }
+      return variable(varId, t);
     }
 
     if (styleValue.type === 'constant') {
-      return styleValue.value as p.Num;
+      return styleValue.value as number;
     }
     throw new Error(`Cannot convert ${styleValue.type} to number`);
   };
 
-  const bounds = (node: Node) => {
-    console.log(node.style);
-    const left = num(node.style.left);
-    const top = num(node.style.top);
-    const width = num(node.style.width);
-    const height = num(node.style.height);
+  const bounds = (node: Node, t: number = time) => {
+    const left = num(node.style.left, t);
+    const top = num(node.style.top, t);
+    const width = num(node.style.width, t);
+    const height = num(node.style.height, t);
     const right = p.add(left, width);
     const bottom = p.add(top, height);
 
@@ -203,37 +272,39 @@ export function createLayout(config: LayoutConfig = {}) {
   };
 
   const constraint = {
-    // Ensure node A is fully contained within node B
-    contains: (containerNode: Node, node: Node) => {
+    eq: defineConstraint('eq', (a: p.Num, b: p.Num) => {
+      return [p.mul(p.absVal(p.sub(a, b)), 0.1)];
+    }),
+
+    between: defineConstraint('between', (value: p.Num, range: Interval) => {
+      const { min, max } = range;
+      return [p.lessThan(min, value), p.lessThan(value, max)];
+    }),
+
+    assign: defineConstraint('assign', (nodeA: Node, nodeB: Node) => {
+      const { left: aLeft, top: aTop, right: aRight, bottom: aBottom } = bounds(nodeA);
+      const { left: bLeft, top: bTop, right: bRight, bottom: bBottom } = bounds(nodeB);
+      return [
+        p.mul(p.absVal(p.sub(aLeft, bLeft)), 1),
+        p.mul(p.absVal(p.sub(aTop, bTop)), 1),
+        p.mul(p.absVal(p.sub(aRight, bRight)), 1),
+        p.mul(p.absVal(p.sub(aBottom, bBottom)), 1)
+      ];
+    }),
+
+    contains: defineConstraint('contains', (containerNode: Node, node: Node) => {
       const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = bounds(containerNode);
       const { left, top, right, bottom } = bounds(node);
 
-      setConstraints({
-        [containerNode.localUniqId(`contains-${node.localUniqId('left')}`)]: lessThanWithPadding(
-          cLeft,
-          left,
-          0
-        ),
-        [containerNode.localUniqId(`contains-${node.localUniqId('right')}`)]: lessThanWithPadding(
-          right,
-          cRight,
-          0
-        ),
-        [containerNode.localUniqId(`contains-${node.localUniqId('top')}`)]: lessThanWithPadding(
-          cTop,
-          top,
-          0
-        ),
-        [containerNode.localUniqId(`contains-${node.localUniqId('bottom')}`)]: lessThanWithPadding(
-          bottom,
-          cBottom,
-          0
-        )
-      });
-    },
+      return [
+        lessThanWithPadding(cLeft, left, 0),
+        lessThanWithPadding(right, cRight, 0),
+        lessThanWithPadding(cTop, top, 0),
+        lessThanWithPadding(bottom, cBottom, 0)
+      ];
+    }),
 
-    // Ensure nodes A and B do not overlap
-    disjoint: (nodeA: Node, nodeB: Node) => {
+    disjoint: defineConstraint('disjoint', (nodeA: Node, nodeB: Node) => {
       const {
         left: aLeft,
         top: aTop,
@@ -259,81 +330,26 @@ export function createLayout(config: LayoutConfig = {}) {
 
       const overlapFraction = p.mul(100, p.mul(normOverlapX, normOverlapY));
 
-      setConstraints({
-        [nodeA.localUniqId(nodeB.localUniqId('disjoint'))]: p.absVal(overlapFraction)
-      });
-    },
+      return [overlapFraction];
+    }),
 
-    // Neighbours
-    adjacentX: (nodeA: Node, nodeB: Node, padding = 0) => {
+    adjacentX: defineConstraint('adjacentX', (nodeA: Node, nodeB: Node, padding: number = 0) => {
       const { right: aRight } = bounds(nodeA);
       const { left: bLeft } = bounds(nodeB);
 
-      setConstraints({
-        [nodeA.localUniqId(nodeB.localUniqId('adjacentX'))]: lessThanWithPadding(
-          aRight,
-          bLeft,
-          padding
-        )
-      });
-    },
+      return [lessThanWithPadding(aRight, bLeft, padding)];
+    }),
 
-    // Centering in container
-    centerX: (containerNode: Node, node: Node) => {
+    centerX: defineConstraint('centerX', (containerNode: Node, node: Node) => {
       const { left: nLeft, right: nRight } = bounds(node);
       const { left: cLeft, right: cRight } = bounds(containerNode);
 
       const distToLeft = p.sub(nLeft, cLeft);
       const distToRight = p.sub(cRight, nRight);
-
       const imbalance = p.absVal(p.sub(distToLeft, distToRight));
 
-      setConstraints({
-        [node.localUniqId(containerNode.localUniqId('centerX'))]: p.log2(imbalance)
-      });
-    },
-
-    centerY: (containerNode: Node, node: Node) => {
-      const { top: nTop, bottom: nBottom } = bounds(node);
-      const { top: cTop, bottom: cBottom } = bounds(containerNode);
-
-      const distToTop = p.sub(nTop, cTop);
-      const distToBottom = p.sub(cBottom, nBottom);
-
-      const imbalance = p.absVal(p.sub(distToTop, distToBottom));
-
-      setConstraints({
-        [node.localUniqId(containerNode.localUniqId('centerY'))]: p.log2(imbalance)
-      });
-    }
-  };
-
-  const variable = (name: string): p.Var => {
-    // Check if variable already exists
-    if (name in variables) {
-      return variables[name].variable;
-    }
-
-    // Create new variable in the current scope
-    console.log(`Creating new variable ${name}`);
-
-    const varRange: Interval = { min: 1, max: 1000 };
-    const varInfo = { variable: p.variable(0), range: varRange };
-
-    setConstraints({
-      [`${name}-min`]: p.lessThan(varInfo.range.min, varInfo.variable),
-      [`${name}-max`]: p.lessThan(varInfo.variable, varInfo.range.max)
-    });
-
-    // if (unitSize) {
-    //   // Snap variable to nearest unit size using a soft constraint
-    //   setConstraints({
-    //     [`${name}-snap`]: snapModulo(varInfo.variable, unitSize, 0.1)
-    //   });
-    // }
-
-    variables[name] = varInfo;
-    return varInfo.variable;
+      return [p.log2(imbalance)];
+    })
   };
 
   const nodeContentTexts = $state({} as Record<string, ReactiveValue<string>>);
@@ -390,7 +406,6 @@ export function createLayout(config: LayoutConfig = {}) {
       id,
       content: undefined,
       style: {},
-      constraints: new SvelteMap<string, p.Num>(),
       localUniqId,
       setContent: (content: string) => {
         liveNodeContentText(node.id).value = content;
@@ -451,21 +466,30 @@ export function createLayout(config: LayoutConfig = {}) {
         return;
       }
 
-      constraints.set(
-        node.localUniqId('at-least-content-width'),
-        p.lessThan(
-          num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
-          num(node.style.width)
-        )
-      );
+      // across all constaint times
+      for (let t = 0; t <= time; t++) {
+        const consAtTime = constraintsAtTime[t];
 
-      constraints.set(
-        node.localUniqId('at-least-content-height'),
-        p.lessThan(
-          num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
-          num(node.style.height)
-        )
-      );
+        const { width, height } = bounds(node, t);
+
+        consAtTime[node.localUniqId('at-least-content-width')] = p.mul(
+          10,
+          lessThanWithPadding(
+            num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
+            width,
+            0
+          )
+        );
+
+        consAtTime[node.localUniqId('at-least-content-height')] = p.mul(
+          10,
+          lessThanWithPadding(
+            num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
+            height,
+            0
+          )
+        );
+      }
 
       dirty = true;
     });
@@ -496,59 +520,79 @@ export function createLayout(config: LayoutConfig = {}) {
   });
 
   const solve = async () => {
+    const allConstraints = {} as Record<string, p.Num>;
+    constraintsAtTime.forEach((consAtTime, cTime) => {
+      const prefix = `t${cTime}-`;
+      for (const [key, value] of Object.entries(consAtTime)) {
+        allConstraints[`${prefix}${key}`] = value;
+      }
+    });
+
     console.log('====================== SOLVE ======================');
     console.log(`>>> Variables (n=${Object.keys(variables).length}):`, variables);
     console.log(`>>> Constraints (n=${Object.keys(allConstraints).length}):`, allConstraints);
 
     // Randomize initial variable values to help solver escape local minima
-    for (const { variable, range } of Object.values(variables)) {
-      const randomValue = Math.random() * (range.max - range.min) + range.min;
-      variable.val = randomValue;
-    }
+    for (const variable of Object.values(variables)) {
+      // Always at least one time step if variable exists
+      const firstTimeStep = variable.at[0];
+      const initValue =
+        Math.random() * (firstTimeStep.randomInit.max - firstTimeStep.randomInit.min) +
+        firstTimeStep.randomInit.min;
 
-    // const cons = $state.snapshot<Record<string, p.Num>>(constraints);
+      for (const timeKey in variable.at) {
+        variable.at[timeKey].val = initValue;
+      }
+    }
 
     const solveIteration = async () => {
       const problem = await p.problem({
-        constraints: allConstraints
+        constraints: Object.values(allConstraints)
       });
 
       const result = problem.start({}).run({});
       console.log('Solver result:', result);
 
       // Update values
-      for (const { variable } of Object.values(variables)) {
-        const solvedValue = result.vals.get(variable) as number;
-        variable.val = roundToUnit(solvedValue);
+      for (const variable of Object.values(variables)) {
+        for (const timeKey in variable.at) {
+          const solvedValue = result.vals.get(variable.at[timeKey]) as number;
+          variable.at[timeKey].val = roundToUnit(solvedValue);
+        }
       }
     };
 
     await solveIteration();
 
-    output.views = Object.values(nodes).map((node) => {
-      const style: Record<string, string> = {};
-      for (const [key, value] of Object.entries(node.style)) {
-        if (value.type === 'variable') {
-          const varValue = variables[value.varId].variable.val;
-          const [cssKey, cssValue] = toCSSrule(key, varValue);
-          if (node.id === 'node-2' || node.id === 'node-3') {
-            console.log(`Setting style ${cssKey} to ${cssValue} for node ${node.id}`);
-          }
-          style[cssKey] = cssValue;
-        } else if (value.type === 'constant') {
-          const [cssKey, cssValue] = toCSSrule(key, roundToUnit(value.value));
-          style[cssKey] = cssValue;
-        } else if (value.type === 'fixed') {
-          const [cssKey, cssValue] = toCSSrule(key, value.value);
-          style[cssKey] = cssValue;
-        }
-      }
-      return {
-        nodeId: node.id,
-        style,
-        content: node.content
-      } as NodeView;
-    });
+    output.views = {
+      at: fromPairs(
+        range(time + 1).map((t) => {
+          const nodeViews = Object.values(nodes).map((node) => {
+            const style: Record<string, string> = {};
+            for (const [key, value] of Object.entries(node.style)) {
+              if (value.type === 'variable') {
+                const varValue = variables[value.varId].at[t].val;
+                const [cssKey, cssValue] = toCSSrule(key, varValue);
+                style[cssKey] = cssValue;
+              } else if (value.type === 'constant') {
+                const [cssKey, cssValue] = toCSSrule(key, roundToUnit(value.value));
+                style[cssKey] = cssValue;
+              } else if (value.type === 'fixed') {
+                const [cssKey, cssValue] = toCSSrule(key, value.value);
+                style[cssKey] = cssValue;
+              }
+            }
+            return {
+              nodeId: node.id,
+              style,
+              content: node.content
+            } as NodeView;
+          });
+
+          return [t, nodeViews];
+        })
+      )
+    };
 
     dirty = false;
   };
@@ -558,7 +602,7 @@ export function createLayout(config: LayoutConfig = {}) {
       return !dirty;
     },
 
-    get views(): NodeView[] {
+    get views(): Temporal<NodeView[]> {
       return output.views;
     },
 
@@ -574,6 +618,17 @@ export function createLayout(config: LayoutConfig = {}) {
 
     get root() {
       return root;
+    },
+
+    get step() {
+      return function (f: () => void) {
+        addTimeStep();
+        f();
+      };
+    },
+
+    get timeSteps() {
+      return time;
     },
 
     addVariable: variable,

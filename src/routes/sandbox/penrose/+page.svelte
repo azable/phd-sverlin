@@ -23,7 +23,7 @@
       .setContent(value.toString());
   };
 
-  const array = (nodes: Node[]): Node => {
+  const array = (size: number): Node[] => {
     const arrayNode = layout.createNode({
       width: '?<',
       height: '?<',
@@ -33,28 +33,53 @@
       zIndex: 2
     });
 
-    for (let i = 0; i < nodes.length; i++) {
-      if (i !== nodes.length - 1) {
+    layout.constraint.centerX(layout.root, arrayNode);
+    layout.constraint.contains(layout.root, arrayNode);
+
+    const nodes = Array.from({ length: size }, () => layout.createNode());
+
+    for (let i = 0; i < size; i++) {
+      if (i !== size - 1) {
         layout.constraint.adjacentX(nodes[i], nodes[i + 1], 20);
       }
       layout.constraint.contains(arrayNode, nodes[i]);
     }
-    return arrayNode;
+    return nodes;
   };
 
   const value1 = int(1);
   const value2 = int(5);
   const value3 = int(10);
+  // const value4 = int(15);
 
-  const array1 = array([value1, value2, value3]);
+  const array1 = array(4);
 
-  layout.constraint.centerX(layout.root, array1);
-  layout.constraint.contains(layout.root, array1);
+  layout.constraint.assign(array1[0], value1);
+  layout.constraint.assign(array1[1], value2);
+  layout.constraint.assign(array1[2], value3);
+
+  layout.step(() => {
+    layout.constraint.assign(array1[0], value1);
+    layout.constraint.assign(array1[1], value2);
+    layout.constraint.assign(array1[2], value3);
+  });
+
+  // layout.step(() => {
+  //   layout.constraint.contains(array1[0], value1);
+  //   layout.constraint.contains(array1[1], value3);
+  //   layout.constraint.contains(array1[2], value2);
+  // });
+
+  let currStep = $state(0);
 
   const nextStep = () => {
     console.log('>>> Next step', array1);
-    // array1.children[0].children = [];
-    // array1.children[0].addChild(int(2));
+    currStep++;
+  };
+
+  const prevStep = () => {
+    console.log('>>> Previous step', array1);
+    currStep--;
   };
 
   const recomputeLayout = async () => {
@@ -73,7 +98,11 @@
 
 <div class="page" style:width="100vw" style:height="100vh">
   <button class="solve-button" onclick={() => recomputeLayout()}>Solve</button>
-  <button class="solve-button" onclick={() => nextStep()}>Next Step</button>
+  <button class="solve-button" onclick={() => prevStep()} disabled={currStep === 0}>Previous</button
+  >
+  <button class="solve-button" onclick={() => nextStep()} disabled={currStep === layout.timeSteps}
+    >Next</button
+  >
   <div
     class="canvas"
     style:opacity={layout.ready ? 1 : 0}
@@ -82,7 +111,7 @@
     style:height="{config.height}px"
     style:background-size="{config.unitSize}px {config.unitSize}px"
   >
-    {#each layout.views as view (view.nodeId)}
+    {#each layout.views.at[currStep] as view (view.nodeId)}
       <div class="node" id={view.nodeId} style={css(view.style)}>
         {#if view.content}
           <div
