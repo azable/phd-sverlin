@@ -60,17 +60,19 @@
 
   layout.step();
 
-  // layout.constraint.assign(array1[0], value2);
-  // layout.constraint.assign(array1[1], value1);
-  // layout.constraint.assign(array1[2], value3);
+  layout.constraint.assign(array1[0], value2);
+  layout.constraint.assign(array1[1], value1);
+  layout.constraint.assign(array1[2], value3);
 
   let currStep = $state(0);
 
   const nextStep = () => {
+    console.log('Next step', layout.views[currStep]);
     currStep++;
   };
 
   const prevStep = () => {
+    console.log('Previous step', layout.views[currStep]);
     currStep--;
   };
 
@@ -101,7 +103,7 @@
     style:height="{config.height}px"
     style:background-size="{config.unitSize}px {config.unitSize}px"
   >
-    {#each layout.views.at[currStep] as view (view.nodeId)}
+    {#each layout.views[currStep] as view (view.nodeId)}
       <div class="node" id={view.nodeId} style={css(view.style)}>
         {#if view.content}
           <div

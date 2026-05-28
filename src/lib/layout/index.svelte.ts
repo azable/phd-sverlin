@@ -21,10 +21,6 @@ interface Variable extends p.Var {
   randomInit: Interval;
 }
 
-type Temporal<T> = {
-  at: Record<number, T>;
-};
-
 export type NodeConfig = {
   style: Record<string, string | number>;
 };
@@ -179,13 +175,12 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const globals = {
     byName: (name: string) => {
-      console.log(`Looking up global variable by name: ${name}`);
       return `global-${name}`;
     }
   };
 
   const output = $state({
-    views: { at: { 0: [] } } as Temporal<NodeView[]>
+    views: [] as NodeView[][]
   });
 
   const num = (value: StyleValue | ReactiveValue<number> | number, t = time): p.Num => {
@@ -564,35 +559,31 @@ export function createLayout(config: LayoutConfig = {}) {
       window.structuredClone(matVariables)
     );
 
-    output.views = {
-      at: _.fromPairs(
-        _.range(time + 1).map((t) => {
-          const nodeViews = Object.values(nodes).map((node) => {
-            const style: Record<string, string> = {};
-            for (const [key, value] of Object.entries(node.style)) {
-              if (value.type === 'variable') {
-                const varValue = matVariables[value.varId][t].val;
-                const [cssKey, cssValue] = toCSSrule(key, varValue);
-                style[cssKey] = cssValue;
-              } else if (value.type === 'constant') {
-                const [cssKey, cssValue] = toCSSrule(key, roundToUnit(value.value));
-                style[cssKey] = cssValue;
-              } else if (value.type === 'fixed') {
-                const [cssKey, cssValue] = toCSSrule(key, value.value);
-                style[cssKey] = cssValue;
-              }
-            }
-            return {
-              nodeId: node.id,
-              style,
-              content: node.content
-            } as NodeView;
-          });
+    output.views = _.range(time + 1).map((t) => {
+      const nodeViews = Object.values(nodes).map((node) => {
+        const style: Record<string, string> = {};
+        for (const [key, value] of Object.entries(node.style)) {
+          if (value.type === 'variable') {
+            const varValue = matVariables[value.varId][t].val;
+            const [cssKey, cssValue] = toCSSrule(key, varValue);
+            style[cssKey] = cssValue;
+          } else if (value.type === 'constant') {
+            const [cssKey, cssValue] = toCSSrule(key, roundToUnit(value.value));
+            style[cssKey] = cssValue;
+          } else if (value.type === 'fixed') {
+            const [cssKey, cssValue] = toCSSrule(key, value.value);
+            style[cssKey] = cssValue;
+          }
+        }
+        return {
+          nodeId: node.id,
+          style,
+          content: node.content
+        } as NodeView;
+      });
 
-          return [t, nodeViews];
-        })
-      )
-    };
+      return nodeViews;
+    });
 
     dirty = false;
   };
@@ -602,7 +593,7 @@ export function createLayout(config: LayoutConfig = {}) {
       return !dirty;
     },
 
-    get views(): Temporal<NodeView[]> {
+    get views(): NodeView[][] {
       return output.views;
     },
 
