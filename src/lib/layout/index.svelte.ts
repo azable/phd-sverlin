@@ -139,14 +139,11 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const nodes = {} as Record<string, Node>;
 
-  const constraintsAtTime = [{}] as Record<string, p.Num>[];
-  const constraints = () => constraintsAtTime[time];
-
-  const setConstraints = (newConstraints: Record<string, p.Num>) => {
-    for (const [key, value] of Object.entries(newConstraints)) {
-      constraints()[key] = value;
-    }
+  const createConstraint = (): p.Num => {
+    return p.variable(0);
   };
+
+  const constraints = new LazyTemporalMap<string, p.Num>(createConstraint);
 
   const defineConstraint = <Args extends unknown[]>(
     consName: string,
@@ -161,11 +158,9 @@ export function createLayout(config: LayoutConfig = {}) {
       const constraintKeys = constraintExprs.map((_, i) => {
         return `${consName}-${nodeIdsConcat}${varIdsConcat}${i}`;
       });
-      const newConstraints: Record<string, p.Num> = {};
       constraintKeys.forEach((key, i) => {
-        newConstraints[key] = constraintExprs[i];
+        constraints.lookup(key).setAt(time, constraintExprs[i]);
       });
-      setConstraints(newConstraints);
     };
   };
 
@@ -181,12 +176,6 @@ export function createLayout(config: LayoutConfig = {}) {
   const variables = new LazyTemporalMap<string, Variable>(createVariable);
 
   let time = 0;
-  const addTimeStep = () => {
-    constraintsAtTime.push({});
-    console.log(`Adding time step ${time + 1}`);
-
-    time += 1;
-  };
 
   const globals = {
     byName: (name: string) => {
@@ -352,8 +341,8 @@ export function createLayout(config: LayoutConfig = {}) {
 
     config = {
       style: {
-        width: `?<`,
-        height: `?<`,
+        width: `?`,
+        height: `?`,
         left: `?`,
         top: `?`,
         ...config.style
@@ -390,10 +379,8 @@ export function createLayout(config: LayoutConfig = {}) {
           varId
         };
         if (value.length > 1 && value[1] === '<') {
-          // Minimize variable ("?<")
-          setConstraints({
-            [node.localUniqId(`minimize-${key}`)]: p.log2(varInstance)
-          });
+          const constraintId = node.localUniqId(`minimize-${key}`);
+          constraints.lookup(constraintId).setAt(time, p.log2(varInstance));
         }
       } else if (typeof value === 'string' && value[0] === '$') {
         // Explicit variable (e.g. "$width" -> variable named "width")
@@ -426,30 +413,35 @@ export function createLayout(config: LayoutConfig = {}) {
         return;
       }
 
-      // across all constaint times
-      for (let t = 0; t <= 0; t++) {
-        const consAtTime = constraintsAtTime[t];
+      const { width, height } = bounds(node, 0);
 
-        const { width, height } = bounds(node, t);
-
-        consAtTime[node.localUniqId('at-least-content-width')] = p.mul(
-          10,
-          lessThanWithPadding(
-            num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
-            width,
-            0
+      constraints
+        .lookup(node.localUniqId('at-least-content-width'))
+        .setAt(
+          0,
+          p.mul(
+            10,
+            lessThanWithPadding(
+              num(roundToUnit(node.content.clientWidth.value + unitSize / 2)),
+              width,
+              0
+            )
           )
         );
 
-        consAtTime[node.localUniqId('at-least-content-height')] = p.mul(
-          10,
-          lessThanWithPadding(
-            num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
-            height,
-            0
+      constraints
+        .lookup(node.localUniqId('at-least-content-height'))
+        .setAt(
+          0,
+          p.mul(
+            10,
+            lessThanWithPadding(
+              num(roundToUnit(node.content.clientHeight.value + unitSize / 2)),
+              height,
+              0
+            )
           )
         );
-      }
 
       dirty = true;
     });
@@ -481,36 +473,40 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const solve = async () => {
     // console.log(variables);
-    const seqVariables = variables.toSequence(time);
-    console.log(seqVariables);
+    const matVariables = variables.materialize(time);
+    console.log(matVariables);
 
-    const seqConstraints = constraintsAtTime.reduce(
-      (cons, consAtTime, t) => {
-        const newConsAtTime = _.cloneDeepWith(consAtTime, (value) => {
-          if (
-            typeof value === 'object' &&
-            value !== null &&
-            'tag' in value &&
-            value.tag === 'Var'
-          ) {
-            console.log('Cloning constraint value:', value);
-            console.log(
-              'Replacing with variable value from seqVariables:',
-              seqVariables[value.id][t]
-            );
-            return seqVariables[value.id][t];
-          }
-          return undefined;
-        }) as Record<string, p.Num>;
+    console.log(constraints);
+    const matConstraints = constraints.materialize(time);
+    console.log(matConstraints);
 
-        const prefix = `t${t}-`;
-        for (const [key, value] of Object.entries(newConsAtTime)) {
-          cons[`${prefix}${key}`] = value;
-        }
-        return cons;
-      },
-      {} as Record<string, p.Num>
-    );
+    // const seqConstraints = constraintsAtTime.reduce(
+    //   (cons, consAtTime, t) => {
+    //     const newConsAtTime = _.cloneDeepWith(consAtTime, (value) => {
+    //       if (
+    //         typeof value === 'object' &&
+    //         value !== null &&
+    //         'tag' in value &&
+    //         value.tag === 'Var'
+    //       ) {
+    //         console.log('Cloning constraint value:', value);
+    //         console.log(
+    //           'Replacing with variable value from seqVariables:',
+    //           seqVariables[value.id][t]
+    //         );
+    //         return seqVariables[value.id][t];
+    //       }
+    //       return undefined;
+    //     }) as Record<string, p.Num>;
+
+    //     const prefix = `t${t}-`;
+    //     for (const [key, value] of Object.entries(newConsAtTime)) {
+    //       cons[`${prefix}${key}`] = value;
+    //     }
+    //     return cons;
+    //   },
+    //   {} as Record<string, p.Num>
+    // );
     // constraintsAtTime.forEach((consAtTime, cTime) => {
     //   const prefix = `t${cTime}-`;
     //   for (const [key, value] of Object.entries(consAtTime)) {
@@ -518,41 +514,55 @@ export function createLayout(config: LayoutConfig = {}) {
     //   }
     // });
 
-    console.log('====================== SOLVE ======================');
-    console.log(`>>> Variables (n=${Object.keys(seqVariables).length}):`, seqVariables);
-    console.log(`>>> Constraints (n=${Object.keys(seqConstraints).length}):`, seqConstraints);
-
     // Randomize initial variable values to help solver escape local minima
-    for (const variable of Object.values(seqVariables)) {
+    for (const variable of Object.keys(matVariables)) {
       // Always at least one time step if variable exists
-      const firstTimeStep = variable[0];
+      const firstTimeStep = matVariables[variable][0];
       const initValue =
         Math.random() * (firstTimeStep.randomInit.max - firstTimeStep.randomInit.min) +
         firstTimeStep.randomInit.min;
 
-      for (const timeKey in variable) {
-        variable[timeKey].val = initValue;
+      for (const timeKey in matVariables[variable]) {
+        matVariables[variable][timeKey].val = initValue;
       }
     }
 
+    console.log('====================== SOLVE ======================');
+    console.log(
+      `>>> Variables (n=${Object.keys(matVariables).length}):`,
+      window.structuredClone(matVariables)
+    );
+    console.log(
+      `>>> Constraints (n=${Object.keys(matConstraints).length}):`,
+      window.structuredClone(matConstraints)
+    );
+
     const solveIteration = async () => {
       const problem = await p.problem({
-        constraints: Object.values(seqConstraints)
+        constraints: _.flatten(Object.values(matConstraints))
       });
 
       const result = problem.start({}).run({});
-      console.log('Solver result:', result);
 
       // Update values
-      for (const variable of Object.values(seqVariables)) {
-        for (const timeKey in variable) {
-          const solvedValue = result.vals.get(variable[timeKey]) as number;
-          variable[timeKey].val = roundToUnit(solvedValue);
+      for (const variable of Object.keys(matVariables)) {
+        for (const timeKey in matVariables[variable]) {
+          const solvedValue = result.vals.get(matVariables[variable][timeKey]);
+          if (solvedValue === undefined) {
+            console.warn(`No solved value for variable ${variable} at time ${timeKey}`);
+            continue;
+          }
+          matVariables[variable][timeKey].val = roundToUnit(solvedValue);
         }
       }
     };
 
     await solveIteration();
+
+    console.log(
+      `>>> Variables [SOLVED] (n=${Object.keys(matVariables).length}):`,
+      window.structuredClone(matVariables)
+    );
 
     output.views = {
       at: _.fromPairs(
@@ -561,7 +571,7 @@ export function createLayout(config: LayoutConfig = {}) {
             const style: Record<string, string> = {};
             for (const [key, value] of Object.entries(node.style)) {
               if (value.type === 'variable') {
-                const varValue = seqVariables[value.varId][t].val;
+                const varValue = matVariables[value.varId][t].val;
                 const [cssKey, cssValue] = toCSSrule(key, varValue);
                 style[cssKey] = cssValue;
               } else if (value.type === 'constant') {
@@ -611,9 +621,8 @@ export function createLayout(config: LayoutConfig = {}) {
     },
 
     get step() {
-      return function (f: () => void) {
-        addTimeStep();
-        f();
+      return function () {
+        time += 1;
       };
     },
 

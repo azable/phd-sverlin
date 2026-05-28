@@ -52,33 +52,25 @@
   const value3 = int(10);
   // const value4 = int(15);
 
-  const array1 = array(4);
+  const array1 = array(3);
 
   layout.constraint.assign(array1[0], value1);
   layout.constraint.assign(array1[1], value2);
   layout.constraint.assign(array1[2], value3);
 
-  layout.step(() => {
-    layout.constraint.assign(array1[0], value2);
-    layout.constraint.assign(array1[1], value1);
-    layout.constraint.assign(array1[2], value3);
-  });
+  layout.step();
 
-  // layout.step(() => {
-  //   layout.constraint.contains(array1[0], value1);
-  //   layout.constraint.contains(array1[1], value3);
-  //   layout.constraint.contains(array1[2], value2);
-  // });
+  // layout.constraint.assign(array1[0], value2);
+  // layout.constraint.assign(array1[1], value1);
+  // layout.constraint.assign(array1[2], value3);
 
   let currStep = $state(0);
 
   const nextStep = () => {
-    console.log('>>> Next step', array1);
     currStep++;
   };
 
   const prevStep = () => {
-    console.log('>>> Previous step', array1);
     currStep--;
   };
 
@@ -92,8 +84,6 @@
       .map(([key, value]) => `${key}: ${value}`)
       .join('; ');
   };
-
-  $effect(() => console.log(layout.views));
 </script>
 
 <div class="page" style:width="100vw" style:height="100vh">
@@ -156,5 +146,9 @@
     height: 30px;
     background-color: lightblue;
     margin-bottom: 10px;
+  }
+
+  .solve-button:disabled {
+    background-color: gray;
   }
 </style>

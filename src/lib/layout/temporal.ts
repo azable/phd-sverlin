@@ -1,6 +1,6 @@
 import { range } from 'lodash-es';
 
-export class LazyTemporal<T extends object> {
+export class LazyTemporal<T> {
   private values: Record<number, T> = {};
   private instantiator: () => T;
 
@@ -19,7 +19,11 @@ export class LazyTemporal<T extends object> {
     return this.values[time];
   }
 
-  public toSequence(maxTime: number): T[] {
+  public setAt(time: number, value: T) {
+    this.values[time] = value;
+  }
+
+  public materialize(maxTime: number): T[] {
     const times = Object.keys(this.values)
       .map(Number)
       .sort((a, b) => a - b);
@@ -37,7 +41,7 @@ export class LazyTemporal<T extends object> {
   }
 }
 
-export class LazyTemporalMap<K extends string | number, V extends object> {
+export class LazyTemporalMap<K extends string | number, V> {
   private map: Record<K, LazyTemporal<V>> = {} as Record<K, LazyTemporal<V>>;
   private instantiator: (key: K) => LazyTemporal<V>;
 
@@ -52,10 +56,10 @@ export class LazyTemporalMap<K extends string | number, V extends object> {
     return this.map[key];
   }
 
-  public toSequence(maxTime: number): Record<K, V[]> {
+  public materialize(maxTime: number): Record<K, V[]> {
     const result: Record<K, V[]> = {} as Record<K, V[]>;
     for (const key in this.map) {
-      result[key] = this.map[key].toSequence(maxTime);
+      result[key] = this.map[key].materialize(maxTime);
     }
     return result;
   }
