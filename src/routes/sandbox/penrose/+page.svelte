@@ -59,8 +59,8 @@
   layout.constraint.assign(array1[2], value3);
 
   layout.step(() => {
-    layout.constraint.assign(array1[0], value1);
-    layout.constraint.assign(array1[1], value2);
+    layout.constraint.assign(array1[0], value2);
+    layout.constraint.assign(array1[1], value1);
     layout.constraint.assign(array1[2], value3);
   });
 

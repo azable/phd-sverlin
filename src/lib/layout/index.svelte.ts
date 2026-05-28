@@ -1,11 +1,7 @@
 import * as p from '@penrose/core';
 import { tick } from 'svelte';
-import { cloneDeep, zipWith, range, fromPairs } from 'lodash-es';
-
-// const snapModulo = (x: p.Num, modulo: number, weight = 1): p.Num => {
-//   return 0;
-//   return p.mul(weight, p.pow(p.sin(p.div(p.mul(Math.PI, x), modulo)), 2));
-// };
+import * as _ from 'lodash-es';
+import { LazyTemporalMap } from './temporal';
 
 const lessThanWithPadding = (a: p.Num, b: p.Num, padding: p.Num): p.Num => {
   const gap = p.add(p.sub(a, b), padding);
@@ -20,6 +16,7 @@ type Interval = {
 };
 
 interface Variable extends p.Var {
+  id: string;
   uuid: string;
   randomInit: Interval;
 }
@@ -57,17 +54,6 @@ export type Node = {
   localUniqId: (suffix: string) => string;
   setContent: (content: string) => Node;
 };
-
-// A value can be re-assigned to nodes (variables). It is treated as
-// immutable from the perspective of the layout system, but allows
-// users to keep track of the history of changes to a variable and
-// potentially use that for undo/redo or debugging.
-
-// export type Value<T> = {
-
-//   readonly value: T;
-//   readonly history: string[];
-// };
 
 export type NodeView = {
   nodeId: string;
@@ -183,55 +169,30 @@ export function createLayout(config: LayoutConfig = {}) {
     };
   };
 
-  const variables = {} as Record<string, Temporal<Variable>>;
-
-  const variable = (name: string, t: number = time): Variable => {
-    // Return from store if variable already exists at the current time step
-    if (name in variables) {
-      return variables[name].at[t];
-    }
-
-    if (!(name in variables)) {
-      variables[name] = { at: {} };
-    }
-
-    // Create new variable in the current scope
-    console.log(`Creating new variable ${name} at time ${t}`);
-
-    const variable = {
+  const createVariable = (key: string): Variable => {
+    return {
       ...p.variable(0),
+      id: key,
       uuid: crypto.randomUUID().slice(0, 8),
       randomInit: { min: 1, max: 1000 }
-    } as Variable;
-
-    // TODO confirm necessary
-    // constraint.between(variable.val, variable.randomInit);
-
-    variables[name].at[t] = variable;
-    return variable;
+    };
   };
+
+  const variables = new LazyTemporalMap<string, Variable>(createVariable);
 
   let time = 0;
   const addTimeStep = () => {
-    // deep copy variables from previous time step, add eq constraints to
-    // keep them the same unless explicitly changed
     constraintsAtTime.push({});
     console.log(`Adding time step ${time + 1}`);
-    // console.log(constraintsAtTime);
-    // for (const [name, temporalVar] of Object.entries(variables)) {
-    //   const prevVar = temporalVar.at[time];
-    //   if (prevVar) {
-    //     const newVar = { ...cloneDeep(prevVar), uuid: crypto.randomUUID().slice(0, 8) } as Variable;
-    //     // console.log(newVar, prevVar);
-    //     constraint.eq(newVar, prevVar);
-    //     variables[name].at[time + 1] = newVar;
-    //   }
-    // }
+
     time += 1;
   };
 
   const globals = {
-    byName: (name: string) => `global-${name}`
+    byName: (name: string) => {
+      console.log(`Looking up global variable by name: ${name}`);
+      return `global-${name}`;
+    }
   };
 
   const output = $state({
@@ -250,8 +211,7 @@ export function createLayout(config: LayoutConfig = {}) {
     const styleValue = value as StyleValue;
 
     if (styleValue.type === 'variable') {
-      const varId = styleValue.varId;
-      return variable(varId, t);
+      return variables.lookup(styleValue.varId).at(t);
     }
 
     if (styleValue.type === 'constant') {
@@ -273,7 +233,7 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const constraint = {
     eq: defineConstraint('eq', (a: p.Num, b: p.Num) => {
-      return [p.mul(p.absVal(p.sub(a, b)), 0.1)];
+      return [p.log2(p.absVal(p.sub(a, b)))];
     }),
 
     between: defineConstraint('between', (value: p.Num, range: Interval) => {
@@ -424,7 +384,7 @@ export function createLayout(config: LayoutConfig = {}) {
         // Implicit variable (default)
         const varName = parseVariableName(key);
         const varId = localUniqId(varName);
-        const varInstance = variable(varId);
+        const varInstance = variables.lookup(varId).at(time);
         node.style[key] = {
           type: 'variable',
           varId
@@ -439,11 +399,11 @@ export function createLayout(config: LayoutConfig = {}) {
         // Explicit variable (e.g. "$width" -> variable named "width")
         const varName = parseVariableName(value.slice(1));
         const varId = globals.byName(varName);
-        variable(varId);
         node.style[key] = {
           type: 'variable',
           varId
         };
+        console.log(`Created variable ${varId} for node ${node.id} style ${key}`);
       } else if (typeof value === 'number') {
         // A number/string is treated as a constant CSS attribute
         node.style[key] = {
@@ -467,7 +427,7 @@ export function createLayout(config: LayoutConfig = {}) {
       }
 
       // across all constaint times
-      for (let t = 0; t <= time; t++) {
+      for (let t = 0; t <= 0; t++) {
         const consAtTime = constraintsAtTime[t];
 
         const { width, height } = bounds(node, t);
@@ -520,44 +480,74 @@ export function createLayout(config: LayoutConfig = {}) {
   });
 
   const solve = async () => {
-    const allConstraints = {} as Record<string, p.Num>;
-    constraintsAtTime.forEach((consAtTime, cTime) => {
-      const prefix = `t${cTime}-`;
-      for (const [key, value] of Object.entries(consAtTime)) {
-        allConstraints[`${prefix}${key}`] = value;
-      }
-    });
+    // console.log(variables);
+    const seqVariables = variables.toSequence(time);
+    console.log(seqVariables);
+
+    const seqConstraints = constraintsAtTime.reduce(
+      (cons, consAtTime, t) => {
+        const newConsAtTime = _.cloneDeepWith(consAtTime, (value) => {
+          if (
+            typeof value === 'object' &&
+            value !== null &&
+            'tag' in value &&
+            value.tag === 'Var'
+          ) {
+            console.log('Cloning constraint value:', value);
+            console.log(
+              'Replacing with variable value from seqVariables:',
+              seqVariables[value.id][t]
+            );
+            return seqVariables[value.id][t];
+          }
+          return undefined;
+        }) as Record<string, p.Num>;
+
+        const prefix = `t${t}-`;
+        for (const [key, value] of Object.entries(newConsAtTime)) {
+          cons[`${prefix}${key}`] = value;
+        }
+        return cons;
+      },
+      {} as Record<string, p.Num>
+    );
+    // constraintsAtTime.forEach((consAtTime, cTime) => {
+    //   const prefix = `t${cTime}-`;
+    //   for (const [key, value] of Object.entries(consAtTime)) {
+    //     seqConstraints[`${prefix}${key}`] = value;
+    //   }
+    // });
 
     console.log('====================== SOLVE ======================');
-    console.log(`>>> Variables (n=${Object.keys(variables).length}):`, variables);
-    console.log(`>>> Constraints (n=${Object.keys(allConstraints).length}):`, allConstraints);
+    console.log(`>>> Variables (n=${Object.keys(seqVariables).length}):`, seqVariables);
+    console.log(`>>> Constraints (n=${Object.keys(seqConstraints).length}):`, seqConstraints);
 
     // Randomize initial variable values to help solver escape local minima
-    for (const variable of Object.values(variables)) {
+    for (const variable of Object.values(seqVariables)) {
       // Always at least one time step if variable exists
-      const firstTimeStep = variable.at[0];
+      const firstTimeStep = variable[0];
       const initValue =
         Math.random() * (firstTimeStep.randomInit.max - firstTimeStep.randomInit.min) +
         firstTimeStep.randomInit.min;
 
-      for (const timeKey in variable.at) {
-        variable.at[timeKey].val = initValue;
+      for (const timeKey in variable) {
+        variable[timeKey].val = initValue;
       }
     }
 
     const solveIteration = async () => {
       const problem = await p.problem({
-        constraints: Object.values(allConstraints)
+        constraints: Object.values(seqConstraints)
       });
 
       const result = problem.start({}).run({});
       console.log('Solver result:', result);
 
       // Update values
-      for (const variable of Object.values(variables)) {
-        for (const timeKey in variable.at) {
-          const solvedValue = result.vals.get(variable.at[timeKey]) as number;
-          variable.at[timeKey].val = roundToUnit(solvedValue);
+      for (const variable of Object.values(seqVariables)) {
+        for (const timeKey in variable) {
+          const solvedValue = result.vals.get(variable[timeKey]) as number;
+          variable[timeKey].val = roundToUnit(solvedValue);
         }
       }
     };
@@ -565,13 +555,13 @@ export function createLayout(config: LayoutConfig = {}) {
     await solveIteration();
 
     output.views = {
-      at: fromPairs(
-        range(time + 1).map((t) => {
+      at: _.fromPairs(
+        _.range(time + 1).map((t) => {
           const nodeViews = Object.values(nodes).map((node) => {
             const style: Record<string, string> = {};
             for (const [key, value] of Object.entries(node.style)) {
               if (value.type === 'variable') {
-                const varValue = variables[value.varId].at[t].val;
+                const varValue = seqVariables[value.varId][t].val;
                 const [cssKey, cssValue] = toCSSrule(key, varValue);
                 style[cssKey] = cssValue;
               } else if (value.type === 'constant') {
@@ -631,7 +621,6 @@ export function createLayout(config: LayoutConfig = {}) {
       return time;
     },
 
-    addVariable: variable,
     solve
   };
 }
