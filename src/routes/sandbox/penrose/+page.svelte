@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createLayout, type Node } from '$lib/layout/index.svelte';
+  import { createLayout } from '$lib/layout/index.svelte';
 
   const config = $state({
     width: 1200,
@@ -10,7 +10,7 @@
   const layout = createLayout(config);
   const { uniform } = layout;
 
-  const int = (value: number): Node => {
+  const int = (value: number) => {
     return layout
       .createNode({
         width: uniform('isize'),
@@ -24,9 +24,9 @@
       .setContent(value.toString());
   };
 
-  const array = (size: number): Node[] => {
-    const awidth = uniform();
-    const aheight = uniform();
+  const array = (size: number) => {
+    const awidth = uniform('array');
+    const aheight = uniform('array');
 
     layout.constraint.minimize(awidth);
     layout.constraint.minimize(aheight);
@@ -57,7 +57,6 @@
   const value1 = int(1);
   const value2 = int(5);
   const value3 = int(10);
-  // const value4 = int(15);
 
   const array1 = array(3);
 
@@ -67,8 +66,8 @@
 
   layout.step();
 
-  layout.constraint.assign(array1[0], value2);
-  layout.constraint.assign(array1[1], value1);
+  layout.constraint.assign(array1[0], value1);
+  layout.constraint.assign(array1[1], value2);
   layout.constraint.assign(array1[2], value3);
 
   let currStep = $state(0);
@@ -115,10 +114,10 @@
         {#if view.content}
           <div
             class="node-content"
-            bind:clientWidth={view.content.clientWidth.value}
-            bind:clientHeight={view.content.clientHeight.value}
+            bind:clientWidth={view.content.clientWidth}
+            bind:clientHeight={view.content.clientHeight}
           >
-            {view.content.text.value}
+            {view.content.text}
           </div>
         {/if}
       </div>

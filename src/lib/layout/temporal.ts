@@ -66,7 +66,7 @@ export class LazyUniform<T> extends Lazy<T> implements Temporal<T> {
     this.value = this.instantiate();
   }
 
-  public at(time: number): T {
+  public at(_time: number): T {
     return this.value;
   }
 
