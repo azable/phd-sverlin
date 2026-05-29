@@ -8,11 +8,11 @@
   });
 
   const layout = createLayout(config);
-  const { uniform } = layout;
-
-  const intsize = uniform('int');
+  const { global } = layout;
 
   const int = (value: number) => {
+    const intsize = global.uniform('intsize');
+
     return layout
       .createNode({
         width: intsize,
@@ -27,8 +27,8 @@
   };
 
   const array = (size: number) => {
-    const awidth = uniform('array');
-    const aheight = uniform('array');
+    const awidth = global.uniform('awidth');
+    const aheight = global.uniform('aheight');
 
     layout.constraint.minimize(awidth);
     layout.constraint.minimize(aheight);

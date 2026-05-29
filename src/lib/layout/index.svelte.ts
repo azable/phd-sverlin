@@ -138,8 +138,12 @@ export function createLayout(config: LayoutConfig = {}) {
     },
 
     step: layout.step.bind(layout),
-    varying: layout.varying.bind(layout),
-    uniform: layout.uniform.bind(layout),
+    get global() {
+      return {
+        varying: (id?: string) => layout.varying('global', id),
+        uniform: (id?: string) => layout.uniform('global', id)
+      };
+    },
     solve: layout.solve.bind(layout)
   };
 }
