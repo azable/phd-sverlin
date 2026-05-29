@@ -45,7 +45,12 @@
     layout.constraint.centerX(layout.root, arrayNode);
     layout.constraint.contains(layout.root, arrayNode);
 
-    const nodes = Array.from({ length: size }, () => layout.createNode());
+    const nodes = Array.from({ length: size }, () =>
+      layout.createNode({
+        top: global.uniform(),
+        left: global.uniform()
+      })
+    );
 
     for (let i = 0; i < size; i++) {
       if (i !== size - 1) {
@@ -69,8 +74,8 @@
   layout.step();
 
   layout.constraint.assign(array1[0], value1);
-  layout.constraint.assign(array1[1], value2);
-  layout.constraint.assign(array1[2], value3);
+  layout.constraint.assign(array1[1], value3);
+  layout.constraint.assign(array1[2], value2);
 
   let currStep = $state(0);
 
