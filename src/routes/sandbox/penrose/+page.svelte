@@ -10,11 +10,13 @@
   const layout = createLayout(config);
   const { uniform } = layout;
 
+  const intsize = uniform('int');
+
   const int = (value: number) => {
     return layout
       .createNode({
-        width: uniform('isize'),
-        height: uniform('isize'),
+        width: intsize,
+        height: intsize,
         fontSize: 40,
         backgroundColor: 'lightblue',
         border: '2px solid black',

@@ -48,13 +48,8 @@ export function createLayout(config: LayoutConfig = {}) {
     }),
 
     contains: layout.defineConstraint('contains', (containerNode: Node, node: Node) => {
-      const {
-        left: cLeft,
-        top: cTop,
-        right: cRight,
-        bottom: cBottom
-      } = containerNode.bounds(layout.time);
-      const { left, top, right, bottom } = node.bounds(layout.time);
+      const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = containerNode.bounds();
+      const { left, top, right, bottom } = node.bounds();
 
       return [
         p.lessThanWithPadding(cLeft, left, 0),

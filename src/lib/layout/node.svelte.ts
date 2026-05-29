@@ -34,8 +34,6 @@ export type NodeContent = {
 };
 
 export class Node {
-  public static all = {} as Record<string, Node>;
-
   #layout: LayoutCSP;
   #scope: LayoutCSPScope;
 
@@ -49,7 +47,7 @@ export class Node {
 
   constructor(layout: LayoutCSP, config: NodeConfig) {
     this.#layout = layout;
-    this.#id = `node-${Object.keys(Node.all).length + 1}`;
+    this.#id = `node-${Object.keys(layout.getNodes()).length + 1}`;
     this.#scope = new LayoutCSPScope(layout, this.#id);
 
     config = {
@@ -82,7 +80,7 @@ export class Node {
       throw new Error(`Invalid style value for key ${key}`);
     });
 
-    Node.all[this.#id] = this;
+    this.#layout.registerNode(this.#id, this);
 
     // Min width/height constraints based on content size
     $effect(() => {

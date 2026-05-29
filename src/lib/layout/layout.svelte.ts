@@ -2,6 +2,7 @@ import * as penrose from '@penrose/core';
 import * as _ from 'lodash-es';
 import { LazyTemporal, LazyUniform, LazyTemporalMap, type Temporal } from './temporal';
 import { type StyleValue, Node, type NodeView } from './node.svelte';
+import { toCSSrule } from './style';
 import { randomUUID } from './utils';
 import { tick } from 'svelte';
 
@@ -13,50 +14,6 @@ export const p = {
     const penalty = penrose.pow(violation, 2);
     return penalty;
   }
-};
-
-const toCSSrule = (key: string, value: number | string): [string, string] => {
-  const kebabKey = key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
-
-  if (typeof value === 'string') {
-    return [kebabKey, value];
-  }
-
-  const map: Record<string, (value: number) => string> = {
-    backgroundColor: (v) => v.toString(),
-
-    width: (v) => `${v}px`,
-    height: (v) => `${v}px`,
-    left: (v) => `${v}px`,
-    top: (v) => `${v}px`,
-
-    minWidth: (v) => `${v}px`,
-    minHeight: (v) => `${v}px`,
-
-    padding: (v) => `${v}px`,
-    paddingTop: (v) => `${v}px`,
-    paddingBottom: (v) => `${v}px`,
-    paddingLeft: (v) => `${v}px`,
-    paddingRight: (v) => `${v}px`,
-
-    margin: (v) => `${v}px`,
-    marginTop: (v) => `${v}px`,
-    marginBottom: (v) => `${v}px`,
-    marginLeft: (v) => `${v}px`,
-    marginRight: (v) => `${v}px`,
-
-    fontSize: (v) => `${v}px`,
-
-    borderWidth: (v) => `${v}px`,
-    borderRadius: (v) => `${v}px`,
-
-    zIndex: (v) => v.toString()
-  };
-
-  if (key in map) {
-    return [kebabKey, map[key](value)];
-  }
-  throw new Error(`No CSS mapping for key: ${key}`);
 };
 
 export type Interval = {
@@ -73,7 +30,9 @@ export interface Variable extends penrose.Var {
 export class LayoutCSP {
   #time: number = $state(0);
   #unitSize: number;
-  #dirty: boolean = $state(true);
+  #dirty: boolean = $state(false);
+
+  #nodes: Record<string, Node> = {};
 
   #uniforms: LazyTemporalMap<string, Variable>;
   #varyings: LazyTemporalMap<string, Variable>;
@@ -105,10 +64,22 @@ export class LayoutCSP {
       if (!this.#dirty) {
         return;
       }
+      console.log('>>> Scheduled re-solve at next tick');
       tick().then(() => {
         this.solve();
       });
     });
+  }
+
+  public registerNode(id: string, node: Node) {
+    if (id in this.#nodes) {
+      throw new Error(`Node with id ${id} already exists`);
+    }
+    this.#nodes[id] = node;
+  }
+
+  public getNodes() {
+    return this.#nodes;
   }
 
   public step() {
@@ -220,7 +191,7 @@ export class LayoutCSP {
     );
 
     this.#views = _.range(this.time + 1).map((t) => {
-      const nodeViews = Object.values(Node.all).map((node) => {
+      const nodeViews = Object.values(this.#nodes).map((node) => {
         const style: Record<string, string> = {};
         for (const [key, value] of Object.entries(node.style)) {
           if (value.type === 'variable') {
