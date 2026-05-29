@@ -1,7 +1,11 @@
 import * as p from '@penrose/core';
 import { tick } from 'svelte';
 import * as _ from 'lodash-es';
-import { LazyTemporalMap } from './temporal';
+import { LazyTemporal, LazyTemporalMap, type Temporal } from './temporal';
+
+const randomUUID = (): string => {
+  return crypto.randomUUID().slice(0, 8);
+};
 
 const lessThanWithPadding = (a: p.Num, b: p.Num, padding: p.Num): p.Num => {
   const gap = p.add(p.sub(a, b), padding);
@@ -22,7 +26,7 @@ interface Variable extends p.Var {
 }
 
 export type NodeConfig = {
-  style: Record<string, string | number>;
+  style: Record<string, string | number | Temporal<Variable>>;
 };
 
 type ReactiveValue<T> = {
@@ -47,7 +51,8 @@ export type Node = {
   id: string;
   content?: NodeContent;
   style: Record<string, StyleValue>;
-  localUniqId: (suffix: string) => string;
+  // localUniqId: (suffix: string) => string;
+  // variable: (name: string) => LazyTemporal<Variable>;
   setContent: (content: string) => Node;
 };
 
@@ -63,16 +68,16 @@ type NodeContent = {
   clientHeight: ReactiveValue<number>;
 };
 
-const parseVariableName = (name: string): string => {
-  if (!name) {
-    throw new Error(`Variable name cannot be empty`);
-  }
-  // ensure all lowercase and underscores/dashes only
-  if (!/^[a-z_][a-z0-9_-]*$/.test(name)) {
-    throw new Error(`Invalid variable name: ${name}`);
-  }
-  return name;
-};
+// const parseVariableName = (name: string): string => {
+//   if (!name) {
+//     throw new Error(`Variable name cannot be empty`);
+//   }
+//   // ensure all lowercase and underscores/dashes only
+//   if (!/^[a-z_][a-z0-9_-]*$/.test(name)) {
+//     throw new Error(`Invalid variable name: ${name}`);
+//   }
+//   return name;
+// };
 
 const toCSSrule = (key: string, value: number | string): [string, string] => {
   const kebabKey = key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
@@ -139,7 +144,7 @@ export function createLayout(config: LayoutConfig = {}) {
     return p.variable(0);
   };
 
-  const constraints = new LazyTemporalMap<string, p.Num>(createConstraint);
+  const constraints = new LazyTemporalMap<string, p.Num>(LazyTemporal, createConstraint);
 
   const defineConstraint = <Args extends unknown[]>(
     consName: string,
@@ -147,9 +152,12 @@ export function createLayout(config: LayoutConfig = {}) {
   ) => {
     return (...args: Args) => {
       const nodes = args.filter((arg): arg is Node => typeof arg === 'object' && 'id' in arg!);
-      const vars = args.filter((arg): arg is Variable => typeof arg === 'object' && 'val' in arg!);
-      const nodeIdsConcat = nodes.map((n) => n.localUniqId('')).join('');
-      const varIdsConcat = vars.map((v) => v.uuid).join('-');
+      const vars = args.filter(
+        (arg): arg is Temporal<Variable> => typeof arg === 'object' && 'at' in arg!
+      );
+      const varsAtTime = vars.map((v) => v.at(time));
+      const nodeIdsConcat = nodes.map((n) => n.id).join('');
+      const varIdsConcat = varsAtTime.map((v) => v.uuid).join('-');
       const constraintExprs = constraintFn(...args);
       const constraintKeys = constraintExprs.map((_, i) => {
         return `${consName}-${nodeIdsConcat}${varIdsConcat}${i}`;
@@ -164,20 +172,30 @@ export function createLayout(config: LayoutConfig = {}) {
     return {
       ...p.variable(0),
       id: key,
-      uuid: crypto.randomUUID().slice(0, 8),
+      uuid: randomUUID(),
       randomInit: { min: 1, max: 1000 }
     };
   };
 
-  const variables = new LazyTemporalMap<string, Variable>(createVariable);
+  const variables = new LazyTemporalMap<string, Variable>(LazyTemporal, createVariable);
+
+  const uniform = (key?: string): Temporal<Variable> => {
+    if (key === undefined || key === null) {
+      key = randomUUID();
+    }
+    key = `uniform-${key}`;
+    return variables.lookup(key);
+  };
+
+  const variable = (key?: string): Temporal<Variable> => {
+    if (key === undefined || key === null) {
+      key = randomUUID();
+    }
+    key = `varying-${key}`;
+    return variables.lookup(key);
+  };
 
   let time = 0;
-
-  const globals = {
-    byName: (name: string) => {
-      return `global-${name}`;
-    }
-  };
 
   const output = $state({
     views: [] as NodeView[][]
@@ -216,13 +234,13 @@ export function createLayout(config: LayoutConfig = {}) {
   };
 
   const constraint = {
-    eq: defineConstraint('eq', (a: p.Num, b: p.Num) => {
-      return [p.log2(p.absVal(p.sub(a, b)))];
+    eq: defineConstraint('eq', (a: Temporal<Variable>, b: Temporal<Variable>) => {
+      return [p.log2(p.absVal(p.sub(a.at(time), b.at(time))))];
     }),
 
-    between: defineConstraint('between', (value: p.Num, range: Interval) => {
+    between: defineConstraint('between', (value: Temporal<Variable>, range: Interval) => {
       const { min, max } = range;
-      return [p.lessThan(min, value), p.lessThan(value, max)];
+      return [p.lessThan(min, value.at(time)), p.lessThan(value.at(time), max)];
     }),
 
     assign: defineConstraint('assign', (nodeA: Node, nodeB: Node) => {
@@ -234,6 +252,10 @@ export function createLayout(config: LayoutConfig = {}) {
         p.mul(p.absVal(p.sub(aRight, bRight)), 1),
         p.mul(p.absVal(p.sub(aBottom, bBottom)), 1)
       ];
+    }),
+
+    minimize: defineConstraint('minimize', (value: Temporal<Variable>) => {
+      return [p.log2(p.absVal(value.at(time)))];
     }),
 
     contains: defineConstraint('contains', (containerNode: Node, node: Node) => {
@@ -324,33 +346,41 @@ export function createLayout(config: LayoutConfig = {}) {
   const createNode = (config: NodeConfig = { style: {} }) => {
     const id = `node-${Object.keys(nodes).length + 1}`;
 
-    if (config.style.x !== undefined) {
-      config.style.left = config.style.x;
-      delete config.style.x;
-    }
-
-    if (config.style.y !== undefined) {
-      config.style.top = config.style.y;
-      delete config.style.y;
-    }
+    const localUniqId = (suffix: string) => `${id}-${suffix}`;
 
     config = {
       style: {
-        width: `?`,
-        height: `?`,
-        left: `?`,
-        top: `?`,
+        width: config.style.width ?? variable(localUniqId('width')),
+        height: config.style.height ?? variable(localUniqId('height')),
+        left: config.style.left ?? variable(localUniqId('left')),
+        top: config.style.top ?? variable(localUniqId('top')),
         ...config.style
       }
     };
 
-    const localUniqId = (suffix: string) => `${id}-${suffix}`;
-
     const node: Node = {
       id,
       content: undefined,
-      style: {},
-      localUniqId,
+      style: _.mapValues(config.style, (value, key) => {
+        if (typeof value === 'object' && 'at' in value && 'setAt' in value) {
+          console.log('Creating variable style value for key:', key, value.at(0).id);
+          return {
+            type: 'variable',
+            varId: value.at(0).id
+          } as StyleValue;
+        } else if (typeof value === 'number') {
+          return {
+            type: 'constant',
+            value
+          } as StyleValue;
+        } else if (typeof value === 'string') {
+          return {
+            type: 'fixed',
+            value
+          } as StyleValue;
+        }
+        throw new Error(`Invalid style value for key ${key}`);
+      }),
       setContent: (content: string) => {
         liveNodeContentText(node.id).value = content;
 
@@ -363,43 +393,6 @@ export function createLayout(config: LayoutConfig = {}) {
       }
     };
 
-    for (const [key, value] of Object.entries(config.style)) {
-      if (typeof value === 'string' && value[0] === '?') {
-        // Implicit variable (default)
-        const varName = parseVariableName(key);
-        const varId = localUniqId(varName);
-        const varInstance = variables.lookup(varId).at(time);
-        node.style[key] = {
-          type: 'variable',
-          varId
-        };
-        if (value.length > 1 && value[1] === '<') {
-          const constraintId = node.localUniqId(`minimize-${key}`);
-          constraints.lookup(constraintId).setAt(time, p.log2(varInstance));
-        }
-      } else if (typeof value === 'string' && value[0] === '$') {
-        // Explicit variable (e.g. "$width" -> variable named "width")
-        const varName = parseVariableName(value.slice(1));
-        const varId = globals.byName(varName);
-        node.style[key] = {
-          type: 'variable',
-          varId
-        };
-        console.log(`Created variable ${varId} for node ${node.id} style ${key}`);
-      } else if (typeof value === 'number') {
-        // A number/string is treated as a constant CSS attribute
-        node.style[key] = {
-          type: 'constant',
-          value: value
-        };
-      } else if (typeof value === 'string') {
-        node.style[key] = {
-          type: 'fixed',
-          value
-        };
-      }
-    }
-
     nodes[node.id] = node;
 
     // Min width/height constraints based on content size
@@ -411,7 +404,7 @@ export function createLayout(config: LayoutConfig = {}) {
       const { width, height } = bounds(node, 0);
 
       constraints
-        .lookup(node.localUniqId('at-least-content-width'))
+        .lookup(localUniqId('at-least-content-width'))
         .setAt(
           0,
           p.mul(
@@ -425,7 +418,7 @@ export function createLayout(config: LayoutConfig = {}) {
         );
 
       constraints
-        .lookup(node.localUniqId('at-least-content-height'))
+        .lookup(localUniqId('at-least-content-height'))
         .setAt(
           0,
           p.mul(
@@ -446,8 +439,8 @@ export function createLayout(config: LayoutConfig = {}) {
 
   const root = createNode({
     style: {
-      width: rootWidth ?? '?',
-      height: rootHeight ?? '?',
+      width: rootWidth ?? 1200,
+      height: rootHeight ?? 800,
       left: 0,
       top: 0
     }
@@ -511,6 +504,7 @@ export function createLayout(config: LayoutConfig = {}) {
 
     // Randomize initial variable values to help solver escape local minima
     for (const variable of Object.keys(matVariables)) {
+      console.log(variable);
       // Always at least one time step if variable exists
       const firstTimeStep = matVariables[variable][0];
       const initValue =
@@ -602,7 +596,7 @@ export function createLayout(config: LayoutConfig = {}) {
     },
 
     get createNode() {
-      return (style?: Record<string, '?' | string | number>) => {
+      return (style?: NodeConfig['style']) => {
         return createNode({ style: style ?? {} });
       };
     },
@@ -621,6 +615,8 @@ export function createLayout(config: LayoutConfig = {}) {
       return time;
     },
 
+    variable,
+    uniform,
     solve
   };
 }

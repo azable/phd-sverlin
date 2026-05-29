@@ -8,12 +8,13 @@
   });
 
   const layout = createLayout(config);
+  const { uniform } = layout;
 
   const int = (value: number): Node => {
     return layout
       .createNode({
-        width: '$isize',
-        height: '$isize',
+        width: uniform('isize'),
+        height: uniform('isize'),
         fontSize: 40,
         backgroundColor: 'lightblue',
         border: '2px solid black',
@@ -24,9 +25,15 @@
   };
 
   const array = (size: number): Node[] => {
+    const awidth = uniform();
+    const aheight = uniform();
+
+    layout.constraint.minimize(awidth);
+    layout.constraint.minimize(aheight);
+
     const arrayNode = layout.createNode({
-      width: '?<',
-      height: '?<',
+      width: awidth,
+      height: aheight,
       backgroundColor: 'lightgray',
       borderRadius: '10px',
       outline: '20px solid lightgray',
@@ -67,12 +74,12 @@
   let currStep = $state(0);
 
   const nextStep = () => {
-    console.log('Next step', layout.views[currStep]);
+    console.log('Next step');
     currStep++;
   };
 
   const prevStep = () => {
-    console.log('Previous step', layout.views[currStep]);
+    console.log('Previous step');
     currStep--;
   };
 

@@ -1,16 +1,33 @@
 import { range } from 'lodash-es';
 
-export class LazyTemporal<T> {
-  private values: Record<number, T> = {};
+class Lazy<T> {
   private instantiator: () => T;
 
   constructor(instantiator: () => T) {
     this.instantiator = instantiator;
   }
 
+  protected instantiate(): T {
+    return this.instantiator();
+  }
+}
+
+export interface Temporal<T> {
+  at(time: number): T;
+  setAt(time: number, value: T): void;
+  materialize(maxTime: number): T[];
+}
+
+export class LazyTemporal<T> extends Lazy<T> implements Temporal<T> {
+  private values: Record<number, T> = {};
+
+  constructor(instantiator: () => T) {
+    super(instantiator);
+  }
+
   private ensureInstanceAt(time: number) {
     if (!this.values[time]) {
-      this.values[time] = this.instantiator();
+      this.values[time] = this.instantiate();
     }
   }
 
@@ -41,15 +58,39 @@ export class LazyTemporal<T> {
   }
 }
 
-export class LazyTemporalMap<K extends string | number, V> {
-  private map: Record<K, LazyTemporal<V>> = {} as Record<K, LazyTemporal<V>>;
-  private instantiator: (key: K) => LazyTemporal<V>;
+export class LazyUniform<T> extends Lazy<T> implements Temporal<T> {
+  private value: T;
 
-  constructor(instantiator: (key: K) => V) {
-    this.instantiator = (key) => new LazyTemporal<V>(() => instantiator(key));
+  constructor(instantiator: () => T) {
+    super(instantiator);
+    this.value = this.instantiate();
   }
 
-  public lookup(key: K): LazyTemporal<V> {
+  public at(time: number): T {
+    return this.value;
+  }
+
+  public setAt(time: number, value: T) {
+    this.value = value;
+  }
+
+  public materialize(maxTime: number): T[] {
+    const value = this.at(0);
+    return range(0, maxTime + 1).map(() => value);
+  }
+}
+
+type TemporalConstructor<T> = new (instantiator: () => T) => Temporal<T>;
+
+export class LazyTemporalMap<K extends string | number, V> {
+  private map: Record<K, Temporal<V>> = {} as Record<K, Temporal<V>>;
+  private instantiator: (key: K) => Temporal<V>;
+
+  constructor(TemporalClass: TemporalConstructor<V>, instantiator: (key: K) => V) {
+    this.instantiator = (key) => new TemporalClass(() => instantiator(key));
+  }
+
+  public lookup(key: K): Temporal<V> {
     if (!this.map[key]) {
       this.map[key] = this.instantiator(key);
     }
