@@ -72,7 +72,8 @@ executable compile-app
                       containers,
                       mtl,
                       lens,
-                      dunai
+                      dunai,
+                      free
 
     -- Directories containing source files.
     hs-source-dirs:   app

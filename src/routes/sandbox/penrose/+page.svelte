@@ -77,6 +77,12 @@
   layout.constraint.assign(array1[1], value3);
   layout.constraint.assign(array1[2], value2);
 
+  layout.step();
+
+  layout.constraint.assign(array1[0], value2);
+  layout.constraint.assign(array1[1], value3);
+  layout.constraint.assign(array1[2], value1);
+
   let currStep = $state(0);
 
   const nextStep = () => {
