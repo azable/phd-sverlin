@@ -4,16 +4,17 @@
 -- {-# LANGUAGE Arrows #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Main where
 
--- import Control.Monad.State
-import Control.Monad.Free ( Free(..), liftF )
+import Control.Monad.State
 import Data.Typeable 
-import GHC.TypeLits ( KnownNat, Nat, natVal )
-import Control.Monad ( join )
+import GHC.TypeLits ( KnownNat, Nat, natVal, Symbol, KnownSymbol, symbolVal )
 import qualified Data.Map as Map
 import Data.Map (Map)
+import Control.Monad
 
 --------------------------------------------------------------------------------
 -- Typed C value classes
@@ -50,231 +51,171 @@ instance (KnownNat n, CType a) => CType (TArray n a) where
     fromInteger (natVal (Proxy @n)) * getSize (undefined :: a)
 
 -- Run-time variable and value representations
-newtype MemAddress a = MemAddress Int deriving (Eq, Ord, Show)
 
-data Value a where
-  Value    :: (CType a) => a -> Value a
-
-instance Show (Value a) where
-  show (Value a) = show a
-
-data Variable a where
-  Variable :: (CType a) => a -> MemAddress a -> Variable a
-
-data Op r where
-  Add :: (CTypeNumeric a) => Value a -> Value a -> Op a
-  Sub :: (CTypeNumeric a) => Value a -> Value a -> Op a
-  Mul :: (CTypeNumeric a) => Value a -> Value a -> Op a
-  Gt  :: (CTypeNumeric a) => Value a -> Value a -> Op TInt
-  Lt  :: (CTypeNumeric a) => Value a -> Value a -> Op TInt
-  Eq  :: (CTypeNumeric a) => Value a -> Value a -> Op TInt
-
-instance Show (Op r) where
-  show op =
-    case op of
-      Add (Value a) (Value b) -> show a ++ " + " ++ show b
-      Sub (Value a) (Value b) -> show a ++ " - " ++ show b
-      Mul (Value a) (Value b) -> show a ++ " * " ++ show b
-      Gt  (Value a) (Value b) -> show a ++ " > " ++ show b
-      Lt  (Value a) (Value b) -> show a ++ " < " ++ show b
-      Eq  (Value a) (Value b) -> show a ++ " == " ++ show b
-
-data Instr next where
-  Literal :: (CType a) => Value a    -> (Value a -> next) -> Instr next
-  Read    :: (CType a) => MemAddress a -> (Value a -> next) -> Instr next
-  Write   :: (CType a) => MemAddress a ->  Value a -> next  -> Instr next
-  Compute :: (CType r) => Op r       -> (Value r -> next) -> Instr next
-  Branch  ::              Value TInt -> next     -> next  -> Instr next
-
-instance Functor Instr where
-  fmap f instr =
-    case instr of
-      Literal value k                -> Literal value (f . k)
-      Read    addr k                 -> Read addr (f . k)
-      Write   addr value next        -> Write addr value (f next)
-      Compute op k                   -> Compute op (f . k)
-      Branch  cond thenNext elseNext -> Branch cond (f thenNext) (f elseNext)
-
-type Program a = Free Instr a
-
-literal  :: (CType a) => Value a -> Program (Value a)
-literal value = liftF (Literal value id)
-
-readVar  :: (CType a) => MemAddress a -> Program (Value a)
-readVar addr = liftF (Read addr id)
-
-writeVar :: (CType a) => MemAddress a -> Value a -> Program ()
-writeVar addr value = liftF (Write addr value ())
-
-compute  :: (CType r) => Op r -> Program (Value r)
-compute op = liftF (Compute op id)
-
-branch   :: Value TInt -> Program () -> Program () -> Program ()
-branch cond thenProg elseProg =
-  join (liftF (Branch cond thenProg elseProg))
-
+type Ident = String
 type NodeId = Int
 
-data TraceAction where
-  TraceLiteral :: Value a -> TraceAction
-  TraceRead    :: MemAddress a -> Value a -> TraceAction
-  TraceWrite   :: MemAddress a -> Value a -> Maybe (Value a) -> TraceAction
-  TraceCompute :: Op r -> Value r -> TraceAction
-  TraceBranch  :: Bool -> TraceAction
+data Ref a where
+  Ref :: (CType a) => NodeId -> a -> Ref a
 
-data TraceNode = TraceNode
-  { traceNodeId :: NodeId
-  , traceAction :: TraceAction
-  }
+data TraceNode where
+  TraceNode :: (CType a) => NodeId -> TraceOp a -> a -> TraceNode
 
-instance Show TraceNode where
-  show (TraceNode nid action) =
-    "Node " ++ show nid ++ ": " ++ case action of
-      TraceLiteral value -> "Literal " ++ show value
-      TraceRead addr value -> "Read from " ++ show addr ++ ": " ++ show value
-      TraceWrite addr newValue oldValue ->
-        "Write to " ++ show addr ++ ": " ++ show newValue ++
-        case oldValue of
-          Nothing -> " (no previous value)"
-          Just v  -> " (previous value: " ++ show v ++ ")"
-      TraceCompute op result -> "Compute " ++ show op ++ ": " ++ show result
-      TraceBranch cond -> "Branch on condition: " ++ show cond
-
-data TraceGraph = TraceGraph
-  { traceNodes :: [TraceNode]
-  , traceEdges :: [(NodeId, NodeId)]
-  }
-
-data AnyValue where
-  AnyValue :: (CType a) => Value a -> AnyValue
-
-castAnyValue :: CType a => AnyValue -> Maybe (Value a)
-castAnyValue (AnyValue value) = cast value
+data AnyRef where
+  AnyRef :: (CType a) => Ref a -> AnyRef
 
 data ExecState = ExecState
-  { store      :: Map Int AnyValue
-  , nextNodeId :: NodeId
-  , prevNodeId :: Maybe NodeId
-  , graph      :: TraceGraph
+  { store      :: Map Ident AnyRef
+  , nextId     :: NodeId
+  , nodes      :: [TraceNode]
   }
 
-addrKey :: MemAddress a -> Int
-addrKey (MemAddress i) = i
+type TraceM a = State ExecState a
 
-storeInsert :: CType a => MemAddress a -> Value a -> ExecState -> ExecState
-storeInsert addr value st =
-  st { store = Map.insert (addrKey addr) (AnyValue value) (store st) }
+infixl 0 ==>
+(==>) :: (CType a) => TraceOp a -> a -> TraceM (Ref a)
+(==>) event value = do
+  st <- get
 
-storeLookup :: CType a => MemAddress a -> ExecState -> Maybe (Value a)
-storeLookup addr st = do
-  anyValue <- Map.lookup (addrKey addr) (store st)
-  castAnyValue anyValue
+  let nid = nextId st
+      node = TraceNode nid event value
 
-addTraceNode :: TraceAction -> ExecState -> (NodeId, ExecState)
-addTraceNode action st =
-  let nid = nextNodeId st
+  put st
+    { nextId = nid + 1
+    , nodes = nodes st ++ [node]
+    }
 
-      node = TraceNode
-          { traceNodeId = nid
-          , traceAction = action
-          }
+  pure (Ref nid value)
 
-      newEdge = case prevNodeId st of
-          Nothing   -> []
-          Just prev -> [(prev, nid)]
+data Op1 (name :: Symbol) a b where
+  Op1 :: forall name a b. (CType a, CType b) => (a -> b) -> Op1 name a b
 
-      oldGraph = graph st
+evalUnaryOp :: Op1 name a b -> a -> b
+evalUnaryOp (Op1 f) = f
 
-      newGraph = oldGraph
-          { traceNodes = traceNodes oldGraph ++ [node]
-          , traceEdges = traceEdges oldGraph ++ newEdge
-          }
+op1 :: forall (name :: Symbol) a b. (KnownSymbol name, CType a, CType b) 
+    => Proxy name -> (a -> b) -> Ref a -> TraceM (Ref b)
+op1 _ f operand =
+  let op = Op1 @name f
+  in TCompute1 op operand ==> f (valueOf operand)
 
-      st' = st
-          { nextNodeId = nid + 1
-          , prevNodeId = Just nid
-          , graph = newGraph
-          }
+data Op2 (name :: Symbol) a b c where
+  Op2 :: forall name a b c. (CType a, CType b, CType c) => (a -> b -> c) -> Op2 name a b c
 
-  in (nid, st')
+evalBinaryOp :: Op2 name a b c -> a -> b -> c
+evalBinaryOp (Op2 f) = f
 
-evalOp :: Op a -> Either String (Value a)
-evalOp (Add (Value a) (Value b)) = Right $ Value (a + b)
-evalOp (Sub (Value a) (Value b)) = Right $ Value (a - b)
-evalOp (Mul (Value a) (Value b)) = Right $ Value (a * b)
-evalOp (Gt  (Value a) (Value b)) = Right $ Value (if a > b then TInt 1 else TInt 0)
-evalOp (Lt  (Value a) (Value b)) = Right $ Value (if a < b then TInt 1 else TInt 0)
-evalOp (Eq  (Value a) (Value b)) = Right $ Value (if a == b then TInt 1 else TInt 0)
-  
-runProgram :: Program a -> ExecState -> Either String (a, ExecState)
-runProgram (Pure a) st = Right (a, st)
+op2 :: forall (name :: Symbol) a b c. (KnownSymbol name, CType a, CType b, CType c)
+    => Proxy name -> (a -> b -> c) -> Ref a -> Ref b -> TraceM (Ref c)
+op2 _ f lhs rhs =
+  let op = Op2 @name f
+  in TCompute2 op lhs rhs ==> f (valueOf lhs) (valueOf rhs)
 
-runProgram (Free (Literal value next)) st =
-    let (_, st') = addTraceNode (TraceLiteral value) st
-    in runProgram (next value) st'
+data TraceOp a where
+  TLiteral  :: (CType a) => a -> TraceOp a
+  TRead     :: (CType a) => Ident -> Ref a -> TraceOp a
+  TWrite    :: (CType a) => Ident -> Ref a -> TraceOp a
+  TCompute1 :: (KnownSymbol name, CType a, CType b) => Op1 name a b -> Ref a -> TraceOp b
+  TCompute2 :: (KnownSymbol name, CType a, CType b, CType c) => Op2 name a b c -> Ref a -> Ref b -> TraceOp c
 
-runProgram (Free (Read var next)) st = case storeLookup var st of
-    Nothing -> Left ("Unknown variable: " ++ show var)
-    Just value ->
-      let (_, st') = addTraceNode (TraceRead var value) st
-      in runProgram (next value) st'
+valueOf :: Ref a -> a
+valueOf (Ref _ val) = val
 
-runProgram (Free (Write var value next)) st =
-    let oldValue = storeLookup var st
-        (_, st1) = addTraceNode (TraceWrite var value oldValue) st
-        st2 = storeInsert var value st1
-    in runProgram next st2
+literal :: (CType a) => a -> TraceM (Ref a)
+literal value = TLiteral value ==> value
 
-runProgram (Free (Compute op next)) st =
-    case evalOp op of
-        Left err -> Left err
-        Right value ->
-            let (_, st') = addTraceNode (TraceCompute op value) st
-            in runProgram (next value) st'
+readVar :: (CType a) => Ident -> TraceM (Ref a)
+readVar varId = do
+  st <- get
+  case Map.lookup varId (store st) of
+    Just (AnyRef ref) ->
+      case cast ref of
+        Just typedRef -> TRead varId typedRef ==> valueOf typedRef
+        Nothing -> error $ "Type mismatch when reading variable " ++ varId
+    Nothing -> error $ "Variable not found: " ++ varId
 
-runProgram (Free (Branch (Value (TInt c)) thenProg elseProg)) st =
-    case c of
-        0 ->
-            let (_, st') = addTraceNode (TraceBranch False) st
-            in runProgram elseProg st'
-        _ ->
-            let (_, st') = addTraceNode (TraceBranch True) st
-            in runProgram thenProg st'
+writeVar :: (CType a) => Ident -> Ref a -> TraceM ()
+writeVar varId (Ref sourceId sourceValue) = do
+  writeRef <- TWrite varId (Ref sourceId sourceValue) ==> sourceValue
+  modify $ \st ->
+    st { store = Map.insert varId (AnyRef writeRef) (store st) }
+
+(.+.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
+(.+.) = op2 (Proxy @"+") (+)
+
+(.-.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
+(.-.) = op2 (Proxy @"-") (-)
+
+(.*.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
+(.*.) = op2 (Proxy @"*") (*)
+
+(.>.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref TInt)
+(.>.) = op2 (Proxy @">") (\lhs rhs -> if lhs > rhs then 1 else 0)
+
+(.<.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref TInt)
+(.<.) = op2 (Proxy @"<") (\lhs rhs -> if lhs < rhs then 1 else 0)
+
+(.!.) :: (CTypeNumeric a) => Ref a -> TraceM (Ref TInt)
+(.!.) = op1 (Proxy @"!") (\rhs -> if rhs == 0 then 1 else 0)
+
+(.&&.) :: Ref TInt -> Ref TInt -> TraceM (Ref TInt)
+(.&&.) = op2 (Proxy @"&&") (\lhs rhs -> if lhs /= 0 && rhs /= 0 then 1 else 0)
+
+(.||.) :: Ref TInt -> Ref TInt -> TraceM (Ref TInt)
+(.||.) = op2 (Proxy @"||") (\lhs rhs -> if lhs /= 0 || rhs /= 0 then 1 else 0)
+
+_if :: TraceM (Ref TInt) -> TraceM () -> TraceM () -> TraceM ()
+_if cond trueBranch falseBranch = do
+  eCond <- cond
+  if valueOf eCond /= 0
+    then trueBranch
+    else falseBranch
+
+_while :: TraceM (Ref TInt) -> TraceM () -> TraceM ()
+_while cond body = do
+  eCond <- cond
+  when (valueOf eCond /= 0) $ do
+    body
+    _while cond body
+
+_for :: TraceM () -> TraceM (Ref TInt) -> TraceM () -> TraceM () -> TraceM ()
+_for initial cond update body = do
+  initial
+  _while cond $ do
+    body
+    update
 
 -- Program
 
-_xAddr :: MemAddress TInt
-_xAddr = MemAddress 0
-_yAddr :: MemAddress TInt
-_yAddr = MemAddress 1
-_zAddr :: MemAddress TInt
-_zAddr = MemAddress 2
-_resultAddr :: MemAddress TInt
-_resultAddr = MemAddress 3
-
-example :: Program ()
+example :: TraceM ()
 example = do
-  writeVar _xAddr (Value $ TInt 7)
+  x <- literal (5 :: TInt)
+  y <- literal (10 :: TInt)
+  z <- x .+. y
+  writeVar "z" z
 
-  x <- readVar _xAddr
-  y <- compute $ Add x (Value $ TInt 5)
-  writeVar _yAddr y
+--------------------------------------------------------------------------------
 
-  cond <- compute $ Gt y (Value $ TInt 10)
+instance Show (TraceOp a) where
+  show event = case event of
+    TLiteral val -> "Literal " ++ show val
+    TRead varId (Ref sourceId _) -> "Read " ++ varId ++ " from Node " ++ show sourceId
+    TWrite varId (Ref sourceId _) -> "Write " ++ varId ++ " from Node " ++ show sourceId
+    TCompute1 op rhs -> show op ++ "[Node " ++ showNodeId rhs ++ "]"
+    TCompute2 op lhs rhs -> "[Node " ++ showNodeId lhs ++ "] " ++ show op ++ " [Node " ++ showNodeId rhs ++ "]"
 
-  branch cond
-    (do
-      y1 <- readVar _yAddr 
-      z  <- compute $ Mul y1 (Value $ TInt 2)
-      writeVar _zAddr z)
-    (do
-      y1 <- readVar _yAddr
-      z  <- compute $ Sub y1 (Value $ TInt 2)
-      writeVar _zAddr z)
+instance KnownSymbol name => Show (Op1 name a b) where
+  show _ = symbolVal (Proxy @name)
 
-  z0 <- readVar _zAddr
-  result <- compute $ Add z0 (Value $ TInt 0)
-  writeVar _resultAddr result
+instance KnownSymbol name => Show (Op2 name a b c) where
+  show _ = symbolVal (Proxy @name)
+
+showNodeId :: Ref a -> String
+showNodeId (Ref nid _) = show nid
+    
+instance Show TraceNode where
+  show (TraceNode nid event value) =
+    "Node " ++ show nid ++ ": " ++ show event ++ " => " ++ show value
 
 
 main :: IO ()
@@ -282,19 +223,10 @@ main = do
   putStr "Result: "
   let initialState = ExecState
         { store = Map.empty
-        , nextNodeId = 0
-        , prevNodeId = Nothing
-        , graph = TraceGraph [] []
+        , nextId = 0
+        , nodes = []
         }
-  let result = runProgram example initialState
-  -- print full trace graph
-  case result of
-    Left err -> putStrLn ("Error: " ++ err)
-    Right ((), finalState) -> do
-      putStrLn "Execution completed successfully."
-      putStrLn "Trace graph:"
-      mapM_ print (traceNodes (graph finalState))
-      putStrLn "Edges:"
-      mapM_ print (traceEdges (graph finalState))
-  
-
+  let (_, finalState) = runState example initialState
+  -- print list of trace nodes
+  putStrLn "Trace Nodes:"
+  mapM_ print (nodes finalState)
