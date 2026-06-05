@@ -1,38 +1,48 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FunctionalDependencies #-}
 -- {-# LANGUAGE Arrows #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FunctionalDependencies #-}
 
 module Main where
 
-import Control.Monad.State
-import Data.Typeable 
-import GHC.TypeLits ( KnownNat, Nat, natVal, Symbol, KnownSymbol, symbolVal )
-import qualified Data.Map as Map
-import Data.Map (Map)
 import Control.Monad
+import Control.Monad.State
+import Data.Map (Map)
+import Data.Map qualified as Map
+import Data.Typeable
+import GHC.TypeLits
+  ( KnownNat,
+    KnownSymbol,
+    Nat,
+    Symbol,
+    natVal,
+    symbolVal,
+  )
 
 --------------------------------------------------------------------------------
 -- Typed C value classes
 
 class (Show a, Typeable a) => CType a where
   getTypeName :: a -> String
-  getSize     :: a -> Int
+  getSize :: a -> Int
 
 class (CType a, Ord a, Num a) => CTypeNumeric a
 
 -- Types
-newtype TInt                = TInt Int        deriving (Show, Eq, Ord, Num, Real, Enum, Integral, Typeable)
-newtype TDouble             = TDouble Double  deriving (Show, Eq, Ord, Num, Real, Typeable)
-newtype TArray (n :: Nat) a = TArray [a]      deriving (Show, Eq, Typeable)
+newtype TInt = TInt Int deriving (Show, Eq, Ord, Num, Real, Enum, Integral, Typeable)
+
+newtype TDouble = TDouble Double deriving (Show, Eq, Ord, Num, Real, Typeable)
+
+newtype TArray (n :: Nat) a = TArray [a] deriving (Show, Eq, Typeable)
 
 instance CTypeNumeric TInt
+
 instance CTypeNumeric TDouble
 
 instance CType TInt where
@@ -44,7 +54,8 @@ instance CType TDouble where
   getSize _ = 8
 
 instance (KnownNat n, CType a) => CType (TArray n a) where
-  getTypeName _ = getTypeName (undefined :: a)
+  getTypeName _ =
+    getTypeName (undefined :: a)
       ++ "["
       ++ show (natVal (Proxy @n))
       ++ "]"
@@ -55,6 +66,7 @@ instance (KnownNat n, CType a) => CType (TArray n a) where
 -- Run-time variable and value representations
 
 type Ident = String
+
 type NodeId = Int
 
 data Ref a where
@@ -67,14 +79,15 @@ data AnyRef where
   AnyRef :: (CType a) => Ref a -> AnyRef
 
 data ExecState = ExecState
-  { store      :: Map Ident AnyRef
-  , nextId     :: NodeId
-  , nodes      :: [TraceNode]
+  { store :: Map Ident AnyRef,
+    nextId :: NodeId,
+    nodes :: [TraceNode]
   }
 
 type TraceM a = State ExecState a
 
 infixl 0 ==>
+
 (==>) :: (CType a) => TraceOp a -> a -> TraceM (Ref a)
 (==>) event value = do
   st <- get
@@ -82,10 +95,11 @@ infixl 0 ==>
   let nid = nextId st
       node = TraceNode nid event value
 
-  put st
-    { nextId = nid + 1
-    , nodes = nodes st ++ [node]
-    }
+  put
+    st
+      { nextId = nid + 1,
+        nodes = nodes st ++ [node]
+      }
 
   pure (Ref nid value)
 
@@ -94,20 +108,20 @@ infixl 0 ==>
 data Op1 (name :: Symbol) a b where
   Op1 :: Op1 name a b
 
-op1
-  :: forall (name :: Symbol) a b.
-     ( KnownSymbol name
-     , CType a
-     , CType b
-     , EvalOp1 name a b
-     )
-  => Proxy name
-  -> Ref a
-  -> TraceM (Ref b)
+op1 ::
+  forall (name :: Symbol) a b.
+  ( KnownSymbol name,
+    CType a,
+    CType b,
+    EvalOp1 name a b
+  ) =>
+  Proxy name ->
+  Ref a ->
+  TraceM (Ref b)
 op1 _ rhs =
   let op = Op1 @name @a @b
       result = evalOp1 @name @a @b (valueOf rhs)
-  in TCompute1 op rhs ==> result
+   in TCompute1 op rhs ==> result
 
 class EvalOp1 (name :: Symbol) a b where
   evalOp1 :: a -> b
@@ -116,29 +130,29 @@ class EvalOp1 (name :: Symbol) a b where
 data Op2 (name :: Symbol) a b c where
   Op2 :: Op2 name a b c
 
-op2
-  :: forall (name :: Symbol) a b c.
-     ( KnownSymbol name
-     , CType a
-     , CType b
-     , CType c
-     , EvalOp2 name a b c
-     )
-  => Ref a
-  -> Ref b
-  -> TraceM (Ref c)
+op2 ::
+  forall (name :: Symbol) a b c.
+  ( KnownSymbol name,
+    CType a,
+    CType b,
+    CType c,
+    EvalOp2 name a b c
+  ) =>
+  Ref a ->
+  Ref b ->
+  TraceM (Ref c)
 op2 lhs rhs =
   let op = Op2 @name @a @b @c
       result = evalOp2 (Proxy @name) (valueOf lhs) (valueOf rhs)
-  in TCompute2 op lhs rhs ==> result
+   in TCompute2 op lhs rhs ==> result
 
 class EvalOp2 (name :: Symbol) a b c | name a b -> c where
   evalOp2 :: Proxy name -> a -> b -> c
 
 data TraceOp a where
-  TLiteral  :: (CType a) => a -> TraceOp a
-  TRead     :: (CType a) => Ident -> Ref a -> TraceOp a
-  TWrite    :: (CType a) => Ident -> Ref a -> TraceOp a
+  TLiteral :: (CType a) => a -> TraceOp a
+  TRead :: (CType a) => Ident -> Ref a -> TraceOp a
+  TWrite :: (CType a) => Ident -> Ref a -> TraceOp a
   TCompute1 :: (KnownSymbol name, CType a, CType b) => Op1 name a b -> Ref a -> TraceOp b
   TCompute2 :: (KnownSymbol name, CType a, CType b, CType c) => Op2 name a b c -> Ref a -> Ref b -> TraceOp c
 
@@ -162,7 +176,7 @@ writeVar :: (CType a) => Ident -> Ref a -> TraceM ()
 writeVar varId (Ref sourceId sourceValue) = do
   writeRef <- TWrite varId (Ref sourceId sourceValue) ==> sourceValue
   modify $ \st ->
-    st { store = Map.insert varId (AnyRef writeRef) (store st) }
+    st {store = Map.insert varId (AnyRef writeRef) (store st)}
 
 -- (.+.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
 -- (.+.) = op2 @"+"
@@ -193,7 +207,6 @@ instance EvalOp2 "/" TInt TDouble TDouble where
 
 instance EvalOp2 "/" TDouble TInt TDouble where
   evalOp2 _ (TDouble x) (TInt y) = TDouble (x / fromIntegral y)
-
 
 _if :: TraceM (Ref TInt) -> TraceM () -> TraceM () -> TraceM ()
 _if cond trueBranch falseBranch = do
@@ -235,10 +248,10 @@ instance Show (TraceOp a) where
     TCompute1 op rhs -> show op ++ " " ++ show rhs
     TCompute2 op lhs rhs -> show lhs ++ " " ++ show op ++ " " ++ show rhs
 
-instance KnownSymbol name => Show (Op1 name a b) where
+instance (KnownSymbol name) => Show (Op1 name a b) where
   show _ = symbolVal (Proxy @name)
 
-instance KnownSymbol name => Show (Op2 name a b c) where
+instance (KnownSymbol name) => Show (Op2 name a b c) where
   show _ = symbolVal (Proxy @name)
 
 instance Show (Ref a) where
@@ -248,15 +261,15 @@ instance Show TraceNode where
   show (TraceNode nid event value) =
     "Node " ++ show nid ++ ": " ++ show event ++ " => " ++ show value
 
-
 main :: IO ()
 main = do
   putStr "Result: "
-  let initialState = ExecState
-        { store = Map.empty
-        , nextId = 0
-        , nodes = []
-        }
+  let initialState =
+        ExecState
+          { store = Map.empty,
+            nextId = 0,
+            nodes = []
+          }
   let (_, finalState) = runState example initialState
   -- print list of trace nodes
   putStrLn "Trace Nodes:"

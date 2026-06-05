@@ -15,6 +15,12 @@
   "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+  "[haskell]": {
+    "editor.defaultFormatter": "haskell.haskell",
+    "editor.formatOnSave": true
+  },
+
+  "haskell.formattingProvider": "fourmolu",
 
   "editor.tabSize": 2
 }
