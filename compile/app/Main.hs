@@ -1,6 +1,9 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LinearTypes #-}
 
 import Control.Monad.State
+
+-- Generic node layer
 
 type NId = Int
 
@@ -19,30 +22,6 @@ makeN content refs = do
   put (ns ++ [newNode])
   pure (NRef newId)
 
-data NContent
-  = NValue Value
-  | NOp Op
-  deriving (Show, Eq)
-
-data Value
-  = TInt Int
-  | TDouble Double
-  deriving (Show, Eq)
-
-data Op
-  = OAdd
-  | OMul
-  deriving (Show, Eq)
-
-eval :: [NContent] -> NContent
-eval [NValue (TInt x), NOp OAdd, NValue (TInt y)] = NValue (TInt (x + y))
-eval [NValue (TInt x), NOp OMul, NValue (TInt y)] = NValue (TInt (x * y))
-eval [NValue (TDouble x), NOp OAdd, NValue (TDouble y)] = NValue (TDouble (x + y))
-eval [NValue (TDouble x), NOp OMul, NValue (TDouble y)] = NValue (TDouble (x * y))
-eval contents = error $ "Type mismatch: " ++ displayContents
-  where
-    displayContents = unwords $ map show contents
-
 e :: [NRef] -> NBuilder
 e refs = do
   ns <- get
@@ -55,15 +34,55 @@ e refs = do
           refs
   makeN (eval contents) refs
 
+v :: Value -> NBuilder
+v val = makeN (V val) []
+
+o :: Op -> NBuilder
+o op = makeN (O op) []
+
+-- DSL layer
+
+data NContent
+  = V Value
+  | O Op
+  deriving (Show, Eq)
+
+data Value
+  = I32 Int
+  | F64 Double
+  deriving (Show, Eq)
+
+data Op
+  = Add
+  | Mul
+  deriving (Show, Eq)
+
+eval :: [NContent] -> NContent
+eval [V (I32 x), O Add, V (I32 y)] = V (I32 (x + y))
+eval [V (I32 x), O Mul, V (I32 y)] = V (I32 (x * y))
+eval [V (F64 x), O Add, V (F64 y)] = V (F64 (x + y))
+eval [V (F64 x), O Mul, V (F64 y)] = V (F64 (x * y))
+eval contents = error $ "Type mismatch: " ++ displayContents
+  where
+    displayContents = unwords $ map show contents
+
+(.+.) :: NRef -> NRef -> NBuilder
+(.+.) a b = do
+  add <- o Add
+  e [a, add, b]
+
+(.*.) :: NRef -> NRef -> NBuilder
+(.*.) a b = do
+  mul <- o Mul
+  e [a, mul, b]
+
 example :: NBuilder
 example = do
-  n1 <- makeN (NValue (TInt 42)) []
-  (.+.) <- makeN (NOp OAdd) []
-  (.*.) <- makeN (NOp OMul) []
-  n2 <- makeN (NValue (TInt 100)) []
-  added <- e [n1, (.+.), n2]
-  multiplied <- e [n1, (.*.), n2]
-  e [added, (.+.), multiplied]
+  n1 <- v (I32 42)
+  n2 <- v (I32 100)
+  added <- n1 .+. n2
+  multiplied <- n1 .*. n2
+  added .+. multiplied
 
 main :: IO ()
 main = do
