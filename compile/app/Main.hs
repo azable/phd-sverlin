@@ -6,6 +6,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module Main where
 
@@ -26,7 +28,7 @@ class (Show a, Typeable a) => CType a where
 class (CType a, Ord a, Num a) => CTypeNumeric a
 
 -- Types
-newtype TInt                = TInt Int        deriving (Show, Eq, Ord, Num, Real, Typeable)
+newtype TInt                = TInt Int        deriving (Show, Eq, Ord, Num, Real, Enum, Integral, Typeable)
 newtype TDouble             = TDouble Double  deriving (Show, Eq, Ord, Num, Real, Typeable)
 newtype TArray (n :: Nat) a = TArray [a]      deriving (Show, Eq, Typeable)
 
@@ -87,29 +89,51 @@ infixl 0 ==>
 
   pure (Ref nid value)
 
+-- One argument operations
+
 data Op1 (name :: Symbol) a b where
-  Op1 :: forall name a b. (CType a, CType b) => (a -> b) -> Op1 name a b
+  Op1 :: Op1 name a b
 
-evalUnaryOp :: Op1 name a b -> a -> b
-evalUnaryOp (Op1 f) = f
+op1
+  :: forall (name :: Symbol) a b.
+     ( KnownSymbol name
+     , CType a
+     , CType b
+     , EvalOp1 name a b
+     )
+  => Proxy name
+  -> Ref a
+  -> TraceM (Ref b)
+op1 _ rhs =
+  let op = Op1 @name @a @b
+      result = evalOp1 @name @a @b (valueOf rhs)
+  in TCompute1 op rhs ==> result
 
-op1 :: forall (name :: Symbol) a b. (KnownSymbol name, CType a, CType b) 
-    => Proxy name -> (a -> b) -> Ref a -> TraceM (Ref b)
-op1 _ f operand =
-  let op = Op1 @name f
-  in TCompute1 op operand ==> f (valueOf operand)
+class EvalOp1 (name :: Symbol) a b where
+  evalOp1 :: a -> b
 
+-- Two argument operations
 data Op2 (name :: Symbol) a b c where
-  Op2 :: forall name a b c. (CType a, CType b, CType c) => (a -> b -> c) -> Op2 name a b c
+  Op2 :: Op2 name a b c
 
-evalBinaryOp :: Op2 name a b c -> a -> b -> c
-evalBinaryOp (Op2 f) = f
+op2
+  :: forall (name :: Symbol) a b c.
+     ( KnownSymbol name
+     , CType a
+     , CType b
+     , CType c
+     , EvalOp2 name a b c
+     )
+  => Ref a
+  -> Ref b
+  -> TraceM (Ref c)
+op2 lhs rhs =
+  let op = Op2 @name @a @b @c
+      result = evalOp2 (Proxy @name) (valueOf lhs) (valueOf rhs)
+  in TCompute2 op lhs rhs ==> result
 
-op2 :: forall (name :: Symbol) a b c. (KnownSymbol name, CType a, CType b, CType c)
-    => Proxy name -> (a -> b -> c) -> Ref a -> Ref b -> TraceM (Ref c)
-op2 _ f lhs rhs =
-  let op = Op2 @name f
-  in TCompute2 op lhs rhs ==> f (valueOf lhs) (valueOf rhs)
+class EvalOp2 (name :: Symbol) a b c | name a b -> c where
+  evalOp2 :: Proxy name -> a -> b -> c
 
 data TraceOp a where
   TLiteral  :: (CType a) => a -> TraceOp a
@@ -140,29 +164,36 @@ writeVar varId (Ref sourceId sourceValue) = do
   modify $ \st ->
     st { store = Map.insert varId (AnyRef writeRef) (store st) }
 
-(.+.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
-(.+.) = op2 (Proxy @"+") (+)
+-- (.+.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
+-- (.+.) = op2 @"+"
 
-(.-.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
-(.-.) = op2 (Proxy @"-") (-)
+-- (.-.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
+-- (.-.) = op2 @"-"
 
-(.*.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
-(.*.) = op2 (Proxy @"*") (*)
+-- (.*.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref a)
+-- (.*.) = op2 @"*"
 
-(.>.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref TInt)
-(.>.) = op2 (Proxy @">") (\lhs rhs -> if lhs > rhs then 1 else 0)
+-- (./.) :: (CTypeNumeric a, CTypeNumeric b, CTypeNumeric c) => Ref a -> Ref b -> TraceM (Ref c)
+-- (./.) = op2 @"/"
 
-(.<.) :: (CTypeNumeric a) => Ref a -> Ref a -> TraceM (Ref TInt)
-(.<.) = op2 (Proxy @"<") (\lhs rhs -> if lhs < rhs then 1 else 0)
+instance (CTypeNumeric a) => EvalOp2 "+" a a a where
+  evalOp2 _ x y = x + y
 
-(.!.) :: (CTypeNumeric a) => Ref a -> TraceM (Ref TInt)
-(.!.) = op1 (Proxy @"!") (\rhs -> if rhs == 0 then 1 else 0)
+instance (CTypeNumeric a) => EvalOp2 "-" a a a where
+  evalOp2 _ x y = x - y
 
-(.&&.) :: Ref TInt -> Ref TInt -> TraceM (Ref TInt)
-(.&&.) = op2 (Proxy @"&&") (\lhs rhs -> if lhs /= 0 && rhs /= 0 then 1 else 0)
+instance (CTypeNumeric a) => EvalOp2 "*" a a a where
+  evalOp2 _ x y = x * y
 
-(.||.) :: Ref TInt -> Ref TInt -> TraceM (Ref TInt)
-(.||.) = op2 (Proxy @"||") (\lhs rhs -> if lhs /= 0 || rhs /= 0 then 1 else 0)
+instance EvalOp2 "/" TInt TInt TInt where
+  evalOp2 _ x y = x `quot` y
+
+instance EvalOp2 "/" TInt TDouble TDouble where
+  evalOp2 _ (TInt x) (TDouble y) = TDouble (fromIntegral x / y)
+
+instance EvalOp2 "/" TDouble TInt TDouble where
+  evalOp2 _ (TDouble x) (TInt y) = TDouble (x / fromIntegral y)
+
 
 _if :: TraceM (Ref TInt) -> TraceM () -> TraceM () -> TraceM ()
 _if cond trueBranch falseBranch = do
@@ -189,9 +220,9 @@ _for initial cond update body = do
 
 example :: TraceM ()
 example = do
-  x <- literal (5 :: TInt)
+  x <- literal (42 :: TInt)
   y <- literal (10 :: TInt)
-  z <- x .+. y
+  z <- op2 @"/" x y
   writeVar "z" z
 
 --------------------------------------------------------------------------------
@@ -199,10 +230,10 @@ example = do
 instance Show (TraceOp a) where
   show event = case event of
     TLiteral val -> "Literal " ++ show val
-    TRead varId (Ref sourceId _) -> "Read " ++ varId ++ " from Node " ++ show sourceId
-    TWrite varId (Ref sourceId _) -> "Write " ++ varId ++ " from Node " ++ show sourceId
-    TCompute1 op rhs -> show op ++ "[Node " ++ showNodeId rhs ++ "]"
-    TCompute2 op lhs rhs -> "[Node " ++ showNodeId lhs ++ "] " ++ show op ++ " [Node " ++ showNodeId rhs ++ "]"
+    TRead varId sourceRef -> "Read " ++ varId ++ " from " ++ show sourceRef
+    TWrite varId targetRef -> "Write " ++ show targetRef ++ " to " ++ varId
+    TCompute1 op rhs -> show op ++ " " ++ show rhs
+    TCompute2 op lhs rhs -> show lhs ++ " " ++ show op ++ " " ++ show rhs
 
 instance KnownSymbol name => Show (Op1 name a b) where
   show _ = symbolVal (Proxy @name)
@@ -210,9 +241,9 @@ instance KnownSymbol name => Show (Op1 name a b) where
 instance KnownSymbol name => Show (Op2 name a b c) where
   show _ = symbolVal (Proxy @name)
 
-showNodeId :: Ref a -> String
-showNodeId (Ref nid _) = show nid
-    
+instance Show (Ref a) where
+  show (Ref nid _) = "[Node " ++ show nid ++ "]"
+
 instance Show TraceNode where
   show (TraceNode nid event value) =
     "Node " ++ show nid ++ ": " ++ show event ++ " => " ++ show value
