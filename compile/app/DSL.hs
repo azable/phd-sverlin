@@ -69,6 +69,9 @@ v val = node (EVal val)
 o :: Op -> GraphBuilder ORef
 o op = node (Op op)
 
+info :: String -> GraphBuilder InfoRef
+info str = node (Info str)
+
 var :: String -> Value -> GraphBuilder VarRef
 var name val = do
   valueRef <- v val
