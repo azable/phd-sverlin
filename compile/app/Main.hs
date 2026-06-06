@@ -1,13 +1,8 @@
--- {-# LANGUAGE GADTs #-}
--- {-# LANGUAGE LinearTypes #-}
-
 module Main where
 
-import NodeBase qualified
-
-graph :: [NodeBase.N]
-graph = NodeBase.buildGraph NodeBase.example
+import Program qualified
 
 main :: IO ()
 main = do
+  let graph = Program.runProgram
   mapM_ print graph
