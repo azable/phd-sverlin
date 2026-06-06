@@ -40,9 +40,6 @@ data SomeNContent where
 instance P.Show SomeNContent where
   show (SomeNContent content) = show content
 
-class KnownNTag tag where
-  matchContent :: SomeNContent -> Maybe (NContent tag)
-
 data N where
   N :: NId -> SomeNContent -> [NId] -> N
 
@@ -56,7 +53,7 @@ instance P.Show N where
       padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
 
 data NRef tag where
-  NRef :: Ur NId %1 -> NRef tag
+  NRef :: Ur NId %1 -> Ur (NContent tag) %1 -> NRef tag
 
 data BuilderState = BuilderState
   { nextId :: Ur NId,
@@ -85,45 +82,32 @@ makeN content refs = do
   put (BuilderState (Ur (newId + 1)) (Ur (oldNodes ++ [newNode])))
   return (Ur newId)
 
-lookupRefContent :: (KnownNTag tag) => NRef tag %1 -> NBuilder (Ur (NId, NContent tag))
-lookupRefContent ref =
-  withNRef ref $ \rid -> do
-    BuilderState (Ur _) (Ur ns) <- get
-    case find (\(N nid _ _) -> nid == rid) ns of
-      Just (N _ someContent _) ->
-        case matchContent someContent of
-          Just content -> return (Ur (rid, content))
-          Nothing -> error "Internal type mismatch: ref tag does not match stored node content"
-      Nothing ->
-        error $ "Node not found: " P.++ P.show rid
-
 makeNRef :: NContent tag -> [NId] -> NBuilder (NRef tag)
 makeNRef content refs = do
   Ur nid <- makeN content refs
-  return (NRef (Ur nid))
+  return (NRef (Ur nid) (Ur content))
 
-withNRef :: NRef tag %1 -> (NId -> r) %1 -> r
-withNRef (NRef (Ur nid)) k =
-  k nid
+withNRef :: NRef tag %1 -> (NId -> NContent tag -> r) %1 -> r
+withNRef (NRef (Ur nid) (Ur content)) k =
+  k nid content
 
-make1 :: NContent tag -> NBuilder (NRef tag)
-make1 content = makeNRef content []
+make :: NContent tag -> NBuilder (NRef tag)
+make content = makeNRef content []
 
 combine3 ::
-  (KnownNTag a, KnownNTag b, KnownNTag c) =>
   NRef a %1 ->
   NRef b %1 ->
   NRef c %1 ->
   (NContent a -> NContent b -> NContent c -> NContent tag) ->
   NBuilder (NRef tag)
-combine3 refA refB refC makeContent = do
-  Ur (aId, contentA) <- lookupRefContent refA
-  Ur (bId, contentB) <- lookupRefContent refB
-  Ur (cId, contentC) <- lookupRefContent refC
-
-  makeNRef
-    (makeContent contentA contentB contentC)
-    [aId, bId, cId]
+combine3 refA refB refC makeContent =
+  withNRef refA $ \aId contentA ->
+    withNRef refB $ \bId contentB ->
+      withNRef refC $ \cId contentC -> do
+        let refs = [aId, bId, cId]
+        makeNRef
+          (makeContent contentA contentB contentC)
+          refs
 
 -- DSL layer
 
@@ -142,14 +126,6 @@ data NContent tag where
 instance P.Show (NContent tag) where
   show (V val) = "V " P.++ P.show val
   show (O op) = "O " P.++ P.show op
-
-instance KnownNTag KValue where
-  matchContent (SomeNContent c@(V _)) = Just c
-  matchContent _ = Nothing
-
-instance KnownNTag KOp where
-  matchContent (SomeNContent c@(O _)) = Just c
-  matchContent _ = Nothing
 
 data Value
   = I32 Int
@@ -171,10 +147,10 @@ eval lhs op rhs = error $ "Type mismatch" ++ displayContents
     displayContents = "\n  LHS: " ++ P.show lhs ++ "\n  OP: " ++ P.show op ++ "\n  RHS: " ++ P.show rhs
 
 v :: Value -> NBuilder VRef
-v val = make1 (V val)
+v val = make (V val)
 
 o :: Op -> NBuilder ORef
-o op = make1 (O op)
+o op = make (O op)
 
 e :: VRef %1 -> ORef %1 -> VRef %1 -> NBuilder VRef
 e refA refOp refB = combine3 refA refOp refB eval
