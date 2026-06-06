@@ -11,16 +11,21 @@ module NodeBase
     N (..),
     Some (..),
     NId,
-    NRef,
+    NRef (..),
+    NPtr (..),
     LPair (..),
+    freezeRef,
+    copyPtr,
     node,
     dropNode,
     dropNodeM,
     inspectNode,
     splitNode,
     cloneNode,
+    cloneNodeWith,
     mapNode,
     zipNode2,
+    zipNode2WithId,
     zipNode3,
     buildGraph,
   )
@@ -59,6 +64,13 @@ instance Consumable (NRef content tag) where
   consume (NRef nid content) =
     consume nid `lseq` consume content
 
+data NPtr content tag where
+  NPtr :: NId -> content tag -> NPtr content tag
+
+instance (P.Show (content tag)) => P.Show (NPtr content tag) where
+  show (NPtr nid _) =
+    "[N" P.++ P.show nid P.++ "]"
+
 data BuilderState content = BuilderState
   { nextId :: Ur NId,
     nodes :: Ur [N content]
@@ -81,6 +93,17 @@ type NBuilder content = State (BuilderState content)
 data LPair a b where
   LPair :: a %1 -> b %1 -> LPair a b
 
+freezeRef :: NRef content tag %1 -> Ur (NPtr content tag)
+freezeRef ref =
+  withNRef
+    ref
+    ( \nid content ->
+        Ur (NPtr nid content)
+    )
+
+copyPtr :: NPtr content tag -> NBuilder content (NRef content tag)
+copyPtr (NPtr nid content) = makeNRef content [nid]
+
 makeN :: content tag -> [NId] -> NBuilder content (Ur NId)
 makeN content refs = do
   (BuilderState (Ur oldNextId) (Ur oldNodes)) <- get
@@ -95,8 +118,7 @@ makeNRef content refs = do
   return (NRef (Ur nid) (Ur content))
 
 withNRef :: NRef content tag %1 -> (NId -> content tag -> r) %1 -> r
-withNRef (NRef (Ur nid) (Ur content)) k =
-  k nid content
+withNRef (NRef (Ur nid) (Ur content)) k = k nid content
 
 node :: content tag -> NBuilder content (NRef content tag)
 node content = makeNRef content []
@@ -130,6 +152,19 @@ cloneNode ref f = splitNode ref $ \content ->
   let outB = f content
    in (content, outB)
 
+cloneNodeWith ::
+  NRef content a %1 ->
+  (content a -> NBuilder content (NRef content b)) ->
+  NBuilder content (LPair (NRef content a) (NRef content b))
+cloneNodeWith ref f =
+  withNRef
+    ref
+    ( \nid content -> do
+        nextRef <- makeNRef content [nid]
+        outRef <- f content
+        return (LPair nextRef outRef)
+    )
+
 mapNode ::
   NRef content a %1 ->
   (content a -> content b) ->
@@ -149,6 +184,19 @@ zipNode2 refA refB makeContent =
       let refs = [aId, bId]
       makeNRef
         (makeContent contentA contentB)
+        refs
+
+zipNode2WithId ::
+  NRef content a %1 ->
+  NRef content b %1 ->
+  (NId -> content a -> NId -> content b -> content tag) ->
+  NBuilder content (NRef content tag)
+zipNode2WithId refA refB makeContent =
+  withNRef refA $ \aId contentA ->
+    withNRef refB $ \bId contentB -> do
+      let refs = [aId, bId]
+      makeNRef
+        (makeContent aId contentA bId contentB)
         refs
 
 zipNode3 ::

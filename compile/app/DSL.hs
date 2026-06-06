@@ -24,7 +24,7 @@ data NContent tag where
   EVal :: Value -> NContent KValue
   Op :: Op -> NContent KOp
   Info :: String -> NContent KInfo
-  Var :: String -> Value -> NContent KVar
+  Var :: String -> NPtr NContent KValue -> NContent KVar
 
 padRight :: Int -> String -> String
 padRight n s = s ++ replicate (n - P.length s) ' '
@@ -48,7 +48,7 @@ type ORef = Ref KOp
 
 type InfoRef = Ref KInfo
 
-type CellRef = Ref KVar
+type VarRef = Ref KVar
 
 data Value
   = I32 Int
@@ -69,18 +69,30 @@ v val = node (EVal val)
 o :: Op -> GraphBuilder ORef
 o op = node (Op op)
 
-cell :: String -> Value -> GraphBuilder CellRef
-cell name val = node (Var name val)
+var :: String -> Value -> GraphBuilder VarRef
+var name val = do
+  valueRef <- v val
+  case freezeRef valueRef of
+    Ur valuePtr ->
+      node (Var name valuePtr)
 
-readCell :: CellRef %1 -> GraphBuilder (LPair CellRef VRef)
-readCell ref = cloneNode ref $ \(Var _ val) -> EVal val
+readVar :: VarRef %1 -> GraphBuilder (LPair VarRef VRef)
+readVar ref =
+  cloneNodeWith
+    ref
+    $ \(Var _ ptr) ->
+      copyPtr ptr
 
-writeCell :: CellRef %1 -> VRef %1 -> GraphBuilder CellRef
-writeCell cellRef valueRef =
-  zipNode2 cellRef valueRef $ \cellContent valueContent ->
-    case (cellContent, valueContent) of
-      (Var name _, EVal val) ->
-        Var name val
+writeVar :: VarRef %1 -> VRef %1 -> GraphBuilder VarRef
+writeVar varRef valueRef =
+  zipNode2WithId
+    varRef
+    valueRef
+    ( \_ varContent valueId valueContent ->
+        case varContent of
+          Var name _ ->
+            Var name (NPtr valueId valueContent)
+    )
 
 binaryValueOp :: Op -> Value -> Value -> Value
 binaryValueOp Add (I32 x) (I32 y) = I32 (x + y)
@@ -116,16 +128,16 @@ e refA refOp refB = zipNode3 refA refOp refB eval
 
 example :: GraphBuilder InfoRef
 example = do
-  x0 <- cell "x" (I32 10)
+  x0 <- var "x" (I32 10)
 
-  LPair x1 a <- readCell x0
-  LPair x2 b <- readCell x1
+  LPair x1 a <- readVar x0
+  LPair x2 b <- readVar x1
 
   c <- a .+. b
 
-  x3 <- writeCell x2 c
+  x3 <- writeVar x2 c
 
-  LPair x4 n5 <- readCell x3
+  LPair x4 n5 <- readVar x3
   dropNodeM x4
 
   mapNode n5 $ \result ->
@@ -141,26 +153,25 @@ fib n = do
 
 fibIter :: Int -> GraphBuilder VRef
 fibIter n = do
-  prev0 <- cell "prev" (I32 0)
-  curr0 <- cell "curr" (I32 1)
+  prev0 <- var "prev" (I32 0)
+  curr0 <- var "curr" (I32 1)
   go n prev0 curr0
   where
-    go :: Int -> CellRef %1 -> CellRef %1 -> GraphBuilder VRef
+    go :: Int -> VarRef %1 -> VarRef %1 -> GraphBuilder VRef
     go 0 prev curr = do
-      LPair prev' result <- readCell prev
+      LPair prev' result <- readVar prev
       dropNodeM curr
       dropNodeM prev'
       return result
     go k prev curr = do
-      LPair prev1 prevVal <- readCell prev
+      LPair prev1 prevVal <- readVar prev
 
-      LPair curr1 currValForNext <- readCell curr
+      LPair curr1 currValForNext <- readVar curr
       nextVal <- prevVal .+. currValForNext
 
-      LPair curr2 currValForPrev <- readCell curr1
-      prev2 <- writeCell prev1 currValForPrev
-
-      curr3 <- writeCell curr2 nextVal
+      LPair curr2 currValForPrev <- readVar curr1
+      prev2 <- writeVar prev1 currValForPrev
+      curr3 <- writeVar curr2 nextVal
 
       go (k - 1) prev2 curr3
 
