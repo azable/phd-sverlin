@@ -10,8 +10,8 @@ import DSL
 import NodeBase qualified
 import Prelude.Linear
 
-example :: GraphBuilder VRef
-example = do
+example' :: GraphBuilder VRef
+example' = do
   n1 <- v (I32 42)
   n2 <- v (I32 100)
 
@@ -21,4 +21,4 @@ example = do
   n3 .+. n4
 
 runProgram :: [NodeBase.N NContent]
-runProgram = run example
+runProgram = run $ fibIter 4
