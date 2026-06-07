@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
 
@@ -12,19 +14,44 @@ import Prelude qualified as P
 
 -- DSL layer
 
-data KValue
+data CType
+  = CTInt
+  | CTDouble
+  | CTBool
 
-data KOp
+data KValue (ty :: CType)
 
-data KInfo
+data Value ty where
+  I32 :: Int -> Value 'CTInt
+  F64 :: Double -> Value 'CTDouble
 
-data KVar
+instance Show (Value ty) where
+  show (I32 i) = show i
+  show (F64 f) = show f
+
+data KOp (lhs :: CType) (rhs :: CType) (out :: CType)
+
+data Op lhs rhs out where
+  AddI :: Op 'CTInt 'CTInt 'CTInt
+  MulI :: Op 'CTInt 'CTInt 'CTInt
+  AddD :: Op 'CTDouble 'CTDouble 'CTDouble
+  MulD :: Op 'CTDouble 'CTDouble 'CTDouble
+
+instance Show (Op lhs rhs out) where
+  show AddI = "AddI"
+  show MulI = "MulI"
+  show AddD = "AddD"
+  show MulD = "MulD"
+
+data KVar (ty :: CType)
 
 data NContent tag where
-  Val :: Value -> NContent KValue
-  Op :: Op -> NContent KOp
-  Info :: String -> NContent KInfo
-  Var :: String -> NPtr NContent KValue -> NContent KVar
+  Val :: Value ty -> NContent (KValue ty)
+  Op :: Op lhs rhs out -> NContent (KOp lhs rhs out)
+  Var ::
+    String ->
+    NPtr NContent (KValue ty) ->
+    NContent (KVar ty)
 
 padRight :: Int -> String -> String
 padRight n s = s ++ replicate (n - P.length s) ' '
@@ -35,58 +62,45 @@ padRightF = padRight 8
 instance Show (NContent tag) where
   show (Val val) = padRightF "=>" ++ show val
   show (Op op) = padRightF "Op " ++ show op
-  show (Info inf) = padRightF "Inf " ++ inf
   show (Var name val) = padRightF "===" ++ name ++ " = " ++ show val
 
 type GraphBuilder = NBuilder NContent
 
 type Ref tag = NRef NContent tag
 
-type ValRef = Ref KValue
-
-type OpRef = Ref KOp
-
-type InfoRef = Ref KInfo
-
-type VarRef = Ref KVar
-
-data Value
-  = I32 Int
-  | F64 Double
-
-instance Show Value where
-  show (I32 i) = show i
-  show (F64 f) = show f
-
-data Op
-  = Add
-  | Mul
-  deriving stock (Show)
-
-v :: Value -> GraphBuilder ValRef
+v ::
+  Value ty ->
+  GraphBuilder (Ref (KValue ty))
 v val = node (Val val)
 
-o :: Op -> GraphBuilder OpRef
+o ::
+  Op lhs rhs out ->
+  GraphBuilder (Ref (KOp lhs rhs out))
 o op = node (Op op)
 
-info :: String -> GraphBuilder InfoRef
-info str = node (Info str)
-
-var :: String -> Value -> GraphBuilder VarRef
+var ::
+  String ->
+  Value ty ->
+  GraphBuilder (Ref (KVar ty))
 var name val = do
   valueRef <- v val
   case freezeRef valueRef of
     Ur valuePtr ->
       node (Var name valuePtr)
 
-readVar :: VarRef %1 -> GraphBuilder (LPair VarRef ValRef)
+readVar ::
+  Ref (KVar ty) %1 ->
+  GraphBuilder (LPair (Ref (KVar ty)) (Ref (KValue ty)))
 readVar ref =
   cloneNodeWith
     ref
     $ \(Var _ ptr) ->
       copyPtr ptr
 
-writeVar :: VarRef %1 -> ValRef %1 -> GraphBuilder VarRef
+writeVar ::
+  Ref (KVar ty) %1 ->
+  Ref (KValue ty) %1 ->
+  GraphBuilder (Ref (KVar ty))
 writeVar varRef valueRef =
   zipNode2WithId
     varRef
@@ -97,56 +111,63 @@ writeVar varRef valueRef =
             Var name (NPtr valueId valueContent)
     )
 
-binaryValueOp :: Op -> Value -> Value -> Value
-binaryValueOp Add (I32 x) (I32 y) = I32 (x + y)
-binaryValueOp Mul (I32 x) (I32 y) = I32 (x * y)
-binaryValueOp Add (F64 x) (F64 y) = F64 (x + y)
-binaryValueOp Mul (F64 x) (F64 y) = F64 (x * y)
-binaryValueOp op lhs rhs =
-  error $
-    "Type mismatch"
-      ++ "\n  LHS: "
-      ++ show lhs
-      ++ "\n  OP: "
-      ++ show op
-      ++ "\n  RHS: "
-      ++ show rhs
+binaryValueOp ::
+  Op lhs rhs out ->
+  Value lhs ->
+  Value rhs ->
+  Value out
+binaryValueOp AddI (I32 x) (I32 y) = I32 (x + y)
+binaryValueOp MulI (I32 x) (I32 y) = I32 (x * y)
+binaryValueOp AddD (F64 x) (F64 y) = F64 (x + y)
+binaryValueOp MulD (F64 x) (F64 y) = F64 (x * y)
 
-eval :: NContent KValue -> NContent KOp -> NContent KValue -> NContent KValue
-eval (Val lhs) (Op op) (Val rhs) =
-  Val (binaryValueOp op lhs rhs)
+eval ::
+  NContent (KValue lhs) ->
+  NContent (KOp lhs rhs out) ->
+  NContent (KValue rhs) ->
+  NContent (KValue out)
+eval (Val lhs) (Op op) (Val rhs) = Val (binaryValueOp op lhs rhs)
 
-e :: ValRef %1 -> OpRef %1 -> ValRef %1 -> GraphBuilder ValRef
+e ::
+  Ref (KValue lhs) %1 ->
+  Ref (KOp lhs rhs out) %1 ->
+  Ref (KValue rhs) %1 ->
+  GraphBuilder (Ref (KValue out))
 e refA refOp refB = zipNode3 refA refOp refB eval
 
-(.+.) :: ValRef %1 -> ValRef %1 -> GraphBuilder ValRef
+(.+.) ::
+  Ref (KValue 'CTInt) %1 ->
+  Ref (KValue 'CTInt) %1 ->
+  GraphBuilder (Ref (KValue 'CTInt))
 (.+.) a b = do
-  add <- o Add
+  add <- o AddI
   e a add b
 
-(.*.) :: ValRef %1 -> ValRef %1 -> GraphBuilder ValRef
+(.*.) ::
+  Ref (KValue 'CTInt) %1 ->
+  Ref (KValue 'CTInt) %1 ->
+  GraphBuilder (Ref (KValue 'CTInt))
 (.*.) a b = do
-  mul <- o Mul
+  mul <- o MulI
   e a mul b
 
-example :: GraphBuilder InfoRef
+example :: GraphBuilder (Ref (KValue 'CTInt))
 example = do
   x0 <- var "x" (I32 10)
 
   LPair x1 a <- readVar x0
-  LPair x2 b <- readVar x1
+  b <- v (I32 20)
 
   c <- a .+. b
 
-  x3 <- writeVar x2 c
+  x3 <- writeVar x1 c
 
   LPair x4 n5 <- readVar x3
   dropNodeM x4
 
-  mapNode n5 $ \result ->
-    Info $ "The result is: " ++ show result
+  return n5
 
-fib :: Int -> GraphBuilder ValRef
+fib :: Int -> GraphBuilder (Ref (KValue 'CTInt))
 fib 0 = v (I32 0)
 fib 1 = v (I32 1)
 fib n = do
@@ -154,13 +175,17 @@ fib n = do
   n2 <- fib (n - 2)
   n1 .+. n2
 
-fibIter :: Int -> GraphBuilder ValRef
+fibIter :: Int -> GraphBuilder (Ref (KValue 'CTInt))
 fibIter n = do
   prev0 <- var "prev" (I32 0)
   curr0 <- var "curr" (I32 1)
   go n prev0 curr0
   where
-    go :: Int -> VarRef %1 -> VarRef %1 -> GraphBuilder ValRef
+    go ::
+      Int ->
+      Ref (KVar 'CTInt) %1 ->
+      Ref (KVar 'CTInt) %1 ->
+      GraphBuilder (Ref (KValue 'CTInt))
     go 0 prev curr = do
       LPair prev' result <- readVar prev
       dropNodeM curr
