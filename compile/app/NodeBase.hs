@@ -9,20 +9,20 @@ module NodeBase
   ( G (..),
     GBuilder,
     GBuilderState (..),
-    N (..),
+    NRecord (..),
     Some (..),
     NId,
-    NHandle (..),
+    N (..),
     NSnapshot (..),
     freeze,
-    copyPtr,
-    node,
+    makeNode,
     dropNode,
     dropNodeM,
-    inspectNode,
+    withNode,
     splitNode,
     cloneNode,
     cloneNodeWith,
+    cloneNodeFromSnapshot,
     mapNode,
     zipNode2,
     zipNode2WithId,
@@ -35,7 +35,7 @@ import Control.Functor.Linear
 import Prelude.Linear
 import Prelude qualified as P
 
--- Generic node layer
+-- Generic createNode layer
 
 type NId = Int
 
@@ -45,39 +45,42 @@ data Some content where
 instance (forall tag. P.Show (content tag)) => P.Show (Some content) where
   show (Some content) = P.show content
 
-data N content where
-  N :: NId -> Some content -> [NId] -> N content
+data NRecord content = NRecord
+  { nodeId :: NId,
+    nodeParents :: [NId],
+    nodeContent :: Some content
+  }
 
-instance (forall tag. P.Show (content tag)) => P.Show (N content) where
-  show (N nid content handles) =
+instance (forall tag. P.Show (content tag)) => P.Show (NRecord content) where
+  show (NRecord nid content nodes) =
     padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ padRight 14 (P.show handles)
+      P.++ padRight 14 (P.show nodes)
       P.++ padRight 20 (P.show content)
     where
       padRight :: Int -> String -> String
       padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
 
-data NHandle content tag where
-  NHandle :: Ur NId %1 -> Ur (content tag) %1 -> NHandle content tag
+data N content tag where
+  N :: Ur NId %1 -> Ur (content tag) %1 -> N content tag
 
-instance Consumable (NHandle content tag) where
-  consume (NHandle nid content) =
+instance Consumable (N content tag) where
+  consume (N nid content) =
     consume nid `lseq` consume content
 
 data NSnapshot content tag where
-  NPtr :: NId -> content tag -> NSnapshot content tag
+  NSnapshot :: NId -> content tag -> NSnapshot content tag
 
 instance (P.Show (content tag)) => P.Show (NSnapshot content tag) where
-  show (NPtr nid _) =
+  show (NSnapshot nid _) =
     "$[N" P.++ P.show nid P.++ "]"
 
 newtype G content = G
-  { graphNodes :: [N content]
+  { graphNodes :: [NRecord content]
   }
 
 data GBuilderState content = GBuilderState
   { nextId :: Ur NId,
-    nodes :: Ur [N content]
+    nodes :: Ur [NRecord content]
   }
 
 instance Consumable (GBuilderState content) where
@@ -94,126 +97,123 @@ instance Dupable (GBuilderState content) where
 
 type GBuilder content = State (GBuilderState content)
 
-freeze :: NHandle content tag %1 -> Ur (NSnapshot content tag)
-freeze handle =
-  withNHandle
-    handle
+freeze :: N content tag %1 -> Ur (NSnapshot content tag)
+freeze node =
+  withNode
+    node
     ( \nid content ->
-        Ur (NPtr nid content)
+        Ur (NSnapshot nid content)
     )
 
-copyPtr :: NSnapshot content tag -> GBuilder content (NHandle content tag)
-copyPtr (NPtr nid content) = makeNHandle content [nid]
-
-makeN :: content tag -> [NId] -> GBuilder content (Ur NId)
-makeN content handles = do
+makeNRecord :: content tag -> [NId] -> GBuilder content (Ur NId)
+makeNRecord content parentsIds = do
   (GBuilderState (Ur oldNextId) (Ur oldNodes)) <- get
   let newId = oldNextId
-      newNode = N newId (Some content) handles
+      newNode = NRecord newId parentsIds (Some content)
   put (GBuilderState (Ur (newId + 1)) (Ur (oldNodes ++ [newNode])))
   return (Ur newId)
 
-makeNHandle :: content tag -> [NId] -> GBuilder content (NHandle content tag)
-makeNHandle content handles = do
-  Ur nid <- makeN content handles
-  return (NHandle (Ur nid) (Ur content))
+makeN :: content tag -> [NId] -> GBuilder content (N content tag)
+makeN content parentsIds = do
+  Ur nid <- makeNRecord content parentsIds
+  return (N (Ur nid) (Ur content))
 
-withNHandle :: NHandle content tag %1 -> (NId -> content tag -> r) %1 -> r
-withNHandle (NHandle (Ur nid) (Ur content)) k = k nid content
+withNode :: N content tag %1 -> (NId -> content tag -> r) %1 -> r
+withNode (N (Ur nid) (Ur content)) k = k nid content
 
-node :: content tag -> GBuilder content (NHandle content tag)
-node content = makeNHandle content []
+makeNode :: content tag -> GBuilder content (N content tag)
+makeNode content = makeN content []
 
-dropNode :: NHandle content tag %1 -> ()
+dropNode :: N content tag %1 -> ()
 dropNode = consume
 
-dropNodeM :: NHandle content tag %1 -> GBuilder content ()
-dropNodeM handle =
-  consume handle `lseq` return ()
-
-inspectNode :: NHandle content tag %1 -> (NId -> content tag -> r) %1 -> r
-inspectNode (NHandle (Ur nid) (Ur content)) k = k nid content
+dropNodeM :: N content tag %1 -> GBuilder content ()
+dropNodeM node =
+  consume node `lseq` return ()
 
 splitNode ::
-  NHandle content a %1 ->
+  N content a %1 ->
   (content a -> (content b, content c)) ->
-  GBuilder content (NHandle content b, NHandle content c)
-splitNode handle f =
-  inspectNode handle $ \nid content -> do
+  GBuilder content (N content b, N content c)
+splitNode node f =
+  withNode node $ \nid content -> do
     let (outB, outC) = f content
-    handleB <- makeNHandle outB [nid]
-    handleC <- makeNHandle outC [nid]
-    return (handleB, handleC)
+    nodeB <- makeN outB [nid]
+    nodeC <- makeN outC [nid]
+    return (nodeB, nodeC)
 
 cloneNode ::
-  NHandle content a %1 ->
+  N content a %1 ->
   (content a -> content b) ->
-  GBuilder content (NHandle content a, NHandle content b)
-cloneNode handle f = splitNode handle $ \content ->
+  GBuilder content (N content a, N content b)
+cloneNode node f = splitNode node $ \content ->
   let outB = f content
    in (content, outB)
 
 cloneNodeWith ::
-  NHandle content a %1 ->
-  (content a -> GBuilder content (NHandle content b)) ->
-  GBuilder content (NHandle content a, NHandle content b)
-cloneNodeWith handle f =
-  withNHandle
-    handle
+  N content a %1 ->
+  (content a -> GBuilder content (N content b)) ->
+  GBuilder content (N content a, N content b)
+cloneNodeWith node f =
+  withNode
+    node
     ( \nid content -> do
-        nextHandle <- makeNHandle content [nid]
-        outHandle <- f content
-        return (nextHandle, outHandle)
+        next <- makeN content [nid]
+        out <- f content
+        return (next, out)
     )
 
+cloneNodeFromSnapshot :: NSnapshot content tag -> GBuilder content (N content tag)
+cloneNodeFromSnapshot (NSnapshot nid content) = makeN content [nid]
+
 mapNode ::
-  NHandle content a %1 ->
+  N content a %1 ->
   (content a -> content b) ->
-  GBuilder content (NHandle content b)
-mapNode handle f =
-  withNHandle handle $ \nid content -> do
-    makeNHandle (f content) [nid]
+  GBuilder content (N content b)
+mapNode node f =
+  withNode node $ \nid content -> do
+    makeN (f content) [nid]
 
 zipNode2 ::
-  NHandle content a %1 ->
-  NHandle content b %1 ->
+  N content a %1 ->
+  N content b %1 ->
   (content a -> content b -> content tag) ->
-  GBuilder content (NHandle content tag)
-zipNode2 handleA handleB makeContent =
-  withNHandle handleA $ \aId contentA ->
-    withNHandle handleB $ \bId contentB -> do
-      let handles = [aId, bId]
-      makeNHandle
+  GBuilder content (N content tag)
+zipNode2 nodeA nodeB makeContent =
+  withNode nodeA $ \aId contentA ->
+    withNode nodeB $ \bId contentB -> do
+      let nodes = [aId, bId]
+      makeN
         (makeContent contentA contentB)
-        handles
+        nodes
 
 zipNode2WithId ::
-  NHandle content a %1 ->
-  NHandle content b %1 ->
+  N content a %1 ->
+  N content b %1 ->
   (NId -> content a -> NId -> content b -> content tag) ->
-  GBuilder content (NHandle content tag)
-zipNode2WithId handleA handleB makeContent =
-  withNHandle handleA $ \aId contentA ->
-    withNHandle handleB $ \bId contentB -> do
-      let handles = [aId, bId]
-      makeNHandle
+  GBuilder content (N content tag)
+zipNode2WithId nodeA nodeB makeContent =
+  withNode nodeA $ \aId contentA ->
+    withNode nodeB $ \bId contentB -> do
+      let nodes = [aId, bId]
+      makeN
         (makeContent aId contentA bId contentB)
-        handles
+        nodes
 
 zipNode3 ::
-  NHandle content a %1 ->
-  NHandle content b %1 ->
-  NHandle content c %1 ->
+  N content a %1 ->
+  N content b %1 ->
+  N content c %1 ->
   (content a -> content b -> content c -> content tag) ->
-  GBuilder content (NHandle content tag)
-zipNode3 handleA handleB handleC makeContent =
-  withNHandle handleA $ \aId contentA ->
-    withNHandle handleB $ \bId contentB ->
-      withNHandle handleC $ \cId contentC -> do
-        let handles = [aId, bId, cId]
-        makeNHandle
+  GBuilder content (N content tag)
+zipNode3 nodeA nodeB nodeC makeContent =
+  withNode nodeA $ \aId contentA ->
+    withNode nodeB $ \bId contentB ->
+      withNode nodeC $ \cId contentC -> do
+        let nodes = [aId, bId, cId]
+        makeN
           (makeContent contentA contentB contentC)
-          handles
+          nodes
 
 buildGraph :: GBuilder content tag -> G content
 buildGraph builder =
