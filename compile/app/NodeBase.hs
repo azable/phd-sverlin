@@ -12,7 +12,7 @@ module NodeBase
     NRecord (..),
     Some (..),
     NId,
-    N (..),
+    N,
     NSnapshot (..),
     freeze,
     makeNode,
@@ -52,9 +52,9 @@ data NRecord content = NRecord
   }
 
 instance (forall tag. P.Show (content tag)) => P.Show (NRecord content) where
-  show (NRecord nid content nodes) =
+  show (NRecord nid parents content) =
     padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ padRight 14 (P.show nodes)
+      P.++ padRight 14 (P.show parents)
       P.++ padRight 20 (P.show content)
     where
       padRight :: Int -> String -> String
