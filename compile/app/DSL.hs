@@ -21,7 +21,7 @@ data KInfo
 data KVar
 
 data NContent tag where
-  EVal :: Value -> NContent KValue
+  Val :: Value -> NContent KValue
   Op :: Op -> NContent KOp
   Info :: String -> NContent KInfo
   Var :: String -> NPtr NContent KValue -> NContent KVar
@@ -33,18 +33,18 @@ padRightF :: String -> String
 padRightF = padRight 8
 
 instance Show (NContent tag) where
-  show (EVal val) = padRightF "=>" ++ show val
+  show (Val val) = padRightF "=>" ++ show val
   show (Op op) = padRightF "Op " ++ show op
-  show (Info info) = padRightF "Inf " ++ info
+  show (Info inf) = padRightF "Inf " ++ inf
   show (Var name val) = padRightF "===" ++ name ++ " = " ++ show val
 
 type GraphBuilder = NBuilder NContent
 
 type Ref tag = NRef NContent tag
 
-type VRef = Ref KValue
+type ValRef = Ref KValue
 
-type ORef = Ref KOp
+type OpRef = Ref KOp
 
 type InfoRef = Ref KInfo
 
@@ -63,10 +63,10 @@ data Op
   | Mul
   deriving stock (Show)
 
-v :: Value -> GraphBuilder VRef
-v val = node (EVal val)
+v :: Value -> GraphBuilder ValRef
+v val = node (Val val)
 
-o :: Op -> GraphBuilder ORef
+o :: Op -> GraphBuilder OpRef
 o op = node (Op op)
 
 info :: String -> GraphBuilder InfoRef
@@ -79,14 +79,14 @@ var name val = do
     Ur valuePtr ->
       node (Var name valuePtr)
 
-readVar :: VarRef %1 -> GraphBuilder (LPair VarRef VRef)
+readVar :: VarRef %1 -> GraphBuilder (LPair VarRef ValRef)
 readVar ref =
   cloneNodeWith
     ref
     $ \(Var _ ptr) ->
       copyPtr ptr
 
-writeVar :: VarRef %1 -> VRef %1 -> GraphBuilder VarRef
+writeVar :: VarRef %1 -> ValRef %1 -> GraphBuilder VarRef
 writeVar varRef valueRef =
   zipNode2WithId
     varRef
@@ -113,18 +113,18 @@ binaryValueOp op lhs rhs =
       ++ show rhs
 
 eval :: NContent KValue -> NContent KOp -> NContent KValue -> NContent KValue
-eval (EVal lhs) (Op op) (EVal rhs) =
-  EVal (binaryValueOp op lhs rhs)
+eval (Val lhs) (Op op) (Val rhs) =
+  Val (binaryValueOp op lhs rhs)
 
-e :: VRef %1 -> ORef %1 -> VRef %1 -> GraphBuilder VRef
+e :: ValRef %1 -> OpRef %1 -> ValRef %1 -> GraphBuilder ValRef
 e refA refOp refB = zipNode3 refA refOp refB eval
 
-(.+.) :: VRef %1 -> VRef %1 -> GraphBuilder VRef
+(.+.) :: ValRef %1 -> ValRef %1 -> GraphBuilder ValRef
 (.+.) a b = do
   add <- o Add
   e a add b
 
-(.*.) :: VRef %1 -> VRef %1 -> GraphBuilder VRef
+(.*.) :: ValRef %1 -> ValRef %1 -> GraphBuilder ValRef
 (.*.) a b = do
   mul <- o Mul
   e a mul b
@@ -146,7 +146,7 @@ example = do
   mapNode n5 $ \result ->
     Info $ "The result is: " ++ show result
 
-fib :: Int -> GraphBuilder VRef
+fib :: Int -> GraphBuilder ValRef
 fib 0 = v (I32 0)
 fib 1 = v (I32 1)
 fib n = do
@@ -154,13 +154,13 @@ fib n = do
   n2 <- fib (n - 2)
   n1 .+. n2
 
-fibIter :: Int -> GraphBuilder VRef
+fibIter :: Int -> GraphBuilder ValRef
 fibIter n = do
   prev0 <- var "prev" (I32 0)
   curr0 <- var "curr" (I32 1)
   go n prev0 curr0
   where
-    go :: Int -> VarRef %1 -> VarRef %1 -> GraphBuilder VRef
+    go :: Int -> VarRef %1 -> VarRef %1 -> GraphBuilder ValRef
     go 0 prev curr = do
       LPair prev' result <- readVar prev
       dropNodeM curr
