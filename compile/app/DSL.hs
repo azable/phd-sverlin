@@ -74,17 +74,16 @@ var ::
   Value ty ->
   Builder (Node (KVar ty))
 var name val = do
-  valueHandle <- v val
-  case freeze valueHandle of
-    Ur valuePtr ->
-      makeNode (NVar name valuePtr)
+  valueNode <- v val
+  case freeze valueNode of
+    Ur valuePtr -> makeNode (NVar name valuePtr)
 
 readVar ::
   Node (KVar ty) %1 ->
   Builder (Node (KVar ty), Node (KValue ty))
-readVar handle =
+readVar node =
   cloneNodeWith
-    handle
+    node
     $ \(NVar _ snapshot) ->
       cloneNodeFromSnapshot snapshot
 
@@ -92,14 +91,12 @@ writeVar ::
   Node (KVar ty) %1 ->
   Node (KValue ty) %1 ->
   Builder (Node (KVar ty))
-writeVar varHandle valueHandle =
+writeVar varNode valueNode =
   zipNode2WithId
-    varHandle
-    valueHandle
-    ( \_ varContent valueId valueContent ->
-        case varContent of
-          NVar name _ ->
-            NVar name (NSnapshot valueId valueContent)
+    varNode
+    valueNode
+    ( \_ (NVar varName _) valueId valueContent ->
+        NVar varName (NSnapshot valueId valueContent)
     )
 
 binaryValueOp ::
@@ -124,7 +121,7 @@ e ::
   Node (KOp lhs rhs out) %1 ->
   Node (KValue rhs) %1 ->
   Builder (Node (KValue out))
-e handleA handleOp handleB = zipNode3 handleA handleOp handleB eval
+e lhsNode opNode rhsNode = zipNode3 lhsNode opNode rhsNode eval
 
 (.+.) ::
   Node (KValue 'CTInt) %1 ->
