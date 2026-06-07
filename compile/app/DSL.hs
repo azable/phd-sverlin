@@ -6,7 +6,7 @@
 {-# LANGUAGE RebindableSyntax #-}
 
 module DSL
-  ( NodeData,
+  ( NodeContent,
     G (..),
     run,
     example,
@@ -50,14 +50,14 @@ data Op lhs rhs out where
 
 data KVar (ty :: CType)
 
-data NodeData tag where
-  NValue :: Value ty -> NodeData (KValue ty)
-  NOp :: Op lhs rhs out -> NodeData (KOp lhs rhs out)
-  NVar :: String -> NSnapshot NodeData (KValue ty) -> NodeData (KVar ty)
+data NodeContent tag where
+  NValue :: Value ty -> NodeContent (KValue ty)
+  NOp :: Op lhs rhs out -> NodeContent (KOp lhs rhs out)
+  NVar :: String -> NSnapshot NodeContent (KValue ty) -> NodeContent (KVar ty)
 
-type Builder = GBuilder NodeData
+type Builder = GBuilder NodeContent
 
-type Node tag = N NodeData tag
+type Node tag = N NodeContent tag
 
 v ::
   Value ty ->
@@ -113,10 +113,10 @@ binaryValueOp AddD (F64 x) (F64 y) = F64 (x + y)
 binaryValueOp MulD (F64 x) (F64 y) = F64 (x * y)
 
 eval ::
-  NodeData (KValue lhs) ->
-  NodeData (KOp lhs rhs out) ->
-  NodeData (KValue rhs) ->
-  NodeData (KValue out)
+  NodeContent (KValue lhs) ->
+  NodeContent (KOp lhs rhs out) ->
+  NodeContent (KValue rhs) ->
+  NodeContent (KValue out)
 eval (NValue lhs) (NOp op) (NValue rhs) = NValue (binaryValueOp op lhs rhs)
 
 e ::
@@ -194,7 +194,7 @@ fibIter n = do
 
       go (k - 1) prev2 curr3
 
-run :: Builder (Node tag) -> G NodeData
+run :: Builder (Node tag) -> G NodeContent
 run = buildGraph
 
 --- Formatting typeclasses
@@ -205,7 +205,7 @@ padRight n s = s ++ replicate (n - P.length s) ' '
 padRightF :: String -> String
 padRightF = padRight 8
 
-instance Show (NodeData tag) where
+instance Show (NodeContent tag) where
   show (NValue val) = padRightF "=>" ++ show val
   show (NOp op) = padRightF "Op " ++ show op
   show (NVar name val) = padRightF "===" ++ name ++ " = " ++ show val

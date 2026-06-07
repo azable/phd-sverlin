@@ -5,7 +5,7 @@
 
 module Program
   ( runProgram,
-    NodeData,
+    NodeContent,
     G,
   )
 where
@@ -25,5 +25,5 @@ import Prelude.Linear
 
 --   n3 .+. n4
 
-runProgram :: G NodeData
+runProgram :: G NodeContent
 runProgram = run $ fibIter 20
