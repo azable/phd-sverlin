@@ -12,9 +12,9 @@ module NodeBase
     N (..),
     Some (..),
     NId,
-    NLive (..),
-    NPtr (..),
-    freezeRef,
+    NHandle (..),
+    NSnapshot (..),
+    freeze,
     copyPtr,
     node,
     dropNode,
@@ -49,27 +49,27 @@ data N content where
   N :: NId -> Some content -> [NId] -> N content
 
 instance (forall tag. P.Show (content tag)) => P.Show (N content) where
-  show (N nid content refs) =
+  show (N nid content handles) =
     padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ padRight 14 (P.show refs)
+      P.++ padRight 14 (P.show handles)
       P.++ padRight 20 (P.show content)
     where
       padRight :: Int -> String -> String
       padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
 
-data NLive content tag where
-  NLive :: Ur NId %1 -> Ur (content tag) %1 -> NLive content tag
+data NHandle content tag where
+  NHandle :: Ur NId %1 -> Ur (content tag) %1 -> NHandle content tag
 
-instance Consumable (NLive content tag) where
-  consume (NLive nid content) =
+instance Consumable (NHandle content tag) where
+  consume (NHandle nid content) =
     consume nid `lseq` consume content
 
-data NPtr content tag where
-  NPtr :: NId -> content tag -> NPtr content tag
+data NSnapshot content tag where
+  NPtr :: NId -> content tag -> NSnapshot content tag
 
-instance (P.Show (content tag)) => P.Show (NPtr content tag) where
+instance (P.Show (content tag)) => P.Show (NSnapshot content tag) where
   show (NPtr nid _) =
-    "[NLive" P.++ P.show nid P.++ "]"
+    "$[N" P.++ P.show nid P.++ "]"
 
 newtype G content = G
   { graphNodes :: [N content]
@@ -94,126 +94,126 @@ instance Dupable (GBuilderState content) where
 
 type GBuilder content = State (GBuilderState content)
 
-freezeRef :: NLive content tag %1 -> Ur (NPtr content tag)
-freezeRef ref =
-  withNRef
-    ref
+freeze :: NHandle content tag %1 -> Ur (NSnapshot content tag)
+freeze handle =
+  withNHandle
+    handle
     ( \nid content ->
         Ur (NPtr nid content)
     )
 
-copyPtr :: NPtr content tag -> GBuilder content (NLive content tag)
-copyPtr (NPtr nid content) = makeNRef content [nid]
+copyPtr :: NSnapshot content tag -> GBuilder content (NHandle content tag)
+copyPtr (NPtr nid content) = makeNHandle content [nid]
 
 makeN :: content tag -> [NId] -> GBuilder content (Ur NId)
-makeN content refs = do
+makeN content handles = do
   (GBuilderState (Ur oldNextId) (Ur oldNodes)) <- get
   let newId = oldNextId
-      newNode = N newId (Some content) refs
+      newNode = N newId (Some content) handles
   put (GBuilderState (Ur (newId + 1)) (Ur (oldNodes ++ [newNode])))
   return (Ur newId)
 
-makeNRef :: content tag -> [NId] -> GBuilder content (NLive content tag)
-makeNRef content refs = do
-  Ur nid <- makeN content refs
-  return (NLive (Ur nid) (Ur content))
+makeNHandle :: content tag -> [NId] -> GBuilder content (NHandle content tag)
+makeNHandle content handles = do
+  Ur nid <- makeN content handles
+  return (NHandle (Ur nid) (Ur content))
 
-withNRef :: NLive content tag %1 -> (NId -> content tag -> r) %1 -> r
-withNRef (NLive (Ur nid) (Ur content)) k = k nid content
+withNHandle :: NHandle content tag %1 -> (NId -> content tag -> r) %1 -> r
+withNHandle (NHandle (Ur nid) (Ur content)) k = k nid content
 
-node :: content tag -> GBuilder content (NLive content tag)
-node content = makeNRef content []
+node :: content tag -> GBuilder content (NHandle content tag)
+node content = makeNHandle content []
 
-dropNode :: NLive content tag %1 -> ()
+dropNode :: NHandle content tag %1 -> ()
 dropNode = consume
 
-dropNodeM :: NLive content tag %1 -> GBuilder content ()
-dropNodeM ref =
-  consume ref `lseq` return ()
+dropNodeM :: NHandle content tag %1 -> GBuilder content ()
+dropNodeM handle =
+  consume handle `lseq` return ()
 
-inspectNode :: NLive content tag %1 -> (NId -> content tag -> r) %1 -> r
-inspectNode (NLive (Ur nid) (Ur content)) k = k nid content
+inspectNode :: NHandle content tag %1 -> (NId -> content tag -> r) %1 -> r
+inspectNode (NHandle (Ur nid) (Ur content)) k = k nid content
 
 splitNode ::
-  NLive content a %1 ->
+  NHandle content a %1 ->
   (content a -> (content b, content c)) ->
-  GBuilder content (NLive content b, NLive content c)
-splitNode ref f =
-  inspectNode ref $ \nid content -> do
+  GBuilder content (NHandle content b, NHandle content c)
+splitNode handle f =
+  inspectNode handle $ \nid content -> do
     let (outB, outC) = f content
-    refB <- makeNRef outB [nid]
-    refC <- makeNRef outC [nid]
-    return (refB, refC)
+    handleB <- makeNHandle outB [nid]
+    handleC <- makeNHandle outC [nid]
+    return (handleB, handleC)
 
 cloneNode ::
-  NLive content a %1 ->
+  NHandle content a %1 ->
   (content a -> content b) ->
-  GBuilder content (NLive content a, NLive content b)
-cloneNode ref f = splitNode ref $ \content ->
+  GBuilder content (NHandle content a, NHandle content b)
+cloneNode handle f = splitNode handle $ \content ->
   let outB = f content
    in (content, outB)
 
 cloneNodeWith ::
-  NLive content a %1 ->
-  (content a -> GBuilder content (NLive content b)) ->
-  GBuilder content (NLive content a, NLive content b)
-cloneNodeWith ref f =
-  withNRef
-    ref
+  NHandle content a %1 ->
+  (content a -> GBuilder content (NHandle content b)) ->
+  GBuilder content (NHandle content a, NHandle content b)
+cloneNodeWith handle f =
+  withNHandle
+    handle
     ( \nid content -> do
-        nextRef <- makeNRef content [nid]
-        outRef <- f content
-        return (nextRef, outRef)
+        nextHandle <- makeNHandle content [nid]
+        outHandle <- f content
+        return (nextHandle, outHandle)
     )
 
 mapNode ::
-  NLive content a %1 ->
+  NHandle content a %1 ->
   (content a -> content b) ->
-  GBuilder content (NLive content b)
-mapNode ref f =
-  withNRef ref $ \nid content -> do
-    makeNRef (f content) [nid]
+  GBuilder content (NHandle content b)
+mapNode handle f =
+  withNHandle handle $ \nid content -> do
+    makeNHandle (f content) [nid]
 
 zipNode2 ::
-  NLive content a %1 ->
-  NLive content b %1 ->
+  NHandle content a %1 ->
+  NHandle content b %1 ->
   (content a -> content b -> content tag) ->
-  GBuilder content (NLive content tag)
-zipNode2 refA refB makeContent =
-  withNRef refA $ \aId contentA ->
-    withNRef refB $ \bId contentB -> do
-      let refs = [aId, bId]
-      makeNRef
+  GBuilder content (NHandle content tag)
+zipNode2 handleA handleB makeContent =
+  withNHandle handleA $ \aId contentA ->
+    withNHandle handleB $ \bId contentB -> do
+      let handles = [aId, bId]
+      makeNHandle
         (makeContent contentA contentB)
-        refs
+        handles
 
 zipNode2WithId ::
-  NLive content a %1 ->
-  NLive content b %1 ->
+  NHandle content a %1 ->
+  NHandle content b %1 ->
   (NId -> content a -> NId -> content b -> content tag) ->
-  GBuilder content (NLive content tag)
-zipNode2WithId refA refB makeContent =
-  withNRef refA $ \aId contentA ->
-    withNRef refB $ \bId contentB -> do
-      let refs = [aId, bId]
-      makeNRef
+  GBuilder content (NHandle content tag)
+zipNode2WithId handleA handleB makeContent =
+  withNHandle handleA $ \aId contentA ->
+    withNHandle handleB $ \bId contentB -> do
+      let handles = [aId, bId]
+      makeNHandle
         (makeContent aId contentA bId contentB)
-        refs
+        handles
 
 zipNode3 ::
-  NLive content a %1 ->
-  NLive content b %1 ->
-  NLive content c %1 ->
+  NHandle content a %1 ->
+  NHandle content b %1 ->
+  NHandle content c %1 ->
   (content a -> content b -> content c -> content tag) ->
-  GBuilder content (NLive content tag)
-zipNode3 refA refB refC makeContent =
-  withNRef refA $ \aId contentA ->
-    withNRef refB $ \bId contentB ->
-      withNRef refC $ \cId contentC -> do
-        let refs = [aId, bId, cId]
-        makeNRef
+  GBuilder content (NHandle content tag)
+zipNode3 handleA handleB handleC makeContent =
+  withNHandle handleA $ \aId contentA ->
+    withNHandle handleB $ \bId contentB ->
+      withNHandle handleC $ \cId contentC -> do
+        let handles = [aId, bId, cId]
+        makeNHandle
           (makeContent contentA contentB contentC)
-          refs
+          handles
 
 buildGraph :: GBuilder content tag -> G content
 buildGraph builder =

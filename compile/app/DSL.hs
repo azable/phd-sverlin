@@ -53,49 +53,49 @@ data KVar (ty :: CType)
 data Node tag where
   NValue :: Value ty -> Node (KValue ty)
   NOp :: Op lhs rhs out -> Node (KOp lhs rhs out)
-  NVar :: String -> NPtr Node (KValue ty) -> Node (KVar ty)
+  NVar :: String -> NSnapshot Node (KValue ty) -> Node (KVar ty)
 
 type Builder = GBuilder Node
 
-type Live tag = NLive Node tag
+type NodeH tag = NHandle Node tag
 
 v ::
   Value ty ->
-  Builder (Live (KValue ty))
+  Builder (NodeH (KValue ty))
 v val = node (NValue val)
 
 o ::
   Op lhs rhs out ->
-  Builder (Live (KOp lhs rhs out))
+  Builder (NodeH (KOp lhs rhs out))
 o op = node (NOp op)
 
 var ::
   String ->
   Value ty ->
-  Builder (Live (KVar ty))
+  Builder (NodeH (KVar ty))
 var name val = do
-  valueRef <- v val
-  case freezeRef valueRef of
+  valueHandle <- v val
+  case freeze valueHandle of
     Ur valuePtr ->
       node (NVar name valuePtr)
 
 readVar ::
-  Live (KVar ty) %1 ->
-  Builder (Live (KVar ty), Live (KValue ty))
-readVar ref =
+  NodeH (KVar ty) %1 ->
+  Builder (NodeH (KVar ty), NodeH (KValue ty))
+readVar handle =
   cloneNodeWith
-    ref
+    handle
     $ \(NVar _ ptr) ->
       copyPtr ptr
 
 writeVar ::
-  Live (KVar ty) %1 ->
-  Live (KValue ty) %1 ->
-  Builder (Live (KVar ty))
-writeVar varRef valueRef =
+  NodeH (KVar ty) %1 ->
+  NodeH (KValue ty) %1 ->
+  Builder (NodeH (KVar ty))
+writeVar varHandle valueHandle =
   zipNode2WithId
-    varRef
-    valueRef
+    varHandle
+    valueHandle
     ( \_ varContent valueId valueContent ->
         case varContent of
           NVar name _ ->
@@ -120,29 +120,29 @@ eval ::
 eval (NValue lhs) (NOp op) (NValue rhs) = NValue (binaryValueOp op lhs rhs)
 
 e ::
-  Live (KValue lhs) %1 ->
-  Live (KOp lhs rhs out) %1 ->
-  Live (KValue rhs) %1 ->
-  Builder (Live (KValue out))
-e refA refOp refB = zipNode3 refA refOp refB eval
+  NodeH (KValue lhs) %1 ->
+  NodeH (KOp lhs rhs out) %1 ->
+  NodeH (KValue rhs) %1 ->
+  Builder (NodeH (KValue out))
+e handleA handleOp handleB = zipNode3 handleA handleOp handleB eval
 
 (.+.) ::
-  Live (KValue 'CTInt) %1 ->
-  Live (KValue 'CTInt) %1 ->
-  Builder (Live (KValue 'CTInt))
+  NodeH (KValue 'CTInt) %1 ->
+  NodeH (KValue 'CTInt) %1 ->
+  Builder (NodeH (KValue 'CTInt))
 (.+.) a b = do
   add <- o AddI
   e a add b
 
 (.*.) ::
-  Live (KValue 'CTInt) %1 ->
-  Live (KValue 'CTInt) %1 ->
-  Builder (Live (KValue 'CTInt))
+  NodeH (KValue 'CTInt) %1 ->
+  NodeH (KValue 'CTInt) %1 ->
+  Builder (NodeH (KValue 'CTInt))
 (.*.) a b = do
   mul <- o MulI
   e a mul b
 
-example :: Builder (Live (KValue 'CTInt))
+example :: Builder (NodeH (KValue 'CTInt))
 example = do
   x0 <- var "x" (I32 10)
 
@@ -158,7 +158,7 @@ example = do
 
   return n5
 
-fib :: Int -> Builder (Live (KValue 'CTInt))
+fib :: Int -> Builder (NodeH (KValue 'CTInt))
 fib 0 = v (I32 0)
 fib 1 = v (I32 1)
 fib n = do
@@ -166,7 +166,7 @@ fib n = do
   n2 <- fib (n - 2)
   n1 .+. n2
 
-fibIter :: Int -> Builder (Live (KValue 'CTInt))
+fibIter :: Int -> Builder (NodeH (KValue 'CTInt))
 fibIter n = do
   prev0 <- var "prev" (I32 0)
   curr0 <- var "curr" (I32 1)
@@ -174,9 +174,9 @@ fibIter n = do
   where
     go ::
       Int ->
-      Live (KVar 'CTInt) %1 ->
-      Live (KVar 'CTInt) %1 ->
-      Builder (Live (KValue 'CTInt))
+      NodeH (KVar 'CTInt) %1 ->
+      NodeH (KVar 'CTInt) %1 ->
+      Builder (NodeH (KValue 'CTInt))
     go 0 prev curr = do
       (prev', result) <- readVar prev
       dropNodeM curr
@@ -194,7 +194,7 @@ fibIter n = do
 
       go (k - 1) prev2 curr3
 
-run :: Builder (Live tag) -> G Node
+run :: Builder (NodeH tag) -> G Node
 run = buildGraph
 
 --- Formatting typeclasses
