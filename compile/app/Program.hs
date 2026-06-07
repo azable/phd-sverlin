@@ -3,11 +3,16 @@
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
 
-module Program where
+module Program
+  ( runProgram,
+    Node,
+    G,
+  )
+where
 
 -- import Control.Functor.Linear
 import DSL
-import NodeBase qualified
+-- import NodeBase qualified
 import Prelude.Linear
 
 -- example' :: GraphBuilder ValRef
@@ -20,5 +25,5 @@ import Prelude.Linear
 
 --   n3 .+. n4
 
-runProgram :: [NodeBase.N Node]
+runProgram :: G Node
 runProgram = run $ fibIter 20
