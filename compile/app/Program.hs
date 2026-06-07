@@ -20,5 +20,5 @@ import Prelude.Linear
 
 --   n3 .+. n4
 
-runProgram :: [NodeBase.N NContent]
+runProgram :: [NodeBase.N Node]
 runProgram = run $ fibIter 20

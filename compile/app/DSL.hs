@@ -5,7 +5,22 @@
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
 
-module DSL where
+module DSL
+  ( Node,
+    run,
+    example,
+    fib,
+    fibIter,
+    v,
+    o,
+    var,
+    readVar,
+    writeVar,
+    e,
+    (.+.),
+    (.*.),
+  )
+where
 
 import Control.Functor.Linear
 import NodeBase
@@ -17,17 +32,12 @@ import Prelude qualified as P
 data CType
   = CTInt
   | CTDouble
-  | CTBool
 
 data KValue (ty :: CType)
 
 data Value ty where
   I32 :: Int -> Value 'CTInt
   F64 :: Double -> Value 'CTDouble
-
-instance Show (Value ty) where
-  show (I32 i) = show i
-  show (F64 f) = show f
 
 data KOp (lhs :: CType) (rhs :: CType) (out :: CType)
 
@@ -37,78 +47,58 @@ data Op lhs rhs out where
   AddD :: Op 'CTDouble 'CTDouble 'CTDouble
   MulD :: Op 'CTDouble 'CTDouble 'CTDouble
 
-instance Show (Op lhs rhs out) where
-  show AddI = "AddI"
-  show MulI = "MulI"
-  show AddD = "AddD"
-  show MulD = "MulD"
-
 data KVar (ty :: CType)
 
-data NContent tag where
-  Val :: Value ty -> NContent (KValue ty)
-  Op :: Op lhs rhs out -> NContent (KOp lhs rhs out)
-  Var ::
-    String ->
-    NPtr NContent (KValue ty) ->
-    NContent (KVar ty)
+data Node tag where
+  NValue :: Value ty -> Node (KValue ty)
+  NOp :: Op lhs rhs out -> Node (KOp lhs rhs out)
+  NVar :: String -> NPtr Node (KValue ty) -> Node (KVar ty)
 
-padRight :: Int -> String -> String
-padRight n s = s ++ replicate (n - P.length s) ' '
+type Builder = NBuilder Node
 
-padRightF :: String -> String
-padRightF = padRight 8
-
-instance Show (NContent tag) where
-  show (Val val) = padRightF "=>" ++ show val
-  show (Op op) = padRightF "Op " ++ show op
-  show (Var name val) = padRightF "===" ++ name ++ " = " ++ show val
-
-type GraphBuilder = NBuilder NContent
-
-type Ref tag = NRef NContent tag
+type NodeRef tag = NRef Node tag
 
 v ::
   Value ty ->
-  GraphBuilder (Ref (KValue ty))
-v val = node (Val val)
+  Builder (NodeRef (KValue ty))
+v val = node (NValue val)
 
 o ::
   Op lhs rhs out ->
-  GraphBuilder (Ref (KOp lhs rhs out))
-o op = node (Op op)
+  Builder (NodeRef (KOp lhs rhs out))
+o op = node (NOp op)
 
 var ::
   String ->
   Value ty ->
-  GraphBuilder (Ref (KVar ty))
+  Builder (NodeRef (KVar ty))
 var name val = do
   valueRef <- v val
   case freezeRef valueRef of
     Ur valuePtr ->
-      node (Var name valuePtr)
+      node (NVar name valuePtr)
 
 readVar ::
-  Ref (KVar ty) %1 ->
-  GraphBuilder (LPair (Ref (KVar ty)) (Ref (KValue ty)))
+  NodeRef (KVar ty) %1 ->
+  Builder (LPair (NodeRef (KVar ty)) (NodeRef (KValue ty)))
 readVar ref =
   cloneNodeWith
     ref
-    $ \(Var _ ptr) ->
+    $ \(NVar _ ptr) ->
       copyPtr ptr
 
 writeVar ::
-  Ref (KVar ty) %1 ->
-  Ref (KValue ty) %1 ->
-  GraphBuilder (Ref (KVar ty))
+  NodeRef (KVar ty) %1 ->
+  NodeRef (KValue ty) %1 ->
+  Builder (NodeRef (KVar ty))
 writeVar varRef valueRef =
   zipNode2WithId
     varRef
     valueRef
     ( \_ varContent valueId valueContent ->
         case varContent of
-          Var name _ ->
-            Var name (NPtr valueId valueContent)
+          NVar name _ ->
+            NVar name (NPtr valueId valueContent)
     )
 
 binaryValueOp ::
@@ -122,36 +112,36 @@ binaryValueOp AddD (F64 x) (F64 y) = F64 (x + y)
 binaryValueOp MulD (F64 x) (F64 y) = F64 (x * y)
 
 eval ::
-  NContent (KValue lhs) ->
-  NContent (KOp lhs rhs out) ->
-  NContent (KValue rhs) ->
-  NContent (KValue out)
-eval (Val lhs) (Op op) (Val rhs) = Val (binaryValueOp op lhs rhs)
+  Node (KValue lhs) ->
+  Node (KOp lhs rhs out) ->
+  Node (KValue rhs) ->
+  Node (KValue out)
+eval (NValue lhs) (NOp op) (NValue rhs) = NValue (binaryValueOp op lhs rhs)
 
 e ::
-  Ref (KValue lhs) %1 ->
-  Ref (KOp lhs rhs out) %1 ->
-  Ref (KValue rhs) %1 ->
-  GraphBuilder (Ref (KValue out))
+  NodeRef (KValue lhs) %1 ->
+  NodeRef (KOp lhs rhs out) %1 ->
+  NodeRef (KValue rhs) %1 ->
+  Builder (NodeRef (KValue out))
 e refA refOp refB = zipNode3 refA refOp refB eval
 
 (.+.) ::
-  Ref (KValue 'CTInt) %1 ->
-  Ref (KValue 'CTInt) %1 ->
-  GraphBuilder (Ref (KValue 'CTInt))
+  NodeRef (KValue 'CTInt) %1 ->
+  NodeRef (KValue 'CTInt) %1 ->
+  Builder (NodeRef (KValue 'CTInt))
 (.+.) a b = do
   add <- o AddI
   e a add b
 
 (.*.) ::
-  Ref (KValue 'CTInt) %1 ->
-  Ref (KValue 'CTInt) %1 ->
-  GraphBuilder (Ref (KValue 'CTInt))
+  NodeRef (KValue 'CTInt) %1 ->
+  NodeRef (KValue 'CTInt) %1 ->
+  Builder (NodeRef (KValue 'CTInt))
 (.*.) a b = do
   mul <- o MulI
   e a mul b
 
-example :: GraphBuilder (Ref (KValue 'CTInt))
+example :: Builder (NodeRef (KValue 'CTInt))
 example = do
   x0 <- var "x" (I32 10)
 
@@ -167,7 +157,7 @@ example = do
 
   return n5
 
-fib :: Int -> GraphBuilder (Ref (KValue 'CTInt))
+fib :: Int -> Builder (NodeRef (KValue 'CTInt))
 fib 0 = v (I32 0)
 fib 1 = v (I32 1)
 fib n = do
@@ -175,7 +165,7 @@ fib n = do
   n2 <- fib (n - 2)
   n1 .+. n2
 
-fibIter :: Int -> GraphBuilder (Ref (KValue 'CTInt))
+fibIter :: Int -> Builder (NodeRef (KValue 'CTInt))
 fibIter n = do
   prev0 <- var "prev" (I32 0)
   curr0 <- var "curr" (I32 1)
@@ -183,9 +173,9 @@ fibIter n = do
   where
     go ::
       Int ->
-      Ref (KVar 'CTInt) %1 ->
-      Ref (KVar 'CTInt) %1 ->
-      GraphBuilder (Ref (KValue 'CTInt))
+      NodeRef (KVar 'CTInt) %1 ->
+      NodeRef (KVar 'CTInt) %1 ->
+      Builder (NodeRef (KValue 'CTInt))
     go 0 prev curr = do
       LPair prev' result <- readVar prev
       dropNodeM curr
@@ -203,5 +193,28 @@ fibIter n = do
 
       go (k - 1) prev2 curr3
 
-run :: GraphBuilder tag -> [N NContent]
+run :: Builder tag -> [N Node]
 run = buildGraph
+
+--- Formatting typeclasses
+
+padRight :: Int -> String -> String
+padRight n s = s ++ replicate (n - P.length s) ' '
+
+padRightF :: String -> String
+padRightF = padRight 8
+
+instance Show (Node tag) where
+  show (NValue val) = padRightF "=>" ++ show val
+  show (NOp op) = padRightF "Op " ++ show op
+  show (NVar name val) = padRightF "===" ++ name ++ " = " ++ show val
+
+instance Show (Value ty) where
+  show (I32 i) = show i
+  show (F64 f) = show f
+
+instance Show (Op lhs rhs out) where
+  show AddI = "AddI"
+  show MulI = "MulI"
+  show AddD = "AddD"
+  show MulD = "MulD"
