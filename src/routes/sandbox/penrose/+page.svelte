@@ -12,6 +12,7 @@
 
   const int = (value: number) => {
     const intsize = global.uniform('intsize');
+    layout.constraint.minimize(intsize);
 
     return layout
       .createNode({
@@ -26,62 +27,100 @@
       .setContent(value.toString());
   };
 
-  const array = (size: number) => {
-    const awidth = global.uniform('awidth');
-    const aheight = global.uniform('aheight');
+  const intVar = (name: string) => {
+    const intVarSize = global.uniform('intvarsize');
+    const x = global.uniform();
+    layout.constraint.minimize(intVarSize);
 
-    layout.constraint.minimize(awidth);
-    layout.constraint.minimize(aheight);
-
-    const arrayNode = layout.createNode({
-      width: awidth,
-      height: aheight,
-      backgroundColor: 'lightgray',
-      borderRadius: '10px',
-      outline: '20px solid lightgray',
-      zIndex: 2
+    const container = layout.createNode({
+      width: intVarSize,
+      height: intVarSize
     });
 
-    layout.constraint.centerX(layout.root, arrayNode);
-    layout.constraint.contains(layout.root, arrayNode);
-
-    const nodes = Array.from({ length: size }, () =>
-      layout.createNode({
-        top: global.uniform(),
-        left: global.uniform()
+    const label = layout
+      .createNode({
+        width: intVarSize,
+        left: x,
+        fontSize: 30
       })
-    );
+      .setContent(name);
 
-    for (let i = 0; i < size; i++) {
-      if (i !== size - 1) {
-        layout.constraint.adjacentX(nodes[i], nodes[i + 1], 20);
-      }
-      layout.constraint.contains(arrayNode, nodes[i]);
-    }
-    return nodes;
+    const slot = layout.createNode({
+      width: global.uniform('intsize'),
+      height: global.uniform('intsize'),
+      left: x,
+      backgroundColor: 'grey',
+      border: '2px solid black',
+      borderRadius: '10px'
+    });
+
+    layout.constraint.contains(container, label);
+    layout.constraint.contains(container, slot);
+
+    layout.constraint.above(label, slot, 0);
+
+    return slot;
   };
 
-  const value1 = int(1);
-  const value2 = int(5);
-  const value3 = int(10);
+  // const array = (size: number) => {
+  //   const awidth = global.uniform('awidth');
+  //   const aheight = global.uniform('aheight');
 
-  const array1 = array(3);
+  //   layout.constraint.minimize(awidth);
+  //   layout.constraint.minimize(aheight);
 
-  layout.constraint.assign(array1[0], value1);
-  layout.constraint.assign(array1[1], value2);
-  layout.constraint.assign(array1[2], value3);
+  //   const arrayNode = layout.createNode({
+  //     width: awidth,
+  //     height: aheight,
+  //     backgroundColor: 'lightgray',
+  //     borderRadius: '10px',
+  //     outline: '20px solid lightgray',
+  //     zIndex: 2
+  //   });
 
-  layout.step();
+  //   layout.constraint.centerX(layout.root, arrayNode);
+  //   layout.constraint.contains(layout.root, arrayNode);
 
-  layout.constraint.assign(array1[0], value1);
-  layout.constraint.assign(array1[1], value3);
-  layout.constraint.assign(array1[2], value2);
+  //   const nodes = Array.from({ length: size }, () =>
+  //     layout.createNode({
+  //       top: global.uniform(),
+  //       left: global.uniform()
+  //     })
+  //   );
 
-  layout.step();
+  //   for (let i = 0; i < size; i++) {
+  //     if (i !== size - 1) {
+  //       layout.constraint.adjacentX(nodes[i], nodes[i + 1], 20);
+  //     }
+  //     layout.constraint.contains(arrayNode, nodes[i]);
+  //   }
+  //   return nodes;
+  // };
 
-  layout.constraint.assign(array1[0], value2);
-  layout.constraint.assign(array1[1], value3);
-  layout.constraint.assign(array1[2], value1);
+  const value = int(1);
+  const my_var = intVar('A');
+
+  // const array1 = array(3);
+
+  // layout.step();
+
+  // layout.constraint.assign(my_var, value);
+
+  // layout.constraint.assign(array1[0], value1);
+  // layout.constraint.assign(array1[1], value2);
+  // layout.constraint.assign(array1[2], value3);
+
+  // layout.step();
+
+  // layout.constraint.assign(array1[0], value1);
+  // layout.constraint.assign(array1[1], value3);
+  // layout.constraint.assign(array1[2], value2);
+
+  // layout.step();
+
+  // layout.constraint.assign(array1[0], value2);
+  // layout.constraint.assign(array1[1], value3);
+  // layout.constraint.assign(array1[2], value1);
 
   let currStep = $state(0);
 

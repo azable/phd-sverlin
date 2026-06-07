@@ -98,6 +98,23 @@ export function createLayout(config: LayoutConfig = {}) {
       }
     ),
 
+    adjacentY: layout.defineConstraint(
+      'adjacentY',
+      (nodeA: Node, nodeB: Node, padding: number = 0) => {
+        const { bottom: aBottom } = nodeA.bounds(layout.time);
+        const { top: bTop } = nodeB.bounds(layout.time);
+
+        return [p.lessThanWithPadding(aBottom, bTop, padding)];
+      }
+    ),
+
+    above: layout.defineConstraint('above', (nodeA: Node, nodeB: Node, padding: number = 0) => {
+      const { bottom: aBottom } = nodeA.bounds(layout.time);
+      const { top: bTop } = nodeB.bounds(layout.time);
+
+      return [p.lessThanWithPadding(aBottom, bTop, padding)];
+    }),
+
     centerX: layout.defineConstraint('centerX', (containerNode: Node, node: Node) => {
       const { left: nLeft, right: nRight } = node.bounds(layout.time);
       const { left: cLeft, right: cRight } = containerNode.bounds(layout.time);
