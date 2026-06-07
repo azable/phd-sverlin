@@ -13,7 +13,6 @@ module NodeBase
     NId,
     NRef (..),
     NPtr (..),
-    LPair (..),
     freezeRef,
     copyPtr,
     node,
@@ -90,9 +89,6 @@ instance Dupable (BuilderState content) where
 
 type NBuilder content = State (BuilderState content)
 
-data LPair a b where
-  LPair :: a %1 -> b %1 -> LPair a b
-
 freezeRef :: NRef content tag %1 -> Ur (NPtr content tag)
 freezeRef ref =
   withNRef
@@ -136,18 +132,18 @@ inspectNode (NRef (Ur nid) (Ur content)) k = k nid content
 splitNode ::
   NRef content a %1 ->
   (content a -> (content b, content c)) ->
-  NBuilder content (LPair (NRef content b) (NRef content c))
+  NBuilder content (NRef content b, NRef content c)
 splitNode ref f =
   inspectNode ref $ \nid content -> do
     let (outB, outC) = f content
     refB <- makeNRef outB [nid]
     refC <- makeNRef outC [nid]
-    return (LPair refB refC)
+    return (refB, refC)
 
 cloneNode ::
   NRef content a %1 ->
   (content a -> content b) ->
-  NBuilder content (LPair (NRef content a) (NRef content b))
+  NBuilder content (NRef content a, NRef content b)
 cloneNode ref f = splitNode ref $ \content ->
   let outB = f content
    in (content, outB)
@@ -155,14 +151,14 @@ cloneNode ref f = splitNode ref $ \content ->
 cloneNodeWith ::
   NRef content a %1 ->
   (content a -> NBuilder content (NRef content b)) ->
-  NBuilder content (LPair (NRef content a) (NRef content b))
+  NBuilder content (NRef content a, NRef content b)
 cloneNodeWith ref f =
   withNRef
     ref
     ( \nid content -> do
         nextRef <- makeNRef content [nid]
         outRef <- f content
-        return (LPair nextRef outRef)
+        return (nextRef, outRef)
     )
 
 mapNode ::

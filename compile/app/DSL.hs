@@ -80,7 +80,7 @@ var name val = do
 
 readVar ::
   NodeRef (KVar ty) %1 ->
-  Builder (LPair (NodeRef (KVar ty)) (NodeRef (KValue ty)))
+  Builder (NodeRef (KVar ty), NodeRef (KValue ty))
 readVar ref =
   cloneNodeWith
     ref
@@ -145,14 +145,14 @@ example :: Builder (NodeRef (KValue 'CTInt))
 example = do
   x0 <- var "x" (I32 10)
 
-  LPair x1 a <- readVar x0
+  (x1, a) <- readVar x0
   b <- v (I32 20)
 
   c <- a .+. b
 
   x3 <- writeVar x1 c
 
-  LPair x4 n5 <- readVar x3
+  (x4, n5) <- readVar x3
   dropNodeM x4
 
   return n5
@@ -177,17 +177,17 @@ fibIter n = do
       NodeRef (KVar 'CTInt) %1 ->
       Builder (NodeRef (KValue 'CTInt))
     go 0 prev curr = do
-      LPair prev' result <- readVar prev
+      (prev', result) <- readVar prev
       dropNodeM curr
       dropNodeM prev'
       return result
     go k prev curr = do
-      LPair prev1 prevVal <- readVar prev
+      (prev1, prevVal) <- readVar prev
 
-      LPair curr1 currValForNext <- readVar curr
+      (curr1, currValForNext) <- readVar curr
       nextVal <- prevVal .+. currValForNext
 
-      LPair curr2 currValForPrev <- readVar curr1
+      (curr2, currValForPrev) <- readVar curr1
       prev2 <- writeVar prev1 currValForPrev
       curr3 <- writeVar curr2 nextVal
 
