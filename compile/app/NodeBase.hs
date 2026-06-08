@@ -12,35 +12,14 @@ module NodeBase
     NRecord (..),
     Some (..),
     NId,
-    -- Linear node handles
     N,
-    -- Valid wiring tokens
     Parent,
-    -- SomeParent,
-    -- someParent,
-    -- parents1,
-    -- parents2,
-    -- parents3,
-    -- Observed nodes
     Observed (Observed),
     (<<<),
     (>>>),
-    -- Snapshots
     NSnapshot (..),
     freeze,
-    -- Node API
-    -- makeNode,
-    -- dropNode,
-    -- dropNodeM,
-    -- withNode,
-    -- splitNode,
-    -- cloneNode,
-    -- cloneNodeWith,
-    -- cloneNodeFromSnapshot,
     discard,
-    -- mapNode,
-    -- zipNode2,
-    -- zipNode3,
     buildGraph,
   )
 where
@@ -85,56 +64,17 @@ instance Consumable (N content tag) where
   consume (N nid content) =
     consume nid `lseq` consume content
 
--- Valid wiring tokens.
---
--- Parent's constructor is deliberately not exported.
--- Users can only obtain a Parent by destroying/freezing a real node.
-
 data Parent content where
   Parent :: NId -> Parent content
 
--- someParent :: Parent content tag -> SomeParent content
--- someParent =
---   SomeParent
-
--- parents1 :: Parent content a -> [SomeParent content]
--- parents1 a =
---   [SomeParent a]
-
--- parents2 ::
---   Parent content a ->
---   Parent content b ->
---   [SomeParent content]
--- parents2 a b =
---   [SomeParent a, SomeParent b]
-
--- parents3 ::
---   Parent content a ->
---   Parent content b ->
---   Parent content c ->
---   [SomeParent content]
--- parents3 a b c =
---   [SomeParent a, SomeParent b, SomeParent c]
-
 parentId :: Parent content -> NId
-parentId (Parent nid) =
-  nid
-
--- Observed node data.
---
--- Parent's constructor is hidden, so users can pattern match on Observed
--- without being able to fabricate new valid parents from raw NIds.
+parentId (Parent nid) = nid
 
 data Observed content tag where
   Observed ::
     Parent content ->
     content tag ->
     Observed content tag
-
--- Snapshots.
---
--- A snapshot carries a valid Parent token, not a raw arbitrary NId.
--- The pattern synonym keeps the public API clean.
 
 data NSnapshot content tag where
   NSnapshot ::
