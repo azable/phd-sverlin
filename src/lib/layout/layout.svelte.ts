@@ -1,11 +1,32 @@
 import * as penrose from '@penrose/core';
 import * as _ from 'lodash-es';
-import { Node, type NodeView, type NodeConfig, type StyleValue } from './node.svelte';
+import {
+  Node,
+  type NodeView,
+  type StyleValue,
+  type NodeHandle,
+  type NodeStyle,
+  type WithDefaultStyle,
+  getNodeHandleId
+} from './node.svelte';
 import { toCSSrule, toCSS } from './style';
 import { randomUUID } from './utils';
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { debugPrettyPrint } from './debug';
+
+export type StepNodeSpec<StyleT extends NodeStyle = NodeStyle> = readonly [
+  style: StyleT,
+  content?: string
+];
+
+type StepHandles<Specs extends readonly StepNodeSpec[]> = {
+  [K in keyof Specs]: Specs[K] extends readonly [infer StyleT, string?]
+    ? StyleT extends NodeStyle
+      ? NodeHandle<WithDefaultStyle<StyleT>>
+      : never
+    : never;
+};
 
 export type Interval = {
   min: number;
@@ -140,20 +161,32 @@ export class LayoutCSP {
     }
   }
 
-  private async node(config: NodeConfig, content?: string): Promise<string> {
+  private async node<StyleT extends NodeStyle>(
+    style: StyleT,
+    content?: string
+  ): Promise<NodeHandle<WithDefaultStyle<StyleT>>> {
     this.ensureRoot();
+
     const nodeId = `node-${this.#nodeIdCounter++}`;
-    const node = await Node.create(this, nodeId, config, content);
+
+    const node = await Node.create(this, nodeId, { style }, content);
+
     this.#nodes[this.time].set(node.id, node);
     node.within(this.#root!);
-    return node.id;
+
+    return node.handle;
   }
 
-  public async step(
-    removeNodeIds: string[] = [],
-    nodes: [NodeConfig['style'], string?][] = []
-  ): Promise<string[]> {
+  public async step<const Specs extends readonly StepNodeSpec[]>(
+    removeNodes: readonly (string | NodeHandle<NodeStyle>)[] = [],
+    nodes: Specs = [] as unknown as Specs
+  ): Promise<StepHandles<Specs>> {
     this.#time += 1;
+
+    const removeNodeIds = removeNodes.map((node) =>
+      typeof node === 'string' ? node : getNodeHandleId(node)
+    );
+
     this.#nodes[this.time] =
       this.time > 0
         ? new SvelteMap(
@@ -163,9 +196,13 @@ export class LayoutCSP {
           )
         : new SvelteMap();
 
-    return await Promise.all(
-      nodes.map(async ([style, content]) => await this.node({ style }, content))
+    const handles = await Promise.all(
+      nodes.map(async ([style, content]) => {
+        return await this.node(style, content);
+      })
     );
+
+    return handles as StepHandles<Specs>;
   }
 
   public get time() {

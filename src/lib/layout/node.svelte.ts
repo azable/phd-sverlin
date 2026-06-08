@@ -1,6 +1,6 @@
 import * as _ from 'lodash-es';
 import * as penrose from '@penrose/core';
-import { LayoutCSP, LayoutCSPScope, type Variable } from './layout.svelte';
+import { LayoutCSP, LayoutCSPScope, Variable } from './layout.svelte';
 import { lessThan } from './constraints.svelte';
 import { measureContent, type ClientSize } from './node-content';
 import { styleValuesToDefaultCSSrules, toCSS } from './style';
@@ -30,63 +30,125 @@ export type NodeView = {
   content?: NodeContent;
 };
 
+const NODE_HANDLE_ID: unique symbol = Symbol('NodeHandle.id');
+
+export type NodeStyleValue = string | number | Variable;
+
+export type NodeStyle = Record<string, NodeStyleValue>;
+
+export type DefaultStyleFields = {
+  left: Variable;
+  top: Variable;
+  width: Variable;
+  height: Variable;
+};
+
+export type WithDefaultStyle<StyleT extends NodeStyle> = DefaultStyleFields & StyleT;
+
+type VariableFields<T extends Record<string, unknown>> = {
+  [K in keyof T as T[K] extends Variable ? K : never]: T[K];
+};
+
+export type NodeHandle<StyleT extends NodeStyle> = VariableFields<StyleT> & {
+  readonly [NODE_HANDLE_ID]: string;
+};
+
+export type AnyStyledNodeHandle = NodeHandle<NodeStyle>;
+
+export function getNodeHandleId(handle: AnyStyledNodeHandle): string {
+  return handle[NODE_HANDLE_ID];
+}
+
+function makeNodeHandle<StyleT extends NodeStyle>(
+  nodeId: string,
+  style: StyleT
+): NodeHandle<StyleT> {
+  const result: Record<string, Variable> = {};
+
+  for (const [key, value] of Object.entries(style)) {
+    if (value instanceof Variable) {
+      result[key] = value;
+    }
+  }
+
+  Object.defineProperty(result, NODE_HANDLE_ID, {
+    value: nodeId,
+    enumerable: false
+  });
+
+  Object.defineProperty(result, 'id', {
+    value: nodeId,
+    enumerable: true
+  });
+
+  return result as NodeHandle<StyleT>;
+}
+
 export type NodeContent = {
   text: string;
 };
 
-export class Node {
+export class Node<StyleT extends NodeStyle = NodeStyle> {
   #layout: LayoutCSP;
   #scope: LayoutCSPScope;
 
   #id: string;
-  #style: Record<string, StyleValue>;
+  #rawStyle: StyleT;
+  #style: Record<keyof StyleT, StyleValue>;
   #content: NodeContent = $state({
     text: ''
   });
 
-  private constructor(layout: LayoutCSP, id: string, config: NodeConfig) {
+  private constructor(layout: LayoutCSP, id: string, scope: LayoutCSPScope, rawStyle: StyleT) {
     this.#layout = layout;
     this.#id = id;
-    this.#scope = new LayoutCSPScope(layout, this.#id);
+    this.#scope = scope;
+    this.#rawStyle = rawStyle;
 
-    config = {
-      style: {
-        width: config.style.width ?? this.#scope.variable('width'),
-        height: config.style.height ?? this.#scope.variable('height'),
-        left: config.style.left ?? this.#scope.variable('left'),
-        top: config.style.top ?? this.#scope.variable('top'),
-        ...config.style
-      }
-    };
-
-    this.#style = _.mapValues(config.style, (value, key) => {
-      if (typeof value === 'object') {
+    this.#style = _.mapValues(rawStyle, (value, key) => {
+      if (value instanceof Variable) {
         return {
           type: 'variable',
           varId: value.id
-        } as StyleValue;
-      } else if (typeof value === 'number') {
+        } satisfies StyleValue;
+      }
+
+      if (typeof value === 'number') {
         return {
           type: 'constant',
           value
-        } as StyleValue;
-      } else if (typeof value === 'string') {
+        } satisfies StyleValue;
+      }
+
+      if (typeof value === 'string') {
         return {
           type: 'fixed',
           value
-        } as StyleValue;
+        } satisfies StyleValue;
       }
-      throw new Error(`Invalid style value for key ${key}`);
-    });
+
+      throw new Error(`Invalid style value for key ${String(key)}`);
+    }) as Record<keyof StyleT, StyleValue>;
   }
 
-  public static async create(
+  public static async create<InputStyleT extends NodeStyle>(
     layout: LayoutCSP,
     id: string,
-    config: NodeConfig,
+    config: { style: InputStyleT },
     content?: string
-  ): Promise<Node> {
-    const node = new Node(layout, id, config);
+  ): Promise<Node<WithDefaultStyle<InputStyleT>>> {
+    const scope = new LayoutCSPScope(layout, id);
+
+    const rawStyle = {
+      width: config.style.width ?? scope.variable('width'),
+      height: config.style.height ?? scope.variable('height'),
+      left: config.style.left ?? scope.variable('left'),
+      top: config.style.top ?? scope.variable('top'),
+      ...config.style
+    } as WithDefaultStyle<InputStyleT>;
+
+    const node = new Node(layout, id, scope, rawStyle);
+
     if (content !== undefined) {
       const { clientWidth, clientHeight } = await node.setContent(content);
       const { width, height } = node.bounds();
@@ -99,6 +161,7 @@ export class Node {
         .constraint('min-height')
         .set(lessThan(node.#layout.num(clientHeight), height, node.#layout.unitSize));
     }
+
     return node;
   }
 
@@ -106,12 +169,20 @@ export class Node {
     return this.#id;
   }
 
-  public get content() {
-    return this.#content;
+  public get rawStyle(): StyleT {
+    return this.#rawStyle;
   }
 
-  public get style(): Record<string, StyleValue> {
+  public get style(): Record<keyof StyleT, StyleValue> {
     return this.#style;
+  }
+
+  public get handle(): NodeHandle<StyleT> {
+    return makeNodeHandle(this.#id, this.#rawStyle);
+  }
+
+  public get content() {
+    return this.#content;
   }
 
   public asObject() {
@@ -126,10 +197,10 @@ export class Node {
     const { left, top, right, bottom } = this.bounds();
     const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = container.bounds();
 
-    this.#scope.constraint('within-left').set(lessThan(cLeft, left));
-    this.#scope.constraint('within-top').set(lessThan(cTop, top));
-    this.#scope.constraint('within-right').set(lessThan(right, cRight));
-    this.#scope.constraint('within-bottom').set(lessThan(bottom, cBottom));
+    this.#scope.constraint('within-left').set(lessThan(cLeft, left, 0));
+    this.#scope.constraint('within-top').set(lessThan(cTop, top, 0));
+    this.#scope.constraint('within-right').set(lessThan(right, cRight, 0));
+    this.#scope.constraint('within-bottom').set(lessThan(bottom, cBottom, 0));
 
     return this;
   }
