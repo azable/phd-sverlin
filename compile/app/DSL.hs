@@ -11,7 +11,6 @@ module DSL
     run,
     example,
     fibIter,
-    var,
     readVar,
     writeVar,
     e,
@@ -56,11 +55,11 @@ type Builder = GBuilder NodeContent
 
 type Node tag = N NodeContent tag
 
-var ::
+declare ::
   String ->
   Value ty ->
   Builder (Node (KVar ty))
-var name val = do
+declare name val = do
   valueNode <- () >>> Value val
 
   case freeze valueNode of
@@ -71,12 +70,11 @@ readVar ::
   Node (KVar ty) %1 ->
   Builder (Node (KVar ty), Node (KValue ty))
 readVar varNode = do
-  Observed varObs <- (<<<) varNode
+  Observed var <- (<<<) varNode
 
-  let varContent@(Var _ snapshot@(NSnapshot _ snapshotValue)) =
-        content varObs
+  let varContent@(Var _ snapshot@(NSnapshot _ snapshotValue)) = content var
 
-  nextVar <- varObs >>> varContent
+  nextVar <- var >>> varContent
   value <- snapshot >>> snapshotValue
 
   return (nextVar, value)
@@ -86,16 +84,12 @@ writeVar ::
   Node (KValue ty) %1 ->
   Builder (Node (KVar ty))
 writeVar varNode valueNode = do
-  Observed varObs <- (<<<) varNode
-  Observed valueObs <- (<<<) valueNode
+  Observed var <- (<<<) varNode
+  Observed value <- (<<<) valueNode
 
-  let Var varName _ =
-        content varObs
+  let Var varName _ = content var
 
-  (varObs, valueObs)
-    >>> Var
-      varName
-      (NSnapshot (parent valueObs) (content valueObs))
+  (var, value) >>> Var varName (NSnapshot (parent value) (content value))
 
 binaryValueOp ::
   Op lhs rhs out ->
@@ -151,7 +145,7 @@ e lhsNode opNode rhsNode = do
 
 example :: Builder (Node (KValue 'CTInt))
 example = do
-  x0 <- var "x" (I32 10)
+  x0 <- declare "x" (I32 10)
 
   (x1, a) <- readVar x0
   b <- () >>> Value (I32 20)
@@ -167,8 +161,8 @@ example = do
 
 fibIter :: Int -> Builder (Node (KValue 'CTInt))
 fibIter n = do
-  prev0 <- var "prev" (I32 0)
-  curr0 <- var "curr" (I32 1)
+  prev0 <- declare "prev" (I32 0)
+  curr0 <- declare "curr" (I32 1)
   go n prev0 curr0
   where
     go ::
