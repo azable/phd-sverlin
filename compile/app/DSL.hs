@@ -10,10 +10,7 @@ module DSL
     G (..),
     run,
     example,
-    fib,
     fibIter,
-    v,
-    o,
     var,
     readVar,
     writeVar,
@@ -51,53 +48,49 @@ data Op lhs rhs out where
 data KVar (ty :: CType)
 
 data NodeContent tag where
-  NValue :: Value ty -> NodeContent (KValue ty)
-  NOp :: Op lhs rhs out -> NodeContent (KOp lhs rhs out)
-  NVar :: String -> NSnapshot NodeContent (KValue ty) -> NodeContent (KVar ty)
+  Value :: Value ty -> NodeContent (KValue ty)
+  Op :: Op lhs rhs out -> NodeContent (KOp lhs rhs out)
+  Var :: String -> NSnapshot NodeContent (KValue ty) -> NodeContent (KVar ty)
 
 type Builder = GBuilder NodeContent
 
 type Node tag = N NodeContent tag
-
-v ::
-  Value ty ->
-  Builder (Node (KValue ty))
-v val = makeNode (NValue val)
-
-o ::
-  Op lhs rhs out ->
-  Builder (Node (KOp lhs rhs out))
-o op = makeNode (NOp op)
 
 var ::
   String ->
   Value ty ->
   Builder (Node (KVar ty))
 var name val = do
-  valueNode <- v val
+  valueNode <- [] >>> Value val
+
   case freeze valueNode of
-    Ur valuePtr -> makeNode (NVar name valuePtr)
+    Ur snapshot@(NSnapshot valueParent _) ->
+      [valueParent] >>> Var name snapshot
 
 readVar ::
   Node (KVar ty) %1 ->
   Builder (Node (KVar ty), Node (KValue ty))
-readVar node =
-  cloneNodeWith
-    node
-    $ \(NVar _ snapshot) ->
-      cloneNodeFromSnapshot snapshot
+readVar varNode = do
+  Observed varParent varContent <- (<<<) varNode
+
+  let Var _ (NSnapshot sParent sValue) = varContent
+
+  nextVar <- [varParent] >>> varContent
+  value <- [sParent] >>> sValue
+
+  return (nextVar, value)
 
 writeVar ::
   Node (KVar ty) %1 ->
   Node (KValue ty) %1 ->
   Builder (Node (KVar ty))
-writeVar varNode valueNode =
-  zipNode2WithId
-    varNode
-    valueNode
-    ( \_ (NVar varName _) valueId valueContent ->
-        NVar varName (NSnapshot valueId valueContent)
-    )
+writeVar varNode valueNode = do
+  Observed varParent varContent <- (<<<) varNode
+  Observed valueParent valueContent <- (<<<) valueNode
+
+  let Var varName _ = varContent
+
+  [varParent, valueParent] >>> Var varName (NSnapshot valueParent valueContent)
 
 binaryValueOp ::
   Op lhs rhs out ->
@@ -114,21 +107,28 @@ eval ::
   NodeContent (KOp lhs rhs out) ->
   NodeContent (KValue rhs) ->
   NodeContent (KValue out)
-eval (NValue lhs) (NOp op) (NValue rhs) = NValue (binaryValueOp op lhs rhs)
+eval (Value lhs) (Op op) (Value rhs) = Value (binaryValueOp op lhs rhs)
 
 e ::
   Node (KValue lhs) %1 ->
   Node (KOp lhs rhs out) %1 ->
   Node (KValue rhs) %1 ->
   Builder (Node (KValue out))
-e lhsNode opNode rhsNode = zipNode3 lhsNode opNode rhsNode eval
+e lhsNode opNode rhsNode = do
+  Observed lhsParent lhsContent <- (<<<) lhsNode
+  Observed opParent opContent <- (<<<) opNode
+  Observed rhsParent rhsContent <- (<<<) rhsNode
+
+  let outContent = eval lhsContent opContent rhsContent
+
+  [lhsParent, opParent, rhsParent] >>> outContent
 
 (.+.) ::
   Node (KValue 'CTInt) %1 ->
   Node (KValue 'CTInt) %1 ->
   Builder (Node (KValue 'CTInt))
 (.+.) a b = do
-  add <- o AddI
+  add <- (>>>) [] (Op AddI)
   e a add b
 
 (.*.) ::
@@ -136,7 +136,7 @@ e lhsNode opNode rhsNode = zipNode3 lhsNode opNode rhsNode eval
   Node (KValue 'CTInt) %1 ->
   Builder (Node (KValue 'CTInt))
 (.*.) a b = do
-  mul <- o MulI
+  mul <- [] >>> Op MulI
   e a mul b
 
 example :: Builder (Node (KValue 'CTInt))
@@ -144,24 +144,16 @@ example = do
   x0 <- var "x" (I32 10)
 
   (x1, a) <- readVar x0
-  b <- v (I32 20)
+  b <- [] >>> Value (I32 20)
 
   c <- a .+. b
 
   x3 <- writeVar x1 c
 
   (x4, n5) <- readVar x3
-  dropNodeM x4
+  discard x4
 
   return n5
-
-fib :: Int -> Builder (Node (KValue 'CTInt))
-fib 0 = v (I32 0)
-fib 1 = v (I32 1)
-fib n = do
-  n1 <- fib (n - 1)
-  n2 <- fib (n - 2)
-  n1 .+. n2
 
 fibIter :: Int -> Builder (Node (KValue 'CTInt))
 fibIter n = do
@@ -176,8 +168,8 @@ fibIter n = do
       Builder (Node (KValue 'CTInt))
     go 0 prev curr = do
       (prev', result) <- readVar prev
-      dropNodeM curr
-      dropNodeM prev'
+      discard curr
+      discard prev'
       return result
     go k prev curr = do
       (prev1, prevVal) <- readVar prev
@@ -203,9 +195,9 @@ padRightF :: String -> String
 padRightF = padRight 8
 
 instance Show (NodeContent tag) where
-  show (NValue val) = padRightF "=>" ++ show val
-  show (NOp op) = padRightF "Op " ++ show op
-  show (NVar name val) = padRightF "===" ++ name ++ " = " ++ show val
+  show (Value val) = padRightF "=>" ++ show val
+  show (Op op) = padRightF "Op " ++ show op
+  show (Var name val) = padRightF "===" ++ name ++ " = " ++ show val
 
 instance Show (Value ty) where
   show (I32 i) = show i
