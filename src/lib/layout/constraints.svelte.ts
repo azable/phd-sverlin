@@ -1,5 +1,6 @@
 // import { type Variable, type Interval, p } from './layout.svelte';
 import * as penrose from '@penrose/core';
+import type { NodeBounds } from './node.svelte';
 
 export type ConstraintFunc<Args extends penrose.Num[] = penrose.Num[]> = (
   ...args: Args
@@ -36,6 +37,22 @@ export const absVal = penrose.absVal as ConstraintFunc;
 export const log2 = penrose.log2 as ConstraintFunc;
 export const max = penrose.max as ConstraintFunc;
 export const min = penrose.min as ConstraintFunc;
+
+export const leftOf = (boundsA: NodeBounds, boundsB: NodeBounds, padding: number = 0) => {
+  return lessThan(boundsA.right, boundsB.left, padding);
+};
+
+export const rightOf = (boundsA: NodeBounds, boundsB: NodeBounds, padding: number = 0) => {
+  return lessThan(boundsA.left, boundsB.right, padding);
+};
+
+// export const rowAlign = (bounds: NodeBounds[], padding: number = 0) => {
+//   const constraints: penrose.Num[] = [];
+//   for (let i = 0; i < bounds.length - 1; i++) {
+//     constraints.push(lessThan(bounds[i].right, bounds[i + 1].left, padding));
+//   }
+//   return penrose.add(...constraints);
+// };
 
 // const eq = (a: p.Num, b: p.Num): p.Num => {
 //   return p.log2(p.absVal(p.sub(a, b)));

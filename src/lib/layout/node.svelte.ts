@@ -45,13 +45,23 @@ export type DefaultStyleFields = {
 
 export type WithDefaultStyle<StyleT extends NodeStyle> = DefaultStyleFields & StyleT;
 
-type VariableFields<T extends Record<string, unknown>> = {
-  [K in keyof T as T[K] extends Variable ? K : never]: T[K];
+export type NodeBounds = {
+  left: penrose.Num;
+  top: penrose.Num;
+  right: penrose.Num;
+  bottom: penrose.Num;
+  width: penrose.Num;
+  height: penrose.Num;
 };
 
-export type NodeHandle<StyleT extends NodeStyle> = VariableFields<StyleT> & {
-  readonly [NODE_HANDLE_ID]: string;
+type PenroseVarFields<T extends Record<string, unknown>> = {
+  [K in keyof T as T[K] extends penrose.Var ? K : never]: penrose.Num;
 };
+
+export type NodeHandle<StyleT extends NodeStyle> = PenroseVarFields<StyleT> &
+  NodeBounds & {
+    readonly [NODE_HANDLE_ID]: string;
+  };
 
 export type AnyStyledNodeHandle = NodeHandle<NodeStyle>;
 
@@ -61,9 +71,10 @@ export function getNodeHandleId(handle: AnyStyledNodeHandle): string {
 
 function makeNodeHandle<StyleT extends NodeStyle>(
   nodeId: string,
-  style: StyleT
+  style: StyleT,
+  bounds: NodeBounds
 ): NodeHandle<StyleT> {
-  const result: Record<string, Variable> = {};
+  const result: Record<string, penrose.Num> = {};
 
   for (const [key, value] of Object.entries(style)) {
     if (value instanceof Variable) {
@@ -71,14 +82,11 @@ function makeNodeHandle<StyleT extends NodeStyle>(
     }
   }
 
+  Object.assign(result, bounds);
+
   Object.defineProperty(result, NODE_HANDLE_ID, {
     value: nodeId,
     enumerable: false
-  });
-
-  Object.defineProperty(result, 'id', {
-    value: nodeId,
-    enumerable: true
   });
 
   return result as NodeHandle<StyleT>;
@@ -147,6 +155,15 @@ export class Node<StyleT extends NodeStyle = NodeStyle> {
       ...config.style
     } as WithDefaultStyle<InputStyleT>;
 
+    // Ensure right and bottom are defined in terms of left, top, width, and height
+    if (!config.style.right) {
+      scope.constraint('right').set(penrose.add(scope.variable('left'), scope.variable('width')));
+    }
+
+    if (!config.style.bottom) {
+      scope.constraint('bottom').set(penrose.add(scope.variable('top'), scope.variable('height')));
+    }
+
     const node = new Node(layout, id, scope, rawStyle);
 
     if (content !== undefined) {
@@ -178,7 +195,7 @@ export class Node<StyleT extends NodeStyle = NodeStyle> {
   }
 
   public get handle(): NodeHandle<StyleT> {
-    return makeNodeHandle(this.#id, this.#rawStyle);
+    return makeNodeHandle(this.#id, this.#rawStyle, this.bounds());
   }
 
   public get content() {
@@ -205,7 +222,7 @@ export class Node<StyleT extends NodeStyle = NodeStyle> {
     return this;
   }
 
-  public bounds(): Record<string, penrose.Num> {
+  public bounds(): NodeBounds {
     const left = this.#layout.num(this.style.left);
     const top = this.#layout.num(this.style.top);
     const width = this.#layout.num(this.style.width);
