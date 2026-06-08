@@ -5,6 +5,7 @@ import { toCSSrule, toCSS } from './style';
 import { randomUUID } from './utils';
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
+import { debugPrettyPrint } from './debug';
 
 export type Interval = {
   min: number;
@@ -164,13 +165,7 @@ export class LayoutCSP {
       ...Object.fromEntries(nodeMap.entries().map(([id, node]) => [id, node.asObject()]))
     }));
     console.log(nodes);
-    const variables = this.#variables.keys().reduce(
-      (acc, key) => {
-        acc[key] = this.#variables.get(key)!;
-        return acc;
-      },
-      {} as Record<string, Variable>
-    );
+    const variables = Object.fromEntries(this.#variables.entries());
     const constraints = Object.fromEntries(
       this.#constraints.entries().map(([id, constraint]) => [id, constraint.expr])
     );
@@ -181,19 +176,10 @@ export class LayoutCSP {
     }
 
     console.log('====================== SOLVE ======================');
-    console.log(
-      `>>> Nodes (time steps=${nodes.length},`,
-      `total nodes=${_.sumBy(nodes, (n) => Object.keys(n).length)}):`,
-      window.structuredClone(nodes)
-    );
-    console.log(
-      `>>> Variables (n=${Object.keys(variables).length}):`,
-      window.structuredClone(variables)
-    );
-    console.log(
-      `>>> Constraints (n=${Object.keys(constraints).length}):`,
-      window.structuredClone(constraints)
-    );
+    console.log(`>>> Variables (n=${Object.keys(variables).length}):`);
+    console.log(debugPrettyPrint(variables, 22));
+    console.log(`=== CONSTRAINTS (n=${Object.keys(constraints).length}) ===`);
+    console.log(debugPrettyPrint(constraints, 22));
 
     const solveIteration = async () => {
       const problem = await penrose.problem({
@@ -233,7 +219,6 @@ export class LayoutCSP {
             }
           })
         );
-        console.log(style);
         return {
           nodeId,
           style,
