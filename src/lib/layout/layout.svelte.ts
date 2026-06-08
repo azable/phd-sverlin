@@ -145,23 +145,25 @@ export class LayoutCSP {
   public constraint(namespace: string, id?: string): Constraint {
     id = this.idWithNamespace(this.ensureUniqId(id), namespace);
     if (!this.#constraints.has(id)) {
-      this.#constraints.set(id, new Constraint(id));
+      const constraint = new Constraint(id);
+      this.#constraints.set(id, constraint);
+      return constraint;
     }
     return this.#constraints.get(id)!;
   }
 
   public async solve() {
-    const variables = this.#variables;
-    const constraints = this.#constraints;
+    const variables = Object.fromEntries(this.#variables.entries());
+    const constraints = Object.fromEntries(this.#constraints.entries());
 
     // Randomize initial variable values to help solver escape local minima
-    for (const v of variables.values()) {
+    for (const v of _.values(variables)) {
       v.val = Math.random() * (v.randomInit.max - v.randomInit.min) + v.randomInit.min;
     }
 
     console.log('====================== SOLVE ======================');
     console.log(
-      `>>> Variables (n=${variables.keys().toArray().length}):`,
+      `>>> Variables (n=${Object.keys(variables).length}):`,
       window.structuredClone(variables)
     );
     console.log(
@@ -171,26 +173,26 @@ export class LayoutCSP {
 
     const solveIteration = async () => {
       const problem = await penrose.problem({
-        constraints: _.flatten(Object.values(constraints))
+        constraints: _.values(constraints).map((c) => c.expr)
       });
 
       const result = problem.start({}).run({});
 
       // Update values
       for (const variable of Object.keys(variables)) {
-        const solvedValue = result.vals.get(variables.get(variable)!);
+        const solvedValue = result.vals.get(variables[variable]);
         if (solvedValue === undefined) {
           console.warn(`No solved value for variable ${variable}`);
           continue;
         }
-        variables.get(variable)!.val = solvedValue;
+        variables[variable].val = solvedValue;
       }
     };
 
     await solveIteration();
 
     console.log(
-      `>>> Variables [SOLVED] (n=${variables.keys().toArray().length}):`,
+      `>>> Variables [SOLVED] (n=${Object.keys(variables).length}):`,
       window.structuredClone(variables)
     );
 
@@ -199,7 +201,7 @@ export class LayoutCSP {
         const style: Record<string, string> = {};
         for (const [key, value] of Object.entries(node.style)) {
           if (value.type === 'variable') {
-            const varValue = variables.get(value.varId)!.val;
+            const varValue = variables[value.varId].val;
             const [cssKey, cssValue] = toCSSrule(key, varValue);
             style[cssKey] = cssValue;
           } else if (value.type === 'constant') {

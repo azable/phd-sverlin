@@ -14,10 +14,6 @@ export async function createLayout(config: LayoutConfig = {}) {
   const layout = await LayoutCSP.create(rootWidth ?? 1200, rootHeight ?? 800, unitSize);
 
   return {
-    get ready(): boolean {
-      return !layout.isDirty;
-    },
-
     get views(): NodeView[][] {
       return layout.views;
     },

@@ -56,7 +56,6 @@
   >
   <div
     class="canvas"
-    style:opacity={layout.ready ? 1 : 0}
     style:position="relative"
     style:width="{config.width}px"
     style:height="{config.height}px"
