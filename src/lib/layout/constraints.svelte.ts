@@ -1,33 +1,41 @@
 // import { type Variable, type Interval, p } from './layout.svelte';
 import * as penrose from '@penrose/core';
 
-export const eq = (a: penrose.Num, b: penrose.Num): penrose.Num => {
+export type ConstraintFunc<Args extends penrose.Num[] = penrose.Num[]> = (
+  ...args: Args
+) => penrose.Num;
+
+export const eq: ConstraintFunc<[penrose.Num, penrose.Num]> = (a, b) => {
   return penrose.log2(penrose.absVal(penrose.sub(a, b)));
 };
 
-export const between = (value: penrose.Num, min: penrose.Num, max: penrose.Num): penrose.Num => {
+export const between: ConstraintFunc<[penrose.Num, penrose.Num, penrose.Num]> = (
+  value,
+  min,
+  max
+) => {
   return penrose.add(penrose.lessThan(min, value), penrose.lessThan(value, max));
 };
 
-export const minimize = (value: penrose.Num): penrose.Num => {
+export const minimize: ConstraintFunc<[penrose.Num]> = (value) => {
   return penrose.log2(penrose.absVal(value));
 };
 
-export const lessThan = (a: penrose.Num, b: penrose.Num, padding: penrose.Num = 0): penrose.Num => {
+export const lessThan: ConstraintFunc<[penrose.Num, penrose.Num, number]> = (a, b, padding = 0) => {
   const gap = penrose.add(penrose.sub(a, b), padding);
   const violation = penrose.max(gap, 0);
   const penalty = penrose.pow(violation, 2);
   return penalty;
 };
 
-export const add = penrose.add;
-export const sub = penrose.sub;
-export const mul = penrose.mul;
-export const div = penrose.div;
-export const absVal = penrose.absVal;
-export const log2 = penrose.log2;
-export const max = penrose.max;
-export const min = penrose.min;
+export const add = penrose.add as ConstraintFunc;
+export const sub = penrose.sub as ConstraintFunc;
+export const mul = penrose.mul as ConstraintFunc;
+export const div = penrose.div as ConstraintFunc;
+export const absVal = penrose.absVal as ConstraintFunc;
+export const log2 = penrose.log2 as ConstraintFunc;
+export const max = penrose.max as ConstraintFunc;
+export const min = penrose.min as ConstraintFunc;
 
 // const eq = (a: p.Num, b: p.Num): p.Num => {
 //   return p.log2(p.absVal(p.sub(a, b)));

@@ -15,26 +15,41 @@ export type Interval = {
 export class Variable implements penrose.Var {
   tag: 'Var';
   val: number;
+  scope: LayoutCSPScope;
   id: string;
   uuid: string;
   randomInit: Interval;
 
-  constructor(id: string) {
+  constructor(id: string, scope: LayoutCSPScope) {
     this.tag = 'Var';
     this.val = 0;
     this.id = id;
+    this.scope = scope;
     this.uuid = randomUUID();
     this.randomInit = { min: 1, max: 1000 };
+  }
+
+  public constraint<Rest extends penrose.Num[]>(
+    c: (self: Variable, ...args: Rest) => penrose.Num,
+    ...args: Rest
+  ): this {
+    const constraint = this.scope.constraint(randomUUID());
+
+    constraint.set(c(this, ...args));
+
+    return this;
   }
 }
 
 export class Constraint {
   #id: string;
   #expr: penrose.Num;
+  #scope: LayoutCSPScope;
 
-  constructor(id: string) {
+  constructor(id: string, scope: LayoutCSPScope) {
     this.#id = id;
     this.#expr = 0;
+    this.#scope = scope;
   }
 
   public get id() {
@@ -45,8 +60,36 @@ export class Constraint {
     return this.#expr;
   }
 
+  public get scope() {
+    return this.#scope;
+  }
+
   public set(expr: penrose.Num) {
     this.#expr = expr;
+  }
+}
+
+export class LayoutCSPScope {
+  private namespace: string;
+  private layout: LayoutCSP;
+
+  constructor(layout: LayoutCSP, namespace: string) {
+    this.namespace = namespace;
+    this.layout = layout;
+  }
+
+  public variable(id: string): Variable {
+    id = this.idWithNamespace(id, this.namespace);
+    return this.layout._defaultVariable(id, () => new Variable(id, this));
+  }
+
+  public constraint(id: string): Constraint {
+    id = this.idWithNamespace(id, this.namespace);
+    return this.layout._defaultConstraint(id, () => new Constraint(id, this));
+  }
+
+  private idWithNamespace(key: string, namespace: string): string {
+    return `${namespace}-${key}`;
   }
 }
 
@@ -55,6 +98,7 @@ export class LayoutCSP {
   #unitSize: number;
 
   #root: Node | undefined;
+  #globalScope: LayoutCSPScope;
 
   #nodes: SvelteMap<string, Node>[] = [new SvelteMap()];
   #nodeIdCounter: number = 0;
@@ -68,6 +112,7 @@ export class LayoutCSP {
     this.#unitSize = unitSize;
     this.#variables = new SvelteMap<string, Variable>();
     this.#constraints = new SvelteMap<string, Constraint>();
+    this.#globalScope = new LayoutCSPScope(this, 'global');
   }
 
   public static async create(
@@ -131,30 +176,26 @@ export class LayoutCSP {
     return this.#unitSize;
   }
 
-  // private ensureUniqId(id: string | undefined): string {
-  //   if (id === undefined || id === null) {
-  //     // throw new Error('ID must be provided for variable/constraint');
-  //     return randomUUID();
-  //   }
-  //   return id;
-  // }
-
-  public variable(namespace: string, id: string): Variable {
-    id = this.idWithNamespace(id, namespace);
+  public _defaultVariable(id: string, factory: () => Variable): Variable {
     if (!this.#variables.has(id)) {
-      this.#variables.set(id, new Variable(id));
+      this.#variables.set(id, factory());
     }
     return this.#variables.get(id)!;
   }
 
-  public constraint(namespace: string, id: string): Constraint {
-    id = this.idWithNamespace(id, namespace);
+  public _defaultConstraint(id: string, factory: () => Constraint): Constraint {
     if (!this.#constraints.has(id)) {
-      const constraint = new Constraint(id);
-      this.#constraints.set(id, constraint);
-      return constraint;
+      this.#constraints.set(id, factory());
     }
     return this.#constraints.get(id)!;
+  }
+
+  public variable(id: string): Variable {
+    return this.#globalScope.variable(id);
+  }
+
+  public constraint(id: string): Constraint {
+    return this.#globalScope.constraint(id);
   }
 
   public async solve() {
@@ -204,7 +245,7 @@ export class LayoutCSP {
 
     console.log(
       `>>> Variables [SOLVED] (n=${Object.keys(variables).length}):`,
-      window.structuredClone(variables)
+      debugPrettyPrint(variables, 22)
     );
 
     this.#views = _.range(this.time + 1).map((t) => {
@@ -235,10 +276,6 @@ export class LayoutCSP {
     return this.#views;
   }
 
-  private idWithNamespace(key: string, namespace: string): string {
-    return `${namespace}-${key}`;
-  }
-
   public num = (value: StyleValue | number): penrose.Num => {
     if (typeof value === 'number') {
       return value;
@@ -258,22 +295,4 @@ export class LayoutCSP {
     }
     throw new Error(`Cannot convert ${styleValue.type} to number`);
   };
-}
-
-export class LayoutCSPScope {
-  private namespace: string;
-  private layout: LayoutCSP;
-
-  constructor(layout: LayoutCSP, namespace: string) {
-    this.namespace = namespace;
-    this.layout = layout;
-  }
-
-  public variable(id: string): Variable {
-    return this.layout.variable(this.namespace, id);
-  }
-
-  public constraint(id: string): Constraint {
-    return this.layout.constraint(this.namespace, id);
-  }
 }

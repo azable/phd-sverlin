@@ -22,14 +22,14 @@ export async function createLayout(config: LayoutConfig = {}) {
     get constraint() {
       return (expr: penrose.Num, id?: string) => {
         id ??= randomUUID();
-        layout.constraint('global', id).set(expr);
+        layout.constraint(id).set(expr);
       };
     },
 
     get variable() {
       return (id?: string) => {
         id ??= randomUUID();
-        return layout.variable('global', id);
+        return layout.variable(id);
       };
     },
 

@@ -10,10 +10,9 @@
   });
 
   const layout = await createLayout(config);
-  const { step, constraint, variable } = layout;
+  const { step, variable } = layout;
 
-  const intsize = variable('intsize');
-  constraint(minimize(intsize));
+  const intsize = variable('intsize').constraint(minimize);
 
   const int = {
     width: intsize,
@@ -25,9 +24,23 @@
     zIndex: 10
   };
 
+  const op = {
+    width: intsize,
+    height: intsize,
+    backgroundColor: 'lightcoral',
+    border: '2px solid black',
+    borderRadius: '10px',
+    fontSize: 30,
+    zIndex: 10
+  };
+
   const [v1] = await step([], [[int, '1']]);
 
-  await step([v1], [[int, '2']]);
+  const [v2] = await step([], [[int, '2']]);
+
+  const [v3] = await step([], [[op, '+']]);
+
+  await step([v1, v2, v3], [[int, '3']]);
 
   let currStep = $state(0);
 
