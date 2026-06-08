@@ -169,28 +169,12 @@ instance Dupable (GBuilderState content) where
 
 type GBuilder content = State (GBuilderState content)
 
--- Destroy / observe a node
-
 (<<<) :: N content tag %1 -> GBuilder content (Observed content tag)
 (<<<) (N (Ur nid) (Ur content)) = return (Observed (Parent nid) content)
-
--- Compatibility-style eliminator.
---
--- This still exposes NId for inspection, but public node creation no longer
--- accepts raw NIds for wiring.
-
--- withNode :: N content tag %1 -> (NId -> content tag -> r) %1 -> r
--- withNode (N (Ur nid) (Ur content)) k =
---   k nid content
 
 freeze :: N content tag %1 -> Ur (NSnapshot content tag)
 freeze (N (Ur nid) (Ur content)) =
   Ur (NSnapshot (Parent nid) content)
-
--- Internal node creation.
---
--- Wiring uses SomeParent tokens, then this function privately extracts NIds
--- for storage in NRecord.
 
 makeNRecord :: content tag -> [Parent content] -> GBuilder content (Ur NId)
 makeNRecord content parents = do
@@ -208,93 +192,12 @@ makeN content parents = do
   Ur nid <- makeNRecord content parents
   return (N (Ur nid) (Ur content))
 
--- Public output constructor
 (>>>) :: [Parent content] -> content tag -> GBuilder content (N content tag)
 (>>>) parents content = makeN content parents
-
--- makeNode :: content tag -> GBuilder content (N content tag)
--- makeNode content =
---   makeN content []
-
--- dropNode :: N content tag %1 -> ()
--- dropNode =
---   consume
 
 discard :: N content tag %1 -> GBuilder content ()
 discard node =
   consume node `lseq` return ()
-
--- splitNode ::
---   N content a %1 ->
---   (content a -> (content b, content c)) ->
---   GBuilder content (N content b, N content c)
--- splitNode node f = do
---   Observed parent content <- (<<<) node
-
---   let (outB, outC) = f content
---       parents = parents1 parent
-
---   nodeB <- (>>>) parents outB
---   nodeC <- (>>>) parents outC
-
---   return (nodeB, nodeC)
-
--- cloneNode ::
---   N content a %1 ->
---   (content a -> content b) ->
---   GBuilder content (N content a, N content b)
--- cloneNode node f =
---   splitNode node $ \content ->
---     let outB = f content
---      in (content, outB)
-
--- cloneNodeWith ::
---   N content a %1 ->
---   (content a -> GBuilder content (N content b)) ->
---   GBuilder content (N content a, N content b)
--- cloneNodeWith node f = do
---   Observed parent content <- (<<<) node
-
---   next <- (>>>) (parents1 parent) content
---   out <- f content
-
---   return (next, out)
-
--- cloneNodeFromSnapshot :: NSnapshot content tag -> GBuilder content (N content tag)
--- cloneNodeFromSnapshot (NSnapshot parent content) =
---   (>>>) (parents1 parent) content
-
--- mapNode ::
---   N content a %1 ->
---   (content a -> content b) ->
---   GBuilder content (N content b)
--- mapNode node f = do
---   Observed parent content <- (<<<) node
---   (>>>) (parents1 parent) (f content)
-
--- zipNode2 ::
---   N content a %1 ->
---   N content b %1 ->
---   (content a -> content b -> content tag) ->
---   GBuilder content (N content tag)
--- zipNode2 nodeA nodeB makeContent = do
---   Observed parentA contentA <- (<<<) nodeA
---   Observed parentB contentB <- (<<<) nodeB
-
---   (>>>) (parents2 parentA parentB) (makeContent contentA contentB)
-
--- zipNode3 ::
---   N content a %1 ->
---   N content b %1 ->
---   N content c %1 ->
---   (content a -> content b -> content c -> content tag) ->
---   GBuilder content (N content tag)
--- zipNode3 nodeA nodeB nodeC makeContent = do
---   Observed parentA contentA <- (<<<) nodeA
---   Observed parentB contentB <- (<<<) nodeB
---   Observed parentC contentC <- (<<<) nodeC
-
---   (>>>) (parents3 parentA parentB parentC) (makeContent contentA contentB contentC)
 
 buildGraph :: GBuilder content tag -> G content
 buildGraph builder =
