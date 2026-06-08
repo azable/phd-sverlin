@@ -61,22 +61,23 @@ var ::
   Value ty ->
   Builder (Node (KVar ty))
 var name val = do
-  valueNode <- [] >>> Value val
+  valueNode <- () >>> Value val
 
   case freeze valueNode of
-    Ur snapshot@(NSnapshot valueParent _) ->
-      [valueParent] >>> Var name snapshot
+    Ur snapshot ->
+      snapshot >>> Var name snapshot
 
 readVar ::
   Node (KVar ty) %1 ->
   Builder (Node (KVar ty), Node (KValue ty))
 readVar varNode = do
-  Observed varParent varContent <- (<<<) varNode
+  Observed varObs <- (<<<) varNode
 
-  let Var _ (NSnapshot sParent sValue) = varContent
+  let varContent@(Var _ snapshot@(NSnapshot _ snapshotValue)) =
+        content varObs
 
-  nextVar <- [varParent] >>> varContent
-  value <- [sParent] >>> sValue
+  nextVar <- varObs >>> varContent
+  value <- snapshot >>> snapshotValue
 
   return (nextVar, value)
 
@@ -85,12 +86,16 @@ writeVar ::
   Node (KValue ty) %1 ->
   Builder (Node (KVar ty))
 writeVar varNode valueNode = do
-  Observed varParent varContent <- (<<<) varNode
-  Observed valueParent valueContent <- (<<<) valueNode
+  Observed varObs <- (<<<) varNode
+  Observed valueObs <- (<<<) valueNode
 
-  let Var varName _ = varContent
+  let Var varName _ =
+        content varObs
 
-  [varParent, valueParent] >>> Var varName (NSnapshot valueParent valueContent)
+  (varObs, valueObs)
+    >>> Var
+      varName
+      (NSnapshot (parent valueObs) (content valueObs))
 
 binaryValueOp ::
   Op lhs rhs out ->
@@ -107,7 +112,8 @@ eval ::
   NodeContent (KOp lhs rhs out) ->
   NodeContent (KValue rhs) ->
   NodeContent (KValue out)
-eval (Value lhs) (Op op) (Value rhs) = Value (binaryValueOp op lhs rhs)
+eval (Value lhs) (Op op) (Value rhs) =
+  Value (binaryValueOp op lhs rhs)
 
 e ::
   Node (KValue lhs) %1 ->
@@ -115,20 +121,24 @@ e ::
   Node (KValue rhs) %1 ->
   Builder (Node (KValue out))
 e lhsNode opNode rhsNode = do
-  Observed lhsParent lhsContent <- (<<<) lhsNode
-  Observed opParent opContent <- (<<<) opNode
-  Observed rhsParent rhsContent <- (<<<) rhsNode
+  Observed lhs <- (<<<) lhsNode
+  Observed op <- (<<<) opNode
+  Observed rhs <- (<<<) rhsNode
 
-  let outContent = eval lhsContent opContent rhsContent
+  let outContent =
+        eval
+          (content lhs)
+          (content op)
+          (content rhs)
 
-  [lhsParent, opParent, rhsParent] >>> outContent
+  (lhs, op, rhs) >>> outContent
 
 (.+.) ::
   Node (KValue 'CTInt) %1 ->
   Node (KValue 'CTInt) %1 ->
   Builder (Node (KValue 'CTInt))
 (.+.) a b = do
-  add <- (>>>) [] (Op AddI)
+  add <- () >>> Op AddI
   e a add b
 
 (.*.) ::
@@ -136,7 +146,7 @@ e lhsNode opNode rhsNode = do
   Node (KValue 'CTInt) %1 ->
   Builder (Node (KValue 'CTInt))
 (.*.) a b = do
-  mul <- [] >>> Op MulI
+  mul <- () >>> Op MulI
   e a mul b
 
 example :: Builder (Node (KValue 'CTInt))
@@ -144,7 +154,7 @@ example = do
   x0 <- var "x" (I32 10)
 
   (x1, a) <- readVar x0
-  b <- [] >>> Value (I32 20)
+  b <- () >>> Value (I32 20)
 
   c <- a .+. b
 
