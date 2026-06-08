@@ -45,6 +45,8 @@
     currStep = 0;
     await layout.solve();
   };
+
+  await recomputeLayout();
 </script>
 
 <div class="page" style:width="100vw" style:height="100vh">

@@ -3,6 +3,7 @@ import * as penrose from '@penrose/core';
 import { LayoutCSP, LayoutCSPScope, type Variable } from './layout.svelte';
 import { lessThan } from './constraints.svelte';
 import { measureContent, type ClientSize } from './node-content';
+import { styleValuesToDefaultCSSrules, toCSS } from './style';
 
 export type NodeConfig = {
   style: Record<string, string | number | Variable>;
@@ -77,8 +78,6 @@ export class Node {
       }
       throw new Error(`Invalid style value for key ${key}`);
     });
-
-    return this;
   }
 
   public static async create(
@@ -115,6 +114,14 @@ export class Node {
     return this.#style;
   }
 
+  public asObject() {
+    return {
+      id: this.#id,
+      style: this.#style,
+      content: { ...this.#content }
+    };
+  }
+
   public within(container: Node) {
     const { left, top, right, bottom } = this.bounds();
     const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = container.bounds();
@@ -147,8 +154,10 @@ export class Node {
 
   private async setContent(content: string): Promise<ClientSize> {
     this.#content.text = content;
+    const styleValues = styleValuesToDefaultCSSrules(this.style);
     return await measureContent({
-      text: this.#content.text
+      text: this.#content.text,
+      css: toCSS(styleValues)
     });
   }
 }

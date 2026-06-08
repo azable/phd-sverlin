@@ -1,12 +1,13 @@
 <script lang="ts">
   export type NodeContentProps = {
     text: string;
+    css: string;
   };
 
-  let { text }: NodeContentProps = $props();
+  let { text, css }: NodeContentProps = $props();
 </script>
 
-<div class="node-content">
+<div class="node-content" style={css}>
   {text}
 </div>
 

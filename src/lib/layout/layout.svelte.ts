@@ -1,6 +1,6 @@
 import * as penrose from '@penrose/core';
 import * as _ from 'lodash-es';
-import { type StyleValue, Node, type NodeView, type NodeConfig } from './node.svelte';
+import { Node, type NodeView, type NodeConfig, type StyleValue } from './node.svelte';
 import { toCSSrule, toCSS } from './style';
 import { randomUUID } from './utils';
 import { tick } from 'svelte';
@@ -55,7 +55,7 @@ export class LayoutCSP {
 
   #root: Node | undefined;
 
-  #nodes: SvelteMap<string, Node>[] = $state([new SvelteMap()]);
+  #nodes: SvelteMap<string, Node>[] = [new SvelteMap()];
   #nodeIdCounter: number = 0;
 
   #variables: SvelteMap<string, Variable>;
@@ -84,19 +84,22 @@ export class LayoutCSP {
       }
     });
     layout.#root = root;
-    layout.#nodes[0].set(layout.#root.id, layout.#root);
     await tick();
     return layout;
   }
 
-  private async node(config: NodeConfig, content?: string): Promise<string> {
+  private ensureRoot() {
     if (this.#root === undefined) {
-      throw new Error('Root node not initialized');
+      throw new Error('Root node is not defined.');
     }
+  }
+
+  private async node(config: NodeConfig, content?: string): Promise<string> {
+    this.ensureRoot();
     const nodeId = `node-${this.#nodeIdCounter++}`;
     const node = await Node.create(this, nodeId, config, content);
     this.#nodes[this.time].set(node.id, node);
-    node.within(this.#root);
+    node.within(this.#root!);
     return node.id;
   }
 
@@ -127,23 +130,24 @@ export class LayoutCSP {
     return this.#unitSize;
   }
 
-  private ensureUniqId(id: string | undefined): string {
-    if (id === undefined || id === null) {
-      return randomUUID();
-    }
-    return id;
-  }
+  // private ensureUniqId(id: string | undefined): string {
+  //   if (id === undefined || id === null) {
+  //     // throw new Error('ID must be provided for variable/constraint');
+  //     return randomUUID();
+  //   }
+  //   return id;
+  // }
 
-  public variable(namespace: string, id?: string): Variable {
-    id = this.idWithNamespace(this.ensureUniqId(id), namespace);
+  public variable(namespace: string, id: string): Variable {
+    id = this.idWithNamespace(id, namespace);
     if (!this.#variables.has(id)) {
       this.#variables.set(id, new Variable(id));
     }
     return this.#variables.get(id)!;
   }
 
-  public constraint(namespace: string, id?: string): Constraint {
-    id = this.idWithNamespace(this.ensureUniqId(id), namespace);
+  public constraint(namespace: string, id: string): Constraint {
+    id = this.idWithNamespace(id, namespace);
     if (!this.#constraints.has(id)) {
       const constraint = new Constraint(id);
       this.#constraints.set(id, constraint);
@@ -153,8 +157,23 @@ export class LayoutCSP {
   }
 
   public async solve() {
-    const variables = Object.fromEntries(this.#variables.entries());
-    const constraints = Object.fromEntries(this.#constraints.entries());
+    this.ensureRoot();
+
+    const nodes = this.#nodes.map((nodeMap) => ({
+      root: this.#root!.asObject(),
+      ...Object.fromEntries(nodeMap.entries().map(([id, node]) => [id, node.asObject()]))
+    }));
+    console.log(nodes);
+    const variables = this.#variables.keys().reduce(
+      (acc, key) => {
+        acc[key] = this.#variables.get(key)!;
+        return acc;
+      },
+      {} as Record<string, Variable>
+    );
+    const constraints = Object.fromEntries(
+      this.#constraints.entries().map(([id, constraint]) => [id, constraint.expr])
+    );
 
     // Randomize initial variable values to help solver escape local minima
     for (const v of _.values(variables)) {
@@ -162,6 +181,11 @@ export class LayoutCSP {
     }
 
     console.log('====================== SOLVE ======================');
+    console.log(
+      `>>> Nodes (time steps=${nodes.length},`,
+      `total nodes=${_.sumBy(nodes, (n) => Object.keys(n).length)}):`,
+      window.structuredClone(nodes)
+    );
     console.log(
       `>>> Variables (n=${Object.keys(variables).length}):`,
       window.structuredClone(variables)
@@ -173,10 +197,11 @@ export class LayoutCSP {
 
     const solveIteration = async () => {
       const problem = await penrose.problem({
-        constraints: _.values(constraints).map((c) => c.expr)
+        constraints: _.values(constraints)
       });
 
       const result = problem.start({}).run({});
+      console.log('>>> Solver result:', result);
 
       // Update values
       for (const variable of Object.keys(variables)) {
@@ -197,21 +222,18 @@ export class LayoutCSP {
     );
 
     this.#views = _.range(this.time + 1).map((t) => {
-      const nodeViews = this.#nodes[t].entries().map(([nodeId, node]) => {
-        const style: Record<string, string> = {};
-        for (const [key, value] of Object.entries(node.style)) {
-          if (value.type === 'variable') {
-            const varValue = variables[value.varId].val;
-            const [cssKey, cssValue] = toCSSrule(key, varValue);
-            style[cssKey] = cssValue;
-          } else if (value.type === 'constant') {
-            const [cssKey, cssValue] = toCSSrule(key, value.value);
-            style[cssKey] = cssValue;
-          } else if (value.type === 'fixed') {
-            const [cssKey, cssValue] = toCSSrule(key, value.value);
-            style[cssKey] = cssValue;
-          }
-        }
+      const nodeViews = _.entries(nodes[t]).map(([nodeId, node]) => {
+        const style = Object.fromEntries(
+          _.entries(node.style).map(([key, value]) => {
+            if (value.type === 'variable') {
+              const varValue = variables[value.varId].val;
+              return toCSSrule(key, varValue);
+            } else {
+              return toCSSrule(key, value.value);
+            }
+          })
+        );
+        console.log(style);
         return {
           nodeId,
           style,
@@ -220,12 +242,16 @@ export class LayoutCSP {
         } as NodeView;
       });
 
-      return nodeViews.toArray();
+      return nodeViews;
     });
   }
 
   public get views() {
     return this.#views;
+  }
+
+  private idWithNamespace(key: string, namespace: string): string {
+    return `${namespace}-${key}`;
   }
 
   public num = (value: StyleValue | number): penrose.Num => {
@@ -236,7 +262,10 @@ export class LayoutCSP {
     const styleValue = value as StyleValue;
 
     if (styleValue.type === 'variable') {
-      return this.variable(styleValue.varId);
+      if (!this.#variables.has(styleValue.varId)) {
+        throw new Error(`Variable with id ${styleValue.varId} does not exist`);
+      }
+      return this.#variables.get(styleValue.varId)!;
     }
 
     if (styleValue.type === 'constant') {
@@ -244,10 +273,6 @@ export class LayoutCSP {
     }
     throw new Error(`Cannot convert ${styleValue.type} to number`);
   };
-
-  private idWithNamespace(key: string, namespace: string): string {
-    return `${namespace}-${key}`;
-  }
 }
 
 export class LayoutCSPScope {

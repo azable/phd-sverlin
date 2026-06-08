@@ -1,6 +1,7 @@
 import { LayoutCSP } from './layout.svelte';
 import { type NodeView } from './node.svelte';
 import * as penrose from '@penrose/core';
+import { randomUUID } from './utils';
 
 type LayoutConfig = {
   width?: number;
@@ -19,11 +20,17 @@ export async function createLayout(config: LayoutConfig = {}) {
     },
 
     get constraint() {
-      return (expr: penrose.Num) => layout.constraint('global').set(expr);
+      return (expr: penrose.Num, id?: string) => {
+        id ??= randomUUID();
+        layout.constraint('global', id).set(expr);
+      };
     },
 
     get variable() {
-      return (id?: string) => layout.variable('global', id);
+      return (id?: string) => {
+        id ??= randomUUID();
+        return layout.variable('global', id);
+      };
     },
 
     get timeSteps() {

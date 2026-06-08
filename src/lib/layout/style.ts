@@ -1,3 +1,34 @@
+import { type StyleValue } from './node.svelte';
+
+export const styleValuesToDefaultCSSrules = (
+  styleValues: Record<string, StyleValue>
+): Record<string, string> => {
+  const defaultCSS: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(styleValues)) {
+    switch (value.type) {
+      case 'variable':
+        // Skip, cannot determine default value for variable
+        break;
+      case 'constant':
+        defaultCSS[key] = value.value;
+        break;
+      case 'fixed':
+        defaultCSS[key] = value.value;
+        break;
+    }
+  }
+  return toCSSrules(defaultCSS);
+};
+
+export const toCSSrules = (style: Record<string, string | number>): Record<string, string> => {
+  const rules: Record<string, string> = {};
+  for (const [key, value] of Object.entries(style)) {
+    const [cssKey, cssValue] = toCSSrule(key, value);
+    rules[cssKey] = cssValue;
+  }
+  return rules;
+};
+
 export const toCSSrule = (key: string, value: number | string): [string, string] => {
   const kebabKey = key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 
