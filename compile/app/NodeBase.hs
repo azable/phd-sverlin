@@ -15,10 +15,11 @@ module NodeBase
     Some (..),
     NId,
     N,
+    NRef,
     Observation (..),
     Observed (Observed),
-    HasParent (..),
-    ToParents (..),
+    HasRef (..),
+    ToRefs (..),
     (<<<),
     (>>>),
     NSnapshot (..),
@@ -44,6 +45,9 @@ instance (forall tag. P.Show (content tag)) => P.Show (Some content) where
 
 data NRecord content = NRecord
   { nodeId :: NId,
+    -- These are the IDs of nodes this node depends on.
+    --
+    -- This is graph provenance, not the node's own identity.
     nodeParents :: [NId],
     nodeContent :: Some content
   }
@@ -68,94 +72,111 @@ instance Consumable (N content tag) where
   consume (N nid nodeContent') =
     consume nid `lseq` consume nodeContent'
 
-data Parent content where
-  Parent :: NId -> Parent content
+-- A reference to a graph node.
+--
+-- This is the node's own identity. It can later be used as one parent/input
+-- when constructing another node.
+--
+-- It is deliberately not called Parent, because a node can itself have many
+-- parents in its NRecord.
 
-parentId :: Parent content -> NId
-parentId (Parent nid) = nid
+data NRef content where
+  NRef :: NId -> NRef content
+
+refId :: NRef content -> NId
+refId (NRef nid) = nid
 
 data Observation content tag = Observation
-  { parent :: Parent content,
+  { ref :: NRef content,
     content :: content tag
   }
+
+-- Domain-specific Ur-like wrapper.
+--
+-- Pattern matching:
+--
+--   Observed obs <- ...
+--
+-- gives an unrestricted Observation value.
 
 data Observed content tag where
   Observed :: Observation content tag -> Observed content tag
 
 data NSnapshot content tag where
   NSnapshot ::
-    Parent content ->
+    NRef content ->
     content tag ->
     NSnapshot content tag
 
 instance (P.Show (content tag)) => P.Show (NSnapshot content tag) where
-  show (NSnapshot (Parent nid) _) =
+  show (NSnapshot (NRef nid) _) =
     "$[N" P.++ P.show nid P.++ "]"
 
--- Anything that can be used as a parent reference.
+-- Anything that has a node reference.
+
+class HasRef x content where
+  toRef :: x -> NRef content
+
+instance HasRef (NRef content) content where
+  toRef = id
+
+instance HasRef (Observation content tag) content where
+  toRef = ref
+
+instance HasRef (NSnapshot content tag) content where
+  toRef (NSnapshot r _) = r
+
+-- Things that can be converted into a list of node references.
 --
--- This deliberately includes Observed and NSnapshot, so the DSL layer does not
--- need to manually unpack parents everywhere.
+-- These references become the parents/provenance of the newly emitted node.
 
-class HasParent x content where
-  toParent :: x -> Parent content
+class ToRefs ps content where
+  toRefs :: ps -> [NRef content]
 
-instance HasParent (Parent content) content where
-  toParent = id
+instance ToRefs () content where
+  toRefs () = []
 
-instance HasParent (Observation content tag) content where
-  toParent = parent
+instance ToRefs [NRef content] content where
+  toRefs = id
 
-instance HasParent (NSnapshot content tag) content where
-  toParent (NSnapshot p _) = p
+instance ToRefs (NRef content) content where
+  toRefs r = [r]
 
-class ToParents ps content where
-  toParents :: ps -> [Parent content]
+instance ToRefs (Observation content tag) content where
+  toRefs obs = [toRef obs]
 
-instance ToParents () content where
-  toParents () = []
-
-instance ToParents [Parent content] content where
-  toParents = id
-
-instance ToParents (Parent content) content where
-  toParents p = [p]
-
-instance ToParents (Observation content tag) content where
-  toParents obs = [toParent obs]
-
-instance ToParents (NSnapshot content tag) content where
-  toParents snapshot = [toParent snapshot]
+instance ToRefs (NSnapshot content tag) content where
+  toRefs snapshot = [toRef snapshot]
 
 instance
-  ( HasParent a content,
-    HasParent b content
+  ( HasRef a content,
+    HasRef b content
   ) =>
-  ToParents (a, b) content
+  ToRefs (a, b) content
   where
-  toParents (a, b) =
-    [toParent a, toParent b]
+  toRefs (a, b) =
+    [toRef a, toRef b]
 
 instance
-  ( HasParent a content,
-    HasParent b content,
-    HasParent c content
+  ( HasRef a content,
+    HasRef b content,
+    HasRef c content
   ) =>
-  ToParents (a, b, c) content
+  ToRefs (a, b, c) content
   where
-  toParents (a, b, c) =
-    [toParent a, toParent b, toParent c]
+  toRefs (a, b, c) =
+    [toRef a, toRef b, toRef c]
 
 instance
-  ( HasParent a content,
-    HasParent b content,
-    HasParent c content,
-    HasParent d content
+  ( HasRef a content,
+    HasRef b content,
+    HasRef c content,
+    HasRef d content
   ) =>
-  ToParents (a, b, c, d) content
+  ToRefs (a, b, c, d) content
   where
-  toParents (a, b, c, d) =
-    [toParent a, toParent b, toParent c, toParent d]
+  toRefs (a, b, c, d) =
+    [toRef a, toRef b, toRef c, toRef d]
 
 newtype G content = G
   { graphNodes :: [NRecord content]
@@ -182,35 +203,35 @@ type GBuilder content = State (GBuilderState content)
 
 (<<<) :: N content tag %1 -> GBuilder content (Observed content tag)
 (<<<) (N (Ur nid) (Ur nodeContent')) =
-  return (Observed (Observation (Parent nid) nodeContent'))
+  return (Observed (Observation (NRef nid) nodeContent'))
 
 freeze :: N content tag %1 -> Ur (NSnapshot content tag)
 freeze (N (Ur nid) (Ur nodeContent')) =
-  Ur (NSnapshot (Parent nid) nodeContent')
+  Ur (NSnapshot (NRef nid) nodeContent')
 
-makeNRecord :: content tag -> [Parent content] -> GBuilder content (Ur NId)
-makeNRecord nodeContent' parents = do
+makeNRecord :: content tag -> [NRef content] -> GBuilder content (Ur NId)
+makeNRecord nodeContent' refs = do
   GBuilderState (Ur oldNextId) (Ur oldNodes) <- get
 
   let newId = oldNextId
-      parentIds = P.map parentId parents
+      parentIds = P.map refId refs
       newNode = NRecord newId parentIds (Some nodeContent')
 
   put (GBuilderState (Ur (newId + 1)) (Ur (oldNodes P.++ [newNode])))
   return (Ur newId)
 
-makeN :: content tag -> [Parent content] -> GBuilder content (N content tag)
-makeN nodeContent' parents = do
-  Ur nid <- makeNRecord nodeContent' parents
+makeN :: content tag -> [NRef content] -> GBuilder content (N content tag)
+makeN nodeContent' refs = do
+  Ur nid <- makeNRecord nodeContent' refs
   return (N (Ur nid) (Ur nodeContent'))
 
 (>>>) ::
-  (ToParents ps content) =>
+  (ToRefs ps content) =>
   ps ->
   content tag ->
   GBuilder content (N content tag)
-parents >>> nodeContent' =
-  makeN nodeContent' (toParents parents)
+refs >>> nodeContent' =
+  makeN nodeContent' (toRefs refs)
 
 discard :: N content tag %1 -> GBuilder content ()
 discard node =

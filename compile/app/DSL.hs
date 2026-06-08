@@ -89,7 +89,7 @@ writeVar varNode valueNode = do
 
   let Var varName _ = content var
 
-  (var, value) >>> Var varName (NSnapshot (parent value) (content value))
+  (var, value) >>> Var varName (NSnapshot (ref value) (content value))
 
 binaryValueOp ::
   Op lhs rhs out ->
