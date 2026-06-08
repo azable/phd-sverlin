@@ -1,63 +1,73 @@
 import * as penrose from '@penrose/core';
 import * as _ from 'lodash-es';
-import { LazyTemporal, LazyUniform, LazyTemporalMap, type Temporal } from './temporal';
-import { type StyleValue, Node, type NodeView } from './node.svelte';
-import { toCSSrule } from './style';
+import { type StyleValue, Node, type NodeView, type NodeConfig } from './node.svelte';
+import { toCSSrule, toCSS } from './style';
 import { randomUUID } from './utils';
 import { tick } from 'svelte';
-
-export const p = {
-  ...penrose,
-  lessThanWithPadding: (a: penrose.Num, b: penrose.Num, padding: penrose.Num): penrose.Num => {
-    const gap = penrose.add(penrose.sub(a, b), padding);
-    const violation = penrose.max(gap, 0);
-    const penalty = penrose.pow(violation, 2);
-    return penalty;
-  }
-};
+import { SvelteMap } from 'svelte/reactivity';
 
 export type Interval = {
   min: number;
   max: number;
 };
 
-export interface Variable extends penrose.Var {
+export class Variable implements penrose.Var {
+  tag: 'Var';
+  val: number;
   id: string;
   uuid: string;
   randomInit: Interval;
+
+  constructor(id: string) {
+    this.tag = 'Var';
+    this.val = 0;
+    this.id = id;
+    this.uuid = randomUUID();
+    this.randomInit = { min: 1, max: 1000 };
+  }
+}
+
+export class Constraint {
+  #id: string;
+  #expr: penrose.Num;
+
+  constructor(id: string) {
+    this.#id = id;
+    this.#expr = 0;
+  }
+
+  public get id() {
+    return this.#id;
+  }
+
+  public get expr() {
+    return this.#expr;
+  }
+
+  public set(expr: penrose.Num) {
+    this.#expr = expr;
+  }
 }
 
 export class LayoutCSP {
-  #time: number = $state(0);
+  #time: number = $state(-1);
   #unitSize: number;
   #dirty: boolean = $state(false);
 
-  #nodes: Record<string, Node> = {};
+  #root: Node | undefined;
 
-  #uniforms: LazyTemporalMap<string, Variable>;
-  #varyings: LazyTemporalMap<string, Variable>;
-  #constraints: LazyTemporalMap<string, penrose.Num>;
+  #nodes: SvelteMap<string, Node>[] = $state([new SvelteMap()]);
+  #nodeIdCounter: number = 0;
+
+  #variables: SvelteMap<string, Variable>;
+  #constraints: SvelteMap<string, Constraint>;
 
   #views: NodeView[][] = $state([]);
 
-  constructor(unitSize: number = 1) {
+  private constructor(unitSize: number = 1) {
     this.#unitSize = unitSize;
-
-    const makeVariable = (key: string): Variable => {
-      return {
-        ...penrose.variable(0),
-        id: key,
-        uuid: randomUUID(),
-        randomInit: { min: 1, max: 1000 }
-      };
-    };
-
-    this.#uniforms = new LazyTemporalMap<string, Variable>(LazyUniform, makeVariable);
-    this.#varyings = new LazyTemporalMap<string, Variable>(LazyTemporal, makeVariable);
-
-    this.#constraints = new LazyTemporalMap<string, penrose.Num>(LazyTemporal, () =>
-      penrose.variable(0)
-    );
+    this.#variables = new SvelteMap<string, Variable>();
+    this.#constraints = new SvelteMap<string, Constraint>();
 
     $effect(() => {
       // Ensure always up to date by next tick if scheduled to resolve
@@ -71,19 +81,54 @@ export class LayoutCSP {
     });
   }
 
-  public registerNode(id: string, node: Node) {
-    if (id in this.#nodes) {
-      throw new Error(`Node with id ${id} already exists`);
+  public static async create(
+    canvasWidth: number,
+    canvasHeight: number,
+    unitSize: number = 1
+  ): Promise<LayoutCSP> {
+    const layout = new LayoutCSP(unitSize);
+    const root = await Node.create(layout, 'root', {
+      style: {
+        width: canvasWidth,
+        height: canvasHeight,
+        left: 0,
+        top: 0
+      }
+    });
+    layout.#root = root;
+    layout.#nodes[0].set(layout.#root.id, layout.#root);
+    await tick();
+    return layout;
+  }
+
+  private async node(config: NodeConfig, content?: string): Promise<string> {
+    if (this.#root === undefined) {
+      throw new Error('Root node not initialized');
     }
-    this.#nodes[id] = node;
+    const nodeId = `node-${this.#nodeIdCounter++}`;
+    const node = await Node.create(this, nodeId, config, content);
+    this.#nodes[this.time].set(node.id, node);
+    node.within(this.#root);
+    return node.id;
   }
 
-  public getNodes() {
-    return this.#nodes;
-  }
-
-  public step() {
+  public async step(
+    removeNodeIds: string[] = [],
+    nodes: [NodeConfig['style'], string?][] = []
+  ): Promise<string[]> {
     this.#time += 1;
+    this.#nodes[this.time] =
+      this.time > 0
+        ? new SvelteMap(
+            this.#nodes[this.time - 1]
+              .entries()
+              .filter(([nodeId]) => !removeNodeIds.includes(nodeId))
+          )
+        : new SvelteMap();
+    const addNodeIds = await Promise.all(
+      nodes.map(async ([style, content]) => await this.node({ style }, content))
+    );
+    return addNodeIds;
   }
 
   public get time() {
@@ -109,93 +154,72 @@ export class LayoutCSP {
     return id;
   }
 
-  public uniform(namespace: string, id?: string): Temporal<Variable> {
-    id = this.ensureUniqId(id);
-    return this.#uniforms.lookup(this.idWithNamespace(`uniform-${id}`, namespace));
-  }
-
-  public varying(namespace: string, id?: string): Temporal<Variable> {
-    id = this.ensureUniqId(id);
-    return this.#varyings.lookup(this.idWithNamespace(`varying-${id}`, namespace));
-  }
-
-  public variable(id: string): Temporal<Variable> {
-    if (id.includes('uniform')) {
-      return this.#uniforms.lookup(id);
-    } else if (id.includes('varying')) {
-      return this.#varyings.lookup(id);
+  public variable(namespace: string, id?: string): Variable {
+    id = this.idWithNamespace(this.ensureUniqId(id), namespace);
+    if (!this.#variables.has(id)) {
+      this.#variables.set(id, new Variable(id));
     }
-    throw new Error(`Variable id must contain either 'uniform' or 'varying': ${id}`);
+    return this.#variables.get(id)!;
   }
 
-  public constraint(namespace: string, id?: string): Temporal<penrose.Num> {
-    id = this.ensureUniqId(id);
-    return this.#constraints.lookup(this.idWithNamespace(id, namespace));
+  public constraint(namespace: string, id?: string): Constraint {
+    id = this.idWithNamespace(this.ensureUniqId(id), namespace);
+    if (!this.#constraints.has(id)) {
+      this.#constraints.set(id, new Constraint(id));
+    }
+    return this.#constraints.get(id)!;
   }
 
   public async solve() {
-    const matVariables = {
-      ...this.#uniforms.materialize(this.time),
-      ...this.#varyings.materialize(this.time)
-    };
-    const matConstraints = this.#constraints.materialize(this.time);
+    const variables = this.#variables;
+    const constraints = this.#constraints;
 
     // Randomize initial variable values to help solver escape local minima
-    for (const variable of Object.keys(matVariables)) {
-      // Always at least one time step if variable exists
-      const firstTimeStep = matVariables[variable][0];
-      const initValue =
-        Math.random() * (firstTimeStep.randomInit.max - firstTimeStep.randomInit.min) +
-        firstTimeStep.randomInit.min;
-
-      for (const timeKey in matVariables[variable]) {
-        matVariables[variable][timeKey].val = initValue;
-      }
+    for (const v of variables.values()) {
+      v.val = Math.random() * (v.randomInit.max - v.randomInit.min) + v.randomInit.min;
     }
 
     console.log('====================== SOLVE ======================');
     console.log(
-      `>>> Variables (n=${Object.keys(matVariables).length}):`,
-      window.structuredClone(matVariables)
+      `>>> Variables (n=${variables.keys().toArray().length}):`,
+      window.structuredClone(variables)
     );
     console.log(
-      `>>> Constraints (n=${Object.keys(matConstraints).length}):`,
-      window.structuredClone(matConstraints)
+      `>>> Constraints (n=${Object.keys(constraints).length}):`,
+      window.structuredClone(constraints)
     );
 
     const solveIteration = async () => {
-      const problem = await p.problem({
-        constraints: _.flatten(Object.values(matConstraints))
+      const problem = await penrose.problem({
+        constraints: _.flatten(Object.values(constraints))
       });
 
       const result = problem.start({}).run({});
 
       // Update values
-      for (const variable of Object.keys(matVariables)) {
-        for (const timeKey in matVariables[variable]) {
-          const solvedValue = result.vals.get(matVariables[variable][timeKey]);
-          if (solvedValue === undefined) {
-            console.warn(`No solved value for variable ${variable} at time ${timeKey}`);
-            continue;
-          }
-          matVariables[variable][timeKey].val = solvedValue;
+      for (const variable of Object.keys(variables)) {
+        const solvedValue = result.vals.get(variables.get(variable)!);
+        if (solvedValue === undefined) {
+          console.warn(`No solved value for variable ${variable}`);
+          continue;
         }
+        variables.get(variable)!.val = solvedValue;
       }
     };
 
     await solveIteration();
 
     console.log(
-      `>>> Variables [SOLVED] (n=${Object.keys(matVariables).length}):`,
-      window.structuredClone(matVariables)
+      `>>> Variables [SOLVED] (n=${variables.keys().toArray().length}):`,
+      window.structuredClone(variables)
     );
 
     this.#views = _.range(this.time + 1).map((t) => {
-      const nodeViews = Object.values(this.#nodes).map((node) => {
+      const nodeViews = this.#nodes[t].entries().map(([nodeId, node]) => {
         const style: Record<string, string> = {};
         for (const [key, value] of Object.entries(node.style)) {
           if (value.type === 'variable') {
-            const varValue = matVariables[value.varId][t].val;
+            const varValue = variables.get(value.varId)!.val;
             const [cssKey, cssValue] = toCSSrule(key, varValue);
             style[cssKey] = cssValue;
           } else if (value.type === 'constant') {
@@ -207,13 +231,14 @@ export class LayoutCSP {
           }
         }
         return {
-          nodeId: node.id,
+          nodeId,
           style,
+          css: toCSS(style),
           content: node.content
         } as NodeView;
       });
 
-      return nodeViews;
+      return nodeViews.toArray();
     });
 
     this.#dirty = false;
@@ -223,7 +248,7 @@ export class LayoutCSP {
     return this.#views;
   }
 
-  public num = (value: StyleValue | number, t = this.#time): penrose.Num => {
+  public num = (value: StyleValue | number): penrose.Num => {
     if (typeof value === 'number') {
       return value;
     }
@@ -231,7 +256,7 @@ export class LayoutCSP {
     const styleValue = value as StyleValue;
 
     if (styleValue.type === 'variable') {
-      return this.variable(styleValue.varId).at(t);
+      return this.variable(styleValue.varId);
     }
 
     if (styleValue.type === 'constant') {
@@ -240,27 +265,27 @@ export class LayoutCSP {
     throw new Error(`Cannot convert ${styleValue.type} to number`);
   };
 
-  public defineConstraint = <Args extends unknown[]>(
-    consName: string,
-    constraintFn: (...args: Args) => Array<penrose.Num>
-  ) => {
-    return (...args: Args) => {
-      const nodes = args.filter((arg): arg is Node => typeof arg === 'object' && 'id' in arg!);
-      const vars = args.filter(
-        (arg): arg is Temporal<Variable> => typeof arg === 'object' && 'at' in arg!
-      );
-      const varsAtTime = vars.map((v) => v.at(this.time));
-      const nodeIdsConcat = nodes.map((n) => n.id).join('');
-      const varIdsConcat = varsAtTime.map((v) => v.uuid).join('-');
-      const constraintExprs = constraintFn(...args);
-      const constraintKeys = constraintExprs.map((_, i) => {
-        return `${consName}-${nodeIdsConcat}${varIdsConcat}${i}`;
-      });
-      constraintKeys.forEach((key, i) => {
-        this.#constraints.lookup(key).setAt(this.time, constraintExprs[i]);
-      });
-    };
-  };
+  // public defineConstraint = <Args extends unknown[]>(
+  //   consName: string,
+  //   constraintFn: (...args: Args) => Array<penrose.Num>
+  // ) => {
+  //   return (...args: Args) => {
+  //     const nodes = args.filter((arg): arg is Node => typeof arg === 'object' && 'id' in arg!);
+  //     const vars = args.filter(
+  //       (arg): arg is Temporal<Variable> => typeof arg === 'object' && 'at' in arg!
+  //     );
+  //     const varsAtTime = vars.map((v) => v.at(this.time));
+  //     const nodeIdsConcat = nodes.map((n) => n.id).join('');
+  //     const varIdsConcat = varsAtTime.map((v) => v.uuid).join('-');
+  //     const constraintExprs = constraintFn(...args);
+  //     const constraintKeys = constraintExprs.map((_, i) => {
+  //       return `${consName}-${nodeIdsConcat}${varIdsConcat}${i}`;
+  //     });
+  //     constraintKeys.forEach((key, i) => {
+  //       this.#constraints.lookup(key).setAt(this.time, constraintExprs[i]);
+  //     });
+  //   };
+  // };
 
   private idWithNamespace(key: string, namespace: string): string {
     return `${namespace}-${key}`;
@@ -276,15 +301,11 @@ export class LayoutCSPScope {
     this.layout = layout;
   }
 
-  public uniform(id: string): Temporal<Variable> {
-    return this.layout.uniform(this.namespace, id);
+  public variable(id: string): Variable {
+    return this.layout.variable(this.namespace, id);
   }
 
-  public varying(id: string): Temporal<Variable> {
-    return this.layout.varying(this.namespace, id);
-  }
-
-  public constraint(id: string): Temporal<penrose.Num> {
+  public constraint(id: string): Constraint {
     return this.layout.constraint(this.namespace, id);
   }
 }

@@ -41,3 +41,10 @@ export const toCSSrule = (key: string, value: number | string): [string, string]
   }
   throw new Error(`No CSS mapping for key: ${key}`);
 };
+
+export const toCSS = (style: Record<string, string>): string => {
+  return Object.entries(style)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('; ');
+};

@@ -10,6 +10,11 @@ const config = {
     alias: {
       $lib: './src/lib'
     }
+  },
+  compilerOptions: {
+    experimental: {
+      async: true
+    }
   }
 };
 

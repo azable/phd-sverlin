@@ -1,10 +1,11 @@
 import * as _ from 'lodash-es';
 import * as penrose from '@penrose/core';
-import { LayoutCSP, LayoutCSPScope, type Variable, p } from './layout.svelte';
-import { type Temporal } from './temporal';
+import { LayoutCSP, LayoutCSPScope, type Variable } from './layout.svelte';
+import { lessThan } from './constraints.svelte';
+import { measureContent, type ClientSize } from './node-content';
 
 export type NodeConfig = {
-  style: Record<string, string | number | Temporal<Variable>>;
+  style: Record<string, string | number | Variable>;
 };
 
 export type StyleValue =
@@ -24,6 +25,7 @@ export type StyleValue =
 export type NodeView = {
   nodeId: string;
   style: Record<string, string>;
+  css: string;
   content?: NodeContent;
 };
 
@@ -45,26 +47,26 @@ export class Node {
     clientHeight: 0
   });
 
-  constructor(layout: LayoutCSP, config: NodeConfig) {
+  private constructor(layout: LayoutCSP, id: string, config: NodeConfig) {
     this.#layout = layout;
-    this.#id = `node-${Object.keys(layout.getNodes()).length + 1}`;
+    this.#id = id;
     this.#scope = new LayoutCSPScope(layout, this.#id);
 
     config = {
       style: {
-        width: config.style.width ?? this.#scope.varying('width'),
-        height: config.style.height ?? this.#scope.varying('height'),
-        left: config.style.left ?? this.#scope.varying('left'),
-        top: config.style.top ?? this.#scope.varying('top'),
+        width: config.style.width ?? this.#scope.variable('width'),
+        height: config.style.height ?? this.#scope.variable('height'),
+        left: config.style.left ?? this.#scope.variable('left'),
+        top: config.style.top ?? this.#scope.variable('top'),
         ...config.style
       }
     };
 
     this.#style = _.mapValues(config.style, (value, key) => {
-      if (typeof value === 'object' && 'at' in value && 'setAt' in value) {
+      if (typeof value === 'object') {
         return {
           type: 'variable',
-          varId: value.at(0).id
+          varId: value.id
         } as StyleValue;
       } else if (typeof value === 'number') {
         return {
@@ -80,42 +82,50 @@ export class Node {
       throw new Error(`Invalid style value for key ${key}`);
     });
 
-    this.#layout.registerNode(this.#id, this);
+    // // Min width/height constraints based on content size
+    // $effect(() => {
+    //   if (!this.#content) {
+    //     return;
+    //   }
 
-    // Min width/height constraints based on content size
-    $effect(() => {
-      if (!this.#content) {
-        return;
-      }
+    //   const { width, height } = this.bounds();
 
-      const { width, height } = this.bounds(0);
+    //   this.#scope
+    //     .constraint('min-width')
+    //     .set(lessThan(this.#layout.num(this.#content.clientWidth), width, this.#layout.unitSize));
 
-      this.#scope
-        .constraint('at-least-content-width')
-        .setAt(
-          0,
-          p.lessThanWithPadding(
-            p.add(this.#layout.num(this.#content.clientWidth), this.#layout.unitSize),
-            width,
-            0
-          )
-        );
+    //   this.#scope
+    //     .constraint('min-height')
+    //     .set(lessThan(this.#layout.num(this.#content.clientHeight), height, this.#layout.unitSize));
 
-      this.#scope
-        .constraint('at-least-content-height')
-        .setAt(
-          0,
-          p.lessThanWithPadding(
-            p.add(this.#layout.num(this.#content.clientHeight), this.#layout.unitSize),
-            height,
-            0
-          )
-        );
-
-      this.#layout.scheduleResolve();
-    });
+    //   this.#layout.scheduleResolve();
+    // });
 
     return this;
+  }
+
+  public static async create(
+    layout: LayoutCSP,
+    id: string,
+    config: NodeConfig,
+    content?: string
+  ): Promise<Node> {
+    const node = new Node(layout, id, config);
+    if (content !== undefined) {
+      const { clientWidth, clientHeight } = await node.setContent(content);
+      const { width, height } = node.bounds();
+
+      node.#scope
+        .constraint('min-width')
+        .set(lessThan(node.#layout.num(clientWidth), width, node.#layout.unitSize));
+
+      node.#scope
+        .constraint('min-height')
+        .set(lessThan(node.#layout.num(clientHeight), height, node.#layout.unitSize));
+
+      node.#layout.scheduleResolve();
+    }
+    return node;
   }
 
   public get id() {
@@ -130,11 +140,23 @@ export class Node {
     return this.#style;
   }
 
-  public bounds(time: number = this.#layout.time): Record<string, penrose.Num> {
-    const left = this.#layout.num(this.style.left, time);
-    const top = this.#layout.num(this.style.top, time);
-    const width = this.#layout.num(this.style.width, time);
-    const height = this.#layout.num(this.style.height, time);
+  public within(container: Node) {
+    const { left, top, right, bottom } = this.bounds();
+    const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = container.bounds();
+
+    this.#scope.constraint('min-left').set(lessThan(cLeft, left));
+    this.#scope.constraint('min-top').set(lessThan(cTop, top));
+    this.#scope.constraint('max-right').set(lessThan(right, cRight));
+    this.#scope.constraint('max-bottom').set(lessThan(bottom, cBottom));
+
+    return this;
+  }
+
+  public bounds(): Record<string, penrose.Num> {
+    const left = this.#layout.num(this.style.left);
+    const top = this.#layout.num(this.style.top);
+    const width = this.#layout.num(this.style.width);
+    const height = this.#layout.num(this.style.height);
     const right = penrose.add(left, width);
     const bottom = penrose.add(top, height);
 
@@ -148,8 +170,12 @@ export class Node {
     };
   }
 
-  public setContent(content: string) {
+  private async setContent(content: string): Promise<ClientSize> {
     this.#content.text = content;
-    return this;
+    const size = await measureContent({
+      text: this.#content.text
+    });
+    console.log('>>> Measured content size for node', this.#id, size);
+    return size;
   }
 }
