@@ -106,8 +106,7 @@ eval ::
   NodeContent (KOp lhs rhs out) ->
   NodeContent (KValue rhs) ->
   NodeContent (KValue out)
-eval (Value lhs) (Op op) (Value rhs) =
-  Value (binaryValueOp op lhs rhs)
+eval (Value lhs) (Op op) (Value rhs) = Value (binaryValueOp op lhs rhs)
 
 e ::
   Node (KValue lhs) %1 ->
@@ -119,20 +118,20 @@ e lhsNode opNode rhsNode = do
   Observed op <- (<<<) opNode
   Observed rhs <- (<<<) rhsNode
 
-  let outContent =
-        eval
-          (content lhs)
-          (content op)
-          (content rhs)
+  (lhs, op, rhs) >>> eval (content lhs) (content op) (content rhs)
 
-  (lhs, op, rhs) >>> outContent
+literal :: Value ty -> Builder (Node (KValue ty))
+literal val = () >>> Value val
+
+operator :: Op lhs rhs out -> Builder (Node (KOp lhs rhs out))
+operator op = () >>> Op op
 
 (.+.) ::
   Node (KValue 'CTInt) %1 ->
   Node (KValue 'CTInt) %1 ->
   Builder (Node (KValue 'CTInt))
 (.+.) a b = do
-  add <- () >>> Op AddI
+  add <- operator AddI
   e a add b
 
 (.*.) ::
@@ -140,7 +139,7 @@ e lhsNode opNode rhsNode = do
   Node (KValue 'CTInt) %1 ->
   Builder (Node (KValue 'CTInt))
 (.*.) a b = do
-  mul <- () >>> Op MulI
+  mul <- operator MulI
   e a mul b
 
 example :: Builder (Node (KValue 'CTInt))
@@ -148,7 +147,7 @@ example = do
   x0 <- declare "x" (I32 10)
 
   (x1, a) <- readVar x0
-  b <- () >>> Value (I32 20)
+  b <- literal (I32 20)
 
   c <- a .+. b
 
