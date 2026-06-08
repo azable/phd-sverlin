@@ -31,8 +31,6 @@ export type NodeView = {
 
 export type NodeContent = {
   text: string;
-  clientWidth: number;
-  clientHeight: number;
 };
 
 export class Node {
@@ -42,9 +40,7 @@ export class Node {
   #id: string;
   #style: Record<string, StyleValue>;
   #content: NodeContent = $state({
-    text: '',
-    clientWidth: 0,
-    clientHeight: 0
+    text: ''
   });
 
   private constructor(layout: LayoutCSP, id: string, config: NodeConfig) {
@@ -82,25 +78,6 @@ export class Node {
       throw new Error(`Invalid style value for key ${key}`);
     });
 
-    // // Min width/height constraints based on content size
-    // $effect(() => {
-    //   if (!this.#content) {
-    //     return;
-    //   }
-
-    //   const { width, height } = this.bounds();
-
-    //   this.#scope
-    //     .constraint('min-width')
-    //     .set(lessThan(this.#layout.num(this.#content.clientWidth), width, this.#layout.unitSize));
-
-    //   this.#scope
-    //     .constraint('min-height')
-    //     .set(lessThan(this.#layout.num(this.#content.clientHeight), height, this.#layout.unitSize));
-
-    //   this.#layout.scheduleResolve();
-    // });
-
     return this;
   }
 
@@ -122,8 +99,6 @@ export class Node {
       node.#scope
         .constraint('min-height')
         .set(lessThan(node.#layout.num(clientHeight), height, node.#layout.unitSize));
-
-      node.#layout.scheduleResolve();
     }
     return node;
   }
@@ -144,10 +119,10 @@ export class Node {
     const { left, top, right, bottom } = this.bounds();
     const { left: cLeft, top: cTop, right: cRight, bottom: cBottom } = container.bounds();
 
-    this.#scope.constraint('min-left').set(lessThan(cLeft, left));
-    this.#scope.constraint('min-top').set(lessThan(cTop, top));
-    this.#scope.constraint('max-right').set(lessThan(right, cRight));
-    this.#scope.constraint('max-bottom').set(lessThan(bottom, cBottom));
+    this.#scope.constraint('within-left').set(lessThan(cLeft, left));
+    this.#scope.constraint('within-top').set(lessThan(cTop, top));
+    this.#scope.constraint('within-right').set(lessThan(right, cRight));
+    this.#scope.constraint('within-bottom').set(lessThan(bottom, cBottom));
 
     return this;
   }
@@ -172,10 +147,8 @@ export class Node {
 
   private async setContent(content: string): Promise<ClientSize> {
     this.#content.text = content;
-    const size = await measureContent({
+    return await measureContent({
       text: this.#content.text
     });
-    console.log('>>> Measured content size for node', this.#id, size);
-    return size;
   }
 }

@@ -52,7 +52,6 @@ export class Constraint {
 export class LayoutCSP {
   #time: number = $state(-1);
   #unitSize: number;
-  #dirty: boolean = $state(false);
 
   #root: Node | undefined;
 
@@ -68,17 +67,6 @@ export class LayoutCSP {
     this.#unitSize = unitSize;
     this.#variables = new SvelteMap<string, Variable>();
     this.#constraints = new SvelteMap<string, Constraint>();
-
-    $effect(() => {
-      // Ensure always up to date by next tick if scheduled to resolve
-      if (!this.#dirty) {
-        return;
-      }
-      console.log('>>> Scheduled re-solve at next tick');
-      tick().then(() => {
-        this.solve();
-      });
-    });
   }
 
   public static async create(
@@ -125,10 +113,10 @@ export class LayoutCSP {
               .filter(([nodeId]) => !removeNodeIds.includes(nodeId))
           )
         : new SvelteMap();
-    const addNodeIds = await Promise.all(
+
+    return await Promise.all(
       nodes.map(async ([style, content]) => await this.node({ style }, content))
     );
-    return addNodeIds;
   }
 
   public get time() {
@@ -137,14 +125,6 @@ export class LayoutCSP {
 
   public get unitSize() {
     return this.#unitSize;
-  }
-
-  public get isDirty() {
-    return this.#dirty;
-  }
-
-  public scheduleResolve() {
-    this.#dirty = true;
   }
 
   private ensureUniqId(id: string | undefined): string {
@@ -240,8 +220,6 @@ export class LayoutCSP {
 
       return nodeViews.toArray();
     });
-
-    this.#dirty = false;
   }
 
   public get views() {
@@ -264,28 +242,6 @@ export class LayoutCSP {
     }
     throw new Error(`Cannot convert ${styleValue.type} to number`);
   };
-
-  // public defineConstraint = <Args extends unknown[]>(
-  //   consName: string,
-  //   constraintFn: (...args: Args) => Array<penrose.Num>
-  // ) => {
-  //   return (...args: Args) => {
-  //     const nodes = args.filter((arg): arg is Node => typeof arg === 'object' && 'id' in arg!);
-  //     const vars = args.filter(
-  //       (arg): arg is Temporal<Variable> => typeof arg === 'object' && 'at' in arg!
-  //     );
-  //     const varsAtTime = vars.map((v) => v.at(this.time));
-  //     const nodeIdsConcat = nodes.map((n) => n.id).join('');
-  //     const varIdsConcat = varsAtTime.map((v) => v.uuid).join('-');
-  //     const constraintExprs = constraintFn(...args);
-  //     const constraintKeys = constraintExprs.map((_, i) => {
-  //       return `${consName}-${nodeIdsConcat}${varIdsConcat}${i}`;
-  //     });
-  //     constraintKeys.forEach((key, i) => {
-  //       this.#constraints.lookup(key).setAt(this.time, constraintExprs[i]);
-  //     });
-  //   };
-  // };
 
   private idWithNamespace(key: string, namespace: string): string {
     return `${namespace}-${key}`;
