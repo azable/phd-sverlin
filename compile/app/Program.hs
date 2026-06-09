@@ -26,4 +26,4 @@ import Prelude.Linear
 --   n3 .+. n4
 
 runProgram :: G NodeContent
-runProgram = run $ fibIter 3
+runProgram = run $ example

@@ -10,10 +10,13 @@ module DSL
     G (..),
     run,
     example,
-    fibIter,
+    -- fibIter,
+    declare,
     readVar,
     writeVar,
     e,
+    literal,
+    operator,
     (.+.),
     (.*.),
   )
@@ -23,8 +26,6 @@ import Control.Functor.Linear
 import NodeBase
 import Prelude.Linear
 import Prelude qualified as P
-
--- DSL layer
 
 data CType
   = CTInt
@@ -49,43 +50,42 @@ data KVar (ty :: CType)
 data NodeContent tag where
   Value :: Value ty -> NodeContent (KValue ty)
   Op :: Op lhs rhs out -> NodeContent (KOp lhs rhs out)
-  Var :: String -> NSnapshot NodeContent (KValue ty) -> NodeContent (KVar ty)
+  Var :: String -> NodeContent (KVar ty)
 
 type Builder = GBuilder NodeContent
 
 type Node tag = N NodeContent tag
 
-declare :: String -> Value ty -> Builder (Node (KVar ty))
-declare name initial = do
-  valueNode <- () >>> Value initial
+type VarNode ty = CN NodeContent (KVar ty) (KValue ty)
 
-  case freeze valueNode of
-    Ur snapshot -> () >>> Var name snapshot
+declare ::
+  String ->
+  Value ty ->
+  Builder (VarNode ty)
+declare name initial = do
+  valueNode <- literal initial
+  container () (Var name) valueNode
 
 readVar ::
-  Node (KVar ty) %1 ->
-  Builder (Node (KVar ty), Node (KValue ty))
-readVar varNode = do
-  Observed var <- (<<<) varNode
+  VarNode ty %1 ->
+  Builder (VarNode ty, Node (KValue ty))
+readVar var = do
+  ObservedContainer obs held <- observeC var
 
-  let varContent@(Var _ snapshot@(NSnapshot _ snapshotValue)) = content var
+  (held', copy) <- copyOut held
+  var' <- container obs (content obs) held'
 
-  nextVarNode <- var >>> varContent
-  valueNode <- snapshot >>> snapshotValue
-
-  return (nextVarNode, valueNode)
+  return (var', copy)
 
 writeVar ::
-  Node (KVar ty) %1 ->
+  VarNode ty %1 ->
   Node (KValue ty) %1 ->
-  Builder (Node (KVar ty))
-writeVar varNode valueNode = do
-  Observed var <- (<<<) varNode
-  Observed value <- (<<<) valueNode
+  Builder (VarNode ty)
+writeVar var value = do
+  ObservedContainer obs oldHeld <- observeC var
 
-  let Var varName _ = content var
-
-  var >>> Var varName (NSnapshot (ref value) (content value))
+  discard oldHeld
+  container obs (content obs) value
 
 binaryValueOp ::
   Op lhs rhs out ->
@@ -102,7 +102,8 @@ eval ::
   NodeContent (KOp lhs rhs out) ->
   NodeContent (KValue rhs) ->
   NodeContent (KValue out)
-eval (Value lhs) (Op op) (Value rhs) = Value (binaryValueOp op lhs rhs)
+eval (Value lhs) (Op op) (Value rhs) =
+  Value (binaryValueOp op lhs rhs)
 
 e ::
   Node (KValue lhs) %1 ->
@@ -117,10 +118,12 @@ e lhsNode opNode rhsNode = do
   op >>> eval (content lhs) (content op) (content rhs)
 
 literal :: Value ty -> Builder (Node (KValue ty))
-literal val = () >>> Value val
+literal val =
+  () >>> Value val
 
 operator :: Op lhs rhs out -> Builder (Node (KOp lhs rhs out))
-operator op = () >>> Op op
+operator op =
+  () >>> Op op
 
 (.+.) ::
   Node (KValue 'CTInt) %1 ->
@@ -147,40 +150,43 @@ example = do
 
   c <- a .+. b
 
-  x3 <- writeVar x1 c
+  x2 <- writeVar x1 c
 
-  (x4, n5) <- readVar x3
-  discard x4
+  (x3, n5) <- readVar x2
+  discardC x3
 
   return n5
 
-fibIter :: Int -> Builder (Node (KValue 'CTInt))
-fibIter n = do
-  prev0 <- declare "prev" (I32 0)
-  curr0 <- declare "curr" (I32 1)
-  go n prev0 curr0
-  where
-    go 0 prev curr = do
-      (prev', result) <- readVar prev
-      discard curr
-      discard prev'
-      return result
-    go k prev curr = do
-      (prev1, prevVal) <- readVar prev
+-- fibIter :: Int -> Builder (Node (KValue 'CTInt))
+-- fibIter n = do
+--   prev0 <- declare "prev" (I32 0)
+--   curr0 <- declare "curr" (I32 1)
+--   go n prev0 curr0
+--   where
+--     go ::
+--       Int ->
+--       VarNode 'CTInt %1 ->
+--       VarNode 'CTInt %1 ->
+--       Builder (Node (KValue 'CTInt))
+--     go 0 prev curr = do
+--       (prev', result) <- readVar prev
+--       discardC curr
+--       discardC prev'
+--       return result
+--     go k prev curr = do
+--       (prev1, prevVal) <- readVar prev
 
-      (curr1, currValForNext) <- readVar curr
-      nextVal <- prevVal .+. currValForNext
+--       (curr1, currValForNext) <- readVar curr
+--       nextVal <- prevVal .+. currValForNext
 
-      (curr2, currValForPrev) <- readVar curr1
-      prev2 <- writeVar prev1 currValForPrev
-      curr3 <- writeVar curr2 nextVal
+--       (curr2, currValForPrev) <- readVar curr1
+--       prev2 <- writeVar prev1 currValForPrev
+--       curr3 <- writeVar curr2 nextVal
 
-      go (k - 1) prev2 curr3
+--       go (k - 1) prev2 curr3
 
 run :: Builder (Node tag) -> G NodeContent
 run = buildGraph
-
---- Formatting typeclasses
 
 padRight :: Int -> String -> String
 padRight n s = s ++ replicate (n - P.length s) ' '
@@ -191,7 +197,7 @@ padRightF = padRight 8
 instance Show (NodeContent tag) where
   show (Value val) = padRightF "Val" ++ show val
   show (Op op) = padRightF "Op " ++ show op
-  show (Var name val) = padRightF "Var" ++ name ++ " = " ++ show val
+  show (Var name) = padRightF "Var" ++ name
 
 instance Show (Value ty) where
   show (I32 i) = show i
