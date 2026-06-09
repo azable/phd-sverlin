@@ -55,12 +55,9 @@ type Builder = GBuilder NodeContent
 
 type Node tag = N NodeContent tag
 
-declare ::
-  String ->
-  Value ty ->
-  Builder (Node (KVar ty))
-declare name val = do
-  valueNode <- () >>> Value val
+declare :: String -> Value ty -> Builder (Node (KVar ty))
+declare name initial = do
+  valueNode <- () >>> Value initial
 
   case freeze valueNode of
     Ur snapshot -> () >>> Var name snapshot
@@ -163,11 +160,6 @@ fibIter n = do
   curr0 <- declare "curr" (I32 1)
   go n prev0 curr0
   where
-    go ::
-      Int ->
-      Node (KVar 'CTInt) %1 ->
-      Node (KVar 'CTInt) %1 ->
-      Builder (Node (KValue 'CTInt))
     go 0 prev curr = do
       (prev', result) <- readVar prev
       discard curr
@@ -197,9 +189,9 @@ padRightF :: String -> String
 padRightF = padRight 8
 
 instance Show (NodeContent tag) where
-  show (Value val) = padRightF "=>" ++ show val
+  show (Value val) = padRightF "Val" ++ show val
   show (Op op) = padRightF "Op " ++ show op
-  show (Var name val) = padRightF "===" ++ name ++ " = " ++ show val
+  show (Var name val) = padRightF "Var" ++ name ++ " = " ++ show val
 
 instance Show (Value ty) where
   show (I32 i) = show i
