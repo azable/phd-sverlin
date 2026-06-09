@@ -55,8 +55,8 @@ data ParentRecord
 
 instance P.Show ParentRecord where
   show NoParent = ""
-  show (Continued nid) = "continue N" P.++ P.show nid
-  show (Copied nid) = "    copy N" P.++ P.show nid
+  show (Continued nid) = "continue [N" P.++ P.show nid P.++ "]"
+  show (Copied nid) = "    copy [N" P.++ P.show nid P.++ "]"
 
 data HeldRecord
   = HoldsNone
@@ -76,7 +76,7 @@ data NRecord content = NRecord
 instance (forall tag. P.Show (content tag)) => P.Show (NRecord content) where
   show (NRecord nid parentRecord heldRecord nodeContent') =
     padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ padRight 24 (P.show parentRecord)
+      P.++ padRight 18 (P.show parentRecord)
       P.++ padRight 14 (P.show heldRecord)
       P.++ padRight 20 (P.show nodeContent')
     where
@@ -240,8 +240,8 @@ copyOut ::
 copyOut node = do
   Observed obs <- (<<<) node
 
-  source <- obs >>> content obs
   copy <- Copy (ref obs) >>> content obs
+  source <- obs >>> content obs
 
   return (source, copy)
 
