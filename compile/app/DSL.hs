@@ -63,8 +63,7 @@ declare name val = do
   valueNode <- () >>> Value val
 
   case freeze valueNode of
-    Ur snapshot ->
-      snapshot >>> Var name snapshot
+    Ur snapshot -> () >>> Var name snapshot
 
 readVar ::
   Node (KVar ty) %1 ->
@@ -74,10 +73,10 @@ readVar varNode = do
 
   let varContent@(Var _ snapshot@(NSnapshot _ snapshotValue)) = content var
 
-  nextVar <- var >>> varContent
-  value <- snapshot >>> snapshotValue
+  nextVarNode <- var >>> varContent
+  valueNode <- snapshot >>> snapshotValue
 
-  return (nextVar, value)
+  return (nextVarNode, valueNode)
 
 writeVar ::
   Node (KVar ty) %1 ->
@@ -89,7 +88,7 @@ writeVar varNode valueNode = do
 
   let Var varName _ = content var
 
-  (var, value) >>> Var varName (NSnapshot (ref value) (content value))
+  var >>> Var varName (NSnapshot (ref value) (content value))
 
 binaryValueOp ::
   Op lhs rhs out ->
@@ -118,7 +117,7 @@ e lhsNode opNode rhsNode = do
   Observed op <- (<<<) opNode
   Observed rhs <- (<<<) rhsNode
 
-  (lhs, op, rhs) >>> eval (content lhs) (content op) (content rhs)
+  op >>> eval (content lhs) (content op) (content rhs)
 
 literal :: Value ty -> Builder (Node (KValue ty))
 literal val = () >>> Value val

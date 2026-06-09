@@ -16,10 +16,11 @@ module NodeBase
     NId,
     N,
     NRef,
+    ParentRecord (..),
+    ParentLink (..),
     Observation (..),
     Observed (Observed),
-    HasRef (..),
-    ToRefs (..),
+    ToParentRecord (..),
     (<<<),
     (>>>),
     NSnapshot (..),
@@ -43,27 +44,30 @@ data Some content where
 instance (forall tag. P.Show (content tag)) => P.Show (Some content) where
   show (Some content) = P.show content
 
+data ParentRecord
+  = NoParent
+  | Continued NId
+  | Copied NId
+
+instance P.Show ParentRecord where
+  show NoParent = ""
+  show (Continued nid) = "continue N" P.++ P.show nid
+  show (Copied nid) = "    copy N" P.++ P.show nid
+
 data NRecord content = NRecord
   { nodeId :: NId,
-    -- These are the IDs of nodes this node depends on.
-    --
-    -- This is graph provenance, not the node's own identity.
-    nodeParents :: [NId],
+    nodeParent :: ParentRecord,
     nodeContent :: Some content
   }
 
 instance (forall tag. P.Show (content tag)) => P.Show (NRecord content) where
-  show (NRecord nid parents nodeContent') =
+  show (NRecord nid parentRecord nodeContent') =
     padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ padRight 14 (P.show parents)
+      P.++ padRight 24 (P.show parentRecord)
       P.++ padRight 20 (P.show nodeContent')
     where
       padRight :: Int -> String -> String
       padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
-
--- Linear node handle.
---
--- The constructor is not exported, so users cannot fabricate node handles.
 
 data N content tag where
   N :: Ur NId %1 -> Ur (content tag) %1 -> N content tag
@@ -72,19 +76,19 @@ instance Consumable (N content tag) where
   consume (N nid nodeContent') =
     consume nid `lseq` consume nodeContent'
 
--- A reference to a graph node.
---
--- This is the node's own identity. It can later be used as one parent/input
--- when constructing another node.
---
--- It is deliberately not called Parent, because a node can itself have many
--- parents in its NRecord.
-
 data NRef content where
   NRef :: NId -> NRef content
 
 refId :: NRef content -> NId
 refId (NRef nid) = nid
+
+data ParentLink content
+  = Continue (NRef content)
+  | Copy (NRef content)
+
+parentLinkToRecord :: ParentLink content -> ParentRecord
+parentLinkToRecord (Continue r) = Continued (refId r)
+parentLinkToRecord (Copy r) = Copied (refId r)
 
 data Observation content tag = Observation
   { ref :: NRef content,
@@ -108,75 +112,34 @@ data NSnapshot content tag where
     content tag ->
     NSnapshot content tag
 
+snapshotRef :: NSnapshot content tag -> NRef content
+snapshotRef (NSnapshot r _) = r
+
 instance (P.Show (content tag)) => P.Show (NSnapshot content tag) where
   show (NSnapshot (NRef nid) _) =
     "$[N" P.++ P.show nid P.++ "]"
 
--- Anything that has a node reference.
+class ToParentRecord p where
+  toParentRecord :: p -> ParentRecord
 
-class HasRef x content where
-  toRef :: x -> NRef content
+instance ToParentRecord () where
+  toParentRecord () = NoParent
 
-instance HasRef (NRef content) content where
-  toRef = id
+instance ToParentRecord (NRef content) where
+  toParentRecord r =
+    Continued (refId r)
 
-instance HasRef (Observation content tag) content where
-  toRef = ref
+instance ToParentRecord (Observation content tag) where
+  toParentRecord obs =
+    Continued (refId (ref obs))
 
-instance HasRef (NSnapshot content tag) content where
-  toRef (NSnapshot r _) = r
+instance ToParentRecord (NSnapshot content tag) where
+  toParentRecord snapshot =
+    Copied (refId (snapshotRef snapshot))
 
--- Things that can be converted into a list of node references.
---
--- These references become the parents/provenance of the newly emitted node.
-
-class ToRefs ps content where
-  toRefs :: ps -> [NRef content]
-
-instance ToRefs () content where
-  toRefs () = []
-
-instance ToRefs [NRef content] content where
-  toRefs = id
-
-instance ToRefs (NRef content) content where
-  toRefs r = [r]
-
-instance ToRefs (Observation content tag) content where
-  toRefs obs = [toRef obs]
-
-instance ToRefs (NSnapshot content tag) content where
-  toRefs snapshot = [toRef snapshot]
-
-instance
-  ( HasRef a content,
-    HasRef b content
-  ) =>
-  ToRefs (a, b) content
-  where
-  toRefs (a, b) =
-    [toRef a, toRef b]
-
-instance
-  ( HasRef a content,
-    HasRef b content,
-    HasRef c content
-  ) =>
-  ToRefs (a, b, c) content
-  where
-  toRefs (a, b, c) =
-    [toRef a, toRef b, toRef c]
-
-instance
-  ( HasRef a content,
-    HasRef b content,
-    HasRef c content,
-    HasRef d content
-  ) =>
-  ToRefs (a, b, c, d) content
-  where
-  toRefs (a, b, c, d) =
-    [toRef a, toRef b, toRef c, toRef d]
+instance ToParentRecord (ParentLink content) where
+  toParentRecord =
+    parentLinkToRecord
 
 newtype G content = G
   { graphNodes :: [NRecord content]
@@ -209,29 +172,33 @@ freeze :: N content tag %1 -> Ur (NSnapshot content tag)
 freeze (N (Ur nid) (Ur nodeContent')) =
   Ur (NSnapshot (NRef nid) nodeContent')
 
-makeNRecord :: content tag -> [NRef content] -> GBuilder content (Ur NId)
-makeNRecord nodeContent' refs = do
+makeNRecord ::
+  content tag ->
+  ParentRecord ->
+  GBuilder content (Ur NId)
+makeNRecord nodeContent' parentRecord = do
   GBuilderState (Ur oldNextId) (Ur oldNodes) <- get
 
   let newId = oldNextId
-      parentIds = P.map refId refs
-      newNode = NRecord newId parentIds (Some nodeContent')
+      newNode = NRecord newId parentRecord (Some nodeContent')
 
   put (GBuilderState (Ur (newId + 1)) (Ur (oldNodes P.++ [newNode])))
   return (Ur newId)
 
-makeN :: content tag -> [NRef content] -> GBuilder content (N content tag)
-makeN nodeContent' refs = do
-  Ur nid <- makeNRecord nodeContent' refs
+makeN ::
+  content tag ->
+  ParentRecord ->
+  GBuilder content (N content tag)
+makeN nodeContent' parentRecord = do
+  Ur nid <- makeNRecord nodeContent' parentRecord
   return (N (Ur nid) (Ur nodeContent'))
 
 (>>>) ::
-  (ToRefs ps content) =>
-  ps ->
+  (ToParentRecord parent) =>
+  parent ->
   content tag ->
   GBuilder content (N content tag)
-refs >>> nodeContent' =
-  makeN nodeContent' (toRefs refs)
+parent >>> nodeContent' = makeN nodeContent' (toParentRecord parent)
 
 discard :: N content tag %1 -> GBuilder content ()
 discard node =
