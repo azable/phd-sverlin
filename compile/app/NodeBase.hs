@@ -1,6 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -10,57 +8,38 @@
 {-# LANGUAGE TypeOperators #-}
 
 module NodeBase
-  ( -- * Public graph
-    G (..),
+  ( G (..),
     GBuilder,
     GBuilderState (..),
     NRecord (..),
     Event (..),
     Some (..),
     SomeObservation (..),
-
-    -- * Node handles and references
     NId,
     N,
     NRef,
     Observation (..),
-
-    -- * Lifecycle modes
-    Created,
-    Observed,
-    Used,
-    Destroyed,
-    CopiedFrom,
-    CopiedTo,
-    ReplacedFrom,
-    ReplacedTo,
-
-    -- * Lifecycle protocol items
     Create,
     Observe,
     Use,
-    Destroy,
     Copy,
     Replace,
-
-    -- * Linear evidence
+    Destroy,
     Seen,
-    Evidence (Evidence),
-    Ev (..),
-    EvList (..),
-
-    -- * Lifecycle/evidence primitives
+    SeenList (..),
+    Created (..),
+    Observed (..),
+    Used (..),
+    Copied (..),
+    Replaced (..),
+    Destroyed (..),
     create,
     observe,
     use,
     copy,
     replace,
     destroy,
-
-    -- * Contextual descriptions
     emitDesc,
-
-    -- * Running builders
     buildGraph,
   )
 where
@@ -76,35 +55,28 @@ data Some content where
   Some :: content tag -> Some content
 
 instance (forall tag. P.Show (content tag)) => P.Show (Some content) where
-  show (Some content') =
-    P.show content'
+  show (Some content') = P.show content'
 
 data NRecord content = NRecord
   { nodeId :: NId,
     nodeContent :: Some content
   }
 
-instance (forall tag. P.Show (content tag)) => P.Show (NRecord content) where
-  show (NRecord nid nodeContent') =
-    padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ P.show nodeContent'
+instance
+  (forall tag. P.Show (content tag)) =>
+  P.Show (NRecord content)
+  where
+  show (NRecord nid content') =
+    padRight 10 ("[N" P.++ P.show nid P.++ "]") P.++ P.show content'
 
 data N content tag where
-  N ::
-    Ur NId %1 ->
-    Ur (content tag) %1 ->
-    N content tag
-
-instance Consumable (N content tag) where
-  consume (N nid nodeContent') =
-    consume nid `lseq` consume nodeContent'
+  N :: Ur NId %1 -> Ur (content tag) %1 -> N content tag
 
 data NRef content where
   NRef :: NId -> NRef content
 
 instance P.Show (NRef content) where
-  show (NRef nid) =
-    "[N" P.++ P.show nid P.++ "]"
+  show (NRef nid) = "[N" P.++ P.show nid P.++ "]"
 
 data Observation content tag = Observation
   { ref :: NRef content,
@@ -116,46 +88,73 @@ instance (P.Show (content tag)) => P.Show (Observation content tag) where
     P.show r P.++ " " P.++ P.show content'
 
 data SomeObservation content where
-  SomeObservation ::
-    Observation content tag ->
-    SomeObservation content
+  SomeObservation :: Observation content tag -> SomeObservation content
 
-instance (forall tag. P.Show (content tag)) => P.Show (SomeObservation content) where
-  show (SomeObservation obs) =
-    P.show obs
+instance
+  (forall tag. P.Show (content tag)) =>
+  P.Show (SomeObservation content)
+  where
+  show (SomeObservation obs) = P.show obs
 
--- Lifecycle modes.
-data Created
-
-data Observed
-
-data Used
-
-data Destroyed
-
-data CopiedFrom
-
-data CopiedTo
-
-data ReplacedFrom
-
-data ReplacedTo
-
--- Lifecycle protocol items.
---
--- Copy tag and Replace tag are intentionally binary protocol items.
--- They each expand to two observations, both with the same tag.
 data Create tag
 
 data Observe tag
 
 data Use tag
 
-data Destroy tag
-
 data Copy tag
 
 data Replace tag
+
+data Destroy tag
+
+data Seen content act where
+  Seen :: Ur [SomeObservation content] %1 -> Seen content act
+
+data SeenList content acts where
+  ENil :: SeenList content '[]
+  (:~) ::
+    Seen content act %1 ->
+    SeenList content acts %1 ->
+    SeenList content (act ': acts)
+
+infixr 5 :~
+
+data Created content tag where
+  Created ::
+    N content tag %1 ->
+    Seen content (Create tag) %1 ->
+    Created content tag
+
+data Observed content tag where
+  Observed ::
+    N content tag %1 ->
+    Seen content (Observe tag) %1 ->
+    Observed content tag
+
+data Used content tag where
+  Used ::
+    content tag %1 ->
+    Seen content (Use tag) %1 ->
+    Used content tag
+
+data Copied content tag where
+  Copied ::
+    N content tag %1 ->
+    N content tag %1 ->
+    Seen content (Copy tag) %1 ->
+    Copied content tag
+
+data Replaced content tag where
+  Replaced ::
+    N content tag %1 ->
+    Seen content (Replace tag) %1 ->
+    Replaced content tag
+
+data Destroyed content tag where
+  Destroyed ::
+    Seen content (Destroy tag) %1 ->
+    Destroyed content tag
 
 data Event content (desc :: [Type] -> Type) where
   Event ::
@@ -186,9 +185,12 @@ instance
   where
   show (G ns es) =
     "Nodes:\n"
-      P.++ P.concat (P.map (\n -> "  " P.++ P.show n P.++ "\n") ns)
+      P.++ P.concat (P.map showNode ns)
       P.++ "Events:\n"
-      P.++ P.concat (P.map (\e -> "  " P.++ P.show e P.++ "\n") es)
+      P.++ P.concat (P.map showEvent es)
+    where
+      showNode n = "  " P.++ P.show n P.++ "\n"
+      showEvent e = "  " P.++ P.show e P.++ "\n"
 
 data GBuilderState content (desc :: [Type] -> Type) = GBuilderState
   { nextId :: Ur NId,
@@ -208,150 +210,66 @@ instance Dupable (GBuilderState content desc) where
           (ns1, ns2) ->
             case dup2 es of
               (es1, es2) ->
-                ( GBuilderState next1 ns1 es1,
-                  GBuilderState next2 ns2 es2
-                )
+                (GBuilderState next1 ns1 es1, GBuilderState next2 ns2 es2)
 
-type GBuilder content desc =
-  State (GBuilderState content desc)
+type GBuilder content desc = State (GBuilderState content desc)
 
-data Seen content mode tag where
-  Seen ::
-    Ur (Observation content tag) %1 ->
-    Seen content mode tag
-
-data Evidence content mode tag where
-  Evidence ::
-    Observation content tag ->
-    Seen content mode tag %1 ->
-    Evidence content mode tag
-
-mkEvidence ::
+makeObservation ::
   NRef content ->
   content tag ->
-  Evidence content mode tag
-mkEvidence r content' =
-  let obs =
-        Observation r content'
-   in Evidence obs (Seen (Ur obs))
+  SomeObservation content
+makeObservation r content' =
+  SomeObservation (Observation r content')
 
-seenToObservation ::
-  Seen content mode tag %1 ->
-  Ur (SomeObservation content)
-seenToObservation (Seen obs) =
-  case obs of
-    Ur obs' ->
-      Ur (SomeObservation obs')
+makeSeen1 ::
+  NRef content ->
+  content tag ->
+  Seen content act
+makeSeen1 r content' =
+  Seen (Ur [makeObservation r content'])
 
--- | Evidence for a single protocol item.
---
--- Composite protocol items such as Copy and Replace consume two evidence
--- tokens, but still expose one declarative action at the description level.
-data Ev content item where
-  EvCreate ::
-    Seen content Created tag %1 ->
-    Ev content (Create tag)
-  EvObserve ::
-    Seen content Observed tag %1 ->
-    Ev content (Observe tag)
-  EvUse ::
-    Seen content Used tag %1 ->
-    Ev content (Use tag)
-  EvDestroy ::
-    Seen content Destroyed tag %1 ->
-    Ev content (Destroy tag)
-  EvCopy ::
-    Seen content CopiedFrom tag %1 ->
-    Seen content CopiedTo tag %1 ->
-    Ev content (Copy tag)
-  EvReplace ::
-    Seen content ReplacedFrom tag %1 ->
-    Seen content ReplacedTo tag %1 ->
-    Ev content (Replace tag)
+makeSeen2 ::
+  NRef content ->
+  content tag ->
+  NRef content ->
+  content tag ->
+  Seen content act
+makeSeen2 r1 content1 r2 content2 =
+  Seen
+    ( Ur
+        [ makeObservation r1 content1,
+          makeObservation r2 content2
+        ]
+    )
 
-data EvList content items where
-  ENil ::
-    EvList content '[]
-  (:~) ::
-    Ev content item %1 ->
-    EvList content items %1 ->
-    EvList content (item ': items)
-
-infixr 5 :~
-
-evToObservations ::
-  Ev content item %1 ->
+seenToObservations ::
+  Seen content act %1 ->
   Ur [SomeObservation content]
-evToObservations (EvCreate seen) =
-  case seenToObservation seen of
-    Ur obs ->
-      Ur [obs]
-evToObservations (EvObserve seen) =
-  case seenToObservation seen of
-    Ur obs ->
-      Ur [obs]
-evToObservations (EvUse seen) =
-  case seenToObservation seen of
-    Ur obs ->
-      Ur [obs]
-evToObservations (EvDestroy seen) =
-  case seenToObservation seen of
-    Ur obs ->
-      Ur [obs]
-evToObservations (EvCopy fromSeen toSeen) =
-  case seenToObservation fromSeen of
-    Ur fromObs ->
-      case seenToObservation toSeen of
-        Ur toObs ->
-          Ur [fromObs, toObs]
-evToObservations (EvReplace fromSeen toSeen) =
-  case seenToObservation fromSeen of
-    Ur fromObs ->
-      case seenToObservation toSeen of
-        Ur toObs ->
-          Ur [fromObs, toObs]
+seenToObservations (Seen observations) = observations
 
-evListToObservations ::
-  EvList content items %1 ->
+seenListToObservations ::
+  SeenList content acts %1 ->
   Ur [SomeObservation content]
-evListToObservations ENil =
-  Ur []
-evListToObservations (ev :~ rest) =
-  case evToObservations ev of
-    Ur obs ->
-      case evListToObservations rest of
-        Ur restObs ->
-          Ur (obs P.++ restObs)
-
-emitDesc ::
-  desc acts ->
-  EvList content acts %1 ->
-  GBuilder content desc ()
-emitDesc desc evs =
-  case evListToObservations evs of
+seenListToObservations ENil = Ur []
+seenListToObservations (seen :~ rest) =
+  case seenToObservations seen of
     Ur observations ->
-      emitEvent
-        (Event desc observations)
+      case seenListToObservations rest of
+        Ur restObservations -> Ur (observations P.++ restObservations)
 
 makeNRecord ::
   content tag ->
   GBuilder content desc (Ur NId)
-makeNRecord nodeContent' = do
+makeNRecord content' = do
   GBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
-
-  let newId =
-        oldNextId
-
-      newNode =
-        NRecord newId (Some nodeContent')
-
+  let newId = oldNextId
+  let newNode = NRecord newId (Some content')
   put
     ( GBuilderState
         (Ur (newId + 1))
         (Ur (oldNodes P.++ [newNode]))
         oldEvents
     )
-
   return (Ur newId)
 
 emitEvent ::
@@ -359,121 +277,88 @@ emitEvent ::
   GBuilder content desc ()
 emitEvent event = do
   GBuilderState oldNext oldNodes (Ur oldEvents) <- get
+  put (GBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
 
-  put
-    ( GBuilderState
-        oldNext
-        oldNodes
-        (Ur (oldEvents P.++ [event]))
-    )
+emitDesc ::
+  desc acts ->
+  SeenList content acts %1 ->
+  GBuilder content desc ()
+emitDesc desc seenList =
+  case seenListToObservations seenList of
+    Ur observations -> emitEvent (Event desc observations)
 
 create ::
-  content tag ->
-  GBuilder content desc (N content tag, Evidence content Created tag)
-create nodeContent' = do
-  Ur nid <-
-    makeNRecord nodeContent'
-
-  let r =
-        NRef nid
-
-  return
-    ( N (Ur nid) (Ur nodeContent'),
-      mkEvidence r nodeContent'
-    )
+  Ur (content tag) %1 ->
+  GBuilder content desc (Created content tag)
+create (Ur content') = do
+  Ur nid <- makeNRecord content'
+  let r = NRef nid
+  return (Created (N (Ur nid) (Ur content')) (makeSeen1 r content'))
 
 observe ::
   N content tag %1 ->
-  GBuilder content desc (N content tag, Evidence content Observed tag)
-observe (N (Ur nid) (Ur nodeContent')) =
+  GBuilder content desc (Observed content tag)
+observe (N (Ur nid) (Ur content')) =
   return
-    ( N (Ur nid) (Ur nodeContent'),
-      mkEvidence (NRef nid) nodeContent'
+    ( Observed
+        (N (Ur nid) (Ur content'))
+        (makeSeen1 (NRef nid) content')
     )
 
 use ::
   N content tag %1 ->
-  GBuilder content desc (Evidence content Used tag)
-use (N (Ur nid) (Ur nodeContent')) =
-  return
-    (mkEvidence (NRef nid) nodeContent')
+  GBuilder content desc (Used content tag)
+use (N (Ur nid) (Ur content')) =
+  return (Used content' (makeSeen1 (NRef nid) content'))
 
 copy ::
   N content tag %1 ->
-  GBuilder
-    content
-    desc
-    ( N content tag,
-      Evidence content CopiedFrom tag,
-      N content tag,
-      Evidence content CopiedTo tag
-    )
-copy (N (Ur nid) (Ur nodeContent')) = do
-  Ur copyId <-
-    makeNRecord nodeContent'
-
-  let originalRef =
-        NRef nid
-
-      copyRef =
-        NRef copyId
-
+  GBuilder content desc (Copied content tag)
+copy (N (Ur originalId) (Ur content')) = do
+  Ur copyId <- makeNRecord content'
+  let originalRef = NRef originalId
+  let copyRef = NRef copyId
   return
-    ( N (Ur nid) (Ur nodeContent'),
-      mkEvidence originalRef nodeContent',
-      N (Ur copyId) (Ur nodeContent'),
-      mkEvidence copyRef nodeContent'
+    ( Copied
+        (N (Ur originalId) (Ur content'))
+        (N (Ur copyId) (Ur content'))
+        (makeSeen2 originalRef content' copyRef content')
     )
 
 replace ::
   N content tag %1 ->
   N content tag %1 ->
-  GBuilder
-    content
-    desc
-    ( N content tag,
-      Evidence content ReplacedFrom tag,
-      Evidence content ReplacedTo tag
-    )
+  GBuilder content desc (Replaced content tag)
 replace oldNode newNode =
   case oldNode of
     N (Ur oldId) (Ur oldContent) ->
       case newNode of
         N (Ur newId) (Ur newContent) ->
           return
-            ( N (Ur newId) (Ur newContent),
-              mkEvidence (NRef oldId) oldContent,
-              mkEvidence (NRef newId) newContent
+            ( Replaced
+                (N (Ur newId) (Ur newContent))
+                (makeSeen2 (NRef oldId) oldContent (NRef newId) newContent)
             )
 
 destroy ::
   N content tag %1 ->
-  GBuilder content desc (Evidence content Destroyed tag)
-destroy (N (Ur nid) (Ur nodeContent')) =
-  return
-    (mkEvidence (NRef nid) nodeContent')
+  GBuilder content desc (Destroyed content tag)
+destroy (N (Ur nid) (Ur content')) =
+  return (Destroyed (makeSeen1 (NRef nid) content'))
 
 buildGraph ::
-  GBuilder content desc tag ->
+  GBuilder content desc () ->
   G content desc
 buildGraph builder =
   let (_, finalState) =
-        runState
-          builder
-          (GBuilderState (Ur 0) (Ur []) (Ur []))
-
-      GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) =
-        finalState
+        runState builder (GBuilderState (Ur 0) (Ur []) (Ur []))
+      GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState
    in G finalNodes finalEvents
 
 padRight :: Int -> String -> String
-padRight n s =
-  s P.++ P.replicate (n P.- P.length s) ' '
+padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
 
 joinWith :: String -> [String] -> String
-joinWith _ [] =
-  ""
-joinWith _ [x] =
-  x
-joinWith sep (x : xs) =
-  x P.++ sep P.++ joinWith sep xs
+joinWith _ [] = ""
+joinWith _ [x] = x
+joinWith sep (x : xs) = x P.++ sep P.++ joinWith sep xs
