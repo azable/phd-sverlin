@@ -7,6 +7,7 @@ module Program
   ( runProgram,
     NodeContent,
     G,
+    Desc,
   )
 where
 
@@ -25,5 +26,5 @@ import Prelude.Linear
 
 --   n3 .+. n4
 
-runProgram :: G NodeContent
+runProgram :: G NodeContent Desc
 runProgram = run $ example
