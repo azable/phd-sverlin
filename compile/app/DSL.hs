@@ -4,6 +4,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
+{-# LANGUAGE TypeOperators #-}
 
 module DSL
   ( NodeContent,
@@ -58,23 +59,56 @@ data NodeContent tag where
   Op :: Op lhs rhs out -> NodeContent (KOp lhs rhs out)
   Var :: String -> NodeContent (KVar ty)
 
--- Positional event conventions:
+-- Description schemas.
+--
+-- These are no longer plain labels. Each constructor carries, at the type
+-- level, the lifecycle protocol that must be discharged when emitting it.
+--
+-- Flattened observation order:
 --
 --   DLiteral    [value]
 --   DOperator   [operator]
 --   DDeclareVar [var, initialValue]
---   DReadVar    [var, heldValue, copiedValue]
---   DWriteVar   [var, oldValue, newValue]
+--   DReadVar    [var, copiedFrom, copiedTo]
+--   DWriteVar   [var, replacedFrom, replacedTo]
 --   DEval       [lhs, op, rhs, out]
 --   DDiscardVar [var, heldValue]
-data Desc
-  = DLiteral
-  | DOperator
-  | DDeclareVar
-  | DReadVar
-  | DWriteVar
-  | DEval
-  | DDiscardVar
+data Desc acts where
+  DLiteral ::
+    Desc
+      '[ Create (KValue ty)
+       ]
+  DOperator ::
+    Desc
+      '[ Create (KOp lhs rhs out)
+       ]
+  DDeclareVar ::
+    Desc
+      '[ Create (KVar ty),
+         Create (KValue ty)
+       ]
+  DReadVar ::
+    Desc
+      '[ Observe (KVar ty),
+         Copy (KValue ty)
+       ]
+  DWriteVar ::
+    Desc
+      '[ Observe (KVar ty),
+         Replace (KValue ty)
+       ]
+  DEval ::
+    Desc
+      '[ Use (KValue lhs),
+         Use (KOp lhs rhs out),
+         Use (KValue rhs),
+         Create (KValue out)
+       ]
+  DDiscardVar ::
+    Desc
+      '[ Destroy (KVar ty),
+         Destroy (KValue ty)
+       ]
 
 type Builder =
   GBuilder NodeContent Desc
@@ -93,16 +127,10 @@ declare ::
   Value ty ->
   Builder (VarNode ty)
 declare name initial = do
-  (valueNode, Evidence _ valueSeen) <-
-    create (Value initial)
+  (valueNode, Evidence _ valueSeen) <- create (Value initial)
+  (varNode, Evidence _ varSeen) <- create (Var name)
 
-  (varNode, Evidence _ varSeen) <-
-    create (Var name)
-
-  describe2
-    DDeclareVar
-    varSeen
-    valueSeen
+  emitDesc DDeclareVar (EvCreate varSeen :~ EvCreate valueSeen :~ ENil)
 
   return (VarNode varNode valueNode)
 
@@ -110,17 +138,16 @@ readVar ::
   VarNode ty %1 ->
   Builder (VarNode ty, Node (KValue ty))
 readVar (VarNode var held) = do
-  (var', Evidence _ varSeen) <-
-    observe var
-
-  (held', Evidence _ heldSeen, copyNode, Evidence _ copySeen) <-
+  (var', Evidence _ varSeen) <- observe var
+  (held', Evidence _ copiedFromSeen, copyNode, Evidence _ copiedToSeen) <-
     copy held
 
-  describe3
+  emitDesc
     DReadVar
-    varSeen
-    heldSeen
-    copySeen
+    ( EvObserve varSeen
+        :~ EvCopy copiedFromSeen copiedToSeen
+        :~ ENil
+    )
 
   return (VarNode var' held', copyNode)
 
@@ -129,51 +156,42 @@ writeVar ::
   Node (KValue ty) %1 ->
   Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
-  (var', Evidence _ varSeen) <-
-    observe var
+  (var', Evidence _ varSeen) <- observe var
+  (newHeld, Evidence _ replacedFromSeen, Evidence _ replacedToSeen) <-
+    replace oldHeld newValue
 
-  Evidence _ oldSeen <-
-    destroy oldHeld
-
-  (newValue', Evidence _ newSeen) <-
-    observe newValue
-
-  describe3
+  emitDesc
     DWriteVar
-    varSeen
-    oldSeen
-    newSeen
+    ( EvObserve varSeen
+        :~ EvReplace replacedFromSeen replacedToSeen
+        :~ ENil
+    )
 
-  return (VarNode var' newValue')
+  return (VarNode var' newHeld)
 
 discardVar ::
   VarNode ty %1 ->
   Builder ()
 discardVar (VarNode var held) = do
-  Evidence _ varSeen <-
-    destroy var
+  Evidence _ varSeen <- destroy var
+  Evidence _ heldSeen <- destroy held
 
-  Evidence _ heldSeen <-
-    destroy held
-
-  describe2
+  emitDesc
     DDiscardVar
-    varSeen
-    heldSeen
+    ( EvDestroy varSeen
+        :~ EvDestroy heldSeen
+        :~ ENil
+    )
 
 binaryValueOp ::
   Op lhs rhs out ->
   Value lhs ->
   Value rhs ->
   Value out
-binaryValueOp AddI (I32 x) (I32 y) =
-  I32 (x + y)
-binaryValueOp MulI (I32 x) (I32 y) =
-  I32 (x * y)
-binaryValueOp AddD (F64 x) (F64 y) =
-  F64 (x + y)
-binaryValueOp MulD (F64 x) (F64 y) =
-  F64 (x * y)
+binaryValueOp AddI (I32 x) (I32 y) = I32 (x + y)
+binaryValueOp MulI (I32 x) (I32 y) = I32 (x * y)
+binaryValueOp AddD (F64 x) (F64 y) = F64 (x + y)
+binaryValueOp MulD (F64 x) (F64 y) = F64 (x * y)
 
 eval ::
   NodeContent (KValue lhs) ->
@@ -196,7 +214,14 @@ e lhsNode opNode rhsNode = do
   (outNode, Evidence _ outSeen) <-
     create (eval (content lhsObs) (content opObs) (content rhsObs))
 
-  describe4 DEval lhsSeen opSeen rhsSeen outSeen
+  emitDesc
+    DEval
+    ( EvUse lhsSeen
+        :~ EvUse opSeen
+        :~ EvUse rhsSeen
+        :~ EvCreate outSeen
+        :~ ENil
+    )
 
   return outNode
 
@@ -207,9 +232,11 @@ literal val = do
   (node, Evidence _ seen) <-
     create (Value val)
 
-  describe1
+  emitDesc
     DLiteral
-    seen
+    ( EvCreate seen
+        :~ ENil
+    )
 
   return node
 
@@ -220,9 +247,11 @@ operator op = do
   (node, Evidence _ seen) <-
     create (Op op)
 
-  describe1
+  emitDesc
     DOperator
-    seen
+    ( EvCreate seen
+        :~ ENil
+    )
 
   return node
 
@@ -309,7 +338,7 @@ instance Show (Op lhs rhs out) where
   show MulD =
     "MulD"
 
-instance Show Desc where
+instance Show (Desc acts) where
   show DLiteral =
     "Literal"
   show DOperator =
