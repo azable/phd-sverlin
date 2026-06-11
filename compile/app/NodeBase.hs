@@ -5,6 +5,7 @@
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RebindableSyntax #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
 module NodeBase
@@ -24,6 +25,8 @@ module NodeBase
     Use,
     Copy,
     Replace,
+    Compute,
+    -- Computation,
     Destroy,
     Seen,
     SeenList (..),
@@ -32,12 +35,14 @@ module NodeBase
     Used (..),
     Copied (..),
     Replaced (..),
+    Computed (..),
     Destroyed (..),
     create,
     observe,
     use,
     copy,
     replace,
+    compute,
     destroy,
     emitDesc,
     buildGraph,
@@ -47,6 +52,7 @@ where
 import Control.Functor.Linear
 import Data.Kind (Type)
 import Prelude.Linear
+import Unsafe.Coerce qualified as Unsafe
 import Prelude qualified as P
 
 type NId = Int
@@ -106,6 +112,8 @@ data Copy tag
 
 data Replace tag
 
+data Compute tag
+
 data Destroy tag
 
 data Seen content act where
@@ -150,6 +158,12 @@ data Replaced content tag where
     N content tag %1 ->
     Seen content (Replace tag) %1 ->
     Replaced content tag
+
+data Computed content tag where
+  Computed ::
+    N content tag %1 ->
+    Seen content (Compute tag) %1 ->
+    Computed content tag
 
 data Destroyed content tag where
   Destroyed ::
@@ -288,9 +302,9 @@ emitDesc desc seenList =
     Ur observations -> emitEvent (Event desc observations)
 
 create ::
-  Ur (content tag) %1 ->
+  content tag ->
   GBuilder content desc (Created content tag)
-create (Ur content') = do
+create content' = do
   Ur nid <- makeNRecord content'
   let r = NRef nid
   return (Created (N (Ur nid) (Ur content')) (makeSeen1 r content'))
@@ -339,6 +353,27 @@ replace oldNode newNode =
                 (N (Ur newId) (Ur newContent))
                 (makeSeen2 (NRef oldId) oldContent (NRef newId) newContent)
             )
+
+unsafeUr ::
+  forall a.
+  a %1 ->
+  Ur a
+unsafeUr =
+  Unsafe.unsafeCoerce (Ur :: a -> Ur a)
+
+compute ::
+  content tag %1 ->
+  GBuilder content desc (Computed content tag)
+compute content =
+  case unsafeUr content of
+    Ur content' -> do
+      Ur nid <- makeNRecord content'
+      let r = NRef nid
+      return
+        ( Computed
+            (N (Ur nid) (Ur content'))
+            (makeSeen1 r content')
+        )
 
 destroy ::
   N content tag %1 ->

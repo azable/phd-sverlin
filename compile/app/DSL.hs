@@ -37,8 +37,8 @@ data CType = CTInt | CTDouble
 data KValue (ty :: CType)
 
 data Value ty where
-  I32 :: Int -> Value 'CTInt
-  F64 :: Double -> Value 'CTDouble
+  I32 :: Int %1 -> Value 'CTInt
+  F64 :: Double %1 -> Value 'CTDouble
 
 data KOp (lhs :: CType) (rhs :: CType) (out :: CType)
 
@@ -66,7 +66,7 @@ data Desc acts where
       '[ Use (KValue lhs),
          Use (KOp lhs rhs out),
          Use (KValue rhs),
-         Create (KValue out)
+         Compute (KValue out)
        ]
   DDiscardVar :: Desc '[Destroy (KVar ty), Destroy (KValue ty)]
   DDiscardValue :: Desc '[Destroy (KValue ty)]
@@ -86,8 +86,8 @@ declare ::
   Value ty ->
   Builder (VarNode ty)
 declare name initial = do
-  Created valueNode valueSeen <- create (Ur (Value initial))
-  Created varNode varSeen <- create (Ur (Var name))
+  Created valueNode valueSeen <- create (Value initial)
+  Created varNode varSeen <- create (Var name)
   emitDesc DDeclareVar (varSeen :~ valueSeen :~ ENil)
   return (VarNode varNode valueNode)
 
@@ -132,9 +132,8 @@ eval ::
   NodeContent (KValue lhs) %1 ->
   NodeContent (KOp lhs rhs out) %1 ->
   NodeContent (KValue rhs) %1 ->
-  Ur (NodeContent (KValue out))
-eval (Value lhs) (Op op) (Value rhs) =
-  Ur (Value (linearValueOp op lhs rhs))
+  NodeContent (KValue out)
+eval (Value lhs) (Op op) (Value rhs) = Value (linearValueOp op lhs rhs)
 
 e ::
   Node (KValue lhs) %1 ->
@@ -145,7 +144,7 @@ e lhsNode opNode rhsNode = do
   Used lhs lhsSeen <- use lhsNode
   Used op opSeen <- use opNode
   Used rhs rhsSeen <- use rhsNode
-  Created outNode outSeen <- create (eval lhs op rhs)
+  Computed outNode outSeen <- compute (eval lhs op rhs)
   emitDesc
     DEval
     (lhsSeen :~ opSeen :~ rhsSeen :~ outSeen :~ ENil)
@@ -155,7 +154,7 @@ literal ::
   Value ty ->
   Builder (Node (KValue ty))
 literal val = do
-  Created node seen <- create (Ur (Value val))
+  Created node seen <- create (Value val)
   emitDesc DLiteral (seen :~ ENil)
   return node
 
@@ -163,7 +162,7 @@ operator ::
   Op lhs rhs out ->
   Builder (Node (KOp lhs rhs out))
 operator op = do
-  Created node seen <- create (Ur (Op op))
+  Created node seen <- create (Op op)
   emitDesc DOperator (seen :~ ENil)
   return node
 
