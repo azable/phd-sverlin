@@ -48,7 +48,7 @@ module NodeBase
   , replace
   , compute
   , destroy
-  , describe
+  , explain
   , buildGraph
   ) where
 
@@ -129,7 +129,7 @@ data Owed act where
   Owed :: Ur [SomeObservation] %1 -> Owed act
 
 data OwedList acts where
-  ENil :: OwedList '[]
+  PaidDebt :: OwedList '[]
   (:~) :: Owed act %1 -> OwedList acts %1 -> OwedList (act : acts)
 
 infixr 5 :~
@@ -212,11 +212,11 @@ makeObservation ::
   -> SomeObservation
 makeObservation _ r payload = SomeObservation (Observation r payload)
 
-makeMustDesc1 ::
+makeDesc1 ::
      (P.Show (Payload tag)) => Proxy tag -> NRef tag -> Payload tag -> Owed act
-makeMustDesc1 proxy r payload = Owed (Ur [makeObservation proxy r payload])
+makeDesc1 proxy r payload = Owed (Ur [makeObservation proxy r payload])
 
-makeMustDesc2 ::
+makeDesc2 ::
      (P.Show (Payload tag1), P.Show (Payload tag2))
   => Proxy tag1
   -> NRef tag1
@@ -225,7 +225,7 @@ makeMustDesc2 ::
   -> NRef tag2
   -> Payload tag2
   -> Owed act
-makeMustDesc2 proxy1 r1 payload1 proxy2 r2 payload2 =
+makeDesc2 proxy1 r1 payload1 proxy2 r2 payload2 =
   Owed
     (Ur [makeObservation proxy1 r1 payload1, makeObservation proxy2 r2 payload2])
 
@@ -233,7 +233,7 @@ descToObservations :: Owed act %1 -> Ur [SomeObservation]
 descToObservations (Owed observations) = observations
 
 descListToObservations :: OwedList acts %1 -> Ur [SomeObservation]
-descListToObservations ENil = Ur []
+descListToObservations PaidDebt = Ur []
 descListToObservations (desc :~ rest) =
   case descToObservations desc of
     Ur observations ->
@@ -264,8 +264,8 @@ emitEvent event = do
   GBuilderState oldNext oldNodes (Ur oldEvents) <- get
   put (GBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
 
-describe :: desc acts -> OwedList acts %1 -> GBuilder desc ()
-describe desc descList =
+explain :: desc acts -> OwedList acts %1 -> GBuilder desc ()
+explain desc descList =
   case descListToObservations descList of
     Ur observations -> emitEvent (Event desc observations)
 
@@ -279,7 +279,7 @@ create payload0 = do
   return
     (Created
        (N (Ur nid) (Ur payload))
-       (makeMustDesc1 (Proxy :: Proxy tag) ref' payload))
+       (makeDesc1 (Proxy :: Proxy tag) ref' payload))
 
 observe ::
      forall desc tag. (P.Show (Payload tag))
@@ -289,7 +289,7 @@ observe (N (Ur nid) (Ur payload)) =
   return
     (Observed
        (N (Ur nid) (Ur payload))
-       (makeMustDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
+       (makeDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 use ::
      forall desc tag. (P.Show (Payload tag))
@@ -297,9 +297,7 @@ use ::
      %1 -> GBuilder desc (Used tag)
 use (N (Ur nid) (Ur payload)) =
   return
-    (Used
-       (OneUse payload)
-       (makeMustDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
+    (Used (OneUse payload) (makeDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 copy ::
      forall desc tag. (P.Show (Payload tag))
@@ -313,7 +311,7 @@ copy (N (Ur originalId) (Ur payload)) = do
     (Copied
        (N (Ur originalId) (Ur payload))
        (N (Ur copyId) (Ur copiedPayload))
-       (makeMustDesc2
+       (makeDesc2
           (Proxy :: Proxy tag)
           originalRef
           payload
@@ -334,7 +332,7 @@ replace oldNode newNode =
           return
             (Replaced
                (N (Ur newId) (Ur newPayload))
-               (makeMustDesc2
+               (makeDesc2
                   (Proxy :: Proxy tag)
                   (NRef oldId)
                   oldPayload
@@ -352,14 +350,14 @@ compute (OneUse payload0) = do
   return
     (Computed
        (N (Ur nid) (Ur payload))
-       (makeMustDesc1 (Proxy :: Proxy tag) ref' payload))
+       (makeDesc1 (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
      forall desc tag. (P.Show (Payload tag))
   => N tag
      %1 -> GBuilder desc (Destroyed tag)
 destroy (N (Ur nid) (Ur payload)) =
-  return (Destroyed (makeMustDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
+  return (Destroyed (makeDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 buildGraph :: GBuilder desc () -> G desc
 buildGraph builder =

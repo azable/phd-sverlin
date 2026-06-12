@@ -85,30 +85,30 @@ data VarNode ty where
 
 declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
-  Created valueNode valueO <- create initial
-  Created varNode varO <- create (Var name)
-  describe DDeclareVar (varO :~ valueO :~ ENil)
+  Created valueNode createValue <- create initial
+  Created varNode createVar <- create (Var name)
+  explain DDeclareVar (createVar :~ createValue :~ PaidDebt)
   return (VarNode varNode valueNode)
 
 readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (KValue ty))
 readVar (VarNode var held) = do
-  Observed var' varO <- observe var
-  Copied held' copyNode copyO <- copy held
-  describe DReadVar (varO :~ copyO :~ ENil)
+  Observed var' observeVar <- observe var
+  Copied held' copyNode copyHeld <- copy held
+  explain DReadVar (observeVar :~ copyHeld :~ PaidDebt)
   return (VarNode var' held', copyNode)
 
 writeVar :: VarNode ty %1 -> Node (KValue ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
-  Observed var' varO <- observe var
-  Replaced newHeld replaceO <- replace oldHeld newValue
-  describe DWriteVar (varO :~ replaceO :~ ENil)
+  Observed var' observeVar <- observe var
+  Replaced newHeld replaceHeld <- replace oldHeld newValue
+  explain DWriteVar (observeVar :~ replaceHeld :~ PaidDebt)
   return (VarNode var' newHeld)
 
 discardVar :: VarNode ty %1 -> Builder ()
 discardVar (VarNode var held) = do
-  Destroyed varO <- destroy var
-  Destroyed heldO <- destroy held
-  describe DDiscardVar (varO :~ heldO :~ ENil)
+  Destroyed destroyVar <- destroy var
+  Destroyed destroyHeld <- destroy held
+  explain DDiscardVar (destroyVar :~ destroyHeld :~ PaidDebt)
 
 eval :: Value lhs %1 -> Op lhs rhs out %1 -> Value rhs %1 -> Value out
 eval (I32 x) AddI (I32 y) = I32 (x + y)
@@ -121,23 +121,23 @@ e :: Node (KValue lhs)
      %1 -> Node (KValue rhs)
      %1 -> Builder (Node (KValue out))
 e lhsNode opNode rhsNode = do
-  Used lhs lhsO <- use lhsNode
-  Used op opO <- use opNode
-  Used rhs rhsO <- use rhsNode
-  Computed outNode outO <- compute (eval <$> lhs <*> op <*> rhs)
-  describe DEval (lhsO :~ opO :~ rhsO :~ outO :~ ENil)
+  Used lhs useLhs <- use lhsNode
+  Used op useOp <- use opNode
+  Used rhs useRhs <- use rhsNode
+  Computed outNode computeOut <- compute (eval <$> lhs <*> op <*> rhs)
+  explain DEval (useLhs :~ useOp :~ useRhs :~ computeOut :~ PaidDebt)
   return outNode
 
 literal :: Value ty %1 -> Builder (Node (KValue ty))
 literal val = do
   Created node literalO <- create val
-  describe DLiteral (literalO :~ ENil)
+  explain DLiteral (literalO :~ PaidDebt)
   return node
 
 operator :: Op lhs rhs out %1 -> Builder (Node (KOp lhs rhs out))
 operator op = do
   Created node opO <- create op
-  describe DOperator (opO :~ ENil)
+  explain DOperator (opO :~ PaidDebt)
   return node
 
 (.+.) ::
@@ -166,7 +166,7 @@ example = do
   (x3, n5) <- readVar x2
   discardVar x3
   Destroyed n5O <- destroy n5
-  describe DDiscardValue (n5O :~ ENil)
+  explain DDiscardValue (n5O :~ PaidDebt)
 
 run :: Builder () -> G Desc
 run = buildGraph
