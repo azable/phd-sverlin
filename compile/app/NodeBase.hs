@@ -6,6 +6,7 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RebindableSyntax #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module NodeBase
@@ -14,12 +15,13 @@ module NodeBase
     GBuilderState (..),
     NRecord (..),
     Event (..),
-    Some (..),
-    SomeObservation (..),
+    Some,
+    SomeObservation,
     NId,
     N,
     NRef,
-    Observation (..),
+    Observation,
+    Payload,
     OneUse,
     (<$>),
     (<*>),
@@ -39,6 +41,7 @@ module NodeBase
     Replaced (..),
     Computed (..),
     Destroyed (..),
+    ShowDesc (..),
     create,
     observe,
     use,
@@ -53,6 +56,7 @@ where
 
 import Control.Functor.Linear hiding ((<$>), (<*>))
 import Data.Kind (Type)
+import Data.Proxy (Proxy (..))
 import Prelude.Linear
 import Unsafe.Coerce qualified as Unsafe
 import Prelude qualified as P
@@ -62,6 +66,8 @@ infixl 4 <$>
 infixl 4 <*>
 
 type NId = Int
+
+type family Payload tag :: Type
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
@@ -80,52 +86,59 @@ f <$> OneUse x =
 OneUse f <*> OneUse x =
   OneUse (f x)
 
-data Some content where
-  Some :: content tag -> Some content
+data NRef tag where
+  NRef :: NId -> NRef tag
 
-instance (forall tag. P.Show (content tag)) => P.Show (Some content) where
-  show (Some content') = P.show content'
-
-data NRecord content = NRecord
-  { nodeId :: NId,
-    nodeContent :: Some content
-  }
-
-instance
-  (forall tag. P.Show (content tag)) =>
-  P.Show (NRecord content)
-  where
-  show (NRecord nid content') =
-    padRight 10 ("[N" P.++ P.show nid P.++ "]")
-      P.++ P.show content'
-
-data N content tag where
-  N :: Ur NId %1 -> Ur (content tag) %1 -> N content tag
-
-data NRef content where
-  NRef :: NId -> NRef content
-
-instance P.Show (NRef content) where
+instance P.Show (NRef tag) where
   show (NRef nid) =
     "[N" P.++ P.show nid P.++ "]"
 
-data Observation content tag = Observation
-  { ref :: NRef content,
-    content :: content tag
+data Some where
+  Some ::
+    (P.Show (Payload tag)) =>
+    NRef tag ->
+    Payload tag ->
+    Some
+
+instance P.Show Some where
+  show (Some _ payload) =
+    P.show payload
+
+data NRecord = NRecord
+  { nodeId :: NId,
+    nodePayload :: Some
   }
 
-instance (P.Show (content tag)) => P.Show (Observation content tag) where
-  show (Observation r content') =
-    P.show r P.++ " " P.++ P.show content'
+instance P.Show NRecord where
+  show (NRecord nid payload) =
+    padRight 10 ("[N" P.++ P.show nid P.++ "]")
+      P.++ P.show payload
 
-data SomeObservation content where
-  SomeObservation :: Observation content tag -> SomeObservation content
+data N tag where
+  N ::
+    Ur NId %1 ->
+    Ur (Payload tag) %1 ->
+    N tag
 
-instance
-  (forall tag. P.Show (content tag)) =>
-  P.Show (SomeObservation content)
-  where
-  show (SomeObservation obs) = P.show obs
+data Observation tag where
+  Observation ::
+    (P.Show (Payload tag)) =>
+    NRef tag ->
+    Payload tag ->
+    Observation tag
+
+instance P.Show (Observation tag) where
+  show (Observation r payload) =
+    P.show r P.++ " " P.++ P.show payload
+
+data SomeObservation where
+  SomeObservation ::
+    Observation tag ->
+    SomeObservation
+
+instance P.Show SomeObservation where
+  show (SomeObservation obs) =
+    P.show obs
 
 data Create tag
 
@@ -141,107 +154,106 @@ data Compute tag
 
 data Destroy tag
 
-data Seen content act where
-  Seen :: Ur [SomeObservation content] %1 -> Seen content act
+data Seen act where
+  Seen ::
+    Ur [SomeObservation] %1 ->
+    Seen act
 
-data SeenList content acts where
-  ENil :: SeenList content '[]
+data SeenList acts where
+  ENil ::
+    SeenList '[]
   (:~) ::
-    Seen content act %1 ->
-    SeenList content acts %1 ->
-    SeenList content (act ': acts)
+    Seen act %1 ->
+    SeenList acts %1 ->
+    SeenList (act ': acts)
 
 infixr 5 :~
 
-data Created content tag where
+data Created tag where
   Created ::
-    N content tag %1 ->
-    Seen content (Create tag) %1 ->
-    Created content tag
+    N tag %1 ->
+    Seen (Create tag) %1 ->
+    Created tag
 
-data Observed content tag where
+data Observed tag where
   Observed ::
-    N content tag %1 ->
-    Seen content (Observe tag) %1 ->
-    Observed content tag
+    N tag %1 ->
+    Seen (Observe tag) %1 ->
+    Observed tag
 
-data Used content tag where
+data Used tag where
   Used ::
-    OneUse (content tag) %1 ->
-    Seen content (Use tag) %1 ->
-    Used content tag
+    OneUse (Payload tag) %1 ->
+    Seen (Use tag) %1 ->
+    Used tag
 
-data Copied content tag where
+data Copied tag where
   Copied ::
-    N content tag %1 ->
-    N content tag %1 ->
-    Seen content (Copy tag) %1 ->
-    Copied content tag
+    N tag %1 ->
+    N tag %1 ->
+    Seen (Copy tag) %1 ->
+    Copied tag
 
-data Replaced content tag where
+data Replaced tag where
   Replaced ::
-    N content tag %1 ->
-    Seen content (Replace tag) %1 ->
-    Replaced content tag
+    N tag %1 ->
+    Seen (Replace tag) %1 ->
+    Replaced tag
 
-data Computed content tag where
+data Computed tag where
   Computed ::
-    N content tag %1 ->
-    Seen content (Compute tag) %1 ->
-    Computed content tag
+    N tag %1 ->
+    Seen (Compute tag) %1 ->
+    Computed tag
 
-data Destroyed content tag where
+data Destroyed tag where
   Destroyed ::
-    Seen content (Destroy tag) %1 ->
-    Destroyed content tag
+    Seen (Destroy tag) %1 ->
+    Destroyed tag
 
-data Event content (desc :: [Type] -> Type) where
+data Event (desc :: [Type] -> Type) where
   Event ::
     desc acts ->
-    [SomeObservation content] ->
-    Event content desc
+    [SomeObservation] ->
+    Event desc
 
-instance
-  ( forall tag. P.Show (content tag),
-    forall acts. P.Show (desc acts)
-  ) =>
-  P.Show (Event content desc)
-  where
-  show (Event desc observations) =
-    padRight 14 (P.show desc)
-      P.++ joinWith ", " (P.map P.show observations)
-
-data G content (desc :: [Type] -> Type) = G
-  { graphNodes :: [NRecord content],
-    graphEvents :: [Event content desc]
+data G (desc :: [Type] -> Type) = G
+  { graphNodes :: [NRecord],
+    graphEvents :: [Event desc]
   }
 
-instance
-  ( forall tag. P.Show (content tag),
-    forall acts. P.Show (desc acts)
-  ) =>
-  P.Show (G content desc)
-  where
+class ShowDesc desc where
+  showDesc :: desc acts -> String
+
+instance (ShowDesc desc) => P.Show (Event desc) where
+  show (Event desc observations) =
+    padRight 14 (showDesc desc)
+      P.++ joinWith ", " (P.map P.show observations)
+
+instance (ShowDesc desc) => P.Show (G desc) where
   show (G ns es) =
     "Nodes:\n"
       P.++ P.concat (P.map showNode ns)
       P.++ "Events:\n"
       P.++ P.concat (P.map showEvent es)
     where
-      showNode n = "  " P.++ P.show n P.++ "\n"
-      showEvent e = "  " P.++ P.show e P.++ "\n"
+      showNode n =
+        "  " P.++ P.show n P.++ "\n"
 
-data GBuilderState content (desc :: [Type] -> Type) = GBuilderState
+      showEvent e =
+        "  " P.++ P.show e P.++ "\n"
+
+data GBuilderState (desc :: [Type] -> Type) = GBuilderState
   { nextId :: Ur NId,
-    nodes :: Ur [NRecord content],
-    events :: Ur [Event content desc]
+    nodes :: Ur [NRecord],
+    events :: Ur [Event desc]
   }
 
-instance Consumable (GBuilderState content desc) where
+instance Consumable (GBuilderState desc) where
   consume (GBuilderState next ns es) =
     consume next `lseq` consume ns `lseq` consume es
 
-instance Dupable (GBuilderState content desc) where
+instance Dupable (GBuilderState desc) where
   dup2 (GBuilderState next ns es) =
     case dup2 next of
       (next1, next2) ->
@@ -253,45 +265,64 @@ instance Dupable (GBuilderState content desc) where
                   GBuilderState next2 ns2 es2
                 )
 
-type GBuilder content desc = State (GBuilderState content desc)
+type GBuilder desc =
+  State (GBuilderState desc)
+
+mkNRef ::
+  Proxy tag ->
+  NId ->
+  NRef tag
+mkNRef _ nid =
+  NRef nid
 
 makeObservation ::
-  NRef content ->
-  content tag ->
-  SomeObservation content
-makeObservation r content' =
-  SomeObservation (Observation r content')
+  (P.Show (Payload tag)) =>
+  Proxy tag ->
+  NRef tag ->
+  Payload tag ->
+  SomeObservation
+makeObservation _ r payload =
+  SomeObservation (Observation r payload)
 
 makeSeen1 ::
-  NRef content ->
-  content tag ->
-  Seen content act
-makeSeen1 r content' =
-  Seen (Ur [makeObservation r content'])
+  (P.Show (Payload tag)) =>
+  Proxy tag ->
+  NRef tag ->
+  Payload tag ->
+  Seen act
+makeSeen1 proxy r payload =
+  Seen (Ur [makeObservation proxy r payload])
 
 makeSeen2 ::
-  NRef content ->
-  content tag ->
-  NRef content ->
-  content tag ->
-  Seen content act
-makeSeen2 r1 content1 r2 content2 =
+  ( P.Show (Payload tag1),
+    P.Show (Payload tag2)
+  ) =>
+  Proxy tag1 ->
+  NRef tag1 ->
+  Payload tag1 ->
+  Proxy tag2 ->
+  NRef tag2 ->
+  Payload tag2 ->
+  Seen act
+makeSeen2 proxy1 r1 payload1 proxy2 r2 payload2 =
   Seen
     ( Ur
-        [ makeObservation r1 content1,
-          makeObservation r2 content2
+        [ makeObservation proxy1 r1 payload1,
+          makeObservation proxy2 r2 payload2
         ]
     )
 
 seenToObservations ::
-  Seen content act %1 ->
-  Ur [SomeObservation content]
-seenToObservations (Seen observations) = observations
+  Seen act %1 ->
+  Ur [SomeObservation]
+seenToObservations (Seen observations) =
+  observations
 
 seenListToObservations ::
-  SeenList content acts %1 ->
-  Ur [SomeObservation content]
-seenListToObservations ENil = Ur []
+  SeenList acts %1 ->
+  Ur [SomeObservation]
+seenListToObservations ENil =
+  Ur []
 seenListToObservations (seen :~ rest) =
   case seenToObservations seen of
     Ur observations ->
@@ -299,27 +330,40 @@ seenListToObservations (seen :~ rest) =
         Ur restObservations ->
           Ur (observations P.++ restObservations)
 
-makeNRecord ::
-  content tag ->
-  GBuilder content desc (Ur NId)
-makeNRecord content' = do
-  GBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
+unsafeUr ::
+  forall a.
+  a %1 ->
+  Ur a
+unsafeUr =
+  Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
-  let newId = oldNextId
-  let newNode = NRecord newId (Some content')
+storeNRecord ::
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  Proxy tag ->
+  Payload tag %1 ->
+  GBuilder desc (Ur NId, Ur (Payload tag))
+storeNRecord _ payload0 =
+  case unsafeUr payload0 of
+    Ur payload -> do
+      GBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
 
-  put
-    ( GBuilderState
-        (Ur (newId + 1))
-        (Ur (oldNodes P.++ [newNode]))
-        oldEvents
-    )
+      let newId = oldNextId
+      let ref' = mkNRef (Proxy :: Proxy tag) newId
+      let newNode = NRecord newId (Some ref' payload)
 
-  return (Ur newId)
+      put
+        ( GBuilderState
+            (Ur (newId + 1))
+            (Ur (oldNodes P.++ [newNode]))
+            oldEvents
+        )
+
+      return (Ur newId, Ur payload)
 
 emitEvent ::
-  Event content desc ->
-  GBuilder content desc ()
+  Event desc ->
+  GBuilder desc ()
 emitEvent event = do
   GBuilderState oldNext oldNodes (Ur oldEvents) <- get
 
@@ -332,112 +376,132 @@ emitEvent event = do
 
 emitDesc ::
   desc acts ->
-  SeenList content acts %1 ->
-  GBuilder content desc ()
+  SeenList acts %1 ->
+  GBuilder desc ()
 emitDesc desc seenList =
   case seenListToObservations seenList of
     Ur observations ->
       emitEvent (Event desc observations)
 
-unsafeUr ::
-  forall a.
-  a %1 ->
-  Ur a
-unsafeUr =
-  Unsafe.unsafeCoerce (Ur :: a -> Ur a)
-
 create ::
-  content tag %1 ->
-  GBuilder content desc (Created content tag)
-create content0 =
-  case unsafeUr content0 of
-    Ur content' -> do
-      Ur nid <- makeNRecord content'
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  Payload tag %1 ->
+  GBuilder desc (Created tag)
+create payload0 = do
+  (Ur nid, Ur payload) <-
+    storeNRecord (Proxy :: Proxy tag) payload0
 
-      let r = NRef nid
+  let ref' = NRef nid
 
-      return
-        ( Created
-            (N (Ur nid) (Ur content'))
-            (makeSeen1 r content')
-        )
+  return
+    ( Created
+        (N (Ur nid) (Ur payload))
+        (makeSeen1 (Proxy :: Proxy tag) ref' payload)
+    )
 
 observe ::
-  N content tag %1 ->
-  GBuilder content desc (Observed content tag)
-observe (N (Ur nid) (Ur content')) =
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  N tag %1 ->
+  GBuilder desc (Observed tag)
+observe (N (Ur nid) (Ur payload)) =
   return
     ( Observed
-        (N (Ur nid) (Ur content'))
-        (makeSeen1 (NRef nid) content')
+        (N (Ur nid) (Ur payload))
+        (makeSeen1 (Proxy :: Proxy tag) (NRef nid) payload)
     )
 
 use ::
-  N content tag %1 ->
-  GBuilder content desc (Used content tag)
-use (N (Ur nid) (Ur content')) =
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  N tag %1 ->
+  GBuilder desc (Used tag)
+use (N (Ur nid) (Ur payload)) =
   return
     ( Used
-        (OneUse content')
-        (makeSeen1 (NRef nid) content')
+        (OneUse payload)
+        (makeSeen1 (Proxy :: Proxy tag) (NRef nid) payload)
     )
 
 copy ::
-  N content tag %1 ->
-  GBuilder content desc (Copied content tag)
-copy (N (Ur originalId) (Ur content')) = do
-  Ur copyId <- makeNRecord content'
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  N tag %1 ->
+  GBuilder desc (Copied tag)
+copy (N (Ur originalId) (Ur payload)) = do
+  (Ur copyId, Ur copiedPayload) <-
+    storeNRecord (Proxy :: Proxy tag) payload
 
   let originalRef = NRef originalId
   let copyRef = NRef copyId
 
   return
     ( Copied
-        (N (Ur originalId) (Ur content'))
-        (N (Ur copyId) (Ur content'))
-        (makeSeen2 originalRef content' copyRef content')
+        (N (Ur originalId) (Ur payload))
+        (N (Ur copyId) (Ur copiedPayload))
+        ( makeSeen2
+            (Proxy :: Proxy tag)
+            originalRef
+            payload
+            (Proxy :: Proxy tag)
+            copyRef
+            copiedPayload
+        )
     )
 
 replace ::
-  N content tag %1 ->
-  N content tag %1 ->
-  GBuilder content desc (Replaced content tag)
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  N tag %1 ->
+  N tag %1 ->
+  GBuilder desc (Replaced tag)
 replace oldNode newNode =
   case oldNode of
-    N (Ur oldId) (Ur oldContent) ->
+    N (Ur oldId) (Ur oldPayload) ->
       case newNode of
-        N (Ur newId) (Ur newContent) ->
+        N (Ur newId) (Ur newPayload) ->
           return
             ( Replaced
-                (N (Ur newId) (Ur newContent))
-                (makeSeen2 (NRef oldId) oldContent (NRef newId) newContent)
+                (N (Ur newId) (Ur newPayload))
+                ( makeSeen2
+                    (Proxy :: Proxy tag)
+                    (NRef oldId)
+                    oldPayload
+                    (Proxy :: Proxy tag)
+                    (NRef newId)
+                    newPayload
+                )
             )
 
 compute ::
-  OneUse (content tag) %1 ->
-  GBuilder content desc (Computed content tag)
-compute (OneUse content0) =
-  case unsafeUr content0 of
-    Ur content' -> do
-      Ur nid <- makeNRecord content'
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  OneUse (Payload tag) %1 ->
+  GBuilder desc (Computed tag)
+compute (OneUse payload0) = do
+  (Ur nid, Ur payload) <-
+    storeNRecord (Proxy :: Proxy tag) payload0
 
-      let r = NRef nid
+  let ref' = NRef nid
 
-      return
-        ( Computed
-            (N (Ur nid) (Ur content'))
-            (makeSeen1 r content')
-        )
+  return
+    ( Computed
+        (N (Ur nid) (Ur payload))
+        (makeSeen1 (Proxy :: Proxy tag) ref' payload)
+    )
 
 destroy ::
-  N content tag %1 ->
-  GBuilder content desc (Destroyed content tag)
-destroy (N (Ur nid) (Ur content')) =
-  return (Destroyed (makeSeen1 (NRef nid) content'))
+  forall desc tag.
+  (P.Show (Payload tag)) =>
+  N tag %1 ->
+  GBuilder desc (Destroyed tag)
+destroy (N (Ur nid) (Ur payload)) =
+  return (Destroyed (makeSeen1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 buildGraph ::
-  GBuilder content desc () ->
-  G content desc
+  GBuilder desc () ->
+  G desc
 buildGraph builder =
   let (_, finalState) =
         runState builder (GBuilderState (Ur 0) (Ur []) (Ur []))
@@ -451,7 +515,9 @@ padRight n s =
   s P.++ P.replicate (n P.- P.length s) ' '
 
 joinWith :: String -> [String] -> String
-joinWith _ [] = ""
-joinWith _ [x] = x
+joinWith _ [] =
+  ""
+joinWith _ [x] =
+  x
 joinWith sep (x : xs) =
   x P.++ sep P.++ joinWith sep xs

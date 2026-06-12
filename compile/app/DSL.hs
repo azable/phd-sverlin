@@ -3,12 +3,13 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module DSL
-  ( NodeContent,
-    CType (..),
+  ( CType (..),
     Value (..),
     Op (..),
+    Var (..),
     Desc (..),
     G (..),
     Node,
@@ -50,16 +51,20 @@ data Op lhs rhs out where
 
 data KVar (ty :: CType)
 
-data NodeContent tag where
-  Value ::
-    Value ty %1 ->
-    NodeContent (KValue ty)
-  Op ::
-    Op lhs rhs out %1 ->
-    NodeContent (KOp lhs rhs out)
-  Var ::
-    String ->
-    NodeContent (KVar ty)
+data Var ty where
+  Var :: String -> Var ty
+
+type instance
+  Payload (KValue ty) =
+    Value ty
+
+type instance
+  Payload (KOp lhs rhs out) =
+    Op lhs rhs out
+
+type instance
+  Payload (KVar ty) =
+    Var ty
 
 data Desc acts where
   DLiteral :: Desc '[Create (KValue ty)]
@@ -82,9 +87,9 @@ data Desc acts where
   DDiscardValue ::
     Desc '[Destroy (KValue ty)]
 
-type Builder = GBuilder NodeContent Desc
+type Builder = GBuilder Desc
 
-type Node tag = N NodeContent tag
+type Node tag = N tag
 
 data VarNode ty where
   VarNode ::
@@ -97,7 +102,7 @@ declare ::
   Value ty %1 ->
   Builder (VarNode ty)
 declare name initial = do
-  Created valueNode valueSeen <- create (Value initial)
+  Created valueNode valueSeen <- create initial
   Created varNode varSeen <- create (Var name)
 
   emitDesc DDeclareVar (varSeen :~ valueSeen :~ ENil)
@@ -136,27 +141,15 @@ discardVar (VarNode var held) = do
 
   emitDesc DDiscardVar (varSeen :~ heldSeen :~ ENil)
 
-linearValueOp ::
-  Op lhs rhs out %1 ->
+eval ::
   Value lhs %1 ->
+  Op lhs rhs out %1 ->
   Value rhs %1 ->
   Value out
-linearValueOp AddI (I32 x) (I32 y) =
-  I32 (x + y)
-linearValueOp MulI (I32 x) (I32 y) =
-  I32 (x * y)
-linearValueOp AddD (F64 x) (F64 y) =
-  F64 (x + y)
-linearValueOp MulD (F64 x) (F64 y) =
-  F64 (x * y)
-
-eval ::
-  NodeContent (KValue lhs) %1 ->
-  NodeContent (KOp lhs rhs out) %1 ->
-  NodeContent (KValue rhs) %1 ->
-  NodeContent (KValue out)
-eval (Value lhs) (Op op) (Value rhs) =
-  Value (linearValueOp op lhs rhs)
+eval (I32 x) AddI (I32 y) = I32 (x + y)
+eval (I32 x) MulI (I32 y) = I32 (x * y)
+eval (F64 x) AddD (F64 y) = F64 (x + y)
+eval (F64 x) MulD (F64 y) = F64 (x * y)
 
 e ::
   Node (KValue lhs) %1 ->
@@ -170,9 +163,7 @@ e lhsNode opNode rhsNode = do
 
   Computed outNode outSeen <- compute (eval <$> lhs <*> op <*> rhs)
 
-  emitDesc
-    DEval
-    (lhsSeen :~ opSeen :~ rhsSeen :~ outSeen :~ ENil)
+  emitDesc DEval (lhsSeen :~ opSeen :~ rhsSeen :~ outSeen :~ ENil)
 
   return outNode
 
@@ -180,7 +171,7 @@ literal ::
   Value ty %1 ->
   Builder (Node (KValue ty))
 literal val = do
-  Created node seen <- create (Value val)
+  Created node seen <- create val
 
   emitDesc DLiteral (seen :~ ENil)
 
@@ -190,7 +181,7 @@ operator ::
   Op lhs rhs out %1 ->
   Builder (Node (KOp lhs rhs out))
 operator op = do
-  Created node seen <- create (Op op)
+  Created node seen <- create op
 
   emitDesc DOperator (seen :~ ENil)
 
@@ -230,8 +221,9 @@ example = do
 
 run ::
   Builder () ->
-  G NodeContent Desc
-run = buildGraph
+  G Desc
+run =
+  buildGraph
 
 padRight :: Int -> String -> String
 padRight n s =
@@ -241,30 +233,40 @@ padRightF :: String -> String
 padRightF =
   padRight 8
 
-instance Show (NodeContent tag) where
-  show (Value val) =
-    padRightF "Val" ++ show val
-  show (Op op) =
-    padRightF "Op" ++ show op
+instance P.Show (Value ty) where
+  show (I32 i) =
+    padRightF "Val" ++ P.show i
+  show (F64 f) =
+    padRightF "Val" ++ P.show f
+
+instance P.Show (Op lhs rhs out) where
+  show AddI =
+    padRightF "Op" ++ "AddI"
+  show MulI =
+    padRightF "Op" ++ "MulI"
+  show AddD =
+    padRightF "Op" ++ "AddD"
+  show MulD =
+    padRightF "Op" ++ "MulD"
+
+instance P.Show (Var ty) where
   show (Var name) =
     padRightF "Var" ++ name
 
-instance Show (Value ty) where
-  show (I32 i) = show i
-  show (F64 f) = show f
-
-instance Show (Op lhs rhs out) where
-  show AddI = "AddI"
-  show MulI = "MulI"
-  show AddD = "AddD"
-  show MulD = "MulD"
-
-instance Show (Desc acts) where
-  show DLiteral = "Literal"
-  show DOperator = "Operator"
-  show DDeclareVar = "DeclareVar"
-  show DReadVar = "ReadVar"
-  show DWriteVar = "WriteVar"
-  show DEval = "Eval"
-  show DDiscardVar = "DiscardVar"
-  show DDiscardValue = "DiscardValue"
+instance ShowDesc Desc where
+  showDesc DLiteral =
+    "Literal"
+  showDesc DOperator =
+    "Operator"
+  showDesc DDeclareVar =
+    "DeclareVar"
+  showDesc DReadVar =
+    "ReadVar"
+  showDesc DWriteVar =
+    "WriteVar"
+  showDesc DEval =
+    "Eval"
+  showDesc DDiscardVar =
+    "DiscardVar"
+  showDesc DDiscardValue =
+    "DiscardValue"

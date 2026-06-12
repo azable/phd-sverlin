@@ -5,7 +5,6 @@
 
 module Program
   ( runProgram,
-    NodeContent,
     G,
     Desc,
   )
@@ -26,5 +25,5 @@ import Prelude.Linear
 
 --   n3 .+. n4
 
-runProgram :: G NodeContent Desc
+runProgram :: G Desc
 runProgram = run $ example
