@@ -20,13 +20,15 @@ module NodeBase
     N,
     NRef,
     Observation (..),
+    OneUse,
+    (<$>),
+    (<*>),
     Create,
     Observe,
     Use,
     Copy,
     Replace,
     Compute,
-    -- Computation,
     Destroy,
     Seen,
     SeenList (..),
@@ -49,13 +51,34 @@ module NodeBase
   )
 where
 
-import Control.Functor.Linear
+import Control.Functor.Linear hiding ((<$>), (<*>))
 import Data.Kind (Type)
 import Prelude.Linear
 import Unsafe.Coerce qualified as Unsafe
 import Prelude qualified as P
 
+infixl 4 <$>
+
+infixl 4 <*>
+
 type NId = Int
+
+data OneUse a where
+  OneUse :: a %1 -> OneUse a
+
+(<$>) ::
+  (a %1 -> b) %1 ->
+  OneUse a %1 ->
+  OneUse b
+f <$> OneUse x =
+  OneUse (f x)
+
+(<*>) ::
+  OneUse (a %1 -> b) %1 ->
+  OneUse a %1 ->
+  OneUse b
+OneUse f <*> OneUse x =
+  OneUse (f x)
 
 data Some content where
   Some :: content tag -> Some content
@@ -73,7 +96,8 @@ instance
   P.Show (NRecord content)
   where
   show (NRecord nid content') =
-    padRight 10 ("[N" P.++ P.show nid P.++ "]") P.++ P.show content'
+    padRight 10 ("[N" P.++ P.show nid P.++ "]")
+      P.++ P.show content'
 
 data N content tag where
   N :: Ur NId %1 -> Ur (content tag) %1 -> N content tag
@@ -82,7 +106,8 @@ data NRef content where
   NRef :: NId -> NRef content
 
 instance P.Show (NRef content) where
-  show (NRef nid) = "[N" P.++ P.show nid P.++ "]"
+  show (NRef nid) =
+    "[N" P.++ P.show nid P.++ "]"
 
 data Observation content tag = Observation
   { ref :: NRef content,
@@ -142,7 +167,7 @@ data Observed content tag where
 
 data Used content tag where
   Used ::
-    content tag %1 ->
+    OneUse (content tag) %1 ->
     Seen content (Use tag) %1 ->
     Used content tag
 
@@ -224,7 +249,9 @@ instance Dupable (GBuilderState content desc) where
           (ns1, ns2) ->
             case dup2 es of
               (es1, es2) ->
-                (GBuilderState next1 ns1 es1, GBuilderState next2 ns2 es2)
+                ( GBuilderState next1 ns1 es1,
+                  GBuilderState next2 ns2 es2
+                )
 
 type GBuilder content desc = State (GBuilderState content desc)
 
@@ -269,21 +296,25 @@ seenListToObservations (seen :~ rest) =
   case seenToObservations seen of
     Ur observations ->
       case seenListToObservations rest of
-        Ur restObservations -> Ur (observations P.++ restObservations)
+        Ur restObservations ->
+          Ur (observations P.++ restObservations)
 
 makeNRecord ::
   content tag ->
   GBuilder content desc (Ur NId)
 makeNRecord content' = do
   GBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
+
   let newId = oldNextId
   let newNode = NRecord newId (Some content')
+
   put
     ( GBuilderState
         (Ur (newId + 1))
         (Ur (oldNodes P.++ [newNode]))
         oldEvents
     )
+
   return (Ur newId)
 
 emitEvent ::
@@ -291,7 +322,13 @@ emitEvent ::
   GBuilder content desc ()
 emitEvent event = do
   GBuilderState oldNext oldNodes (Ur oldEvents) <- get
-  put (GBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
+
+  put
+    ( GBuilderState
+        oldNext
+        oldNodes
+        (Ur (oldEvents P.++ [event]))
+    )
 
 emitDesc ::
   desc acts ->
@@ -299,15 +336,31 @@ emitDesc ::
   GBuilder content desc ()
 emitDesc desc seenList =
   case seenListToObservations seenList of
-    Ur observations -> emitEvent (Event desc observations)
+    Ur observations ->
+      emitEvent (Event desc observations)
+
+unsafeUr ::
+  forall a.
+  a %1 ->
+  Ur a
+unsafeUr =
+  Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
 create ::
-  content tag ->
+  content tag %1 ->
   GBuilder content desc (Created content tag)
-create content' = do
-  Ur nid <- makeNRecord content'
-  let r = NRef nid
-  return (Created (N (Ur nid) (Ur content')) (makeSeen1 r content'))
+create content0 =
+  case unsafeUr content0 of
+    Ur content' -> do
+      Ur nid <- makeNRecord content'
+
+      let r = NRef nid
+
+      return
+        ( Created
+            (N (Ur nid) (Ur content'))
+            (makeSeen1 r content')
+        )
 
 observe ::
   N content tag %1 ->
@@ -323,15 +376,21 @@ use ::
   N content tag %1 ->
   GBuilder content desc (Used content tag)
 use (N (Ur nid) (Ur content')) =
-  return (Used content' (makeSeen1 (NRef nid) content'))
+  return
+    ( Used
+        (OneUse content')
+        (makeSeen1 (NRef nid) content')
+    )
 
 copy ::
   N content tag %1 ->
   GBuilder content desc (Copied content tag)
 copy (N (Ur originalId) (Ur content')) = do
   Ur copyId <- makeNRecord content'
+
   let originalRef = NRef originalId
   let copyRef = NRef copyId
+
   return
     ( Copied
         (N (Ur originalId) (Ur content'))
@@ -354,21 +413,16 @@ replace oldNode newNode =
                 (makeSeen2 (NRef oldId) oldContent (NRef newId) newContent)
             )
 
-unsafeUr ::
-  forall a.
-  a %1 ->
-  Ur a
-unsafeUr =
-  Unsafe.unsafeCoerce (Ur :: a -> Ur a)
-
 compute ::
-  content tag %1 ->
+  OneUse (content tag) %1 ->
   GBuilder content desc (Computed content tag)
-compute content =
-  case unsafeUr content of
+compute (OneUse content0) =
+  case unsafeUr content0 of
     Ur content' -> do
       Ur nid <- makeNRecord content'
+
       let r = NRef nid
+
       return
         ( Computed
             (N (Ur nid) (Ur content'))
@@ -387,13 +441,17 @@ buildGraph ::
 buildGraph builder =
   let (_, finalState) =
         runState builder (GBuilderState (Ur 0) (Ur []) (Ur []))
-      GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState
+
+      GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) =
+        finalState
    in G finalNodes finalEvents
 
 padRight :: Int -> String -> String
-padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
+padRight n s =
+  s P.++ P.replicate (n P.- P.length s) ' '
 
 joinWith :: String -> [String] -> String
 joinWith _ [] = ""
 joinWith _ [x] = x
-joinWith sep (x : xs) = x P.++ sep P.++ joinWith sep xs
+joinWith sep (x : xs) =
+  x P.++ sep P.++ joinWith sep xs
