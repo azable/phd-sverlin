@@ -87,28 +87,28 @@ declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
   Created valueNode createValue <- create initial
   Created varNode createVar <- create (Var name)
-  explain DDeclareVar (createVar :~ createValue :~ PaidDebt)
+  DDeclareVar `explain` (createVar :~ createValue :~ PaidDebt)
   return (VarNode varNode valueNode)
 
 readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (KValue ty))
 readVar (VarNode var held) = do
   Observed var' observeVar <- observe var
   Copied held' copyNode copyHeld <- copy held
-  explain DReadVar (observeVar :~ copyHeld :~ PaidDebt)
+  DReadVar `explain` (observeVar :~ copyHeld :~ PaidDebt)
   return (VarNode var' held', copyNode)
 
 writeVar :: VarNode ty %1 -> Node (KValue ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
   Observed var' observeVar <- observe var
   Replaced newHeld replaceHeld <- replace oldHeld newValue
-  explain DWriteVar (observeVar :~ replaceHeld :~ PaidDebt)
+  DWriteVar `explain` (observeVar :~ replaceHeld :~ PaidDebt)
   return (VarNode var' newHeld)
 
 discardVar :: VarNode ty %1 -> Builder ()
 discardVar (VarNode var held) = do
   Destroyed destroyVar <- destroy var
   Destroyed destroyHeld <- destroy held
-  explain DDiscardVar (destroyVar :~ destroyHeld :~ PaidDebt)
+  DDiscardVar `explain` (destroyVar :~ destroyHeld :~ PaidDebt)
 
 eval :: Value lhs %1 -> Op lhs rhs out %1 -> Value rhs %1 -> Value out
 eval (I32 x) AddI (I32 y) = I32 (x + y)
@@ -125,19 +125,19 @@ e lhsNode opNode rhsNode = do
   Used op useOp <- use opNode
   Used rhs useRhs <- use rhsNode
   Computed outNode computeOut <- compute (eval <$> lhs <*> op <*> rhs)
-  explain DEval (useLhs :~ useOp :~ useRhs :~ computeOut :~ PaidDebt)
+  DEval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ PaidDebt)
   return outNode
 
 literal :: Value ty %1 -> Builder (Node (KValue ty))
 literal val = do
   Created node literalO <- create val
-  explain DLiteral (literalO :~ PaidDebt)
+  DLiteral `explain` (literalO :~ PaidDebt)
   return node
 
 operator :: Op lhs rhs out %1 -> Builder (Node (KOp lhs rhs out))
 operator op = do
   Created node opO <- create op
-  explain DOperator (opO :~ PaidDebt)
+  DOperator `explain` (opO :~ PaidDebt)
   return node
 
 (.+.) ::
