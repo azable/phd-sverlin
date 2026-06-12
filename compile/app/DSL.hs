@@ -85,30 +85,30 @@ data VarNode ty where
 
 declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
-  Created valueNode valueSeen <- create initial
-  Created varNode varSeen <- create (Var name)
-  emitDesc DDeclareVar (varSeen :~ valueSeen :~ ENil)
+  Created valueNode valueO <- create initial
+  Created varNode varO <- create (Var name)
+  describe DDeclareVar (varO :~ valueO :~ ENil)
   return (VarNode varNode valueNode)
 
 readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (KValue ty))
 readVar (VarNode var held) = do
-  Observed var' varSeen <- observe var
-  Copied held' copyNode copySeen <- copy held
-  emitDesc DReadVar (varSeen :~ copySeen :~ ENil)
+  Observed var' varO <- observe var
+  Copied held' copyNode copyO <- copy held
+  describe DReadVar (varO :~ copyO :~ ENil)
   return (VarNode var' held', copyNode)
 
 writeVar :: VarNode ty %1 -> Node (KValue ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
-  Observed var' varSeen <- observe var
-  Replaced newHeld replaceSeen <- replace oldHeld newValue
-  emitDesc DWriteVar (varSeen :~ replaceSeen :~ ENil)
+  Observed var' varO <- observe var
+  Replaced newHeld replaceO <- replace oldHeld newValue
+  describe DWriteVar (varO :~ replaceO :~ ENil)
   return (VarNode var' newHeld)
 
 discardVar :: VarNode ty %1 -> Builder ()
 discardVar (VarNode var held) = do
-  Destroyed varSeen <- destroy var
-  Destroyed heldSeen <- destroy held
-  emitDesc DDiscardVar (varSeen :~ heldSeen :~ ENil)
+  Destroyed varO <- destroy var
+  Destroyed heldO <- destroy held
+  describe DDiscardVar (varO :~ heldO :~ ENil)
 
 eval :: Value lhs %1 -> Op lhs rhs out %1 -> Value rhs %1 -> Value out
 eval (I32 x) AddI (I32 y) = I32 (x + y)
@@ -121,23 +121,23 @@ e :: Node (KValue lhs)
      %1 -> Node (KValue rhs)
      %1 -> Builder (Node (KValue out))
 e lhsNode opNode rhsNode = do
-  Used lhs lhsSeen <- use lhsNode
-  Used op opSeen <- use opNode
-  Used rhs rhsSeen <- use rhsNode
-  Computed outNode outSeen <- compute (eval <$> lhs <*> op <*> rhs)
-  emitDesc DEval (lhsSeen :~ opSeen :~ rhsSeen :~ outSeen :~ ENil)
+  Used lhs lhsO <- use lhsNode
+  Used op opO <- use opNode
+  Used rhs rhsO <- use rhsNode
+  Computed outNode outO <- compute (eval <$> lhs <*> op <*> rhs)
+  describe DEval (lhsO :~ opO :~ rhsO :~ outO :~ ENil)
   return outNode
 
 literal :: Value ty %1 -> Builder (Node (KValue ty))
 literal val = do
-  Created node seen <- create val
-  emitDesc DLiteral (seen :~ ENil)
+  Created node literalO <- create val
+  describe DLiteral (literalO :~ ENil)
   return node
 
 operator :: Op lhs rhs out %1 -> Builder (Node (KOp lhs rhs out))
 operator op = do
-  Created node seen <- create op
-  emitDesc DOperator (seen :~ ENil)
+  Created node opO <- create op
+  describe DOperator (opO :~ ENil)
   return node
 
 (.+.) ::
@@ -165,8 +165,8 @@ example = do
   x2 <- writeVar x1 c
   (x3, n5) <- readVar x2
   discardVar x3
-  Destroyed n5Seen <- destroy n5
-  emitDesc DDiscardValue (n5Seen :~ ENil)
+  Destroyed n5O <- destroy n5
+  describe DDiscardValue (n5O :~ ENil)
 
 run :: Builder () -> G Desc
 run = buildGraph

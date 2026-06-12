@@ -31,8 +31,8 @@ module NodeBase
   , Replace
   , Compute
   , Destroy
-  , Seen
-  , SeenList(..)
+  , Owed
+  , OwedList(..)
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -48,7 +48,7 @@ module NodeBase
   , replace
   , compute
   , destroy
-  , emitDesc
+  , describe
   , buildGraph
   ) where
 
@@ -125,34 +125,34 @@ data Compute tag
 
 data Destroy tag
 
-data Seen act where
-  Seen :: Ur [SomeObservation] %1 -> Seen act
+data Owed act where
+  Owed :: Ur [SomeObservation] %1 -> Owed act
 
-data SeenList acts where
-  ENil :: SeenList '[]
-  (:~) :: Seen act %1 -> SeenList acts %1 -> SeenList (act : acts)
+data OwedList acts where
+  ENil :: OwedList '[]
+  (:~) :: Owed act %1 -> OwedList acts %1 -> OwedList (act : acts)
 
 infixr 5 :~
 data Created tag where
-  Created :: N tag %1 -> Seen (Create tag) %1 -> Created tag
+  Created :: N tag %1 -> Owed (Create tag) %1 -> Created tag
 
 data Observed tag where
-  Observed :: N tag %1 -> Seen (Observe tag) %1 -> Observed tag
+  Observed :: N tag %1 -> Owed (Observe tag) %1 -> Observed tag
 
 data Used tag where
-  Used :: OneUse (Payload tag) %1 -> Seen (Use tag) %1 -> Used tag
+  Used :: OneUse (Payload tag) %1 -> Owed (Use tag) %1 -> Used tag
 
 data Copied tag where
-  Copied :: N tag %1 -> N tag %1 -> Seen (Copy tag) %1 -> Copied tag
+  Copied :: N tag %1 -> N tag %1 -> Owed (Copy tag) %1 -> Copied tag
 
 data Replaced tag where
-  Replaced :: N tag %1 -> Seen (Replace tag) %1 -> Replaced tag
+  Replaced :: N tag %1 -> Owed (Replace tag) %1 -> Replaced tag
 
 data Computed tag where
-  Computed :: N tag %1 -> Seen (Compute tag) %1 -> Computed tag
+  Computed :: N tag %1 -> Owed (Compute tag) %1 -> Computed tag
 
 data Destroyed tag where
-  Destroyed :: Seen (Destroy tag) %1 -> Destroyed tag
+  Destroyed :: Owed (Destroy tag) %1 -> Destroyed tag
 
 data Event (desc :: [Type] -> Type) where
   Event :: desc acts -> [SomeObservation] -> Event desc
@@ -212,11 +212,11 @@ makeObservation ::
   -> SomeObservation
 makeObservation _ r payload = SomeObservation (Observation r payload)
 
-makeSeen1 ::
-     (P.Show (Payload tag)) => Proxy tag -> NRef tag -> Payload tag -> Seen act
-makeSeen1 proxy r payload = Seen (Ur [makeObservation proxy r payload])
+makeMustDesc1 ::
+     (P.Show (Payload tag)) => Proxy tag -> NRef tag -> Payload tag -> Owed act
+makeMustDesc1 proxy r payload = Owed (Ur [makeObservation proxy r payload])
 
-makeSeen2 ::
+makeMustDesc2 ::
      (P.Show (Payload tag1), P.Show (Payload tag2))
   => Proxy tag1
   -> NRef tag1
@@ -224,20 +224,20 @@ makeSeen2 ::
   -> Proxy tag2
   -> NRef tag2
   -> Payload tag2
-  -> Seen act
-makeSeen2 proxy1 r1 payload1 proxy2 r2 payload2 =
-  Seen
+  -> Owed act
+makeMustDesc2 proxy1 r1 payload1 proxy2 r2 payload2 =
+  Owed
     (Ur [makeObservation proxy1 r1 payload1, makeObservation proxy2 r2 payload2])
 
-seenToObservations :: Seen act %1 -> Ur [SomeObservation]
-seenToObservations (Seen observations) = observations
+descToObservations :: Owed act %1 -> Ur [SomeObservation]
+descToObservations (Owed observations) = observations
 
-seenListToObservations :: SeenList acts %1 -> Ur [SomeObservation]
-seenListToObservations ENil = Ur []
-seenListToObservations (seen :~ rest) =
-  case seenToObservations seen of
+descListToObservations :: OwedList acts %1 -> Ur [SomeObservation]
+descListToObservations ENil = Ur []
+descListToObservations (desc :~ rest) =
+  case descToObservations desc of
     Ur observations ->
-      case seenListToObservations rest of
+      case descListToObservations rest of
         Ur restObservations -> Ur (observations P.++ restObservations)
 
 unsafeUr :: forall a. a %1 -> Ur a
@@ -264,9 +264,9 @@ emitEvent event = do
   GBuilderState oldNext oldNodes (Ur oldEvents) <- get
   put (GBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
 
-emitDesc :: desc acts -> SeenList acts %1 -> GBuilder desc ()
-emitDesc desc seenList =
-  case seenListToObservations seenList of
+describe :: desc acts -> OwedList acts %1 -> GBuilder desc ()
+describe desc descList =
+  case descListToObservations descList of
     Ur observations -> emitEvent (Event desc observations)
 
 create ::
@@ -279,7 +279,7 @@ create payload0 = do
   return
     (Created
        (N (Ur nid) (Ur payload))
-       (makeSeen1 (Proxy :: Proxy tag) ref' payload))
+       (makeMustDesc1 (Proxy :: Proxy tag) ref' payload))
 
 observe ::
      forall desc tag. (P.Show (Payload tag))
@@ -289,7 +289,7 @@ observe (N (Ur nid) (Ur payload)) =
   return
     (Observed
        (N (Ur nid) (Ur payload))
-       (makeSeen1 (Proxy :: Proxy tag) (NRef nid) payload))
+       (makeMustDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 use ::
      forall desc tag. (P.Show (Payload tag))
@@ -297,7 +297,9 @@ use ::
      %1 -> GBuilder desc (Used tag)
 use (N (Ur nid) (Ur payload)) =
   return
-    (Used (OneUse payload) (makeSeen1 (Proxy :: Proxy tag) (NRef nid) payload))
+    (Used
+       (OneUse payload)
+       (makeMustDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 copy ::
      forall desc tag. (P.Show (Payload tag))
@@ -311,7 +313,7 @@ copy (N (Ur originalId) (Ur payload)) = do
     (Copied
        (N (Ur originalId) (Ur payload))
        (N (Ur copyId) (Ur copiedPayload))
-       (makeSeen2
+       (makeMustDesc2
           (Proxy :: Proxy tag)
           originalRef
           payload
@@ -332,7 +334,7 @@ replace oldNode newNode =
           return
             (Replaced
                (N (Ur newId) (Ur newPayload))
-               (makeSeen2
+               (makeMustDesc2
                   (Proxy :: Proxy tag)
                   (NRef oldId)
                   oldPayload
@@ -350,14 +352,14 @@ compute (OneUse payload0) = do
   return
     (Computed
        (N (Ur nid) (Ur payload))
-       (makeSeen1 (Proxy :: Proxy tag) ref' payload))
+       (makeMustDesc1 (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
      forall desc tag. (P.Show (Payload tag))
   => N tag
      %1 -> GBuilder desc (Destroyed tag)
 destroy (N (Ur nid) (Ur payload)) =
-  return (Destroyed (makeSeen1 (Proxy :: Proxy tag) (NRef nid) payload))
+  return (Destroyed (makeMustDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
 
 buildGraph :: GBuilder desc () -> G desc
 buildGraph builder =
