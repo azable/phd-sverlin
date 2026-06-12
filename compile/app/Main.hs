@@ -1,7 +1,7 @@
 module Main where
 
-import DSL qualified
-import Program qualified
+import qualified DSL
+import qualified Program
 
 main :: IO ()
 main = do

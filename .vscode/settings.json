@@ -16,11 +16,12 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[haskell]": {
-    "editor.defaultFormatter": "haskell.haskell",
+    "editor.defaultFormatter": "0xCD.stylish-hindent",
     "editor.formatOnSave": true
   },
 
-  "haskell.formattingProvider": "ormolu",
+  "stylish-hindent.commandline.hindent": "",
+  "stylish-hindent.executables.hindent": "hindent",
 
   "editor.tabSize": 2
 }

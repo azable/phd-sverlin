@@ -7,7 +7,13 @@
 
   "customizations": {
     "vscode": {
-      "extensions": ["svelte.svelte-vscode", "esbenp.prettier-vscode", "haskell.haskell"]
+      "extensions": [
+        "svelte.svelte-vscode",
+        "esbenp.prettier-vscode",
+        "haskell.haskell",
+        "justusadam.language-haskell",
+        "0xCD.stylish-hindent"
+      ]
     }
   },
 
@@ -27,5 +33,5 @@
 
   "remoteUser": "node",
 
-  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store"
+  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store && cabal install stylish-haskell hindent"
 }
