@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RebindableSyntax #-}
@@ -233,9 +232,9 @@ instance (ShowDesc desc) => P.Show (Event desc) where
 instance (ShowDesc desc) => P.Show (G desc) where
   show (G ns es) =
     "Nodes:\n"
-      P.++ P.concat (P.map showNode ns)
+      P.++ P.concatMap showNode ns
       P.++ "Events:\n"
-      P.++ P.concat (P.map showEvent es)
+      P.++ P.concatMap showEvent es
     where
       showNode n =
         "  " P.++ P.show n P.++ "\n"

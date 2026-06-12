@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE RebindableSyntax #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -69,12 +68,9 @@ type instance
 data Desc acts where
   DLiteral :: Desc '[Create (KValue ty)]
   DOperator :: Desc '[Create (KOp lhs rhs out)]
-  DDeclareVar ::
-    Desc '[Create (KVar ty), Create (KValue ty)]
-  DReadVar ::
-    Desc '[Observe (KVar ty), Copy (KValue ty)]
-  DWriteVar ::
-    Desc '[Observe (KVar ty), Replace (KValue ty)]
+  DDeclareVar :: Desc '[Create (KVar ty), Create (KValue ty)]
+  DReadVar :: Desc '[Observe (KVar ty), Copy (KValue ty)]
+  DWriteVar :: Desc '[Observe (KVar ty), Replace (KValue ty)]
   DEval ::
     Desc
       '[ Use (KValue lhs),
@@ -82,25 +78,17 @@ data Desc acts where
          Use (KValue rhs),
          Compute (KValue out)
        ]
-  DDiscardVar ::
-    Desc '[Destroy (KVar ty), Destroy (KValue ty)]
-  DDiscardValue ::
-    Desc '[Destroy (KValue ty)]
+  DDiscardVar :: Desc '[Destroy (KVar ty), Destroy (KValue ty)]
+  DDiscardValue :: Desc '[Destroy (KValue ty)]
 
 type Builder = GBuilder Desc
 
 type Node tag = N tag
 
 data VarNode ty where
-  VarNode ::
-    Node (KVar ty) %1 ->
-    Node (KValue ty) %1 ->
-    VarNode ty
+  VarNode :: Node (KVar ty) %1 -> Node (KValue ty) %1 -> VarNode ty
 
-declare ::
-  String ->
-  Value ty %1 ->
-  Builder (VarNode ty)
+declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
   Created valueNode valueSeen <- create initial
   Created varNode varSeen <- create (Var name)
@@ -109,9 +97,7 @@ declare name initial = do
 
   return (VarNode varNode valueNode)
 
-readVar ::
-  VarNode ty %1 ->
-  Builder (VarNode ty, Node (KValue ty))
+readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (KValue ty))
 readVar (VarNode var held) = do
   Observed var' varSeen <- observe var
   Copied held' copyNode copySeen <- copy held
@@ -120,10 +106,7 @@ readVar (VarNode var held) = do
 
   return (VarNode var' held', copyNode)
 
-writeVar ::
-  VarNode ty %1 ->
-  Node (KValue ty) %1 ->
-  Builder (VarNode ty)
+writeVar :: VarNode ty %1 -> Node (KValue ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
   Observed var' varSeen <- observe var
   Replaced newHeld replaceSeen <- replace oldHeld newValue
@@ -132,20 +115,14 @@ writeVar (VarNode var oldHeld) newValue = do
 
   return (VarNode var' newHeld)
 
-discardVar ::
-  VarNode ty %1 ->
-  Builder ()
+discardVar :: VarNode ty %1 -> Builder ()
 discardVar (VarNode var held) = do
   Destroyed varSeen <- destroy var
   Destroyed heldSeen <- destroy held
 
   emitDesc DDiscardVar (varSeen :~ heldSeen :~ ENil)
 
-eval ::
-  Value lhs %1 ->
-  Op lhs rhs out %1 ->
-  Value rhs %1 ->
-  Value out
+eval :: Value lhs %1 -> Op lhs rhs out %1 -> Value rhs %1 -> Value out
 eval (I32 x) AddI (I32 y) = I32 (x + y)
 eval (I32 x) MulI (I32 y) = I32 (x * y)
 eval (F64 x) AddD (F64 y) = F64 (x + y)
@@ -167,9 +144,7 @@ e lhsNode opNode rhsNode = do
 
   return outNode
 
-literal ::
-  Value ty %1 ->
-  Builder (Node (KValue ty))
+literal :: Value ty %1 -> Builder (Node (KValue ty))
 literal val = do
   Created node seen <- create val
 
@@ -177,9 +152,7 @@ literal val = do
 
   return node
 
-operator ::
-  Op lhs rhs out %1 ->
-  Builder (Node (KOp lhs rhs out))
+operator :: Op lhs rhs out %1 -> Builder (Node (KOp lhs rhs out))
 operator op = do
   Created node seen <- create op
 
@@ -219,54 +192,34 @@ example = do
 
   emitDesc DDiscardValue (n5Seen :~ ENil)
 
-run ::
-  Builder () ->
-  G Desc
-run =
-  buildGraph
+run :: Builder () -> G Desc
+run = buildGraph
 
 padRight :: Int -> String -> String
-padRight n s =
-  s ++ replicate (n - P.length s) ' '
+padRight n s = s ++ replicate (n - P.length s) ' '
 
 padRightF :: String -> String
-padRightF =
-  padRight 8
+padRightF = padRight 8
 
 instance P.Show (Value ty) where
-  show (I32 i) =
-    padRightF "Val" ++ P.show i
-  show (F64 f) =
-    padRightF "Val" ++ P.show f
+  show (I32 i) = padRightF "Val" ++ P.show i
+  show (F64 f) = padRightF "Val" ++ P.show f
 
 instance P.Show (Op lhs rhs out) where
-  show AddI =
-    padRightF "Op" ++ "AddI"
-  show MulI =
-    padRightF "Op" ++ "MulI"
-  show AddD =
-    padRightF "Op" ++ "AddD"
-  show MulD =
-    padRightF "Op" ++ "MulD"
+  show AddI = padRightF "Op" ++ "AddI"
+  show MulI = padRightF "Op" ++ "MulI"
+  show AddD = padRightF "Op" ++ "AddD"
+  show MulD = padRightF "Op" ++ "MulD"
 
 instance P.Show (Var ty) where
-  show (Var name) =
-    padRightF "Var" ++ name
+  show (Var name) = padRightF "Var" ++ name
 
 instance ShowDesc Desc where
-  showDesc DLiteral =
-    "Literal"
-  showDesc DOperator =
-    "Operator"
-  showDesc DDeclareVar =
-    "DeclareVar"
-  showDesc DReadVar =
-    "ReadVar"
-  showDesc DWriteVar =
-    "WriteVar"
-  showDesc DEval =
-    "Eval"
-  showDesc DDiscardVar =
-    "DiscardVar"
-  showDesc DDiscardValue =
-    "DiscardValue"
+  showDesc DLiteral = "Literal"
+  showDesc DOperator = "Operator"
+  showDesc DDeclareVar = "DeclareVar"
+  showDesc DReadVar = "ReadVar"
+  showDesc DWriteVar = "WriteVar"
+  showDesc DEval = "Eval"
+  showDesc DDiscardVar = "DiscardVar"
+  showDesc DDiscardValue = "DiscardValue"
