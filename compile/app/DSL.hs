@@ -26,78 +26,49 @@ import           LinearTrace
 import qualified Prelude                as P
 import           Prelude.Linear
 
-data CType
-  = CTInt
-  | CTDouble
-
-data KValue (ty :: CType)
-
-data Value ty where
-  I32 :: Int %1 -> Value 'CTInt
-  F64 :: Double %1 -> Value 'CTDouble
-
-data KOp (lhs :: CType) (rhs :: CType) (out :: CType)
-
-data Op lhs rhs out where
-  AddI :: Op 'CTInt 'CTInt 'CTInt
-  MulI :: Op 'CTInt 'CTInt 'CTInt
-  AddD :: Op 'CTDouble 'CTDouble 'CTDouble
-  MulD :: Op 'CTDouble 'CTDouble 'CTDouble
-
-data KVar (ty :: CType)
+data PrimitiveType
+  = TInt
+  | TDouble
 
 data Var ty where
   Var :: String -> Var ty
 
-type instance Payload (KValue ty) = Value ty
+data Value ty where
+  I32 :: Int %1 -> Value 'TInt
+  F64 :: Double %1 -> Value 'TDouble
 
-type instance Payload (KOp lhs rhs out) = Op lhs rhs out
+data Op lhs rhs out where
+  AddI :: Op 'TInt 'TInt 'TInt
+  MulI :: Op 'TInt 'TInt 'TInt
+  AddD :: Op 'TDouble 'TDouble 'TDouble
+  MulD :: Op 'TDouble 'TDouble 'TDouble
 
-type instance Payload (KVar ty) = Var ty
+type instance Payload (Value ty) = Value ty
 
-instance TracePayload (KValue ty) where
-  payloadView _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
-  payloadView _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
+type instance Payload (Op lhs rhs out) = Op lhs rhs out
 
-instance TracePayload (KOp lhs rhs out) where
-  payloadView _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
-  payloadView _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
-  payloadView _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
-  payloadView _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
-
-instance TracePayload (KVar ty) where
-  payloadView _ (Var name) = PayloadView (padRightF "Var" P.++ name)
+type instance Payload (Var ty) = Var ty
 
 data Desc acts where
-  DLiteral :: Desc '[ Create (KValue ty)]
-  DOperator :: Desc '[ Create (KOp lhs rhs out)]
-  DDeclareVar :: Desc '[ Create (KVar ty), Create (KValue ty)]
-  DReadVar :: Desc '[ Observe (KVar ty), Copy (KValue ty)]
-  DWriteVar :: Desc '[ Observe (KVar ty), Replace (KValue ty)]
+  DLiteral :: Desc '[ Create (Value ty)]
+  DOperator :: Desc '[ Create (Op lhs rhs out)]
+  DDeclareVar :: Desc '[ Create (Var ty), Create (Value ty)]
+  DReadVar :: Desc '[ Observe (Var ty), Copy (Value ty)]
+  DWriteVar :: Desc '[ Observe (Var ty), Replace (Value ty)]
   DEval
     :: Desc
-         '[ Use (KValue lhs)
-          , Use (KOp lhs rhs out)
-          , Use (KValue rhs)
-          , Compute (KValue out)
+         '[ Use (Value lhs)
+          , Use (Op lhs rhs out)
+          , Use (Value rhs)
+          , Compute (Value out)
           ]
-  DDiscardVar :: Desc '[ Destroy (KVar ty), Destroy (KValue ty)]
-  DDiscardValue :: Desc '[ Destroy (KValue ty)]
-
-instance PrintDesc Desc where
-  printDesc DLiteral      = "Literal"
-  printDesc DOperator     = "Operator"
-  printDesc DDeclareVar   = "DeclareVar"
-  printDesc DReadVar      = "ReadVar"
-  printDesc DWriteVar     = "WriteVar"
-  printDesc DEval         = "Eval"
-  printDesc DDiscardVar   = "DiscardVar"
-  printDesc DDiscardValue = "DiscardValue"
+  DDiscardVar :: Desc '[ Destroy (Var ty), Destroy (Value ty)]
+  DDiscardValue :: Desc '[ Destroy (Value ty)]
 
 type Builder a = TraceBuilder Desc a
 
 data VarNode ty where
-  VarNode :: Node (KVar ty) %1 -> Node (KValue ty) %1 -> VarNode ty
+  VarNode :: Node (Var ty) %1 -> Node (Value ty) %1 -> VarNode ty
 
 declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
@@ -106,14 +77,14 @@ declare name initial = do
   DDeclareVar `explain` (createVar :~ createValue :~ PaidDebt)
   return (VarNode varNode valueNode)
 
-readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (KValue ty))
+readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (Value ty))
 readVar (VarNode var held) = do
   Observed var' observeVar <- observe var
   Copied held' copyNode copyHeld <- copy held
   DReadVar `explain` (observeVar :~ copyHeld :~ PaidDebt)
   return (VarNode var' held', copyNode)
 
-writeVar :: VarNode ty %1 -> Node (KValue ty) %1 -> Builder (VarNode ty)
+writeVar :: VarNode ty %1 -> Node (Value ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
   Observed var' observeVar <- observe var
   Replaced newHeld replaceHeld <- replace oldHeld newValue
@@ -132,10 +103,10 @@ eval (I32 x) MulI (I32 y) = I32 (x * y)
 eval (F64 x) AddD (F64 y) = F64 (x + y)
 eval (F64 x) MulD (F64 y) = F64 (x * y)
 
-e :: Node (KValue lhs)
-     %1 -> Node (KOp lhs rhs out)
-     %1 -> Node (KValue rhs)
-     %1 -> Builder (Node (KValue out))
+e :: Node (Value lhs)
+     %1 -> Node (Op lhs rhs out)
+     %1 -> Node (Value rhs)
+     %1 -> Builder (Node (Value out))
 e lhsNode opNode rhsNode = do
   Used lhs useLhs <- use lhsNode
   Used op useOp <- use opNode
@@ -144,36 +115,36 @@ e lhsNode opNode rhsNode = do
   DEval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ PaidDebt)
   return outNode
 
-literal :: Value ty %1 -> Builder (Node (KValue ty))
+literal :: Value ty %1 -> Builder (Node (Value ty))
 literal val = do
   Created node createVal <- create val
   DLiteral `explain` (createVal :~ PaidDebt)
   return node
 
-operator :: Op lhs rhs out %1 -> Builder (Node (KOp lhs rhs out))
+operator :: Op lhs rhs out %1 -> Builder (Node (Op lhs rhs out))
 operator op = do
   Created node createOp <- create op
   DOperator `explain` (createOp :~ PaidDebt)
   return node
 
 (.+.) ::
-     Node (KValue 'CTInt)
-     %1 -> Node (KValue 'CTInt)
-     %1 -> Builder (Node (KValue 'CTInt))
+     Node (Value 'TInt)
+     %1 -> Node (Value 'TInt)
+     %1 -> Builder (Node (Value 'TInt))
 (.+.) lhs rhs = do
   add <- operator AddI
   e lhs add rhs
 
 (.*.) ::
-     Node (KValue 'CTInt)
-     %1 -> Node (KValue 'CTInt)
-     %1 -> Builder (Node (KValue 'CTInt))
+     Node (Value 'TInt)
+     %1 -> Node (Value 'TInt)
+     %1 -> Builder (Node (Value 'TInt))
 (.*.) lhs rhs = do
   mul <- operator MulI
   e lhs mul rhs
 
 data FibState where
-  FibState :: VarNode 'CTInt %1 -> VarNode 'CTInt %1 -> FibState
+  FibState :: VarNode 'TInt %1 -> VarNode 'TInt %1 -> FibState
 
 iterateLinear :: Int -> (state %1 -> Builder state) -> state %1 -> Builder state
 iterateLinear n step state'
@@ -205,8 +176,32 @@ example = do
 run :: Builder () -> TraceGraph Desc
 run = buildGraph
 
+-- Rendering logic
 padRight :: Int -> String -> String
 padRight n s = s P.++ P.replicate (P.max 0 (n P.- P.length s)) ' '
 
 padRightF :: String -> String
 padRightF = padRight 5
+
+instance TracePayload (Value ty) where
+  payloadView _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
+  payloadView _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
+
+instance TracePayload (Op lhs rhs out) where
+  payloadView _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
+  payloadView _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
+  payloadView _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
+  payloadView _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
+
+instance TracePayload (Var ty) where
+  payloadView _ (Var name) = PayloadView (padRightF "Var" P.++ name)
+
+instance PrintDesc Desc where
+  printDesc DLiteral      = "Literal"
+  printDesc DOperator     = "Operator"
+  printDesc DDeclareVar   = "DeclareVar"
+  printDesc DReadVar      = "ReadVar"
+  printDesc DWriteVar     = "WriteVar"
+  printDesc DEval         = "Eval"
+  printDesc DDiscardVar   = "DiscardVar"
+  printDesc DDiscardValue = "DiscardValue"
