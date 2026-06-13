@@ -74,28 +74,28 @@ declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
   Created valueNode createValue <- create initial
   Created varNode createVar <- create (Var name)
-  DeclareVar `explain` (createVar :~ createValue :~ Evidenced)
+  DeclareVar `explain` (createVar :~ createValue :~ Done)
   return (VarNode varNode valueNode)
 
 readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (Value ty))
 readVar (VarNode var held) = do
   Observed var' observeVar <- observe var
   Copied held' copyNode copyHeld <- copy held
-  ReadVar `explain` (observeVar :~ copyHeld :~ Evidenced)
+  ReadVar `explain` (observeVar :~ copyHeld :~ Done)
   return (VarNode var' held', copyNode)
 
 writeVar :: VarNode ty %1 -> Node (Value ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
   Observed var' observeVar <- observe var
   Replaced newHeld replaceHeld <- replace oldHeld newValue
-  WriteVar `explain` (observeVar :~ replaceHeld :~ Evidenced)
+  WriteVar `explain` (observeVar :~ replaceHeld :~ Done)
   return (VarNode var' newHeld)
 
 discardVar :: VarNode ty %1 -> Builder ()
 discardVar (VarNode var held) = do
   Destroyed destroyVar <- destroy var
   Destroyed destroyHeld <- destroy held
-  DiscardVar `explain` (destroyVar :~ destroyHeld :~ Evidenced)
+  DiscardVar `explain` (destroyVar :~ destroyHeld :~ Done)
 
 eval :: Value lhs %1 -> Op lhs rhs out %1 -> Value rhs %1 -> Value out
 eval (I32 x) AddI (I32 y) = I32 (x + y)
@@ -112,19 +112,19 @@ e lhsNode opNode rhsNode = do
   Used op useOp <- use opNode
   Used rhs useRhs <- use rhsNode
   Computed outNode computeOut <- compute (eval <$> lhs <*> op <*> rhs)
-  Eval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ Evidenced)
+  Eval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ Done)
   return outNode
 
 literal :: Value ty %1 -> Builder (Node (Value ty))
 literal val = do
   Created node createVal <- create val
-  Literal `explain` (createVal :~ Evidenced)
+  Literal `explain` (createVal :~ Done)
   return node
 
 operator :: Op lhs rhs out %1 -> Builder (Node (Op lhs rhs out))
 operator op = do
   Created node createOp <- create op
-  Operator `explain` (createOp :~ Evidenced)
+  Operator `explain` (createOp :~ Done)
   return node
 
 (.+.) ::

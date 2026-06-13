@@ -25,7 +25,7 @@ module LinearTrace
   , -- * Auditing operations
     OneUse
   , Evidence
-  , EvidenceList(Evidenced, (:~))
+  , EvidenceList(Done, (:~))
   , Created(..)
   , Observed(..)
   , Used(..)

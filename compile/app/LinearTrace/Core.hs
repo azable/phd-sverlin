@@ -189,7 +189,7 @@ data Evidence act where
   Evidence :: Ur (AuditStep act) %1 -> Evidence act
 
 data EvidenceList acts where
-  Evidenced :: EvidenceList '[]
+  Done :: EvidenceList '[]
   (:~) :: Evidence act %1 -> EvidenceList acts %1 -> EvidenceList (act : acts)
 
 data TraceEvent (event :: [Type] -> Type) where
@@ -263,7 +263,7 @@ evidenceToAuditStep :: Evidence act %1 -> Ur (AuditStep act)
 evidenceToAuditStep (Evidence step) = step
 
 evidenceListToAudit :: EvidenceList acts %1 -> Ur (Audit acts)
-evidenceListToAudit Evidenced = Ur EmptyAudit
+evidenceListToAudit Done = Ur EmptyAudit
 evidenceListToAudit (evidence :~ rest) =
   case evidenceToAuditStep evidence of
     Ur step ->
