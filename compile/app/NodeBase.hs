@@ -13,7 +13,9 @@ module NodeBase
   , GBuilder
   , GBuilderState(..)
   , NRecord(..)
+  , TraceAction(..)
   , TraceOp(..)
+  , SomeTraceOp(..)
   , Event(..)
   , Some
   , SomeObservation
@@ -42,6 +44,7 @@ module NodeBase
   , Computed(..)
   , Destroyed(..)
   , ShowDesc(..)
+  , traceActionName
   , create
   , observe
   , use
@@ -115,15 +118,6 @@ data SomeObservation where
 instance P.Show SomeObservation where
   show (SomeObservation obs) = P.show obs
 
-data TraceOp = TraceOp
-  { traceOpName         :: String
-  , traceOpObservations :: [SomeObservation]
-  }
-
-instance P.Show TraceOp where
-  show (TraceOp name observations) =
-    name P.++ " " P.++ joinWith ", " (P.map P.show observations)
-
 data Create tag
 
 data Observe tag
@@ -138,8 +132,43 @@ data Compute tag
 
 data Destroy tag
 
+data TraceAction act where
+  TraceCreate :: TraceAction (Create tag)
+  TraceObserve :: TraceAction (Observe tag)
+  TraceUse :: TraceAction (Use tag)
+  TraceCopy :: TraceAction (Copy tag)
+  TraceReplace :: TraceAction (Replace tag)
+  TraceCompute :: TraceAction (Compute tag)
+  TraceDestroy :: TraceAction (Destroy tag)
+
+traceActionName :: TraceAction act -> String
+traceActionName TraceCreate  = "create"
+traceActionName TraceObserve = "observe"
+traceActionName TraceUse     = "use"
+traceActionName TraceCopy    = "copy"
+traceActionName TraceReplace = "replace"
+traceActionName TraceCompute = "compute"
+traceActionName TraceDestroy = "destroy"
+
+data TraceOp act = TraceOp
+  { traceOpAction       :: TraceAction act
+  , traceOpObservations :: [SomeObservation]
+  }
+
+instance P.Show (TraceOp act) where
+  show (TraceOp action observations) =
+    traceActionName action
+      P.++ " "
+      P.++ joinWith ", " (P.map P.show observations)
+
+data SomeTraceOp where
+  SomeTraceOp :: TraceOp act -> SomeTraceOp
+
+instance P.Show SomeTraceOp where
+  show (SomeTraceOp op) = P.show op
+
 data Owed act where
-  Owed :: Ur TraceOp %1 -> Owed act
+  Owed :: Ur (TraceOp act) %1 -> Owed act
 
 data OwedList acts where
   PaidDebt :: OwedList '[]
@@ -168,7 +197,7 @@ data Destroyed tag where
   Destroyed :: Owed (Destroy tag) %1 -> Destroyed tag
 
 data Event (desc :: [Type] -> Type) where
-  Event :: desc acts -> [TraceOp] -> Event desc
+  Event :: desc acts -> [SomeTraceOp] -> Event desc
 
 data G (desc :: [Type] -> Type) = G
   { graphNodes  :: [NRecord]
@@ -227,17 +256,17 @@ makeObservation _ r payload = SomeObservation (Observation r payload)
 
 makeOp1 ::
      (P.Show (Payload tag))
-  => String
+  => TraceAction act
   -> Proxy tag
   -> NRef tag
   -> Payload tag
   -> Owed act
-makeOp1 name proxy r payload =
-  Owed (Ur (TraceOp name [makeObservation proxy r payload]))
+makeOp1 action proxy r payload =
+  Owed (Ur (TraceOp action [makeObservation proxy r payload]))
 
 makeOp2 ::
      (P.Show (Payload tag1), P.Show (Payload tag2))
-  => String
+  => TraceAction act
   -> Proxy tag1
   -> NRef tag1
   -> Payload tag1
@@ -245,19 +274,21 @@ makeOp2 ::
   -> NRef tag2
   -> Payload tag2
   -> Owed act
-makeOp2 name proxy1 r1 payload1 proxy2 r2 payload2 =
+makeOp2 action proxy1 r1 payload1 proxy2 r2 payload2 =
   Owed
     (Ur
        (TraceOp
-          name
+          action
           [ makeObservation proxy1 r1 payload1
           , makeObservation proxy2 r2 payload2
           ]))
 
-descToTraceOp :: Owed act %1 -> Ur TraceOp
-descToTraceOp (Owed op) = op
+descToTraceOp :: Owed act %1 -> Ur SomeTraceOp
+descToTraceOp (Owed op) =
+  case op of
+    Ur traceOp -> Ur (SomeTraceOp traceOp)
 
-descListToTraceOps :: OwedList acts %1 -> Ur [TraceOp]
+descListToTraceOps :: OwedList acts %1 -> Ur [SomeTraceOp]
 descListToTraceOps PaidDebt = Ur []
 descListToTraceOps (desc :~ rest) =
   case descToTraceOp desc of
@@ -304,7 +335,7 @@ create payload0 = do
   return
     (Created
        (N (Ur nid) (Ur payload))
-       (makeOp1 "create" (Proxy :: Proxy tag) ref' payload))
+       (makeOp1 TraceCreate (Proxy :: Proxy tag) ref' payload))
 
 observe ::
      forall desc tag. (P.Show (Payload tag))
@@ -314,7 +345,7 @@ observe (N (Ur nid) (Ur payload)) =
   return
     (Observed
        (N (Ur nid) (Ur payload))
-       (makeOp1 "observe" (Proxy :: Proxy tag) (NRef nid) payload))
+       (makeOp1 TraceObserve (Proxy :: Proxy tag) (NRef nid) payload))
 
 use ::
      forall desc tag. (P.Show (Payload tag))
@@ -324,7 +355,7 @@ use (N (Ur nid) (Ur payload)) =
   return
     (Used
        (OneUse payload)
-       (makeOp1 "use" (Proxy :: Proxy tag) (NRef nid) payload))
+       (makeOp1 TraceUse (Proxy :: Proxy tag) (NRef nid) payload))
 
 copy ::
      forall desc tag. (P.Show (Payload tag))
@@ -339,7 +370,7 @@ copy (N (Ur originalId) (Ur payload)) = do
        (N (Ur originalId) (Ur payload))
        (N (Ur copyId) (Ur copiedPayload))
        (makeOp2
-          "copy"
+          TraceCopy
           (Proxy :: Proxy tag)
           originalRef
           payload
@@ -361,7 +392,7 @@ replace oldNode newNode =
             (Replaced
                (N (Ur newId) (Ur newPayload))
                (makeOp2
-                  "replace"
+                  TraceReplace
                   (Proxy :: Proxy tag)
                   (NRef oldId)
                   oldPayload
@@ -379,14 +410,15 @@ compute (OneUse payload0) = do
   return
     (Computed
        (N (Ur nid) (Ur payload))
-       (makeOp1 "compute" (Proxy :: Proxy tag) ref' payload))
+       (makeOp1 TraceCompute (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
      forall desc tag. (P.Show (Payload tag))
   => N tag
      %1 -> GBuilder desc (Destroyed tag)
 destroy (N (Ur nid) (Ur payload)) =
-  return (Destroyed (makeOp1 "destroy" (Proxy :: Proxy tag) (NRef nid) payload))
+  return
+    (Destroyed (makeOp1 TraceDestroy (Proxy :: Proxy tag) (NRef nid) payload))
 
 buildGraph :: GBuilder desc () -> G desc
 buildGraph builder =
@@ -436,12 +468,12 @@ renderEvent ix (Event desc ops) =
     P.++ P.concatMap renderTraceOp ops
     P.++ "\n"
 
-renderTraceOp :: TraceOp -> String
-renderTraceOp (TraceOp name observations) =
+renderTraceOp :: SomeTraceOp -> String
+renderTraceOp (SomeTraceOp (TraceOp action observations)) =
   case observations of
-    [] -> renderTraceOpName name P.++ "\n"
+    [] -> renderTraceOpName (traceActionName action) P.++ "\n"
     first:rest ->
-      renderTaggedObservation name first
+      renderTaggedObservation (traceActionName action) first
         P.++ P.concatMap renderUntaggedObservation rest
 
 renderTaggedObservation :: String -> SomeObservation -> String
