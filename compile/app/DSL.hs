@@ -6,25 +6,19 @@
 {-# LANGUAGE TypeFamilies      #-}
 
 module DSL
-  ( CType(..)
-  , Value(..)
-  , Op(..)
-  , Var(..)
-  , Desc(..)
-  , G
-  , Node
-  , VarNode
-  , run
-  , example
-  , declare
+  ( -- Operations
+    declare
   , readVar
   , writeVar
   , discardVar
-  , e
+  , eval
   , literal
   , operator
   , (.+.)
   , (.*.)
+  , -- Runners/examples
+    run
+  , example
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
@@ -100,9 +94,7 @@ instance PrintDesc Desc where
   printDesc DDiscardVar   = "DiscardVar"
   printDesc DDiscardValue = "DiscardValue"
 
-type Builder ty = GBuilder Desc ty
-
-type Node tag = N tag
+type Builder a = TraceBuilder Desc a
 
 data VarNode ty where
   VarNode :: Node (KVar ty) %1 -> Node (KValue ty) %1 -> VarNode ty
@@ -210,7 +202,7 @@ example = do
       discardVar aN
       discardVar bN
 
-run :: Builder () -> G Desc
+run :: Builder () -> TraceGraph Desc
 run = buildGraph
 
 padRight :: Int -> String -> String

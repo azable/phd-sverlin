@@ -1,9 +1,9 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module LinearTrace
-  ( G
-  , GBuilder
-  , N
+  ( TraceGraph
+  , TraceBuilder
+  , Node
   , Payload
   , -- * Action vocabulary
     Action

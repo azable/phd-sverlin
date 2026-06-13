@@ -1,6 +1,4 @@
-{-# LANGUAGE GADTs         #-}
-{-# LANGUAGE TypeFamilies  #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs #-}
 
 module LinearTrace.Print
   ( PrintDesc(..)
@@ -16,122 +14,119 @@ import qualified Prelude          as P
 class PrintDesc desc where
   printDesc :: desc acts -> P.String
 
-printGraph :: (PrintDesc desc) => G desc -> P.IO ()
+printGraph :: (PrintDesc desc) => TraceGraph desc -> P.IO ()
 printGraph graph = P.putStr (renderGraph graph)
 
-printTrace :: (PrintDesc desc) => G desc -> P.IO ()
+printTrace :: (PrintDesc desc) => TraceGraph desc -> P.IO ()
 printTrace graph = P.putStr (renderTrace graph)
 
-renderGraph :: (PrintDesc desc) => G desc -> P.String
-renderGraph (G ns es) =
+renderGraph :: (PrintDesc desc) => TraceGraph desc -> P.String
+renderGraph (TraceGraph nodes events) =
   renderHeader "Graph"
-    P.++ renderSummary ns es
+    P.++ renderSummary nodes events
     P.++ "\n"
-    P.++ renderNodes ns
+    P.++ renderNodes nodes
     P.++ "\n"
-    P.++ renderTraceEvents es
+    P.++ renderEvents events
 
-renderTrace :: (PrintDesc desc) => G desc -> P.String
-renderTrace (G _ es) = renderTraceEvents es
+renderTrace :: (PrintDesc desc) => TraceGraph desc -> P.String
+renderTrace (TraceGraph _ events) = renderEvents events
 
-renderSummary :: [NRecord] -> [Event desc] -> P.String
-renderSummary ns es =
+renderSummary :: [NodeRecord] -> [Event desc] -> P.String
+renderSummary nodes events =
   "Nodes:  "
-    P.++ P.show (P.length ns)
+    P.++ P.show (P.length nodes)
     P.++ "\n"
     P.++ "Events: "
-    P.++ P.show (P.length es)
+    P.++ P.show (P.length events)
     P.++ "\n"
 
-renderNodes :: [NRecord] -> P.String
-renderNodes ns = renderHeader "Nodes" P.++ P.concatMap renderNode ns
+renderNodes :: [NodeRecord] -> P.String
+renderNodes nodes = renderHeader "Nodes" P.++ P.concatMap renderNode nodes
 
-renderNode :: NRecord -> P.String
-renderNode (NRecord nid snapshot) =
+renderNode :: NodeRecord -> P.String
+renderNode (NodeRecord snapshot) =
   "  "
-    P.++ padRight 8 ("N" P.++ P.show nid)
-    P.++ renderSomeNodeSnapshotPayload snapshot
+    P.++ padRight 8 (renderNodeRefPlain (snapshotRef snapshot))
+    P.++ renderSnapshotPayload snapshot
     P.++ "\n"
 
-renderSomeNodeSnapshotPayload :: SomeNodeSnapshot -> P.String
-renderSomeNodeSnapshotPayload (SomeNodeSnapshot snapshot) =
-  renderNodeSnapshotPayload snapshot
-
-renderNodeSnapshotPayload :: NodeSnapshot tag -> P.String
-renderNodeSnapshotPayload (NodeSnapshot _ _ payloadView') =
-  renderPayloadView payloadView'
-
-renderPayloadView :: PayloadView -> P.String
-renderPayloadView (PayloadView text) = text
-
-renderNRef :: NRef tag -> P.String
-renderNRef (NRef nid) = "[N" P.++ P.show nid P.++ "]"
-
-renderNodeSnapshot :: NodeSnapshot tag -> P.String
-renderNodeSnapshot (NodeSnapshot ref _ payloadView') =
-  padRight 6 (renderNRef ref) P.++ " " P.++ renderPayloadView payloadView'
-
-renderTraceEvents :: (PrintDesc desc) => [Event desc] -> P.String
-renderTraceEvents es =
+renderEvents :: (PrintDesc desc) => [Event desc] -> P.String
+renderEvents events =
   renderHeader "Trace"
-    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) es)
+    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) events)
 
 renderEvent :: (PrintDesc desc) => P.Int -> Event desc -> P.String
-renderEvent ix (Event desc ops) =
+renderEvent ix (Event desc actions) =
   padLeft 3 (P.show ix)
     P.++ " | "
     P.++ ansiBold
     P.++ printDesc desc
     P.++ ansiReset
     P.++ "\n"
-    P.++ renderTraceActions ops
+    P.++ renderActionTrace actions
     P.++ "\n"
 
-renderTraceActions :: TraceActions acts -> P.String
-renderTraceActions TraceNil     = ""
-renderTraceActions (op :> rest) = renderTraceOp op P.++ renderTraceActions rest
+renderActionTrace :: ActionTrace acts -> P.String
+renderActionTrace TraceNil = ""
+renderActionTrace (action :> rest) =
+  renderTraceAction action P.++ renderActionTrace rest
 
-renderTraceOp :: TraceAction act -> P.String
-renderTraceOp (TraceCreate snapshot) =
-  renderOneSnapshotOp "create" ansiGreen snapshot
-renderTraceOp (TraceObserve snapshot) =
-  renderOneSnapshotOp "observe" ansiCyan snapshot
-renderTraceOp (TraceUse snapshot) =
-  renderOneSnapshotOp "use" ansiYellow snapshot
-renderTraceOp (TraceCopy original copy') =
-  renderTwoSnapshotOp "copy" ansiBlue original copy'
-renderTraceOp (TraceReplace old new) =
-  renderTwoSnapshotOp "replace" ansiMagenta old new
-renderTraceOp (TraceCompute snapshot) =
-  renderOneSnapshotOp "compute" ansiLime snapshot
-renderTraceOp (TraceDestroy snapshot) =
-  renderOneSnapshotOp "destroy" ansiRed snapshot
+renderTraceAction :: TraceAction act -> P.String
+renderTraceAction action =
+  case action of
+    TraceCreate snapshot -> renderOneSnapshotAction "create" ansiGreen snapshot
+    TraceObserve snapshot -> renderOneSnapshotAction "observe" ansiCyan snapshot
+    TraceUse snapshot -> renderOneSnapshotAction "use" ansiYellow snapshot
+    TraceCopy original copy' ->
+      renderTwoSnapshotAction "copy" ansiBlue original copy'
+    TraceReplace old new ->
+      renderTwoSnapshotAction "replace" ansiMagenta old new
+    TraceCompute snapshot -> renderOneSnapshotAction "compute" ansiLime snapshot
+    TraceDestroy snapshot -> renderOneSnapshotAction "destroy" ansiRed snapshot
 
-renderOneSnapshotOp :: P.String -> P.String -> NodeSnapshot tag -> P.String
-renderOneSnapshotOp name colour snapshot =
-  renderTraceActionName name colour
-    P.++ " "
-    P.++ renderNodeSnapshot snapshot
-    P.++ "\n"
+renderOneSnapshotAction :: P.String -> P.String -> NodeSnapshot tag -> P.String
+renderOneSnapshotAction name colour snapshot =
+  renderActionName name colour P.++ " " P.++ renderSnapshot snapshot P.++ "\n"
 
-renderTwoSnapshotOp ::
+renderTwoSnapshotAction ::
      P.String -> P.String -> NodeSnapshot tag -> NodeSnapshot tag -> P.String
-renderTwoSnapshotOp name colour first second =
-  renderTraceActionName name colour
+renderTwoSnapshotAction name colour first second =
+  renderActionName name colour
     P.++ " "
-    P.++ renderNodeSnapshot first
+    P.++ renderSnapshot first
     P.++ "\n"
-    P.++ renderEmptyTraceActionName
+    P.++ renderEmptyActionName
     P.++ " "
-    P.++ renderNodeSnapshot second
+    P.++ renderSnapshot second
     P.++ "\n"
 
-renderTraceActionName :: P.String -> P.String -> P.String
-renderTraceActionName name colour =
-  "    " P.++ colourText colour (padLeft 16 name)
+renderSnapshot :: NodeSnapshot tag -> P.String
+renderSnapshot snapshot =
+  padRight 6 (renderNodeRef (snapshotRef snapshot))
+    P.++ " "
+    P.++ renderSnapshotPayload snapshot
 
-renderEmptyTraceActionName :: P.String
-renderEmptyTraceActionName = "    " P.++ padLeft 16 ""
+renderSnapshotPayload :: NodeSnapshot tag -> P.String
+renderSnapshotPayload (NodeSnapshot _ _ view) = renderPayloadView view
+
+snapshotRef :: NodeSnapshot tag -> NodeRef tag
+snapshotRef (NodeSnapshot ref _ _) = ref
+
+renderNodeRef :: NodeRef tag -> P.String
+renderNodeRef (NodeRef nodeId) = "[N" P.++ P.show nodeId P.++ "]"
+
+renderNodeRefPlain :: NodeRef tag -> P.String
+renderNodeRefPlain (NodeRef nodeId) = "N" P.++ P.show nodeId
+
+renderPayloadView :: PayloadView -> P.String
+renderPayloadView (PayloadView text) = text
+
+renderActionName :: P.String -> P.String -> P.String
+renderActionName name colour = "    " P.++ colourText colour (padLeft 16 name)
+
+renderEmptyActionName :: P.String
+renderEmptyActionName = "    " P.++ padLeft 16 ""
 
 renderHeader :: P.String -> P.String
 renderHeader title =
