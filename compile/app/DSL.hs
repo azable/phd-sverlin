@@ -175,7 +175,7 @@ padRight :: Int -> String -> String
 padRight n s = s ++ replicate (n - P.length s) ' '
 
 padRightF :: String -> String
-padRightF = padRight 8
+padRightF = padRight 5
 
 instance P.Show (Value ty) where
   show (I32 i) = padRightF "Val" ++ P.show i

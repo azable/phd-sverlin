@@ -65,6 +65,7 @@ module NodeBase
     buildGraph
   , renderGraph
   , printGraph
+  , printTrace
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
@@ -452,6 +453,9 @@ renderGraph (G ns es) =
 printGraph :: (ShowDesc desc) => G desc -> P.IO ()
 printGraph graph = P.putStr (renderGraph graph)
 
+printTrace :: (ShowDesc desc) => G desc -> P.IO ()
+printTrace (G _ es) = P.putStr (renderTrace es)
+
 renderSummary :: [NRecord] -> [Event desc] -> String
 renderSummary ns es =
   "Nodes:  "
@@ -477,7 +481,7 @@ renderEvent :: (ShowDesc desc) => Int -> Event desc -> String
 renderEvent ix (Event desc ops) =
   padLeft 3 (P.show ix)
     P.++ " | "
-    P.++ showDesc desc
+    P.++ (ansiBold P.++ showDesc desc P.++ ansiReset)
     P.++ "\n"
     P.++ P.concatMap renderTraceOp ops
     P.++ "\n"
@@ -500,10 +504,10 @@ renderUntaggedObservation observation =
 
 renderTraceActionName :: TraceAction act -> String
 renderTraceActionName action =
-  "    " P.++ colourTraceAction action (padLeft 11 (traceActionName action))
+  "    " P.++ colourTraceAction action (padLeft 16 (traceActionName action))
 
 renderEmptyTraceActionName :: String
-renderEmptyTraceActionName = "    " P.++ padLeft 11 ""
+renderEmptyTraceActionName = "    " P.++ padLeft 16 ""
 
 renderHeader :: String -> String
 renderHeader title =
@@ -555,3 +559,6 @@ ansiLime = "\ESC[92m"
 
 ansiRed :: String
 ansiRed = "\ESC[31m"
+
+ansiBold :: String
+ansiBold = "\ESC[1m"

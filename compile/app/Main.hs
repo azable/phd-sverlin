@@ -5,4 +5,4 @@ import qualified Program
 
 main :: IO ()
 main = do
-  NodeBase.printGraph Program.runProgram
+  NodeBase.printTrace Program.runProgram
