@@ -252,7 +252,7 @@ instance Dupable (GBuilderState desc) where
               (es1, es2) ->
                 (GBuilderState next1 ns1 es1, GBuilderState next2 ns2 es2)
 
-type GBuilder desc = State (GBuilderState desc)
+type GBuilder desc a = State (GBuilderState desc) a
 
 mkNRef :: Proxy tag -> NId -> NRef tag
 mkNRef _ = NRef

@@ -10,7 +10,7 @@ module DSL
   , Op(..)
   , Var(..)
   , Desc(..)
-  , G(..)
+  , G
   , Node
   , VarNode
   , run
@@ -76,7 +76,7 @@ data Desc acts where
   DDiscardVar :: Desc '[ Destroy (KVar ty), Destroy (KValue ty)]
   DDiscardValue :: Desc '[ Destroy (KValue ty)]
 
-type Builder = GBuilder Desc
+type Builder ty = GBuilder Desc ty
 
 type Node tag = N tag
 
