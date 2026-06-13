@@ -24,8 +24,8 @@ module LinearTrace
   , destroy
   , -- * Auditing operations
     OneUse
-  , Owed
-  , OwedList(PaidDebt, (:~))
+  , Evidence
+  , EvidenceList(Evidenced, (:~))
   , Created(..)
   , Observed(..)
   , Used(..)

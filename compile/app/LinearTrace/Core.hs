@@ -37,8 +37,8 @@ module LinearTrace.Core
   , destroy
   , -- * Auditing operations
     OneUse(..)
-  , Owed(..)
-  , OwedList(..)
+  , Evidence(..)
+  , EvidenceList(..)
   , Created(..)
   , Observed(..)
   , Inspected(..)
@@ -56,18 +56,18 @@ module LinearTrace.Core
   , NodeSnapshot(..)
   , NodeRecord(..)
   , TraceEvent(..)
-  , -- * Internal trace data
-    TraceStep(..)
-  , Trace(..)
+  , -- * Internal audit data
+    AuditStep(..)
+  , Audit(..)
   , -- * Internal builder state
     TraceBuilderState(..)
   , buildGraph
   , makeNodeRef
   , makeSnapshot
-  , makeStep1
-  , makeStep2
-  , owedToStep
-  , owedListToTrace
+  , makeAuditStep1
+  , makeAuditStep2
+  , evidenceToAuditStep
+  , evidenceListToAudit
   , unsafeUr
   , allocateNode
   , emitEvent
@@ -144,56 +144,56 @@ type Compute tag = Action 'ActionCompute tag
 type Destroy tag = Action 'ActionDestroy tag
 
 data Created tag where
-  Created :: Node tag %1 -> Owed (Create tag) %1 -> Created tag
+  Created :: Node tag %1 -> Evidence (Create tag) %1 -> Created tag
 
 data Observed tag where
-  Observed :: Node tag %1 -> Owed (Observe tag) %1 -> Observed tag
+  Observed :: Node tag %1 -> Evidence (Observe tag) %1 -> Observed tag
 
 data Inspected tag where
   Inspected
     :: Node tag
        %1 -> OneUse (Payload tag)
-       %1 -> Owed (Inspect tag)
+       %1 -> Evidence (Inspect tag)
        %1 -> Inspected tag
 
 data Used tag where
-  Used :: OneUse (Payload tag) %1 -> Owed (Use tag) %1 -> Used tag
+  Used :: OneUse (Payload tag) %1 -> Evidence (Use tag) %1 -> Used tag
 
 data Copied tag where
-  Copied :: Node tag %1 -> Node tag %1 -> Owed (Copy tag) %1 -> Copied tag
+  Copied :: Node tag %1 -> Node tag %1 -> Evidence (Copy tag) %1 -> Copied tag
 
 data Replaced tag where
-  Replaced :: Node tag %1 -> Owed (Replace tag) %1 -> Replaced tag
+  Replaced :: Node tag %1 -> Evidence (Replace tag) %1 -> Replaced tag
 
 data Computed tag where
-  Computed :: Node tag %1 -> Owed (Compute tag) %1 -> Computed tag
+  Computed :: Node tag %1 -> Evidence (Compute tag) %1 -> Computed tag
 
 data Destroyed tag where
-  Destroyed :: Owed (Destroy tag) %1 -> Destroyed tag
+  Destroyed :: Evidence (Destroy tag) %1 -> Destroyed tag
 
-data TraceStep act where
-  CreateStep :: NodeSnapshot tag -> TraceStep (Create tag)
-  ObserveStep :: NodeSnapshot tag -> TraceStep (Observe tag)
-  InspectStep :: NodeSnapshot tag -> TraceStep (Inspect tag)
-  UseStep :: NodeSnapshot tag -> TraceStep (Use tag)
-  CopyStep :: NodeSnapshot tag -> NodeSnapshot tag -> TraceStep (Copy tag)
-  ReplaceStep :: NodeSnapshot tag -> NodeSnapshot tag -> TraceStep (Replace tag)
-  ComputeStep :: NodeSnapshot tag -> TraceStep (Compute tag)
-  DestroyStep :: NodeSnapshot tag -> TraceStep (Destroy tag)
+data AuditStep act where
+  CreateStep :: NodeSnapshot tag -> AuditStep (Create tag)
+  ObserveStep :: NodeSnapshot tag -> AuditStep (Observe tag)
+  InspectStep :: NodeSnapshot tag -> AuditStep (Inspect tag)
+  UseStep :: NodeSnapshot tag -> AuditStep (Use tag)
+  CopyStep :: NodeSnapshot tag -> NodeSnapshot tag -> AuditStep (Copy tag)
+  ReplaceStep :: NodeSnapshot tag -> NodeSnapshot tag -> AuditStep (Replace tag)
+  ComputeStep :: NodeSnapshot tag -> AuditStep (Compute tag)
+  DestroyStep :: NodeSnapshot tag -> AuditStep (Destroy tag)
 
-data Trace acts where
-  EmptyTrace :: Trace '[]
-  (:>) :: TraceStep act -> Trace acts -> Trace (act : acts)
+data Audit acts where
+  EmptyAudit :: Audit '[]
+  (:>) :: AuditStep act -> Audit acts -> Audit (act : acts)
 
-data Owed act where
-  Owed :: Ur (TraceStep act) %1 -> Owed act
+data Evidence act where
+  Evidence :: Ur (AuditStep act) %1 -> Evidence act
 
-data OwedList acts where
-  PaidDebt :: OwedList '[]
-  (:~) :: Owed act %1 -> OwedList acts %1 -> OwedList (act : acts)
+data EvidenceList acts where
+  Evidenced :: EvidenceList '[]
+  (:~) :: Evidence act %1 -> EvidenceList acts %1 -> EvidenceList (act : acts)
 
 data TraceEvent (event :: [Type] -> Type) where
-  TraceEvent :: event acts -> Trace acts -> TraceEvent event
+  TraceEvent :: event acts -> Audit acts -> TraceEvent event
 
 data TraceGraph (event :: [Type] -> Type) =
   TraceGraph [NodeRecord] [TraceEvent event]
@@ -233,42 +233,42 @@ makeSnapshot ::
 makeSnapshot tagProxy ref payload =
   NodeSnapshot ref payload (payloadView tagProxy payload)
 
-makeStep1 ::
+makeAuditStep1 ::
      TracePayload tag
-  => (NodeSnapshot tag -> TraceStep act)
+  => (NodeSnapshot tag -> AuditStep act)
   -> Proxy tag
   -> NodeRef tag
   -> Payload tag
-  -> Owed act
-makeStep1 ctor tagProxy ref payload =
-  Owed (Ur (ctor (makeSnapshot tagProxy ref payload)))
+  -> Evidence act
+makeAuditStep1 ctor tagProxy ref payload =
+  Evidence (Ur (ctor (makeSnapshot tagProxy ref payload)))
 
-makeStep2 ::
+makeAuditStep2 ::
      TracePayload tag
-  => (NodeSnapshot tag -> NodeSnapshot tag -> TraceStep act)
+  => (NodeSnapshot tag -> NodeSnapshot tag -> AuditStep act)
   -> Proxy tag
   -> NodeRef tag
   -> Payload tag
   -> NodeRef tag
   -> Payload tag
-  -> Owed act
-makeStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
-  Owed
+  -> Evidence act
+makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
+  Evidence
     (Ur
        (ctor
           (makeSnapshot tagProxy ref1 payload1)
           (makeSnapshot tagProxy ref2 payload2)))
 
-owedToStep :: Owed act %1 -> Ur (TraceStep act)
-owedToStep (Owed step) = step
+evidenceToAuditStep :: Evidence act %1 -> Ur (AuditStep act)
+evidenceToAuditStep (Evidence step) = step
 
-owedListToTrace :: OwedList acts %1 -> Ur (Trace acts)
-owedListToTrace PaidDebt = Ur EmptyTrace
-owedListToTrace (owed :~ rest) =
-  case owedToStep owed of
+evidenceListToAudit :: EvidenceList acts %1 -> Ur (Audit acts)
+evidenceListToAudit Evidenced = Ur EmptyAudit
+evidenceListToAudit (evidence :~ rest) =
+  case evidenceToAuditStep evidence of
     Ur step ->
-      case owedListToTrace rest of
-        Ur trace -> Ur (step :> trace)
+      case evidenceListToAudit rest of
+        Ur audit -> Ur (step :> audit)
 
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
@@ -298,10 +298,10 @@ emitEvent event = do
   TraceBuilderState oldNext oldNodes (Ur oldEvents) <- get
   put (TraceBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
 
-explain :: event acts -> OwedList acts %1 -> TraceBuilder event ()
-explain event owedList =
-  case owedListToTrace owedList of
-    Ur trace -> emitEvent (TraceEvent event trace)
+explain :: event acts -> EvidenceList acts %1 -> TraceBuilder event ()
+explain event evidenceList =
+  case evidenceListToAudit evidenceList of
+    Ur audit -> emitEvent (TraceEvent event audit)
 
 create ::
      forall event tag. TracePayload tag
@@ -313,7 +313,7 @@ create payload0 = do
   return
     (Created
        (Node (Ur nodeId) (Ur payload))
-       (makeStep1 CreateStep (Proxy :: Proxy tag) ref' payload))
+       (makeAuditStep1 CreateStep (Proxy :: Proxy tag) ref' payload))
 
 observe ::
      forall event tag. TracePayload tag
@@ -324,7 +324,7 @@ observe (Node (Ur nodeId) (Ur payload)) = do
   return
     (Observed
        (Node (Ur nodeId) (Ur payload))
-       (makeStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
+       (makeAuditStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
 
 inspect ::
      forall event tag. TracePayload tag
@@ -336,7 +336,7 @@ inspect (Node (Ur nodeId) (Ur payload)) = do
     (Inspected
        (Node (Ur nodeId) (Ur payload))
        (OneUse payload)
-       (makeStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
+       (makeAuditStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
 
 use ::
      forall event tag. TracePayload tag
@@ -345,7 +345,9 @@ use ::
 use (Node (Ur nodeId) (Ur payload)) = do
   let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
   return
-    (Used (OneUse payload) (makeStep1 UseStep (Proxy :: Proxy tag) ref' payload))
+    (Used
+       (OneUse payload)
+       (makeAuditStep1 UseStep (Proxy :: Proxy tag) ref' payload))
 
 copy ::
      forall event tag. TracePayload tag
@@ -359,7 +361,7 @@ copy (Node (Ur originalId) (Ur payload)) = do
     (Copied
        (Node (Ur originalId) (Ur payload))
        (Node (Ur copyId) (Ur copiedPayload))
-       (makeStep2
+       (makeAuditStep2
           CopyStep
           (Proxy :: Proxy tag)
           originalRef
@@ -382,7 +384,7 @@ replace oldNode newNode =
           return
             (Replaced
                (Node (Ur newId) (Ur newPayload))
-               (makeStep2
+               (makeAuditStep2
                   ReplaceStep
                   (Proxy :: Proxy tag)
                   oldRef
@@ -400,7 +402,7 @@ compute (OneUse payload0) = do
   return
     (Computed
        (Node (Ur nodeId) (Ur payload))
-       (makeStep1 ComputeStep (Proxy :: Proxy tag) ref' payload))
+       (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
      forall event tag. TracePayload tag
@@ -408,7 +410,8 @@ destroy ::
      %1 -> TraceBuilder event (Destroyed tag)
 destroy (Node (Ur nodeId) (Ur payload)) = do
   let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
-  return (Destroyed (makeStep1 DestroyStep (Proxy :: Proxy tag) ref' payload))
+  return
+    (Destroyed (makeAuditStep1 DestroyStep (Proxy :: Proxy tag) ref' payload))
 
 buildGraph :: TraceBuilder event () -> TraceGraph event
 buildGraph builder =

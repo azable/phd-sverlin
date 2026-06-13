@@ -53,38 +53,40 @@ renderNode (NodeRecord snapshot) =
 
 renderEvents :: (PrintEvent event) => [TraceEvent event] -> P.String
 renderEvents events =
-  renderHeader "Events" P.++ P.concat (P.zipWith renderEvent [0 ..] events)
+  renderHeader "Events"
+    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) events)
 
 renderEvent :: (PrintEvent event) => P.Int -> TraceEvent event -> P.String
-renderEvent ix (TraceEvent event trace) =
+renderEvent ix (TraceEvent event audit) =
   padLeft 3 (P.show ix)
     P.++ " | "
     P.++ ansiBold
     P.++ printEvent event
     P.++ ansiReset
     P.++ "\n"
-    P.++ renderSteps trace
+    P.++ renderAudit audit
     P.++ "\n"
 
-renderSteps :: Trace acts -> P.String
-renderSteps EmptyTrace     = ""
-renderSteps (step :> rest) = renderStep step P.++ renderSteps rest
+renderAudit :: Audit acts -> P.String
+renderAudit EmptyAudit     = ""
+renderAudit (step :> rest) = renderAuditStep step P.++ renderAudit rest
 
-renderStep :: TraceStep act -> P.String
-renderStep (CreateStep snapshot) =
+renderAuditStep :: AuditStep act -> P.String
+renderAuditStep (CreateStep snapshot) =
   renderOneSnapshotStep "create" ansiGreen snapshot
-renderStep (ObserveStep snapshot) =
+renderAuditStep (ObserveStep snapshot) =
   renderOneSnapshotStep "observe" ansiCyan snapshot
-renderStep (InspectStep snapshot) =
+renderAuditStep (InspectStep snapshot) =
   renderOneSnapshotStep "inspect" ansiBrightCyan snapshot
-renderStep (UseStep snapshot) = renderOneSnapshotStep "use" ansiYellow snapshot
-renderStep (CopyStep original copy') =
+renderAuditStep (UseStep snapshot) =
+  renderOneSnapshotStep "use" ansiYellow snapshot
+renderAuditStep (CopyStep original copy') =
   renderTwoSnapshotStep "copy" ansiBlue original copy'
-renderStep (ReplaceStep old new) =
+renderAuditStep (ReplaceStep old new) =
   renderTwoSnapshotStep "replace" ansiMagenta old new
-renderStep (ComputeStep snapshot) =
+renderAuditStep (ComputeStep snapshot) =
   renderOneSnapshotStep "compute" ansiLime snapshot
-renderStep (DestroyStep snapshot) =
+renderAuditStep (DestroyStep snapshot) =
   renderOneSnapshotStep "destroy" ansiRed snapshot
 
 renderOneSnapshotStep :: P.String -> P.String -> NodeSnapshot tag -> P.String
