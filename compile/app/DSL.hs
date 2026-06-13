@@ -1,22 +1,30 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs             #-}
-{-# LANGUAGE LinearTypes       #-}
-{-# LANGUAGE RebindableSyntax  #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LinearTypes           #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RebindableSyntax      #-}
+{-# LANGUAGE TypeFamilies          #-}
 
 module DSL
   ( CType(..)
   , Value(..)
   , Op(..)
   , Var(..)
-  , Desc(..)
+  , -- * Replay / visualisation model
+    PayloadModel(..)
+  , ValueModel(..)
+  , OpModel(..)
+  , -- * DSL descriptions
+    Desc(..)
   , G
   , Node
   , VarNode
-  , run
+  , -- * Running
+    run
   , example
-  , declare
+  , -- * DSL operations
+    declare
   , readVar
   , writeVar
   , discardVar
@@ -28,7 +36,8 @@ module DSL
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
-import           LinearTrace
+import           LinearTrace            hiding (G, GBuilder)
+import qualified LinearTrace            as LT
 import qualified Prelude                as P
 import           Prelude.Linear
 
@@ -61,18 +70,40 @@ type instance Payload (KOp lhs rhs out) = Op lhs rhs out
 
 type instance Payload (KVar ty) = Var ty
 
-instance TracePayload (KValue ty) where
-  payloadView _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
-  payloadView _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
+data PayloadModel
+  = ModelValue ValueModel
+  | ModelOp OpModel
+  | ModelVar String
 
-instance TracePayload (KOp lhs rhs out) where
-  payloadView _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
-  payloadView _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
-  payloadView _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
-  payloadView _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
+data ValueModel
+  = ModelI32 Int
+  | ModelF64 Double
 
-instance TracePayload (KVar ty) where
-  payloadView _ (Var name) = PayloadView (padRightF "Var" P.++ name)
+data OpModel
+  = ModelAddI
+  | ModelMulI
+  | ModelAddD
+  | ModelMulD
+
+instance TracePayload PayloadModel (KValue ty) where
+  payloadView _ _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
+  payloadView _ _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
+  payloadModel _ _ (I32 i) = ModelValue (ModelI32 i)
+  payloadModel _ _ (F64 f) = ModelValue (ModelF64 f)
+
+instance TracePayload PayloadModel (KOp lhs rhs out) where
+  payloadView _ _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
+  payloadView _ _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
+  payloadView _ _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
+  payloadView _ _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
+  payloadModel _ _ AddI = ModelOp ModelAddI
+  payloadModel _ _ MulI = ModelOp ModelMulI
+  payloadModel _ _ AddD = ModelOp ModelAddD
+  payloadModel _ _ MulD = ModelOp ModelMulD
+
+instance TracePayload PayloadModel (KVar ty) where
+  payloadView _ _ (Var name) = PayloadView (padRightF "Var" P.++ name)
+  payloadModel _ _ (Var name) = ModelVar name
 
 data Desc acts where
   DLiteral :: Desc '[ Create (KValue ty)]
@@ -100,7 +131,9 @@ instance PrintDesc Desc where
   printDesc DDiscardVar   = "DiscardVar"
   printDesc DDiscardValue = "DiscardValue"
 
-type Builder ty = GBuilder Desc ty
+type Builder a = LT.GBuilder PayloadModel Desc a
+
+type G = LT.G PayloadModel Desc
 
 type Node tag = N tag
 
@@ -168,17 +201,17 @@ operator op = do
      Node (KValue 'CTInt)
      %1 -> Node (KValue 'CTInt)
      %1 -> Builder (Node (KValue 'CTInt))
-(.+.) a b = do
+(.+.) lhs rhs = do
   add <- operator AddI
-  e a add b
+  e lhs add rhs
 
 (.*.) ::
      Node (KValue 'CTInt)
      %1 -> Node (KValue 'CTInt)
      %1 -> Builder (Node (KValue 'CTInt))
-(.*.) a b = do
+(.*.) lhs rhs = do
   mul <- operator MulI
-  e a mul b
+  e lhs mul rhs
 
 data FibState where
   FibState :: VarNode 'CTInt %1 -> VarNode 'CTInt %1 -> FibState
@@ -210,7 +243,7 @@ example = do
       discardVar aN
       discardVar bN
 
-run :: Builder () -> G Desc
+run :: Builder () -> G
 run = buildGraph
 
 padRight :: Int -> String -> String
