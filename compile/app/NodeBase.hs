@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE EmptyDataDecls        #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE LinearTypes           #-}
@@ -13,10 +14,23 @@ module NodeBase
   , GBuilder
   , GBuilderState(..)
   , NRecord(..)
-  , TraceAction(..)
+  , -- Action vocabulary
+    ActionKind(..)
+  , Action
+  , type Create
+  , type Observe
+  , type Use
+  , type Copy
+  , type Replace
+  , type Compute
+  , type Destroy
+  , -- Trace operations
+    TraceAction(..)
   , TraceOp(..)
   , SomeTraceOp(..)
-  , Event(..)
+  , traceActionName
+  , -- Graph/event data
+    Event(..)
   , Some
   , SomeObservation
   , NId
@@ -27,14 +41,8 @@ module NodeBase
   , OneUse
   , (<$>)
   , (<*>)
-  , Create
-  , Observe
-  , Use
-  , Copy
-  , Replace
-  , Compute
-  , Destroy
-  , Owed
+  , -- Linear debts/results
+    Owed
   , OwedList(..)
   , Created(..)
   , Observed(..)
@@ -43,8 +51,8 @@ module NodeBase
   , Replaced(..)
   , Computed(..)
   , Destroyed(..)
-  , ShowDesc(..)
-  , traceActionName
+  , -- Primitive operations
+    ShowDesc(..)
   , create
   , observe
   , use
@@ -118,19 +126,30 @@ data SomeObservation where
 instance P.Show SomeObservation where
   show (SomeObservation obs) = P.show obs
 
-data Create tag
+data ActionKind
+  = ActionCreate
+  | ActionObserve
+  | ActionUse
+  | ActionCopy
+  | ActionReplace
+  | ActionCompute
+  | ActionDestroy
 
-data Observe tag
+data Action (kind :: ActionKind) tag
 
-data Use tag
+type Create tag = Action 'ActionCreate tag
 
-data Copy tag
+type Observe tag = Action 'ActionObserve tag
 
-data Replace tag
+type Use tag = Action 'ActionUse tag
 
-data Compute tag
+type Copy tag = Action 'ActionCopy tag
 
-data Destroy tag
+type Replace tag = Action 'ActionReplace tag
+
+type Compute tag = Action 'ActionCompute tag
+
+type Destroy tag = Action 'ActionDestroy tag
 
 data TraceAction act where
   TraceCreate :: TraceAction (Create tag)
@@ -256,32 +275,29 @@ makeObservation _ r payload = SomeObservation (Observation r payload)
 
 makeOp1 ::
      (P.Show (Payload tag))
-  => TraceAction act
+  => TraceAction (Action kind tag)
   -> Proxy tag
   -> NRef tag
   -> Payload tag
-  -> Owed act
+  -> Owed (Action kind tag)
 makeOp1 action proxy r payload =
   Owed (Ur (TraceOp action [makeObservation proxy r payload]))
 
 makeOp2 ::
-     (P.Show (Payload tag1), P.Show (Payload tag2))
-  => TraceAction act
-  -> Proxy tag1
-  -> NRef tag1
-  -> Payload tag1
-  -> Proxy tag2
-  -> NRef tag2
-  -> Payload tag2
-  -> Owed act
-makeOp2 action proxy1 r1 payload1 proxy2 r2 payload2 =
+     (P.Show (Payload tag))
+  => TraceAction (Action kind tag)
+  -> Proxy tag
+  -> NRef tag
+  -> Payload tag
+  -> NRef tag
+  -> Payload tag
+  -> Owed (Action kind tag)
+makeOp2 action proxy r1 payload1 r2 payload2 =
   Owed
     (Ur
        (TraceOp
           action
-          [ makeObservation proxy1 r1 payload1
-          , makeObservation proxy2 r2 payload2
-          ]))
+          [makeObservation proxy r1 payload1, makeObservation proxy r2 payload2]))
 
 descToTraceOp :: Owed act %1 -> Ur SomeTraceOp
 descToTraceOp (Owed op) =
@@ -374,7 +390,6 @@ copy (N (Ur originalId) (Ur payload)) = do
           (Proxy :: Proxy tag)
           originalRef
           payload
-          (Proxy :: Proxy tag)
           copyRef
           copiedPayload))
 
@@ -396,7 +411,6 @@ replace oldNode newNode =
                   (Proxy :: Proxy tag)
                   (NRef oldId)
                   oldPayload
-                  (Proxy :: Proxy tag)
                   (NRef newId)
                   newPayload))
 
