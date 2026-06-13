@@ -57,46 +57,47 @@ renderEvents events =
     P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) events)
 
 renderEvent :: (PrintDesc desc) => P.Int -> Event desc -> P.String
-renderEvent ix (Event desc actions) =
+renderEvent ix (Event desc trace) =
   padLeft 3 (P.show ix)
     P.++ " | "
     P.++ ansiBold
     P.++ printDesc desc
     P.++ ansiReset
     P.++ "\n"
-    P.++ renderActionTrace actions
+    P.++ renderSteps trace
     P.++ "\n"
 
-renderActionTrace :: ActionTrace acts -> P.String
-renderActionTrace TraceNil = ""
-renderActionTrace (action :> rest) =
-  renderTraceAction action P.++ renderActionTrace rest
+renderSteps :: Trace acts -> P.String
+renderSteps EmptyTrace     = ""
+renderSteps (step :> rest) = renderStep step P.++ renderSteps rest
 
-renderTraceAction :: TraceAction act -> P.String
-renderTraceAction action =
-  case action of
-    TraceCreate snapshot -> renderOneSnapshotAction "create" ansiGreen snapshot
-    TraceObserve snapshot -> renderOneSnapshotAction "observe" ansiCyan snapshot
-    TraceUse snapshot -> renderOneSnapshotAction "use" ansiYellow snapshot
-    TraceCopy original copy' ->
-      renderTwoSnapshotAction "copy" ansiBlue original copy'
-    TraceReplace old new ->
-      renderTwoSnapshotAction "replace" ansiMagenta old new
-    TraceCompute snapshot -> renderOneSnapshotAction "compute" ansiLime snapshot
-    TraceDestroy snapshot -> renderOneSnapshotAction "destroy" ansiRed snapshot
+renderStep :: TraceStep act -> P.String
+renderStep (CreateStep snapshot) =
+  renderOneSnapshotStep "create" ansiGreen snapshot
+renderStep (ObserveStep snapshot) =
+  renderOneSnapshotStep "observe" ansiCyan snapshot
+renderStep (UseStep snapshot) = renderOneSnapshotStep "use" ansiYellow snapshot
+renderStep (CopyStep original copy') =
+  renderTwoSnapshotStep "copy" ansiBlue original copy'
+renderStep (ReplaceStep old new) =
+  renderTwoSnapshotStep "replace" ansiMagenta old new
+renderStep (ComputeStep snapshot) =
+  renderOneSnapshotStep "compute" ansiLime snapshot
+renderStep (DestroyStep snapshot) =
+  renderOneSnapshotStep "destroy" ansiRed snapshot
 
-renderOneSnapshotAction :: P.String -> P.String -> NodeSnapshot tag -> P.String
-renderOneSnapshotAction name colour snapshot =
-  renderActionName name colour P.++ " " P.++ renderSnapshot snapshot P.++ "\n"
+renderOneSnapshotStep :: P.String -> P.String -> NodeSnapshot tag -> P.String
+renderOneSnapshotStep name colour snapshot =
+  renderStepName name colour P.++ " " P.++ renderSnapshot snapshot P.++ "\n"
 
-renderTwoSnapshotAction ::
+renderTwoSnapshotStep ::
      P.String -> P.String -> NodeSnapshot tag -> NodeSnapshot tag -> P.String
-renderTwoSnapshotAction name colour first second =
-  renderActionName name colour
+renderTwoSnapshotStep name colour first second =
+  renderStepName name colour
     P.++ " "
     P.++ renderSnapshot first
     P.++ "\n"
-    P.++ renderEmptyActionName
+    P.++ renderEmptyStepName
     P.++ " "
     P.++ renderSnapshot second
     P.++ "\n"
@@ -122,11 +123,11 @@ renderNodeRefPlain (NodeRef nodeId) = "N" P.++ P.show nodeId
 renderPayloadView :: PayloadView -> P.String
 renderPayloadView (PayloadView text) = text
 
-renderActionName :: P.String -> P.String -> P.String
-renderActionName name colour = "    " P.++ colourText colour (padLeft 16 name)
+renderStepName :: P.String -> P.String -> P.String
+renderStepName name colour = "    " P.++ colourText colour (padLeft 16 name)
 
-renderEmptyActionName :: P.String
-renderEmptyActionName = "    " P.++ padLeft 16 ""
+renderEmptyStepName :: P.String
+renderEmptyStepName = "    " P.++ padLeft 16 ""
 
 renderHeader :: P.String -> P.String
 renderHeader title =
