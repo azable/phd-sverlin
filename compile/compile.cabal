@@ -66,7 +66,6 @@ executable compile-app
         LinearTrace.Core
         LinearTrace.Print
         DSL
-        Program
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

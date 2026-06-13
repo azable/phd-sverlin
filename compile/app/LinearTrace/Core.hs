@@ -90,7 +90,7 @@ type NId = Int
 
 type family Payload tag :: Type
 
-data PayloadView =
+newtype PayloadView =
   PayloadView P.String
 
 class TracePayload tag where

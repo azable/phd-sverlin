@@ -1,8 +1,10 @@
+{-# LANGUAGE DerivingStrategies #-}
+
 module Main where
 
+import qualified DSL
 import qualified LinearTrace
-import qualified Program
 
 main :: IO ()
 main = do
-  LinearTrace.printTrace Program.runProgram
+  LinearTrace.printTrace (DSL.run DSL.example)
