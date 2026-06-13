@@ -5,6 +5,11 @@ module LinearTrace
   , TraceBuilder
   , Node
   , Payload
+  , -- * Trusted linear payloads
+    LUnit(..)
+  , LInt(..)
+  , LDouble(..)
+  , LString(..)
   , -- * Action vocabulary
     Action
   , type Create

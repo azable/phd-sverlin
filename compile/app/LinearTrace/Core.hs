@@ -1,20 +1,28 @@
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LinearTypes         #-}
-{-# LANGUAGE RebindableSyntax    #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE ConstraintKinds         #-}
+{-# LANGUAGE DataKinds               #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE GADTs                   #-}
+{-# LANGUAGE LinearTypes             #-}
+{-# LANGUAGE RebindableSyntax        #-}
+{-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE TypeFamilyDependencies  #-}
+{-# LANGUAGE TypeOperators           #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module LinearTrace.Core
   ( -- * Core public API data
     TraceGraph(..)
   , TraceBuilder
-  , Node(..)
+  , Node
   , Payload
   , PayloadView(..)
   , TracePayload(..)
+  , -- * Trusted linear payloads
+    LUnit(..)
+  , LInt(..)
+  , LDouble(..)
+  , LString(..)
   , -- * Action vocabulary
     ActionKind(..)
   , Action
@@ -50,27 +58,17 @@ module LinearTrace.Core
   , explain
   , (<$>)
   , (<*>)
-  , -- * Internal graph/event data
+  , -- * Public graph/event data
     NodeId
   , NodeRef(..)
   , NodeSnapshot(..)
   , NodeRecord(..)
   , TraceEvent(..)
-  , -- * Internal audit data
+  , -- * Public audit data
     AuditStep(..)
   , Audit(..)
-  , -- * Internal builder state
-    TraceBuilderState(..)
-  , buildGraph
-  , makeNodeRef
-  , makeSnapshot
-  , makeAuditStep1
-  , makeAuditStep2
-  , evidenceToAuditStep
-  , evidenceListToAudit
-  , unsafeUr
-  , allocateNode
-  , emitEvent
+  , -- * Runner
+    buildGraph
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
@@ -86,12 +84,40 @@ infixr 5 :~
 infixr 5 :>
 type NodeId = Int
 
-type family Payload tag :: Type
+type family Payload tag = payload | payload -> tag
 
 newtype PayloadView =
   PayloadView P.String
 
-class TracePayload tag where
+-- Deliberately not exported.
+--
+-- Downstream DSLs can use LinearTrace-approved payload wrappers, but cannot
+-- define new approved payload classes of their own.
+class LinearPayload payload
+
+data LUnit tag =
+  LUnit
+
+newtype LInt tag =
+  LInt Int
+
+newtype LDouble tag =
+  LDouble Double
+
+newtype LString tag =
+  LString P.String
+
+instance LinearPayload (LUnit tag)
+
+instance LinearPayload (LInt tag)
+
+instance LinearPayload (LDouble tag)
+
+instance LinearPayload (LString tag)
+
+class LinearPayload (Payload tag) =>
+      TracePayload tag
+  where
   payloadView :: Proxy tag -> Payload tag -> PayloadView
 
 data OneUse a where
