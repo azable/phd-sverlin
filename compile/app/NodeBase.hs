@@ -10,13 +10,11 @@
 {-# LANGUAGE TypeOperators         #-}
 
 module NodeBase
-  ( G(..)
+  ( G
   , GBuilder
-  , GBuilderState(..)
-  , NRecord(..)
+  , Payload
   , -- Action vocabulary
-    ActionKind(..)
-  , Action
+    Action
   , type Create
   , type Observe
   , type Use
@@ -24,35 +22,6 @@ module NodeBase
   , type Replace
   , type Compute
   , type Destroy
-  , -- Trace operations
-    TraceAction(..)
-  , TraceOp(..)
-  , SomeTraceOp(..)
-  , traceActionName
-  , -- Graph/event data
-    Event(..)
-  , Some
-  , SomeObservation
-  , NId
-  , N
-  , NRef
-  , Observation
-  , Payload
-  , OneUse
-  , (<$>)
-  , (<*>)
-  , -- Linear debts/results
-    Owed
-  , OwedList(..)
-  , Created(..)
-  , Observed(..)
-  , Used(..)
-  , Copied(..)
-  , Replaced(..)
-  , Computed(..)
-  , Destroyed(..)
-  , -- Primitive operations
-    ShowDesc(..)
   , create
   , observe
   , use
@@ -60,9 +29,36 @@ module NodeBase
   , replace
   , compute
   , destroy
+  , -- Auditing operations
+    OneUse
+  , Owed
+  , OwedList(PaidDebt, (:~))
+  , Created(..)
+  , Observed(..)
+  , Used(..)
+  , Copied(..)
+  , Replaced(..)
+  , Computed(..)
+  , Destroyed(..)
   , explain
+  , -- Trace operations
+    TraceAction
+  , TraceOp
+  , SomeTraceOp
+  , traceActionName
+  , -- Graph/event data
+    NId
+  , N
+  , NRef
+  , Event
+  , Observation
+  , Some
+  , SomeObservation
+  , (<$>)
+  , (<*>)
   , -- Graph building and rendering
-    buildGraph
+    ShowDesc(..)
+  , buildGraph
   , renderGraph
   , printGraph
   , printTrace
@@ -102,10 +98,8 @@ data Some where
 instance P.Show Some where
   show (Some _ payload) = P.show payload
 
-data NRecord = NRecord
-  { nodeId      :: NId
-  , nodePayload :: Some
-  }
+data NRecord =
+  NRecord NId Some
 
 instance P.Show NRecord where
   show (NRecord nid payload) =
@@ -171,10 +165,8 @@ traceActionName TraceReplace = "replace"
 traceActionName TraceCompute = "compute"
 traceActionName TraceDestroy = "destroy"
 
-data TraceOp act = TraceOp
-  { traceOpAction       :: TraceAction act
-  , traceOpObservations :: [SomeObservation]
-  }
+data TraceOp act where
+  TraceOp :: TraceAction act -> [SomeObservation] -> TraceOp act
 
 instance P.Show (TraceOp act) where
   show (TraceOp action observations) =
@@ -220,10 +212,8 @@ data Destroyed tag where
 data Event (desc :: [Type] -> Type) where
   Event :: desc acts -> [SomeTraceOp] -> Event desc
 
-data G (desc :: [Type] -> Type) = G
-  { graphNodes  :: [NRecord]
-  , graphEvents :: [Event desc]
-  }
+data G (desc :: [Type] -> Type) =
+  G [NRecord] [Event desc]
 
 class ShowDesc desc where
   showDesc :: desc acts -> String
@@ -243,9 +233,9 @@ instance (ShowDesc desc) => P.Show (G desc) where
       showEvent e = "  " P.++ P.show e P.++ "\n"
 
 data GBuilderState (desc :: [Type] -> Type) = GBuilderState
-  { nextId :: Ur NId
-  , nodes  :: Ur [NRecord]
-  , events :: Ur [Event desc]
+  { _nextId :: Ur NId
+  , _nodes  :: Ur [NRecord]
+  , _events :: Ur [Event desc]
   }
 
 instance Consumable (GBuilderState desc) where
