@@ -485,21 +485,25 @@ renderEvent ix (Event desc ops) =
 renderTraceOp :: SomeTraceOp -> String
 renderTraceOp (SomeTraceOp (TraceOp action observations)) =
   case observations of
-    [] -> renderTraceOpName (traceActionName action) P.++ "\n"
+    [] -> renderTraceActionName action P.++ "\n"
     first:rest ->
-      renderTaggedObservation (traceActionName action) first
+      renderTaggedObservation action first
         P.++ P.concatMap renderUntaggedObservation rest
 
-renderTaggedObservation :: String -> SomeObservation -> String
-renderTaggedObservation name observation =
-  renderTraceOpName name P.++ "  " P.++ P.show observation P.++ "\n"
+renderTaggedObservation :: TraceAction act -> SomeObservation -> String
+renderTaggedObservation action observation =
+  renderTraceActionName action P.++ "  " P.++ P.show observation P.++ "\n"
 
 renderUntaggedObservation :: SomeObservation -> String
 renderUntaggedObservation observation =
-  renderTraceOpName "" P.++ "  " P.++ P.show observation P.++ "\n"
+  renderEmptyTraceActionName P.++ "  " P.++ P.show observation P.++ "\n"
 
-renderTraceOpName :: String -> String
-renderTraceOpName name = "    " P.++ padLeft 11 name
+renderTraceActionName :: TraceAction act -> String
+renderTraceActionName action =
+  "    " P.++ colourTraceAction action (padLeft 11 (traceActionName action))
+
+renderEmptyTraceActionName :: String
+renderEmptyTraceActionName = "    " P.++ padLeft 11 ""
 
 renderHeader :: String -> String
 renderHeader title =
@@ -515,3 +519,39 @@ joinWith :: String -> [String] -> String
 joinWith _ []       = ""
 joinWith _ [x]      = x
 joinWith sep (x:xs) = x P.++ sep P.++ joinWith sep xs
+
+colourTraceAction :: TraceAction act -> String -> String
+colourTraceAction action text = traceActionAnsi action P.++ text P.++ ansiReset
+
+traceActionAnsi :: TraceAction act -> String
+traceActionAnsi TraceCreate  = ansiGreen
+traceActionAnsi TraceObserve = ansiCyan
+traceActionAnsi TraceUse     = ansiYellow
+traceActionAnsi TraceCopy    = ansiBlue
+traceActionAnsi TraceReplace = ansiMagenta
+traceActionAnsi TraceCompute = ansiLime
+traceActionAnsi TraceDestroy = ansiRed
+
+ansiReset :: String
+ansiReset = "\ESC[0m"
+
+ansiGreen :: String
+ansiGreen = "\ESC[32m"
+
+ansiCyan :: String
+ansiCyan = "\ESC[36m"
+
+ansiYellow :: String
+ansiYellow = "\ESC[33m"
+
+ansiBlue :: String
+ansiBlue = "\ESC[34m"
+
+ansiMagenta :: String
+ansiMagenta = "\ESC[35m"
+
+ansiLime :: String
+ansiLime = "\ESC[92m"
+
+ansiRed :: String
+ansiRed = "\ESC[31m"
