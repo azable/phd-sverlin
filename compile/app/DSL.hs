@@ -158,15 +158,39 @@ operator op = do
 
 example :: Builder ()
 example = do
-  x0 <- declare "x" (I32 10)
-  (x1, a) <- readVar x0
-  b <- literal (I32 20)
-  c <- a .+. b
-  x2 <- writeVar x1 c
-  (x3, n5) <- readVar x2
-  discardVar x3
-  Destroyed n5O <- destroy n5
-  explain DDiscardValue (n5O :~ PaidDebt)
+  a0 <- declare "a" (I32 0)
+  b0 <- declare "b" (I32 1)
+  -- Initial state:
+  --   a = 0
+  --   b = 1
+  --
+  -- Each step computes:
+  --   next = a + b
+  --   a    = b
+  --   b    = next
+  --
+  -- This constructs:
+  --   0, 1, 1, 2, 3, 5, 8
+  (a1, b1) <- fibStep a0 b0
+  (a2, b2) <- fibStep a1 b1
+  (a3, b3) <- fibStep a2 b2
+  (a4, b4) <- fibStep a3 b3
+  (a5, b5) <- fibStep a4 b4
+  discardVar a5
+  discardVar b5
+
+fibStep ::
+     VarNode 'CTInt
+     %1 -> VarNode 'CTInt
+     %1 -> Builder (VarNode 'CTInt, VarNode 'CTInt)
+fibStep a0 b0 = do
+  (a1, aValue) <- readVar a0
+  (b1, bForA) <- readVar b0
+  (b2, bForSum) <- readVar b1
+  next <- aValue .+. bForSum
+  a2 <- writeVar a1 bForA
+  b3 <- writeVar b2 next
+  return (a2, b3)
 
 run :: Builder () -> G Desc
 run = buildGraph

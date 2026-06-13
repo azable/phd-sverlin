@@ -119,7 +119,8 @@ data Observation tag where
     :: (P.Show (Payload tag)) => NRef tag -> Payload tag -> Observation tag
 
 instance P.Show (Observation tag) where
-  show (Observation r payload) = P.show r P.++ " " P.++ P.show payload
+  show (Observation r payload) =
+    padRight 6 (P.show r) P.++ " " P.++ P.show payload
 
 data SomeObservation where
   SomeObservation :: Observation tag -> SomeObservation
@@ -496,11 +497,11 @@ renderTraceOp (SomeTraceOp (TraceOp action observations)) =
 
 renderTaggedObservation :: TraceAction act -> SomeObservation -> String
 renderTaggedObservation action observation =
-  renderTraceActionName action P.++ "  " P.++ P.show observation P.++ "\n"
+  renderTraceActionName action P.++ " " P.++ P.show observation P.++ "\n"
 
 renderUntaggedObservation :: SomeObservation -> String
 renderUntaggedObservation observation =
-  renderEmptyTraceActionName P.++ "  " P.++ P.show observation P.++ "\n"
+  renderEmptyTraceActionName P.++ " " P.++ P.show observation P.++ "\n"
 
 renderTraceActionName :: TraceAction act -> String
 renderTraceActionName action =
