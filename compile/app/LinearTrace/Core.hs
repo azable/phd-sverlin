@@ -1,12 +1,11 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE LinearTypes           #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RebindableSyntax      #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LinearTypes         #-}
+{-# LANGUAGE RebindableSyntax    #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module LinearTrace.Core
   ( -- * Core public API data
@@ -56,17 +55,17 @@ module LinearTrace.Core
   , NRecord(..)
   , Event(..)
   , -- * Internal trace data
-    TraceOp(..)
-  , TraceOps(..)
+    TraceAction(..)
+  , TraceActions(..)
   , -- * Internal builder state
     GBuilderState(..)
   , buildGraph
-  , mkNRef
-  , mkSnapshot
-  , makeOp1
-  , makeOp2
-  , descToTraceOp
-  , descListToTraceOps
+  , makeNRef
+  , makeSnapshot
+  , makeTraceAction1
+  , makeTraceAction2
+  , owedToTraceAction
+  , owedListToTraceActions
   , unsafeUr
   , storeNRecord
   , emitEvent
@@ -90,9 +89,8 @@ type family Payload tag :: Type
 newtype PayloadView =
   PayloadView P.String
 
-class TracePayload model tag where
-  payloadView :: Proxy model -> Proxy tag -> Payload tag -> PayloadView
-  payloadModel :: Proxy model -> Proxy tag -> Payload tag -> model
+class TracePayload tag where
+  payloadView :: Proxy tag -> Payload tag -> PayloadView
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
@@ -109,14 +107,14 @@ data NRef tag where
 data N tag where
   N :: Ur NId %1 -> Ur (Payload tag) %1 -> N tag
 
-data NodeSnapshot model tag where
-  NodeSnapshot :: NRef tag -> PayloadView -> model -> NodeSnapshot model tag
+data NodeSnapshot tag where
+  NodeSnapshot :: NRef tag -> Payload tag -> PayloadView -> NodeSnapshot tag
 
-data SomeNodeSnapshot model where
-  SomeNodeSnapshot :: NodeSnapshot model tag -> SomeNodeSnapshot model
+data SomeNodeSnapshot where
+  SomeNodeSnapshot :: NodeSnapshot tag -> SomeNodeSnapshot
 
-data NRecord model =
-  NRecord NId (SomeNodeSnapshot model)
+data NRecord =
+  NRecord NId SomeNodeSnapshot
 
 data ActionKind
   = ActionCreate
@@ -143,74 +141,65 @@ type Compute tag = Action 'ActionCompute tag
 
 type Destroy tag = Action 'ActionDestroy tag
 
-data Created model tag where
-  Created :: N tag %1 -> Owed model (Create tag) %1 -> Created model tag
+data Created tag where
+  Created :: N tag %1 -> Owed (Create tag) %1 -> Created tag
 
-data Observed model tag where
-  Observed :: N tag %1 -> Owed model (Observe tag) %1 -> Observed model tag
+data Observed tag where
+  Observed :: N tag %1 -> Owed (Observe tag) %1 -> Observed tag
 
-data Used model tag where
-  Used :: OneUse (Payload tag) %1 -> Owed model (Use tag) %1 -> Used model tag
+data Used tag where
+  Used :: OneUse (Payload tag) %1 -> Owed (Use tag) %1 -> Used tag
 
-data Copied model tag where
-  Copied :: N tag %1 -> N tag %1 -> Owed model (Copy tag) %1 -> Copied model tag
+data Copied tag where
+  Copied :: N tag %1 -> N tag %1 -> Owed (Copy tag) %1 -> Copied tag
 
-data Replaced model tag where
-  Replaced :: N tag %1 -> Owed model (Replace tag) %1 -> Replaced model tag
+data Replaced tag where
+  Replaced :: N tag %1 -> Owed (Replace tag) %1 -> Replaced tag
 
-data Computed model tag where
-  Computed :: N tag %1 -> Owed model (Compute tag) %1 -> Computed model tag
+data Computed tag where
+  Computed :: N tag %1 -> Owed (Compute tag) %1 -> Computed tag
 
-data Destroyed model tag where
-  Destroyed :: Owed model (Destroy tag) %1 -> Destroyed model tag
+data Destroyed tag where
+  Destroyed :: Owed (Destroy tag) %1 -> Destroyed tag
 
-data TraceOp model act where
-  TraceCreate :: NodeSnapshot model tag -> TraceOp model (Create tag)
-  TraceObserve :: NodeSnapshot model tag -> TraceOp model (Observe tag)
-  TraceUse :: NodeSnapshot model tag -> TraceOp model (Use tag)
-  TraceCopy
-    :: NodeSnapshot model tag
-    -> NodeSnapshot model tag
-    -> TraceOp model (Copy tag)
+data TraceAction act where
+  TraceCreate :: NodeSnapshot tag -> TraceAction (Create tag)
+  TraceObserve :: NodeSnapshot tag -> TraceAction (Observe tag)
+  TraceUse :: NodeSnapshot tag -> TraceAction (Use tag)
+  TraceCopy :: NodeSnapshot tag -> NodeSnapshot tag -> TraceAction (Copy tag)
   TraceReplace
-    :: NodeSnapshot model tag
-    -> NodeSnapshot model tag
-    -> TraceOp model (Replace tag)
-  TraceCompute :: NodeSnapshot model tag -> TraceOp model (Compute tag)
-  TraceDestroy :: NodeSnapshot model tag -> TraceOp model (Destroy tag)
+    :: NodeSnapshot tag -> NodeSnapshot tag -> TraceAction (Replace tag)
+  TraceCompute :: NodeSnapshot tag -> TraceAction (Compute tag)
+  TraceDestroy :: NodeSnapshot tag -> TraceAction (Destroy tag)
 
-data TraceOps model acts where
-  TraceNil :: TraceOps model '[]
-  (:>)
-    :: TraceOp model act -> TraceOps model acts -> TraceOps model (act : acts)
+data TraceActions acts where
+  TraceNil :: TraceActions '[]
+  (:>) :: TraceAction act -> TraceActions acts -> TraceActions (act : acts)
 
-data Owed model act where
-  Owed :: Ur (TraceOp model act) %1 -> Owed model act
+data Owed act where
+  Owed :: Ur (TraceAction act) %1 -> Owed act
 
-data OwedList model acts where
-  PaidDebt :: OwedList model '[]
-  (:~)
-    :: Owed model act
-       %1 -> OwedList model acts
-       %1 -> OwedList model (act : acts)
+data OwedList acts where
+  PaidDebt :: OwedList '[]
+  (:~) :: Owed act %1 -> OwedList acts %1 -> OwedList (act : acts)
 
-data Event model (desc :: [Type] -> Type) where
-  Event :: desc acts -> TraceOps model acts -> Event model desc
+data Event (desc :: [Type] -> Type) where
+  Event :: desc acts -> TraceActions acts -> Event desc
 
-data G model (desc :: [Type] -> Type) =
-  G [NRecord model] [Event model desc]
+data G (desc :: [Type] -> Type) =
+  G [NRecord] [Event desc]
 
-data GBuilderState model (desc :: [Type] -> Type) = GBuilderState
+data GBuilderState (desc :: [Type] -> Type) = GBuilderState
   { _nextId :: Ur NId
-  , _nodes  :: Ur [NRecord model]
-  , _events :: Ur [Event model desc]
+  , _nodes  :: Ur [NRecord]
+  , _events :: Ur [Event desc]
   }
 
-instance Consumable (GBuilderState model desc) where
+instance Consumable (GBuilderState desc) where
   consume (GBuilderState next ns es) =
     consume next `lseq` consume ns `lseq` consume es
 
-instance Dupable (GBuilderState model desc) where
+instance Dupable (GBuilderState desc) where
   dup2 (GBuilderState next ns es) =
     case dup2 next of
       (next1, next2) ->
@@ -220,160 +209,135 @@ instance Dupable (GBuilderState model desc) where
               (es1, es2) ->
                 (GBuilderState next1 ns1 es1, GBuilderState next2 ns2 es2)
 
-type GBuilder model desc a = State (GBuilderState model desc) a
+type GBuilder desc a = State (GBuilderState desc) a
 
-mkNRef :: Proxy tag -> NId -> NRef tag
-mkNRef _ = NRef
+makeNRef :: Proxy tag -> NId -> NRef tag
+makeNRef _ = NRef
 
-mkSnapshot ::
-     forall model tag. TracePayload model tag
-  => Proxy model
+makeSnapshot ::
+     forall tag. TracePayload tag
+  => Proxy tag
+  -> NRef tag
+  -> Payload tag
+  -> NodeSnapshot tag
+makeSnapshot tagProxy ref payload =
+  NodeSnapshot ref payload (payloadView tagProxy payload)
+
+makeTraceAction1 ::
+     TracePayload tag
+  => (NodeSnapshot tag -> TraceAction act)
   -> Proxy tag
   -> NRef tag
   -> Payload tag
-  -> NodeSnapshot model tag
-mkSnapshot modelProxy tagProxy ref payload =
-  NodeSnapshot
-    ref
-    (payloadView modelProxy tagProxy payload)
-    (payloadModel modelProxy tagProxy payload)
+  -> Owed act
+makeTraceAction1 ctor tagProxy ref payload =
+  Owed (Ur (ctor (makeSnapshot tagProxy ref payload)))
 
-makeOp1 ::
-     TracePayload model tag
-  => (NodeSnapshot model tag -> TraceOp model act)
-  -> Proxy model
-  -> Proxy tag
-  -> NRef tag
-  -> Payload tag
-  -> Owed model act
-makeOp1 ctor modelProxy tagProxy ref payload =
-  Owed (Ur (ctor (mkSnapshot modelProxy tagProxy ref payload)))
-
-makeOp2 ::
-     TracePayload model tag
-  => (NodeSnapshot model tag -> NodeSnapshot model tag -> TraceOp model act)
-  -> Proxy model
+makeTraceAction2 ::
+     TracePayload tag
+  => (NodeSnapshot tag -> NodeSnapshot tag -> TraceAction act)
   -> Proxy tag
   -> NRef tag
   -> Payload tag
   -> NRef tag
   -> Payload tag
-  -> Owed model act
-makeOp2 ctor modelProxy tagProxy ref1 payload1 ref2 payload2 =
+  -> Owed act
+makeTraceAction2 ctor tagProxy ref1 payload1 ref2 payload2 =
   Owed
     (Ur
        (ctor
-          (mkSnapshot modelProxy tagProxy ref1 payload1)
-          (mkSnapshot modelProxy tagProxy ref2 payload2)))
+          (makeSnapshot tagProxy ref1 payload1)
+          (makeSnapshot tagProxy ref2 payload2)))
 
-descToTraceOp :: Owed model act %1 -> Ur (TraceOp model act)
-descToTraceOp (Owed op) = op
+owedToTraceAction :: Owed act %1 -> Ur (TraceAction act)
+owedToTraceAction (Owed action) = action
 
-descListToTraceOps :: OwedList model acts %1 -> Ur (TraceOps model acts)
-descListToTraceOps PaidDebt = Ur TraceNil
-descListToTraceOps (owed :~ rest) =
-  case descToTraceOp owed of
-    Ur op ->
-      case descListToTraceOps rest of
-        Ur restOps -> Ur (op :> restOps)
+owedListToTraceActions :: OwedList acts %1 -> Ur (TraceActions acts)
+owedListToTraceActions PaidDebt = Ur TraceNil
+owedListToTraceActions (owed :~ rest) =
+  case owedToTraceAction owed of
+    Ur action ->
+      case owedListToTraceActions rest of
+        Ur restActions -> Ur (action :> restActions)
 
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
 storeNRecord ::
-     forall model desc tag. TracePayload model tag
-  => Proxy model
-  -> Proxy tag
+     forall desc tag. TracePayload tag
+  => Proxy tag
   -> Payload tag
-     %1 -> GBuilder model desc (Ur NId, Ur (Payload tag))
-storeNRecord modelProxy tagProxy payload0 =
+     %1 -> GBuilder desc (Ur NId, Ur (Payload tag))
+storeNRecord tagProxy payload0 =
   case unsafeUr payload0 of
     Ur payload -> do
       GBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
       let newId = oldNextId
-      let ref' = mkNRef tagProxy newId
-      let snapshot = mkSnapshot modelProxy tagProxy ref' payload
+      let ref' = makeNRef tagProxy newId
+      let snapshot = makeSnapshot tagProxy ref' payload
       let newNode = NRecord newId (SomeNodeSnapshot snapshot)
       put
         (GBuilderState (Ur (newId + 1)) (Ur (oldNodes P.++ [newNode])) oldEvents)
       return (Ur newId, Ur payload)
 
-emitEvent :: Event model desc -> GBuilder model desc ()
+emitEvent :: Event desc -> GBuilder desc ()
 emitEvent event = do
   GBuilderState oldNext oldNodes (Ur oldEvents) <- get
   put (GBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
 
-explain :: desc acts -> OwedList model acts %1 -> GBuilder model desc ()
+explain :: desc acts -> OwedList acts %1 -> GBuilder desc ()
 explain desc owedList =
-  case descListToTraceOps owedList of
-    Ur ops -> emitEvent (Event desc ops)
+  case owedListToTraceActions owedList of
+    Ur actions -> emitEvent (Event desc actions)
 
 create ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => Payload tag
-     %1 -> GBuilder model desc (Created model tag)
+     %1 -> GBuilder desc (Created tag)
 create payload0 = do
-  (Ur nid, Ur payload) <-
-    storeNRecord (Proxy :: Proxy model) (Proxy :: Proxy tag) payload0
-  let ref' = mkNRef (Proxy :: Proxy tag) nid
+  (Ur nid, Ur payload) <- storeNRecord (Proxy :: Proxy tag) payload0
+  let ref' = makeNRef (Proxy :: Proxy tag) nid
   return
     (Created
        (N (Ur nid) (Ur payload))
-       (makeOp1
-          TraceCreate
-          (Proxy :: Proxy model)
-          (Proxy :: Proxy tag)
-          ref'
-          payload))
+       (makeTraceAction1 TraceCreate (Proxy :: Proxy tag) ref' payload))
 
 observe ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => N tag
-     %1 -> GBuilder model desc (Observed model tag)
+     %1 -> GBuilder desc (Observed tag)
 observe (N (Ur nid) (Ur payload)) = do
-  let ref' = mkNRef (Proxy :: Proxy tag) nid
+  let ref' = makeNRef (Proxy :: Proxy tag) nid
   return
     (Observed
        (N (Ur nid) (Ur payload))
-       (makeOp1
-          TraceObserve
-          (Proxy :: Proxy model)
-          (Proxy :: Proxy tag)
-          ref'
-          payload))
+       (makeTraceAction1 TraceObserve (Proxy :: Proxy tag) ref' payload))
 
 use ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => N tag
-     %1 -> GBuilder model desc (Used model tag)
+     %1 -> GBuilder desc (Used tag)
 use (N (Ur nid) (Ur payload)) = do
-  let ref' = mkNRef (Proxy :: Proxy tag) nid
+  let ref' = makeNRef (Proxy :: Proxy tag) nid
   return
     (Used
        (OneUse payload)
-       (makeOp1
-          TraceUse
-          (Proxy :: Proxy model)
-          (Proxy :: Proxy tag)
-          ref'
-          payload))
+       (makeTraceAction1 TraceUse (Proxy :: Proxy tag) ref' payload))
 
 copy ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => N tag
-     %1 -> GBuilder model desc (Copied model tag)
+     %1 -> GBuilder desc (Copied tag)
 copy (N (Ur originalId) (Ur payload)) = do
-  (Ur copyId, Ur copiedPayload) <-
-    storeNRecord (Proxy :: Proxy model) (Proxy :: Proxy tag) payload
-  let originalRef = mkNRef (Proxy :: Proxy tag) originalId
-  let copyRef = mkNRef (Proxy :: Proxy tag) copyId
+  (Ur copyId, Ur copiedPayload) <- storeNRecord (Proxy :: Proxy tag) payload
+  let originalRef = makeNRef (Proxy :: Proxy tag) originalId
+  let copyRef = makeNRef (Proxy :: Proxy tag) copyId
   return
     (Copied
        (N (Ur originalId) (Ur payload))
        (N (Ur copyId) (Ur copiedPayload))
-       (makeOp2
+       (makeTraceAction2
           TraceCopy
-          (Proxy :: Proxy model)
           (Proxy :: Proxy tag)
           originalRef
           payload
@@ -381,23 +345,22 @@ copy (N (Ur originalId) (Ur payload)) = do
           copiedPayload))
 
 replace ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => N tag
      %1 -> N tag
-     %1 -> GBuilder model desc (Replaced model tag)
+     %1 -> GBuilder desc (Replaced tag)
 replace oldNode newNode =
   case oldNode of
     N (Ur oldId) (Ur oldPayload) ->
       case newNode of
         N (Ur newId) (Ur newPayload) -> do
-          let oldRef = mkNRef (Proxy :: Proxy tag) oldId
-          let newRef = mkNRef (Proxy :: Proxy tag) newId
+          let oldRef = makeNRef (Proxy :: Proxy tag) oldId
+          let newRef = makeNRef (Proxy :: Proxy tag) newId
           return
             (Replaced
                (N (Ur newId) (Ur newPayload))
-               (makeOp2
+               (makeTraceAction2
                   TraceReplace
-                  (Proxy :: Proxy model)
                   (Proxy :: Proxy tag)
                   oldRef
                   oldPayload
@@ -405,39 +368,27 @@ replace oldNode newNode =
                   newPayload))
 
 compute ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => OneUse (Payload tag)
-     %1 -> GBuilder model desc (Computed model tag)
+     %1 -> GBuilder desc (Computed tag)
 compute (OneUse payload0) = do
-  (Ur nid, Ur payload) <-
-    storeNRecord (Proxy :: Proxy model) (Proxy :: Proxy tag) payload0
-  let ref' = mkNRef (Proxy :: Proxy tag) nid
+  (Ur nid, Ur payload) <- storeNRecord (Proxy :: Proxy tag) payload0
+  let ref' = makeNRef (Proxy :: Proxy tag) nid
   return
     (Computed
        (N (Ur nid) (Ur payload))
-       (makeOp1
-          TraceCompute
-          (Proxy :: Proxy model)
-          (Proxy :: Proxy tag)
-          ref'
-          payload))
+       (makeTraceAction1 TraceCompute (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
-     forall model desc tag. TracePayload model tag
+     forall desc tag. TracePayload tag
   => N tag
-     %1 -> GBuilder model desc (Destroyed model tag)
+     %1 -> GBuilder desc (Destroyed tag)
 destroy (N (Ur nid) (Ur payload)) = do
-  let ref' = mkNRef (Proxy :: Proxy tag) nid
+  let ref' = makeNRef (Proxy :: Proxy tag) nid
   return
-    (Destroyed
-       (makeOp1
-          TraceDestroy
-          (Proxy :: Proxy model)
-          (Proxy :: Proxy tag)
-          ref'
-          payload))
+    (Destroyed (makeTraceAction1 TraceDestroy (Proxy :: Proxy tag) ref' payload))
 
-buildGraph :: GBuilder model desc () -> G model desc
+buildGraph :: GBuilder desc () -> G desc
 buildGraph builder =
   let (_, finalState) = runState builder (GBuilderState (Ur 0) (Ur []) (Ur []))
       GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState

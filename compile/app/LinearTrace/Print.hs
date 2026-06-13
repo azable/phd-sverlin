@@ -1,5 +1,6 @@
-{-# LANGUAGE GADTs        #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GADTs         #-}
+{-# LANGUAGE TypeFamilies  #-}
+{-# LANGUAGE TypeOperators #-}
 
 module LinearTrace.Print
   ( PrintDesc(..)
@@ -15,13 +16,13 @@ import qualified Prelude          as P
 class PrintDesc desc where
   printDesc :: desc acts -> P.String
 
-printGraph :: (PrintDesc desc) => G model desc -> P.IO ()
+printGraph :: (PrintDesc desc) => G desc -> P.IO ()
 printGraph graph = P.putStr (renderGraph graph)
 
-printTrace :: (PrintDesc desc) => G model desc -> P.IO ()
+printTrace :: (PrintDesc desc) => G desc -> P.IO ()
 printTrace graph = P.putStr (renderTrace graph)
 
-renderGraph :: (PrintDesc desc) => G model desc -> P.String
+renderGraph :: (PrintDesc desc) => G desc -> P.String
 renderGraph (G ns es) =
   renderHeader "Graph"
     P.++ renderSummary ns es
@@ -30,10 +31,10 @@ renderGraph (G ns es) =
     P.++ "\n"
     P.++ renderTraceEvents es
 
-renderTrace :: (PrintDesc desc) => G model desc -> P.String
+renderTrace :: (PrintDesc desc) => G desc -> P.String
 renderTrace (G _ es) = renderTraceEvents es
 
-renderSummary :: [NRecord model] -> [Event model desc] -> P.String
+renderSummary :: [NRecord] -> [Event desc] -> P.String
 renderSummary ns es =
   "Nodes:  "
     P.++ P.show (P.length ns)
@@ -42,22 +43,22 @@ renderSummary ns es =
     P.++ P.show (P.length es)
     P.++ "\n"
 
-renderNodes :: [NRecord model] -> P.String
+renderNodes :: [NRecord] -> P.String
 renderNodes ns = renderHeader "Nodes" P.++ P.concatMap renderNode ns
 
-renderNode :: NRecord model -> P.String
+renderNode :: NRecord -> P.String
 renderNode (NRecord nid snapshot) =
   "  "
     P.++ padRight 8 ("N" P.++ P.show nid)
     P.++ renderSomeNodeSnapshotPayload snapshot
     P.++ "\n"
 
-renderSomeNodeSnapshotPayload :: SomeNodeSnapshot model -> P.String
+renderSomeNodeSnapshotPayload :: SomeNodeSnapshot -> P.String
 renderSomeNodeSnapshotPayload (SomeNodeSnapshot snapshot) =
   renderNodeSnapshotPayload snapshot
 
-renderNodeSnapshotPayload :: NodeSnapshot model tag -> P.String
-renderNodeSnapshotPayload (NodeSnapshot _ payloadView' _) =
+renderNodeSnapshotPayload :: NodeSnapshot tag -> P.String
+renderNodeSnapshotPayload (NodeSnapshot _ _ payloadView') =
   renderPayloadView payloadView'
 
 renderPayloadView :: PayloadView -> P.String
@@ -66,16 +67,16 @@ renderPayloadView (PayloadView text) = text
 renderNRef :: NRef tag -> P.String
 renderNRef (NRef nid) = "[N" P.++ P.show nid P.++ "]"
 
-renderNodeSnapshot :: NodeSnapshot model tag -> P.String
-renderNodeSnapshot (NodeSnapshot ref payloadView' _) =
+renderNodeSnapshot :: NodeSnapshot tag -> P.String
+renderNodeSnapshot (NodeSnapshot ref _ payloadView') =
   padRight 6 (renderNRef ref) P.++ " " P.++ renderPayloadView payloadView'
 
-renderTraceEvents :: (PrintDesc desc) => [Event model desc] -> P.String
+renderTraceEvents :: (PrintDesc desc) => [Event desc] -> P.String
 renderTraceEvents es =
   renderHeader "Trace"
     P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) es)
 
-renderEvent :: (PrintDesc desc) => P.Int -> Event model desc -> P.String
+renderEvent :: (PrintDesc desc) => P.Int -> Event desc -> P.String
 renderEvent ix (Event desc ops) =
   padLeft 3 (P.show ix)
     P.++ " | "
@@ -83,14 +84,14 @@ renderEvent ix (Event desc ops) =
     P.++ printDesc desc
     P.++ ansiReset
     P.++ "\n"
-    P.++ renderTraceOps ops
+    P.++ renderTraceActions ops
     P.++ "\n"
 
-renderTraceOps :: TraceOps model acts -> P.String
-renderTraceOps TraceNil     = ""
-renderTraceOps (op :> rest) = renderTraceOp op P.++ renderTraceOps rest
+renderTraceActions :: TraceActions acts -> P.String
+renderTraceActions TraceNil     = ""
+renderTraceActions (op :> rest) = renderTraceOp op P.++ renderTraceActions rest
 
-renderTraceOp :: TraceOp model act -> P.String
+renderTraceOp :: TraceAction act -> P.String
 renderTraceOp (TraceCreate snapshot) =
   renderOneSnapshotOp "create" ansiGreen snapshot
 renderTraceOp (TraceObserve snapshot) =
@@ -106,8 +107,7 @@ renderTraceOp (TraceCompute snapshot) =
 renderTraceOp (TraceDestroy snapshot) =
   renderOneSnapshotOp "destroy" ansiRed snapshot
 
-renderOneSnapshotOp ::
-     P.String -> P.String -> NodeSnapshot model tag -> P.String
+renderOneSnapshotOp :: P.String -> P.String -> NodeSnapshot tag -> P.String
 renderOneSnapshotOp name colour snapshot =
   renderTraceActionName name colour
     P.++ " "
@@ -115,11 +115,7 @@ renderOneSnapshotOp name colour snapshot =
     P.++ "\n"
 
 renderTwoSnapshotOp ::
-     P.String
-  -> P.String
-  -> NodeSnapshot model tag
-  -> NodeSnapshot model tag
-  -> P.String
+     P.String -> P.String -> NodeSnapshot tag -> NodeSnapshot tag -> P.String
 renderTwoSnapshotOp name colour first second =
   renderTraceActionName name colour
     P.++ " "

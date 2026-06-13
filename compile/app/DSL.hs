@@ -1,30 +1,22 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE LinearTypes           #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RebindableSyntax      #-}
-{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE LinearTypes       #-}
+{-# LANGUAGE RebindableSyntax  #-}
+{-# LANGUAGE TypeFamilies      #-}
 
 module DSL
   ( CType(..)
   , Value(..)
   , Op(..)
   , Var(..)
-  , -- * Replay / visualisation model
-    PayloadModel(..)
-  , ValueModel(..)
-  , OpModel(..)
-  , -- * DSL descriptions
-    Desc(..)
+  , Desc(..)
   , G
   , Node
   , VarNode
-  , -- * Running
-    run
+  , run
   , example
-  , -- * DSL operations
-    declare
+  , declare
   , readVar
   , writeVar
   , discardVar
@@ -36,8 +28,7 @@ module DSL
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
-import           LinearTrace            hiding (G, GBuilder)
-import qualified LinearTrace            as LT
+import           LinearTrace
 import qualified Prelude                as P
 import           Prelude.Linear
 
@@ -70,40 +61,18 @@ type instance Payload (KOp lhs rhs out) = Op lhs rhs out
 
 type instance Payload (KVar ty) = Var ty
 
-data PayloadModel
-  = ModelValue ValueModel
-  | ModelOp OpModel
-  | ModelVar String
+instance TracePayload (KValue ty) where
+  payloadView _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
+  payloadView _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
 
-data ValueModel
-  = ModelI32 Int
-  | ModelF64 Double
+instance TracePayload (KOp lhs rhs out) where
+  payloadView _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
+  payloadView _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
+  payloadView _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
+  payloadView _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
 
-data OpModel
-  = ModelAddI
-  | ModelMulI
-  | ModelAddD
-  | ModelMulD
-
-instance TracePayload PayloadModel (KValue ty) where
-  payloadView _ _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
-  payloadView _ _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
-  payloadModel _ _ (I32 i) = ModelValue (ModelI32 i)
-  payloadModel _ _ (F64 f) = ModelValue (ModelF64 f)
-
-instance TracePayload PayloadModel (KOp lhs rhs out) where
-  payloadView _ _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
-  payloadView _ _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
-  payloadView _ _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
-  payloadView _ _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
-  payloadModel _ _ AddI = ModelOp ModelAddI
-  payloadModel _ _ MulI = ModelOp ModelMulI
-  payloadModel _ _ AddD = ModelOp ModelAddD
-  payloadModel _ _ MulD = ModelOp ModelMulD
-
-instance TracePayload PayloadModel (KVar ty) where
-  payloadView _ _ (Var name) = PayloadView (padRightF "Var" P.++ name)
-  payloadModel _ _ (Var name) = ModelVar name
+instance TracePayload (KVar ty) where
+  payloadView _ (Var name) = PayloadView (padRightF "Var" P.++ name)
 
 data Desc acts where
   DLiteral :: Desc '[ Create (KValue ty)]
@@ -131,9 +100,7 @@ instance PrintDesc Desc where
   printDesc DDiscardVar   = "DiscardVar"
   printDesc DDiscardValue = "DiscardValue"
 
-type Builder a = LT.GBuilder PayloadModel Desc a
-
-type G = LT.G PayloadModel Desc
+type Builder ty = GBuilder Desc ty
 
 type Node tag = N tag
 
@@ -243,7 +210,7 @@ example = do
       discardVar aN
       discardVar bN
 
-run :: Builder () -> G
+run :: Builder () -> G Desc
 run = buildGraph
 
 padRight :: Int -> String -> String
