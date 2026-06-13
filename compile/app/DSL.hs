@@ -1,8 +1,9 @@
-{-# LANGUAGE DataKinds        #-}
-{-# LANGUAGE GADTs            #-}
-{-# LANGUAGE LinearTypes      #-}
-{-# LANGUAGE RebindableSyntax #-}
-{-# LANGUAGE TypeFamilies     #-}
+{-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE LinearTypes       #-}
+{-# LANGUAGE RebindableSyntax  #-}
+{-# LANGUAGE TypeFamilies      #-}
 
 module DSL
   ( CType(..)
@@ -60,6 +61,19 @@ type instance Payload (KOp lhs rhs out) = Op lhs rhs out
 
 type instance Payload (KVar ty) = Var ty
 
+instance TracePayload (KValue ty) where
+  payloadView _ (I32 i) = PayloadView (padRightF "Val" P.++ P.show i)
+  payloadView _ (F64 f) = PayloadView (padRightF "Val" P.++ P.show f)
+
+instance TracePayload (KOp lhs rhs out) where
+  payloadView _ AddI = PayloadView (padRightF "Op" P.++ "AddI")
+  payloadView _ MulI = PayloadView (padRightF "Op" P.++ "MulI")
+  payloadView _ AddD = PayloadView (padRightF "Op" P.++ "AddD")
+  payloadView _ MulD = PayloadView (padRightF "Op" P.++ "MulD")
+
+instance TracePayload (KVar ty) where
+  payloadView _ (Var name) = PayloadView (padRightF "Var" P.++ name)
+
 data Desc acts where
   DLiteral :: Desc '[ Create (KValue ty)]
   DOperator :: Desc '[ Create (KOp lhs rhs out)]
@@ -75,6 +89,16 @@ data Desc acts where
           ]
   DDiscardVar :: Desc '[ Destroy (KVar ty), Destroy (KValue ty)]
   DDiscardValue :: Desc '[ Destroy (KValue ty)]
+
+instance PrintDesc Desc where
+  printDesc DLiteral      = "Literal"
+  printDesc DOperator     = "Operator"
+  printDesc DDeclareVar   = "DeclareVar"
+  printDesc DReadVar      = "ReadVar"
+  printDesc DWriteVar     = "WriteVar"
+  printDesc DEval         = "Eval"
+  printDesc DDiscardVar   = "DiscardVar"
+  printDesc DDiscardValue = "DiscardValue"
 
 type Builder ty = GBuilder Desc ty
 
@@ -190,30 +214,7 @@ run :: Builder () -> G Desc
 run = buildGraph
 
 padRight :: Int -> String -> String
-padRight n s = s ++ replicate (n - P.length s) ' '
+padRight n s = s P.++ P.replicate (P.max 0 (n P.- P.length s)) ' '
 
 padRightF :: String -> String
 padRightF = padRight 5
-
-instance P.Show (Value ty) where
-  show (I32 i) = padRightF "Val" ++ P.show i
-  show (F64 f) = padRightF "Val" ++ P.show f
-
-instance P.Show (Op lhs rhs out) where
-  show AddI = padRightF "Op" ++ "AddI"
-  show MulI = padRightF "Op" ++ "MulI"
-  show AddD = padRightF "Op" ++ "AddD"
-  show MulD = padRightF "Op" ++ "MulD"
-
-instance P.Show (Var ty) where
-  show (Var name) = padRightF "Var" ++ name
-
-instance ShowDesc Desc where
-  showDesc DLiteral      = "Literal"
-  showDesc DOperator     = "Operator"
-  showDesc DDeclareVar   = "DeclareVar"
-  showDesc DReadVar      = "ReadVar"
-  showDesc DWriteVar     = "WriteVar"
-  showDesc DEval         = "Eval"
-  showDesc DDiscardVar   = "DiscardVar"
-  showDesc DDiscardValue = "DiscardValue"

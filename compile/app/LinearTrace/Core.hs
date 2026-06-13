@@ -15,6 +15,8 @@ module LinearTrace.Core
   , GBuilder
   , N(..)
   , Payload
+  , PayloadView(..)
+  , TracePayload(..)
   , -- * Action vocabulary
     ActionKind(..)
   , Action
@@ -88,6 +90,12 @@ type NId = Int
 
 type family Payload tag :: Type
 
+data PayloadView =
+  PayloadView P.String
+
+class TracePayload tag where
+  payloadView :: Proxy tag -> Payload tag -> PayloadView
+
 data OneUse a where
   OneUse :: a %1 -> OneUse a
 
@@ -100,38 +108,20 @@ OneUse f <*> OneUse x = OneUse (f x)
 data NRef tag where
   NRef :: NId -> NRef tag
 
-instance P.Show (NRef tag) where
-  show (NRef nid) = "[N" P.++ P.show nid P.++ "]"
-
 data Some where
-  Some :: (P.Show (Payload tag)) => NRef tag -> Payload tag -> Some
-
-instance P.Show Some where
-  show (Some _ payload) = P.show payload
+  Some :: NRef tag -> PayloadView -> Some
 
 data NRecord =
   NRecord NId Some
-
-instance P.Show NRecord where
-  show (NRecord nid payload) =
-    padRight 10 ("[N" P.++ P.show nid P.++ "]") P.++ P.show payload
 
 data N tag where
   N :: Ur NId %1 -> Ur (Payload tag) %1 -> N tag
 
 data Observation tag where
-  Observation
-    :: (P.Show (Payload tag)) => NRef tag -> Payload tag -> Observation tag
-
-instance P.Show (Observation tag) where
-  show (Observation r payload) =
-    padRight 6 (P.show r) P.++ " " P.++ P.show payload
+  Observation :: NRef tag -> PayloadView -> Observation tag
 
 data SomeObservation where
   SomeObservation :: Observation tag -> SomeObservation
-
-instance P.Show SomeObservation where
-  show (SomeObservation obs) = P.show obs
 
 data ActionKind
   = ActionCreate
@@ -242,15 +232,12 @@ mkNRef :: Proxy tag -> NId -> NRef tag
 mkNRef _ = NRef
 
 makeObservation ::
-     (P.Show (Payload tag))
-  => Proxy tag
-  -> NRef tag
-  -> Payload tag
-  -> SomeObservation
-makeObservation _ r payload = SomeObservation (Observation r payload)
+     TracePayload tag => Proxy tag -> NRef tag -> Payload tag -> SomeObservation
+makeObservation proxy r payload =
+  SomeObservation (Observation r (payloadView proxy payload))
 
 makeOp1 ::
-     (P.Show (Payload tag))
+     TracePayload tag
   => TraceAction (Action kind tag)
   -> Proxy tag
   -> NRef tag
@@ -260,7 +247,7 @@ makeOp1 action proxy r payload =
   Owed (Ur (TraceOp action [makeObservation proxy r payload]))
 
 makeOp2 ::
-     (P.Show (Payload tag))
+     TracePayload tag
   => TraceAction (Action kind tag)
   -> Proxy tag
   -> NRef tag
@@ -292,17 +279,18 @@ unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
 storeNRecord ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => Proxy tag
   -> Payload tag
      %1 -> GBuilder desc (Ur NId, Ur (Payload tag))
-storeNRecord _ payload0 =
+storeNRecord proxy payload0 =
   case unsafeUr payload0 of
     Ur payload -> do
       GBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
       let newId = oldNextId
-      let ref' = mkNRef (Proxy :: Proxy tag) newId
-      let newNode = NRecord newId (Some ref' payload)
+      let ref' = mkNRef proxy newId
+      let payloadSnapshot = payloadView proxy payload
+      let newNode = NRecord newId (Some ref' payloadSnapshot)
       put
         (GBuilderState (Ur (newId + 1)) (Ur (oldNodes P.++ [newNode])) oldEvents)
       return (Ur newId, Ur payload)
@@ -318,7 +306,7 @@ explain desc descList =
     Ur ops -> emitEvent (Event desc ops)
 
 create ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => Payload tag
      %1 -> GBuilder desc (Created tag)
 create payload0 = do
@@ -330,7 +318,7 @@ create payload0 = do
        (makeOp1 TraceCreate (Proxy :: Proxy tag) ref' payload))
 
 observe ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => N tag
      %1 -> GBuilder desc (Observed tag)
 observe (N (Ur nid) (Ur payload)) =
@@ -340,7 +328,7 @@ observe (N (Ur nid) (Ur payload)) =
        (makeOp1 TraceObserve (Proxy :: Proxy tag) (NRef nid) payload))
 
 use ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => N tag
      %1 -> GBuilder desc (Used tag)
 use (N (Ur nid) (Ur payload)) =
@@ -350,7 +338,7 @@ use (N (Ur nid) (Ur payload)) =
        (makeOp1 TraceUse (Proxy :: Proxy tag) (NRef nid) payload))
 
 copy ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => N tag
      %1 -> GBuilder desc (Copied tag)
 copy (N (Ur originalId) (Ur payload)) = do
@@ -370,7 +358,7 @@ copy (N (Ur originalId) (Ur payload)) = do
           copiedPayload))
 
 replace ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => N tag
      %1 -> N tag
      %1 -> GBuilder desc (Replaced tag)
@@ -391,7 +379,7 @@ replace oldNode newNode =
                   newPayload))
 
 compute ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => OneUse (Payload tag)
      %1 -> GBuilder desc (Computed tag)
 compute (OneUse payload0) = do
@@ -403,7 +391,7 @@ compute (OneUse payload0) = do
        (makeOp1 TraceCompute (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
-     forall desc tag. (P.Show (Payload tag))
+     forall desc tag. TracePayload tag
   => N tag
      %1 -> GBuilder desc (Destroyed tag)
 destroy (N (Ur nid) (Ur payload)) =
@@ -415,6 +403,3 @@ buildGraph builder =
   let (_, finalState) = runState builder (GBuilderState (Ur 0) (Ur []) (Ur []))
       GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState
    in G finalNodes finalEvents
-
-padRight :: Int -> String -> String
-padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
