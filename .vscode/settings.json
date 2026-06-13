@@ -1,6 +1,10 @@
 {
   "files.associations": {
-    "*.css": "tailwindcss"
+    "*.css": "tailwindcss",
+    "*.hs": "haskell",
+    "*.hs-boot": "haskell",
+    "*.hsc": "haskell",
+    "*.cabal": "cabal"
   },
 
   "editor.formatOnSave": true,

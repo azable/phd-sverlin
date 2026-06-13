@@ -130,14 +130,14 @@ e lhsNode opNode rhsNode = do
 
 literal :: Value ty %1 -> Builder (Node (KValue ty))
 literal val = do
-  Created node literalO <- create val
-  DLiteral `explain` (literalO :~ PaidDebt)
+  Created node createVal <- create val
+  DLiteral `explain` (createVal :~ PaidDebt)
   return node
 
 operator :: Op lhs rhs out %1 -> Builder (Node (KOp lhs rhs out))
 operator op = do
-  Created node opO <- create op
-  DOperator `explain` (opO :~ PaidDebt)
+  Created node createOp <- create op
+  DOperator `explain` (createOp :~ PaidDebt)
   return node
 
 (.+.) ::

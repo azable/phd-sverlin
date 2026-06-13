@@ -1,9 +1,20 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/typescript-node
 {
-  "name": "Node.js & TypeScript",
-  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-  "image": "mcr.microsoft.com/devcontainers/typescript-node:4-24-bookworm",
+  "name": "Svelte + Haskell",
+
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "GHC_VERSION": "9.6.7",
+      "CABAL_VERSION": "3.14.2.0",
+      "HLS_VERSION": "2.14.0.0",
+      "STACK_VERSION": "3.7.1",
+      "PNPM_VERSION": "10.12.1",
+      "EXTRA_CABAL_TOOLS": "stylish-haskell hindent"
+    }
+  },
+
+  "workspaceFolder": "/workspaces/phd-sverlin",
+  "remoteUser": "node",
 
   "customizations": {
     "vscode": {
@@ -13,15 +24,50 @@
         "haskell.haskell",
         "justusadam.language-haskell",
         "0xCD.stylish-hindent"
-      ]
+      ],
+
+      "settings": {
+        "files.associations": {
+          "*.css": "tailwindcss",
+          "*.hs": "haskell",
+          "*.lhs": "haskell",
+          "*.hs-boot": "haskell",
+          "*.hsc": "haskell",
+          "*.cabal": "cabal",
+          "cabal.project": "cabal"
+        },
+
+        "haskell.manageHLS": "PATH",
+        "haskell.serverExecutablePath": "/home/node/.ghcup/bin/haskell-language-server-wrapper",
+
+        "haskell.serverEnvironment": {
+          "PATH": "/home/node/.ghcup/bin:/home/node/.cabal/bin:/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        },
+
+        "haskell.formattingProvider": "stylish-haskell",
+
+        "[haskell]": {
+          "editor.defaultFormatter": "haskell.haskell",
+          "editor.formatOnSave": false
+        },
+
+        "[svelte]": {
+          "editor.defaultFormatter": "svelte.svelte-vscode"
+        },
+
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
     }
-  },
-
-  "workspaceFolder": "/workspaces/phd-sverlin",
-
-  "features": {
-    "ghcr.io/devcontainers-extra/features/pnpm:2": {},
-    "ghcr.io/devcontainers-extra/features/haskell:2": {}
   },
 
   "forwardPorts": [5173],
@@ -31,7 +77,10 @@
     "type=volume,source=${localWorkspaceFolderBasename}-node-modules,target=/workspaces/phd-sverlin/node_modules"
   ],
 
-  "remoteUser": "node",
+  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store"
 
-  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store && cabal install stylish-haskell hindent"
+  // temp fix for syntax highlighting https://github.com/haskell/vscode-haskell/issues/1376
+  // npx --yes ovsx get justusadam.language-haskell -o /tmp/language-haskell.vsix
+  // code --install-extension /tmp/language-haskell.vsix --force
+  //"postAttachCommand": "if ! code --list-extensions | grep -qi '^justusadam.language-haskell$'; then npx --yes ovsx get justusadam.language-haskell -o /tmp/language-haskell.vsix && code --install-extension /tmp/language-haskell.vsix --force; fi"
 }
