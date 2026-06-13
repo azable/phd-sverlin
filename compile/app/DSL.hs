@@ -156,41 +156,35 @@ operator op = do
   mul <- operator MulI
   e a mul b
 
-example :: Builder ()
-example = do
-  a0 <- declare "a" (I32 0)
-  b0 <- declare "b" (I32 1)
-  -- Initial state:
-  --   a = 0
-  --   b = 1
-  --
-  -- Each step computes:
-  --   next = a + b
-  --   a    = b
-  --   b    = next
-  --
-  -- This constructs:
-  --   0, 1, 1, 2, 3, 5, 8
-  (a1, b1) <- fibStep a0 b0
-  (a2, b2) <- fibStep a1 b1
-  (a3, b3) <- fibStep a2 b2
-  (a4, b4) <- fibStep a3 b3
-  (a5, b5) <- fibStep a4 b4
-  discardVar a5
-  discardVar b5
+data FibState where
+  FibState :: VarNode 'CTInt %1 -> VarNode 'CTInt %1 -> FibState
 
-fibStep ::
-     VarNode 'CTInt
-     %1 -> VarNode 'CTInt
-     %1 -> Builder (VarNode 'CTInt, VarNode 'CTInt)
-fibStep a0 b0 = do
+iterateLinear :: Int -> (state %1 -> Builder state) -> state %1 -> Builder state
+iterateLinear n step state'
+  | n P.<= 0 = return state'
+  | P.otherwise = do
+    state'' <- step state'
+    iterateLinear (n P.- 1) step state''
+
+fibStep :: FibState %1 -> Builder FibState
+fibStep (FibState a0 b0) = do
   (a1, aValue) <- readVar a0
   (b1, bForA) <- readVar b0
   (b2, bForSum) <- readVar b1
   next <- aValue .+. bForSum
   a2 <- writeVar a1 bForA
   b3 <- writeVar b2 next
-  return (a2, b3)
+  return (FibState a2 b3)
+
+example :: Builder ()
+example = do
+  a0 <- declare "a" (I32 0)
+  b0 <- declare "b" (I32 1)
+  final <- iterateLinear 5 fibStep (FibState a0 b0)
+  case final of
+    FibState aN bN -> do
+      discardVar aN
+      discardVar bN
 
 run :: Builder () -> G Desc
 run = buildGraph
