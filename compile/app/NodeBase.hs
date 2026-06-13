@@ -49,7 +49,10 @@ module NodeBase
   , compute
   , destroy
   , explain
-  , buildGraph
+  , -- Graph building and rendering
+    buildGraph
+  , renderGraph
+  , printGraph
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
@@ -372,3 +375,52 @@ joinWith :: String -> [String] -> String
 joinWith _ []       = ""
 joinWith _ [x]      = x
 joinWith sep (x:xs) = x P.++ sep P.++ joinWith sep xs
+
+renderGraph :: (ShowDesc desc) => G desc -> String
+renderGraph (G ns es) =
+  renderHeader "Graph"
+    P.++ renderSummary ns es
+    P.++ "\n"
+    P.++ renderNodes ns
+    P.++ "\n"
+    P.++ renderTrace es
+
+printGraph :: (ShowDesc desc) => G desc -> P.IO ()
+printGraph graph = P.putStr (renderGraph graph)
+
+renderSummary :: [NRecord] -> [Event desc] -> String
+renderSummary ns es =
+  "Nodes:  "
+    P.++ P.show (P.length ns)
+    P.++ "\n"
+    P.++ "Events: "
+    P.++ P.show (P.length es)
+    P.++ "\n"
+
+renderNodes :: [NRecord] -> String
+renderNodes ns = renderHeader "Nodes" P.++ P.concatMap renderNode ns
+
+renderNode :: NRecord -> String
+renderNode (NRecord nid payload) =
+  "  " P.++ padRight 8 ("N" P.++ P.show nid) P.++ P.show payload P.++ "\n"
+
+renderTrace :: (ShowDesc desc) => [Event desc] -> String
+renderTrace es =
+  renderHeader "Trace"
+    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: Int)) es)
+
+renderEvent :: (ShowDesc desc) => Int -> Event desc -> String
+renderEvent ix (Event desc observations) =
+  "  "
+    P.++ padRight 6 (P.show ix)
+    P.++ showDesc desc
+    P.++ "\n"
+    P.++ P.concatMap renderObservation observations
+    P.++ "\n"
+
+renderObservation :: SomeObservation -> String
+renderObservation observation = "          " P.++ P.show observation P.++ "\n"
+
+renderHeader :: String -> String
+renderHeader title =
+  title P.++ "\n" P.++ P.replicate (P.length title) '-' P.++ "\n"
