@@ -9,13 +9,15 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 
-module NodeBase
-  ( G
+module LinearTrace.Core
+  ( -- * Core public API data
+    G(..)
   , GBuilder
-  , N
+  , N(..)
   , Payload
-  , -- Action vocabulary
-    Action
+  , -- * Action vocabulary
+    ActionKind(..)
+  , Action
   , type Create
   , type Observe
   , type Use
@@ -23,17 +25,18 @@ module NodeBase
   , type Replace
   , type Compute
   , type Destroy
-  , create
+  , -- * Primitive operations
+    create
   , observe
   , use
   , copy
   , replace
   , compute
   , destroy
-  , -- Auditing operations
-    OneUse
-  , Owed
-  , OwedList(PaidDebt, (:~))
+  , -- * Auditing operations
+    OneUse(..)
+  , Owed(..)
+  , OwedList(..)
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -44,12 +47,31 @@ module NodeBase
   , explain
   , (<$>)
   , (<*>)
-  , -- Graph building and rendering
-    ShowDesc(..)
+  , -- * Internal graph/event data
+    NId
+  , NRef(..)
+  , NRecord(..)
+  , Some(..)
+  , Observation(..)
+  , SomeObservation(..)
+  , Event(..)
+  , -- * Internal trace data
+    TraceAction(..)
+  , TraceOp(..)
+  , SomeTraceOp(..)
+  , traceActionName
+  , -- * Internal builder state
+    GBuilderState(..)
   , buildGraph
-  , renderGraph
-  , printGraph
-  , printTrace
+  , mkNRef
+  , makeObservation
+  , makeOp1
+  , makeOp2
+  , descToTraceOp
+  , descListToTraceOps
+  , unsafeUr
+  , storeNRecord
+  , emitEvent
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
@@ -61,6 +83,7 @@ import qualified Unsafe.Coerce          as Unsafe
 
 infixl 4 <$>
 infixl 4 <*>
+infixr 5 :~
 type NId = Int
 
 type family Payload tag :: Type
@@ -156,17 +179,8 @@ traceActionName TraceDestroy = "destroy"
 data TraceOp act where
   TraceOp :: TraceAction act -> [SomeObservation] -> TraceOp act
 
-instance P.Show (TraceOp act) where
-  show (TraceOp action observations) =
-    traceActionName action
-      P.++ " "
-      P.++ joinWith ", " (P.map P.show observations)
-
 data SomeTraceOp where
   SomeTraceOp :: TraceOp act -> SomeTraceOp
-
-instance P.Show SomeTraceOp where
-  show (SomeTraceOp op) = P.show op
 
 data Owed act where
   Owed :: Ur (TraceOp act) %1 -> Owed act
@@ -175,7 +189,6 @@ data OwedList acts where
   PaidDebt :: OwedList '[]
   (:~) :: Owed act %1 -> OwedList acts %1 -> OwedList (act : acts)
 
-infixr 5 :~
 data Created tag where
   Created :: N tag %1 -> Owed (Create tag) %1 -> Created tag
 
@@ -202,23 +215,6 @@ data Event (desc :: [Type] -> Type) where
 
 data G (desc :: [Type] -> Type) =
   G [NRecord] [Event desc]
-
-class ShowDesc desc where
-  showDesc :: desc acts -> String
-
-instance (ShowDesc desc) => P.Show (Event desc) where
-  show (Event desc ops) =
-    padRight 14 (showDesc desc) P.++ joinWith " | " (P.map P.show ops)
-
-instance (ShowDesc desc) => P.Show (G desc) where
-  show (G ns es) =
-    "Nodes:\n"
-      P.++ P.concatMap showNode ns
-      P.++ "Events:\n"
-      P.++ P.concatMap showEvent es
-    where
-      showNode n = "  " P.++ P.show n P.++ "\n"
-      showEvent e = "  " P.++ P.show e P.++ "\n"
 
 data GBuilderState (desc :: [Type] -> Type) = GBuilderState
   { _nextId :: Ur NId
@@ -420,124 +416,5 @@ buildGraph builder =
       GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState
    in G finalNodes finalEvents
 
-renderGraph :: (ShowDesc desc) => G desc -> String
-renderGraph (G ns es) =
-  renderHeader "Graph"
-    P.++ renderSummary ns es
-    P.++ "\n"
-    P.++ renderNodes ns
-    P.++ "\n"
-    P.++ renderTrace es
-
-printGraph :: (ShowDesc desc) => G desc -> P.IO ()
-printGraph graph = P.putStr (renderGraph graph)
-
-printTrace :: (ShowDesc desc) => G desc -> P.IO ()
-printTrace (G _ es) = P.putStr (renderTrace es)
-
-renderSummary :: [NRecord] -> [Event desc] -> String
-renderSummary ns es =
-  "Nodes:  "
-    P.++ P.show (P.length ns)
-    P.++ "\n"
-    P.++ "Events: "
-    P.++ P.show (P.length es)
-    P.++ "\n"
-
-renderNodes :: [NRecord] -> String
-renderNodes ns = renderHeader "Nodes" P.++ P.concatMap renderNode ns
-
-renderNode :: NRecord -> String
-renderNode (NRecord nid payload) =
-  "  " P.++ padRight 8 ("N" P.++ P.show nid) P.++ P.show payload P.++ "\n"
-
-renderTrace :: (ShowDesc desc) => [Event desc] -> String
-renderTrace es =
-  renderHeader "Trace"
-    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: Int)) es)
-
-renderEvent :: (ShowDesc desc) => Int -> Event desc -> String
-renderEvent ix (Event desc ops) =
-  padLeft 3 (P.show ix)
-    P.++ " | "
-    P.++ (ansiBold P.++ showDesc desc P.++ ansiReset)
-    P.++ "\n"
-    P.++ P.concatMap renderTraceOp ops
-    P.++ "\n"
-
-renderTraceOp :: SomeTraceOp -> String
-renderTraceOp (SomeTraceOp (TraceOp action observations)) =
-  case observations of
-    [] -> renderTraceActionName action P.++ "\n"
-    first:rest ->
-      renderTaggedObservation action first
-        P.++ P.concatMap renderUntaggedObservation rest
-
-renderTaggedObservation :: TraceAction act -> SomeObservation -> String
-renderTaggedObservation action observation =
-  renderTraceActionName action P.++ " " P.++ P.show observation P.++ "\n"
-
-renderUntaggedObservation :: SomeObservation -> String
-renderUntaggedObservation observation =
-  renderEmptyTraceActionName P.++ " " P.++ P.show observation P.++ "\n"
-
-renderTraceActionName :: TraceAction act -> String
-renderTraceActionName action =
-  "    " P.++ colourTraceAction action (padLeft 16 (traceActionName action))
-
-renderEmptyTraceActionName :: String
-renderEmptyTraceActionName = "    " P.++ padLeft 16 ""
-
-renderHeader :: String -> String
-renderHeader title =
-  title P.++ "\n" P.++ P.replicate (P.length title) '-' P.++ "\n"
-
 padRight :: Int -> String -> String
 padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
-
-padLeft :: Int -> String -> String
-padLeft n s = P.replicate (n P.- P.length s) ' ' P.++ s
-
-joinWith :: String -> [String] -> String
-joinWith _ []       = ""
-joinWith _ [x]      = x
-joinWith sep (x:xs) = x P.++ sep P.++ joinWith sep xs
-
-colourTraceAction :: TraceAction act -> String -> String
-colourTraceAction action text = traceActionAnsi action P.++ text P.++ ansiReset
-
-traceActionAnsi :: TraceAction act -> String
-traceActionAnsi TraceCreate  = ansiGreen
-traceActionAnsi TraceObserve = ansiCyan
-traceActionAnsi TraceUse     = ansiYellow
-traceActionAnsi TraceCopy    = ansiBlue
-traceActionAnsi TraceReplace = ansiMagenta
-traceActionAnsi TraceCompute = ansiLime
-traceActionAnsi TraceDestroy = ansiRed
-
-ansiReset :: String
-ansiReset = "\ESC[0m"
-
-ansiGreen :: String
-ansiGreen = "\ESC[32m"
-
-ansiCyan :: String
-ansiCyan = "\ESC[36m"
-
-ansiYellow :: String
-ansiYellow = "\ESC[33m"
-
-ansiBlue :: String
-ansiBlue = "\ESC[34m"
-
-ansiMagenta :: String
-ansiMagenta = "\ESC[35m"
-
-ansiLime :: String
-ansiLime = "\ESC[92m"
-
-ansiRed :: String
-ansiRed = "\ESC[31m"
-
-ansiBold :: String
-ansiBold = "\ESC[1m"

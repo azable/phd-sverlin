@@ -27,7 +27,7 @@ module DSL
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
-import           NodeBase
+import           LinearTrace
 import qualified Prelude                as P
 import           Prelude.Linear
 

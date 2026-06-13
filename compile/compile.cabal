@@ -62,7 +62,9 @@ executable compile-app
 
     -- Modules included in this executable, other than Main.
     other-modules:
-        NodeBase
+        LinearTrace
+        LinearTrace.Core
+        LinearTrace.Print
         DSL
         Program
 
