@@ -13,6 +13,7 @@ module NodeBase
   , GBuilder
   , GBuilderState(..)
   , NRecord(..)
+  , TraceOp(..)
   , Event(..)
   , Some
   , SomeObservation
@@ -114,6 +115,15 @@ data SomeObservation where
 instance P.Show SomeObservation where
   show (SomeObservation obs) = P.show obs
 
+data TraceOp = TraceOp
+  { traceOpName         :: String
+  , traceOpObservations :: [SomeObservation]
+  }
+
+instance P.Show TraceOp where
+  show (TraceOp name observations) =
+    name P.++ " " P.++ joinWith ", " (P.map P.show observations)
+
 data Create tag
 
 data Observe tag
@@ -129,7 +139,7 @@ data Compute tag
 data Destroy tag
 
 data Owed act where
-  Owed :: Ur [SomeObservation] %1 -> Owed act
+  Owed :: Ur TraceOp %1 -> Owed act
 
 data OwedList acts where
   PaidDebt :: OwedList '[]
@@ -158,7 +168,7 @@ data Destroyed tag where
   Destroyed :: Owed (Destroy tag) %1 -> Destroyed tag
 
 data Event (desc :: [Type] -> Type) where
-  Event :: desc acts -> [SomeObservation] -> Event desc
+  Event :: desc acts -> [TraceOp] -> Event desc
 
 data G (desc :: [Type] -> Type) = G
   { graphNodes  :: [NRecord]
@@ -169,8 +179,8 @@ class ShowDesc desc where
   showDesc :: desc acts -> String
 
 instance (ShowDesc desc) => P.Show (Event desc) where
-  show (Event desc observations) =
-    padRight 14 (showDesc desc) P.++ joinWith ", " (P.map P.show observations)
+  show (Event desc ops) =
+    padRight 14 (showDesc desc) P.++ joinWith " | " (P.map P.show ops)
 
 instance (ShowDesc desc) => P.Show (G desc) where
   show (G ns es) =
@@ -215,33 +225,45 @@ makeObservation ::
   -> SomeObservation
 makeObservation _ r payload = SomeObservation (Observation r payload)
 
-makeDesc1 ::
-     (P.Show (Payload tag)) => Proxy tag -> NRef tag -> Payload tag -> Owed act
-makeDesc1 proxy r payload = Owed (Ur [makeObservation proxy r payload])
+makeOp1 ::
+     (P.Show (Payload tag))
+  => String
+  -> Proxy tag
+  -> NRef tag
+  -> Payload tag
+  -> Owed act
+makeOp1 name proxy r payload =
+  Owed (Ur (TraceOp name [makeObservation proxy r payload]))
 
-makeDesc2 ::
+makeOp2 ::
      (P.Show (Payload tag1), P.Show (Payload tag2))
-  => Proxy tag1
+  => String
+  -> Proxy tag1
   -> NRef tag1
   -> Payload tag1
   -> Proxy tag2
   -> NRef tag2
   -> Payload tag2
   -> Owed act
-makeDesc2 proxy1 r1 payload1 proxy2 r2 payload2 =
+makeOp2 name proxy1 r1 payload1 proxy2 r2 payload2 =
   Owed
-    (Ur [makeObservation proxy1 r1 payload1, makeObservation proxy2 r2 payload2])
+    (Ur
+       (TraceOp
+          name
+          [ makeObservation proxy1 r1 payload1
+          , makeObservation proxy2 r2 payload2
+          ]))
 
-descToObservations :: Owed act %1 -> Ur [SomeObservation]
-descToObservations (Owed observations) = observations
+descToTraceOp :: Owed act %1 -> Ur TraceOp
+descToTraceOp (Owed op) = op
 
-descListToObservations :: OwedList acts %1 -> Ur [SomeObservation]
-descListToObservations PaidDebt = Ur []
-descListToObservations (desc :~ rest) =
-  case descToObservations desc of
-    Ur observations ->
-      case descListToObservations rest of
-        Ur restObservations -> Ur (observations P.++ restObservations)
+descListToTraceOps :: OwedList acts %1 -> Ur [TraceOp]
+descListToTraceOps PaidDebt = Ur []
+descListToTraceOps (desc :~ rest) =
+  case descToTraceOp desc of
+    Ur op ->
+      case descListToTraceOps rest of
+        Ur restOps -> Ur (op : restOps)
 
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
@@ -269,8 +291,8 @@ emitEvent event = do
 
 explain :: desc acts -> OwedList acts %1 -> GBuilder desc ()
 explain desc descList =
-  case descListToObservations descList of
-    Ur observations -> emitEvent (Event desc observations)
+  case descListToTraceOps descList of
+    Ur ops -> emitEvent (Event desc ops)
 
 create ::
      forall desc tag. (P.Show (Payload tag))
@@ -282,7 +304,7 @@ create payload0 = do
   return
     (Created
        (N (Ur nid) (Ur payload))
-       (makeDesc1 (Proxy :: Proxy tag) ref' payload))
+       (makeOp1 "create" (Proxy :: Proxy tag) ref' payload))
 
 observe ::
      forall desc tag. (P.Show (Payload tag))
@@ -292,7 +314,7 @@ observe (N (Ur nid) (Ur payload)) =
   return
     (Observed
        (N (Ur nid) (Ur payload))
-       (makeDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
+       (makeOp1 "observe" (Proxy :: Proxy tag) (NRef nid) payload))
 
 use ::
      forall desc tag. (P.Show (Payload tag))
@@ -300,7 +322,9 @@ use ::
      %1 -> GBuilder desc (Used tag)
 use (N (Ur nid) (Ur payload)) =
   return
-    (Used (OneUse payload) (makeDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
+    (Used
+       (OneUse payload)
+       (makeOp1 "use" (Proxy :: Proxy tag) (NRef nid) payload))
 
 copy ::
      forall desc tag. (P.Show (Payload tag))
@@ -314,7 +338,8 @@ copy (N (Ur originalId) (Ur payload)) = do
     (Copied
        (N (Ur originalId) (Ur payload))
        (N (Ur copyId) (Ur copiedPayload))
-       (makeDesc2
+       (makeOp2
+          "copy"
           (Proxy :: Proxy tag)
           originalRef
           payload
@@ -335,7 +360,8 @@ replace oldNode newNode =
           return
             (Replaced
                (N (Ur newId) (Ur newPayload))
-               (makeDesc2
+               (makeOp2
+                  "replace"
                   (Proxy :: Proxy tag)
                   (NRef oldId)
                   oldPayload
@@ -353,28 +379,20 @@ compute (OneUse payload0) = do
   return
     (Computed
        (N (Ur nid) (Ur payload))
-       (makeDesc1 (Proxy :: Proxy tag) ref' payload))
+       (makeOp1 "compute" (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
      forall desc tag. (P.Show (Payload tag))
   => N tag
      %1 -> GBuilder desc (Destroyed tag)
 destroy (N (Ur nid) (Ur payload)) =
-  return (Destroyed (makeDesc1 (Proxy :: Proxy tag) (NRef nid) payload))
+  return (Destroyed (makeOp1 "destroy" (Proxy :: Proxy tag) (NRef nid) payload))
 
 buildGraph :: GBuilder desc () -> G desc
 buildGraph builder =
   let (_, finalState) = runState builder (GBuilderState (Ur 0) (Ur []) (Ur []))
       GBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState
    in G finalNodes finalEvents
-
-padRight :: Int -> String -> String
-padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
-
-joinWith :: String -> [String] -> String
-joinWith _ []       = ""
-joinWith _ [x]      = x
-joinWith sep (x:xs) = x P.++ sep P.++ joinWith sep xs
 
 renderGraph :: (ShowDesc desc) => G desc -> String
 renderGraph (G ns es) =
@@ -410,17 +428,44 @@ renderTrace es =
     P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: Int)) es)
 
 renderEvent :: (ShowDesc desc) => Int -> Event desc -> String
-renderEvent ix (Event desc observations) =
-  "  "
-    P.++ padRight 6 (P.show ix)
+renderEvent ix (Event desc ops) =
+  padLeft 3 (P.show ix)
+    P.++ " | "
     P.++ showDesc desc
     P.++ "\n"
-    P.++ P.concatMap renderObservation observations
+    P.++ P.concatMap renderTraceOp ops
     P.++ "\n"
 
-renderObservation :: SomeObservation -> String
-renderObservation observation = "          " P.++ P.show observation P.++ "\n"
+renderTraceOp :: TraceOp -> String
+renderTraceOp (TraceOp name observations) =
+  case observations of
+    [] -> renderTraceOpName name P.++ "\n"
+    first:rest ->
+      renderTaggedObservation name first
+        P.++ P.concatMap renderUntaggedObservation rest
+
+renderTaggedObservation :: String -> SomeObservation -> String
+renderTaggedObservation name observation =
+  renderTraceOpName name P.++ "  " P.++ P.show observation P.++ "\n"
+
+renderUntaggedObservation :: SomeObservation -> String
+renderUntaggedObservation observation =
+  renderTraceOpName "" P.++ "  " P.++ P.show observation P.++ "\n"
+
+renderTraceOpName :: String -> String
+renderTraceOpName name = "    " P.++ padLeft 11 name
 
 renderHeader :: String -> String
 renderHeader title =
   title P.++ "\n" P.++ P.replicate (P.length title) '-' P.++ "\n"
+
+padRight :: Int -> String -> String
+padRight n s = s P.++ P.replicate (n P.- P.length s) ' '
+
+padLeft :: Int -> String -> String
+padLeft n s = P.replicate (n P.- P.length s) ' ' P.++ s
+
+joinWith :: String -> [String] -> String
+joinWith _ []       = ""
+joinWith _ [x]      = x
+joinWith sep (x:xs) = x P.++ sep P.++ joinWith sep xs
