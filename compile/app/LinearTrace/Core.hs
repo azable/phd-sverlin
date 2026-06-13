@@ -15,6 +15,7 @@ module LinearTrace.Core
     TraceGraph(..)
   , TraceBuilder
   , Node
+  , Slot
   , Payload
   , PayloadView(..)
   , TracePayload(..)
@@ -34,6 +35,8 @@ module LinearTrace.Core
   , type Replace
   , type Compute
   , type Destroy
+  , type Seal
+  , type Unseal
   , -- * Primitive operations
     create
   , observe
@@ -43,6 +46,8 @@ module LinearTrace.Core
   , replace
   , compute
   , destroy
+  , seal
+  , unseal
   , -- * Auditing operations
     OneUse(..)
   , Evidence(..)
@@ -55,6 +60,8 @@ module LinearTrace.Core
   , Replaced(..)
   , Computed(..)
   , Destroyed(..)
+  , Sealed(..)
+  , Unsealed(..)
   , explain
   , (<$>)
   , (<*>)
@@ -135,6 +142,13 @@ data NodeRef tag where
 data Node tag where
   Node :: Ur NodeId %1 -> Ur (Payload tag) %1 -> Node tag
 
+-- | A sealed node of type @tag@ owned by an owner type @owner@.
+--
+-- The constructor is intentionally not exported. Users can hold slots, but
+-- cannot extract the hidden node except through 'unseal'.
+data Slot owner tag where
+  Slot :: Node tag %1 -> Slot owner tag
+
 data NodeSnapshot tag where
   NodeSnapshot :: NodeRef tag -> Payload tag -> PayloadView -> NodeSnapshot tag
 
@@ -150,8 +164,14 @@ data ActionKind
   | ActionReplace
   | ActionCompute
   | ActionDestroy
+  | ActionSeal
+  | ActionUnseal
 
 data Action (kind :: ActionKind) tag
+
+data SealTag owner tag
+
+data UnsealTag owner tag
 
 type Create tag = Action 'ActionCreate tag
 
@@ -168,6 +188,10 @@ type Replace tag = Action 'ActionReplace tag
 type Compute tag = Action 'ActionCompute tag
 
 type Destroy tag = Action 'ActionDestroy tag
+
+type Seal owner tag = Action 'ActionSeal (SealTag owner tag)
+
+type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
 
 data Created tag where
   Created :: Node tag %1 -> Evidence (Create tag) %1 -> Created tag
@@ -197,6 +221,20 @@ data Computed tag where
 data Destroyed tag where
   Destroyed :: Evidence (Destroy tag) %1 -> Destroyed tag
 
+data Sealed owner tag where
+  Sealed
+    :: Node owner
+       %1 -> Slot owner tag
+       %1 -> Evidence (Seal owner tag)
+       %1 -> Sealed owner tag
+
+data Unsealed owner tag where
+  Unsealed
+    :: Node owner
+       %1 -> Node tag
+       %1 -> Evidence (Unseal owner tag)
+       %1 -> Unsealed owner tag
+
 data AuditStep act where
   CreateStep :: NodeSnapshot tag -> AuditStep (Create tag)
   ObserveStep :: NodeSnapshot tag -> AuditStep (Observe tag)
@@ -206,6 +244,10 @@ data AuditStep act where
   ReplaceStep :: NodeSnapshot tag -> NodeSnapshot tag -> AuditStep (Replace tag)
   ComputeStep :: NodeSnapshot tag -> AuditStep (Compute tag)
   DestroyStep :: NodeSnapshot tag -> AuditStep (Destroy tag)
+  SealStep
+    :: NodeSnapshot owner -> NodeSnapshot tag -> AuditStep (Seal owner tag)
+  UnsealStep
+    :: NodeSnapshot owner -> NodeSnapshot tag -> AuditStep (Unseal owner tag)
 
 data Audit acts where
   EmptyAudit :: Audit '[]
@@ -284,6 +326,23 @@ makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
        (ctor
           (makeSnapshot tagProxy ref1 payload1)
           (makeSnapshot tagProxy ref2 payload2)))
+
+makeAuditStep2Hetero ::
+     (TracePayload left, TracePayload right)
+  => (NodeSnapshot left -> NodeSnapshot right -> AuditStep act)
+  -> Proxy left
+  -> NodeRef left
+  -> Payload left
+  -> Proxy right
+  -> NodeRef right
+  -> Payload right
+  -> Evidence act
+makeAuditStep2Hetero ctor leftProxy leftRef leftPayload rightProxy rightRef rightPayload =
+  Evidence
+    (Ur
+       (ctor
+          (makeSnapshot leftProxy leftRef leftPayload)
+          (makeSnapshot rightProxy rightRef rightPayload)))
 
 evidenceToAuditStep :: Evidence act %1 -> Ur (AuditStep act)
 evidenceToAuditStep (Evidence step) = step
@@ -438,6 +497,58 @@ destroy (Node (Ur nodeId) (Ur payload)) = do
   let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
   return
     (Destroyed (makeAuditStep1 DestroyStep (Proxy :: Proxy tag) ref' payload))
+
+seal ::
+     forall event owner tag. (TracePayload owner, TracePayload tag)
+  => Node owner
+     %1 -> Node tag
+     %1 -> TraceBuilder event (Sealed owner tag)
+seal ownerNode childNode =
+  case ownerNode of
+    Node (Ur ownerId) (Ur ownerPayload) ->
+      case childNode of
+        Node (Ur childId) (Ur childPayload) -> do
+          let ownerRef = makeNodeRef (Proxy :: Proxy owner) ownerId
+          let childRef = makeNodeRef (Proxy :: Proxy tag) childId
+          return
+            (Sealed
+               (Node (Ur ownerId) (Ur ownerPayload))
+               (Slot (Node (Ur childId) (Ur childPayload)))
+               (makeAuditStep2Hetero
+                  SealStep
+                  (Proxy :: Proxy owner)
+                  ownerRef
+                  ownerPayload
+                  (Proxy :: Proxy tag)
+                  childRef
+                  childPayload))
+
+unseal ::
+     forall event owner tag. (TracePayload owner, TracePayload tag)
+  => Node owner
+     %1 -> Slot owner tag
+     %1 -> TraceBuilder event (Unsealed owner tag)
+unseal ownerNode slot =
+  case ownerNode of
+    Node (Ur ownerId) (Ur ownerPayload) ->
+      case slot of
+        Slot childNode ->
+          case childNode of
+            Node (Ur childId) (Ur childPayload) -> do
+              let ownerRef = makeNodeRef (Proxy :: Proxy owner) ownerId
+              let childRef = makeNodeRef (Proxy :: Proxy tag) childId
+              return
+                (Unsealed
+                   (Node (Ur ownerId) (Ur ownerPayload))
+                   (Node (Ur childId) (Ur childPayload))
+                   (makeAuditStep2Hetero
+                      UnsealStep
+                      (Proxy :: Proxy owner)
+                      ownerRef
+                      ownerPayload
+                      (Proxy :: Proxy tag)
+                      childRef
+                      childPayload))
 
 buildGraph :: TraceBuilder event () -> TraceGraph event
 buildGraph builder =

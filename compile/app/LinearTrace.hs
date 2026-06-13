@@ -4,6 +4,7 @@ module LinearTrace
   ( TraceGraph
   , TraceBuilder
   , Node
+  , Slot
   , Payload
   , -- * Trusted linear payloads
     LUnit(..)
@@ -19,6 +20,8 @@ module LinearTrace
   , type Replace
   , type Compute
   , type Destroy
+  , type Seal
+  , type Unseal
   , -- * Primitive operations
     create
   , observe
@@ -27,6 +30,8 @@ module LinearTrace
   , replace
   , compute
   , destroy
+  , seal
+  , unseal
   , -- * Auditing operations
     OneUse
   , Evidence
@@ -38,6 +43,8 @@ module LinearTrace
   , Replaced(..)
   , Computed(..)
   , Destroyed(..)
+  , Sealed(..)
+  , Unsealed(..)
   , explain
   , (<$>)
   , (<*>)

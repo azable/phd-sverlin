@@ -9,168 +9,179 @@ module LinearTrace.Print
   ) where
 
 import           LinearTrace.Core
-import qualified Prelude          as P
+import           Prelude
 
 class PrintEvent event where
-  printEvent :: event acts -> P.String
+  printEvent :: event acts -> String
 
-printGraph :: (PrintEvent event) => TraceGraph event -> P.IO ()
-printGraph graph = P.putStr (renderGraph graph)
+printGraph :: (PrintEvent event) => TraceGraph event -> IO ()
+printGraph graph = putStr (renderGraph graph)
 
-printTrace :: (PrintEvent event) => TraceGraph event -> P.IO ()
-printTrace graph = P.putStr (renderTrace graph)
+printTrace :: (PrintEvent event) => TraceGraph event -> IO ()
+printTrace graph = putStr (renderTrace graph)
 
-renderGraph :: (PrintEvent event) => TraceGraph event -> P.String
+renderGraph :: (PrintEvent event) => TraceGraph event -> String
 renderGraph (TraceGraph nodes events) =
   renderHeader "Graph"
-    P.++ renderSummary nodes events
-    P.++ "\n"
-    P.++ renderNodes nodes
-    P.++ "\n"
-    P.++ renderEvents events
+    ++ renderSummary nodes events
+    ++ "\n"
+    ++ renderNodes nodes
+    ++ "\n"
+    ++ renderEvents events
 
-renderTrace :: (PrintEvent event) => TraceGraph event -> P.String
+renderTrace :: (PrintEvent event) => TraceGraph event -> String
 renderTrace (TraceGraph _ events) = renderEvents events
 
-renderSummary :: [NodeRecord] -> [TraceEvent event] -> P.String
+renderSummary :: [NodeRecord] -> [TraceEvent event] -> String
 renderSummary nodes events =
   "Nodes:  "
-    P.++ P.show (P.length nodes)
-    P.++ "\n"
-    P.++ "Events: "
-    P.++ P.show (P.length events)
-    P.++ "\n"
+    ++ show (length nodes)
+    ++ "\n"
+    ++ "Events: "
+    ++ show (length events)
+    ++ "\n"
 
-renderNodes :: [NodeRecord] -> P.String
-renderNodes nodes = renderHeader "Nodes" P.++ P.concatMap renderNode nodes
+renderNodes :: [NodeRecord] -> String
+renderNodes nodes = renderHeader "Nodes" ++ concatMap renderNode nodes
 
-renderNode :: NodeRecord -> P.String
+renderNode :: NodeRecord -> String
 renderNode (NodeRecord snapshot) =
   "  "
-    P.++ padRight 8 (renderNodeRefPlain (snapshotRef snapshot))
-    P.++ renderSnapshotPayload snapshot
-    P.++ "\n"
+    ++ padRight 8 (renderNodeRefPlain (snapshotRef snapshot))
+    ++ renderSnapshotPayload snapshot
+    ++ "\n"
 
-renderEvents :: (PrintEvent event) => [TraceEvent event] -> P.String
+renderEvents :: (PrintEvent event) => [TraceEvent event] -> String
 renderEvents events =
   renderHeader "Events"
-    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) events)
+    ++ concat (zipWith renderEvent (enumFrom (0 :: Int)) events)
 
-renderEvent :: (PrintEvent event) => P.Int -> TraceEvent event -> P.String
+renderEvent :: (PrintEvent event) => Int -> TraceEvent event -> String
 renderEvent ix (TraceEvent event audit) =
-  padLeft 3 (P.show ix)
-    P.++ " | "
-    P.++ ansiBold
-    P.++ printEvent event
-    P.++ ansiReset
-    P.++ "\n"
-    P.++ renderAudit audit
-    P.++ "\n"
+  padLeft 3 (show ix)
+    ++ " | "
+    ++ ansiBold
+    ++ printEvent event
+    ++ ansiReset
+    ++ "\n"
+    ++ renderAudit audit
+    ++ "\n"
 
-renderAudit :: Audit acts -> P.String
+renderAudit :: Audit acts -> String
 renderAudit EmptyAudit     = ""
-renderAudit (step :> rest) = renderAuditStep step P.++ renderAudit rest
+renderAudit (step :> rest) = renderAuditStep step ++ renderAudit rest
 
-renderAuditStep :: AuditStep act -> P.String
+renderAuditStep :: AuditStep act -> String
 renderAuditStep (CreateStep snapshot) =
-  renderOneSnapshotStep "create" ansiGreen snapshot
+  renderSnapshotStep1 "create" ansiCreate snapshot
 renderAuditStep (ObserveStep snapshot) =
-  renderOneSnapshotStep "observe" ansiCyan snapshot
+  renderSnapshotStep1 "observe" ansiObserve snapshot
 renderAuditStep (InspectStep snapshot) =
-  renderOneSnapshotStep "inspect" ansiBrightCyan snapshot
-renderAuditStep (UseStep snapshot) =
-  renderOneSnapshotStep "use" ansiYellow snapshot
+  renderSnapshotStep1 "inspect" ansiInspect snapshot
+renderAuditStep (UseStep snapshot) = renderSnapshotStep1 "use" ansiUse snapshot
 renderAuditStep (CopyStep original copy') =
-  renderTwoSnapshotStep "copy" ansiBlue original copy'
+  renderSnapshotStep2 "copy" ansiCopy original copy'
 renderAuditStep (ReplaceStep old new) =
-  renderTwoSnapshotStep "replace" ansiMagenta old new
+  renderSnapshotStep2 "replace" ansiReplace old new
 renderAuditStep (ComputeStep snapshot) =
-  renderOneSnapshotStep "compute" ansiLime snapshot
+  renderSnapshotStep1 "compute" ansiCompute snapshot
 renderAuditStep (DestroyStep snapshot) =
-  renderOneSnapshotStep "destroy" ansiRed snapshot
+  renderSnapshotStep1 "destroy" ansiDestroy snapshot
+renderAuditStep (SealStep owner child) =
+  renderSnapshotStep2 "seal" ansiSeal owner child
+renderAuditStep (UnsealStep owner child) =
+  renderSnapshotStep2 "unseal" ansiUnseal owner child
 
-renderOneSnapshotStep :: P.String -> P.String -> NodeSnapshot tag -> P.String
-renderOneSnapshotStep name colour snapshot =
-  renderStepName name colour P.++ " " P.++ renderSnapshot snapshot P.++ "\n"
+renderSnapshotStep1 :: String -> String -> NodeSnapshot tag -> String
+renderSnapshotStep1 name colour snapshot =
+  renderStepName name colour ++ " " ++ renderSnapshot snapshot ++ "\n"
 
-renderTwoSnapshotStep ::
-     P.String -> P.String -> NodeSnapshot tag -> NodeSnapshot tag -> P.String
-renderTwoSnapshotStep name colour first second =
+renderSnapshotStep2 ::
+     String -> String -> NodeSnapshot first -> NodeSnapshot second -> String
+renderSnapshotStep2 name colour first second =
   renderStepName name colour
-    P.++ " "
-    P.++ renderSnapshot first
-    P.++ "\n"
-    P.++ renderEmptyStepName
-    P.++ " "
-    P.++ renderSnapshot second
-    P.++ "\n"
+    ++ " "
+    ++ renderSnapshot first
+    ++ "\n"
+    ++ renderEmptyStepName
+    ++ " "
+    ++ renderSnapshot second
+    ++ "\n"
 
-renderSnapshot :: NodeSnapshot tag -> P.String
+renderSnapshot :: NodeSnapshot tag -> String
 renderSnapshot snapshot =
   padRight 6 (renderNodeRef (snapshotRef snapshot))
-    P.++ " "
-    P.++ renderSnapshotPayload snapshot
+    ++ " "
+    ++ renderSnapshotPayload snapshot
 
-renderSnapshotPayload :: NodeSnapshot tag -> P.String
+renderSnapshotPayload :: NodeSnapshot tag -> String
 renderSnapshotPayload (NodeSnapshot _ _ view) = renderPayloadView view
 
 snapshotRef :: NodeSnapshot tag -> NodeRef tag
 snapshotRef (NodeSnapshot ref _ _) = ref
 
-renderNodeRef :: NodeRef tag -> P.String
-renderNodeRef (NodeRef nodeId) = "[N" P.++ P.show nodeId P.++ "]"
+renderNodeRef :: NodeRef tag -> String
+renderNodeRef (NodeRef nodeId) = "[N" ++ show nodeId ++ "]"
 
-renderNodeRefPlain :: NodeRef tag -> P.String
-renderNodeRefPlain (NodeRef nodeId) = "N" P.++ P.show nodeId
+renderNodeRefPlain :: NodeRef tag -> String
+renderNodeRefPlain (NodeRef nodeId) = "N" ++ show nodeId
 
-renderPayloadView :: PayloadView -> P.String
+renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView text) = text
 
-renderStepName :: P.String -> P.String -> P.String
-renderStepName name colour = "    " P.++ colourText colour (padLeft 16 name)
+renderStepName :: String -> String -> String
+renderStepName name colour = "    " ++ colourText colour (padLeft 16 name)
 
-renderEmptyStepName :: P.String
-renderEmptyStepName = "    " P.++ padLeft 16 ""
+renderEmptyStepName :: String
+renderEmptyStepName = "    " ++ padLeft 16 ""
 
-renderHeader :: P.String -> P.String
-renderHeader title =
-  title P.++ "\n" P.++ P.replicate (P.length title) '-' P.++ "\n"
+renderHeader :: String -> String
+renderHeader title = title ++ "\n" ++ replicate (length title) '-' ++ "\n"
 
-padRight :: P.Int -> P.String -> P.String
-padRight n s = s P.++ P.replicate (P.max 0 (n P.- P.length s)) ' '
+padRight :: Int -> String -> String
+padRight n s = s ++ replicate (max 0 (n - length s)) ' '
 
-padLeft :: P.Int -> P.String -> P.String
-padLeft n s = P.replicate (P.max 0 (n P.- P.length s)) ' ' P.++ s
+padLeft :: Int -> String -> String
+padLeft n s = replicate (max 0 (n - length s)) ' ' ++ s
 
-colourText :: P.String -> P.String -> P.String
-colourText colour text = colour P.++ text P.++ ansiReset
+colourText :: String -> String -> String
+colourText colour text = colour ++ text ++ ansiReset
 
-ansiReset :: P.String
+ansiReset :: String
 ansiReset = "\ESC[0m"
 
-ansiBold :: P.String
+ansiBold :: String
 ansiBold = "\ESC[1m"
 
-ansiGreen :: P.String
-ansiGreen = "\ESC[32m"
+ansi256Fg :: Int -> String
+ansi256Fg n = "\ESC[38;5;" ++ show n ++ "m"
 
-ansiCyan :: P.String
-ansiCyan = "\ESC[36m"
+ansiCreate :: String
+ansiCreate = ansi256Fg 82 -- green
 
-ansiBrightCyan :: P.String
-ansiBrightCyan = "\ESC[96m"
+ansiObserve :: String
+ansiObserve = ansi256Fg 51 -- cyan
 
-ansiYellow :: P.String
-ansiYellow = "\ESC[33m"
+ansiInspect :: String
+ansiInspect = ansi256Fg 123 -- pale cyan
 
-ansiBlue :: P.String
-ansiBlue = "\ESC[34m"
+ansiUse :: String
+ansiUse = ansi256Fg 220 -- yellow
 
-ansiMagenta :: P.String
-ansiMagenta = "\ESC[35m"
+ansiCopy :: String
+ansiCopy = ansi256Fg 75 -- blue
 
-ansiLime :: P.String
-ansiLime = "\ESC[92m"
+ansiReplace :: String
+ansiReplace = ansi256Fg 171 -- purple
 
-ansiRed :: P.String
-ansiRed = "\ESC[31m"
+ansiCompute :: String
+ansiCompute = ansi256Fg 118 -- lime
+
+ansiDestroy :: String
+ansiDestroy = ansi256Fg 196 -- red
+
+ansiSeal :: String
+ansiSeal = ansi256Fg 213 -- pink
+
+ansiUnseal :: String
+ansiUnseal = ansi256Fg 208 -- orange

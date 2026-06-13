@@ -64,9 +64,20 @@ double = LDouble
 data Event acts where
   Literal :: Event '[ Create (Value ty)]
   Operator :: Event '[ Create (Op op lhs rhs out)]
-  DeclareVar :: Event '[ Create (Var ty), Create (Value ty)]
-  ReadVar :: Event '[ Observe (Var ty), Copy (Value ty)]
-  WriteVar :: Event '[ Observe (Var ty), Replace (Value ty)]
+  DeclareVar
+    :: Event '[ Create (Var ty), Create (Value ty), Seal (Var ty) (Value ty)]
+  ReadVar
+    :: Event
+         '[ Unseal (Var ty) (Value ty)
+          , Copy (Value ty)
+          , Seal (Var ty) (Value ty)
+          ]
+  WriteVar
+    :: Event
+         '[ Unseal (Var ty) (Value ty)
+          , Replace (Value ty)
+          , Seal (Var ty) (Value ty)
+          ]
   Eval
     :: Event
          '[ Use (Value lhs)
@@ -74,13 +85,15 @@ data Event acts where
           , Use (Value rhs)
           , Compute (Value out)
           ]
-  DiscardVar :: Event '[ Destroy (Var ty), Destroy (Value ty)]
+  DiscardVar
+    :: Event
+         '[ Unseal (Var ty) (Value ty), Destroy (Var ty), Destroy (Value ty)]
   DiscardValue :: Event '[ Destroy (Value ty)]
 
 type Builder a = TraceBuilder Event a
 
 data VarNode ty where
-  VarNode :: Node (Var ty) %1 -> Node (Value ty) %1 -> VarNode ty
+  VarNode :: Node (Var ty) %1 -> Slot (Var ty) (Value ty) %1 -> VarNode ty
 
 declare ::
      forall ty. TracePayload (Value ty)
@@ -90,35 +103,39 @@ declare ::
 declare name initial = do
   Created valueNode createValue <- create initial
   Created varNode createVar <- create (LString name :: Payload (Var ty))
-  DeclareVar `explain` (createVar :~ createValue :~ Done)
-  return (VarNode varNode valueNode)
+  Sealed varNode' valueSlot sealValue <- seal varNode valueNode
+  DeclareVar `explain` (createVar :~ createValue :~ sealValue :~ Done)
+  return (VarNode varNode' valueSlot)
 
 readVar ::
      TracePayload (Value ty)
   => VarNode ty
      %1 -> Builder (VarNode ty, Node (Value ty))
-readVar (VarNode var held) = do
-  Observed var' observeVar <- observe var
+readVar (VarNode var valueSlot) = do
+  Unsealed var1 held unsealValue <- unseal var valueSlot
   Copied held' copyNode copyHeld <- copy held
-  ReadVar `explain` (observeVar :~ copyHeld :~ Done)
-  return (VarNode var' held', copyNode)
+  Sealed var2 valueSlot' sealValue <- seal var1 held'
+  ReadVar `explain` (unsealValue :~ copyHeld :~ sealValue :~ Done)
+  return (VarNode var2 valueSlot', copyNode)
 
 writeVar ::
      TracePayload (Value ty)
   => VarNode ty
      %1 -> Node (Value ty)
      %1 -> Builder (VarNode ty)
-writeVar (VarNode var oldHeld) newValue = do
-  Observed var' observeVar <- observe var
+writeVar (VarNode var valueSlot) newValue = do
+  Unsealed var1 oldHeld unsealValue <- unseal var valueSlot
   Replaced newHeld replaceHeld <- replace oldHeld newValue
-  WriteVar `explain` (observeVar :~ replaceHeld :~ Done)
-  return (VarNode var' newHeld)
+  Sealed var2 valueSlot' sealValue <- seal var1 newHeld
+  WriteVar `explain` (unsealValue :~ replaceHeld :~ sealValue :~ Done)
+  return (VarNode var2 valueSlot')
 
 discardVar :: TracePayload (Value ty) => VarNode ty %1 -> Builder ()
-discardVar (VarNode var held) = do
-  Destroyed destroyVar <- destroy var
+discardVar (VarNode var valueSlot) = do
+  Unsealed var1 held unsealValue <- unseal var valueSlot
+  Destroyed destroyVar <- destroy var1
   Destroyed destroyHeld <- destroy held
-  DiscardVar `explain` (destroyVar :~ destroyHeld :~ Done)
+  DiscardVar `explain` (unsealValue :~ destroyVar :~ destroyHeld :~ Done)
 
 class ( TracePayload (Value lhs)
       , TracePayload (Op op lhs rhs out)
