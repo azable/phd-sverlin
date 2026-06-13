@@ -20,6 +20,7 @@ module LinearTrace.Core
   , Action
   , type Create
   , type Observe
+  , type Inspect
   , type Use
   , type Copy
   , type Replace
@@ -28,6 +29,7 @@ module LinearTrace.Core
   , -- * Primitive operations
     create
   , observe
+  , inspect
   , use
   , copy
   , replace
@@ -39,6 +41,7 @@ module LinearTrace.Core
   , OwedList(..)
   , Created(..)
   , Observed(..)
+  , Inspected(..)
   , Used(..)
   , Copied(..)
   , Replaced(..)
@@ -115,6 +118,7 @@ data NodeRecord where
 data ActionKind
   = ActionCreate
   | ActionObserve
+  | ActionInspect
   | ActionUse
   | ActionCopy
   | ActionReplace
@@ -126,6 +130,8 @@ data Action (kind :: ActionKind) tag
 type Create tag = Action 'ActionCreate tag
 
 type Observe tag = Action 'ActionObserve tag
+
+type Inspect tag = Action 'ActionInspect tag
 
 type Use tag = Action 'ActionUse tag
 
@@ -142,6 +148,13 @@ data Created tag where
 
 data Observed tag where
   Observed :: Node tag %1 -> Owed (Observe tag) %1 -> Observed tag
+
+data Inspected tag where
+  Inspected
+    :: Node tag
+       %1 -> OneUse (Payload tag)
+       %1 -> Owed (Inspect tag)
+       %1 -> Inspected tag
 
 data Used tag where
   Used :: OneUse (Payload tag) %1 -> Owed (Use tag) %1 -> Used tag
@@ -161,6 +174,7 @@ data Destroyed tag where
 data TraceStep act where
   CreateStep :: NodeSnapshot tag -> TraceStep (Create tag)
   ObserveStep :: NodeSnapshot tag -> TraceStep (Observe tag)
+  InspectStep :: NodeSnapshot tag -> TraceStep (Inspect tag)
   UseStep :: NodeSnapshot tag -> TraceStep (Use tag)
   CopyStep :: NodeSnapshot tag -> NodeSnapshot tag -> TraceStep (Copy tag)
   ReplaceStep :: NodeSnapshot tag -> NodeSnapshot tag -> TraceStep (Replace tag)
@@ -311,6 +325,18 @@ observe (Node (Ur nodeId) (Ur payload)) = do
     (Observed
        (Node (Ur nodeId) (Ur payload))
        (makeStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
+
+inspect ::
+     forall desc tag. TracePayload tag
+  => Node tag
+     %1 -> TraceBuilder desc (Inspected tag)
+inspect (Node (Ur nodeId) (Ur payload)) = do
+  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+  return
+    (Inspected
+       (Node (Ur nodeId) (Ur payload))
+       (OneUse payload)
+       (makeStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
 
 use ::
      forall desc tag. TracePayload tag

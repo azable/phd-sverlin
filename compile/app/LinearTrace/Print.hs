@@ -76,6 +76,8 @@ renderStep (CreateStep snapshot) =
   renderOneSnapshotStep "create" ansiGreen snapshot
 renderStep (ObserveStep snapshot) =
   renderOneSnapshotStep "observe" ansiCyan snapshot
+renderStep (InspectStep snapshot) =
+  renderOneSnapshotStep "inspect" ansiBrightCyan snapshot
 renderStep (UseStep snapshot) = renderOneSnapshotStep "use" ansiYellow snapshot
 renderStep (CopyStep original copy') =
   renderTwoSnapshotStep "copy" ansiBlue original copy'
@@ -145,11 +147,17 @@ colourText colour text = colour P.++ text P.++ ansiReset
 ansiReset :: P.String
 ansiReset = "\ESC[0m"
 
+ansiBold :: P.String
+ansiBold = "\ESC[1m"
+
 ansiGreen :: P.String
 ansiGreen = "\ESC[32m"
 
 ansiCyan :: P.String
 ansiCyan = "\ESC[36m"
+
+ansiBrightCyan :: P.String
+ansiBrightCyan = "\ESC[96m"
 
 ansiYellow :: P.String
 ansiYellow = "\ESC[33m"
@@ -165,6 +173,3 @@ ansiLime = "\ESC[92m"
 
 ansiRed :: P.String
 ansiRed = "\ESC[31m"
-
-ansiBold :: P.String
-ansiBold = "\ESC[1m"
