@@ -12,6 +12,7 @@
 module NodeBase
   ( G
   , GBuilder
+  , N
   , Payload
   , -- Action vocabulary
     Action
@@ -41,19 +42,6 @@ module NodeBase
   , Computed(..)
   , Destroyed(..)
   , explain
-  , -- Trace operations
-    TraceAction
-  , TraceOp
-  , SomeTraceOp
-  , traceActionName
-  , -- Graph/event data
-    NId
-  , N
-  , NRef
-  , Event
-  , Observation
-  , Some
-  , SomeObservation
   , (<$>)
   , (<*>)
   , -- Graph building and rendering
