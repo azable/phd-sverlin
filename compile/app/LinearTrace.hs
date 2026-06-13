@@ -39,7 +39,7 @@ module LinearTrace
   , -- * Graph building and rendering
     TracePayload(..)
   , PayloadView(..)
-  , PrintDesc(..)
+  , PrintEvent(..)
   , buildGraph
   , printGraph
   , printTrace

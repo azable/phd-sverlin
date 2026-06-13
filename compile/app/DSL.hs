@@ -49,23 +49,23 @@ type instance Payload (Op lhs rhs out) = Op lhs rhs out
 
 type instance Payload (Var ty) = Var ty
 
-data Desc acts where
-  DLiteral :: Desc '[ Create (Value ty)]
-  DOperator :: Desc '[ Create (Op lhs rhs out)]
-  DDeclareVar :: Desc '[ Create (Var ty), Create (Value ty)]
-  DReadVar :: Desc '[ Observe (Var ty), Copy (Value ty)]
-  DWriteVar :: Desc '[ Observe (Var ty), Replace (Value ty)]
-  DEval
-    :: Desc
+data Event acts where
+  Literal :: Event '[ Create (Value ty)]
+  Operator :: Event '[ Create (Op lhs rhs out)]
+  DeclareVar :: Event '[ Create (Var ty), Create (Value ty)]
+  ReadVar :: Event '[ Observe (Var ty), Copy (Value ty)]
+  WriteVar :: Event '[ Observe (Var ty), Replace (Value ty)]
+  Eval
+    :: Event
          '[ Use (Value lhs)
           , Use (Op lhs rhs out)
           , Use (Value rhs)
           , Compute (Value out)
           ]
-  DDiscardVar :: Desc '[ Destroy (Var ty), Destroy (Value ty)]
-  DDiscardValue :: Desc '[ Destroy (Value ty)]
+  DiscardVar :: Event '[ Destroy (Var ty), Destroy (Value ty)]
+  DiscardValue :: Event '[ Destroy (Value ty)]
 
-type Builder a = TraceBuilder Desc a
+type Builder a = TraceBuilder Event a
 
 data VarNode ty where
   VarNode :: Node (Var ty) %1 -> Node (Value ty) %1 -> VarNode ty
@@ -74,28 +74,28 @@ declare :: String -> Value ty %1 -> Builder (VarNode ty)
 declare name initial = do
   Created valueNode createValue <- create initial
   Created varNode createVar <- create (Var name)
-  DDeclareVar `explain` (createVar :~ createValue :~ PaidDebt)
+  DeclareVar `explain` (createVar :~ createValue :~ PaidDebt)
   return (VarNode varNode valueNode)
 
 readVar :: VarNode ty %1 -> Builder (VarNode ty, Node (Value ty))
 readVar (VarNode var held) = do
   Observed var' observeVar <- observe var
   Copied held' copyNode copyHeld <- copy held
-  DReadVar `explain` (observeVar :~ copyHeld :~ PaidDebt)
+  ReadVar `explain` (observeVar :~ copyHeld :~ PaidDebt)
   return (VarNode var' held', copyNode)
 
 writeVar :: VarNode ty %1 -> Node (Value ty) %1 -> Builder (VarNode ty)
 writeVar (VarNode var oldHeld) newValue = do
   Observed var' observeVar <- observe var
   Replaced newHeld replaceHeld <- replace oldHeld newValue
-  DWriteVar `explain` (observeVar :~ replaceHeld :~ PaidDebt)
+  WriteVar `explain` (observeVar :~ replaceHeld :~ PaidDebt)
   return (VarNode var' newHeld)
 
 discardVar :: VarNode ty %1 -> Builder ()
 discardVar (VarNode var held) = do
   Destroyed destroyVar <- destroy var
   Destroyed destroyHeld <- destroy held
-  DDiscardVar `explain` (destroyVar :~ destroyHeld :~ PaidDebt)
+  DiscardVar `explain` (destroyVar :~ destroyHeld :~ PaidDebt)
 
 eval :: Value lhs %1 -> Op lhs rhs out %1 -> Value rhs %1 -> Value out
 eval (I32 x) AddI (I32 y) = I32 (x + y)
@@ -112,19 +112,19 @@ e lhsNode opNode rhsNode = do
   Used op useOp <- use opNode
   Used rhs useRhs <- use rhsNode
   Computed outNode computeOut <- compute (eval <$> lhs <*> op <*> rhs)
-  DEval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ PaidDebt)
+  Eval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ PaidDebt)
   return outNode
 
 literal :: Value ty %1 -> Builder (Node (Value ty))
 literal val = do
   Created node createVal <- create val
-  DLiteral `explain` (createVal :~ PaidDebt)
+  Literal `explain` (createVal :~ PaidDebt)
   return node
 
 operator :: Op lhs rhs out %1 -> Builder (Node (Op lhs rhs out))
 operator op = do
   Created node createOp <- create op
-  DOperator `explain` (createOp :~ PaidDebt)
+  Operator `explain` (createOp :~ PaidDebt)
   return node
 
 (.+.) ::
@@ -173,7 +173,7 @@ example = do
       discardVar aN
       discardVar bN
 
-run :: Builder () -> TraceGraph Desc
+run :: Builder () -> TraceGraph Event
 run = buildGraph
 
 -- Rendering logic
@@ -196,12 +196,12 @@ instance TracePayload (Op lhs rhs out) where
 instance TracePayload (Var ty) where
   payloadView _ (Var name) = PayloadView (padRightF "Var" P.++ name)
 
-instance PrintDesc Desc where
-  printDesc DLiteral      = "Literal"
-  printDesc DOperator     = "Operator"
-  printDesc DDeclareVar   = "DeclareVar"
-  printDesc DReadVar      = "ReadVar"
-  printDesc DWriteVar     = "WriteVar"
-  printDesc DEval         = "Eval"
-  printDesc DDiscardVar   = "DiscardVar"
-  printDesc DDiscardValue = "DiscardValue"
+instance PrintEvent Event where
+  printEvent Literal      = "Literal"
+  printEvent Operator     = "Operator"
+  printEvent DeclareVar   = "DeclareVar"
+  printEvent ReadVar      = "ReadVar"
+  printEvent WriteVar     = "WriteVar"
+  printEvent Eval         = "Eval"
+  printEvent DiscardVar   = "DiscardVar"
+  printEvent DiscardValue = "DiscardValue"

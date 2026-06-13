@@ -1,7 +1,7 @@
 {-# LANGUAGE GADTs #-}
 
 module LinearTrace.Print
-  ( PrintDesc(..)
+  ( PrintEvent(..)
   , renderGraph
   , renderTrace
   , printGraph
@@ -11,16 +11,16 @@ module LinearTrace.Print
 import           LinearTrace.Core
 import qualified Prelude          as P
 
-class PrintDesc desc where
-  printDesc :: desc acts -> P.String
+class PrintEvent event where
+  printEvent :: event acts -> P.String
 
-printGraph :: (PrintDesc desc) => TraceGraph desc -> P.IO ()
+printGraph :: (PrintEvent event) => TraceGraph event -> P.IO ()
 printGraph graph = P.putStr (renderGraph graph)
 
-printTrace :: (PrintDesc desc) => TraceGraph desc -> P.IO ()
+printTrace :: (PrintEvent event) => TraceGraph event -> P.IO ()
 printTrace graph = P.putStr (renderTrace graph)
 
-renderGraph :: (PrintDesc desc) => TraceGraph desc -> P.String
+renderGraph :: (PrintEvent event) => TraceGraph event -> P.String
 renderGraph (TraceGraph nodes events) =
   renderHeader "Graph"
     P.++ renderSummary nodes events
@@ -29,10 +29,10 @@ renderGraph (TraceGraph nodes events) =
     P.++ "\n"
     P.++ renderEvents events
 
-renderTrace :: (PrintDesc desc) => TraceGraph desc -> P.String
+renderTrace :: (PrintEvent event) => TraceGraph event -> P.String
 renderTrace (TraceGraph _ events) = renderEvents events
 
-renderSummary :: [NodeRecord] -> [Event desc] -> P.String
+renderSummary :: [NodeRecord] -> [TraceEvent event] -> P.String
 renderSummary nodes events =
   "Nodes:  "
     P.++ P.show (P.length nodes)
@@ -51,17 +51,16 @@ renderNode (NodeRecord snapshot) =
     P.++ renderSnapshotPayload snapshot
     P.++ "\n"
 
-renderEvents :: (PrintDesc desc) => [Event desc] -> P.String
+renderEvents :: (PrintEvent event) => [TraceEvent event] -> P.String
 renderEvents events =
-  renderHeader "Trace"
-    P.++ P.concat (P.zipWith renderEvent (P.enumFrom (0 :: P.Int)) events)
+  renderHeader "Events" P.++ P.concat (P.zipWith renderEvent [0 ..] events)
 
-renderEvent :: (PrintDesc desc) => P.Int -> Event desc -> P.String
-renderEvent ix (Event desc trace) =
+renderEvent :: (PrintEvent event) => P.Int -> TraceEvent event -> P.String
+renderEvent ix (TraceEvent event trace) =
   padLeft 3 (P.show ix)
     P.++ " | "
     P.++ ansiBold
-    P.++ printDesc desc
+    P.++ printEvent event
     P.++ ansiReset
     P.++ "\n"
     P.++ renderSteps trace
