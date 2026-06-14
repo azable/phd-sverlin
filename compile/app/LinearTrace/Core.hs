@@ -14,7 +14,7 @@ module LinearTrace.Core
   ( -- * Core public API data
     TraceGraph(..)
   , TraceBuilder
-  , Node
+  , Block
   , Slot
   , Payload
   , PayloadView(..)
@@ -70,10 +70,10 @@ module LinearTrace.Core
   , (<$>)
   , (<*>)
   , -- * Public graph/event data
-    NodeId
-  , NodeRef(..)
-  , NodeSnapshot(..)
-  , NodeRecord(..)
+    BlockId
+  , BlockRef(..)
+  , BlockSnapshot(..)
+  , BlockRecord(..)
   , TraceEvent(..)
   , -- * Public audit data
     AuditStep(..)
@@ -93,7 +93,7 @@ infixl 4 <$>
 infixl 4 <*>
 infixr 5 :~
 infixr 5 :>
-type NodeId = Int
+type BlockId = Int
 
 type family Payload tag = payload | payload -> tag
 
@@ -145,24 +145,25 @@ f <$> OneUse x = OneUse (f x)
 (<*>) :: OneUse (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
 OneUse f <*> OneUse x = OneUse (f x)
 
-data NodeRef tag where
-  NodeRef :: NodeId -> NodeRef tag
+data BlockRef tag where
+  BlockRef :: BlockId -> BlockRef tag
 
-data Node tag where
-  Node :: Ur NodeId %1 -> Ur (Payload tag) %1 -> Node tag
+data Block tag where
+  Block :: Ur BlockId %1 -> Ur (Payload tag) %1 -> Block tag
 
--- | A sealed node of type @tag@ owned by an owner type @owner@.
+-- | A sealed block of type @tag@ owned by an owner type @owner@.
 --
 -- The constructor is intentionally not exported. Users can hold slots, but
--- cannot extract the hidden node except through 'unseal'.
+-- cannot extract the hidden block except through 'unseal'.
 data Slot owner tag where
-  Slot :: Node tag %1 -> Slot owner tag
+  Slot :: Block tag %1 -> Slot owner tag
 
-data NodeSnapshot tag where
-  NodeSnapshot :: NodeRef tag -> Payload tag -> PayloadView -> NodeSnapshot tag
+data BlockSnapshot tag where
+  BlockSnapshot
+    :: BlockRef tag -> Payload tag -> PayloadView -> BlockSnapshot tag
 
-data NodeRecord where
-  NodeRecord :: NodeSnapshot tag -> NodeRecord
+data BlockRecord where
+  BlockRecord :: BlockSnapshot tag -> BlockRecord
 
 data ActionKind
   = ActionCreate
@@ -206,14 +207,14 @@ type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
 type Decide tag = Action 'ActionDecide tag
 
 data Created tag where
-  Created :: Node tag %1 -> Evidence (Create tag) %1 -> Created tag
+  Created :: Block tag %1 -> Evidence (Create tag) %1 -> Created tag
 
 data Observed tag where
-  Observed :: Node tag %1 -> Evidence (Observe tag) %1 -> Observed tag
+  Observed :: Block tag %1 -> Evidence (Observe tag) %1 -> Observed tag
 
 data Inspected tag where
   Inspected
-    :: Node tag
+    :: Block tag
        %1 -> OneUse (Payload tag)
        %1 -> Evidence (Inspect tag)
        %1 -> Inspected tag
@@ -222,28 +223,28 @@ data Used tag where
   Used :: OneUse (Payload tag) %1 -> Evidence (Use tag) %1 -> Used tag
 
 data Copied tag where
-  Copied :: Node tag %1 -> Node tag %1 -> Evidence (Copy tag) %1 -> Copied tag
+  Copied :: Block tag %1 -> Block tag %1 -> Evidence (Copy tag) %1 -> Copied tag
 
 data Replaced tag where
-  Replaced :: Node tag %1 -> Evidence (Replace tag) %1 -> Replaced tag
+  Replaced :: Block tag %1 -> Evidence (Replace tag) %1 -> Replaced tag
 
 data Computed tag where
-  Computed :: Node tag %1 -> Evidence (Compute tag) %1 -> Computed tag
+  Computed :: Block tag %1 -> Evidence (Compute tag) %1 -> Computed tag
 
 data Destroyed tag where
   Destroyed :: Evidence (Destroy tag) %1 -> Destroyed tag
 
 data Sealed owner tag where
   Sealed
-    :: Node owner
+    :: Block owner
        %1 -> Slot owner tag
        %1 -> Evidence (Seal owner tag)
        %1 -> Sealed owner tag
 
 data Unsealed owner tag where
   Unsealed
-    :: Node owner
-       %1 -> Node tag
+    :: Block owner
+       %1 -> Block tag
        %1 -> Evidence (Unseal owner tag)
        %1 -> Unsealed owner tag
 
@@ -252,19 +253,20 @@ data Decided tag where
   DecidedFalse :: Evidence (Decide tag) %1 -> Decided tag
 
 data AuditStep act where
-  CreateStep :: NodeSnapshot tag -> AuditStep (Create tag)
-  ObserveStep :: NodeSnapshot tag -> AuditStep (Observe tag)
-  InspectStep :: NodeSnapshot tag -> AuditStep (Inspect tag)
-  UseStep :: NodeSnapshot tag -> AuditStep (Use tag)
-  CopyStep :: NodeSnapshot tag -> NodeSnapshot tag -> AuditStep (Copy tag)
-  ReplaceStep :: NodeSnapshot tag -> NodeSnapshot tag -> AuditStep (Replace tag)
-  ComputeStep :: NodeSnapshot tag -> AuditStep (Compute tag)
-  DestroyStep :: NodeSnapshot tag -> AuditStep (Destroy tag)
+  CreateStep :: BlockSnapshot tag -> AuditStep (Create tag)
+  ObserveStep :: BlockSnapshot tag -> AuditStep (Observe tag)
+  InspectStep :: BlockSnapshot tag -> AuditStep (Inspect tag)
+  UseStep :: BlockSnapshot tag -> AuditStep (Use tag)
+  CopyStep :: BlockSnapshot tag -> BlockSnapshot tag -> AuditStep (Copy tag)
+  ReplaceStep
+    :: BlockSnapshot tag -> BlockSnapshot tag -> AuditStep (Replace tag)
+  ComputeStep :: BlockSnapshot tag -> AuditStep (Compute tag)
+  DestroyStep :: BlockSnapshot tag -> AuditStep (Destroy tag)
   SealStep
-    :: NodeSnapshot owner -> NodeSnapshot tag -> AuditStep (Seal owner tag)
+    :: BlockSnapshot owner -> BlockSnapshot tag -> AuditStep (Seal owner tag)
   UnsealStep
-    :: NodeSnapshot owner -> NodeSnapshot tag -> AuditStep (Unseal owner tag)
-  DecideStep :: NodeSnapshot tag -> AuditStep (Decide tag)
+    :: BlockSnapshot owner -> BlockSnapshot tag -> AuditStep (Unseal owner tag)
+  DecideStep :: BlockSnapshot tag -> AuditStep (Decide tag)
 
 data Audit acts where
   EmptyAudit :: Audit '[]
@@ -281,48 +283,48 @@ data TraceEvent (event :: [Type] -> Type) where
   TraceEvent :: event acts -> Audit acts -> TraceEvent event
 
 data TraceGraph (event :: [Type] -> Type) =
-  TraceGraph [NodeRecord] [TraceEvent event]
+  TraceGraph [BlockRecord] [TraceEvent event]
 
 data TraceBuilderState (event :: [Type] -> Type) = TraceBuilderState
-  { _nextId :: Ur NodeId
-  , _nodes  :: Ur [NodeRecord]
-  , _events :: Ur [TraceEvent event]
+  { _nextBlockId :: Ur BlockId
+  , _blocks      :: Ur [BlockRecord]
+  , _events      :: Ur [TraceEvent event]
   }
 
 instance Consumable (TraceBuilderState event) where
-  consume (TraceBuilderState next ns es) =
-    consume next `lseq` consume ns `lseq` consume es
+  consume (TraceBuilderState next blocks events) =
+    consume next `lseq` consume blocks `lseq` consume events
 
 instance Dupable (TraceBuilderState event) where
-  dup2 (TraceBuilderState next ns es) =
+  dup2 (TraceBuilderState next blocks events) =
     case dup2 next of
       (next1, next2) ->
-        case dup2 ns of
-          (ns1, ns2) ->
-            case dup2 es of
-              (es1, es2) ->
-                ( TraceBuilderState next1 ns1 es1
-                , TraceBuilderState next2 ns2 es2)
+        case dup2 blocks of
+          (blocks1, blocks2) ->
+            case dup2 events of
+              (events1, events2) ->
+                ( TraceBuilderState next1 blocks1 events1
+                , TraceBuilderState next2 blocks2 events2)
 
 type TraceBuilder event a = State (TraceBuilderState event) a
 
-makeNodeRef :: Proxy tag -> NodeId -> NodeRef tag
-makeNodeRef _ = NodeRef
+makeBlockRef :: Proxy tag -> BlockId -> BlockRef tag
+makeBlockRef _ = BlockRef
 
 makeSnapshot ::
      forall tag. TracePayload tag
   => Proxy tag
-  -> NodeRef tag
+  -> BlockRef tag
   -> Payload tag
-  -> NodeSnapshot tag
+  -> BlockSnapshot tag
 makeSnapshot tagProxy ref payload =
-  NodeSnapshot ref payload (payloadView tagProxy payload)
+  BlockSnapshot ref payload (payloadView tagProxy payload)
 
 makeAuditStep1 ::
      TracePayload tag
-  => (NodeSnapshot tag -> AuditStep act)
+  => (BlockSnapshot tag -> AuditStep act)
   -> Proxy tag
-  -> NodeRef tag
+  -> BlockRef tag
   -> Payload tag
   -> Evidence act
 makeAuditStep1 ctor tagProxy ref payload =
@@ -330,11 +332,11 @@ makeAuditStep1 ctor tagProxy ref payload =
 
 makeAuditStep2 ::
      TracePayload tag
-  => (NodeSnapshot tag -> NodeSnapshot tag -> AuditStep act)
+  => (BlockSnapshot tag -> BlockSnapshot tag -> AuditStep act)
   -> Proxy tag
-  -> NodeRef tag
+  -> BlockRef tag
   -> Payload tag
-  -> NodeRef tag
+  -> BlockRef tag
   -> Payload tag
   -> Evidence act
 makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
@@ -346,12 +348,12 @@ makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
 
 makeAuditStep2Hetero ::
      (TracePayload left, TracePayload right)
-  => (NodeSnapshot left -> NodeSnapshot right -> AuditStep act)
+  => (BlockSnapshot left -> BlockSnapshot right -> AuditStep act)
   -> Proxy left
-  -> NodeRef left
+  -> BlockRef left
   -> Payload left
   -> Proxy right
-  -> NodeRef right
+  -> BlockRef right
   -> Payload right
   -> Evidence act
 makeAuditStep2Hetero ctor leftProxy leftRef leftPayload rightProxy rightRef rightPayload =
@@ -375,30 +377,30 @@ evidenceListToAudit (evidence :~ rest) =
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
-allocateNode ::
+allocateBlock ::
      forall event tag. TracePayload tag
   => Proxy tag
   -> Payload tag
-     %1 -> TraceBuilder event (Ur NodeId, Ur (Payload tag))
-allocateNode tagProxy payload0 =
+     %1 -> TraceBuilder event (Ur BlockId, Ur (Payload tag))
+allocateBlock tagProxy payload0 =
   case unsafeUr payload0 of
     Ur payload -> do
-      TraceBuilderState (Ur oldNextId) (Ur oldNodes) oldEvents <- get
-      let nodeId = oldNextId
-      let ref' = makeNodeRef tagProxy nodeId
+      TraceBuilderState (Ur oldNextBlockId) (Ur oldBlocks) oldEvents <- get
+      let blockId = oldNextBlockId
+      let ref' = makeBlockRef tagProxy blockId
       let snapshot = makeSnapshot tagProxy ref' payload
-      let nodeRecord = NodeRecord snapshot
+      let blockRecord = BlockRecord snapshot
       put
         (TraceBuilderState
-           (Ur (nodeId + 1))
-           (Ur (oldNodes P.++ [nodeRecord]))
+           (Ur (blockId + 1))
+           (Ur (oldBlocks P.++ [blockRecord]))
            oldEvents)
-      return (Ur nodeId, Ur payload)
+      return (Ur blockId, Ur payload)
 
 emitEvent :: TraceEvent event -> TraceBuilder event ()
 emitEvent event = do
-  TraceBuilderState oldNext oldNodes (Ur oldEvents) <- get
-  put (TraceBuilderState oldNext oldNodes (Ur (oldEvents P.++ [event])))
+  TraceBuilderState oldNext oldBlocks (Ur oldEvents) <- get
+  put (TraceBuilderState oldNext oldBlocks (Ur (oldEvents P.++ [event])))
 
 explain :: event acts -> EvidenceList acts %1 -> TraceBuilder event ()
 explain event evidenceList =
@@ -410,42 +412,42 @@ create ::
   => Payload tag
      %1 -> TraceBuilder event (Created tag)
 create payload0 = do
-  (Ur nodeId, Ur payload) <- allocateNode (Proxy :: Proxy tag) payload0
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+  (Ur blockId, Ur payload) <- allocateBlock (Proxy :: Proxy tag) payload0
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Created
-       (Node (Ur nodeId) (Ur payload))
+       (Block (Ur blockId) (Ur payload))
        (makeAuditStep1 CreateStep (Proxy :: Proxy tag) ref' payload))
 
 observe ::
      forall event tag. TracePayload tag
-  => Node tag
+  => Block tag
      %1 -> TraceBuilder event (Observed tag)
-observe (Node (Ur nodeId) (Ur payload)) = do
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+observe (Block (Ur blockId) (Ur payload)) = do
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Observed
-       (Node (Ur nodeId) (Ur payload))
+       (Block (Ur blockId) (Ur payload))
        (makeAuditStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
 
 inspect ::
      forall event tag. TracePayload tag
-  => Node tag
+  => Block tag
      %1 -> TraceBuilder event (Inspected tag)
-inspect (Node (Ur nodeId) (Ur payload)) = do
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+inspect (Block (Ur blockId) (Ur payload)) = do
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Inspected
-       (Node (Ur nodeId) (Ur payload))
+       (Block (Ur blockId) (Ur payload))
        (OneUse payload)
        (makeAuditStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
 
 use ::
      forall event tag. TracePayload tag
-  => Node tag
+  => Block tag
      %1 -> TraceBuilder event (Used tag)
-use (Node (Ur nodeId) (Ur payload)) = do
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+use (Block (Ur blockId) (Ur payload)) = do
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Used
        (OneUse payload)
@@ -453,16 +455,16 @@ use (Node (Ur nodeId) (Ur payload)) = do
 
 copy ::
      forall event tag. TracePayload tag
-  => Node tag
+  => Block tag
      %1 -> TraceBuilder event (Copied tag)
-copy (Node (Ur originalId) (Ur payload)) = do
-  (Ur copyId, Ur copiedPayload) <- allocateNode (Proxy :: Proxy tag) payload
-  let originalRef = makeNodeRef (Proxy :: Proxy tag) originalId
-  let copyRef = makeNodeRef (Proxy :: Proxy tag) copyId
+copy (Block (Ur originalId) (Ur payload)) = do
+  (Ur copyId, Ur copiedPayload) <- allocateBlock (Proxy :: Proxy tag) payload
+  let originalRef = makeBlockRef (Proxy :: Proxy tag) originalId
+  let copyRef = makeBlockRef (Proxy :: Proxy tag) copyId
   return
     (Copied
-       (Node (Ur originalId) (Ur payload))
-       (Node (Ur copyId) (Ur copiedPayload))
+       (Block (Ur originalId) (Ur payload))
+       (Block (Ur copyId) (Ur copiedPayload))
        (makeAuditStep2
           CopyStep
           (Proxy :: Proxy tag)
@@ -473,19 +475,19 @@ copy (Node (Ur originalId) (Ur payload)) = do
 
 replace ::
      forall event tag. TracePayload tag
-  => Node tag
-     %1 -> Node tag
+  => Block tag
+     %1 -> Block tag
      %1 -> TraceBuilder event (Replaced tag)
-replace oldNode newNode =
-  case oldNode of
-    Node (Ur oldId) (Ur oldPayload) ->
-      case newNode of
-        Node (Ur newId) (Ur newPayload) -> do
-          let oldRef = makeNodeRef (Proxy :: Proxy tag) oldId
-          let newRef = makeNodeRef (Proxy :: Proxy tag) newId
+replace oldBlock newBlock =
+  case oldBlock of
+    Block (Ur oldId) (Ur oldPayload) ->
+      case newBlock of
+        Block (Ur newId) (Ur newPayload) -> do
+          let oldRef = makeBlockRef (Proxy :: Proxy tag) oldId
+          let newRef = makeBlockRef (Proxy :: Proxy tag) newId
           return
             (Replaced
-               (Node (Ur newId) (Ur newPayload))
+               (Block (Ur newId) (Ur newPayload))
                (makeAuditStep2
                   ReplaceStep
                   (Proxy :: Proxy tag)
@@ -499,38 +501,38 @@ compute ::
   => OneUse (Payload tag)
      %1 -> TraceBuilder event (Computed tag)
 compute (OneUse payload0) = do
-  (Ur nodeId, Ur payload) <- allocateNode (Proxy :: Proxy tag) payload0
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+  (Ur blockId, Ur payload) <- allocateBlock (Proxy :: Proxy tag) payload0
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Computed
-       (Node (Ur nodeId) (Ur payload))
+       (Block (Ur blockId) (Ur payload))
        (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
      forall event tag. TracePayload tag
-  => Node tag
+  => Block tag
      %1 -> TraceBuilder event (Destroyed tag)
-destroy (Node (Ur nodeId) (Ur payload)) = do
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+destroy (Block (Ur blockId) (Ur payload)) = do
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Destroyed (makeAuditStep1 DestroyStep (Proxy :: Proxy tag) ref' payload))
 
 seal ::
      forall event owner tag. (TracePayload owner, TracePayload tag)
-  => Node owner
-     %1 -> Node tag
+  => Block owner
+     %1 -> Block tag
      %1 -> TraceBuilder event (Sealed owner tag)
-seal ownerNode childNode =
-  case ownerNode of
-    Node (Ur ownerId) (Ur ownerPayload) ->
-      case childNode of
-        Node (Ur childId) (Ur childPayload) -> do
-          let ownerRef = makeNodeRef (Proxy :: Proxy owner) ownerId
-          let childRef = makeNodeRef (Proxy :: Proxy tag) childId
+seal ownerBlock childBlock =
+  case ownerBlock of
+    Block (Ur ownerId) (Ur ownerPayload) ->
+      case childBlock of
+        Block (Ur childId) (Ur childPayload) -> do
+          let ownerRef = makeBlockRef (Proxy :: Proxy owner) ownerId
+          let childRef = makeBlockRef (Proxy :: Proxy tag) childId
           return
             (Sealed
-               (Node (Ur ownerId) (Ur ownerPayload))
-               (Slot (Node (Ur childId) (Ur childPayload)))
+               (Block (Ur ownerId) (Ur ownerPayload))
+               (Slot (Block (Ur childId) (Ur childPayload)))
                (makeAuditStep2Hetero
                   SealStep
                   (Proxy :: Proxy owner)
@@ -542,22 +544,22 @@ seal ownerNode childNode =
 
 unseal ::
      forall event owner tag. (TracePayload owner, TracePayload tag)
-  => Node owner
+  => Block owner
      %1 -> Slot owner tag
      %1 -> TraceBuilder event (Unsealed owner tag)
-unseal ownerNode slot =
-  case ownerNode of
-    Node (Ur ownerId) (Ur ownerPayload) ->
+unseal ownerBlock slot =
+  case ownerBlock of
+    Block (Ur ownerId) (Ur ownerPayload) ->
       case slot of
-        Slot childNode ->
-          case childNode of
-            Node (Ur childId) (Ur childPayload) -> do
-              let ownerRef = makeNodeRef (Proxy :: Proxy owner) ownerId
-              let childRef = makeNodeRef (Proxy :: Proxy tag) childId
+        Slot childBlock ->
+          case childBlock of
+            Block (Ur childId) (Ur childPayload) -> do
+              let ownerRef = makeBlockRef (Proxy :: Proxy owner) ownerId
+              let childRef = makeBlockRef (Proxy :: Proxy tag) childId
               return
                 (Unsealed
-                   (Node (Ur ownerId) (Ur ownerPayload))
-                   (Node (Ur childId) (Ur childPayload))
+                   (Block (Ur ownerId) (Ur ownerPayload))
+                   (Block (Ur childId) (Ur childPayload))
                    (makeAuditStep2Hetero
                       UnsealStep
                       (Proxy :: Proxy owner)
@@ -570,10 +572,10 @@ unseal ownerNode slot =
 decide ::
      forall event tag. TracePayload tag
   => (Payload tag %1 -> Bool)
-  -> Node tag
+  -> Block tag
      %1 -> TraceBuilder event (Decided tag)
-decide predicate (Node (Ur nodeId) (Ur payload)) = do
-  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+decide predicate (Block (Ur blockId) (Ur payload)) = do
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   let evidence = makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload
   case predicate payload of
     True  -> return (DecidedTrue evidence)
@@ -583,5 +585,5 @@ buildGraph :: TraceBuilder event () -> TraceGraph event
 buildGraph builder =
   let (_, finalState) =
         runState builder (TraceBuilderState (Ur 0) (Ur []) (Ur []))
-      TraceBuilderState (Ur _) (Ur finalNodes) (Ur finalEvents) = finalState
-   in TraceGraph finalNodes finalEvents
+      TraceBuilderState (Ur _) (Ur finalBlocks) (Ur finalEvents) = finalState
+   in TraceGraph finalBlocks finalEvents

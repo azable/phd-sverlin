@@ -3,7 +3,7 @@
 module LinearTrace
   ( TraceGraph
   , TraceBuilder
-  , Node
+  , Block
   , Slot
   , Payload
   , -- * Trusted linear payloads

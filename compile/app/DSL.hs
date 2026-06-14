@@ -17,9 +17,9 @@ module DSL
   , Value
   , Var
   , Op
-  , VarNode
-  , IntNode
-  , DoubleNode
+  , VarBlock
+  , IntBlock
+  , DoubleBlock
   , IntVar
   , DoubleVar
   , -- * Literals
@@ -82,16 +82,16 @@ type instance Payload (Op op lhs rhs out) = LUnit (Op op lhs rhs out)
 
 type Builder a = TraceBuilder Event a
 
-type IntNode = Node (Value 'TInt)
+type IntBlock = Block (Value 'TInt)
 
-type DoubleNode = Node (Value 'TDouble)
+type DoubleBlock = Block (Value 'TDouble)
 
-type IntVar = VarNode 'TInt
+type IntVar = VarBlock 'TInt
 
-type DoubleVar = VarNode 'TDouble
+type DoubleVar = VarBlock 'TDouble
 
-data VarNode ty where
-  VarNode :: Node (Var ty) %1 -> Slot (Var ty) (Value ty) %1 -> VarNode ty
+data VarBlock ty where
+  VarBlock :: Block (Var ty) %1 -> Slot (Var ty) (Value ty) %1 -> VarBlock ty
 
 --------------------------------------------------------------------------------
 -- Event vocabulary
@@ -137,11 +137,11 @@ double = LDouble
 literal ::
      TracePayload (Value ty)
   => Payload (Value ty)
-     %1 -> Builder (Node (Value ty))
+     %1 -> Builder (Block (Value ty))
 literal payload = do
-  Created node createValue <- create payload
+  Created block createValue <- create payload
   Literal `explain` (createValue :~ Done)
-  return node
+  return block
 
 --------------------------------------------------------------------------------
 -- Variables
@@ -150,39 +150,39 @@ declare ::
      forall ty. TracePayload (Value ty)
   => String
   -> Payload (Value ty)
-     %1 -> Builder (VarNode ty)
+     %1 -> Builder (VarBlock ty)
 declare name initial = do
-  Created valueNode createValue <- create initial
-  Created varNode createVar <- create (LString name :: Payload (Var ty))
-  Sealed varNode' valueSlot sealValue <- seal varNode valueNode
+  Created valueBlock createValue <- create initial
+  Created varBlock createVar <- create (LString name :: Payload (Var ty))
+  Sealed varBlock' valueSlot sealValue <- seal varBlock valueBlock
   DeclareVar `explain` (createValue :~ createVar :~ sealValue :~ Done)
-  return (VarNode varNode' valueSlot)
+  return (VarBlock varBlock' valueSlot)
 
 readVar ::
      TracePayload (Value ty)
-  => VarNode ty
-     %1 -> Builder (VarNode ty, Node (Value ty))
-readVar (VarNode var valueSlot) = do
+  => VarBlock ty
+     %1 -> Builder (VarBlock ty, Block (Value ty))
+readVar (VarBlock var valueSlot) = do
   Unsealed var1 held unsealValue <- unseal var valueSlot
-  Copied held' copyNode copyValue <- copy held
+  Copied held' copyBlock copyValue <- copy held
   Sealed var2 valueSlot' sealValue <- seal var1 held'
   ReadVar `explain` (unsealValue :~ copyValue :~ sealValue :~ Done)
-  return (VarNode var2 valueSlot', copyNode)
+  return (VarBlock var2 valueSlot', copyBlock)
 
 writeVar ::
      TracePayload (Value ty)
-  => VarNode ty
-     %1 -> Node (Value ty)
-     %1 -> Builder (VarNode ty)
-writeVar (VarNode var valueSlot) newValue = do
+  => VarBlock ty
+     %1 -> Block (Value ty)
+     %1 -> Builder (VarBlock ty)
+writeVar (VarBlock var valueSlot) newValue = do
   Unsealed var1 oldValue unsealValue <- unseal var valueSlot
   Replaced currentValue replaceValue <- replace oldValue newValue
   Sealed var2 valueSlot' sealValue <- seal var1 currentValue
   WriteVar `explain` (unsealValue :~ replaceValue :~ sealValue :~ Done)
-  return (VarNode var2 valueSlot')
+  return (VarBlock var2 valueSlot')
 
-discardVar :: TracePayload (Value ty) => VarNode ty %1 -> Builder ()
-discardVar (VarNode var valueSlot) = do
+discardVar :: TracePayload (Value ty) => VarBlock ty %1 -> Builder ()
+discardVar (VarBlock var valueSlot) = do
   Unsealed var1 held unsealValue <- unseal var valueSlot
   Destroyed destroyVar <- destroy var1
   Destroyed destroyHeld <- destroy held
@@ -191,7 +191,7 @@ discardVar (VarNode var valueSlot) = do
 --------------------------------------------------------------------------------
 -- Values
 --------------------------------------------------------------------------------
-discardValue :: TracePayload (Value ty) => Node (Value ty) %1 -> Builder ()
+discardValue :: TracePayload (Value ty) => Block (Value ty) %1 -> Builder ()
 discardValue value = do
   Destroyed destroyValue <- destroy value
   DiscardValue `explain` (destroyValue :~ Done)
@@ -202,11 +202,11 @@ discardValue value = do
 operator ::
      TracePayload (Op op lhs rhs out)
   => Payload (Op op lhs rhs out)
-     %1 -> Builder (Node (Op op lhs rhs out))
+     %1 -> Builder (Block (Op op lhs rhs out))
 operator payload = do
-  Created node createOp <- create payload
+  Created block createOp <- create payload
   Operator `explain` (createOp :~ Done)
-  return node
+  return block
 
 class ( TracePayload (Value lhs)
       , TracePayload (Op op lhs rhs out)
@@ -235,33 +235,33 @@ instance EvalOp 'TMul 'TDouble 'TDouble 'TDouble where
 
 apply ::
      EvalOp op lhs rhs out
-  => Node (Value lhs)
-     %1 -> Node (Op op lhs rhs out)
-     %1 -> Node (Value rhs)
-     %1 -> Builder (Node (Value out))
-apply lhsNode opNode rhsNode = do
-  Used lhs useLhs <- use lhsNode
-  Used opPayload useOp <- use opNode
-  Used rhs useRhs <- use rhsNode
-  Computed outNode computeOut <-
+  => Block (Value lhs)
+     %1 -> Block (Op op lhs rhs out)
+     %1 -> Block (Value rhs)
+     %1 -> Builder (Block (Value out))
+apply lhsBlock opBlock rhsBlock = do
+  Used lhs useLhs <- use lhsBlock
+  Used opPayload useOp <- use opBlock
+  Used rhs useRhs <- use rhsBlock
+  Computed outBlock computeOut <-
     compute (evalPayload <$> lhs <*> opPayload <*> rhs)
   Eval `explain` (useLhs :~ useOp :~ useRhs :~ computeOut :~ Done)
-  return outNode
+  return outBlock
 
 (.+.) ::
      forall ty. EvalOp 'TAdd ty ty ty
-  => Node (Value ty)
-     %1 -> Node (Value ty)
-     %1 -> Builder (Node (Value ty))
+  => Block (Value ty)
+     %1 -> Block (Value ty)
+     %1 -> Builder (Block (Value ty))
 (.+.) lhs rhs = do
   add <- operator (LUnit :: Payload (Op 'TAdd ty ty ty))
   apply lhs add rhs
 
 (.*.) ::
      forall ty. EvalOp 'TMul ty ty ty
-  => Node (Value ty)
-     %1 -> Node (Value ty)
-     %1 -> Builder (Node (Value ty))
+  => Block (Value ty)
+     %1 -> Block (Value ty)
+     %1 -> Builder (Block (Value ty))
 (.*.) lhs rhs = do
   mul <- operator (LUnit :: Payload (Op 'TMul ty ty ty))
   apply lhs mul rhs

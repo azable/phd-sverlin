@@ -15,8 +15,8 @@ import           Prelude
 eventIndexWidth :: Int
 eventIndexWidth = 3
 
-nodeListRefWidth :: Int
-nodeListRefWidth = 8
+blockListRefWidth :: Int
+blockListRefWidth = 8
 
 snapshotRefWidth :: Int
 snapshotRefWidth = 6
@@ -108,12 +108,12 @@ printTrace :: PrintEvent event => TraceGraph event -> IO ()
 printTrace graph = putStr (renderTrace graph)
 
 renderGraph :: PrintEvent event => TraceGraph event -> String
-renderGraph (TraceGraph nodes events) =
+renderGraph (TraceGraph blocks events) =
   concat
     [ renderHeader "Graph"
-    , renderSummary nodes events
+    , renderSummary blocks events
     , "\n"
-    , renderNodes nodes
+    , renderBlocks blocks
     , "\n"
     , renderEvents events
     ]
@@ -121,25 +121,25 @@ renderGraph (TraceGraph nodes events) =
 renderTrace :: PrintEvent event => TraceGraph event -> String
 renderTrace (TraceGraph _ events) = renderEvents events
 
-renderSummary :: [NodeRecord] -> [TraceEvent event] -> String
-renderSummary nodes events =
+renderSummary :: [BlockRecord] -> [TraceEvent event] -> String
+renderSummary blocks events =
   concat
-    [ "Nodes:  "
-    , show (length nodes)
+    [ "Blocks: "
+    , show (length blocks)
     , "\n"
     , "Events: "
     , show (length events)
     , "\n"
     ]
 
-renderNodes :: [NodeRecord] -> String
-renderNodes nodes = renderHeader "Nodes" ++ concatMap renderNode nodes
+renderBlocks :: [BlockRecord] -> String
+renderBlocks blocks = renderHeader "Blocks" ++ concatMap renderBlock blocks
 
-renderNode :: NodeRecord -> String
-renderNode (NodeRecord snapshot) =
+renderBlock :: BlockRecord -> String
+renderBlock (BlockRecord snapshot) =
   concat
     [ "  "
-    , padRight nodeListRefWidth (renderNodeRefPlain (snapshotRef snapshot))
+    , padRight blockListRefWidth (renderBlockRefPlain (snapshotRef snapshot))
     , renderSnapshotPayload snapshot
     , "\n"
     ]
@@ -183,12 +183,12 @@ renderAuditStep (UnsealStep owner child) =
   renderSnapshotStep2 unsealStyle owner child
 renderAuditStep (DecideStep snapshot) = renderSnapshotStep1 decideStyle snapshot
 
-renderSnapshotStep1 :: StepStyle -> NodeSnapshot tag -> String
+renderSnapshotStep1 :: StepStyle -> BlockSnapshot tag -> String
 renderSnapshotStep1 style snapshot =
   concat [renderStepName style, " ", renderSnapshot snapshot, "\n"]
 
 renderSnapshotStep2 ::
-     StepStyle -> NodeSnapshot first -> NodeSnapshot second -> String
+     StepStyle -> BlockSnapshot first -> BlockSnapshot second -> String
 renderSnapshotStep2 style first second =
   concat
     [ renderStepName style
@@ -201,23 +201,23 @@ renderSnapshotStep2 style first second =
     , "\n"
     ]
 
-renderSnapshot :: NodeSnapshot tag -> String
+renderSnapshot :: BlockSnapshot tag -> String
 renderSnapshot snapshot =
-  padRight snapshotRefWidth (renderNodeRef (snapshotRef snapshot))
+  padRight snapshotRefWidth (renderBlockRef (snapshotRef snapshot))
     ++ " "
     ++ renderSnapshotPayload snapshot
 
-renderSnapshotPayload :: NodeSnapshot tag -> String
-renderSnapshotPayload (NodeSnapshot _ _ view) = renderPayloadView view
+renderSnapshotPayload :: BlockSnapshot tag -> String
+renderSnapshotPayload (BlockSnapshot _ _ view) = renderPayloadView view
 
-snapshotRef :: NodeSnapshot tag -> NodeRef tag
-snapshotRef (NodeSnapshot ref _ _) = ref
+snapshotRef :: BlockSnapshot tag -> BlockRef tag
+snapshotRef (BlockSnapshot ref _ _) = ref
 
-renderNodeRef :: NodeRef tag -> String
-renderNodeRef (NodeRef nodeId) = "[N" ++ show nodeId ++ "]"
+renderBlockRef :: BlockRef tag -> String
+renderBlockRef (BlockRef blockId) = "[B" ++ show blockId ++ "]"
 
-renderNodeRefPlain :: NodeRef tag -> String
-renderNodeRefPlain (NodeRef nodeId) = "N" ++ show nodeId
+renderBlockRefPlain :: BlockRef tag -> String
+renderBlockRefPlain (BlockRef blockId) = "B" ++ show blockId
 
 renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView text) = text
