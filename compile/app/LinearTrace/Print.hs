@@ -56,10 +56,13 @@ destroyColour :: Ansi
 destroyColour = Ansi256Fg 196 -- red
 
 sealColour :: Ansi
-sealColour = Ansi256Fg 37 --teal
+sealColour = Ansi256Fg 37 -- teal
 
 unsealColour :: Ansi
 unsealColour = Ansi256Fg 208 -- orange
+
+decideColour :: Ansi
+decideColour = Ansi256Fg 201 -- magenta
 
 -- Step styles
 createStyle :: StepStyle
@@ -92,16 +95,19 @@ sealStyle = StepStyle "seal" sealColour
 unsealStyle :: StepStyle
 unsealStyle = StepStyle "unseal" unsealColour
 
+decideStyle :: StepStyle
+decideStyle = StepStyle "decide" decideColour
+
 class PrintEvent event where
   printEvent :: event acts -> String
 
-printGraph :: (PrintEvent event) => TraceGraph event -> IO ()
+printGraph :: PrintEvent event => TraceGraph event -> IO ()
 printGraph graph = putStr (renderGraph graph)
 
-printTrace :: (PrintEvent event) => TraceGraph event -> IO ()
+printTrace :: PrintEvent event => TraceGraph event -> IO ()
 printTrace graph = putStr (renderTrace graph)
 
-renderGraph :: (PrintEvent event) => TraceGraph event -> String
+renderGraph :: PrintEvent event => TraceGraph event -> String
 renderGraph (TraceGraph nodes events) =
   concat
     [ renderHeader "Graph"
@@ -112,7 +118,7 @@ renderGraph (TraceGraph nodes events) =
     , renderEvents events
     ]
 
-renderTrace :: (PrintEvent event) => TraceGraph event -> String
+renderTrace :: PrintEvent event => TraceGraph event -> String
 renderTrace (TraceGraph _ events) = renderEvents events
 
 renderSummary :: [NodeRecord] -> [TraceEvent event] -> String
@@ -138,11 +144,11 @@ renderNode (NodeRecord snapshot) =
     , "\n"
     ]
 
-renderEvents :: (PrintEvent event) => [TraceEvent event] -> String
+renderEvents :: PrintEvent event => [TraceEvent event] -> String
 renderEvents events =
   renderHeader "Events" ++ concat (zipWith renderEvent [0 :: Int ..] events)
 
-renderEvent :: (PrintEvent event) => Int -> TraceEvent event -> String
+renderEvent :: PrintEvent event => Int -> TraceEvent event -> String
 renderEvent ix (TraceEvent event audit) =
   concat
     [ padLeft eventIndexWidth (show ix)
@@ -175,6 +181,7 @@ renderAuditStep (SealStep owner child) =
   renderSnapshotStep2 sealStyle owner child
 renderAuditStep (UnsealStep owner child) =
   renderSnapshotStep2 unsealStyle owner child
+renderAuditStep (DecideStep snapshot) = renderSnapshotStep1 decideStyle snapshot
 
 renderSnapshotStep1 :: StepStyle -> NodeSnapshot tag -> String
 renderSnapshotStep1 style snapshot =

@@ -38,6 +38,7 @@ module LinearTrace.Core
   , type Destroy
   , type Seal
   , type Unseal
+  , type Decide
   , -- * Primitive operations
     create
   , observe
@@ -49,6 +50,7 @@ module LinearTrace.Core
   , destroy
   , seal
   , unseal
+  , decide
   , -- * Auditing operations
     OneUse(..)
   , Evidence(..)
@@ -63,6 +65,7 @@ module LinearTrace.Core
   , Destroyed(..)
   , Sealed(..)
   , Unsealed(..)
+  , Decided(..)
   , explain
   , (<$>)
   , (<*>)
@@ -172,6 +175,7 @@ data ActionKind
   | ActionDestroy
   | ActionSeal
   | ActionUnseal
+  | ActionDecide
 
 data Action (kind :: ActionKind) tag
 
@@ -198,6 +202,8 @@ type Destroy tag = Action 'ActionDestroy tag
 type Seal owner tag = Action 'ActionSeal (SealTag owner tag)
 
 type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
+
+type Decide tag = Action 'ActionDecide tag
 
 data Created tag where
   Created :: Node tag %1 -> Evidence (Create tag) %1 -> Created tag
@@ -241,6 +247,10 @@ data Unsealed owner tag where
        %1 -> Evidence (Unseal owner tag)
        %1 -> Unsealed owner tag
 
+data Decided tag where
+  DecidedTrue :: Evidence (Decide tag) %1 -> Decided tag
+  DecidedFalse :: Evidence (Decide tag) %1 -> Decided tag
+
 data AuditStep act where
   CreateStep :: NodeSnapshot tag -> AuditStep (Create tag)
   ObserveStep :: NodeSnapshot tag -> AuditStep (Observe tag)
@@ -254,6 +264,7 @@ data AuditStep act where
     :: NodeSnapshot owner -> NodeSnapshot tag -> AuditStep (Seal owner tag)
   UnsealStep
     :: NodeSnapshot owner -> NodeSnapshot tag -> AuditStep (Unseal owner tag)
+  DecideStep :: NodeSnapshot tag -> AuditStep (Decide tag)
 
 data Audit acts where
   EmptyAudit :: Audit '[]
@@ -555,6 +566,18 @@ unseal ownerNode slot =
                       (Proxy :: Proxy tag)
                       childRef
                       childPayload))
+
+decide ::
+     forall event tag. TracePayload tag
+  => (Payload tag %1 -> Bool)
+  -> Node tag
+     %1 -> TraceBuilder event (Decided tag)
+decide predicate (Node (Ur nodeId) (Ur payload)) = do
+  let ref' = makeNodeRef (Proxy :: Proxy tag) nodeId
+  let evidence = makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload
+  case predicate payload of
+    True  -> return (DecidedTrue evidence)
+    False -> return (DecidedFalse evidence)
 
 buildGraph :: TraceBuilder event () -> TraceGraph event
 buildGraph builder =

@@ -19,6 +19,11 @@ module DSL
   , Op
   , Index
   , Array
+  , InsertionBranch
+  , InnerLoopStatus
+  , OuterLoopStatus
+  , IndexNegative
+  , IndexZero
   , VarNode
   , ArrayNode
   , ArrayRead(..)
@@ -27,6 +32,11 @@ module DSL
   , DoubleNode
   , BoolNode
   , IndexNode
+  , InsertionBranchNode
+  , InnerLoopStatusNode
+  , OuterLoopStatusNode
+  , IndexNegativeNode
+  , IndexZeroNode
   , IntVar
   , DoubleVar
   , BoolVar
@@ -59,6 +69,17 @@ module DSL
   , -- * Index operations
     incIndex
   , decIndex
+  , -- * Semantic decisions
+    classifyInsertionBranch
+  , decideInsertionBranch
+  , classifyInnerLoopStatus
+  , decideInnerLoopStatus
+  , classifyOuterLoopStatus
+  , decideOuterLoopStatus
+  , classifyIndexNegative
+  , decideIndexNegative
+  , classifyIndexZero
+  , decideIndexZero
   , -- * Operators
     operator
   , apply
@@ -82,7 +103,7 @@ import           Prelude.Linear
 -- Configuration
 --------------------------------------------------------------------------------
 labelWidth :: Int
-labelWidth = 5
+labelWidth = 8
 
 --------------------------------------------------------------------------------
 -- DSL type vocabulary
@@ -107,6 +128,36 @@ data Index
 
 data Array (ty :: PrimitiveType)
 
+-- | Semantic branch decision for insertion sort.
+--
+--   True  = shift
+--   False = stop
+data InsertionBranch
+
+-- | Semantic inner-loop status.
+--
+--   True  = continue
+--   False = done
+data InnerLoopStatus
+
+-- | Semantic outer-loop status.
+--
+--   True  = continue
+--   False = done
+data OuterLoopStatus
+
+-- | Semantic index-negative status.
+--
+--   True  = negative
+--   False = non-negative
+data IndexNegative
+
+-- | Semantic index-zero status.
+--
+--   True  = zero
+--   False = non-zero
+data IndexZero
+
 type instance Payload (Value 'TInt) = LInt (Value 'TInt)
 
 type instance Payload (Value 'TDouble) = LDouble (Value 'TDouble)
@@ -121,6 +172,16 @@ type instance Payload Index = LInt Index
 
 type instance Payload (Array ty) = LString (Array ty)
 
+type instance Payload InsertionBranch = LBool InsertionBranch
+
+type instance Payload InnerLoopStatus = LBool InnerLoopStatus
+
+type instance Payload OuterLoopStatus = LBool OuterLoopStatus
+
+type instance Payload IndexNegative = LBool IndexNegative
+
+type instance Payload IndexZero = LBool IndexZero
+
 type Builder a = TraceBuilder Event a
 
 type IntNode = Node (Value 'TInt)
@@ -130,6 +191,16 @@ type DoubleNode = Node (Value 'TDouble)
 type BoolNode = Node (Value 'TBool)
 
 type IndexNode = Node Index
+
+type InsertionBranchNode = Node InsertionBranch
+
+type InnerLoopStatusNode = Node InnerLoopStatus
+
+type OuterLoopStatusNode = Node OuterLoopStatus
+
+type IndexNegativeNode = Node IndexNegative
+
+type IndexZeroNode = Node IndexZero
 
 type IntVar = VarNode (Value 'TInt)
 
@@ -181,32 +252,41 @@ data Event acts where
           ]
   IncIndex :: Event '[ Use Index, Compute Index]
   DecIndex :: Event '[ Use Index, Compute Index]
-  BranchTrue
-    :: Event
-         '[ Use (Value 'TBool), Compute (Value 'TBool), Destroy (Value 'TBool)]
-  BranchFalse
-    :: Event
-         '[ Use (Value 'TBool), Compute (Value 'TBool), Destroy (Value 'TBool)]
+  ClassifyInsertionBranch
+    :: Event '[ Use (Value 'TBool), Compute InsertionBranch]
+  TakeShiftBranch :: Event '[ Decide InsertionBranch]
+  TakeStopBranch :: Event '[ Decide InsertionBranch]
+  ClassifyInnerLoopStatus :: Event '[ Use Index, Compute InnerLoopStatus]
+  TakeInnerLoopContinue :: Event '[ Decide InnerLoopStatus]
+  TakeInnerLoopDone :: Event '[ Decide InnerLoopStatus]
+  ClassifyOuterLoopStatus
+    :: Event '[ Use Index, Use Index, Compute OuterLoopStatus]
+  TakeOuterLoopContinue :: Event '[ Decide OuterLoopStatus]
+  TakeOuterLoopDone :: Event '[ Decide OuterLoopStatus]
+  ClassifyIndexNegative :: Event '[ Inspect Index, Compute IndexNegative]
+  TakeIndexNegative :: Event '[ Decide IndexNegative]
+  TakeIndexNonNegative :: Event '[ Decide IndexNegative]
+  ClassifyIndexZero :: Event '[ Inspect Index, Compute IndexZero]
+  TakeIndexZero :: Event '[ Decide IndexZero]
+  TakeIndexNonZero :: Event '[ Decide IndexZero]
   CreateArray :: Event '[ Create (Array ty)]
   InitArrayCell :: Event '[ Create (Value ty), Seal (Array ty) (Value ty)]
   ReadArray
     :: Event
-         '[ Observe Index
-          , Destroy Index
+         '[ Destroy Index
           , Unseal (Array ty) (Value ty)
           , Copy (Value ty)
           , Seal (Array ty) (Value ty)
           ]
-  ReadArrayOutOfBounds :: Event '[ Observe Index, Destroy Index]
+  ReadArrayOutOfBounds :: Event '[ Destroy Index]
   WriteArray
     :: Event
-         '[ Observe Index
-          , Destroy Index
+         '[ Destroy Index
           , Unseal (Array ty) (Value ty)
           , Replace (Value ty)
           , Seal (Array ty) (Value ty)
           ]
-  WriteArrayOutOfBounds :: Event '[ Observe Index, Destroy Index]
+  WriteArrayOutOfBounds :: Event '[ Destroy Index]
   DiscardArrayCell :: Event '[ Unseal (Array ty) (Value ty), Destroy (Value ty)]
   DiscardArray :: Event '[ Destroy (Array ty)]
   DiscardVar :: Event '[ Unseal (Var tag) tag, Destroy (Var tag), Destroy tag]
@@ -285,31 +365,6 @@ discardValue value = do
   Destroyed destroyValue <- destroy value
   DiscardValue `explain` (destroyValue :~ Done)
 
-identityValue :: Payload (Value ty) %1 -> Payload (Value ty)
-identityValue payload = payload
-
-recordBranch :: Bool -> BoolNode %1 -> Builder ()
-recordBranch True condition = do
-  Used conditionPayload useCondition <- use condition
-  Computed recordedCondition computeCondition <-
-    compute (identityValue <$> conditionPayload)
-  Destroyed destroyRecordedCondition <- destroy recordedCondition
-  BranchTrue
-    `explain` (useCondition
-                 :~ computeCondition
-                 :~ destroyRecordedCondition
-                 :~ Done)
-recordBranch False condition = do
-  Used conditionPayload useCondition <- use condition
-  Computed recordedCondition computeCondition <-
-    compute (identityValue <$> conditionPayload)
-  Destroyed destroyRecordedCondition <- destroy recordedCondition
-  BranchFalse
-    `explain` (useCondition
-                 :~ computeCondition
-                 :~ destroyRecordedCondition
-                 :~ Done)
-
 --------------------------------------------------------------------------------
 -- Arrays
 --------------------------------------------------------------------------------
@@ -351,141 +406,19 @@ initArraySlots arrayNode (payload:payloads) = do
   (arrayNode'', slots) <- initArraySlots arrayNode' payloads
   return (arrayNode'', SlotCons slot slots)
 
-data ReadCell ty where
-  ReadCell
-    :: Node (Array ty)
-       %1 -> ArraySlots ty
-       %1 -> Node (Value ty)
-       %1 -> Evidence (Unseal (Array ty) (Value ty))
-       %1 -> Evidence (Copy (Value ty))
-       %1 -> Evidence (Seal (Array ty) (Value ty))
-       %1 -> ReadCell ty
-
-data ReadCellResult ty where
-  ReadCellFound :: ReadCell ty %1 -> ReadCellResult ty
-  ReadCellMissing :: Node (Array ty) %1 -> ArraySlots ty %1 -> ReadCellResult ty
-
-data WriteCell ty where
-  WriteCell
-    :: Node (Array ty)
-       %1 -> ArraySlots ty
-       %1 -> Evidence (Unseal (Array ty) (Value ty))
-       %1 -> Evidence (Replace (Value ty))
-       %1 -> Evidence (Seal (Array ty) (Value ty))
-       %1 -> WriteCell ty
-
-data WriteCellResult ty where
-  WriteCellFound :: WriteCell ty %1 -> WriteCellResult ty
-  WriteCellMissing
-    :: Node (Array ty)
-       %1 -> ArraySlots ty
-       %1 -> Node (Value ty)
-       %1 -> WriteCellResult ty
-
-readCellAt ::
-     TracePayload (Value ty)
-  => Int
-  -> Node (Array ty)
-     %1 -> ArraySlots ty
-     %1 -> Builder (ReadCellResult ty)
-readCellAt _ arrayNode EmptySlots =
-  return (ReadCellMissing arrayNode EmptySlots)
-readCellAt position arrayNode (SlotCons slot rest)
-  | position <= 0 = do
-    Unsealed arrayNode' held unsealValue <- unseal arrayNode slot
-    Copied held' copyNode copyValue <- copy held
-    Sealed arrayNode'' slot' sealValue <- seal arrayNode' held'
-    return
-      (ReadCellFound
-         (ReadCell
-            arrayNode''
-            (SlotCons slot' rest)
-            copyNode
-            unsealValue
-            copyValue
-            sealValue))
-  | otherwise = do
-    result <- readCellAt (position - 1) arrayNode rest
-    case result of
-      ReadCellFound (ReadCell arrayNode' rest' copyNode unsealValue copyValue sealValue) ->
-        return
-          (ReadCellFound
-             (ReadCell
-                arrayNode'
-                (SlotCons slot rest')
-                copyNode
-                unsealValue
-                copyValue
-                sealValue))
-      ReadCellMissing arrayNode' rest' ->
-        return (ReadCellMissing arrayNode' (SlotCons slot rest'))
-
-writeCellAt ::
-     TracePayload (Value ty)
-  => Int
-  -> Node (Array ty)
-     %1 -> ArraySlots ty
-     %1 -> Node (Value ty)
-     %1 -> Builder (WriteCellResult ty)
-writeCellAt _ arrayNode EmptySlots newValue =
-  return (WriteCellMissing arrayNode EmptySlots newValue)
-writeCellAt position arrayNode (SlotCons slot rest) newValue
-  | position <= 0 = do
-    Unsealed arrayNode' oldValue unsealValue <- unseal arrayNode slot
-    Replaced currentValue replaceValue <- replace oldValue newValue
-    Sealed arrayNode'' slot' sealValue <- seal arrayNode' currentValue
-    return
-      (WriteCellFound
-         (WriteCell
-            arrayNode''
-            (SlotCons slot' rest)
-            unsealValue
-            replaceValue
-            sealValue))
-  | otherwise = do
-    result <- writeCellAt (position - 1) arrayNode rest newValue
-    case result of
-      WriteCellFound (WriteCell arrayNode' rest' unsealValue replaceValue sealValue) ->
-        return
-          (WriteCellFound
-             (WriteCell
-                arrayNode'
-                (SlotCons slot rest')
-                unsealValue
-                replaceValue
-                sealValue))
-      WriteCellMissing arrayNode' rest' newValue' ->
-        return (WriteCellMissing arrayNode' (SlotCons slot rest') newValue')
-
 readArrayAt ::
      TracePayload (Value ty) => Int -> ArrayNode ty %1 -> Builder (ArrayRead ty)
 readArrayAt position arrayNode = do
   indexNode <- index position
-  readArrayAtNode position arrayNode indexNode
+  readArrayAtNode arrayNode indexNode
 
 readArrayAtNode ::
      TracePayload (Value ty)
-  => Int
-  -> ArrayNode ty
+  => ArrayNode ty
      %1 -> IndexNode
      %1 -> Builder (ArrayRead ty)
-readArrayAtNode position (ArrayNode arrayNode slots) indexNode = do
-  Observed indexNode' observeIndex <- observe indexNode
-  Destroyed destroyIndex <- destroy indexNode'
-  result <- readCellAt position arrayNode slots
-  case result of
-    ReadCellFound (ReadCell arrayNode' slots' valueNode unsealValue copyValue sealValue) -> do
-      ReadArray
-        `explain` (observeIndex
-                     :~ destroyIndex
-                     :~ unsealValue
-                     :~ copyValue
-                     :~ sealValue
-                     :~ Done)
-      return (ArrayRead (ArrayNode arrayNode' slots') valueNode)
-    ReadCellMissing arrayNode' slots' -> do
-      ReadArrayOutOfBounds `explain` (observeIndex :~ destroyIndex :~ Done)
-      return (ArrayReadOutOfBounds (ArrayNode arrayNode' slots'))
+readArrayAtNode (ArrayNode arrayNode slots) indexNode =
+  readCellAtNode arrayNode slots indexNode
 
 writeArrayAt ::
      TracePayload (Value ty)
@@ -495,32 +428,16 @@ writeArrayAt ::
      %1 -> Builder (ArrayWrite ty)
 writeArrayAt position arrayNode value = do
   indexNode <- index position
-  writeArrayAtNode position arrayNode indexNode value
+  writeArrayAtNode arrayNode indexNode value
 
 writeArrayAtNode ::
      TracePayload (Value ty)
-  => Int
-  -> ArrayNode ty
+  => ArrayNode ty
      %1 -> IndexNode
      %1 -> Node (Value ty)
      %1 -> Builder (ArrayWrite ty)
-writeArrayAtNode position (ArrayNode arrayNode slots) indexNode newValue = do
-  Observed indexNode' observeIndex <- observe indexNode
-  Destroyed destroyIndex <- destroy indexNode'
-  result <- writeCellAt position arrayNode slots newValue
-  case result of
-    WriteCellFound (WriteCell arrayNode' slots' unsealValue replaceValue sealValue) -> do
-      WriteArray
-        `explain` (observeIndex
-                     :~ destroyIndex
-                     :~ unsealValue
-                     :~ replaceValue
-                     :~ sealValue
-                     :~ Done)
-      return (ArrayWrite (ArrayNode arrayNode' slots'))
-    WriteCellMissing arrayNode' slots' newValue' -> do
-      WriteArrayOutOfBounds `explain` (observeIndex :~ destroyIndex :~ Done)
-      return (ArrayWriteOutOfBounds (ArrayNode arrayNode' slots') newValue')
+writeArrayAtNode (ArrayNode arrayNode slots) indexNode value =
+  writeCellAtNode arrayNode slots indexNode value
 
 discardArray :: TracePayload (Value ty) => ArrayNode ty %1 -> Builder ()
 discardArray (ArrayNode arrayNode slots) = do
@@ -541,12 +458,164 @@ discardArraySlots arrayNode (SlotCons slot rest) = do
   discardArraySlots arrayNode' rest
 
 --------------------------------------------------------------------------------
+-- Node-driven array traversal
+--------------------------------------------------------------------------------
+readCellAtNode ::
+     TracePayload (Value ty)
+  => Node (Array ty)
+     %1 -> ArraySlots ty
+     %1 -> IndexNode
+     %1 -> Builder (ArrayRead ty)
+readCellAtNode arrayNode EmptySlots indexNode = do
+  Destroyed destroyIndex <- destroy indexNode
+  ReadArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayReadOutOfBounds (ArrayNode arrayNode EmptySlots))
+readCellAtNode arrayNode slots indexNode = do
+  (indexNode1, negativeNode) <- classifyIndexNegative indexNode
+  negativeDecision <- decideIndexNegative negativeNode
+  readCellAtNodeNegativeDecision negativeDecision arrayNode slots indexNode1
+
+readCellAtNodeNegativeDecision ::
+     TracePayload (Value ty)
+  => Decided IndexNegative
+     %1 -> Node (Array ty)
+     %1 -> ArraySlots ty
+     %1 -> IndexNode
+     %1 -> Builder (ArrayRead ty)
+readCellAtNodeNegativeDecision (DecidedTrue decideNegative) arrayNode slots indexNode = do
+  TakeIndexNegative `explain` (decideNegative :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  ReadArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayReadOutOfBounds (ArrayNode arrayNode slots))
+readCellAtNodeNegativeDecision (DecidedFalse decideNegative) arrayNode slots indexNode = do
+  TakeIndexNonNegative `explain` (decideNegative :~ Done)
+  (indexNode1, zeroNode) <- classifyIndexZero indexNode
+  zeroDecision <- decideIndexZero zeroNode
+  readCellAtNodeZeroDecision zeroDecision arrayNode slots indexNode1
+
+readCellAtNodeZeroDecision ::
+     TracePayload (Value ty)
+  => Decided IndexZero
+     %1 -> Node (Array ty)
+     %1 -> ArraySlots ty
+     %1 -> IndexNode
+     %1 -> Builder (ArrayRead ty)
+readCellAtNodeZeroDecision (DecidedTrue decideZero) arrayNode EmptySlots indexNode = do
+  TakeIndexZero `explain` (decideZero :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  ReadArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayReadOutOfBounds (ArrayNode arrayNode EmptySlots))
+readCellAtNodeZeroDecision (DecidedTrue decideZero) arrayNode (SlotCons slot rest) indexNode = do
+  TakeIndexZero `explain` (decideZero :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  Unsealed arrayNode' held unsealValue <- unseal arrayNode slot
+  Copied held' copyNode copyValue <- copy held
+  Sealed arrayNode'' slot' sealValue <- seal arrayNode' held'
+  ReadArray
+    `explain` (destroyIndex :~ unsealValue :~ copyValue :~ sealValue :~ Done)
+  return (ArrayRead (ArrayNode arrayNode'' (SlotCons slot' rest)) copyNode)
+readCellAtNodeZeroDecision (DecidedFalse decideZero) arrayNode EmptySlots indexNode = do
+  TakeIndexNonZero `explain` (decideZero :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  ReadArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayReadOutOfBounds (ArrayNode arrayNode EmptySlots))
+readCellAtNodeZeroDecision (DecidedFalse decideZero) arrayNode (SlotCons slot rest) indexNode = do
+  TakeIndexNonZero `explain` (decideZero :~ Done)
+  nextIndex <- decIndex indexNode
+  result <- readCellAtNode arrayNode rest nextIndex
+  case result of
+    ArrayRead (ArrayNode arrayNode' rest') value ->
+      return (ArrayRead (ArrayNode arrayNode' (SlotCons slot rest')) value)
+    ArrayReadOutOfBounds (ArrayNode arrayNode' rest') ->
+      return (ArrayReadOutOfBounds (ArrayNode arrayNode' (SlotCons slot rest')))
+
+writeCellAtNode ::
+     TracePayload (Value ty)
+  => Node (Array ty)
+     %1 -> ArraySlots ty
+     %1 -> IndexNode
+     %1 -> Node (Value ty)
+     %1 -> Builder (ArrayWrite ty)
+writeCellAtNode arrayNode EmptySlots indexNode value = do
+  Destroyed destroyIndex <- destroy indexNode
+  WriteArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayWriteOutOfBounds (ArrayNode arrayNode EmptySlots) value)
+writeCellAtNode arrayNode slots indexNode value = do
+  (indexNode1, negativeNode) <- classifyIndexNegative indexNode
+  negativeDecision <- decideIndexNegative negativeNode
+  writeCellAtNodeNegativeDecision
+    negativeDecision
+    arrayNode
+    slots
+    indexNode1
+    value
+
+writeCellAtNodeNegativeDecision ::
+     TracePayload (Value ty)
+  => Decided IndexNegative
+     %1 -> Node (Array ty)
+     %1 -> ArraySlots ty
+     %1 -> IndexNode
+     %1 -> Node (Value ty)
+     %1 -> Builder (ArrayWrite ty)
+writeCellAtNodeNegativeDecision (DecidedTrue decideNegative) arrayNode slots indexNode value = do
+  TakeIndexNegative `explain` (decideNegative :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  WriteArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayWriteOutOfBounds (ArrayNode arrayNode slots) value)
+writeCellAtNodeNegativeDecision (DecidedFalse decideNegative) arrayNode slots indexNode value = do
+  TakeIndexNonNegative `explain` (decideNegative :~ Done)
+  (indexNode1, zeroNode) <- classifyIndexZero indexNode
+  zeroDecision <- decideIndexZero zeroNode
+  writeCellAtNodeZeroDecision zeroDecision arrayNode slots indexNode1 value
+
+writeCellAtNodeZeroDecision ::
+     TracePayload (Value ty)
+  => Decided IndexZero
+     %1 -> Node (Array ty)
+     %1 -> ArraySlots ty
+     %1 -> IndexNode
+     %1 -> Node (Value ty)
+     %1 -> Builder (ArrayWrite ty)
+writeCellAtNodeZeroDecision (DecidedTrue decideZero) arrayNode EmptySlots indexNode value = do
+  TakeIndexZero `explain` (decideZero :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  WriteArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayWriteOutOfBounds (ArrayNode arrayNode EmptySlots) value)
+writeCellAtNodeZeroDecision (DecidedTrue decideZero) arrayNode (SlotCons slot rest) indexNode value = do
+  TakeIndexZero `explain` (decideZero :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  Unsealed arrayNode' oldValue unsealValue <- unseal arrayNode slot
+  Replaced currentValue replaceValue <- replace oldValue value
+  Sealed arrayNode'' slot' sealValue <- seal arrayNode' currentValue
+  WriteArray
+    `explain` (destroyIndex :~ unsealValue :~ replaceValue :~ sealValue :~ Done)
+  return (ArrayWrite (ArrayNode arrayNode'' (SlotCons slot' rest)))
+writeCellAtNodeZeroDecision (DecidedFalse decideZero) arrayNode EmptySlots indexNode value = do
+  TakeIndexNonZero `explain` (decideZero :~ Done)
+  Destroyed destroyIndex <- destroy indexNode
+  WriteArrayOutOfBounds `explain` (destroyIndex :~ Done)
+  return (ArrayWriteOutOfBounds (ArrayNode arrayNode EmptySlots) value)
+writeCellAtNodeZeroDecision (DecidedFalse decideZero) arrayNode (SlotCons slot rest) indexNode value = do
+  TakeIndexNonZero `explain` (decideZero :~ Done)
+  nextIndex <- decIndex indexNode
+  result <- writeCellAtNode arrayNode rest nextIndex value
+  case result of
+    ArrayWrite (ArrayNode arrayNode' rest') ->
+      return (ArrayWrite (ArrayNode arrayNode' (SlotCons slot rest')))
+    ArrayWriteOutOfBounds (ArrayNode arrayNode' rest') value' ->
+      return
+        (ArrayWriteOutOfBounds
+           (ArrayNode arrayNode' (SlotCons slot rest'))
+           value')
+
+--------------------------------------------------------------------------------
 -- Checked array helpers
 --------------------------------------------------------------------------------
 readIntArrayAtNodeChecked ::
-     Int -> IntArray %1 -> IndexNode %1 -> Builder (IntArray, IntNode)
-readIntArrayAtNodeChecked position values indexNode = do
-  result <- readArrayAtNode position values indexNode
+     IntArray %1 -> IndexNode %1 -> Builder (IntArray, IntNode)
+readIntArrayAtNodeChecked values indexNode = do
+  result <- readArrayAtNode values indexNode
   case result of
     ArrayRead values' value -> return (values', value)
     ArrayReadOutOfBounds values' -> do
@@ -555,13 +624,12 @@ readIntArrayAtNodeChecked position values indexNode = do
 
 writeArrayAtNodeChecked ::
      TracePayload (Value ty)
-  => Int
-  -> ArrayNode ty
+  => ArrayNode ty
      %1 -> IndexNode
      %1 -> Node (Value ty)
      %1 -> Builder (ArrayNode ty)
-writeArrayAtNodeChecked position values indexNode value = do
-  result <- writeArrayAtNode position values indexNode value
+writeArrayAtNodeChecked values indexNode value = do
+  result <- writeArrayAtNode values indexNode value
   case result of
     ArrayWrite values' -> return values'
     ArrayWriteOutOfBounds values' value' -> do
@@ -590,6 +658,126 @@ decIndex indexNode = do
   Computed nextIndex computeIndex <- compute (decIndexPayload <$> indexPayload)
   DecIndex `explain` (useIndex :~ computeIndex :~ Done)
   return nextIndex
+
+--------------------------------------------------------------------------------
+-- Semantic insertion branches
+--------------------------------------------------------------------------------
+boolToInsertionBranch :: Payload (Value 'TBool) %1 -> Payload InsertionBranch
+boolToInsertionBranch (LBool True)  = LBool True
+boolToInsertionBranch (LBool False) = LBool False
+
+isShiftBranch :: Payload InsertionBranch %1 -> Bool
+isShiftBranch (LBool True)  = True
+isShiftBranch (LBool False) = False
+
+classifyInsertionBranch :: BoolNode %1 -> Builder InsertionBranchNode
+classifyInsertionBranch condition = do
+  Used conditionPayload useCondition <- use condition
+  Computed branchNode computeBranch <-
+    compute (boolToInsertionBranch <$> conditionPayload)
+  ClassifyInsertionBranch `explain` (useCondition :~ computeBranch :~ Done)
+  return branchNode
+
+decideInsertionBranch ::
+     InsertionBranchNode %1 -> Builder (Decided InsertionBranch)
+decideInsertionBranch = decide isShiftBranch
+
+--------------------------------------------------------------------------------
+-- Semantic inner-loop status
+--------------------------------------------------------------------------------
+indexToInnerLoopStatus :: Payload Index %1 -> Payload InnerLoopStatus
+indexToInnerLoopStatus (LInt value) =
+  case value >= 0 of
+    True  -> LBool True
+    False -> LBool False
+
+isInnerLoopContinue :: Payload InnerLoopStatus %1 -> Bool
+isInnerLoopContinue (LBool True)  = True
+isInnerLoopContinue (LBool False) = False
+
+classifyInnerLoopStatus :: IndexNode %1 -> Builder InnerLoopStatusNode
+classifyInnerLoopStatus jIndex = do
+  Used jPayload useJ <- use jIndex
+  Computed statusNode computeStatus <-
+    compute (indexToInnerLoopStatus <$> jPayload)
+  ClassifyInnerLoopStatus `explain` (useJ :~ computeStatus :~ Done)
+  return statusNode
+
+decideInnerLoopStatus ::
+     InnerLoopStatusNode %1 -> Builder (Decided InnerLoopStatus)
+decideInnerLoopStatus = decide isInnerLoopContinue
+
+--------------------------------------------------------------------------------
+-- Semantic outer-loop status
+--------------------------------------------------------------------------------
+indicesToOuterLoopStatus ::
+     Payload Index %1 -> Payload Index %1 -> Payload OuterLoopStatus
+indicesToOuterLoopStatus (LInt i) (LInt n) =
+  case i < n of
+    True  -> LBool True
+    False -> LBool False
+
+isOuterLoopContinue :: Payload OuterLoopStatus %1 -> Bool
+isOuterLoopContinue (LBool True)  = True
+isOuterLoopContinue (LBool False) = False
+
+classifyOuterLoopStatus ::
+     IndexNode %1 -> IndexNode %1 -> Builder OuterLoopStatusNode
+classifyOuterLoopStatus iIndex nIndex = do
+  Used iPayload useI <- use iIndex
+  Used nPayload useN <- use nIndex
+  Computed statusNode computeStatus <-
+    compute (indicesToOuterLoopStatus <$> iPayload <*> nPayload)
+  ClassifyOuterLoopStatus `explain` (useI :~ useN :~ computeStatus :~ Done)
+  return statusNode
+
+decideOuterLoopStatus ::
+     OuterLoopStatusNode %1 -> Builder (Decided OuterLoopStatus)
+decideOuterLoopStatus = decide isOuterLoopContinue
+
+--------------------------------------------------------------------------------
+-- Semantic index decisions
+--------------------------------------------------------------------------------
+indexToNegative :: Payload Index %1 -> Payload IndexNegative
+indexToNegative (LInt value) =
+  case value < 0 of
+    True  -> LBool True
+    False -> LBool False
+
+indexToZero :: Payload Index %1 -> Payload IndexZero
+indexToZero (LInt value) =
+  case value == 0 of
+    True  -> LBool True
+    False -> LBool False
+
+isIndexNegative :: Payload IndexNegative %1 -> Bool
+isIndexNegative (LBool True)  = True
+isIndexNegative (LBool False) = False
+
+isIndexZero :: Payload IndexZero %1 -> Bool
+isIndexZero (LBool True)  = True
+isIndexZero (LBool False) = False
+
+classifyIndexNegative :: IndexNode %1 -> Builder (IndexNode, IndexNegativeNode)
+classifyIndexNegative indexNode = do
+  Inspected indexNode' indexPayload inspectIndex <- inspect indexNode
+  Computed negativeNode computeNegative <-
+    compute (indexToNegative <$> indexPayload)
+  ClassifyIndexNegative `explain` (inspectIndex :~ computeNegative :~ Done)
+  return (indexNode', negativeNode)
+
+decideIndexNegative :: IndexNegativeNode %1 -> Builder (Decided IndexNegative)
+decideIndexNegative = decide isIndexNegative
+
+classifyIndexZero :: IndexNode %1 -> Builder (IndexNode, IndexZeroNode)
+classifyIndexZero indexNode = do
+  Inspected indexNode' indexPayload inspectIndex <- inspect indexNode
+  Computed zeroNode computeZero <- compute (indexToZero <$> indexPayload)
+  ClassifyIndexZero `explain` (inspectIndex :~ computeZero :~ Done)
+  return (indexNode', zeroNode)
+
+decideIndexZero :: IndexZeroNode %1 -> Builder (Decided IndexZero)
+decideIndexZero = decide isIndexZero
 
 --------------------------------------------------------------------------------
 -- Operators
@@ -677,24 +865,11 @@ apply lhsNode opNode rhsNode = do
   apply lhs greater rhs
 
 --------------------------------------------------------------------------------
--- Host schedule helpers
+-- Host initialisation helpers
 --------------------------------------------------------------------------------
 hostLength :: [a] -> Int
 hostLength []       = 0
 hostLength (_:rest) = 1 + hostLength rest
-
-hostAt :: Int -> [Int] -> Int
-hostAt _ [] = 0
-hostAt position (value:rest)
-  | position <= 0 = value
-  | otherwise = hostAt (position - 1) rest
-
-hostSet :: Int -> Int -> [Int] -> [Int]
-hostSet _ _ [] = []
-hostSet position newValue (_:rest)
-  | position <= 0 = newValue : rest
-hostSet position newValue (value:rest) =
-  value : hostSet (position - 1) newValue rest
 
 --------------------------------------------------------------------------------
 -- Insertion sort
@@ -704,112 +879,128 @@ data OuterResult where
     :: IntArray
        %1 -> IndexVar
        %1 -> IndexVar
+       %1 -> IndexVar
        %1 -> IntVar
-       %1 -> [Int]
-    -> OuterResult
+       %1 -> OuterResult
 
 data InnerResult where
-  InnerResult
-    :: IntArray %1 -> IndexVar %1 -> IntVar %1 -> Int -> [Int] -> InnerResult
+  InnerResult :: IntArray %1 -> IndexVar %1 -> IntVar %1 -> InnerResult
 
 insertionSort :: [Int] -> IntArray %1 -> Builder IntArray
 insertionSort initial values = do
   i <- declare "i" (idx 1)
   j <- declare "j" (idx 0)
+  n <- declare "n" (idx (hostLength initial))
   key <- declare "key" (int 0)
-  OuterResult sorted i' j' key' _ <-
-    insertionSortOuter (hostLength initial) 1 initial i j key values
+  OuterResult sorted i' j' n' key' <- insertionSortOuter i j n key values
   discardVar i'
   discardVar j'
+  discardVar n'
   discardVar key'
   return sorted
 
+--------------------------------------------------------------------------------
+-- Outer loop
+--------------------------------------------------------------------------------
 insertionSortOuter ::
-     Int
-  -> Int
-  -> [Int]
-  -> IndexVar
+     IndexVar
+     %1 -> IndexVar
      %1 -> IndexVar
      %1 -> IntVar
      %1 -> IntArray
      %1 -> Builder OuterResult
-insertionSortOuter size position mirror i j key values
-  | position >= size = return (OuterResult values i j key mirror)
-  | otherwise = do
-    let keyHost = hostAt position mirror
-    (i1, iIndexForRead) <- readVar i
-    (values1, keyValue) <-
-      readIntArrayAtNodeChecked position values iIndexForRead
-    key1 <- writeVar key keyValue
-    (i2, iIndexForJ) <- readVar i1
-    jStart <- decIndex iIndexForJ
-    j1 <- writeVar j jStart
-    InnerResult values2 j2 key2 insertPosition mirror2 <-
-      insertionSortInner (position - 1) keyHost mirror j1 key1 values1
-    (j3, jIndexForInsert) <- readVar j2
-    insertIndex <- incIndex jIndexForInsert
-    (key3, keyValue') <- readVar key2
-    values3 <-
-      writeArrayAtNodeChecked (insertPosition + 1) values2 insertIndex keyValue'
-    let mirror3 = hostSet (insertPosition + 1) keyHost mirror2
-    (i3, iIndexForInc) <- readVar i2
-    nextI <- incIndex iIndexForInc
-    i4 <- writeVar i3 nextI
-    insertionSortOuter size (position + 1) mirror3 i4 j3 key3 values3
+insertionSortOuter i j n key values = do
+  (i1, iIndexForStatus) <- readVar i
+  (n1, nIndexForStatus) <- readVar n
+  statusNode <- classifyOuterLoopStatus iIndexForStatus nIndexForStatus
+  statusDecision <- decideOuterLoopStatus statusNode
+  insertionSortOuterStatusDecision statusDecision i1 j n1 key values
 
+insertionSortOuterStatusDecision ::
+     Decided OuterLoopStatus
+     %1 -> IndexVar
+     %1 -> IndexVar
+     %1 -> IndexVar
+     %1 -> IntVar
+     %1 -> IntArray
+     %1 -> Builder OuterResult
+insertionSortOuterStatusDecision (DecidedFalse decideStatus) i j n key values = do
+  TakeOuterLoopDone `explain` (decideStatus :~ Done)
+  return (OuterResult values i j n key)
+insertionSortOuterStatusDecision (DecidedTrue decideStatus) i j n key values = do
+  TakeOuterLoopContinue `explain` (decideStatus :~ Done)
+  (i1, iIndexForRead) <- readVar i
+  (values1, keyValue) <- readIntArrayAtNodeChecked values iIndexForRead
+  key1 <- writeVar key keyValue
+  (i2, iIndexForJ) <- readVar i1
+  jStart <- decIndex iIndexForJ
+  j1 <- writeVar j jStart
+  InnerResult values2 j2 key2 <- insertionSortInner j1 key1 values1
+  (j3, jIndexForInsert) <- readVar j2
+  insertIndex <- incIndex jIndexForInsert
+  (key3, keyValue') <- readVar key2
+  values3 <- writeArrayAtNodeChecked values2 insertIndex keyValue'
+  (i3, iIndexForInc) <- readVar i2
+  nextI <- incIndex iIndexForInc
+  i4 <- writeVar i3 nextI
+  insertionSortOuter i4 j3 n key3 values3
+
+--------------------------------------------------------------------------------
+-- Inner loop
+--------------------------------------------------------------------------------
 insertionSortInner ::
-     Int
-  -> Int
-  -> [Int]
-  -> IndexVar
-     %1 -> IntVar
-     %1 -> IntArray
-     %1 -> Builder InnerResult
-insertionSortInner position keyHost mirror j key values
-  | position < 0 = return (InnerResult values j key position mirror)
-  | otherwise = do
-    let currentHost = hostAt position mirror
-    (j1, jIndexForCompare) <- readVar j
-    (values1, currentForCompare) <-
-      readIntArrayAtNodeChecked position values jIndexForCompare
-    (key1, keyForCompare) <- readVar key
-    isGreaterNode <- currentForCompare .>. keyForCompare
-    recordBranch (currentHost > keyHost) isGreaterNode
-    insertionSortInnerDecision
-      (currentHost > keyHost)
-      position
-      keyHost
-      currentHost
-      mirror
-      j1
-      key1
-      values1
+     IndexVar %1 -> IntVar %1 -> IntArray %1 -> Builder InnerResult
+insertionSortInner j key values = do
+  (j1, jIndexForStatus) <- readVar j
+  statusNode <- classifyInnerLoopStatus jIndexForStatus
+  statusDecision <- decideInnerLoopStatus statusNode
+  insertionSortInnerStatusDecision statusDecision j1 key values
 
-insertionSortInnerDecision ::
-     Bool
-  -> Int
-  -> Int
-  -> Int
-  -> [Int]
-  -> IndexVar
+insertionSortInnerStatusDecision ::
+     Decided InnerLoopStatus
+     %1 -> IndexVar
      %1 -> IntVar
      %1 -> IntArray
      %1 -> Builder InnerResult
-insertionSortInnerDecision True position keyHost currentHost mirror j key values = do
+insertionSortInnerStatusDecision (DecidedFalse decideStatus) j key values = do
+  TakeInnerLoopDone `explain` (decideStatus :~ Done)
+  return (InnerResult values j key)
+insertionSortInnerStatusDecision (DecidedTrue decideStatus) j key values = do
+  TakeInnerLoopContinue `explain` (decideStatus :~ Done)
+  insertionSortInnerCompare j key values
+
+insertionSortInnerCompare ::
+     IndexVar %1 -> IntVar %1 -> IntArray %1 -> Builder InnerResult
+insertionSortInnerCompare j key values = do
+  (j1, jIndexForCompare) <- readVar j
+  (values1, currentForCompare) <-
+    readIntArrayAtNodeChecked values jIndexForCompare
+  (key1, keyForCompare) <- readVar key
+  isGreaterNode <- currentForCompare .>. keyForCompare
+  branchNode <- classifyInsertionBranch isGreaterNode
+  branchDecision <- decideInsertionBranch branchNode
+  insertionSortInnerBranchDecision branchDecision j1 key1 values1
+
+insertionSortInnerBranchDecision ::
+     Decided InsertionBranch
+     %1 -> IndexVar
+     %1 -> IntVar
+     %1 -> IntArray
+     %1 -> Builder InnerResult
+insertionSortInnerBranchDecision (DecidedFalse decideBranch) j key values = do
+  TakeStopBranch `explain` (decideBranch :~ Done)
+  return (InnerResult values j key)
+insertionSortInnerBranchDecision (DecidedTrue decideBranch) j key values = do
+  TakeShiftBranch `explain` (decideBranch :~ Done)
   (j1, jIndexForShift) <- readVar j
-  (values1, currentForShift) <-
-    readIntArrayAtNodeChecked position values jIndexForShift
+  (values1, currentForShift) <- readIntArrayAtNodeChecked values jIndexForShift
   (j2, jIndexForTarget) <- readVar j1
   targetIndex <- incIndex jIndexForTarget
-  values2 <-
-    writeArrayAtNodeChecked (position + 1) values1 targetIndex currentForShift
+  values2 <- writeArrayAtNodeChecked values1 targetIndex currentForShift
   (j3, jIndexForDec) <- readVar j2
   nextJ <- decIndex jIndexForDec
   j4 <- writeVar j3 nextJ
-  let mirror2 = hostSet (position + 1) currentHost mirror
-  insertionSortInner (position - 1) keyHost mirror2 j4 key values2
-insertionSortInnerDecision False position _keyHost _currentHost mirror j key values =
-  return (InnerResult values j key position mirror)
+  insertionSortInner j4 key values2
 
 --------------------------------------------------------------------------------
 -- Example
@@ -869,6 +1060,26 @@ instance TracePayload (Value 'TBool) where
 instance TracePayload Index where
   payloadView _ (LInt i) = PayloadView (padRightF "Idx" P.++ P.show i)
 
+instance TracePayload InsertionBranch where
+  payloadView _ (LBool True)  = PayloadView (padRightF "Branch" P.++ "shift")
+  payloadView _ (LBool False) = PayloadView (padRightF "Branch" P.++ "stop")
+
+instance TracePayload InnerLoopStatus where
+  payloadView _ (LBool True)  = PayloadView (padRightF "Inner" P.++ "continue")
+  payloadView _ (LBool False) = PayloadView (padRightF "Inner" P.++ "done")
+
+instance TracePayload OuterLoopStatus where
+  payloadView _ (LBool True)  = PayloadView (padRightF "Outer" P.++ "continue")
+  payloadView _ (LBool False) = PayloadView (padRightF "Outer" P.++ "done")
+
+instance TracePayload IndexNegative where
+  payloadView _ (LBool True)  = PayloadView (padRightF "IdxNeg" P.++ "true")
+  payloadView _ (LBool False) = PayloadView (padRightF "IdxNeg" P.++ "false")
+
+instance TracePayload IndexZero where
+  payloadView _ (LBool True)  = PayloadView (padRightF "IdxZero" P.++ "true")
+  payloadView _ (LBool False) = PayloadView (padRightF "IdxZero" P.++ "false")
+
 instance TracePayload (Var tag) where
   payloadView _ (LString name) = PayloadView (padRightF "Var" P.++ name)
 
@@ -884,24 +1095,37 @@ instance (BinaryOpLabel op, PrimitiveLabel out) =>
          P.++ primitiveLabel (Proxy :: Proxy out))
 
 instance PrintEvent Event where
-  printEvent Literal               = "Literal"
-  printEvent IndexLiteral          = "Index"
-  printEvent Operator              = "Operator"
-  printEvent DeclareVar            = "DeclareVar"
-  printEvent ReadVar               = "ReadVar"
-  printEvent WriteVar              = "WriteVar"
-  printEvent Eval                  = "Eval"
-  printEvent IncIndex              = "IncIndex"
-  printEvent DecIndex              = "DecIndex"
-  printEvent BranchTrue            = "BranchTrue"
-  printEvent BranchFalse           = "BranchFalse"
-  printEvent CreateArray           = "CreateArray"
-  printEvent InitArrayCell         = "InitArrayCell"
-  printEvent ReadArray             = "ReadArray"
-  printEvent ReadArrayOutOfBounds  = "ReadArrayOutOfBounds"
-  printEvent WriteArray            = "WriteArray"
-  printEvent WriteArrayOutOfBounds = "WriteArrayOutOfBounds"
-  printEvent DiscardArrayCell      = "DiscardArrayCell"
-  printEvent DiscardArray          = "DiscardArray"
-  printEvent DiscardVar            = "DiscardVar"
-  printEvent DiscardValue          = "DiscardValue"
+  printEvent Literal                 = "Literal"
+  printEvent IndexLiteral            = "Index"
+  printEvent Operator                = "Operator"
+  printEvent DeclareVar              = "DeclareVar"
+  printEvent ReadVar                 = "ReadVar"
+  printEvent WriteVar                = "WriteVar"
+  printEvent Eval                    = "Eval"
+  printEvent IncIndex                = "IncIndex"
+  printEvent DecIndex                = "DecIndex"
+  printEvent ClassifyInsertionBranch = "ClassifyInsertionBranch"
+  printEvent TakeShiftBranch         = "TakeShiftBranch"
+  printEvent TakeStopBranch          = "TakeStopBranch"
+  printEvent ClassifyInnerLoopStatus = "ClassifyInnerLoopStatus"
+  printEvent TakeInnerLoopContinue   = "TakeInnerLoopContinue"
+  printEvent TakeInnerLoopDone       = "TakeInnerLoopDone"
+  printEvent ClassifyOuterLoopStatus = "ClassifyOuterLoopStatus"
+  printEvent TakeOuterLoopContinue   = "TakeOuterLoopContinue"
+  printEvent TakeOuterLoopDone       = "TakeOuterLoopDone"
+  printEvent ClassifyIndexNegative   = "ClassifyIndexNegative"
+  printEvent TakeIndexNegative       = "TakeIndexNegative"
+  printEvent TakeIndexNonNegative    = "TakeIndexNonNegative"
+  printEvent ClassifyIndexZero       = "ClassifyIndexZero"
+  printEvent TakeIndexZero           = "TakeIndexZero"
+  printEvent TakeIndexNonZero        = "TakeIndexNonZero"
+  printEvent CreateArray             = "CreateArray"
+  printEvent InitArrayCell           = "InitArrayCell"
+  printEvent ReadArray               = "ReadArray"
+  printEvent ReadArrayOutOfBounds    = "ReadArrayOutOfBounds"
+  printEvent WriteArray              = "WriteArray"
+  printEvent WriteArrayOutOfBounds   = "WriteArrayOutOfBounds"
+  printEvent DiscardArrayCell        = "DiscardArrayCell"
+  printEvent DiscardArray            = "DiscardArray"
+  printEvent DiscardVar              = "DiscardVar"
+  printEvent DiscardValue            = "DiscardValue"

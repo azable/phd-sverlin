@@ -24,6 +24,7 @@ module LinearTrace
   , type Destroy
   , type Seal
   , type Unseal
+  , type Decide
   , -- * Primitive operations
     create
   , observe
@@ -35,6 +36,7 @@ module LinearTrace
   , destroy
   , seal
   , unseal
+  , decide
   , -- * Auditing operations
     OneUse
   , Evidence
@@ -49,6 +51,7 @@ module LinearTrace
   , Destroyed(..)
   , Sealed(..)
   , Unsealed(..)
+  , Decided(..)
   , explain
   , (<$>)
   , (<*>)
