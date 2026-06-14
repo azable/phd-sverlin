@@ -73,6 +73,7 @@ executable compile-app
 
     -- Other library packages from which modules are imported.
     build-depends:    base ^>=4.18.3.0,
+                      mtl,
                       linear-base,
                       numeric-optimization,
                       numeric-optimization-ad
