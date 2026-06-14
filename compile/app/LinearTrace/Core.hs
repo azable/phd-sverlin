@@ -21,6 +21,7 @@ module LinearTrace.Core
   , TracePayload(..)
   , -- * Trusted linear payloads
     LUnit(..)
+  , LBool(..)
   , LInt(..)
   , LDouble(..)
   , LString(..)
@@ -108,6 +109,9 @@ data LUnit tag =
 newtype LInt tag =
   LInt Int
 
+newtype LBool tag =
+  LBool Bool
+
 newtype LDouble tag =
   LDouble Double
 
@@ -115,6 +119,8 @@ newtype LString tag =
   LString P.String
 
 instance LinearPayload (LUnit tag)
+
+instance LinearPayload (LBool tag)
 
 instance LinearPayload (LInt tag)
 
