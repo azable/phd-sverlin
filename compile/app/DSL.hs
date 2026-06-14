@@ -900,13 +900,6 @@ apply lhsNode opNode rhsNode = do
   apply lhs greater rhs
 
 --------------------------------------------------------------------------------
--- Host initialisation helpers
---------------------------------------------------------------------------------
-hostLength :: [a] -> Int
-hostLength []       = 0
-hostLength (_:rest) = 1 + hostLength rest
-
---------------------------------------------------------------------------------
 -- Insertion sort
 --------------------------------------------------------------------------------
 data OuterResult where
@@ -921,11 +914,11 @@ data OuterResult where
 data InnerResult where
   InnerResult :: IntArray %1 -> IndexVar %1 -> IntVar %1 -> InnerResult
 
-insertionSort :: [Int] -> IntArray %1 -> Builder IntArray
-insertionSort initial values = do
+insertionSort :: IntArray %1 -> Int -> Builder IntArray
+insertionSort values len = do
   i <- declare "i" (idx 1)
   j <- declare "j" (idx 0)
-  n <- declare "n" (idx (hostLength initial))
+  n <- declare "n" (idx len)
   key <- declare "key" (int 0)
   OuterResult sorted i' j' n' key' <- insertionSortOuter i j n key values
   discardVar i'
@@ -1023,7 +1016,7 @@ insertionSortInnerShift j key values = do
 example :: Builder ()
 example = do
   values <- intArray "xs" [5, 2, 4, 6, 1, 3]
-  sorted <- insertionSort [5, 2, 4, 6, 1, 3] values
+  sorted <- insertionSort values 6
   discardArray sorted
 
 run :: Builder () -> TraceGraph Event
