@@ -8,13 +8,14 @@
 module LinearTrace.Print
   ( PrintEvent(..)
   , PrintEvents(..)
-  , renderGraph
-  , renderTrace
   , printGraph
   , printTrace
+  , printVisualization
+  , printVisualisation
   ) where
 
 import           LinearTrace.Core
+import qualified LinearTrace.Visualize as V
 import           Prelude
 
 --------------------------------------------------------------------------------
@@ -137,6 +138,12 @@ printGraph graph = putStr (renderGraph graph)
 printTrace :: PrintEvents events => TraceGraph events -> IO ()
 printTrace graph = putStr (renderTrace graph)
 
+printVisualization :: PrintEvents events => V.ViewGraph events -> IO ()
+printVisualization graph = putStr (renderVisualization graph)
+
+printVisualisation :: PrintEvents events => V.ViewGraph events -> IO ()
+printVisualisation = printVisualization
+
 renderGraph :: PrintEvents events => TraceGraph events -> String
 renderGraph (TraceGraph blocks events) =
   concat
@@ -151,6 +158,19 @@ renderGraph (TraceGraph blocks events) =
 renderTrace :: PrintEvents events => TraceGraph events -> String
 renderTrace (TraceGraph _ events) = renderEvents events
 
+renderVisualization :: PrintEvents events => V.ViewGraph events -> String
+renderVisualization (V.ViewGraph nodes steps constraints) =
+  concat
+    [ renderHeader "Visualization"
+    , renderVisualizationSummary nodes steps constraints
+    , "\n"
+    , renderViewNodes nodes
+    , "\n"
+    , renderViewConstraints constraints
+    -- , "\n"
+    -- , renderViewSteps steps
+    ]
+
 --------------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------------
@@ -162,6 +182,21 @@ renderSummary blocks events =
     , "\n"
     , "Events: "
     , show (length events)
+    , "\n"
+    ]
+
+renderVisualizationSummary ::
+     [V.ViewNode] -> [V.ViewStep events] -> [V.Constraint] -> String
+renderVisualizationSummary nodes steps constraints =
+  concat
+    [ "View nodes: "
+    , show (length nodes)
+    , "\n"
+    , "View steps: "
+    , show (length steps)
+    , "\n"
+    , "Constraints: "
+    , show (length constraints)
     , "\n"
     ]
 
@@ -179,6 +214,72 @@ renderBlock (BlockRecord snapshot) =
     , renderSnapshotPayload snapshot
     , "\n"
     ]
+
+--------------------------------------------------------------------------------
+-- View nodes
+--------------------------------------------------------------------------------
+renderViewNodes :: [V.ViewNode] -> String
+renderViewNodes nodes =
+  renderHeader "View nodes" ++ concatMap renderViewNode nodes
+
+renderViewNode :: V.ViewNode -> String
+renderViewNode node =
+  case node of
+    V.BlockViewNode block -> renderBlockView block
+
+renderBlockView :: V.BlockView tag -> String
+renderBlockView block =
+  concat
+    [ "  "
+    , padRight blockListRefWidth (renderBlockRefPlain (V.blockRef block))
+    , renderPayloadView (V.blockLabel block)
+    , "\n"
+    , stepIndent
+    , "style "
+    , renderStyle (V.blockStyle block)
+    , "\n"
+    ]
+
+renderStyle :: V.Style -> String
+renderStyle style =
+  concat
+    [ "{ top = "
+    , renderExpr (V.top style)
+    , ", left = "
+    , renderExpr (V.left style)
+    , ", width = "
+    , renderExpr (V.width style)
+    , ", height = "
+    , renderExpr (V.height style)
+    , " }"
+    ]
+
+--------------------------------------------------------------------------------
+-- View constraints
+--------------------------------------------------------------------------------
+renderViewConstraints :: [V.Constraint] -> String
+renderViewConstraints constraints =
+  renderHeader "View constraints" ++ concatMap renderViewConstraint constraints
+
+renderViewConstraint :: V.Constraint -> String
+renderViewConstraint constraint =
+  case constraint of
+    V.Equals lhs rhs ->
+      concat ["  ", renderExpr lhs, " = ", renderExpr rhs, "\n"]
+    V.Minimize expr -> concat ["  minimize ", renderExpr expr, "\n"]
+
+--------------------------------------------------------------------------------
+-- View steps
+--------------------------------------------------------------------------------
+renderViewSteps :: PrintEvents events => [V.ViewStep events] -> String
+renderViewSteps steps =
+  renderHeader "View steps"
+    ++ concat (zipWith renderViewStep [0 :: Int ..] steps)
+
+renderViewStep :: PrintEvents events => Int -> V.ViewStep events -> String
+renderViewStep ix step =
+  case step of
+    V.ViewStep event -> renderEvent ix event
 
 --------------------------------------------------------------------------------
 -- Events
@@ -261,6 +362,42 @@ renderBlockRefPlain (BlockRef blockId) = "B" ++ show blockId
 
 renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView text) = text
+
+--------------------------------------------------------------------------------
+-- Expression rendering
+--------------------------------------------------------------------------------
+renderExpr :: V.Expr -> String
+renderExpr = renderExprPrec 0
+
+renderExprPrec :: Int -> V.Expr -> String
+renderExprPrec precedence expr =
+  case expr of
+    V.EVar variable -> V.varName variable
+    V.ELit value -> show value
+    V.EAdd lhs rhs ->
+      parenthesize
+        (precedence > addPrecedence)
+        (renderExprPrec addPrecedence lhs
+           ++ " + "
+           ++ renderExprPrec addPrecedence rhs)
+    V.EMul lhs rhs ->
+      parenthesize
+        (precedence > mulPrecedence)
+        (renderExprPrec mulPrecedence lhs
+           ++ " * "
+           ++ renderExprPrec mulPrecedence rhs)
+
+addPrecedence :: Int
+addPrecedence = 6
+
+mulPrecedence :: Int
+mulPrecedence = 7
+
+parenthesize :: Bool -> String -> String
+parenthesize shouldParenthesize text =
+  if shouldParenthesize
+    then "(" ++ text ++ ")"
+    else text
 
 --------------------------------------------------------------------------------
 -- Text helpers

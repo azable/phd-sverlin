@@ -19,8 +19,8 @@ module LinearTrace.Visualize
   , plus
   , times
   , num
-  , -- , var
-    -- * View audit
+  , varName
+  , -- * View audit
     ViewAuditStep(..)
   , ViewAudit(..)
   , -- * Builder
@@ -52,6 +52,9 @@ infixr 5 :&
 --------------------------------------------------------------------------------
 newtype Var =
   Var String
+
+varName :: Var -> String
+varName (Var name) = name
 
 data Expr
   = EVar Var

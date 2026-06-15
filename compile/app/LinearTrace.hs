@@ -67,6 +67,8 @@ module LinearTrace
   , buildGraph
   , printGraph
   , printTrace
+  , printVisualization
+  , printVisualisation
   ) where
 
 import           LinearTrace.Core
