@@ -3,9 +3,12 @@
 module LinearTrace
   ( TraceGraph
   , TraceBuilder
+  , TraceEventSpec
+  , EventActs
   , Block
   , Slot
   , Payload
+  , Member
   , -- * Trusted linear payloads
     LUnit(..)
   , LBool(..)
@@ -57,6 +60,8 @@ module LinearTrace
   , (<*>)
   , -- * Graph building and rendering
     TracePayload(..)
+  , Audit(..)
+  , AuditStep(..)
   , PayloadView(..)
   , PrintEvent(..)
   , buildGraph

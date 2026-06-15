@@ -4,10 +4,13 @@
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LinearTypes             #-}
+{-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE TypeOperators           #-}
+{-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module LinearTrace.Core
@@ -74,6 +77,9 @@ module LinearTrace.Core
   , BlockRef(..)
   , BlockSnapshot(..)
   , BlockRecord(..)
+  , TraceEventSpec(..)
+  , EventUnion(..)
+  , Member(..)
   , TraceEvent(..)
   , -- * Public audit data
     AuditStep(..)
@@ -165,6 +171,9 @@ data BlockSnapshot tag where
 data BlockRecord where
   BlockRecord :: BlockSnapshot tag -> BlockRecord
 
+--------------------------------------------------------------------------------
+-- Actions
+--------------------------------------------------------------------------------
 data ActionKind
   = ActionCreate
   | ActionObserve
@@ -206,6 +215,9 @@ type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
 
 type Decide tag = Action 'ActionDecide tag
 
+--------------------------------------------------------------------------------
+-- Primitive operation result types
+--------------------------------------------------------------------------------
 data Created tag where
   Created :: Block tag %1 -> Evidence (Create tag) %1 -> Created tag
 
@@ -252,6 +264,9 @@ data Decided tag where
   DecidedTrue :: Evidence (Decide tag) %1 -> Decided tag
   DecidedFalse :: Evidence (Decide tag) %1 -> Decided tag
 
+--------------------------------------------------------------------------------
+-- Audit data
+--------------------------------------------------------------------------------
 data AuditStep act where
   CreateStep :: BlockSnapshot tag -> AuditStep (Create tag)
   ObserveStep :: BlockSnapshot tag -> AuditStep (Observe tag)
@@ -279,23 +294,66 @@ data EvidenceList acts where
   Done :: EvidenceList '[]
   (:~) :: Evidence act %1 -> EvidenceList acts %1 -> EvidenceList (act : acts)
 
-data TraceEvent (event :: [Type] -> Type) where
-  TraceEvent :: event acts -> Audit acts -> TraceEvent event
+--------------------------------------------------------------------------------
+-- Revised event layer
+--------------------------------------------------------------------------------
+-- | Ordinary event types declare their required audit shape here.
+--
+-- This replaces the older model where every event language had to have kind:
+--
+-- > [Type] -> Type
+--
+-- Downstream events can now be ordinary types such as:
+--
+-- > data Add ty = Add
+--
+-- with:
+--
+-- > instance TraceEventSpec (Add ty) where
+-- >   type EventActs (Add ty) = '[Create ..., Use ..., Compute ...]
+class TraceEventSpec event where
+  type EventActs event :: [Type]
 
-data TraceGraph (event :: [Type] -> Type) =
-  TraceGraph [BlockRecord] [TraceEvent event]
+-- | A typed closed vocabulary of allowed event types.
+--
+-- The second index records the concrete action list required by the selected
+-- event. This preserves the invariant that an event and its audit agree.
+data EventUnion (events :: [Type]) (acts :: [Type]) where
+  Here
+    :: TraceEventSpec event=> event
+    -> EventUnion (event : events) (EventActs event)
+  There :: EventUnion events acts -> EventUnion (other : events) acts
 
-data TraceBuilderState (event :: [Type] -> Type) = TraceBuilderState
+class Member event events where
+  injectEvent ::
+       TraceEventSpec event => event -> EventUnion events (EventActs event)
+
+instance {-# OVERLAPPING #-} Member event (event : events) where
+  injectEvent = Here
+
+instance {-# OVERLAPPABLE #-} Member event events =>
+         Member event (other : events) where
+  injectEvent = There P.. injectEvent
+
+data TraceEvent (events :: [Type]) where
+  TraceEvent :: EventUnion events acts -> Audit acts -> TraceEvent events
+
+data TraceGraph (events :: [Type]) =
+  TraceGraph [BlockRecord] [TraceEvent events]
+
+data TraceBuilderState (events :: [Type]) = TraceBuilderState
   { _nextBlockId :: Ur BlockId
   , _blocks      :: Ur [BlockRecord]
-  , _events      :: Ur [TraceEvent event]
+  , _events      :: Ur [TraceEvent events]
   }
 
-instance Consumable (TraceBuilderState event) where
+type TraceBuilder events a = State (TraceBuilderState events) a
+
+instance Consumable (TraceBuilderState events) where
   consume (TraceBuilderState next blocks events) =
     consume next `lseq` consume blocks `lseq` consume events
 
-instance Dupable (TraceBuilderState event) where
+instance Dupable (TraceBuilderState events) where
   dup2 (TraceBuilderState next blocks events) =
     case dup2 next of
       (next1, next2) ->
@@ -306,8 +364,9 @@ instance Dupable (TraceBuilderState event) where
                 ( TraceBuilderState next1 blocks1 events1
                 , TraceBuilderState next2 blocks2 events2)
 
-type TraceBuilder event a = State (TraceBuilderState event) a
-
+--------------------------------------------------------------------------------
+-- Internal helpers
+--------------------------------------------------------------------------------
 makeBlockRef :: Proxy tag -> BlockId -> BlockRef tag
 makeBlockRef _ = BlockRef
 
@@ -378,10 +437,10 @@ unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
 allocateBlock ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Proxy tag
   -> Payload tag
-     %1 -> TraceBuilder event (Ur BlockId, Ur (Payload tag))
+     %1 -> TraceBuilder events (Ur BlockId, Ur (Payload tag))
 allocateBlock tagProxy payload0 =
   case unsafeUr payload0 of
     Ur payload -> do
@@ -397,20 +456,27 @@ allocateBlock tagProxy payload0 =
            oldEvents)
       return (Ur blockId, Ur payload)
 
-emitEvent :: TraceEvent event -> TraceBuilder event ()
+emitEvent :: TraceEvent events -> TraceBuilder events ()
 emitEvent event = do
   TraceBuilderState oldNext oldBlocks (Ur oldEvents) <- get
   put (TraceBuilderState oldNext oldBlocks (Ur (oldEvents P.++ [event])))
 
-explain :: event acts -> EvidenceList acts %1 -> TraceBuilder event ()
+explain ::
+     (TraceEventSpec event, Member event events)
+  => event
+  -> EvidenceList (EventActs event)
+     %1 -> TraceBuilder events ()
 explain event evidenceList =
   case evidenceListToAudit evidenceList of
-    Ur audit -> emitEvent (TraceEvent event audit)
+    Ur audit -> emitEvent (TraceEvent (injectEvent event) audit)
 
+--------------------------------------------------------------------------------
+-- Primitive operations
+--------------------------------------------------------------------------------
 create ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Payload tag
-     %1 -> TraceBuilder event (Created tag)
+     %1 -> TraceBuilder events (Created tag)
 create payload0 = do
   (Ur blockId, Ur payload) <- allocateBlock (Proxy :: Proxy tag) payload0
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
@@ -420,9 +486,9 @@ create payload0 = do
        (makeAuditStep1 CreateStep (Proxy :: Proxy tag) ref' payload))
 
 observe ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Block tag
-     %1 -> TraceBuilder event (Observed tag)
+     %1 -> TraceBuilder events (Observed tag)
 observe (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
@@ -431,9 +497,9 @@ observe (Block (Ur blockId) (Ur payload)) = do
        (makeAuditStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
 
 inspect ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Block tag
-     %1 -> TraceBuilder event (Inspected tag)
+     %1 -> TraceBuilder events (Inspected tag)
 inspect (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
@@ -443,9 +509,9 @@ inspect (Block (Ur blockId) (Ur payload)) = do
        (makeAuditStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
 
 use ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Block tag
-     %1 -> TraceBuilder event (Used tag)
+     %1 -> TraceBuilder events (Used tag)
 use (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
@@ -454,9 +520,9 @@ use (Block (Ur blockId) (Ur payload)) = do
        (makeAuditStep1 UseStep (Proxy :: Proxy tag) ref' payload))
 
 copy ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Block tag
-     %1 -> TraceBuilder event (Copied tag)
+     %1 -> TraceBuilder events (Copied tag)
 copy (Block (Ur originalId) (Ur payload)) = do
   (Ur copyId, Ur copiedPayload) <- allocateBlock (Proxy :: Proxy tag) payload
   let originalRef = makeBlockRef (Proxy :: Proxy tag) originalId
@@ -474,10 +540,10 @@ copy (Block (Ur originalId) (Ur payload)) = do
           copiedPayload))
 
 replace ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Block tag
      %1 -> Block tag
-     %1 -> TraceBuilder event (Replaced tag)
+     %1 -> TraceBuilder events (Replaced tag)
 replace oldBlock newBlock =
   case oldBlock of
     Block (Ur oldId) (Ur oldPayload) ->
@@ -497,9 +563,9 @@ replace oldBlock newBlock =
                   newPayload))
 
 compute ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => OneUse (Payload tag)
-     %1 -> TraceBuilder event (Computed tag)
+     %1 -> TraceBuilder events (Computed tag)
 compute (OneUse payload0) = do
   (Ur blockId, Ur payload) <- allocateBlock (Proxy :: Proxy tag) payload0
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
@@ -509,19 +575,19 @@ compute (OneUse payload0) = do
        (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => Block tag
-     %1 -> TraceBuilder event (Destroyed tag)
+     %1 -> TraceBuilder events (Destroyed tag)
 destroy (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   return
     (Destroyed (makeAuditStep1 DestroyStep (Proxy :: Proxy tag) ref' payload))
 
 seal ::
-     forall event owner tag. (TracePayload owner, TracePayload tag)
+     forall events owner tag. (TracePayload owner, TracePayload tag)
   => Block owner
      %1 -> Block tag
-     %1 -> TraceBuilder event (Sealed owner tag)
+     %1 -> TraceBuilder events (Sealed owner tag)
 seal ownerBlock childBlock =
   case ownerBlock of
     Block (Ur ownerId) (Ur ownerPayload) ->
@@ -543,10 +609,10 @@ seal ownerBlock childBlock =
                   childPayload))
 
 unseal ::
-     forall event owner tag. (TracePayload owner, TracePayload tag)
+     forall events owner tag. (TracePayload owner, TracePayload tag)
   => Block owner
      %1 -> Slot owner tag
-     %1 -> TraceBuilder event (Unsealed owner tag)
+     %1 -> TraceBuilder events (Unsealed owner tag)
 unseal ownerBlock slot =
   case ownerBlock of
     Block (Ur ownerId) (Ur ownerPayload) ->
@@ -570,10 +636,10 @@ unseal ownerBlock slot =
                       childPayload))
 
 decide ::
-     forall event tag. TracePayload tag
+     forall events tag. TracePayload tag
   => (Payload tag %1 -> Bool)
   -> Block tag
-     %1 -> TraceBuilder event (Decided tag)
+     %1 -> TraceBuilder events (Decided tag)
 decide predicate (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   let evidence = makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload
@@ -581,7 +647,10 @@ decide predicate (Block (Ur blockId) (Ur payload)) = do
     True  -> return (DecidedTrue evidence)
     False -> return (DecidedFalse evidence)
 
-buildGraph :: TraceBuilder event () -> TraceGraph event
+--------------------------------------------------------------------------------
+-- Runner
+--------------------------------------------------------------------------------
+buildGraph :: TraceBuilder events () -> TraceGraph events
 buildGraph builder =
   let (_, finalState) =
         runState builder (TraceBuilderState (Ur 0) (Ur []) (Ur []))

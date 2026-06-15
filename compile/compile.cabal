@@ -65,8 +65,8 @@ executable compile-app
         LinearTrace
         LinearTrace.Core
         LinearTrace.Print
+        DSL.Core
         Solver
-        DSL
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

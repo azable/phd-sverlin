@@ -2,11 +2,12 @@
 
 module Main where
 
-import qualified DSL
+import           DSL.Core
 import qualified LinearTrace
-import           Solver
 
+-- import           LinearTrace.View
+-- import           Solver
 main :: IO ()
 main = do
-  -- LinearTrace.printTrace (DSL.run DSL.example)
-  test
+  LinearTrace.printTrace (run example)
+  -- test

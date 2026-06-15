@@ -1,7 +1,13 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE EmptyCase            #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module LinearTrace.Print
   ( PrintEvent(..)
+  , PrintEvents(..)
   , renderGraph
   , renderTrace
   , printGraph
@@ -11,7 +17,9 @@ module LinearTrace.Print
 import           LinearTrace.Core
 import           Prelude
 
+--------------------------------------------------------------------------------
 -- Layout constants
+--------------------------------------------------------------------------------
 eventIndexWidth :: Int
 eventIndexWidth = 3
 
@@ -27,44 +35,48 @@ stepNameWidth = 16
 stepIndent :: String
 stepIndent = "    "
 
+--------------------------------------------------------------------------------
 -- Colour/style constants
+--------------------------------------------------------------------------------
 eventTitleStyle :: [Ansi]
 eventTitleStyle = [AnsiBold]
 
 createColour :: Ansi
-createColour = Ansi256Fg 82 -- green
+createColour = Ansi256Fg 82
 
 observeColour :: Ansi
-observeColour = Ansi256Fg 51 -- cyan
+observeColour = Ansi256Fg 51
 
 inspectColour :: Ansi
-inspectColour = Ansi256Fg 123 -- pale cyan
+inspectColour = Ansi256Fg 123
 
 useColour :: Ansi
-useColour = Ansi256Fg 220 -- yellow
+useColour = Ansi256Fg 220
 
 copyColour :: Ansi
-copyColour = Ansi256Fg 75 -- blue
+copyColour = Ansi256Fg 75
 
 replaceColour :: Ansi
-replaceColour = Ansi256Fg 171 -- purple
+replaceColour = Ansi256Fg 171
 
 computeColour :: Ansi
-computeColour = Ansi256Fg 118 -- lime
+computeColour = Ansi256Fg 118
 
 destroyColour :: Ansi
-destroyColour = Ansi256Fg 196 -- red
+destroyColour = Ansi256Fg 196
 
 sealColour :: Ansi
-sealColour = Ansi256Fg 37 -- teal
+sealColour = Ansi256Fg 37
 
 unsealColour :: Ansi
-unsealColour = Ansi256Fg 208 -- orange
+unsealColour = Ansi256Fg 208
 
 decideColour :: Ansi
-decideColour = Ansi256Fg 201 -- magenta
+decideColour = Ansi256Fg 201
 
+--------------------------------------------------------------------------------
 -- Step styles
+--------------------------------------------------------------------------------
 createStyle :: StepStyle
 createStyle = StepStyle "create" createColour
 
@@ -98,16 +110,34 @@ unsealStyle = StepStyle "unseal" unsealColour
 decideStyle :: StepStyle
 decideStyle = StepStyle "decide" decideColour
 
+--------------------------------------------------------------------------------
+-- Event printing
+--------------------------------------------------------------------------------
 class PrintEvent event where
-  printEvent :: event acts -> String
+  printEvent :: event -> String
 
-printGraph :: PrintEvent event => TraceGraph event -> IO ()
+class PrintEvents events where
+  printEventUnion :: EventUnion events acts -> String
+
+instance PrintEvents '[] where
+  printEventUnion union = case union of {}
+
+instance (PrintEvent event, PrintEvents events) => PrintEvents (event : events) where
+  printEventUnion union =
+    case union of
+      Here event -> printEvent event
+      There rest -> printEventUnion rest
+
+--------------------------------------------------------------------------------
+-- Public rendering API
+--------------------------------------------------------------------------------
+printGraph :: PrintEvents events => TraceGraph events -> IO ()
 printGraph graph = putStr (renderGraph graph)
 
-printTrace :: PrintEvent event => TraceGraph event -> IO ()
+printTrace :: PrintEvents events => TraceGraph events -> IO ()
 printTrace graph = putStr (renderTrace graph)
 
-renderGraph :: PrintEvent event => TraceGraph event -> String
+renderGraph :: PrintEvents events => TraceGraph events -> String
 renderGraph (TraceGraph blocks events) =
   concat
     [ renderHeader "Graph"
@@ -118,10 +148,13 @@ renderGraph (TraceGraph blocks events) =
     , renderEvents events
     ]
 
-renderTrace :: PrintEvent event => TraceGraph event -> String
+renderTrace :: PrintEvents events => TraceGraph events -> String
 renderTrace (TraceGraph _ events) = renderEvents events
 
-renderSummary :: [BlockRecord] -> [TraceEvent event] -> String
+--------------------------------------------------------------------------------
+-- Summary
+--------------------------------------------------------------------------------
+renderSummary :: [BlockRecord] -> [TraceEvent events] -> String
 renderSummary blocks events =
   concat
     [ "Blocks: "
@@ -132,6 +165,9 @@ renderSummary blocks events =
     , "\n"
     ]
 
+--------------------------------------------------------------------------------
+-- Blocks
+--------------------------------------------------------------------------------
 renderBlocks :: [BlockRecord] -> String
 renderBlocks blocks = renderHeader "Blocks" ++ concatMap renderBlock blocks
 
@@ -144,44 +180,45 @@ renderBlock (BlockRecord snapshot) =
     , "\n"
     ]
 
-renderEvents :: PrintEvent event => [TraceEvent event] -> String
+--------------------------------------------------------------------------------
+-- Events
+--------------------------------------------------------------------------------
+renderEvents :: PrintEvents events => [TraceEvent events] -> String
 renderEvents events =
   renderHeader "Events" ++ concat (zipWith renderEvent [0 :: Int ..] events)
 
-renderEvent :: PrintEvent event => Int -> TraceEvent event -> String
+renderEvent :: PrintEvents events => Int -> TraceEvent events -> String
 renderEvent ix (TraceEvent event audit) =
   concat
     [ padLeft eventIndexWidth (show ix)
     , " | "
-    , ansiText eventTitleStyle (printEvent event)
+    , ansiText eventTitleStyle (printEventUnion event)
     , "\n"
     , renderAudit audit
     , "\n"
     ]
 
+--------------------------------------------------------------------------------
+-- Audit rendering
+--------------------------------------------------------------------------------
 renderAudit :: Audit acts -> String
 renderAudit EmptyAudit     = ""
 renderAudit (step :> rest) = renderAuditStep step ++ renderAudit rest
 
 renderAuditStep :: AuditStep act -> String
-renderAuditStep (CreateStep snapshot) = renderSnapshotStep1 createStyle snapshot
-renderAuditStep (ObserveStep snapshot) =
-  renderSnapshotStep1 observeStyle snapshot
-renderAuditStep (InspectStep snapshot) =
-  renderSnapshotStep1 inspectStyle snapshot
-renderAuditStep (UseStep snapshot) = renderSnapshotStep1 useStyle snapshot
-renderAuditStep (CopyStep original copy') =
-  renderSnapshotStep2 copyStyle original copy'
-renderAuditStep (ReplaceStep old new) = renderSnapshotStep2 replaceStyle old new
-renderAuditStep (ComputeStep snapshot) =
-  renderSnapshotStep1 computeStyle snapshot
-renderAuditStep (DestroyStep snapshot) =
-  renderSnapshotStep1 destroyStyle snapshot
-renderAuditStep (SealStep owner child) =
-  renderSnapshotStep2 sealStyle owner child
-renderAuditStep (UnsealStep owner child) =
-  renderSnapshotStep2 unsealStyle owner child
-renderAuditStep (DecideStep snapshot) = renderSnapshotStep1 decideStyle snapshot
+renderAuditStep step =
+  case step of
+    CreateStep snapshot     -> renderSnapshotStep1 createStyle snapshot
+    ObserveStep snapshot    -> renderSnapshotStep1 observeStyle snapshot
+    InspectStep snapshot    -> renderSnapshotStep1 inspectStyle snapshot
+    UseStep snapshot        -> renderSnapshotStep1 useStyle snapshot
+    CopyStep original copy' -> renderSnapshotStep2 copyStyle original copy'
+    ReplaceStep old new     -> renderSnapshotStep2 replaceStyle old new
+    ComputeStep snapshot    -> renderSnapshotStep1 computeStyle snapshot
+    DestroyStep snapshot    -> renderSnapshotStep1 destroyStyle snapshot
+    SealStep owner child    -> renderSnapshotStep2 sealStyle owner child
+    UnsealStep owner child  -> renderSnapshotStep2 unsealStyle owner child
+    DecideStep snapshot     -> renderSnapshotStep1 decideStyle snapshot
 
 renderSnapshotStep1 :: StepStyle -> BlockSnapshot tag -> String
 renderSnapshotStep1 style snapshot =
@@ -201,6 +238,9 @@ renderSnapshotStep2 style first second =
     , "\n"
     ]
 
+--------------------------------------------------------------------------------
+-- Snapshot rendering
+--------------------------------------------------------------------------------
 renderSnapshot :: BlockSnapshot tag -> String
 renderSnapshot snapshot =
   padRight snapshotRefWidth (renderBlockRef (snapshotRef snapshot))
@@ -222,6 +262,9 @@ renderBlockRefPlain (BlockRef blockId) = "B" ++ show blockId
 renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView text) = text
 
+--------------------------------------------------------------------------------
+-- Text helpers
+--------------------------------------------------------------------------------
 renderHeader :: String -> String
 renderHeader title = title ++ "\n" ++ replicate (length title) '-' ++ "\n"
 
@@ -238,6 +281,9 @@ padRight n s = s ++ replicate (max 0 (n - length s)) ' '
 padLeft :: Int -> String -> String
 padLeft n s = replicate (max 0 (n - length s)) ' ' ++ s
 
+--------------------------------------------------------------------------------
+-- ANSI helpers
+--------------------------------------------------------------------------------
 data StepStyle =
   StepStyle String Ansi
 
@@ -258,16 +304,18 @@ ansiText :: [Ansi] -> String -> String
 ansiText styles text = concatMap ansiCode styles ++ text ++ ansiCode AnsiReset
 
 ansiCode :: Ansi -> String
-ansiCode AnsiReset = "\ESC[0m"
-ansiCode AnsiBold = "\ESC[1m"
-ansiCode AnsiDim = "\ESC[2m"
-ansiCode AnsiItalic = "\ESC[3m"
-ansiCode AnsiUnderline = "\ESC[4m"
-ansiCode (AnsiFg n) = "\ESC[" ++ show n ++ "m"
-ansiCode (AnsiBg n) = "\ESC[" ++ show n ++ "m"
-ansiCode (Ansi256Fg n) = "\ESC[38;5;" ++ show n ++ "m"
-ansiCode (Ansi256Bg n) = "\ESC[48;5;" ++ show n ++ "m"
-ansiCode (AnsiRgbFg r g b) =
-  "\ESC[38;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
-ansiCode (AnsiRgbBg r g b) =
-  "\ESC[48;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
+ansiCode ansi =
+  case ansi of
+    AnsiReset -> "\ESC[0m"
+    AnsiBold -> "\ESC[1m"
+    AnsiDim -> "\ESC[2m"
+    AnsiItalic -> "\ESC[3m"
+    AnsiUnderline -> "\ESC[4m"
+    AnsiFg n -> "\ESC[" ++ show n ++ "m"
+    AnsiBg n -> "\ESC[" ++ show n ++ "m"
+    Ansi256Fg n -> "\ESC[38;5;" ++ show n ++ "m"
+    Ansi256Bg n -> "\ESC[48;5;" ++ show n ++ "m"
+    AnsiRgbFg r g b ->
+      "\ESC[38;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
+    AnsiRgbBg r g b ->
+      "\ESC[48;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
