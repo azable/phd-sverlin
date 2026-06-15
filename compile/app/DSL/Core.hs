@@ -18,6 +18,7 @@ module DSL.Core
   , Step(..)
   , Performed(..)
   , step
+  , (:*)(..)
   , run
   , -- * DSL type vocabulary
     PrimitiveType(..)
@@ -43,17 +44,6 @@ module DSL.Core
   , Mul(..)
   , DiscardVar(..)
   , DiscardValue(..)
-  , -- * Command types
-    LiteralCmd(..)
-  , OperatorCmd(..)
-  , DeclareVarCmd(..)
-  , ReadVarCmd(..)
-  , WriteVarCmd(..)
-  , EvalCmd(..)
-  , AddCmd(..)
-  , MulCmd(..)
-  , DiscardVarCmd(..)
-  , DiscardValueCmd(..)
   , -- * Action-list aliases
     LiteralActs
   , OperatorActs
@@ -90,11 +80,12 @@ import           Control.Functor.Linear hiding ((<$>), (<*>))
 import           Data.Kind              (Type)
 import           Data.Proxy             (Proxy (..))
 import           LinearTrace
-import           LinearTrace.View
+import           LinearTrace.Visualize
 
 import qualified Prelude                as P
 import           Prelude.Linear
 
+infixr 4 :*
 --------------------------------------------------------------------------------
 -- Configuration
 --------------------------------------------------------------------------------
@@ -106,28 +97,30 @@ labelWidth = 5
 --------------------------------------------------------------------------------
 type Builder events a = TraceBuilder events a
 
+data (:*) a b where
+  (:*) :: a %1 -> b %1 -> a :* b
+
 data Performed event result where
   Performed
-    :: result
-       %1 -> Ur event
-       %1 -> EvidenceList (EventActs event)
-       %1 -> Performed event result
+    :: result %1 -> EvidenceList (EventActs event) %1 -> Performed event result
 
-class TraceEventSpec (StepEvent command) =>
-      Step command
+class TraceEventSpec event =>
+      Step event
   where
-  type StepEvent command :: Type
-  type StepResult command :: Type
+  type StepInput event :: Type
+  type StepResult event :: Type
   perform ::
-       command
-       %1 -> Builder events (Performed (StepEvent command) (StepResult command))
+       event
+    -> StepInput event
+       %1 -> Builder events (Performed event (StepResult event))
 
 step ::
-     forall command events. (Step command, Member (StepEvent command) events)
-  => command
-     %1 -> Builder events (StepResult command)
-step command = do
-  Performed result (Ur event) evidence <- perform command
+     forall event events. (Step event, Member event events)
+  => event
+  -> StepInput event
+     %1 -> Builder events (StepResult event)
+step event input = do
+  Performed result evidence <- perform event input
   event `explain` evidence
   return result
 
@@ -170,9 +163,6 @@ type DoubleVar = VarBlock 'TDouble
 data VarBlock ty where
   VarBlock :: Block (Var ty) %1 -> Slot (Var ty) (Value ty) %1 -> VarBlock ty
 
-data ReadVarResult ty where
-  ReadVarResult :: VarBlock ty %1 -> Block (Value ty) %1 -> ReadVarResult ty
-
 --------------------------------------------------------------------------------
 -- Payload constructors
 --------------------------------------------------------------------------------
@@ -193,22 +183,18 @@ data Literal (ty :: PrimitiveType) =
 instance TraceEventSpec (Literal ty) where
   type EventActs (Literal ty) = LiteralActs ty
 
-data LiteralCmd ty where
-  LiteralCmd
-    :: TracePayload (Value ty) => Payload (Value ty) %1 -> LiteralCmd ty
-
-instance Step (LiteralCmd ty) where
-  type StepEvent (LiteralCmd ty) = Literal ty
-  type StepResult (LiteralCmd ty) = Block (Value ty)
-  perform (LiteralCmd payload) = do
+instance TracePayload (Value ty) => Step (Literal ty) where
+  type StepInput (Literal ty) = Payload (Value ty)
+  type StepResult (Literal ty) = Block (Value ty)
+  perform Literal payload = do
     Created block createValue <- create payload
-    return (Performed block (Ur Literal) (createValue :~ Done))
+    return (Performed block (createValue :~ Done))
 
 literal ::
      (TracePayload (Value ty), Member (Literal ty) events)
   => Payload (Value ty)
      %1 -> Builder events (Block (Value ty))
-literal payload = step (LiteralCmd payload)
+literal = step Literal
 
 instance PrintEvent (Literal ty) where
   printEvent Literal = "Literal"
@@ -230,23 +216,16 @@ newtype DeclareVar (ty :: PrimitiveType) =
 instance TraceEventSpec (DeclareVar ty) where
   type EventActs (DeclareVar ty) = DeclareVarActs ty
 
-data DeclareVarCmd ty where
-  DeclareVarCmd
-    :: TracePayload (Value ty)=> String
-    -> Payload (Value ty)
-       %1 -> DeclareVarCmd ty
-
-instance Step (DeclareVarCmd ty) where
-  type StepEvent (DeclareVarCmd ty) = DeclareVar ty
-  type StepResult (DeclareVarCmd ty) = VarBlock ty
-  perform (DeclareVarCmd name initial) = do
+instance TracePayload (Value ty) => Step (DeclareVar ty) where
+  type StepInput (DeclareVar ty) = Payload (Value ty)
+  type StepResult (DeclareVar ty) = VarBlock ty
+  perform (DeclareVar name) initial = do
     Created valueBlock createValue <- create initial
     Created varBlock createVar <- create (LString name :: Payload (Var ty))
     Sealed varBlock' valueSlot sealValue <- seal varBlock valueBlock
     return
       (Performed
          (VarBlock varBlock' valueSlot)
-         (Ur (DeclareVar name))
          (createValue :~ createVar :~ sealValue :~ Done))
 
 declare ::
@@ -254,7 +233,7 @@ declare ::
   => String
   -> Payload (Value ty)
      %1 -> Builder events (VarBlock ty)
-declare name initial = step (DeclareVarCmd name initial)
+declare name = step (DeclareVar name)
 
 instance PrintEvent (DeclareVar ty) where
   printEvent (DeclareVar name) = "DeclareVar " P.++ name
@@ -275,23 +254,22 @@ type ReadVarActs ty
 data ReadVar (ty :: PrimitiveType) =
   ReadVar
 
+data ReadVarResult ty where
+  ReadVarResult :: VarBlock ty %1 -> Block (Value ty) %1 -> ReadVarResult ty
+
 instance TraceEventSpec (ReadVar ty) where
   type EventActs (ReadVar ty) = ReadVarActs ty
 
-data ReadVarCmd ty where
-  ReadVarCmd :: TracePayload (Value ty) => VarBlock ty %1 -> ReadVarCmd ty
-
-instance Step (ReadVarCmd ty) where
-  type StepEvent (ReadVarCmd ty) = ReadVar ty
-  type StepResult (ReadVarCmd ty) = ReadVarResult ty
-  perform (ReadVarCmd (VarBlock var valueSlot)) = do
+instance TracePayload (Value ty) => Step (ReadVar ty) where
+  type StepInput (ReadVar ty) = VarBlock ty
+  type StepResult (ReadVar ty) = ReadVarResult ty
+  perform ReadVar (VarBlock var valueSlot) = do
     Unsealed var1 held unsealValue <- unseal var valueSlot
     Copied held' copyBlock copyValue <- copy held
     Sealed var2 valueSlot' sealValue <- seal var1 held'
     return
       (Performed
          (ReadVarResult (VarBlock var2 valueSlot') copyBlock)
-         (Ur ReadVar)
          (unsealValue :~ copyValue :~ sealValue :~ Done))
 
 readVar ::
@@ -299,9 +277,8 @@ readVar ::
   => VarBlock ty
      %1 -> Builder events (VarBlock ty, Block (Value ty))
 readVar varBlock = do
-  result <- step (ReadVarCmd varBlock)
-  case result of
-    ReadVarResult nextVar value -> return (nextVar, value)
+  ReadVarResult nextVar value <- step ReadVar varBlock
+  return (nextVar, value)
 
 instance PrintEvent (ReadVar ty) where
   printEvent ReadVar = "ReadVar"
@@ -326,23 +303,16 @@ data WriteVar (ty :: PrimitiveType) =
 instance TraceEventSpec (WriteVar ty) where
   type EventActs (WriteVar ty) = WriteVarActs ty
 
-data WriteVarCmd ty where
-  WriteVarCmd
-    :: TracePayload (Value ty)=> VarBlock ty
-       %1 -> Block (Value ty)
-       %1 -> WriteVarCmd ty
-
-instance Step (WriteVarCmd ty) where
-  type StepEvent (WriteVarCmd ty) = WriteVar ty
-  type StepResult (WriteVarCmd ty) = VarBlock ty
-  perform (WriteVarCmd (VarBlock var valueSlot) newValue) = do
+instance TracePayload (Value ty) => Step (WriteVar ty) where
+  type StepInput (WriteVar ty) = VarBlock ty :* Block (Value ty)
+  type StepResult (WriteVar ty) = VarBlock ty
+  perform WriteVar (VarBlock var valueSlot :* newValue) = do
     Unsealed var1 oldValue unsealValue <- unseal var valueSlot
     Replaced currentValue replaceValue <- replace oldValue newValue
     Sealed var2 valueSlot' sealValue <- seal var1 currentValue
     return
       (Performed
          (VarBlock var2 valueSlot')
-         (Ur WriteVar)
          (unsealValue :~ replaceValue :~ sealValue :~ Done))
 
 writeVar ::
@@ -350,7 +320,7 @@ writeVar ::
   => VarBlock ty
      %1 -> Block (Value ty)
      %1 -> Builder events (VarBlock ty)
-writeVar varBlock newValue = step (WriteVarCmd varBlock newValue)
+writeVar varBlock newValue = step WriteVar (varBlock :* newValue)
 
 instance PrintEvent (WriteVar ty) where
   printEvent WriteVar = "WriteVar"
@@ -375,27 +345,20 @@ data DiscardVar (ty :: PrimitiveType) =
 instance TraceEventSpec (DiscardVar ty) where
   type EventActs (DiscardVar ty) = DiscardVarActs ty
 
-data DiscardVarCmd ty where
-  DiscardVarCmd :: TracePayload (Value ty) => VarBlock ty %1 -> DiscardVarCmd ty
-
-instance Step (DiscardVarCmd ty) where
-  type StepEvent (DiscardVarCmd ty) = DiscardVar ty
-  type StepResult (DiscardVarCmd ty) = ()
-  perform (DiscardVarCmd (VarBlock var valueSlot)) = do
+instance TracePayload (Value ty) => Step (DiscardVar ty) where
+  type StepInput (DiscardVar ty) = VarBlock ty
+  type StepResult (DiscardVar ty) = ()
+  perform DiscardVar (VarBlock var valueSlot) = do
     Unsealed var1 held unsealValue <- unseal var valueSlot
     Destroyed destroyVar <- destroy var1
     Destroyed destroyHeld <- destroy held
-    return
-      (Performed
-         ()
-         (Ur DiscardVar)
-         (unsealValue :~ destroyVar :~ destroyHeld :~ Done))
+    return (Performed () (unsealValue :~ destroyVar :~ destroyHeld :~ Done))
 
 discardVar ::
      (TracePayload (Value ty), Member (DiscardVar ty) events)
   => VarBlock ty
      %1 -> Builder events ()
-discardVar varBlock = step (DiscardVarCmd varBlock)
+discardVar = step DiscardVar
 
 instance PrintEvent (DiscardVar ty) where
   printEvent DiscardVar = "DiscardVar"
@@ -417,22 +380,18 @@ data DiscardValue (ty :: PrimitiveType) =
 instance TraceEventSpec (DiscardValue ty) where
   type EventActs (DiscardValue ty) = DiscardValueActs ty
 
-data DiscardValueCmd ty where
-  DiscardValueCmd
-    :: TracePayload (Value ty) => Block (Value ty) %1 -> DiscardValueCmd ty
-
-instance Step (DiscardValueCmd ty) where
-  type StepEvent (DiscardValueCmd ty) = DiscardValue ty
-  type StepResult (DiscardValueCmd ty) = ()
-  perform (DiscardValueCmd value) = do
+instance TracePayload (Value ty) => Step (DiscardValue ty) where
+  type StepInput (DiscardValue ty) = Block (Value ty)
+  type StepResult (DiscardValue ty) = ()
+  perform DiscardValue value = do
     Destroyed destroyValue <- destroy value
-    return (Performed () (Ur DiscardValue) (destroyValue :~ Done))
+    return (Performed () (destroyValue :~ Done))
 
 discardValue ::
      (TracePayload (Value ty), Member (DiscardValue ty) events)
   => Block (Value ty)
      %1 -> Builder events ()
-discardValue value = step (DiscardValueCmd value)
+discardValue = step DiscardValue
 
 instance PrintEvent (DiscardValue ty) where
   printEvent DiscardValue = "DiscardValue"
@@ -453,23 +412,18 @@ data Operator (op :: BinaryOp) (lhs :: PrimitiveType) (rhs :: PrimitiveType) (ou
 instance TraceEventSpec (Operator op lhs rhs out) where
   type EventActs (Operator op lhs rhs out) = OperatorActs op lhs rhs out
 
-data OperatorCmd op lhs rhs out where
-  OperatorCmd
-    :: TracePayload (Op op lhs rhs out)=> Payload (Op op lhs rhs out)
-       %1 -> OperatorCmd op lhs rhs out
-
-instance Step (OperatorCmd op lhs rhs out) where
-  type StepEvent (OperatorCmd op lhs rhs out) = Operator op lhs rhs out
-  type StepResult (OperatorCmd op lhs rhs out) = Block (Op op lhs rhs out)
-  perform (OperatorCmd payload) = do
+instance TracePayload (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
+  type StepInput (Operator op lhs rhs out) = Payload (Op op lhs rhs out)
+  type StepResult (Operator op lhs rhs out) = Block (Op op lhs rhs out)
+  perform Operator payload = do
     Created block createOp <- create payload
-    return (Performed block (Ur Operator) (createOp :~ Done))
+    return (Performed block (createOp :~ Done))
 
 operator ::
      (TracePayload (Op op lhs rhs out), Member (Operator op lhs rhs out) events)
   => Payload (Op op lhs rhs out)
      %1 -> Builder events (Block (Op op lhs rhs out))
-operator payload = step (OperatorCmd payload)
+operator = step Operator
 
 instance PrintEvent (Operator op lhs rhs out) where
   printEvent Operator = "Operator"
@@ -523,27 +477,18 @@ data Eval (op :: BinaryOp) (lhs :: PrimitiveType) (rhs :: PrimitiveType) (out ::
 instance TraceEventSpec (Eval op lhs rhs out) where
   type EventActs (Eval op lhs rhs out) = EvalActs op lhs rhs out
 
-data EvalCmd op lhs rhs out where
-  EvalCmd
-    :: EvalOp op lhs rhs out=> Block (Value lhs)
-       %1 -> Block (Op op lhs rhs out)
-       %1 -> Block (Value rhs)
-       %1 -> EvalCmd op lhs rhs out
-
-instance Step (EvalCmd op lhs rhs out) where
-  type StepEvent (EvalCmd op lhs rhs out) = Eval op lhs rhs out
-  type StepResult (EvalCmd op lhs rhs out) = Block (Value out)
-  perform (EvalCmd lhsBlock opBlock rhsBlock) = do
+instance EvalOp op lhs rhs out => Step (Eval op lhs rhs out) where
+  type StepInput (Eval op lhs rhs out) = Block (Value lhs) :* Block
+    (Op op lhs rhs out) :* Block (Value rhs)
+  type StepResult (Eval op lhs rhs out) = Block (Value out)
+  perform Eval (lhsBlock :* opBlock :* rhsBlock) = do
     Used lhs useLhs <- use lhsBlock
     Used opPayload useOp <- use opBlock
     Used rhs useRhs <- use rhsBlock
     Computed outBlock computeOut <-
       compute (evalPayload <$> lhs <*> opPayload <*> rhs)
     return
-      (Performed
-         outBlock
-         (Ur Eval)
-         (useLhs :~ useOp :~ useRhs :~ computeOut :~ Done))
+      (Performed outBlock (useLhs :~ useOp :~ useRhs :~ computeOut :~ Done))
 
 apply ::
      (EvalOp op lhs rhs out, Member (Eval op lhs rhs out) events)
@@ -551,7 +496,7 @@ apply ::
      %1 -> Block (Op op lhs rhs out)
      %1 -> Block (Value rhs)
      %1 -> Builder events (Block (Value out))
-apply lhsBlock opBlock rhsBlock = step (EvalCmd lhsBlock opBlock rhsBlock)
+apply lhsBlock opBlock rhsBlock = step Eval (lhsBlock :* opBlock :* rhsBlock)
 
 instance PrintEvent (Eval op lhs rhs out) where
   printEvent Eval = "Eval"
@@ -584,16 +529,10 @@ data Add (ty :: PrimitiveType) =
 instance TraceEventSpec (Add ty) where
   type EventActs (Add ty) = AddActs ty
 
-data AddCmd ty where
-  AddCmd
-    :: EvalOp 'TAdd ty ty ty=> Block (Value ty)
-       %1 -> Block (Value ty)
-       %1 -> AddCmd ty
-
-instance Step (AddCmd ty) where
-  type StepEvent (AddCmd ty) = Add ty
-  type StepResult (AddCmd ty) = Block (Value ty)
-  perform (AddCmd lhsBlock rhsBlock) = do
+instance EvalOp 'TAdd ty ty ty => Step (Add ty) where
+  type StepInput (Add ty) = Block (Value ty) :* Block (Value ty)
+  type StepResult (Add ty) = Block (Value ty)
+  perform Add (lhsBlock :* rhsBlock) = do
     Created opBlock createOp <- create (LUnit :: Payload (Op 'TAdd ty ty ty))
     Used lhs useLhs <- use lhsBlock
     Used opPayload useOp <- use opBlock
@@ -603,7 +542,6 @@ instance Step (AddCmd ty) where
     return
       (Performed
          outBlock
-         (Ur Add)
          (createOp :~ useLhs :~ useOp :~ useRhs :~ computeOut :~ Done))
 
 (.+.) ::
@@ -611,7 +549,7 @@ instance Step (AddCmd ty) where
   => Block (Value ty)
      %1 -> Block (Value ty)
      %1 -> Builder events (Block (Value ty))
-(.+.) lhs rhs = step (AddCmd lhs rhs)
+(.+.) lhs rhs = step Add (lhs :* rhs)
 
 instance PrintEvent (Add ty) where
   printEvent Add = "Add"
@@ -644,16 +582,10 @@ data Mul (ty :: PrimitiveType) =
 instance TraceEventSpec (Mul ty) where
   type EventActs (Mul ty) = MulActs ty
 
-data MulCmd ty where
-  MulCmd
-    :: EvalOp 'TMul ty ty ty=> Block (Value ty)
-       %1 -> Block (Value ty)
-       %1 -> MulCmd ty
-
-instance Step (MulCmd ty) where
-  type StepEvent (MulCmd ty) = Mul ty
-  type StepResult (MulCmd ty) = Block (Value ty)
-  perform (MulCmd lhsBlock rhsBlock) = do
+instance EvalOp 'TMul ty ty ty => Step (Mul ty) where
+  type StepInput (Mul ty) = Block (Value ty) :* Block (Value ty)
+  type StepResult (Mul ty) = Block (Value ty)
+  perform Mul (lhsBlock :* rhsBlock) = do
     Created opBlock createOp <- create (LUnit :: Payload (Op 'TMul ty ty ty))
     Used lhs useLhs <- use lhsBlock
     Used opPayload useOp <- use opBlock
@@ -663,7 +595,6 @@ instance Step (MulCmd ty) where
     return
       (Performed
          outBlock
-         (Ur Mul)
          (createOp :~ useLhs :~ useOp :~ useRhs :~ computeOut :~ Done))
 
 (.*.) ::
@@ -671,19 +602,17 @@ instance Step (MulCmd ty) where
   => Block (Value ty)
      %1 -> Block (Value ty)
      %1 -> Builder events (Block (Value ty))
-(.*.) lhs rhs = step (MulCmd lhs rhs)
+(.*.) lhs rhs = step Mul (lhs :* rhs)
 
 instance PrintEvent (Mul ty) where
   printEvent Mul = "Mul"
 
 instance VisualizeEvent (Mul ty) where
-  visualizeEvent Mul audit =
-    case audit of
-      VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone -> P.do
-        sameTop lhs op
-        sameTop rhs op
-        placeBelow result op
-        sameLeft result op
+  visualizeEvent Mul (VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone) = P.do
+    sameTop lhs op
+    sameTop rhs op
+    placeBelow result op
+    sameLeft result op
 
 --------------------------------------------------------------------------------
 -- Example

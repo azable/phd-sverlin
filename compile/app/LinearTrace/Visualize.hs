@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module LinearTrace.View
+module LinearTrace.Visualize
   ( -- * View graph
     ViewGraph(..)
   , ViewNode(..)

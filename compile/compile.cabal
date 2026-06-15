@@ -64,6 +64,7 @@ executable compile-app
     other-modules:
         LinearTrace
         LinearTrace.Core
+        LinearTrace.Visualize
         LinearTrace.Print
         DSL.Core
         Solver

@@ -295,29 +295,11 @@ data EvidenceList acts where
   (:~) :: Evidence act %1 -> EvidenceList acts %1 -> EvidenceList (act : acts)
 
 --------------------------------------------------------------------------------
--- Revised event layer
+-- Event layer
 --------------------------------------------------------------------------------
--- | Ordinary event types declare their required audit shape here.
---
--- This replaces the older model where every event language had to have kind:
---
--- > [Type] -> Type
---
--- Downstream events can now be ordinary types such as:
---
--- > data Add ty = Add
---
--- with:
---
--- > instance TraceEventSpec (Add ty) where
--- >   type EventActs (Add ty) = '[Create ..., Use ..., Compute ...]
 class TraceEventSpec event where
   type EventActs event :: [Type]
 
--- | A typed closed vocabulary of allowed event types.
---
--- The second index records the concrete action list required by the selected
--- event. This preserves the invariant that an event and its audit agree.
 data EventUnion (events :: [Type]) (acts :: [Type]) where
   Here
     :: TraceEventSpec event=> event
@@ -329,11 +311,11 @@ class Member event events where
        TraceEventSpec event => event -> EventUnion events (EventActs event)
 
 instance {-# OVERLAPPING #-} Member event (event : events) where
-  injectEvent = Here
+  injectEvent event = Here event
 
 instance {-# OVERLAPPABLE #-} Member event events =>
          Member event (other : events) where
-  injectEvent = There P.. injectEvent
+  injectEvent event = There (injectEvent event)
 
 data TraceEvent (events :: [Type]) where
   TraceEvent :: EventUnion events acts -> Audit acts -> TraceEvent events
