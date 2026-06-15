@@ -234,53 +234,62 @@ renderBlockView block =
     , padRight blockListRefWidth (renderBlockRefPlain (V.blockRef block))
     , renderPayloadView (V.blockLabel block)
     , "\n"
-    , stepIndent
-    , "style "
     , renderStyle (V.blockStyle block)
-    , "\n"
     ]
 
 renderStyle :: V.Style -> String
 renderStyle style =
   concat
-    [ "{ top = "
-    , renderExpr (V.top style)
-    , ", left = "
-    , renderExpr (V.left style)
-    , ", width = "
-    , renderExpr (V.width style)
-    , ", height = "
-    , renderExpr (V.height style)
-    , " }"
+    [ stepIndent
+    , "style\n"
+    , renderStyleField "top" (V.top style)
+    , renderStyleField "left" (V.left style)
+    , renderStyleField "width" (V.width style)
+    , renderStyleField "height" (V.height style)
     ]
+
+renderStyleField :: String -> V.Expr -> String
+renderStyleField name expr =
+  concat [stepIndent, stepIndent, padRight 8 name, "= ", renderExpr expr, "\n"]
 
 --------------------------------------------------------------------------------
 -- View constraints
 --------------------------------------------------------------------------------
 renderViewConstraints :: [V.Constraint] -> String
 renderViewConstraints constraints =
-  renderHeader "View constraints" ++ concatMap renderViewConstraint constraints
+  let rendered = map renderConstraintParts constraints
+      lhsWidth = maximum (0 : [length lhs | RenderedEquals lhs _ <- rendered])
+   in renderHeader "View constraints"
+        ++ concatMap (renderRenderedConstraint lhsWidth) rendered
 
-renderViewConstraint :: V.Constraint -> String
-renderViewConstraint constraint =
+data RenderedConstraint
+  = RenderedEquals String String
+  | RenderedMinimize String
+
+renderConstraintParts :: V.Constraint -> RenderedConstraint
+renderConstraintParts constraint =
   case constraint of
-    V.Equals lhs rhs ->
-      concat ["  ", renderExpr lhs, " = ", renderExpr rhs, "\n"]
-    V.Minimize expr -> concat ["  minimize ", renderExpr expr, "\n"]
+    V.Equals lhs rhs -> RenderedEquals (renderExpr lhs) (renderExpr rhs)
+    V.Minimize expr  -> RenderedMinimize (renderExpr expr)
+
+renderRenderedConstraint :: Int -> RenderedConstraint -> String
+renderRenderedConstraint lhsWidth constraint =
+  case constraint of
+    RenderedEquals lhs rhs ->
+      concat ["  ", padRight lhsWidth lhs, " = ", rhs, "\n"]
+    RenderedMinimize expr -> concat ["  minimize ", expr, "\n"]
 
 --------------------------------------------------------------------------------
 -- View steps
 --------------------------------------------------------------------------------
-renderViewSteps :: PrintEvents events => [V.ViewStep events] -> String
-renderViewSteps steps =
-  renderHeader "View steps"
-    ++ concat (zipWith renderViewStep [0 :: Int ..] steps)
-
-renderViewStep :: PrintEvents events => Int -> V.ViewStep events -> String
-renderViewStep ix step =
-  case step of
-    V.ViewStep event -> renderEvent ix event
-
+-- renderViewSteps :: PrintEvents events => [V.ViewStep events] -> String
+-- renderViewSteps steps =
+--   renderHeader "View steps"
+--     ++ concat (zipWith renderViewStep [0 :: Int ..] steps)
+-- renderViewStep :: PrintEvents events => Int -> V.ViewStep events -> String
+-- renderViewStep ix step =
+--   case step of
+--     V.ViewStep event -> renderEvent ix event
 --------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
