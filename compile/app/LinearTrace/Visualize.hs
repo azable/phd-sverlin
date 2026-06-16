@@ -36,8 +36,8 @@ module LinearTrace.Visualize
   , ViewBuilder
   , VisualizeEvent(..)
   , VisualizeEvents(..)
-  , buildVisualizationCSP
-  , solveVisualizationCSP
+  , buildCSP
+  , solveCSP
   , defaultSolveConfig
   , ensure
   , -- * Style helpers
@@ -241,9 +241,8 @@ instance (VisualizeEvent event, VisualizeEvents rest) =>
 --------------------------------------------------------------------------------
 -- Build a view graph
 --------------------------------------------------------------------------------
-buildVisualizationCSP ::
-     VisualizeEvents events => C.TraceGraph events -> ViewGraph events
-buildVisualizationCSP graph@(C.TraceGraph blocks events) =
+buildCSP :: VisualizeEvents events => C.TraceGraph events -> ViewGraph events
+buildCSP graph@(C.TraceGraph blocks events) =
   let env = buildViewEnv graph
       staticNodes = map viewNodeOfBlock blocks
       stepOutputs = map (visualizeTraceEvent env) events
@@ -256,8 +255,8 @@ buildVisualizationCSP graph@(C.TraceGraph blocks events) =
         , viewConstraints = constraints
         }
 
-solveVisualizationCSP :: S.SolveConfig -> ViewGraph events -> IO S.Solution
-solveVisualizationCSP config graph = S.solve config (viewConstraints graph)
+solveCSP :: S.SolveConfig -> ViewGraph events -> IO S.Solution
+solveCSP config graph = S.solve config (viewConstraints graph)
 
 data BuiltViewStep events = BuiltViewStep
   { stepView        :: ViewStep events
