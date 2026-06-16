@@ -594,10 +594,13 @@ instance ( BinaryOpLabel op
 --------------------------------------------------------------------------------
 -- Block visualisation
 --------------------------------------------------------------------------------
+blockSize :: Expr
+blockSize = global "blockSize"
+
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
-  ensure $ equals (widthOf block) (global "blockWidth")
-  ensure $ equals (heightOf block) (global "blockHeight")
+  ensure $ equals (widthOf block) blockSize
+  ensure $ equals (heightOf block) blockSize
 
 instance VisualizeBlock (Value 'TInt) where
   visualizeBlock = cellBlock
@@ -630,8 +633,6 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
   visualizeEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
-        visualizeBlock valueB
-        visualizeBlock varB
         sameBounds valueB varB
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
@@ -639,18 +640,13 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
   visualizeEvent ReadVar audit =
     case audit of
       VUnsealed varB held :& VCopied _heldOriginal copied :& VSealed _ _ :& VDone -> P.do
-        visualizeBlock varB
-        visualizeBlock held
-        visualizeBlock copied
+        P.pure ()
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (WriteVar ty) where
   visualizeEvent WriteVar audit =
     case audit of
       VUnsealed varB oldValue :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
-        visualizeBlock varB
-        visualizeBlock oldValue
-        visualizeBlock newValue
         sameBounds varB newValue
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
@@ -658,21 +654,20 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
   visualizeEvent DiscardVar audit =
     case audit of
       VUnsealed varB value :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
-        visualizeBlock varB
-        visualizeBlock value
+        P.pure ()
 
 instance VisualizeBlock (Value ty) => VisualizeEvent (DiscardValue ty) where
   visualizeEvent DiscardValue audit =
     case audit of
       VDestroyed value :& VDone -> P.do
-        visualizeBlock value
+        P.pure ()
 
 instance VisualizeBlock (Op op lhs rhs out) =>
          VisualizeEvent (Operator op lhs rhs out) where
   visualizeEvent Operator audit =
     case audit of
       VCreated op :& VDone -> P.do
-        visualizeBlock op
+        P.pure ()
 
 instance ( VisualizeBlock (Value lhs)
          , VisualizeBlock (Op op lhs rhs out)
@@ -683,10 +678,6 @@ instance ( VisualizeBlock (Value lhs)
   visualizeEvent Eval audit =
     case audit of
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
-        visualizeBlock lhs
-        visualizeBlock op
-        visualizeBlock rhs
-        visualizeBlock result
         lhs |=| op
         op |=| rhs
         rhs |=| result

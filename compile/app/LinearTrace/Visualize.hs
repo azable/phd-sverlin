@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds            #-}
 {-# LANGUAGE EmptyCase            #-}
+{-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE TypeOperators        #-}
@@ -223,6 +224,63 @@ class C.TraceBlock tag =>
   visualizeBlock :: BlockView tag -> ViewBuilder events ()
 
 --------------------------------------------------------------------------------
+-- Automatic block visualisation from audit steps
+--------------------------------------------------------------------------------
+class VisualizeAuditBlock act where
+  visualizeAuditBlockStep :: ViewAuditStep act -> ViewBuilder events ()
+
+instance VisualizeBlock tag => VisualizeAuditBlock (C.Create tag) where
+  visualizeAuditBlockStep step =
+    case step of
+      VCreated block -> visualizeBlock block
+
+instance VisualizeAuditBlock (C.Observe tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeAuditBlock (C.Inspect tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeAuditBlock (C.Use tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeBlock tag => VisualizeAuditBlock (C.Copy tag) where
+  visualizeAuditBlockStep step =
+    case step of
+      VCopied _original copy' -> visualizeBlock copy'
+
+instance VisualizeAuditBlock (C.Replace tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeBlock tag => VisualizeAuditBlock (C.Compute tag) where
+  visualizeAuditBlockStep step =
+    case step of
+      VComputed block -> visualizeBlock block
+
+instance VisualizeAuditBlock (C.Destroy tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeAuditBlock (C.Seal owner tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeAuditBlock (C.Unseal owner tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+instance VisualizeAuditBlock (C.Decide tag) where
+  visualizeAuditBlockStep _ = pure ()
+
+class VisualizeAuditBlocks acts where
+  visualizeAuditBlocks :: ViewAudit acts -> ViewBuilder events ()
+
+instance VisualizeAuditBlocks '[] where
+  visualizeAuditBlocks VDone = pure ()
+
+instance (VisualizeAuditBlock act, VisualizeAuditBlocks acts) =>
+         VisualizeAuditBlocks (act : acts) where
+  visualizeAuditBlocks (step :& rest) = do
+    visualizeAuditBlockStep step
+    visualizeAuditBlocks rest
+
+--------------------------------------------------------------------------------
 -- Per-event visualisation
 --------------------------------------------------------------------------------
 class C.TraceEventSpec event =>
@@ -238,11 +296,16 @@ class VisualizeEvents choices where
 instance VisualizeEvents '[] where
   visualizeUnion union _ = case union of {}
 
-instance (VisualizeEvent event, VisualizeEvents rest) =>
+instance ( VisualizeEvent event
+         , VisualizeAuditBlocks (C.EventActs event)
+         , VisualizeEvents rest
+         ) =>
          VisualizeEvents (event : rest) where
   visualizeUnion union audit =
     case union of
-      C.Here event -> visualizeEvent event audit
+      C.Here event -> do
+        visualizeAuditBlocks audit
+        visualizeEvent event audit
       C.There rest -> visualizeUnion rest audit
 
 --------------------------------------------------------------------------------
