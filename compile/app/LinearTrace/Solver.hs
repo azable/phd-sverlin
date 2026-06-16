@@ -16,6 +16,9 @@ module LinearTrace.Solver
   , (@=@)
   , (@<@)
   , minimize
+  , maxE
+  , minE
+  , clipNegative
   , -- * Solving
     SolveConfig(..)
   , defaultSolveConfig
@@ -26,7 +29,6 @@ module LinearTrace.Solver
 
 import           Control.Monad.State.Strict
 import           Data.Foldable              (traverse_)
-import qualified Data.List                  as List
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Set                   (Set)
@@ -89,6 +91,15 @@ squared = ESquare
 
 minimize :: Expr -> Constraint
 minimize = Minimize
+
+maxE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
+maxE x y = (x + y + abs (x - y)) / 2
+
+minE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
+minE x y = (x + y - abs (x - y)) / 2
+
+clipNegative :: Floating a => EnergyExpr a -> EnergyExpr a
+clipNegative = maxE 0
 
 --------------------------------------------------------------------------------
 -- Solver-facing compiled expressions
@@ -290,7 +301,7 @@ lowerConstraint config vars constraint =
     LessThan lhs rhs ->
       addTerm
         (ensureWeight config)
-        (sq (lowerExpr vars lhs - lowerExpr vars rhs))
+        (sq (clipNegative (lowerExpr vars lhs - lowerExpr vars rhs)))
     Minimize objective ->
       addTerm (encourageWeight config) (lowerExpr vars objective)
 

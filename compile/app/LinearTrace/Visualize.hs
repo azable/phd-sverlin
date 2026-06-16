@@ -44,6 +44,7 @@ module LinearTrace.Visualize
   , solveCSP
   , defaultSolveConfig
   , ensure
+  , encourage
   , -- * Style helpers
     topOf
   , leftOf
@@ -231,6 +232,9 @@ type ViewBuilder events a = ReaderT ViewEnv (Writer (ViewOutput events)) a
 
 ensure :: Constraint -> ViewBuilder events ()
 ensure constraint = tell mempty {emittedConstraints = [constraint]}
+
+encourage :: Expr -> ViewBuilder events ()
+encourage objective = tell mempty {emittedConstraints = [minimize objective]}
 
 --------------------------------------------------------------------------------
 -- Constraint constructors/helpers

@@ -595,7 +595,7 @@ instance ( BinaryOpLabel op
 -- Block visualisation
 --------------------------------------------------------------------------------
 blockSize :: Expr
-blockSize = global "blockSize"
+blockSize = num 50 --global "blockSize"
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
@@ -626,7 +626,7 @@ instance VisualizeBlock (Value ty) => VisualizeEvent (Literal ty) where
   visualizeEvent Literal audit =
     case audit of
       VCreated value :& VDone -> P.do
-        visualizeBlock value
+        P.pure ()
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (DeclareVar ty) where
@@ -680,4 +680,4 @@ instance ( VisualizeBlock (Value lhs)
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
         lhs |=| op
         op |=| rhs
-        rhs |=| result
+        -- rhs |=| result
