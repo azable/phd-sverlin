@@ -113,7 +113,8 @@ data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
 
 data ViewStep events where
-  ViewStep :: C.TraceEvent events -> ViewStep events
+  ViewStep
+    :: C.TraceEvent events -> [ViewNode] -> [Constraint] -> ViewStep events
 
 data ViewGraph events = ViewGraph
   { viewNodes       :: [ViewNode]
@@ -152,7 +153,7 @@ data Globals = Globals
   , globalCellWidth :: Expr
   }
 
-data ViewEnv = ViewEnv
+newtype ViewEnv = ViewEnv
   { globals :: Globals
   }
 
@@ -190,9 +191,6 @@ type ViewBuilder events a = ReaderT ViewEnv (Writer (ViewOutput events)) a
 ensure :: Constraint -> ViewBuilder events ()
 ensure constraint = tell mempty {emittedConstraints = [constraint]}
 
-emitStep :: ViewStep events -> ViewBuilder events ()
-emitStep step = tell mempty {emittedSteps = [step]}
-
 --------------------------------------------------------------------------------
 -- Per-event visualisation
 --------------------------------------------------------------------------------
@@ -222,24 +220,42 @@ instance (VisualizeEvent event, VisualizeEvents rest) =>
 buildVisualization ::
      VisualizeEvents events => C.TraceGraph events -> ViewGraph events
 buildVisualization graph@(C.TraceGraph blocks events) =
-  let staticNodes = map viewNodeOfBlock blocks
-      output =
-        execWriter
-          (runReaderT (mapM_ visualizeTraceEvent events) (buildViewEnv graph))
+  let env = buildViewEnv graph
+      staticNodes = map viewNodeOfBlock blocks
+      stepOutputs = map (visualizeTraceEvent env) events
+      viewSteps' = map stepView stepOutputs
+      dynamicNodes = concatMap stepNodes stepOutputs
+      constraints = concatMap stepConstraints stepOutputs
    in ViewGraph
-        { viewNodes = staticNodes ++ emittedNodes output
-        , viewSteps = emittedSteps output
-        , viewConstraints = emittedConstraints output
+        { viewNodes = staticNodes ++ dynamicNodes
+        , viewSteps = viewSteps'
+        , viewConstraints = constraints
+        }
+
+data BuiltViewStep events = BuiltViewStep
+  { stepView        :: ViewStep events
+  , stepNodes       :: [ViewNode]
+  , stepConstraints :: [Constraint]
+  }
+
+visualizeTraceEvent ::
+     VisualizeEvents events
+  => ViewEnv
+  -> C.TraceEvent events
+  -> BuiltViewStep events
+visualizeTraceEvent env traceEvent@(C.TraceEvent event audit) =
+  let output =
+        execWriter (runReaderT (visualizeUnion event (viewAudit audit)) env)
+      nodes = emittedNodes output
+      constraints = emittedConstraints output
+   in BuiltViewStep
+        { stepView = ViewStep traceEvent nodes constraints
+        , stepNodes = nodes
+        , stepConstraints = constraints
         }
 
 buildViewEnv :: C.TraceGraph events -> ViewEnv
 buildViewEnv _ = defaultViewEnv
-
-visualizeTraceEvent ::
-     VisualizeEvents events => C.TraceEvent events -> ViewBuilder events ()
-visualizeTraceEvent traceEvent@(C.TraceEvent event audit) = do
-  emitStep (ViewStep traceEvent)
-  visualizeUnion event (viewAudit audit)
 
 --------------------------------------------------------------------------------
 -- Static block pass

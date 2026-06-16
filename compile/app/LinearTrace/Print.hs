@@ -166,9 +166,7 @@ renderVisualization (V.ViewGraph nodes steps constraints) =
     , "\n"
     , renderViewNodes nodes
     , "\n"
-    , renderViewConstraints constraints
-    -- , "\n"
-    -- , renderViewSteps steps
+    , renderViewTrace steps
     ]
 
 --------------------------------------------------------------------------------
@@ -255,13 +253,6 @@ renderStyleField name expr =
 --------------------------------------------------------------------------------
 -- View constraints
 --------------------------------------------------------------------------------
-renderViewConstraints :: [V.Constraint] -> String
-renderViewConstraints constraints =
-  let rendered = map renderConstraintParts constraints
-      lhsWidth = maximum (0 : [length lhs | RenderedEquals lhs _ <- rendered])
-   in renderHeader "View constraints"
-        ++ concatMap (renderRenderedConstraint lhsWidth) rendered
-
 data RenderedConstraint
   = RenderedEquals String String
   | RenderedMinimize String
@@ -272,12 +263,74 @@ renderConstraintParts constraint =
     V.Equals lhs rhs -> RenderedEquals (renderExpr lhs) (renderExpr rhs)
     V.Minimize expr  -> RenderedMinimize (renderExpr expr)
 
-renderRenderedConstraint :: Int -> RenderedConstraint -> String
-renderRenderedConstraint lhsWidth constraint =
+--------------------------------------------------------------------------------
+-- View trace
+--------------------------------------------------------------------------------
+renderViewTrace :: PrintEvents events => [V.ViewStep events] -> String
+renderViewTrace steps =
+  renderHeader "View trace"
+    ++ concat (zipWith renderViewTraceStep [0 :: Int ..] steps)
+
+renderViewTraceStep :: PrintEvents events => Int -> V.ViewStep events -> String
+renderViewTraceStep ix step =
+  case step of
+    V.ViewStep event nodes constraints ->
+      concat
+        [ renderEvent ix event
+        , renderStepViewNodes nodes
+        , renderStepConstraints constraints
+        ]
+
+renderStepViewNodes :: [V.ViewNode] -> String
+renderStepViewNodes nodes =
+  case nodes of
+    [] -> ""
+    _ ->
+      concat
+        [ stepIndent
+        , "view nodes\n"
+        , concatMap renderIndentedViewNode nodes
+        , "\n"
+        ]
+
+renderIndentedViewNode :: V.ViewNode -> String
+renderIndentedViewNode node =
+  case node of
+    V.BlockViewNode block ->
+      concat
+        [ stepIndent
+        , stepIndent
+        , renderBlockRefPlain (V.blockRef block)
+        , " "
+        , renderPayloadView (V.blockLabel block)
+        , "\n"
+        ]
+
+renderStepConstraints :: [V.Constraint] -> String
+renderStepConstraints constraints =
+  case constraints of
+    [] -> ""
+    _ ->
+      concat
+        [ stepIndent
+        , "constraints\n"
+        , renderIndentedConstraints constraints
+        , "\n"
+        ]
+
+renderIndentedConstraints :: [V.Constraint] -> String
+renderIndentedConstraints constraints =
+  let rendered = map renderConstraintParts constraints
+      lhsWidth = maximum (0 : [length lhs | RenderedEquals lhs _ <- rendered])
+   in concatMap (renderIndentedConstraint lhsWidth) rendered
+
+renderIndentedConstraint :: Int -> RenderedConstraint -> String
+renderIndentedConstraint lhsWidth constraint =
   case constraint of
     RenderedEquals lhs rhs ->
-      concat ["  ", padRight lhsWidth lhs, " = ", rhs, "\n"]
-    RenderedMinimize expr -> concat ["  minimize ", expr, "\n"]
+      concat [stepIndent, stepIndent, padRight lhsWidth lhs, " = ", rhs, "\n"]
+    RenderedMinimize expr ->
+      concat [stepIndent, stepIndent, "minimize ", expr, "\n"]
 
 --------------------------------------------------------------------------------
 -- View steps
