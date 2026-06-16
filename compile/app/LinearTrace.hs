@@ -68,7 +68,7 @@ module LinearTrace
   , printGraph
   , printTrace
   , printVisualization
-  , printVisualisation
+  , printVisualizationCSPSolution
   ) where
 
 import           LinearTrace.Core

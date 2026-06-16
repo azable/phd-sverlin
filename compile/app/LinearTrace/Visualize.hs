@@ -12,12 +12,19 @@ module LinearTrace.Visualize
   , ViewStep(..)
   , BlockView(..)
   , Style(..)
+  , MaterializedStyle(..)
+  , MaterializedBlockView(..)
+  , MaterializedViewNode(..)
   , -- * Expressions and constraints
     Expr(..)
   , Constraint(..)
+  , var
   , equals
   , plus
+  , minus
   , times
+  , dividedBy
+  , squared
   , num
   , varName
   , -- * View audit
@@ -29,7 +36,9 @@ module LinearTrace.Visualize
   , ViewBuilder
   , VisualizeEvent(..)
   , VisualizeEvents(..)
-  , buildVisualization
+  , buildVisualizationCSP
+  , solveVisualizationCSP
+  , defaultSolveConfig
   , ensure
   , -- * Style helpers
     topOf
@@ -39,48 +48,22 @@ module LinearTrace.Visualize
   , sameTop
   , sameLeft
   , placeBelow
+  , materializeStyle
+  , materializeBlockView
+  , materializeViewNode
   ) where
 
 import           Control.Monad.Reader
 import           Control.Monad.Writer.Strict
 import qualified LinearTrace.Core            as C
+import           LinearTrace.Solver          (Constraint (..), Expr (..),
+                                              defaultSolveConfig, dividedBy,
+                                              equals, minus, num, plus, squared,
+                                              times, var, varName)
+import qualified LinearTrace.Solver          as S
 import           Prelude
 
 infixr 5 :&
---------------------------------------------------------------------------------
--- Symbolic layout language
---------------------------------------------------------------------------------
-newtype Var =
-  Var String
-
-varName :: Var -> String
-varName (Var name) = name
-
-data Expr
-  = EVar Var
-  | ELit Double
-  | EAdd Expr Expr
-  | EMul Expr Expr
-
-data Constraint
-  = Equals Expr Expr
-  | Minimize Expr
-
-var :: String -> Expr
-var = EVar . Var
-
-num :: Double -> Expr
-num = ELit
-
-plus :: Expr -> Expr -> Expr
-plus = EAdd
-
-times :: Expr -> Expr -> Expr
-times = EMul
-
-equals :: Expr -> Expr -> Constraint
-equals = Equals
-
 --------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
@@ -121,6 +104,47 @@ data ViewGraph events = ViewGraph
   , viewSteps       :: [ViewStep events]
   , viewConstraints :: [Constraint]
   }
+
+--------------------------------------------------------------------------------
+-- Materialized views
+--------------------------------------------------------------------------------
+data MaterializedStyle = MaterializedStyle
+  { materializedTop    :: Double
+  , materializedLeft   :: Double
+  , materializedWidth  :: Double
+  , materializedHeight :: Double
+  } deriving (Eq, Show)
+
+data MaterializedBlockView tag = MaterializedBlockView
+  { materializedBlockRef   :: C.BlockRef tag
+  , materializedBlockLabel :: C.PayloadView
+  , materializedBlockStyle :: MaterializedStyle
+  }
+
+data MaterializedViewNode where
+  MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
+
+materializeStyle :: S.Solution -> Style -> Maybe MaterializedStyle
+materializeStyle solution style =
+  MaterializedStyle
+    <$> S.evalExpr solution (top style)
+    <*> S.evalExpr solution (left style)
+    <*> S.evalExpr solution (width style)
+    <*> S.evalExpr solution (height style)
+
+materializeBlockView ::
+     S.Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
+materializeBlockView solution block =
+  MaterializedBlockView
+    <$> pure (blockRef block)
+    <*> pure (blockLabel block)
+    <*> materializeStyle solution (blockStyle block)
+
+materializeViewNode :: S.Solution -> ViewNode -> Maybe MaterializedViewNode
+materializeViewNode solution node =
+  case node of
+    BlockViewNode block ->
+      MaterializedBlockViewNode <$> materializeBlockView solution block
 
 --------------------------------------------------------------------------------
 -- View audit
@@ -217,9 +241,9 @@ instance (VisualizeEvent event, VisualizeEvents rest) =>
 --------------------------------------------------------------------------------
 -- Build a view graph
 --------------------------------------------------------------------------------
-buildVisualization ::
+buildVisualizationCSP ::
      VisualizeEvents events => C.TraceGraph events -> ViewGraph events
-buildVisualization graph@(C.TraceGraph blocks events) =
+buildVisualizationCSP graph@(C.TraceGraph blocks events) =
   let env = buildViewEnv graph
       staticNodes = map viewNodeOfBlock blocks
       stepOutputs = map (visualizeTraceEvent env) events
@@ -231,6 +255,9 @@ buildVisualization graph@(C.TraceGraph blocks events) =
         , viewSteps = viewSteps'
         , viewConstraints = constraints
         }
+
+solveVisualizationCSP :: S.SolveConfig -> ViewGraph events -> IO S.Solution
+solveVisualizationCSP config graph = S.solve config (viewConstraints graph)
 
 data BuiltViewStep events = BuiltViewStep
   { stepView        :: ViewStep events

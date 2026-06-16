@@ -11,10 +11,12 @@ module LinearTrace.Print
   , printGraph
   , printTrace
   , printVisualization
-  , printVisualisation
+  , printVisualizationCSPSolution
   ) where
 
+import qualified Data.Map.Strict       as Map
 import           LinearTrace.Core
+import qualified LinearTrace.Solver    as S
 import qualified LinearTrace.Visualize as V
 import           Prelude
 
@@ -32,6 +34,9 @@ snapshotRefWidth = 6
 
 stepNameWidth :: Int
 stepNameWidth = 16
+
+solutionNameWidth :: Int
+solutionNameWidth = 32
 
 stepIndent :: String
 stepIndent = "    "
@@ -141,8 +146,8 @@ printTrace graph = putStr (renderTrace graph)
 printVisualization :: PrintEvents events => V.ViewGraph events -> IO ()
 printVisualization graph = putStr (renderVisualization graph)
 
-printVisualisation :: PrintEvents events => V.ViewGraph events -> IO ()
-printVisualisation = printVisualization
+printVisualizationCSPSolution :: S.Solution -> IO ()
+printVisualizationCSPSolution solution = putStr (renderSolution solution)
 
 renderGraph :: PrintEvents events => TraceGraph events -> String
 renderGraph (TraceGraph blocks events) =
@@ -167,6 +172,15 @@ renderVisualization (V.ViewGraph nodes steps constraints) =
     , renderViewNodes nodes
     , "\n"
     , renderViewTrace steps
+    ]
+
+renderSolution :: S.Solution -> String
+renderSolution solution =
+  concat
+    [ renderHeader "Solution"
+    , renderSolutionSummary solution
+    , "\n"
+    , renderSolutionValues (S.solutionValues solution)
     ]
 
 --------------------------------------------------------------------------------
@@ -195,6 +209,20 @@ renderVisualizationSummary nodes steps constraints =
     , "\n"
     , "Constraints: "
     , show (length constraints)
+    , "\n"
+    ]
+
+renderSolutionSummary :: S.Solution -> String
+renderSolutionSummary solution =
+  concat
+    [ "Success: "
+    , show (S.solutionSuccess solution)
+    , "\n"
+    , "Energy: "
+    , show (S.solutionEnergy solution)
+    , "\n"
+    , "Variables: "
+    , show (Map.size (S.solutionValues solution))
     , "\n"
     ]
 
@@ -249,6 +277,20 @@ renderStyle style =
 renderStyleField :: String -> V.Expr -> String
 renderStyleField name expr =
   concat [stepIndent, stepIndent, padRight 8 name, "= ", renderExpr expr, "\n"]
+
+--------------------------------------------------------------------------------
+-- Solution values
+--------------------------------------------------------------------------------
+renderSolutionValues :: Map.Map String Double -> String
+renderSolutionValues values =
+  concat
+    [ renderHeader "Solution values"
+    , concatMap renderSolutionValue (Map.toAscList values)
+    ]
+
+renderSolutionValue :: (String, Double) -> String
+renderSolutionValue (name, value) =
+  concat ["  ", padRight solutionNameWidth name, " = ", show value, "\n"]
 
 --------------------------------------------------------------------------------
 -- View constraints
@@ -332,17 +374,6 @@ renderIndentedConstraint lhsWidth constraint =
     RenderedMinimize expr ->
       concat [stepIndent, stepIndent, "minimize ", expr, "\n"]
 
---------------------------------------------------------------------------------
--- View steps
---------------------------------------------------------------------------------
--- renderViewSteps :: PrintEvents events => [V.ViewStep events] -> String
--- renderViewSteps steps =
---   renderHeader "View steps"
---     ++ concat (zipWith renderViewStep [0 :: Int ..] steps)
--- renderViewStep :: PrintEvents events => Int -> V.ViewStep events -> String
--- renderViewStep ix step =
---   case step of
---     V.ViewStep event -> renderEvent ix event
 --------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
@@ -442,18 +473,44 @@ renderExprPrec precedence expr =
         (renderExprPrec addPrecedence lhs
            ++ " + "
            ++ renderExprPrec addPrecedence rhs)
+    V.ESub lhs rhs ->
+      parenthesize
+        (precedence > addPrecedence)
+        (renderExprPrec addPrecedence lhs
+           ++ " - "
+           ++ renderExprPrec (addPrecedence + 1) rhs)
     V.EMul lhs rhs ->
       parenthesize
         (precedence > mulPrecedence)
         (renderExprPrec mulPrecedence lhs
            ++ " * "
            ++ renderExprPrec mulPrecedence rhs)
+    V.EDiv lhs rhs ->
+      parenthesize
+        (precedence > mulPrecedence)
+        (renderExprPrec mulPrecedence lhs
+           ++ " / "
+           ++ renderExprPrec (mulPrecedence + 1) rhs)
+    V.ENeg inner ->
+      parenthesize
+        (precedence > unaryPrecedence)
+        ("-" ++ renderExprPrec unaryPrecedence inner)
+    V.ESquare inner ->
+      parenthesize
+        (precedence > powerPrecedence)
+        (renderExprPrec powerPrecedence inner ++ "^2")
 
 addPrecedence :: Int
 addPrecedence = 6
 
 mulPrecedence :: Int
 mulPrecedence = 7
+
+unaryPrecedence :: Int
+unaryPrecedence = 8
+
+powerPrecedence :: Int
+powerPrecedence = 9
 
 parenthesize :: Bool -> String -> String
 parenthesize shouldParenthesize text =

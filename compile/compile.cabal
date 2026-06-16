@@ -66,14 +66,15 @@ executable compile-app
         LinearTrace.Core
         LinearTrace.Visualize
         LinearTrace.Print
+        LinearTrace.Solver
         DSL.Main
-        Solver
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
     build-depends:    base ^>=4.18.3.0,
+                      containers,
                       mtl,
                       linear-base,
                       numeric-optimization,

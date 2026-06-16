@@ -12,6 +12,11 @@ main :: IO ()
 main = do
   let graph = run example
   LinearTrace.printTrace graph
-  let visGraph = LinearTrace.Visualize.buildVisualization graph
+  let visGraph = LinearTrace.Visualize.buildVisualizationCSP graph
   LinearTrace.printVisualization visGraph
+  let solved =
+        LinearTrace.Visualize.solveVisualizationCSP
+          LinearTrace.Visualize.defaultSolveConfig
+          visGraph
+  LinearTrace.printVisualizationCSPSolution =<< solved
   -- test
