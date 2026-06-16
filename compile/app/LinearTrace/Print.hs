@@ -18,6 +18,7 @@ import qualified Data.Map.Strict       as Map
 import           LinearTrace.Core
 import qualified LinearTrace.Solver    as S
 import qualified LinearTrace.Visualize as V
+import           Numeric               (showFFloat)
 import           Prelude
 
 --------------------------------------------------------------------------------
@@ -36,7 +37,10 @@ stepNameWidth :: Int
 stepNameWidth = 16
 
 solutionNameWidth :: Int
-solutionNameWidth = 32
+solutionNameWidth = 24
+
+solutionValueWidth :: Int
+solutionValueWidth = 8
 
 stepIndent :: String
 stepIndent = "    "
@@ -290,7 +294,13 @@ renderSolutionValues values =
 
 renderSolutionValue :: (String, Double) -> String
 renderSolutionValue (name, value) =
-  concat ["  ", padRight solutionNameWidth name, " = ", show value, "\n"]
+  concat
+    [ "  "
+    , padRight solutionNameWidth name
+    , " = "
+    , formatSignedDouble value
+    , "\n"
+    ]
 
 --------------------------------------------------------------------------------
 -- View constraints
@@ -536,6 +546,25 @@ padRight n s = s ++ replicate (max 0 (n - length s)) ' '
 
 padLeft :: Int -> String -> String
 padLeft n s = replicate (max 0 (n - length s)) ' ' ++ s
+
+formatSignedDouble :: Double -> String
+formatSignedDouble value = padLeft solutionValueWidth (signedFixed2 value)
+
+signedFixed2 :: Double -> String
+signedFixed2 value =
+  let text = fixed2 (cleanNegativeZero value)
+   in if value < 0
+        then text
+        else " " ++ text
+
+fixed2 :: Double -> String
+fixed2 value = showFFloat (Just 2) value ""
+
+cleanNegativeZero :: Double -> Double
+cleanNegativeZero value =
+  if abs value < 0.005
+    then 0
+    else value
 
 --------------------------------------------------------------------------------
 -- ANSI helpers
