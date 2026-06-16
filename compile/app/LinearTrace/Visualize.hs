@@ -43,14 +43,21 @@ module LinearTrace.Visualize
   , -- * Style helpers
     topOf
   , leftOf
+  , bottomOf
+  , rightOf
   , widthOf
   , heightOf
   , sameTop
+  , sameBottom
+  , sameRight
   , sameLeft
-  , placeBelow
+  , sameWidth
+  , sameHeight
+  , sameBounds
   , materializeStyle
   , materializeBlockView
   , materializeViewNode
+  , (|=|)
   ) where
 
 import           Control.Monad.Reader
@@ -83,8 +90,14 @@ data BlockView tag = BlockView
 topOf :: BlockView tag -> Expr
 topOf = top . blockStyle
 
+bottomOf :: BlockView tag -> Expr
+bottomOf block = topOf block `plus` heightOf block
+
 leftOf :: BlockView tag -> Expr
 leftOf = left . blockStyle
+
+rightOf :: BlockView tag -> Expr
+rightOf block = leftOf block `plus` widthOf block
 
 widthOf :: BlockView tag -> Expr
 widthOf = width . blockStyle
@@ -135,10 +148,8 @@ materializeStyle solution style =
 materializeBlockView ::
      S.Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
 materializeBlockView solution block =
-  MaterializedBlockView
-    <$> pure (blockRef block)
-    <*> pure (blockLabel block)
-    <*> materializeStyle solution (blockStyle block)
+  MaterializedBlockView (blockRef block) (blockLabel block)
+    <$> materializeStyle solution (blockStyle block)
 
 materializeViewNode :: S.Solution -> ViewNode -> Maybe MaterializedViewNode
 materializeViewNode solution node =
@@ -345,8 +356,27 @@ sameTop a b = ensure $ equals (topOf a) (topOf b)
 sameLeft :: BlockView a -> BlockView b -> ViewBuilder events ()
 sameLeft a b = ensure $ equals (leftOf a) (leftOf b)
 
-placeBelow :: BlockView below -> BlockView above -> ViewBuilder events ()
-placeBelow below above = do
-  env <- ask
-  let gap = globalGap (globals env)
-  ensure $ equals (topOf below) (topOf above `plus` heightOf above `plus` gap)
+sameBottom :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameBottom a b = ensure $ equals (bottomOf a) (bottomOf b)
+
+sameRight :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameRight a b = ensure $ equals (rightOf a) (rightOf b)
+
+sameWidth :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameWidth a b = ensure $ equals (widthOf a) (widthOf b)
+
+sameHeight :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameHeight a b = ensure $ equals (heightOf a) (heightOf b)
+
+sameBounds :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameBounds a b = do
+  sameTop a b
+  sameLeft a b
+  sameWidth a b
+  sameHeight a b
+
+-- Adjacent blocks with same y coordinate
+(|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
+(|=|) a b = do
+  sameTop a b
+  ensure $ equals (leftOf b) (rightOf a)

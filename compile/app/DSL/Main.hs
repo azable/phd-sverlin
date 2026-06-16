@@ -199,11 +199,6 @@ literal = step Literal
 instance PrintEvent (Literal ty) where
   printEvent Literal = "Literal"
 
-instance VisualizeEvent (Literal ty) where
-  visualizeEvent Literal audit =
-    case audit of
-      VCreated _value :& VDone -> P.pure ()
-
 --------------------------------------------------------------------------------
 -- Declare variable step
 --------------------------------------------------------------------------------
@@ -237,13 +232,6 @@ declare name = step (DeclareVar name)
 
 instance PrintEvent (DeclareVar ty) where
   printEvent (DeclareVar name) = "DeclareVar " P.++ name
-
-instance VisualizeEvent (DeclareVar ty) where
-  visualizeEvent (DeclareVar _) audit =
-    case audit of
-      VCreated value :& VCreated varBlock :& VSealed _ _ :& VDone -> P.do
-        sameTop value varBlock
-        ensure $ equals (leftOf value) (leftOf varBlock `plus` num 80)
 
 --------------------------------------------------------------------------------
 -- Read variable step
@@ -283,14 +271,6 @@ readVar varBlock = do
 instance PrintEvent (ReadVar ty) where
   printEvent ReadVar = "ReadVar"
 
-instance VisualizeEvent (ReadVar ty) where
-  visualizeEvent ReadVar audit =
-    case audit of
-      VUnsealed varBlock held :& VCopied _heldOriginal copiedValue :& VSealed _ _ :& VDone -> P.do
-        sameTop varBlock held
-        sameTop held copiedValue
-        ensure $ equals (leftOf copiedValue) (leftOf held `plus` num 80)
-
 --------------------------------------------------------------------------------
 -- Write variable step
 --------------------------------------------------------------------------------
@@ -325,14 +305,6 @@ writeVar varBlock newValue = step WriteVar (varBlock :* newValue)
 instance PrintEvent (WriteVar ty) where
   printEvent WriteVar = "WriteVar"
 
-instance VisualizeEvent (WriteVar ty) where
-  visualizeEvent WriteVar audit =
-    case audit of
-      VUnsealed varBlock oldValue :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
-        sameTop varBlock oldValue
-        sameTop oldValue newValue
-        ensure $ equals (leftOf newValue) (leftOf oldValue `plus` num 80)
-
 --------------------------------------------------------------------------------
 -- Discard variable step
 --------------------------------------------------------------------------------
@@ -363,12 +335,6 @@ discardVar = step DiscardVar
 instance PrintEvent (DiscardVar ty) where
   printEvent DiscardVar = "DiscardVar"
 
-instance VisualizeEvent (DiscardVar ty) where
-  visualizeEvent DiscardVar audit =
-    case audit of
-      VUnsealed varBlock value :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
-        sameTop varBlock value
-
 --------------------------------------------------------------------------------
 -- Discard value step
 --------------------------------------------------------------------------------
@@ -396,11 +362,6 @@ discardValue = step DiscardValue
 instance PrintEvent (DiscardValue ty) where
   printEvent DiscardValue = "DiscardValue"
 
-instance VisualizeEvent (DiscardValue ty) where
-  visualizeEvent DiscardValue audit =
-    case audit of
-      VDestroyed _value :& VDone -> P.pure ()
-
 --------------------------------------------------------------------------------
 -- Operator step
 --------------------------------------------------------------------------------
@@ -427,11 +388,6 @@ operator = step Operator
 
 instance PrintEvent (Operator op lhs rhs out) where
   printEvent Operator = "Operator"
-
-instance VisualizeEvent (Operator op lhs rhs out) where
-  visualizeEvent Operator audit =
-    case audit of
-      VCreated _operator :& VDone -> P.pure ()
 
 --------------------------------------------------------------------------------
 -- Evaluation support
@@ -501,17 +457,6 @@ apply lhsBlock opBlock rhsBlock = step Eval (lhsBlock :* opBlock :* rhsBlock)
 instance PrintEvent (Eval op lhs rhs out) where
   printEvent Eval = "Eval"
 
-instance VisualizeEvent (Eval op lhs rhs out) where
-  visualizeEvent Eval audit =
-    case audit of
-      VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
-        sameTop lhs op
-        sameTop rhs op
-        placeBelow result op
-        ensure $ equals (leftOf op) (leftOf lhs `plus` num 80)
-        ensure $ equals (leftOf rhs) (leftOf op `plus` num 80)
-        sameLeft result op
-
 --------------------------------------------------------------------------------
 -- Add step
 --------------------------------------------------------------------------------
@@ -554,17 +499,6 @@ instance EvalOp 'TAdd ty ty ty => Step (Add ty) where
 instance PrintEvent (Add ty) where
   printEvent Add = "Add"
 
-instance VisualizeEvent (Add ty) where
-  visualizeEvent Add audit =
-    case audit of
-      VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone -> P.do
-        sameTop lhs op
-        sameTop rhs op
-        placeBelow result op
-        ensure $ equals (leftOf op) (leftOf lhs `plus` num 80)
-        ensure $ equals (leftOf rhs) (leftOf op `plus` num 80)
-        sameLeft result op
-
 --------------------------------------------------------------------------------
 -- Mul step
 --------------------------------------------------------------------------------
@@ -606,13 +540,6 @@ instance EvalOp 'TMul ty ty ty => Step (Mul ty) where
 
 instance PrintEvent (Mul ty) where
   printEvent Mul = "Mul"
-
-instance VisualizeEvent (Mul ty) where
-  visualizeEvent Mul (VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone) = P.do
-    sameTop lhs op
-    sameTop rhs op
-    placeBelow result op
-    sameLeft result op
 
 --------------------------------------------------------------------------------
 -- Example
@@ -706,3 +633,61 @@ instance ( BinaryOpLabel op
          P.++ primitiveLabel (Proxy :: Proxy lhs)
          P.++ primitiveLabel (Proxy :: Proxy rhs)
          P.++ primitiveLabel (Proxy :: Proxy out))
+
+-- Visualisation layer
+instance VisualizeEvent (Literal ty) where
+  visualizeEvent Literal audit =
+    case audit of
+      VCreated _value :& VDone -> P.pure ()
+
+instance VisualizeEvent (DeclareVar ty) where
+  visualizeEvent (DeclareVar _) audit =
+    case audit of
+      VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
+        sameBounds valueB varB
+
+instance VisualizeEvent (ReadVar ty) where
+  visualizeEvent ReadVar audit =
+    case audit of
+      VUnsealed varBlock held :& VCopied _heldOriginal _ :& VSealed _ _ :& VDone -> P.do
+        P.pure ()
+
+instance VisualizeEvent (WriteVar ty) where
+  visualizeEvent WriteVar audit =
+    case audit of
+      VUnsealed varBlock oldValue :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
+        sameBounds varBlock newValue
+
+instance VisualizeEvent (DiscardVar ty) where
+  visualizeEvent DiscardVar audit =
+    case audit of
+      VUnsealed _ _ :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
+        P.pure ()
+
+instance VisualizeEvent (DiscardValue ty) where
+  visualizeEvent DiscardValue audit =
+    case audit of
+      VDestroyed _value :& VDone -> P.pure ()
+
+instance VisualizeEvent (Operator op lhs rhs out) where
+  visualizeEvent Operator audit =
+    case audit of
+      VCreated _operator :& VDone -> P.pure ()
+
+instance VisualizeEvent (Eval op lhs rhs out) where
+  visualizeEvent Eval audit =
+    case audit of
+      VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
+        lhs |=| op
+        op |=| rhs
+        result |=| rhs
+
+instance VisualizeEvent (Add ty) where
+  visualizeEvent Add audit =
+    case audit of
+      VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone -> P.do
+        P.pure ()
+
+instance VisualizeEvent (Mul ty) where
+  visualizeEvent Mul (VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone) = P.do
+    P.pure ()

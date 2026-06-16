@@ -37,6 +37,9 @@ snapshotRefWidth = 6
 stepNameWidth :: Int
 stepNameWidth = 16
 
+constraintNameWidth :: Int
+constraintNameWidth = 24
+
 solutionNameWidth :: Int
 solutionNameWidth = 24
 
