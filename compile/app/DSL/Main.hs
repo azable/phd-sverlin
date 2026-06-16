@@ -599,8 +599,8 @@ blockSize = global "blockSize"
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
-  ensure $ equals (widthOf block) blockSize
-  ensure $ equals (heightOf block) blockSize
+  ensure $ widthOf block @=@ blockSize
+  ensure $ heightOf block @=@ blockSize
 
 instance VisualizeBlock (Value 'TInt) where
   visualizeBlock = cellBlock

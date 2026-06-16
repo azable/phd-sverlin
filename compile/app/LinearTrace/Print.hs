@@ -335,13 +335,15 @@ renderStyleField name expr =
 --------------------------------------------------------------------------------
 data RenderedConstraint
   = RenderedEquals String String
+  | RenderedLessThan String String
   | RenderedMinimize String
 
 renderConstraintParts :: V.Constraint -> RenderedConstraint
 renderConstraintParts constraint =
   case constraint of
-    V.Equals lhs rhs -> RenderedEquals (renderExpr lhs) (renderExpr rhs)
-    V.Minimize expr  -> RenderedMinimize (renderExpr expr)
+    V.Equals lhs rhs   -> RenderedEquals (renderExpr lhs) (renderExpr rhs)
+    V.LessThan lhs rhs -> RenderedLessThan (renderExpr lhs) (renderExpr rhs)
+    V.Minimize expr    -> RenderedMinimize (renderExpr expr)
 
 renderStepConstraints :: [V.Constraint] -> String
 renderStepConstraints constraints =
@@ -368,6 +370,8 @@ renderIndentedConstraint lhsWidth constraint =
       concat [stepIndent, stepIndent, padRight lhsWidth lhs, " = ", rhs, "\n"]
     RenderedMinimize expr ->
       concat [stepIndent, stepIndent, "minimize ", expr, "\n"]
+    RenderedLessThan lhs rhs ->
+      concat [stepIndent, stepIndent, padRight lhsWidth lhs, " < ", rhs, "\n"]
 
 --------------------------------------------------------------------------------
 -- Solved view constraints
@@ -391,8 +395,9 @@ renderStepSolution maybeSolution constraints =
 solveConstraintExpr :: S.Solution -> V.Constraint -> [SolvedExpr]
 solveConstraintExpr solution constraint =
   case constraint of
-    V.Equals lhs rhs -> solveExpr solution lhs ++ solveExpr solution rhs
-    V.Minimize expr  -> solveExpr solution expr
+    V.Equals lhs rhs   -> solveExpr solution lhs ++ solveExpr solution rhs
+    V.LessThan lhs rhs -> solveExpr solution lhs ++ solveExpr solution rhs
+    V.Minimize expr    -> solveExpr solution expr
 
 solveExpr :: S.Solution -> V.Expr -> [SolvedExpr]
 solveExpr solution expr =

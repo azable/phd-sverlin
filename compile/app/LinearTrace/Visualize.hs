@@ -13,6 +13,7 @@ module LinearTrace.Visualize
   , ViewStep(..)
   , BlockView(..)
   , Style(..)
+  , Bounds(..)
   , MaterializedStyle(..)
   , MaterializedBlockView(..)
   , MaterializedViewNode(..)
@@ -22,7 +23,8 @@ module LinearTrace.Visualize
   , var
   , varName
   , global
-  , equals
+  , (@=@)
+  , (@<@)
   , plus
   , minus
   , times
@@ -49,6 +51,9 @@ module LinearTrace.Visualize
   , rightOf
   , widthOf
   , heightOf
+  , blockBounds
+  , canvasBounds
+  , contains
   , sameTop
   , sameBottom
   , sameRight
@@ -65,11 +70,7 @@ module LinearTrace.Visualize
 import           Control.Monad.Reader
 import           Control.Monad.Writer.Strict
 import qualified LinearTrace.Core            as C
-import           LinearTrace.Solver          (Constraint (..), Expr (..),
-                                              defaultSolveConfig, dividedBy,
-                                              equals, minus, num, plus, squared,
-                                              times, var, varName)
-import qualified LinearTrace.Solver          as S
+import           LinearTrace.Solver
 import           Prelude
 
 infixr 5 :&
@@ -81,6 +82,13 @@ data Style = Style
   , left   :: Expr
   , width  :: Expr
   , height :: Expr
+  }
+
+data Bounds = Bounds
+  { boundsTop    :: Expr
+  , boundsLeft   :: Expr
+  , boundsRight  :: Expr
+  , boundsBottom :: Expr
   }
 
 data BlockView tag = BlockView
@@ -106,6 +114,15 @@ widthOf = width . blockStyle
 
 heightOf :: BlockView tag -> Expr
 heightOf = height . blockStyle
+
+blockBounds :: BlockView tag -> Bounds
+blockBounds block =
+  Bounds
+    { boundsTop = topOf block
+    , boundsLeft = leftOf block
+    , boundsRight = rightOf block
+    , boundsBottom = bottomOf block
+    }
 
 data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
@@ -139,21 +156,21 @@ data MaterializedBlockView tag = MaterializedBlockView
 data MaterializedViewNode where
   MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
 
-materializeStyle :: S.Solution -> Style -> Maybe MaterializedStyle
+materializeStyle :: Solution -> Style -> Maybe MaterializedStyle
 materializeStyle solution style =
   MaterializedStyle
-    <$> S.evalExpr solution (top style)
-    <*> S.evalExpr solution (left style)
-    <*> S.evalExpr solution (width style)
-    <*> S.evalExpr solution (height style)
+    <$> evalExpr solution (top style)
+    <*> evalExpr solution (left style)
+    <*> evalExpr solution (width style)
+    <*> evalExpr solution (height style)
 
 materializeBlockView ::
-     S.Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
+     Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
 materializeBlockView solution block =
   MaterializedBlockView (blockRef block) (blockLabel block)
     <$> materializeStyle solution (blockStyle block)
 
-materializeViewNode :: S.Solution -> ViewNode -> Maybe MaterializedViewNode
+materializeViewNode :: Solution -> ViewNode -> Maybe MaterializedViewNode
 materializeViewNode solution node =
   case node of
     BlockViewNode block ->
@@ -216,12 +233,78 @@ ensure :: Constraint -> ViewBuilder events ()
 ensure constraint = tell mempty {emittedConstraints = [constraint]}
 
 --------------------------------------------------------------------------------
+-- Constraint constructors/helpers
+--------------------------------------------------------------------------------
+global :: String -> Expr
+global name = var ("global." ++ name)
+
+canvasBounds :: ViewBuilder events Bounds
+canvasBounds = do
+  env <- ask
+  return
+    Bounds
+      { boundsTop = num 0
+      , boundsLeft = num 0
+      , boundsRight = canvasWidth env
+      , boundsBottom = canvasHeight env
+      }
+
+contains :: Bounds -> Bounds -> ViewBuilder events ()
+contains outer inner = do
+  ensure $ boundsLeft outer @<@ boundsLeft inner
+  ensure $ boundsTop outer @<@ boundsTop inner
+  ensure $ boundsRight inner @<@ boundsRight outer
+  ensure $ boundsBottom inner @<@ boundsBottom outer
+
+containsCanvas :: BlockView tag -> ViewBuilder events ()
+containsCanvas block = do
+  canvas <- canvasBounds
+  canvas `contains` blockBounds block
+
+sameTop :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameTop a b = ensure $ topOf a @=@ topOf b
+
+sameLeft :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameLeft a b = ensure $ leftOf a @=@ leftOf b
+
+sameBottom :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameBottom a b = ensure $ bottomOf a @=@ bottomOf b
+
+sameRight :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameRight a b = ensure $ rightOf a @=@ rightOf b
+
+sameWidth :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameWidth a b = ensure $ widthOf a @=@ widthOf b
+
+sameHeight :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameHeight a b = ensure $ heightOf a @=@ heightOf b
+
+sameBounds :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameBounds a b = do
+  sameTop a b
+  sameLeft a b
+  sameWidth a b
+  sameHeight a b
+
+-- | Adjacent blocks with the same y coordinate.
+(|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
+(|=|) a b = do
+  sameTop a b
+  ensure $ rightOf a @=@ leftOf b
+
+--------------------------------------------------------------------------------
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 class C.TraceBlock tag =>
       VisualizeBlock tag
   where
   visualizeBlock :: BlockView tag -> ViewBuilder events ()
+
+visualizeNewBlock ::
+     VisualizeBlock tag => BlockView tag -> ViewBuilder events ()
+visualizeNewBlock block = do
+  containsCanvas block
+  visualizeBlock block
 
 --------------------------------------------------------------------------------
 -- Automatic block visualisation from audit steps
@@ -232,7 +315,7 @@ class VisualizeAuditBlock act where
 instance VisualizeBlock tag => VisualizeAuditBlock (C.Create tag) where
   visualizeAuditBlockStep step =
     case step of
-      VCreated block -> visualizeBlock block
+      VCreated block -> visualizeNewBlock block
 
 instance VisualizeAuditBlock (C.Observe tag) where
   visualizeAuditBlockStep _ = pure ()
@@ -246,7 +329,7 @@ instance VisualizeAuditBlock (C.Use tag) where
 instance VisualizeBlock tag => VisualizeAuditBlock (C.Copy tag) where
   visualizeAuditBlockStep step =
     case step of
-      VCopied _original copy' -> visualizeBlock copy'
+      VCopied _original copy' -> visualizeNewBlock copy'
 
 instance VisualizeAuditBlock (C.Replace tag) where
   visualizeAuditBlockStep _ = pure ()
@@ -254,7 +337,7 @@ instance VisualizeAuditBlock (C.Replace tag) where
 instance VisualizeBlock tag => VisualizeAuditBlock (C.Compute tag) where
   visualizeAuditBlockStep step =
     case step of
-      VComputed block -> visualizeBlock block
+      VComputed block -> visualizeNewBlock block
 
 instance VisualizeAuditBlock (C.Destroy tag) where
   visualizeAuditBlockStep _ = pure ()
@@ -325,8 +408,8 @@ buildCSP graph@(C.TraceGraph blocks events) =
         , viewConstraints = constraints
         }
 
-solveCSP :: S.SolveConfig -> ViewGraph events -> IO S.Solution
-solveCSP config graph = S.solve config (viewConstraints graph)
+solveCSP :: SolveConfig -> ViewGraph events -> IO Solution
+solveCSP config graph = solve config (viewConstraints graph)
 
 data BuiltViewStep events = BuiltViewStep
   { stepView        :: ViewStep events
@@ -374,9 +457,6 @@ styleForRef ref =
     , height = blockVar ref "height"
     }
 
-global :: String -> Expr
-global name = var ("global." ++ name)
-
 blockVar :: C.BlockRef tag -> String -> Expr
 blockVar (C.BlockRef blockId) field =
   var ("block." ++ show blockId ++ "." ++ field)
@@ -408,37 +488,3 @@ viewAuditStep step =
     C.UnsealStep owner child ->
       VUnsealed (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
     C.DecideStep snapshot -> VDecided (blockViewOfSnapshot snapshot)
-
---------------------------------------------------------------------------------
--- Constraint helpers
---------------------------------------------------------------------------------
-sameTop :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameTop a b = ensure $ equals (topOf a) (topOf b)
-
-sameLeft :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameLeft a b = ensure $ equals (leftOf a) (leftOf b)
-
-sameBottom :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameBottom a b = ensure $ equals (bottomOf a) (bottomOf b)
-
-sameRight :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameRight a b = ensure $ equals (rightOf a) (rightOf b)
-
-sameWidth :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameWidth a b = ensure $ equals (widthOf a) (widthOf b)
-
-sameHeight :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameHeight a b = ensure $ equals (heightOf a) (heightOf b)
-
-sameBounds :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameBounds a b = do
-  sameTop a b
-  sameLeft a b
-  sameWidth a b
-  sameHeight a b
-
--- | Adjacent blocks with the same y coordinate.
-(|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
-(|=|) a b = do
-  sameTop a b
-  ensure $ equals (rightOf a) (leftOf b)

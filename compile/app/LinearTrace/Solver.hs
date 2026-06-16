@@ -13,7 +13,8 @@ module LinearTrace.Solver
   , times
   , dividedBy
   , squared
-  , equals
+  , (@=@)
+  , (@<@)
   , minimize
   , -- * Solving
     SolveConfig(..)
@@ -56,8 +57,8 @@ data Expr
 
 data Constraint
   = Equals Expr Expr
+  | LessThan Expr Expr
   | Minimize Expr
-  deriving (Eq, Show)
 
 var :: String -> Expr
 var = EVar . Var
@@ -80,8 +81,11 @@ dividedBy = EDiv
 squared :: Expr -> Expr
 squared = ESquare
 
-equals :: Expr -> Expr -> Constraint
-equals = Equals
+(@=@) :: Expr -> Expr -> Constraint
+(@=@) = Equals
+
+(@<@) :: Expr -> Expr -> Constraint
+(@<@) = LessThan
 
 minimize :: Expr -> Constraint
 minimize = Minimize
@@ -188,25 +192,20 @@ solveCSP (CSP initials energy) =
 --------------------------------------------------------------------------------
 data SolveConfig = SolveConfig
   { initialValueFor :: String -> Double
-  , equalityWeight  :: Rational
-  , objectiveWeight :: Rational
+  , ensureWeight    :: Rational
+  , encourageWeight :: Rational
   }
 
 defaultSolveConfig :: SolveConfig
 defaultSolveConfig =
   SolveConfig
     { initialValueFor = defaultInitialValue
-    , equalityWeight = 100
-    , objectiveWeight = 1
+    , ensureWeight = 100
+    , encourageWeight = 1
     }
 
 defaultInitialValue :: String -> Double
 defaultInitialValue name
-  | name == "global.gap" = 24
-  | name == "global.cellGap" = 8
-  | name == "global.cellWidth" = 48
-  | ".width" `List.isSuffixOf` name = 80
-  | ".height" `List.isSuffixOf` name = 40
   | otherwise = 0
 
 data NamedCSP = NamedCSP
@@ -274,6 +273,7 @@ collectConstraintVars :: Constraint -> Set String
 collectConstraintVars constraint =
   case constraint of
     Equals lhs rhs     -> collectExprVars lhs <> collectExprVars rhs
+    LessThan lhs rhs   -> collectExprVars lhs <> collectExprVars rhs
     Minimize objective -> collectExprVars objective
 
 --------------------------------------------------------------------------------
@@ -285,10 +285,14 @@ lowerConstraint config vars constraint =
   case constraint of
     Equals lhs rhs ->
       addTerm
-        (equalityWeight config)
+        (ensureWeight config)
+        (sq (lowerExpr vars lhs - lowerExpr vars rhs))
+    LessThan lhs rhs ->
+      addTerm
+        (ensureWeight config)
         (sq (lowerExpr vars lhs - lowerExpr vars rhs))
     Minimize objective ->
-      addTerm (objectiveWeight config) (lowerExpr vars objective)
+      addTerm (encourageWeight config) (lowerExpr vars objective)
 
 lowerExpr :: Floating a => Map String InternalVar -> Expr -> EnergyExpr a
 lowerExpr vars expr =
