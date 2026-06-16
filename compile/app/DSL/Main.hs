@@ -251,8 +251,8 @@ instance TraceEventSpec (ReadVar ty) where
 instance TracePayload (Value ty) => Step (ReadVar ty) where
   type StepInput (ReadVar ty) = VarBlock ty
   type StepResult (ReadVar ty) = ReadVarResult ty
-  perform ReadVar (VarBlock var valueSlot) = do
-    Unsealed var1 held unsealValue <- unseal var valueSlot
+  perform ReadVar (VarBlock varBlock valueSlot) = do
+    Unsealed var1 held unsealValue <- unseal varBlock valueSlot
     Copied held' copyBlock copyValue <- copy held
     Sealed var2 valueSlot' sealValue <- seal var1 held'
     return
@@ -286,8 +286,8 @@ instance TraceEventSpec (WriteVar ty) where
 instance TracePayload (Value ty) => Step (WriteVar ty) where
   type StepInput (WriteVar ty) = VarBlock ty :* Block (Value ty)
   type StepResult (WriteVar ty) = VarBlock ty
-  perform WriteVar (VarBlock var valueSlot :* newValue) = do
-    Unsealed var1 oldValue unsealValue <- unseal var valueSlot
+  perform WriteVar (VarBlock varBlock valueSlot :* newValue) = do
+    Unsealed var1 oldValue unsealValue <- unseal varBlock valueSlot
     Replaced currentValue replaceValue <- replace oldValue newValue
     Sealed var2 valueSlot' sealValue <- seal var1 currentValue
     return
@@ -320,8 +320,8 @@ instance TraceEventSpec (DiscardVar ty) where
 instance TracePayload (Value ty) => Step (DiscardVar ty) where
   type StepInput (DiscardVar ty) = VarBlock ty
   type StepResult (DiscardVar ty) = ()
-  perform DiscardVar (VarBlock var valueSlot) = do
-    Unsealed var1 held unsealValue <- unseal var valueSlot
+  perform DiscardVar (VarBlock varBlock valueSlot) = do
+    Unsealed var1 held unsealValue <- unseal varBlock valueSlot
     Destroyed destroyVar <- destroy var1
     Destroyed destroyHeld <- destroy held
     return (Performed () (unsealValue :~ destroyVar :~ destroyHeld :~ Done))
@@ -649,13 +649,13 @@ instance VisualizeEvent (DeclareVar ty) where
 instance VisualizeEvent (ReadVar ty) where
   visualizeEvent ReadVar audit =
     case audit of
-      VUnsealed varBlock held :& VCopied _heldOriginal _ :& VSealed _ _ :& VDone -> P.do
+      VUnsealed _ _ :& VCopied _heldOriginal _ :& VSealed _ _ :& VDone -> P.do
         P.pure ()
 
 instance VisualizeEvent (WriteVar ty) where
   visualizeEvent WriteVar audit =
     case audit of
-      VUnsealed varBlock oldValue :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
+      VUnsealed varBlock _ :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
         sameBounds varBlock newValue
 
 instance VisualizeEvent (DiscardVar ty) where
@@ -685,9 +685,9 @@ instance VisualizeEvent (Eval op lhs rhs out) where
 instance VisualizeEvent (Add ty) where
   visualizeEvent Add audit =
     case audit of
-      VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone -> P.do
+      VCreated _ :& VUsed _ :& VUsed _opUsed :& VUsed _ :& VComputed _ :& VDone -> P.do
         P.pure ()
 
 instance VisualizeEvent (Mul ty) where
-  visualizeEvent Mul (VCreated op :& VUsed lhs :& VUsed _opUsed :& VUsed rhs :& VComputed result :& VDone) = P.do
+  visualizeEvent Mul (VCreated _ :& VUsed _ :& VUsed _opUsed :& VUsed _ :& VComputed _ :& VDone) = P.do
     P.pure ()
