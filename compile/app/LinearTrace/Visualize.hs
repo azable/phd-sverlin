@@ -379,4 +379,4 @@ sameBounds a b = do
 (|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
 (|=|) a b = do
   sameTop a b
-  ensure $ equals (leftOf b) (rightOf a)
+  ensure $ equals (rightOf a) (leftOf b)

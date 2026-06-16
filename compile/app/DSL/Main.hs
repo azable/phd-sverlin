@@ -40,8 +40,6 @@ module DSL.Main
   , ReadVar(..)
   , WriteVar(..)
   , Eval(..)
-  , Add(..)
-  , Mul(..)
   , DiscardVar(..)
   , DiscardValue(..)
   , -- * Action-list aliases
@@ -51,8 +49,6 @@ module DSL.Main
   , ReadVarActs
   , WriteVarActs
   , EvalActs
-  , AddActs
-  , MulActs
   , DiscardVarActs
   , DiscardValueActs
   , -- * Literals
@@ -458,88 +454,33 @@ instance PrintEvent (Eval op lhs rhs out) where
   printEvent Eval = "Eval"
 
 --------------------------------------------------------------------------------
--- Add step
+-- Operator convenience combinators
 --------------------------------------------------------------------------------
-type AddActs ty
-  = '[ Create (Op 'TAdd ty ty ty)
-     , Use (Value ty)
-     , Use (Op 'TAdd ty ty ty)
-     , Use (Value ty)
-     , Compute (Value ty)
-     ]
-
-data Add (ty :: PrimitiveType) =
-  Add
-
-instance TraceEventSpec (Add ty) where
-  type EventActs (Add ty) = AddActs ty
-
-instance EvalOp 'TAdd ty ty ty => Step (Add ty) where
-  type StepInput (Add ty) = Block (Value ty) :* Block (Value ty)
-  type StepResult (Add ty) = Block (Value ty)
-  perform Add (lhsBlock :* rhsBlock) = do
-    Created opBlock createOp <- create (LUnit :: Payload (Op 'TAdd ty ty ty))
-    Used lhs useLhs <- use lhsBlock
-    Used opPayload useOp <- use opBlock
-    Used rhs useRhs <- use rhsBlock
-    Computed outBlock computeOut <-
-      compute (evalPayload <$> lhs <*> opPayload <*> rhs)
-    return
-      (Performed
-         outBlock
-         (createOp :~ useLhs :~ useOp :~ useRhs :~ computeOut :~ Done))
-
 (.+.) ::
-     forall events ty. (EvalOp 'TAdd ty ty ty, Member (Add ty) events)
+     forall events ty.
+     ( EvalOp 'TAdd ty ty ty
+     , Member (Operator 'TAdd ty ty ty) events
+     , Member (Eval 'TAdd ty ty ty) events
+     )
   => Block (Value ty)
      %1 -> Block (Value ty)
      %1 -> Builder events (Block (Value ty))
-(.+.) lhs rhs = step Add (lhs :* rhs)
-
-instance PrintEvent (Add ty) where
-  printEvent Add = "Add"
-
---------------------------------------------------------------------------------
--- Mul step
---------------------------------------------------------------------------------
-type MulActs ty
-  = '[ Create (Op 'TMul ty ty ty)
-     , Use (Value ty)
-     , Use (Op 'TMul ty ty ty)
-     , Use (Value ty)
-     , Compute (Value ty)
-     ]
-
-data Mul (ty :: PrimitiveType) =
-  Mul
-
-instance TraceEventSpec (Mul ty) where
-  type EventActs (Mul ty) = MulActs ty
-
-instance EvalOp 'TMul ty ty ty => Step (Mul ty) where
-  type StepInput (Mul ty) = Block (Value ty) :* Block (Value ty)
-  type StepResult (Mul ty) = Block (Value ty)
-  perform Mul (lhsBlock :* rhsBlock) = do
-    Created opBlock createOp <- create (LUnit :: Payload (Op 'TMul ty ty ty))
-    Used lhs useLhs <- use lhsBlock
-    Used opPayload useOp <- use opBlock
-    Used rhs useRhs <- use rhsBlock
-    Computed outBlock computeOut <-
-      compute (evalPayload <$> lhs <*> opPayload <*> rhs)
-    return
-      (Performed
-         outBlock
-         (createOp :~ useLhs :~ useOp :~ useRhs :~ computeOut :~ Done))
+(.+.) lhs rhs = do
+  op <- operator (LUnit :: Payload (Op 'TAdd ty ty ty))
+  apply lhs op rhs
 
 (.*.) ::
-     forall events ty. (EvalOp 'TMul ty ty ty, Member (Mul ty) events)
+     forall events ty.
+     ( EvalOp 'TMul ty ty ty
+     , Member (Operator 'TMul ty ty ty) events
+     , Member (Eval 'TMul ty ty ty) events
+     )
   => Block (Value ty)
      %1 -> Block (Value ty)
      %1 -> Builder events (Block (Value ty))
-(.*.) lhs rhs = step Mul (lhs :* rhs)
-
-instance PrintEvent (Mul ty) where
-  printEvent Mul = "Mul"
+(.*.) lhs rhs = do
+  op <- operator (LUnit :: Payload (Op 'TMul ty ty ty))
+  apply lhs op rhs
 
 --------------------------------------------------------------------------------
 -- Example
@@ -547,7 +488,8 @@ instance PrintEvent (Mul ty) where
 type ExampleEvents
   = '[ DeclareVar 'TInt
      , ReadVar 'TInt
-     , Add 'TInt
+     , Operator 'TAdd 'TInt 'TInt 'TInt
+     , Eval 'TAdd 'TInt 'TInt 'TInt
      , WriteVar 'TInt
      , DiscardVar 'TInt
      ]
@@ -634,7 +576,9 @@ instance ( BinaryOpLabel op
          P.++ primitiveLabel (Proxy :: Proxy rhs)
          P.++ primitiveLabel (Proxy :: Proxy out))
 
+--------------------------------------------------------------------------------
 -- Visualisation layer
+--------------------------------------------------------------------------------
 instance VisualizeEvent (Literal ty) where
   visualizeEvent Literal audit =
     case audit of
@@ -643,26 +587,25 @@ instance VisualizeEvent (Literal ty) where
 instance VisualizeEvent (DeclareVar ty) where
   visualizeEvent (DeclareVar _) audit =
     case audit of
-      VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
+      VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone ->
         sameBounds valueB varB
 
 instance VisualizeEvent (ReadVar ty) where
   visualizeEvent ReadVar audit =
     case audit of
-      VUnsealed _ _ :& VCopied _heldOriginal _ :& VSealed _ _ :& VDone -> P.do
+      VUnsealed _ _ :& VCopied _heldOriginal _ :& VSealed _ _ :& VDone ->
         P.pure ()
 
 instance VisualizeEvent (WriteVar ty) where
   visualizeEvent WriteVar audit =
     case audit of
-      VUnsealed varBlock _ :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
+      VUnsealed varBlock _ :& VReplaced _old newValue :& VSealed _ _ :& VDone ->
         sameBounds varBlock newValue
 
 instance VisualizeEvent (DiscardVar ty) where
   visualizeEvent DiscardVar audit =
     case audit of
-      VUnsealed _ _ :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
-        P.pure ()
+      VUnsealed _ _ :& VDestroyed _ :& VDestroyed _ :& VDone -> P.pure ()
 
 instance VisualizeEvent (DiscardValue ty) where
   visualizeEvent DiscardValue audit =
@@ -680,14 +623,4 @@ instance VisualizeEvent (Eval op lhs rhs out) where
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
         lhs |=| op
         op |=| rhs
-        result |=| rhs
-
-instance VisualizeEvent (Add ty) where
-  visualizeEvent Add audit =
-    case audit of
-      VCreated _ :& VUsed _ :& VUsed _opUsed :& VUsed _ :& VComputed _ :& VDone -> P.do
-        P.pure ()
-
-instance VisualizeEvent (Mul ty) where
-  visualizeEvent Mul (VCreated _ :& VUsed _ :& VUsed _opUsed :& VUsed _ :& VComputed _ :& VDone) = P.do
-    P.pure ()
+        rhs |=| result
