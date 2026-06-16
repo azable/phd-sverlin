@@ -11,6 +11,7 @@ module LinearTrace.Print
   , printGraph
   , printTrace
   , printVisualization
+  , printSolvedVisualization
   , printVisualizationCSPSolution
   ) where
 
@@ -38,9 +39,6 @@ stepNameWidth = 16
 
 solutionNameWidth :: Int
 solutionNameWidth = 24
-
-solutionValueWidth :: Int
-solutionValueWidth = 8
 
 stepIndent :: String
 stepIndent = "    "
@@ -148,11 +146,19 @@ printTrace :: PrintEvents events => TraceGraph events -> IO ()
 printTrace graph = putStr (renderTrace graph)
 
 printVisualization :: PrintEvents events => V.ViewGraph events -> IO ()
-printVisualization graph = putStr (renderVisualization graph)
+printVisualization graph = putStr (renderVisualization Nothing graph)
+
+printSolvedVisualization ::
+     PrintEvents events => S.Solution -> V.ViewGraph events -> IO ()
+printSolvedVisualization solution graph =
+  putStr (renderVisualization (Just solution) graph)
 
 printVisualizationCSPSolution :: S.Solution -> IO ()
 printVisualizationCSPSolution solution = putStr (renderSolution solution)
 
+--------------------------------------------------------------------------------
+-- Graph rendering
+--------------------------------------------------------------------------------
 renderGraph :: PrintEvents events => TraceGraph events -> String
 renderGraph (TraceGraph blocks events) =
   concat
@@ -167,17 +173,39 @@ renderGraph (TraceGraph blocks events) =
 renderTrace :: PrintEvents events => TraceGraph events -> String
 renderTrace (TraceGraph _ events) = renderEvents events
 
-renderVisualization :: PrintEvents events => V.ViewGraph events -> String
-renderVisualization (V.ViewGraph nodes steps constraints) =
+--------------------------------------------------------------------------------
+-- Visualization rendering
+--------------------------------------------------------------------------------
+renderVisualization ::
+     PrintEvents events => Maybe S.Solution -> V.ViewGraph events -> String
+renderVisualization maybeSolution (V.ViewGraph nodes steps constraints) =
   concat
     [ renderHeader "Visualization"
     , renderVisualizationSummary nodes steps constraints
+    , renderMaybeSolutionSummary maybeSolution
     , "\n"
     , renderViewNodes nodes
     , "\n"
-    , renderViewTrace steps
+    , renderViewTrace maybeSolution steps
     ]
 
+renderMaybeSolutionSummary :: Maybe S.Solution -> String
+renderMaybeSolutionSummary maybeSolution =
+  case maybeSolution of
+    Nothing -> ""
+    Just solution ->
+      concat
+        [ "Solved: "
+        , show (S.solutionSuccess solution)
+        , "\n"
+        , "Energy: "
+        , formatSignedDouble (S.solutionEnergy solution)
+        , "\n"
+        ]
+
+--------------------------------------------------------------------------------
+-- Standalone solution rendering
+--------------------------------------------------------------------------------
 renderSolution :: S.Solution -> String
 renderSolution solution =
   concat
@@ -185,6 +213,37 @@ renderSolution solution =
     , renderSolutionSummary solution
     , "\n"
     , renderSolutionValues (S.solutionValues solution)
+    ]
+
+renderSolutionSummary :: S.Solution -> String
+renderSolutionSummary solution =
+  concat
+    [ "Success: "
+    , show (S.solutionSuccess solution)
+    , "\n"
+    , "Energy: "
+    , formatSignedDouble (S.solutionEnergy solution)
+    , "\n"
+    , "Variables: "
+    , show (Map.size (S.solutionValues solution))
+    , "\n"
+    ]
+
+renderSolutionValues :: Map.Map String Double -> String
+renderSolutionValues values =
+  concat
+    [ renderHeader "Solution values"
+    , concatMap renderSolutionValue (Map.toAscList values)
+    ]
+
+renderSolutionValue :: (String, Double) -> String
+renderSolutionValue (name, value) =
+  concat
+    [ "  "
+    , padRight solutionNameWidth name
+    , " = "
+    , formatSignedDouble value
+    , "\n"
     ]
 
 --------------------------------------------------------------------------------
@@ -213,20 +272,6 @@ renderVisualizationSummary nodes steps constraints =
     , "\n"
     , "Constraints: "
     , show (length constraints)
-    , "\n"
-    ]
-
-renderSolutionSummary :: S.Solution -> String
-renderSolutionSummary solution =
-  concat
-    [ "Success: "
-    , show (S.solutionSuccess solution)
-    , "\n"
-    , "Energy: "
-    , show (S.solutionEnergy solution)
-    , "\n"
-    , "Variables: "
-    , show (Map.size (S.solutionValues solution))
     , "\n"
     ]
 
@@ -283,26 +328,6 @@ renderStyleField name expr =
   concat [stepIndent, stepIndent, padRight 8 name, "= ", renderExpr expr, "\n"]
 
 --------------------------------------------------------------------------------
--- Solution values
---------------------------------------------------------------------------------
-renderSolutionValues :: Map.Map String Double -> String
-renderSolutionValues values =
-  concat
-    [ renderHeader "Solution values"
-    , concatMap renderSolutionValue (Map.toAscList values)
-    ]
-
-renderSolutionValue :: (String, Double) -> String
-renderSolutionValue (name, value) =
-  concat
-    [ "  "
-    , padRight solutionNameWidth name
-    , " = "
-    , formatSignedDouble value
-    , "\n"
-    ]
-
---------------------------------------------------------------------------------
 -- View constraints
 --------------------------------------------------------------------------------
 data RenderedConstraint
@@ -314,49 +339,6 @@ renderConstraintParts constraint =
   case constraint of
     V.Equals lhs rhs -> RenderedEquals (renderExpr lhs) (renderExpr rhs)
     V.Minimize expr  -> RenderedMinimize (renderExpr expr)
-
---------------------------------------------------------------------------------
--- View trace
---------------------------------------------------------------------------------
-renderViewTrace :: PrintEvents events => [V.ViewStep events] -> String
-renderViewTrace steps =
-  renderHeader "View trace"
-    ++ concat (zipWith renderViewTraceStep [0 :: Int ..] steps)
-
-renderViewTraceStep :: PrintEvents events => Int -> V.ViewStep events -> String
-renderViewTraceStep ix step =
-  case step of
-    V.ViewStep event nodes constraints ->
-      concat
-        [ renderEvent ix event
-        , renderStepViewNodes nodes
-        , renderStepConstraints constraints
-        ]
-
-renderStepViewNodes :: [V.ViewNode] -> String
-renderStepViewNodes nodes =
-  case nodes of
-    [] -> ""
-    _ ->
-      concat
-        [ stepIndent
-        , "view nodes\n"
-        , concatMap renderIndentedViewNode nodes
-        , "\n"
-        ]
-
-renderIndentedViewNode :: V.ViewNode -> String
-renderIndentedViewNode node =
-  case node of
-    V.BlockViewNode block ->
-      concat
-        [ stepIndent
-        , stepIndent
-        , renderBlockRefPlain (V.blockRef block)
-        , " "
-        , renderPayloadView (V.blockLabel block)
-        , "\n"
-        ]
 
 renderStepConstraints :: [V.Constraint] -> String
 renderStepConstraints constraints =
@@ -385,6 +367,111 @@ renderIndentedConstraint lhsWidth constraint =
       concat [stepIndent, stepIndent, "minimize ", expr, "\n"]
 
 --------------------------------------------------------------------------------
+-- Solved view constraints
+--------------------------------------------------------------------------------
+data SolvedExpr =
+  SolvedExpr String Double
+
+renderStepSolution :: Maybe S.Solution -> [V.Constraint] -> String
+renderStepSolution maybeSolution constraints =
+  case maybeSolution of
+    Nothing -> ""
+    Just solution ->
+      let solved =
+            dedupeSolvedExprs
+              (concatMap (solveConstraintExpr solution) constraints)
+       in case solved of
+            [] -> ""
+            _ ->
+              concat [stepIndent, "solution\n", renderSolvedExprs solved, "\n"]
+
+solveConstraintExpr :: S.Solution -> V.Constraint -> [SolvedExpr]
+solveConstraintExpr solution constraint =
+  case constraint of
+    V.Equals lhs rhs -> solveExpr solution lhs ++ solveExpr solution rhs
+    V.Minimize expr  -> solveExpr solution expr
+
+solveExpr :: S.Solution -> V.Expr -> [SolvedExpr]
+solveExpr solution expr =
+  case S.evalExpr solution expr of
+    Nothing    -> []
+    Just value -> [SolvedExpr (renderExpr expr) value]
+
+dedupeSolvedExprs :: [SolvedExpr] -> [SolvedExpr]
+dedupeSolvedExprs = go []
+  where
+    go _ [] = []
+    go seen (solved@(SolvedExpr name _):rest)
+      | name `elem` seen = go seen rest
+      | otherwise = solved : go (name : seen) rest
+
+renderSolvedExprs :: [SolvedExpr] -> String
+renderSolvedExprs solved =
+  let nameWidth = maximum (0 : [length name | SolvedExpr name _ <- solved])
+   in concatMap (renderSolvedExpr nameWidth) solved
+
+renderSolvedExpr :: Int -> SolvedExpr -> String
+renderSolvedExpr nameWidth (SolvedExpr name value) =
+  concat
+    [ stepIndent
+    , stepIndent
+    , padRight nameWidth name
+    , " = "
+    , formatSignedDouble value
+    , "\n"
+    ]
+
+--------------------------------------------------------------------------------
+-- View trace
+--------------------------------------------------------------------------------
+renderViewTrace ::
+     PrintEvents events => Maybe S.Solution -> [V.ViewStep events] -> String
+renderViewTrace maybeSolution steps =
+  renderHeader "View trace"
+    ++ concat (zipWith (renderViewTraceStep maybeSolution) [0 :: Int ..] steps)
+
+renderViewTraceStep ::
+     PrintEvents events
+  => Maybe S.Solution
+  -> Int
+  -> V.ViewStep events
+  -> String
+renderViewTraceStep maybeSolution ix step =
+  case step of
+    V.ViewStep event nodes constraints ->
+      concat
+        [ renderEvent ix event
+        , renderStepViewNodes nodes
+        , renderStepConstraints constraints
+        , renderStepSolution maybeSolution constraints
+        ]
+
+renderStepViewNodes :: [V.ViewNode] -> String
+renderStepViewNodes nodes =
+  case nodes of
+    [] -> ""
+    _ ->
+      concat
+        [ stepIndent
+        , "view nodes\n"
+        , concatMap renderIndentedViewNode nodes
+        , "\n"
+        ]
+
+renderIndentedViewNode :: V.ViewNode -> String
+renderIndentedViewNode node =
+  case node of
+    V.BlockViewNode block ->
+      concat
+        [ stepIndent
+        , stepIndent
+        , renderBlockRefPlain (V.blockRef block)
+        , " "
+        , renderPayloadView (V.blockLabel block)
+        , "\n"
+        ]
+
+--------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
 renderEvents :: PrintEvents events => [TraceEvent events] -> String
@@ -394,7 +481,7 @@ renderEvents events =
 renderEvent :: PrintEvents events => Int -> TraceEvent events -> String
 renderEvent ix (TraceEvent event audit) =
   concat
-    [ padLeft eventIndexWidth (show ix)
+    [ padLeft eventIndexWidth ("B" ++ show ix)
     , " | "
     , ansiText eventTitleStyle (printEventUnion event)
     , "\n"
@@ -476,7 +563,7 @@ renderExprPrec :: Int -> V.Expr -> String
 renderExprPrec precedence expr =
   case expr of
     V.EVar variable -> V.varName variable
-    V.ELit value -> show value
+    V.ELit value -> fixed2 value
     V.EAdd lhs rhs ->
       parenthesize
         (precedence > addPrecedence)
@@ -542,19 +629,17 @@ renderEmptyStepName :: String
 renderEmptyStepName = stepIndent ++ padLeft stepNameWidth ""
 
 padRight :: Int -> String -> String
-padRight n s = s ++ replicate (max 0 (n - length s)) ' '
+padRight n text = text ++ replicate (max 0 (n - length text)) ' '
 
 padLeft :: Int -> String -> String
-padLeft n s = replicate (max 0 (n - length s)) ' ' ++ s
+padLeft n text = replicate (max 0 (n - length text)) ' ' ++ text
 
 formatSignedDouble :: Double -> String
-formatSignedDouble value = padLeft solutionValueWidth (signedFixed2 value)
-
-signedFixed2 :: Double -> String
-signedFixed2 value =
-  let text = fixed2 (cleanNegativeZero value)
-   in if value < 0
-        then text
+formatSignedDouble value =
+  let cleaned = cleanNegativeZero value
+      text = fixed2 (abs cleaned)
+   in if cleaned < 0
+        then "-" ++ text
         else " " ++ text
 
 fixed2 :: Double -> String
