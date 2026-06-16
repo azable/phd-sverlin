@@ -2,7 +2,7 @@
 
 module Main where
 
-import           DSL.Core
+import           DSL.Main
 import qualified LinearTrace
 import           LinearTrace.Visualize
 

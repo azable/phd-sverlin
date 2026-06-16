@@ -12,7 +12,7 @@
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module DSL.Core
+module DSL.Main
   ( -- * Public program types
     Builder
   , Step(..)
