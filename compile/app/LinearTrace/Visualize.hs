@@ -19,6 +19,8 @@ module LinearTrace.Visualize
     Expr(..)
   , Constraint(..)
   , var
+  , varName
+  , global
   , equals
   , plus
   , minus
@@ -26,14 +28,13 @@ module LinearTrace.Visualize
   , dividedBy
   , squared
   , num
-  , varName
   , -- * View audit
     ViewAuditStep(..)
   , ViewAudit(..)
   , -- * Builder
     ViewEnv(..)
-  , Globals(..)
   , ViewBuilder
+  , VisualizeBlock(..)
   , VisualizeEvent(..)
   , VisualizeEvents(..)
   , buildCSP
@@ -182,26 +183,13 @@ data ViewAudit acts where
 --------------------------------------------------------------------------------
 -- Reader + Writer builder
 --------------------------------------------------------------------------------
-data Globals = Globals
-  { globalGap       :: Expr
-  , globalCellGap   :: Expr
-  , globalCellWidth :: Expr
-  }
-
-newtype ViewEnv = ViewEnv
-  { globals :: Globals
+data ViewEnv = ViewEnv
+  { canvasWidth  :: Expr
+  , canvasHeight :: Expr
   }
 
 defaultViewEnv :: ViewEnv
-defaultViewEnv =
-  ViewEnv
-    { globals =
-        Globals
-          { globalGap = var "global.gap"
-          , globalCellGap = var "global.cellGap"
-          , globalCellWidth = var "global.cellWidth"
-          }
-    }
+defaultViewEnv = ViewEnv {canvasWidth = num 800, canvasHeight = num 600}
 
 data ViewOutput events = ViewOutput
   { emittedNodes       :: [ViewNode]
@@ -225,6 +213,14 @@ type ViewBuilder events a = ReaderT ViewEnv (Writer (ViewOutput events)) a
 
 ensure :: Constraint -> ViewBuilder events ()
 ensure constraint = tell mempty {emittedConstraints = [constraint]}
+
+--------------------------------------------------------------------------------
+-- Per-block visualisation
+--------------------------------------------------------------------------------
+class C.TraceBlock tag =>
+      VisualizeBlock tag
+  where
+  visualizeBlock :: BlockView tag -> ViewBuilder events ()
 
 --------------------------------------------------------------------------------
 -- Per-event visualisation
@@ -315,6 +311,9 @@ styleForRef ref =
     , height = blockVar ref "height"
     }
 
+global :: String -> Expr
+global name = var ("global." ++ name)
+
 blockVar :: C.BlockRef tag -> String -> Expr
 blockVar (C.BlockRef blockId) field =
   var ("block." ++ show blockId ++ "." ++ field)
@@ -375,7 +374,7 @@ sameBounds a b = do
   sameWidth a b
   sameHeight a b
 
--- Adjacent blocks with same y coordinate
+-- | Adjacent blocks with the same y coordinate.
 (|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
 (|=|) a b = do
   sameTop a b

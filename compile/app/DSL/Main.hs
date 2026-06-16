@@ -73,6 +73,7 @@ module DSL.Main
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
+import           Control.Monad.Reader   (ask)
 import           Data.Kind              (Type)
 import           Data.Proxy             (Proxy (..))
 import           LinearTrace
@@ -179,7 +180,7 @@ data Literal (ty :: PrimitiveType) =
 instance TraceEventSpec (Literal ty) where
   type EventActs (Literal ty) = LiteralActs ty
 
-instance TracePayload (Value ty) => Step (Literal ty) where
+instance TraceBlock (Value ty) => Step (Literal ty) where
   type StepInput (Literal ty) = Payload (Value ty)
   type StepResult (Literal ty) = Block (Value ty)
   perform Literal payload = do
@@ -187,7 +188,7 @@ instance TracePayload (Value ty) => Step (Literal ty) where
     return (Performed block (createValue :~ Done))
 
 literal ::
-     (TracePayload (Value ty), Member (Literal ty) events)
+     (TraceBlock (Value ty), Member (Literal ty) events)
   => Payload (Value ty)
      %1 -> Builder events (Block (Value ty))
 literal = step Literal
@@ -207,7 +208,7 @@ newtype DeclareVar (ty :: PrimitiveType) =
 instance TraceEventSpec (DeclareVar ty) where
   type EventActs (DeclareVar ty) = DeclareVarActs ty
 
-instance TracePayload (Value ty) => Step (DeclareVar ty) where
+instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (DeclareVar ty) where
   type StepInput (DeclareVar ty) = Payload (Value ty)
   type StepResult (DeclareVar ty) = VarBlock ty
   perform (DeclareVar name) initial = do
@@ -220,7 +221,8 @@ instance TracePayload (Value ty) => Step (DeclareVar ty) where
          (createValue :~ createVar :~ sealValue :~ Done))
 
 declare ::
-     forall events ty. (TracePayload (Value ty), Member (DeclareVar ty) events)
+     forall events ty.
+     (TraceBlock (Value ty), TraceBlock (Var ty), Member (DeclareVar ty) events)
   => String
   -> Payload (Value ty)
      %1 -> Builder events (VarBlock ty)
@@ -244,7 +246,7 @@ data ReadVarResult ty where
 instance TraceEventSpec (ReadVar ty) where
   type EventActs (ReadVar ty) = ReadVarActs ty
 
-instance TracePayload (Value ty) => Step (ReadVar ty) where
+instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (ReadVar ty) where
   type StepInput (ReadVar ty) = VarBlock ty
   type StepResult (ReadVar ty) = ReadVarResult ty
   perform ReadVar (VarBlock varBlock valueSlot) = do
@@ -257,7 +259,7 @@ instance TracePayload (Value ty) => Step (ReadVar ty) where
          (unsealValue :~ copyValue :~ sealValue :~ Done))
 
 readVar ::
-     (TracePayload (Value ty), Member (ReadVar ty) events)
+     (TraceBlock (Value ty), TraceBlock (Var ty), Member (ReadVar ty) events)
   => VarBlock ty
      %1 -> Builder events (VarBlock ty, Block (Value ty))
 readVar varBlock = do
@@ -279,7 +281,7 @@ data WriteVar (ty :: PrimitiveType) =
 instance TraceEventSpec (WriteVar ty) where
   type EventActs (WriteVar ty) = WriteVarActs ty
 
-instance TracePayload (Value ty) => Step (WriteVar ty) where
+instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (WriteVar ty) where
   type StepInput (WriteVar ty) = VarBlock ty :* Block (Value ty)
   type StepResult (WriteVar ty) = VarBlock ty
   perform WriteVar (VarBlock varBlock valueSlot :* newValue) = do
@@ -292,7 +294,7 @@ instance TracePayload (Value ty) => Step (WriteVar ty) where
          (unsealValue :~ replaceValue :~ sealValue :~ Done))
 
 writeVar ::
-     (TracePayload (Value ty), Member (WriteVar ty) events)
+     (TraceBlock (Value ty), TraceBlock (Var ty), Member (WriteVar ty) events)
   => VarBlock ty
      %1 -> Block (Value ty)
      %1 -> Builder events (VarBlock ty)
@@ -313,7 +315,7 @@ data DiscardVar (ty :: PrimitiveType) =
 instance TraceEventSpec (DiscardVar ty) where
   type EventActs (DiscardVar ty) = DiscardVarActs ty
 
-instance TracePayload (Value ty) => Step (DiscardVar ty) where
+instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (DiscardVar ty) where
   type StepInput (DiscardVar ty) = VarBlock ty
   type StepResult (DiscardVar ty) = ()
   perform DiscardVar (VarBlock varBlock valueSlot) = do
@@ -323,7 +325,7 @@ instance TracePayload (Value ty) => Step (DiscardVar ty) where
     return (Performed () (unsealValue :~ destroyVar :~ destroyHeld :~ Done))
 
 discardVar ::
-     (TracePayload (Value ty), Member (DiscardVar ty) events)
+     (TraceBlock (Value ty), TraceBlock (Var ty), Member (DiscardVar ty) events)
   => VarBlock ty
      %1 -> Builder events ()
 discardVar = step DiscardVar
@@ -342,7 +344,7 @@ data DiscardValue (ty :: PrimitiveType) =
 instance TraceEventSpec (DiscardValue ty) where
   type EventActs (DiscardValue ty) = DiscardValueActs ty
 
-instance TracePayload (Value ty) => Step (DiscardValue ty) where
+instance TraceBlock (Value ty) => Step (DiscardValue ty) where
   type StepInput (DiscardValue ty) = Block (Value ty)
   type StepResult (DiscardValue ty) = ()
   perform DiscardValue value = do
@@ -350,7 +352,7 @@ instance TracePayload (Value ty) => Step (DiscardValue ty) where
     return (Performed () (destroyValue :~ Done))
 
 discardValue ::
-     (TracePayload (Value ty), Member (DiscardValue ty) events)
+     (TraceBlock (Value ty), Member (DiscardValue ty) events)
   => Block (Value ty)
      %1 -> Builder events ()
 discardValue = step DiscardValue
@@ -369,7 +371,7 @@ data Operator (op :: BinaryOp) (lhs :: PrimitiveType) (rhs :: PrimitiveType) (ou
 instance TraceEventSpec (Operator op lhs rhs out) where
   type EventActs (Operator op lhs rhs out) = OperatorActs op lhs rhs out
 
-instance TracePayload (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
+instance TraceBlock (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
   type StepInput (Operator op lhs rhs out) = Payload (Op op lhs rhs out)
   type StepResult (Operator op lhs rhs out) = Block (Op op lhs rhs out)
   perform Operator payload = do
@@ -377,7 +379,7 @@ instance TracePayload (Op op lhs rhs out) => Step (Operator op lhs rhs out) wher
     return (Performed block (createOp :~ Done))
 
 operator ::
-     (TracePayload (Op op lhs rhs out), Member (Operator op lhs rhs out) events)
+     (TraceBlock (Op op lhs rhs out), Member (Operator op lhs rhs out) events)
   => Payload (Op op lhs rhs out)
      %1 -> Builder events (Block (Op op lhs rhs out))
 operator = step Operator
@@ -388,10 +390,10 @@ instance PrintEvent (Operator op lhs rhs out) where
 --------------------------------------------------------------------------------
 -- Evaluation support
 --------------------------------------------------------------------------------
-class ( TracePayload (Value lhs)
-      , TracePayload (Op op lhs rhs out)
-      , TracePayload (Value rhs)
-      , TracePayload (Value out)
+class ( TraceBlock (Value lhs)
+      , TraceBlock (Op op lhs rhs out)
+      , TraceBlock (Value rhs)
+      , TraceBlock (Value out)
       ) =>
       EvalOp op lhs rhs out
   where
@@ -556,11 +558,17 @@ instance BinaryOpLabel 'TMul where
 instance TracePayload (Value 'TInt) where
   payloadView _ (LInt i) = PayloadView (padRightF "Val" P.++ P.show i)
 
+instance TraceBlock (Value 'TInt)
+
 instance TracePayload (Value 'TDouble) where
   payloadView _ (LDouble f) = PayloadView (padRightF "Val" P.++ P.show f)
 
+instance TraceBlock (Value 'TDouble)
+
 instance TracePayload (Var ty) where
   payloadView _ (LString name) = PayloadView (padRightF "Var" P.++ name)
+
+instance TraceBlock (Var ty)
 
 instance ( BinaryOpLabel op
          , PrimitiveLabel lhs
@@ -576,51 +584,109 @@ instance ( BinaryOpLabel op
          P.++ primitiveLabel (Proxy :: Proxy rhs)
          P.++ primitiveLabel (Proxy :: Proxy out))
 
+instance ( BinaryOpLabel op
+         , PrimitiveLabel lhs
+         , PrimitiveLabel rhs
+         , PrimitiveLabel out
+         ) =>
+         TraceBlock (Op op lhs rhs out)
+
 --------------------------------------------------------------------------------
--- Visualisation layer
+-- Block visualisation
 --------------------------------------------------------------------------------
-instance VisualizeEvent (Literal ty) where
+cellBlock :: BlockView tag -> ViewBuilder events ()
+cellBlock block = P.do
+  ensure $ equals (widthOf block) (global "blockWidth")
+  ensure $ equals (heightOf block) (global "blockHeight")
+
+instance VisualizeBlock (Value 'TInt) where
+  visualizeBlock = cellBlock
+
+instance VisualizeBlock (Value 'TDouble) where
+  visualizeBlock = cellBlock
+
+instance VisualizeBlock (Var ty) where
+  visualizeBlock = cellBlock
+
+instance ( BinaryOpLabel op
+         , PrimitiveLabel lhs
+         , PrimitiveLabel rhs
+         , PrimitiveLabel out
+         ) =>
+         VisualizeBlock (Op op lhs rhs out) where
+  visualizeBlock = cellBlock
+
+--------------------------------------------------------------------------------
+-- Event visualisation
+--------------------------------------------------------------------------------
+instance VisualizeBlock (Value ty) => VisualizeEvent (Literal ty) where
   visualizeEvent Literal audit =
     case audit of
-      VCreated _value :& VDone -> P.pure ()
+      VCreated value :& VDone -> P.do
+        visualizeBlock value
 
-instance VisualizeEvent (DeclareVar ty) where
+instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
+         VisualizeEvent (DeclareVar ty) where
   visualizeEvent (DeclareVar _) audit =
     case audit of
-      VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone ->
+      VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
+        visualizeBlock valueB
+        visualizeBlock varB
         sameBounds valueB varB
 
-instance VisualizeEvent (ReadVar ty) where
+instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
+         VisualizeEvent (ReadVar ty) where
   visualizeEvent ReadVar audit =
     case audit of
-      VUnsealed _ _ :& VCopied _heldOriginal _ :& VSealed _ _ :& VDone ->
-        P.pure ()
+      VUnsealed varB held :& VCopied _heldOriginal copied :& VSealed _ _ :& VDone -> P.do
+        visualizeBlock varB
+        visualizeBlock held
+        visualizeBlock copied
 
-instance VisualizeEvent (WriteVar ty) where
+instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
+         VisualizeEvent (WriteVar ty) where
   visualizeEvent WriteVar audit =
     case audit of
-      VUnsealed varBlock _ :& VReplaced _old newValue :& VSealed _ _ :& VDone ->
-        sameBounds varBlock newValue
+      VUnsealed varB oldValue :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
+        visualizeBlock varB
+        visualizeBlock oldValue
+        visualizeBlock newValue
+        sameBounds varB newValue
 
-instance VisualizeEvent (DiscardVar ty) where
+instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
+         VisualizeEvent (DiscardVar ty) where
   visualizeEvent DiscardVar audit =
     case audit of
-      VUnsealed _ _ :& VDestroyed _ :& VDestroyed _ :& VDone -> P.pure ()
+      VUnsealed varB value :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
+        visualizeBlock varB
+        visualizeBlock value
 
-instance VisualizeEvent (DiscardValue ty) where
+instance VisualizeBlock (Value ty) => VisualizeEvent (DiscardValue ty) where
   visualizeEvent DiscardValue audit =
     case audit of
-      VDestroyed _value :& VDone -> P.pure ()
+      VDestroyed value :& VDone -> P.do
+        visualizeBlock value
 
-instance VisualizeEvent (Operator op lhs rhs out) where
+instance VisualizeBlock (Op op lhs rhs out) =>
+         VisualizeEvent (Operator op lhs rhs out) where
   visualizeEvent Operator audit =
     case audit of
-      VCreated _operator :& VDone -> P.pure ()
+      VCreated op :& VDone -> P.do
+        visualizeBlock op
 
-instance VisualizeEvent (Eval op lhs rhs out) where
+instance ( VisualizeBlock (Value lhs)
+         , VisualizeBlock (Op op lhs rhs out)
+         , VisualizeBlock (Value rhs)
+         , VisualizeBlock (Value out)
+         ) =>
+         VisualizeEvent (Eval op lhs rhs out) where
   visualizeEvent Eval audit =
     case audit of
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
+        visualizeBlock lhs
+        visualizeBlock op
+        visualizeBlock rhs
+        visualizeBlock result
         lhs |=| op
         op |=| rhs
         rhs |=| result

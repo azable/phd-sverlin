@@ -7,7 +7,6 @@
 {-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
-{-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE TypeOperators           #-}
 {-# LANGUAGE UndecidableInstances    #-}
@@ -22,6 +21,7 @@ module LinearTrace.Core
   , Payload
   , PayloadView(..)
   , TracePayload(..)
+  , TraceBlock
   , -- * Trusted linear payloads
     LUnit(..)
   , LBool(..)
@@ -88,7 +88,7 @@ module LinearTrace.Core
     buildGraph
   ) where
 
-import           Control.Functor.Linear hiding ((<$>), (<*>))
+import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
 import           Data.Kind              (Type)
 import           Data.Proxy             (Proxy (..))
 import qualified Prelude                as P
@@ -141,6 +141,16 @@ class LinearPayload (Payload tag) =>
       TracePayload tag
   where
   payloadView :: Proxy tag -> Payload tag -> PayloadView
+
+-- | Block-level analogue of 'TraceEventSpec'.
+--
+-- 'TracePayload' says how to render a payload textually.
+-- 'TraceBlock' says that this tag is a valid trace block tag.
+--
+-- Visual layers can add their own block-specific class on top of this, e.g.
+-- VisualizeBlock.
+class TracePayload tag =>
+      TraceBlock tag
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
@@ -311,7 +321,7 @@ class Member event events where
        TraceEventSpec event => event -> EventUnion events (EventActs event)
 
 instance {-# OVERLAPPING #-} Member event (event : events) where
-  injectEvent event = Here event
+  injectEvent = Here
 
 instance {-# OVERLAPPABLE #-} Member event events =>
          Member event (other : events) where
@@ -353,7 +363,7 @@ makeBlockRef :: Proxy tag -> BlockId -> BlockRef tag
 makeBlockRef _ = BlockRef
 
 makeSnapshot ::
-     forall tag. TracePayload tag
+     forall tag. TraceBlock tag
   => Proxy tag
   -> BlockRef tag
   -> Payload tag
@@ -362,7 +372,7 @@ makeSnapshot tagProxy ref payload =
   BlockSnapshot ref payload (payloadView tagProxy payload)
 
 makeAuditStep1 ::
-     TracePayload tag
+     TraceBlock tag
   => (BlockSnapshot tag -> AuditStep act)
   -> Proxy tag
   -> BlockRef tag
@@ -372,7 +382,7 @@ makeAuditStep1 ctor tagProxy ref payload =
   Evidence (Ur (ctor (makeSnapshot tagProxy ref payload)))
 
 makeAuditStep2 ::
-     TracePayload tag
+     TraceBlock tag
   => (BlockSnapshot tag -> BlockSnapshot tag -> AuditStep act)
   -> Proxy tag
   -> BlockRef tag
@@ -388,7 +398,7 @@ makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
           (makeSnapshot tagProxy ref2 payload2)))
 
 makeAuditStep2Hetero ::
-     (TracePayload left, TracePayload right)
+     (TraceBlock left, TraceBlock right)
   => (BlockSnapshot left -> BlockSnapshot right -> AuditStep act)
   -> Proxy left
   -> BlockRef left
@@ -419,7 +429,7 @@ unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
 allocateBlock ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Proxy tag
   -> Payload tag
      %1 -> TraceBuilder events (Ur BlockId, Ur (Payload tag))
@@ -456,7 +466,7 @@ explain event evidenceList =
 -- Primitive operations
 --------------------------------------------------------------------------------
 create ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Payload tag
      %1 -> TraceBuilder events (Created tag)
 create payload0 = do
@@ -468,7 +478,7 @@ create payload0 = do
        (makeAuditStep1 CreateStep (Proxy :: Proxy tag) ref' payload))
 
 observe ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Block tag
      %1 -> TraceBuilder events (Observed tag)
 observe (Block (Ur blockId) (Ur payload)) = do
@@ -479,7 +489,7 @@ observe (Block (Ur blockId) (Ur payload)) = do
        (makeAuditStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
 
 inspect ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Block tag
      %1 -> TraceBuilder events (Inspected tag)
 inspect (Block (Ur blockId) (Ur payload)) = do
@@ -491,7 +501,7 @@ inspect (Block (Ur blockId) (Ur payload)) = do
        (makeAuditStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
 
 use ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Block tag
      %1 -> TraceBuilder events (Used tag)
 use (Block (Ur blockId) (Ur payload)) = do
@@ -502,7 +512,7 @@ use (Block (Ur blockId) (Ur payload)) = do
        (makeAuditStep1 UseStep (Proxy :: Proxy tag) ref' payload))
 
 copy ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Block tag
      %1 -> TraceBuilder events (Copied tag)
 copy (Block (Ur originalId) (Ur payload)) = do
@@ -522,7 +532,7 @@ copy (Block (Ur originalId) (Ur payload)) = do
           copiedPayload))
 
 replace ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Block tag
      %1 -> Block tag
      %1 -> TraceBuilder events (Replaced tag)
@@ -545,7 +555,7 @@ replace oldBlock newBlock =
                   newPayload))
 
 compute ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => OneUse (Payload tag)
      %1 -> TraceBuilder events (Computed tag)
 compute (OneUse payload0) = do
@@ -557,7 +567,7 @@ compute (OneUse payload0) = do
        (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload))
 
 destroy ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => Block tag
      %1 -> TraceBuilder events (Destroyed tag)
 destroy (Block (Ur blockId) (Ur payload)) = do
@@ -566,7 +576,7 @@ destroy (Block (Ur blockId) (Ur payload)) = do
     (Destroyed (makeAuditStep1 DestroyStep (Proxy :: Proxy tag) ref' payload))
 
 seal ::
-     forall events owner tag. (TracePayload owner, TracePayload tag)
+     forall events owner tag. (TraceBlock owner, TraceBlock tag)
   => Block owner
      %1 -> Block tag
      %1 -> TraceBuilder events (Sealed owner tag)
@@ -591,7 +601,7 @@ seal ownerBlock childBlock =
                   childPayload))
 
 unseal ::
-     forall events owner tag. (TracePayload owner, TracePayload tag)
+     forall events owner tag. (TraceBlock owner, TraceBlock tag)
   => Block owner
      %1 -> Slot owner tag
      %1 -> TraceBuilder events (Unsealed owner tag)
@@ -618,7 +628,7 @@ unseal ownerBlock slot =
                       childPayload))
 
 decide ::
-     forall events tag. TracePayload tag
+     forall events tag. TraceBlock tag
   => (Payload tag %1 -> Bool)
   -> Block tag
      %1 -> TraceBuilder events (Decided tag)
