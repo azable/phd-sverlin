@@ -507,17 +507,18 @@ renderAudit (step :> rest) = renderAuditStep step ++ renderAudit rest
 renderAuditStep :: AuditStep act -> String
 renderAuditStep step =
   case step of
-    CreateStep snapshot     -> renderSnapshotStep1 createStyle snapshot
-    ObserveStep snapshot    -> renderSnapshotStep1 observeStyle snapshot
-    InspectStep snapshot    -> renderSnapshotStep1 inspectStyle snapshot
-    UseStep snapshot        -> renderSnapshotStep1 useStyle snapshot
+    CreateStep snapshot -> renderSnapshotStep1 createStyle snapshot
+    ObserveStep snapshot -> renderSnapshotStep1 observeStyle snapshot
+    InspectStep snapshot -> renderSnapshotStep1 inspectStyle snapshot
+    UseStep snapshot -> renderSnapshotStep1 useStyle snapshot
     CopyStep original copy' -> renderSnapshotStep2 copyStyle original copy'
-    ReplaceStep old new     -> renderSnapshotStep2 replaceStyle old new
-    ComputeStep snapshot    -> renderSnapshotStep1 computeStyle snapshot
-    DestroyStep snapshot    -> renderSnapshotStep1 destroyStyle snapshot
-    SealStep owner child    -> renderSnapshotStep2 sealStyle owner child
-    UnsealStep owner child  -> renderSnapshotStep2 unsealStyle owner child
-    DecideStep snapshot     -> renderSnapshotStep1 decideStyle snapshot
+    ReplaceStep old incoming output ->
+      renderSnapshotStep3 replaceStyle old incoming output
+    ComputeStep snapshot -> renderSnapshotStep1 computeStyle snapshot
+    DestroyStep snapshot -> renderSnapshotStep1 destroyStyle snapshot
+    SealStep owner child -> renderSnapshotStep2 sealStyle owner child
+    UnsealStep owner child -> renderSnapshotStep2 unsealStyle owner child
+    DecideStep snapshot -> renderSnapshotStep1 decideStyle snapshot
 
 renderSnapshotStep1 :: StepStyle -> BlockSnapshot tag -> String
 renderSnapshotStep1 style snapshot =
@@ -534,6 +535,28 @@ renderSnapshotStep2 style first second =
     , renderEmptyStepName
     , " "
     , renderSnapshot second
+    , "\n"
+    ]
+
+renderSnapshotStep3 ::
+     StepStyle
+  -> BlockSnapshot first
+  -> BlockSnapshot second
+  -> BlockSnapshot third
+  -> String
+renderSnapshotStep3 style first second third =
+  concat
+    [ renderStepName style
+    , " "
+    , renderSnapshot first
+    , "\n"
+    , renderEmptyStepName
+    , " "
+    , renderSnapshot second
+    , "\n"
+    , renderEmptyStepName
+    , " "
+    , renderSnapshot third
     , "\n"
     ]
 

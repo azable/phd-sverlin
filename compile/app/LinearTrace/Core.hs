@@ -284,7 +284,10 @@ data AuditStep act where
   UseStep :: BlockSnapshot tag -> AuditStep (Use tag)
   CopyStep :: BlockSnapshot tag -> BlockSnapshot tag -> AuditStep (Copy tag)
   ReplaceStep
-    :: BlockSnapshot tag -> BlockSnapshot tag -> AuditStep (Replace tag)
+    :: BlockSnapshot tag
+    -> BlockSnapshot tag
+    -> BlockSnapshot tag
+    -> AuditStep (Replace tag)
   ComputeStep :: BlockSnapshot tag -> AuditStep (Compute tag)
   DestroyStep :: BlockSnapshot tag -> AuditStep (Destroy tag)
   SealStep
@@ -396,6 +399,26 @@ makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
        (ctor
           (makeSnapshot tagProxy ref1 payload1)
           (makeSnapshot tagProxy ref2 payload2)))
+
+makeAuditStep3 ::
+     TraceBlock tag
+  => (BlockSnapshot tag -> BlockSnapshot tag -> BlockSnapshot tag -> AuditStep
+                                                                       act)
+  -> Proxy tag
+  -> BlockRef tag
+  -> Payload tag
+  -> BlockRef tag
+  -> Payload tag
+  -> BlockRef tag
+  -> Payload tag
+  -> Evidence act
+makeAuditStep3 ctor tagProxy ref1 payload1 ref2 payload2 ref3 payload3 =
+  Evidence
+    (Ur
+       (ctor
+          (makeSnapshot tagProxy ref1 payload1)
+          (makeSnapshot tagProxy ref2 payload2)
+          (makeSnapshot tagProxy ref3 payload3)))
 
 makeAuditStep2Hetero ::
      (TraceBlock left, TraceBlock right)
@@ -536,23 +559,28 @@ replace ::
   => Block tag
      %1 -> Block tag
      %1 -> TraceBuilder events (Replaced tag)
-replace oldBlock newBlock =
+replace oldBlock incomingBlock =
   case oldBlock of
     Block (Ur oldId) (Ur oldPayload) ->
-      case newBlock of
-        Block (Ur newId) (Ur newPayload) -> do
+      case incomingBlock of
+        Block (Ur incomingId) (Ur incomingPayload) -> do
+          (Ur outputId, Ur outputPayload) <-
+            allocateBlock (Proxy :: Proxy tag) incomingPayload
           let oldRef = makeBlockRef (Proxy :: Proxy tag) oldId
-          let newRef = makeBlockRef (Proxy :: Proxy tag) newId
+          let incomingRef = makeBlockRef (Proxy :: Proxy tag) incomingId
+          let outputRef = makeBlockRef (Proxy :: Proxy tag) outputId
           return
             (Replaced
-               (Block (Ur newId) (Ur newPayload))
-               (makeAuditStep2
+               (Block (Ur outputId) (Ur outputPayload))
+               (makeAuditStep3
                   ReplaceStep
                   (Proxy :: Proxy tag)
                   oldRef
                   oldPayload
-                  newRef
-                  newPayload))
+                  incomingRef
+                  incomingPayload
+                  outputRef
+                  outputPayload))
 
 compute ::
      forall events tag. TraceBlock tag

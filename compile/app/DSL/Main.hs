@@ -73,7 +73,6 @@ module DSL.Main
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
-import           Control.Monad.Reader   (ask)
 import           Data.Kind              (Type)
 import           Data.Proxy             (Proxy (..))
 import           LinearTrace
@@ -646,8 +645,8 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (WriteVar ty) where
   visualizeEvent WriteVar audit =
     case audit of
-      VUnsealed varB oldValue :& VReplaced _old newValue :& VSealed _ _ :& VDone -> P.do
-        sameBounds varB newValue
+      VUnsealed varB _oldValue :& VReplaced _old _incoming stored :& VSealed _ _ :& VDone -> P.do
+        sameBounds varB stored
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (DiscardVar ty) where
@@ -680,4 +679,4 @@ instance ( VisualizeBlock (Value lhs)
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
         lhs |=| op
         op |=| rhs
-        -- rhs |=| result
+        rhs |=| result

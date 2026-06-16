@@ -186,7 +186,11 @@ data ViewAuditStep act where
   VInspected :: BlockView tag -> ViewAuditStep (C.Inspect tag)
   VUsed :: BlockView tag -> ViewAuditStep (C.Use tag)
   VCopied :: BlockView tag -> BlockView tag -> ViewAuditStep (C.Copy tag)
-  VReplaced :: BlockView tag -> BlockView tag -> ViewAuditStep (C.Replace tag)
+  VReplaced
+    :: BlockView tag
+    -> BlockView tag
+    -> BlockView tag
+    -> ViewAuditStep (C.Replace tag)
   VComputed :: BlockView tag -> ViewAuditStep (C.Compute tag)
   VDestroyed :: BlockView tag -> ViewAuditStep (C.Destroy tag)
   VSealed
@@ -335,8 +339,10 @@ instance VisualizeBlock tag => VisualizeAuditBlock (C.Copy tag) where
     case step of
       VCopied _original copy' -> visualizeNewBlock copy'
 
-instance VisualizeAuditBlock (C.Replace tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance VisualizeBlock tag => VisualizeAuditBlock (C.Replace tag) where
+  visualizeAuditBlockStep step =
+    case step of
+      VReplaced _old _incoming output -> visualizeNewBlock output
 
 instance VisualizeBlock tag => VisualizeAuditBlock (C.Compute tag) where
   visualizeAuditBlockStep step =
@@ -483,8 +489,11 @@ viewAuditStep step =
     C.UseStep snapshot -> VUsed (blockViewOfSnapshot snapshot)
     C.CopyStep original copy' ->
       VCopied (blockViewOfSnapshot original) (blockViewOfSnapshot copy')
-    C.ReplaceStep old new ->
-      VReplaced (blockViewOfSnapshot old) (blockViewOfSnapshot new)
+    C.ReplaceStep old incoming output ->
+      VReplaced
+        (blockViewOfSnapshot old)
+        (blockViewOfSnapshot incoming)
+        (blockViewOfSnapshot output)
     C.ComputeStep snapshot -> VComputed (blockViewOfSnapshot snapshot)
     C.DestroyStep snapshot -> VDestroyed (blockViewOfSnapshot snapshot)
     C.SealStep owner child ->
