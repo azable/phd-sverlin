@@ -50,6 +50,12 @@ module LinearTrace.Solver
     maxE
   , minE
   , clipNegative
+  , -- * Seeded initial value generation
+    RandomSeed(..)
+  , RandomSample(..)
+  , defaultRandomSeed
+  , randomSamplesFromSeed
+  , randomUnitsFromSeed
   , -- * Solving
     SolveConfig(..)
   , defaultSolveConfig
@@ -66,6 +72,7 @@ import qualified Data.Map.Strict            as Map
 import           Data.Proxy                 (Proxy (..))
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
+import           System.Random              (mkStdGen, randomRs)
 
 --------------------------------------------------------------------------------
 -- Symbolic scalar domains
@@ -219,7 +226,9 @@ num ::
      forall ty. SymbolicType ty
   => Double
   -> Expr ty
-num value = Expr (symbolicType (Proxy :: Proxy ty)) (ELit value)
+num value = Expr ty (ELit value)
+  where
+    ty = symbolicType (Proxy :: Proxy ty)
 
 binaryExpr :: (RawExpr -> RawExpr -> RawExpr) -> Expr ty -> Expr ty -> Expr ty
 binaryExpr f (Expr ty lhs) (Expr _ rhs) = Expr ty (f lhs rhs)
@@ -443,26 +452,52 @@ solveCSP (CSP initials energy) =
   Opt.minimize Opt.LBFGS Opt.def energy Nothing [] initials
 
 --------------------------------------------------------------------------------
+-- Seeded initial value generation
+--------------------------------------------------------------------------------
+newtype RandomSeed =
+  RandomSeed Int
+  deriving (Eq, Ord, Show)
+
+data RandomSample = RandomSample
+  { randomSampleIndex :: Int
+  , randomSampleUnit  :: Double
+  } deriving (Eq, Show)
+
+defaultRandomSeed :: RandomSeed
+defaultRandomSeed = RandomSeed 2
+
+randomSamplesFromSeed :: RandomSeed -> [RandomSample]
+randomSamplesFromSeed seed =
+  zipWith RandomSample [0 ..] (randomUnitsFromSeed seed)
+
+randomUnitsFromSeed :: RandomSeed -> [Double]
+randomUnitsFromSeed (RandomSeed seed) = randomRs (0.0, 1.0) (mkStdGen seed)
+
+--------------------------------------------------------------------------------
 -- Named constraint solving
 --------------------------------------------------------------------------------
 data SolveConfig = SolveConfig
-  { initialValueFor :: String -> ScalarType -> InitialBounds -> Double
-  , ensureWeight    :: Rational
+  { initialSeed :: RandomSeed
+  , initialValueFor :: RandomSample -> String -> ScalarType -> InitialBounds -> Double
+  , ensureWeight :: Rational
   , encourageWeight :: Rational
-  , rangeWeight     :: Rational
+  , rangeWeight :: Rational
   }
 
 defaultSolveConfig :: SolveConfig
 defaultSolveConfig =
   SolveConfig
-    { initialValueFor = defaultInitialValue
+    { initialSeed = defaultRandomSeed
+    , initialValueFor = defaultInitialValue
     , ensureWeight = 100
     , encourageWeight = 1
     , rangeWeight = 100
     }
 
-defaultInitialValue :: String -> ScalarType -> InitialBounds -> Double
-defaultInitialValue name _ bounds = chooseInitialValue bounds (hashUnit name)
+defaultInitialValue ::
+     RandomSample -> String -> ScalarType -> InitialBounds -> Double
+defaultInitialValue sample _name _ty bounds =
+  chooseInitialValue bounds (randomSampleUnit sample)
 
 chooseInitialValue :: InitialBounds -> Double -> Double
 chooseInitialValue bounds t =
@@ -470,19 +505,12 @@ chooseInitialValue bounds t =
     (Just lo, Just hi)
       | lo < hi -> lo + interior t * (hi - lo)
       | otherwise -> lo
-    (Just lo, Nothing) -> lo + 1 + 99 * t
-    (Nothing, Just hi) -> hi - 1 - 99 * t
-    (Nothing, Nothing) -> (t - 0.5) * 200
+    (Just lo, Nothing) -> lo + 1 + 999 * t
+    (Nothing, Just hi) -> hi - 1 - 999 * t
+    (Nothing, Nothing) -> (t - 0.5) * 2000
 
 interior :: Double -> Double
 interior t = 0.05 + 0.9 * t
-
-hashUnit :: String -> Double
-hashUnit text = fromIntegral bucket / fromIntegral modulus
-  where
-    modulus = 1000000 :: Int
-    bucket = abs hash `mod` modulus
-    hash = foldl' (\acc ch -> acc * 33 + fromEnum ch) (5381 :: Int) text
 
 data NamedCSP = NamedCSP
   { namedVars :: Map String InternalVar
@@ -519,19 +547,22 @@ compileConstraints config constraints =
   where
     varTypes = collectConstraintVarTypes constraints
     inferredBounds = inferInitialBounds constraints
+    variableInputs =
+      zip (randomSamplesFromSeed (initialSeed config)) (Map.toAscList varTypes)
     build = do
       pairs <-
         traverse
-          (\(name, ty) -> do
+          (\(sample, (name, ty)) -> do
              let bounds =
                    typeInitialBounds ty
                      `mergeInitialBounds` Map.findWithDefault
                                             unboundedInitialBounds
                                             name
                                             inferredBounds
-             internal <- newInternalVar (initialValueFor config name ty bounds)
+                 initial = initialValueFor config sample name ty bounds
+             internal <- newInternalVar initial
              pure (name, ty, internal))
-          (Map.toAscList varTypes)
+          variableInputs
       let vars' =
             Map.fromList [(name, internal) | (name, _ty, internal) <- pairs]
       traverse_

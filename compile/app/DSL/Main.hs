@@ -508,9 +508,9 @@ example = do
   three <- literal (int 3)
   result <- sumValue .*. three
   x2 <- writeVar x1 result
-  (x3, finalValue) <- readVar x2
-  discardValue finalValue
-  discardVar x3
+  -- (x3, finalValue) <- readVar x2
+  -- discardValue finalValue
+  discardVar x2
 
 --------------------------------------------------------------------------------
 -- Block visualisation
