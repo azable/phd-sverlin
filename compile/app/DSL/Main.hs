@@ -489,111 +489,34 @@ instance PrintEvent (Eval op lhs rhs out) where
 type ExampleEvents
   = '[ DeclareVar 'TInt
      , ReadVar 'TInt
+     , Literal 'TInt
      , Operator 'TAdd 'TInt 'TInt 'TInt
+     , Operator 'TMul 'TInt 'TInt 'TInt
      , Eval 'TAdd 'TInt 'TInt 'TInt
+     , Eval 'TMul 'TInt 'TInt 'TInt
      , WriteVar 'TInt
      , DiscardVar 'TInt
+     , DiscardValue 'TInt
      ]
-
-data FibState where
-  FibState :: IntVar %1 -> IntVar %1 -> FibState
-
-iterateL ::
-     Int
-  -> (state %1 -> Builder ExampleEvents state)
-  -> state
-     %1 -> Builder ExampleEvents state
-iterateL n stepOnce state'
-  | n P.<= 0 = return state'
-  | P.otherwise = do
-    state'' <- stepOnce state'
-    iterateL (n P.- 1) stepOnce state''
-
-fibStep :: FibState %1 -> Builder ExampleEvents FibState
-fibStep (FibState a0 b0) = do
-  (a1, aValue) <- readVar a0
-  (b1, bForA) <- readVar b0
-  (b2, bForSum) <- readVar b1
-  next <- aValue .+. bForSum
-  a2 <- writeVar a1 bForA
-  b3 <- writeVar b2 next
-  return (FibState a2 b3)
 
 example :: Builder ExampleEvents ()
 example = do
-  a0 <- declare "a" (int 0)
-  b0 <- declare "b" (int 1)
-  FibState aN bN <- iterateL 5 fibStep (FibState a0 b0)
-  discardVar aN
-  discardVar bN
-
---------------------------------------------------------------------------------
--- Payload labels
---------------------------------------------------------------------------------
-padRight :: Int -> String -> String
-padRight n s = s P.++ P.replicate (P.max 0 (n P.- P.length s)) ' '
-
-padRightF :: String -> String
-padRightF = padRight labelWidth
-
-class PrimitiveLabel ty where
-  primitiveLabel :: Proxy ty -> String
-
-instance PrimitiveLabel 'TInt where
-  primitiveLabel _ = "I"
-
-instance PrimitiveLabel 'TDouble where
-  primitiveLabel _ = "D"
-
-class BinaryOpLabel op where
-  binaryOpLabel :: Proxy op -> String
-
-instance BinaryOpLabel 'TAdd where
-  binaryOpLabel _ = "+"
-
-instance BinaryOpLabel 'TMul where
-  binaryOpLabel _ = "*"
-
-instance TracePayload (Value 'TInt) where
-  payloadView _ (LInt i) =
-    PayloadView {payloadKind = "Val", payloadContent = P.show i}
-
-instance TraceBlock (Value 'TInt)
-
-instance TracePayload (Value 'TDouble) where
-  payloadView _ (LDouble f) =
-    PayloadView {payloadKind = "Val", payloadContent = P.show f}
-
-instance TraceBlock (Value 'TDouble)
-
-instance TracePayload (Var ty) where
-  payloadView _ (LString name) =
-    PayloadView {payloadKind = "Var", payloadContent = name}
-
-instance TraceBlock (Var ty)
-
-instance ( BinaryOpLabel op
-         , PrimitiveLabel lhs
-         , PrimitiveLabel rhs
-         , PrimitiveLabel out
-         ) =>
-         TracePayload (Op op lhs rhs out) where
-  payloadView _ LUnit =
-    PayloadView
-      {payloadKind = "Op", payloadContent = binaryOpLabel (Proxy :: Proxy op)}
-
-instance ( BinaryOpLabel op
-         , PrimitiveLabel lhs
-         , PrimitiveLabel rhs
-         , PrimitiveLabel out
-         ) =>
-         TraceBlock (Op op lhs rhs out)
+  x0 <- declare "x" (int 10)
+  (x1, xValue) <- readVar x0
+  two <- literal (int 2)
+  sumValue <- xValue .+. two
+  three <- literal (int 3)
+  result <- sumValue .*. three
+  x2 <- writeVar x1 result
+  (x3, finalValue) <- readVar x2
+  discardValue finalValue
+  discardVar x3
 
 --------------------------------------------------------------------------------
 -- Block visualisation
 --------------------------------------------------------------------------------
 blockSize :: Expr
-blockSize = num 100 --global "blockSize"
+blockSize = num 200 --global "blockSize"
 
 valueFill :: Hsl Expr
 valueFill = Hsl {hue = num 200, saturation = num 0.7, lightness = num 0.5}
@@ -607,7 +530,7 @@ instance VisualizeBlock (Value 'TInt) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
-      P.. withFontSize (num 40)
+      P.. withFontSize (blockSize `dividedBy` num 2)
       P.. withFontFamily "Inter"
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
@@ -698,3 +621,101 @@ instance ( VisualizeBlock (Value lhs)
         lhs |=| op
         op |=| rhs
         rhs |=| result
+
+--------------------------------------------------------------------------------
+-- Payload labels
+--------------------------------------------------------------------------------
+padRight :: Int -> String -> String
+padRight n s = s P.++ P.replicate (P.max 0 (n P.- P.length s)) ' '
+
+padRightF :: String -> String
+padRightF = padRight labelWidth
+
+class PrimitiveLabel ty where
+  primitiveLabel :: Proxy ty -> String
+
+instance PrimitiveLabel 'TInt where
+  primitiveLabel _ = "I"
+
+instance PrimitiveLabel 'TDouble where
+  primitiveLabel _ = "D"
+
+class BinaryOpLabel op where
+  binaryOpLabel :: Proxy op -> String
+
+instance BinaryOpLabel 'TAdd where
+  binaryOpLabel _ = "+"
+
+instance BinaryOpLabel 'TMul where
+  binaryOpLabel _ = "*"
+
+instance TracePayload (Value 'TInt) where
+  payloadView _ (LInt i) =
+    PayloadView {payloadKind = "Val", payloadContent = P.show i}
+
+instance TraceBlock (Value 'TInt)
+
+instance TracePayload (Value 'TDouble) where
+  payloadView _ (LDouble f) =
+    PayloadView {payloadKind = "Val", payloadContent = P.show f}
+
+instance TraceBlock (Value 'TDouble)
+
+instance TracePayload (Var ty) where
+  payloadView _ (LString name) =
+    PayloadView {payloadKind = "Var", payloadContent = name}
+
+instance TraceBlock (Var ty)
+
+instance ( BinaryOpLabel op
+         , PrimitiveLabel lhs
+         , PrimitiveLabel rhs
+         , PrimitiveLabel out
+         ) =>
+         TracePayload (Op op lhs rhs out) where
+  payloadView _ LUnit =
+    PayloadView
+      {payloadKind = "Op", payloadContent = binaryOpLabel (Proxy :: Proxy op)}
+
+instance ( BinaryOpLabel op
+         , PrimitiveLabel lhs
+         , PrimitiveLabel rhs
+         , PrimitiveLabel out
+         ) =>
+         TraceBlock (Op op lhs rhs out)
+-- type ExampleEvents
+--   = '[ DeclareVar 'TInt
+--      , ReadVar 'TInt
+--      , Operator 'TAdd 'TInt 'TInt 'TInt
+--      , Eval 'TAdd 'TInt 'TInt 'TInt
+--      , WriteVar 'TInt
+--      , DiscardVar 'TInt
+--      ]
+-- data FibState where
+--   FibState :: IntVar %1 -> IntVar %1 -> FibState
+-- iterateL ::
+--      Int
+--   -> (state %1 -> Builder ExampleEvents state)
+--   -> state
+--      %1 -> Builder ExampleEvents state
+-- iterateL n stepOnce state'
+--   | n P.<= 0 = return state'
+--   | P.otherwise = do
+--     state'' <- stepOnce state'
+--     iterateL (n P.- 1) stepOnce state''
+-- fibStep :: FibState %1 -> Builder ExampleEvents FibState
+-- fibStep (FibState a0 b0) = do
+--   (a1, aValue) <- readVar a0
+--   (b1, bForA) <- readVar b0
+--   (b2, bForSum) <- readVar b1
+--   next <- aValue .+. bForSum
+--   a2 <- writeVar a1 bForA
+--   b3 <- writeVar b2 next
+--   return (FibState a2 b3)
+-- example :: Builder ExampleEvents ()
+-- example = do
+--   a0 <- declare "a" (int 0)
+--   b0 <- declare "b" (int 1)
+--   FibState aN bN <- iterateL 5 fibStep (FibState a0 b0)
+--   discardVar aN
+--   discardVar bN
