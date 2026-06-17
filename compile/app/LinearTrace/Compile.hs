@@ -38,11 +38,20 @@ freshRenderIdForBlock blockId = RenderId ("lineage." ++ show blockId)
 --------------------------------------------------------------------------------
 -- Compiled geometry
 --------------------------------------------------------------------------------
+data StyleValue
+  = StyleNumber Double
+  | StylePixels Double
+  | StyleText String
+  | StyleColor String
+  | StyleBool Bool
+  deriving (Eq, Show)
+
 data RenderStyle = RenderStyle
   { renderTop    :: Double
   , renderLeft   :: Double
   , renderWidth  :: Double
   , renderHeight :: Double
+  , renderAttrs  :: Map String StyleValue
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
@@ -250,6 +259,7 @@ compileMaterializedStyle style =
     , renderLeft = V.materializedLeft style
     , renderWidth = V.materializedWidth style
     , renderHeight = V.materializedHeight style
+    , renderAttrs = Map.empty
     }
 
 requireBlock :: BlockLookup -> C.BlockSnapshot tag -> CompileM RenderBlock

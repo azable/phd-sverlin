@@ -1,8 +1,12 @@
 {-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE DeriveFoldable       #-}
+{-# LANGUAGE DeriveFunctor        #-}
+{-# LANGUAGE DeriveTraversable    #-}
 {-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -13,13 +17,27 @@ module LinearTrace.Visualize
   , ViewStep(..)
   , BlockView(..)
   , Style(..)
+  , Box(..)
   , Bounds(..)
+  , Hsl(..)
+  , CssText(..)
+  , FontWeight(..)
+  , FontStyle(..)
+  , TextAlign(..)
+  , BorderStyle(..)
+  , WhiteSpace(..)
   , MaterializedStyle(..)
   , MaterializedBlockView(..)
   , MaterializedViewNode(..)
-  , -- * Expressions and constraints
+  , -- * Expressions, vectors, and constraints
     Expr(..)
   , Constraint(..)
+  , Vec2(..)
+  , Vec3(..)
+  , Vec4(..)
+  , vec2
+  , vec3
+  , vec4
   , var
   , varName
   , global
@@ -46,15 +64,25 @@ module LinearTrace.Visualize
   , ensure
   , encourage
   , -- * Style helpers
-    topOf
+    top
+  , left
+  , width
+  , height
+  , topOf
   , leftOf
   , bottomOf
   , rightOf
   , widthOf
   , heightOf
+  , positionOf
+  , sizeOf
   , blockBounds
   , canvasBounds
   , contains
+  , between
+  , unitBounds
+  , hueBounds
+  , hslBounds
   , sameTop
   , sameBottom
   , sameRight
@@ -62,6 +90,27 @@ module LinearTrace.Visualize
   , sameWidth
   , sameHeight
   , sameBounds
+  , sameVec2
+  , sameHsl
+  , withOpacity
+  , withZIndex
+  , withFontSize
+  , withRadius
+  , withFill
+  , withStroke
+  , withStrokeWidth
+  , withAlpha
+  , withFontFamily
+  , withFontWeight
+  , withFontStyle
+  , withTextAlign
+  , withBorderStyle
+  , withWhiteSpace
+  , withCssClass
+  , materializedTop
+  , materializedLeft
+  , materializedWidth
+  , materializedHeight
   , materializeStyle
   , materializeBlockView
   , materializeViewNode
@@ -70,6 +119,7 @@ module LinearTrace.Visualize
 
 import           Control.Monad.Reader
 import           Control.Monad.Writer.Strict
+import           Data.Proxy                  (Proxy (..))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver
 import           Prelude
@@ -78,12 +128,95 @@ infixr 5 :&
 --------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
+data Box a = Box
+  { boxTop    :: a
+  , boxLeft   :: a
+  , boxWidth  :: a
+  , boxHeight :: a
+  } deriving (Eq, Show, Functor, Foldable, Traversable)
+
+data Hsl a = Hsl
+  { hslHue        :: a
+  , hslSaturation :: a
+  , hslLightness  :: a
+  } deriving (Eq, Show, Functor, Foldable, Traversable)
+
+newtype CssText =
+  CssText String
+  deriving (Eq, Show)
+
+data FontWeight
+  = FontWeightNormal
+  | FontWeightBold
+  | FontWeightBolder
+  | FontWeightLighter
+  | FontWeightNumber Int
+  deriving (Eq, Show)
+
+data FontStyle
+  = FontStyleNormal
+  | FontStyleItalic
+  | FontStyleOblique
+  deriving (Eq, Show)
+
+data TextAlign
+  = TextAlignLeft
+  | TextAlignCenter
+  | TextAlignRight
+  | TextAlignJustify
+  deriving (Eq, Show)
+
+data BorderStyle
+  = BorderNone
+  | BorderSolid
+  | BorderDashed
+  | BorderDotted
+  | BorderDouble
+  deriving (Eq, Show)
+
+data WhiteSpace
+  = WhiteSpaceNormal
+  | WhiteSpaceNoWrap
+  | WhiteSpacePre
+  | WhiteSpacePreWrap
+  deriving (Eq, Show)
+
+-- | Symbolic style.
+--
+-- Numeric/interpolatable values are represented as Expr.
+-- Discrete/non-interpolatable CSS-like values are stored directly.
 data Style = Style
-  { top    :: Expr
-  , left   :: Expr
-  , width  :: Expr
-  , height :: Expr
-  }
+  { styleBox         :: Box Expr
+    -- Interpolatable / constrainable attributes.
+  , styleOpacity     :: Maybe Expr
+  , styleZIndex      :: Maybe Expr
+  , styleFontSize    :: Maybe Expr
+  , styleRadius      :: Maybe Expr
+  , styleFill        :: Maybe (Hsl Expr)
+  , styleStroke      :: Maybe (Hsl Expr)
+  , styleStrokeWidth :: Maybe Expr
+  , styleAlpha       :: Maybe Expr
+    -- Discrete / non-interpolatable CSS-like attributes.
+  , styleFontFamily  :: Maybe CssText
+  , styleFontWeight  :: Maybe FontWeight
+  , styleFontStyle   :: Maybe FontStyle
+  , styleTextAlign   :: Maybe TextAlign
+  , styleBorderStyle :: Maybe BorderStyle
+  , styleWhiteSpace  :: Maybe WhiteSpace
+  , styleCssClass    :: Maybe CssText
+  } deriving (Eq, Show)
+
+top :: Style -> Expr
+top = boxTop . styleBox
+
+left :: Style -> Expr
+left = boxLeft . styleBox
+
+width :: Style -> Expr
+width = boxWidth . styleBox
+
+height :: Style -> Expr
+height = boxHeight . styleBox
 
 data Bounds = Bounds
   { boundsTop    :: Expr
@@ -116,6 +249,12 @@ widthOf = width . blockStyle
 heightOf :: BlockView tag -> Expr
 heightOf = height . blockStyle
 
+positionOf :: BlockView tag -> Vec2 Expr
+positionOf block = Vec2 (leftOf block) (topOf block)
+
+sizeOf :: BlockView tag -> Vec2 Expr
+sizeOf block = Vec2 (widthOf block) (heightOf block)
+
 blockBounds :: BlockView tag -> Bounds
 blockBounds block =
   Bounds
@@ -141,12 +280,42 @@ data ViewGraph events = ViewGraph
 --------------------------------------------------------------------------------
 -- Materialized views
 --------------------------------------------------------------------------------
+-- | Solved style.
+--
+-- Expr-valued attributes become Double-valued attributes.
+-- Discrete CSS-like attributes are copied through unchanged.
 data MaterializedStyle = MaterializedStyle
-  { materializedTop    :: Double
-  , materializedLeft   :: Double
-  , materializedWidth  :: Double
-  , materializedHeight :: Double
+  { materializedBox         :: Box Double
+    -- Interpolatable / solved attributes.
+  , materializedOpacity     :: Maybe Double
+  , materializedZIndex      :: Maybe Double
+  , materializedFontSize    :: Maybe Double
+  , materializedRadius      :: Maybe Double
+  , materializedFill        :: Maybe (Hsl Double)
+  , materializedStroke      :: Maybe (Hsl Double)
+  , materializedStrokeWidth :: Maybe Double
+  , materializedAlpha       :: Maybe Double
+    -- Discrete / copied attributes.
+  , materializedFontFamily  :: Maybe CssText
+  , materializedFontWeight  :: Maybe FontWeight
+  , materializedFontStyle   :: Maybe FontStyle
+  , materializedTextAlign   :: Maybe TextAlign
+  , materializedBorderStyle :: Maybe BorderStyle
+  , materializedWhiteSpace  :: Maybe WhiteSpace
+  , materializedCssClass    :: Maybe CssText
   } deriving (Eq, Show)
+
+materializedTop :: MaterializedStyle -> Double
+materializedTop = boxTop . materializedBox
+
+materializedLeft :: MaterializedStyle -> Double
+materializedLeft = boxLeft . materializedBox
+
+materializedWidth :: MaterializedStyle -> Double
+materializedWidth = boxWidth . materializedBox
+
+materializedHeight :: MaterializedStyle -> Double
+materializedHeight = boxHeight . materializedBox
 
 data MaterializedBlockView tag = MaterializedBlockView
   { materializedBlockRef   :: C.BlockRef tag
@@ -157,13 +326,31 @@ data MaterializedBlockView tag = MaterializedBlockView
 data MaterializedViewNode where
   MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
 
+materializeBox :: Solution -> Box Expr -> Maybe (Box Double)
+materializeBox solution = traverse (evalExpr solution)
+
+materializeHsl :: Solution -> Hsl Expr -> Maybe (Hsl Double)
+materializeHsl solution = traverse (evalExpr solution)
+
 materializeStyle :: Solution -> Style -> Maybe MaterializedStyle
 materializeStyle solution style =
   MaterializedStyle
-    <$> evalExpr solution (top style)
-    <*> evalExpr solution (left style)
-    <*> evalExpr solution (width style)
-    <*> evalExpr solution (height style)
+    <$> materializeBox solution (styleBox style)
+    <*> traverse (evalExpr solution) (styleOpacity style)
+    <*> traverse (evalExpr solution) (styleZIndex style)
+    <*> traverse (evalExpr solution) (styleFontSize style)
+    <*> traverse (evalExpr solution) (styleRadius style)
+    <*> traverse (materializeHsl solution) (styleFill style)
+    <*> traverse (materializeHsl solution) (styleStroke style)
+    <*> traverse (evalExpr solution) (styleStrokeWidth style)
+    <*> traverse (evalExpr solution) (styleAlpha style)
+    <*> pure (styleFontFamily style)
+    <*> pure (styleFontWeight style)
+    <*> pure (styleFontStyle style)
+    <*> pure (styleTextAlign style)
+    <*> pure (styleBorderStyle style)
+    <*> pure (styleWhiteSpace style)
+    <*> pure (styleCssClass style)
 
 materializeBlockView ::
      Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
@@ -240,6 +427,9 @@ ensure constraint = tell mempty {emittedConstraints = [constraint]}
 encourage :: Expr -> ViewBuilder events ()
 encourage objective = tell mempty {emittedConstraints = [minimize objective]}
 
+emitViewNode :: ViewNode -> ViewBuilder events ()
+emitViewNode node = tell mempty {emittedNodes = [node]}
+
 --------------------------------------------------------------------------------
 -- Constraint constructors/helpers
 --------------------------------------------------------------------------------
@@ -269,6 +459,23 @@ containsCanvas block = do
   canvas <- canvasBounds
   canvas `contains` blockBounds block
 
+between :: Expr -> Expr -> Expr -> ViewBuilder events ()
+between lo x hi = do
+  ensure $ lo @<@ x
+  ensure $ x @<@ hi
+
+unitBounds :: Expr -> ViewBuilder events ()
+unitBounds x = between (num 0) x (num 1)
+
+hueBounds :: Expr -> ViewBuilder events ()
+hueBounds h = between (num 0) h (num 360)
+
+hslBounds :: Hsl Expr -> ViewBuilder events ()
+hslBounds hsl = do
+  hueBounds (hslHue hsl)
+  unitBounds (hslSaturation hsl)
+  unitBounds (hslLightness hsl)
+
 sameTop :: BlockView a -> BlockView b -> ViewBuilder events ()
 sameTop a b = ensure $ topOf a @=@ topOf b
 
@@ -294,6 +501,17 @@ sameBounds a b = do
   sameWidth a b
   sameHeight a b
 
+sameVec2 :: Vec2 Expr -> Vec2 Expr -> ViewBuilder events ()
+sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
+  ensure $ ax @=@ bx
+  ensure $ ay @=@ by
+
+sameHsl :: Hsl Expr -> Hsl Expr -> ViewBuilder events ()
+sameHsl a b = do
+  ensure $ hslHue a @=@ hslHue b
+  ensure $ hslSaturation a @=@ hslSaturation b
+  ensure $ hslLightness a @=@ hslLightness b
+
 -- | Adjacent blocks with the same y coordinate.
 (|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
 (|=|) a b = do
@@ -301,16 +519,72 @@ sameBounds a b = do
   ensure $ rightOf a @=@ leftOf b
 
 --------------------------------------------------------------------------------
+-- Style construction helpers
+--------------------------------------------------------------------------------
+withOpacity :: Expr -> Style -> Style
+withOpacity value style = style {styleOpacity = Just value}
+
+withZIndex :: Expr -> Style -> Style
+withZIndex value style = style {styleZIndex = Just value}
+
+withFontSize :: Expr -> Style -> Style
+withFontSize value style = style {styleFontSize = Just value}
+
+withRadius :: Expr -> Style -> Style
+withRadius value style = style {styleRadius = Just value}
+
+withFill :: Hsl Expr -> Style -> Style
+withFill value style = style {styleFill = Just value}
+
+withStroke :: Hsl Expr -> Style -> Style
+withStroke value style = style {styleStroke = Just value}
+
+withStrokeWidth :: Expr -> Style -> Style
+withStrokeWidth value style = style {styleStrokeWidth = Just value}
+
+withAlpha :: Expr -> Style -> Style
+withAlpha value style = style {styleAlpha = Just value}
+
+withFontFamily :: String -> Style -> Style
+withFontFamily value style = style {styleFontFamily = Just (CssText value)}
+
+withFontWeight :: FontWeight -> Style -> Style
+withFontWeight value style = style {styleFontWeight = Just value}
+
+withFontStyle :: FontStyle -> Style -> Style
+withFontStyle value style = style {styleFontStyle = Just value}
+
+withTextAlign :: TextAlign -> Style -> Style
+withTextAlign value style = style {styleTextAlign = Just value}
+
+withBorderStyle :: BorderStyle -> Style -> Style
+withBorderStyle value style = style {styleBorderStyle = Just value}
+
+withWhiteSpace :: WhiteSpace -> Style -> Style
+withWhiteSpace value style = style {styleWhiteSpace = Just value}
+
+withCssClass :: String -> Style -> Style
+withCssClass value style = style {styleCssClass = Just (CssText value)}
+
+--------------------------------------------------------------------------------
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 class C.TraceBlock tag =>
       VisualizeBlock tag
   where
+  styleBlock :: Proxy tag -> Style -> Style
+  styleBlock _ = id
   visualizeBlock :: BlockView tag -> ViewBuilder events ()
 
 visualizeNewBlock ::
-     VisualizeBlock tag => BlockView tag -> ViewBuilder events ()
-visualizeNewBlock block = do
+     forall tag events. VisualizeBlock tag
+  => BlockView tag
+  -> ViewBuilder events ()
+visualizeNewBlock block0 = do
+  let block =
+        block0
+          {blockStyle = styleBlock (Proxy :: Proxy tag) (blockStyle block0)}
+  emitViewNode (BlockViewNode block)
   containsCanvas block
   visualizeBlock block
 
@@ -405,15 +679,14 @@ instance ( VisualizeEvent event
 -- Build a view graph
 --------------------------------------------------------------------------------
 buildCSP :: VisualizeEvents events => C.TraceGraph events -> ViewGraph events
-buildCSP graph@(C.TraceGraph blocks events) =
+buildCSP graph@(C.TraceGraph _blocks events) =
   let env = buildViewEnv graph
-      staticNodes = map viewNodeOfBlock blocks
       stepOutputs = map (visualizeTraceEvent env) events
       viewSteps' = map stepView stepOutputs
-      dynamicNodes = concatMap stepNodes stepOutputs
+      nodes = concatMap stepNodes stepOutputs
       constraints = concatMap stepConstraints stepOutputs
    in ViewGraph
-        { viewNodes = staticNodes ++ dynamicNodes
+        { viewNodes = nodes
         , viewSteps = viewSteps'
         , viewConstraints = constraints
         }
@@ -447,12 +720,8 @@ buildViewEnv :: C.TraceGraph events -> ViewEnv
 buildViewEnv _ = defaultViewEnv
 
 --------------------------------------------------------------------------------
--- Static block pass
+-- Core block snapshots -> base block views
 --------------------------------------------------------------------------------
-viewNodeOfBlock :: C.BlockRecord -> ViewNode
-viewNodeOfBlock (C.BlockRecord snapshot) =
-  BlockViewNode (blockViewOfSnapshot snapshot)
-
 blockViewOfSnapshot :: C.BlockSnapshot tag -> BlockView tag
 blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView) =
   BlockView
@@ -461,10 +730,30 @@ blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView) =
 styleForRef :: C.BlockRef tag -> Style
 styleForRef ref =
   Style
-    { top = blockVar ref "top"
-    , left = blockVar ref "left"
-    , width = blockVar ref "width"
-    , height = blockVar ref "height"
+    { styleBox =
+        Box
+          { boxTop = blockVar ref "top"
+          , boxLeft = blockVar ref "left"
+          , boxWidth = blockVar ref "width"
+          , boxHeight = blockVar ref "height"
+          }
+      -- Interpolatable/constrainable defaults.
+    , styleOpacity = Nothing
+    , styleZIndex = Nothing
+    , styleFontSize = Nothing
+    , styleRadius = Nothing
+    , styleFill = Nothing
+    , styleStroke = Nothing
+    , styleStrokeWidth = Nothing
+    , styleAlpha = Nothing
+      -- Discrete CSS-like defaults.
+    , styleFontFamily = Nothing
+    , styleFontWeight = Nothing
+    , styleFontStyle = Nothing
+    , styleTextAlign = Nothing
+    , styleBorderStyle = Nothing
+    , styleWhiteSpace = Nothing
+    , styleCssClass = Nothing
     }
 
 blockVar :: C.BlockRef tag -> String -> Expr

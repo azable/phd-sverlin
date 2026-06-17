@@ -1,7 +1,10 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DeriveFoldable    #-}
+{-# LANGUAGE DeriveFunctor     #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE RankNTypes        #-}
 
 module LinearTrace.Solver
-  ( -- * Symbolic layout language
+  ( -- * Symbolic scalar language
     Var(..)
   , varName
   , Expr(..)
@@ -16,7 +19,18 @@ module LinearTrace.Solver
   , (@=@)
   , (@<@)
   , minimize
-  , maxE
+  , -- * Symbolic vector containers
+    Vec2(..)
+  , Vec3(..)
+  , Vec4(..)
+  , vec2
+  , vec3
+  , vec4
+  , evalVec2
+  , evalVec3
+  , evalVec4
+  , -- * Internal energy helpers
+    maxE
   , minE
   , clipNegative
   , -- * Solving
@@ -37,7 +51,7 @@ import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
 
 --------------------------------------------------------------------------------
--- Symbolic layout language
+-- Symbolic scalar language
 --------------------------------------------------------------------------------
 newtype Var =
   Var String
@@ -61,6 +75,7 @@ data Constraint
   = Equals Expr Expr
   | LessThan Expr Expr
   | Minimize Expr
+  deriving (Eq, Show)
 
 var :: String -> Expr
 var = EVar . Var
@@ -92,14 +107,40 @@ squared = ESquare
 minimize :: Expr -> Constraint
 minimize = Minimize
 
-maxE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
-maxE x y = (x + y + abs (x - y)) / 2
+--------------------------------------------------------------------------------
+-- Symbolic vector containers
+--------------------------------------------------------------------------------
+-- These are intentionally only containers of scalar expressions. The optimiser
+-- still sees a scalar CSP; vector helpers are lowered component-wise by callers.
+data Vec2 a =
+  Vec2 a a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
-minE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
-minE x y = (x + y - abs (x - y)) / 2
+data Vec3 a =
+  Vec3 a a a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
 
-clipNegative :: Floating a => EnergyExpr a -> EnergyExpr a
-clipNegative = maxE 0
+data Vec4 a =
+  Vec4 a a a a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+vec2 :: a -> a -> Vec2 a
+vec2 = Vec2
+
+vec3 :: a -> a -> a -> Vec3 a
+vec3 = Vec3
+
+vec4 :: a -> a -> a -> a -> Vec4 a
+vec4 = Vec4
+
+evalVec2 :: Solution -> Vec2 Expr -> Maybe (Vec2 Double)
+evalVec2 solution = traverse (evalExpr solution)
+
+evalVec3 :: Solution -> Vec3 Expr -> Maybe (Vec3 Double)
+evalVec3 solution = traverse (evalExpr solution)
+
+evalVec4 :: Solution -> Vec4 Expr -> Maybe (Vec4 Double)
+evalVec4 solution = traverse (evalExpr solution)
 
 --------------------------------------------------------------------------------
 -- Solver-facing compiled expressions
@@ -117,6 +158,19 @@ valueOf (InternalVar i) = EnergyExpr (!! i)
 
 sq :: Num a => a -> a
 sq x = x * x
+
+maxE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
+maxE x y = (x + y + abs (x - y)) / 2
+
+minE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
+minE x y = (x + y - abs (x - y)) / 2
+
+-- | One-sided hinge: values below zero are clipped to zero.
+--
+-- This lets @lhs < rhs@ lower to @max 0 (lhs - rhs)^2@, so satisfied
+-- inequalities do not keep pulling values around as if they were equalities.
+clipNegative :: Floating a => EnergyExpr a -> EnergyExpr a
+clipNegative = maxE 0
 
 instance Num a => Num (EnergyExpr a) where
   EnergyExpr f + EnergyExpr g = EnergyExpr (\xs -> f xs + g xs)
@@ -216,8 +270,7 @@ defaultSolveConfig =
     }
 
 defaultInitialValue :: String -> Double
-defaultInitialValue name
-  | otherwise = 0
+defaultInitialValue _name = 0
 
 data NamedCSP = NamedCSP
   { namedVars :: Map String InternalVar
