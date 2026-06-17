@@ -582,7 +582,7 @@ renderBlockRefPlain :: BlockRef tag -> String
 renderBlockRefPlain (BlockRef blockId) = "B" ++ show blockId
 
 renderPayloadView :: PayloadView -> String
-renderPayloadView (PayloadView text) = text
+renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
 
 --------------------------------------------------------------------------------
 -- Expression rendering

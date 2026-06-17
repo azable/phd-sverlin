@@ -103,8 +103,10 @@ type BlockId = Int
 
 type family Payload tag = payload | payload -> tag
 
-newtype PayloadView =
-  PayloadView P.String
+data PayloadView = PayloadView
+  { payloadKind    :: P.String
+  , payloadContent :: P.String
+  }
 
 -- Deliberately not exported.
 --
@@ -142,13 +144,7 @@ class LinearPayload (Payload tag) =>
   where
   payloadView :: Proxy tag -> Payload tag -> PayloadView
 
--- | Block-level analogue of 'TraceEventSpec'.
---
--- 'TracePayload' says how to render a payload textually.
--- 'TraceBlock' says that this tag is a valid trace block tag.
---
--- Visual layers can add their own block-specific class on top of this, e.g.
--- VisualizeBlock.
+-- | Block-level analogue of 'TraceEventSpec'
 class TracePayload tag =>
       TraceBlock tag
 

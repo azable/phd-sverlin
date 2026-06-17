@@ -69,10 +69,10 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId   :: C.BlockId
-  , renderLabel     :: String
-  , renderClassName :: Maybe String
-  , renderStyle     :: RenderStyle
+  { renderBlockId :: C.BlockId
+  , renderContent :: String
+  , renderKind    :: String
+  , renderStyle   :: RenderStyle
   } deriving (Eq, Show)
 
 data RenderPatch
@@ -267,12 +267,13 @@ insertMaterializedNode solution blocks node =
 
 compileMaterializedBlock :: V.MaterializedBlockView tag -> RenderBlock
 compileMaterializedBlock block =
-  let style = V.materializedBlockStyle block
+  let payload = V.materializedBlockLabel block
    in RenderBlock
         { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
-        , renderLabel = payloadViewText (V.materializedBlockLabel block)
-        , renderClassName = compileCssClass style
-        , renderStyle = compileMaterializedStyle style
+        , renderContent = payloadViewContent payload
+        , renderKind = payloadViewKind payload
+        , renderStyle =
+            compileMaterializedStyle (V.materializedBlockStyle block)
         }
 
 compileMaterializedStyle :: V.MaterializedStyle -> RenderStyle
@@ -424,10 +425,15 @@ blockIdOfRef ref =
   case ref of
     C.BlockRef blockId -> blockId
 
-payloadViewText :: C.PayloadView -> String
-payloadViewText payloadView =
+payloadViewContent :: C.PayloadView -> String
+payloadViewContent payloadView =
   case payloadView of
-    C.PayloadView text -> text
+    C.PayloadView _kind content -> content
+
+payloadViewKind :: C.PayloadView -> String
+payloadViewKind payloadView =
+  case payloadView of
+    C.PayloadView kind _content -> kind
 
 --------------------------------------------------------------------------------
 -- Number formatting and rounding
@@ -496,19 +502,17 @@ instance ToJSON RenderStyle where
        ]
          ++ map styleAttrPair (Map.toAscList (renderAttrs style)))
 
+styleAttrPair :: (KeyValue e kv, ToJSON v) => (String, v) -> kv
 styleAttrPair (name, value) = Key.fromString name .= value
 
 instance ToJSON RenderBlock where
   toJSON block =
     object
-      ([ "blockId" .= renderBlockId block
-       , "label" .= renderLabel block
-       , "style" .= renderStyle block
-       ]
-         ++ maybe
-              []
-              (\className -> ["className" .= className])
-              (renderClassName block))
+      [ "blockId" .= renderBlockId block
+      , "kind" .= renderKind block
+      , "content" .= renderContent block
+      , "style" .= renderStyle block
+      ]
 
 instance ToJSON RenderPatch where
   toJSON patch =

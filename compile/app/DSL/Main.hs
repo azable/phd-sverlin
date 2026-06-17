@@ -555,17 +555,20 @@ instance BinaryOpLabel 'TMul where
   binaryOpLabel _ = "Mul"
 
 instance TracePayload (Value 'TInt) where
-  payloadView _ (LInt i) = PayloadView (padRightF "Val" P.++ P.show i)
+  payloadView _ (LInt i) =
+    PayloadView {payloadKind = "Val", payloadContent = P.show i}
 
 instance TraceBlock (Value 'TInt)
 
 instance TracePayload (Value 'TDouble) where
-  payloadView _ (LDouble f) = PayloadView (padRightF "Val" P.++ P.show f)
+  payloadView _ (LDouble f) =
+    PayloadView {payloadKind = "Val", payloadContent = P.show f}
 
 instance TraceBlock (Value 'TDouble)
 
 instance TracePayload (Var ty) where
-  payloadView _ (LString name) = PayloadView (padRightF "Var" P.++ name)
+  payloadView _ (LString name) =
+    PayloadView {payloadKind = "Var", payloadContent = name}
 
 instance TraceBlock (Var ty)
 
@@ -577,11 +580,7 @@ instance ( BinaryOpLabel op
          TracePayload (Op op lhs rhs out) where
   payloadView _ LUnit =
     PayloadView
-      (padRightF "Op"
-         P.++ binaryOpLabel (Proxy :: Proxy op)
-         P.++ primitiveLabel (Proxy :: Proxy lhs)
-         P.++ primitiveLabel (Proxy :: Proxy rhs)
-         P.++ primitiveLabel (Proxy :: Proxy out))
+      {payloadKind = "Op", payloadContent = binaryOpLabel (Proxy :: Proxy op)}
 
 instance ( BinaryOpLabel op
          , PrimitiveLabel lhs
