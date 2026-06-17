@@ -146,12 +146,12 @@ printTrace :: PrintEvents events => TraceGraph events -> IO ()
 printTrace graph = putStr (renderTrace graph)
 
 printVisualization :: PrintEvents events => V.ViewGraph events -> IO ()
-printVisualization graph = putStr (renderVisualization Nothing graph)
+printVisualization graph = putStr (renderVisualization True Nothing graph)
 
 printSolvedVisualization ::
-     PrintEvents events => S.Solution -> V.ViewGraph events -> IO ()
-printSolvedVisualization solution graph =
-  putStr (renderVisualization (Just solution) graph)
+     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> IO ()
+printSolvedVisualization showDetails solution graph =
+  putStr (renderVisualization showDetails (Just solution) graph)
 
 printVisualizationCSPSolution :: S.Solution -> IO ()
 printVisualizationCSPSolution solution = putStr (renderSolution solution)
@@ -177,16 +177,19 @@ renderTrace (TraceGraph _ events) = renderEvents events
 -- Visualization rendering
 --------------------------------------------------------------------------------
 renderVisualization ::
-     PrintEvents events => Maybe S.Solution -> V.ViewGraph events -> String
-renderVisualization maybeSolution (V.ViewGraph nodes steps constraints) =
+     PrintEvents events
+  => Bool
+  -> Maybe S.Solution
+  -> V.ViewGraph events
+  -> String
+renderVisualization showDetails maybeSolution (V.ViewGraph nodes steps constraints) =
   concat
     [ renderHeader "Visualization"
     , renderVisualizationSummary nodes steps constraints
     , renderMaybeSolutionSummary maybeSolution
     , "\n"
-    , renderViewNodes nodes
-    , "\n"
-    , renderViewTrace maybeSolution steps
+    , renderWhen showDetails (renderViewNodes nodes ++ "\n")
+    , renderViewTrace showDetails maybeSolution steps
     ]
 
 renderMaybeSolutionSummary :: Maybe S.Solution -> String
@@ -507,25 +510,38 @@ renderSolvedExprs solved =
 -- View trace
 --------------------------------------------------------------------------------
 renderViewTrace ::
-     PrintEvents events => Maybe S.Solution -> [V.ViewStep events] -> String
-renderViewTrace maybeSolution steps =
+     PrintEvents events
+  => Bool
+  -> Maybe S.Solution
+  -> [V.ViewStep events]
+  -> String
+renderViewTrace showDetails maybeSolution steps =
   renderHeader "View trace"
-    ++ concat (zipWith (renderViewTraceStep maybeSolution) [0 :: Int ..] steps)
+    ++ concat
+         (zipWith
+            (renderViewTraceStep showDetails maybeSolution)
+            [0 :: Int ..]
+            steps)
 
 renderViewTraceStep ::
      PrintEvents events
-  => Maybe S.Solution
+  => Bool
+  -> Maybe S.Solution
   -> Int
   -> V.ViewStep events
   -> String
-renderViewTraceStep maybeSolution ix step =
+renderViewTraceStep showDetails maybeSolution ix step =
   case step of
     V.ViewStep event nodes constraints ->
       concat
         [ renderEvent ix event
-        , renderStepViewNodes nodes
-        , renderStepConstraints constraints
-        , renderStepSolution maybeSolution nodes constraints
+        , renderWhen
+            showDetails
+            (concat
+               [ renderStepViewNodes nodes
+               , renderStepConstraints constraints
+               , renderStepSolution maybeSolution nodes constraints
+               ])
         ]
 
 renderStepViewNodes :: [V.ViewNode] -> String
@@ -725,6 +741,12 @@ parenthesize shouldParenthesize text =
 --------------------------------------------------------------------------------
 renderHeader :: String -> String
 renderHeader title = title ++ "\n" ++ replicate (length title) '-' ++ "\n"
+
+renderWhen :: Bool -> String -> String
+renderWhen enabled text =
+  if enabled
+    then text
+    else ""
 
 renderStepName :: StepStyle -> String
 renderStepName (StepStyle name colour) =

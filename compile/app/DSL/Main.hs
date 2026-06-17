@@ -650,7 +650,7 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
   visualizeEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
-        sameBounds valueB varB
+        valueB `sameBounds` varB
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (ReadVar ty) where
@@ -664,7 +664,7 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
   visualizeEvent WriteVar audit =
     case audit of
       VUnsealed varB _oldValue :& VReplaced _old _incoming stored :& VSealed _ _ :& VDone -> P.do
-        sameBounds varB stored
+        stored `sameBounds` _old
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (DiscardVar ty) where

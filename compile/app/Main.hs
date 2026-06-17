@@ -15,7 +15,7 @@ main = do
     LinearTrace.Visualize.solveCSP
       LinearTrace.Visualize.defaultSolveConfig
       visGraph
-  LinearTrace.printSolvedVisualization solved visGraph
+  LinearTrace.printSolvedVisualization False solved visGraph
   -- LinearTrace.printVisualizationCSPSolution solved
   case LinearTrace.compileSolvedVisualization solved visGraph of
     Left err -> putStrLn err
