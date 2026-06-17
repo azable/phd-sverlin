@@ -26,3 +26,4 @@ vite.config.ts.timestamp-*
 dist-newstyle
 
 *.tmp
+compiled.json

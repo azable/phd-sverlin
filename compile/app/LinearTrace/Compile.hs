@@ -1,4 +1,5 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module LinearTrace.Compile
   ( RenderId(..)
@@ -11,10 +12,15 @@ module LinearTrace.Compile
   , CompiledVisualization(..)
   , -- * Compilation
     compileSolvedVisualization
+  , printCompiledVisualizationJSON
+  , writeCompiledVisualizationJSON
   ) where
 
 import           Control.Monad
 import           Control.Monad.State.Strict
+import           Data.Aeson
+import           Data.Aeson.Encode.Pretty   (encodePretty)
+import qualified Data.ByteString.Lazy       as BL
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import qualified LinearTrace.Core           as C
@@ -271,3 +277,60 @@ payloadViewText :: C.PayloadView -> String
 payloadViewText payloadView =
   case payloadView of
     C.PayloadView text -> text
+
+--------------------------------------------------------------------------------
+-- JSON helpers
+--------------------------------------------------------------------------------
+instance ToJSON RenderId where
+  toJSON (RenderId text) = toJSON text
+
+instance ToJSON RenderStyle where
+  toJSON style =
+    object
+      [ "top" .= renderTop style
+      , "left" .= renderLeft style
+      , "width" .= renderWidth style
+      , "height" .= renderHeight style
+      ]
+
+instance ToJSON RenderBlock where
+  toJSON block =
+    object
+      [ "blockId" .= renderBlockId block
+      , "label" .= renderLabel block
+      , "style" .= renderStyle block
+      ]
+
+instance ToJSON RenderPatch where
+  toJSON patch =
+    case patch of
+      RenderCreate renderId block ->
+        object ["kind" .= String "create", "id" .= renderId, "element" .= block]
+      RenderUpdate renderId fromBlock toBlock ->
+        object
+          [ "kind" .= String "update"
+          , "id" .= renderId
+          , "from" .= fromBlock
+          , "to" .= toBlock
+          ]
+      RenderDestroy renderId block ->
+        object
+          ["kind" .= String "destroy", "id" .= renderId, "element" .= block]
+
+instance ToJSON RenderFrame where
+  toJSON frame =
+    object ["index" .= frameIndex frame, "patches" .= framePatches frame]
+
+instance ToJSON CompiledVisualization where
+  toJSON compiled = object ["frames" .= frames compiled]
+
+encodeCompiledVisualizationPretty :: CompiledVisualization -> BL.ByteString
+encodeCompiledVisualizationPretty = encodePretty
+
+writeCompiledVisualizationJSON :: FilePath -> CompiledVisualization -> IO ()
+writeCompiledVisualizationJSON path compiled =
+  BL.writeFile path (encodeCompiledVisualizationPretty compiled)
+
+printCompiledVisualizationJSON :: CompiledVisualization -> IO ()
+printCompiledVisualizationJSON compiled =
+  BL.putStr (encodeCompiledVisualizationPretty compiled)

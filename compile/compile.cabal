@@ -78,7 +78,10 @@ executable compile-app
                       mtl,
                       linear-base,
                       numeric-optimization,
-                      numeric-optimization-ad
+                      numeric-optimization-ad,
+                      aeson,
+                      aeson-pretty,
+                      bytestring
 
     -- Directories containing source files.
     hs-source-dirs:   app

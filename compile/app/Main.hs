@@ -16,7 +16,8 @@ main = do
     LinearTrace.Visualize.solveCSP
       LinearTrace.Visualize.defaultSolveConfig
       visGraph
-  LinearTrace.printVisualizationCSPSolution solved
-  LinearTrace.printSolvedVisualization solved visGraph
-  let compiled = LinearTrace.compileSolvedVisualization solved visGraph
-  print compiled
+  -- LinearTrace.printVisualizationCSPSolution solved
+  case LinearTrace.compileSolvedVisualization solved visGraph of
+    Left err -> putStrLn err
+    Right compiled ->
+      LinearTrace.writeCompiledVisualizationJSON "compiled.json" compiled

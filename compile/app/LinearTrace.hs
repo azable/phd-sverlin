@@ -72,6 +72,8 @@ module LinearTrace
   , printVisualizationCSPSolution
   , printSolvedVisualization
   , compileSolvedVisualization
+  , printCompiledVisualizationJSON
+  , writeCompiledVisualizationJSON
   ) where
 
 import           LinearTrace.Compile
