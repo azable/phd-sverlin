@@ -758,8 +758,7 @@ styleForRef ref =
     }
 
 blockVar :: C.BlockRef tag -> String -> Expr
-blockVar (C.BlockRef blockId) field =
-  var ("block." ++ show blockId ++ "." ++ field)
+blockVar (C.BlockRef blockId) field = var ("B" ++ show blockId ++ "." ++ field)
 
 --------------------------------------------------------------------------------
 -- Core audit -> view audit

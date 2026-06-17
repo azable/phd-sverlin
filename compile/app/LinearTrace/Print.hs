@@ -37,9 +37,6 @@ snapshotRefWidth = 6
 stepNameWidth :: Int
 stepNameWidth = 16
 
-constraintNameWidth :: Int
-constraintNameWidth = 24
-
 solutionNameWidth :: Int
 solutionNameWidth = 24
 
@@ -236,17 +233,11 @@ renderSolutionValues :: Map.Map String Double -> String
 renderSolutionValues values =
   concat
     [ renderHeader "Solution values"
-    , concatMap renderSolutionValue (Map.toAscList values)
-    ]
-
-renderSolutionValue :: (String, Double) -> String
-renderSolutionValue (name, value) =
-  concat
-    [ "  "
-    , padRight solutionNameWidth name
-    , " = "
-    , formatSignedDouble value
-    , "\n"
+    , renderAlignedAssignments
+        "  "
+        [ (name, formatSignedDouble value)
+        | (name, value) <- Map.toAscList values
+        ]
     ]
 
 --------------------------------------------------------------------------------
@@ -328,82 +319,175 @@ renderStyle style =
 
 renderStyleField :: String -> V.Expr -> String
 renderStyleField name expr =
-  concat [stepIndent, stepIndent, padRight 8 name, "= ", renderExpr expr, "\n"]
+  concat [stepIndent, stepIndent, padRight 8 name, " = ", renderExpr expr, "\n"]
 
 --------------------------------------------------------------------------------
 -- View constraints
 --------------------------------------------------------------------------------
-data RenderedConstraint
-  = RenderedEquals String String
-  | RenderedLessThan String String
-  | RenderedMinimize String
+data RenderedConstraint = RenderedConstraint
+  { renderedConstraintLhs :: String
+  , renderedConstraintOp  :: String
+  , renderedConstraintRhs :: String
+  }
 
 renderConstraintParts :: V.Constraint -> RenderedConstraint
 renderConstraintParts constraint =
   case constraint of
-    V.Equals lhs rhs   -> RenderedEquals (renderExpr lhs) (renderExpr rhs)
-    V.LessThan lhs rhs -> RenderedLessThan (renderExpr lhs) (renderExpr rhs)
-    V.Minimize expr    -> RenderedMinimize (renderExpr expr)
+    V.Equals lhs rhs ->
+      RenderedConstraint
+        { renderedConstraintLhs = renderExpr lhs
+        , renderedConstraintOp = "="
+        , renderedConstraintRhs = renderExpr rhs
+        }
+    V.LessThan lhs rhs ->
+      RenderedConstraint
+        { renderedConstraintLhs = renderExpr lhs
+        , renderedConstraintOp = "<"
+        , renderedConstraintRhs = renderExpr rhs
+        }
+    V.Minimize expr ->
+      RenderedConstraint
+        { renderedConstraintLhs = ""
+        , renderedConstraintOp = "minimize"
+        , renderedConstraintRhs = renderExpr expr
+        }
 
 renderStepConstraints :: [V.Constraint] -> String
 renderStepConstraints constraints =
-  case constraints of
-    [] -> ""
-    _ ->
-      concat
-        [ stepIndent
-        , "constraints\n"
-        , renderIndentedConstraints constraints
-        , "\n"
-        ]
+  let visibleConstraints = filter constraintMentionsVar constraints
+   in case visibleConstraints of
+        [] -> ""
+        _ ->
+          concat
+            [ stepIndent
+            , "constraints\n"
+            , renderIndentedConstraints visibleConstraints
+            , "\n"
+            ]
 
 renderIndentedConstraints :: [V.Constraint] -> String
 renderIndentedConstraints constraints =
   let rendered = map renderConstraintParts constraints
-      lhsWidth = maximum (0 : [length lhs | RenderedEquals lhs _ <- rendered])
-   in concatMap (renderIndentedConstraint lhsWidth) rendered
+      lhsWidth =
+        maximum
+          (0
+             : [ length (renderedConstraintLhs constraint)
+               | constraint <- rendered
+               ])
+      opWidth =
+        maximum
+          (0
+             : [ length (renderedConstraintOp constraint)
+               | constraint <- rendered
+               ])
+   in concatMap (renderIndentedConstraint lhsWidth opWidth) rendered
 
-renderIndentedConstraint :: Int -> RenderedConstraint -> String
-renderIndentedConstraint lhsWidth constraint =
+renderIndentedConstraint :: Int -> Int -> RenderedConstraint -> String
+renderIndentedConstraint lhsWidth opWidth constraint =
+  concat
+    [ stepIndent
+    , stepIndent
+    , padRight lhsWidth (renderedConstraintLhs constraint)
+    , " "
+    , padRight opWidth (renderedConstraintOp constraint)
+    , " "
+    , renderedConstraintRhs constraint
+    , "\n"
+    ]
+
+constraintMentionsVar :: V.Constraint -> Bool
+constraintMentionsVar constraint =
   case constraint of
-    RenderedEquals lhs rhs ->
-      concat [stepIndent, stepIndent, padRight lhsWidth lhs, " = ", rhs, "\n"]
-    RenderedMinimize expr ->
-      concat [stepIndent, stepIndent, "minimize ", expr, "\n"]
-    RenderedLessThan lhs rhs ->
-      concat [stepIndent, stepIndent, padRight lhsWidth lhs, " < ", rhs, "\n"]
+    V.Equals lhs rhs   -> exprMentionsVar lhs || exprMentionsVar rhs
+    V.LessThan lhs rhs -> exprMentionsVar lhs || exprMentionsVar rhs
+    V.Minimize expr    -> exprMentionsVar expr
+
+exprMentionsVar :: V.Expr -> Bool
+exprMentionsVar expr =
+  case expr of
+    V.EVar _        -> True
+    V.ELit _        -> False
+    V.EAdd lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
+    V.ESub lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
+    V.EMul lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
+    V.EDiv lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
+    V.ENeg inner    -> exprMentionsVar inner
+    V.ESquare inner -> exprMentionsVar inner
 
 --------------------------------------------------------------------------------
--- Solved view constraints
+-- Solved view values
 --------------------------------------------------------------------------------
 data SolvedExpr =
   SolvedExpr String Double
 
-renderStepSolution :: Maybe S.Solution -> [V.Constraint] -> String
-renderStepSolution maybeSolution constraints =
+renderStepSolution ::
+     Maybe S.Solution -> [V.ViewNode] -> [V.Constraint] -> String
+renderStepSolution maybeSolution nodes _constraints =
   case maybeSolution of
     Nothing -> ""
     Just solution ->
       let solved =
-            dedupeSolvedExprs
-              (concatMap (solveConstraintExpr solution) constraints)
+            dedupeSolvedExprs (concatMap (solveViewNodeExprs solution) nodes)
        in case solved of
             [] -> ""
             _ ->
               concat [stepIndent, "solution\n", renderSolvedExprs solved, "\n"]
 
-solveConstraintExpr :: S.Solution -> V.Constraint -> [SolvedExpr]
-solveConstraintExpr solution constraint =
-  case constraint of
-    V.Equals lhs rhs   -> solveExpr solution lhs ++ solveExpr solution rhs
-    V.LessThan lhs rhs -> solveExpr solution lhs ++ solveExpr solution rhs
-    V.Minimize expr    -> solveExpr solution expr
+solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
+solveViewNodeExprs solution node =
+  case node of
+    V.BlockViewNode block -> solveBlockViewExprs solution block
 
-solveExpr :: S.Solution -> V.Expr -> [SolvedExpr]
-solveExpr solution expr =
+solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
+solveBlockViewExprs solution block =
+  let blockName = renderBlockRefPlain (V.blockRef block)
+      style = V.blockStyle block
+   in concat
+        [ solveNamedExpr solution (blockName ++ ".top") (V.top style)
+        , solveNamedExpr solution (blockName ++ ".left") (V.left style)
+        , solveNamedExpr solution (blockName ++ ".width") (V.width style)
+        , solveNamedExpr solution (blockName ++ ".height") (V.height style)
+        , solveMaybeExpr
+            solution
+            (blockName ++ ".opacity")
+            (V.styleOpacity style)
+        , solveMaybeExpr solution (blockName ++ ".zIndex") (V.styleZIndex style)
+        , solveMaybeExpr
+            solution
+            (blockName ++ ".fontSize")
+            (V.styleFontSize style)
+        , solveMaybeExpr solution (blockName ++ ".radius") (V.styleRadius style)
+        , solveMaybeHsl solution (blockName ++ ".fill") (V.styleFill style)
+        , solveMaybeHsl solution (blockName ++ ".stroke") (V.styleStroke style)
+        , solveMaybeExpr
+            solution
+            (blockName ++ ".strokeWidth")
+            (V.styleStrokeWidth style)
+        , solveMaybeExpr solution (blockName ++ ".alpha") (V.styleAlpha style)
+        ]
+
+solveMaybeExpr :: S.Solution -> String -> Maybe V.Expr -> [SolvedExpr]
+solveMaybeExpr solution name maybeExpr =
+  case maybeExpr of
+    Nothing   -> []
+    Just expr -> solveNamedExpr solution name expr
+
+solveMaybeHsl :: S.Solution -> String -> Maybe (V.Hsl V.Expr) -> [SolvedExpr]
+solveMaybeHsl solution name maybeHsl =
+  case maybeHsl of
+    Nothing -> []
+    Just hsl ->
+      concat
+        [ solveNamedExpr solution (name ++ ".hue") (V.hue hsl)
+        , solveNamedExpr solution (name ++ ".saturation") (V.saturation hsl)
+        , solveNamedExpr solution (name ++ ".lightness") (V.lightness hsl)
+        ]
+
+solveNamedExpr :: S.Solution -> String -> V.Expr -> [SolvedExpr]
+solveNamedExpr solution name expr =
   case S.evalExpr solution expr of
     Nothing    -> []
-    Just value -> [SolvedExpr (renderExpr expr) value]
+    Just value -> [SolvedExpr name value]
 
 dedupeSolvedExprs :: [SolvedExpr] -> [SolvedExpr]
 dedupeSolvedExprs = go []
@@ -415,19 +499,9 @@ dedupeSolvedExprs = go []
 
 renderSolvedExprs :: [SolvedExpr] -> String
 renderSolvedExprs solved =
-  let nameWidth = maximum (0 : [length name | SolvedExpr name _ <- solved])
-   in concatMap (renderSolvedExpr nameWidth) solved
-
-renderSolvedExpr :: Int -> SolvedExpr -> String
-renderSolvedExpr nameWidth (SolvedExpr name value) =
-  concat
-    [ stepIndent
-    , stepIndent
-    , padRight nameWidth name
-    , " = "
-    , formatSignedDouble value
-    , "\n"
-    ]
+  renderAlignedAssignments
+    (stepIndent ++ stepIndent)
+    [(name, formatSignedDouble value) | SolvedExpr name value <- solved]
 
 --------------------------------------------------------------------------------
 -- View trace
@@ -451,7 +525,7 @@ renderViewTraceStep maybeSolution ix step =
         [ renderEvent ix event
         , renderStepViewNodes nodes
         , renderStepConstraints constraints
-        , renderStepSolution maybeSolution constraints
+        , renderStepSolution maybeSolution nodes constraints
         ]
 
 renderStepViewNodes :: [V.ViewNode] -> String
@@ -658,6 +732,15 @@ renderStepName (StepStyle name colour) =
 
 renderEmptyStepName :: String
 renderEmptyStepName = stepIndent ++ padLeft stepNameWidth ""
+
+renderAlignedAssignments :: String -> [(String, String)] -> String
+renderAlignedAssignments indent assignments =
+  let nameWidth = maximum (0 : [length name | (name, _) <- assignments])
+   in concatMap (renderAlignedAssignment indent nameWidth) assignments
+
+renderAlignedAssignment :: String -> Int -> (String, String) -> String
+renderAlignedAssignment indent nameWidth (name, value) =
+  concat [indent, padRight nameWidth name, " = ", value, "\n"]
 
 padRight :: Int -> String -> String
 padRight n text = text ++ replicate (max 0 (n - length text)) ' '
