@@ -549,10 +549,10 @@ class BinaryOpLabel op where
   binaryOpLabel :: Proxy op -> String
 
 instance BinaryOpLabel 'TAdd where
-  binaryOpLabel _ = "Add"
+  binaryOpLabel _ = "+"
 
 instance BinaryOpLabel 'TMul where
-  binaryOpLabel _ = "Mul"
+  binaryOpLabel _ = "*"
 
 instance TracePayload (Value 'TInt) where
   payloadView _ (LInt i) =
