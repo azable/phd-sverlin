@@ -593,11 +593,10 @@ instance ( BinaryOpLabel op
 -- Block visualisation
 --------------------------------------------------------------------------------
 blockSize :: Expr
-blockSize = num 50 --global "blockSize"
+blockSize = num 100 --global "blockSize"
 
 valueFill :: Hsl Expr
-valueFill =
-  Hsl {hue = num 200, saturation = num 0.7, lightness = global "lightness"}
+valueFill = Hsl {hue = num 200, saturation = num 0.7, lightness = num 0.5}
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do

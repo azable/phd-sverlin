@@ -20,4 +20,4 @@ main = do
   case LinearTrace.compileSolvedVisualization solved visGraph of
     Left err -> putStrLn err
     Right compiled ->
-      LinearTrace.writeCompiledVisualizationJSON "compiled.json" compiled
+      LinearTrace.writeCompiledVisualizationJSON "static/compiled.json" compiled

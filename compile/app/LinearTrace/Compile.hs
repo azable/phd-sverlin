@@ -13,6 +13,7 @@ module LinearTrace.Compile
   , CompiledVisualization(..)
   , -- * Compilation
     compileSolvedVisualization
+  , compileSolvedVisualizationWithViewport
   , encodeCompiledVisualizationPretty
   , printCompiledVisualizationJSON
   , writeCompiledVisualizationJSON
@@ -43,11 +44,6 @@ freshRenderIdForBlock blockId = RenderId ("lineage." ++ show blockId)
 --------------------------------------------------------------------------------
 -- Compiled CSS style
 --------------------------------------------------------------------------------
--- | CSS-ready style values.
---
--- Values that need units should already be represented as 'StylePixels'.
--- Values that are unitless CSS values, such as opacity or z-index, should use
--- 'StyleNumber'. Colours should already be converted to CSS colour strings.
 data StyleValue
   = StyleNumber Double
   | StylePixels Double
@@ -56,10 +52,6 @@ data StyleValue
   | StyleBool Bool
   deriving (Eq, Show)
 
--- | CSS style object.
---
--- The four box fields are kept separately for internal convenience, but the JSON
--- instance emits them as CSS properties in pixels, together with 'renderAttrs'.
 data RenderStyle = RenderStyle
   { renderTop    :: Double
   , renderLeft   :: Double
@@ -69,10 +61,11 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId :: C.BlockId
-  , renderContent :: String
-  , renderKind    :: String
-  , renderStyle   :: RenderStyle
+  { renderBlockId   :: C.BlockId
+  , renderContent   :: String
+  , renderKind      :: String
+  , renderStyle     :: RenderStyle
+  , renderClassName :: Maybe String
   } deriving (Eq, Show)
 
 data RenderPatch
@@ -81,14 +74,22 @@ data RenderPatch
   | RenderDestroy RenderId RenderBlock
   deriving (Eq, Show)
 
-data RenderFrame = RenderFrame
-  { frameIndex   :: Int
-  , framePatches :: [RenderPatch]
+-- | One animation frame.
+newtype RenderFrame = RenderFrame
+  { framePatches :: [RenderPatch]
   } deriving (Eq, Show)
 
-newtype CompiledVisualization = CompiledVisualization
-  { frames :: [RenderFrame]
+data CompiledVisualization = CompiledVisualization
+  { compiledWidth  :: Double
+  , compiledHeight :: Double
+  , frames         :: [RenderFrame]
   } deriving (Eq, Show)
+
+defaultCompiledWidth :: Double
+defaultCompiledWidth = 800
+
+defaultCompiledHeight :: Double
+defaultCompiledHeight = 600
 
 --------------------------------------------------------------------------------
 -- Compiler state
@@ -105,9 +106,24 @@ type CompileM = StateT CompileState (Either String)
 --------------------------------------------------------------------------------
 -- Public compiler
 --------------------------------------------------------------------------------
+-- | Compile using the default viewport size.
+--
+-- This mirrors the current default Visualize canvas. If you later make canvas
+-- size configurable, prefer 'compileSolvedVisualizationWithViewport'.
 compileSolvedVisualization ::
      S.Solution -> V.ViewGraph events -> Either String CompiledVisualization
-compileSolvedVisualization solution graph =
+compileSolvedVisualization =
+  compileSolvedVisualizationWithViewport
+    defaultCompiledWidth
+    defaultCompiledHeight
+
+compileSolvedVisualizationWithViewport ::
+     Double
+  -> Double
+  -> S.Solution
+  -> V.ViewGraph events
+  -> Either String CompiledVisualization
+compileSolvedVisualizationWithViewport viewportWidth viewportHeight solution graph =
   case buildBlockLookup solution graph of
     Left err -> Left err
     Right blocksById -> do
@@ -115,26 +131,27 @@ compileSolvedVisualization solution graph =
         evalStateT
           (compileFrames blocksById (V.viewSteps graph))
           emptyCompileState
-      pure CompiledVisualization {frames = frames'}
+      pure
+        CompiledVisualization
+          { compiledWidth = roundLayout viewportWidth
+          , compiledHeight = roundLayout viewportHeight
+          , frames = frames'
+          }
 
 --------------------------------------------------------------------------------
 -- Frame compilation
 --------------------------------------------------------------------------------
 compileFrames ::
      Map C.BlockId RenderBlock -> [V.ViewStep events] -> CompileM [RenderFrame]
-compileFrames blocksById steps =
-  traverse (uncurry (compileFrame blocksById)) (zip [0 ..] steps)
+compileFrames blocksById steps = traverse (compileFrame blocksById) steps
 
 compileFrame ::
-     Map C.BlockId RenderBlock
-  -> Int
-  -> V.ViewStep events
-  -> CompileM RenderFrame
-compileFrame blocksById ix step =
+     Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM RenderFrame
+compileFrame blocksById step =
   case step of
     V.ViewStep traceEvent _nodes _constraints -> do
       patches <- compileTraceEvent blocksById traceEvent
-      pure RenderFrame {frameIndex = ix, framePatches = patches}
+      pure RenderFrame {framePatches = patches}
 
 compileTraceEvent ::
      Map C.BlockId RenderBlock -> C.TraceEvent events -> CompileM [RenderPatch]
@@ -268,12 +285,13 @@ insertMaterializedNode solution blocks node =
 compileMaterializedBlock :: V.MaterializedBlockView tag -> RenderBlock
 compileMaterializedBlock block =
   let payload = V.materializedBlockLabel block
+      style = V.materializedBlockStyle block
    in RenderBlock
         { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
         , renderContent = payloadViewContent payload
         , renderKind = payloadViewKind payload
-        , renderStyle =
-            compileMaterializedStyle (V.materializedBlockStyle block)
+        , renderStyle = compileMaterializedStyle style
+        , renderClassName = compileCssClass style
         }
 
 compileMaterializedStyle :: V.MaterializedStyle -> RenderStyle
@@ -508,11 +526,15 @@ styleAttrPair (name, value) = Key.fromString name .= value
 instance ToJSON RenderBlock where
   toJSON block =
     object
-      [ "blockId" .= renderBlockId block
-      , "kind" .= renderKind block
-      , "content" .= renderContent block
-      , "style" .= renderStyle block
-      ]
+      ([ "blockId" .= renderBlockId block
+       , "kind" .= renderKind block
+       , "content" .= renderContent block
+       , "style" .= renderStyle block
+       ]
+         ++ maybe
+              []
+              (\className -> ["className" .= className])
+              (renderClassName block))
 
 instance ToJSON RenderPatch where
   toJSON patch =
@@ -531,11 +553,18 @@ instance ToJSON RenderPatch where
           ["kind" .= String "destroy", "id" .= renderId, "element" .= block]
 
 instance ToJSON RenderFrame where
-  toJSON frame =
-    object ["index" .= frameIndex frame, "patches" .= framePatches frame]
+  toJSON (RenderFrame patches) = toJSON patches
 
 instance ToJSON CompiledVisualization where
-  toJSON compiled = object ["frames" .= frames compiled]
+  toJSON compiled =
+    object
+      [ "canvas"
+          .= object
+               [ "width" .= roundLayout (compiledWidth compiled)
+               , "height" .= roundLayout (compiledHeight compiled)
+               ]
+      , "frames" .= frames compiled
+      ]
 
 encodeCompiledVisualizationPretty :: CompiledVisualization -> BL.ByteString
 encodeCompiledVisualizationPretty = encodePretty

@@ -489,7 +489,7 @@ renderEvents events =
 renderEvent :: PrintEvents events => Int -> TraceEvent events -> String
 renderEvent ix (TraceEvent event audit) =
   concat
-    [ padLeft eventIndexWidth ("B" ++ show ix)
+    [ padLeft eventIndexWidth ("E" ++ show ix)
     , " | "
     , ansiText eventTitleStyle (printEventUnion event)
     , "\n"
