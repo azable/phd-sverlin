@@ -136,9 +136,9 @@ data Box a = Box
   } deriving (Eq, Show, Functor, Foldable, Traversable)
 
 data Hsl a = Hsl
-  { hslHue        :: a
-  , hslSaturation :: a
-  , hslLightness  :: a
+  { hue        :: a
+  , saturation :: a
+  , lightness  :: a
   } deriving (Eq, Show, Functor, Foldable, Traversable)
 
 newtype CssText =
@@ -472,9 +472,9 @@ hueBounds h = between (num 0) h (num 360)
 
 hslBounds :: Hsl Expr -> ViewBuilder events ()
 hslBounds hsl = do
-  hueBounds (hslHue hsl)
-  unitBounds (hslSaturation hsl)
-  unitBounds (hslLightness hsl)
+  hueBounds (hue hsl)
+  unitBounds (saturation hsl)
+  unitBounds (lightness hsl)
 
 sameTop :: BlockView a -> BlockView b -> ViewBuilder events ()
 sameTop a b = ensure $ topOf a @=@ topOf b
@@ -508,9 +508,9 @@ sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
 
 sameHsl :: Hsl Expr -> Hsl Expr -> ViewBuilder events ()
 sameHsl a b = do
-  ensure $ hslHue a @=@ hslHue b
-  ensure $ hslSaturation a @=@ hslSaturation b
-  ensure $ hslLightness a @=@ hslLightness b
+  ensure $ hue a @=@ hue b
+  ensure $ saturation a @=@ saturation b
+  ensure $ lightness a @=@ lightness b
 
 -- | Adjacent blocks with the same y coordinate.
 (|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()

@@ -596,15 +596,39 @@ instance ( BinaryOpLabel op
 blockSize :: Expr
 blockSize = num 50 --global "blockSize"
 
+valueFill :: Hsl Expr
+valueFill =
+  Hsl
+    { hue = global "style.value.hue"
+    , saturation = global "style.value.saturation"
+    , lightness = global "style.value.lightness"
+    }
+
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
   ensure $ widthOf block @=@ blockSize
   ensure $ heightOf block @=@ blockSize
 
 instance VisualizeBlock (Value 'TInt) where
+  styleBlock _ =
+    withFill valueFill
+      P.. withRadius (num 10)
+      P.. withFontSize (num 40)
+      P.. withFontFamily "Inter"
+      P.. withFontWeight FontWeightBold
+      P.. withTextAlign TextAlignCenter
+      P.. withWhiteSpace WhiteSpaceNoWrap
   visualizeBlock = cellBlock
 
 instance VisualizeBlock (Value 'TDouble) where
+  styleBlock _ =
+    withFill valueFill
+      P.. withRadius (num 10)
+      P.. withFontSize (num 40)
+      P.. withFontFamily "Inter"
+      P.. withFontWeight FontWeightBold
+      P.. withTextAlign TextAlignCenter
+      P.. withWhiteSpace WhiteSpaceNoWrap
   visualizeBlock = cellBlock
 
 instance VisualizeBlock (Var ty) where
