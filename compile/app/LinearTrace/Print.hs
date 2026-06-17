@@ -485,17 +485,16 @@ constraintMentionsVar constraint =
 rawExprMentionsVar :: S.RawExpr -> Bool
 rawExprMentionsVar expr =
   case expr of
-    S.EVar _ _ -> True
-    S.ELit _ -> False
-    S.EAdd lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.ESub lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.EMul lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.EDiv lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.ENeg inner -> rawExprMentionsVar inner
-    S.EAbs inner -> rawExprMentionsVar inner
+    S.EVar _ _      -> True
+    S.ELit _        -> False
+    S.EAdd lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ESub lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.EMul lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.EDiv lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ENeg inner    -> rawExprMentionsVar inner
+    S.EAbs inner    -> rawExprMentionsVar inner
     S.ESignum inner -> rawExprMentionsVar inner
-    S.EPow base exponent ->
-      rawExprMentionsVar base || rawExprMentionsVar exponent
+    S.EPow base to  -> rawExprMentionsVar base || rawExprMentionsVar to
 
 --------------------------------------------------------------------------------
 -- Solved view values
@@ -613,16 +612,14 @@ renderViewTraceStep ::
 renderViewTraceStep showDetails maybeSolution ix step =
   case step of
     V.ViewStep event nodes constraints ->
-      concat
-        [ renderEvent ix event
-        , renderWhen
-            showDetails
-            (concat
-               [ renderStepViewNodes nodes
-               , renderStepConstraints constraints
-               , renderStepSolution maybeSolution nodes constraints
-               ])
-        ]
+      renderEvent ix event
+        ++ renderWhen
+             showDetails
+             (concat
+                [ renderStepViewNodes nodes
+                , renderStepConstraints constraints
+                , renderStepSolution maybeSolution nodes constraints
+                ])
 
 renderStepViewNodes :: [V.ViewNode] -> String
 renderStepViewNodes nodes =
@@ -798,12 +795,12 @@ renderRawExprPrec precedence expr =
         ("-" ++ renderRawExprPrec unaryPrecedence inner)
     S.EAbs inner -> "abs " ++ renderRawExprPrec unaryPrecedence inner
     S.ESignum inner -> "signum " ++ renderRawExprPrec unaryPrecedence inner
-    S.EPow base exponent ->
+    S.EPow base to ->
       parenthesize
         (precedence > powerPrecedence)
         (renderRawExprPrec powerPrecedence base
            ++ " ^ "
-           ++ renderRawExprPrec (powerPrecedence + 1) exponent)
+           ++ renderRawExprPrec (powerPrecedence + 1) to)
 
 addPrecedence :: Int
 addPrecedence = 6

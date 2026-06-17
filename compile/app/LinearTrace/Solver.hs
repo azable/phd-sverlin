@@ -10,7 +10,7 @@ module LinearTrace.Solver
   , InitialBounds(..)
   , SymbolicType(..)
   , Free
-  , Length
+  , Layout
   , Unit
   , Angle
   , -- * Symbolic scalar language
@@ -101,7 +101,7 @@ class SymbolicType ty where
 
 data Free
 
-data Length
+data Layout
 
 data Unit
 
@@ -112,7 +112,7 @@ instance SymbolicType Free where
     ScalarType
       {typeName = "free", typeRange = Nothing, typeCircularPeriod = Nothing}
 
-instance SymbolicType Length where
+instance SymbolicType Layout where
   symbolicType _ =
     ScalarType
       {typeName = "length", typeRange = Nothing, typeCircularPeriod = Nothing}

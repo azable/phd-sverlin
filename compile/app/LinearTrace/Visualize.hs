@@ -31,11 +31,11 @@ module LinearTrace.Visualize
     Range(..)
   , InitialVar(..)
   , Free
-  , Length
+  , Layout
   , Unit
   , Angle
   , FreeExpr
-  , LengthExpr
+  , LayoutExpr
   , UnitExpr
   , AngleExpr
   , HueExpr
@@ -148,7 +148,7 @@ infixr 5 :&
 --------------------------------------------------------------------------------
 type FreeExpr = Expr Free
 
-type LengthExpr = Expr Length
+type LayoutExpr = Expr Layout
 
 type UnitExpr = Expr Unit
 
@@ -221,15 +221,15 @@ data WhiteSpace
 -- Numeric/interpolatable values are represented as typed solver expressions.
 -- Discrete/non-interpolatable CSS-like values are stored directly.
 data Style = Style
-  { styleBox         :: Box LengthExpr
+  { styleBox         :: Box LayoutExpr
     -- Interpolatable / constrainable attributes.
   , styleOpacity     :: Maybe UnitExpr
   , styleZIndex      :: Maybe FreeExpr
-  , styleFontSize    :: Maybe LengthExpr
-  , styleRadius      :: Maybe LengthExpr
+  , styleFontSize    :: Maybe LayoutExpr
+  , styleRadius      :: Maybe LayoutExpr
   , styleFill        :: Maybe HslExpr
   , styleStroke      :: Maybe HslExpr
-  , styleStrokeWidth :: Maybe LengthExpr
+  , styleStrokeWidth :: Maybe LayoutExpr
   , styleAlpha       :: Maybe UnitExpr
     -- Discrete / non-interpolatable CSS-like attributes.
   , styleFontFamily  :: Maybe CssText
@@ -242,10 +242,10 @@ data Style = Style
   } deriving (Eq, Show)
 
 data Bounds = Bounds
-  { boundsTop    :: LengthExpr
-  , boundsLeft   :: LengthExpr
-  , boundsRight  :: LengthExpr
-  , boundsBottom :: LengthExpr
+  { boundsTop    :: LayoutExpr
+  , boundsLeft   :: LayoutExpr
+  , boundsRight  :: LayoutExpr
+  , boundsBottom :: LayoutExpr
   }
 
 data BlockView tag = BlockView
@@ -254,40 +254,40 @@ data BlockView tag = BlockView
   , blockStyle :: Style
   }
 
-top :: Style -> LengthExpr
+top :: Style -> LayoutExpr
 top = boxTop . styleBox
 
-left :: Style -> LengthExpr
+left :: Style -> LayoutExpr
 left = boxLeft . styleBox
 
-width :: Style -> LengthExpr
+width :: Style -> LayoutExpr
 width = boxWidth . styleBox
 
-height :: Style -> LengthExpr
+height :: Style -> LayoutExpr
 height = boxHeight . styleBox
 
-topOf :: BlockView tag -> LengthExpr
+topOf :: BlockView tag -> LayoutExpr
 topOf = top . blockStyle
 
-bottomOf :: BlockView tag -> LengthExpr
+bottomOf :: BlockView tag -> LayoutExpr
 bottomOf block = topOf block `plus` heightOf block
 
-leftOf :: BlockView tag -> LengthExpr
+leftOf :: BlockView tag -> LayoutExpr
 leftOf = left . blockStyle
 
-rightOf :: BlockView tag -> LengthExpr
+rightOf :: BlockView tag -> LayoutExpr
 rightOf block = leftOf block `plus` widthOf block
 
-widthOf :: BlockView tag -> LengthExpr
+widthOf :: BlockView tag -> LayoutExpr
 widthOf = width . blockStyle
 
-heightOf :: BlockView tag -> LengthExpr
+heightOf :: BlockView tag -> LayoutExpr
 heightOf = height . blockStyle
 
-positionOf :: BlockView tag -> Vec2 LengthExpr
+positionOf :: BlockView tag -> Vec2 LayoutExpr
 positionOf block = Vec2 (leftOf block) (topOf block)
 
-sizeOf :: BlockView tag -> Vec2 LengthExpr
+sizeOf :: BlockView tag -> Vec2 LayoutExpr
 sizeOf block = Vec2 (widthOf block) (heightOf block)
 
 blockBounds :: BlockView tag -> Bounds
@@ -362,7 +362,7 @@ data MaterializedBlockView tag = MaterializedBlockView
 data MaterializedViewNode where
   MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
 
-materializeBox :: Solution -> Box LengthExpr -> Maybe (Box Double)
+materializeBox :: Solution -> Box LayoutExpr -> Maybe (Box Double)
 materializeBox solution = traverse (evalExpr solution)
 
 materializeHsl :: Solution -> HslExpr -> Maybe MaterializedHsl
@@ -436,8 +436,8 @@ data ViewAudit acts where
 data ViewEnv = ViewEnv
   { canvasWidthValue  :: Double
   , canvasHeightValue :: Double
-  , canvasWidth       :: LengthExpr
-  , canvasHeight      :: LengthExpr
+  , canvasWidth       :: LayoutExpr
+  , canvasHeight      :: LayoutExpr
   }
 
 defaultViewEnv :: ViewEnv
@@ -563,7 +563,7 @@ sameBounds a b = do
   sameWidth a b
   sameHeight a b
 
-sameVec2 :: Vec2 LengthExpr -> Vec2 LengthExpr -> ViewBuilder events ()
+sameVec2 :: Vec2 LayoutExpr -> Vec2 LayoutExpr -> ViewBuilder events ()
 sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
   ensure $ ax @=@ bx
   ensure $ ay @=@ by
@@ -589,10 +589,10 @@ withOpacity value style = style {styleOpacity = Just value}
 withZIndex :: FreeExpr -> Style -> Style
 withZIndex value style = style {styleZIndex = Just value}
 
-withFontSize :: LengthExpr -> Style -> Style
+withFontSize :: LayoutExpr -> Style -> Style
 withFontSize value style = style {styleFontSize = Just value}
 
-withRadius :: LengthExpr -> Style -> Style
+withRadius :: LayoutExpr -> Style -> Style
 withRadius value style = style {styleRadius = Just value}
 
 withFill :: HslExpr -> Style -> Style
@@ -601,7 +601,7 @@ withFill value style = style {styleFill = Just value}
 withStroke :: HslExpr -> Style -> Style
 withStroke value style = style {styleStroke = Just value}
 
-withStrokeWidth :: LengthExpr -> Style -> Style
+withStrokeWidth :: LayoutExpr -> Style -> Style
 withStrokeWidth value style = style {styleStrokeWidth = Just value}
 
 withAlpha :: UnitExpr -> Style -> Style

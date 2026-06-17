@@ -515,7 +515,7 @@ example = do
 --------------------------------------------------------------------------------
 -- Block visualisation
 --------------------------------------------------------------------------------
-blockSize :: LengthExpr
+blockSize :: LayoutExpr
 blockSize = num 100 --global "blockSize"
 
 valueFill :: HslExpr
