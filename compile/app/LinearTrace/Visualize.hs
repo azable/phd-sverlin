@@ -29,8 +29,20 @@ module LinearTrace.Visualize
   , MaterializedStyle(..)
   , MaterializedBlockView(..)
   , MaterializedViewNode(..)
+  , -- * Solver domains
+    Free
+  , Length
+  , Unit
+  , Angle
+  , FreeExpr
+  , LengthExpr
+  , UnitExpr
+  , AngleExpr
+  , HueExpr
+  , HslExpr
+  , MaterializedHsl
   , -- * Expressions, vectors, and constraints
-    Expr(..)
+    Expr
   , Constraint(..)
   , Vec2(..)
   , Vec3(..)
@@ -43,11 +55,11 @@ module LinearTrace.Visualize
   , global
   , (@=@)
   , (@<@)
-  , plus
-  , minus
-  , times
-  , dividedBy
-  , squared
+  , (@+@)
+  , (@-@)
+  , (@*@)
+  , (@/@)
+  , (@^@)
   , num
   , -- * View audit
     ViewAuditStep(..)
@@ -81,7 +93,7 @@ module LinearTrace.Visualize
   , contains
   , between
   , unitBounds
-  , hueBounds
+  , angleBounds
   , hslBounds
   , sameTop
   , sameBottom
@@ -126,6 +138,23 @@ import           Prelude
 
 infixr 5 :&
 --------------------------------------------------------------------------------
+-- Domain aliases
+--------------------------------------------------------------------------------
+type FreeExpr = Expr Free
+
+type LengthExpr = Expr Length
+
+type UnitExpr = Expr Unit
+
+type AngleExpr = Expr Angle
+
+type HueExpr = Expr Angle
+
+type HslExpr = Hsl HueExpr UnitExpr
+
+type MaterializedHsl = Hsl Double Double
+
+--------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
 data Box a = Box
@@ -135,10 +164,10 @@ data Box a = Box
   , boxHeight :: a
   } deriving (Eq, Show, Functor, Foldable, Traversable)
 
-data Hsl a = Hsl
-  { hue        :: a
-  , saturation :: a
-  , lightness  :: a
+data Hsl hue unit = Hsl
+  { hue        :: hue
+  , saturation :: unit
+  , lightness  :: unit
   } deriving (Eq, Show, Functor, Foldable, Traversable)
 
 newtype CssText =
@@ -183,19 +212,19 @@ data WhiteSpace
 
 -- | Symbolic style.
 --
--- Numeric/interpolatable values are represented as Expr.
+-- Numeric/interpolatable values are represented as typed solver expressions.
 -- Discrete/non-interpolatable CSS-like values are stored directly.
 data Style = Style
-  { styleBox         :: Box Expr
+  { styleBox         :: Box LengthExpr
     -- Interpolatable / constrainable attributes.
-  , styleOpacity     :: Maybe Expr
-  , styleZIndex      :: Maybe Expr
-  , styleFontSize    :: Maybe Expr
-  , styleRadius      :: Maybe Expr
-  , styleFill        :: Maybe (Hsl Expr)
-  , styleStroke      :: Maybe (Hsl Expr)
-  , styleStrokeWidth :: Maybe Expr
-  , styleAlpha       :: Maybe Expr
+  , styleOpacity     :: Maybe UnitExpr
+  , styleZIndex      :: Maybe FreeExpr
+  , styleFontSize    :: Maybe LengthExpr
+  , styleRadius      :: Maybe LengthExpr
+  , styleFill        :: Maybe HslExpr
+  , styleStroke      :: Maybe HslExpr
+  , styleStrokeWidth :: Maybe LengthExpr
+  , styleAlpha       :: Maybe UnitExpr
     -- Discrete / non-interpolatable CSS-like attributes.
   , styleFontFamily  :: Maybe CssText
   , styleFontWeight  :: Maybe FontWeight
@@ -206,23 +235,11 @@ data Style = Style
   , styleCssClass    :: Maybe CssText
   } deriving (Eq, Show)
 
-top :: Style -> Expr
-top = boxTop . styleBox
-
-left :: Style -> Expr
-left = boxLeft . styleBox
-
-width :: Style -> Expr
-width = boxWidth . styleBox
-
-height :: Style -> Expr
-height = boxHeight . styleBox
-
 data Bounds = Bounds
-  { boundsTop    :: Expr
-  , boundsLeft   :: Expr
-  , boundsRight  :: Expr
-  , boundsBottom :: Expr
+  { boundsTop    :: LengthExpr
+  , boundsLeft   :: LengthExpr
+  , boundsRight  :: LengthExpr
+  , boundsBottom :: LengthExpr
   }
 
 data BlockView tag = BlockView
@@ -231,28 +248,40 @@ data BlockView tag = BlockView
   , blockStyle :: Style
   }
 
-topOf :: BlockView tag -> Expr
+top :: Style -> LengthExpr
+top = boxTop . styleBox
+
+left :: Style -> LengthExpr
+left = boxLeft . styleBox
+
+width :: Style -> LengthExpr
+width = boxWidth . styleBox
+
+height :: Style -> LengthExpr
+height = boxHeight . styleBox
+
+topOf :: BlockView tag -> LengthExpr
 topOf = top . blockStyle
 
-bottomOf :: BlockView tag -> Expr
+bottomOf :: BlockView tag -> LengthExpr
 bottomOf block = topOf block `plus` heightOf block
 
-leftOf :: BlockView tag -> Expr
+leftOf :: BlockView tag -> LengthExpr
 leftOf = left . blockStyle
 
-rightOf :: BlockView tag -> Expr
+rightOf :: BlockView tag -> LengthExpr
 rightOf block = leftOf block `plus` widthOf block
 
-widthOf :: BlockView tag -> Expr
+widthOf :: BlockView tag -> LengthExpr
 widthOf = width . blockStyle
 
-heightOf :: BlockView tag -> Expr
+heightOf :: BlockView tag -> LengthExpr
 heightOf = height . blockStyle
 
-positionOf :: BlockView tag -> Vec2 Expr
+positionOf :: BlockView tag -> Vec2 LengthExpr
 positionOf block = Vec2 (leftOf block) (topOf block)
 
-sizeOf :: BlockView tag -> Vec2 Expr
+sizeOf :: BlockView tag -> Vec2 LengthExpr
 sizeOf block = Vec2 (widthOf block) (heightOf block)
 
 blockBounds :: BlockView tag -> Bounds
@@ -291,8 +320,8 @@ data MaterializedStyle = MaterializedStyle
   , materializedZIndex      :: Maybe Double
   , materializedFontSize    :: Maybe Double
   , materializedRadius      :: Maybe Double
-  , materializedFill        :: Maybe (Hsl Double)
-  , materializedStroke      :: Maybe (Hsl Double)
+  , materializedFill        :: Maybe MaterializedHsl
+  , materializedStroke      :: Maybe MaterializedHsl
   , materializedStrokeWidth :: Maybe Double
   , materializedAlpha       :: Maybe Double
     -- Discrete / copied attributes.
@@ -326,11 +355,15 @@ data MaterializedBlockView tag = MaterializedBlockView
 data MaterializedViewNode where
   MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
 
-materializeBox :: Solution -> Box Expr -> Maybe (Box Double)
+materializeBox :: Solution -> Box LengthExpr -> Maybe (Box Double)
 materializeBox solution = traverse (evalExpr solution)
 
-materializeHsl :: Solution -> Hsl Expr -> Maybe (Hsl Double)
-materializeHsl solution = traverse (evalExpr solution)
+materializeHsl :: Solution -> HslExpr -> Maybe MaterializedHsl
+materializeHsl solution hsl =
+  Hsl
+    <$> evalExpr solution (hue hsl)
+    <*> evalExpr solution (saturation hsl)
+    <*> evalExpr solution (lightness hsl)
 
 materializeStyle :: Solution -> Style -> Maybe MaterializedStyle
 materializeStyle solution style =
@@ -394,8 +427,8 @@ data ViewAudit acts where
 -- Reader + Writer builder
 --------------------------------------------------------------------------------
 data ViewEnv = ViewEnv
-  { canvasWidth  :: Expr
-  , canvasHeight :: Expr
+  { canvasWidth  :: LengthExpr
+  , canvasHeight :: LengthExpr
   }
 
 defaultViewEnv :: ViewEnv
@@ -424,7 +457,7 @@ type ViewBuilder events a = ReaderT ViewEnv (Writer (ViewOutput events)) a
 ensure :: Constraint -> ViewBuilder events ()
 ensure constraint = tell mempty {emittedConstraints = [constraint]}
 
-encourage :: Expr -> ViewBuilder events ()
+encourage :: Expr ty -> ViewBuilder events ()
 encourage objective = tell mempty {emittedConstraints = [minimize objective]}
 
 emitViewNode :: ViewNode -> ViewBuilder events ()
@@ -433,7 +466,7 @@ emitViewNode node = tell mempty {emittedNodes = [node]}
 --------------------------------------------------------------------------------
 -- Constraint constructors/helpers
 --------------------------------------------------------------------------------
-global :: String -> Expr
+global :: SymbolicType ty => String -> Expr ty
 global name = var ("global." ++ name)
 
 canvasBounds :: ViewBuilder events Bounds
@@ -459,22 +492,25 @@ containsCanvas block = do
   canvas <- canvasBounds
   canvas `contains` blockBounds block
 
-between :: Expr -> Expr -> Expr -> ViewBuilder events ()
+between :: Expr ty -> Expr ty -> Expr ty -> ViewBuilder events ()
 between lo x hi = do
   ensure $ lo @<@ x
   ensure $ x @<@ hi
 
-unitBounds :: Expr -> ViewBuilder events ()
+unitBounds :: UnitExpr -> ViewBuilder events ()
 unitBounds x = between (num 0) x (num 1)
 
-hueBounds :: Expr -> ViewBuilder events ()
-hueBounds h = between (num 0) h (num 360)
+angleBounds :: AngleExpr -> ViewBuilder events ()
+angleBounds angle = between (num 0) angle (num 360)
 
-hslBounds :: Hsl Expr -> ViewBuilder events ()
+hslBounds :: HslExpr -> ViewBuilder events ()
 hslBounds hsl = do
-  hueBounds (hue hsl)
+  angleBounds (hue hsl)
   unitBounds (saturation hsl)
   unitBounds (lightness hsl)
+
+nonNegative :: SymbolicType ty => Expr ty -> ViewBuilder events ()
+nonNegative expr = ensure $ num 0 @<@ expr
 
 sameTop :: BlockView a -> BlockView b -> ViewBuilder events ()
 sameTop a b = ensure $ topOf a @=@ topOf b
@@ -501,12 +537,12 @@ sameBounds a b = do
   sameWidth a b
   sameHeight a b
 
-sameVec2 :: Vec2 Expr -> Vec2 Expr -> ViewBuilder events ()
+sameVec2 :: Vec2 LengthExpr -> Vec2 LengthExpr -> ViewBuilder events ()
 sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
   ensure $ ax @=@ bx
   ensure $ ay @=@ by
 
-sameHsl :: Hsl Expr -> Hsl Expr -> ViewBuilder events ()
+sameHsl :: HslExpr -> HslExpr -> ViewBuilder events ()
 sameHsl a b = do
   ensure $ hue a @=@ hue b
   ensure $ saturation a @=@ saturation b
@@ -521,28 +557,28 @@ sameHsl a b = do
 --------------------------------------------------------------------------------
 -- Style construction helpers
 --------------------------------------------------------------------------------
-withOpacity :: Expr -> Style -> Style
+withOpacity :: UnitExpr -> Style -> Style
 withOpacity value style = style {styleOpacity = Just value}
 
-withZIndex :: Expr -> Style -> Style
+withZIndex :: FreeExpr -> Style -> Style
 withZIndex value style = style {styleZIndex = Just value}
 
-withFontSize :: Expr -> Style -> Style
+withFontSize :: LengthExpr -> Style -> Style
 withFontSize value style = style {styleFontSize = Just value}
 
-withRadius :: Expr -> Style -> Style
+withRadius :: LengthExpr -> Style -> Style
 withRadius value style = style {styleRadius = Just value}
 
-withFill :: Hsl Expr -> Style -> Style
+withFill :: HslExpr -> Style -> Style
 withFill value style = style {styleFill = Just value}
 
-withStroke :: Hsl Expr -> Style -> Style
+withStroke :: HslExpr -> Style -> Style
 withStroke value style = style {styleStroke = Just value}
 
-withStrokeWidth :: Expr -> Style -> Style
+withStrokeWidth :: LengthExpr -> Style -> Style
 withStrokeWidth value style = style {styleStrokeWidth = Just value}
 
-withAlpha :: Expr -> Style -> Style
+withAlpha :: UnitExpr -> Style -> Style
 withAlpha value style = style {styleAlpha = Just value}
 
 withFontFamily :: String -> Style -> Style
@@ -757,7 +793,7 @@ styleForRef ref =
     , styleCssClass = Nothing
     }
 
-blockVar :: C.BlockRef tag -> String -> Expr
+blockVar :: SymbolicType ty => C.BlockRef tag -> String -> Expr ty
 blockVar (C.BlockRef blockId) field = var ("B" ++ show blockId ++ "." ++ field)
 
 --------------------------------------------------------------------------------
@@ -795,16 +831,13 @@ viewAuditStep step =
 -- Style bounds / registration
 --------------------------------------------------------------------------------
 constrainMaybe ::
-     (Expr -> ViewBuilder events ()) -> Maybe Expr -> ViewBuilder events ()
-constrainMaybe f maybeExpr =
-  case maybeExpr of
-    Nothing   -> pure ()
-    Just expr -> f expr
+     (a -> ViewBuilder events ()) -> Maybe a -> ViewBuilder events ()
+constrainMaybe f maybeValue =
+  case maybeValue of
+    Nothing    -> pure ()
+    Just value -> f value
 
-nonNegative :: Expr -> ViewBuilder events ()
-nonNegative expr = ensure $ num 0 @<@ expr
-
-constrainMaybeHsl :: Maybe (Hsl Expr) -> ViewBuilder events ()
+constrainMaybeHsl :: Maybe HslExpr -> ViewBuilder events ()
 constrainMaybeHsl maybeHsl =
   case maybeHsl of
     Nothing  -> pure ()
@@ -812,6 +845,8 @@ constrainMaybeHsl maybeHsl =
 
 constrainStyle :: Style -> ViewBuilder events ()
 constrainStyle style = do
+  -- Unit and hue ranges are already known to the solver from their types.
+  -- Keeping these constraints here makes the visual-layer contract explicit.
   constrainMaybe unitBounds (styleOpacity style)
   constrainMaybe nonNegative (styleZIndex style)
   constrainMaybe nonNegative (styleFontSize style)

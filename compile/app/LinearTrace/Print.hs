@@ -37,9 +37,6 @@ snapshotRefWidth = 6
 stepNameWidth :: Int
 stepNameWidth = 16
 
-solutionNameWidth :: Int
-solutionNameWidth = 24
-
 stepIndent :: String
 stepIndent = "    "
 
@@ -318,11 +315,37 @@ renderStyle style =
     , renderStyleField "left" (V.left style)
     , renderStyleField "width" (V.width style)
     , renderStyleField "height" (V.height style)
+    , renderMaybeStyleField "opacity" (V.styleOpacity style)
+    , renderMaybeStyleField "zIndex" (V.styleZIndex style)
+    , renderMaybeStyleField "fontSize" (V.styleFontSize style)
+    , renderMaybeStyleField "radius" (V.styleRadius style)
+    , renderMaybeHslStyleField "fill" (V.styleFill style)
+    , renderMaybeHslStyleField "stroke" (V.styleStroke style)
+    , renderMaybeStyleField "strokeWidth" (V.styleStrokeWidth style)
+    , renderMaybeStyleField "alpha" (V.styleAlpha style)
     ]
 
-renderStyleField :: String -> V.Expr -> String
+renderStyleField :: String -> V.Expr ty -> String
 renderStyleField name expr =
-  concat [stepIndent, stepIndent, padRight 8 name, " = ", renderExpr expr, "\n"]
+  concat
+    [stepIndent, stepIndent, padRight 12 name, " = ", renderExpr expr, "\n"]
+
+renderMaybeStyleField :: String -> Maybe (V.Expr ty) -> String
+renderMaybeStyleField name maybeExpr =
+  case maybeExpr of
+    Nothing   -> ""
+    Just expr -> renderStyleField name expr
+
+renderMaybeHslStyleField :: String -> Maybe V.HslExpr -> String
+renderMaybeHslStyleField name maybeHsl =
+  case maybeHsl of
+    Nothing -> ""
+    Just hsl ->
+      concat
+        [ renderStyleField (name ++ ".hue") (V.hue hsl)
+        , renderStyleField (name ++ ".saturation") (V.saturation hsl)
+        , renderStyleField (name ++ ".lightness") (V.lightness hsl)
+        ]
 
 --------------------------------------------------------------------------------
 -- View constraints
@@ -336,24 +359,36 @@ data RenderedConstraint = RenderedConstraint
 renderConstraintParts :: V.Constraint -> RenderedConstraint
 renderConstraintParts constraint =
   case constraint of
-    V.Equals lhs rhs ->
+    S.Equals ty lhs rhs ->
       RenderedConstraint
-        { renderedConstraintLhs = renderExpr lhs
-        , renderedConstraintOp = "="
-        , renderedConstraintRhs = renderExpr rhs
+        { renderedConstraintLhs = renderRawExpr lhs
+        , renderedConstraintOp = renderEqualityOperator ty
+        , renderedConstraintRhs = renderEqualityRhs ty rhs
         }
-    V.LessThan lhs rhs ->
+    S.LessThan lhs rhs ->
       RenderedConstraint
-        { renderedConstraintLhs = renderExpr lhs
+        { renderedConstraintLhs = renderRawExpr lhs
         , renderedConstraintOp = "<"
-        , renderedConstraintRhs = renderExpr rhs
+        , renderedConstraintRhs = renderRawExpr rhs
         }
-    V.Minimize expr ->
+    S.Minimize expr ->
       RenderedConstraint
         { renderedConstraintLhs = ""
         , renderedConstraintOp = "minimize"
-        , renderedConstraintRhs = renderExpr expr
+        , renderedConstraintRhs = renderRawExpr expr
         }
+
+renderEqualityOperator :: S.ScalarType -> String
+renderEqualityOperator ty =
+  case S.typeCircularPeriod ty of
+    Nothing -> "="
+    Just _  -> "≡"
+
+renderEqualityRhs :: S.ScalarType -> S.RawExpr -> String
+renderEqualityRhs ty rhs =
+  case S.typeCircularPeriod ty of
+    Nothing     -> renderRawExpr rhs
+    Just period -> renderRawExpr rhs ++ " (mod " ++ fixed2 period ++ ")"
 
 renderStepConstraints :: [V.Constraint] -> String
 renderStepConstraints constraints =
@@ -401,21 +436,24 @@ renderIndentedConstraint lhsWidth opWidth constraint =
 constraintMentionsVar :: V.Constraint -> Bool
 constraintMentionsVar constraint =
   case constraint of
-    V.Equals lhs rhs   -> exprMentionsVar lhs || exprMentionsVar rhs
-    V.LessThan lhs rhs -> exprMentionsVar lhs || exprMentionsVar rhs
-    V.Minimize expr    -> exprMentionsVar expr
+    S.Equals _ lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.LessThan lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.Minimize expr    -> rawExprMentionsVar expr
 
-exprMentionsVar :: V.Expr -> Bool
-exprMentionsVar expr =
+rawExprMentionsVar :: S.RawExpr -> Bool
+rawExprMentionsVar expr =
   case expr of
-    V.EVar _        -> True
-    V.ELit _        -> False
-    V.EAdd lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
-    V.ESub lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
-    V.EMul lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
-    V.EDiv lhs rhs  -> exprMentionsVar lhs || exprMentionsVar rhs
-    V.ENeg inner    -> exprMentionsVar inner
-    V.ESquare inner -> exprMentionsVar inner
+    S.EVar _ _ -> True
+    S.ELit _ -> False
+    S.EAdd lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ESub lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.EMul lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.EDiv lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ENeg inner -> rawExprMentionsVar inner
+    S.EAbs inner -> rawExprMentionsVar inner
+    S.ESignum inner -> rawExprMentionsVar inner
+    S.EPow base exponent ->
+      rawExprMentionsVar base || rawExprMentionsVar exponent
 
 --------------------------------------------------------------------------------
 -- Solved view values
@@ -469,13 +507,13 @@ solveBlockViewExprs solution block =
         , solveMaybeExpr solution (blockName ++ ".alpha") (V.styleAlpha style)
         ]
 
-solveMaybeExpr :: S.Solution -> String -> Maybe V.Expr -> [SolvedExpr]
+solveMaybeExpr :: S.Solution -> String -> Maybe (V.Expr ty) -> [SolvedExpr]
 solveMaybeExpr solution name maybeExpr =
   case maybeExpr of
     Nothing   -> []
     Just expr -> solveNamedExpr solution name expr
 
-solveMaybeHsl :: S.Solution -> String -> Maybe (V.Hsl V.Expr) -> [SolvedExpr]
+solveMaybeHsl :: S.Solution -> String -> Maybe V.HslExpr -> [SolvedExpr]
 solveMaybeHsl solution name maybeHsl =
   case maybeHsl of
     Nothing -> []
@@ -486,7 +524,7 @@ solveMaybeHsl solution name maybeHsl =
         , solveNamedExpr solution (name ++ ".lightness") (V.lightness hsl)
         ]
 
-solveNamedExpr :: S.Solution -> String -> V.Expr -> [SolvedExpr]
+solveNamedExpr :: S.Solution -> String -> V.Expr ty -> [SolvedExpr]
 solveNamedExpr solution name expr =
   case S.evalExpr solution expr of
     Nothing    -> []
@@ -677,46 +715,53 @@ renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
 --------------------------------------------------------------------------------
 -- Expression rendering
 --------------------------------------------------------------------------------
-renderExpr :: V.Expr -> String
-renderExpr = renderExprPrec 0
+renderExpr :: V.Expr ty -> String
+renderExpr = renderRawExpr . S.exprRaw
 
-renderExprPrec :: Int -> V.Expr -> String
-renderExprPrec precedence expr =
+renderRawExpr :: S.RawExpr -> String
+renderRawExpr = renderRawExprPrec 0
+
+renderRawExprPrec :: Int -> S.RawExpr -> String
+renderRawExprPrec precedence expr =
   case expr of
-    V.EVar variable -> V.varName variable
-    V.ELit value -> fixed2 value
-    V.EAdd lhs rhs ->
+    S.EVar _ variable -> S.varName variable
+    S.ELit value -> fixed2 value
+    S.EAdd lhs rhs ->
       parenthesize
         (precedence > addPrecedence)
-        (renderExprPrec addPrecedence lhs
+        (renderRawExprPrec addPrecedence lhs
            ++ " + "
-           ++ renderExprPrec addPrecedence rhs)
-    V.ESub lhs rhs ->
+           ++ renderRawExprPrec addPrecedence rhs)
+    S.ESub lhs rhs ->
       parenthesize
         (precedence > addPrecedence)
-        (renderExprPrec addPrecedence lhs
+        (renderRawExprPrec addPrecedence lhs
            ++ " - "
-           ++ renderExprPrec (addPrecedence + 1) rhs)
-    V.EMul lhs rhs ->
+           ++ renderRawExprPrec (addPrecedence + 1) rhs)
+    S.EMul lhs rhs ->
       parenthesize
         (precedence > mulPrecedence)
-        (renderExprPrec mulPrecedence lhs
+        (renderRawExprPrec mulPrecedence lhs
            ++ " * "
-           ++ renderExprPrec mulPrecedence rhs)
-    V.EDiv lhs rhs ->
+           ++ renderRawExprPrec mulPrecedence rhs)
+    S.EDiv lhs rhs ->
       parenthesize
         (precedence > mulPrecedence)
-        (renderExprPrec mulPrecedence lhs
+        (renderRawExprPrec mulPrecedence lhs
            ++ " / "
-           ++ renderExprPrec (mulPrecedence + 1) rhs)
-    V.ENeg inner ->
+           ++ renderRawExprPrec (mulPrecedence + 1) rhs)
+    S.ENeg inner ->
       parenthesize
         (precedence > unaryPrecedence)
-        ("-" ++ renderExprPrec unaryPrecedence inner)
-    V.ESquare inner ->
+        ("-" ++ renderRawExprPrec unaryPrecedence inner)
+    S.EAbs inner -> "abs " ++ renderRawExprPrec unaryPrecedence inner
+    S.ESignum inner -> "signum " ++ renderRawExprPrec unaryPrecedence inner
+    S.EPow base exponent ->
       parenthesize
         (precedence > powerPrecedence)
-        (renderExprPrec powerPrecedence inner ++ "^2")
+        (renderRawExprPrec powerPrecedence base
+           ++ " ^ "
+           ++ renderRawExprPrec (powerPrecedence + 1) exponent)
 
 addPrecedence :: Int
 addPrecedence = 6

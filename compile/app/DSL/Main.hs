@@ -515,11 +515,13 @@ example = do
 --------------------------------------------------------------------------------
 -- Block visualisation
 --------------------------------------------------------------------------------
-blockSize :: Expr
-blockSize = num 200 --global "blockSize"
+blockSize :: LengthExpr
+blockSize = num 100 --global "blockSize"
 
-valueFill :: Hsl Expr
-valueFill = Hsl {hue = num 200, saturation = num 0.7, lightness = num 0.5}
+valueFill :: HslExpr
+valueFill =
+  Hsl
+    {hue = global "hue", saturation = global "saturation", lightness = num 0.5}
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
@@ -530,7 +532,7 @@ instance VisualizeBlock (Value 'TInt) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
-      P.. withFontSize (blockSize `dividedBy` num 2)
+      P.. withFontSize (blockSize @/@ num 2)
       P.. withFontFamily "Inter"
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
@@ -541,7 +543,7 @@ instance VisualizeBlock (Value 'TDouble) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
-      P.. withFontSize (num 40)
+      P.. withFontSize (blockSize @/@ num 2)
       P.. withFontFamily "Inter"
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter

@@ -106,10 +106,6 @@ type CompileM = StateT CompileState (Either String)
 --------------------------------------------------------------------------------
 -- Public compiler
 --------------------------------------------------------------------------------
--- | Compile using the default viewport size.
---
--- This mirrors the current default Visualize canvas. If you later make canvas
--- size configurable, prefer 'compileSolvedVisualizationWithViewport'.
 compileSolvedVisualization ::
      S.Solution -> V.ViewGraph events -> Either String CompiledVisualization
 compileSolvedVisualization =
@@ -143,7 +139,7 @@ compileSolvedVisualizationWithViewport viewportWidth viewportHeight solution gra
 --------------------------------------------------------------------------------
 compileFrames ::
      Map C.BlockId RenderBlock -> [V.ViewStep events] -> CompileM [RenderFrame]
-compileFrames blocksById steps = traverse (compileFrame blocksById) steps
+compileFrames blocksById = traverse (compileFrame blocksById)
 
 compileFrame ::
      Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM RenderFrame
@@ -343,18 +339,16 @@ compileCssAttrs style =
        ])
 
 styleMaybeNumber :: String -> Maybe Double -> Maybe (String, StyleValue)
-styleMaybeNumber name value =
-  fmap (\x -> (name, StyleNumber (roundLayout x))) value
+styleMaybeNumber name = fmap (\x -> (name, StyleNumber (roundLayout x)))
 
 styleMaybePixels :: String -> Maybe Double -> Maybe (String, StyleValue)
-styleMaybePixels name value =
-  fmap (\x -> (name, StylePixels (roundLayout x))) value
+styleMaybePixels name = fmap (\x -> (name, StylePixels (roundLayout x)))
 
 styleMaybeText :: String -> Maybe String -> Maybe (String, StyleValue)
-styleMaybeText name value = fmap (\text -> (name, StyleText text)) value
+styleMaybeText name = fmap (\text -> (name, StyleText text))
 
 styleMaybeColor :: String -> Maybe String -> Maybe (String, StyleValue)
-styleMaybeColor name value = fmap (\text -> (name, StyleColor text)) value
+styleMaybeColor name = fmap (\text -> (name, StyleColor text))
 
 compileCssClass :: V.MaterializedStyle -> Maybe String
 compileCssClass style = compileCssText <$> V.materializedCssClass style
@@ -405,7 +399,7 @@ compileWhiteSpace value =
     V.WhiteSpacePre     -> "pre"
     V.WhiteSpacePreWrap -> "pre-wrap"
 
-materializedHslToCss :: Maybe Double -> V.Hsl Double -> String
+materializedHslToCss :: Maybe Double -> V.MaterializedHsl -> String
 materializedHslToCss maybeAlpha hsl =
   let h = formatCssNumber (V.hue hsl)
       s = formatCssPercent01 (V.saturation hsl)
