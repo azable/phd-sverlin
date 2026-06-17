@@ -598,11 +598,7 @@ blockSize = num 50 --global "blockSize"
 
 valueFill :: Hsl Expr
 valueFill =
-  Hsl
-    { hue = global "style.value.hue"
-    , saturation = global "style.value.saturation"
-    , lightness = global "style.value.lightness"
-    }
+  Hsl {hue = num 200, saturation = num 0.7, lightness = global "lightness"}
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do

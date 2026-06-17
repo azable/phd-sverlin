@@ -586,6 +586,7 @@ visualizeNewBlock block0 = do
           {blockStyle = styleBlock (Proxy :: Proxy tag) (blockStyle block0)}
   emitViewNode (BlockViewNode block)
   containsCanvas block
+  constrainStyle (blockStyle block)
   visualizeBlock block
 
 --------------------------------------------------------------------------------
@@ -790,3 +791,33 @@ viewAuditStep step =
     C.UnsealStep owner child ->
       VUnsealed (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
     C.DecideStep snapshot -> VDecided (blockViewOfSnapshot snapshot)
+
+--------------------------------------------------------------------------------
+-- Style bounds / registration
+--------------------------------------------------------------------------------
+constrainMaybe ::
+     (Expr -> ViewBuilder events ()) -> Maybe Expr -> ViewBuilder events ()
+constrainMaybe f maybeExpr =
+  case maybeExpr of
+    Nothing   -> pure ()
+    Just expr -> f expr
+
+nonNegative :: Expr -> ViewBuilder events ()
+nonNegative expr = ensure $ num 0 @<@ expr
+
+constrainMaybeHsl :: Maybe (Hsl Expr) -> ViewBuilder events ()
+constrainMaybeHsl maybeHsl =
+  case maybeHsl of
+    Nothing  -> pure ()
+    Just hsl -> hslBounds hsl
+
+constrainStyle :: Style -> ViewBuilder events ()
+constrainStyle style = do
+  constrainMaybe unitBounds (styleOpacity style)
+  constrainMaybe nonNegative (styleZIndex style)
+  constrainMaybe nonNegative (styleFontSize style)
+  constrainMaybe nonNegative (styleRadius style)
+  constrainMaybeHsl (styleFill style)
+  constrainMaybeHsl (styleStroke style)
+  constrainMaybe nonNegative (styleStrokeWidth style)
+  constrainMaybe unitBounds (styleAlpha style)

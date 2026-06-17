@@ -3,8 +3,9 @@
 
 module LinearTrace.Compile
   ( RenderId(..)
-  , -- * Compiled geometry
-    RenderStyle(..)
+  , -- * Compiled CSS geometry/style
+    StyleValue(..)
+  , RenderStyle(..)
   , RenderBlock(..)
   , -- * Lifecycle patches
     RenderPatch(..)
@@ -12,6 +13,7 @@ module LinearTrace.Compile
   , CompiledVisualization(..)
   , -- * Compilation
     compileSolvedVisualization
+  , encodeCompiledVisualizationPretty
   , printCompiledVisualizationJSON
   , writeCompiledVisualizationJSON
   ) where
@@ -20,12 +22,15 @@ import           Control.Monad
 import           Control.Monad.State.Strict
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty   (encodePretty)
+import qualified Data.Aeson.Key             as Key
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
+import           Data.Maybe                 (catMaybes)
 import qualified LinearTrace.Core           as C
 import qualified LinearTrace.Solver         as S
 import qualified LinearTrace.Visualize      as V
+import           Numeric                    (showFFloat)
 import           Prelude
 
 newtype RenderId =
@@ -36,8 +41,13 @@ freshRenderIdForBlock :: C.BlockId -> RenderId
 freshRenderIdForBlock blockId = RenderId ("lineage." ++ show blockId)
 
 --------------------------------------------------------------------------------
--- Compiled geometry
+-- Compiled CSS style
 --------------------------------------------------------------------------------
+-- | CSS-ready style values.
+--
+-- Values that need units should already be represented as 'StylePixels'.
+-- Values that are unitless CSS values, such as opacity or z-index, should use
+-- 'StyleNumber'. Colours should already be converted to CSS colour strings.
 data StyleValue
   = StyleNumber Double
   | StylePixels Double
@@ -46,6 +56,10 @@ data StyleValue
   | StyleBool Bool
   deriving (Eq, Show)
 
+-- | CSS style object.
+--
+-- The four box fields are kept separately for internal convenience, but the JSON
+-- instance emits them as CSS properties in pixels, together with 'renderAttrs'.
 data RenderStyle = RenderStyle
   { renderTop    :: Double
   , renderLeft   :: Double
@@ -55,9 +69,10 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId :: C.BlockId
-  , renderLabel   :: String
-  , renderStyle   :: RenderStyle
+  { renderBlockId   :: C.BlockId
+  , renderLabel     :: String
+  , renderClassName :: Maybe String
+  , renderStyle     :: RenderStyle
   } deriving (Eq, Show)
 
 data RenderPatch
@@ -96,11 +111,11 @@ compileSolvedVisualization solution graph =
   case buildBlockLookup solution graph of
     Left err -> Left err
     Right blocksById -> do
-      frames <-
+      frames' <-
         evalStateT
           (compileFrames blocksById (V.viewSteps graph))
           emptyCompileState
-      pure CompiledVisualization {frames = frames}
+      pure CompiledVisualization {frames = frames'}
 
 --------------------------------------------------------------------------------
 -- Frame compilation
@@ -108,7 +123,7 @@ compileSolvedVisualization solution graph =
 compileFrames ::
      Map C.BlockId RenderBlock -> [V.ViewStep events] -> CompileM [RenderFrame]
 compileFrames blocksById steps =
-  traverse (\(ix, step) -> compileFrame blocksById ix step) (zip [0 ..] steps)
+  traverse (uncurry (compileFrame blocksById)) (zip [0 ..] steps)
 
 compileFrame ::
      Map C.BlockId RenderBlock
@@ -144,26 +159,28 @@ compileAuditStep ::
      Map C.BlockId RenderBlock -> C.AuditStep act -> CompileM [RenderPatch]
 compileAuditStep blocksById step =
   case step of
-    C.CreateStep snapshot -> createSnapshot blocksById snapshot
-    C.ObserveStep _snapshot -> pure []
-    C.InspectStep _snapshot -> pure []
-    C.UseStep snapshot -> destroySnapshot blocksById snapshot
-    C.CopyStep _original copy' -> createSnapshot blocksById copy'
+    C.CreateStep node -> createNode blocksById node
+    C.ObserveStep _node -> pure []
+    C.InspectStep _node -> pure []
+    C.UseStep node -> destroyNode blocksById node
+    C.CopyStep _original copy' -> createNode blocksById copy'
     C.ReplaceStep old incoming output ->
-      replaceSnapshot blocksById old incoming output
-    C.ComputeStep snapshot -> createSnapshot blocksById snapshot
-    C.DestroyStep snapshot -> destroySnapshot blocksById snapshot
+      replaceNode blocksById old incoming output
+    C.ComputeStep node -> createNode blocksById node
+    C.DestroyStep node -> destroyNode blocksById node
     C.SealStep _owner _child -> pure []
     C.UnsealStep _owner _child -> pure []
-    C.DecideStep _snapshot -> pure []
+    C.DecideStep _node -> pure []
 
 --------------------------------------------------------------------------------
 -- Primitive lifecycle operations
 --------------------------------------------------------------------------------
-createSnapshot ::
-     Map C.BlockId RenderBlock -> C.BlockSnapshot tag -> CompileM [RenderPatch]
-createSnapshot blocksById snapshot = do
-  block <- requireBlock blocksById snapshot
+type TraceNode tag = C.BlockSnapshot tag
+
+createNode ::
+     Map C.BlockId RenderBlock -> TraceNode tag -> CompileM [RenderPatch]
+createNode blocksById node = do
+  block <- requireBlock blocksById node
   let renderId = freshRenderIdForBlock (renderBlockId block)
   modify
     (\st ->
@@ -173,10 +190,10 @@ createSnapshot blocksById snapshot = do
          })
   pure [RenderCreate renderId block]
 
-destroySnapshot ::
-     Map C.BlockId RenderBlock -> C.BlockSnapshot tag -> CompileM [RenderPatch]
-destroySnapshot blocksById snapshot = do
-  block <- requireBlock blocksById snapshot
+destroyNode ::
+     Map C.BlockId RenderBlock -> TraceNode tag -> CompileM [RenderPatch]
+destroyNode blocksById node = do
+  block <- requireBlock blocksById node
   renderId <- requireLineage block
   modify
     (\st ->
@@ -184,16 +201,16 @@ destroySnapshot blocksById snapshot = do
          {lineageByBlock = Map.delete (renderBlockId block) (lineageByBlock st)})
   pure [RenderDestroy renderId block]
 
-replaceSnapshot ::
+replaceNode ::
      Map C.BlockId RenderBlock
-  -> C.BlockSnapshot tag
-  -> C.BlockSnapshot tag
-  -> C.BlockSnapshot tag
+  -> TraceNode tag
+  -> TraceNode tag
+  -> TraceNode tag
   -> CompileM [RenderPatch]
-replaceSnapshot blocksById oldSnapshot incomingSnapshot outputSnapshot = do
-  oldBlock <- requireBlock blocksById oldSnapshot
-  incomingBlock <- requireBlock blocksById incomingSnapshot
-  outputBlock <- requireBlock blocksById outputSnapshot
+replaceNode blocksById oldNode incomingNode outputNode = do
+  oldBlock <- requireBlock blocksById oldNode
+  incomingBlock <- requireBlock blocksById incomingNode
+  outputBlock <- requireBlock blocksById outputNode
   oldRenderId <- requireLineage oldBlock
   incomingRenderId <- requireLineage incomingBlock
   modify
@@ -237,7 +254,11 @@ insertMaterializedNode ::
      S.Solution -> BlockLookup -> V.ViewNode -> Either String BlockLookup
 insertMaterializedNode solution blocks node =
   case V.materializeViewNode solution node of
-    Nothing -> Left "could not materialize a view node from the solver solution"
+    Nothing ->
+      Left
+        "could not materialize a view node from the solver solution; \
+       \a style or geometry Expr probably references a variable that was not \
+       \included in any constraint"
     Just materialized ->
       case materialized of
         V.MaterializedBlockViewNode block ->
@@ -246,36 +267,156 @@ insertMaterializedNode solution blocks node =
 
 compileMaterializedBlock :: V.MaterializedBlockView tag -> RenderBlock
 compileMaterializedBlock block =
-  RenderBlock
-    { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
-    , renderLabel = payloadViewText (V.materializedBlockLabel block)
-    , renderStyle = compileMaterializedStyle (V.materializedBlockStyle block)
-    }
+  let style = V.materializedBlockStyle block
+   in RenderBlock
+        { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
+        , renderLabel = payloadViewText (V.materializedBlockLabel block)
+        , renderClassName = compileCssClass style
+        , renderStyle = compileMaterializedStyle style
+        }
 
 compileMaterializedStyle :: V.MaterializedStyle -> RenderStyle
 compileMaterializedStyle style =
   RenderStyle
-    { renderTop = V.materializedTop style
-    , renderLeft = V.materializedLeft style
-    , renderWidth = V.materializedWidth style
-    , renderHeight = V.materializedHeight style
-    , renderAttrs = Map.empty
+    { renderTop = roundLayout (V.materializedTop style)
+    , renderLeft = roundLayout (V.materializedLeft style)
+    , renderWidth = roundLayout (V.materializedWidth style)
+    , renderHeight = roundLayout (V.materializedHeight style)
+    , renderAttrs = compileCssAttrs style
     }
 
-requireBlock :: BlockLookup -> C.BlockSnapshot tag -> CompileM RenderBlock
-requireBlock blocksById snapshot =
-  case Map.lookup (snapshotBlockId snapshot) blocksById of
-    Just block -> pure block
-    Nothing ->
-      lift
-        (Left ("no materialized block for B" ++ show (snapshotBlockId snapshot)))
+compileCssAttrs :: V.MaterializedStyle -> Map String StyleValue
+compileCssAttrs style =
+  Map.fromList
+    (catMaybes
+       [ Just ("position", StyleText "absolute")
+       , styleMaybePixels "fontSize" (V.materializedFontSize style)
+       , styleMaybePixels "borderRadius" (V.materializedRadius style)
+       , styleMaybePixels "borderWidth" (V.materializedStrokeWidth style)
+       , styleMaybeNumber "opacity" (V.materializedOpacity style)
+       , styleMaybeNumber "zIndex" (V.materializedZIndex style)
+       , styleMaybeColor
+           "backgroundColor"
+           (materializedHslToCss (V.materializedAlpha style)
+              <$> V.materializedFill style)
+       , styleMaybeColor
+           "borderColor"
+           (materializedHslToCss (V.materializedAlpha style)
+              <$> V.materializedStroke style)
+       , styleMaybeText
+           "fontFamily"
+           (compileCssText <$> V.materializedFontFamily style)
+       , styleMaybeText
+           "fontWeight"
+           (compileFontWeight <$> V.materializedFontWeight style)
+       , styleMaybeText
+           "fontStyle"
+           (compileFontStyle <$> V.materializedFontStyle style)
+       , styleMaybeText
+           "textAlign"
+           (compileTextAlign <$> V.materializedTextAlign style)
+       , styleMaybeText
+           "borderStyle"
+           (compileBorderStyle <$> V.materializedBorderStyle style)
+       , styleMaybeText
+           "whiteSpace"
+           (compileWhiteSpace <$> V.materializedWhiteSpace style)
+       ])
+
+styleMaybeNumber :: String -> Maybe Double -> Maybe (String, StyleValue)
+styleMaybeNumber name value =
+  fmap (\x -> (name, StyleNumber (roundLayout x))) value
+
+styleMaybePixels :: String -> Maybe Double -> Maybe (String, StyleValue)
+styleMaybePixels name value =
+  fmap (\x -> (name, StylePixels (roundLayout x))) value
+
+styleMaybeText :: String -> Maybe String -> Maybe (String, StyleValue)
+styleMaybeText name value = fmap (\text -> (name, StyleText text)) value
+
+styleMaybeColor :: String -> Maybe String -> Maybe (String, StyleValue)
+styleMaybeColor name value = fmap (\text -> (name, StyleColor text)) value
+
+compileCssClass :: V.MaterializedStyle -> Maybe String
+compileCssClass style = compileCssText <$> V.materializedCssClass style
+
+compileCssText :: V.CssText -> String
+compileCssText cssText =
+  case cssText of
+    V.CssText text -> text
+
+compileFontWeight :: V.FontWeight -> String
+compileFontWeight value =
+  case value of
+    V.FontWeightNormal   -> "normal"
+    V.FontWeightBold     -> "bold"
+    V.FontWeightBolder   -> "bolder"
+    V.FontWeightLighter  -> "lighter"
+    V.FontWeightNumber n -> show n
+
+compileFontStyle :: V.FontStyle -> String
+compileFontStyle value =
+  case value of
+    V.FontStyleNormal  -> "normal"
+    V.FontStyleItalic  -> "italic"
+    V.FontStyleOblique -> "oblique"
+
+compileTextAlign :: V.TextAlign -> String
+compileTextAlign value =
+  case value of
+    V.TextAlignLeft    -> "left"
+    V.TextAlignCenter  -> "center"
+    V.TextAlignRight   -> "right"
+    V.TextAlignJustify -> "justify"
+
+compileBorderStyle :: V.BorderStyle -> String
+compileBorderStyle value =
+  case value of
+    V.BorderNone   -> "none"
+    V.BorderSolid  -> "solid"
+    V.BorderDashed -> "dashed"
+    V.BorderDotted -> "dotted"
+    V.BorderDouble -> "double"
+
+compileWhiteSpace :: V.WhiteSpace -> String
+compileWhiteSpace value =
+  case value of
+    V.WhiteSpaceNormal  -> "normal"
+    V.WhiteSpaceNoWrap  -> "nowrap"
+    V.WhiteSpacePre     -> "pre"
+    V.WhiteSpacePreWrap -> "pre-wrap"
+
+materializedHslToCss :: Maybe Double -> V.Hsl Double -> String
+materializedHslToCss maybeAlpha hsl =
+  let h = formatCssNumber (V.hue hsl)
+      s = formatCssPercent01 (V.saturation hsl)
+      l = formatCssPercent01 (V.lightness hsl)
+   in case maybeAlpha of
+        Nothing -> "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ ")"
+        Just a ->
+          "hsl("
+            ++ h
+            ++ " "
+            ++ s
+            ++ " "
+            ++ l
+            ++ " / "
+            ++ formatCssNumber (clamp 0 1 a)
+            ++ ")"
 
 --------------------------------------------------------------------------------
--- Core helpers
+-- Render lookup helpers
 --------------------------------------------------------------------------------
-snapshotBlockId :: C.BlockSnapshot tag -> C.BlockId
-snapshotBlockId snapshot =
-  case snapshot of
+requireBlock :: BlockLookup -> TraceNode tag -> CompileM RenderBlock
+requireBlock blocksById node =
+  case Map.lookup (nodeBlockId node) blocksById of
+    Just block -> pure block
+    Nothing ->
+      lift (Left ("no materialized block for B" ++ show (nodeBlockId node)))
+
+nodeBlockId :: TraceNode tag -> C.BlockId
+nodeBlockId node =
+  case node of
     C.BlockSnapshot ref _payload _view -> blockIdOfRef ref
 
 blockIdOfRef :: C.BlockRef tag -> C.BlockId
@@ -289,27 +430,85 @@ payloadViewText payloadView =
     C.PayloadView text -> text
 
 --------------------------------------------------------------------------------
+-- Number formatting and rounding
+--------------------------------------------------------------------------------
+roundLayout :: Double -> Double
+roundLayout = roundTo 3
+
+roundTo :: Int -> Double -> Double
+roundTo places x =
+  cleanNegativeZero (fromIntegral (round (x * scale) :: Integer) / scale)
+  where
+    scale = 10 ^ places
+
+cleanNegativeZero :: Double -> Double
+cleanNegativeZero x =
+  if abs x < 0.0005
+    then 0
+    else x
+
+clamp :: Double -> Double -> Double -> Double
+clamp lo hi x = max lo (min hi x)
+
+formatCssPixels :: Double -> String
+formatCssPixels x = formatCssNumber x ++ "px"
+
+formatCssPercent01 :: Double -> String
+formatCssPercent01 x = formatCssNumber (100 * clamp 0 1 x) ++ "%"
+
+formatCssNumber :: Double -> String
+formatCssNumber value =
+  trimTrailingZeros (showFFloat (Just 3) (roundLayout value) "")
+
+trimTrailingZeros :: String -> String
+trimTrailingZeros text =
+  case break (== '.') text of
+    (_whole, "") -> text
+    (whole, dotAndFraction) ->
+      let fraction = drop 1 dotAndFraction
+          trimmedFraction = reverse (dropWhile (== '0') (reverse fraction))
+       in case trimmedFraction of
+            "" -> whole
+            _  -> whole ++ "." ++ trimmedFraction
+
+--------------------------------------------------------------------------------
 -- JSON helpers
 --------------------------------------------------------------------------------
 instance ToJSON RenderId where
   toJSON (RenderId text) = toJSON text
 
+instance ToJSON StyleValue where
+  toJSON value =
+    case value of
+      StyleNumber x   -> toJSON (roundLayout x)
+      StylePixels x   -> toJSON (formatCssPixels x)
+      StyleText text  -> toJSON text
+      StyleColor text -> toJSON text
+      StyleBool bool  -> toJSON bool
+
 instance ToJSON RenderStyle where
   toJSON style =
     object
-      [ "top" .= renderTop style
-      , "left" .= renderLeft style
-      , "width" .= renderWidth style
-      , "height" .= renderHeight style
-      ]
+      ([ "top" .= StylePixels (renderTop style)
+       , "left" .= StylePixels (renderLeft style)
+       , "width" .= StylePixels (renderWidth style)
+       , "height" .= StylePixels (renderHeight style)
+       ]
+         ++ map styleAttrPair (Map.toAscList (renderAttrs style)))
+
+styleAttrPair (name, value) = Key.fromString name .= value
 
 instance ToJSON RenderBlock where
   toJSON block =
     object
-      [ "blockId" .= renderBlockId block
-      , "label" .= renderLabel block
-      , "style" .= renderStyle block
-      ]
+      ([ "blockId" .= renderBlockId block
+       , "label" .= renderLabel block
+       , "style" .= renderStyle block
+       ]
+         ++ maybe
+              []
+              (\className -> ["className" .= className])
+              (renderClassName block))
 
 instance ToJSON RenderPatch where
   toJSON patch =
