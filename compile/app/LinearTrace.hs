@@ -59,7 +59,7 @@ module LinearTrace
   , explain
   , (<$>)
   , (<*>)
-  , -- * Graph building and rendering
+  , -- * Graph building, rendering and compilation
     TracePayload(..)
   , Audit(..)
   , AuditStep(..)
@@ -71,8 +71,12 @@ module LinearTrace
   , printVisualization
   , printVisualizationCSPSolution
   , printSolvedVisualization
+  , compileSolvedVisualization
   ) where
 
+import           LinearTrace.Compile
 import           LinearTrace.Core
 import           LinearTrace.Print
-import           Prelude           hiding ((<$>), (<*>))
+
+-- import           LinearTrace.Visualize
+import           Prelude             hiding ((<$>), (<*>))

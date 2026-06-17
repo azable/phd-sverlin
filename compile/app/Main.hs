@@ -18,4 +18,5 @@ main = do
       visGraph
   LinearTrace.printVisualizationCSPSolution solved
   LinearTrace.printSolvedVisualization solved visGraph
-  -- test
+  let compiled = LinearTrace.compileSolvedVisualization solved visGraph
+  print compiled
