@@ -179,15 +179,22 @@ renderVisualization ::
   -> Maybe S.Solution
   -> V.ViewGraph events
   -> String
-renderVisualization showDetails maybeSolution (V.ViewGraph nodes steps constraints) =
+renderVisualization showDetails maybeSolution graph =
   concat
     [ renderHeader "Visualization"
-    , renderVisualizationSummary nodes steps constraints
+    , renderVisualizationSummary nodes steps constraints initialVars
     , renderMaybeSolutionSummary maybeSolution
     , "\n"
-    , renderWhen showDetails (renderViewNodes nodes ++ "\n")
+    , renderWhen
+        showDetails
+        (concat [renderViewNodes nodes, "\n", renderInitialVars initialVars])
     , renderViewTrace showDetails maybeSolution steps
     ]
+  where
+    nodes = V.viewNodes graph
+    steps = V.viewSteps graph
+    constraints = V.viewConstraints graph
+    initialVars = V.viewInitialVars graph
 
 renderMaybeSolutionSummary :: Maybe S.Solution -> String
 renderMaybeSolutionSummary maybeSolution =
@@ -231,14 +238,12 @@ renderSolutionSummary solution =
 
 renderSolutionValues :: Map.Map String Double -> String
 renderSolutionValues values =
-  concat
-    [ renderHeader "Solution values"
-    , renderAlignedAssignments
-        "  "
-        [ (name, formatSignedDouble value)
-        | (name, value) <- Map.toAscList values
-        ]
-    ]
+  renderHeader "Solution values"
+    ++ renderAlignedAssignments
+         "  "
+         [ (name, formatSignedDouble value)
+         | (name, value) <- Map.toAscList values
+         ]
 
 --------------------------------------------------------------------------------
 -- Summary
@@ -255,8 +260,12 @@ renderSummary blocks events =
     ]
 
 renderVisualizationSummary ::
-     [V.ViewNode] -> [V.ViewStep events] -> [V.Constraint] -> String
-renderVisualizationSummary nodes steps constraints =
+     [V.ViewNode]
+  -> [V.ViewStep events]
+  -> [V.Constraint]
+  -> [S.InitialVar]
+  -> String
+renderVisualizationSummary nodes steps constraints initialVars =
   concat
     [ "View nodes: "
     , show (length nodes)
@@ -266,6 +275,9 @@ renderVisualizationSummary nodes steps constraints =
     , "\n"
     , "Constraints: "
     , show (length constraints)
+    , "\n"
+    , "Initial vars: "
+    , show (length initialVars)
     , "\n"
     ]
 
@@ -346,6 +358,36 @@ renderMaybeHslStyleField name maybeHsl =
         , renderStyleField (name ++ ".saturation") (V.saturation hsl)
         , renderStyleField (name ++ ".lightness") (V.lightness hsl)
         ]
+
+--------------------------------------------------------------------------------
+-- Initial variables
+--------------------------------------------------------------------------------
+renderInitialVars :: [S.InitialVar] -> String
+renderInitialVars initialVars =
+  case initialVars of
+    [] -> ""
+    _ ->
+      concat
+        [ renderHeader "Initial variables"
+        , renderAlignedAssignments
+            "  "
+            [ (name, renderInitialVarValue ty bounds)
+            | S.InitialVar name ty bounds <- initialVars
+            ]
+        , "\n"
+        ]
+
+renderInitialVarValue :: S.ScalarType -> S.InitialBounds -> String
+renderInitialVarValue ty bounds =
+  concat [S.typeName ty, " ", renderInitialBounds bounds]
+
+renderInitialBounds :: S.InitialBounds -> String
+renderInitialBounds bounds =
+  case (S.initialLower bounds, S.initialUpper bounds) of
+    (Just lo, Just hi) -> "[" ++ fixed2 lo ++ ", " ++ fixed2 hi ++ "]"
+    (Just lo, Nothing) -> "[" ++ fixed2 lo ++ ", ∞)"
+    (Nothing, Just hi) -> "(-∞, " ++ fixed2 hi ++ "]"
+    (Nothing, Nothing) -> "(-∞, ∞)"
 
 --------------------------------------------------------------------------------
 -- View constraints

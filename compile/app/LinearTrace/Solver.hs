@@ -15,6 +15,8 @@ module LinearTrace.Solver
   , Angle
   , -- * Symbolic scalar language
     Var(..)
+  , InitialVar(..)
+  , initialRangeFor
   , varName
   , Expr
   , RawExpr(..)
@@ -61,6 +63,7 @@ module LinearTrace.Solver
   , defaultSolveConfig
   , Solution(..)
   , solve
+  , solveWithInitialVars
   , evalExpr
   ) where
 
@@ -196,6 +199,12 @@ newtype Var =
 varName :: Var -> String
 varName (Var name) = name
 
+data InitialVar = InitialVar
+  { initialVarName   :: String
+  , initialVarType   :: ScalarType
+  , initialVarBounds :: InitialBounds
+  } deriving (Eq, Show)
+
 data RawExpr
   = EVar ScalarType Var
   | ELit Double
@@ -221,6 +230,18 @@ var ::
 var name = Expr ty (EVar ty (Var name))
   where
     ty = symbolicType (Proxy :: Proxy ty)
+
+initialRangeFor :: Expr ty -> Range -> Maybe InitialVar
+initialRangeFor (Expr _ raw) range =
+  case raw of
+    EVar ty variable ->
+      Just
+        InitialVar
+          { initialVarName = varName variable
+          , initialVarType = ty
+          , initialVarBounds = rangeToInitialBounds range
+          }
+    _ -> Nothing
 
 num ::
      forall ty. SymbolicType ty
@@ -525,8 +546,12 @@ data Solution = Solution
   } deriving (Eq, Show)
 
 solve :: SolveConfig -> [Constraint] -> IO Solution
-solve config constraints = do
-  let named = compileConstraints config constraints
+solve config = solveWithInitialVars config []
+
+solveWithInitialVars ::
+     SolveConfig -> [InitialVar] -> [Constraint] -> IO Solution
+solveWithInitialVars config initialVars constraints = do
+  let named = compileConstraintsWithInitialVars config initialVars constraints
   result <- solveCSP (namedCSP named)
   let vector = Opt.resultSolution result
       lookupValue (InternalVar i)
@@ -542,11 +567,22 @@ solve config constraints = do
       }
 
 compileConstraints :: SolveConfig -> [Constraint] -> NamedCSP
-compileConstraints config constraints =
+compileConstraints config = compileConstraintsWithInitialVars config []
+
+compileConstraintsWithInitialVars ::
+     SolveConfig -> [InitialVar] -> [Constraint] -> NamedCSP
+compileConstraintsWithInitialVars config initialVars constraints =
   NamedCSP {namedVars = vars, namedCSP = csp}
   where
-    varTypes = collectConstraintVarTypes constraints
-    inferredBounds = inferInitialBounds constraints
+    varTypes =
+      mergeVarTypeMaps
+        (collectInitialVarTypes initialVars)
+        (collectConstraintVarTypes constraints)
+    inferredBounds =
+      Map.unionWith
+        mergeInitialBounds
+        (collectInitialVarBounds initialVars)
+        (inferInitialBounds constraints)
     variableInputs =
       zip (randomSamplesFromSeed (initialSeed config)) (Map.toAscList varTypes)
     build = do
@@ -578,6 +614,23 @@ compileConstraints config constraints =
 --------------------------------------------------------------------------------
 -- Symbol collection and inferred initial ranges
 --------------------------------------------------------------------------------
+collectInitialVarTypes :: [InitialVar] -> Map String ScalarType
+collectInitialVarTypes = foldMap collectOne
+  where
+    collectOne initial =
+      Map.singleton (initialVarName initial) (initialVarType initial)
+
+collectInitialVarBounds :: [InitialVar] -> Map String InitialBounds
+collectInitialVarBounds = foldl' addOne Map.empty
+  where
+    addOne bounds initial =
+      Map.alter
+        (Just
+           . mergeInitialBounds (initialVarBounds initial)
+           . maybe unboundedInitialBounds id)
+        (initialVarName initial)
+        bounds
+
 collectRawExprVarTypes :: RawExpr -> Map String ScalarType
 collectRawExprVarTypes expr =
   case expr of

@@ -1,6 +1,4 @@
 {-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE DeriveFoldable       #-}
-{-# LANGUAGE DeriveFunctor        #-}
 {-# LANGUAGE DeriveTraversable    #-}
 {-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleContexts     #-}
@@ -30,7 +28,9 @@ module LinearTrace.Visualize
   , MaterializedBlockView(..)
   , MaterializedViewNode(..)
   , -- * Solver domains
-    Free
+    Range(..)
+  , InitialVar(..)
+  , Free
   , Length
   , Unit
   , Angle
@@ -80,6 +80,7 @@ module LinearTrace.Visualize
   , defaultRandomSeed
   , ensure
   , encourage
+  , registerInitialRange
   , -- * Style helpers
     top
   , left
@@ -309,6 +310,7 @@ data ViewGraph events = ViewGraph
   { viewNodes       :: [ViewNode]
   , viewSteps       :: [ViewStep events]
   , viewConstraints :: [Constraint]
+  , viewInitialVars :: [InitialVar]
   }
 
 --------------------------------------------------------------------------------
@@ -432,30 +434,45 @@ data ViewAudit acts where
 -- Reader + Writer builder
 --------------------------------------------------------------------------------
 data ViewEnv = ViewEnv
-  { canvasWidth  :: LengthExpr
-  , canvasHeight :: LengthExpr
+  { canvasWidthValue  :: Double
+  , canvasHeightValue :: Double
+  , canvasWidth       :: LengthExpr
+  , canvasHeight      :: LengthExpr
   }
 
 defaultViewEnv :: ViewEnv
-defaultViewEnv = ViewEnv {canvasWidth = num 800, canvasHeight = num 600}
+defaultViewEnv =
+  ViewEnv
+    { canvasWidthValue = 800
+    , canvasHeightValue = 600
+    , canvasWidth = num 800
+    , canvasHeight = num 600
+    }
 
 data ViewOutput events = ViewOutput
   { emittedNodes       :: [ViewNode]
   , emittedSteps       :: [ViewStep events]
   , emittedConstraints :: [Constraint]
+  , emittedInitialVars :: [InitialVar]
   }
 
 instance Semigroup (ViewOutput events) where
-  ViewOutput nodesA stepsA constraintsA <> ViewOutput nodesB stepsB constraintsB =
+  ViewOutput nodesA stepsA constraintsA initialsA <> ViewOutput nodesB stepsB constraintsB initialsB =
     ViewOutput
       { emittedNodes = nodesA ++ nodesB
       , emittedSteps = stepsA ++ stepsB
       , emittedConstraints = constraintsA ++ constraintsB
+      , emittedInitialVars = initialsA ++ initialsB
       }
 
 instance Monoid (ViewOutput events) where
   mempty =
-    ViewOutput {emittedNodes = [], emittedSteps = [], emittedConstraints = []}
+    ViewOutput
+      { emittedNodes = []
+      , emittedSteps = []
+      , emittedConstraints = []
+      , emittedInitialVars = []
+      }
 
 type ViewBuilder events a = ReaderT ViewEnv (Writer (ViewOutput events)) a
 
@@ -464,6 +481,15 @@ ensure constraint = tell mempty {emittedConstraints = [constraint]}
 
 encourage :: Expr ty -> ViewBuilder events ()
 encourage objective = tell mempty {emittedConstraints = [minimize objective]}
+
+registerInitialVar :: InitialVar -> ViewBuilder events ()
+registerInitialVar initial = tell mempty {emittedInitialVars = [initial]}
+
+registerInitialRange :: Expr ty -> Range -> ViewBuilder events ()
+registerInitialRange expr range =
+  case initialRangeFor expr range of
+    Nothing      -> pure ()
+    Just initial -> registerInitialVar initial
 
 emitViewNode :: ViewNode -> ViewBuilder events ()
 emitViewNode node = tell mempty {emittedNodes = [node]}
@@ -491,11 +517,6 @@ contains outer inner = do
   ensure $ boundsTop outer @<@ boundsTop inner
   ensure $ boundsRight inner @<@ boundsRight outer
   ensure $ boundsBottom inner @<@ boundsBottom outer
-
-containsCanvas :: BlockView tag -> ViewBuilder events ()
-containsCanvas block = do
-  canvas <- canvasBounds
-  canvas `contains` blockBounds block
 
 between :: Expr ty -> Expr ty -> Expr ty -> ViewBuilder events ()
 between lo x hi = do
@@ -626,7 +647,7 @@ visualizeNewBlock block0 = do
         block0
           {blockStyle = styleBlock (Proxy :: Proxy tag) (blockStyle block0)}
   emitViewNode (BlockViewNode block)
-  containsCanvas block
+  registerInitialStyleBounds (blockStyle block)
   constrainStyle (blockStyle block)
   visualizeBlock block
 
@@ -727,14 +748,17 @@ buildCSP graph@(C.TraceGraph _blocks events) =
       viewSteps' = map stepView stepOutputs
       nodes = concatMap stepNodes stepOutputs
       constraints = concatMap stepConstraints stepOutputs
+      initialVars = concatMap stepInitialVars stepOutputs
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
         , viewConstraints = constraints
+        , viewInitialVars = initialVars
         }
 
 solveCSP :: SolveConfig -> ViewGraph events -> IO Solution
-solveCSP config graph = solve config (viewConstraints graph)
+solveCSP config graph =
+  solveWithInitialVars config (viewInitialVars graph) (viewConstraints graph)
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph events -> IO Solution
 solveCSPWithSeed seed = solveCSP defaultSolveConfig {initialSeed = seed}
@@ -743,6 +767,7 @@ data BuiltViewStep events = BuiltViewStep
   { stepView        :: ViewStep events
   , stepNodes       :: [ViewNode]
   , stepConstraints :: [Constraint]
+  , stepInitialVars :: [InitialVar]
   }
 
 visualizeTraceEvent ::
@@ -755,10 +780,12 @@ visualizeTraceEvent env traceEvent@(C.TraceEvent event audit) =
         execWriter (runReaderT (visualizeUnion event (viewAudit audit)) env)
       nodes = emittedNodes output
       constraints = emittedConstraints output
+      initialVars = emittedInitialVars output
    in BuiltViewStep
         { stepView = ViewStep traceEvent nodes constraints
         , stepNodes = nodes
         , stepConstraints = constraints
+        , stepInitialVars = initialVars
         }
 
 buildViewEnv :: C.TraceGraph events -> ViewEnv
@@ -838,6 +865,42 @@ viewAuditStep step =
 --------------------------------------------------------------------------------
 -- Style bounds / registration
 --------------------------------------------------------------------------------
+registerMaybeInitialRange :: Range -> Maybe (Expr ty) -> ViewBuilder events ()
+registerMaybeInitialRange range maybeExpr =
+  case maybeExpr of
+    Nothing   -> pure ()
+    Just expr -> registerInitialRange expr range
+
+registerInitialHslBounds :: HslExpr -> ViewBuilder events ()
+registerInitialHslBounds hsl = do
+  registerInitialRange (hue hsl) (Range 0 360)
+  registerInitialRange (saturation hsl) (Range 0 1)
+  registerInitialRange (lightness hsl) (Range 0 1)
+
+registerMaybeInitialHslBounds :: Maybe HslExpr -> ViewBuilder events ()
+registerMaybeInitialHslBounds maybeHsl =
+  case maybeHsl of
+    Nothing  -> pure ()
+    Just hsl -> registerInitialHslBounds hsl
+
+registerInitialStyleBounds :: Style -> ViewBuilder events ()
+registerInitialStyleBounds style = do
+  env <- ask
+  let canvasW = canvasWidthValue env
+      canvasH = canvasHeightValue env
+  registerInitialRange (left style) (Range 0 canvasW)
+  registerInitialRange (top style) (Range 0 canvasH)
+  registerInitialRange (width style) (Range 20 (max 20 (canvasW / 4)))
+  registerInitialRange (height style) (Range 20 (max 20 (canvasH / 4)))
+  registerMaybeInitialRange (Range 0 1) (styleOpacity style)
+  registerMaybeInitialRange (Range (-10) 10) (styleZIndex style)
+  registerMaybeInitialRange (Range 8 48) (styleFontSize style)
+  registerMaybeInitialRange (Range 0 32) (styleRadius style)
+  registerMaybeInitialHslBounds (styleFill style)
+  registerMaybeInitialHslBounds (styleStroke style)
+  registerMaybeInitialRange (Range 0 8) (styleStrokeWidth style)
+  registerMaybeInitialRange (Range 0 1) (styleAlpha style)
+
 constrainMaybe ::
      (a -> ViewBuilder events ()) -> Maybe a -> ViewBuilder events ()
 constrainMaybe f maybeValue =
