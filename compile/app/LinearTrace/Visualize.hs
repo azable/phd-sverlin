@@ -72,7 +72,12 @@ module LinearTrace.Visualize
   , VisualizeEvents(..)
   , buildCSP
   , solveCSP
+  , solveCSPWithSeed
+  , SolveConfig(..)
+  , RandomSeed(..)
+  , RandomSample(..)
   , defaultSolveConfig
+  , defaultRandomSeed
   , ensure
   , encourage
   , -- * Style helpers
@@ -730,6 +735,10 @@ buildCSP graph@(C.TraceGraph _blocks events) =
 
 solveCSP :: SolveConfig -> ViewGraph events -> IO Solution
 solveCSP config graph = solve config (viewConstraints graph)
+
+solveCSPWithSeed :: Int -> ViewGraph events -> IO Solution
+solveCSPWithSeed seed =
+  solveCSP defaultSolveConfig {initialSeed = RandomSeed seed}
 
 data BuiltViewStep events = BuiltViewStep
   { stepView        :: ViewStep events

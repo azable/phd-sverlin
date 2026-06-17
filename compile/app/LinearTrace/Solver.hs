@@ -464,7 +464,7 @@ data RandomSample = RandomSample
   } deriving (Eq, Show)
 
 defaultRandomSeed :: RandomSeed
-defaultRandomSeed = RandomSeed 2
+defaultRandomSeed = RandomSeed 0
 
 randomSamplesFromSeed :: RandomSeed -> [RandomSample]
 randomSamplesFromSeed seed =

@@ -11,10 +11,7 @@ main = do
   let graph = run example
   LinearTrace.printTrace graph
   let visGraph = LinearTrace.Visualize.buildCSP graph
-  solved <-
-    LinearTrace.Visualize.solveCSP
-      LinearTrace.Visualize.defaultSolveConfig
-      visGraph
+  solved <- LinearTrace.Visualize.solveCSPWithSeed 20 visGraph
   LinearTrace.printSolvedVisualization True solved visGraph
   -- LinearTrace.printVisualizationCSPSolution solved
   case LinearTrace.compileSolvedVisualization solved visGraph of
