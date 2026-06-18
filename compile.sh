@@ -1,2 +1,2 @@
-#/bin/bash
-cabal run -v0 compile --builddir=compile/dist-newstyle
+#!/bin/bash
+cabal run -v0 compile-app --builddir=compile/dist-newstyle -- "$@"

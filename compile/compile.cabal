@@ -85,6 +85,7 @@ executable compile-app
                       aeson,
                       aeson-pretty,
                       bytestring,
+                      optparse-applicative,
                       prettyprinter
 
     -- Directories containing source files.
