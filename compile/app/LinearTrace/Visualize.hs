@@ -291,6 +291,11 @@ positionOf block = Vec2 (leftOf block) (topOf block)
 sizeOf :: BlockView tag -> Vec2 LayoutExpr
 sizeOf block = Vec2 (widthOf block) (heightOf block)
 
+insideCanvas :: BlockView tag -> ViewBuilder events ()
+insideCanvas block = do
+  canvas <- canvasBounds
+  canvas `contains` blockBounds block
+
 blockBounds :: BlockView tag -> Bounds
 blockBounds block =
   Bounds
@@ -650,6 +655,7 @@ viewNewBlock block0 = do
   emitViewNode (BlockViewNode block)
   registerInitialStyleBounds (blockStyle block)
   constrainStyle (blockStyle block)
+  insideCanvas block
   viewBlock block
 
 --------------------------------------------------------------------------------
