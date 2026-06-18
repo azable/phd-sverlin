@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -67,9 +68,9 @@ module LinearTrace.Visualize
   , -- * Builder
     ViewEnv(..)
   , ViewBuilder
-  , VisualizeBlock(..)
-  , VisualizeEvent(..)
-  , VisualizeEvents(..)
+  , ViewBlock(..)
+  , ViewEvent(..)
+  , ViewEvents(..)
   , buildCSP
   , solveCSP
   , solveCSPWithSeed
@@ -304,7 +305,7 @@ data ViewNode where
 
 data ViewStep events where
   ViewStep
-    :: C.TraceEvent events -> [ViewNode] -> [Constraint] -> ViewStep events
+    :: C.RecordedEvent events -> [ViewNode] -> [Constraint] -> ViewStep events
 
 data ViewGraph events = ViewGraph
   { viewNodes       :: [ViewNode]
@@ -563,18 +564,6 @@ sameBounds a b = do
   sameWidth a b
   sameHeight a b
 
--- centeredWithin :: BlockView a -> BlockView b -> ViewBuilder events ()
--- centeredWithin inner outer = do
---   ensure
---     $ leftOf inner
---         @+@ (widthOf inner @/@ num 2)
---         @=@ leftOf outer
---         @+@ (widthOf outer @/@ num 2)
---   ensure
---     $ topOf inner
---         @+@ (heightOf inner @/@ num 2)
---         @=@ topOf outer
---         @+@ (heightOf outer @/@ num 2)
 sameVec2 :: Vec2 LayoutExpr -> Vec2 LayoutExpr -> ViewBuilder events ()
 sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
   ensure $ ax @=@ bx
@@ -644,119 +633,112 @@ withCssClass value style = style {styleCssClass = Just (CssText value)}
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 class C.Traceable tag =>
-      VisualizeBlock tag
+      ViewBlock tag
   where
   styleBlock :: Proxy tag -> Style -> Style
   styleBlock _ = id
-  visualizeBlock :: BlockView tag -> ViewBuilder events ()
+  viewBlock :: BlockView tag -> ViewBuilder events ()
 
-visualizeNewBlock ::
-     forall tag events. VisualizeBlock tag
+viewNewBlock ::
+     forall tag events. ViewBlock tag
   => BlockView tag
   -> ViewBuilder events ()
-visualizeNewBlock block0 = do
+viewNewBlock block0 = do
   let block =
         block0
           {blockStyle = styleBlock (Proxy :: Proxy tag) (blockStyle block0)}
   emitViewNode (BlockViewNode block)
   registerInitialStyleBounds (blockStyle block)
   constrainStyle (blockStyle block)
-  visualizeBlock block
+  viewBlock block
 
 --------------------------------------------------------------------------------
 -- Automatic block visualisation from audit steps
 --------------------------------------------------------------------------------
-class VisualizeAuditBlock act where
-  visualizeAuditBlockStep :: ViewAuditStep act -> ViewBuilder events ()
+class ViewAction act where
+  viewAction :: ViewAuditStep act -> ViewBuilder events ()
 
-instance VisualizeBlock tag => VisualizeAuditBlock (C.Create tag) where
-  visualizeAuditBlockStep step =
+instance ViewBlock tag => ViewAction (C.Create tag) where
+  viewAction step =
     case step of
-      VCreated block -> visualizeNewBlock block
+      VCreated block -> viewNewBlock block
 
-instance VisualizeAuditBlock (C.Observe tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Observe tag) where
+  viewAction _ = pure ()
 
-instance VisualizeAuditBlock (C.Inspect tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Inspect tag) where
+  viewAction _ = pure ()
 
-instance VisualizeAuditBlock (C.Use tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Use tag) where
+  viewAction _ = pure ()
 
-instance VisualizeBlock tag => VisualizeAuditBlock (C.Copy tag) where
-  visualizeAuditBlockStep step =
+instance ViewBlock tag => ViewAction (C.Copy tag) where
+  viewAction step =
     case step of
-      VCopied _original copy' -> visualizeNewBlock copy'
+      VCopied _original copy' -> viewNewBlock copy'
 
-instance VisualizeBlock tag => VisualizeAuditBlock (C.Replace tag) where
-  visualizeAuditBlockStep step =
+instance ViewBlock tag => ViewAction (C.Replace tag) where
+  viewAction step =
     case step of
-      VReplaced _old _incoming output -> visualizeNewBlock output
+      VReplaced _old _incoming output -> viewNewBlock output
 
-instance VisualizeBlock tag => VisualizeAuditBlock (C.Compute tag) where
-  visualizeAuditBlockStep step =
+instance ViewBlock tag => ViewAction (C.Compute tag) where
+  viewAction step =
     case step of
-      VComputed block -> visualizeNewBlock block
+      VComputed block -> viewNewBlock block
 
-instance VisualizeAuditBlock (C.Destroy tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Destroy tag) where
+  viewAction _ = pure ()
 
-instance VisualizeAuditBlock (C.Seal owner tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Seal owner tag) where
+  viewAction _ = pure ()
 
-instance VisualizeAuditBlock (C.Unseal owner tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Unseal owner tag) where
+  viewAction _ = pure ()
 
-instance VisualizeAuditBlock (C.Decide tag) where
-  visualizeAuditBlockStep _ = pure ()
+instance ViewAction (C.Decide tag) where
+  viewAction _ = pure ()
 
-class VisualizeAuditBlocks acts where
-  visualizeAuditBlocks :: ViewAudit acts -> ViewBuilder events ()
+class ViewActions acts where
+  viewActions :: ViewAudit acts -> ViewBuilder events ()
 
-instance VisualizeAuditBlocks '[] where
-  visualizeAuditBlocks VDone = pure ()
+instance ViewActions '[] where
+  viewActions VDone = pure ()
 
-instance (VisualizeAuditBlock act, VisualizeAuditBlocks acts) =>
-         VisualizeAuditBlocks (act : acts) where
-  visualizeAuditBlocks (step :& rest) = do
-    visualizeAuditBlockStep step
-    visualizeAuditBlocks rest
+instance (ViewAction act, ViewActions acts) => ViewActions (act : acts) where
+  viewActions (step :& rest) = do
+    viewAction step
+    viewActions rest
 
 --------------------------------------------------------------------------------
 -- Per-event visualisation
 --------------------------------------------------------------------------------
-class C.TraceEventSpec event =>
-      VisualizeEvent event
-  where
-  visualizeEvent ::
-       event -> ViewAudit (C.EventActs event) -> ViewBuilder events ()
+class ViewEvent event where
+  viewEvent :: event -> ViewAudit (C.Actions event) -> ViewBuilder events ()
 
-class VisualizeEvents choices where
-  visualizeUnion ::
-       C.EventUnion choices acts -> ViewAudit acts -> ViewBuilder events ()
+class ViewEvents choices where
+  viewUnion ::
+       C.EventChoice choices acts -> ViewAudit acts -> ViewBuilder events ()
 
-instance VisualizeEvents '[] where
-  visualizeUnion union _ = case union of {}
+instance ViewEvents '[] where
+  viewUnion union _ = case union of {}
 
-instance ( VisualizeEvent event
-         , VisualizeAuditBlocks (C.EventActs event)
-         , VisualizeEvents rest
-         ) =>
-         VisualizeEvents (event : rest) where
-  visualizeUnion union audit =
+instance (ViewEvent event, ViewActions (C.Actions event), ViewEvents rest) =>
+         ViewEvents (event : rest) where
+  viewUnion union audit =
     case union of
       C.Here event -> do
-        visualizeAuditBlocks audit
-        visualizeEvent event audit
-      C.There rest -> visualizeUnion rest audit
+        viewActions audit
+        viewEvent event audit
+      C.There rest -> viewUnion rest audit
 
 --------------------------------------------------------------------------------
 -- Build a view graph
 --------------------------------------------------------------------------------
-buildCSP :: VisualizeEvents events => C.TraceGraph events -> ViewGraph events
+buildCSP :: ViewEvents events => C.TraceGraph events -> ViewGraph events
 buildCSP graph@(C.TraceGraph _blocks events) =
   let env = buildViewEnv graph
-      stepOutputs = map (visualizeTraceEvent env) events
+      stepOutputs = map (viewRecordedEvent env) events
       viewSteps' = map stepView stepOutputs
       nodes = concatMap stepNodes stepOutputs
       constraints = concatMap stepConstraints stepOutputs
@@ -782,19 +764,18 @@ data BuiltViewStep events = BuiltViewStep
   , stepInitialVars :: [InitialVar]
   }
 
-visualizeTraceEvent ::
-     VisualizeEvents events
+viewRecordedEvent ::
+     ViewEvents events
   => ViewEnv
-  -> C.TraceEvent events
+  -> C.RecordedEvent events
   -> BuiltViewStep events
-visualizeTraceEvent env traceEvent@(C.TraceEvent event audit) =
-  let output =
-        execWriter (runReaderT (visualizeUnion event (viewAudit audit)) env)
+viewRecordedEvent env recordedEvent@(C.RecordedEvent event audit) =
+  let output = execWriter (runReaderT (viewUnion event (viewAudit audit)) env)
       nodes = emittedNodes output
       constraints = emittedConstraints output
       initialVars = emittedInitialVars output
    in BuiltViewStep
-        { stepView = ViewStep traceEvent nodes constraints
+        { stepView = ViewStep recordedEvent nodes constraints
         , stepNodes = nodes
         , stepConstraints = constraints
         , stepInitialVars = initialVars

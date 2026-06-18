@@ -122,16 +122,16 @@ class PrintEvent event where
   printEvent :: event -> String
 
 class PrintEvents events where
-  printEventUnion :: EventUnion events acts -> String
+  printEventChoice :: EventChoice events acts -> String
 
 instance PrintEvents '[] where
-  printEventUnion union = case union of {}
+  printEventChoice choice = case choice of {}
 
 instance (PrintEvent event, PrintEvents events) => PrintEvents (event : events) where
-  printEventUnion union =
-    case union of
+  printEventChoice choice =
+    case choice of
       Here event -> printEvent event
-      There rest -> printEventUnion rest
+      There rest -> printEventChoice rest
 
 --------------------------------------------------------------------------------
 -- Public rendering API
@@ -248,7 +248,7 @@ renderSolutionValues values =
 --------------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------------
-renderSummary :: [BlockRecord] -> [TraceEvent events] -> String
+renderSummary :: [BlockRecord] -> [RecordedEvent events] -> String
 renderSummary blocks events =
   concat
     [ "Blocks: "
@@ -649,16 +649,16 @@ renderIndentedViewNode node =
 --------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
-renderEvents :: PrintEvents events => [TraceEvent events] -> String
+renderEvents :: PrintEvents events => [RecordedEvent events] -> String
 renderEvents events =
   renderHeader "Events" ++ concat (zipWith renderEvent [0 :: Int ..] events)
 
-renderEvent :: PrintEvents events => Int -> TraceEvent events -> String
-renderEvent ix (TraceEvent event audit) =
+renderEvent :: PrintEvents events => Int -> RecordedEvent events -> String
+renderEvent ix (RecordedEvent event audit) =
   concat
     [ padLeft eventIndexWidth ("E" ++ show ix)
     , " | "
-    , ansiText eventTitleStyle (printEventUnion event)
+    , ansiText eventTitleStyle (printEventChoice event)
     , "\n"
     , renderAudit audit
     , "\n"

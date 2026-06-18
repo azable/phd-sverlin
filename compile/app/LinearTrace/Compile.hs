@@ -145,15 +145,17 @@ compileFrame ::
      Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM RenderFrame
 compileFrame blocksById step =
   case step of
-    V.ViewStep traceEvent _nodes _constraints -> do
-      patches <- compileTraceEvent blocksById traceEvent
+    V.ViewStep recordedEvent _nodes _constraints -> do
+      patches <- compileRecordedEvent blocksById recordedEvent
       pure RenderFrame {framePatches = patches}
 
-compileTraceEvent ::
-     Map C.BlockId RenderBlock -> C.TraceEvent events -> CompileM [RenderPatch]
-compileTraceEvent blocksById traceEvent =
-  case traceEvent of
-    C.TraceEvent _event audit -> compileAudit blocksById audit
+compileRecordedEvent ::
+     Map C.BlockId RenderBlock
+  -> C.RecordedEvent events
+  -> CompileM [RenderPatch]
+compileRecordedEvent blocksById recordedEvent =
+  case recordedEvent of
+    C.RecordedEvent _event audit -> compileAudit blocksById audit
 
 compileAudit ::
      Map C.BlockId RenderBlock -> C.Audit acts -> CompileM [RenderPatch]

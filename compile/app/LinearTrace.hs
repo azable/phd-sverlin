@@ -1,15 +1,17 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module LinearTrace
-  ( TraceGraph
+  ( -- * Core public API data
+    TraceGraph
   , TraceBuilder
-  , Traceable
-  , TraceEventSpec
-  , EventActs
+  , Traceable(..)
   , Block
   , Slot
   , Payload
+  , type Actions
   , Member
+  , EventChoice(..)
+  , RecordedEvent(..)
   , -- * Trusted linear payloads
     LUnit(..)
   , LBool(..)
@@ -78,6 +80,4 @@ module LinearTrace
 import           LinearTrace.Compile
 import           LinearTrace.Core
 import           LinearTrace.Print
-
--- import           LinearTrace.Visualize
 import           Prelude             hiding ((<$>), (<*>))

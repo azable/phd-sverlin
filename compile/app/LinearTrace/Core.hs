@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE TypeOperators           #-}
 {-# LANGUAGE UndecidableInstances    #-}
@@ -41,6 +42,8 @@ module LinearTrace.Core
   , type Seal
   , type Unseal
   , type Decide
+  , -- * Event vocabulary
+    type Actions
   , -- * Primitive operations
     create
   , observe
@@ -76,10 +79,9 @@ module LinearTrace.Core
   , BlockRef(..)
   , BlockSnapshot(..)
   , BlockRecord(..)
-  , TraceEventSpec(..)
-  , EventUnion(..)
+  , EventChoice(..)
   , Member(..)
-  , TraceEvent(..)
+  , RecordedEvent(..)
   , -- * Public audit data
     AuditStep(..)
   , Audit(..)
@@ -102,6 +104,8 @@ infixr 5 :>
 type BlockId = Int
 
 type family Payload tag = payload | payload -> tag
+
+type family Actions event :: [Type]
 
 data PayloadView = PayloadView
   { payloadKind    :: P.String
@@ -313,18 +317,12 @@ data EvidenceList acts where
 --------------------------------------------------------------------------------
 -- Event layer
 --------------------------------------------------------------------------------
-class TraceEventSpec event where
-  type EventActs event :: [Type]
-
-data EventUnion (events :: [Type]) (acts :: [Type]) where
-  Here
-    :: TraceEventSpec event=> event
-    -> EventUnion (event : events) (EventActs event)
-  There :: EventUnion events acts -> EventUnion (other : events) acts
+data EventChoice (events :: [Type]) (acts :: [Type]) where
+  Here :: event -> EventChoice (event : events) (Actions event)
+  There :: EventChoice events acts -> EventChoice (other : events) acts
 
 class Member event events where
-  injectEvent ::
-       TraceEventSpec event => event -> EventUnion events (EventActs event)
+  injectEvent :: event -> EventChoice events (Actions event)
 
 instance {-# OVERLAPPING #-} Member event (event : events) where
   injectEvent = Here
@@ -333,16 +331,16 @@ instance {-# OVERLAPPABLE #-} Member event events =>
          Member event (other : events) where
   injectEvent event = There (injectEvent event)
 
-data TraceEvent (events :: [Type]) where
-  TraceEvent :: EventUnion events acts -> Audit acts -> TraceEvent events
+data RecordedEvent (events :: [Type]) where
+  RecordedEvent :: EventChoice events acts -> Audit acts -> RecordedEvent events
 
 data TraceGraph (events :: [Type]) =
-  TraceGraph [BlockRecord] [TraceEvent events]
+  TraceGraph [BlockRecord] [RecordedEvent events]
 
 data TraceBuilderState (events :: [Type]) = TraceBuilderState
   { _nextBlockId :: Ur BlockId
   , _blocks      :: Ur [BlockRecord]
-  , _events      :: Ur [TraceEvent events]
+  , _events      :: Ur [RecordedEvent events]
   }
 
 type TraceBuilder events a = State (TraceBuilderState events) a
@@ -474,19 +472,19 @@ allocateBlock tagProxy payload0 =
            oldEvents)
       return (Ur blockId, Ur payload)
 
-emitEvent :: TraceEvent events -> TraceBuilder events ()
+emitEvent :: RecordedEvent events -> TraceBuilder events ()
 emitEvent event = do
   TraceBuilderState oldNext oldBlocks (Ur oldEvents) <- get
   put (TraceBuilderState oldNext oldBlocks (Ur (oldEvents P.++ [event])))
 
 explain ::
-     (TraceEventSpec event, Member event events)
+     Member event events
   => event
-  -> EvidenceList (EventActs event)
+  -> EvidenceList (Actions event)
      %1 -> TraceBuilder events ()
 explain event evidenceList =
   case evidenceListToAudit evidenceList of
-    Ur audit -> emitEvent (TraceEvent (injectEvent event) audit)
+    Ur audit -> emitEvent (RecordedEvent (injectEvent event) audit)
 
 --------------------------------------------------------------------------------
 -- Primitive operations

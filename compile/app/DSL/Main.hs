@@ -43,14 +43,14 @@ module DSL.Main
   , DiscardVar(..)
   , DiscardValue(..)
   , -- * Action-list aliases
-    LiteralActs
-  , OperatorActs
-  , DeclareVarActs
-  , ReadVarActs
-  , WriteVarActs
-  , EvalActs
-  , DiscardVarActs
-  , DiscardValueActs
+    LiteralActions
+  , OperatorActions
+  , DeclareVarActions
+  , ReadVarActions
+  , WriteVarActions
+  , EvalActions
+  , DiscardVarActions
+  , DiscardValueActions
   , -- * Literals
     int
   , double
@@ -92,23 +92,21 @@ data (:*) a b where
 
 data Performed event result where
   Performed
-    :: result %1 -> EvidenceList (EventActs event) %1 -> Performed event result
+    :: result %1 -> EvidenceList (Actions event) %1 -> Performed event result
 
-class TraceEventSpec event =>
-      Step event
-  where
-  type StepInput event :: Type
-  type StepResult event :: Type
+class Step event where
+  type Input event :: Type
+  type Output event :: Type
   perform ::
        event
-    -> StepInput event
-       %1 -> Builder events (Performed event (StepResult event))
+    -> Input event
+       %1 -> Builder events (Performed event (Output event))
 
 step ::
      forall event events. (Step event, Member event events)
   => event
-  -> StepInput event
-     %1 -> Builder events (StepResult event)
+  -> Input event
+     %1 -> Builder events (Output event)
 step event input = do
   Performed result evidence <- perform event input
   event `explain` evidence
@@ -174,17 +172,16 @@ double = LDouble
 --------------------------------------------------------------------------------
 -- Literal step
 --------------------------------------------------------------------------------
-type LiteralActs ty = '[ Create (Value ty)]
+type LiteralActions ty = '[ Create (Value ty)]
 
 data Literal (ty :: PrimitiveType) =
   Literal
 
-instance TraceEventSpec (Literal ty) where
-  type EventActs (Literal ty) = LiteralActs ty
+type instance Actions (Literal ty) = LiteralActions ty
 
 instance Traceable (Value ty) => Step (Literal ty) where
-  type StepInput (Literal ty) = Payload (Value ty)
-  type StepResult (Literal ty) = Block (Value ty)
+  type Input (Literal ty) = Payload (Value ty)
+  type Output (Literal ty) = Block (Value ty)
   perform Literal payload = do
     Created block createValue <- create payload
     return (Performed block (createValue :~ Done))
@@ -201,18 +198,17 @@ instance PrintEvent (Literal ty) where
 --------------------------------------------------------------------------------
 -- Declare variable step
 --------------------------------------------------------------------------------
-type DeclareVarActs ty
+type DeclareVarActions ty
   = '[ Create (Value ty), Create (Var ty), Seal (Var ty) (Value ty)]
 
 newtype DeclareVar (ty :: PrimitiveType) =
   DeclareVar String
 
-instance TraceEventSpec (DeclareVar ty) where
-  type EventActs (DeclareVar ty) = DeclareVarActs ty
+type instance Actions (DeclareVar ty) = DeclareVarActions ty
 
 instance (Traceable (Value ty), Traceable (Var ty)) => Step (DeclareVar ty) where
-  type StepInput (DeclareVar ty) = Payload (Value ty)
-  type StepResult (DeclareVar ty) = VarBlock ty
+  type Input (DeclareVar ty) = Payload (Value ty)
+  type Output (DeclareVar ty) = VarBlock ty
   perform (DeclareVar name) initial = do
     Created valueBlock createValue <- create initial
     Created varBlock createVar <- create (LString name :: Payload (Var ty))
@@ -236,7 +232,7 @@ instance PrintEvent (DeclareVar ty) where
 --------------------------------------------------------------------------------
 -- Read variable step
 --------------------------------------------------------------------------------
-type ReadVarActs ty
+type ReadVarActions ty
   = '[ Unseal (Var ty) (Value ty), Copy (Value ty), Seal (Var ty) (Value ty)]
 
 data ReadVar (ty :: PrimitiveType) =
@@ -245,12 +241,11 @@ data ReadVar (ty :: PrimitiveType) =
 data ReadVarResult ty where
   ReadVarResult :: VarBlock ty %1 -> Block (Value ty) %1 -> ReadVarResult ty
 
-instance TraceEventSpec (ReadVar ty) where
-  type EventActs (ReadVar ty) = ReadVarActs ty
+type instance Actions (ReadVar ty) = ReadVarActions ty
 
 instance (Traceable (Value ty), Traceable (Var ty)) => Step (ReadVar ty) where
-  type StepInput (ReadVar ty) = VarBlock ty
-  type StepResult (ReadVar ty) = ReadVarResult ty
+  type Input (ReadVar ty) = VarBlock ty
+  type Output (ReadVar ty) = ReadVarResult ty
   perform ReadVar (VarBlock varBlock valueSlot) = do
     Unsealed var1 held unsealValue <- unseal varBlock valueSlot
     Copied held' copyBlock copyValue <- copy held
@@ -274,18 +269,17 @@ instance PrintEvent (ReadVar ty) where
 --------------------------------------------------------------------------------
 -- Write variable step
 --------------------------------------------------------------------------------
-type WriteVarActs ty
+type WriteVarActions ty
   = '[ Unseal (Var ty) (Value ty), Replace (Value ty), Seal (Var ty) (Value ty)]
 
 data WriteVar (ty :: PrimitiveType) =
   WriteVar
 
-instance TraceEventSpec (WriteVar ty) where
-  type EventActs (WriteVar ty) = WriteVarActs ty
+type instance Actions (WriteVar ty) = WriteVarActions ty
 
 instance (Traceable (Value ty), Traceable (Var ty)) => Step (WriteVar ty) where
-  type StepInput (WriteVar ty) = VarBlock ty :* Block (Value ty)
-  type StepResult (WriteVar ty) = VarBlock ty
+  type Input (WriteVar ty) = VarBlock ty :* Block (Value ty)
+  type Output (WriteVar ty) = VarBlock ty
   perform WriteVar (VarBlock varBlock valueSlot :* newValue) = do
     Unsealed var1 oldValue unsealValue <- unseal varBlock valueSlot
     Replaced currentValue replaceValue <- replace oldValue newValue
@@ -308,18 +302,17 @@ instance PrintEvent (WriteVar ty) where
 --------------------------------------------------------------------------------
 -- Discard variable step
 --------------------------------------------------------------------------------
-type DiscardVarActs ty
+type DiscardVarActions ty
   = '[ Unseal (Var ty) (Value ty), Destroy (Var ty), Destroy (Value ty)]
 
 data DiscardVar (ty :: PrimitiveType) =
   DiscardVar
 
-instance TraceEventSpec (DiscardVar ty) where
-  type EventActs (DiscardVar ty) = DiscardVarActs ty
+type instance Actions (DiscardVar ty) = DiscardVarActions ty
 
 instance (Traceable (Value ty), Traceable (Var ty)) => Step (DiscardVar ty) where
-  type StepInput (DiscardVar ty) = VarBlock ty
-  type StepResult (DiscardVar ty) = ()
+  type Input (DiscardVar ty) = VarBlock ty
+  type Output (DiscardVar ty) = ()
   perform DiscardVar (VarBlock varBlock valueSlot) = do
     Unsealed var1 held unsealValue <- unseal varBlock valueSlot
     Destroyed destroyVar <- destroy var1
@@ -338,17 +331,16 @@ instance PrintEvent (DiscardVar ty) where
 --------------------------------------------------------------------------------
 -- Discard value step
 --------------------------------------------------------------------------------
-type DiscardValueActs ty = '[ Destroy (Value ty)]
+type DiscardValueActions ty = '[ Destroy (Value ty)]
 
 data DiscardValue (ty :: PrimitiveType) =
   DiscardValue
 
-instance TraceEventSpec (DiscardValue ty) where
-  type EventActs (DiscardValue ty) = DiscardValueActs ty
+type instance Actions (DiscardValue ty) = DiscardValueActions ty
 
 instance Traceable (Value ty) => Step (DiscardValue ty) where
-  type StepInput (DiscardValue ty) = Block (Value ty)
-  type StepResult (DiscardValue ty) = ()
+  type Input (DiscardValue ty) = Block (Value ty)
+  type Output (DiscardValue ty) = ()
   perform DiscardValue value = do
     Destroyed destroyValue <- destroy value
     return (Performed () (destroyValue :~ Done))
@@ -365,17 +357,16 @@ instance PrintEvent (DiscardValue ty) where
 --------------------------------------------------------------------------------
 -- Operator step
 --------------------------------------------------------------------------------
-type OperatorActs op lhs rhs out = '[ Create (Op op lhs rhs out)]
+type OperatorActions op lhs rhs out = '[ Create (Op op lhs rhs out)]
 
 data Operator (op :: BinaryOp) (lhs :: PrimitiveType) (rhs :: PrimitiveType) (out :: PrimitiveType) =
   Operator
 
-instance TraceEventSpec (Operator op lhs rhs out) where
-  type EventActs (Operator op lhs rhs out) = OperatorActs op lhs rhs out
+type instance Actions (Operator op lhs rhs out) = OperatorActions op lhs rhs out
 
 instance Traceable (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
-  type StepInput (Operator op lhs rhs out) = Payload (Op op lhs rhs out)
-  type StepResult (Operator op lhs rhs out) = Block (Op op lhs rhs out)
+  type Input (Operator op lhs rhs out) = Payload (Op op lhs rhs out)
+  type Output (Operator op lhs rhs out) = Block (Op op lhs rhs out)
   perform Operator payload = do
     Created block createOp <- create payload
     return (Performed block (createOp :~ Done))
@@ -420,7 +411,7 @@ instance EvalOp 'TMul 'TDouble 'TDouble 'TDouble where
 --------------------------------------------------------------------------------
 -- Eval step
 --------------------------------------------------------------------------------
-type EvalActs op lhs rhs out
+type EvalActions op lhs rhs out
   = '[ Use (Value lhs)
      , Use (Op op lhs rhs out)
      , Use (Value rhs)
@@ -430,13 +421,12 @@ type EvalActs op lhs rhs out
 data Eval (op :: BinaryOp) (lhs :: PrimitiveType) (rhs :: PrimitiveType) (out :: PrimitiveType) =
   Eval
 
-instance TraceEventSpec (Eval op lhs rhs out) where
-  type EventActs (Eval op lhs rhs out) = EvalActs op lhs rhs out
+type instance Actions (Eval op lhs rhs out) = EvalActions op lhs rhs out
 
 instance EvalOp op lhs rhs out => Step (Eval op lhs rhs out) where
-  type StepInput (Eval op lhs rhs out) = Block (Value lhs) :* Block
+  type Input (Eval op lhs rhs out) = Block (Value lhs) :* Block
     (Op op lhs rhs out) :* Block (Value rhs)
-  type StepResult (Eval op lhs rhs out) = Block (Value out)
+  type Output (Eval op lhs rhs out) = Block (Value out)
   perform Eval (lhsBlock :* opBlock :* rhsBlock) = do
     Used lhs useLhs <- use lhsBlock
     Used opPayload useOp <- use opBlock
@@ -537,7 +527,7 @@ varBlock block = P.do
   ensure $ widthOf block @=@ (blockSize @+@ num 20)
   ensure $ heightOf block @=@ (blockSize @+@ num 20)
 
-instance VisualizeBlock (Value 'TInt) where
+instance ViewBlock (Value 'TInt) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
@@ -546,9 +536,9 @@ instance VisualizeBlock (Value 'TInt) where
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
       P.. withWhiteSpace WhiteSpaceNoWrap
-  visualizeBlock = cellBlock
+  viewBlock = cellBlock
 
-instance VisualizeBlock (Value 'TDouble) where
+instance ViewBlock (Value 'TDouble) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
@@ -557,9 +547,9 @@ instance VisualizeBlock (Value 'TDouble) where
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
       P.. withWhiteSpace WhiteSpaceNoWrap
-  visualizeBlock = cellBlock
+  viewBlock = cellBlock
 
-instance Typeable ty => VisualizeBlock (Var ty) where
+instance Typeable ty => ViewBlock (Var ty) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
@@ -570,68 +560,63 @@ instance Typeable ty => VisualizeBlock (Var ty) where
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
       P.. withWhiteSpace WhiteSpaceNoWrap
-  visualizeBlock = varBlock
+  viewBlock = varBlock
 
-instance Traceable (Op op lhs rhs out) => VisualizeBlock (Op op lhs rhs out) where
-  visualizeBlock = cellBlock
+instance Traceable (Op op lhs rhs out) => ViewBlock (Op op lhs rhs out) where
+  viewBlock = cellBlock
 
 --------------------------------------------------------------------------------
 -- Event visualisation
 --------------------------------------------------------------------------------
-instance VisualizeBlock (Value ty) => VisualizeEvent (Literal ty) where
-  visualizeEvent Literal audit =
+instance ViewBlock (Value ty) => ViewEvent (Literal ty) where
+  viewEvent Literal audit =
     case audit of
       VCreated value :& VDone -> P.do
         P.pure ()
 
-instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
-         VisualizeEvent (DeclareVar ty) where
-  visualizeEvent (DeclareVar _) audit =
+instance (ViewBlock (Value ty), ViewBlock (Var ty)) => ViewEvent (DeclareVar ty) where
+  viewEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
         varB `sameBounds` valueB
 
-instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
-         VisualizeEvent (ReadVar ty) where
-  visualizeEvent ReadVar audit =
+instance (ViewBlock (Value ty), ViewBlock (Var ty)) => ViewEvent (ReadVar ty) where
+  viewEvent ReadVar audit =
     case audit of
       VUnsealed varB held :& VCopied _heldOriginal copied :& VSealed _ _ :& VDone -> P.do
         P.pure ()
 
-instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
-         VisualizeEvent (WriteVar ty) where
-  visualizeEvent WriteVar audit =
+instance (ViewBlock (Value ty), ViewBlock (Var ty)) => ViewEvent (WriteVar ty) where
+  viewEvent WriteVar audit =
     case audit of
       VUnsealed varB _oldValue :& VReplaced _old _incoming stored :& VSealed _ _ :& VDone -> P.do
         stored `sameBounds` _old
 
-instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
-         VisualizeEvent (DiscardVar ty) where
-  visualizeEvent DiscardVar audit =
+instance (ViewBlock (Value ty), ViewBlock (Var ty)) => ViewEvent (DiscardVar ty) where
+  viewEvent DiscardVar audit =
     case audit of
       VUnsealed varB value :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
         P.pure ()
 
-instance VisualizeBlock (Value ty) => VisualizeEvent (DiscardValue ty) where
-  visualizeEvent DiscardValue audit =
+instance ViewBlock (Value ty) => ViewEvent (DiscardValue ty) where
+  viewEvent DiscardValue audit =
     case audit of
       VDestroyed value :& VDone -> P.do
         P.pure ()
 
-instance VisualizeBlock (Op op lhs rhs out) =>
-         VisualizeEvent (Operator op lhs rhs out) where
-  visualizeEvent Operator audit =
+instance ViewBlock (Op op lhs rhs out) => ViewEvent (Operator op lhs rhs out) where
+  viewEvent Operator audit =
     case audit of
       VCreated op :& VDone -> P.do
         P.pure ()
 
-instance ( VisualizeBlock (Value lhs)
-         , VisualizeBlock (Op op lhs rhs out)
-         , VisualizeBlock (Value rhs)
-         , VisualizeBlock (Value out)
+instance ( ViewBlock (Value lhs)
+         , ViewBlock (Op op lhs rhs out)
+         , ViewBlock (Value rhs)
+         , ViewBlock (Value out)
          ) =>
-         VisualizeEvent (Eval op lhs rhs out) where
-  visualizeEvent Eval audit =
+         ViewEvent (Eval op lhs rhs out) where
+  viewEvent Eval audit =
     case audit of
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
         lhs |=| op
