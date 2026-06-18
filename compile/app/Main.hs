@@ -2,8 +2,8 @@
 
 module Main where
 
+import           App
 import           DSL.Main
-import qualified LinearTrace
 import           Options.Applicative
 import           System.Random       (randomIO)
 
@@ -18,15 +18,14 @@ main = do
   seedInt <- chooseSeed (optionSeed options)
   let graph = run example
       config =
-        LinearTrace.defaultRunConfig
-          { LinearTrace.runSeed = LinearTrace.RandomSeed seedInt
-          , LinearTrace.runShowDetails = optionShowSolverDetails options
+        App.defaultRunConfig
+          { App.runSeed = seedInt
+          , App.runShowDetails = optionShowSolverDetails options
           }
-  result <- LinearTrace.runVisualization config graph
+  result <- App.runVisualization config graph
   case result of
     Left err        -> putStrLn err
     Right _compiled -> pure ()
-  putStrLn ("Compiled with solver seed: " ++ show seedInt)
 
 chooseSeed :: Maybe Int -> IO Int
 chooseSeed = maybe randomIO pure

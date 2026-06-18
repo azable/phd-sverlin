@@ -63,7 +63,6 @@ executable compile-app
     -- Modules included in this executable, other than Main.
     other-modules:
         LinearTrace
-        LinearTrace.App
         LinearTrace.Core
         LinearTrace.View
         LinearTrace.View.Style
@@ -71,6 +70,7 @@ executable compile-app
         LinearTrace.Solver
         LinearTrace.Compile
         DSL.Main
+        App
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

@@ -69,24 +69,17 @@ module LinearTrace
   , buildGraph
   , printGraph
   , printTrace
-  , printVisualization
-  , printVisualizationCSPSolution
-  , printSolvedVisualization
+  , printSolutionByEvent
   , RandomSeed(..)
-  , compileSolvedVisualization
-  , printCompiledVisualizationJSON
-  , writeCompiledVisualizationJSON
+  , compileSolved
+  , printCompiledJSON
+  , writeCompiledJSON
   , -- * Application pipeline
     ViewBlock(..)
   , ViewEvent(..)
   , ViewEvents
-  , RunConfig(..)
-  , defaultRunConfig
-  , buildViewGraph
-  , runVisualization
   ) where
 
-import           LinearTrace.App
 import           LinearTrace.Compile
 import           LinearTrace.Core
 import           LinearTrace.Print

@@ -8,12 +8,12 @@ module LinearTrace.Compile
   , RenderBlock(..)
   , RenderPatch(..)
   , RenderFrame(..)
-  , CompiledVisualization(..)
-  , compileSolvedVisualization
-  , compileSolvedVisualizationWithViewport
-  , encodeCompiledVisualizationPretty
-  , printCompiledVisualizationJSON
-  , writeCompiledVisualizationJSON
+  , Visualization(..)
+  , compileSolved
+  , compileSolvedWithViewport
+  , encodeCompiledPretty
+  , printCompiledJSON
+  , writeCompiledJSON
   ) where
 
 import           Control.Monad
@@ -26,7 +26,7 @@ import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import qualified LinearTrace.Core           as C
 import qualified LinearTrace.Solver         as S
-import qualified LinearTrace.View            as V
+import qualified LinearTrace.View           as V
 import           Numeric                    (showFFloat)
 import           Prelude
 
@@ -74,7 +74,7 @@ newtype RenderFrame = RenderFrame
   { framePatches :: [RenderPatch]
   } deriving (Eq, Show)
 
-data CompiledVisualization = CompiledVisualization
+data Visualization = Compiled
   { compiledWidth  :: Double
   , compiledHeight :: Double
   , frames         :: [RenderFrame]
@@ -101,20 +101,17 @@ type CompileM = StateT CompileState (Either String)
 --------------------------------------------------------------------------------
 -- Public compiler
 --------------------------------------------------------------------------------
-compileSolvedVisualization ::
-     S.Solution -> V.ViewGraph events -> Either String CompiledVisualization
-compileSolvedVisualization =
-  compileSolvedVisualizationWithViewport
-    defaultCompiledWidth
-    defaultCompiledHeight
+compileSolved :: S.Solution -> V.ViewGraph events -> Either String Visualization
+compileSolved =
+  compileSolvedWithViewport defaultCompiledWidth defaultCompiledHeight
 
-compileSolvedVisualizationWithViewport ::
+compileSolvedWithViewport ::
      Double
   -> Double
   -> S.Solution
   -> V.ViewGraph events
-  -> Either String CompiledVisualization
-compileSolvedVisualizationWithViewport viewportWidth viewportHeight solution graph =
+  -> Either String Visualization
+compileSolvedWithViewport viewportWidth viewportHeight solution graph =
   case buildBlockLookup solution graph of
     Left err -> Left err
     Right blocksById -> do
@@ -123,7 +120,7 @@ compileSolvedVisualizationWithViewport viewportWidth viewportHeight solution gra
           (compileFrames blocksById (V.viewSteps graph))
           emptyCompileState
       pure
-        CompiledVisualization
+        Compiled
           { compiledWidth = roundLayout viewportWidth
           , compiledHeight = roundLayout viewportHeight
           , frames = frames'
@@ -454,7 +451,7 @@ instance ToJSON RenderPatch where
 instance ToJSON RenderFrame where
   toJSON (RenderFrame patches) = toJSON patches
 
-instance ToJSON CompiledVisualization where
+instance ToJSON Visualization where
   toJSON compiled =
     object
       [ "canvas"
@@ -465,13 +462,12 @@ instance ToJSON CompiledVisualization where
       , "frames" .= frames compiled
       ]
 
-encodeCompiledVisualizationPretty :: CompiledVisualization -> BL.ByteString
-encodeCompiledVisualizationPretty = encodePretty
+encodeCompiledPretty :: Visualization -> BL.ByteString
+encodeCompiledPretty = encodePretty
 
-writeCompiledVisualizationJSON :: FilePath -> CompiledVisualization -> IO ()
-writeCompiledVisualizationJSON path compiled =
-  BL.writeFile path (encodeCompiledVisualizationPretty compiled)
+writeCompiledJSON :: FilePath -> Visualization -> IO ()
+writeCompiledJSON path compiled =
+  BL.writeFile path (encodeCompiledPretty compiled)
 
-printCompiledVisualizationJSON :: CompiledVisualization -> IO ()
-printCompiledVisualizationJSON compiled =
-  BL.putStr (encodeCompiledVisualizationPretty compiled)
+printCompiledJSON :: Visualization -> IO ()
+printCompiledJSON compiled = BL.putStr (encodeCompiledPretty compiled)

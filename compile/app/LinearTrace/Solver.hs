@@ -52,7 +52,6 @@ module LinearTrace.Solver
   , -- * Seeded initial value generation
     RandomSeed(..)
   , RandomSample(..)
-  , defaultRandomSeed
   , randomSamplesFromSeed
   , randomUnitsFromSeed
   , -- * Solving
@@ -143,7 +142,8 @@ rangeToInitialBounds range =
     }
 
 typeInitialBounds :: ScalarType -> InitialBounds
-typeInitialBounds ty = maybe unboundedInitialBounds rangeToInitialBounds (typeRange ty)
+typeInitialBounds ty =
+  maybe unboundedInitialBounds rangeToInitialBounds (typeRange ty)
 
 mergeInitialBounds :: InitialBounds -> InitialBounds -> InitialBounds
 mergeInitialBounds a b =
@@ -561,9 +561,6 @@ data RandomSample = RandomSample
   , randomSampleUnit  :: Double
   } deriving (Eq, Show)
 
-defaultRandomSeed :: RandomSeed
-defaultRandomSeed = RandomSeed 0
-
 randomSamplesFromSeed :: RandomSeed -> [RandomSample]
 randomSamplesFromSeed seed =
   zipWith RandomSample [0 ..] (randomUnitsFromSeed seed)
@@ -585,7 +582,7 @@ data SolveConfig = SolveConfig
 defaultSolveConfig :: SolveConfig
 defaultSolveConfig =
   SolveConfig
-    { initialSeed = defaultRandomSeed
+    { initialSeed = RandomSeed 0
     , initialValueFor = defaultInitialValue
     , ensureWeight = 100
     , encourageWeight = 1
@@ -617,6 +614,7 @@ data NamedCSP = NamedCSP
 
 data Solution = Solution
   { solutionSuccess :: Bool
+  , solutionSeed    :: RandomSeed
   , solutionEnergy  :: Double
   , solutionValues  :: Map String Double
   , solutionVector  :: [Double]
@@ -638,6 +636,7 @@ solveWithInitialVars config initialVars constraints = do
   pure
     Solution
       { solutionSuccess = Opt.resultSuccess result
+      , solutionSeed = initialSeed config
       , solutionEnergy = Opt.resultValue result
       , solutionValues = values
       , solutionVector = vector

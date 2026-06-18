@@ -11,19 +11,17 @@ module LinearTrace.Print
   , PrintEvents(..)
   , printGraph
   , printTrace
-  , printVisualization
-  , printSolvedVisualization
-  , printVisualizationCSPSolution
+  , printSolutionByEvent
+  , printSolutionSummary
   ) where
 
-import qualified Data.Map.Strict                  as Map
 import           LinearTrace.Core
-import qualified LinearTrace.Solver               as S
-import qualified LinearTrace.View                  as V
-import           Numeric                          (showFFloat)
+import qualified LinearTrace.Solver          as S
+import qualified LinearTrace.View            as V
+import           Numeric                     (showFFloat)
 import           Prelude
 import           Prettyprinter
-import           Prettyprinter.Render.String      (renderString)
+import           Prettyprinter.Render.String (renderString)
 
 --------------------------------------------------------------------------------
 -- Layout constants
@@ -143,21 +141,18 @@ instance (PrintEvent event, PrintEvents events) => PrintEvents (event : events) 
 -- Public rendering API
 --------------------------------------------------------------------------------
 printGraph :: PrintEvents events => TraceGraph events -> IO ()
-printGraph graph = putStr (renderGraph graph)
+printGraph graph = putStr $ renderGraph graph
 
 printTrace :: PrintEvents events => TraceGraph events -> IO ()
-printTrace graph = putStr (renderTrace graph)
+printTrace graph = putStr $ renderTrace graph
 
-printVisualization :: PrintEvents events => V.ViewGraph events -> IO ()
-printVisualization graph = putStr (renderVisualization True Nothing graph)
-
-printSolvedVisualization ::
+printSolutionByEvent ::
      PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> IO ()
-printSolvedVisualization showDetails solution graph =
-  putStr (renderVisualization showDetails (Just solution) graph)
+printSolutionByEvent showDetails solution graph =
+  putStr $ renderSolutionByEvent showDetails solution graph
 
-printVisualizationCSPSolution :: S.Solution -> IO ()
-printVisualizationCSPSolution solution = putStr (renderSolution solution)
+printSolutionSummary :: S.Solution -> IO ()
+printSolutionSummary solution = putStr $ renderDoc $ solutionSummaryDoc solution
 
 --------------------------------------------------------------------------------
 -- Graph rendering
@@ -185,31 +180,23 @@ traceDoc (TraceGraph _ events) = eventsDoc events
 --------------------------------------------------------------------------------
 -- Visualization rendering
 --------------------------------------------------------------------------------
-renderVisualization ::
-     PrintEvents events
-  => Bool
-  -> Maybe S.Solution
-  -> V.ViewGraph events
-  -> String
-renderVisualization showDetails maybeSolution =
-  renderDoc . visualizationDoc showDetails maybeSolution
+renderSolutionByEvent ::
+     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> String
+renderSolutionByEvent showDetails solution =
+  renderDoc . solutionByEventDoc showDetails solution
 
-visualizationDoc ::
-     PrintEvents events
-  => Bool
-  -> Maybe S.Solution
-  -> V.ViewGraph events
-  -> RenderDoc
-visualizationDoc showDetails maybeSolution graph =
+solutionByEventDoc ::
+     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> RenderDoc
+solutionByEventDoc showDetails solution graph =
   mconcat
-    [ headerDoc "Visualization"
-    , visualizationSummaryDoc nodes steps constraints initialVars
-    , maybeSolutionSummaryDoc maybeSolution
+    [ headerDoc "Solution"
+    , viewSummaryDoc nodes steps constraints initialVars
+    , solutionSummaryDoc solution
     , hardline
     , whenDoc
         showDetails
         (mconcat [viewNodesDoc nodes, hardline, initialVarsDoc initialVars])
-    , viewTraceDoc showDetails maybeSolution steps
+    , viewTraceDoc showDetails solution steps
     ]
   where
     nodes = V.viewNodes graph
@@ -217,47 +204,16 @@ visualizationDoc showDetails maybeSolution graph =
     constraints = V.viewConstraints graph
     initialVars = V.viewInitialVars graph
 
-maybeSolutionSummaryDoc :: Maybe S.Solution -> RenderDoc
-maybeSolutionSummaryDoc maybeSolution =
-  case maybeSolution of
-    Nothing -> mempty
-    Just solution ->
-      vsep
-        [ "Solved:" <+> pretty (show (S.solutionSuccess solution))
-        , "Energy:" <+> pretty (formatSignedDouble (S.solutionEnergy solution))
-        ] <> hardline
-
---------------------------------------------------------------------------------
--- Standalone solution rendering
---------------------------------------------------------------------------------
-renderSolution :: S.Solution -> String
-renderSolution = renderDoc . solutionDoc
-
-solutionDoc :: S.Solution -> RenderDoc
-solutionDoc solution =
-  mconcat
-    [ headerDoc "Solution"
-    , solutionSummaryDoc solution
-    , hardline
-    , solutionValuesDoc (S.solutionValues solution)
-    ]
-
 solutionSummaryDoc :: S.Solution -> RenderDoc
 solutionSummaryDoc solution =
-  vsep
-    [ "Success:" <+> pretty (show (S.solutionSuccess solution))
-    , "Energy:" <+> pretty (formatSignedDouble (S.solutionEnergy solution))
-    , "Variables:" <+> pretty (show (Map.size (S.solutionValues solution)))
-    ] <> hardline
-
-solutionValuesDoc :: Map.Map String Double -> RenderDoc
-solutionValuesDoc values =
-  headerDoc "Solution values"
-    <> alignedAssignmentsDoc
-         "  "
-         [ (name, formatSignedDouble value)
-         | (name, value) <- Map.toAscList values
-         ]
+  let (V.RandomSeed seed) = S.solutionSeed solution
+   in vsep
+        [ headerDoc "Solution summary"
+        , "Solved:" <+> pretty (show (S.solutionSuccess solution))
+        , "Energy:" <+> pretty (formatSignedDouble (S.solutionEnergy solution))
+        , "Seed:" <+> pretty (show seed)
+        ]
+        <> hardline
 
 --------------------------------------------------------------------------------
 -- Summary
@@ -267,21 +223,23 @@ summaryDoc blocks events =
   vsep
     [ "Blocks:" <+> pretty (show (length blocks))
     , "Events:" <+> pretty (show (length events))
-    ] <> hardline
+    ]
+    <> hardline
 
-visualizationSummaryDoc ::
+viewSummaryDoc ::
      [V.ViewNode]
   -> [V.ViewStep events]
   -> [S.Constraint]
   -> [S.InitialVar]
   -> RenderDoc
-visualizationSummaryDoc nodes steps constraints initialVars =
+viewSummaryDoc nodes steps constraints initialVars =
   vsep
     [ "View nodes:" <+> pretty (show (length nodes))
     , "View steps:" <+> pretty (show (length steps))
     , "Constraints:" <+> pretty (show (length (flattenConstraints constraints)))
     , "Initial vars:" <+> pretty (show (length initialVars))
-    ] <> hardline
+    ]
+    <> hardline
 
 --------------------------------------------------------------------------------
 -- Blocks
@@ -491,24 +449,14 @@ rawExprMentionsVar expr =
 data SolvedExpr =
   SolvedExpr String Double
 
-stepSolutionDoc ::
-     Maybe S.Solution -> [V.ViewNode] -> [S.Constraint] -> RenderDoc
-stepSolutionDoc maybeSolution nodes _constraints =
-  case maybeSolution of
-    Nothing -> mempty
-    Just solution ->
-      let solved =
-            dedupeSolvedExprs (concatMap (solveViewNodeExprs solution) nodes)
-       in case solved of
-            [] -> mempty
-            _ ->
-              mconcat
-                [ stepIndent
-                , "solution"
-                , hardline
-                , solvedExprsDoc solved
-                , hardline
-                ]
+stepSolutionDoc :: S.Solution -> [V.ViewNode] -> [S.Constraint] -> RenderDoc
+stepSolutionDoc solution nodes _constraints =
+  let solved = dedupeSolvedExprs (concatMap (solveViewNodeExprs solution) nodes)
+   in case solved of
+        [] -> mempty
+        _ ->
+          mconcat
+            [stepIndent, "solution", hardline, solvedExprsDoc solved, hardline]
 
 solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
 solveViewNodeExprs solution node =
@@ -542,25 +490,22 @@ solvedExprsDoc solved =
 viewTraceDoc ::
      PrintEvents events
   => Bool
-  -> Maybe S.Solution
+  -> S.Solution
   -> [V.ViewStep events]
   -> RenderDoc
-viewTraceDoc showDetails maybeSolution steps =
+viewTraceDoc showDetails solution steps =
   headerDoc "View trace"
     <> mconcat
-         (zipWith
-            (viewTraceStepDoc showDetails maybeSolution)
-            [0 :: Int ..]
-            steps)
+         (zipWith (viewTraceStepDoc showDetails solution) [0 :: Int ..] steps)
 
 viewTraceStepDoc ::
      PrintEvents events
   => Bool
-  -> Maybe S.Solution
+  -> S.Solution
   -> Int
   -> V.ViewStep events
   -> RenderDoc
-viewTraceStepDoc showDetails maybeSolution ix step =
+viewTraceStepDoc showDetails solution ix step =
   case step of
     V.ViewStep event nodes constraints ->
       eventDoc ix event
@@ -569,7 +514,7 @@ viewTraceStepDoc showDetails maybeSolution ix step =
              (mconcat
                 [ stepViewNodesDoc nodes
                 , stepConstraintsDoc constraints
-                , stepSolutionDoc maybeSolution nodes constraints
+                , stepSolutionDoc solution nodes constraints
                 ])
 
 stepViewNodesDoc :: [V.ViewNode] -> RenderDoc
@@ -775,7 +720,7 @@ renderDoc = renderString . layoutPretty defaultLayoutOptions
 
 headerDoc :: String -> RenderDoc
 headerDoc title =
-  pretty title <> hardline <> pretty (replicate (length title) '-') <> hardline
+  pretty title <> hardline <> pretty (replicate (length title) '-')
 
 whenDoc :: Bool -> RenderDoc -> RenderDoc
 whenDoc enabled doc =
@@ -797,7 +742,11 @@ alignedAssignmentsDoc leading assignments =
 
 alignedAssignmentDoc :: String -> Int -> (String, String) -> RenderDoc
 alignedAssignmentDoc leading nameWidth (name, value) =
-  pretty leading <> fixedWidth nameWidth name <> " = " <> pretty value <> hardline
+  pretty leading
+    <> fixedWidth nameWidth name
+    <> " = "
+    <> pretty value
+    <> hardline
 
 fixedWidth :: Int -> String -> Doc ann
 fixedWidth targetWidth text =
@@ -815,7 +764,7 @@ formatSignedDouble value =
       text = fixed2 (abs cleaned)
    in if cleaned < 0
         then "-" ++ text
-        else " " ++ text
+        else text
 
 fixed2 :: Double -> String
 fixed2 value = showFFloat (Just 2) value ""
