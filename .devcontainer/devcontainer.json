@@ -23,7 +23,8 @@
         "esbenp.prettier-vscode",
         "haskell.haskell",
         "justusadam.language-haskell",
-        "0xCD.stylish-hindent"
+        "0xCD.stylish-hindent",
+        "openai.chatgpt"
       ],
 
       "settings": {

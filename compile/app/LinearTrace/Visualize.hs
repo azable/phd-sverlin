@@ -63,9 +63,7 @@ module LinearTrace.Visualize
   , (@^@)
   , (@=@)
   , (@<=@)
-  , (@<@)
   , (@>=@)
-  , (@>@)
   , -- * Builder
     ViewBuilder
   , ViewBlock(..)

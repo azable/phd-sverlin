@@ -42,6 +42,7 @@ RUN apt-get update \
     zlib1g-dev \
     libopenblas-dev \
     liblapack-dev \
+    bubblewrap \
   && rm -rf /var/lib/apt/lists/*
 
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \

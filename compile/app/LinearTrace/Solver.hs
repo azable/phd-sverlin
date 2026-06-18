@@ -35,9 +35,7 @@ module LinearTrace.Solver
   , ConstrainOrd(..)
   , (@=@)
   , (@<=@)
-  , (@<@)
   , (@>=@)
-  , (@>@)
   , minimize
   , flattenConstraint
   , -- * Symbolic vector containers
@@ -388,27 +386,16 @@ class ConstrainOrd a where
 
 infix 4 @=@
 infix 4 @<=@
-infix 4 @<@
 infix 4 @>=@
-infix 4 @>@
 (@=@) :: ConstrainEq a => a -> a -> Constraint
 (@=@) = constrainEqual
 
+-- The solver lowers inequalities to a non-strict hinge penalty.
 (@<=@) :: ConstrainOrd a => a -> a -> Constraint
 (@<=@) = constrainLessOrEqual
 
--- | Alias for '@<=@'.
---
--- The solver enforces inequalities using a non-strict penalty, so '@<@' and
--- '@<=@' have the same semantics. Prefer '@<=@' where precision matters.
-(@<@) :: ConstrainOrd a => a -> a -> Constraint
-(@<@) = constrainLessOrEqual
-
 (@>=@) :: ConstrainOrd a => a -> a -> Constraint
 lhs @>=@ rhs = rhs @<=@ lhs
-
-(@>@) :: ConstrainOrd a => a -> a -> Constraint
-lhs @>@ rhs = rhs @<=@ lhs
 
 instance ConstrainEq (Expr ty) where
   constrainEqual (Expr ty lhs) (Expr _ rhs) = Equals ty lhs rhs
