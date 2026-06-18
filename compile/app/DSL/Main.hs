@@ -518,7 +518,7 @@ valueFill =
     {hue = global "hue", saturation = global "saturation", lightness = num 0.5}
 
 varFill :: HslExpr
-varFill = Hsl {hue = num 0, saturation = num 0, lightness = num 0.7}
+varFill = Hsl {hue = num 0, saturation = num 0, lightness = num 0.8}
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
@@ -527,17 +527,17 @@ cellBlock block = P.do
 
 varBlockV :: BlockView tag -> ViewBuilder events ()
 varBlockV block = P.do
-  ensure $ width block @=@ (blockSize @+@ num 40)
-  ensure $ height block @=@ (blockSize @+@ num 40)
+  ensure $ width block @=@ (blockSize @+@ num 20)
+  ensure $ height block @=@ (blockSize @+@ num 20)
 
 instance ViewBlock (Value 'TInt) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
+      P.. withStroke black
+      P.. withStrokeWidth (num 4)
       P.. withFontSize (blockSize @/@ num 2)
-      P.. withFontFamily "Inter"
-      P.. withFontWeight FontWeightBold
-      P.. withTextAlign TextAlignCenter
+      P.. withFontFamily "Verdana"
       P.. withWhiteSpace WhiteSpaceNoWrap
   viewBlock = cellBlock
 
@@ -545,10 +545,10 @@ instance ViewBlock (Value 'TDouble) where
   styleBlock _ =
     withFill valueFill
       P.. withRadius (num 10)
+      P.. withStroke black
+      P.. withStrokeWidth (num 4)
       P.. withFontSize (blockSize @/@ num 2)
-      P.. withFontFamily "Inter"
-      P.. withFontWeight FontWeightBold
-      P.. withTextAlign TextAlignCenter
+      P.. withFontFamily "Verdana"
       P.. withWhiteSpace WhiteSpaceNoWrap
   viewBlock = cellBlock
 
@@ -556,10 +556,8 @@ instance Typeable ty => ViewBlock (Var ty) where
   styleBlock _ =
     withFill varFill
       P.. withRadius (num 10)
-      P.. withStroke black
-      P.. withStrokeWidth (num 4)
       P.. withFontSize (blockSize @/@ num 2)
-      P.. withFontFamily "Inter"
+      P.. withFontFamily "Verdana"
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
       P.. withWhiteSpace WhiteSpaceNoWrap
