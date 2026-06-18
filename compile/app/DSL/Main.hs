@@ -451,6 +451,7 @@ instance PrintEvent (Eval op lhs rhs out) where
 -- Operator convenience combinators
 --------------------------------------------------------------------------------
 (.+.) ::
+     forall events ty.
      ( EvalOp 'TAdd ty ty ty
      , Member (Operator 'TAdd ty ty ty) events
      , Member (Eval 'TAdd ty ty ty) events
@@ -463,6 +464,7 @@ instance PrintEvent (Eval op lhs rhs out) where
   apply lhs op rhs
 
 (.*.) ::
+     forall events ty.
      ( EvalOp 'TMul ty ty ty
      , Member (Operator 'TMul ty ty ty) events
      , Member (Eval 'TMul ty ty ty) events
@@ -516,17 +518,17 @@ valueFill =
     {hue = global "hue", saturation = global "saturation", lightness = num 0.5}
 
 varFill :: HslExpr
-varFill = Hsl {hue = num 0, saturation = num 0, lightness = num 0.9}
+varFill = Hsl {hue = num 0, saturation = num 0, lightness = num 0.7}
 
 cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
-  ensure $ widthOf block @=@ blockSize
-  ensure $ heightOf block @=@ blockSize
+  ensure $ width block @=@ blockSize
+  ensure $ height block @=@ blockSize
 
 varBlockV :: BlockView tag -> ViewBuilder events ()
 varBlockV block = P.do
-  ensure $ widthOf block @=@ (blockSize @+@ num 40)
-  ensure $ heightOf block @=@ (blockSize @+@ num 40)
+  ensure $ width block @=@ (blockSize @+@ num 40)
+  ensure $ height block @=@ (blockSize @+@ num 40)
 
 instance ViewBlock (Value 'TInt) where
   styleBlock _ =
@@ -561,55 +563,55 @@ instance Typeable ty => ViewBlock (Var ty) where
       P.. withFontWeight FontWeightBold
       P.. withTextAlign TextAlignCenter
       P.. withWhiteSpace WhiteSpaceNoWrap
+      P.. withZIndex (num (-1))
   viewBlock = varBlockV
 
 instance Traceable (Op op lhs rhs out) => ViewBlock (Op op lhs rhs out) where
   viewBlock = cellBlock
 
---5710414721092298507
 --------------------------------------------------------------------------------
 -- Event visualisation
 --------------------------------------------------------------------------------
 instance ViewEvent (Literal ty) where
   viewEvent Literal audit =
     case audit of
-      VCreated value :& VDone -> P.do
+      VCreated _value :& VDone -> P.do
         P.pure ()
 
 instance ViewEvent (DeclareVar ty) where
   viewEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
-        varB `sameBounds` valueB
+        valueB `sameCenter` varB
 
 instance ViewEvent (ReadVar ty) where
   viewEvent ReadVar audit =
     case audit of
-      VUnsealed varB held :& VCopied _heldOriginal copied :& VSealed _ _ :& VDone -> P.do
+      VUnsealed _varB _held :& VCopied _heldOriginal _copied :& VSealed _ _ :& VDone -> P.do
         P.pure ()
 
 instance ViewEvent (WriteVar ty) where
   viewEvent WriteVar audit =
     case audit of
-      VUnsealed varB _oldValue :& VReplaced _old _incoming stored :& VSealed _ _ :& VDone -> P.do
-        stored `sameBounds` _old
+      VUnsealed _varB _oldValue :& VReplaced old _incoming stored :& VSealed _ _ :& VDone -> P.do
+        stored `sameBounds` old
 
 instance ViewEvent (DiscardVar ty) where
   viewEvent DiscardVar audit =
     case audit of
-      VUnsealed varB value :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
+      VUnsealed _varB _value :& VDestroyed _ :& VDestroyed _ :& VDone -> P.do
         P.pure ()
 
 instance ViewEvent (DiscardValue ty) where
   viewEvent DiscardValue audit =
     case audit of
-      VDestroyed value :& VDone -> P.do
+      VDestroyed _value :& VDone -> P.do
         P.pure ()
 
 instance ViewEvent (Operator op lhs rhs out) where
   viewEvent Operator audit =
     case audit of
-      VCreated op :& VDone -> P.do
+      VCreated _op :& VDone -> P.do
         P.pure ()
 
 instance ViewEvent (Eval op lhs rhs out) where

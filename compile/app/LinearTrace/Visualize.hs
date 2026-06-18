@@ -16,8 +16,10 @@ module LinearTrace.Visualize
   , ViewStep(..)
   , BlockView(..)
   , Style(..)
-  , Box(..)
   , Bounds(..)
+  , BoundsExpr
+  , MaterializedBounds
+  , HasBounds(..)
   , Hsl(..)
   , CssText(..)
   , FontWeight(..)
@@ -82,22 +84,10 @@ module LinearTrace.Visualize
   , ensure
   , encourage
   , registerInitialRange
-  , -- * Style helpers
-    top
-  , left
-  , width
-  , height
-  , topOf
-  , leftOf
-  , bottomOf
-  , rightOf
-  , widthOf
-  , heightOf
-  , positionOf
-  , sizeOf
-  , blockBounds
-  , canvasBounds
+  , -- * Bounds and layout helpers
+    canvasBounds
   , contains
+  , insideCanvas
   , between
   , unitBounds
   , angleBounds
@@ -109,9 +99,18 @@ module LinearTrace.Visualize
   , sameWidth
   , sameHeight
   , sameBounds
+  , sameCenterX
+  , sameCenterY
+  , sameCenter
+  , above
+  , below
+  , beside
+  , besideWithGap
+  , belowWithGap
   , sameVec2
   , sameHsl
-  , withOpacity
+  , -- * Style helpers
+    withOpacity
   , withZIndex
   , withFontSize
   , withRadius
@@ -144,6 +143,7 @@ import           LinearTrace.Solver
 import           Prelude
 
 infixr 5 :&
+infixl 6 |=|
 --------------------------------------------------------------------------------
 -- Domain aliases
 --------------------------------------------------------------------------------
@@ -162,15 +162,69 @@ type HslExpr = Hsl HueExpr UnitExpr
 type MaterializedHsl = Hsl Double Double
 
 --------------------------------------------------------------------------------
+-- Bounds
+--------------------------------------------------------------------------------
+-- | A rectangle represented by top, left, width, and height.
+--
+-- Right, bottom, position, size, and center are derived handles exposed through
+-- 'HasBounds'.
+data Bounds a =
+  Bounds a a a a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+type BoundsExpr = Bounds LayoutExpr
+
+type MaterializedBounds = Bounds Double
+
+boundsTop :: Bounds a -> a
+boundsTop bounds =
+  case bounds of
+    Bounds t _ _ _ -> t
+
+boundsLeft :: Bounds a -> a
+boundsLeft bounds =
+  case bounds of
+    Bounds _ l _ _ -> l
+
+boundsWidth :: Bounds a -> a
+boundsWidth bounds =
+  case bounds of
+    Bounds _ _ w _ -> w
+
+boundsHeight :: Bounds a -> a
+boundsHeight bounds =
+  case bounds of
+    Bounds _ _ _ h -> h
+
+class HasBounds a where
+  top :: a -> LayoutExpr
+  left :: a -> LayoutExpr
+  width :: a -> LayoutExpr
+  height :: a -> LayoutExpr
+  right :: a -> LayoutExpr
+  right x = left x @+@ width x
+  bottom :: a -> LayoutExpr
+  bottom x = top x @+@ height x
+  centerX :: a -> LayoutExpr
+  centerX x = left x @+@ (width x @/@ num 2)
+  centerY :: a -> LayoutExpr
+  centerY x = top x @+@ (height x @/@ num 2)
+  center :: a -> Vec2 LayoutExpr
+  center x = Vec2 (centerX x) (centerY x)
+  position :: a -> Vec2 LayoutExpr
+  position x = Vec2 (left x) (top x)
+  size :: a -> Vec2 LayoutExpr
+  size x = Vec2 (width x) (height x)
+
+instance HasBounds (Bounds (Expr Layout)) where
+  top = boundsTop
+  left = boundsLeft
+  width = boundsWidth
+  height = boundsHeight
+
+--------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
-data Box a = Box
-  { boxTop    :: a
-  , boxLeft   :: a
-  , boxWidth  :: a
-  , boxHeight :: a
-  } deriving (Eq, Show, Functor, Foldable, Traversable)
-
 data Hsl hue unit = Hsl
   { hue        :: hue
   , saturation :: unit
@@ -222,7 +276,7 @@ data WhiteSpace
 -- Numeric/interpolatable values are represented as typed solver expressions.
 -- Discrete/non-interpolatable CSS-like values are stored directly.
 data Style = Style
-  { styleBox         :: Box LayoutExpr
+  { styleBounds      :: BoundsExpr
     -- Interpolatable / constrainable attributes.
   , styleOpacity     :: Maybe UnitExpr
   , styleZIndex      :: Maybe FreeExpr
@@ -242,12 +296,11 @@ data Style = Style
   , styleCssClass    :: Maybe CssText
   } deriving (Eq, Show)
 
-data Bounds = Bounds
-  { boundsTop    :: LayoutExpr
-  , boundsLeft   :: LayoutExpr
-  , boundsRight  :: LayoutExpr
-  , boundsBottom :: LayoutExpr
-  }
+instance HasBounds Style where
+  top = top . styleBounds
+  left = left . styleBounds
+  width = width . styleBounds
+  height = height . styleBounds
 
 data BlockView tag = BlockView
   { blockRef   :: C.BlockRef tag
@@ -255,55 +308,11 @@ data BlockView tag = BlockView
   , blockStyle :: Style
   }
 
-top :: Style -> LayoutExpr
-top = boxTop . styleBox
-
-left :: Style -> LayoutExpr
-left = boxLeft . styleBox
-
-width :: Style -> LayoutExpr
-width = boxWidth . styleBox
-
-height :: Style -> LayoutExpr
-height = boxHeight . styleBox
-
-topOf :: BlockView tag -> LayoutExpr
-topOf = top . blockStyle
-
-bottomOf :: BlockView tag -> LayoutExpr
-bottomOf block = topOf block `plus` heightOf block
-
-leftOf :: BlockView tag -> LayoutExpr
-leftOf = left . blockStyle
-
-rightOf :: BlockView tag -> LayoutExpr
-rightOf block = leftOf block `plus` widthOf block
-
-widthOf :: BlockView tag -> LayoutExpr
-widthOf = width . blockStyle
-
-heightOf :: BlockView tag -> LayoutExpr
-heightOf = height . blockStyle
-
-positionOf :: BlockView tag -> Vec2 LayoutExpr
-positionOf block = Vec2 (leftOf block) (topOf block)
-
-sizeOf :: BlockView tag -> Vec2 LayoutExpr
-sizeOf block = Vec2 (widthOf block) (heightOf block)
-
-insideCanvas :: BlockView tag -> ViewBuilder events ()
-insideCanvas block = do
-  canvas <- canvasBounds
-  canvas `contains` blockBounds block
-
-blockBounds :: BlockView tag -> Bounds
-blockBounds block =
-  Bounds
-    { boundsTop = topOf block
-    , boundsLeft = leftOf block
-    , boundsRight = rightOf block
-    , boundsBottom = bottomOf block
-    }
+instance HasBounds (BlockView tag) where
+  top = top . blockStyle
+  left = left . blockStyle
+  width = width . blockStyle
+  height = height . blockStyle
 
 data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
@@ -327,7 +336,7 @@ data ViewGraph events = ViewGraph
 -- Expr-valued attributes become Double-valued attributes.
 -- Discrete CSS-like attributes are copied through unchanged.
 data MaterializedStyle = MaterializedStyle
-  { materializedBox         :: Box Double
+  { materializedBounds      :: MaterializedBounds
     -- Interpolatable / solved attributes.
   , materializedOpacity     :: Maybe Double
   , materializedZIndex      :: Maybe Double
@@ -348,16 +357,16 @@ data MaterializedStyle = MaterializedStyle
   } deriving (Eq, Show)
 
 materializedTop :: MaterializedStyle -> Double
-materializedTop = boxTop . materializedBox
+materializedTop = boundsTop . materializedBounds
 
 materializedLeft :: MaterializedStyle -> Double
-materializedLeft = boxLeft . materializedBox
+materializedLeft = boundsLeft . materializedBounds
 
 materializedWidth :: MaterializedStyle -> Double
-materializedWidth = boxWidth . materializedBox
+materializedWidth = boundsWidth . materializedBounds
 
 materializedHeight :: MaterializedStyle -> Double
-materializedHeight = boxHeight . materializedBox
+materializedHeight = boundsHeight . materializedBounds
 
 data MaterializedBlockView tag = MaterializedBlockView
   { materializedBlockRef   :: C.BlockRef tag
@@ -368,8 +377,8 @@ data MaterializedBlockView tag = MaterializedBlockView
 data MaterializedViewNode where
   MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
 
-materializeBox :: Solution -> Box LayoutExpr -> Maybe (Box Double)
-materializeBox solution = traverse (evalExpr solution)
+materializeBounds :: Solution -> BoundsExpr -> Maybe MaterializedBounds
+materializeBounds solution = traverse (evalExpr solution)
 
 materializeHsl :: Solution -> HslExpr -> Maybe MaterializedHsl
 materializeHsl solution hsl =
@@ -381,7 +390,7 @@ materializeHsl solution hsl =
 materializeStyle :: Solution -> Style -> Maybe MaterializedStyle
 materializeStyle solution style =
   MaterializedStyle
-    <$> materializeBox solution (styleBox style)
+    <$> materializeBounds solution (styleBounds style)
     <*> traverse (evalExpr solution) (styleOpacity style)
     <*> traverse (evalExpr solution) (styleZIndex style)
     <*> traverse (evalExpr solution) (styleFontSize style)
@@ -506,23 +515,26 @@ emitViewNode node = tell mempty {emittedNodes = [node]}
 global :: SymbolicType ty => String -> Expr ty
 global name = var ("global." ++ name)
 
-canvasBounds :: ViewBuilder events Bounds
+canvasBounds :: ViewBuilder events BoundsExpr
 canvasBounds = do
   env <- ask
-  return
-    Bounds
-      { boundsTop = num 0
-      , boundsLeft = num 0
-      , boundsRight = canvasWidth env
-      , boundsBottom = canvasHeight env
-      }
+  return (Bounds (num 0) (num 0) (canvasWidth env) (canvasHeight env))
 
-contains :: Bounds -> Bounds -> ViewBuilder events ()
+contains ::
+     (HasBounds outer, HasBounds inner)
+  => outer
+  -> inner
+  -> ViewBuilder events ()
 contains outer inner = do
-  ensure $ boundsLeft outer @<@ boundsLeft inner
-  ensure $ boundsTop outer @<@ boundsTop inner
-  ensure $ boundsRight inner @<@ boundsRight outer
-  ensure $ boundsBottom inner @<@ boundsBottom outer
+  ensure $ left outer @<@ left inner
+  ensure $ top outer @<@ top inner
+  ensure $ right inner @<@ right outer
+  ensure $ bottom inner @<@ bottom outer
+
+insideCanvas :: HasBounds block => block -> ViewBuilder events ()
+insideCanvas block = do
+  canvas <- canvasBounds
+  canvas `contains` block
 
 between :: Expr ty -> Expr ty -> Expr ty -> ViewBuilder events ()
 between lo x hi = do
@@ -544,30 +556,64 @@ hslBounds hsl = do
 nonNegative :: SymbolicType ty => Expr ty -> ViewBuilder events ()
 nonNegative expr = ensure $ num 0 @<@ expr
 
-sameTop :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameTop a b = ensure $ topOf a @=@ topOf b
+sameTop :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameTop a b = ensure $ top a @=@ top b
 
-sameLeft :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameLeft a b = ensure $ leftOf a @=@ leftOf b
+sameLeft :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameLeft a b = ensure $ left a @=@ left b
 
-sameBottom :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameBottom a b = ensure $ bottomOf a @=@ bottomOf b
+sameBottom :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameBottom a b = ensure $ bottom a @=@ bottom b
 
-sameRight :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameRight a b = ensure $ rightOf a @=@ rightOf b
+sameRight :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameRight a b = ensure $ right a @=@ right b
 
-sameWidth :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameWidth a b = ensure $ widthOf a @=@ widthOf b
+sameWidth :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameWidth a b = ensure $ width a @=@ width b
 
-sameHeight :: BlockView a -> BlockView b -> ViewBuilder events ()
-sameHeight a b = ensure $ heightOf a @=@ heightOf b
+sameHeight :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameHeight a b = ensure $ height a @=@ height b
 
-sameBounds :: BlockView a -> BlockView b -> ViewBuilder events ()
+sameBounds :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
 sameBounds a b = do
   sameTop a b
   sameLeft a b
   sameWidth a b
   sameHeight a b
+
+sameCenterX :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameCenterX a b = ensure $ centerX a @=@ centerX b
+
+sameCenterY :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameCenterY a b = ensure $ centerY a @=@ centerY b
+
+sameCenter :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+sameCenter a b = do
+  sameCenterX a b
+  sameCenterY a b
+
+above :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+above a b = ensure $ bottom a @<@ top b
+
+below :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+below a b = ensure $ bottom b @<@ top a
+
+beside :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+beside a b = do
+  sameCenterY a b
+  ensure $ right a @=@ left b
+
+besideWithGap ::
+     (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
+besideWithGap gap a b = do
+  sameCenterY a b
+  ensure $ right a @+@ gap @=@ left b
+
+belowWithGap ::
+     (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
+belowWithGap gap a b = do
+  sameCenterX a b
+  ensure $ bottom a @+@ gap @=@ top b
 
 sameVec2 :: Vec2 LayoutExpr -> Vec2 LayoutExpr -> ViewBuilder events ()
 sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
@@ -580,11 +626,9 @@ sameHsl a b = do
   ensure $ saturation a @=@ saturation b
   ensure $ lightness a @=@ lightness b
 
--- | Adjacent blocks with the same y coordinate.
-(|=|) :: BlockView a -> BlockView b -> ViewBuilder events ()
-(|=|) a b = do
-  sameTop a b
-  ensure $ rightOf a @=@ leftOf b
+-- | Adjacent blocks aligned by vertical center.
+(|=|) :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
+(|=|) = beside
 
 --------------------------------------------------------------------------------
 -- Style construction helpers
@@ -801,13 +845,12 @@ blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView) =
 styleForRef :: C.BlockRef tag -> Style
 styleForRef ref =
   Style
-    { styleBox =
-        Box
-          { boxTop = blockVar ref "top"
-          , boxLeft = blockVar ref "left"
-          , boxWidth = blockVar ref "width"
-          , boxHeight = blockVar ref "height"
-          }
+    { styleBounds =
+        Bounds
+          (blockVar ref "top")
+          (blockVar ref "left")
+          (blockVar ref "width")
+          (blockVar ref "height")
       -- Interpolatable/constrainable defaults.
     , styleOpacity = Nothing
     , styleZIndex = Nothing
