@@ -2,7 +2,6 @@
 {-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -15,13 +14,18 @@ module LinearTrace.Print
   , printSolutionSummary
   ) where
 
+import           Data.Char              (isDigit)
+import           Data.List              (dropWhileEnd)
 import           LinearTrace.Core
-import qualified LinearTrace.Solver          as S
-import qualified LinearTrace.View            as V
-import           Numeric                     (showFFloat)
+import qualified LinearTrace.Solver     as S
+import qualified LinearTrace.View       as V
+import           Numeric                (showFFloat)
 import           Prelude
-import           Prettyprinter
-import           Prettyprinter.Render.String (renderString)
+import           System.Console.ANSI    (ConsoleIntensity (..),
+                                         ConsoleLayer (..), SGR (..),
+                                         hNowSupportsANSI, setSGRCode)
+import           System.IO              (stdout)
+import qualified Text.PrettyPrint.Boxes as Box
 
 --------------------------------------------------------------------------------
 -- Layout constants
@@ -44,80 +48,61 @@ styleFieldWidth = 18
 stepIndentWidth :: Int
 stepIndentWidth = 4
 
-stepIndent :: Doc ann
-stepIndent = pretty (replicate stepIndentWidth ' ')
-
 --------------------------------------------------------------------------------
 -- Colour/style constants
 --------------------------------------------------------------------------------
-eventTitleStyle :: [Ansi]
-eventTitleStyle = [AnsiBold]
-
 createStyle :: StepStyle
-createStyle = StepStyle "create" createColour
+createStyle = StepStyle "create" 82
 
 observeStyle :: StepStyle
-observeStyle = StepStyle "observe" observeColour
+observeStyle = StepStyle "observe" 51
 
 inspectStyle :: StepStyle
-inspectStyle = StepStyle "inspect" inspectColour
+inspectStyle = StepStyle "inspect" 123
 
 useStyle :: StepStyle
-useStyle = StepStyle "use" useColour
+useStyle = StepStyle "use" 220
 
 copyStyle :: StepStyle
-copyStyle = StepStyle "copy" copyColour
+copyStyle = StepStyle "copy" 75
 
 replaceStyle :: StepStyle
-replaceStyle = StepStyle "replace" replaceColour
+replaceStyle = StepStyle "replace" 171
 
 computeStyle :: StepStyle
-computeStyle = StepStyle "compute" computeColour
+computeStyle = StepStyle "compute" 118
 
 destroyStyle :: StepStyle
-destroyStyle = StepStyle "destroy" destroyColour
+destroyStyle = StepStyle "destroy" 196
 
 sealStyle :: StepStyle
-sealStyle = StepStyle "seal" sealColour
+sealStyle = StepStyle "seal" 37
 
 unsealStyle :: StepStyle
-unsealStyle = StepStyle "unseal" unsealColour
+unsealStyle = StepStyle "unseal" 208
 
 decideStyle :: StepStyle
-decideStyle = StepStyle "decide" decideColour
+decideStyle = StepStyle "decide" 201
 
-createColour :: Ansi
-createColour = Ansi256Fg 82
+allStepStyles :: [StepStyle]
+allStepStyles =
+  [ createStyle
+  , observeStyle
+  , inspectStyle
+  , useStyle
+  , copyStyle
+  , replaceStyle
+  , computeStyle
+  , destroyStyle
+  , sealStyle
+  , unsealStyle
+  , decideStyle
+  ]
 
-observeColour :: Ansi
-observeColour = Ansi256Fg 51
-
-inspectColour :: Ansi
-inspectColour = Ansi256Fg 123
-
-useColour :: Ansi
-useColour = Ansi256Fg 220
-
-copyColour :: Ansi
-copyColour = Ansi256Fg 75
-
-replaceColour :: Ansi
-replaceColour = Ansi256Fg 171
-
-computeColour :: Ansi
-computeColour = Ansi256Fg 118
-
-destroyColour :: Ansi
-destroyColour = Ansi256Fg 196
-
-sealColour :: Ansi
-sealColour = Ansi256Fg 37
-
-unsealColour :: Ansi
-unsealColour = Ansi256Fg 208
-
-decideColour :: Ansi
-decideColour = Ansi256Fg 201
+data StepStyle = StepStyle
+  { stepStyleName   :: String
+  , stepStyleColour :: Int
+  }
 
 --------------------------------------------------------------------------------
 -- Event printing
@@ -141,175 +126,157 @@ instance (PrintEvent event, PrintEvents events) => PrintEvents (event : events) 
 -- Public rendering API
 --------------------------------------------------------------------------------
 printGraph :: PrintEvents events => TraceGraph events -> IO ()
-printGraph graph = putStr $ renderGraph graph
+printGraph = printReport . graphBox
 
 printTrace :: PrintEvents events => TraceGraph events -> IO ()
-printTrace graph = putStr $ renderTrace graph
+printTrace = printReport . traceBox
 
 printSolutionByEvent ::
      PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> IO ()
-printSolutionByEvent showDetails solution graph =
-  putStr $ renderSolutionByEvent showDetails solution graph
+printSolutionByEvent showDetails solution =
+  printReport . solutionByEventBox showDetails solution
 
 printSolutionSummary :: S.Solution -> IO ()
-printSolutionSummary solution = putStr $ renderDoc $ solutionSummaryDoc solution
+printSolutionSummary = printReport . solutionSummaryBox
+
+printReport :: Box.Box -> IO ()
+printReport box = do
+  supportsAnsi <- hNowSupportsANSI stdout
+  putStr (renderReport supportsAnsi box)
+
+renderReport :: Bool -> Box.Box -> String
+renderReport supportsAnsi box =
+  let plain = Box.render box ++ "\n"
+   in if supportsAnsi
+        then colourReport plain
+        else plain
 
 --------------------------------------------------------------------------------
 -- Graph rendering
 --------------------------------------------------------------------------------
-renderGraph :: PrintEvents events => TraceGraph events -> String
-renderGraph = renderDoc . graphDoc
-
-graphDoc :: PrintEvents events => TraceGraph events -> RenderDoc
-graphDoc (TraceGraph blocks events) =
-  mconcat
-    [ headerDoc "Graph"
-    , summaryDoc blocks events
-    , hardline
-    , blocksDoc blocks
-    , hardline
-    , eventsDoc events
+graphBox :: PrintEvents events => TraceGraph events -> Box.Box
+graphBox (TraceGraph blocks events) =
+  sections
+    [ sectionBox "Graph" (summaryBox blocks events)
+    , blocksBox blocks
+    , eventsBox events
     ]
 
-renderTrace :: PrintEvents events => TraceGraph events -> String
-renderTrace = renderDoc . traceDoc
+traceBox :: PrintEvents events => TraceGraph events -> Box.Box
+traceBox (TraceGraph _ events) = eventsBox events
 
-traceDoc :: PrintEvents events => TraceGraph events -> RenderDoc
-traceDoc (TraceGraph _ events) = eventsDoc events
+summaryBox :: [BlockRecord] -> [RecordedEvent events] -> Box.Box
+summaryBox blocks events =
+  linesBox
+    ["Blocks: " ++ show (length blocks), "Events: " ++ show (length events)]
 
 --------------------------------------------------------------------------------
--- Visualization rendering
+-- Solution rendering
 --------------------------------------------------------------------------------
-renderSolutionByEvent ::
-     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> String
-renderSolutionByEvent showDetails solution =
-  renderDoc . solutionByEventDoc showDetails solution
-
-solutionByEventDoc ::
-     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> RenderDoc
-solutionByEventDoc showDetails solution graph =
-  mconcat
-    [ headerDoc "Solution"
-    , viewSummaryDoc nodes steps constraints initialVars
-    , solutionSummaryDoc solution
-    , hardline
-    , whenDoc
-        showDetails
-        (mconcat [viewNodesDoc nodes, hardline, initialVarsDoc initialVars])
-    , viewTraceDoc showDetails solution steps
-    ]
+solutionByEventBox ::
+     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> Box.Box
+solutionByEventBox showDetails solution graph =
+  sections
+    $ [ sectionBox "Solution"
+          $ viewSummaryBox nodes steps constraints initialVars
+      , solutionSummaryBox solution
+      ]
+        ++ detailBoxes
+        ++ [viewTraceBox showDetails solution steps]
   where
     nodes = V.viewNodes graph
     steps = V.viewSteps graph
     constraints = V.viewConstraints graph
     initialVars = V.viewInitialVars graph
+    detailBoxes
+      | showDetails =
+        optionalSection "View nodes" (viewNodesBox nodes)
+          ++ optionalSection "Initial variables" (initialVarsBox initialVars)
+      | otherwise = []
 
-solutionSummaryDoc :: S.Solution -> RenderDoc
-solutionSummaryDoc solution =
-  let (V.RandomSeed seed) = S.solutionSeed solution
-   in vsep
-        [ headerDoc "Solution summary"
-        , "Solved:" <+> pretty (show (S.solutionSuccess solution))
-        , "Energy:" <+> pretty (formatSignedDouble (S.solutionEnergy solution))
-        , "Seed:" <+> pretty (show seed)
+solutionSummaryBox :: S.Solution -> Box.Box
+solutionSummaryBox solution =
+  sectionBox "Solution summary"
+    $ linesBox
+        [ "Solved: " ++ show (S.solutionSuccess solution)
+        , "Energy: " ++ formatSignedDouble (S.solutionEnergy solution)
+        , "Seed: " ++ show seed
         ]
-        <> hardline
+  where
+    V.RandomSeed seed = S.solutionSeed solution
 
---------------------------------------------------------------------------------
--- Summary
---------------------------------------------------------------------------------
-summaryDoc :: [BlockRecord] -> [RecordedEvent events] -> RenderDoc
-summaryDoc blocks events =
-  vsep
-    [ "Blocks:" <+> pretty (show (length blocks))
-    , "Events:" <+> pretty (show (length events))
-    ]
-    <> hardline
-
-viewSummaryDoc ::
+viewSummaryBox ::
      [V.ViewNode]
   -> [V.ViewStep events]
   -> [S.Constraint]
   -> [S.InitialVar]
-  -> RenderDoc
-viewSummaryDoc nodes steps constraints initialVars =
-  vsep
-    [ "View nodes:" <+> pretty (show (length nodes))
-    , "View steps:" <+> pretty (show (length steps))
-    , "Constraints:" <+> pretty (show (length (flattenConstraints constraints)))
-    , "Initial vars:" <+> pretty (show (length initialVars))
+  -> Box.Box
+viewSummaryBox nodes steps constraints initialVars =
+  linesBox
+    [ "View nodes: " ++ show (length nodes)
+    , "View steps: " ++ show (length steps)
+    , "Constraints: " ++ show (length (flattenConstraints constraints))
+    , "Initial vars: " ++ show (length initialVars)
     ]
-    <> hardline
 
 --------------------------------------------------------------------------------
 -- Blocks
 --------------------------------------------------------------------------------
-blocksDoc :: [BlockRecord] -> RenderDoc
-blocksDoc blocks = headerDoc "Blocks" <> mconcat (map blockDoc blocks)
+blocksBox :: [BlockRecord] -> Box.Box
+blocksBox blocks = sectionBox "Blocks" $ tightVcat (map blockBox blocks)
 
-blockDoc :: BlockRecord -> RenderDoc
-blockDoc (BlockRecord snapshot) =
-  "  "
-    <> fixedWidth blockListRefWidth (renderBlockRefPlain (snapshotRef snapshot))
-    <> pretty (renderSnapshotPayload snapshot)
-    <> hardline
+blockBox :: BlockRecord -> Box.Box
+blockBox (BlockRecord snapshot) =
+  indentBox 2
+    $ rowBox
+        [ fieldBox
+            blockListRefWidth
+            (renderBlockRefPlain (snapshotRef snapshot))
+        , Box.text (renderSnapshotPayload snapshot)
+        ]
 
 --------------------------------------------------------------------------------
 -- View nodes
 --------------------------------------------------------------------------------
-viewNodesDoc :: [V.ViewNode] -> RenderDoc
-viewNodesDoc nodes = headerDoc "View nodes" <> mconcat (map viewNodeDoc nodes)
+viewNodesBox :: [V.ViewNode] -> Box.Box
+viewNodesBox nodes = spacedVcat (map viewNodeBox nodes)
 
-viewNodeDoc :: V.ViewNode -> RenderDoc
-viewNodeDoc node =
+viewNodeBox :: V.ViewNode -> Box.Box
+viewNodeBox node =
   case node of
-    V.BlockViewNode block -> blockViewDoc block
+    V.BlockViewNode block -> blockViewBox block
 
-blockViewDoc :: V.BlockView tag -> RenderDoc
-blockViewDoc block =
-  mconcat
-    [ "  "
-    , fixedWidth blockListRefWidth (renderBlockRefPlain (V.blockRef block))
-    , pretty (renderPayloadView (V.blockLabel block))
-    , hardline
-    , styleDoc (V.blockStyle block)
+blockViewBox :: V.BlockView tag -> Box.Box
+blockViewBox block =
+  tightVcat
+    [ indentBox 2
+        $ rowBox
+            [ fieldBox
+                blockListRefWidth
+                (renderBlockRefPlain (V.blockRef block))
+            , Box.text (renderPayloadView (V.blockLabel block))
+            ]
+    , styleBox (V.blockStyle block)
     ]
 
-styleDoc :: V.Style -> RenderDoc
-styleDoc style =
-  mconcat
-    [ stepIndent
-    , "style"
-    , hardline
-    , mconcat (V.mapStyleExprLeaves styleFieldDoc style)
-    ]
+styleBox :: V.Style -> Box.Box
+styleBox style =
+  stepSectionBox "style" $ tightVcat (V.mapStyleExprLeaves styleFieldBox style)
 
-styleFieldDoc :: String -> S.Expr ty -> RenderDoc
-styleFieldDoc name expr =
-  stepIndent
-    <> stepIndent
-    <> fixedWidth styleFieldWidth name
-    <> " = "
-    <> exprDoc expr
-    <> hardline
+styleFieldBox :: String -> S.Expr ty -> Box.Box
+styleFieldBox name expr =
+  rowBox [fieldBox styleFieldWidth name, Box.text "=", Box.text (exprText expr)]
 
 --------------------------------------------------------------------------------
 -- Initial variables
 --------------------------------------------------------------------------------
-initialVarsDoc :: [S.InitialVar] -> RenderDoc
-initialVarsDoc initialVars =
-  case initialVars of
-    [] -> mempty
-    _ ->
-      mconcat
-        [ headerDoc "Initial variables"
-        , alignedAssignmentsDoc
-            "  "
-            [ (name, renderInitialVarValue ty bounds)
-            | S.InitialVar name ty bounds <- initialVars
-            ]
-        , hardline
-        ]
+initialVarsBox :: [S.InitialVar] -> Box.Box
+initialVarsBox initialVars =
+  assignmentsBox
+    2
+    [ (name, renderInitialVarValue ty bounds)
+    | S.InitialVar name ty bounds <- initialVars
+    ]
 
 renderInitialVarValue :: S.ScalarType -> S.InitialBounds -> String
 renderInitialVarValue ty bounds =
@@ -340,21 +307,21 @@ renderConstraintParts constraint =
   case constraint of
     S.Equals ty lhs rhs ->
       RenderedConstraint
-        { renderedConstraintLhs = renderRawExpr lhs
+        { renderedConstraintLhs = rawExprText lhs
         , renderedConstraintOp = renderEqualityOperator ty
         , renderedConstraintRhs = renderEqualityRhs ty rhs
         }
     S.LessOrEqual lhs rhs ->
       RenderedConstraint
-        { renderedConstraintLhs = renderRawExpr lhs
+        { renderedConstraintLhs = rawExprText lhs
         , renderedConstraintOp = "<="
-        , renderedConstraintRhs = renderRawExpr rhs
+        , renderedConstraintRhs = rawExprText rhs
         }
     S.Minimize expr ->
       RenderedConstraint
         { renderedConstraintLhs = ""
         , renderedConstraintOp = "minimize"
-        , renderedConstraintRhs = renderRawExpr expr
+        , renderedConstraintRhs = rawExprText expr
         }
     S.All constraints ->
       RenderedConstraint
@@ -373,53 +340,34 @@ renderEqualityOperator ty =
 renderEqualityRhs :: S.ScalarType -> S.RawExpr -> String
 renderEqualityRhs ty rhs =
   case S.typeCircularPeriod ty of
-    Nothing     -> renderRawExpr rhs
-    Just period -> renderRawExpr rhs ++ " (mod " ++ fixed2 period ++ ")"
+    Nothing     -> rawExprText rhs
+    Just period -> rawExprText rhs ++ " (mod " ++ fixed2 period ++ ")"
 
-stepConstraintsDoc :: [S.Constraint] -> RenderDoc
-stepConstraintsDoc constraints =
-  let visibleConstraints =
-        filter constraintMentionsVar (flattenConstraints constraints)
-   in case visibleConstraints of
-        [] -> mempty
-        _ ->
-          mconcat
-            [ stepIndent
-            , "constraints"
-            , hardline
-            , indentedConstraintsDoc visibleConstraints
-            , hardline
-            ]
+stepConstraintsBoxes :: [S.Constraint] -> [Box.Box]
+stepConstraintsBoxes constraints =
+  case filter constraintMentionsVar (flattenConstraints constraints) of
+    []      -> []
+    visible -> [stepSectionBox "constraints" (constraintTableBox visible)]
 
-indentedConstraintsDoc :: [S.Constraint] -> RenderDoc
-indentedConstraintsDoc constraints =
-  let rendered = map renderConstraintParts constraints
-      lhsWidth =
-        maximum
-          (0
-             : [ length (renderedConstraintLhs constraint)
-               | constraint <- rendered
-               ])
-      opWidth =
-        maximum
-          (0
-             : [ length (renderedConstraintOp constraint)
-               | constraint <- rendered
-               ])
-   in mconcat (map (indentedConstraintDoc lhsWidth opWidth) rendered)
-
-indentedConstraintDoc :: Int -> Int -> RenderedConstraint -> RenderDoc
-indentedConstraintDoc lhsWidth opWidth constraint =
-  mconcat
-    [ stepIndent
-    , stepIndent
-    , fixedWidth lhsWidth (renderedConstraintLhs constraint)
-    , " "
-    , fixedWidth opWidth (renderedConstraintOp constraint)
-    , " "
-    , pretty (renderedConstraintRhs constraint)
-    , hardline
-    ]
+constraintTableBox :: [S.Constraint] -> Box.Box
+constraintTableBox constraints = tightVcat (map row rendered)
+  where
+    rendered = map renderConstraintParts constraints
+    lhsWidth =
+      maximum
+        (0
+           : [ length (renderedConstraintLhs constraint)
+             | constraint <- rendered
+             ])
+    opWidth =
+      maximum
+        (0 : [length (renderedConstraintOp constraint) | constraint <- rendered])
+    row constraint =
+      rowBox
+        [ fieldBox lhsWidth (renderedConstraintLhs constraint)
+        , fieldBox opWidth (renderedConstraintOp constraint)
+        , Box.text (renderedConstraintRhs constraint)
+        ]
 
 constraintMentionsVar :: S.Constraint -> Bool
 constraintMentionsVar constraint =
@@ -449,14 +397,11 @@ rawExprMentionsVar expr =
 data SolvedExpr =
   SolvedExpr String Double
 
-stepSolutionDoc :: S.Solution -> [V.ViewNode] -> [S.Constraint] -> RenderDoc
-stepSolutionDoc solution nodes _constraints =
-  let solved = dedupeSolvedExprs (concatMap (solveViewNodeExprs solution) nodes)
-   in case solved of
-        [] -> mempty
-        _ ->
-          mconcat
-            [stepIndent, "solution", hardline, solvedExprsDoc solved, hardline]
+stepSolutionBoxes :: S.Solution -> [V.ViewNode] -> [S.Constraint] -> [Box.Box]
+stepSolutionBoxes solution nodes _constraints =
+  case dedupeSolvedExprs (concatMap (solveViewNodeExprs solution) nodes) of
+    []     -> []
+    solved -> [stepSectionBox "solution" (solvedExprsBox solved)]
 
 solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
 solveViewNodeExprs solution node =
@@ -478,150 +423,151 @@ dedupeSolvedExprs = go []
       | name `elem` seen = go seen rest
       | otherwise = solved : go (name : seen) rest
 
-solvedExprsDoc :: [SolvedExpr] -> RenderDoc
-solvedExprsDoc solved =
-  alignedAssignmentsDoc
-    (replicate (stepIndentWidth * 2) ' ')
+solvedExprsBox :: [SolvedExpr] -> Box.Box
+solvedExprsBox solved =
+  assignmentsBox
+    0
     [(name, formatSignedDouble value) | SolvedExpr name value <- solved]
 
 --------------------------------------------------------------------------------
 -- View trace
 --------------------------------------------------------------------------------
-viewTraceDoc ::
-     PrintEvents events
-  => Bool
-  -> S.Solution
-  -> [V.ViewStep events]
-  -> RenderDoc
-viewTraceDoc showDetails solution steps =
-  headerDoc "View trace"
-    <> mconcat
-         (zipWith (viewTraceStepDoc showDetails solution) [0 :: Int ..] steps)
+viewTraceBox ::
+     PrintEvents events => Bool -> S.Solution -> [V.ViewStep events] -> Box.Box
+viewTraceBox showDetails solution steps =
+  sectionBox "View trace"
+    $ spacedVcat
+    $ zipWith (viewTraceStepBox showDetails solution) [0 :: Int ..] steps
 
-viewTraceStepDoc ::
+viewTraceStepBox ::
      PrintEvents events
   => Bool
   -> S.Solution
   -> Int
   -> V.ViewStep events
-  -> RenderDoc
-viewTraceStepDoc showDetails solution ix step =
+  -> Box.Box
+viewTraceStepBox showDetails solution ix step =
   case step of
     V.ViewStep event nodes constraints ->
-      eventDoc ix event
-        <> whenDoc
-             showDetails
-             (mconcat
-                [ stepViewNodesDoc nodes
-                , stepConstraintsDoc constraints
-                , stepSolutionDoc solution nodes constraints
-                ])
+      if showDetails
+        then spacedVcat (eventBox ix event : detailBoxes)
+        else eventBox ix event
+      where
+        detailBoxes =
+          concat
+            [ stepViewNodeBoxes nodes
+            , stepConstraintsBoxes constraints
+            , stepSolutionBoxes solution nodes constraints
+            ]
 
-stepViewNodesDoc :: [V.ViewNode] -> RenderDoc
-stepViewNodesDoc nodes =
+stepViewNodeBoxes :: [V.ViewNode] -> [Box.Box]
+stepViewNodeBoxes nodes =
   case nodes of
-    [] -> mempty
+    [] -> []
     _ ->
-      mconcat
-        [ stepIndent
-        , "view nodes"
-        , hardline
-        , mconcat (map indentedViewNodeDoc nodes)
-        , hardline
-        ]
+      [stepSectionBox "view nodes" (tightVcat (map indentedViewNodeBox nodes))]
 
-indentedViewNodeDoc :: V.ViewNode -> RenderDoc
-indentedViewNodeDoc node =
+indentedViewNodeBox :: V.ViewNode -> Box.Box
+indentedViewNodeBox node =
   case node of
     V.BlockViewNode block ->
-      mconcat
-        [ stepIndent
-        , stepIndent
-        , pretty (renderBlockRefPlain (V.blockRef block))
-        , " "
-        , pretty (renderPayloadView (V.blockLabel block))
-        , hardline
+      rowBox
+        [ Box.text (renderBlockRefPlain (V.blockRef block))
+        , Box.text (renderPayloadView (V.blockLabel block))
         ]
 
 --------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
-eventsDoc :: PrintEvents events => [RecordedEvent events] -> RenderDoc
-eventsDoc events =
-  headerDoc "Events" <> mconcat (zipWith eventDoc [0 :: Int ..] events)
+eventsBox :: PrintEvents events => [RecordedEvent events] -> Box.Box
+eventsBox events =
+  sectionBox "Events" $ spacedVcat $ zipWith eventBox [0 :: Int ..] events
 
-eventDoc :: PrintEvents events => Int -> RecordedEvent events -> RenderDoc
-eventDoc ix (RecordedEvent event audit) =
-  mconcat
-    [ fixedLeft eventIndexWidth ("E" ++ show ix)
-    , " | "
-    , pretty (ansiText eventTitleStyle (printEventChoice event))
-    , hardline
-    , auditDoc audit
-    , hardline
+eventBox :: PrintEvents events => Int -> RecordedEvent events -> Box.Box
+eventBox ix (RecordedEvent event audit) =
+  case audit of
+    EmptyAudit -> eventHeaderBox ix event
+    _          -> tightVcat [eventHeaderBox ix event, auditBox audit]
+
+eventHeaderBox ::
+     PrintEvents events => Int -> EventChoice events acts -> Box.Box
+eventHeaderBox ix event =
+  rowBox
+    [ rightFieldBox eventIndexWidth ("E" ++ show ix)
+    , Box.text "|"
+    , Box.text (printEventChoice event)
     ]
 
 --------------------------------------------------------------------------------
 -- Audit rendering
 --------------------------------------------------------------------------------
-auditDoc :: Audit acts -> RenderDoc
-auditDoc EmptyAudit     = mempty
-auditDoc (step :> rest) = auditStepDoc step <> auditDoc rest
+auditBox :: Audit acts -> Box.Box
+auditBox audit =
+  case audit of
+    EmptyAudit -> Box.nullBox
+    step :> rest ->
+      case rest of
+        EmptyAudit -> auditStepBox step
+        _          -> tightVcat [auditStepBox step, auditBox rest]
 
-auditStepDoc :: AuditStep act -> RenderDoc
-auditStepDoc step =
+auditStepBox :: AuditStep act -> Box.Box
+auditStepBox step =
   case step of
-    CreateStep snapshot -> snapshotStep1Doc createStyle snapshot
-    ObserveStep snapshot -> snapshotStep1Doc observeStyle snapshot
-    InspectStep snapshot -> snapshotStep1Doc inspectStyle snapshot
-    UseStep snapshot -> snapshotStep1Doc useStyle snapshot
-    CopyStep original copy' -> snapshotStep2Doc copyStyle original copy'
+    CreateStep snapshot -> snapshotStep1Box createStyle snapshot
+    ObserveStep snapshot -> snapshotStep1Box observeStyle snapshot
+    InspectStep snapshot -> snapshotStep1Box inspectStyle snapshot
+    UseStep snapshot -> snapshotStep1Box useStyle snapshot
+    CopyStep original copy' -> snapshotStep2Box copyStyle original copy'
     ReplaceStep old incoming output ->
-      snapshotStep3Doc replaceStyle old incoming output
-    ComputeStep snapshot -> snapshotStep1Doc computeStyle snapshot
-    DestroyStep snapshot -> snapshotStep1Doc destroyStyle snapshot
-    SealStep owner child -> snapshotStep2Doc sealStyle owner child
-    UnsealStep owner child -> snapshotStep2Doc unsealStyle owner child
-    DecideStep snapshot -> snapshotStep1Doc decideStyle snapshot
+      snapshotStep3Box replaceStyle old incoming output
+    ComputeStep snapshot -> snapshotStep1Box computeStyle snapshot
+    DestroyStep snapshot -> snapshotStep1Box destroyStyle snapshot
+    SealStep owner child -> snapshotStep2Box sealStyle owner child
+    UnsealStep owner child -> snapshotStep2Box unsealStyle owner child
+    DecideStep snapshot -> snapshotStep1Box decideStyle snapshot
 
-snapshotStep1Doc :: StepStyle -> BlockSnapshot tag -> RenderDoc
-snapshotStep1Doc style snapshot =
-  renderStepName style <+> snapshotDoc snapshot <> hardline
+snapshotStep1Box :: StepStyle -> BlockSnapshot tag -> Box.Box
+snapshotStep1Box style snapshot =
+  rowBox [renderStepNameBox style, snapshotBox snapshot]
 
-snapshotStep2Doc ::
-     StepStyle -> BlockSnapshot first -> BlockSnapshot second -> RenderDoc
-snapshotStep2Doc style first second =
-  mconcat
-    [ renderStepName style <+> snapshotDoc first
-    , hardline
-    , renderEmptyStepName <+> snapshotDoc second
-    , hardline
+snapshotStep2Box ::
+     StepStyle -> BlockSnapshot first -> BlockSnapshot second -> Box.Box
+snapshotStep2Box style first second =
+  tightVcat
+    [ rowBox [renderStepNameBox style, snapshotBox first]
+    , rowBox [renderEmptyStepNameBox, snapshotBox second]
     ]
 
-snapshotStep3Doc ::
+snapshotStep3Box ::
      StepStyle
   -> BlockSnapshot first
   -> BlockSnapshot second
   -> BlockSnapshot third
-  -> RenderDoc
-snapshotStep3Doc style first second third =
-  mconcat
-    [ renderStepName style <+> snapshotDoc first
-    , hardline
-    , renderEmptyStepName <+> snapshotDoc second
-    , hardline
-    , renderEmptyStepName <+> snapshotDoc third
-    , hardline
+  -> Box.Box
+snapshotStep3Box style first second third =
+  tightVcat
+    [ rowBox [renderStepNameBox style, snapshotBox first]
+    , rowBox [renderEmptyStepNameBox, snapshotBox second]
+    , rowBox [renderEmptyStepNameBox, snapshotBox third]
     ]
+
+renderStepNameBox :: StepStyle -> Box.Box
+renderStepNameBox style =
+  indentBox stepIndentWidth $ rightFieldBox stepNameWidth (stepStyleName style)
+
+renderEmptyStepNameBox :: Box.Box
+renderEmptyStepNameBox =
+  indentBox stepIndentWidth $ rightFieldBox stepNameWidth ""
 
 --------------------------------------------------------------------------------
 -- Snapshot rendering
 --------------------------------------------------------------------------------
-snapshotDoc :: BlockSnapshot tag -> RenderDoc
-snapshotDoc snapshot =
-  fixedWidth snapshotRefWidth (renderBlockRef (snapshotRef snapshot))
-    <> " "
-    <> pretty (renderSnapshotPayload snapshot)
+snapshotBox :: BlockSnapshot tag -> Box.Box
+snapshotBox snapshot =
+  rowBox
+    [ fieldBox snapshotRefWidth (renderBlockRef (snapshotRef snapshot))
+    , Box.text (renderSnapshotPayload snapshot)
+    ]
 
 renderSnapshotPayload :: BlockSnapshot tag -> String
 renderSnapshotPayload (BlockSnapshot _ _ view) = renderPayloadView view
@@ -641,56 +587,66 @@ renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
 --------------------------------------------------------------------------------
 -- Expression rendering
 --------------------------------------------------------------------------------
-exprDoc :: S.Expr ty -> RenderDoc
-exprDoc = rawExprDoc . S.exprRaw
+exprText :: S.Expr ty -> String
+exprText = rawExprText . S.exprRaw
 
-renderRawExpr :: S.RawExpr -> String
-renderRawExpr = renderDoc . rawExprDoc
+rawExprText :: S.RawExpr -> String
+rawExprText = rawExprTextPrec 0
 
-rawExprDoc :: S.RawExpr -> RenderDoc
-rawExprDoc = rawExprDocPrec 0
-
-rawExprDocPrec :: Int -> S.RawExpr -> RenderDoc
-rawExprDocPrec precedence expr =
+rawExprTextPrec :: Int -> S.RawExpr -> String
+rawExprTextPrec precedence expr =
   case expr of
-    S.EVar _ variable -> pretty (S.varName variable)
-    S.ELit value -> pretty (fixed2 value)
+    S.EVar _ variable -> S.varName variable
+    S.ELit value -> fixed2 value
     S.EAdd lhs rhs ->
-      parenthesizeDoc
-        (precedence > addPrecedence)
-        (rawExprDocPrec addPrecedence lhs
-           <+> "+"
-           <+> rawExprDocPrec addPrecedence rhs)
+      infixExprText
+        precedence
+        addPrecedence
+        "+"
+        (rawExprTextPrec addPrecedence lhs)
+        (rawExprTextPrec addPrecedence rhs)
     S.ESub lhs rhs ->
-      parenthesizeDoc
-        (precedence > addPrecedence)
-        (rawExprDocPrec addPrecedence lhs
-           <+> "-"
-           <+> rawExprDocPrec (addPrecedence + 1) rhs)
+      infixExprText
+        precedence
+        addPrecedence
+        "-"
+        (rawExprTextPrec addPrecedence lhs)
+        (rawExprTextPrec (addPrecedence + 1) rhs)
     S.EMul lhs rhs ->
-      parenthesizeDoc
-        (precedence > mulPrecedence)
-        (rawExprDocPrec mulPrecedence lhs
-           <+> "*"
-           <+> rawExprDocPrec mulPrecedence rhs)
+      infixExprText
+        precedence
+        mulPrecedence
+        "*"
+        (rawExprTextPrec mulPrecedence lhs)
+        (rawExprTextPrec mulPrecedence rhs)
     S.EDiv lhs rhs ->
-      parenthesizeDoc
-        (precedence > mulPrecedence)
-        (rawExprDocPrec mulPrecedence lhs
-           <+> "/"
-           <+> rawExprDocPrec (mulPrecedence + 1) rhs)
+      infixExprText
+        precedence
+        mulPrecedence
+        "/"
+        (rawExprTextPrec mulPrecedence lhs)
+        (rawExprTextPrec (mulPrecedence + 1) rhs)
     S.ENeg inner ->
-      parenthesizeDoc
-        (precedence > unaryPrecedence)
-        ("-" <> rawExprDocPrec unaryPrecedence inner)
-    S.EAbs inner -> "abs" <+> rawExprDocPrec unaryPrecedence inner
-    S.ESignum inner -> "signum" <+> rawExprDocPrec unaryPrecedence inner
+      parenthesizeText (precedence > unaryPrecedence)
+        $ "-" ++ rawExprTextPrec unaryPrecedence inner
+    S.EAbs inner -> functionExprText "abs" inner
+    S.ESignum inner -> functionExprText "signum" inner
     S.EPow base to ->
-      parenthesizeDoc
-        (precedence > powerPrecedence)
-        (rawExprDocPrec powerPrecedence base
-           <+> "^"
-           <+> rawExprDocPrec (powerPrecedence + 1) to)
+      infixExprText
+        precedence
+        powerPrecedence
+        "^"
+        (rawExprTextPrec powerPrecedence base)
+        (rawExprTextPrec (powerPrecedence + 1) to)
+
+infixExprText :: Int -> Int -> String -> String -> String -> String
+infixExprText outerPrecedence innerPrecedence operator lhs rhs =
+  parenthesizeText (outerPrecedence > innerPrecedence)
+    $ lhs ++ " " ++ operator ++ " " ++ rhs
+
+functionExprText :: String -> S.RawExpr -> String
+functionExprText name inner =
+  name ++ " " ++ rawExprTextPrec unaryPrecedence inner
 
 addPrecedence :: Int
 addPrecedence = 6
@@ -704,60 +660,152 @@ unaryPrecedence = 8
 powerPrecedence :: Int
 powerPrecedence = 9
 
-parenthesizeDoc :: Bool -> RenderDoc -> RenderDoc
-parenthesizeDoc shouldParenthesize doc =
+parenthesizeText :: Bool -> String -> String
+parenthesizeText shouldParenthesize textValue =
   if shouldParenthesize
-    then parens doc
-    else doc
+    then "(" ++ textValue ++ ")"
+    else textValue
+
+--------------------------------------------------------------------------------
+-- Box helpers
+--------------------------------------------------------------------------------
+sectionBox :: String -> Box.Box -> Box.Box
+sectionBox title body =
+  tightVcat [Box.text title, Box.text (replicate (length title) '-'), body]
+
+optionalSection :: String -> Box.Box -> [Box.Box]
+optionalSection title body =
+  if isNullBox body
+    then []
+    else [sectionBox title body]
+
+stepSectionBox :: String -> Box.Box -> Box.Box
+stepSectionBox title body =
+  indentBox stepIndentWidth
+    $ tightVcat [Box.text title, indentBox stepIndentWidth body]
+
+sections :: [Box.Box] -> Box.Box
+sections = spacedVcat
+
+tightVcat :: [Box.Box] -> Box.Box
+tightVcat boxes =
+  case filter (not . isNullBox) boxes of
+    []      -> Box.nullBox
+    visible -> Box.vcat Box.left visible
+
+spacedVcat :: [Box.Box] -> Box.Box
+spacedVcat boxes =
+  case filter (not . isNullBox) boxes of
+    []      -> Box.nullBox
+    [box]   -> box
+    visible -> Box.vsep 1 Box.left visible
+
+linesBox :: [String] -> Box.Box
+linesBox = tightVcat . map Box.text
+
+rowBox :: [Box.Box] -> Box.Box
+rowBox = Box.hsep 1 Box.top
+
+fieldBox :: Int -> String -> Box.Box
+fieldBox width value = Box.alignHoriz Box.left width (Box.text value)
+
+rightFieldBox :: Int -> String -> Box.Box
+rightFieldBox width value = Box.alignHoriz Box.right width (Box.text value)
+
+indentBox :: Int -> Box.Box -> Box.Box
+indentBox amount box =
+  if isNullBox box
+    then Box.nullBox
+    else Box.hcat Box.top [Box.emptyBox (Box.rows box) amount, box]
+
+assignmentsBox :: Int -> [(String, String)] -> Box.Box
+assignmentsBox indentWidth assignments =
+  indentBox indentWidth $ tightVcat (map assignmentRow assignments)
+  where
+    nameWidth = maximum (0 : [length name | (name, _) <- assignments])
+    assignmentRow (name, value) =
+      rowBox [fieldBox nameWidth name, Box.text "=", Box.text value]
+
+isNullBox :: Box.Box -> Bool
+isNullBox box = Box.rows box == 0 && Box.cols box == 0
+
+--------------------------------------------------------------------------------
+-- ANSI post-processing
+--------------------------------------------------------------------------------
+colourReport :: String -> String
+colourReport = unlines . map colourLine . lines
+
+colourLine :: String -> String
+colourLine line
+  | isEventHeaderLine line = colourEventHeaderLine line
+  | otherwise = colourStepNameLine line
+
+isEventHeaderLine :: String -> Bool
+isEventHeaderLine line =
+  let (prefix, rest) = splitAt eventIndexWidth line
+   in looksLikeEventIndex prefix && take 3 rest == " | "
+
+looksLikeEventIndex :: String -> Bool
+looksLikeEventIndex textValue =
+  case trimLeft textValue of
+    'E':digits -> not (null digits) && all isDigit digits
+    _          -> False
+
+colourEventHeaderLine :: String -> String
+colourEventHeaderLine line =
+  let prefixWidth = eventIndexWidth + length " | "
+      (prefix, title) = splitAt prefixWidth line
+   in prefix ++ sgrBold ++ title ++ sgrReset
+
+colourStepNameLine :: String -> String
+colourStepNameLine line =
+  case splitStepNameLine line of
+    Nothing -> line
+    Just (before, nameField, after) ->
+      case lookup (trim nameField) stepColourMap of
+        Nothing -> line
+        Just colour ->
+          before ++ sgrPalette colour ++ nameField ++ sgrReset ++ after
+
+splitStepNameLine :: String -> Maybe (String, String, String)
+splitStepNameLine line =
+  let (before, rest) = splitAt stepIndentWidth line
+      (nameField, after) = splitAt stepNameWidth rest
+   in if length before == stepIndentWidth
+           && all (== ' ') before
+           && length nameField == stepNameWidth
+        then Just (before, nameField, after)
+        else Nothing
+
+stepColourMap :: [(String, Int)]
+stepColourMap =
+  [(stepStyleName style, stepStyleColour style) | style <- allStepStyles]
+
+sgrBold :: String
+sgrBold = setSGRCode [SetConsoleIntensity BoldIntensity]
+
+sgrPalette :: Int -> String
+sgrPalette colour =
+  setSGRCode [SetPaletteColor Foreground (fromIntegral colour)]
+
+sgrReset :: String
+sgrReset = setSGRCode [Reset]
 
 --------------------------------------------------------------------------------
 -- Text helpers
 --------------------------------------------------------------------------------
-type RenderDoc = Doc ()
+trim :: String -> String
+trim = trimLeft . trimRight
 
-renderDoc :: RenderDoc -> String
-renderDoc = renderString . layoutPretty defaultLayoutOptions
+trimLeft :: String -> String
+trimLeft = dropWhile (== ' ')
 
-headerDoc :: String -> RenderDoc
-headerDoc title =
-  pretty title <> hardline <> pretty (replicate (length title) '-')
+trimRight :: String -> String
+trimRight = dropWhileEnd (== ' ')
 
-whenDoc :: Bool -> RenderDoc -> RenderDoc
-whenDoc enabled doc =
-  if enabled
-    then doc
-    else mempty
-
-renderStepName :: StepStyle -> RenderDoc
-renderStepName (StepStyle name style) =
-  stepIndent <> pretty (ansiText [style] (padLeft stepNameWidth name))
-
-renderEmptyStepName :: RenderDoc
-renderEmptyStepName = stepIndent <> fixedLeft stepNameWidth ""
-
-alignedAssignmentsDoc :: String -> [(String, String)] -> RenderDoc
-alignedAssignmentsDoc leading assignments =
-  let nameWidth = maximum (0 : [length name | (name, _) <- assignments])
-   in mconcat (map (alignedAssignmentDoc leading nameWidth) assignments)
-
-alignedAssignmentDoc :: String -> Int -> (String, String) -> RenderDoc
-alignedAssignmentDoc leading nameWidth (name, value) =
-  pretty leading
-    <> fixedWidth nameWidth name
-    <> " = "
-    <> pretty value
-    <> hardline
-
-fixedWidth :: Int -> String -> Doc ann
-fixedWidth targetWidth text =
-  pretty text <> pretty (replicate (max 0 (targetWidth - length text)) ' ')
-
-fixedLeft :: Int -> String -> Doc ann
-fixedLeft targetWidth text = pretty (padLeft targetWidth text)
-
-padLeft :: Int -> String -> String
-padLeft n text = replicate (max 0 (n - length text)) ' ' ++ text
-
+--------------------------------------------------------------------------------
+-- Numeric helpers
+--------------------------------------------------------------------------------
 formatSignedDouble :: Double -> String
 formatSignedDouble value =
   let cleaned = cleanNegativeZero value
@@ -774,24 +822,3 @@ cleanNegativeZero value =
   if abs value < 0.005
     then 0
     else value
-
---------------------------------------------------------------------------------
--- ANSI helpers
---------------------------------------------------------------------------------
-data StepStyle =
-  StepStyle String Ansi
-
-data Ansi
-  = AnsiReset
-  | AnsiBold
-  | Ansi256Fg Int
-
-ansiText :: [Ansi] -> String -> String
-ansiText styles text = concatMap ansiCode styles ++ text ++ ansiCode AnsiReset
-
-ansiCode :: Ansi -> String
-ansiCode ansi =
-  case ansi of
-    AnsiReset   -> "\ESC[0m"
-    AnsiBold    -> "\ESC[1m"
-    Ansi256Fg n -> "\ESC[38;5;" ++ show n ++ "m"

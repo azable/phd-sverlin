@@ -46,4 +46,5 @@ runVisualization config graph = do
     Left err -> pure (Left err)
     Right compiled -> do
       Compile.writeCompiledJSON (runOutputPath config) compiled
+      putStrLn ("Compiled JSON at: " ++ runOutputPath config)
       pure (Right compiled)

@@ -87,7 +87,8 @@ executable compile-app
                       aeson-pretty,
                       bytestring,
                       optparse-applicative,
-                      prettyprinter
+                      boxes,
+                      ansi-terminal,
 
     -- Directories containing source files.
     hs-source-dirs:   app
