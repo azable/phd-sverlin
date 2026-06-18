@@ -74,7 +74,7 @@ module DSL.Main
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
 import           Data.Kind              (Type)
-import           Data.Proxy             (Proxy (..))
+import           Data.Typeable          (Typeable)
 import           LinearTrace
 import           LinearTrace.Visualize
 
@@ -82,12 +82,6 @@ import qualified Prelude                as P
 import           Prelude.Linear
 
 infixr 4 :*
---------------------------------------------------------------------------------
--- Configuration
---------------------------------------------------------------------------------
-labelWidth :: Int
-labelWidth = 5
-
 --------------------------------------------------------------------------------
 -- Builder / step protocol
 --------------------------------------------------------------------------------
@@ -147,6 +141,15 @@ type instance Payload (Value 'TDouble) = LDouble (Value 'TDouble)
 type instance Payload (Var ty) = LString (Var ty)
 
 type instance Payload (Op op lhs rhs out) = LUnit (Op op lhs rhs out)
+
+instance TraceBlock (Value 'TInt)
+
+instance TraceBlock (Value 'TDouble)
+
+instance Typeable ty => TraceBlock (Var ty)
+
+instance (Typeable op, Typeable lhs, Typeable rhs, Typeable out) =>
+         TraceBlock (Op op lhs rhs out)
 
 type IntBlock = Block (Value 'TInt)
 
@@ -508,8 +511,6 @@ example = do
   three <- literal (int 3)
   result <- sumValue .*. three
   x2 <- writeVar x1 result
-  -- (x3, finalValue) <- readVar x2
-  -- discardValue finalValue
   discardVar x2
 
 --------------------------------------------------------------------------------
@@ -517,6 +518,9 @@ example = do
 --------------------------------------------------------------------------------
 blockSize :: LayoutExpr
 blockSize = num 100 --global "blockSize"
+
+black :: HslExpr
+black = Hsl {hue = num 0, saturation = num 0, lightness = num 0}
 
 valueFill :: HslExpr
 valueFill =
@@ -527,6 +531,11 @@ cellBlock :: BlockView tag -> ViewBuilder events ()
 cellBlock block = P.do
   ensure $ widthOf block @=@ blockSize
   ensure $ heightOf block @=@ blockSize
+
+varBlock :: BlockView tag -> ViewBuilder events ()
+varBlock block = P.do
+  ensure $ widthOf block @=@ (blockSize @+@ num 20)
+  ensure $ heightOf block @=@ (blockSize @+@ num 20)
 
 instance VisualizeBlock (Value 'TInt) where
   styleBlock _ =
@@ -550,15 +559,20 @@ instance VisualizeBlock (Value 'TDouble) where
       P.. withWhiteSpace WhiteSpaceNoWrap
   visualizeBlock = cellBlock
 
-instance VisualizeBlock (Var ty) where
-  visualizeBlock = cellBlock
+instance Typeable ty => VisualizeBlock (Var ty) where
+  styleBlock _ =
+    withFill valueFill
+      P.. withRadius (num 10)
+      P.. withStroke black
+      P.. withStrokeWidth (num 4)
+      P.. withFontSize (blockSize @/@ num 2)
+      P.. withFontFamily "Inter"
+      P.. withFontWeight FontWeightBold
+      P.. withTextAlign TextAlignCenter
+      P.. withWhiteSpace WhiteSpaceNoWrap
+  visualizeBlock = varBlock
 
-instance ( BinaryOpLabel op
-         , PrimitiveLabel lhs
-         , PrimitiveLabel rhs
-         , PrimitiveLabel out
-         ) =>
-         VisualizeBlock (Op op lhs rhs out) where
+instance TraceBlock (Op op lhs rhs out) => VisualizeBlock (Op op lhs rhs out) where
   visualizeBlock = cellBlock
 
 --------------------------------------------------------------------------------
@@ -575,7 +589,7 @@ instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
   visualizeEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
-        valueB `sameBounds` varB
+        varB `sameBounds` valueB
 
 instance (VisualizeBlock (Value ty), VisualizeBlock (Var ty)) =>
          VisualizeEvent (ReadVar ty) where
@@ -623,101 +637,3 @@ instance ( VisualizeBlock (Value lhs)
         lhs |=| op
         op |=| rhs
         rhs |=| result
-
---------------------------------------------------------------------------------
--- Payload labels
---------------------------------------------------------------------------------
-padRight :: Int -> String -> String
-padRight n s = s P.++ P.replicate (P.max 0 (n P.- P.length s)) ' '
-
-padRightF :: String -> String
-padRightF = padRight labelWidth
-
-class PrimitiveLabel ty where
-  primitiveLabel :: Proxy ty -> String
-
-instance PrimitiveLabel 'TInt where
-  primitiveLabel _ = "I"
-
-instance PrimitiveLabel 'TDouble where
-  primitiveLabel _ = "D"
-
-class BinaryOpLabel op where
-  binaryOpLabel :: Proxy op -> String
-
-instance BinaryOpLabel 'TAdd where
-  binaryOpLabel _ = "+"
-
-instance BinaryOpLabel 'TMul where
-  binaryOpLabel _ = "*"
-
-instance TracePayload (Value 'TInt) where
-  payloadView _ (LInt i) =
-    PayloadView {payloadKind = "Val", payloadContent = P.show i}
-
-instance TraceBlock (Value 'TInt)
-
-instance TracePayload (Value 'TDouble) where
-  payloadView _ (LDouble f) =
-    PayloadView {payloadKind = "Val", payloadContent = P.show f}
-
-instance TraceBlock (Value 'TDouble)
-
-instance TracePayload (Var ty) where
-  payloadView _ (LString name) =
-    PayloadView {payloadKind = "Var", payloadContent = name}
-
-instance TraceBlock (Var ty)
-
-instance ( BinaryOpLabel op
-         , PrimitiveLabel lhs
-         , PrimitiveLabel rhs
-         , PrimitiveLabel out
-         ) =>
-         TracePayload (Op op lhs rhs out) where
-  payloadView _ LUnit =
-    PayloadView
-      {payloadKind = "Op", payloadContent = binaryOpLabel (Proxy :: Proxy op)}
-
-instance ( BinaryOpLabel op
-         , PrimitiveLabel lhs
-         , PrimitiveLabel rhs
-         , PrimitiveLabel out
-         ) =>
-         TraceBlock (Op op lhs rhs out)
--- type ExampleEvents
---   = '[ DeclareVar 'TInt
---      , ReadVar 'TInt
---      , Operator 'TAdd 'TInt 'TInt 'TInt
---      , Eval 'TAdd 'TInt 'TInt 'TInt
---      , WriteVar 'TInt
---      , DiscardVar 'TInt
---      ]
--- data FibState where
---   FibState :: IntVar %1 -> IntVar %1 -> FibState
--- iterateL ::
---      Int
---   -> (state %1 -> Builder ExampleEvents state)
---   -> state
---      %1 -> Builder ExampleEvents state
--- iterateL n stepOnce state'
---   | n P.<= 0 = return state'
---   | P.otherwise = do
---     state'' <- stepOnce state'
---     iterateL (n P.- 1) stepOnce state''
--- fibStep :: FibState %1 -> Builder ExampleEvents FibState
--- fibStep (FibState a0 b0) = do
---   (a1, aValue) <- readVar a0
---   (b1, bForA) <- readVar b0
---   (b2, bForSum) <- readVar b1
---   next <- aValue .+. bForSum
---   a2 <- writeVar a1 bForA
---   b3 <- writeVar b2 next
---   return (FibState a2 b3)
--- example :: Builder ExampleEvents ()
--- example = do
---   a0 <- declare "a" (int 0)
---   b0 <- declare "b" (int 1)
---   FibState aN bN <- iterateL 5 fibStep (FibState a0 b0)
---   discardVar aN
---   discardVar bN

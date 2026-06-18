@@ -1,0 +1,36 @@
+-- type ExampleEvents
+--   = '[ DeclareVar 'TInt
+--      , ReadVar 'TInt
+--      , Operator 'TAdd 'TInt 'TInt 'TInt
+--      , Eval 'TAdd 'TInt 'TInt 'TInt
+--      , WriteVar 'TInt
+--      , DiscardVar 'TInt
+--      ]
+-- data FibState where
+--   FibState :: IntVar %1 -> IntVar %1 -> FibState
+-- iterateL ::
+--      Int
+--   -> (state %1 -> Builder ExampleEvents state)
+--   -> state
+--      %1 -> Builder ExampleEvents state
+-- iterateL n stepOnce state'
+--   | n P.<= 0 = return state'
+--   | P.otherwise = do
+--     state'' <- stepOnce state'
+--     iterateL (n P.- 1) stepOnce state''
+-- fibStep :: FibState %1 -> Builder ExampleEvents FibState
+-- fibStep (FibState a0 b0) = do
+--   (a1, aValue) <- readVar a0
+--   (b1, bForA) <- readVar b0
+--   (b2, bForSum) <- readVar b1
+--   next <- aValue .+. bForSum
+--   a2 <- writeVar a1 bForA
+--   b3 <- writeVar b2 next
+--   return (FibState a2 b3)
+-- example :: Builder ExampleEvents ()
+-- example = do
+--   a0 <- declare "a" (int 0)
+--   b0 <- declare "b" (int 1)
+--   FibState aN bN <- iterateL 5 fibStep (FibState a0 b0)
+--   discardVar aN
+--   discardVar bN

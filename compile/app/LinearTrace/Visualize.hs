@@ -563,6 +563,18 @@ sameBounds a b = do
   sameWidth a b
   sameHeight a b
 
+-- centeredWithin :: BlockView a -> BlockView b -> ViewBuilder events ()
+-- centeredWithin inner outer = do
+--   ensure
+--     $ leftOf inner
+--         @+@ (widthOf inner @/@ num 2)
+--         @=@ leftOf outer
+--         @+@ (widthOf outer @/@ num 2)
+--   ensure
+--     $ topOf inner
+--         @+@ (heightOf inner @/@ num 2)
+--         @=@ topOf outer
+--         @+@ (heightOf outer @/@ num 2)
 sameVec2 :: Vec2 LayoutExpr -> Vec2 LayoutExpr -> ViewBuilder events ()
 sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
   ensure $ ax @=@ bx

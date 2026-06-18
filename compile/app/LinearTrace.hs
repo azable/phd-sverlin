@@ -60,8 +60,7 @@ module LinearTrace
   , (<$>)
   , (<*>)
   , -- * Graph building, rendering and compilation
-    TracePayload(..)
-  , Audit(..)
+    Audit(..)
   , AuditStep(..)
   , PayloadView(..)
   , PrintEvent(..)

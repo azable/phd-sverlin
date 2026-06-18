@@ -20,8 +20,7 @@ module LinearTrace.Core
   , Slot
   , Payload
   , PayloadView(..)
-  , TracePayload(..)
-  , TraceBlock
+  , TraceBlock(..)
   , -- * Trusted linear payloads
     LUnit(..)
   , LBool(..)
@@ -91,6 +90,7 @@ module LinearTrace.Core
 import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
 import           Data.Kind              (Type)
 import           Data.Proxy             (Proxy (..))
+import           Data.Typeable          (Typeable, typeRep)
 import qualified Prelude                as P
 import           Prelude.Linear
 import qualified Unsafe.Coerce          as Unsafe
@@ -112,7 +112,8 @@ data PayloadView = PayloadView
 --
 -- Downstream DSLs can use LinearTrace-approved payload wrappers, but cannot
 -- define new approved payload classes of their own.
-class LinearPayload payload
+class LinearPayload payload where
+  payloadDebugContent :: payload -> P.String
 
 data LUnit tag =
   LUnit
@@ -129,24 +130,30 @@ newtype LDouble tag =
 newtype LString tag =
   LString P.String
 
-instance LinearPayload (LUnit tag)
+instance LinearPayload (LUnit tag) where
+  payloadDebugContent LUnit = "()"
 
-instance LinearPayload (LBool tag)
+instance LinearPayload (LBool tag) where
+  payloadDebugContent (LBool value) = P.show value
 
-instance LinearPayload (LInt tag)
+instance LinearPayload (LInt tag) where
+  payloadDebugContent (LInt value) = P.show value
 
-instance LinearPayload (LDouble tag)
+instance LinearPayload (LDouble tag) where
+  payloadDebugContent (LDouble value) = P.show value
 
-instance LinearPayload (LString tag)
+instance LinearPayload (LString tag) where
+  payloadDebugContent (LString value) = value
 
-class LinearPayload (Payload tag) =>
-      TracePayload tag
+class (LinearPayload (Payload tag), Typeable tag) =>
+      TraceBlock tag
   where
   payloadView :: Proxy tag -> Payload tag -> PayloadView
-
--- | Block-level analogue of 'TraceEventSpec'
-class TracePayload tag =>
-      TraceBlock tag
+  payloadView tagProxy payload =
+    PayloadView
+      { payloadKind = P.show (typeRep tagProxy)
+      , payloadContent = payloadDebugContent payload
+      }
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
