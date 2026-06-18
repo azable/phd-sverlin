@@ -35,15 +35,9 @@ module LinearTrace.Visualize
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
-  , StyleValueUnit(..)
-  , StyleScalarSpec(..)
-  , StyleTextSpec(..)
-  , StyleField(..)
   , styleBounds
-  , styleFields
-  , setStyleField
-  , styleExprLeaves
-  , StyleExprLeaf(..)
+  , mapStyleExprLeaves
+  , solvedStyleExprs
   , -- * Expressions
     Expr
   , Constraint
@@ -111,25 +105,15 @@ module LinearTrace.Visualize
   , setWhiteSpace
   , setCssClass
   , -- * Materialization
-    MaterializedStyle(..)
-  , MaterializedField(..)
-  , MaterializedScalar(..)
-  , MaterializedColor(..)
-  , MaterializedDiscrete(..)
-  , MaterializedCssField(..)
-  , MaterializedCssValue(..)
+    MaterializedStyle
   , MaterializedBlockView(..)
   , MaterializedViewNode(..)
   , materializedTop
   , materializedLeft
   , materializedWidth
   , materializedHeight
-  , materializedScalarValue
-  , materializedScalars
-  , materializedColors
-  , materializedDiscrete
-  , materializedCssClass
-  , materializedCssFields
+  , materializedClassName
+  , materializedCssAttrsWith
   , materializeViewNode
   ) where
 

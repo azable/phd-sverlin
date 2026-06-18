@@ -326,13 +326,8 @@ renderStyle style =
   concat
     [ stepIndent
     , "style\n"
-    , concatMap renderStyleExprLeaf (V.styleExprLeaves style)
+    , concat (V.mapStyleExprLeaves renderStyleField style)
     ]
-
-renderStyleExprLeaf :: V.StyleExprLeaf -> String
-renderStyleExprLeaf leaf =
-  case leaf of
-    V.StyleExprLeaf name expr -> renderStyleField name expr
 
 renderStyleField :: String -> S.Expr ty -> String
 renderStyleField name expr =
@@ -521,21 +516,9 @@ solveViewNodeExprs solution node =
 solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
 solveBlockViewExprs solution block =
   let blockName = renderBlockRefPlain (V.blockRef block)
-   in concatMap
-        (solveStyleExprLeaf solution blockName)
-        (V.styleExprLeaves (V.blockStyle block))
-
-solveStyleExprLeaf :: S.Solution -> String -> V.StyleExprLeaf -> [SolvedExpr]
-solveStyleExprLeaf solution blockName leaf =
-  case leaf of
-    V.StyleExprLeaf name expr ->
-      solveNamedExpr solution (blockName ++ "." ++ name) expr
-
-solveNamedExpr :: S.Solution -> String -> S.Expr ty -> [SolvedExpr]
-solveNamedExpr solution name expr =
-  case S.evalExpr solution expr of
-    Nothing    -> []
-    Just value -> [SolvedExpr name value]
+   in [ SolvedExpr (blockName ++ "." ++ name) value
+      | (name, value) <- V.solvedStyleExprs solution (V.blockStyle block)
+      ]
 
 dedupeSolvedExprs :: [SolvedExpr] -> [SolvedExpr]
 dedupeSolvedExprs = go []

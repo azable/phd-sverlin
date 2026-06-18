@@ -2,6 +2,8 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module LinearTrace.Visualize.Style
@@ -39,8 +41,8 @@ module LinearTrace.Visualize.Style
   , styleFields
   , defaultStyleFields
   , setStyleField
-  , styleExprLeaves
-  , StyleExprLeaf(..)
+  , mapStyleExprLeaves
+  , solvedStyleExprs
   , styleInitialVars
   , styleConstraints
   , -- * Public style accessors/setters
@@ -84,11 +86,14 @@ module LinearTrace.Visualize.Style
   , materializedColors
   , materializedDiscrete
   , materializedCssClass
+  , materializedClassName
   , materializedCssFields
+  , materializedCssAttrsWith
   , materializeStyle
   ) where
 
-import           Data.Maybe         (maybeToList)
+import           Data.Kind          (Type)
+import           Data.Maybe         (mapMaybe, maybeToList)
 import           LinearTrace.Solver
 import           Prelude
 
@@ -359,7 +364,7 @@ replaceByName getName newValue values = go values
 -- Style inspection
 --------------------------------------------------------------------------------
 data StyleExprLeaf where
-  StyleExprLeaf :: String -> Expr ty -> StyleExprLeaf
+  StyleExprLeaf :: String -> Expr (ty :: Type) -> StyleExprLeaf
 
 styleExprLeaves :: Style -> [StyleExprLeaf]
 styleExprLeaves style' =
@@ -392,6 +397,27 @@ fieldExprLeaves field =
     StyleBorderStyleField _ _ -> []
     StyleWhiteSpaceField _ _ -> []
     StyleClassField _ _ -> []
+
+mapStyleExprLeaves ::
+     (forall (ty :: Type). String -> Expr ty -> a)
+  -> Style
+  -> [a]
+mapStyleExprLeaves f style' = map go (styleExprLeaves style')
+  where
+    go leaf =
+      case leaf of
+        StyleExprLeaf name expr -> f name expr
+
+solvedStyleExprs :: Solution -> Style -> [(String, Double)]
+solvedStyleExprs solution =
+  mapMaybe solveLeaf . styleExprLeaves
+  where
+    solveLeaf leaf =
+      case leaf of
+        StyleExprLeaf name expr ->
+          case evalExpr solution expr of
+            Nothing    -> Nothing
+            Just value -> Just (name, value)
 
 styleInitialVars :: Style -> [InitialVar]
 styleInitialVars style' = concatMap fieldInitialVars (styleFields style')
@@ -956,11 +982,34 @@ materializedCssClass style' = go (materializedFields style')
         MaterializedClassField "cssClass" value:_ -> value
         _:rest                                    -> go rest
 
+materializedClassName :: MaterializedStyle -> Maybe String
+materializedClassName style' = cssTextString <$> materializedCssClass style'
+
 materializedCssFields :: MaterializedStyle -> [MaterializedCssField]
 materializedCssFields style' =
   concatMap (fieldCss alphaValue) (materializedFields style')
   where
     alphaValue = materializedScalarValue "alpha" 1 style'
+
+materializedCssAttrsWith ::
+     (Double -> a)
+  -> (Double -> a)
+  -> (String -> a)
+  -> (Double -> MaterializedHsl -> a)
+  -> MaterializedStyle
+  -> [(String, a)]
+materializedCssAttrsWith number pixels text hsl style' =
+  map convertField (materializedCssFields style')
+  where
+    convertField field =
+      case field of
+        MaterializedCssField name value -> (name, convertValue value)
+    convertValue value =
+      case value of
+        CssNumberValue x      -> number x
+        CssPixelsValue x      -> pixels x
+        CssTextValue value'   -> text value'
+        CssHslValue alphaValue hsl' -> hsl alphaValue hsl'
 
 fieldCss :: Double -> MaterializedField -> [MaterializedCssField]
 fieldCss alphaValue field =

@@ -304,23 +304,15 @@ compileCssAttrs :: V.MaterializedStyle -> Map String StyleValue
 compileCssAttrs style =
   Map.fromList
     ([("position", StyleText "absolute")]
-       ++ map compileCssField (V.materializedCssFields style))
-
-compileCssField :: V.MaterializedCssField -> (String, StyleValue)
-compileCssField field =
-  case field of
-    V.MaterializedCssField name value -> (name, compileCssValue value)
-
-compileCssValue :: V.MaterializedCssValue -> StyleValue
-compileCssValue value =
-  case value of
-    V.CssNumberValue x      -> StyleNumber (roundLayout x)
-    V.CssPixelsValue x      -> StylePixels (roundLayout x)
-    V.CssTextValue text     -> StyleText text
-    V.CssHslValue alpha hsl -> StyleColor (materializedHslToCss alpha hsl)
+       ++ V.materializedCssAttrsWith
+            (StyleNumber . roundLayout)
+            (StylePixels . roundLayout)
+            StyleText
+            (\alpha hsl -> StyleColor (materializedHslToCss alpha hsl))
+            style)
 
 compileCssClass :: V.MaterializedStyle -> Maybe String
-compileCssClass style = V.cssTextString <$> V.materializedCssClass style
+compileCssClass = V.materializedClassName
 
 materializedHslToCss :: Double -> V.MaterializedHsl -> String
 materializedHslToCss alpha hsl =
