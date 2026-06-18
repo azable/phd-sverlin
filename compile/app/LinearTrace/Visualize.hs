@@ -61,7 +61,7 @@ module LinearTrace.Visualize
   , (@*@)
   , (@/@)
   , (@^@)
-  , (@=@)
+  , (@==@)
   , (@<=@)
   , (@>=@)
   , -- * Builder
@@ -336,20 +336,20 @@ below a b = ensure $ bottom b @<=@ top a
 
 beside :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
 beside a b = do
-  ensure $ centerY a @=@ centerY b
-  ensure $ right a @=@ left b
+  ensure $ centerY a @==@ centerY b
+  ensure $ right a @==@ left b
 
 besideWithGap ::
      (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
 besideWithGap gap a b = do
-  ensure $ centerY a @=@ centerY b
-  ensure $ right a @+@ gap @=@ left b
+  ensure $ centerY a @==@ centerY b
+  ensure $ right a @+@ gap @==@ left b
 
 belowWithGap ::
      (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
 belowWithGap gap a b = do
-  ensure $ centerX a @=@ centerX b
-  ensure $ bottom a @+@ gap @=@ top b
+  ensure $ centerX a @==@ centerX b
+  ensure $ bottom a @+@ gap @==@ top b
 
 (|=|) :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
 (|=|) = beside

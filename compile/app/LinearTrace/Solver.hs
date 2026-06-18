@@ -33,7 +33,7 @@ module LinearTrace.Solver
     Constraint(..)
   , ConstrainEq(..)
   , ConstrainOrd(..)
-  , (@=@)
+  , (@==@)
   , (@<=@)
   , (@>=@)
   , minimize
@@ -384,11 +384,11 @@ class ConstrainEq a where
 class ConstrainOrd a where
   constrainLessOrEqual :: a -> a -> Constraint
 
-infix 4 @=@
+infix 4 @==@
 infix 4 @<=@
 infix 4 @>=@
-(@=@) :: ConstrainEq a => a -> a -> Constraint
-(@=@) = constrainEqual
+(@==@) :: ConstrainEq a => a -> a -> Constraint
+(@==@) = constrainEqual
 
 -- The solver lowers inequalities to a non-strict hinge penalty.
 (@<=@) :: ConstrainOrd a => a -> a -> Constraint
@@ -406,18 +406,18 @@ instance ConstrainOrd (Expr ty) where
 instance ConstrainEq a => ConstrainEq (Vec2 a) where
   constrainEqual lhs rhs =
     case (lhs, rhs) of
-      (Vec2 ax ay, Vec2 bx by) -> All [ax @=@ bx, ay @=@ by]
+      (Vec2 ax ay, Vec2 bx by) -> All [ax @==@ bx, ay @==@ by]
 
 instance ConstrainEq a => ConstrainEq (Vec3 a) where
   constrainEqual lhs rhs =
     case (lhs, rhs) of
-      (Vec3 ax ay az, Vec3 bx by bz) -> All [ax @=@ bx, ay @=@ by, az @=@ bz]
+      (Vec3 ax ay az, Vec3 bx by bz) -> All [ax @==@ bx, ay @==@ by, az @==@ bz]
 
 instance ConstrainEq a => ConstrainEq (Vec4 a) where
   constrainEqual lhs rhs =
     case (lhs, rhs) of
       (Vec4 ax ay az aw, Vec4 bx by bz bw) ->
-        All [ax @=@ bx, ay @=@ by, az @=@ bz, aw @=@ bw]
+        All [ax @==@ bx, ay @==@ by, az @==@ bz, aw @==@ bw]
 
 flattenConstraint :: Constraint -> [Constraint]
 flattenConstraint constraint =

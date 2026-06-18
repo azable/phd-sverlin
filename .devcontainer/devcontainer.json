@@ -22,7 +22,6 @@
         "svelte.svelte-vscode",
         "esbenp.prettier-vscode",
         "haskell.haskell",
-        "justusadam.language-haskell",
         "0xCD.stylish-hindent",
         "openai.chatgpt"
       ],
@@ -78,7 +77,7 @@
     "type=volume,source=${localWorkspaceFolderBasename}-node-modules,target=/workspaces/phd-sverlin/node_modules"
   ],
 
-  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store"
+  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store && sudo npm install -g @openai/codex"
 
   // temp fix for syntax highlighting https://github.com/haskell/vscode-haskell/issues/1376
   // npx --yes ovsx get justusadam.language-haskell -o /tmp/language-haskell.vsix

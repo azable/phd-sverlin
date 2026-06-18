@@ -144,7 +144,7 @@ instance ConstrainEq a => ConstrainEq (Bounds a) where
   constrainEqual lhs rhs =
     case (lhs, rhs) of
       (Bounds at al aw ah, Bounds bt bl bw bh) ->
-        All [at @=@ bt, al @=@ bl, aw @=@ bw, ah @=@ bh]
+        All [at @==@ bt, al @==@ bl, aw @==@ bw, ah @==@ bh]
 
 class HasBounds a where
   top :: a -> LayoutExpr
