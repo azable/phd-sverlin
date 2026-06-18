@@ -17,9 +17,24 @@ logger.warn = (msg, options) => {
   originalWarn(msg, options);
 };
 
+function MDHmr() {
+  return {
+    name: 'static-hmr',
+    enforce: 'post' as const,
+    handleHotUpdate({ file, server }: any) {
+      if (file.includes('static/')) {
+        server.ws.send({
+          type: 'full-reload',
+          path: '*'
+        });
+      }
+    }
+  };
+}
+
 export default defineConfig({
   customLogger: logger,
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [tailwindcss(), sveltekit(), MDHmr()],
   optimizeDeps: {
     exclude: ['@penrose/core'],
     include: [
