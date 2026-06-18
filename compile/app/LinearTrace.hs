@@ -72,12 +72,23 @@ module LinearTrace
   , printVisualization
   , printVisualizationCSPSolution
   , printSolvedVisualization
+  , RandomSeed(..)
   , compileSolvedVisualization
   , printCompiledVisualizationJSON
   , writeCompiledVisualizationJSON
+  , -- * Application pipeline
+    ViewBlock(..)
+  , ViewEvent(..)
+  , ViewEvents
+  , RunConfig(..)
+  , defaultRunConfig
+  , buildViewGraph
+  , runVisualization
   ) where
 
+import           LinearTrace.App
 import           LinearTrace.Compile
 import           LinearTrace.Core
 import           LinearTrace.Print
+import           LinearTrace.Visualize
 import           Prelude             hiding ((<$>), (<*>))

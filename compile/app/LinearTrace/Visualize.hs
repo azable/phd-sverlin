@@ -62,6 +62,7 @@ module LinearTrace.Visualize
     ViewBuilder
   , ViewBlock(..)
   , ViewEvent(..)
+  , ViewEvents
   , buildCSP
   , solveCSP
   , solveCSPWithSeed
@@ -119,7 +120,7 @@ module LinearTrace.Visualize
 
 import           Control.Monad.Reader
 import           Control.Monad.Writer.Strict
-import           Data.Foldable              (for_)
+import           Data.Foldable               (for_)
 import           Data.Proxy                  (Proxy (..))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver

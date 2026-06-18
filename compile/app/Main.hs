@@ -4,9 +4,8 @@ module Main where
 
 import           DSL.Main
 import qualified LinearTrace
-import           LinearTrace.Visualize
 import           Options.Applicative
-import           System.Random         (randomIO)
+import           System.Random       (randomIO)
 
 data Options = Options
   { optionShowSolverDetails :: Bool
@@ -18,17 +17,15 @@ main = do
   options <- execParser optionsParserInfo
   seedInt <- chooseSeed (optionSeed options)
   let graph = run example
-  LinearTrace.printTrace graph
-  let visGraph = LinearTrace.Visualize.buildCSP graph
-  solved <- LinearTrace.Visualize.solveCSPWithSeed (RandomSeed seedInt) visGraph
-  LinearTrace.printSolvedVisualization
-    (optionShowSolverDetails options)
-    solved
-    visGraph
-  case LinearTrace.compileSolvedVisualization solved visGraph of
-    Left err -> putStrLn err
-    Right compiled ->
-      LinearTrace.writeCompiledVisualizationJSON "static/compiled.json" compiled
+      config =
+        LinearTrace.defaultRunConfig
+          { LinearTrace.runSeed = LinearTrace.RandomSeed seedInt
+          , LinearTrace.runShowDetails = optionShowSolverDetails options
+          }
+  result <- LinearTrace.runVisualization config graph
+  case result of
+    Left err        -> putStrLn err
+    Right _compiled -> pure ()
   putStrLn ("Compiled with solver seed: " ++ show seedInt)
 
 chooseSeed :: Maybe Int -> IO Int
