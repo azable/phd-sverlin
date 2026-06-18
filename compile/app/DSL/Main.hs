@@ -668,7 +668,7 @@ instance ViewEvent (DeclareVar ty) where
   viewEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
-        valueB `centeredWithin` varB
+        ensure $ center valueB @=@ center varB
 
 instance ViewEvent (ReadVar ty) where
   viewEvent ReadVar audit =

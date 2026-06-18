@@ -11,31 +11,20 @@
 
 module LinearTrace.Visualize
   ( -- * View graph
-    ViewGraph(..)
+    ViewGraph
   , ViewNode(..)
-  , ViewStep(..)
-  , BlockView(..)
+  , ViewStep
+  , BlockView
+  , viewNodes
+  , viewSteps
+  , viewConstraints
   , -- * Styles
-    Style(..)
-  , StyleScalar(..)
-  , StyleColor(..)
-  , StyleDiscrete(..)
-  , StyleValueUnit(..)
-  , MaterializedStyle(..)
-  , MaterializedScalar(..)
-  , MaterializedColor(..)
-  , MaterializedDiscrete(..)
-  , StyleExprLeaf(..)
-  , styleExprLeaves
-  , materializedScalarValue
-  , materializedCssClass
-  , -- * Bounds/style values
-    Bounds(..)
+    Style
+  , HasStyle(..)
+  , HasBounds(..)
+  , Bounds(..)
   , BoundsExpr
   , MaterializedBounds
-  , HasBounds(..)
-  , HasStyle(..)
-  , boundsOf
   , Hsl(..)
   , CssText(..)
   , FontWeight(..)
@@ -43,36 +32,18 @@ module LinearTrace.Visualize
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
-  , MaterializedHsl
-  , MaterializedBlockView(..)
-  , MaterializedViewNode(..)
-  , -- * Solver domains
-    Range(..)
-  , InitialVar(..)
-  , Free
-  , Layout
-  , Unit
-  , Angle
+  , -- * Expressions
+    Expr
+  , Constraint
   , FreeExpr
   , LayoutExpr
   , UnitExpr
   , AngleExpr
   , HueExpr
   , HslExpr
-  , -- * Expressions, vectors, and constraints
-    Expr
-  , Constraint(..)
-  , ConstrainEq(..)
-  , ConstrainOrd(..)
-  , Vec2(..)
-  , Vec3(..)
-  , Vec4(..)
-  , vec2
-  , vec3
-  , vec4
-  , var
-  , varName
+  , MaterializedHsl
   , global
+  , num
   , (@+@)
   , (@-@)
   , (@*@)
@@ -83,44 +54,28 @@ module LinearTrace.Visualize
   , (@<@)
   , (@>=@)
   , (@>@)
-  , num
-  , -- * View audit
-    ViewAuditStep(..)
-  , ViewAudit(..)
   , -- * Builder
-    ViewEnv(..)
-  , ViewBuilder
+    ViewBuilder
   , ViewBlock(..)
   , ViewEvent(..)
-  , ViewEvents(..)
   , buildCSP
   , solveCSP
   , solveCSPWithSeed
-  , SolveConfig(..)
-  , RandomSeed(..)
-  , RandomSample(..)
-  , defaultSolveConfig
-  , defaultRandomSeed
   , ensure
   , encourage
-  , registerInitialRange
-  , -- * Bounds and layout helpers
-    canvasBounds
-  , contains
-  , insideCanvas
+  , -- * Layout helpers
+    contains
   , between
   , unitBounds
   , angleBounds
   , hslBounds
-  , nonNegative
-  , centeredWithin
   , above
   , below
   , beside
   , besideWithGap
   , belowWithGap
   , (|=|)
-  , -- * Common style accessors/setters
+  , -- * Style accessors/setters
     opacity
   , zIndex
   , fontSize
@@ -145,12 +100,18 @@ module LinearTrace.Visualize
   , setWhiteSpace
   , setCssClass
   , -- * Materialization
-    materializedTop
+    MaterializedStyle(..)
+  , MaterializedScalar(..)
+  , MaterializedColor(..)
+  , MaterializedDiscrete(..)
+  , MaterializedBlockView(..)
+  , MaterializedViewNode(..)
+  , materializedTop
   , materializedLeft
   , materializedWidth
   , materializedHeight
-  , materializeStyle
-  , materializeBlockView
+  , materializedScalarValue
+  , materializedCssClass
   , materializeViewNode
   ) where
 
@@ -237,9 +198,6 @@ class HasBounds a where
   position x = Vec2 (left x) (top x)
   size :: a -> Vec2 LayoutExpr
   size x = Vec2 (width x) (height x)
-
-boundsOf :: HasBounds a => a -> BoundsExpr
-boundsOf x = Bounds (top x) (left x) (width x) (height x)
 
 instance HasBounds BoundsExpr where
   top = boundsTop
