@@ -257,6 +257,13 @@ binaryExpr f (Expr ty lhs) (Expr _ rhs) = Expr ty (f lhs rhs)
 unaryExpr :: (RawExpr -> RawExpr) -> Expr ty -> Expr ty
 unaryExpr f (Expr ty inner) = Expr ty (f inner)
 
+infix 4 @=@
+infix 4 @<@
+infixl 6 @+@
+infixl 6 @-@
+infixl 7 @*@
+infixl 7 @/@
+infixr 8 @^@
 (@+@) :: Expr ty -> Expr ty -> Expr ty
 (@+@) = binaryExpr EAdd
 

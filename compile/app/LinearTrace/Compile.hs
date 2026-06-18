@@ -307,11 +307,18 @@ compileCssAttrs style =
   Map.fromList
     (catMaybes
        [ Just ("position", StyleText "absolute")
-       , styleMaybePixels "fontSize" (V.materializedFontSize style)
-       , styleMaybePixels "borderRadius" (V.materializedRadius style)
-       , styleMaybePixels "borderWidth" (V.materializedStrokeWidth style)
-       , styleMaybeNumber "opacity" (V.materializedOpacity style)
-       , styleMaybeNumber "zIndex" (V.materializedZIndex style)
+       , Just
+           ( "fontSize"
+           , StylePixels (roundLayout (V.materializedFontSize style)))
+       , Just
+           ( "borderRadius"
+           , StylePixels (roundLayout (V.materializedRadius style)))
+       , Just
+           ( "borderWidth"
+           , StylePixels (roundLayout (V.materializedStrokeWidth style)))
+       , Just
+           ("opacity", StyleNumber (roundLayout (V.materializedOpacity style)))
+       , Just ("zIndex", StyleNumber (roundLayout (V.materializedZIndex style)))
        , styleMaybeColor
            "backgroundColor"
            (materializedHslToCss (V.materializedAlpha style)
@@ -339,12 +346,6 @@ compileCssAttrs style =
            "whiteSpace"
            (compileWhiteSpace <$> V.materializedWhiteSpace style)
        ])
-
-styleMaybeNumber :: String -> Maybe Double -> Maybe (String, StyleValue)
-styleMaybeNumber name = fmap (\x -> (name, StyleNumber (roundLayout x)))
-
-styleMaybePixels :: String -> Maybe Double -> Maybe (String, StyleValue)
-styleMaybePixels name = fmap (\x -> (name, StylePixels (roundLayout x)))
 
 styleMaybeText :: String -> Maybe String -> Maybe (String, StyleValue)
 styleMaybeText name = fmap (\text -> (name, StyleText text))
@@ -401,23 +402,13 @@ compileWhiteSpace value =
     V.WhiteSpacePre     -> "pre"
     V.WhiteSpacePreWrap -> "pre-wrap"
 
-materializedHslToCss :: Maybe Double -> V.MaterializedHsl -> String
-materializedHslToCss maybeAlpha hsl =
+materializedHslToCss :: Double -> V.MaterializedHsl -> String
+materializedHslToCss alpha hsl =
   let h = formatCssNumber (V.hue hsl)
       s = formatCssPercent01 (V.saturation hsl)
       l = formatCssPercent01 (V.lightness hsl)
-   in case maybeAlpha of
-        Nothing -> "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ ")"
-        Just a ->
-          "hsl("
-            ++ h
-            ++ " "
-            ++ s
-            ++ " "
-            ++ l
-            ++ " / "
-            ++ formatCssNumber (clamp 0 1 a)
-            ++ ")"
+      a = formatCssNumber (clamp 0 1 alpha)
+   in "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ " / " ++ a ++ ")"
 
 --------------------------------------------------------------------------------
 -- Render lookup helpers

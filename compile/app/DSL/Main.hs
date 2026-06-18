@@ -507,7 +507,25 @@ example = do
 -- Block visualisation
 --------------------------------------------------------------------------------
 blockSize :: LayoutExpr
-blockSize = num 100 --global "blockSize"
+blockSize = num 100
+
+valueRadiusName :: LayoutExpr
+valueRadiusName = global "value.radius"
+
+valueFontSizeName :: LayoutExpr
+valueFontSizeName = global "value.fontSize"
+
+varRadiusName :: LayoutExpr
+varRadiusName = global "var.radius"
+
+varFontSizeName :: LayoutExpr
+varFontSizeName = global "var.fontSize"
+
+opRadiusName :: LayoutExpr
+opRadiusName = global "op.radius"
+
+opFontSizeName :: LayoutExpr
+opFontSizeName = global "op.fontSize"
 
 black :: HslExpr
 black = Hsl {hue = num 0, saturation = num 0, lightness = num 0}
@@ -515,57 +533,127 @@ black = Hsl {hue = num 0, saturation = num 0, lightness = num 0}
 valueFill :: HslExpr
 valueFill =
   Hsl
-    {hue = global "hue", saturation = global "saturation", lightness = num 0.5}
+    {hue = global "hue", saturation = global "saturation", lightness = num 0.52}
 
 varFill :: HslExpr
-varFill = Hsl {hue = num 0, saturation = num 0, lightness = num 0.8}
+varFill =
+  Hsl
+    { hue = global "hue"
+    , saturation = global "saturation" @*@ num 0.35
+    , lightness = num 0.88
+    }
 
-cellBlock :: BlockView tag -> ViewBuilder events ()
-cellBlock block = P.do
-  ensure $ width block @=@ blockSize
-  ensure $ height block @=@ blockSize
+opFill :: HslExpr
+opFill =
+  Hsl
+    { hue = global "hue"
+    , saturation = global "saturation" @*@ num 0.2
+    , lightness = num 0.96
+    }
+
+fixedSize ::
+     HasBounds block
+  => LayoutExpr
+  -> LayoutExpr
+  -> block
+  -> ViewBuilder events ()
+fixedSize w h block = P.do
+  ensure $ width block @=@ w
+  ensure $ height block @=@ h
+
+square :: HasBounds block => LayoutExpr -> block -> ViewBuilder events ()
+square size' = fixedSize size' size'
+
+proportionalRadius ::
+     (HasBounds block, HasStyle block)
+  => LayoutExpr
+  -> block
+  -> ViewBuilder events ()
+proportionalRadius divisor block =
+  ensure $ radius block @=@ width block @/@ divisor
+
+proportionalFontSize ::
+     (HasBounds block, HasStyle block)
+  => LayoutExpr
+  -> block
+  -> ViewBuilder events ()
+proportionalFontSize divisor block =
+  ensure $ fontSize block @=@ height block @/@ divisor
+
+valueStyle :: Style -> Style
+valueStyle =
+  setFill valueFill
+    P.. setStroke black
+    P.. setStrokeWidth (num 4)
+    P.. setRadius valueRadiusName
+    P.. setFontSize valueFontSizeName
+    P.. setFontFamily "Verdana"
+    P.. setFontWeight FontWeightBold
+    P.. setTextAlign TextAlignCenter
+    P.. setWhiteSpace WhiteSpaceNoWrap
+    P.. setBorderStyle BorderSolid
+    P.. setOpacity (num 1)
+    P.. setAlpha (num 1)
+    P.. setZIndex (num 1)
+
+varStyle :: Style -> Style
+varStyle =
+  setFill varFill
+    P.. setRadius varRadiusName
+    P.. setFontSize varFontSizeName
+    P.. setFontFamily "Verdana"
+    P.. setFontWeight FontWeightBold
+    P.. setTextAlign TextAlignCenter
+    P.. setWhiteSpace WhiteSpaceNoWrap
+    P.. setOpacity (num 1)
+    P.. setAlpha (num 1)
+    P.. setZIndex (num (-1))
+
+opStyle :: Style -> Style
+opStyle =
+  setFill opFill
+    P.. setStroke black
+    P.. setStrokeWidth (num 3)
+    P.. setRadius opRadiusName
+    P.. setFontSize opFontSizeName
+    P.. setFontFamily "Verdana"
+    P.. setFontWeight FontWeightBold
+    P.. setTextAlign TextAlignCenter
+    P.. setWhiteSpace WhiteSpaceNoWrap
+    P.. setBorderStyle BorderSolid
+    P.. setOpacity (num 1)
+    P.. setAlpha (num 1)
+    P.. setZIndex (num 2)
+
+valueBlockV :: BlockView tag -> ViewBuilder events ()
+valueBlockV block = P.do
+  square blockSize block
+  proportionalRadius (num 10) block
+  proportionalFontSize (num 2) block
 
 varBlockV :: BlockView tag -> ViewBuilder events ()
 varBlockV block = P.do
-  ensure $ width block @=@ (blockSize @+@ num 20)
-  ensure $ height block @=@ (blockSize @+@ num 20)
+  square (blockSize @+@ num 20) block
+  proportionalRadius (num 12) block
+  proportionalFontSize (num 2.4) block
 
-instance ViewBlock (Value 'TInt) where
-  styleBlock _ =
-    withFill valueFill
-      P.. withRadius (num 10)
-      P.. withStroke black
-      P.. withStrokeWidth (num 4)
-      P.. withFontSize (blockSize @/@ num 2)
-      P.. withFontFamily "Verdana"
-      P.. withWhiteSpace WhiteSpaceNoWrap
-  viewBlock = cellBlock
+opBlockV :: BlockView tag -> ViewBuilder events ()
+opBlockV block = P.do
+  square (blockSize @*@ num 0.75) block
+  proportionalRadius (num 6) block
+  proportionalFontSize (num 2.4) block
 
-instance ViewBlock (Value 'TDouble) where
-  styleBlock _ =
-    withFill valueFill
-      P.. withRadius (num 10)
-      P.. withStroke black
-      P.. withStrokeWidth (num 4)
-      P.. withFontSize (blockSize @/@ num 2)
-      P.. withFontFamily "Verdana"
-      P.. withWhiteSpace WhiteSpaceNoWrap
-  viewBlock = cellBlock
+instance Traceable (Value ty) => ViewBlock (Value ty) where
+  styleBlock _ = valueStyle
+  viewBlock = valueBlockV
 
 instance Typeable ty => ViewBlock (Var ty) where
-  styleBlock _ =
-    withFill varFill
-      P.. withRadius (num 10)
-      P.. withFontSize (blockSize @/@ num 2)
-      P.. withFontFamily "Verdana"
-      P.. withFontWeight FontWeightBold
-      P.. withTextAlign TextAlignCenter
-      P.. withWhiteSpace WhiteSpaceNoWrap
-      P.. withZIndex (num (-1))
+  styleBlock _ = varStyle
   viewBlock = varBlockV
 
 instance Traceable (Op op lhs rhs out) => ViewBlock (Op op lhs rhs out) where
-  viewBlock = cellBlock
+  styleBlock _ = opStyle
+  viewBlock = opBlockV
 
 --------------------------------------------------------------------------------
 -- Event visualisation
@@ -580,7 +668,7 @@ instance ViewEvent (DeclareVar ty) where
   viewEvent (DeclareVar _) audit =
     case audit of
       VCreated valueB :& VCreated varB :& VSealed _ _ :& VDone -> P.do
-        valueB `sameCenter` varB
+        valueB `centeredWithin` varB
 
 instance ViewEvent (ReadVar ty) where
   viewEvent ReadVar audit =
@@ -616,6 +704,7 @@ instance ViewEvent (Eval op lhs rhs out) where
   viewEvent Eval audit =
     case audit of
       VUsed lhs :& VUsed op :& VUsed rhs :& VComputed result :& VDone -> P.do
-        lhs |=| op
-        op |=| rhs
-        rhs |=| result
+        besideWithGap (num 12) lhs op
+        besideWithGap (num 12) op rhs
+        besideWithGap (num 16) rhs result
+        sameCenterY lhs result

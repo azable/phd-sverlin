@@ -327,26 +327,20 @@ renderStyle style =
     , renderStyleField "left" (V.left style)
     , renderStyleField "width" (V.width style)
     , renderStyleField "height" (V.height style)
-    , renderMaybeStyleField "opacity" (V.styleOpacity style)
-    , renderMaybeStyleField "zIndex" (V.styleZIndex style)
-    , renderMaybeStyleField "fontSize" (V.styleFontSize style)
-    , renderMaybeStyleField "radius" (V.styleRadius style)
-    , renderMaybeHslStyleField "fill" (V.styleFill style)
-    , renderMaybeHslStyleField "stroke" (V.styleStroke style)
-    , renderMaybeStyleField "strokeWidth" (V.styleStrokeWidth style)
-    , renderMaybeStyleField "alpha" (V.styleAlpha style)
+    , renderStyleField "opacity" (V.opacity style)
+    , renderStyleField "zIndex" (V.zIndex style)
+    , renderStyleField "fontSize" (V.fontSize style)
+    , renderStyleField "radius" (V.radius style)
+    , renderMaybeHslStyleField "fill" (V.fill style)
+    , renderMaybeHslStyleField "stroke" (V.stroke style)
+    , renderStyleField "strokeWidth" (V.strokeWidth style)
+    , renderStyleField "alpha" (V.alpha style)
     ]
 
 renderStyleField :: String -> V.Expr ty -> String
 renderStyleField name expr =
   concat
     [stepIndent, stepIndent, padRight 12 name, " = ", renderExpr expr, "\n"]
-
-renderMaybeStyleField :: String -> Maybe (V.Expr ty) -> String
-renderMaybeStyleField name maybeExpr =
-  case maybeExpr of
-    Nothing   -> ""
-    Just expr -> renderStyleField name expr
 
 renderMaybeHslStyleField :: String -> Maybe V.HslExpr -> String
 renderMaybeHslStyleField name maybeHsl =
@@ -529,30 +523,18 @@ solveBlockViewExprs solution block =
         , solveNamedExpr solution (blockName ++ ".left") (V.left style)
         , solveNamedExpr solution (blockName ++ ".width") (V.width style)
         , solveNamedExpr solution (blockName ++ ".height") (V.height style)
-        , solveMaybeExpr
-            solution
-            (blockName ++ ".opacity")
-            (V.styleOpacity style)
-        , solveMaybeExpr solution (blockName ++ ".zIndex") (V.styleZIndex style)
-        , solveMaybeExpr
-            solution
-            (blockName ++ ".fontSize")
-            (V.styleFontSize style)
-        , solveMaybeExpr solution (blockName ++ ".radius") (V.styleRadius style)
-        , solveMaybeHsl solution (blockName ++ ".fill") (V.styleFill style)
-        , solveMaybeHsl solution (blockName ++ ".stroke") (V.styleStroke style)
-        , solveMaybeExpr
+        , solveNamedExpr solution (blockName ++ ".opacity") (V.opacity style)
+        , solveNamedExpr solution (blockName ++ ".zIndex") (V.zIndex style)
+        , solveNamedExpr solution (blockName ++ ".fontSize") (V.fontSize style)
+        , solveNamedExpr solution (blockName ++ ".radius") (V.radius style)
+        , solveMaybeHsl solution (blockName ++ ".fill") (V.fill style)
+        , solveMaybeHsl solution (blockName ++ ".stroke") (V.stroke style)
+        , solveNamedExpr
             solution
             (blockName ++ ".strokeWidth")
-            (V.styleStrokeWidth style)
-        , solveMaybeExpr solution (blockName ++ ".alpha") (V.styleAlpha style)
+            (V.strokeWidth style)
+        , solveNamedExpr solution (blockName ++ ".alpha") (V.alpha style)
         ]
-
-solveMaybeExpr :: S.Solution -> String -> Maybe (V.Expr ty) -> [SolvedExpr]
-solveMaybeExpr solution name maybeExpr =
-  case maybeExpr of
-    Nothing   -> []
-    Just expr -> solveNamedExpr solution name expr
 
 solveMaybeHsl :: S.Solution -> String -> Maybe V.HslExpr -> [SolvedExpr]
 solveMaybeHsl solution name maybeHsl =
