@@ -3,16 +3,13 @@
 
 module LinearTrace.Compile
   ( RenderId(..)
-  , -- * Compiled CSS geometry/style
-    StyleValue(..)
+  , StyleValue(..)
   , RenderStyle(..)
   , RenderBlock(..)
-  , -- * Lifecycle patches
-    RenderPatch(..)
+  , RenderPatch(..)
   , RenderFrame(..)
   , CompiledVisualization(..)
-  , -- * Compilation
-    compileSolvedVisualization
+  , compileSolvedVisualization
   , compileSolvedVisualizationWithViewport
   , encodeCompiledVisualizationPretty
   , printCompiledVisualizationJSON
@@ -74,7 +71,6 @@ data RenderPatch
   | RenderDestroy RenderId RenderBlock
   deriving (Eq, Show)
 
--- | One animation frame.
 newtype RenderFrame = RenderFrame
   { framePatches :: [RenderPatch]
   } deriving (Eq, Show)
@@ -302,56 +298,84 @@ compileMaterializedStyle style =
     , renderAttrs = compileCssAttrs style
     }
 
+--------------------------------------------------------------------------------
+-- CSS mapping
+--------------------------------------------------------------------------------
 compileCssAttrs :: V.MaterializedStyle -> Map String StyleValue
 compileCssAttrs style =
   Map.fromList
-    (catMaybes
-       [ Just ("position", StyleText "absolute")
-       , Just
-           ( "fontSize"
-           , StylePixels (roundLayout (V.materializedFontSize style)))
-       , Just
-           ( "borderRadius"
-           , StylePixels (roundLayout (V.materializedRadius style)))
-       , Just
-           ( "borderWidth"
-           , StylePixels (roundLayout (V.materializedStrokeWidth style)))
-       , Just
-           ("opacity", StyleNumber (roundLayout (V.materializedOpacity style)))
-       , Just ("zIndex", StyleNumber (roundLayout (V.materializedZIndex style)))
-       , styleMaybeColor
-           "backgroundColor"
-           (materializedHslToCss (V.materializedAlpha style)
-              <$> V.materializedFill style)
-       , styleMaybeColor
-           "borderColor"
-           (materializedHslToCss (V.materializedAlpha style)
-              <$> V.materializedStroke style)
-       , styleMaybeText
-           "fontFamily"
-           (compileCssText <$> V.materializedFontFamily style)
-       , styleMaybeText
-           "fontWeight"
-           (compileFontWeight <$> V.materializedFontWeight style)
-       , styleMaybeText
-           "fontStyle"
-           (compileFontStyle <$> V.materializedFontStyle style)
-       , styleMaybeText
-           "textAlign"
-           (compileTextAlign <$> V.materializedTextAlign style)
-       , styleMaybeText
-           "borderStyle"
-           (compileBorderStyle <$> V.materializedBorderStyle style)
-       , styleMaybeText
-           "whiteSpace"
-           (compileWhiteSpace <$> V.materializedWhiteSpace style)
-       ])
+    ([("position", StyleText "absolute")]
+       ++ concatMap compileScalar (V.materializedScalars style)
+       ++ concatMap (compileColor alpha) (V.materializedColors style)
+       ++ concatMap compileDiscrete (V.materializedDiscrete style))
+  where
+    alpha = V.materializedScalarValue "alpha" 1 style
 
-styleMaybeText :: String -> Maybe String -> Maybe (String, StyleValue)
-styleMaybeText name = fmap (\text -> (name, StyleText text))
+compileScalar :: V.MaterializedScalar -> [(String, StyleValue)]
+compileScalar scalar =
+  case scalar of
+    V.MaterializedScalar name value unit ->
+      case unit of
+        V.StyleHidden -> []
+        V.StyleNumber ->
+          [(compileScalarName name, StyleNumber (roundLayout value))]
+        V.StylePixels ->
+          [(compileScalarName name, StylePixels (roundLayout value))]
 
-styleMaybeColor :: String -> Maybe String -> Maybe (String, StyleValue)
-styleMaybeColor name = fmap (\text -> (name, StyleColor text))
+compileScalarName :: String -> String
+compileScalarName name =
+  case name of
+    "radius"      -> "borderRadius"
+    "strokeWidth" -> "borderWidth"
+    _             -> name
+
+compileColor :: Double -> V.MaterializedColor -> [(String, StyleValue)]
+compileColor alpha color =
+  case color of
+    V.MaterializedColor name maybeHsl ->
+      case maybeHsl of
+        Nothing -> []
+        Just hsl ->
+          [(compileColorName name, StyleColor (materializedHslToCss alpha hsl))]
+
+compileColorName :: String -> String
+compileColorName name =
+  case name of
+    "fill"   -> "backgroundColor"
+    "stroke" -> "borderColor"
+    _        -> name
+
+compileDiscrete :: V.MaterializedDiscrete -> [(String, StyleValue)]
+compileDiscrete field =
+  case field of
+    V.MaterializedTextAttr name maybeText ->
+      maybe [] (\text -> [(name, StyleText (compileCssText text))]) maybeText
+    V.MaterializedFontWeightAttr name maybeValue ->
+      maybe
+        []
+        (\value -> [(name, StyleText (compileFontWeight value))])
+        maybeValue
+    V.MaterializedFontStyleAttr name maybeValue ->
+      maybe
+        []
+        (\value -> [(name, StyleText (compileFontStyle value))])
+        maybeValue
+    V.MaterializedTextAlignAttr name maybeValue ->
+      maybe
+        []
+        (\value -> [(name, StyleText (compileTextAlign value))])
+        maybeValue
+    V.MaterializedBorderStyleAttr name maybeValue ->
+      maybe
+        []
+        (\value -> [(name, StyleText (compileBorderStyle value))])
+        maybeValue
+    V.MaterializedWhiteSpaceAttr name maybeValue ->
+      maybe
+        []
+        (\value -> [(name, StyleText (compileWhiteSpace value))])
+        maybeValue
+    V.MaterializedClassAttr _ _ -> []
 
 compileCssClass :: V.MaterializedStyle -> Maybe String
 compileCssClass style = compileCssText <$> V.materializedCssClass style

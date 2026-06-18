@@ -570,7 +570,7 @@ proportionalRadius ::
   -> block
   -> ViewBuilder events ()
 proportionalRadius divisor block =
-  ensure $ radius block @=@ width block @/@ divisor
+  ensure $ radius block @=@ width block / divisor
 
 proportionalFontSize ::
      (HasBounds block, HasStyle block)
@@ -578,7 +578,7 @@ proportionalFontSize ::
   -> block
   -> ViewBuilder events ()
 proportionalFontSize divisor block =
-  ensure $ fontSize block @=@ height block @/@ divisor
+  ensure $ fontSize block @=@ height block / divisor
 
 valueStyle :: Style -> Style
 valueStyle =
@@ -680,7 +680,7 @@ instance ViewEvent (WriteVar ty) where
   viewEvent WriteVar audit =
     case audit of
       VUnsealed _varB _oldValue :& VReplaced old _incoming stored :& VSealed _ _ :& VDone -> P.do
-        stored `sameBounds` old
+        ensure $ center stored @=@ center old
 
 instance ViewEvent (DiscardVar ty) where
   viewEvent DiscardVar audit =
@@ -707,4 +707,4 @@ instance ViewEvent (Eval op lhs rhs out) where
         besideWithGap (num 12) lhs op
         besideWithGap (num 12) op rhs
         besideWithGap (num 16) rhs result
-        sameCenterY lhs result
+        ensure $ centerY lhs @=@ centerY result

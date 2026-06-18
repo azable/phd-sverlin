@@ -13,7 +13,7 @@ module LinearTrace.Solver
   , Layout
   , Unit
   , Angle
-  , -- * Symbolic scalar language
+  , -- * Symbolic scalar expressions
     Var(..)
   , InitialVar(..)
   , initialRangeFor
@@ -29,15 +29,17 @@ module LinearTrace.Solver
   , (@*@)
   , (@/@)
   , (@^@)
-  , plus
-  , minus
-  , times
-  , dividedBy
-  , squared
-  , Constraint(..)
+  , -- * Constraints
+    Constraint(..)
+  , ConstrainEq(..)
+  , ConstrainOrd(..)
   , (@=@)
+  , (@<=@)
   , (@<@)
+  , (@>=@)
+  , (@>@)
   , minimize
+  , flattenConstraint
   , -- * Symbolic vector containers
     Vec2(..)
   , Vec3(..)
@@ -45,9 +47,6 @@ module LinearTrace.Solver
   , vec2
   , vec3
   , vec4
-  , evalVec2
-  , evalVec3
-  , evalVec4
   , -- * Internal energy helpers
     maxE
   , minE
@@ -190,7 +189,7 @@ addInitialUpper hi bounds =
     }
 
 --------------------------------------------------------------------------------
--- Symbolic scalar language
+-- Symbolic scalar expressions
 --------------------------------------------------------------------------------
 newtype Var =
   Var String
@@ -257,8 +256,6 @@ binaryExpr f (Expr ty lhs) (Expr _ rhs) = Expr ty (f lhs rhs)
 unaryExpr :: (RawExpr -> RawExpr) -> Expr ty -> Expr ty
 unaryExpr f (Expr ty inner) = Expr ty (f inner)
 
-infix 4 @=@
-infix 4 @<@
 infixl 6 @+@
 infixl 6 @-@
 infixl 7 @*@
@@ -279,21 +276,6 @@ infixr 8 @^@
 (@^@) :: Expr ty -> Expr ty -> Expr ty
 (@^@) = binaryExpr EPow
 
-plus :: Expr ty -> Expr ty -> Expr ty
-plus = (@+@)
-
-minus :: Expr ty -> Expr ty -> Expr ty
-minus = (@-@)
-
-times :: Expr ty -> Expr ty -> Expr ty
-times = (@*@)
-
-dividedBy :: Expr ty -> Expr ty -> Expr ty
-dividedBy = (@/@)
-
-squared :: Expr ty -> Expr ty
-squared x = x @*@ x
-
 instance SymbolicType ty => Num (Expr ty) where
   (+) = (@+@)
   (-) = (@-@)
@@ -305,23 +287,8 @@ instance SymbolicType ty => Num (Expr ty) where
 
 instance SymbolicType ty => Fractional (Expr ty) where
   (/) = (@/@)
-  recip x = num 1 / x
+  recip x = num 1 @/@ x
   fromRational = num . fromRational
-
-data Constraint
-  = Equals ScalarType RawExpr RawExpr
-  | LessThan RawExpr RawExpr
-  | Minimize RawExpr
-  deriving (Eq, Show)
-
-(@=@) :: Expr ty -> Expr ty -> Constraint
-Expr ty lhs @=@ Expr _ rhs = Equals ty lhs rhs
-
-(@<@) :: Expr ty -> Expr ty -> Constraint
-Expr _ lhs @<@ Expr _ rhs = LessThan lhs rhs
-
-minimize :: Expr ty -> Constraint
-minimize (Expr _ objective) = Minimize objective
 
 --------------------------------------------------------------------------------
 -- Symbolic vector containers
@@ -347,14 +314,132 @@ vec3 = Vec3
 vec4 :: a -> a -> a -> a -> Vec4 a
 vec4 = Vec4
 
-evalVec2 :: Solution -> Vec2 (Expr ty) -> Maybe (Vec2 Double)
-evalVec2 solution = traverse (evalExpr solution)
+instance Num a => Num (Vec2 a) where
+  Vec2 ax ay + Vec2 bx by = Vec2 (ax + bx) (ay + by)
+  Vec2 ax ay - Vec2 bx by = Vec2 (ax - bx) (ay - by)
+  Vec2 ax ay * Vec2 bx by = Vec2 (ax * bx) (ay * by)
+  negate (Vec2 ax ay) = Vec2 (negate ax) (negate ay)
+  abs (Vec2 ax ay) = Vec2 (abs ax) (abs ay)
+  signum (Vec2 ax ay) = Vec2 (signum ax) (signum ay)
+  fromInteger n = Vec2 (fromInteger n) (fromInteger n)
 
-evalVec3 :: Solution -> Vec3 (Expr ty) -> Maybe (Vec3 Double)
-evalVec3 solution = traverse (evalExpr solution)
+instance Fractional a => Fractional (Vec2 a) where
+  Vec2 ax ay / Vec2 bx by = Vec2 (ax / bx) (ay / by)
+  recip (Vec2 ax ay) = Vec2 (recip ax) (recip ay)
+  fromRational x = Vec2 (fromRational x) (fromRational x)
 
-evalVec4 :: Solution -> Vec4 (Expr ty) -> Maybe (Vec4 Double)
-evalVec4 solution = traverse (evalExpr solution)
+instance Num a => Num (Vec3 a) where
+  Vec3 ax ay az + Vec3 bx by bz = Vec3 (ax + bx) (ay + by) (az + bz)
+  Vec3 ax ay az - Vec3 bx by bz = Vec3 (ax - bx) (ay - by) (az - bz)
+  Vec3 ax ay az * Vec3 bx by bz = Vec3 (ax * bx) (ay * by) (az * bz)
+  negate (Vec3 ax ay az) = Vec3 (negate ax) (negate ay) (negate az)
+  abs (Vec3 ax ay az) = Vec3 (abs ax) (abs ay) (abs az)
+  signum (Vec3 ax ay az) = Vec3 (signum ax) (signum ay) (signum az)
+  fromInteger n = Vec3 (fromInteger n) (fromInteger n) (fromInteger n)
+
+instance Fractional a => Fractional (Vec3 a) where
+  Vec3 ax ay az / Vec3 bx by bz = Vec3 (ax / bx) (ay / by) (az / bz)
+  recip (Vec3 ax ay az) = Vec3 (recip ax) (recip ay) (recip az)
+  fromRational x = Vec3 (fromRational x) (fromRational x) (fromRational x)
+
+instance Num a => Num (Vec4 a) where
+  Vec4 ax ay az aw + Vec4 bx by bz bw =
+    Vec4 (ax + bx) (ay + by) (az + bz) (aw + bw)
+  Vec4 ax ay az aw - Vec4 bx by bz bw =
+    Vec4 (ax - bx) (ay - by) (az - bz) (aw - bw)
+  Vec4 ax ay az aw * Vec4 bx by bz bw =
+    Vec4 (ax * bx) (ay * by) (az * bz) (aw * bw)
+  negate (Vec4 ax ay az aw) =
+    Vec4 (negate ax) (negate ay) (negate az) (negate aw)
+  abs (Vec4 ax ay az aw) = Vec4 (abs ax) (abs ay) (abs az) (abs aw)
+  signum (Vec4 ax ay az aw) =
+    Vec4 (signum ax) (signum ay) (signum az) (signum aw)
+  fromInteger n =
+    Vec4 (fromInteger n) (fromInteger n) (fromInteger n) (fromInteger n)
+
+instance Fractional a => Fractional (Vec4 a) where
+  Vec4 ax ay az aw / Vec4 bx by bz bw =
+    Vec4 (ax / bx) (ay / by) (az / bz) (aw / bw)
+  recip (Vec4 ax ay az aw) = Vec4 (recip ax) (recip ay) (recip az) (recip aw)
+  fromRational x =
+    Vec4 (fromRational x) (fromRational x) (fromRational x) (fromRational x)
+
+--------------------------------------------------------------------------------
+-- Constraints
+--------------------------------------------------------------------------------
+data Constraint
+  = Equals ScalarType RawExpr RawExpr
+  | LessOrEqual RawExpr RawExpr
+  | Minimize RawExpr
+  | All [Constraint]
+  deriving (Eq, Show)
+
+instance Semigroup Constraint where
+  lhs <> rhs = All (flattenConstraint lhs ++ flattenConstraint rhs)
+
+instance Monoid Constraint where
+  mempty = All []
+
+class ConstrainEq a where
+  constrainEqual :: a -> a -> Constraint
+
+class ConstrainOrd a where
+  constrainLessOrEqual :: a -> a -> Constraint
+
+infix 4 @=@
+infix 4 @<=@
+infix 4 @<@
+infix 4 @>=@
+infix 4 @>@
+(@=@) :: ConstrainEq a => a -> a -> Constraint
+(@=@) = constrainEqual
+
+(@<=@) :: ConstrainOrd a => a -> a -> Constraint
+(@<=@) = constrainLessOrEqual
+
+-- | Alias for '@<=@'.
+--
+-- The solver enforces inequalities using a non-strict penalty, so '@<@' and
+-- '@<=@' have the same semantics. Prefer '@<=@' where precision matters.
+(@<@) :: ConstrainOrd a => a -> a -> Constraint
+(@<@) = constrainLessOrEqual
+
+(@>=@) :: ConstrainOrd a => a -> a -> Constraint
+lhs @>=@ rhs = rhs @<=@ lhs
+
+(@>@) :: ConstrainOrd a => a -> a -> Constraint
+lhs @>@ rhs = rhs @<=@ lhs
+
+instance ConstrainEq (Expr ty) where
+  constrainEqual (Expr ty lhs) (Expr _ rhs) = Equals ty lhs rhs
+
+instance ConstrainOrd (Expr ty) where
+  constrainLessOrEqual (Expr _ lhs) (Expr _ rhs) = LessOrEqual lhs rhs
+
+instance ConstrainEq a => ConstrainEq (Vec2 a) where
+  constrainEqual lhs rhs =
+    case (lhs, rhs) of
+      (Vec2 ax ay, Vec2 bx by) -> All [ax @=@ bx, ay @=@ by]
+
+instance ConstrainEq a => ConstrainEq (Vec3 a) where
+  constrainEqual lhs rhs =
+    case (lhs, rhs) of
+      (Vec3 ax ay az, Vec3 bx by bz) -> All [ax @=@ bx, ay @=@ by, az @=@ bz]
+
+instance ConstrainEq a => ConstrainEq (Vec4 a) where
+  constrainEqual lhs rhs =
+    case (lhs, rhs) of
+      (Vec4 ax ay az aw, Vec4 bx by bz bw) ->
+        All [ax @=@ bx, ay @=@ by, az @=@ bz, aw @=@ bw]
+
+flattenConstraint :: Constraint -> [Constraint]
+flattenConstraint constraint =
+  case constraint of
+    All constraints -> concatMap flattenConstraint constraints
+    _               -> [constraint]
+
+minimize :: Expr ty -> Constraint
+minimize (Expr _ objective) = Minimize objective
 
 --------------------------------------------------------------------------------
 -- Solver-facing compiled expressions
@@ -581,15 +666,16 @@ compileConstraintsWithInitialVars ::
 compileConstraintsWithInitialVars config initialVars constraints =
   NamedCSP {namedVars = vars, namedCSP = csp}
   where
+    flatConstraints = concatMap flattenConstraint constraints
     varTypes =
       mergeVarTypeMaps
         (collectInitialVarTypes initialVars)
-        (collectConstraintVarTypes constraints)
+        (collectConstraintVarTypes flatConstraints)
     inferredBounds =
       Map.unionWith
         mergeInitialBounds
         (collectInitialVarBounds initialVars)
-        (inferInitialBounds constraints)
+        (inferInitialBounds flatConstraints)
     variableInputs =
       zip (randomSamplesFromSeed (initialSeed config)) (Map.toAscList varTypes)
     build = do
@@ -614,7 +700,7 @@ compileConstraintsWithInitialVars config initialVars constraints =
              Nothing    -> pure ()
              Just range -> addRangeTerms (rangeWeight config) internal range)
         pairs
-      traverse_ (lowerConstraint config vars') constraints
+      traverse_ (lowerConstraint config vars') flatConstraints
       pure vars'
     (vars, csp) = compileReturning build
 
@@ -680,11 +766,12 @@ collectConstraintVarTypes = foldMap collectOne
           mergeVarTypeMaps
             (collectRawExprVarTypes lhs)
             (collectRawExprVarTypes rhs)
-        LessThan lhs rhs ->
+        LessOrEqual lhs rhs ->
           mergeVarTypeMaps
             (collectRawExprVarTypes lhs)
             (collectRawExprVarTypes rhs)
         Minimize objective -> collectRawExprVarTypes objective
+        All constraints -> collectConstraintVarTypes constraints
 
 inferInitialBounds :: [Constraint] -> Map String InitialBounds
 inferInitialBounds = foldl' addConstraint Map.empty
@@ -693,16 +780,17 @@ addConstraint ::
      Map String InitialBounds -> Constraint -> Map String InitialBounds
 addConstraint bounds constraint =
   case constraint of
-    LessThan (ELit lo) (EVar _ v) ->
+    LessOrEqual (ELit lo) (EVar _ v) ->
       Map.alter
         (Just . addInitialLower lo . maybe unboundedInitialBounds id)
         (varName v)
         bounds
-    LessThan (EVar _ v) (ELit hi) ->
+    LessOrEqual (EVar _ v) (ELit hi) ->
       Map.alter
         (Just . addInitialUpper hi . maybe unboundedInitialBounds id)
         (varName v)
         bounds
+    All constraints -> foldl' addConstraint bounds constraints
     _ -> bounds
 
 --------------------------------------------------------------------------------
@@ -723,12 +811,13 @@ lowerConstraint config vars constraint =
           addTerm
             (ensureWeight config)
             (sq (lowerExpr vars lhs - lowerExpr vars rhs))
-    LessThan lhs rhs ->
+    LessOrEqual lhs rhs ->
       addTerm
         (ensureWeight config)
         (sq (clipNegative (lowerExpr vars lhs - lowerExpr vars rhs)))
     Minimize objective ->
       addTerm (encourageWeight config) (lowerExpr vars objective)
+    All constraints -> traverse_ (lowerConstraint config vars) constraints
 
 lowerExpr :: Floating a => Map String InternalVar -> RawExpr -> EnergyExpr a
 lowerExpr vars expr =

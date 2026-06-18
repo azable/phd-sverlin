@@ -262,7 +262,7 @@ renderSummary blocks events =
 renderVisualizationSummary ::
      [V.ViewNode]
   -> [V.ViewStep events]
-  -> [V.Constraint]
+  -> [S.Constraint]
   -> [S.InitialVar]
   -> String
 renderVisualizationSummary nodes steps constraints initialVars =
@@ -274,7 +274,7 @@ renderVisualizationSummary nodes steps constraints initialVars =
     , show (length steps)
     , "\n"
     , "Constraints: "
-    , show (length constraints)
+    , show (length (flattenConstraints constraints))
     , "\n"
     , "Initial vars: "
     , show (length initialVars)
@@ -323,35 +323,18 @@ renderStyle style =
   concat
     [ stepIndent
     , "style\n"
-    , renderStyleField "top" (V.top style)
-    , renderStyleField "left" (V.left style)
-    , renderStyleField "width" (V.width style)
-    , renderStyleField "height" (V.height style)
-    , renderStyleField "opacity" (V.opacity style)
-    , renderStyleField "zIndex" (V.zIndex style)
-    , renderStyleField "fontSize" (V.fontSize style)
-    , renderStyleField "radius" (V.radius style)
-    , renderMaybeHslStyleField "fill" (V.fill style)
-    , renderMaybeHslStyleField "stroke" (V.stroke style)
-    , renderStyleField "strokeWidth" (V.strokeWidth style)
-    , renderStyleField "alpha" (V.alpha style)
+    , concatMap renderStyleExprLeaf (V.styleExprLeaves style)
     ]
 
-renderStyleField :: String -> V.Expr ty -> String
+renderStyleExprLeaf :: V.StyleExprLeaf -> String
+renderStyleExprLeaf leaf =
+  case leaf of
+    V.StyleExprLeaf name expr -> renderStyleField name expr
+
+renderStyleField :: String -> S.Expr ty -> String
 renderStyleField name expr =
   concat
-    [stepIndent, stepIndent, padRight 12 name, " = ", renderExpr expr, "\n"]
-
-renderMaybeHslStyleField :: String -> Maybe V.HslExpr -> String
-renderMaybeHslStyleField name maybeHsl =
-  case maybeHsl of
-    Nothing -> ""
-    Just hsl ->
-      concat
-        [ renderStyleField (name ++ ".hue") (V.hue hsl)
-        , renderStyleField (name ++ ".saturation") (V.saturation hsl)
-        , renderStyleField (name ++ ".lightness") (V.lightness hsl)
-        ]
+    [stepIndent, stepIndent, padRight 18 name, " = ", renderExpr expr, "\n"]
 
 --------------------------------------------------------------------------------
 -- Initial variables
@@ -392,7 +375,10 @@ data RenderedConstraint = RenderedConstraint
   , renderedConstraintRhs :: String
   }
 
-renderConstraintParts :: V.Constraint -> RenderedConstraint
+flattenConstraints :: [S.Constraint] -> [S.Constraint]
+flattenConstraints = concatMap S.flattenConstraint
+
+renderConstraintParts :: S.Constraint -> RenderedConstraint
 renderConstraintParts constraint =
   case constraint of
     S.Equals ty lhs rhs ->
@@ -401,10 +387,10 @@ renderConstraintParts constraint =
         , renderedConstraintOp = renderEqualityOperator ty
         , renderedConstraintRhs = renderEqualityRhs ty rhs
         }
-    S.LessThan lhs rhs ->
+    S.LessOrEqual lhs rhs ->
       RenderedConstraint
         { renderedConstraintLhs = renderRawExpr lhs
-        , renderedConstraintOp = "<"
+        , renderedConstraintOp = "<="
         , renderedConstraintRhs = renderRawExpr rhs
         }
     S.Minimize expr ->
@@ -412,6 +398,13 @@ renderConstraintParts constraint =
         { renderedConstraintLhs = ""
         , renderedConstraintOp = "minimize"
         , renderedConstraintRhs = renderRawExpr expr
+        }
+    S.All constraints ->
+      RenderedConstraint
+        { renderedConstraintLhs = ""
+        , renderedConstraintOp = "all"
+        , renderedConstraintRhs =
+            show (length (flattenConstraints constraints)) ++ " constraints"
         }
 
 renderEqualityOperator :: S.ScalarType -> String
@@ -426,9 +419,10 @@ renderEqualityRhs ty rhs =
     Nothing     -> renderRawExpr rhs
     Just period -> renderRawExpr rhs ++ " (mod " ++ fixed2 period ++ ")"
 
-renderStepConstraints :: [V.Constraint] -> String
+renderStepConstraints :: [S.Constraint] -> String
 renderStepConstraints constraints =
-  let visibleConstraints = filter constraintMentionsVar constraints
+  let visibleConstraints =
+        filter constraintMentionsVar (flattenConstraints constraints)
    in case visibleConstraints of
         [] -> ""
         _ ->
@@ -439,7 +433,7 @@ renderStepConstraints constraints =
             , "\n"
             ]
 
-renderIndentedConstraints :: [V.Constraint] -> String
+renderIndentedConstraints :: [S.Constraint] -> String
 renderIndentedConstraints constraints =
   let rendered = map renderConstraintParts constraints
       lhsWidth =
@@ -469,12 +463,13 @@ renderIndentedConstraint lhsWidth opWidth constraint =
     , "\n"
     ]
 
-constraintMentionsVar :: V.Constraint -> Bool
+constraintMentionsVar :: S.Constraint -> Bool
 constraintMentionsVar constraint =
   case constraint of
-    S.Equals _ lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.LessThan lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.Minimize expr    -> rawExprMentionsVar expr
+    S.Equals _ lhs rhs    -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.LessOrEqual lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.Minimize expr       -> rawExprMentionsVar expr
+    S.All constraints     -> any constraintMentionsVar constraints
 
 rawExprMentionsVar :: S.RawExpr -> Bool
 rawExprMentionsVar expr =
@@ -497,7 +492,7 @@ data SolvedExpr =
   SolvedExpr String Double
 
 renderStepSolution ::
-     Maybe S.Solution -> [V.ViewNode] -> [V.Constraint] -> String
+     Maybe S.Solution -> [V.ViewNode] -> [S.Constraint] -> String
 renderStepSolution maybeSolution nodes _constraints =
   case maybeSolution of
     Nothing -> ""
@@ -517,37 +512,17 @@ solveViewNodeExprs solution node =
 solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
 solveBlockViewExprs solution block =
   let blockName = renderBlockRefPlain (V.blockRef block)
-      style = V.blockStyle block
-   in concat
-        [ solveNamedExpr solution (blockName ++ ".top") (V.top style)
-        , solveNamedExpr solution (blockName ++ ".left") (V.left style)
-        , solveNamedExpr solution (blockName ++ ".width") (V.width style)
-        , solveNamedExpr solution (blockName ++ ".height") (V.height style)
-        , solveNamedExpr solution (blockName ++ ".opacity") (V.opacity style)
-        , solveNamedExpr solution (blockName ++ ".zIndex") (V.zIndex style)
-        , solveNamedExpr solution (blockName ++ ".fontSize") (V.fontSize style)
-        , solveNamedExpr solution (blockName ++ ".radius") (V.radius style)
-        , solveMaybeHsl solution (blockName ++ ".fill") (V.fill style)
-        , solveMaybeHsl solution (blockName ++ ".stroke") (V.stroke style)
-        , solveNamedExpr
-            solution
-            (blockName ++ ".strokeWidth")
-            (V.strokeWidth style)
-        , solveNamedExpr solution (blockName ++ ".alpha") (V.alpha style)
-        ]
+   in concatMap
+        (solveStyleExprLeaf solution blockName)
+        (V.styleExprLeaves (V.blockStyle block))
 
-solveMaybeHsl :: S.Solution -> String -> Maybe V.HslExpr -> [SolvedExpr]
-solveMaybeHsl solution name maybeHsl =
-  case maybeHsl of
-    Nothing -> []
-    Just hsl ->
-      concat
-        [ solveNamedExpr solution (name ++ ".hue") (V.hue hsl)
-        , solveNamedExpr solution (name ++ ".saturation") (V.saturation hsl)
-        , solveNamedExpr solution (name ++ ".lightness") (V.lightness hsl)
-        ]
+solveStyleExprLeaf :: S.Solution -> String -> V.StyleExprLeaf -> [SolvedExpr]
+solveStyleExprLeaf solution blockName leaf =
+  case leaf of
+    V.StyleExprLeaf name expr ->
+      solveNamedExpr solution (blockName ++ "." ++ name) expr
 
-solveNamedExpr :: S.Solution -> String -> V.Expr ty -> [SolvedExpr]
+solveNamedExpr :: S.Solution -> String -> S.Expr ty -> [SolvedExpr]
 solveNamedExpr solution name expr =
   case S.evalExpr solution expr of
     Nothing    -> []
@@ -736,7 +711,7 @@ renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
 --------------------------------------------------------------------------------
 -- Expression rendering
 --------------------------------------------------------------------------------
-renderExpr :: V.Expr ty -> String
+renderExpr :: S.Expr ty -> String
 renderExpr = renderRawExpr . S.exprRaw
 
 renderRawExpr :: S.RawExpr -> String

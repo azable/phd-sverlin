@@ -15,12 +15,27 @@ module LinearTrace.Visualize
   , ViewNode(..)
   , ViewStep(..)
   , BlockView(..)
-  , Style(..)
-  , Bounds(..)
+  , -- * Styles
+    Style(..)
+  , StyleScalar(..)
+  , StyleColor(..)
+  , StyleDiscrete(..)
+  , StyleValueUnit(..)
+  , MaterializedStyle(..)
+  , MaterializedScalar(..)
+  , MaterializedColor(..)
+  , MaterializedDiscrete(..)
+  , StyleExprLeaf(..)
+  , styleExprLeaves
+  , materializedScalarValue
+  , materializedCssClass
+  , -- * Bounds/style values
+    Bounds(..)
   , BoundsExpr
   , MaterializedBounds
   , HasBounds(..)
   , HasStyle(..)
+  , boundsOf
   , Hsl(..)
   , CssText(..)
   , FontWeight(..)
@@ -28,7 +43,7 @@ module LinearTrace.Visualize
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
-  , MaterializedStyle(..)
+  , MaterializedHsl
   , MaterializedBlockView(..)
   , MaterializedViewNode(..)
   , -- * Solver domains
@@ -44,10 +59,11 @@ module LinearTrace.Visualize
   , AngleExpr
   , HueExpr
   , HslExpr
-  , MaterializedHsl
   , -- * Expressions, vectors, and constraints
     Expr
   , Constraint(..)
+  , ConstrainEq(..)
+  , ConstrainOrd(..)
   , Vec2(..)
   , Vec3(..)
   , Vec4(..)
@@ -57,13 +73,16 @@ module LinearTrace.Visualize
   , var
   , varName
   , global
-  , (@=@)
-  , (@<@)
   , (@+@)
   , (@-@)
   , (@*@)
   , (@/@)
   , (@^@)
+  , (@=@)
+  , (@<=@)
+  , (@<@)
+  , (@>=@)
+  , (@>@)
   , num
   , -- * View audit
     ViewAuditStep(..)
@@ -93,26 +112,24 @@ module LinearTrace.Visualize
   , unitBounds
   , angleBounds
   , hslBounds
-  , sameTop
-  , sameBottom
-  , sameRight
-  , sameLeft
-  , sameWidth
-  , sameHeight
-  , sameBounds
-  , sameCenterX
-  , sameCenterY
-  , sameCenter
+  , nonNegative
   , centeredWithin
   , above
   , below
   , beside
   , besideWithGap
   , belowWithGap
-  , sameVec2
-  , sameHsl
-  , -- * Style setters
-    setOpacity
+  , (|=|)
+  , -- * Common style accessors/setters
+    opacity
+  , zIndex
+  , fontSize
+  , radius
+  , strokeWidth
+  , alpha
+  , fill
+  , stroke
+  , setOpacity
   , setZIndex
   , setFontSize
   , setRadius
@@ -135,11 +152,11 @@ module LinearTrace.Visualize
   , materializeStyle
   , materializeBlockView
   , materializeViewNode
-  , (|=|)
   ) where
 
 import           Control.Monad.Reader
 import           Control.Monad.Writer.Strict
+import           Data.Maybe                  (maybeToList)
 import           Data.Proxy                  (Proxy (..))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver
@@ -167,10 +184,6 @@ type MaterializedHsl = Hsl Double Double
 --------------------------------------------------------------------------------
 -- Bounds
 --------------------------------------------------------------------------------
--- | A rectangle represented by top, left, width, and height.
---
--- Right, bottom, position, size, and center are derived handles exposed through
--- 'HasBounds'.
 data Bounds a =
   Bounds a a a a
   deriving (Eq, Show, Functor, Foldable, Traversable)
@@ -199,6 +212,12 @@ boundsHeight bounds =
   case bounds of
     Bounds _ _ _ h -> h
 
+instance ConstrainEq a => ConstrainEq (Bounds a) where
+  constrainEqual lhs rhs =
+    case (lhs, rhs) of
+      (Bounds at al aw ah, Bounds bt bl bw bh) ->
+        All [at @=@ bt, al @=@ bl, aw @=@ bw, ah @=@ bh]
+
 class HasBounds a where
   top :: a -> LayoutExpr
   left :: a -> LayoutExpr
@@ -219,14 +238,17 @@ class HasBounds a where
   size :: a -> Vec2 LayoutExpr
   size x = Vec2 (width x) (height x)
 
-instance HasBounds (Bounds (Expr Layout)) where
+boundsOf :: HasBounds a => a -> BoundsExpr
+boundsOf x = Bounds (top x) (left x) (width x) (height x)
+
+instance HasBounds BoundsExpr where
   top = boundsTop
   left = boundsLeft
   width = boundsWidth
   height = boundsHeight
 
 --------------------------------------------------------------------------------
--- Block views
+-- Basic style values
 --------------------------------------------------------------------------------
 data Hsl hue unit = Hsl
   { hue        :: hue
@@ -274,32 +296,59 @@ data WhiteSpace
   | WhiteSpacePreWrap
   deriving (Eq, Show)
 
--- | Symbolic style.
---
--- Numeric/interpolatable scalar values are always present, so they can be
--- referenced in constraints. Optional fields represent optional CSS presence,
--- not optional solver variables.
+--------------------------------------------------------------------------------
+-- Centralized style representation
+--------------------------------------------------------------------------------
+data StyleValueUnit
+  = StyleNumber
+  | StylePixels
+  | StyleHidden
+  deriving (Eq, Show)
+
+data StyleScalar
+  = StyleFreeScalar
+      String
+      FreeExpr
+      (Maybe Range)
+      (FreeExpr -> [Constraint])
+      StyleValueUnit
+  | StyleLayoutScalar
+      String
+      LayoutExpr
+      (Maybe Range)
+      (LayoutExpr -> [Constraint])
+      StyleValueUnit
+  | StyleUnitScalar
+      String
+      UnitExpr
+      (Maybe Range)
+      (UnitExpr -> [Constraint])
+      StyleValueUnit
+  | StyleAngleScalar
+      String
+      AngleExpr
+      (Maybe Range)
+      (AngleExpr -> [Constraint])
+      StyleValueUnit
+
+data StyleColor =
+  StyleColor String (Maybe HslExpr)
+
+data StyleDiscrete
+  = StyleTextAttr String (Maybe CssText)
+  | StyleFontWeightAttr String (Maybe FontWeight)
+  | StyleFontStyleAttr String (Maybe FontStyle)
+  | StyleTextAlignAttr String (Maybe TextAlign)
+  | StyleBorderStyleAttr String (Maybe BorderStyle)
+  | StyleWhiteSpaceAttr String (Maybe WhiteSpace)
+  | StyleClassAttr String (Maybe CssText)
+
 data Style = Style
-  { styleBounds      :: BoundsExpr
-    -- Interpolatable / constrainable scalar attributes.
-  , styleOpacity     :: UnitExpr
-  , styleZIndex      :: FreeExpr
-  , styleFontSize    :: LayoutExpr
-  , styleRadius      :: LayoutExpr
-  , styleStrokeWidth :: LayoutExpr
-  , styleAlpha       :: UnitExpr
-    -- Optional interpolatable attributes.
-  , styleFill        :: Maybe HslExpr
-  , styleStroke      :: Maybe HslExpr
-    -- Discrete / non-interpolatable CSS-like attributes.
-  , styleFontFamily  :: Maybe CssText
-  , styleFontWeight  :: Maybe FontWeight
-  , styleFontStyle   :: Maybe FontStyle
-  , styleTextAlign   :: Maybe TextAlign
-  , styleBorderStyle :: Maybe BorderStyle
-  , styleWhiteSpace  :: Maybe WhiteSpace
-  , styleCssClass    :: Maybe CssText
-  } deriving (Eq, Show)
+  { styleBounds   :: BoundsExpr
+  , styleScalars  :: [StyleScalar]
+  , styleColors   :: [StyleColor]
+  , styleDiscrete :: [StyleDiscrete]
+  }
 
 instance HasBounds Style where
   top = top . styleBounds
@@ -307,28 +356,501 @@ instance HasBounds Style where
   width = width . styleBounds
   height = height . styleBounds
 
+data MaterializedScalar =
+  MaterializedScalar String Double StyleValueUnit
+  deriving (Eq, Show)
+
+data MaterializedColor =
+  MaterializedColor String (Maybe MaterializedHsl)
+  deriving (Eq, Show)
+
+data MaterializedDiscrete
+  = MaterializedTextAttr String (Maybe CssText)
+  | MaterializedFontWeightAttr String (Maybe FontWeight)
+  | MaterializedFontStyleAttr String (Maybe FontStyle)
+  | MaterializedTextAlignAttr String (Maybe TextAlign)
+  | MaterializedBorderStyleAttr String (Maybe BorderStyle)
+  | MaterializedWhiteSpaceAttr String (Maybe WhiteSpace)
+  | MaterializedClassAttr String (Maybe CssText)
+  deriving (Eq, Show)
+
+data MaterializedStyle = MaterializedStyle
+  { materializedBounds   :: MaterializedBounds
+  , materializedScalars  :: [MaterializedScalar]
+  , materializedColors   :: [MaterializedColor]
+  , materializedDiscrete :: [MaterializedDiscrete]
+  } deriving (Eq, Show)
+
+materializedTop :: MaterializedStyle -> Double
+materializedTop = boundsTop . materializedBounds
+
+materializedLeft :: MaterializedStyle -> Double
+materializedLeft = boundsLeft . materializedBounds
+
+materializedWidth :: MaterializedStyle -> Double
+materializedWidth = boundsWidth . materializedBounds
+
+materializedHeight :: MaterializedStyle -> Double
+materializedHeight = boundsHeight . materializedBounds
+
+materializedScalarValue :: String -> Double -> MaterializedStyle -> Double
+materializedScalarValue name fallback style' =
+  findScalar fallback (materializedScalars style')
+  where
+    findScalar value scalars =
+      case scalars of
+        [] -> value
+        MaterializedScalar name' x _:rest
+          | name == name' -> x
+          | otherwise -> findScalar value rest
+
+materializedCssClass :: MaterializedStyle -> Maybe CssText
+materializedCssClass style' = findClass (materializedDiscrete style')
+  where
+    findClass fields =
+      case fields of
+        []                                       -> Nothing
+        MaterializedClassAttr "cssClass" value:_ -> value
+        _:rest                                   -> findClass rest
+
+--------------------------------------------------------------------------------
+-- Generic style helpers
+--------------------------------------------------------------------------------
+data StyleExprLeaf where
+  StyleExprLeaf :: String -> Expr ty -> StyleExprLeaf
+
+styleScalarName :: StyleScalar -> String
+styleScalarName scalar =
+  case scalar of
+    StyleFreeScalar name _ _ _ _   -> name
+    StyleLayoutScalar name _ _ _ _ -> name
+    StyleUnitScalar name _ _ _ _   -> name
+    StyleAngleScalar name _ _ _ _  -> name
+
+styleColorName :: StyleColor -> String
+styleColorName color =
+  case color of
+    StyleColor name _ -> name
+
+styleDiscreteName :: StyleDiscrete -> String
+styleDiscreteName field =
+  case field of
+    StyleTextAttr name _        -> name
+    StyleFontWeightAttr name _  -> name
+    StyleFontStyleAttr name _   -> name
+    StyleTextAlignAttr name _   -> name
+    StyleBorderStyleAttr name _ -> name
+    StyleWhiteSpaceAttr name _  -> name
+    StyleClassAttr name _       -> name
+
+replaceByName :: (a -> String) -> a -> [a] -> [a]
+replaceByName getName newValue values = go values
+  where
+    target = getName newValue
+    go xs =
+      case xs of
+        [] -> [newValue]
+        x:rest
+          | getName x == target -> newValue : rest
+          | otherwise -> x : go rest
+
+setStyleScalar :: StyleScalar -> Style -> Style
+setStyleScalar scalar style' =
+  style'
+    {styleScalars = replaceByName styleScalarName scalar (styleScalars style')}
+
+setStyleColor :: StyleColor -> Style -> Style
+setStyleColor color style' =
+  style' {styleColors = replaceByName styleColorName color (styleColors style')}
+
+setStyleDiscrete :: StyleDiscrete -> Style -> Style
+setStyleDiscrete field style' =
+  style'
+    { styleDiscrete =
+        replaceByName styleDiscreteName field (styleDiscrete style')
+    }
+
+lookupFreeScalar :: String -> FreeExpr -> Style -> FreeExpr
+lookupFreeScalar name fallback style' = go (styleScalars style')
+  where
+    go scalars =
+      case scalars of
+        [] -> fallback
+        StyleFreeScalar name' expr _ _ _:_
+          | name == name' -> expr
+        _:rest -> go rest
+
+lookupLayoutScalar :: String -> LayoutExpr -> Style -> LayoutExpr
+lookupLayoutScalar name fallback style' = go (styleScalars style')
+  where
+    go scalars =
+      case scalars of
+        [] -> fallback
+        StyleLayoutScalar name' expr _ _ _:_
+          | name == name' -> expr
+        _:rest -> go rest
+
+lookupUnitScalar :: String -> UnitExpr -> Style -> UnitExpr
+lookupUnitScalar name fallback style' = go (styleScalars style')
+  where
+    go scalars =
+      case scalars of
+        [] -> fallback
+        StyleUnitScalar name' expr _ _ _:_
+          | name == name' -> expr
+        _:rest -> go rest
+
+lookupColor :: String -> Maybe HslExpr -> Style -> Maybe HslExpr
+lookupColor name fallback style' = go (styleColors style')
+  where
+    go colors =
+      case colors of
+        [] -> fallback
+        StyleColor name' value:_
+          | name == name' -> value
+        _:rest -> go rest
+
+styleExprLeaves :: Style -> [StyleExprLeaf]
+styleExprLeaves style' =
+  [ StyleExprLeaf "top" (top style')
+  , StyleExprLeaf "left" (left style')
+  , StyleExprLeaf "width" (width style')
+  , StyleExprLeaf "height" (height style')
+  ]
+    ++ concatMap scalarLeaves (styleScalars style')
+    ++ concatMap colorLeaves (styleColors style')
+  where
+    scalarLeaves scalar =
+      case scalar of
+        StyleFreeScalar name expr _ _ _   -> [StyleExprLeaf name expr]
+        StyleLayoutScalar name expr _ _ _ -> [StyleExprLeaf name expr]
+        StyleUnitScalar name expr _ _ _   -> [StyleExprLeaf name expr]
+        StyleAngleScalar name expr _ _ _  -> [StyleExprLeaf name expr]
+    colorLeaves color =
+      case color of
+        StyleColor name maybeHsl ->
+          case maybeHsl of
+            Nothing -> []
+            Just hsl ->
+              [ StyleExprLeaf (name ++ ".hue") (hue hsl)
+              , StyleExprLeaf (name ++ ".saturation") (saturation hsl)
+              , StyleExprLeaf (name ++ ".lightness") (lightness hsl)
+              ]
+
+styleInitialVars :: Style -> [InitialVar]
+styleInitialVars style' =
+  concatMap scalarInitialVars (styleScalars style')
+    ++ concatMap colorInitialVars (styleColors style')
+  where
+    scalarInitialVars scalar =
+      case scalar of
+        StyleFreeScalar _ expr maybeRange _ _ ->
+          maybe [] (maybeToList . initialRangeFor expr) maybeRange
+        StyleLayoutScalar _ expr maybeRange _ _ ->
+          maybe [] (maybeToList . initialRangeFor expr) maybeRange
+        StyleUnitScalar _ expr maybeRange _ _ ->
+          maybe [] (maybeToList . initialRangeFor expr) maybeRange
+        StyleAngleScalar _ expr maybeRange _ _ ->
+          maybe [] (maybeToList . initialRangeFor expr) maybeRange
+    colorInitialVars color =
+      case color of
+        StyleColor _ maybeHsl ->
+          case maybeHsl of
+            Nothing -> []
+            Just hsl ->
+              concat
+                [ maybeToList (initialRangeFor (hue hsl) (Range 0 360))
+                , maybeToList (initialRangeFor (saturation hsl) (Range 0 1))
+                , maybeToList (initialRangeFor (lightness hsl) (Range 0 1))
+                ]
+
+styleConstraints :: Style -> [Constraint]
+styleConstraints style' =
+  concatMap scalarConstraints (styleScalars style')
+    ++ concatMap colorConstraints (styleColors style')
+  where
+    scalarConstraints scalar =
+      case scalar of
+        StyleFreeScalar _ expr _ constraints _   -> constraints expr
+        StyleLayoutScalar _ expr _ constraints _ -> constraints expr
+        StyleUnitScalar _ expr _ constraints _   -> constraints expr
+        StyleAngleScalar _ expr _ constraints _  -> constraints expr
+    colorConstraints color =
+      case color of
+        StyleColor _ maybeHsl ->
+          case maybeHsl of
+            Nothing -> []
+            Just hsl ->
+              concat
+                [ angleConstraints (hue hsl)
+                , unitConstraints (saturation hsl)
+                , unitConstraints (lightness hsl)
+                ]
+
+--------------------------------------------------------------------------------
+-- Shared constraint helpers for style attributes
+--------------------------------------------------------------------------------
+noConstraints :: Expr ty -> [Constraint]
+noConstraints _ = []
+
+nonNegativeConstraints :: SymbolicType ty => Expr ty -> [Constraint]
+nonNegativeConstraints expr = [num 0 @<=@ expr]
+
+unitConstraints :: UnitExpr -> [Constraint]
+unitConstraints expr = [num 0 @<=@ expr, expr @<=@ num 1]
+
+angleConstraints :: AngleExpr -> [Constraint]
+angleConstraints expr = [num 0 @<=@ expr, expr @<=@ num 360]
+
+--------------------------------------------------------------------------------
+-- Attribute: opacity
+--------------------------------------------------------------------------------
+opacityDefault :: UnitExpr
+opacityDefault = num 1
+
+opacityScalar :: UnitExpr -> StyleScalar
+opacityScalar expr =
+  StyleUnitScalar "opacity" expr (Just (Range 0 1)) unitConstraints StyleNumber
+
+opacity :: HasStyle a => a -> UnitExpr
+opacity value = lookupUnitScalar "opacity" opacityDefault (style value)
+
+setOpacity :: UnitExpr -> Style -> Style
+setOpacity = setStyleScalar . opacityScalar
+
+--------------------------------------------------------------------------------
+-- Attribute: zIndex
+--------------------------------------------------------------------------------
+zIndexDefault :: FreeExpr
+zIndexDefault = num 0
+
+zIndexScalar :: FreeExpr -> StyleScalar
+zIndexScalar expr =
+  StyleFreeScalar
+    "zIndex"
+    expr
+    (Just (Range (-10) 10))
+    noConstraints
+    StyleNumber
+
+zIndex :: HasStyle a => a -> FreeExpr
+zIndex value = lookupFreeScalar "zIndex" zIndexDefault (style value)
+
+setZIndex :: FreeExpr -> Style -> Style
+setZIndex = setStyleScalar . zIndexScalar
+
+--------------------------------------------------------------------------------
+-- Attribute: fontSize
+--------------------------------------------------------------------------------
+fontSizeDefault :: LayoutExpr
+fontSizeDefault = num 16
+
+fontSizeScalar :: LayoutExpr -> StyleScalar
+fontSizeScalar expr =
+  StyleLayoutScalar
+    "fontSize"
+    expr
+    (Just (Range 8 48))
+    nonNegativeConstraints
+    StylePixels
+
+fontSize :: HasStyle a => a -> LayoutExpr
+fontSize value = lookupLayoutScalar "fontSize" fontSizeDefault (style value)
+
+setFontSize :: LayoutExpr -> Style -> Style
+setFontSize = setStyleScalar . fontSizeScalar
+
+--------------------------------------------------------------------------------
+-- Attribute: radius
+--------------------------------------------------------------------------------
+radiusDefault :: LayoutExpr
+radiusDefault = num 0
+
+radiusScalar :: LayoutExpr -> StyleScalar
+radiusScalar expr =
+  StyleLayoutScalar
+    "radius"
+    expr
+    (Just (Range 0 32))
+    nonNegativeConstraints
+    StylePixels
+
+radius :: HasStyle a => a -> LayoutExpr
+radius value = lookupLayoutScalar "radius" radiusDefault (style value)
+
+setRadius :: LayoutExpr -> Style -> Style
+setRadius = setStyleScalar . radiusScalar
+
+--------------------------------------------------------------------------------
+-- Attribute: strokeWidth
+--------------------------------------------------------------------------------
+strokeWidthDefault :: LayoutExpr
+strokeWidthDefault = num 0
+
+strokeWidthScalar :: LayoutExpr -> StyleScalar
+strokeWidthScalar expr =
+  StyleLayoutScalar
+    "strokeWidth"
+    expr
+    (Just (Range 0 8))
+    nonNegativeConstraints
+    StylePixels
+
+strokeWidth :: HasStyle a => a -> LayoutExpr
+strokeWidth value =
+  lookupLayoutScalar "strokeWidth" strokeWidthDefault (style value)
+
+setStrokeWidth :: LayoutExpr -> Style -> Style
+setStrokeWidth = setStyleScalar . strokeWidthScalar
+
+--------------------------------------------------------------------------------
+-- Attribute: alpha
+--------------------------------------------------------------------------------
+alphaDefault :: UnitExpr
+alphaDefault = num 1
+
+alphaScalar :: UnitExpr -> StyleScalar
+alphaScalar expr =
+  StyleUnitScalar "alpha" expr (Just (Range 0 1)) unitConstraints StyleHidden
+
+alpha :: HasStyle a => a -> UnitExpr
+alpha value = lookupUnitScalar "alpha" alphaDefault (style value)
+
+setAlpha :: UnitExpr -> Style -> Style
+setAlpha = setStyleScalar . alphaScalar
+
+--------------------------------------------------------------------------------
+-- Attribute: fill
+--------------------------------------------------------------------------------
+fillDefault :: Maybe HslExpr
+fillDefault = Nothing
+
+fillColor :: Maybe HslExpr -> StyleColor
+fillColor = StyleColor "fill"
+
+fill :: HasStyle a => a -> Maybe HslExpr
+fill value = lookupColor "fill" fillDefault (style value)
+
+setFill :: HslExpr -> Style -> Style
+setFill = setStyleColor . fillColor . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: stroke
+--------------------------------------------------------------------------------
+strokeDefault :: Maybe HslExpr
+strokeDefault = Nothing
+
+strokeColor :: Maybe HslExpr -> StyleColor
+strokeColor = StyleColor "stroke"
+
+stroke :: HasStyle a => a -> Maybe HslExpr
+stroke value = lookupColor "stroke" strokeDefault (style value)
+
+setStroke :: HslExpr -> Style -> Style
+setStroke = setStyleColor . strokeColor . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: fontFamily
+--------------------------------------------------------------------------------
+fontFamilyDiscrete :: Maybe CssText -> StyleDiscrete
+fontFamilyDiscrete = StyleTextAttr "fontFamily"
+
+setFontFamily :: String -> Style -> Style
+setFontFamily = setStyleDiscrete . fontFamilyDiscrete . Just . CssText
+
+--------------------------------------------------------------------------------
+-- Attribute: fontWeight
+--------------------------------------------------------------------------------
+fontWeightDiscrete :: Maybe FontWeight -> StyleDiscrete
+fontWeightDiscrete = StyleFontWeightAttr "fontWeight"
+
+setFontWeight :: FontWeight -> Style -> Style
+setFontWeight = setStyleDiscrete . fontWeightDiscrete . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: fontStyle
+--------------------------------------------------------------------------------
+fontStyleDiscrete :: Maybe FontStyle -> StyleDiscrete
+fontStyleDiscrete = StyleFontStyleAttr "fontStyle"
+
+setFontStyle :: FontStyle -> Style -> Style
+setFontStyle = setStyleDiscrete . fontStyleDiscrete . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: textAlign
+--------------------------------------------------------------------------------
+textAlignDiscrete :: Maybe TextAlign -> StyleDiscrete
+textAlignDiscrete = StyleTextAlignAttr "textAlign"
+
+setTextAlign :: TextAlign -> Style -> Style
+setTextAlign = setStyleDiscrete . textAlignDiscrete . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: borderStyle
+--------------------------------------------------------------------------------
+borderStyleDiscrete :: Maybe BorderStyle -> StyleDiscrete
+borderStyleDiscrete = StyleBorderStyleAttr "borderStyle"
+
+setBorderStyle :: BorderStyle -> Style -> Style
+setBorderStyle = setStyleDiscrete . borderStyleDiscrete . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: whiteSpace
+--------------------------------------------------------------------------------
+whiteSpaceDiscrete :: Maybe WhiteSpace -> StyleDiscrete
+whiteSpaceDiscrete = StyleWhiteSpaceAttr "whiteSpace"
+
+setWhiteSpace :: WhiteSpace -> Style -> Style
+setWhiteSpace = setStyleDiscrete . whiteSpaceDiscrete . Just
+
+--------------------------------------------------------------------------------
+-- Attribute: cssClass
+--------------------------------------------------------------------------------
+cssClassDiscrete :: Maybe CssText -> StyleDiscrete
+cssClassDiscrete = StyleClassAttr "cssClass"
+
+setCssClass :: String -> Style -> Style
+setCssClass = setStyleDiscrete . cssClassDiscrete . Just . CssText
+
+--------------------------------------------------------------------------------
+-- Central default style lists
+--------------------------------------------------------------------------------
+defaultStyleScalars :: [StyleScalar]
+defaultStyleScalars =
+  [ opacityScalar opacityDefault
+  , zIndexScalar zIndexDefault
+  , fontSizeScalar fontSizeDefault
+  , radiusScalar radiusDefault
+  , strokeWidthScalar strokeWidthDefault
+  , alphaScalar alphaDefault
+  ]
+
+defaultStyleColors :: [StyleColor]
+defaultStyleColors = [fillColor fillDefault, strokeColor strokeDefault]
+
+defaultStyleDiscrete :: [StyleDiscrete]
+defaultStyleDiscrete =
+  [ fontFamilyDiscrete Nothing
+  , fontWeightDiscrete Nothing
+  , fontStyleDiscrete Nothing
+  , textAlignDiscrete Nothing
+  , borderStyleDiscrete Nothing
+  , whiteSpaceDiscrete Nothing
+  , cssClassDiscrete Nothing
+  ]
+
+--------------------------------------------------------------------------------
+-- HasStyle
+--------------------------------------------------------------------------------
 class HasStyle a where
   style :: a -> Style
-  opacity :: a -> UnitExpr
-  opacity = styleOpacity . style
-  zIndex :: a -> FreeExpr
-  zIndex = styleZIndex . style
-  fontSize :: a -> LayoutExpr
-  fontSize = styleFontSize . style
-  radius :: a -> LayoutExpr
-  radius = styleRadius . style
-  strokeWidth :: a -> LayoutExpr
-  strokeWidth = styleStrokeWidth . style
-  alpha :: a -> UnitExpr
-  alpha = styleAlpha . style
-  fill :: a -> Maybe HslExpr
-  fill = styleFill . style
-  stroke :: a -> Maybe HslExpr
-  stroke = styleStroke . style
 
 instance HasStyle Style where
   style = id
 
+--------------------------------------------------------------------------------
+-- Block views
+--------------------------------------------------------------------------------
 data BlockView tag = BlockView
   { blockRef   :: C.BlockRef tag
   , blockLabel :: C.PayloadView
@@ -359,46 +881,8 @@ data ViewGraph events = ViewGraph
   }
 
 --------------------------------------------------------------------------------
--- Materialized views
+-- Materialization
 --------------------------------------------------------------------------------
--- | Solved style.
---
--- Expr-valued attributes become Double-valued attributes.
--- Discrete CSS-like attributes are copied through unchanged.
-data MaterializedStyle = MaterializedStyle
-  { materializedBounds      :: MaterializedBounds
-    -- Interpolatable / solved scalar attributes.
-  , materializedOpacity     :: Double
-  , materializedZIndex      :: Double
-  , materializedFontSize    :: Double
-  , materializedRadius      :: Double
-  , materializedStrokeWidth :: Double
-  , materializedAlpha       :: Double
-    -- Optional interpolatable attributes.
-  , materializedFill        :: Maybe MaterializedHsl
-  , materializedStroke      :: Maybe MaterializedHsl
-    -- Discrete / copied attributes.
-  , materializedFontFamily  :: Maybe CssText
-  , materializedFontWeight  :: Maybe FontWeight
-  , materializedFontStyle   :: Maybe FontStyle
-  , materializedTextAlign   :: Maybe TextAlign
-  , materializedBorderStyle :: Maybe BorderStyle
-  , materializedWhiteSpace  :: Maybe WhiteSpace
-  , materializedCssClass    :: Maybe CssText
-  } deriving (Eq, Show)
-
-materializedTop :: MaterializedStyle -> Double
-materializedTop = boundsTop . materializedBounds
-
-materializedLeft :: MaterializedStyle -> Double
-materializedLeft = boundsLeft . materializedBounds
-
-materializedWidth :: MaterializedStyle -> Double
-materializedWidth = boundsWidth . materializedBounds
-
-materializedHeight :: MaterializedStyle -> Double
-materializedHeight = boundsHeight . materializedBounds
-
 data MaterializedBlockView tag = MaterializedBlockView
   { materializedBlockRef   :: C.BlockRef tag
   , materializedBlockLabel :: C.PayloadView
@@ -418,25 +902,42 @@ materializeHsl solution hsl =
     <*> evalExpr solution (saturation hsl)
     <*> evalExpr solution (lightness hsl)
 
+materializeScalar :: Solution -> StyleScalar -> Maybe MaterializedScalar
+materializeScalar solution scalar =
+  case scalar of
+    StyleFreeScalar name expr _ _ unit ->
+      MaterializedScalar name <$> evalExpr solution expr <*> pure unit
+    StyleLayoutScalar name expr _ _ unit ->
+      MaterializedScalar name <$> evalExpr solution expr <*> pure unit
+    StyleUnitScalar name expr _ _ unit ->
+      MaterializedScalar name <$> evalExpr solution expr <*> pure unit
+    StyleAngleScalar name expr _ _ unit ->
+      MaterializedScalar name <$> evalExpr solution expr <*> pure unit
+
+materializeColor :: Solution -> StyleColor -> Maybe MaterializedColor
+materializeColor solution color =
+  case color of
+    StyleColor name maybeHsl ->
+      MaterializedColor name <$> traverse (materializeHsl solution) maybeHsl
+
+materializeDiscrete :: StyleDiscrete -> MaterializedDiscrete
+materializeDiscrete field =
+  case field of
+    StyleTextAttr name value        -> MaterializedTextAttr name value
+    StyleFontWeightAttr name value  -> MaterializedFontWeightAttr name value
+    StyleFontStyleAttr name value   -> MaterializedFontStyleAttr name value
+    StyleTextAlignAttr name value   -> MaterializedTextAlignAttr name value
+    StyleBorderStyleAttr name value -> MaterializedBorderStyleAttr name value
+    StyleWhiteSpaceAttr name value  -> MaterializedWhiteSpaceAttr name value
+    StyleClassAttr name value       -> MaterializedClassAttr name value
+
 materializeStyle :: Solution -> Style -> Maybe MaterializedStyle
 materializeStyle solution style' =
   MaterializedStyle
     <$> materializeBounds solution (styleBounds style')
-    <*> evalExpr solution (styleOpacity style')
-    <*> evalExpr solution (styleZIndex style')
-    <*> evalExpr solution (styleFontSize style')
-    <*> evalExpr solution (styleRadius style')
-    <*> evalExpr solution (styleStrokeWidth style')
-    <*> evalExpr solution (styleAlpha style')
-    <*> traverse (materializeHsl solution) (styleFill style')
-    <*> traverse (materializeHsl solution) (styleStroke style')
-    <*> pure (styleFontFamily style')
-    <*> pure (styleFontWeight style')
-    <*> pure (styleFontStyle style')
-    <*> pure (styleTextAlign style')
-    <*> pure (styleBorderStyle style')
-    <*> pure (styleWhiteSpace style')
-    <*> pure (styleCssClass style')
+    <*> traverse (materializeScalar solution) (styleScalars style')
+    <*> traverse (materializeColor solution) (styleColors style')
+    <*> pure (map materializeDiscrete (styleDiscrete style'))
 
 materializeBlockView ::
      Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
@@ -557,10 +1058,10 @@ contains ::
   -> inner
   -> ViewBuilder events ()
 contains outer inner = do
-  ensure $ left outer @<@ left inner
-  ensure $ top outer @<@ top inner
-  ensure $ right inner @<@ right outer
-  ensure $ bottom inner @<@ bottom outer
+  ensure $ left outer @<=@ left inner
+  ensure $ top outer @<=@ top inner
+  ensure $ right inner @<=@ right outer
+  ensure $ bottom inner @<=@ bottom outer
 
 insideCanvas :: HasBounds block => block -> ViewBuilder events ()
 insideCanvas block = do
@@ -569,8 +1070,8 @@ insideCanvas block = do
 
 between :: Expr ty -> Expr ty -> Expr ty -> ViewBuilder events ()
 between lo x hi = do
-  ensure $ lo @<@ x
-  ensure $ x @<@ hi
+  ensure $ lo @<=@ x
+  ensure $ x @<=@ hi
 
 unitBounds :: UnitExpr -> ViewBuilder events ()
 unitBounds x = between (num 0) x (num 1)
@@ -585,43 +1086,7 @@ hslBounds hsl = do
   unitBounds (lightness hsl)
 
 nonNegative :: SymbolicType ty => Expr ty -> ViewBuilder events ()
-nonNegative expr = ensure $ num 0 @<@ expr
-
-sameTop :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameTop a b = ensure $ top a @=@ top b
-
-sameLeft :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameLeft a b = ensure $ left a @=@ left b
-
-sameBottom :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameBottom a b = ensure $ bottom a @=@ bottom b
-
-sameRight :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameRight a b = ensure $ right a @=@ right b
-
-sameWidth :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameWidth a b = ensure $ width a @=@ width b
-
-sameHeight :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameHeight a b = ensure $ height a @=@ height b
-
-sameBounds :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameBounds a b = do
-  sameTop a b
-  sameLeft a b
-  sameWidth a b
-  sameHeight a b
-
-sameCenterX :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameCenterX a b = ensure $ centerX a @=@ centerX b
-
-sameCenterY :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameCenterY a b = ensure $ centerY a @=@ centerY b
-
-sameCenter :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-sameCenter a b = do
-  sameCenterX a b
-  sameCenterY a b
+nonNegative expr = ensure $ num 0 @<=@ expr
 
 centeredWithin ::
      (HasBounds inner, HasBounds outer)
@@ -629,94 +1094,34 @@ centeredWithin ::
   -> outer
   -> ViewBuilder events ()
 centeredWithin inner outer = do
-  sameCenter inner outer
+  ensure $ center inner @=@ center outer
   outer `contains` inner
 
 above :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-above a b = ensure $ bottom a @<@ top b
+above a b = ensure $ bottom a @<=@ top b
 
 below :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-below a b = ensure $ bottom b @<@ top a
+below a b = ensure $ bottom b @<=@ top a
 
 beside :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
 beside a b = do
-  sameCenterY a b
+  ensure $ centerY a @=@ centerY b
   ensure $ right a @=@ left b
 
 besideWithGap ::
      (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
 besideWithGap gap a b = do
-  sameCenterY a b
+  ensure $ centerY a @=@ centerY b
   ensure $ right a @+@ gap @=@ left b
 
 belowWithGap ::
      (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
 belowWithGap gap a b = do
-  sameCenterX a b
+  ensure $ centerX a @=@ centerX b
   ensure $ bottom a @+@ gap @=@ top b
 
-sameVec2 :: Vec2 LayoutExpr -> Vec2 LayoutExpr -> ViewBuilder events ()
-sameVec2 (Vec2 ax ay) (Vec2 bx by) = do
-  ensure $ ax @=@ bx
-  ensure $ ay @=@ by
-
-sameHsl :: HslExpr -> HslExpr -> ViewBuilder events ()
-sameHsl a b = do
-  ensure $ hue a @=@ hue b
-  ensure $ saturation a @=@ saturation b
-  ensure $ lightness a @=@ lightness b
-
--- | Adjacent blocks aligned by vertical center.
 (|=|) :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
 (|=|) = beside
-
---------------------------------------------------------------------------------
--- Style setters
---------------------------------------------------------------------------------
-setOpacity :: UnitExpr -> Style -> Style
-setOpacity value style' = style' {styleOpacity = value}
-
-setZIndex :: FreeExpr -> Style -> Style
-setZIndex value style' = style' {styleZIndex = value}
-
-setFontSize :: LayoutExpr -> Style -> Style
-setFontSize value style' = style' {styleFontSize = value}
-
-setRadius :: LayoutExpr -> Style -> Style
-setRadius value style' = style' {styleRadius = value}
-
-setFill :: HslExpr -> Style -> Style
-setFill value style' = style' {styleFill = Just value}
-
-setStroke :: HslExpr -> Style -> Style
-setStroke value style' = style' {styleStroke = Just value}
-
-setStrokeWidth :: LayoutExpr -> Style -> Style
-setStrokeWidth value style' = style' {styleStrokeWidth = value}
-
-setAlpha :: UnitExpr -> Style -> Style
-setAlpha value style' = style' {styleAlpha = value}
-
-setFontFamily :: String -> Style -> Style
-setFontFamily value style' = style' {styleFontFamily = Just (CssText value)}
-
-setFontWeight :: FontWeight -> Style -> Style
-setFontWeight value style' = style' {styleFontWeight = Just value}
-
-setFontStyle :: FontStyle -> Style -> Style
-setFontStyle value style' = style' {styleFontStyle = Just value}
-
-setTextAlign :: TextAlign -> Style -> Style
-setTextAlign value style' = style' {styleTextAlign = Just value}
-
-setBorderStyle :: BorderStyle -> Style -> Style
-setBorderStyle value style' = style' {styleBorderStyle = Just value}
-
-setWhiteSpace :: WhiteSpace -> Style -> Style
-setWhiteSpace value style' = style' {styleWhiteSpace = Just value}
-
-setCssClass :: String -> Style -> Style
-setCssClass value style' = style' {styleCssClass = Just (CssText value)}
 
 --------------------------------------------------------------------------------
 -- Per-block visualisation
@@ -891,28 +1296,9 @@ styleForRef ref =
           (blockVar ref "left")
           (blockVar ref "width")
           (blockVar ref "height")
-      -- Interpolatable/constrainable scalar defaults.
-      --
-      -- These are literals by default. If a block wants the field to be
-      -- variable or dependent, its 'styleBlock' can replace the expression with
-      -- a variable or derived expression using the corresponding setter.
-    , styleOpacity = num 1
-    , styleZIndex = num 0
-    , styleFontSize = num 16
-    , styleRadius = num 0
-    , styleStrokeWidth = num 0
-    , styleAlpha = num 1
-      -- Optional interpolatable defaults.
-    , styleFill = Nothing
-    , styleStroke = Nothing
-      -- Discrete CSS-like defaults.
-    , styleFontFamily = Nothing
-    , styleFontWeight = Nothing
-    , styleFontStyle = Nothing
-    , styleTextAlign = Nothing
-    , styleBorderStyle = Nothing
-    , styleWhiteSpace = Nothing
-    , styleCssClass = Nothing
+    , styleScalars = defaultStyleScalars
+    , styleColors = defaultStyleColors
+    , styleDiscrete = defaultStyleDiscrete
     }
 
 blockVar :: SymbolicType ty => C.BlockRef tag -> String -> Expr ty
@@ -952,24 +1338,6 @@ viewAuditStep step =
 --------------------------------------------------------------------------------
 -- Style bounds / registration
 --------------------------------------------------------------------------------
-registerMaybeInitialRange :: Range -> Maybe (Expr ty) -> ViewBuilder events ()
-registerMaybeInitialRange range maybeExpr =
-  case maybeExpr of
-    Nothing   -> pure ()
-    Just expr -> registerInitialRange expr range
-
-registerInitialHslBounds :: HslExpr -> ViewBuilder events ()
-registerInitialHslBounds hsl = do
-  registerInitialRange (hue hsl) (Range 0 360)
-  registerInitialRange (saturation hsl) (Range 0 1)
-  registerInitialRange (lightness hsl) (Range 0 1)
-
-registerMaybeInitialHslBounds :: Maybe HslExpr -> ViewBuilder events ()
-registerMaybeInitialHslBounds maybeHsl =
-  case maybeHsl of
-    Nothing  -> pure ()
-    Just hsl -> registerInitialHslBounds hsl
-
 registerInitialStyleBounds :: Style -> ViewBuilder events ()
 registerInitialStyleBounds style' = do
   env <- ask
@@ -979,34 +1347,7 @@ registerInitialStyleBounds style' = do
   registerInitialRange (top style') (Range 0 canvasH)
   registerInitialRange (width style') (Range 20 (max 20 (canvasW / 4)))
   registerInitialRange (height style') (Range 20 (max 20 (canvasH / 4)))
-  registerInitialRange (styleOpacity style') (Range 0 1)
-  registerInitialRange (styleZIndex style') (Range (-10) 10)
-  registerInitialRange (styleFontSize style') (Range 8 48)
-  registerInitialRange (styleRadius style') (Range 0 32)
-  registerInitialRange (styleStrokeWidth style') (Range 0 8)
-  registerInitialRange (styleAlpha style') (Range 0 1)
-  registerMaybeInitialHslBounds (styleFill style')
-  registerMaybeInitialHslBounds (styleStroke style')
-
-constrainMaybe ::
-     (a -> ViewBuilder events ()) -> Maybe a -> ViewBuilder events ()
-constrainMaybe f maybeValue =
-  case maybeValue of
-    Nothing    -> pure ()
-    Just value -> f value
-
-constrainMaybeHsl :: Maybe HslExpr -> ViewBuilder events ()
-constrainMaybeHsl maybeHsl =
-  case maybeHsl of
-    Nothing  -> pure ()
-    Just hsl -> hslBounds hsl
+  mapM_ registerInitialVar (styleInitialVars style')
 
 constrainStyle :: Style -> ViewBuilder events ()
-constrainStyle style' = do
-  unitBounds (styleOpacity style')
-  nonNegative (styleFontSize style')
-  nonNegative (styleRadius style')
-  nonNegative (styleStrokeWidth style')
-  unitBounds (styleAlpha style')
-  constrainMaybeHsl (styleFill style')
-  constrainMaybeHsl (styleStroke style')
+constrainStyle style' = mapM_ ensure (styleConstraints style')
