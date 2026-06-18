@@ -24,7 +24,6 @@ import qualified Data.Aeson.Key             as Key
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
-import           Data.Maybe                 (catMaybes)
 import qualified LinearTrace.Core           as C
 import qualified LinearTrace.Solver         as S
 import qualified LinearTrace.Visualize      as V
@@ -305,126 +304,23 @@ compileCssAttrs :: V.MaterializedStyle -> Map String StyleValue
 compileCssAttrs style =
   Map.fromList
     ([("position", StyleText "absolute")]
-       ++ concatMap compileScalar (V.materializedScalars style)
-       ++ concatMap (compileColor alpha) (V.materializedColors style)
-       ++ concatMap compileDiscrete (V.materializedDiscrete style))
-  where
-    alpha = V.materializedScalarValue "alpha" 1 style
+       ++ map compileCssField (V.materializedCssFields style))
 
-compileScalar :: V.MaterializedScalar -> [(String, StyleValue)]
-compileScalar scalar =
-  case scalar of
-    V.MaterializedScalar name value unit ->
-      case unit of
-        V.StyleHidden -> []
-        V.StyleNumber ->
-          [(compileScalarName name, StyleNumber (roundLayout value))]
-        V.StylePixels ->
-          [(compileScalarName name, StylePixels (roundLayout value))]
-
-compileScalarName :: String -> String
-compileScalarName name =
-  case name of
-    "radius"      -> "borderRadius"
-    "strokeWidth" -> "borderWidth"
-    _             -> name
-
-compileColor :: Double -> V.MaterializedColor -> [(String, StyleValue)]
-compileColor alpha color =
-  case color of
-    V.MaterializedColor name maybeHsl ->
-      case maybeHsl of
-        Nothing -> []
-        Just hsl ->
-          [(compileColorName name, StyleColor (materializedHslToCss alpha hsl))]
-
-compileColorName :: String -> String
-compileColorName name =
-  case name of
-    "fill"   -> "backgroundColor"
-    "stroke" -> "borderColor"
-    _        -> name
-
-compileDiscrete :: V.MaterializedDiscrete -> [(String, StyleValue)]
-compileDiscrete field =
+compileCssField :: V.MaterializedCssField -> (String, StyleValue)
+compileCssField field =
   case field of
-    V.MaterializedTextAttr name maybeText ->
-      maybe [] (\text -> [(name, StyleText (compileCssText text))]) maybeText
-    V.MaterializedFontWeightAttr name maybeValue ->
-      maybe
-        []
-        (\value -> [(name, StyleText (compileFontWeight value))])
-        maybeValue
-    V.MaterializedFontStyleAttr name maybeValue ->
-      maybe
-        []
-        (\value -> [(name, StyleText (compileFontStyle value))])
-        maybeValue
-    V.MaterializedTextAlignAttr name maybeValue ->
-      maybe
-        []
-        (\value -> [(name, StyleText (compileTextAlign value))])
-        maybeValue
-    V.MaterializedBorderStyleAttr name maybeValue ->
-      maybe
-        []
-        (\value -> [(name, StyleText (compileBorderStyle value))])
-        maybeValue
-    V.MaterializedWhiteSpaceAttr name maybeValue ->
-      maybe
-        []
-        (\value -> [(name, StyleText (compileWhiteSpace value))])
-        maybeValue
-    V.MaterializedClassAttr _ _ -> []
+    V.MaterializedCssField name value -> (name, compileCssValue value)
+
+compileCssValue :: V.MaterializedCssValue -> StyleValue
+compileCssValue value =
+  case value of
+    V.CssNumberValue x      -> StyleNumber (roundLayout x)
+    V.CssPixelsValue x      -> StylePixels (roundLayout x)
+    V.CssTextValue text     -> StyleText text
+    V.CssHslValue alpha hsl -> StyleColor (materializedHslToCss alpha hsl)
 
 compileCssClass :: V.MaterializedStyle -> Maybe String
-compileCssClass style = compileCssText <$> V.materializedCssClass style
-
-compileCssText :: V.CssText -> String
-compileCssText cssText =
-  case cssText of
-    V.CssText text -> text
-
-compileFontWeight :: V.FontWeight -> String
-compileFontWeight value =
-  case value of
-    V.FontWeightNormal   -> "normal"
-    V.FontWeightBold     -> "bold"
-    V.FontWeightBolder   -> "bolder"
-    V.FontWeightLighter  -> "lighter"
-    V.FontWeightNumber n -> show n
-
-compileFontStyle :: V.FontStyle -> String
-compileFontStyle value =
-  case value of
-    V.FontStyleNormal  -> "normal"
-    V.FontStyleItalic  -> "italic"
-    V.FontStyleOblique -> "oblique"
-
-compileTextAlign :: V.TextAlign -> String
-compileTextAlign value =
-  case value of
-    V.TextAlignLeft    -> "left"
-    V.TextAlignCenter  -> "center"
-    V.TextAlignRight   -> "right"
-    V.TextAlignJustify -> "justify"
-
-compileBorderStyle :: V.BorderStyle -> String
-compileBorderStyle value =
-  case value of
-    V.BorderNone   -> "none"
-    V.BorderSolid  -> "solid"
-    V.BorderDashed -> "dashed"
-    V.BorderDotted -> "dotted"
-    V.BorderDouble -> "double"
-
-compileWhiteSpace :: V.WhiteSpace -> String
-compileWhiteSpace value =
-  case value of
-    V.WhiteSpaceNormal  -> "normal"
-    V.WhiteSpaceNoWrap  -> "nowrap"
-    V.WhiteSpacePre     -> "pre"
-    V.WhiteSpacePreWrap -> "pre-wrap"
+compileCssClass style = V.cssTextString <$> V.materializedCssClass style
 
 materializedHslToCss :: Double -> V.MaterializedHsl -> String
 materializedHslToCss alpha hsl =

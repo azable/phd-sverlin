@@ -37,6 +37,9 @@ snapshotRefWidth = 6
 stepNameWidth :: Int
 stepNameWidth = 16
 
+styleFieldWidth :: Int
+styleFieldWidth = 18
+
 stepIndent :: String
 stepIndent = "    "
 
@@ -334,7 +337,13 @@ renderStyleExprLeaf leaf =
 renderStyleField :: String -> S.Expr ty -> String
 renderStyleField name expr =
   concat
-    [stepIndent, stepIndent, padRight 18 name, " = ", renderExpr expr, "\n"]
+    [ stepIndent
+    , stepIndent
+    , padRight styleFieldWidth name
+    , " = "
+    , renderExpr expr
+    , "\n"
+    ]
 
 --------------------------------------------------------------------------------
 -- Initial variables

@@ -65,6 +65,7 @@ executable compile-app
         LinearTrace
         LinearTrace.Core
         LinearTrace.Visualize
+        LinearTrace.Visualize.Style
         LinearTrace.Print
         LinearTrace.Solver
         LinearTrace.Compile
