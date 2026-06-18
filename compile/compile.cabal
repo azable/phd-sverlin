@@ -67,6 +67,7 @@ executable compile-app
         LinearTrace.Visualize
         LinearTrace.Print
         LinearTrace.Solver
+        LinearTrace.Compile
         DSL.Main
 
     -- LANGUAGE extensions used by modules in this package.

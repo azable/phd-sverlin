@@ -3,7 +3,7 @@
 module LinearTrace
   ( TraceGraph
   , TraceBuilder
-  , TraceBlock
+  , Traceable
   , TraceEventSpec
   , EventActs
   , Block

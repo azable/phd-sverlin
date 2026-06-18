@@ -643,7 +643,7 @@ withCssClass value style = style {styleCssClass = Just (CssText value)}
 --------------------------------------------------------------------------------
 -- Per-block visualisation
 --------------------------------------------------------------------------------
-class C.TraceBlock tag =>
+class C.Traceable tag =>
       VisualizeBlock tag
   where
   styleBlock :: Proxy tag -> Style -> Style

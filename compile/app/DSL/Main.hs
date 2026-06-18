@@ -142,14 +142,14 @@ type instance Payload (Var ty) = LString (Var ty)
 
 type instance Payload (Op op lhs rhs out) = LUnit (Op op lhs rhs out)
 
-instance TraceBlock (Value 'TInt)
+instance Traceable (Value 'TInt)
 
-instance TraceBlock (Value 'TDouble)
+instance Traceable (Value 'TDouble)
 
-instance Typeable ty => TraceBlock (Var ty)
+instance Typeable ty => Traceable (Var ty)
 
 instance (Typeable op, Typeable lhs, Typeable rhs, Typeable out) =>
-         TraceBlock (Op op lhs rhs out)
+         Traceable (Op op lhs rhs out)
 
 type IntBlock = Block (Value 'TInt)
 
@@ -182,7 +182,7 @@ data Literal (ty :: PrimitiveType) =
 instance TraceEventSpec (Literal ty) where
   type EventActs (Literal ty) = LiteralActs ty
 
-instance TraceBlock (Value ty) => Step (Literal ty) where
+instance Traceable (Value ty) => Step (Literal ty) where
   type StepInput (Literal ty) = Payload (Value ty)
   type StepResult (Literal ty) = Block (Value ty)
   perform Literal payload = do
@@ -190,7 +190,7 @@ instance TraceBlock (Value ty) => Step (Literal ty) where
     return (Performed block (createValue :~ Done))
 
 literal ::
-     (TraceBlock (Value ty), Member (Literal ty) events)
+     (Traceable (Value ty), Member (Literal ty) events)
   => Payload (Value ty)
      %1 -> Builder events (Block (Value ty))
 literal = step Literal
@@ -210,7 +210,7 @@ newtype DeclareVar (ty :: PrimitiveType) =
 instance TraceEventSpec (DeclareVar ty) where
   type EventActs (DeclareVar ty) = DeclareVarActs ty
 
-instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (DeclareVar ty) where
+instance (Traceable (Value ty), Traceable (Var ty)) => Step (DeclareVar ty) where
   type StepInput (DeclareVar ty) = Payload (Value ty)
   type StepResult (DeclareVar ty) = VarBlock ty
   perform (DeclareVar name) initial = do
@@ -224,7 +224,7 @@ instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (DeclareVar ty) wh
 
 declare ::
      forall events ty.
-     (TraceBlock (Value ty), TraceBlock (Var ty), Member (DeclareVar ty) events)
+     (Traceable (Value ty), Traceable (Var ty), Member (DeclareVar ty) events)
   => String
   -> Payload (Value ty)
      %1 -> Builder events (VarBlock ty)
@@ -248,7 +248,7 @@ data ReadVarResult ty where
 instance TraceEventSpec (ReadVar ty) where
   type EventActs (ReadVar ty) = ReadVarActs ty
 
-instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (ReadVar ty) where
+instance (Traceable (Value ty), Traceable (Var ty)) => Step (ReadVar ty) where
   type StepInput (ReadVar ty) = VarBlock ty
   type StepResult (ReadVar ty) = ReadVarResult ty
   perform ReadVar (VarBlock varBlock valueSlot) = do
@@ -261,7 +261,7 @@ instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (ReadVar ty) where
          (unsealValue :~ copyValue :~ sealValue :~ Done))
 
 readVar ::
-     (TraceBlock (Value ty), TraceBlock (Var ty), Member (ReadVar ty) events)
+     (Traceable (Value ty), Traceable (Var ty), Member (ReadVar ty) events)
   => VarBlock ty
      %1 -> Builder events (VarBlock ty, Block (Value ty))
 readVar varBlock = do
@@ -283,7 +283,7 @@ data WriteVar (ty :: PrimitiveType) =
 instance TraceEventSpec (WriteVar ty) where
   type EventActs (WriteVar ty) = WriteVarActs ty
 
-instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (WriteVar ty) where
+instance (Traceable (Value ty), Traceable (Var ty)) => Step (WriteVar ty) where
   type StepInput (WriteVar ty) = VarBlock ty :* Block (Value ty)
   type StepResult (WriteVar ty) = VarBlock ty
   perform WriteVar (VarBlock varBlock valueSlot :* newValue) = do
@@ -296,7 +296,7 @@ instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (WriteVar ty) wher
          (unsealValue :~ replaceValue :~ sealValue :~ Done))
 
 writeVar ::
-     (TraceBlock (Value ty), TraceBlock (Var ty), Member (WriteVar ty) events)
+     (Traceable (Value ty), Traceable (Var ty), Member (WriteVar ty) events)
   => VarBlock ty
      %1 -> Block (Value ty)
      %1 -> Builder events (VarBlock ty)
@@ -317,7 +317,7 @@ data DiscardVar (ty :: PrimitiveType) =
 instance TraceEventSpec (DiscardVar ty) where
   type EventActs (DiscardVar ty) = DiscardVarActs ty
 
-instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (DiscardVar ty) where
+instance (Traceable (Value ty), Traceable (Var ty)) => Step (DiscardVar ty) where
   type StepInput (DiscardVar ty) = VarBlock ty
   type StepResult (DiscardVar ty) = ()
   perform DiscardVar (VarBlock varBlock valueSlot) = do
@@ -327,7 +327,7 @@ instance (TraceBlock (Value ty), TraceBlock (Var ty)) => Step (DiscardVar ty) wh
     return (Performed () (unsealValue :~ destroyVar :~ destroyHeld :~ Done))
 
 discardVar ::
-     (TraceBlock (Value ty), TraceBlock (Var ty), Member (DiscardVar ty) events)
+     (Traceable (Value ty), Traceable (Var ty), Member (DiscardVar ty) events)
   => VarBlock ty
      %1 -> Builder events ()
 discardVar = step DiscardVar
@@ -346,7 +346,7 @@ data DiscardValue (ty :: PrimitiveType) =
 instance TraceEventSpec (DiscardValue ty) where
   type EventActs (DiscardValue ty) = DiscardValueActs ty
 
-instance TraceBlock (Value ty) => Step (DiscardValue ty) where
+instance Traceable (Value ty) => Step (DiscardValue ty) where
   type StepInput (DiscardValue ty) = Block (Value ty)
   type StepResult (DiscardValue ty) = ()
   perform DiscardValue value = do
@@ -354,7 +354,7 @@ instance TraceBlock (Value ty) => Step (DiscardValue ty) where
     return (Performed () (destroyValue :~ Done))
 
 discardValue ::
-     (TraceBlock (Value ty), Member (DiscardValue ty) events)
+     (Traceable (Value ty), Member (DiscardValue ty) events)
   => Block (Value ty)
      %1 -> Builder events ()
 discardValue = step DiscardValue
@@ -373,7 +373,7 @@ data Operator (op :: BinaryOp) (lhs :: PrimitiveType) (rhs :: PrimitiveType) (ou
 instance TraceEventSpec (Operator op lhs rhs out) where
   type EventActs (Operator op lhs rhs out) = OperatorActs op lhs rhs out
 
-instance TraceBlock (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
+instance Traceable (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
   type StepInput (Operator op lhs rhs out) = Payload (Op op lhs rhs out)
   type StepResult (Operator op lhs rhs out) = Block (Op op lhs rhs out)
   perform Operator payload = do
@@ -381,7 +381,7 @@ instance TraceBlock (Op op lhs rhs out) => Step (Operator op lhs rhs out) where
     return (Performed block (createOp :~ Done))
 
 operator ::
-     (TraceBlock (Op op lhs rhs out), Member (Operator op lhs rhs out) events)
+     (Traceable (Op op lhs rhs out), Member (Operator op lhs rhs out) events)
   => Payload (Op op lhs rhs out)
      %1 -> Builder events (Block (Op op lhs rhs out))
 operator = step Operator
@@ -392,10 +392,10 @@ instance PrintEvent (Operator op lhs rhs out) where
 --------------------------------------------------------------------------------
 -- Evaluation support
 --------------------------------------------------------------------------------
-class ( TraceBlock (Value lhs)
-      , TraceBlock (Op op lhs rhs out)
-      , TraceBlock (Value rhs)
-      , TraceBlock (Value out)
+class ( Traceable (Value lhs)
+      , Traceable (Op op lhs rhs out)
+      , Traceable (Value rhs)
+      , Traceable (Value out)
       ) =>
       EvalOp op lhs rhs out
   where
@@ -572,7 +572,7 @@ instance Typeable ty => VisualizeBlock (Var ty) where
       P.. withWhiteSpace WhiteSpaceNoWrap
   visualizeBlock = varBlock
 
-instance TraceBlock (Op op lhs rhs out) => VisualizeBlock (Op op lhs rhs out) where
+instance Traceable (Op op lhs rhs out) => VisualizeBlock (Op op lhs rhs out) where
   visualizeBlock = cellBlock
 
 --------------------------------------------------------------------------------
