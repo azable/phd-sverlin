@@ -8,7 +8,7 @@
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module LinearTrace.Visualize
+module LinearTrace.View
   ( -- * View graph
     ViewGraph
   , ViewNode(..)
@@ -124,7 +124,7 @@ import           Data.Foldable               (for_)
 import           Data.Proxy                  (Proxy (..))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver
-import           LinearTrace.Visualize.Style
+import           LinearTrace.View.Style
 import           Prelude
 
 infixr 5 :&

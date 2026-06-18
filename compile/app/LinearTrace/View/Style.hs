@@ -6,7 +6,7 @@
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module LinearTrace.Visualize.Style
+module LinearTrace.View.Style
   ( -- * Expression aliases
     FreeExpr
   , LayoutExpr

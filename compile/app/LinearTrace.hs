@@ -90,5 +90,5 @@ import           LinearTrace.App
 import           LinearTrace.Compile
 import           LinearTrace.Core
 import           LinearTrace.Print
-import           LinearTrace.Visualize
+import           LinearTrace.View
 import           Prelude             hiding ((<$>), (<*>))

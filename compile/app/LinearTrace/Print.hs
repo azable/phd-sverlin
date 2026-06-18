@@ -19,7 +19,7 @@ module LinearTrace.Print
 import qualified Data.Map.Strict                  as Map
 import           LinearTrace.Core
 import qualified LinearTrace.Solver               as S
-import qualified LinearTrace.Visualize            as V
+import qualified LinearTrace.View                  as V
 import           Numeric                          (showFFloat)
 import           Prelude
 import           Prettyprinter

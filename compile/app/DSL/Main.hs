@@ -76,7 +76,7 @@ import           Control.Functor.Linear hiding ((<$>), (<*>))
 import           Data.Kind              (Type)
 import           Data.Typeable          (Typeable)
 import           LinearTrace
-import           LinearTrace.Visualize
+import           LinearTrace.View
 
 import qualified Prelude                as P
 import           Prelude.Linear

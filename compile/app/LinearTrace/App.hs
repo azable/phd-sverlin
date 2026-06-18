@@ -10,7 +10,7 @@ import qualified LinearTrace.Compile   as Compile
 import qualified LinearTrace.Core      as Core
 import qualified LinearTrace.Print     as Print
 import qualified LinearTrace.Solver    as Solver
-import qualified LinearTrace.Visualize as Visualize
+import qualified LinearTrace.View       as View
 
 data RunConfig = RunConfig
   { runSeed        :: Solver.RandomSeed
@@ -29,20 +29,20 @@ defaultRunConfig =
     }
 
 buildViewGraph ::
-     Visualize.ViewEvents events
+     View.ViewEvents events
   => Core.TraceGraph events
-  -> Visualize.ViewGraph events
-buildViewGraph = Visualize.buildCSP
+  -> View.ViewGraph events
+buildViewGraph = View.buildCSP
 
 runVisualization ::
-     (Print.PrintEvents events, Visualize.ViewEvents events)
+     (Print.PrintEvents events, View.ViewEvents events)
   => RunConfig
   -> Core.TraceGraph events
   -> IO (Either String Compile.CompiledVisualization)
 runVisualization config graph = do
   when (runPrintTrace config) (Print.printTrace graph)
   let viewGraph = buildViewGraph graph
-  solved <- Visualize.solveCSPWithSeed (runSeed config) viewGraph
+  solved <- View.solveCSPWithSeed (runSeed config) viewGraph
   Print.printSolvedVisualization (runShowDetails config) solved viewGraph
   case Compile.compileSolvedVisualization solved viewGraph of
     Left err -> pure (Left err)
