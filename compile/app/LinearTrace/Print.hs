@@ -2,6 +2,7 @@
 {-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
+{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -15,12 +16,14 @@ module LinearTrace.Print
   , printVisualizationCSPSolution
   ) where
 
-import qualified Data.Map.Strict       as Map
+import qualified Data.Map.Strict                  as Map
 import           LinearTrace.Core
-import qualified LinearTrace.Solver    as S
-import qualified LinearTrace.Visualize as V
-import           Numeric               (showFFloat)
+import qualified LinearTrace.Solver               as S
+import qualified LinearTrace.Visualize            as V
+import           Numeric                          (showFFloat)
 import           Prelude
+import           Prettyprinter
+import           Prettyprinter.Render.String      (renderString)
 
 --------------------------------------------------------------------------------
 -- Layout constants
@@ -40,14 +43,50 @@ stepNameWidth = 16
 styleFieldWidth :: Int
 styleFieldWidth = 18
 
-stepIndent :: String
-stepIndent = "    "
+stepIndentWidth :: Int
+stepIndentWidth = 4
+
+stepIndent :: Doc ann
+stepIndent = pretty (replicate stepIndentWidth ' ')
 
 --------------------------------------------------------------------------------
 -- Colour/style constants
 --------------------------------------------------------------------------------
 eventTitleStyle :: [Ansi]
 eventTitleStyle = [AnsiBold]
+
+createStyle :: StepStyle
+createStyle = StepStyle "create" createColour
+
+observeStyle :: StepStyle
+observeStyle = StepStyle "observe" observeColour
+
+inspectStyle :: StepStyle
+inspectStyle = StepStyle "inspect" inspectColour
+
+useStyle :: StepStyle
+useStyle = StepStyle "use" useColour
+
+copyStyle :: StepStyle
+copyStyle = StepStyle "copy" copyColour
+
+replaceStyle :: StepStyle
+replaceStyle = StepStyle "replace" replaceColour
+
+computeStyle :: StepStyle
+computeStyle = StepStyle "compute" computeColour
+
+destroyStyle :: StepStyle
+destroyStyle = StepStyle "destroy" destroyColour
+
+sealStyle :: StepStyle
+sealStyle = StepStyle "seal" sealColour
+
+unsealStyle :: StepStyle
+unsealStyle = StepStyle "unseal" unsealColour
+
+decideStyle :: StepStyle
+decideStyle = StepStyle "decide" decideColour
 
 createColour :: Ansi
 createColour = Ansi256Fg 82
@@ -81,42 +120,6 @@ unsealColour = Ansi256Fg 208
 
 decideColour :: Ansi
 decideColour = Ansi256Fg 201
-
---------------------------------------------------------------------------------
--- Step styles
---------------------------------------------------------------------------------
-createStyle :: StepStyle
-createStyle = StepStyle "create" createColour
-
-observeStyle :: StepStyle
-observeStyle = StepStyle "observe" observeColour
-
-inspectStyle :: StepStyle
-inspectStyle = StepStyle "inspect" inspectColour
-
-useStyle :: StepStyle
-useStyle = StepStyle "use" useColour
-
-copyStyle :: StepStyle
-copyStyle = StepStyle "copy" copyColour
-
-replaceStyle :: StepStyle
-replaceStyle = StepStyle "replace" replaceColour
-
-computeStyle :: StepStyle
-computeStyle = StepStyle "compute" computeColour
-
-destroyStyle :: StepStyle
-destroyStyle = StepStyle "destroy" destroyColour
-
-sealStyle :: StepStyle
-sealStyle = StepStyle "seal" sealColour
-
-unsealStyle :: StepStyle
-unsealStyle = StepStyle "unseal" unsealColour
-
-decideStyle :: StepStyle
-decideStyle = StepStyle "decide" decideColour
 
 --------------------------------------------------------------------------------
 -- Event printing
@@ -160,18 +163,24 @@ printVisualizationCSPSolution solution = putStr (renderSolution solution)
 -- Graph rendering
 --------------------------------------------------------------------------------
 renderGraph :: PrintEvents events => TraceGraph events -> String
-renderGraph (TraceGraph blocks events) =
-  concat
-    [ renderHeader "Graph"
-    , renderSummary blocks events
-    , "\n"
-    , renderBlocks blocks
-    , "\n"
-    , renderEvents events
+renderGraph = renderDoc . graphDoc
+
+graphDoc :: PrintEvents events => TraceGraph events -> RenderDoc
+graphDoc (TraceGraph blocks events) =
+  mconcat
+    [ headerDoc "Graph"
+    , summaryDoc blocks events
+    , hardline
+    , blocksDoc blocks
+    , hardline
+    , eventsDoc events
     ]
 
 renderTrace :: PrintEvents events => TraceGraph events -> String
-renderTrace (TraceGraph _ events) = renderEvents events
+renderTrace = renderDoc . traceDoc
+
+traceDoc :: PrintEvents events => TraceGraph events -> RenderDoc
+traceDoc (TraceGraph _ events) = eventsDoc events
 
 --------------------------------------------------------------------------------
 -- Visualization rendering
@@ -182,16 +191,25 @@ renderVisualization ::
   -> Maybe S.Solution
   -> V.ViewGraph events
   -> String
-renderVisualization showDetails maybeSolution graph =
-  concat
-    [ renderHeader "Visualization"
-    , renderVisualizationSummary nodes steps constraints initialVars
-    , renderMaybeSolutionSummary maybeSolution
-    , "\n"
-    , renderWhen
+renderVisualization showDetails maybeSolution =
+  renderDoc . visualizationDoc showDetails maybeSolution
+
+visualizationDoc ::
+     PrintEvents events
+  => Bool
+  -> Maybe S.Solution
+  -> V.ViewGraph events
+  -> RenderDoc
+visualizationDoc showDetails maybeSolution graph =
+  mconcat
+    [ headerDoc "Visualization"
+    , visualizationSummaryDoc nodes steps constraints initialVars
+    , maybeSolutionSummaryDoc maybeSolution
+    , hardline
+    , whenDoc
         showDetails
-        (concat [renderViewNodes nodes, "\n", renderInitialVars initialVars])
-    , renderViewTrace showDetails maybeSolution steps
+        (mconcat [viewNodesDoc nodes, hardline, initialVarsDoc initialVars])
+    , viewTraceDoc showDetails maybeSolution steps
     ]
   where
     nodes = V.viewNodes graph
@@ -199,50 +217,43 @@ renderVisualization showDetails maybeSolution graph =
     constraints = V.viewConstraints graph
     initialVars = V.viewInitialVars graph
 
-renderMaybeSolutionSummary :: Maybe S.Solution -> String
-renderMaybeSolutionSummary maybeSolution =
+maybeSolutionSummaryDoc :: Maybe S.Solution -> RenderDoc
+maybeSolutionSummaryDoc maybeSolution =
   case maybeSolution of
-    Nothing -> ""
+    Nothing -> mempty
     Just solution ->
-      concat
-        [ "Solved: "
-        , show (S.solutionSuccess solution)
-        , "\n"
-        , "Energy: "
-        , formatSignedDouble (S.solutionEnergy solution)
-        , "\n"
-        ]
+      vsep
+        [ "Solved:" <+> pretty (show (S.solutionSuccess solution))
+        , "Energy:" <+> pretty (formatSignedDouble (S.solutionEnergy solution))
+        ] <> hardline
 
 --------------------------------------------------------------------------------
 -- Standalone solution rendering
 --------------------------------------------------------------------------------
 renderSolution :: S.Solution -> String
-renderSolution solution =
-  concat
-    [ renderHeader "Solution"
-    , renderSolutionSummary solution
-    , "\n"
-    , renderSolutionValues (S.solutionValues solution)
+renderSolution = renderDoc . solutionDoc
+
+solutionDoc :: S.Solution -> RenderDoc
+solutionDoc solution =
+  mconcat
+    [ headerDoc "Solution"
+    , solutionSummaryDoc solution
+    , hardline
+    , solutionValuesDoc (S.solutionValues solution)
     ]
 
-renderSolutionSummary :: S.Solution -> String
-renderSolutionSummary solution =
-  concat
-    [ "Success: "
-    , show (S.solutionSuccess solution)
-    , "\n"
-    , "Energy: "
-    , formatSignedDouble (S.solutionEnergy solution)
-    , "\n"
-    , "Variables: "
-    , show (Map.size (S.solutionValues solution))
-    , "\n"
-    ]
+solutionSummaryDoc :: S.Solution -> RenderDoc
+solutionSummaryDoc solution =
+  vsep
+    [ "Success:" <+> pretty (show (S.solutionSuccess solution))
+    , "Energy:" <+> pretty (formatSignedDouble (S.solutionEnergy solution))
+    , "Variables:" <+> pretty (show (Map.size (S.solutionValues solution)))
+    ] <> hardline
 
-renderSolutionValues :: Map.Map String Double -> String
-renderSolutionValues values =
-  renderHeader "Solution values"
-    ++ renderAlignedAssignments
+solutionValuesDoc :: Map.Map String Double -> RenderDoc
+solutionValuesDoc values =
+  headerDoc "Solution values"
+    <> alignedAssignmentsDoc
          "  "
          [ (name, formatSignedDouble value)
          | (name, value) <- Map.toAscList values
@@ -251,116 +262,100 @@ renderSolutionValues values =
 --------------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------------
-renderSummary :: [BlockRecord] -> [RecordedEvent events] -> String
-renderSummary blocks events =
-  concat
-    [ "Blocks: "
-    , show (length blocks)
-    , "\n"
-    , "Events: "
-    , show (length events)
-    , "\n"
-    ]
+summaryDoc :: [BlockRecord] -> [RecordedEvent events] -> RenderDoc
+summaryDoc blocks events =
+  vsep
+    [ "Blocks:" <+> pretty (show (length blocks))
+    , "Events:" <+> pretty (show (length events))
+    ] <> hardline
 
-renderVisualizationSummary ::
+visualizationSummaryDoc ::
      [V.ViewNode]
   -> [V.ViewStep events]
   -> [S.Constraint]
   -> [S.InitialVar]
-  -> String
-renderVisualizationSummary nodes steps constraints initialVars =
-  concat
-    [ "View nodes: "
-    , show (length nodes)
-    , "\n"
-    , "View steps: "
-    , show (length steps)
-    , "\n"
-    , "Constraints: "
-    , show (length (flattenConstraints constraints))
-    , "\n"
-    , "Initial vars: "
-    , show (length initialVars)
-    , "\n"
-    ]
+  -> RenderDoc
+visualizationSummaryDoc nodes steps constraints initialVars =
+  vsep
+    [ "View nodes:" <+> pretty (show (length nodes))
+    , "View steps:" <+> pretty (show (length steps))
+    , "Constraints:" <+> pretty (show (length (flattenConstraints constraints)))
+    , "Initial vars:" <+> pretty (show (length initialVars))
+    ] <> hardline
 
 --------------------------------------------------------------------------------
 -- Blocks
 --------------------------------------------------------------------------------
-renderBlocks :: [BlockRecord] -> String
-renderBlocks blocks = renderHeader "Blocks" ++ concatMap renderBlock blocks
+blocksDoc :: [BlockRecord] -> RenderDoc
+blocksDoc blocks = headerDoc "Blocks" <> mconcat (map blockDoc blocks)
 
-renderBlock :: BlockRecord -> String
-renderBlock (BlockRecord snapshot) =
-  concat
-    [ "  "
-    , padRight blockListRefWidth (renderBlockRefPlain (snapshotRef snapshot))
-    , renderSnapshotPayload snapshot
-    , "\n"
-    ]
+blockDoc :: BlockRecord -> RenderDoc
+blockDoc (BlockRecord snapshot) =
+  "  "
+    <> fixedWidth blockListRefWidth (renderBlockRefPlain (snapshotRef snapshot))
+    <> pretty (renderSnapshotPayload snapshot)
+    <> hardline
 
 --------------------------------------------------------------------------------
 -- View nodes
 --------------------------------------------------------------------------------
-renderViewNodes :: [V.ViewNode] -> String
-renderViewNodes nodes =
-  renderHeader "View nodes" ++ concatMap renderViewNode nodes
+viewNodesDoc :: [V.ViewNode] -> RenderDoc
+viewNodesDoc nodes = headerDoc "View nodes" <> mconcat (map viewNodeDoc nodes)
 
-renderViewNode :: V.ViewNode -> String
-renderViewNode node =
+viewNodeDoc :: V.ViewNode -> RenderDoc
+viewNodeDoc node =
   case node of
-    V.BlockViewNode block -> renderBlockView block
+    V.BlockViewNode block -> blockViewDoc block
 
-renderBlockView :: V.BlockView tag -> String
-renderBlockView block =
-  concat
+blockViewDoc :: V.BlockView tag -> RenderDoc
+blockViewDoc block =
+  mconcat
     [ "  "
-    , padRight blockListRefWidth (renderBlockRefPlain (V.blockRef block))
-    , renderPayloadView (V.blockLabel block)
-    , "\n"
-    , renderStyle (V.blockStyle block)
+    , fixedWidth blockListRefWidth (renderBlockRefPlain (V.blockRef block))
+    , pretty (renderPayloadView (V.blockLabel block))
+    , hardline
+    , styleDoc (V.blockStyle block)
     ]
 
-renderStyle :: V.Style -> String
-renderStyle style =
-  concat
+styleDoc :: V.Style -> RenderDoc
+styleDoc style =
+  mconcat
     [ stepIndent
-    , "style\n"
-    , concat (V.mapStyleExprLeaves renderStyleField style)
+    , "style"
+    , hardline
+    , mconcat (V.mapStyleExprLeaves styleFieldDoc style)
     ]
 
-renderStyleField :: String -> S.Expr ty -> String
-renderStyleField name expr =
-  concat
-    [ stepIndent
-    , stepIndent
-    , padRight styleFieldWidth name
-    , " = "
-    , renderExpr expr
-    , "\n"
-    ]
+styleFieldDoc :: String -> S.Expr ty -> RenderDoc
+styleFieldDoc name expr =
+  stepIndent
+    <> stepIndent
+    <> fixedWidth styleFieldWidth name
+    <> " = "
+    <> exprDoc expr
+    <> hardline
 
 --------------------------------------------------------------------------------
 -- Initial variables
 --------------------------------------------------------------------------------
-renderInitialVars :: [S.InitialVar] -> String
-renderInitialVars initialVars =
+initialVarsDoc :: [S.InitialVar] -> RenderDoc
+initialVarsDoc initialVars =
   case initialVars of
-    [] -> ""
+    [] -> mempty
     _ ->
-      concat
-        [ renderHeader "Initial variables"
-        , renderAlignedAssignments
+      mconcat
+        [ headerDoc "Initial variables"
+        , alignedAssignmentsDoc
             "  "
             [ (name, renderInitialVarValue ty bounds)
             | S.InitialVar name ty bounds <- initialVars
             ]
-        , "\n"
+        , hardline
         ]
 
 renderInitialVarValue :: S.ScalarType -> S.InitialBounds -> String
 renderInitialVarValue ty bounds =
-  concat [S.typeName ty, " ", renderInitialBounds bounds]
+  S.typeName ty ++ " " ++ renderInitialBounds bounds
 
 renderInitialBounds :: S.InitialBounds -> String
 renderInitialBounds bounds =
@@ -414,7 +409,7 @@ renderConstraintParts constraint =
 renderEqualityOperator :: S.ScalarType -> String
 renderEqualityOperator ty =
   case S.typeCircularPeriod ty of
-    Nothing -> "="
+    Nothing -> "=="
     Just _  -> "≡"
 
 renderEqualityRhs :: S.ScalarType -> S.RawExpr -> String
@@ -423,22 +418,23 @@ renderEqualityRhs ty rhs =
     Nothing     -> renderRawExpr rhs
     Just period -> renderRawExpr rhs ++ " (mod " ++ fixed2 period ++ ")"
 
-renderStepConstraints :: [S.Constraint] -> String
-renderStepConstraints constraints =
+stepConstraintsDoc :: [S.Constraint] -> RenderDoc
+stepConstraintsDoc constraints =
   let visibleConstraints =
         filter constraintMentionsVar (flattenConstraints constraints)
    in case visibleConstraints of
-        [] -> ""
+        [] -> mempty
         _ ->
-          concat
+          mconcat
             [ stepIndent
-            , "constraints\n"
-            , renderIndentedConstraints visibleConstraints
-            , "\n"
+            , "constraints"
+            , hardline
+            , indentedConstraintsDoc visibleConstraints
+            , hardline
             ]
 
-renderIndentedConstraints :: [S.Constraint] -> String
-renderIndentedConstraints constraints =
+indentedConstraintsDoc :: [S.Constraint] -> RenderDoc
+indentedConstraintsDoc constraints =
   let rendered = map renderConstraintParts constraints
       lhsWidth =
         maximum
@@ -452,19 +448,19 @@ renderIndentedConstraints constraints =
              : [ length (renderedConstraintOp constraint)
                | constraint <- rendered
                ])
-   in concatMap (renderIndentedConstraint lhsWidth opWidth) rendered
+   in mconcat (map (indentedConstraintDoc lhsWidth opWidth) rendered)
 
-renderIndentedConstraint :: Int -> Int -> RenderedConstraint -> String
-renderIndentedConstraint lhsWidth opWidth constraint =
-  concat
+indentedConstraintDoc :: Int -> Int -> RenderedConstraint -> RenderDoc
+indentedConstraintDoc lhsWidth opWidth constraint =
+  mconcat
     [ stepIndent
     , stepIndent
-    , padRight lhsWidth (renderedConstraintLhs constraint)
+    , fixedWidth lhsWidth (renderedConstraintLhs constraint)
     , " "
-    , padRight opWidth (renderedConstraintOp constraint)
+    , fixedWidth opWidth (renderedConstraintOp constraint)
     , " "
-    , renderedConstraintRhs constraint
-    , "\n"
+    , pretty (renderedConstraintRhs constraint)
+    , hardline
     ]
 
 constraintMentionsVar :: S.Constraint -> Bool
@@ -495,18 +491,24 @@ rawExprMentionsVar expr =
 data SolvedExpr =
   SolvedExpr String Double
 
-renderStepSolution ::
-     Maybe S.Solution -> [V.ViewNode] -> [S.Constraint] -> String
-renderStepSolution maybeSolution nodes _constraints =
+stepSolutionDoc ::
+     Maybe S.Solution -> [V.ViewNode] -> [S.Constraint] -> RenderDoc
+stepSolutionDoc maybeSolution nodes _constraints =
   case maybeSolution of
-    Nothing -> ""
+    Nothing -> mempty
     Just solution ->
       let solved =
             dedupeSolvedExprs (concatMap (solveViewNodeExprs solution) nodes)
        in case solved of
-            [] -> ""
+            [] -> mempty
             _ ->
-              concat [stepIndent, "solution\n", renderSolvedExprs solved, "\n"]
+              mconcat
+                [ stepIndent
+                , "solution"
+                , hardline
+                , solvedExprsDoc solved
+                , hardline
+                ]
 
 solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
 solveViewNodeExprs solution node =
@@ -528,162 +530,153 @@ dedupeSolvedExprs = go []
       | name `elem` seen = go seen rest
       | otherwise = solved : go (name : seen) rest
 
-renderSolvedExprs :: [SolvedExpr] -> String
-renderSolvedExprs solved =
-  renderAlignedAssignments
-    (stepIndent ++ stepIndent)
+solvedExprsDoc :: [SolvedExpr] -> RenderDoc
+solvedExprsDoc solved =
+  alignedAssignmentsDoc
+    (replicate (stepIndentWidth * 2) ' ')
     [(name, formatSignedDouble value) | SolvedExpr name value <- solved]
 
 --------------------------------------------------------------------------------
 -- View trace
 --------------------------------------------------------------------------------
-renderViewTrace ::
+viewTraceDoc ::
      PrintEvents events
   => Bool
   -> Maybe S.Solution
   -> [V.ViewStep events]
-  -> String
-renderViewTrace showDetails maybeSolution steps =
-  renderHeader "View trace"
-    ++ concat
+  -> RenderDoc
+viewTraceDoc showDetails maybeSolution steps =
+  headerDoc "View trace"
+    <> mconcat
          (zipWith
-            (renderViewTraceStep showDetails maybeSolution)
+            (viewTraceStepDoc showDetails maybeSolution)
             [0 :: Int ..]
             steps)
 
-renderViewTraceStep ::
+viewTraceStepDoc ::
      PrintEvents events
   => Bool
   -> Maybe S.Solution
   -> Int
   -> V.ViewStep events
-  -> String
-renderViewTraceStep showDetails maybeSolution ix step =
+  -> RenderDoc
+viewTraceStepDoc showDetails maybeSolution ix step =
   case step of
     V.ViewStep event nodes constraints ->
-      renderEvent ix event
-        ++ renderWhen
+      eventDoc ix event
+        <> whenDoc
              showDetails
-             (concat
-                [ renderStepViewNodes nodes
-                , renderStepConstraints constraints
-                , renderStepSolution maybeSolution nodes constraints
+             (mconcat
+                [ stepViewNodesDoc nodes
+                , stepConstraintsDoc constraints
+                , stepSolutionDoc maybeSolution nodes constraints
                 ])
 
-renderStepViewNodes :: [V.ViewNode] -> String
-renderStepViewNodes nodes =
+stepViewNodesDoc :: [V.ViewNode] -> RenderDoc
+stepViewNodesDoc nodes =
   case nodes of
-    [] -> ""
+    [] -> mempty
     _ ->
-      concat
+      mconcat
         [ stepIndent
-        , "view nodes\n"
-        , concatMap renderIndentedViewNode nodes
-        , "\n"
+        , "view nodes"
+        , hardline
+        , mconcat (map indentedViewNodeDoc nodes)
+        , hardline
         ]
 
-renderIndentedViewNode :: V.ViewNode -> String
-renderIndentedViewNode node =
+indentedViewNodeDoc :: V.ViewNode -> RenderDoc
+indentedViewNodeDoc node =
   case node of
     V.BlockViewNode block ->
-      concat
+      mconcat
         [ stepIndent
         , stepIndent
-        , renderBlockRefPlain (V.blockRef block)
+        , pretty (renderBlockRefPlain (V.blockRef block))
         , " "
-        , renderPayloadView (V.blockLabel block)
-        , "\n"
+        , pretty (renderPayloadView (V.blockLabel block))
+        , hardline
         ]
 
 --------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
-renderEvents :: PrintEvents events => [RecordedEvent events] -> String
-renderEvents events =
-  renderHeader "Events" ++ concat (zipWith renderEvent [0 :: Int ..] events)
+eventsDoc :: PrintEvents events => [RecordedEvent events] -> RenderDoc
+eventsDoc events =
+  headerDoc "Events" <> mconcat (zipWith eventDoc [0 :: Int ..] events)
 
-renderEvent :: PrintEvents events => Int -> RecordedEvent events -> String
-renderEvent ix (RecordedEvent event audit) =
-  concat
-    [ padLeft eventIndexWidth ("E" ++ show ix)
+eventDoc :: PrintEvents events => Int -> RecordedEvent events -> RenderDoc
+eventDoc ix (RecordedEvent event audit) =
+  mconcat
+    [ fixedLeft eventIndexWidth ("E" ++ show ix)
     , " | "
-    , ansiText eventTitleStyle (printEventChoice event)
-    , "\n"
-    , renderAudit audit
-    , "\n"
+    , pretty (ansiText eventTitleStyle (printEventChoice event))
+    , hardline
+    , auditDoc audit
+    , hardline
     ]
 
 --------------------------------------------------------------------------------
 -- Audit rendering
 --------------------------------------------------------------------------------
-renderAudit :: Audit acts -> String
-renderAudit EmptyAudit     = ""
-renderAudit (step :> rest) = renderAuditStep step ++ renderAudit rest
+auditDoc :: Audit acts -> RenderDoc
+auditDoc EmptyAudit     = mempty
+auditDoc (step :> rest) = auditStepDoc step <> auditDoc rest
 
-renderAuditStep :: AuditStep act -> String
-renderAuditStep step =
+auditStepDoc :: AuditStep act -> RenderDoc
+auditStepDoc step =
   case step of
-    CreateStep snapshot -> renderSnapshotStep1 createStyle snapshot
-    ObserveStep snapshot -> renderSnapshotStep1 observeStyle snapshot
-    InspectStep snapshot -> renderSnapshotStep1 inspectStyle snapshot
-    UseStep snapshot -> renderSnapshotStep1 useStyle snapshot
-    CopyStep original copy' -> renderSnapshotStep2 copyStyle original copy'
+    CreateStep snapshot -> snapshotStep1Doc createStyle snapshot
+    ObserveStep snapshot -> snapshotStep1Doc observeStyle snapshot
+    InspectStep snapshot -> snapshotStep1Doc inspectStyle snapshot
+    UseStep snapshot -> snapshotStep1Doc useStyle snapshot
+    CopyStep original copy' -> snapshotStep2Doc copyStyle original copy'
     ReplaceStep old incoming output ->
-      renderSnapshotStep3 replaceStyle old incoming output
-    ComputeStep snapshot -> renderSnapshotStep1 computeStyle snapshot
-    DestroyStep snapshot -> renderSnapshotStep1 destroyStyle snapshot
-    SealStep owner child -> renderSnapshotStep2 sealStyle owner child
-    UnsealStep owner child -> renderSnapshotStep2 unsealStyle owner child
-    DecideStep snapshot -> renderSnapshotStep1 decideStyle snapshot
+      snapshotStep3Doc replaceStyle old incoming output
+    ComputeStep snapshot -> snapshotStep1Doc computeStyle snapshot
+    DestroyStep snapshot -> snapshotStep1Doc destroyStyle snapshot
+    SealStep owner child -> snapshotStep2Doc sealStyle owner child
+    UnsealStep owner child -> snapshotStep2Doc unsealStyle owner child
+    DecideStep snapshot -> snapshotStep1Doc decideStyle snapshot
 
-renderSnapshotStep1 :: StepStyle -> BlockSnapshot tag -> String
-renderSnapshotStep1 style snapshot =
-  concat [renderStepName style, " ", renderSnapshot snapshot, "\n"]
+snapshotStep1Doc :: StepStyle -> BlockSnapshot tag -> RenderDoc
+snapshotStep1Doc style snapshot =
+  renderStepName style <+> snapshotDoc snapshot <> hardline
 
-renderSnapshotStep2 ::
-     StepStyle -> BlockSnapshot first -> BlockSnapshot second -> String
-renderSnapshotStep2 style first second =
-  concat
-    [ renderStepName style
-    , " "
-    , renderSnapshot first
-    , "\n"
-    , renderEmptyStepName
-    , " "
-    , renderSnapshot second
-    , "\n"
+snapshotStep2Doc ::
+     StepStyle -> BlockSnapshot first -> BlockSnapshot second -> RenderDoc
+snapshotStep2Doc style first second =
+  mconcat
+    [ renderStepName style <+> snapshotDoc first
+    , hardline
+    , renderEmptyStepName <+> snapshotDoc second
+    , hardline
     ]
 
-renderSnapshotStep3 ::
+snapshotStep3Doc ::
      StepStyle
   -> BlockSnapshot first
   -> BlockSnapshot second
   -> BlockSnapshot third
-  -> String
-renderSnapshotStep3 style first second third =
-  concat
-    [ renderStepName style
-    , " "
-    , renderSnapshot first
-    , "\n"
-    , renderEmptyStepName
-    , " "
-    , renderSnapshot second
-    , "\n"
-    , renderEmptyStepName
-    , " "
-    , renderSnapshot third
-    , "\n"
+  -> RenderDoc
+snapshotStep3Doc style first second third =
+  mconcat
+    [ renderStepName style <+> snapshotDoc first
+    , hardline
+    , renderEmptyStepName <+> snapshotDoc second
+    , hardline
+    , renderEmptyStepName <+> snapshotDoc third
+    , hardline
     ]
 
 --------------------------------------------------------------------------------
 -- Snapshot rendering
 --------------------------------------------------------------------------------
-renderSnapshot :: BlockSnapshot tag -> String
-renderSnapshot snapshot =
-  padRight snapshotRefWidth (renderBlockRef (snapshotRef snapshot))
-    ++ " "
-    ++ renderSnapshotPayload snapshot
+snapshotDoc :: BlockSnapshot tag -> RenderDoc
+snapshotDoc snapshot =
+  fixedWidth snapshotRefWidth (renderBlockRef (snapshotRef snapshot))
+    <> " "
+    <> pretty (renderSnapshotPayload snapshot)
 
 renderSnapshotPayload :: BlockSnapshot tag -> String
 renderSnapshotPayload (BlockSnapshot _ _ view) = renderPayloadView view
@@ -703,53 +696,56 @@ renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
 --------------------------------------------------------------------------------
 -- Expression rendering
 --------------------------------------------------------------------------------
-renderExpr :: S.Expr ty -> String
-renderExpr = renderRawExpr . S.exprRaw
+exprDoc :: S.Expr ty -> RenderDoc
+exprDoc = rawExprDoc . S.exprRaw
 
 renderRawExpr :: S.RawExpr -> String
-renderRawExpr = renderRawExprPrec 0
+renderRawExpr = renderDoc . rawExprDoc
 
-renderRawExprPrec :: Int -> S.RawExpr -> String
-renderRawExprPrec precedence expr =
+rawExprDoc :: S.RawExpr -> RenderDoc
+rawExprDoc = rawExprDocPrec 0
+
+rawExprDocPrec :: Int -> S.RawExpr -> RenderDoc
+rawExprDocPrec precedence expr =
   case expr of
-    S.EVar _ variable -> S.varName variable
-    S.ELit value -> fixed2 value
+    S.EVar _ variable -> pretty (S.varName variable)
+    S.ELit value -> pretty (fixed2 value)
     S.EAdd lhs rhs ->
-      parenthesize
+      parenthesizeDoc
         (precedence > addPrecedence)
-        (renderRawExprPrec addPrecedence lhs
-           ++ " + "
-           ++ renderRawExprPrec addPrecedence rhs)
+        (rawExprDocPrec addPrecedence lhs
+           <+> "+"
+           <+> rawExprDocPrec addPrecedence rhs)
     S.ESub lhs rhs ->
-      parenthesize
+      parenthesizeDoc
         (precedence > addPrecedence)
-        (renderRawExprPrec addPrecedence lhs
-           ++ " - "
-           ++ renderRawExprPrec (addPrecedence + 1) rhs)
+        (rawExprDocPrec addPrecedence lhs
+           <+> "-"
+           <+> rawExprDocPrec (addPrecedence + 1) rhs)
     S.EMul lhs rhs ->
-      parenthesize
+      parenthesizeDoc
         (precedence > mulPrecedence)
-        (renderRawExprPrec mulPrecedence lhs
-           ++ " * "
-           ++ renderRawExprPrec mulPrecedence rhs)
+        (rawExprDocPrec mulPrecedence lhs
+           <+> "*"
+           <+> rawExprDocPrec mulPrecedence rhs)
     S.EDiv lhs rhs ->
-      parenthesize
+      parenthesizeDoc
         (precedence > mulPrecedence)
-        (renderRawExprPrec mulPrecedence lhs
-           ++ " / "
-           ++ renderRawExprPrec (mulPrecedence + 1) rhs)
+        (rawExprDocPrec mulPrecedence lhs
+           <+> "/"
+           <+> rawExprDocPrec (mulPrecedence + 1) rhs)
     S.ENeg inner ->
-      parenthesize
+      parenthesizeDoc
         (precedence > unaryPrecedence)
-        ("-" ++ renderRawExprPrec unaryPrecedence inner)
-    S.EAbs inner -> "abs " ++ renderRawExprPrec unaryPrecedence inner
-    S.ESignum inner -> "signum " ++ renderRawExprPrec unaryPrecedence inner
+        ("-" <> rawExprDocPrec unaryPrecedence inner)
+    S.EAbs inner -> "abs" <+> rawExprDocPrec unaryPrecedence inner
+    S.ESignum inner -> "signum" <+> rawExprDocPrec unaryPrecedence inner
     S.EPow base to ->
-      parenthesize
+      parenthesizeDoc
         (precedence > powerPrecedence)
-        (renderRawExprPrec powerPrecedence base
-           ++ " ^ "
-           ++ renderRawExprPrec (powerPrecedence + 1) to)
+        (rawExprDocPrec powerPrecedence base
+           <+> "^"
+           <+> rawExprDocPrec (powerPrecedence + 1) to)
 
 addPrecedence :: Int
 addPrecedence = 6
@@ -763,42 +759,52 @@ unaryPrecedence = 8
 powerPrecedence :: Int
 powerPrecedence = 9
 
-parenthesize :: Bool -> String -> String
-parenthesize shouldParenthesize text =
+parenthesizeDoc :: Bool -> RenderDoc -> RenderDoc
+parenthesizeDoc shouldParenthesize doc =
   if shouldParenthesize
-    then "(" ++ text ++ ")"
-    else text
+    then parens doc
+    else doc
 
 --------------------------------------------------------------------------------
 -- Text helpers
 --------------------------------------------------------------------------------
-renderHeader :: String -> String
-renderHeader title = title ++ "\n" ++ replicate (length title) '-' ++ "\n"
+type RenderDoc = Doc ()
 
-renderWhen :: Bool -> String -> String
-renderWhen enabled text =
+renderDoc :: RenderDoc -> String
+renderDoc = renderString . layoutPretty defaultLayoutOptions
+
+headerDoc :: String -> RenderDoc
+headerDoc title =
+  pretty title <> hardline <> pretty (replicate (length title) '-') <> hardline
+
+whenDoc :: Bool -> RenderDoc -> RenderDoc
+whenDoc enabled doc =
   if enabled
-    then text
-    else ""
+    then doc
+    else mempty
 
-renderStepName :: StepStyle -> String
-renderStepName (StepStyle name colour) =
-  stepIndent ++ ansiText [colour] (padLeft stepNameWidth name)
+renderStepName :: StepStyle -> RenderDoc
+renderStepName (StepStyle name style) =
+  stepIndent <> pretty (ansiText [style] (padLeft stepNameWidth name))
 
-renderEmptyStepName :: String
-renderEmptyStepName = stepIndent ++ padLeft stepNameWidth ""
+renderEmptyStepName :: RenderDoc
+renderEmptyStepName = stepIndent <> fixedLeft stepNameWidth ""
 
-renderAlignedAssignments :: String -> [(String, String)] -> String
-renderAlignedAssignments indent assignments =
+alignedAssignmentsDoc :: String -> [(String, String)] -> RenderDoc
+alignedAssignmentsDoc leading assignments =
   let nameWidth = maximum (0 : [length name | (name, _) <- assignments])
-   in concatMap (renderAlignedAssignment indent nameWidth) assignments
+   in mconcat (map (alignedAssignmentDoc leading nameWidth) assignments)
 
-renderAlignedAssignment :: String -> Int -> (String, String) -> String
-renderAlignedAssignment indent nameWidth (name, value) =
-  concat [indent, padRight nameWidth name, " = ", value, "\n"]
+alignedAssignmentDoc :: String -> Int -> (String, String) -> RenderDoc
+alignedAssignmentDoc leading nameWidth (name, value) =
+  pretty leading <> fixedWidth nameWidth name <> " = " <> pretty value <> hardline
 
-padRight :: Int -> String -> String
-padRight n text = text ++ replicate (max 0 (n - length text)) ' '
+fixedWidth :: Int -> String -> Doc ann
+fixedWidth targetWidth text =
+  pretty text <> pretty (replicate (max 0 (targetWidth - length text)) ' ')
+
+fixedLeft :: Int -> String -> Doc ann
+fixedLeft targetWidth text = pretty (padLeft targetWidth text)
 
 padLeft :: Int -> String -> String
 padLeft n text = replicate (max 0 (n - length text)) ' ' ++ text
@@ -829,15 +835,7 @@ data StepStyle =
 data Ansi
   = AnsiReset
   | AnsiBold
-  | AnsiDim
-  | AnsiItalic
-  | AnsiUnderline
-  | AnsiFg Int
-  | AnsiBg Int
   | Ansi256Fg Int
-  | Ansi256Bg Int
-  | AnsiRgbFg Int Int Int
-  | AnsiRgbBg Int Int Int
 
 ansiText :: [Ansi] -> String -> String
 ansiText styles text = concatMap ansiCode styles ++ text ++ ansiCode AnsiReset
@@ -845,16 +843,6 @@ ansiText styles text = concatMap ansiCode styles ++ text ++ ansiCode AnsiReset
 ansiCode :: Ansi -> String
 ansiCode ansi =
   case ansi of
-    AnsiReset -> "\ESC[0m"
-    AnsiBold -> "\ESC[1m"
-    AnsiDim -> "\ESC[2m"
-    AnsiItalic -> "\ESC[3m"
-    AnsiUnderline -> "\ESC[4m"
-    AnsiFg n -> "\ESC[" ++ show n ++ "m"
-    AnsiBg n -> "\ESC[" ++ show n ++ "m"
+    AnsiReset   -> "\ESC[0m"
+    AnsiBold    -> "\ESC[1m"
     Ansi256Fg n -> "\ESC[38;5;" ++ show n ++ "m"
-    Ansi256Bg n -> "\ESC[48;5;" ++ show n ++ "m"
-    AnsiRgbFg r g b ->
-      "\ESC[38;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
-    AnsiRgbBg r g b ->
-      "\ESC[48;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"

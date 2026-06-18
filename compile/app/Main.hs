@@ -15,7 +15,7 @@ main = do
   seedInt <- randomIO :: IO Int
   let seed = RandomSeed seedInt
   solved <- LinearTrace.Visualize.solveCSPWithSeed seed visGraph
-  LinearTrace.printSolvedVisualization False solved visGraph
+  LinearTrace.printSolvedVisualization True solved visGraph
   case LinearTrace.compileSolvedVisualization solved visGraph of
     Left err -> putStrLn err
     Right compiled ->
