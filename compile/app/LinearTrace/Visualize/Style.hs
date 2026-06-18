@@ -350,7 +350,7 @@ setStyleField newField style' =
   style' {styleFields = replaceByName fieldName newField (styleFields style')}
 
 replaceByName :: (a -> String) -> a -> [a] -> [a]
-replaceByName getName newValue values = go values
+replaceByName getName newValue = go
   where
     target = getName newValue
     go xs =

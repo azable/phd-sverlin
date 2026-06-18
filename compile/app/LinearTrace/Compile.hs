@@ -303,13 +303,13 @@ compileMaterializedStyle style =
 compileCssAttrs :: V.MaterializedStyle -> Map String StyleValue
 compileCssAttrs style =
   Map.fromList
-    ([("position", StyleText "absolute")]
-       ++ V.materializedCssAttrsWith
-            (StyleNumber . roundLayout)
-            (StylePixels . roundLayout)
-            StyleText
-            (\alpha hsl -> StyleColor (materializedHslToCss alpha hsl))
-            style)
+    (("position", StyleText "absolute")
+       : V.materializedCssAttrsWith
+           (StyleNumber . roundLayout)
+           (StylePixels . roundLayout)
+           StyleText
+           (\alpha hsl -> StyleColor (materializedHslToCss alpha hsl))
+           style)
 
 compileCssClass :: V.MaterializedStyle -> Maybe String
 compileCssClass = V.materializedClassName

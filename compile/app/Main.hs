@@ -6,7 +6,7 @@ import           DSL.Main
 import qualified LinearTrace
 import           LinearTrace.Visualize
 import           Options.Applicative
-import           System.Random          (randomIO)
+import           System.Random         (randomIO)
 
 data Options = Options
   { optionShowSolverDetails :: Bool
@@ -32,10 +32,7 @@ main = do
   putStrLn ("Compiled with solver seed: " ++ show seedInt)
 
 chooseSeed :: Maybe Int -> IO Int
-chooseSeed maybeSeed =
-  case maybeSeed of
-    Just seed -> pure seed
-    Nothing   -> randomIO
+chooseSeed = maybe randomIO pure
 
 optionsParserInfo :: ParserInfo Options
 optionsParserInfo =

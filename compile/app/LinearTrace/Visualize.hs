@@ -119,6 +119,7 @@ module LinearTrace.Visualize
 
 import           Control.Monad.Reader
 import           Control.Monad.Writer.Strict
+import           Data.Foldable              (for_)
 import           Data.Proxy                  (Proxy (..))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver
@@ -260,9 +261,7 @@ registerInitialVar initial = tell mempty {emittedInitialVars = [initial]}
 
 registerInitialRange :: Expr ty -> Range -> ViewBuilder events ()
 registerInitialRange expr range =
-  case initialRangeFor expr range of
-    Nothing      -> pure ()
-    Just initial -> registerInitialVar initial
+  for_ (initialRangeFor expr range) registerInitialVar
 
 emitViewNode :: ViewNode -> ViewBuilder events ()
 emitViewNode node = tell mempty {emittedNodes = [node]}

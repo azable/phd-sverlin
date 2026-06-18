@@ -65,10 +65,11 @@ module LinearTrace.Solver
   ) where
 
 import           Control.Monad.State.Strict
-import           Data.Foldable              (traverse_)
+import           Data.Foldable              (for_, traverse_)
 import           Data.List                  (foldl')
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
+import           Data.Maybe                 (fromMaybe)
 import           Data.Proxy                 (Proxy (..))
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
@@ -142,10 +143,7 @@ rangeToInitialBounds range =
     }
 
 typeInitialBounds :: ScalarType -> InitialBounds
-typeInitialBounds ty =
-  case typeRange ty of
-    Nothing    -> unboundedInitialBounds
-    Just range -> rangeToInitialBounds range
+typeInitialBounds ty = maybe unboundedInitialBounds rangeToInitialBounds (typeRange ty)
 
 mergeInitialBounds :: InitialBounds -> InitialBounds -> InitialBounds
 mergeInitialBounds a b =
@@ -630,7 +628,7 @@ solve config = solveWithInitialVars config []
 solveWithInitialVars ::
      SolveConfig -> [InitialVar] -> [Constraint] -> IO Solution
 solveWithInitialVars config initialVars constraints = do
-  let named = compileConstraintsWithInitialVars config initialVars constraints
+  let named = compileConstraints config initialVars constraints
   result <- solveCSP (namedCSP named)
   let vector = Opt.resultSolution result
       lookupValue (InternalVar i)
@@ -645,12 +643,8 @@ solveWithInitialVars config initialVars constraints = do
       , solutionVector = vector
       }
 
-compileConstraints :: SolveConfig -> [Constraint] -> NamedCSP
-compileConstraints config = compileConstraintsWithInitialVars config []
-
-compileConstraintsWithInitialVars ::
-     SolveConfig -> [InitialVar] -> [Constraint] -> NamedCSP
-compileConstraintsWithInitialVars config initialVars constraints =
+compileConstraints :: SolveConfig -> [InitialVar] -> [Constraint] -> NamedCSP
+compileConstraints config initialVars constraints =
   NamedCSP {namedVars = vars, namedCSP = csp}
   where
     flatConstraints = concatMap flattenConstraint constraints
@@ -683,9 +677,7 @@ compileConstraintsWithInitialVars config initialVars constraints =
             Map.fromList [(name, internal) | (name, _ty, internal) <- pairs]
       traverse_
         (\(_name, ty, internal) ->
-           case typeRange ty of
-             Nothing    -> pure ()
-             Just range -> addRangeTerms (rangeWeight config) internal range)
+           for_ (typeRange ty) (addRangeTerms (rangeWeight config) internal))
         pairs
       traverse_ (lowerConstraint config vars') flatConstraints
       pure vars'
@@ -707,7 +699,7 @@ collectInitialVarBounds = foldl' addOne Map.empty
       Map.alter
         (Just
            . mergeInitialBounds (initialVarBounds initial)
-           . maybe unboundedInitialBounds id)
+           . fromMaybe unboundedInitialBounds)
         (initialVarName initial)
         bounds
 
@@ -769,12 +761,12 @@ addConstraint bounds constraint =
   case constraint of
     LessOrEqual (ELit lo) (EVar _ v) ->
       Map.alter
-        (Just . addInitialLower lo . maybe unboundedInitialBounds id)
+        (Just . addInitialLower lo . fromMaybe unboundedInitialBounds)
         (varName v)
         bounds
     LessOrEqual (EVar _ v) (ELit hi) ->
       Map.alter
-        (Just . addInitialUpper hi . maybe unboundedInitialBounds id)
+        (Just . addInitialUpper hi . fromMaybe unboundedInitialBounds)
         (varName v)
         bounds
     All constraints -> foldl' addConstraint bounds constraints

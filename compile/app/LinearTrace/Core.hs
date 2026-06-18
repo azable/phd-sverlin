@@ -7,7 +7,6 @@
 {-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
-{-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
 {-# LANGUAGE TypeOperators           #-}
 {-# LANGUAGE UndecidableInstances    #-}
@@ -664,6 +663,7 @@ decide ::
 decide predicate (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
   let evidence = makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload
+  {- HLINT ignore "Use if" -}
   case predicate payload of
     True  -> return (DecidedTrue evidence)
     False -> return (DecidedFalse evidence)
