@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE LinearTypes          #-}
+{-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE RebindableSyntax     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeFamilies         #-}
@@ -29,6 +30,26 @@ module LinearTrace.View
   , Taken
   , NewVisual
   , LiveVisual
+  , ViewDefinition(..)
+  , LayoutUse(..)
+  , StyleDraft
+  , EmptyStyleDraft
+  , finalizeStyle
+  , setOpacityOnce
+  , setZIndexOnce
+  , setFontSizeOnce
+  , setRadiusOnce
+  , setFillOnce
+  , setStrokeOnce
+  , setStrokeWidthOnce
+  , setAlphaOnce
+  , setFontFamilyOnce
+  , setFontWeightOnce
+  , setFontStyleOnce
+  , setTextAlignOnce
+  , setBorderStyleOnce
+  , setWhiteSpaceOnce
+  , setCssClassOnce
   , visualBlock
   , createVisual
   , observeVisual
@@ -98,7 +119,6 @@ module LinearTrace.View
   , (@>=@)
   , -- * Builder
     ViewBuilder
-  , ViewBlock(..)
   , ViewEvent(..)
   , ViewEvents
   , buildCSP
@@ -119,7 +139,7 @@ module LinearTrace.View
   , besideWithGap
   , belowWithGap
   , (|=|)
-  , -- * Style accessors/setters
+  , -- * Style accessors
     opacity
   , zIndex
   , fontSize
@@ -128,21 +148,6 @@ module LinearTrace.View
   , alpha
   , fill
   , stroke
-  , setOpacity
-  , setZIndex
-  , setFontSize
-  , setRadius
-  , setFill
-  , setStroke
-  , setStrokeWidth
-  , setAlpha
-  , setFontFamily
-  , setFontWeight
-  , setFontStyle
-  , setTextAlign
-  , setBorderStyle
-  , setWhiteSpace
-  , setCssClass
   , -- * Materialization
     MaterializedStyle
   , MaterializedBlockView(..)
@@ -156,7 +161,7 @@ module LinearTrace.View
   , materializeViewNode
   ) where
 
-import           Data.Proxy                  (Proxy (..))
+import           Data.Kind                   (Type)
 import           Control.Functor.Linear      hiding ((<$>), (<*>))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver
@@ -284,17 +289,152 @@ type NewVisual tag =
 type LiveVisual tag =
   Visual Rendered D0 Available Available Available Available D0 Available Available Available Available tag
 
+data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass where
+  StyleDraft
+    :: Ur Style
+       %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+
+type EmptyStyleDraft =
+  StyleDraft Available Available Available Available Available Available Available Available Available Available Available Available Available Available Available
+
+finalizeStyle ::
+     StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> Style
+finalizeStyle draft =
+  case draft of
+    StyleDraft (Ur style') -> style'
+
+setOpacityOnce ::
+     UnitExpr
+  -> StyleDraft Available zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft Taken zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setOpacityOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setOpacity value style'))
+
+setZIndexOnce ::
+     FreeExpr
+  -> StyleDraft opacity Available fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity Taken fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setZIndexOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setZIndex value style'))
+
+setFontSizeOnce ::
+     LayoutExpr
+  -> StyleDraft opacity zIndex Available radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex Taken radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setFontSizeOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setFontSize value style'))
+
+setRadiusOnce ::
+     LayoutExpr
+  -> StyleDraft opacity zIndex fontSize Available strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize Taken strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setRadiusOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setRadius value style'))
+
+setStrokeWidthOnce ::
+     LayoutExpr
+  -> StyleDraft opacity zIndex fontSize radius Available alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius Taken alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setStrokeWidthOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setStrokeWidth value style'))
+
+setAlphaOnce ::
+     UnitExpr
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth Available fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth Taken fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setAlphaOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setAlpha value style'))
+
+setFillOnce ::
+     HslExpr
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha Available stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha Taken stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setFillOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setFill value style'))
+
+setStrokeOnce ::
+     HslExpr
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill Available fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill Taken fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setStrokeOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setStroke value style'))
+
+setFontFamilyOnce ::
+     String
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke Available fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke Taken fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+setFontFamilyOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setFontFamily value style'))
+
+setFontWeightOnce ::
+     FontWeight
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily Available fontStyle textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily Taken fontStyle textAlign borderStyle whiteSpace cssClass
+setFontWeightOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setFontWeight value style'))
+
+setFontStyleOnce ::
+     FontStyle
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight Available textAlign borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight Taken textAlign borderStyle whiteSpace cssClass
+setFontStyleOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setFontStyle value style'))
+
+setTextAlignOnce ::
+     TextAlign
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle Available borderStyle whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle Taken borderStyle whiteSpace cssClass
+setTextAlignOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setTextAlign value style'))
+
+setBorderStyleOnce ::
+     BorderStyle
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign Available whiteSpace cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign Taken whiteSpace cssClass
+setBorderStyleOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setBorderStyle value style'))
+
+setWhiteSpaceOnce ::
+     WhiteSpace
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle Available cssClass
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle Taken cssClass
+setWhiteSpaceOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setWhiteSpace value style'))
+
+setCssClassOnce ::
+     String
+  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace Available
+     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace Taken
+setCssClassOnce value draft =
+  case draft of
+    StyleDraft (Ur style') -> StyleDraft (Ur (setCssClass value style'))
+
+data ViewDefinition tag where
+  ViewDefinition
+    :: (EmptyStyleDraft %1 -> Style)
+    -> (forall (events :: [Type]). BlockView tag -> ViewBuilder events ())
+    -> ViewDefinition tag
+
+data LayoutUse visual where
+  LayoutUse :: visual %1 -> LayoutExpr -> LayoutUse visual
+
 visualBlock :: Visual state dx l r w cx dy t b h cy tag -> BlockView tag
 visualBlock (Visual block) = block
-
-instance HasBounds (Visual state dx l r w cx dy t b h cy tag) where
-  top visual = top (visualBlock visual)
-  left visual = left (visualBlock visual)
-  width visual = width (visualBlock visual)
-  height visual = height (visualBlock visual)
-
-instance HasStyle (Visual state dx l r w cx dy t b h cy tag) where
-  style visual = style (visualBlock visual)
 
 --------------------------------------------------------------------------------
 -- Reader + writer builder
@@ -480,135 +620,141 @@ belowWithGap gap a b = do
 --------------------------------------------------------------------------------
 -- Per-block visualisation
 --------------------------------------------------------------------------------
-class C.Traceable tag =>
-      ViewBlock tag
-  where
-  styleBlock :: Proxy tag -> Style -> Style
-  styleBlock _ = id
-  viewBlock :: BlockView tag -> ViewBuilder events ()
-
-viewNewBlock ::
-     forall tag events. ViewBlock tag
-  => BlockView tag
-  -> ViewBuilder events ()
-viewNewBlock block0 = do
-  let block =
-        block0
-          {blockStyle = styleBlock (Proxy :: Proxy tag) (blockStyle block0)}
-  emitViewNode (BlockViewNode block)
-  registerInitialStyleBounds (blockStyle block)
-  constrainStyle (blockStyle block)
-  insideCanvas block
-  viewBlock block
+defineNewBlock ::
+     forall tag (events :: [Type]).
+     ViewDefinition tag
+     %1 -> BlockView tag
+  -> ViewBuilder events (Ur (BlockView tag))
+defineNewBlock definition block0 =
+  case definition of
+    ViewDefinition styleDefinition viewDefinition -> do
+      let block =
+            block0
+              { blockStyle =
+                  styleDefinition (StyleDraft (Ur (blockStyle block0)))
+              }
+      emitViewNode (BlockViewNode block)
+      registerInitialStyleBounds (blockStyle block)
+      constrainStyle (blockStyle block)
+      insideCanvas block
+      viewDefinition block
+      pure (Ur block)
 
 --------------------------------------------------------------------------------
 -- Explicit token handling
 --------------------------------------------------------------------------------
-createVisual :: ViewToken (C.Create tag) %1 -> ViewBuilder events (Ur (NewVisual tag))
+createVisual :: ViewToken (C.Create tag) %1 -> ViewBuilder events (NewVisual tag)
 createVisual token =
   case token of
-    CreatedToken block -> pure (Ur (Visual block))
+    CreatedToken block -> pure (Visual block)
 
-observeVisual :: ViewToken (C.Observe tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+observeVisual :: ViewToken (C.Observe tag) %1 -> ViewBuilder events (LiveVisual tag)
 observeVisual token =
   case token of
-    ObservedToken block -> pure (Ur (Visual block))
+    ObservedToken block -> pure (Visual block)
 
-inspectVisual :: ViewToken (C.Inspect tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+inspectVisual :: ViewToken (C.Inspect tag) %1 -> ViewBuilder events (LiveVisual tag)
 inspectVisual token =
   case token of
-    InspectedToken block -> pure (Ur (Visual block))
+    InspectedToken block -> pure (Visual block)
 
-useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder events (LiveVisual tag)
 useVisual token =
   case token of
-    UsedToken block -> pure (Ur (Visual block))
+    UsedToken block -> pure (Visual block)
 
 copyVisual ::
      ViewToken (C.Copy tag)
-     %1 -> ViewBuilder events (Ur (LiveVisual tag, NewVisual tag))
+     %1 -> ViewBuilder events (LiveVisual tag, NewVisual tag)
 copyVisual token =
   case token of
-    CopiedToken original copy' -> pure (Ur (Visual original, Visual copy'))
+    CopiedToken original copy' -> pure (Visual original, Visual copy')
 
 replaceVisual ::
      ViewToken (C.Replace tag)
-     %1 -> ViewBuilder events (Ur (LiveVisual tag, LiveVisual tag, NewVisual tag))
+     %1 -> ViewBuilder events (LiveVisual tag, LiveVisual tag, NewVisual tag)
 replaceVisual token =
   case token of
     ReplacedToken old incoming output ->
-      pure (Ur (Visual old, Visual incoming, Visual output))
+      pure (Visual old, Visual incoming, Visual output)
 
-computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder events (Ur (NewVisual tag))
+computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder events (NewVisual tag)
 computeVisual token =
   case token of
-    ComputedToken block -> pure (Ur (Visual block))
+    ComputedToken block -> pure (Visual block)
 
-destroyVisual :: ViewToken (C.Destroy tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+destroyVisual :: ViewToken (C.Destroy tag) %1 -> ViewBuilder events (LiveVisual tag)
 destroyVisual token =
   case token of
-    DestroyedToken block -> pure (Ur (Visual block))
+    DestroyedToken block -> pure (Visual block)
 
 sealVisual ::
      ViewToken (C.Seal owner tag)
-     %1 -> ViewBuilder events (Ur (LiveVisual owner, LiveVisual tag))
+     %1 -> ViewBuilder events (LiveVisual owner, LiveVisual tag)
 sealVisual token =
   case token of
-    SealedToken owner child -> pure (Ur (Visual owner, Visual child))
+    SealedToken owner child -> pure (Visual owner, Visual child)
 
 unsealVisual ::
      ViewToken (C.Unseal owner tag)
-     %1 -> ViewBuilder events (Ur (LiveVisual owner, LiveVisual tag))
+     %1 -> ViewBuilder events (LiveVisual owner, LiveVisual tag)
 unsealVisual token =
   case token of
-    UnsealedToken owner child -> pure (Ur (Visual owner, Visual child))
+    UnsealedToken owner child -> pure (Visual owner, Visual child)
 
-decideVisual :: ViewToken (C.Decide tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+decideVisual :: ViewToken (C.Decide tag) %1 -> ViewBuilder events (LiveVisual tag)
 decideVisual token =
   case token of
-    DecidedToken block -> pure (Ur (Visual block))
+    DecidedToken block -> pure (Visual block)
 
 fresh ::
-     ViewBlock tag
-  => Visual Unrendered dx l r w cx dy t b h cy tag
-     %1 -> ViewBuilder events (Ur (Visual Rendered dx l r w cx dy t b h cy tag))
-fresh visual =
+     forall tag dx l r w cx dy t b h cy (events :: [Type]).
+     ViewDefinition tag
+     %1 -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
+fresh definition visual =
   case visual of
     Visual block -> do
-      viewNewBlock block
+      Ur renderedBlock <- defineNewBlock definition block
       emitRenderIntent (RenderFresh (blockRef block))
-      pure (Ur (Visual block))
+      pure (Visual renderedBlock)
 
 continueFrom ::
-     ViewBlock tag
-  => LiveVisual oldTag
-  -> Visual Unrendered dx l r w cx dy t b h cy tag
-     %1 -> ViewBuilder events (Ur (Visual Rendered dx l r w cx dy t b h cy tag))
-continueFrom source visual =
-  case visual of
-    Visual block -> do
-      viewNewBlock block
-      emitRenderIntent (RenderContinue (blockRef (visualBlock source)) (blockRef block))
-      pure (Ur (Visual block))
+     forall tag oldTag dx l r w cx dy t b h cy (events :: [Type]).
+     ViewDefinition tag
+     %1 -> LiveVisual oldTag
+     %1 -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
+continueFrom definition source visual =
+  case source of
+    Visual sourceBlock ->
+      case visual of
+        Visual block -> do
+          Ur renderedBlock <- defineNewBlock definition block
+          emitRenderIntent (RenderContinue (blockRef sourceBlock) (blockRef block))
+          pure (Visual renderedBlock)
 
 forkFrom ::
-     ViewBlock tag
-  => LiveVisual oldTag
-  -> Visual Unrendered dx l r w cx dy t b h cy tag
-     %1 -> ViewBuilder events (Ur (Visual Rendered dx l r w cx dy t b h cy tag))
-forkFrom source visual =
-  case visual of
-    Visual block -> do
-      viewNewBlock block
-      emitRenderIntent (RenderFork (blockRef (visualBlock source)) (blockRef block))
-      pure (Ur (Visual block))
+     forall tag oldTag dx l r w cx dy t b h cy (events :: [Type]).
+     ViewDefinition tag
+     %1 -> LiveVisual oldTag
+     %1 -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> ViewBuilder events (LiveVisual oldTag, Visual Rendered dx l r w cx dy t b h cy tag)
+forkFrom definition source visual =
+  case source of
+    Visual sourceBlock ->
+      case visual of
+        Visual block -> do
+          Ur renderedBlock <- defineNewBlock definition block
+          emitRenderIntent (RenderFork (blockRef sourceBlock) (blockRef block))
+          pure (Visual sourceBlock, Visual renderedBlock)
 
 remove :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
 remove visual =
   case visual of
     Visual block -> emitRenderIntent (RenderRemove (blockRef block))
 
-discard :: Visual state dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
+discard :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
 discard visual =
   case visual of
     Visual _ -> pure ()
@@ -616,76 +762,83 @@ discard visual =
 takeLeft ::
      CanSpend dx
   => Visual state dx Available r w cx dy t b h cy tag
-     %1 -> (Visual state (Inc dx) Taken r w cx dy t b h cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state (Inc dx) Taken r w cx dy t b h cy tag)
 takeLeft visual =
   case visual of
-    Visual block -> (Visual block, left block)
+    Visual block -> LayoutUse (Visual block) (left block)
 
 takeRight ::
      CanSpend dx
   => Visual state dx l Available w cx dy t b h cy tag
-     %1 -> (Visual state (Inc dx) l Taken w cx dy t b h cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state (Inc dx) l Taken w cx dy t b h cy tag)
 takeRight visual =
   case visual of
-    Visual block -> (Visual block, right block)
+    Visual block -> LayoutUse (Visual block) (right block)
 
 takeWidth ::
      CanSpend dx
   => Visual state dx l r Available cx dy t b h cy tag
-     %1 -> (Visual state (Inc dx) l r Taken cx dy t b h cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state (Inc dx) l r Taken cx dy t b h cy tag)
 takeWidth visual =
   case visual of
-    Visual block -> (Visual block, width block)
+    Visual block -> LayoutUse (Visual block) (width block)
 
 takeCenterX ::
      CanSpend dx
   => Visual state dx l r w Available dy t b h cy tag
-     %1 -> (Visual state (Inc dx) l r w Taken dy t b h cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state (Inc dx) l r w Taken dy t b h cy tag)
 takeCenterX visual =
   case visual of
-    Visual block -> (Visual block, centerX block)
+    Visual block -> LayoutUse (Visual block) (centerX block)
 
 takeTop ::
      CanSpend dy
   => Visual state dx l r w cx dy Available b h cy tag
-     %1 -> (Visual state dx l r w cx (Inc dy) Taken b h cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) Taken b h cy tag)
 takeTop visual =
   case visual of
-    Visual block -> (Visual block, top block)
+    Visual block -> LayoutUse (Visual block) (top block)
 
 takeBottom ::
      CanSpend dy
   => Visual state dx l r w cx dy t Available h cy tag
-     %1 -> (Visual state dx l r w cx (Inc dy) t Taken h cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) t Taken h cy tag)
 takeBottom visual =
   case visual of
-    Visual block -> (Visual block, bottom block)
+    Visual block -> LayoutUse (Visual block) (bottom block)
 
 takeHeight ::
      CanSpend dy
   => Visual state dx l r w cx dy t b Available cy tag
-     %1 -> (Visual state dx l r w cx (Inc dy) t b Taken cy tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) t b Taken cy tag)
 takeHeight visual =
   case visual of
-    Visual block -> (Visual block, height block)
+    Visual block -> LayoutUse (Visual block) (height block)
 
 takeCenterY ::
      CanSpend dy
   => Visual state dx l r w cx dy t b h Available tag
-     %1 -> (Visual state dx l r w cx (Inc dy) t b h Taken tag, LayoutExpr)
+     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) t b h Taken tag)
 takeCenterY visual =
   case visual of
-    Visual block -> (Visual block, centerY block)
+    Visual block -> LayoutUse (Visual block) (centerY block)
 
 --------------------------------------------------------------------------------
 -- Per-event visualisation
 --------------------------------------------------------------------------------
 class ViewEvent event where
-  viewEvent :: event -> ViewTokens (C.Actions event) %1 -> ViewBuilder events ()
+  viewEvent ::
+       forall (events :: [Type]).
+       event
+    -> ViewTokens (C.Actions event)
+       %1 -> ViewBuilder events ()
 
-class ViewEvents choices where
+class ViewEvents (choices :: [Type]) where
   viewUnion ::
-       C.EventChoice choices acts -> ViewTokens acts %1 -> ViewBuilder events ()
+       forall (acts :: [Type]) (events :: [Type]).
+       C.EventChoice choices acts
+    -> ViewTokens acts
+       %1 -> ViewBuilder events ()
 
 instance ViewEvents '[] where
   viewUnion union _tokens = case union of {}

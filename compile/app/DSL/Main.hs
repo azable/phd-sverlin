@@ -431,33 +431,59 @@ valueSize = layoutCell
 valueHeight :: LayoutExpr
 valueHeight = valueSize
 
-valueNodeStyle :: Style -> Style
-valueNodeStyle base =
-  let style1 = setFill (Hsl (num 205) (num 0.2) (num 0.95)) base
-      style2 = setStroke (Hsl (num 205) (num 0.5) (num 0.34)) style1
-      style3 = setStrokeWidth (num 2) style2
-      style4 = setRadius valueRadius style3
-      style5 = setFontSize valueFontSize style4
-      style6 =
-        setFontFamily "ui-monospace, SFMono-Regular, Menlo, monospace" style5
-      style7 = setFontWeight FontWeightBold style6
-      style8 = setTextAlign TextAlignCenter style7
-      style9 = setWhiteSpace WhiteSpaceNoWrap style8
-   in setCssClass "trace-value-block" style9
+valueNodeStyle :: EmptyStyleDraft %1 -> Style
+valueNodeStyle draft0 =
+  case setFillOnce (Hsl (num 205) (num 0.2) (num 0.95)) draft0 of
+    draft1 ->
+      case setStrokeOnce (Hsl (num 205) (num 0.5) (num 0.34)) draft1 of
+        draft2 ->
+          case setStrokeWidthOnce (num 2) draft2 of
+            draft3 ->
+              case setRadiusOnce valueRadius draft3 of
+                draft4 ->
+                  case setFontSizeOnce valueFontSize draft4 of
+                    draft5 ->
+                      case setFontFamilyOnce
+                             "ui-monospace, SFMono-Regular, Menlo, monospace"
+                             draft5 of
+                        draft6 ->
+                          case setFontWeightOnce FontWeightBold draft6 of
+                            draft7 ->
+                              case setTextAlignOnce TextAlignCenter draft7 of
+                                draft8 ->
+                                  case setWhiteSpaceOnce WhiteSpaceNoWrap draft8 of
+                                    draft9 ->
+                                      finalizeStyle
+                                        (setCssClassOnce
+                                           "trace-value-block"
+                                           draft9)
 
-matchNodeStyle :: Style -> Style
-matchNodeStyle base =
-  let style1 = setFill (Hsl (num 142) (num 0.38) (num 0.9)) base
-      style2 = setStroke (Hsl (num 142) (num 0.48) (num 0.32)) style1
-      style3 = setStrokeWidth (num 2) style2
-      style4 = setRadius valueRadius style3
-      style5 = setFontSize matchFontSize style4
-      style6 =
-        setFontFamily "ui-monospace, SFMono-Regular, Menlo, monospace" style5
-      style7 = setFontWeight FontWeightBold style6
-      style8 = setTextAlign TextAlignCenter style7
-      style9 = setWhiteSpace WhiteSpaceNoWrap style8
-   in setCssClass "trace-match-block" style9
+matchNodeStyle :: EmptyStyleDraft %1 -> Style
+matchNodeStyle draft0 =
+  case setFillOnce (Hsl (num 142) (num 0.38) (num 0.9)) draft0 of
+    draft1 ->
+      case setStrokeOnce (Hsl (num 142) (num 0.48) (num 0.32)) draft1 of
+        draft2 ->
+          case setStrokeWidthOnce (num 2) draft2 of
+            draft3 ->
+              case setRadiusOnce valueRadius draft3 of
+                draft4 ->
+                  case setFontSizeOnce matchFontSize draft4 of
+                    draft5 ->
+                      case setFontFamilyOnce
+                             "ui-monospace, SFMono-Regular, Menlo, monospace"
+                             draft5 of
+                        draft6 ->
+                          case setFontWeightOnce FontWeightBold draft6 of
+                            draft7 ->
+                              case setTextAlignOnce TextAlignCenter draft7 of
+                                draft8 ->
+                                  case setWhiteSpaceOnce WhiteSpaceNoWrap draft8 of
+                                    draft9 ->
+                                      finalizeStyle
+                                        (setCssClassOnce
+                                           "trace-match-block"
+                                           draft9)
 
 defineValueNode :: BlockView Value -> ViewBuilder events ()
 defineValueNode block = do
@@ -473,13 +499,11 @@ defineMatchNode block = do
   ensure (width block @==@ matchWidth)
   ensure (height block @==@ matchHeight)
 
-instance ViewBlock Value where
-  styleBlock _ = valueNodeStyle
-  viewBlock = defineValueNode
+valueViewDefinition :: ViewDefinition Value
+valueViewDefinition = ViewDefinition valueNodeStyle defineValueNode
 
-instance ViewBlock Match where
-  styleBlock _ = matchNodeStyle
-  viewBlock = defineMatchNode
+matchViewDefinition :: ViewDefinition Match
+matchViewDefinition = ViewDefinition matchNodeStyle defineMatchNode
 
 --------------------------------------------------------------------------------
 -- View events
@@ -490,8 +514,8 @@ instance ViewEvent CreateTarget where
       CreateTarget ->
         case tokens of
           VCons targetToken VNil -> do
-            Ur target <- createVisual targetToken
-            Ur renderedTarget <- fresh target
+            target <- createVisual targetToken
+            renderedTarget <- fresh valueViewDefinition target
             discard renderedTarget
 
 instance ViewEvent CreateElement where
@@ -500,8 +524,8 @@ instance ViewEvent CreateElement where
       CreateElement ->
         case tokens of
           VCons elementToken VNil -> do
-            Ur element <- createVisual elementToken
-            Ur renderedElement <- fresh element
+            element <- createVisual elementToken
+            renderedElement <- fresh valueViewDefinition element
             discard renderedElement
 
 instance ViewEvent Compare where
@@ -510,15 +534,23 @@ instance ViewEvent Compare where
       Compare ->
         case tokens of
           VCons targetToken (VCons elementToken (VCons matchToken VNil)) -> do
-            Ur target <- inspectVisual targetToken
-            Ur element <- inspectVisual elementToken
-            Ur match <- computeVisual matchToken
-            Ur renderedMatch <- fresh match
-            ensure (centerX renderedMatch @==@ centerX element)
-            ensure (top renderedMatch @==@ bottom element @+@ matchGap)
-            discard target
-            discard element
-            discard renderedMatch
+            target <- inspectVisual targetToken
+            element <- inspectVisual elementToken
+            match <- computeVisual matchToken
+            renderedMatch <- fresh matchViewDefinition match
+            case takeCenterX renderedMatch of
+              LayoutUse renderedMatch1 matchCenterX ->
+                case takeCenterX element of
+                  LayoutUse element1 elementCenterX ->
+                    case takeTop renderedMatch1 of
+                      LayoutUse renderedMatch2 matchTop ->
+                        case takeBottom element1 of
+                          LayoutUse element2 elementBottom -> do
+                            ensure (matchCenterX @==@ elementCenterX)
+                            ensure (matchTop @==@ elementBottom @+@ matchGap)
+                            discard target
+                            discard element2
+                            discard renderedMatch2
 
 instance ViewEvent Found where
   viewEvent event tokens =
@@ -526,7 +558,7 @@ instance ViewEvent Found where
       Found ->
         case tokens of
           VCons matchToken VNil -> do
-            Ur match <- decideVisual matchToken
+            match <- decideVisual matchToken
             discard match
 
 instance ViewEvent NotThisOne where
@@ -535,7 +567,7 @@ instance ViewEvent NotThisOne where
       NotThisOne ->
         case tokens of
           VCons matchToken VNil -> do
-            Ur match <- decideVisual matchToken
+            match <- decideVisual matchToken
             remove match
 
 instance ViewEvent DiscardChecked where
@@ -544,7 +576,7 @@ instance ViewEvent DiscardChecked where
       DiscardChecked ->
         case tokens of
           VCons elementToken VNil -> do
-            Ur element <- destroyVisual elementToken
+            element <- destroyVisual elementToken
             remove element
 
 instance ViewEvent FinishFound where
@@ -553,8 +585,8 @@ instance ViewEvent FinishFound where
       FinishFound ->
         case tokens of
           VCons targetToken (VCons elementToken VNil) -> do
-            Ur target <- destroyVisual targetToken
-            Ur element <- destroyVisual elementToken
+            target <- destroyVisual targetToken
+            element <- destroyVisual elementToken
             discard target
             discard element
 
@@ -564,7 +596,7 @@ instance ViewEvent DiscardRemaining where
       DiscardRemaining ->
         case tokens of
           VCons elementToken VNil -> do
-            Ur element <- destroyVisual elementToken
+            element <- destroyVisual elementToken
             remove element
 
 instance ViewEvent SearchExhausted where
@@ -573,5 +605,5 @@ instance ViewEvent SearchExhausted where
       SearchExhausted ->
         case tokens of
           VCons targetToken VNil -> do
-            Ur target <- destroyVisual targetToken
+            target <- destroyVisual targetToken
             discard target

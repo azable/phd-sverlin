@@ -75,7 +75,25 @@ module LinearTrace
   , printCompiledJSON
   , writeCompiledJSON
   , -- * Application pipeline
-    ViewBlock(..)
+    ViewDefinition(..)
+  , StyleDraft
+  , EmptyStyleDraft
+  , finalizeStyle
+  , setOpacityOnce
+  , setZIndexOnce
+  , setFontSizeOnce
+  , setRadiusOnce
+  , setFillOnce
+  , setStrokeOnce
+  , setStrokeWidthOnce
+  , setAlphaOnce
+  , setFontFamilyOnce
+  , setFontWeightOnce
+  , setFontStyleOnce
+  , setTextAlignOnce
+  , setBorderStyleOnce
+  , setWhiteSpaceOnce
+  , setCssClassOnce
   , ViewEvent(..)
   , ViewEvents
   ) where
