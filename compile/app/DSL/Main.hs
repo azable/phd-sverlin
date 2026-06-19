@@ -362,48 +362,54 @@ layoutStep :: LayoutExpr
 layoutStep = layoutCell @+@ layoutGap
 
 layoutCenter :: LayoutExpr
-layoutCenter = layoutCanvasWidth @/@ num 2
+layoutCenter = layoutCanvasWidth @/@ (num 2 :: LayoutExpr)
 
 layoutHorizontalInset :: LayoutExpr
-layoutHorizontalInset = (layoutCanvasWidth @-@ layoutAvailableWidth) @/@ num 2
+layoutHorizontalInset =
+  (layoutCanvasWidth @-@ layoutAvailableWidth) @/@ (num 2 :: LayoutExpr)
 
 layoutRightInset :: LayoutExpr
 layoutRightInset = layoutCanvasWidth @-@ layoutHorizontalInset
 
 valueFontSize :: LayoutExpr
-valueFontSize = layoutCell @*@ num 0.34
+valueFontSize = layoutCell @*@ (num 0.34 :: LayoutExpr)
 
 valueRadius :: LayoutExpr
-valueRadius = layoutCell @*@ num 0.11
+valueRadius = layoutCell @*@ (num 0.11 :: LayoutExpr)
 
 matchWidth :: LayoutExpr
-matchWidth = layoutCell @+@ num 20
+matchWidth = layoutCell @+@ (num 20 :: LayoutExpr)
 
 matchHeight :: LayoutExpr
-matchHeight = layoutCell @*@ num 0.7
+matchHeight = layoutCell @*@ (num 0.7 :: LayoutExpr)
 
 matchFontSize :: LayoutExpr
-matchFontSize = matchHeight @*@ num 0.42
+matchFontSize = matchHeight @*@ (num 0.42 :: LayoutExpr)
 
 matchGap :: LayoutExpr
-matchGap = layoutCell @*@ num 0.38
+matchGap = layoutCell @*@ (num 0.38 :: LayoutExpr)
 
 constrainSearchLayout :: ViewBuilder events ()
 constrainSearchLayout = do
-  between layoutMinCell layoutCell layoutMaxCell
-  between (num 0) layoutGap layoutMaxGap
+  ensure (layoutMinCell @<=@ layoutCell)
+  ensure (layoutCell @<=@ layoutMaxCell)
+  ensure ((num 0 :: LayoutExpr) @<=@ layoutGap)
+  ensure (layoutGap @<=@ layoutMaxGap)
   ensure
     (layoutRowWidth
        @==@ ((layoutElementCount @*@ layoutCell)
                @+@ (layoutGapCount @*@ layoutGap)))
-  ensure (layoutRowLeft @+@ (layoutRowWidth @/@ num 2) @==@ layoutCenter)
+  ensure
+    (layoutRowLeft
+       @+@ (layoutRowWidth @/@ (num 2 :: LayoutExpr))
+       @==@ layoutCenter)
   ensure (layoutHorizontalInset @<=@ layoutRowLeft)
   ensure (layoutRowLeft @+@ layoutRowWidth @<=@ layoutRightInset)
   case layoutUsesMaxSize of
     True -> do
       ensure (layoutCell @==@ layoutMaxCell)
       case exampleElementCount <= 1 of
-        True  -> ensure (layoutGap @==@ num 0)
+        True  -> ensure (layoutGap @==@ (num 0 :: LayoutExpr))
         False -> ensure (layoutGap @==@ layoutMaxGap)
     False -> do
       ensure (layoutGap @==@ layoutCell @*@ layoutGapRatio)
@@ -422,8 +428,10 @@ valueLeft ref =
   case ref of
     BlockRef blockId ->
       case blockId of
-        0 -> layoutCenter @-@ (layoutCell @/@ num 2)
-        _ -> layoutRowLeft @+@ (num (fromIntegral (blockId - 1)) @*@ layoutStep)
+        0 -> layoutCenter @-@ (layoutCell @/@ (num 2 :: LayoutExpr))
+        _ ->
+          layoutRowLeft
+            @+@ ((num (fromIntegral (blockId - 1)) :: LayoutExpr) @*@ layoutStep)
 
 valueSize :: LayoutExpr
 valueSize = layoutCell

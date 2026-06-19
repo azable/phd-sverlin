@@ -2,8 +2,11 @@
 {-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                #-}
+{-# LANGUAGE KindSignatures       #-}
 {-# LANGUAGE LinearTypes          #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE RebindableSyntax     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -32,6 +35,8 @@ module LinearTrace.View
   , LiveVisual
   , ViewDefinition(..)
   , LayoutUse(..)
+  , OneExpr
+  , OneConstraint
   , (|>)
   , StyleDraft
   , EmptyStyleDraft
@@ -128,18 +133,6 @@ module LinearTrace.View
   , RandomSeed(..)
   , ensure
   , encourage
-  , -- * Layout helpers
-    contains
-  , between
-  , unitBounds
-  , angleBounds
-  , hslBounds
-  , above
-  , below
-  , beside
-  , besideWithGap
-  , belowWithGap
-  , (|=|)
   , -- * Style accessors
     opacity
   , zIndex
@@ -165,12 +158,23 @@ module LinearTrace.View
 import           Data.Kind                   (Type)
 import           Control.Functor.Linear      hiding ((<$>), (<*>))
 import qualified LinearTrace.Core            as C
-import           LinearTrace.Solver
+import           LinearTrace.Solver          hiding
+                                             ( num
+                                             , (@+@)
+                                             , (@-@)
+                                             , (@*@)
+                                             , (@/@)
+                                             , (@^@)
+                                             , (@==@)
+                                             , (@<=@)
+                                             , (@>=@)
+                                             )
+import qualified LinearTrace.Solver          as S
 import           LinearTrace.View.Style
 import qualified Prelude                     as P
 import           Prelude.Linear
+import qualified Unsafe.Coerce               as Unsafe
 
-infixl 6 |=|
 --------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
@@ -432,12 +436,132 @@ data ViewDefinition tag where
     -> ViewDefinition tag
 
 data LayoutUse visual where
-  LayoutUse :: visual %1 -> LayoutExpr -> LayoutUse visual
+  LayoutUse :: visual %1 -> OneExpr Layout %1 -> LayoutUse visual
+
+data OneExpr (ty :: Type) where
+  OneExpr :: Ur (Expr ty) %1 -> OneExpr ty
+
+data OneConstraint where
+  OneConstraint :: Ur Constraint %1 -> OneConstraint
 
 infixl 1 |>
 
 (|>) :: a %1 -> (a %1 -> b) -> b
 value |> next = next value
+
+-- Solver expressions are immutable metadata; the linear obligation is the
+-- OneExpr/OneConstraint wrapper that controls use at the View boundary.
+unsafeUr :: forall a. a %1 -> Ur a
+unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
+
+class BinaryExpr lhs rhs result | lhs rhs -> result where
+  binaryExpr ::
+       (forall (ty :: Type). Expr ty -> Expr ty -> Expr ty)
+    -> lhs
+       %1 -> rhs
+       %1 -> result
+
+instance BinaryExpr (Expr (ty :: Type)) (Expr ty) (Expr ty) where
+  binaryExpr op lhs rhs =
+    case unsafeUr lhs of
+      Ur lhsRaw ->
+        case unsafeUr rhs of
+          Ur rhsRaw -> op lhsRaw rhsRaw
+
+instance BinaryExpr (OneExpr (ty :: Type)) (Expr ty) (OneExpr ty) where
+  binaryExpr op lhs rhs =
+    case lhs of
+      OneExpr (Ur lhsRaw) ->
+        case unsafeUr rhs of
+          Ur rhsRaw -> OneExpr (Ur (op lhsRaw rhsRaw))
+
+instance BinaryExpr (Expr (ty :: Type)) (OneExpr ty) (OneExpr ty) where
+  binaryExpr op lhs rhs =
+    case unsafeUr lhs of
+      Ur lhsRaw ->
+        case rhs of
+          OneExpr (Ur rhsRaw) -> OneExpr (Ur (op lhsRaw rhsRaw))
+
+instance BinaryExpr (OneExpr (ty :: Type)) (OneExpr ty) (OneExpr ty) where
+  binaryExpr op lhs rhs =
+    case lhs of
+      OneExpr (Ur lhsRaw) ->
+        case rhs of
+          OneExpr (Ur rhsRaw) -> OneExpr (Ur (op lhsRaw rhsRaw))
+
+class RelateExpr lhs rhs where
+  relateExpr ::
+       (forall (ty :: Type). Expr ty -> Expr ty -> Constraint)
+    -> lhs
+       %1 -> rhs
+       %1 -> OneConstraint
+
+instance RelateExpr (Expr (ty :: Type)) (Expr ty) where
+  relateExpr op lhs rhs =
+    case unsafeUr lhs of
+      Ur lhsRaw ->
+        case unsafeUr rhs of
+          Ur rhsRaw -> OneConstraint (Ur (op lhsRaw rhsRaw))
+
+instance RelateExpr (OneExpr (ty :: Type)) (Expr ty) where
+  relateExpr op lhs rhs =
+    case lhs of
+      OneExpr (Ur lhsRaw) ->
+        case unsafeUr rhs of
+          Ur rhsRaw -> OneConstraint (Ur (op lhsRaw rhsRaw))
+
+instance RelateExpr (Expr (ty :: Type)) (OneExpr ty) where
+  relateExpr op lhs rhs =
+    case unsafeUr lhs of
+      Ur lhsRaw ->
+        case rhs of
+          OneExpr (Ur rhsRaw) -> OneConstraint (Ur (op lhsRaw rhsRaw))
+
+instance RelateExpr (OneExpr (ty :: Type)) (OneExpr ty) where
+  relateExpr op lhs rhs =
+    case lhs of
+      OneExpr (Ur lhsRaw) ->
+        case rhs of
+          OneExpr (Ur rhsRaw) -> OneConstraint (Ur (op lhsRaw rhsRaw))
+
+num :: SymbolicType ty => Double -> Expr ty
+num = S.num
+
+global :: SymbolicType ty => String -> Expr ty
+global name = S.var ("global." ++ name)
+
+infixl 6 @+@
+infixl 6 @-@
+infixl 7 @*@
+infixl 7 @/@
+infixr 8 @^@
+infix 4 @==@
+infix 4 @<=@
+infix 4 @>=@
+
+(@+@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
+(@+@) = binaryExpr (S.@+@)
+
+(@-@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
+(@-@) = binaryExpr (S.@-@)
+
+(@*@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
+(@*@) = binaryExpr (S.@*@)
+
+(@/@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
+(@/@) = binaryExpr (S.@/@)
+
+(@^@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
+(@^@) = binaryExpr (S.@^@)
+
+(@==@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
+(@==@) = relateExpr (S.@==@)
+
+(@<=@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
+(@<=@) = relateExpr (S.@<=@)
+
+(@>=@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
+(@>=@) = relateExpr (\lhs rhs -> rhs S.@<=@ lhs)
 
 visualBlock :: Visual state dx l r w cx dy t b h cy tag -> BlockView tag
 visualBlock (Visual block) = block
@@ -533,11 +657,16 @@ traverseMaybeView_ action value =
     Nothing -> return ()
     Just x  -> action x
 
-ensure :: Constraint -> ViewBuilder events ()
-ensure constraint = tellOutput mempty {emittedConstraints = [constraint]}
+ensure :: OneConstraint %1 -> ViewBuilder events ()
+ensure oneConstraint =
+  case oneConstraint of
+    OneConstraint (Ur constraint) -> ensureRaw constraint
+
+ensureRaw :: Constraint -> ViewBuilder events ()
+ensureRaw constraint = tellOutput mempty {emittedConstraints = [constraint]}
 
 encourage :: Expr ty -> ViewBuilder events ()
-encourage objective = tellOutput mempty {emittedConstraints = [minimize objective]}
+encourage objective = tellOutput mempty {emittedConstraints = [S.minimize objective]}
 
 registerInitialVar :: InitialVar -> ViewBuilder events ()
 registerInitialVar initial = tellOutput mempty {emittedInitialVars = [initial]}
@@ -553,77 +682,6 @@ emitRenderIntent :: RenderIntent -> ViewBuilder events ()
 emitRenderIntent intent = tellOutput mempty {emittedRenderIntents = [intent]}
 
 --------------------------------------------------------------------------------
--- Constraint constructors/helpers
---------------------------------------------------------------------------------
-global :: SymbolicType ty => String -> Expr ty
-global name = var ("global." ++ name)
-
-canvasBounds :: ViewBuilder events (Ur BoundsExpr)
-canvasBounds = do
-  Ur env <- askViewEnv
-  pure (Ur (Bounds (num 0) (num 0) (canvasWidth env) (canvasHeight env)))
-
-contains ::
-     (HasBounds outer, HasBounds inner)
-  => outer
-  -> inner
-  -> ViewBuilder events ()
-contains outer inner = do
-  ensure $ left outer @<=@ left inner
-  ensure $ top outer @<=@ top inner
-  ensure $ right inner @<=@ right outer
-  ensure $ bottom inner @<=@ bottom outer
-
-insideCanvas :: HasBounds block => block -> ViewBuilder events ()
-insideCanvas block = do
-  Ur canvas <- canvasBounds
-  canvas `contains` block
-
-between ::
-     SymbolicType ty => Expr ty -> Expr ty -> Expr ty -> ViewBuilder events ()
-between lo x hi = do
-  ensure $ lo @<=@ x
-  ensure $ x @<=@ hi
-
-unitBounds :: UnitExpr -> ViewBuilder events ()
-unitBounds x = between (num 0) x (num 1)
-
-angleBounds :: AngleExpr -> ViewBuilder events ()
-angleBounds angle = between (num 0) angle (num 360)
-
-hslBounds :: HslExpr -> ViewBuilder events ()
-hslBounds hsl = do
-  angleBounds (hue hsl)
-  unitBounds (saturation hsl)
-  unitBounds (lightness hsl)
-
-above :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-above a b = ensure $ bottom a @<=@ top b
-
-below :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-below a b = ensure $ bottom b @<=@ top a
-
-beside :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-beside a b = do
-  ensure $ centerY a @==@ centerY b
-  ensure $ right a @==@ left b
-
-besideWithGap ::
-     (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
-besideWithGap gap a b = do
-  ensure $ centerY a @==@ centerY b
-  ensure $ right a @+@ gap @==@ left b
-
-belowWithGap ::
-     (HasBounds a, HasBounds b) => LayoutExpr -> a -> b -> ViewBuilder events ()
-belowWithGap gap a b = do
-  ensure $ centerX a @==@ centerX b
-  ensure $ bottom a @+@ gap @==@ top b
-
-(|=|) :: (HasBounds a, HasBounds b) => a -> b -> ViewBuilder events ()
-(|=|) = beside
-
---------------------------------------------------------------------------------
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 defineNewBlock ::
@@ -634,6 +692,7 @@ defineNewBlock ::
 defineNewBlock definition block0 =
   case definition of
     ViewDefinition styleDefinition viewDefinition -> do
+      Ur env <- askViewEnv
       let block =
             block0
               { blockStyle =
@@ -642,7 +701,10 @@ defineNewBlock definition block0 =
       emitViewNode (BlockViewNode block)
       registerInitialStyleBounds (blockStyle block)
       constrainStyle (blockStyle block)
-      insideCanvas block
+      ensureRaw (S.num 0 S.@<=@ left block)
+      ensureRaw (S.num 0 S.@<=@ top block)
+      ensureRaw (right block S.@<=@ canvasWidth env)
+      ensureRaw (bottom block S.@<=@ canvasHeight env)
       viewDefinition block
       pure (Ur block)
 
@@ -771,7 +833,7 @@ takeLeft ::
      %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) Taken r w cx dy t b h cy tag))
 takeLeft visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (left block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (left block))))
 
 takeRight ::
      CanSpend dx
@@ -779,7 +841,7 @@ takeRight ::
      %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l Taken w cx dy t b h cy tag))
 takeRight visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (right block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (right block))))
 
 takeWidth ::
      CanSpend dx
@@ -787,7 +849,7 @@ takeWidth ::
      %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l r Taken cx dy t b h cy tag))
 takeWidth visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (width block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (width block))))
 
 takeCenterX ::
      CanSpend dx
@@ -795,7 +857,7 @@ takeCenterX ::
      %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l r w Taken dy t b h cy tag))
 takeCenterX visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (centerX block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerX block))))
 
 takeTop ::
      CanSpend dy
@@ -803,7 +865,7 @@ takeTop ::
      %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) Taken b h cy tag))
 takeTop visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (top block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (top block))))
 
 takeBottom ::
      CanSpend dy
@@ -811,7 +873,7 @@ takeBottom ::
      %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t Taken h cy tag))
 takeBottom visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (bottom block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (bottom block))))
 
 takeHeight ::
      CanSpend dy
@@ -819,7 +881,7 @@ takeHeight ::
      %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t b Taken cy tag))
 takeHeight visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (height block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (height block))))
 
 takeCenterY ::
      CanSpend dy
@@ -827,7 +889,7 @@ takeCenterY ::
      %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t b h Taken tag))
 takeCenterY visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (centerY block))
+    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerY block))))
 
 --------------------------------------------------------------------------------
 -- Per-event visualisation
@@ -974,4 +1036,4 @@ registerInitialStyleBounds style' = do
   traverseView_ registerInitialVar (styleInitialVars style')
 
 constrainStyle :: Style -> ViewBuilder events ()
-constrainStyle style' = traverseView_ ensure (styleConstraints style')
+constrainStyle style' = traverseView_ ensureRaw (styleConstraints style')
