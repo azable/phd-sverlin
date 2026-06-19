@@ -35,7 +35,13 @@ data Match
 
 type instance Payload Match = LBool Match
 
-instance Traceable Match
+instance Traceable Match where
+  payloadView _ payload =
+    case payload of
+      LBool matched ->
+        case matched of
+          True  -> PayloadView "Decision" "MATCH"
+          False -> PayloadView "Decision" "NO MATCH"
 
 sameValue :: Payload Value %1 -> Payload Value %1 -> Payload Match
 sameValue lhsPayload rhsPayload =
@@ -323,38 +329,47 @@ layoutCanvasWidth = num 800
 layoutCanvasHeight :: LayoutExpr
 layoutCanvasHeight = num 600
 
+layoutAvailableWidthValue :: Double
+layoutAvailableWidthValue = 760
+
+layoutMaxCellValue :: Double
+layoutMaxCellValue = 88
+
+layoutMaxGapValue :: Double
+layoutMaxGapValue = 24
+
 layoutAvailableWidth :: LayoutExpr
-layoutAvailableWidth = num 704
+layoutAvailableWidth = num layoutAvailableWidthValue
 
 layoutTargetTop :: LayoutExpr
-layoutTargetTop = num 48
+layoutTargetTop = num 32
 
 layoutVerticalGap :: LayoutExpr
-layoutVerticalGap = layoutCell @*@ (num 0.72 :: LayoutExpr)
+layoutVerticalGap = layoutCell @*@ (num 0.82 :: LayoutExpr)
 
 layoutProbeTop :: LayoutExpr
 layoutProbeTop = layoutTargetTop @+@ layoutCell @+@ layoutVerticalGap
 
 layoutMatchTop :: LayoutExpr
-layoutMatchTop = layoutProbeTop @+@ layoutCell @+@ matchGap
+layoutMatchTop = layoutProbeTop @+@ layoutProbeSize @+@ matchGap
 
 layoutListTop :: LayoutExpr
 layoutListTop = layoutMatchTop @+@ matchHeight @+@ layoutVerticalGap
 
 layoutMaxCell :: LayoutExpr
-layoutMaxCell = num 58
+layoutMaxCell = num layoutMaxCellValue
 
 layoutMinCell :: LayoutExpr
-layoutMinCell = num 12
+layoutMinCell = num 10
 
 layoutMaxGap :: LayoutExpr
-layoutMaxGap = num 12
+layoutMaxGap = num layoutMaxGapValue
 
 layoutGapRatio :: LayoutExpr
 layoutGapRatio = num 0.16
 
 layoutUsesMaxSize :: Bool
-layoutUsesMaxSize = exampleElementCount <= 10
+layoutUsesMaxSize = layoutMaxSizedRowWidthValue <= layoutAvailableWidthValue
 
 layoutElementCountValue :: Int
 layoutElementCountValue =
@@ -367,6 +382,11 @@ layoutGapCountValue =
   case exampleElementCount <= 1 of
     True  -> 0
     False -> exampleElementCount - 1
+
+layoutMaxSizedRowWidthValue :: Double
+layoutMaxSizedRowWidthValue =
+  (fromIntegral layoutElementCountValue * layoutMaxCellValue)
+    + (fromIntegral layoutGapCountValue * layoutMaxGapValue)
 
 layoutElementCount :: LayoutExpr
 layoutElementCount = num (fromIntegral layoutElementCountValue)
@@ -392,12 +412,15 @@ layoutStep = layoutCell @+@ layoutGap
 layoutCenter :: LayoutExpr
 layoutCenter = layoutCanvasWidth @/@ (num 2 :: LayoutExpr)
 
+layoutProbeSize :: LayoutExpr
+layoutProbeSize = layoutCell @*@ (num 1.22 :: LayoutExpr)
+
 layoutProbeGap :: LayoutExpr
-layoutProbeGap = layoutCell @*@ (num 0.35 :: LayoutExpr)
+layoutProbeGap = layoutProbeSize @*@ (num 0.36 :: LayoutExpr)
 
 targetProbeLeft :: LayoutExpr
 targetProbeLeft =
-  layoutCenter @-@ layoutCell @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+  layoutCenter @-@ layoutProbeSize @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 elementProbeLeft :: LayoutExpr
 elementProbeLeft = layoutCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
@@ -412,20 +435,26 @@ layoutRightInset = layoutCanvasWidth @-@ layoutHorizontalInset
 valueFontSize :: LayoutExpr
 valueFontSize = layoutCell @*@ (num 0.34 :: LayoutExpr)
 
+probeFontSize :: LayoutExpr
+probeFontSize = layoutProbeSize @*@ (num 0.34 :: LayoutExpr)
+
 valueRadius :: LayoutExpr
 valueRadius = layoutCell @*@ (num 0.11 :: LayoutExpr)
 
+probeRadius :: LayoutExpr
+probeRadius = layoutProbeSize @*@ (num 0.11 :: LayoutExpr)
+
 matchWidth :: LayoutExpr
-matchWidth = layoutCell @+@ (num 20 :: LayoutExpr)
+matchWidth = (layoutCell @*@ (num 1.88 :: LayoutExpr)) @+@ (num 28 :: LayoutExpr)
 
 matchHeight :: LayoutExpr
-matchHeight = layoutCell @*@ (num 0.7 :: LayoutExpr)
+matchHeight = layoutCell @*@ (num 0.68 :: LayoutExpr)
 
 matchFontSize :: LayoutExpr
-matchFontSize = matchHeight @*@ (num 0.42 :: LayoutExpr)
+matchFontSize = matchHeight @*@ (num 0.38 :: LayoutExpr)
 
 matchGap :: LayoutExpr
-matchGap = layoutCell @*@ (num 0.38 :: LayoutExpr)
+matchGap = layoutCell @*@ (num 0.42 :: LayoutExpr)
 
 constrainSearchLayout :: ViewBuilder events ()
 constrainSearchLayout = do
@@ -444,11 +473,11 @@ constrainSearchLayout = do
   ensure (layoutHorizontalInset @<=@ layoutRowLeft)
   ensure (layoutRowLeft @+@ layoutRowWidth @<=@ layoutRightInset)
   ensure (layoutTargetTop @+@ layoutCell @<=@ layoutProbeTop)
-  ensure (layoutProbeTop @+@ layoutCell @<=@ layoutMatchTop)
+  ensure (layoutProbeTop @+@ layoutProbeSize @<=@ layoutMatchTop)
   ensure (layoutMatchTop @+@ matchHeight @<=@ layoutListTop)
   ensure (layoutListTop @+@ layoutCell @<=@ layoutCanvasHeight)
   ensure (layoutHorizontalInset @<=@ targetProbeLeft)
-  ensure (elementProbeLeft @+@ layoutCell @<=@ layoutRightInset)
+  ensure (elementProbeLeft @+@ layoutProbeSize @<=@ layoutRightInset)
   case layoutUsesMaxSize of
     True -> do
       ensure (layoutCell @==@ layoutMaxCell)
@@ -498,19 +527,36 @@ valueNodeStyle draft =
     |> setCssClassOnce "trace-value-block"
     |> finalizeStyle
 
+probeNodeStyle :: EmptyStyleDraft %1 -> Style
+probeNodeStyle draft =
+  draft
+    |> setFillOnce (Hsl (num 205) (num 0.2) (num 0.95))
+    |> setStrokeOnce (Hsl (num 205) (num 0.5) (num 0.34))
+    |> setStrokeWidthOnce (num 2)
+    |> setZIndexOnce (num 1)
+    |> setRadiusOnce probeRadius
+    |> setFontSizeOnce probeFontSize
+    |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
+    |> setFontWeightOnce FontWeightBold
+    |> setTextAlignOnce TextAlignCenter
+    |> setWhiteSpaceOnce WhiteSpaceNoWrap
+    |> setCssClassOnce "trace-value-block"
+    |> finalizeStyle
+
 matchNodeStyle :: EmptyStyleDraft %1 -> Style
 matchNodeStyle draft =
   draft
-    |> setFillOnce (Hsl (num 142) (num 0.38) (num 0.9))
-    |> setStrokeOnce (Hsl (num 142) (num 0.48) (num 0.32))
+    |> setFillOnce (Hsl (num 48) (num 0.78) (num 0.91))
+    |> setStrokeOnce (Hsl (num 48) (num 0.74) (num 0.34))
     |> setStrokeWidthOnce (num 2)
+    |> setZIndexOnce (num 2)
     |> setRadiusOnce valueRadius
     |> setFontSizeOnce matchFontSize
     |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
     |> setFontWeightOnce FontWeightBold
     |> setTextAlignOnce TextAlignCenter
     |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-match-block"
+    |> setCssClassOnce "trace-decision-block"
     |> finalizeStyle
 
 defineValueNode ::
@@ -541,8 +587,8 @@ defineTargetProbeNode _ref visual0 = do
   LayoutUse visual4 probeHeightY <- takeHeight visual3
   ensure (probeLeftX @==@ targetProbeLeft)
   ensure (probeTopY @==@ layoutProbeTop)
-  ensure (probeWidthX @==@ valueSize)
-  ensure (probeHeightY @==@ valueHeight)
+  ensure (probeWidthX @==@ layoutProbeSize)
+  ensure (probeHeightY @==@ layoutProbeSize)
   return visual4
 
 defineElementProbeNode ::
@@ -557,8 +603,8 @@ defineElementProbeNode _ref visual0 = do
   LayoutUse visual4 probeHeightY <- takeHeight visual3
   ensure (probeLeftX @==@ elementProbeLeft)
   ensure (probeTopY @==@ layoutProbeTop)
-  ensure (probeWidthX @==@ valueSize)
-  ensure (probeHeightY @==@ valueHeight)
+  ensure (probeWidthX @==@ layoutProbeSize)
+  ensure (probeHeightY @==@ layoutProbeSize)
   return visual4
 
 defineMatchNode ::
@@ -577,10 +623,10 @@ valueViewDefinition :: BoxDefinition Value
 valueViewDefinition = boxDefinition valueNodeStyle defineValueNode
 
 targetProbeViewDefinition :: BoxDefinition Value
-targetProbeViewDefinition = boxDefinition valueNodeStyle defineTargetProbeNode
+targetProbeViewDefinition = boxDefinition probeNodeStyle defineTargetProbeNode
 
 elementProbeViewDefinition :: BoxDefinition Value
-elementProbeViewDefinition = boxDefinition valueNodeStyle defineElementProbeNode
+elementProbeViewDefinition = boxDefinition probeNodeStyle defineElementProbeNode
 
 matchViewDefinition :: SizeDefinition Match
 matchViewDefinition = sizeDefinition matchNodeStyle defineMatchNode
@@ -636,14 +682,13 @@ instance ViewEvent Compare where
             match <- computeVisual matchToken
             renderedMatch <- fresh matchViewDefinition match
             LayoutUse renderedMatch1 matchCenterX <- takeCenterX renderedMatch
-            LayoutUse element1 elementCenterX <- takeCenterX element
             LayoutUse renderedMatch2 matchTop <- takeTop renderedMatch1
-            LayoutUse element2 elementBottom <- takeBottom element1
-            ensure (matchCenterX @==@ elementCenterX)
+            LayoutUse element1 elementBottom <- takeBottom element
+            ensure (matchCenterX @==@ layoutCenter)
             ensure (matchTop @==@ elementBottom @+@ matchGap)
             checkpoint
             remove target
-            remove element2
+            remove element1
             complete renderedMatch2
 
 instance ViewEvent Found where
