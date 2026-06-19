@@ -6,6 +6,7 @@ module LinearTrace.Compile
   , StyleValue(..)
   , RenderStyle(..)
   , RenderBlock(..)
+  , RenderOrigin(..)
   , RenderPatch(..)
   , RenderFrame(..)
   , Visualization(..)
@@ -64,8 +65,13 @@ data RenderBlock = RenderBlock
   , renderClassName :: Maybe String
   } deriving (Eq, Show)
 
+data RenderOrigin = RenderOrigin
+  { renderOriginId      :: RenderId
+  , renderOriginElement :: RenderBlock
+  } deriving (Eq, Show)
+
 data RenderPatch
-  = RenderCreate RenderId RenderBlock
+  = RenderCreate RenderId (Maybe RenderOrigin) RenderBlock
   | RenderUpdate RenderId RenderBlock RenderBlock
   | RenderDestroy RenderId RenderBlock
   deriving (Eq, Show)
@@ -170,7 +176,7 @@ createRef blocksById ref = do
          { lineageByBlock =
              Map.insert (renderBlockId block) renderId (lineageByBlock st)
          })
-  pure [RenderCreate renderId block]
+  pure [RenderCreate renderId Nothing block]
 
 destroyRef ::
      Map C.BlockId RenderBlock -> C.BlockRef tag -> CompileM [RenderPatch]
@@ -210,8 +216,24 @@ forkRef ::
   -> CompileM [RenderPatch]
 forkRef blocksById sourceRef targetRef = do
   sourceBlock <- requireBlockByRef blocksById sourceRef
-  _sourceRenderId <- requireLineage sourceBlock
-  createRef blocksById targetRef
+  sourceRenderId <- requireLineage sourceBlock
+  targetBlock <- requireBlockByRef blocksById targetRef
+  let targetRenderId = freshRenderIdForBlock (renderBlockId targetBlock)
+  modify
+    (\st ->
+       st
+         { lineageByBlock =
+             Map.insert
+               (renderBlockId targetBlock)
+               targetRenderId
+               (lineageByBlock st)
+         })
+  pure
+    [ RenderCreate
+        targetRenderId
+        (Just (RenderOrigin sourceRenderId sourceBlock))
+        targetBlock
+    ]
 
 --------------------------------------------------------------------------------
 -- Lineage lookup
@@ -402,11 +424,23 @@ instance ToJSON RenderBlock where
               (\className -> ["className" .= className])
               (renderClassName block))
 
+instance ToJSON RenderOrigin where
+  toJSON origin =
+    object
+      [ "id" .= renderOriginId origin
+      , "element" .= renderOriginElement origin
+      ]
+
 instance ToJSON RenderPatch where
   toJSON patch =
     case patch of
-      RenderCreate renderId block ->
-        object ["kind" .= String "create", "id" .= renderId, "element" .= block]
+      RenderCreate renderId origin block ->
+        object
+          ([ "kind" .= String "create"
+           , "id" .= renderId
+           , "element" .= block
+           ]
+             ++ maybe [] (\origin' -> ["origin" .= origin']) origin)
       RenderUpdate renderId fromBlock toBlock ->
         object
           [ "kind" .= String "update"

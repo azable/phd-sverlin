@@ -35,6 +35,7 @@ module LinearTrace.View
   , Taken
   , NewVisual
   , LiveVisual
+  , CopiedVisual
   , BoxAttrs
   , SizeAttrs
   , BoxVisual
@@ -77,8 +78,9 @@ module LinearTrace.View
   , unsealVisual
   , decideVisual
   , fresh
+  , freshCopy
+  , forkCopy
   , continueFrom
-  , forkFrom
   , remove
   , complete
   , takeLeft
@@ -432,6 +434,9 @@ type NewVisual tag =
 
 type LiveVisual tag =
   Visual Rendered '[] tag
+
+data CopiedVisual tag where
+  CopiedVisual :: LiveVisual tag %1 -> NewVisual tag %1 -> CopiedVisual tag
 
 type BoxAttrs =
   '[AttrLeft, AttrWidth, AttrTop, AttrHeight]
@@ -904,10 +909,10 @@ useVisual token =
 
 copyVisual ::
      ViewToken (C.Copy tag)
-     %1 -> ViewBuilder events (LiveVisual tag, NewVisual tag)
+     %1 -> ViewBuilder events (CopiedVisual tag)
 copyVisual token =
   case token of
-    CopiedToken original copy' -> pure (Visual original, Visual copy')
+    CopiedToken original copy' -> pure (CopiedVisual (Visual original) (Visual copy'))
 
 replaceVisual ::
      ViewToken (C.Replace tag)
@@ -958,6 +963,38 @@ fresh definition visual =
       emitRenderIntent (RenderFresh (blockRef block))
       pure rendered
 
+freshCopy ::
+     forall tag used (events :: [Type]).
+     ViewDefinition tag used
+     %1 -> CopiedVisual tag
+     %1 -> ViewBuilder events (LiveVisual tag, Visual Rendered used tag)
+freshCopy definition copied =
+  case copied of
+    CopiedVisual source visual ->
+      case source of
+        Visual sourceBlock ->
+          case visual of
+            Visual block -> do
+              rendered <- defineNewBlock definition block
+              emitRenderIntent (RenderFresh (blockRef block))
+              pure (Visual sourceBlock, rendered)
+
+forkCopy ::
+     forall tag used (events :: [Type]).
+     ViewDefinition tag used
+     %1 -> CopiedVisual tag
+     %1 -> ViewBuilder events (LiveVisual tag, Visual Rendered used tag)
+forkCopy definition copied =
+  case copied of
+    CopiedVisual source visual ->
+      case source of
+        Visual sourceBlock ->
+          case visual of
+            Visual block -> do
+              rendered <- defineNewBlock definition block
+              emitRenderIntent (RenderFork (blockRef sourceBlock) (blockRef block))
+              pure (Visual sourceBlock, rendered)
+
 continueFrom ::
      forall tag oldTag used (events :: [Type]).
      ViewDefinition tag used
@@ -972,21 +1009,6 @@ continueFrom definition source visual =
           rendered <- defineNewBlock definition block
           emitRenderIntent (RenderContinue (blockRef sourceBlock) (blockRef block))
           pure rendered
-
-forkFrom ::
-     forall tag oldTag used (events :: [Type]).
-     ViewDefinition tag used
-     %1 -> LiveVisual oldTag
-     %1 -> NewVisual tag
-     %1 -> ViewBuilder events (LiveVisual oldTag, Visual Rendered used tag)
-forkFrom definition source visual =
-  case source of
-    Visual sourceBlock ->
-      case visual of
-        Visual block -> do
-          rendered <- defineNewBlock definition block
-          emitRenderIntent (RenderFork (blockRef sourceBlock) (blockRef block))
-          pure (Visual sourceBlock, rendered)
 
 remove :: Visual Rendered used tag %1 -> ViewBuilder events ()
 remove visual =

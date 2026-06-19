@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
   type CssValue = string | number | boolean;
 
@@ -15,11 +15,17 @@
 
   type RenderId = string;
 
+  type RenderOrigin = {
+    id: RenderId;
+    element: RenderElement;
+  };
+
   type RenderPatch =
     | {
         kind: 'create';
         id: RenderId;
         element: RenderElement;
+        origin?: RenderOrigin;
       }
     | {
         kind: 'update';
@@ -65,6 +71,7 @@
   const canvasHeight = $derived(trace?.canvas.height ?? 800);
 
   const destroyTimers = new Map<RenderId, ReturnType<typeof setTimeout>>();
+  let transitionVersion = 0;
 
   onMount(() => {
     void loadTrace();
@@ -107,7 +114,7 @@
     if (!trace || currStep >= lastStep) return;
 
     const next = currStep + 1;
-    applyFrame(trace.frames[next], { animateDestroy: true });
+    applyFrame(trace.frames[next], { animateCreate: true, animateDestroy: true });
     currStep = next;
   }
 
@@ -122,17 +129,26 @@
     if (!trace) return;
 
     clearDestroyTimers();
+    transitionVersion += 1;
 
     const next = new Map<RenderId, LiveElement>();
 
     for (let i = 0; i <= step; i++) {
-      applyPatchesToMap(next, trace.frames[i], { animateDestroy: false });
+      applyPatchesToMap(next, trace.frames[i], {
+        animateCreate: false,
+        animateDestroy: false
+      });
     }
 
     elements = Array.from(next.values());
   }
 
-  function applyFrame(patches: RenderPatch[], options: { animateDestroy: boolean }) {
+  function applyFrame(
+    patches: RenderPatch[],
+    options: { animateCreate: boolean; animateDestroy: boolean }
+  ) {
+    transitionVersion += 1;
+
     const next = new Map<RenderId, LiveElement>();
 
     for (const element of elements) {
@@ -147,18 +163,25 @@
   function applyPatchesToMap(
     next: Map<RenderId, LiveElement>,
     patches: RenderPatch[],
-    options: { animateDestroy: boolean }
+    options: { animateCreate: boolean; animateDestroy: boolean }
   ) {
     for (const patch of patches) {
       switch (patch.kind) {
         case 'create': {
           clearDestroyTimer(patch.id);
+          const originStyle =
+            options.animateCreate && patch.origin ? patch.origin.element.style : undefined;
 
           next.set(patch.id, {
             ...patch.element,
+            style: originStyle ?? patch.element.style,
             id: patch.id,
             exiting: false
           });
+
+          if (originStyle) {
+            scheduleCreateOrigin(patch.id, patch.element);
+          }
 
           break;
         }
@@ -206,6 +229,24 @@
     }, transitionMs);
 
     destroyTimers.set(id, timer);
+  }
+
+  function scheduleCreateOrigin(id: RenderId, element: RenderElement) {
+    const version = transitionVersion;
+
+    void tick().then(() => {
+      if (version !== transitionVersion) return;
+
+      elements = elements.map((current) =>
+        current.id === id
+          ? {
+              ...element,
+              id,
+              exiting: false
+            }
+          : current
+      );
+    });
   }
 
   function clearDestroyTimer(id: RenderId) {

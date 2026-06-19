@@ -224,7 +224,9 @@ compareElement target element = do
   Used elementPayload elementUseEvidence <- use elementProbe
   Computed match matchEvidence <-
     compute (sameValue <$> targetPayload <*> elementPayload)
-  explain Compare (targetUseEvidence :~ elementUseEvidence :~ matchEvidence :~ Done)
+  explain
+    Compare
+    (targetUseEvidence :~ elementUseEvidence :~ matchEvidence :~ Done)
   decision <-
     decide
       (\payload ->
@@ -392,8 +394,7 @@ targetProbeLeft =
   layoutCenter @-@ layoutCell @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 elementProbeLeft :: LayoutExpr
-elementProbeLeft =
-  layoutCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+elementProbeLeft = layoutCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 layoutHorizontalInset :: LayoutExpr
 layoutHorizontalInset =
@@ -601,12 +602,12 @@ instance ViewEvent PrepareCompare where
       PrepareCompare ->
         case tokens of
           VCons targetToken (VCons elementToken VNil) -> do
-            (target, targetProbe) <- copyVisual targetToken
-            (element, elementProbe) <- copyVisual elementToken
+            targetCopy <- copyVisual targetToken
+            elementCopy <- copyVisual elementToken
             (target1, renderedTargetProbe) <-
-              forkFrom targetProbeViewDefinition target targetProbe
+              forkCopy targetProbeViewDefinition targetCopy
             (element1, renderedElementProbe) <-
-              forkFrom elementProbeViewDefinition element elementProbe
+              forkCopy elementProbeViewDefinition elementCopy
             complete target1
             complete element1
             complete renderedTargetProbe
