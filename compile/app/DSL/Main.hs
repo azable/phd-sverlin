@@ -1,14 +1,14 @@
-{-# LANGUAGE ConstraintKinds        #-}
-{-# LANGUAGE DataKinds              #-}
-{-# LANGUAGE FlexibleContexts       #-}
-{-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE GADTs                  #-}
-{-# LANGUAGE LinearTypes            #-}
-{-# LANGUAGE NoImplicitPrelude      #-}
-{-# LANGUAGE RebindableSyntax       #-}
-{-# LANGUAGE TypeFamilies           #-}
-{-# LANGUAGE TypeOperators          #-}
-{-# LANGUAGE UndecidableInstances   #-}
+{-# LANGUAGE ConstraintKinds         #-}
+{-# LANGUAGE DataKinds               #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE GADTs                   #-}
+{-# LANGUAGE LinearTypes             #-}
+{-# LANGUAGE NoImplicitPrelude       #-}
+{-# LANGUAGE RebindableSyntax        #-}
+{-# LANGUAGE TypeFamilies            #-}
+{-# LANGUAGE TypeOperators           #-}
+{-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module DSL.Main
@@ -16,16 +16,15 @@ module DSL.Main
   , run
   ) where
 
-import           LinearTrace.Core
-import           LinearTrace.Print (PrintEvent(..))
-import           LinearTrace.View
 import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
+import           LinearTrace.Core
+import           LinearTrace.Print      (PrintEvent (..))
+import           LinearTrace.View
 import           Prelude.Linear
 
 --------------------------------------------------------------------------------
 -- Payload tags
 --------------------------------------------------------------------------------
-
 data Value
 
 type instance Payload Value = LInt Value
@@ -48,7 +47,6 @@ sameValue lhsPayload rhsPayload =
 --------------------------------------------------------------------------------
 -- Editable input boundary
 --------------------------------------------------------------------------------
-
 data SearchInput where
   SearchInput :: Payload Value %1 -> InputValues %1 -> SearchInput
 
@@ -87,7 +85,8 @@ inputValues :: ExampleValues -> InputValues
 inputValues values =
   case values of
     NoExampleValues -> NoInputValues
-    MoreExampleValue value rest -> MoreInputValue (LInt value) (inputValues rest)
+    MoreExampleValue value rest ->
+      MoreInputValue (LInt value) (inputValues rest)
 
 exampleElementCount :: Int
 exampleElementCount =
@@ -97,74 +96,72 @@ exampleElementCount =
 countExampleValues :: ExampleValues -> Int
 countExampleValues values =
   case values of
-    NoExampleValues -> 0
+    NoExampleValues         -> 0
     MoreExampleValue _ rest -> 1 + countExampleValues rest
 
 --------------------------------------------------------------------------------
 -- Events
 --------------------------------------------------------------------------------
-
 data CreateTarget =
   CreateTarget
 
-type instance Actions CreateTarget = '[Create Value]
+type instance Actions CreateTarget = '[ Create Value]
 
 data CreateElement =
   CreateElement
 
-type instance Actions CreateElement = '[Create Value]
+type instance Actions CreateElement = '[ Create Value]
 
 data Compare =
   Compare
 
-type instance Actions Compare = '[Inspect Value, Inspect Value, Compute Match]
+type instance Actions Compare = '[ Inspect Value, Inspect Value, Compute Match]
 
 data Found =
   Found
 
-type instance Actions Found = '[Decide Match]
+type instance Actions Found = '[ Decide Match]
 
 data NotThisOne =
   NotThisOne
 
-type instance Actions NotThisOne = '[Decide Match]
+type instance Actions NotThisOne = '[ Decide Match]
 
 data DiscardChecked =
   DiscardChecked
 
-type instance Actions DiscardChecked = '[Destroy Value]
+type instance Actions DiscardChecked = '[ Destroy Value]
 
 data FinishFound =
   FinishFound
 
-type instance Actions FinishFound = '[Destroy Value, Destroy Value]
+type instance Actions FinishFound = '[ Destroy Value, Destroy Value]
 
 data DiscardRemaining =
   DiscardRemaining
 
-type instance Actions DiscardRemaining = '[Destroy Value]
+type instance Actions DiscardRemaining = '[ Destroy Value]
 
 data SearchExhausted =
   SearchExhausted
 
-type instance Actions SearchExhausted = '[Destroy Value]
+type instance Actions SearchExhausted = '[ Destroy Value]
 
-type Events =
-  '[ CreateTarget
-   , CreateElement
-   , Compare
-   , Found
-   , NotThisOne
-   , DiscardChecked
-   , FinishFound
-   , DiscardRemaining
-   , SearchExhausted
-   ]
+type Events
+  = '[ CreateTarget
+     , CreateElement
+     , Compare
+     , Found
+     , NotThisOne
+     , DiscardChecked
+     , FinishFound
+     , DiscardRemaining
+     , SearchExhausted
+     ]
 
 --------------------------------------------------------------------------------
 -- Search program
 --------------------------------------------------------------------------------
-
 data Elements where
   NoElements :: Elements
   MoreElement :: Block Value %1 -> Elements %1 -> Elements
@@ -212,16 +209,19 @@ searchElements target elements =
           searchElements targetAfter rest
 
 compareElement ::
-     Block Value
-     %1 -> Block Value
-     %1 -> TraceBuilder Events Comparison
+     Block Value %1 -> Block Value %1 -> TraceBuilder Events Comparison
 compareElement target element = do
   Inspected targetAfter targetPayload targetEvidence <- inspect target
   Inspected elementAfter elementPayload elementEvidence <- inspect element
   Computed match matchEvidence <-
     compute (sameValue <$> targetPayload <*> elementPayload)
   explain Compare (targetEvidence :~ elementEvidence :~ matchEvidence :~ Done)
-  decision <- decide (\payload -> case payload of LBool answer -> answer) match
+  decision <-
+    decide
+      (\payload ->
+         case payload of
+           LBool answer -> answer)
+      match
   case decision of
     DecidedTrue foundEvidence -> do
       explain Found (foundEvidence :~ Done)
@@ -235,10 +235,7 @@ discardChecked element = do
   Destroyed elementEvidence <- destroy element
   explain DiscardChecked (elementEvidence :~ Done)
 
-finishFound ::
-     Block Value
-     %1 -> Block Value
-     %1 -> TraceBuilder Events ()
+finishFound :: Block Value %1 -> Block Value %1 -> TraceBuilder Events ()
 finishFound target element = do
   Destroyed targetEvidence <- destroy target
   Destroyed elementEvidence <- destroy element
@@ -256,7 +253,6 @@ discardRemaining elements =
 --------------------------------------------------------------------------------
 -- Printing
 --------------------------------------------------------------------------------
-
 instance PrintEvent CreateTarget where
   printEvent event =
     case event of
@@ -305,7 +301,6 @@ instance PrintEvent SearchExhausted where
 --------------------------------------------------------------------------------
 -- View constants
 --------------------------------------------------------------------------------
-
 layoutCanvasWidth :: LayoutExpr
 layoutCanvasWidth = num 800
 
@@ -398,9 +393,9 @@ constrainSearchLayout = do
   between layoutMinCell layoutCell layoutMaxCell
   between (num 0) layoutGap layoutMaxGap
   ensure
-    (layoutRowWidth @==@
-     ((layoutElementCount @*@ layoutCell) @+@
-      (layoutGapCount @*@ layoutGap)))
+    (layoutRowWidth
+       @==@ ((layoutElementCount @*@ layoutCell)
+               @+@ (layoutGapCount @*@ layoutGap)))
   ensure (layoutRowLeft @+@ (layoutRowWidth @/@ num 2) @==@ layoutCenter)
   ensure (layoutHorizontalInset @<=@ layoutRowLeft)
   ensure (layoutRowLeft @+@ layoutRowWidth @<=@ layoutRightInset)
@@ -428,9 +423,7 @@ valueLeft ref =
     BlockRef blockId ->
       case blockId of
         0 -> layoutCenter @-@ (layoutCell @/@ num 2)
-        _ ->
-          layoutRowLeft @+@
-          (num (fromIntegral (blockId - 1)) @*@ layoutStep)
+        _ -> layoutRowLeft @+@ (num (fromIntegral (blockId - 1)) @*@ layoutStep)
 
 valueSize :: LayoutExpr
 valueSize = layoutCell
@@ -445,7 +438,8 @@ valueNodeStyle base =
       style3 = setStrokeWidth (num 2) style2
       style4 = setRadius valueRadius style3
       style5 = setFontSize valueFontSize style4
-      style6 = setFontFamily "ui-monospace, SFMono-Regular, Menlo, monospace" style5
+      style6 =
+        setFontFamily "ui-monospace, SFMono-Regular, Menlo, monospace" style5
       style7 = setFontWeight FontWeightBold style6
       style8 = setTextAlign TextAlignCenter style7
       style9 = setWhiteSpace WhiteSpaceNoWrap style8
@@ -458,7 +452,8 @@ matchNodeStyle base =
       style3 = setStrokeWidth (num 2) style2
       style4 = setRadius valueRadius style3
       style5 = setFontSize matchFontSize style4
-      style6 = setFontFamily "ui-monospace, SFMono-Regular, Menlo, monospace" style5
+      style6 =
+        setFontFamily "ui-monospace, SFMono-Regular, Menlo, monospace" style5
       style7 = setFontWeight FontWeightBold style6
       style8 = setTextAlign TextAlignCenter style7
       style9 = setWhiteSpace WhiteSpaceNoWrap style8
@@ -489,7 +484,6 @@ instance ViewBlock Match where
 --------------------------------------------------------------------------------
 -- View events
 --------------------------------------------------------------------------------
-
 instance ViewEvent CreateTarget where
   viewEvent event tokens =
     case event of
