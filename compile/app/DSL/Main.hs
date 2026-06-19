@@ -341,8 +341,11 @@ layoutMaxGapValue = 24
 layoutAvailableWidth :: LayoutExpr
 layoutAvailableWidth = num layoutAvailableWidthValue
 
+layoutStageCenter :: LayoutExpr
+layoutStageCenter = global "linear-search.stage-center"
+
 layoutTargetTop :: LayoutExpr
-layoutTargetTop = num 32
+layoutTargetTop = global "linear-search.target-top"
 
 layoutVerticalGap :: LayoutExpr
 layoutVerticalGap = layoutCell @*@ (num 0.82 :: LayoutExpr)
@@ -359,11 +362,17 @@ layoutListTop = layoutMatchTop @+@ matchHeight @+@ layoutVerticalGap
 layoutMaxCell :: LayoutExpr
 layoutMaxCell = num layoutMaxCellValue
 
+layoutLargeMinCell :: LayoutExpr
+layoutLargeMinCell = layoutMaxCell @*@ (num 0.86 :: LayoutExpr)
+
 layoutMinCell :: LayoutExpr
 layoutMinCell = num 10
 
 layoutMaxGap :: LayoutExpr
 layoutMaxGap = num layoutMaxGapValue
+
+layoutLargeMinGap :: LayoutExpr
+layoutLargeMinGap = layoutMaxGap @*@ (num 0.62 :: LayoutExpr)
 
 layoutGapRatio :: LayoutExpr
 layoutGapRatio = num 0.16
@@ -409,9 +418,6 @@ layoutRowWidth = global "linear-search.row-width"
 layoutStep :: LayoutExpr
 layoutStep = layoutCell @+@ layoutGap
 
-layoutCenter :: LayoutExpr
-layoutCenter = layoutCanvasWidth @/@ (num 2 :: LayoutExpr)
-
 layoutProbeSize :: LayoutExpr
 layoutProbeSize = layoutCell @*@ (num 1.22 :: LayoutExpr)
 
@@ -420,10 +426,10 @@ layoutProbeGap = layoutProbeSize @*@ (num 0.36 :: LayoutExpr)
 
 targetProbeLeft :: LayoutExpr
 targetProbeLeft =
-  layoutCenter @-@ layoutProbeSize @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+  layoutStageCenter @-@ layoutProbeSize @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 elementProbeLeft :: LayoutExpr
-elementProbeLeft = layoutCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+elementProbeLeft = layoutStageCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 layoutHorizontalInset :: LayoutExpr
 layoutHorizontalInset =
@@ -444,6 +450,18 @@ valueRadius = layoutCell @*@ (num 0.11 :: LayoutExpr)
 probeRadius :: LayoutExpr
 probeRadius = layoutProbeSize @*@ (num 0.11 :: LayoutExpr)
 
+valueHue :: HueExpr
+valueHue = global "linear-search.value-hue"
+
+valueFillLightness :: UnitExpr
+valueFillLightness = global "linear-search.value-fill-lightness"
+
+decisionHue :: HueExpr
+decisionHue = global "linear-search.decision-hue"
+
+decisionFillLightness :: UnitExpr
+decisionFillLightness = global "linear-search.decision-fill-lightness"
+
 matchWidth :: LayoutExpr
 matchWidth = (layoutCell @*@ (num 1.88 :: LayoutExpr)) @+@ (num 28 :: LayoutExpr)
 
@@ -458,6 +476,18 @@ matchGap = layoutCell @*@ (num 0.42 :: LayoutExpr)
 
 constrainSearchLayout :: ViewBuilder events ()
 constrainSearchLayout = do
+  ensure ((layoutCanvasWidth @*@ (num 0.43 :: LayoutExpr)) @<=@ layoutStageCenter)
+  ensure (layoutStageCenter @<=@ (layoutCanvasWidth @*@ (num 0.57 :: LayoutExpr)))
+  ensure ((num 24 :: LayoutExpr) @<=@ layoutTargetTop)
+  ensure (layoutTargetTop @<=@ (num 52 :: LayoutExpr))
+  ensure ((num 198 :: HueExpr) @<=@ valueHue)
+  ensure (valueHue @<=@ (num 214 :: HueExpr))
+  ensure ((num 0.92 :: UnitExpr) @<=@ valueFillLightness)
+  ensure (valueFillLightness @<=@ (num 0.98 :: UnitExpr))
+  ensure ((num 40 :: HueExpr) @<=@ decisionHue)
+  ensure (decisionHue @<=@ (num 56 :: HueExpr))
+  ensure ((num 0.88 :: UnitExpr) @<=@ decisionFillLightness)
+  ensure (decisionFillLightness @<=@ (num 0.94 :: UnitExpr))
   ensure (layoutMinCell @<=@ layoutCell)
   ensure (layoutCell @<=@ layoutMaxCell)
   ensure ((num 0 :: LayoutExpr) @<=@ layoutGap)
@@ -469,7 +499,7 @@ constrainSearchLayout = do
   ensure
     (layoutRowLeft
        @+@ (layoutRowWidth @/@ (num 2 :: LayoutExpr))
-       @==@ layoutCenter)
+       @==@ layoutStageCenter)
   ensure (layoutHorizontalInset @<=@ layoutRowLeft)
   ensure (layoutRowLeft @+@ layoutRowWidth @<=@ layoutRightInset)
   ensure (layoutTargetTop @+@ layoutCell @<=@ layoutProbeTop)
@@ -480,10 +510,10 @@ constrainSearchLayout = do
   ensure (elementProbeLeft @+@ layoutProbeSize @<=@ layoutRightInset)
   case layoutUsesMaxSize of
     True -> do
-      ensure (layoutCell @==@ layoutMaxCell)
+      ensure (layoutLargeMinCell @<=@ layoutCell)
       case exampleElementCount <= 1 of
         True  -> ensure (layoutGap @==@ (num 0 :: LayoutExpr))
-        False -> ensure (layoutGap @==@ layoutMaxGap)
+        False -> ensure (layoutLargeMinGap @<=@ layoutGap)
     False -> do
       ensure (layoutGap @==@ layoutCell @*@ layoutGapRatio)
       ensure (layoutRowWidth @==@ layoutAvailableWidth)
@@ -501,7 +531,7 @@ valueLeft ref =
   case ref of
     BlockRef blockId ->
       case blockId of
-        0 -> layoutCenter @-@ (layoutCell @/@ (num 2 :: LayoutExpr))
+        0 -> layoutStageCenter @-@ (layoutCell @/@ (num 2 :: LayoutExpr))
         _ ->
           layoutRowLeft
             @+@ ((num (fromIntegral (blockId - 1)) :: LayoutExpr) @*@ layoutStep)
@@ -515,8 +545,8 @@ valueHeight = valueSize
 valueNodeStyle :: EmptyStyleDraft %1 -> Style
 valueNodeStyle draft =
   draft
-    |> setFillOnce (Hsl (num 205) (num 0.2) (num 0.95))
-    |> setStrokeOnce (Hsl (num 205) (num 0.5) (num 0.34))
+    |> setFillOnce (Hsl valueHue (num 0.2) valueFillLightness)
+    |> setStrokeOnce (Hsl valueHue (num 0.5) (num 0.34))
     |> setStrokeWidthOnce (num 2)
     |> setRadiusOnce valueRadius
     |> setFontSizeOnce valueFontSize
@@ -530,8 +560,8 @@ valueNodeStyle draft =
 probeNodeStyle :: EmptyStyleDraft %1 -> Style
 probeNodeStyle draft =
   draft
-    |> setFillOnce (Hsl (num 205) (num 0.2) (num 0.95))
-    |> setStrokeOnce (Hsl (num 205) (num 0.5) (num 0.34))
+    |> setFillOnce (Hsl valueHue (num 0.2) valueFillLightness)
+    |> setStrokeOnce (Hsl valueHue (num 0.5) (num 0.34))
     |> setStrokeWidthOnce (num 2)
     |> setZIndexOnce (num 1)
     |> setRadiusOnce probeRadius
@@ -546,8 +576,8 @@ probeNodeStyle draft =
 matchNodeStyle :: EmptyStyleDraft %1 -> Style
 matchNodeStyle draft =
   draft
-    |> setFillOnce (Hsl (num 48) (num 0.78) (num 0.91))
-    |> setStrokeOnce (Hsl (num 48) (num 0.74) (num 0.34))
+    |> setFillOnce (Hsl decisionHue (num 0.78) decisionFillLightness)
+    |> setStrokeOnce (Hsl decisionHue (num 0.74) (num 0.34))
     |> setStrokeWidthOnce (num 2)
     |> setZIndexOnce (num 2)
     |> setRadiusOnce valueRadius
@@ -684,7 +714,7 @@ instance ViewEvent Compare where
             LayoutUse renderedMatch1 matchCenterX <- takeCenterX renderedMatch
             LayoutUse renderedMatch2 matchTop <- takeTop renderedMatch1
             LayoutUse element1 elementBottom <- takeBottom element
-            ensure (matchCenterX @==@ layoutCenter)
+            ensure (matchCenterX @==@ layoutStageCenter)
             ensure (matchTop @==@ elementBottom @+@ matchGap)
             checkpoint
             remove target
