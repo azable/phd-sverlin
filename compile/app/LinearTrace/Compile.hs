@@ -137,15 +137,22 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
 --------------------------------------------------------------------------------
 compileFrames ::
      Map C.BlockId RenderBlock -> [V.ViewStep events] -> CompileM [RenderFrame]
-compileFrames blocksById = traverse (compileFrame blocksById)
+compileFrames blocksById steps = do
+  framesByStep <- traverse (compileStepFrames blocksById) steps
+  pure (concat framesByStep)
 
-compileFrame ::
-     Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM RenderFrame
-compileFrame blocksById step =
+compileStepFrames ::
+     Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM [RenderFrame]
+compileStepFrames blocksById step =
   case step of
-    V.ViewStep _recordedEvent _nodes _constraints renderIntents -> do
-      patches <- compileRenderIntents blocksById renderIntents
-      pure RenderFrame {framePatches = patches}
+    V.ViewStep _recordedEvent _nodes _constraints renderFrames ->
+      traverse (compileRenderFrame blocksById) renderFrames
+
+compileRenderFrame ::
+     Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM RenderFrame
+compileRenderFrame blocksById renderIntents = do
+  patches <- compileRenderIntents blocksById renderIntents
+  pure RenderFrame {framePatches = patches}
 
 compileRenderIntents ::
      Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM [RenderPatch]

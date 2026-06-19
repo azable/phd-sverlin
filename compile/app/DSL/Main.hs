@@ -320,20 +320,26 @@ instance PrintEvent SearchExhausted where
 layoutCanvasWidth :: LayoutExpr
 layoutCanvasWidth = num 800
 
+layoutCanvasHeight :: LayoutExpr
+layoutCanvasHeight = num 600
+
 layoutAvailableWidth :: LayoutExpr
 layoutAvailableWidth = num 704
 
 layoutTargetTop :: LayoutExpr
-layoutTargetTop = num 88
+layoutTargetTop = num 48
+
+layoutVerticalGap :: LayoutExpr
+layoutVerticalGap = layoutCell @*@ (num 0.72 :: LayoutExpr)
+
+layoutProbeTop :: LayoutExpr
+layoutProbeTop = layoutTargetTop @+@ layoutCell @+@ layoutVerticalGap
+
+layoutMatchTop :: LayoutExpr
+layoutMatchTop = layoutProbeTop @+@ layoutCell @+@ matchGap
 
 layoutListTop :: LayoutExpr
-layoutListTop = num 244
-
-layoutCompareTop :: LayoutExpr
-layoutCompareTop =
-  layoutTargetTop
-    @+@ (((layoutListTop @-@ layoutTargetTop) @-@ layoutCell)
-           @/@ (num 2 :: LayoutExpr))
+layoutListTop = layoutMatchTop @+@ matchHeight @+@ layoutVerticalGap
 
 layoutMaxCell :: LayoutExpr
 layoutMaxCell = num 58
@@ -437,6 +443,12 @@ constrainSearchLayout = do
        @==@ layoutCenter)
   ensure (layoutHorizontalInset @<=@ layoutRowLeft)
   ensure (layoutRowLeft @+@ layoutRowWidth @<=@ layoutRightInset)
+  ensure (layoutTargetTop @+@ layoutCell @<=@ layoutProbeTop)
+  ensure (layoutProbeTop @+@ layoutCell @<=@ layoutMatchTop)
+  ensure (layoutMatchTop @+@ matchHeight @<=@ layoutListTop)
+  ensure (layoutListTop @+@ layoutCell @<=@ layoutCanvasHeight)
+  ensure (layoutHorizontalInset @<=@ targetProbeLeft)
+  ensure (elementProbeLeft @+@ layoutCell @<=@ layoutRightInset)
   case layoutUsesMaxSize of
     True -> do
       ensure (layoutCell @==@ layoutMaxCell)
@@ -528,7 +540,7 @@ defineTargetProbeNode _ref visual0 = do
   LayoutUse visual3 probeWidthX <- takeWidth visual2
   LayoutUse visual4 probeHeightY <- takeHeight visual3
   ensure (probeLeftX @==@ targetProbeLeft)
-  ensure (probeTopY @==@ layoutCompareTop)
+  ensure (probeTopY @==@ layoutProbeTop)
   ensure (probeWidthX @==@ valueSize)
   ensure (probeHeightY @==@ valueHeight)
   return visual4
@@ -544,7 +556,7 @@ defineElementProbeNode _ref visual0 = do
   LayoutUse visual3 probeWidthX <- takeWidth visual2
   LayoutUse visual4 probeHeightY <- takeHeight visual3
   ensure (probeLeftX @==@ elementProbeLeft)
-  ensure (probeTopY @==@ layoutCompareTop)
+  ensure (probeTopY @==@ layoutProbeTop)
   ensure (probeWidthX @==@ valueSize)
   ensure (probeHeightY @==@ valueHeight)
   return visual4
@@ -629,6 +641,7 @@ instance ViewEvent Compare where
             LayoutUse element2 elementBottom <- takeBottom element1
             ensure (matchCenterX @==@ elementCenterX)
             ensure (matchTop @==@ elementBottom @+@ matchGap)
+            checkpoint
             remove target
             remove element2
             complete renderedMatch2
@@ -640,7 +653,7 @@ instance ViewEvent Found where
         case tokens of
           VCons matchToken VNil -> do
             match <- decideVisual matchToken
-            complete match
+            remove match
 
 instance ViewEvent NotThisOne where
   viewEvent event tokens =
@@ -668,8 +681,8 @@ instance ViewEvent FinishFound where
           VCons targetToken (VCons elementToken VNil) -> do
             target <- destroyVisual targetToken
             element <- destroyVisual elementToken
-            complete target
-            complete element
+            remove target
+            remove element
 
 instance ViewEvent DiscardRemaining where
   viewEvent event tokens =
@@ -687,4 +700,4 @@ instance ViewEvent SearchExhausted where
         case tokens of
           VCons targetToken VNil -> do
             target <- destroyVisual targetToken
-            complete target
+            remove target
