@@ -137,57 +137,32 @@ compileFrame ::
      Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM RenderFrame
 compileFrame blocksById step =
   case step of
-    V.ViewStep recordedEvent _nodes _constraints -> do
-      patches <- compileRecordedEvent blocksById recordedEvent
+    V.ViewStep _recordedEvent _nodes _constraints renderIntents -> do
+      patches <- compileRenderIntents blocksById renderIntents
       pure RenderFrame {framePatches = patches}
 
-compileRecordedEvent ::
-     Map C.BlockId RenderBlock
-  -> C.RecordedEvent events
-  -> CompileM [RenderPatch]
-compileRecordedEvent blocksById recordedEvent =
-  case recordedEvent of
-    C.RecordedEvent _event audit -> compileAudit blocksById audit
-
-compileAudit ::
-     Map C.BlockId RenderBlock -> C.Audit acts -> CompileM [RenderPatch]
-compileAudit blocksById audit =
-  case audit of
-    C.EmptyAudit -> pure []
-    step C.:> rest -> do
-      here <- compileAuditStep blocksById step
-      later <- compileAudit blocksById rest
-      pure (here ++ later)
+compileRenderIntents ::
+     Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM [RenderPatch]
+compileRenderIntents blocksById intents = do
+  patches <- traverse (compileRenderIntent blocksById) intents
+  pure (concat patches)
 
 --------------------------------------------------------------------------------
--- Audit-step lifecycle semantics
+-- Visual lifecycle semantics
 --------------------------------------------------------------------------------
-compileAuditStep ::
-     Map C.BlockId RenderBlock -> C.AuditStep act -> CompileM [RenderPatch]
-compileAuditStep blocksById step =
-  case step of
-    C.CreateStep node -> createNode blocksById node
-    C.ObserveStep _node -> pure []
-    C.InspectStep _node -> pure []
-    C.UseStep node -> destroyNode blocksById node
-    C.CopyStep _original copy' -> createNode blocksById copy'
-    C.ReplaceStep old incoming output ->
-      replaceNode blocksById old incoming output
-    C.ComputeStep node -> createNode blocksById node
-    C.DestroyStep node -> destroyNode blocksById node
-    C.SealStep _owner _child -> pure []
-    C.UnsealStep _owner _child -> pure []
-    C.DecideStep _node -> pure []
+compileRenderIntent ::
+     Map C.BlockId RenderBlock -> V.RenderIntent -> CompileM [RenderPatch]
+compileRenderIntent blocksById intent =
+  case intent of
+    V.RenderFresh ref -> createRef blocksById ref
+    V.RenderContinue source target -> continueRef blocksById source target
+    V.RenderFork source target -> forkRef blocksById source target
+    V.RenderRemove ref -> destroyRef blocksById ref
 
---------------------------------------------------------------------------------
--- Primitive lifecycle operations
---------------------------------------------------------------------------------
-type TraceNode tag = C.BlockSnapshot tag
-
-createNode ::
-     Map C.BlockId RenderBlock -> TraceNode tag -> CompileM [RenderPatch]
-createNode blocksById node = do
-  block <- requireBlock blocksById node
+createRef ::
+     Map C.BlockId RenderBlock -> C.BlockRef tag -> CompileM [RenderPatch]
+createRef blocksById ref = do
+  block <- requireBlockByRef blocksById ref
   let renderId = freshRenderIdForBlock (renderBlockId block)
   modify
     (\st ->
@@ -197,10 +172,10 @@ createNode blocksById node = do
          })
   pure [RenderCreate renderId block]
 
-destroyNode ::
-     Map C.BlockId RenderBlock -> TraceNode tag -> CompileM [RenderPatch]
-destroyNode blocksById node = do
-  block <- requireBlock blocksById node
+destroyRef ::
+     Map C.BlockId RenderBlock -> C.BlockRef tag -> CompileM [RenderPatch]
+destroyRef blocksById ref = do
+  block <- requireBlockByRef blocksById ref
   renderId <- requireLineage block
   modify
     (\st ->
@@ -208,32 +183,35 @@ destroyNode blocksById node = do
          {lineageByBlock = Map.delete (renderBlockId block) (lineageByBlock st)})
   pure [RenderDestroy renderId block]
 
-replaceNode ::
+continueRef ::
      Map C.BlockId RenderBlock
-  -> TraceNode tag
-  -> TraceNode tag
-  -> TraceNode tag
+  -> C.BlockRef source
+  -> C.BlockRef target
   -> CompileM [RenderPatch]
-replaceNode blocksById oldNode incomingNode outputNode = do
-  oldBlock <- requireBlock blocksById oldNode
-  incomingBlock <- requireBlock blocksById incomingNode
-  outputBlock <- requireBlock blocksById outputNode
-  oldRenderId <- requireLineage oldBlock
-  incomingRenderId <- requireLineage incomingBlock
+continueRef blocksById sourceRef targetRef = do
+  sourceBlock <- requireBlockByRef blocksById sourceRef
+  targetBlock <- requireBlockByRef blocksById targetRef
+  renderId <- requireLineage sourceBlock
   modify
     (\st ->
        st
          { lineageByBlock =
              Map.insert
-               (renderBlockId outputBlock)
-               incomingRenderId
-               (Map.delete
-                  (renderBlockId incomingBlock)
-                  (Map.delete (renderBlockId oldBlock) (lineageByBlock st)))
+               (renderBlockId targetBlock)
+               renderId
+               (Map.delete (renderBlockId sourceBlock) (lineageByBlock st))
          })
-  let destroyOld =
-        [RenderDestroy oldRenderId oldBlock | oldRenderId /= incomingRenderId]
-  pure (destroyOld ++ [RenderUpdate incomingRenderId incomingBlock outputBlock])
+  pure [RenderUpdate renderId sourceBlock targetBlock]
+
+forkRef ::
+     Map C.BlockId RenderBlock
+  -> C.BlockRef source
+  -> C.BlockRef target
+  -> CompileM [RenderPatch]
+forkRef blocksById sourceRef targetRef = do
+  sourceBlock <- requireBlockByRef blocksById sourceRef
+  _sourceRenderId <- requireLineage sourceBlock
+  createRef blocksById targetRef
 
 --------------------------------------------------------------------------------
 -- Lineage lookup
@@ -319,20 +297,12 @@ materializedHslToCss alpha hsl =
       a = formatCssNumber (clamp 0 1 alpha)
    in "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ " / " ++ a ++ ")"
 
---------------------------------------------------------------------------------
--- Render lookup helpers
---------------------------------------------------------------------------------
-requireBlock :: BlockLookup -> TraceNode tag -> CompileM RenderBlock
-requireBlock blocksById node =
-  case Map.lookup (nodeBlockId node) blocksById of
+requireBlockByRef :: BlockLookup -> C.BlockRef tag -> CompileM RenderBlock
+requireBlockByRef blocksById ref =
+  case Map.lookup (blockIdOfRef ref) blocksById of
     Just block -> pure block
     Nothing ->
-      lift (Left ("no materialized block for B" ++ show (nodeBlockId node)))
-
-nodeBlockId :: TraceNode tag -> C.BlockId
-nodeBlockId node =
-  case node of
-    C.BlockSnapshot ref _payload _view -> blockIdOfRef ref
+      lift (Left ("no materialized block for B" ++ show (blockIdOfRef ref)))
 
 blockIdOfRef :: C.BlockRef tag -> C.BlockId
 blockIdOfRef ref =

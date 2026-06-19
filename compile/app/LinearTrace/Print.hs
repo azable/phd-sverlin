@@ -448,7 +448,7 @@ viewTraceStepBox ::
   -> Box.Box
 viewTraceStepBox showDetails solution ix step =
   case step of
-    V.ViewStep event nodes constraints ->
+    V.ViewStep event nodes constraints _renderIntents ->
       if showDetails
         then spacedVcat (eventBox ix event : detailBoxes)
         else eventBox ix event

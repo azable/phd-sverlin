@@ -3,6 +3,8 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
+{-# LANGUAGE LinearTypes          #-}
+{-# LANGUAGE RebindableSyntax     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
@@ -14,8 +16,44 @@ module LinearTrace.View
   , ViewNode(..)
   , ViewStep(..)
   , BlockView(..)
-  , ViewAudit(..)
-  , ViewAuditStep(..)
+  , ViewToken(..)
+  , ViewTokens(..)
+  , RenderIntent(..)
+  , Visual
+  , Unrendered
+  , Rendered
+  , D0
+  , D1
+  , D2
+  , Available
+  , Taken
+  , NewVisual
+  , LiveVisual
+  , visualBlock
+  , createVisual
+  , observeVisual
+  , inspectVisual
+  , useVisual
+  , copyVisual
+  , replaceVisual
+  , computeVisual
+  , destroyVisual
+  , sealVisual
+  , unsealVisual
+  , decideVisual
+  , fresh
+  , continueFrom
+  , forkFrom
+  , remove
+  , discard
+  , takeLeft
+  , takeRight
+  , takeWidth
+  , takeCenterX
+  , takeTop
+  , takeBottom
+  , takeHeight
+  , takeCenterY
   , viewNodes
   , viewSteps
   , viewConstraints
@@ -118,16 +156,14 @@ module LinearTrace.View
   , materializeViewNode
   ) where
 
-import           Control.Monad.Reader
-import           Control.Monad.Writer.Strict
-import           Data.Foldable               (for_)
 import           Data.Proxy                  (Proxy (..))
+import           Control.Functor.Linear      hiding ((<$>), (<*>))
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver
 import           LinearTrace.View.Style
-import           Prelude
+import qualified Prelude                     as P
+import           Prelude.Linear
 
-infixr 5 :&
 infixl 6 |=|
 --------------------------------------------------------------------------------
 -- Block views
@@ -139,10 +175,10 @@ data BlockView tag = BlockView
   }
 
 instance HasBounds (BlockView tag) where
-  top = top . blockStyle
-  left = left . blockStyle
-  width = width . blockStyle
-  height = height . blockStyle
+  top block = top (blockStyle block)
+  left block = left (blockStyle block)
+  width block = width (blockStyle block)
+  height block = height (blockStyle block)
 
 instance HasStyle (BlockView tag) where
   style = blockStyle
@@ -152,7 +188,11 @@ data ViewNode where
 
 data ViewStep events where
   ViewStep
-    :: C.RecordedEvent events -> [ViewNode] -> [Constraint] -> ViewStep events
+    :: C.RecordedEvent events
+    -> [ViewNode]
+    -> [Constraint]
+    -> [RenderIntent]
+    -> ViewStep events
 
 data ViewGraph events = ViewGraph
   { viewNodes       :: [ViewNode]
@@ -176,40 +216,85 @@ data MaterializedViewNode where
 materializeBlockView ::
      Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
 materializeBlockView solution block =
-  MaterializedBlockView (blockRef block) (blockLabel block)
-    <$> materializeStyle solution (blockStyle block)
+  P.fmap
+    (MaterializedBlockView (blockRef block) (blockLabel block))
+    (materializeStyle solution (blockStyle block))
 
 materializeViewNode :: Solution -> ViewNode -> Maybe MaterializedViewNode
 materializeViewNode solution node =
   case node of
     BlockViewNode block ->
-      MaterializedBlockViewNode <$> materializeBlockView solution block
+      P.fmap MaterializedBlockViewNode (materializeBlockView solution block)
 
 --------------------------------------------------------------------------------
--- View audit
+-- Linear view tokens
 --------------------------------------------------------------------------------
-data ViewAuditStep act where
-  VCreated :: BlockView tag -> ViewAuditStep (C.Create tag)
-  VObserved :: BlockView tag -> ViewAuditStep (C.Observe tag)
-  VInspected :: BlockView tag -> ViewAuditStep (C.Inspect tag)
-  VUsed :: BlockView tag -> ViewAuditStep (C.Use tag)
-  VCopied :: BlockView tag -> BlockView tag -> ViewAuditStep (C.Copy tag)
-  VReplaced
+data ViewToken act where
+  CreatedToken :: BlockView tag -> ViewToken (C.Create tag)
+  ObservedToken :: BlockView tag -> ViewToken (C.Observe tag)
+  InspectedToken :: BlockView tag -> ViewToken (C.Inspect tag)
+  UsedToken :: BlockView tag -> ViewToken (C.Use tag)
+  CopiedToken :: BlockView tag -> BlockView tag -> ViewToken (C.Copy tag)
+  ReplacedToken
     :: BlockView tag
     -> BlockView tag
     -> BlockView tag
-    -> ViewAuditStep (C.Replace tag)
-  VComputed :: BlockView tag -> ViewAuditStep (C.Compute tag)
-  VDestroyed :: BlockView tag -> ViewAuditStep (C.Destroy tag)
-  VSealed
-    :: BlockView owner -> BlockView tag -> ViewAuditStep (C.Seal owner tag)
-  VUnsealed
-    :: BlockView owner -> BlockView tag -> ViewAuditStep (C.Unseal owner tag)
-  VDecided :: BlockView tag -> ViewAuditStep (C.Decide tag)
+    -> ViewToken (C.Replace tag)
+  ComputedToken :: BlockView tag -> ViewToken (C.Compute tag)
+  DestroyedToken :: BlockView tag -> ViewToken (C.Destroy tag)
+  SealedToken
+    :: BlockView owner -> BlockView tag -> ViewToken (C.Seal owner tag)
+  UnsealedToken
+    :: BlockView owner -> BlockView tag -> ViewToken (C.Unseal owner tag)
+  DecidedToken :: BlockView tag -> ViewToken (C.Decide tag)
 
-data ViewAudit acts where
-  VDone :: ViewAudit '[]
-  (:&) :: ViewAuditStep act -> ViewAudit acts -> ViewAudit (act : acts)
+data ViewTokens acts where
+  VNil :: ViewTokens '[]
+  VCons :: ViewToken act %1 -> ViewTokens acts %1 -> ViewTokens (act : acts)
+
+data RenderIntent where
+  RenderFresh :: C.BlockRef tag -> RenderIntent
+  RenderContinue :: C.BlockRef old -> C.BlockRef tag -> RenderIntent
+  RenderFork :: C.BlockRef old -> C.BlockRef tag -> RenderIntent
+  RenderRemove :: C.BlockRef tag -> RenderIntent
+
+data Unrendered
+data Rendered
+data D0
+data D1
+data D2
+data Available
+data Taken
+
+type family Inc dof where
+  Inc D0 = D1
+  Inc D1 = D2
+
+class CanSpend dof
+
+instance CanSpend D0
+instance CanSpend D1
+
+data Visual state dx l r w cx dy t b h cy tag where
+  Visual :: BlockView tag -> Visual state dx l r w cx dy t b h cy tag
+
+type NewVisual tag =
+  Visual Unrendered D0 Available Available Available Available D0 Available Available Available Available tag
+
+type LiveVisual tag =
+  Visual Rendered D0 Available Available Available Available D0 Available Available Available Available tag
+
+visualBlock :: Visual state dx l r w cx dy t b h cy tag -> BlockView tag
+visualBlock (Visual block) = block
+
+instance HasBounds (Visual state dx l r w cx dy t b h cy tag) where
+  top visual = top (visualBlock visual)
+  left visual = left (visualBlock visual)
+  width visual = width (visualBlock visual)
+  height visual = height (visualBlock visual)
+
+instance HasStyle (Visual state dx l r w cx dy t b h cy tag) where
+  style visual = style (visualBlock visual)
 
 --------------------------------------------------------------------------------
 -- Reader + writer builder
@@ -231,41 +316,95 @@ defaultViewEnv =
     }
 
 data ViewOutput events = ViewOutput
-  { emittedNodes       :: [ViewNode]
-  , emittedConstraints :: [Constraint]
-  , emittedInitialVars :: [InitialVar]
+  { emittedNodes         :: [ViewNode]
+  , emittedConstraints   :: [Constraint]
+  , emittedInitialVars   :: [InitialVar]
+  , emittedRenderIntents :: [RenderIntent]
   }
 
 instance Semigroup (ViewOutput events) where
-  ViewOutput nodesA constraintsA initialsA <> ViewOutput nodesB constraintsB initialsB =
+  ViewOutput nodesA constraintsA initialsA intentsA <> ViewOutput nodesB constraintsB initialsB intentsB =
     ViewOutput
       { emittedNodes = nodesA ++ nodesB
       , emittedConstraints = constraintsA ++ constraintsB
       , emittedInitialVars = initialsA ++ initialsB
+      , emittedRenderIntents = intentsA ++ intentsB
       }
 
 instance Monoid (ViewOutput events) where
   mempty =
     ViewOutput
-      {emittedNodes = [], emittedConstraints = [], emittedInitialVars = []}
+      { emittedNodes = []
+      , emittedConstraints = []
+      , emittedInitialVars = []
+      , emittedRenderIntents = []
+      }
 
-type ViewBuilder events a = ReaderT ViewEnv (Writer (ViewOutput events)) a
+data ViewState events where
+  ViewState :: Ur ViewEnv %1 -> Ur (ViewOutput events) %1 -> ViewState events
+
+type ViewBuilder events a = State (ViewState events) a
+
+instance Consumable (ViewState events) where
+  consume (ViewState env output) =
+    consume env `lseq` consume output
+
+instance Dupable (ViewState events) where
+  dup2 (ViewState env output) =
+    case dup2 env of
+      (env1, env2) ->
+        case dup2 output of
+          (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
+
+runViewBuilder :: ViewEnv -> ViewBuilder events a -> (a, ViewOutput events)
+runViewBuilder env builder =
+  let (result, ViewState _ (Ur output)) =
+        runState builder (ViewState (Ur env) (Ur mempty))
+   in (result, output)
+
+askViewEnv :: ViewBuilder events (Ur ViewEnv)
+askViewEnv = do
+  ViewState (Ur env) output <- get
+  put (ViewState (Ur env) output)
+  return (Ur env)
+
+tellOutput :: ViewOutput events -> ViewBuilder events ()
+tellOutput newOutput = do
+  ViewState env (Ur oldOutput) <- get
+  put (ViewState env (Ur (oldOutput <> newOutput)))
+
+traverseView_ :: (a -> ViewBuilder events ()) -> [a] -> ViewBuilder events ()
+traverseView_ action values =
+  case values of
+    [] -> return ()
+    value:rest -> do
+      action value
+      traverseView_ action rest
+
+traverseMaybeView_ :: (a -> ViewBuilder events ()) -> Maybe a -> ViewBuilder events ()
+traverseMaybeView_ action value =
+  case value of
+    Nothing -> return ()
+    Just x  -> action x
 
 ensure :: Constraint -> ViewBuilder events ()
-ensure constraint = tell mempty {emittedConstraints = [constraint]}
+ensure constraint = tellOutput mempty {emittedConstraints = [constraint]}
 
 encourage :: Expr ty -> ViewBuilder events ()
-encourage objective = tell mempty {emittedConstraints = [minimize objective]}
+encourage objective = tellOutput mempty {emittedConstraints = [minimize objective]}
 
 registerInitialVar :: InitialVar -> ViewBuilder events ()
-registerInitialVar initial = tell mempty {emittedInitialVars = [initial]}
+registerInitialVar initial = tellOutput mempty {emittedInitialVars = [initial]}
 
 registerInitialRange :: Expr ty -> Range -> ViewBuilder events ()
 registerInitialRange expr range =
-  for_ (initialRangeFor expr range) registerInitialVar
+  traverseMaybeView_ registerInitialVar (initialRangeFor expr range)
 
 emitViewNode :: ViewNode -> ViewBuilder events ()
-emitViewNode node = tell mempty {emittedNodes = [node]}
+emitViewNode node = tellOutput mempty {emittedNodes = [node]}
+
+emitRenderIntent :: RenderIntent -> ViewBuilder events ()
+emitRenderIntent intent = tellOutput mempty {emittedRenderIntents = [intent]}
 
 --------------------------------------------------------------------------------
 -- Constraint constructors/helpers
@@ -273,10 +412,10 @@ emitViewNode node = tell mempty {emittedNodes = [node]}
 global :: SymbolicType ty => String -> Expr ty
 global name = var ("global." ++ name)
 
-canvasBounds :: ViewBuilder events BoundsExpr
+canvasBounds :: ViewBuilder events (Ur BoundsExpr)
 canvasBounds = do
-  env <- ask
-  pure (Bounds (num 0) (num 0) (canvasWidth env) (canvasHeight env))
+  Ur env <- askViewEnv
+  pure (Ur (Bounds (num 0) (num 0) (canvasWidth env) (canvasHeight env)))
 
 contains ::
      (HasBounds outer, HasBounds inner)
@@ -291,7 +430,7 @@ contains outer inner = do
 
 insideCanvas :: HasBounds block => block -> ViewBuilder events ()
 insideCanvas block = do
-  canvas <- canvasBounds
+  Ur canvas <- canvasBounds
   canvas `contains` block
 
 between ::
@@ -363,83 +502,198 @@ viewNewBlock block0 = do
   viewBlock block
 
 --------------------------------------------------------------------------------
--- Automatic block visualisation from audit steps
+-- Explicit token handling
 --------------------------------------------------------------------------------
-class ViewAction act where
-  viewAction :: ViewAuditStep act -> ViewBuilder events ()
+createVisual :: ViewToken (C.Create tag) %1 -> ViewBuilder events (Ur (NewVisual tag))
+createVisual token =
+  case token of
+    CreatedToken block -> pure (Ur (Visual block))
 
-instance ViewBlock tag => ViewAction (C.Create tag) where
-  viewAction step =
-    case step of
-      VCreated block -> viewNewBlock block
+observeVisual :: ViewToken (C.Observe tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+observeVisual token =
+  case token of
+    ObservedToken block -> pure (Ur (Visual block))
 
-instance ViewAction (C.Observe tag) where
-  viewAction _ = pure ()
+inspectVisual :: ViewToken (C.Inspect tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+inspectVisual token =
+  case token of
+    InspectedToken block -> pure (Ur (Visual block))
 
-instance ViewAction (C.Inspect tag) where
-  viewAction _ = pure ()
+useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+useVisual token =
+  case token of
+    UsedToken block -> pure (Ur (Visual block))
 
-instance ViewAction (C.Use tag) where
-  viewAction _ = pure ()
+copyVisual ::
+     ViewToken (C.Copy tag)
+     %1 -> ViewBuilder events (Ur (LiveVisual tag, NewVisual tag))
+copyVisual token =
+  case token of
+    CopiedToken original copy' -> pure (Ur (Visual original, Visual copy'))
 
-instance ViewBlock tag => ViewAction (C.Copy tag) where
-  viewAction step =
-    case step of
-      VCopied _original copy' -> viewNewBlock copy'
+replaceVisual ::
+     ViewToken (C.Replace tag)
+     %1 -> ViewBuilder events (Ur (LiveVisual tag, LiveVisual tag, NewVisual tag))
+replaceVisual token =
+  case token of
+    ReplacedToken old incoming output ->
+      pure (Ur (Visual old, Visual incoming, Visual output))
 
-instance ViewBlock tag => ViewAction (C.Replace tag) where
-  viewAction step =
-    case step of
-      VReplaced _old _incoming output -> viewNewBlock output
+computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder events (Ur (NewVisual tag))
+computeVisual token =
+  case token of
+    ComputedToken block -> pure (Ur (Visual block))
 
-instance ViewBlock tag => ViewAction (C.Compute tag) where
-  viewAction step =
-    case step of
-      VComputed block -> viewNewBlock block
+destroyVisual :: ViewToken (C.Destroy tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+destroyVisual token =
+  case token of
+    DestroyedToken block -> pure (Ur (Visual block))
 
-instance ViewAction (C.Destroy tag) where
-  viewAction _ = pure ()
+sealVisual ::
+     ViewToken (C.Seal owner tag)
+     %1 -> ViewBuilder events (Ur (LiveVisual owner, LiveVisual tag))
+sealVisual token =
+  case token of
+    SealedToken owner child -> pure (Ur (Visual owner, Visual child))
 
-instance ViewAction (C.Seal owner tag) where
-  viewAction _ = pure ()
+unsealVisual ::
+     ViewToken (C.Unseal owner tag)
+     %1 -> ViewBuilder events (Ur (LiveVisual owner, LiveVisual tag))
+unsealVisual token =
+  case token of
+    UnsealedToken owner child -> pure (Ur (Visual owner, Visual child))
 
-instance ViewAction (C.Unseal owner tag) where
-  viewAction _ = pure ()
+decideVisual :: ViewToken (C.Decide tag) %1 -> ViewBuilder events (Ur (LiveVisual tag))
+decideVisual token =
+  case token of
+    DecidedToken block -> pure (Ur (Visual block))
 
-instance ViewAction (C.Decide tag) where
-  viewAction _ = pure ()
+fresh ::
+     ViewBlock tag
+  => Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> ViewBuilder events (Ur (Visual Rendered dx l r w cx dy t b h cy tag))
+fresh visual =
+  case visual of
+    Visual block -> do
+      viewNewBlock block
+      emitRenderIntent (RenderFresh (blockRef block))
+      pure (Ur (Visual block))
 
-class ViewActions acts where
-  viewActions :: ViewAudit acts -> ViewBuilder events ()
+continueFrom ::
+     ViewBlock tag
+  => LiveVisual oldTag
+  -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> ViewBuilder events (Ur (Visual Rendered dx l r w cx dy t b h cy tag))
+continueFrom source visual =
+  case visual of
+    Visual block -> do
+      viewNewBlock block
+      emitRenderIntent (RenderContinue (blockRef (visualBlock source)) (blockRef block))
+      pure (Ur (Visual block))
 
-instance ViewActions '[] where
-  viewActions VDone = pure ()
+forkFrom ::
+     ViewBlock tag
+  => LiveVisual oldTag
+  -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> ViewBuilder events (Ur (Visual Rendered dx l r w cx dy t b h cy tag))
+forkFrom source visual =
+  case visual of
+    Visual block -> do
+      viewNewBlock block
+      emitRenderIntent (RenderFork (blockRef (visualBlock source)) (blockRef block))
+      pure (Ur (Visual block))
 
-instance (ViewAction act, ViewActions acts) => ViewActions (act : acts) where
-  viewActions (step :& rest) = do
-    viewAction step
-    viewActions rest
+remove :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
+remove visual =
+  case visual of
+    Visual block -> emitRenderIntent (RenderRemove (blockRef block))
+
+discard :: Visual state dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
+discard visual =
+  case visual of
+    Visual _ -> pure ()
+
+takeLeft ::
+     CanSpend dx
+  => Visual state dx Available r w cx dy t b h cy tag
+     %1 -> (Visual state (Inc dx) Taken r w cx dy t b h cy tag, LayoutExpr)
+takeLeft visual =
+  case visual of
+    Visual block -> (Visual block, left block)
+
+takeRight ::
+     CanSpend dx
+  => Visual state dx l Available w cx dy t b h cy tag
+     %1 -> (Visual state (Inc dx) l Taken w cx dy t b h cy tag, LayoutExpr)
+takeRight visual =
+  case visual of
+    Visual block -> (Visual block, right block)
+
+takeWidth ::
+     CanSpend dx
+  => Visual state dx l r Available cx dy t b h cy tag
+     %1 -> (Visual state (Inc dx) l r Taken cx dy t b h cy tag, LayoutExpr)
+takeWidth visual =
+  case visual of
+    Visual block -> (Visual block, width block)
+
+takeCenterX ::
+     CanSpend dx
+  => Visual state dx l r w Available dy t b h cy tag
+     %1 -> (Visual state (Inc dx) l r w Taken dy t b h cy tag, LayoutExpr)
+takeCenterX visual =
+  case visual of
+    Visual block -> (Visual block, centerX block)
+
+takeTop ::
+     CanSpend dy
+  => Visual state dx l r w cx dy Available b h cy tag
+     %1 -> (Visual state dx l r w cx (Inc dy) Taken b h cy tag, LayoutExpr)
+takeTop visual =
+  case visual of
+    Visual block -> (Visual block, top block)
+
+takeBottom ::
+     CanSpend dy
+  => Visual state dx l r w cx dy t Available h cy tag
+     %1 -> (Visual state dx l r w cx (Inc dy) t Taken h cy tag, LayoutExpr)
+takeBottom visual =
+  case visual of
+    Visual block -> (Visual block, bottom block)
+
+takeHeight ::
+     CanSpend dy
+  => Visual state dx l r w cx dy t b Available cy tag
+     %1 -> (Visual state dx l r w cx (Inc dy) t b Taken cy tag, LayoutExpr)
+takeHeight visual =
+  case visual of
+    Visual block -> (Visual block, height block)
+
+takeCenterY ::
+     CanSpend dy
+  => Visual state dx l r w cx dy t b h Available tag
+     %1 -> (Visual state dx l r w cx (Inc dy) t b h Taken tag, LayoutExpr)
+takeCenterY visual =
+  case visual of
+    Visual block -> (Visual block, centerY block)
 
 --------------------------------------------------------------------------------
 -- Per-event visualisation
 --------------------------------------------------------------------------------
 class ViewEvent event where
-  viewEvent :: event -> ViewAudit (C.Actions event) -> ViewBuilder events ()
+  viewEvent :: event -> ViewTokens (C.Actions event) %1 -> ViewBuilder events ()
 
 class ViewEvents choices where
   viewUnion ::
-       C.EventChoice choices acts -> ViewAudit acts -> ViewBuilder events ()
+       C.EventChoice choices acts -> ViewTokens acts %1 -> ViewBuilder events ()
 
 instance ViewEvents '[] where
-  viewUnion union _ = case union of {}
+  viewUnion union _tokens = case union of {}
 
-instance (ViewEvent event, ViewActions (C.Actions event), ViewEvents rest) =>
-         ViewEvents (event : rest) where
+instance (ViewEvent event, ViewEvents rest) => ViewEvents (event : rest) where
   viewUnion union audit =
     case union of
-      C.Here event -> do
-        viewActions audit
-        viewEvent event audit
+      C.Here event -> viewEvent event audit
       C.There rest -> viewUnion rest audit
 
 --------------------------------------------------------------------------------
@@ -448,11 +702,11 @@ instance (ViewEvent event, ViewActions (C.Actions event), ViewEvents rest) =>
 buildCSP :: ViewEvents events => C.TraceGraph events -> ViewGraph events
 buildCSP graph@(C.TraceGraph _blocks events) =
   let env = buildViewEnv graph
-      stepOutputs = map (viewRecordedEvent env) events
-      viewSteps' = map stepView stepOutputs
-      nodes = concatMap stepNodes stepOutputs
-      constraints = concatMap stepConstraints stepOutputs
-      initialVars = concatMap stepInitialVars stepOutputs
+      stepOutputs = P.map (viewRecordedEvent env) events
+      viewSteps' = P.map stepView stepOutputs
+      nodes = P.concatMap stepNodes stepOutputs
+      constraints = P.concatMap stepConstraints stepOutputs
+      initialVars = P.concatMap stepInitialVars stepOutputs
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
@@ -480,12 +734,13 @@ viewRecordedEvent ::
   -> C.RecordedEvent events
   -> BuiltViewStep events
 viewRecordedEvent env recordedEvent@(C.RecordedEvent event audit) =
-  let output = execWriter (runReaderT (viewUnion event (viewAudit audit)) env)
+  let (_result, output) = runViewBuilder env (viewUnion event (viewTokens audit))
       nodes = emittedNodes output
       constraints = emittedConstraints output
       initialVars = emittedInitialVars output
+      renderIntents = emittedRenderIntents output
    in BuiltViewStep
-        { stepView = ViewStep recordedEvent nodes constraints
+        { stepView = ViewStep recordedEvent nodes constraints renderIntents
         , stepNodes = nodes
         , stepConstraints = constraints
         , stepInitialVars = initialVars
@@ -515,49 +770,49 @@ blockVar :: SymbolicType ty => C.BlockRef tag -> String -> Expr ty
 blockVar (C.BlockRef blockId) field = var ("B" ++ show blockId ++ "." ++ field)
 
 --------------------------------------------------------------------------------
--- Core audit -> view audit
+-- Core audit -> view tokens
 --------------------------------------------------------------------------------
-viewAudit :: C.Audit acts -> ViewAudit acts
-viewAudit audit =
+viewTokens :: C.Audit acts -> ViewTokens acts
+viewTokens audit =
   case audit of
-    C.EmptyAudit   -> VDone
-    step C.:> rest -> viewAuditStep step :& viewAudit rest
+    C.EmptyAudit   -> VNil
+    step C.:> rest -> VCons (viewToken step) (viewTokens rest)
 
-viewAuditStep :: C.AuditStep act -> ViewAuditStep act
-viewAuditStep step =
+viewToken :: C.AuditStep act -> ViewToken act
+viewToken step =
   case step of
-    C.CreateStep snapshot -> VCreated (blockViewOfSnapshot snapshot)
-    C.ObserveStep snapshot -> VObserved (blockViewOfSnapshot snapshot)
-    C.InspectStep snapshot -> VInspected (blockViewOfSnapshot snapshot)
-    C.UseStep snapshot -> VUsed (blockViewOfSnapshot snapshot)
+    C.CreateStep snapshot -> CreatedToken (blockViewOfSnapshot snapshot)
+    C.ObserveStep snapshot -> ObservedToken (blockViewOfSnapshot snapshot)
+    C.InspectStep snapshot -> InspectedToken (blockViewOfSnapshot snapshot)
+    C.UseStep snapshot -> UsedToken (blockViewOfSnapshot snapshot)
     C.CopyStep original copy' ->
-      VCopied (blockViewOfSnapshot original) (blockViewOfSnapshot copy')
+      CopiedToken (blockViewOfSnapshot original) (blockViewOfSnapshot copy')
     C.ReplaceStep old incoming output ->
-      VReplaced
+      ReplacedToken
         (blockViewOfSnapshot old)
         (blockViewOfSnapshot incoming)
         (blockViewOfSnapshot output)
-    C.ComputeStep snapshot -> VComputed (blockViewOfSnapshot snapshot)
-    C.DestroyStep snapshot -> VDestroyed (blockViewOfSnapshot snapshot)
+    C.ComputeStep snapshot -> ComputedToken (blockViewOfSnapshot snapshot)
+    C.DestroyStep snapshot -> DestroyedToken (blockViewOfSnapshot snapshot)
     C.SealStep owner child ->
-      VSealed (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
+      SealedToken (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
     C.UnsealStep owner child ->
-      VUnsealed (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
-    C.DecideStep snapshot -> VDecided (blockViewOfSnapshot snapshot)
+      UnsealedToken (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
+    C.DecideStep snapshot -> DecidedToken (blockViewOfSnapshot snapshot)
 
 --------------------------------------------------------------------------------
 -- Style bounds / registration
 --------------------------------------------------------------------------------
 registerInitialStyleBounds :: Style -> ViewBuilder events ()
 registerInitialStyleBounds style' = do
-  env <- ask
+  Ur env <- askViewEnv
   let canvasW = canvasWidthValue env
       canvasH = canvasHeightValue env
   registerInitialRange (left style') (Range 0 canvasW)
   registerInitialRange (top style') (Range 0 canvasH)
   registerInitialRange (width style') (Range 20 (max 20 (canvasW / 4)))
   registerInitialRange (height style') (Range 20 (max 20 (canvasH / 4)))
-  mapM_ registerInitialVar (styleInitialVars style')
+  traverseView_ registerInitialVar (styleInitialVars style')
 
 constrainStyle :: Style -> ViewBuilder events ()
-constrainStyle style' = mapM_ ensure (styleConstraints style')
+constrainStyle style' = traverseView_ ensure (styleConstraints style')
