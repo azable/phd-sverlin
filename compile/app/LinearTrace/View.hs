@@ -32,6 +32,7 @@ module LinearTrace.View
   , LiveVisual
   , ViewDefinition(..)
   , LayoutUse(..)
+  , (|>)
   , StyleDraft
   , EmptyStyleDraft
   , finalizeStyle
@@ -433,6 +434,11 @@ data ViewDefinition tag where
 data LayoutUse visual where
   LayoutUse :: visual %1 -> LayoutExpr -> LayoutUse visual
 
+infixl 1 |>
+
+(|>) :: a %1 -> (a %1 -> b) -> b
+value |> next = next value
+
 visualBlock :: Visual state dx l r w cx dy t b h cy tag -> BlockView tag
 visualBlock (Visual block) = block
 
@@ -762,66 +768,66 @@ discard visual =
 takeLeft ::
      CanSpend dx
   => Visual state dx Available r w cx dy t b h cy tag
-     %1 -> LayoutUse (Visual state (Inc dx) Taken r w cx dy t b h cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) Taken r w cx dy t b h cy tag))
 takeLeft visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (left block)
+    Visual block -> pure (LayoutUse (Visual block) (left block))
 
 takeRight ::
      CanSpend dx
   => Visual state dx l Available w cx dy t b h cy tag
-     %1 -> LayoutUse (Visual state (Inc dx) l Taken w cx dy t b h cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l Taken w cx dy t b h cy tag))
 takeRight visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (right block)
+    Visual block -> pure (LayoutUse (Visual block) (right block))
 
 takeWidth ::
      CanSpend dx
   => Visual state dx l r Available cx dy t b h cy tag
-     %1 -> LayoutUse (Visual state (Inc dx) l r Taken cx dy t b h cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l r Taken cx dy t b h cy tag))
 takeWidth visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (width block)
+    Visual block -> pure (LayoutUse (Visual block) (width block))
 
 takeCenterX ::
      CanSpend dx
   => Visual state dx l r w Available dy t b h cy tag
-     %1 -> LayoutUse (Visual state (Inc dx) l r w Taken dy t b h cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l r w Taken dy t b h cy tag))
 takeCenterX visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (centerX block)
+    Visual block -> pure (LayoutUse (Visual block) (centerX block))
 
 takeTop ::
      CanSpend dy
   => Visual state dx l r w cx dy Available b h cy tag
-     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) Taken b h cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) Taken b h cy tag))
 takeTop visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (top block)
+    Visual block -> pure (LayoutUse (Visual block) (top block))
 
 takeBottom ::
      CanSpend dy
   => Visual state dx l r w cx dy t Available h cy tag
-     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) t Taken h cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t Taken h cy tag))
 takeBottom visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (bottom block)
+    Visual block -> pure (LayoutUse (Visual block) (bottom block))
 
 takeHeight ::
      CanSpend dy
   => Visual state dx l r w cx dy t b Available cy tag
-     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) t b Taken cy tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t b Taken cy tag))
 takeHeight visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (height block)
+    Visual block -> pure (LayoutUse (Visual block) (height block))
 
 takeCenterY ::
      CanSpend dy
   => Visual state dx l r w cx dy t b h Available tag
-     %1 -> LayoutUse (Visual state dx l r w cx (Inc dy) t b h Taken tag)
+     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t b h Taken tag))
 takeCenterY visual =
   case visual of
-    Visual block -> LayoutUse (Visual block) (centerY block)
+    Visual block -> pure (LayoutUse (Visual block) (centerY block))
 
 --------------------------------------------------------------------------------
 -- Per-event visualisation

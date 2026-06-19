@@ -432,58 +432,34 @@ valueHeight :: LayoutExpr
 valueHeight = valueSize
 
 valueNodeStyle :: EmptyStyleDraft %1 -> Style
-valueNodeStyle draft0 =
-  case setFillOnce (Hsl (num 205) (num 0.2) (num 0.95)) draft0 of
-    draft1 ->
-      case setStrokeOnce (Hsl (num 205) (num 0.5) (num 0.34)) draft1 of
-        draft2 ->
-          case setStrokeWidthOnce (num 2) draft2 of
-            draft3 ->
-              case setRadiusOnce valueRadius draft3 of
-                draft4 ->
-                  case setFontSizeOnce valueFontSize draft4 of
-                    draft5 ->
-                      case setFontFamilyOnce
-                             "ui-monospace, SFMono-Regular, Menlo, monospace"
-                             draft5 of
-                        draft6 ->
-                          case setFontWeightOnce FontWeightBold draft6 of
-                            draft7 ->
-                              case setTextAlignOnce TextAlignCenter draft7 of
-                                draft8 ->
-                                  case setWhiteSpaceOnce WhiteSpaceNoWrap draft8 of
-                                    draft9 ->
-                                      finalizeStyle
-                                        (setCssClassOnce
-                                           "trace-value-block"
-                                           draft9)
+valueNodeStyle draft =
+  draft
+    |> setFillOnce (Hsl (num 205) (num 0.2) (num 0.95))
+    |> setStrokeOnce (Hsl (num 205) (num 0.5) (num 0.34))
+    |> setStrokeWidthOnce (num 2)
+    |> setRadiusOnce valueRadius
+    |> setFontSizeOnce valueFontSize
+    |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
+    |> setFontWeightOnce FontWeightBold
+    |> setTextAlignOnce TextAlignCenter
+    |> setWhiteSpaceOnce WhiteSpaceNoWrap
+    |> setCssClassOnce "trace-value-block"
+    |> finalizeStyle
 
 matchNodeStyle :: EmptyStyleDraft %1 -> Style
-matchNodeStyle draft0 =
-  case setFillOnce (Hsl (num 142) (num 0.38) (num 0.9)) draft0 of
-    draft1 ->
-      case setStrokeOnce (Hsl (num 142) (num 0.48) (num 0.32)) draft1 of
-        draft2 ->
-          case setStrokeWidthOnce (num 2) draft2 of
-            draft3 ->
-              case setRadiusOnce valueRadius draft3 of
-                draft4 ->
-                  case setFontSizeOnce matchFontSize draft4 of
-                    draft5 ->
-                      case setFontFamilyOnce
-                             "ui-monospace, SFMono-Regular, Menlo, monospace"
-                             draft5 of
-                        draft6 ->
-                          case setFontWeightOnce FontWeightBold draft6 of
-                            draft7 ->
-                              case setTextAlignOnce TextAlignCenter draft7 of
-                                draft8 ->
-                                  case setWhiteSpaceOnce WhiteSpaceNoWrap draft8 of
-                                    draft9 ->
-                                      finalizeStyle
-                                        (setCssClassOnce
-                                           "trace-match-block"
-                                           draft9)
+matchNodeStyle draft =
+  draft
+    |> setFillOnce (Hsl (num 142) (num 0.38) (num 0.9))
+    |> setStrokeOnce (Hsl (num 142) (num 0.48) (num 0.32))
+    |> setStrokeWidthOnce (num 2)
+    |> setRadiusOnce valueRadius
+    |> setFontSizeOnce matchFontSize
+    |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
+    |> setFontWeightOnce FontWeightBold
+    |> setTextAlignOnce TextAlignCenter
+    |> setWhiteSpaceOnce WhiteSpaceNoWrap
+    |> setCssClassOnce "trace-match-block"
+    |> finalizeStyle
 
 defineValueNode :: BlockView Value -> ViewBuilder events ()
 defineValueNode block = do
@@ -538,19 +514,15 @@ instance ViewEvent Compare where
             element <- inspectVisual elementToken
             match <- computeVisual matchToken
             renderedMatch <- fresh matchViewDefinition match
-            case takeCenterX renderedMatch of
-              LayoutUse renderedMatch1 matchCenterX ->
-                case takeCenterX element of
-                  LayoutUse element1 elementCenterX ->
-                    case takeTop renderedMatch1 of
-                      LayoutUse renderedMatch2 matchTop ->
-                        case takeBottom element1 of
-                          LayoutUse element2 elementBottom -> do
-                            ensure (matchCenterX @==@ elementCenterX)
-                            ensure (matchTop @==@ elementBottom @+@ matchGap)
-                            discard target
-                            discard element2
-                            discard renderedMatch2
+            LayoutUse renderedMatch1 matchCenterX <- takeCenterX renderedMatch
+            LayoutUse element1 elementCenterX <- takeCenterX element
+            LayoutUse renderedMatch2 matchTop <- takeTop renderedMatch1
+            LayoutUse element2 elementBottom <- takeBottom element1
+            ensure (matchCenterX @==@ elementCenterX)
+            ensure (matchTop @==@ elementBottom @+@ matchGap)
+            discard target
+            discard element2
+            discard renderedMatch2
 
 instance ViewEvent Found where
   viewEvent event tokens =
