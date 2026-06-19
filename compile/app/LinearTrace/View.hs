@@ -75,7 +75,7 @@ module LinearTrace.View
   , continueFrom
   , forkFrom
   , remove
-  , discard
+  , complete
   , takeLeft
   , takeRight
   , takeWidth
@@ -838,8 +838,8 @@ remove visual =
   case visual of
     Visual block -> emitRenderIntent (RenderRemove (blockRef block))
 
-discard :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
-discard visual =
+complete :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
+complete visual =
   case visual of
     Visual _ -> pure ()
 

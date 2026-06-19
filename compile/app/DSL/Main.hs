@@ -526,7 +526,7 @@ instance ViewEvent CreateTarget where
           VCons targetToken VNil -> do
             target <- createVisual targetToken
             renderedTarget <- fresh valueViewDefinition target
-            discard renderedTarget
+            complete renderedTarget
 
 instance ViewEvent CreateElement where
   viewEvent event tokens =
@@ -536,7 +536,7 @@ instance ViewEvent CreateElement where
           VCons elementToken VNil -> do
             element <- createVisual elementToken
             renderedElement <- fresh valueViewDefinition element
-            discard renderedElement
+            complete renderedElement
 
 instance ViewEvent Compare where
   viewEvent event tokens =
@@ -554,9 +554,9 @@ instance ViewEvent Compare where
             LayoutUse element2 elementBottom <- takeBottom element1
             ensure (matchCenterX @==@ elementCenterX)
             ensure (matchTop @==@ elementBottom @+@ matchGap)
-            discard target
-            discard element2
-            discard renderedMatch2
+            complete target
+            complete element2
+            complete renderedMatch2
 
 instance ViewEvent Found where
   viewEvent event tokens =
@@ -565,7 +565,7 @@ instance ViewEvent Found where
         case tokens of
           VCons matchToken VNil -> do
             match <- decideVisual matchToken
-            discard match
+            complete match
 
 instance ViewEvent NotThisOne where
   viewEvent event tokens =
@@ -593,8 +593,8 @@ instance ViewEvent FinishFound where
           VCons targetToken (VCons elementToken VNil) -> do
             target <- destroyVisual targetToken
             element <- destroyVisual elementToken
-            discard target
-            discard element
+            complete target
+            complete element
 
 instance ViewEvent DiscardRemaining where
   viewEvent event tokens =
@@ -612,4 +612,4 @@ instance ViewEvent SearchExhausted where
         case tokens of
           VCons targetToken VNil -> do
             target <- destroyVisual targetToken
-            discard target
+            complete target
