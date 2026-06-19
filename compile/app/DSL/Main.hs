@@ -439,6 +439,18 @@ valueSize = layoutCell
 valueHeight :: LayoutExpr
 valueHeight = valueSize
 
+type DefinedValueVisual =
+  Visual Rendered D2 Taken Available Taken Available D2 Taken Available Taken Available Value
+
+type DefinedMatchVisual =
+  Visual Rendered D1 Available Available Taken Available D1 Available Available Taken Available Match
+
+type ValueViewDefinition =
+  ViewDefinition Value D2 Taken Available Taken Available D2 Taken Available Taken Available
+
+type MatchViewDefinition =
+  ViewDefinition Match D1 Available Available Taken Available D1 Available Available Taken Available
+
 valueNodeStyle :: EmptyStyleDraft %1 -> Style
 valueNodeStyle draft =
   draft
@@ -469,24 +481,38 @@ matchNodeStyle draft =
     |> setCssClassOnce "trace-match-block"
     |> finalizeStyle
 
-defineValueNode :: BlockView Value -> ViewBuilder events ()
-defineValueNode block = do
+defineValueNode ::
+     BlockRef Value
+  -> LiveVisual Value
+     %1 -> ViewBuilder events DefinedValueVisual
+defineValueNode ref visual0 = do
   constrainSearchLayout
-  ensure (left block @==@ valueLeft (blockRef block))
-  ensure (top block @==@ valueTop (blockRef block))
-  ensure (width block @==@ valueSize)
-  ensure (height block @==@ valueHeight)
+  LayoutUse visual1 valueLeftX <- takeLeft visual0
+  LayoutUse visual2 valueTopY <- takeTop visual1
+  LayoutUse visual3 valueWidthX <- takeWidth visual2
+  LayoutUse visual4 valueHeightY <- takeHeight visual3
+  ensure (valueLeftX @==@ valueLeft ref)
+  ensure (valueTopY @==@ valueTop ref)
+  ensure (valueWidthX @==@ valueSize)
+  ensure (valueHeightY @==@ valueHeight)
+  return visual4
 
-defineMatchNode :: BlockView Match -> ViewBuilder events ()
-defineMatchNode block = do
+defineMatchNode ::
+     BlockRef Match
+  -> LiveVisual Match
+     %1 -> ViewBuilder events DefinedMatchVisual
+defineMatchNode _ref visual0 = do
   constrainSearchLayout
-  ensure (width block @==@ matchWidth)
-  ensure (height block @==@ matchHeight)
+  LayoutUse visual1 matchWidthX <- takeWidth visual0
+  LayoutUse visual2 matchHeightY <- takeHeight visual1
+  ensure (matchWidthX @==@ matchWidth)
+  ensure (matchHeightY @==@ matchHeight)
+  return visual2
 
-valueViewDefinition :: ViewDefinition Value
+valueViewDefinition :: ValueViewDefinition
 valueViewDefinition = ViewDefinition valueNodeStyle defineValueNode
 
-matchViewDefinition :: ViewDefinition Match
+matchViewDefinition :: MatchViewDefinition
 matchViewDefinition = ViewDefinition matchNodeStyle defineMatchNode
 
 --------------------------------------------------------------------------------

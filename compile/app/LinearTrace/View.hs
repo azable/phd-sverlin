@@ -19,8 +19,12 @@ module LinearTrace.View
     ViewGraph
   , ViewNode(..)
   , ViewStep(..)
-  , BlockView(..)
-  , ViewToken(..)
+  , BlockView
+  , blockViewRef
+  , blockViewLabel
+  , mapBlockViewStyleExprLeaves
+  , solvedBlockViewExprs
+  , ViewToken
   , ViewTokens(..)
   , RenderIntent(..)
   , Visual
@@ -56,7 +60,6 @@ module LinearTrace.View
   , setBorderStyleOnce
   , setWhiteSpaceOnce
   , setCssClassOnce
-  , visualBlock
   , createVisual
   , observeVisual
   , inspectVisual
@@ -87,8 +90,6 @@ module LinearTrace.View
   , viewInitialVars
   , -- * Styles
     Style
-  , HasStyle(..)
-  , HasBounds(..)
   , Bounds(..)
   , BoundsExpr
   , MaterializedBounds
@@ -235,6 +236,22 @@ materializeViewNode solution node =
   case node of
     BlockViewNode block ->
       P.fmap MaterializedBlockViewNode (materializeBlockView solution block)
+
+blockViewRef :: BlockView tag -> C.BlockRef tag
+blockViewRef = blockRef
+
+blockViewLabel :: BlockView tag -> C.PayloadView
+blockViewLabel = blockLabel
+
+mapBlockViewStyleExprLeaves ::
+     (forall (ty :: Type). String -> Expr ty -> a)
+  -> BlockView tag
+  -> [a]
+mapBlockViewStyleExprLeaves f block = mapStyleExprLeaves f (blockStyle block)
+
+solvedBlockViewExprs :: Solution -> BlockView tag -> [(String, Double)]
+solvedBlockViewExprs solution block =
+  solvedStyleExprs solution (blockStyle block)
 
 --------------------------------------------------------------------------------
 -- Linear view tokens
@@ -429,11 +446,14 @@ setCssClassOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setCssClass value style'))
 
-data ViewDefinition tag where
+data ViewDefinition tag dx l r w cx dy t b h cy where
   ViewDefinition
     :: (EmptyStyleDraft %1 -> Style)
-    -> (forall (events :: [Type]). BlockView tag -> ViewBuilder events ())
-    -> ViewDefinition tag
+    -> (forall (events :: [Type]).
+        C.BlockRef tag
+        -> LiveVisual tag
+           %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag))
+    -> ViewDefinition tag dx l r w cx dy t b h cy
 
 data LayoutUse visual where
   LayoutUse :: visual %1 -> OneExpr Layout %1 -> LayoutUse visual
@@ -563,9 +583,6 @@ infix 4 @>=@
 (@>=@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
 (@>=@) = relateExpr (\lhs rhs -> rhs S.@<=@ lhs)
 
-visualBlock :: Visual state dx l r w cx dy t b h cy tag -> BlockView tag
-visualBlock (Visual block) = block
-
 --------------------------------------------------------------------------------
 -- Reader + writer builder
 --------------------------------------------------------------------------------
@@ -685,10 +702,10 @@ emitRenderIntent intent = tellOutput mempty {emittedRenderIntents = [intent]}
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 defineNewBlock ::
-     forall tag (events :: [Type]).
-     ViewDefinition tag
+     forall tag dx l r w cx dy t b h cy (events :: [Type]).
+     ViewDefinition tag dx l r w cx dy t b h cy
      %1 -> BlockView tag
-  -> ViewBuilder events (Ur (BlockView tag))
+  -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
 defineNewBlock definition block0 =
   case definition of
     ViewDefinition styleDefinition viewDefinition -> do
@@ -705,8 +722,7 @@ defineNewBlock definition block0 =
       ensureRaw (S.num 0 S.@<=@ top block)
       ensureRaw (right block S.@<=@ canvasWidth env)
       ensureRaw (bottom block S.@<=@ canvasHeight env)
-      viewDefinition block
-      pure (Ur block)
+      viewDefinition (blockRef block) (Visual block)
 
 --------------------------------------------------------------------------------
 -- Explicit token handling
@@ -777,45 +793,45 @@ decideVisual token =
 
 fresh ::
      forall tag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag
-     %1 -> Visual Unrendered dx l r w cx dy t b h cy tag
+     ViewDefinition tag dx l r w cx dy t b h cy
+     %1 -> NewVisual tag
      %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
 fresh definition visual =
   case visual of
     Visual block -> do
-      Ur renderedBlock <- defineNewBlock definition block
+      rendered <- defineNewBlock definition block
       emitRenderIntent (RenderFresh (blockRef block))
-      pure (Visual renderedBlock)
+      pure rendered
 
 continueFrom ::
      forall tag oldTag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag
+     ViewDefinition tag dx l r w cx dy t b h cy
      %1 -> LiveVisual oldTag
-     %1 -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> NewVisual tag
      %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
 continueFrom definition source visual =
   case source of
     Visual sourceBlock ->
       case visual of
         Visual block -> do
-          Ur renderedBlock <- defineNewBlock definition block
+          rendered <- defineNewBlock definition block
           emitRenderIntent (RenderContinue (blockRef sourceBlock) (blockRef block))
-          pure (Visual renderedBlock)
+          pure rendered
 
 forkFrom ::
      forall tag oldTag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag
+     ViewDefinition tag dx l r w cx dy t b h cy
      %1 -> LiveVisual oldTag
-     %1 -> Visual Unrendered dx l r w cx dy t b h cy tag
+     %1 -> NewVisual tag
      %1 -> ViewBuilder events (LiveVisual oldTag, Visual Rendered dx l r w cx dy t b h cy tag)
 forkFrom definition source visual =
   case source of
     Visual sourceBlock ->
       case visual of
         Visual block -> do
-          Ur renderedBlock <- defineNewBlock definition block
+          rendered <- defineNewBlock definition block
           emitRenderIntent (RenderFork (blockRef sourceBlock) (blockRef block))
-          pure (Visual sourceBlock, Visual renderedBlock)
+          pure (Visual sourceBlock, rendered)
 
 remove :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
 remove visual =

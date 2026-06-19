@@ -253,15 +253,16 @@ blockViewBox block =
         $ rowBox
             [ fieldBox
                 blockListRefWidth
-                (renderBlockRefPlain (V.blockRef block))
-            , Box.text (renderPayloadView (V.blockLabel block))
+                (renderBlockRefPlain (V.blockViewRef block))
+            , Box.text (renderPayloadView (V.blockViewLabel block))
             ]
-    , styleBox (V.blockStyle block)
+    , blockStyleBox block
     ]
 
-styleBox :: V.Style -> Box.Box
-styleBox style =
-  stepSectionBox "style" $ tightVcat (V.mapStyleExprLeaves styleFieldBox style)
+blockStyleBox :: V.BlockView tag -> Box.Box
+blockStyleBox block =
+  stepSectionBox "style" $
+  tightVcat (V.mapBlockViewStyleExprLeaves styleFieldBox block)
 
 styleFieldBox :: String -> S.Expr ty -> Box.Box
 styleFieldBox name expr =
@@ -410,9 +411,9 @@ solveViewNodeExprs solution node =
 
 solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
 solveBlockViewExprs solution block =
-  let blockName = renderBlockRefPlain (V.blockRef block)
+  let blockName = renderBlockRefPlain (V.blockViewRef block)
    in [ SolvedExpr (blockName ++ "." ++ name) value
-      | (name, value) <- V.solvedStyleExprs solution (V.blockStyle block)
+      | (name, value) <- V.solvedBlockViewExprs solution block
       ]
 
 dedupeSolvedExprs :: [SolvedExpr] -> [SolvedExpr]
@@ -472,8 +473,8 @@ indentedViewNodeBox node =
   case node of
     V.BlockViewNode block ->
       rowBox
-        [ Box.text (renderBlockRefPlain (V.blockRef block))
-        , Box.text (renderPayloadView (V.blockLabel block))
+        [ Box.text (renderBlockRefPlain (V.blockViewRef block))
+        , Box.text (renderPayloadView (V.blockViewLabel block))
         ]
 
 --------------------------------------------------------------------------------
