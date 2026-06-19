@@ -1,18 +1,18 @@
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE EmptyCase            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE DataKinds              #-}
+{-# LANGUAGE EmptyCase              #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE KindSignatures       #-}
-{-# LANGUAGE LinearTypes          #-}
+{-# LANGUAGE GADTs                  #-}
+{-# LANGUAGE KindSignatures         #-}
+{-# LANGUAGE LinearTypes            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE RebindableSyntax     #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RankNTypes             #-}
+{-# LANGUAGE RebindableSyntax       #-}
+{-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE TypeOperators          #-}
+{-# LANGUAGE UndecidableInstances   #-}
 
 module LinearTrace.View
   ( -- * View graph
@@ -30,13 +30,19 @@ module LinearTrace.View
   , Visual
   , Unrendered
   , Rendered
-  , D0
-  , D1
-  , D2
+  , LayoutAttr(..)
   , Available
   , Taken
   , NewVisual
   , LiveVisual
+  , BoxAttrs
+  , SizeAttrs
+  , BoxVisual
+  , SizeVisual
+  , BoxDefinition
+  , SizeDefinition
+  , boxDefinition
+  , sizeDefinition
   , ViewDefinition(..)
   , LayoutUse(..)
   , OneExpr
@@ -156,8 +162,11 @@ module LinearTrace.View
   , materializeViewNode
   ) where
 
-import           Data.Kind                   (Type)
 import           Control.Functor.Linear      hiding ((<$>), (<*>))
+import qualified Data.Kind                   as K
+import           Data.Kind                   (Type)
+import           GHC.TypeLits                (ErrorMessage (..), Nat,
+                                              TypeError, type (+), type CmpNat)
 import qualified LinearTrace.Core            as C
 import           LinearTrace.Solver          hiding
                                              ( num
@@ -287,29 +296,156 @@ data RenderIntent where
 
 data Unrendered
 data Rendered
-data D0
-data D1
-data D2
 data Available
 data Taken
 
-type family Inc dof where
-  Inc D0 = D1
-  Inc D1 = D2
+data LayoutAttr
+  = AttrLeft
+  | AttrRight
+  | AttrWidth
+  | AttrCenterX
+  | AttrTop
+  | AttrBottom
+  | AttrHeight
+  | AttrCenterY
 
-class CanSpend dof
+data Axis = XAxis | YAxis
 
-instance CanSpend D0
-instance CanSpend D1
+type family AttrRank (attr :: LayoutAttr) :: Nat where
+  AttrRank AttrLeft = 0
+  AttrRank AttrRight = 1
+  AttrRank AttrWidth = 2
+  AttrRank AttrCenterX = 3
+  AttrRank AttrTop = 4
+  AttrRank AttrBottom = 5
+  AttrRank AttrHeight = 6
+  AttrRank AttrCenterY = 7
 
-data Visual state dx l r w cx dy t b h cy tag where
-  Visual :: BlockView tag -> Visual state dx l r w cx dy t b h cy tag
+type family Insert (attr :: LayoutAttr) (used :: [LayoutAttr]) :: [LayoutAttr] where
+  Insert attr '[] = '[attr]
+  Insert attr (current ': rest) =
+    InsertByRank (CmpNat (AttrRank attr) (AttrRank current)) attr current rest
+
+type family InsertByRank
+     (ordering :: Ordering)
+     (attr :: LayoutAttr)
+     (current :: LayoutAttr)
+     (rest :: [LayoutAttr])
+     :: [LayoutAttr] where
+  InsertByRank 'LT attr current rest = attr ': current ': rest
+  InsertByRank 'EQ attr current rest = current ': rest
+  InsertByRank 'GT attr current rest = current ': Insert attr rest
+
+type family AttrEq (lhs :: LayoutAttr) (rhs :: LayoutAttr) :: Bool where
+  AttrEq AttrLeft AttrLeft = 'True
+  AttrEq AttrRight AttrRight = 'True
+  AttrEq AttrWidth AttrWidth = 'True
+  AttrEq AttrCenterX AttrCenterX = 'True
+  AttrEq AttrTop AttrTop = 'True
+  AttrEq AttrBottom AttrBottom = 'True
+  AttrEq AttrHeight AttrHeight = 'True
+  AttrEq AttrCenterY AttrCenterY = 'True
+  AttrEq _ _ = 'False
+
+type family MemberAttr (attr :: LayoutAttr) (used :: [LayoutAttr]) :: Bool where
+  MemberAttr attr '[] = 'False
+  MemberAttr attr (current ': rest) =
+    MemberAttrStep (AttrEq attr current) attr rest
+
+type family MemberAttrStep
+     (found :: Bool)
+     (attr :: LayoutAttr)
+     (rest :: [LayoutAttr])
+     :: Bool where
+  MemberAttrStep 'True attr rest = 'True
+  MemberAttrStep 'False attr rest = MemberAttr attr rest
+
+type family AxisOf (attr :: LayoutAttr) :: Axis where
+  AxisOf AttrLeft = XAxis
+  AxisOf AttrRight = XAxis
+  AxisOf AttrWidth = XAxis
+  AxisOf AttrCenterX = XAxis
+  AxisOf AttrTop = YAxis
+  AxisOf AttrBottom = YAxis
+  AxisOf AttrHeight = YAxis
+  AxisOf AttrCenterY = YAxis
+
+type family AxisEq (lhs :: Axis) (rhs :: Axis) :: Bool where
+  AxisEq XAxis XAxis = 'True
+  AxisEq YAxis YAxis = 'True
+  AxisEq _ _ = 'False
+
+type family AxisCount (axis :: Axis) (used :: [LayoutAttr]) :: Nat where
+  AxisCount axis '[] = 0
+  AxisCount axis (attr ': rest) =
+    AxisCountStep (AxisEq axis (AxisOf attr)) axis rest
+
+type family AxisCountStep
+     (matches :: Bool)
+     (axis :: Axis)
+     (rest :: [LayoutAttr])
+     :: Nat where
+  AxisCountStep 'True axis rest = 1 + AxisCount axis rest
+  AxisCountStep 'False axis rest = AxisCount axis rest
+
+type family CanTakeAttr
+     (attr :: LayoutAttr)
+     (used :: [LayoutAttr])
+     :: K.Constraint where
+  CanTakeAttr attr used = CheckUnusedAttr (MemberAttr attr used) attr used
+
+type family CheckUnusedAttr
+     (alreadyUsed :: Bool)
+     (attr :: LayoutAttr)
+     (used :: [LayoutAttr])
+     :: K.Constraint where
+  CheckUnusedAttr 'True attr used =
+    TypeError
+      ( 'Text "Layout attribute "
+        ':<>: 'ShowType attr
+        ':<>: 'Text " has already been used for this visual."
+      )
+  CheckUnusedAttr 'False attr used =
+    CheckAxisRoom (CmpNat (AxisCount (AxisOf attr) used) 2) attr
+
+type family CheckAxisRoom
+     (ordering :: Ordering)
+     (attr :: LayoutAttr)
+     :: K.Constraint where
+  CheckAxisRoom 'LT attr = ()
+  CheckAxisRoom 'EQ attr =
+    TypeError
+      ( 'Text "Cannot use layout attribute "
+        ':<>: 'ShowType attr
+        ':<>: 'Text ": this visual already has two attributes on that axis."
+      )
+  CheckAxisRoom 'GT attr =
+    TypeError
+      ( 'Text "Cannot use layout attribute "
+        ':<>: 'ShowType attr
+        ':<>: 'Text ": this visual already has more than two attributes on that axis."
+      )
+
+data Visual state (used :: [LayoutAttr]) tag where
+  Visual :: BlockView tag -> Visual state used tag
 
 type NewVisual tag =
-  Visual Unrendered D0 Available Available Available Available D0 Available Available Available Available tag
+  Visual Unrendered '[] tag
 
 type LiveVisual tag =
-  Visual Rendered D0 Available Available Available Available D0 Available Available Available Available tag
+  Visual Rendered '[] tag
+
+type BoxAttrs =
+  '[AttrLeft, AttrWidth, AttrTop, AttrHeight]
+
+type SizeAttrs =
+  '[AttrWidth, AttrHeight]
+
+type BoxVisual tag =
+  Visual Rendered BoxAttrs tag
+
+type SizeVisual tag =
+  Visual Rendered SizeAttrs tag
 
 data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass where
   StyleDraft
@@ -446,14 +582,40 @@ setCssClassOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setCssClass value style'))
 
-data ViewDefinition tag dx l r w cx dy t b h cy where
+data ViewDefinition tag (used :: [LayoutAttr]) where
   ViewDefinition
     :: (EmptyStyleDraft %1 -> Style)
     -> (forall (events :: [Type]).
         C.BlockRef tag
         -> LiveVisual tag
-           %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag))
-    -> ViewDefinition tag dx l r w cx dy t b h cy
+           %1 -> ViewBuilder events (Visual Rendered used tag))
+    -> ViewDefinition tag used
+
+type BoxDefinition tag =
+  ViewDefinition tag BoxAttrs
+
+type SizeDefinition tag =
+  ViewDefinition tag SizeAttrs
+
+boxDefinition ::
+     (EmptyStyleDraft %1 -> Style)
+  -> (forall (events :: [Type]).
+      C.BlockRef tag
+      -> LiveVisual tag
+         %1 -> ViewBuilder events (BoxVisual tag))
+  -> BoxDefinition tag
+boxDefinition styleDefinition viewDefinition =
+  ViewDefinition styleDefinition viewDefinition
+
+sizeDefinition ::
+     (EmptyStyleDraft %1 -> Style)
+  -> (forall (events :: [Type]).
+      C.BlockRef tag
+      -> LiveVisual tag
+         %1 -> ViewBuilder events (SizeVisual tag))
+  -> SizeDefinition tag
+sizeDefinition styleDefinition viewDefinition =
+  ViewDefinition styleDefinition viewDefinition
 
 data LayoutUse visual where
   LayoutUse :: visual %1 -> OneExpr Layout %1 -> LayoutUse visual
@@ -702,10 +864,10 @@ emitRenderIntent intent = tellOutput mempty {emittedRenderIntents = [intent]}
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 defineNewBlock ::
-     forall tag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag dx l r w cx dy t b h cy
+     forall tag used (events :: [Type]).
+     ViewDefinition tag used
      %1 -> BlockView tag
-  -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
+  -> ViewBuilder events (Visual Rendered used tag)
 defineNewBlock definition block0 =
   case definition of
     ViewDefinition styleDefinition viewDefinition -> do
@@ -792,10 +954,10 @@ decideVisual token =
     DecidedToken block -> pure (Visual block)
 
 fresh ::
-     forall tag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag dx l r w cx dy t b h cy
+     forall tag used (events :: [Type]).
+     ViewDefinition tag used
      %1 -> NewVisual tag
-     %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
+     %1 -> ViewBuilder events (Visual Rendered used tag)
 fresh definition visual =
   case visual of
     Visual block -> do
@@ -804,11 +966,11 @@ fresh definition visual =
       pure rendered
 
 continueFrom ::
-     forall tag oldTag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag dx l r w cx dy t b h cy
+     forall tag oldTag used (events :: [Type]).
+     ViewDefinition tag used
      %1 -> LiveVisual oldTag
      %1 -> NewVisual tag
-     %1 -> ViewBuilder events (Visual Rendered dx l r w cx dy t b h cy tag)
+     %1 -> ViewBuilder events (Visual Rendered used tag)
 continueFrom definition source visual =
   case source of
     Visual sourceBlock ->
@@ -819,11 +981,11 @@ continueFrom definition source visual =
           pure rendered
 
 forkFrom ::
-     forall tag oldTag dx l r w cx dy t b h cy (events :: [Type]).
-     ViewDefinition tag dx l r w cx dy t b h cy
+     forall tag oldTag used (events :: [Type]).
+     ViewDefinition tag used
      %1 -> LiveVisual oldTag
      %1 -> NewVisual tag
-     %1 -> ViewBuilder events (LiveVisual oldTag, Visual Rendered dx l r w cx dy t b h cy tag)
+     %1 -> ViewBuilder events (LiveVisual oldTag, Visual Rendered used tag)
 forkFrom definition source visual =
   case source of
     Visual sourceBlock ->
@@ -833,76 +995,76 @@ forkFrom definition source visual =
           emitRenderIntent (RenderFork (blockRef sourceBlock) (blockRef block))
           pure (Visual sourceBlock, rendered)
 
-remove :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
+remove :: Visual Rendered used tag %1 -> ViewBuilder events ()
 remove visual =
   case visual of
     Visual block -> emitRenderIntent (RenderRemove (blockRef block))
 
-complete :: Visual Rendered dx l r w cx dy t b h cy tag %1 -> ViewBuilder events ()
+complete :: Visual Rendered used tag %1 -> ViewBuilder events ()
 complete visual =
   case visual of
     Visual _ -> pure ()
 
 takeLeft ::
-     CanSpend dx
-  => Visual state dx Available r w cx dy t b h cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) Taken r w cx dy t b h cy tag))
+     CanTakeAttr AttrLeft used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrLeft used) tag))
 takeLeft visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (left block))))
 
 takeRight ::
-     CanSpend dx
-  => Visual state dx l Available w cx dy t b h cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l Taken w cx dy t b h cy tag))
+     CanTakeAttr AttrRight used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrRight used) tag))
 takeRight visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (right block))))
 
 takeWidth ::
-     CanSpend dx
-  => Visual state dx l r Available cx dy t b h cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l r Taken cx dy t b h cy tag))
+     CanTakeAttr AttrWidth used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrWidth used) tag))
 takeWidth visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (width block))))
 
 takeCenterX ::
-     CanSpend dx
-  => Visual state dx l r w Available dy t b h cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state (Inc dx) l r w Taken dy t b h cy tag))
+     CanTakeAttr AttrCenterX used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrCenterX used) tag))
 takeCenterX visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerX block))))
 
 takeTop ::
-     CanSpend dy
-  => Visual state dx l r w cx dy Available b h cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) Taken b h cy tag))
+     CanTakeAttr AttrTop used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrTop used) tag))
 takeTop visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (top block))))
 
 takeBottom ::
-     CanSpend dy
-  => Visual state dx l r w cx dy t Available h cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t Taken h cy tag))
+     CanTakeAttr AttrBottom used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrBottom used) tag))
 takeBottom visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (bottom block))))
 
 takeHeight ::
-     CanSpend dy
-  => Visual state dx l r w cx dy t b Available cy tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t b Taken cy tag))
+     CanTakeAttr AttrHeight used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrHeight used) tag))
 takeHeight visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (height block))))
 
 takeCenterY ::
-     CanSpend dy
-  => Visual state dx l r w cx dy t b h Available tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state dx l r w cx (Inc dy) t b h Taken tag))
+     CanTakeAttr AttrCenterY used
+  => Visual state used tag
+     %1 -> ViewBuilder events (LayoutUse (Visual state (Insert AttrCenterY used) tag))
 takeCenterY visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerY block))))

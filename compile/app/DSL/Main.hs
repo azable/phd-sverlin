@@ -439,18 +439,6 @@ valueSize = layoutCell
 valueHeight :: LayoutExpr
 valueHeight = valueSize
 
-type DefinedValueVisual =
-  Visual Rendered D2 Taken Available Taken Available D2 Taken Available Taken Available Value
-
-type DefinedMatchVisual =
-  Visual Rendered D1 Available Available Taken Available D1 Available Available Taken Available Match
-
-type ValueViewDefinition =
-  ViewDefinition Value D2 Taken Available Taken Available D2 Taken Available Taken Available
-
-type MatchViewDefinition =
-  ViewDefinition Match D1 Available Available Taken Available D1 Available Available Taken Available
-
 valueNodeStyle :: EmptyStyleDraft %1 -> Style
 valueNodeStyle draft =
   draft
@@ -484,7 +472,7 @@ matchNodeStyle draft =
 defineValueNode ::
      BlockRef Value
   -> LiveVisual Value
-     %1 -> ViewBuilder events DefinedValueVisual
+     %1 -> ViewBuilder events (BoxVisual Value)
 defineValueNode ref visual0 = do
   constrainSearchLayout
   LayoutUse visual1 valueLeftX <- takeLeft visual0
@@ -500,7 +488,7 @@ defineValueNode ref visual0 = do
 defineMatchNode ::
      BlockRef Match
   -> LiveVisual Match
-     %1 -> ViewBuilder events DefinedMatchVisual
+     %1 -> ViewBuilder events (SizeVisual Match)
 defineMatchNode _ref visual0 = do
   constrainSearchLayout
   LayoutUse visual1 matchWidthX <- takeWidth visual0
@@ -509,11 +497,11 @@ defineMatchNode _ref visual0 = do
   ensure (matchHeightY @==@ matchHeight)
   return visual2
 
-valueViewDefinition :: ValueViewDefinition
-valueViewDefinition = ViewDefinition valueNodeStyle defineValueNode
+valueViewDefinition :: BoxDefinition Value
+valueViewDefinition = boxDefinition valueNodeStyle defineValueNode
 
-matchViewDefinition :: MatchViewDefinition
-matchViewDefinition = ViewDefinition matchNodeStyle defineMatchNode
+matchViewDefinition :: SizeDefinition Match
+matchViewDefinition = sizeDefinition matchNodeStyle defineMatchNode
 
 --------------------------------------------------------------------------------
 -- View events
