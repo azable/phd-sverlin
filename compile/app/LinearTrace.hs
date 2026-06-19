@@ -22,7 +22,6 @@ module LinearTrace
     Action
   , type Create
   , type Observe
-  , type Inspect
   , type Use
   , type Copy
   , type Replace
@@ -34,7 +33,6 @@ module LinearTrace
   , -- * Primitive operations
     create
   , observe
-  , inspect
   , use
   , copy
   , replace
@@ -49,7 +47,6 @@ module LinearTrace
   , EvidenceList(Done, (:~))
   , Created(..)
   , Observed(..)
-  , Inspected(..)
   , Used(..)
   , Copied(..)
   , Replaced(..)

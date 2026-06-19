@@ -32,7 +32,6 @@ module LinearTrace.Core
   , Action
   , type Create
   , type Observe
-  , type Inspect
   , type Use
   , type Copy
   , type Replace
@@ -46,7 +45,6 @@ module LinearTrace.Core
   , -- * Primitive operations
     create
   , observe
-  , inspect
   , use
   , copy
   , replace
@@ -61,7 +59,6 @@ module LinearTrace.Core
   , EvidenceList(..)
   , Created(..)
   , Observed(..)
-  , Inspected(..)
   , Used(..)
   , Copied(..)
   , Replaced(..)
@@ -193,7 +190,6 @@ data BlockRecord where
 data ActionKind
   = ActionCreate
   | ActionObserve
-  | ActionInspect
   | ActionUse
   | ActionCopy
   | ActionReplace
@@ -212,8 +208,6 @@ data UnsealTag owner tag
 type Create tag = Action 'ActionCreate tag
 
 type Observe tag = Action 'ActionObserve tag
-
-type Inspect tag = Action 'ActionInspect tag
 
 type Use tag = Action 'ActionUse tag
 
@@ -239,13 +233,6 @@ data Created tag where
 
 data Observed tag where
   Observed :: Block tag %1 -> Evidence (Observe tag) %1 -> Observed tag
-
-data Inspected tag where
-  Inspected
-    :: Block tag
-       %1 -> OneUse (Payload tag)
-       %1 -> Evidence (Inspect tag)
-       %1 -> Inspected tag
 
 data Used tag where
   Used :: OneUse (Payload tag) %1 -> Evidence (Use tag) %1 -> Used tag
@@ -286,7 +273,6 @@ data Decided tag where
 data AuditStep act where
   CreateStep :: BlockSnapshot tag -> AuditStep (Create tag)
   ObserveStep :: BlockSnapshot tag -> AuditStep (Observe tag)
-  InspectStep :: BlockSnapshot tag -> AuditStep (Inspect tag)
   UseStep :: BlockSnapshot tag -> AuditStep (Use tag)
   CopyStep :: BlockSnapshot tag -> BlockSnapshot tag -> AuditStep (Copy tag)
   ReplaceStep
@@ -510,18 +496,6 @@ observe (Block (Ur blockId) (Ur payload)) = do
     (Observed
        (Block (Ur blockId) (Ur payload))
        (makeAuditStep1 ObserveStep (Proxy :: Proxy tag) ref' payload))
-
-inspect ::
-     forall events tag. Traceable tag
-  => Block tag
-     %1 -> TraceBuilder events (Inspected tag)
-inspect (Block (Ur blockId) (Ur payload)) = do
-  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  return
-    (Inspected
-       (Block (Ur blockId) (Ur payload))
-       (OneUse payload)
-       (makeAuditStep1 InspectStep (Proxy :: Proxy tag) ref' payload))
 
 use ::
      forall events tag. Traceable tag

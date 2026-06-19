@@ -68,7 +68,6 @@ module LinearTrace.View
   , setCssClassOnce
   , createVisual
   , observeVisual
-  , inspectVisual
   , useVisual
   , copyVisual
   , replaceVisual
@@ -268,7 +267,6 @@ solvedBlockViewExprs solution block =
 data ViewToken act where
   CreatedToken :: BlockView tag -> ViewToken (C.Create tag)
   ObservedToken :: BlockView tag -> ViewToken (C.Observe tag)
-  InspectedToken :: BlockView tag -> ViewToken (C.Inspect tag)
   UsedToken :: BlockView tag -> ViewToken (C.Use tag)
   CopiedToken :: BlockView tag -> BlockView tag -> ViewToken (C.Copy tag)
   ReplacedToken
@@ -899,11 +897,6 @@ observeVisual token =
   case token of
     ObservedToken block -> pure (Visual block)
 
-inspectVisual :: ViewToken (C.Inspect tag) %1 -> ViewBuilder events (LiveVisual tag)
-inspectVisual token =
-  case token of
-    InspectedToken block -> pure (Visual block)
-
 useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder events (LiveVisual tag)
 useVisual token =
   case token of
@@ -1182,7 +1175,6 @@ viewToken step =
   case step of
     C.CreateStep snapshot -> CreatedToken (blockViewOfSnapshot snapshot)
     C.ObserveStep snapshot -> ObservedToken (blockViewOfSnapshot snapshot)
-    C.InspectStep snapshot -> InspectedToken (blockViewOfSnapshot snapshot)
     C.UseStep snapshot -> UsedToken (blockViewOfSnapshot snapshot)
     C.CopyStep original copy' ->
       CopiedToken (blockViewOfSnapshot original) (blockViewOfSnapshot copy')

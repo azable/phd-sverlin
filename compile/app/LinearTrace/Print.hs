@@ -57,9 +57,6 @@ createStyle = StepStyle "create" 82
 observeStyle :: StepStyle
 observeStyle = StepStyle "observe" 51
 
-inspectStyle :: StepStyle
-inspectStyle = StepStyle "inspect" 123
-
 useStyle :: StepStyle
 useStyle = StepStyle "use" 220
 
@@ -88,7 +85,6 @@ allStepStyles :: [StepStyle]
 allStepStyles =
   [ createStyle
   , observeStyle
-  , inspectStyle
   , useStyle
   , copyStyle
   , replaceStyle
@@ -516,7 +512,6 @@ auditStepBox step =
   case step of
     CreateStep snapshot -> snapshotStep1Box createStyle snapshot
     ObserveStep snapshot -> snapshotStep1Box observeStyle snapshot
-    InspectStep snapshot -> snapshotStep1Box inspectStyle snapshot
     UseStep snapshot -> snapshotStep1Box useStyle snapshot
     CopyStep original copy' -> snapshotStep2Box copyStyle original copy'
     ReplaceStep old incoming output ->

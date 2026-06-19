@@ -115,7 +115,12 @@ type instance Actions CreateElement = '[ Create Value]
 data Compare =
   Compare
 
-type instance Actions Compare = '[ Inspect Value, Inspect Value, Compute Match]
+data PrepareCompare =
+  PrepareCompare
+
+type instance Actions PrepareCompare = '[ Copy Value, Copy Value]
+
+type instance Actions Compare = '[ Use Value, Use Value, Compute Match]
 
 data Found =
   Found
@@ -150,6 +155,7 @@ type instance Actions SearchExhausted = '[ Destroy Value]
 type Events
   = '[ CreateTarget
      , CreateElement
+     , PrepareCompare
      , Compare
      , Found
      , NotThisOne
@@ -211,11 +217,14 @@ searchElements target elements =
 compareElement ::
      Block Value %1 -> Block Value %1 -> TraceBuilder Events Comparison
 compareElement target element = do
-  Inspected targetAfter targetPayload targetEvidence <- inspect target
-  Inspected elementAfter elementPayload elementEvidence <- inspect element
+  Copied targetAfter targetProbe targetCopyEvidence <- copy target
+  Copied elementAfter elementProbe elementCopyEvidence <- copy element
+  explain PrepareCompare (targetCopyEvidence :~ elementCopyEvidence :~ Done)
+  Used targetPayload targetUseEvidence <- use targetProbe
+  Used elementPayload elementUseEvidence <- use elementProbe
   Computed match matchEvidence <-
     compute (sameValue <$> targetPayload <*> elementPayload)
-  explain Compare (targetEvidence :~ elementEvidence :~ matchEvidence :~ Done)
+  explain Compare (targetUseEvidence :~ elementUseEvidence :~ matchEvidence :~ Done)
   decision <-
     decide
       (\payload ->
@@ -268,6 +277,11 @@ instance PrintEvent Compare where
     case event of
       Compare -> "Compare"
 
+instance PrintEvent PrepareCompare where
+  printEvent event =
+    case event of
+      PrepareCompare -> "Prepare compare"
+
 instance PrintEvent Found where
   printEvent event =
     case event of
@@ -312,6 +326,12 @@ layoutTargetTop = num 88
 
 layoutListTop :: LayoutExpr
 layoutListTop = num 244
+
+layoutCompareTop :: LayoutExpr
+layoutCompareTop =
+  layoutTargetTop
+    @+@ (((layoutListTop @-@ layoutTargetTop) @-@ layoutCell)
+           @/@ (num 2 :: LayoutExpr))
 
 layoutMaxCell :: LayoutExpr
 layoutMaxCell = num 58
@@ -363,6 +383,17 @@ layoutStep = layoutCell @+@ layoutGap
 
 layoutCenter :: LayoutExpr
 layoutCenter = layoutCanvasWidth @/@ (num 2 :: LayoutExpr)
+
+layoutProbeGap :: LayoutExpr
+layoutProbeGap = layoutCell @*@ (num 0.35 :: LayoutExpr)
+
+targetProbeLeft :: LayoutExpr
+targetProbeLeft =
+  layoutCenter @-@ layoutCell @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+
+elementProbeLeft :: LayoutExpr
+elementProbeLeft =
+  layoutCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 layoutHorizontalInset :: LayoutExpr
 layoutHorizontalInset =
@@ -485,6 +516,38 @@ defineValueNode ref visual0 = do
   ensure (valueHeightY @==@ valueHeight)
   return visual4
 
+defineTargetProbeNode ::
+     BlockRef Value
+  -> LiveVisual Value
+     %1 -> ViewBuilder events (BoxVisual Value)
+defineTargetProbeNode _ref visual0 = do
+  constrainSearchLayout
+  LayoutUse visual1 probeLeftX <- takeLeft visual0
+  LayoutUse visual2 probeTopY <- takeTop visual1
+  LayoutUse visual3 probeWidthX <- takeWidth visual2
+  LayoutUse visual4 probeHeightY <- takeHeight visual3
+  ensure (probeLeftX @==@ targetProbeLeft)
+  ensure (probeTopY @==@ layoutCompareTop)
+  ensure (probeWidthX @==@ valueSize)
+  ensure (probeHeightY @==@ valueHeight)
+  return visual4
+
+defineElementProbeNode ::
+     BlockRef Value
+  -> LiveVisual Value
+     %1 -> ViewBuilder events (BoxVisual Value)
+defineElementProbeNode _ref visual0 = do
+  constrainSearchLayout
+  LayoutUse visual1 probeLeftX <- takeLeft visual0
+  LayoutUse visual2 probeTopY <- takeTop visual1
+  LayoutUse visual3 probeWidthX <- takeWidth visual2
+  LayoutUse visual4 probeHeightY <- takeHeight visual3
+  ensure (probeLeftX @==@ elementProbeLeft)
+  ensure (probeTopY @==@ layoutCompareTop)
+  ensure (probeWidthX @==@ valueSize)
+  ensure (probeHeightY @==@ valueHeight)
+  return visual4
+
 defineMatchNode ::
      BlockRef Match
   -> LiveVisual Match
@@ -499,6 +562,12 @@ defineMatchNode _ref visual0 = do
 
 valueViewDefinition :: BoxDefinition Value
 valueViewDefinition = boxDefinition valueNodeStyle defineValueNode
+
+targetProbeViewDefinition :: BoxDefinition Value
+targetProbeViewDefinition = boxDefinition valueNodeStyle defineTargetProbeNode
+
+elementProbeViewDefinition :: BoxDefinition Value
+elementProbeViewDefinition = boxDefinition valueNodeStyle defineElementProbeNode
 
 matchViewDefinition :: SizeDefinition Match
 matchViewDefinition = sizeDefinition matchNodeStyle defineMatchNode
@@ -526,14 +595,31 @@ instance ViewEvent CreateElement where
             renderedElement <- fresh valueViewDefinition element
             complete renderedElement
 
+instance ViewEvent PrepareCompare where
+  viewEvent event tokens =
+    case event of
+      PrepareCompare ->
+        case tokens of
+          VCons targetToken (VCons elementToken VNil) -> do
+            (target, targetProbe) <- copyVisual targetToken
+            (element, elementProbe) <- copyVisual elementToken
+            (target1, renderedTargetProbe) <-
+              forkFrom targetProbeViewDefinition target targetProbe
+            (element1, renderedElementProbe) <-
+              forkFrom elementProbeViewDefinition element elementProbe
+            complete target1
+            complete element1
+            complete renderedTargetProbe
+            complete renderedElementProbe
+
 instance ViewEvent Compare where
   viewEvent event tokens =
     case event of
       Compare ->
         case tokens of
           VCons targetToken (VCons elementToken (VCons matchToken VNil)) -> do
-            target <- inspectVisual targetToken
-            element <- inspectVisual elementToken
+            target <- useVisual targetToken
+            element <- useVisual elementToken
             match <- computeVisual matchToken
             renderedMatch <- fresh matchViewDefinition match
             LayoutUse renderedMatch1 matchCenterX <- takeCenterX renderedMatch
@@ -542,8 +628,8 @@ instance ViewEvent Compare where
             LayoutUse element2 elementBottom <- takeBottom element1
             ensure (matchCenterX @==@ elementCenterX)
             ensure (matchTop @==@ elementBottom @+@ matchGap)
-            complete target
-            complete element2
+            remove target
+            remove element2
             complete renderedMatch2
 
 instance ViewEvent Found where
