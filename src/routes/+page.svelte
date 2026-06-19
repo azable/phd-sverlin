@@ -52,6 +52,11 @@
     exiting?: boolean;
   };
 
+  type PatchAnimationOptions = {
+    animateCreate: boolean;
+    animateDestroy: boolean;
+  };
+
   let {
     src = '/compiled.json',
     transitionMs = 300
@@ -121,8 +126,11 @@
   function prevStep() {
     if (!trace || currStep <= 0) return;
 
+    applyReverseFrame(trace.frames[currStep], {
+      animateCreate: true,
+      animateDestroy: true
+    });
     currStep -= 1;
-    rebuildToStep(currStep);
   }
 
   function rebuildToStep(step: number) {
@@ -145,7 +153,7 @@
 
   function applyFrame(
     patches: RenderPatch[],
-    options: { animateCreate: boolean; animateDestroy: boolean }
+    options: PatchAnimationOptions
   ) {
     transitionVersion += 1;
 
@@ -160,10 +168,24 @@
     elements = Array.from(next.values());
   }
 
+  function applyReverseFrame(patches: RenderPatch[], options: PatchAnimationOptions) {
+    transitionVersion += 1;
+
+    const next = new Map<RenderId, LiveElement>();
+
+    for (const element of elements) {
+      next.set(element.id, element);
+    }
+
+    applyReversePatchesToMap(next, patches, options);
+
+    elements = Array.from(next.values());
+  }
+
   function applyPatchesToMap(
     next: Map<RenderId, LiveElement>,
     patches: RenderPatch[],
-    options: { animateCreate: boolean; animateDestroy: boolean }
+    options: PatchAnimationOptions
   ) {
     for (const patch of patches) {
       switch (patch.kind) {
@@ -180,7 +202,7 @@
           });
 
           if (originStyle) {
-            scheduleCreateOrigin(patch.id, patch.element);
+            scheduleSettleElement(patch.id, patch.element);
           }
 
           break;
@@ -220,6 +242,72 @@
     }
   }
 
+  function applyReversePatchesToMap(
+    next: Map<RenderId, LiveElement>,
+    patches: RenderPatch[],
+    options: PatchAnimationOptions
+  ) {
+    for (const patch of patches.slice().reverse()) {
+      switch (patch.kind) {
+        case 'create': {
+          const current = next.get(patch.id);
+
+          if (options.animateCreate) {
+            next.set(patch.id, {
+              ...(current ?? patch.element),
+              style: patch.origin?.element.style ?? (current ?? patch.element).style,
+              id: patch.id,
+              exiting: true
+            });
+
+            scheduleDestroy(patch.id);
+          } else {
+            clearDestroyTimer(patch.id);
+            next.delete(patch.id);
+          }
+
+          break;
+        }
+
+        case 'update': {
+          clearDestroyTimer(patch.id);
+
+          next.set(patch.id, {
+            ...patch.from,
+            id: patch.id,
+            exiting: false
+          });
+
+          break;
+        }
+
+        case 'destroy': {
+          clearDestroyTimer(patch.id);
+
+          if (options.animateDestroy) {
+            const current = next.get(patch.id);
+
+            next.set(patch.id, {
+              ...(current ?? patch.element),
+              id: patch.id,
+              exiting: true
+            });
+
+            scheduleSettleElement(patch.id, patch.element);
+          } else {
+            next.set(patch.id, {
+              ...patch.element,
+              id: patch.id,
+              exiting: false
+            });
+          }
+
+          break;
+        }
+      }
+    }
+  }
+
   function scheduleDestroy(id: RenderId) {
     clearDestroyTimer(id);
 
@@ -231,7 +319,7 @@
     destroyTimers.set(id, timer);
   }
 
-  function scheduleCreateOrigin(id: RenderId, element: RenderElement) {
+  function scheduleSettleElement(id: RenderId, element: RenderElement) {
     const version = transitionVersion;
 
     void tick().then(() => {
