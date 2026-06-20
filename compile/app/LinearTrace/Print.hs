@@ -9,18 +9,18 @@ module LinearTrace.Print
   , printSolutionSummary
   ) where
 
-import           Data.Char              (isDigit)
-import           Data.List              (dropWhileEnd)
+import           Data.Char                 (isDigit)
+import           Data.List                 (dropWhileEnd)
 import           LinearTrace.Core.Internal
-import qualified LinearTrace.Solver     as S
-import qualified LinearTrace.View       as V
-import           Numeric                (showFFloat)
+import qualified LinearTrace.Solver        as S
+import qualified LinearTrace.View          as V
+import           Numeric                   (showFFloat)
 import           Prelude
-import           System.Console.ANSI    (ConsoleIntensity (..),
-                                         ConsoleLayer (..), SGR (..),
-                                         hNowSupportsANSI, setSGRCode)
-import           System.IO              (stdout)
-import qualified Text.PrettyPrint.Boxes as Box
+import           System.Console.ANSI       (ConsoleIntensity (..),
+                                            ConsoleLayer (..), SGR (..),
+                                            hNowSupportsANSI, setSGRCode)
+import           System.IO                 (stdout)
+import qualified Text.PrettyPrint.Boxes    as Box
 
 --------------------------------------------------------------------------------
 -- Layout constants
@@ -177,11 +177,7 @@ solutionSummaryBox solution =
     V.RandomSeed seed = S.solutionSeed solution
 
 viewSummaryBox ::
-     [V.ViewNode]
-  -> [V.ViewStep]
-  -> [S.Constraint]
-  -> [S.InitialVar]
-  -> Box.Box
+     [V.ViewNode] -> [V.ViewStep] -> [S.Constraint] -> [S.InitialVar] -> Box.Box
 viewSummaryBox nodes steps constraints initialVars =
   linesBox
     [ "View nodes: " ++ show (length nodes)
@@ -232,8 +228,8 @@ blockViewBox block =
 
 blockStyleBox :: V.BlockView tag -> Box.Box
 blockStyleBox block =
-  stepSectionBox "style" $
-  tightVcat (V.mapBlockViewStyleExprLeaves styleFieldBox block)
+  stepSectionBox "style"
+    $ tightVcat (V.mapBlockViewStyleExprLeaves styleFieldBox block)
 
 styleFieldBox :: String -> S.Expr ty -> Box.Box
 styleFieldBox name expr =
@@ -410,12 +406,7 @@ viewTraceBox showDetails solution steps =
     $ spacedVcat
     $ zipWith (viewTraceStepBox showDetails solution) [0 :: Int ..] steps
 
-viewTraceStepBox ::
-     Bool
-  -> S.Solution
-  -> Int
-  -> V.ViewStep
-  -> Box.Box
+viewTraceStepBox :: Bool -> S.Solution -> Int -> V.ViewStep -> Box.Box
 viewTraceStepBox showDetails solution ix step =
   case step of
     V.ViewStep traceStep nodes constraints _renderIntents ->
@@ -457,7 +448,8 @@ stepBox :: Int -> TraceStepWith payload -> Box.Box
 stepBox ix step =
   case step of
     ExplainedStep label _payload audit -> labelledStepBox ix label audit
-    DiscardedStep reason audit -> labelledStepBox ix ("Discarded: " ++ reason) audit
+    DiscardedStep reason audit ->
+      labelledStepBox ix ("Discarded: " ++ reason) audit
 
 labelledStepBox :: Int -> String -> Audit acts -> Box.Box
 labelledStepBox ix label audit =
@@ -648,8 +640,7 @@ sectionBox title body =
   tightVcat [Box.text title, Box.text (replicate (length title) '-'), body]
 
 optionalSection :: String -> Box.Box -> [Box.Box]
-optionalSection title body =
-  [sectionBox title body | not (isNullBox body)]
+optionalSection title body = [sectionBox title body | not (isNullBox body)]
 
 stepSectionBox :: String -> Box.Box -> Box.Box
 stepSectionBox title body =

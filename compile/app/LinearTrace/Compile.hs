@@ -184,7 +184,10 @@ coalescePatch :: CoalesceState -> RenderPatch -> Either String CoalesceState
 coalescePatch coalesceState patch =
   case patch of
     RenderCreate renderId origin block ->
-      updateCoalesced renderId (coalesceCreate renderId origin block) coalesceState
+      updateCoalesced
+        renderId
+        (coalesceCreate renderId origin block)
+        coalesceState
     RenderUpdate renderId fromBlock toBlock ->
       updateCoalesced
         renderId
@@ -203,8 +206,9 @@ updateCoalesced renderId reducer coalesceState = do
   let order' = rememberRenderId renderId (coalesceOrder coalesceState)
   let patches' =
         case reduced of
-          Nothing    -> Map.delete renderId (coalescePatches coalesceState)
-          Just patch -> Map.insert renderId patch (coalescePatches coalesceState)
+          Nothing -> Map.delete renderId (coalescePatches coalesceState)
+          Just patch ->
+            Map.insert renderId patch (coalescePatches coalesceState)
   pure coalesceState {coalesceOrder = order', coalescePatches = patches'}
 
 rememberRenderId :: RenderId -> [RenderId] -> [RenderId]
@@ -264,8 +268,7 @@ coalesceDestroy renderId block existing =
           if currentBlock == block
             then Right (Just (CoalescedDestroy firstBlock))
             else Left (inconsistentLifecycleError "destroy" renderId)
-        CoalescedDestroy _ ->
-          Left (duplicateLifecycleError "destroy" renderId)
+        CoalescedDestroy _ -> Left (duplicateLifecycleError "destroy" renderId)
 
 renderCoalescedPatches ::
      [RenderId] -> Map RenderId CoalescedPatch -> [RenderPatch]
@@ -276,14 +279,15 @@ renderCoalescedPatches order patches =
       case Map.lookup renderId patches of
         Nothing -> renderCoalescedPatches rest patches
         Just patch ->
-          renderCoalescedPatch renderId patch : renderCoalescedPatches rest patches
+          renderCoalescedPatch renderId patch
+            : renderCoalescedPatches rest patches
 
 renderCoalescedPatch :: RenderId -> CoalescedPatch -> RenderPatch
 renderCoalescedPatch renderId patch =
   case patch of
-    CoalescedCreate origin block -> RenderCreate renderId origin block
+    CoalescedCreate origin block      -> RenderCreate renderId origin block
     CoalescedUpdate fromBlock toBlock -> RenderUpdate renderId fromBlock toBlock
-    CoalescedDestroy block -> RenderDestroy renderId block
+    CoalescedDestroy block            -> RenderDestroy renderId block
 
 duplicateLifecycleError :: String -> RenderId -> String
 duplicateLifecycleError operation renderId =
@@ -295,7 +299,10 @@ invalidLifecycleError operation renderId =
 
 inconsistentLifecycleError :: String -> RenderId -> String
 inconsistentLifecycleError operation renderId =
-  "inconsistent render " ++ operation ++ " chain in one frame for " ++ show renderId
+  "inconsistent render "
+    ++ operation
+    ++ " chain in one frame for "
+    ++ show renderId
 
 --------------------------------------------------------------------------------
 -- Visual lifecycle semantics
@@ -304,10 +311,10 @@ compileRenderIntent ::
      Map C.BlockId RenderBlock -> V.RenderIntent -> CompileM [RenderPatch]
 compileRenderIntent blocksById intent =
   case intent of
-    V.RenderFresh ref -> createRef blocksById ref
+    V.RenderFresh ref              -> createRef blocksById ref
     V.RenderContinue source target -> continueRef blocksById source target
-    V.RenderFork source target -> forkRef blocksById source target
-    V.RenderRemove ref -> destroyRef blocksById ref
+    V.RenderFork source target     -> forkRef blocksById source target
+    V.RenderRemove ref             -> destroyRef blocksById ref
 
 createRef ::
      Map C.BlockId RenderBlock -> C.BlockRef tag -> CompileM [RenderPatch]
@@ -396,8 +403,7 @@ requireLineage block = do
 --------------------------------------------------------------------------------
 type BlockLookup = Map C.BlockId RenderBlock
 
-buildBlockLookup ::
-     S.Solution -> V.ViewGraph -> Either String BlockLookup
+buildBlockLookup :: S.Solution -> V.ViewGraph -> Either String BlockLookup
 buildBlockLookup solution graph =
   foldM (insertMaterializedNode solution) Map.empty (V.viewNodes graph)
 
@@ -571,19 +577,14 @@ instance ToJSON RenderBlock where
 instance ToJSON RenderOrigin where
   toJSON origin =
     object
-      [ "id" .= renderOriginId origin
-      , "element" .= renderOriginElement origin
-      ]
+      ["id" .= renderOriginId origin, "element" .= renderOriginElement origin]
 
 instance ToJSON RenderPatch where
   toJSON patch =
     case patch of
       RenderCreate renderId origin block ->
         object
-          ([ "kind" .= String "create"
-           , "id" .= renderId
-           , "element" .= block
-           ]
+          (["kind" .= String "create", "id" .= renderId, "element" .= block]
              ++ maybe [] (\origin' -> ["origin" .= origin']) origin)
       RenderUpdate renderId fromBlock toBlock ->
         object

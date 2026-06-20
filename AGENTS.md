@@ -24,3 +24,4 @@ Before finishing:
 
 - If modifying the Haskell application, run `./compile.sh` from the root directory to compile and run the Haskell application.
 - Use `hlint` to check for any Haskell code style issues.
+- After any Haskell source change, run the same formatter pipeline as VSCode on all Haskell source files: first `hindent`, then `stylish-haskell -i`. The `stylish-haskell -i` pass should be the final source-modifying step.

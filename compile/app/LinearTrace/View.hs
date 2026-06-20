@@ -158,32 +158,22 @@ module LinearTrace.View
   , materializeViewNode
   ) where
 
-import           Control.Functor.Linear      hiding ((<$>), (<*>))
-import qualified Data.Kind                   as K
-import           Data.Kind                   (Type)
-import           GHC.TypeLits                (ErrorMessage (..), Nat,
-                                              TypeError, type (+), type CmpNat)
-import qualified LinearTrace.Core.Internal   as C
-import           LinearTrace.Solver          hiding
-                                             ( num
-                                             , (@+@)
-                                             , (@-@)
-                                             , (@*@)
-                                             , (@/@)
-                                             , (@^@)
-                                             , absExpr
-                                             , (@==@)
-                                             , (@<=@)
-                                             , (@>=@)
-                                             )
-import qualified LinearTrace.Solver          as S
+import           Control.Functor.Linear    hiding ((<$>), (<*>))
+import           Data.Kind                 (Type)
+import qualified Data.Kind                 as K
+import           GHC.TypeLits              (ErrorMessage (..), Nat, TypeError,
+                                            type (+), type CmpNat)
+import qualified LinearTrace.Core.Internal as C
+import           LinearTrace.Solver        hiding (absExpr, num, (@*@), (@+@),
+                                            (@-@), (@/@), (@<=@), (@==@),
+                                            (@>=@), (@^@))
+import qualified LinearTrace.Solver        as S
 import           LinearTrace.View.Style
-import qualified Prelude                     as P
+import qualified Prelude                   as P
 import           Prelude.Linear
-import qualified Unsafe.Coerce               as Unsafe
+import qualified Unsafe.Coerce             as Unsafe
 
 infixr 5 :&
-
 --------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
@@ -207,17 +197,13 @@ data ViewNode where
 
 data ViewStep where
   ViewStep
-    :: C.TraceStep
-    -> [ViewNode]
-    -> [Constraint]
-    -> [[RenderIntent]]
-    -> ViewStep
+    :: C.TraceStep -> [ViewNode] -> [Constraint] -> [[RenderIntent]] -> ViewStep
 
 data ViewGraph = ViewGraph
-  { viewNodes       :: [ViewNode]
-  , viewSteps       :: [ViewStep]
-  , viewConstraints :: [Constraint]
-  , viewInitialVars :: [InitialVar]
+  { viewNodes        :: [ViewNode]
+  , viewSteps        :: [ViewStep]
+  , viewConstraints  :: [Constraint]
+  , viewInitialVars  :: [InitialVar]
   , viewRenderFrames :: [[RenderIntent]]
   }
 
@@ -253,9 +239,7 @@ blockViewLabel :: BlockView tag -> C.PayloadView
 blockViewLabel = blockLabel
 
 mapBlockViewStyleExprLeaves ::
-     (forall (ty :: Type). String -> Expr ty -> a)
-  -> BlockView tag
-  -> [a]
+     (forall (ty :: Type). String -> Expr ty -> a) -> BlockView tag -> [a]
 mapBlockViewStyleExprLeaves f block = mapStyleExprLeaves f (blockStyle block)
 
 solvedBlockViewExprs :: Solution -> BlockView tag -> [(String, Double)]
@@ -292,8 +276,9 @@ type family ExplainedVisual act :: Type where
   ExplainedVisual (C.Observe tag) = LiveVisual tag
   ExplainedVisual (C.Use tag) = ConsumedVisual tag
   ExplainedVisual (C.Copy tag) = CopiedVisual tag
-  ExplainedVisual (C.Replace tag) =
-    (ConsumedVisual tag, ConsumedVisual tag, NewVisual tag)
+  ExplainedVisual (C.Replace tag) = ( ConsumedVisual tag
+                                    , ConsumedVisual tag
+                                    , NewVisual tag)
   ExplainedVisual (C.Compute tag) = NewVisual tag
   ExplainedVisual (C.Destroy tag) = ConsumedVisual tag
   ExplainedVisual (C.Seal owner tag) = (LiveVisual owner, LiveVisual tag)
@@ -302,9 +287,10 @@ type family ExplainedVisual act :: Type where
 
 data ExplainedVisuals acts where
   End :: ExplainedVisuals '[]
-  (:&) :: ExplainedVisual act %1
-       -> ExplainedVisuals acts %1
-       -> ExplainedVisuals (act : acts)
+  (:&)
+    :: ExplainedVisual act
+       %1 -> ExplainedVisuals acts
+       %1 -> ExplainedVisuals (act : acts)
 
 data RenderIntent where
   RenderFresh :: C.BlockRef tag -> RenderIntent
@@ -313,10 +299,15 @@ data RenderIntent where
   RenderRemove :: C.BlockRef tag -> RenderIntent
 
 data Unrendered
+
 data Rendered
+
 data Stable
+
 data Consumed
+
 data Available
+
 data Taken
 
 data LayoutAttr
@@ -329,7 +320,9 @@ data LayoutAttr
   | AttrHeight
   | AttrCenterY
 
-data Axis = XAxis | YAxis
+data Axis
+  = XAxis
+  | YAxis
 
 type family AttrRank (attr :: LayoutAttr) :: Nat where
   AttrRank AttrLeft = 0
@@ -342,19 +335,17 @@ type family AttrRank (attr :: LayoutAttr) :: Nat where
   AttrRank AttrCenterY = 7
 
 type family Insert (attr :: LayoutAttr) (used :: [LayoutAttr]) :: [LayoutAttr] where
-  Insert attr '[] = '[attr]
-  Insert attr (current ': rest) =
-    InsertByRank (CmpNat (AttrRank attr) (AttrRank current)) attr current rest
+  Insert attr '[] = '[ attr]
+  Insert attr (current : rest) = InsertByRank
+    (CmpNat (AttrRank attr) (AttrRank current))
+    attr
+    current
+    rest
 
-type family InsertByRank
-     (ordering :: Ordering)
-     (attr :: LayoutAttr)
-     (current :: LayoutAttr)
-     (rest :: [LayoutAttr])
-     :: [LayoutAttr] where
-  InsertByRank 'LT attr current rest = attr ': current ': rest
-  InsertByRank 'EQ attr current rest = current ': rest
-  InsertByRank 'GT attr current rest = current ': Insert attr rest
+type family InsertByRank (ordering :: Ordering) (attr :: LayoutAttr) (current :: LayoutAttr) (rest :: [LayoutAttr]) :: [LayoutAttr] where
+  InsertByRank 'LT attr current rest = attr : current : rest
+  InsertByRank 'EQ attr current rest = current : rest
+  InsertByRank 'GT attr current rest = current : Insert attr rest
 
 type family AttrEq (lhs :: LayoutAttr) (rhs :: LayoutAttr) :: Bool where
   AttrEq AttrLeft AttrLeft = 'True
@@ -369,14 +360,12 @@ type family AttrEq (lhs :: LayoutAttr) (rhs :: LayoutAttr) :: Bool where
 
 type family MemberAttr (attr :: LayoutAttr) (used :: [LayoutAttr]) :: Bool where
   MemberAttr attr '[] = 'False
-  MemberAttr attr (current ': rest) =
-    MemberAttrStep (AttrEq attr current) attr rest
+  MemberAttr attr (current : rest) = MemberAttrStep
+    (AttrEq attr current)
+    attr
+    rest
 
-type family MemberAttrStep
-     (found :: Bool)
-     (attr :: LayoutAttr)
-     (rest :: [LayoutAttr])
-     :: Bool where
+type family MemberAttrStep (found :: Bool) (attr :: LayoutAttr) (rest :: [LayoutAttr]) :: Bool where
   MemberAttrStep 'True attr rest = 'True
   MemberAttrStep 'False attr rest = MemberAttr attr rest
 
@@ -397,92 +386,110 @@ type family AxisEq (lhs :: Axis) (rhs :: Axis) :: Bool where
 
 type family AxisCount (axis :: Axis) (used :: [LayoutAttr]) :: Nat where
   AxisCount axis '[] = 0
-  AxisCount axis (attr ': rest) =
-    AxisCountStep (AxisEq axis (AxisOf attr)) axis rest
+  AxisCount axis (attr : rest) = AxisCountStep
+    (AxisEq axis (AxisOf attr))
+    axis
+    rest
 
-type family AxisCountStep
-     (matches :: Bool)
-     (axis :: Axis)
-     (rest :: [LayoutAttr])
-     :: Nat where
+type family AxisCountStep (matches :: Bool) (axis :: Axis) (rest :: [LayoutAttr]) :: Nat where
   AxisCountStep 'True axis rest = 1 + AxisCount axis rest
   AxisCountStep 'False axis rest = AxisCount axis rest
 
-type family CanTakeAttr
-     (attr :: LayoutAttr)
-     (used :: [LayoutAttr])
-     :: K.Constraint where
+type family CanTakeAttr (attr :: LayoutAttr) (used :: [LayoutAttr]) :: K.Constraint where
   CanTakeAttr attr used = CheckUnusedAttr (MemberAttr attr used) attr used
 
-type family CheckUnusedAttr
-     (alreadyUsed :: Bool)
-     (attr :: LayoutAttr)
-     (used :: [LayoutAttr])
-     :: K.Constraint where
-  CheckUnusedAttr 'True attr used =
-    TypeError
-      ( 'Text "Layout attribute "
-        ':<>: 'ShowType attr
-        ':<>: 'Text " has already been used for this visual."
-      )
-  CheckUnusedAttr 'False attr used =
-    CheckAxisRoom (CmpNat (AxisCount (AxisOf attr) used) 2) attr
+type family CheckUnusedAttr (alreadyUsed :: Bool) (attr :: LayoutAttr) (used :: [LayoutAttr]) :: K.Constraint where
+  CheckUnusedAttr 'True attr used = TypeError
+    ('Text "Layout attribute " :<>: 'ShowType attr :<>: 'Text
+       " has already been used for this visual.")
+  CheckUnusedAttr 'False attr used = CheckAxisRoom
+    (CmpNat (AxisCount (AxisOf attr) used) 2)
+    attr
 
-type family CheckAxisRoom
-     (ordering :: Ordering)
-     (attr :: LayoutAttr)
-     :: K.Constraint where
+type family CheckAxisRoom (ordering :: Ordering) (attr :: LayoutAttr) :: K.Constraint where
   CheckAxisRoom 'LT attr = ()
-  CheckAxisRoom 'EQ attr =
-    TypeError
-      ( 'Text "Cannot use layout attribute "
-        ':<>: 'ShowType attr
-        ':<>: 'Text ": this visual already has two attributes on that axis."
-      )
-  CheckAxisRoom 'GT attr =
-    TypeError
-      ( 'Text "Cannot use layout attribute "
-        ':<>: 'ShowType attr
-        ':<>: 'Text ": this visual already has more than two attributes on that axis."
-      )
+  CheckAxisRoom 'EQ attr = TypeError
+    ('Text "Cannot use layout attribute " :<>: 'ShowType attr :<>: 'Text
+       ": this visual already has two attributes on that axis.")
+  CheckAxisRoom 'GT attr = TypeError
+    ('Text "Cannot use layout attribute " :<>: 'ShowType attr :<>: 'Text
+       ": this visual already has more than two attributes on that axis.")
 
 data Visual state lifecycle (used :: [LayoutAttr]) tag where
   Visual :: BlockView tag -> Visual state lifecycle used tag
 
-type NewVisual tag =
-  Visual Unrendered Stable '[] tag
+type NewVisual tag = Visual Unrendered Stable '[] tag
 
-type LiveVisual tag =
-  Visual Rendered Stable '[] tag
+type LiveVisual tag = Visual Rendered Stable '[] tag
 
-type ConsumedVisual tag =
-  Visual Rendered Consumed '[] tag
+type ConsumedVisual tag = Visual Rendered Consumed '[] tag
 
 data CopiedVisual tag where
   CopiedVisual :: LiveVisual tag %1 -> NewVisual tag %1 -> CopiedVisual tag
 
-type BoxAttrs =
-  '[AttrLeft, AttrWidth, AttrTop, AttrHeight]
+type BoxAttrs = '[ AttrLeft, AttrWidth, AttrTop, AttrHeight]
 
-type SizeAttrs =
-  '[AttrWidth, AttrHeight]
+type SizeAttrs = '[ AttrWidth, AttrHeight]
 
-type BoxVisual tag =
-  Visual Rendered Stable BoxAttrs tag
+type BoxVisual tag = Visual Rendered Stable BoxAttrs tag
 
-type SizeVisual tag =
-  Visual Rendered Stable SizeAttrs tag
+type SizeVisual tag = Visual Rendered Stable SizeAttrs tag
 
 data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass where
   StyleDraft
     :: Ur Style
-       %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+       %1 -> StyleDraft
+         opacity
+         zIndex
+         fontSize
+         radius
+         strokeWidth
+         alpha
+         fill
+         stroke
+         fontFamily
+         fontWeight
+         fontStyle
+         textAlign
+         borderStyle
+         whiteSpace
+         cssClass
 
-type EmptyStyleDraft =
-  StyleDraft Available Available Available Available Available Available Available Available Available Available Available Available Available Available Available
+type EmptyStyleDraft
+  = StyleDraft
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
+      Available
 
 finalizeStyle ::
-     StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+     StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
      %1 -> Style
 finalizeStyle draft =
   case draft of
@@ -490,120 +497,570 @@ finalizeStyle draft =
 
 setOpacityOnce ::
      UnitExpr
-  -> StyleDraft Available zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft Taken zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       Available
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       Taken
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setOpacityOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setOpacity value style'))
 
 setZIndexOnce ::
      FreeExpr
-  -> StyleDraft opacity Available fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity Taken fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       Available
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       Taken
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setZIndexOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setZIndex value style'))
 
 setFontSizeOnce ::
      LayoutExpr
-  -> StyleDraft opacity zIndex Available radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex Taken radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       Available
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       Taken
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setFontSizeOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontSize value style'))
 
 setRadiusOnce ::
      LayoutExpr
-  -> StyleDraft opacity zIndex fontSize Available strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize Taken strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       Available
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       Taken
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setRadiusOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setRadius value style'))
 
 setStrokeWidthOnce ::
      LayoutExpr
-  -> StyleDraft opacity zIndex fontSize radius Available alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius Taken alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       Available
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       Taken
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setStrokeWidthOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setStrokeWidth value style'))
 
 setAlphaOnce ::
      UnitExpr
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth Available fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth Taken fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       Available
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       Taken
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setAlphaOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setAlpha value style'))
 
 setFillOnce ::
      HslExpr
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha Available stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha Taken stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       Available
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       Taken
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setFillOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFill value style'))
 
 setStrokeOnce ::
      HslExpr
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill Available fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill Taken fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       Available
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       Taken
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setStrokeOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setStroke value style'))
 
 setFontFamilyOnce ::
      String
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke Available fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke Taken fontWeight fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       Available
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       Taken
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setFontFamilyOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontFamily value style'))
 
 setFontWeightOnce ::
      FontWeight
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily Available fontStyle textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily Taken fontStyle textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       Available
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       Taken
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setFontWeightOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontWeight value style'))
 
 setFontStyleOnce ::
      FontStyle
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight Available textAlign borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight Taken textAlign borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       Available
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       Taken
+       textAlign
+       borderStyle
+       whiteSpace
+       cssClass
 setFontStyleOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontStyle value style'))
 
 setTextAlignOnce ::
      TextAlign
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle Available borderStyle whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle Taken borderStyle whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       Available
+       borderStyle
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       Taken
+       borderStyle
+       whiteSpace
+       cssClass
 setTextAlignOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setTextAlign value style'))
 
 setBorderStyleOnce ::
      BorderStyle
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign Available whiteSpace cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign Taken whiteSpace cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       Available
+       whiteSpace
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       Taken
+       whiteSpace
+       cssClass
 setBorderStyleOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setBorderStyle value style'))
 
 setWhiteSpaceOnce ::
      WhiteSpace
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle Available cssClass
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle Taken cssClass
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       Available
+       cssClass
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       Taken
+       cssClass
 setWhiteSpaceOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setWhiteSpace value style'))
 
 setCssClassOnce ::
      String
-  -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace Available
-     %1 -> StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace Taken
+  -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       Available
+     %1 -> StyleDraft
+       opacity
+       zIndex
+       fontSize
+       radius
+       strokeWidth
+       alpha
+       fill
+       stroke
+       fontFamily
+       fontWeight
+       fontStyle
+       textAlign
+       borderStyle
+       whiteSpace
+       Taken
 setCssClassOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setCssClass value style'))
@@ -611,27 +1068,22 @@ setCssClassOnce value draft =
 data ViewDefinition tag (used :: [LayoutAttr]) where
   ViewDefinition
     :: (EmptyStyleDraft %1 -> Style)
-    -> (LiveVisual tag
-           %1 -> ViewBuilder (Visual Rendered Stable used tag))
+    -> (LiveVisual tag %1 -> ViewBuilder (Visual Rendered Stable used tag))
     -> ViewDefinition tag used
 
-type BoxDefinition tag =
-  ViewDefinition tag BoxAttrs
+type BoxDefinition tag = ViewDefinition tag BoxAttrs
 
-type SizeDefinition tag =
-  ViewDefinition tag SizeAttrs
+type SizeDefinition tag = ViewDefinition tag SizeAttrs
 
 boxDefinition ::
      (EmptyStyleDraft %1 -> Style)
-  -> (LiveVisual tag
-         %1 -> ViewBuilder (BoxVisual tag))
+  -> (LiveVisual tag %1 -> ViewBuilder (BoxVisual tag))
   -> BoxDefinition tag
 boxDefinition = ViewDefinition
 
 sizeDefinition ::
      (EmptyStyleDraft %1 -> Style)
-  -> (LiveVisual tag
-         %1 -> ViewBuilder (SizeVisual tag))
+  -> (LiveVisual tag %1 -> ViewBuilder (SizeVisual tag))
   -> SizeDefinition tag
 sizeDefinition = ViewDefinition
 
@@ -645,7 +1097,6 @@ data OneConstraint where
   OneConstraint :: Ur Constraint %1 -> OneConstraint
 
 infixl 1 |>
-
 (|>) :: a %1 -> (a %1 -> b) -> b
 value |> next = next value
 
@@ -738,7 +1189,6 @@ infixr 8 @^@
 infix 4 @==@
 infix 4 @<=@
 infix 4 @>=@
-
 (@+@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
 (@+@) = binaryExpr (S.@+@)
 
@@ -834,8 +1284,7 @@ explain label explainTokens script =
   C.explainWith label (ViewScript script) explainTokens
 
 instance Consumable ViewState where
-  consume (ViewState env output) =
-    consume env `lseq` consume output
+  consume (ViewState env output) = consume env `lseq` consume output
 
 instance Dupable ViewState where
   dup2 (ViewState env output) =
@@ -871,8 +1320,9 @@ traverseView_ action values =
       traverseView_ action rest
 
 traverseMaybeView_ :: (a -> ViewBuilder ()) -> Maybe a -> ViewBuilder ()
-traverseMaybeView_ action value =
+traverseMaybeView_ action value
   {- HLINT ignore "Use forM_" -}
+ =
   case value of
     Nothing -> return ()
     Just x  -> action x
@@ -886,7 +1336,8 @@ ensureRaw :: Constraint -> ViewBuilder ()
 ensureRaw constraint = tellOutput mempty {emittedConstraints = [constraint]}
 
 encourage :: Expr ty -> ViewBuilder ()
-encourage objective = tellOutput mempty {emittedConstraints = [S.minimize objective]}
+encourage objective =
+  tellOutput mempty {emittedConstraints = [S.minimize objective]}
 
 registerInitialVar :: InitialVar -> ViewBuilder ()
 registerInitialVar initial = tellOutput mempty {emittedInitialVars = [initial]}
@@ -963,7 +1414,7 @@ explainedVisual token =
 explainedVisuals :: ViewTokens acts %1 -> ExplainedVisuals acts
 explainedVisuals tokens =
   case tokens of
-    VNil -> End
+    VNil             -> End
     VCons token rest -> explainedVisual token :& explainedVisuals rest
 
 fresh ::
@@ -1007,7 +1458,8 @@ forkCopy definition copied =
           case visual of
             Visual block -> do
               rendered <- defineNewBlock definition block
-              emitRenderIntent (RenderFork (blockRef sourceBlock) (blockRef block))
+              emitRenderIntent
+                (RenderFork (blockRef sourceBlock) (blockRef block))
               pure (Visual sourceBlock, rendered)
 
 continueFrom ::
@@ -1022,7 +1474,8 @@ continueFrom definition source visual =
       case visual of
         Visual block -> do
           rendered <- defineNewBlock definition block
-          emitRenderIntent (RenderContinue (blockRef sourceBlock) (blockRef block))
+          emitRenderIntent
+            (RenderContinue (blockRef sourceBlock) (blockRef block))
           pure rendered
 
 remove :: Visual Rendered Consumed used tag %1 -> ViewBuilder ()
@@ -1038,7 +1491,8 @@ complete visual =
 takeLeft ::
      CanTakeAttr AttrLeft used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrLeft used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrLeft used) tag))
 takeLeft visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (left block))))
@@ -1046,7 +1500,8 @@ takeLeft visual =
 takeRight ::
      CanTakeAttr AttrRight used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrRight used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrRight used) tag))
 takeRight visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (right block))))
@@ -1054,7 +1509,8 @@ takeRight visual =
 takeWidth ::
      CanTakeAttr AttrWidth used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrWidth used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrWidth used) tag))
 takeWidth visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (width block))))
@@ -1062,15 +1518,18 @@ takeWidth visual =
 takeCenterX ::
      CanTakeAttr AttrCenterX used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrCenterX used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrCenterX used) tag))
 takeCenterX visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerX block))))
+    Visual block ->
+      pure (LayoutUse (Visual block) (OneExpr (Ur (centerX block))))
 
 takeTop ::
      CanTakeAttr AttrTop used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrTop used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrTop used) tag))
 takeTop visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (top block))))
@@ -1078,26 +1537,32 @@ takeTop visual =
 takeBottom ::
      CanTakeAttr AttrBottom used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrBottom used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrBottom used) tag))
 takeBottom visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (bottom block))))
+    Visual block ->
+      pure (LayoutUse (Visual block) (OneExpr (Ur (bottom block))))
 
 takeHeight ::
      CanTakeAttr AttrHeight used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrHeight used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrHeight used) tag))
 takeHeight visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (height block))))
+    Visual block ->
+      pure (LayoutUse (Visual block) (OneExpr (Ur (height block))))
 
 takeCenterY ::
      CanTakeAttr AttrCenterY used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrCenterY used) tag))
+     %1 -> ViewBuilder
+       (LayoutUse (Visual state lifecycle (Insert AttrCenterY used) tag))
 takeCenterY visual =
   case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerY block))))
+    Visual block ->
+      pure (LayoutUse (Visual block) (OneExpr (Ur (centerY block))))
 
 --------------------------------------------------------------------------------
 -- Build a view graph
@@ -1127,11 +1592,11 @@ solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
 solveCSPWithSeed seed = solveCSP defaultSolveConfig {initialSeed = seed}
 
 data BuiltViewStep = BuiltViewStep
-  { stepView        :: ViewStep
-  , stepNodes       :: [ViewNode]
-  , stepConstraints :: [Constraint]
-  , stepInitialVars :: [InitialVar]
-  , stepRenderFrames :: [[RenderIntent]]
+  { stepView                 :: ViewStep
+  , stepNodes                :: [ViewNode]
+  , stepConstraints          :: [Constraint]
+  , stepInitialVars          :: [InitialVar]
+  , stepRenderFrames         :: [[RenderIntent]]
   , stepPendingRenderIntents :: [RenderIntent]
   }
 
@@ -1144,15 +1609,7 @@ data BuiltViewSteps = BuiltViewSteps
   }
 
 viewTraceSteps :: ViewEnv -> [C.TraceStepWith ViewScript] -> BuiltViewSteps
-viewTraceSteps env =
-  viewTraceStepsWith
-    (viewTraceStep env)
-    []
-    []
-    []
-    []
-    []
-    []
+viewTraceSteps env = viewTraceStepsWith (viewTraceStep env) [] [] [] [] [] []
 
 viewTraceStepsWith ::
      ([RenderIntent] -> record -> BuiltViewStep)
@@ -1195,8 +1652,8 @@ withImplicitInitialFrame frames =
     [] -> []
     first:rest ->
       case splitLeadingFresh first of
-        ([], _)         -> first : rest
-        (freshes, [])   -> freshes : rest
+        ([], _)          -> first : rest
+        (freshes, [])    -> freshes : rest
         (freshes, tail') -> freshes : tail' : rest
 
 splitLeadingFresh :: [RenderIntent] -> ([RenderIntent], [RenderIntent])
@@ -1208,10 +1665,7 @@ splitLeadingFresh intents =
     _ -> ([], intents)
 
 viewTraceStep ::
-     ViewEnv
-  -> [RenderIntent]
-  -> C.TraceStepWith ViewScript
-  -> BuiltViewStep
+     ViewEnv -> [RenderIntent] -> C.TraceStepWith ViewScript -> BuiltViewStep
 viewTraceStep env pending step =
   case step of
     C.ExplainedStep label (ViewScript script) audit ->

@@ -237,7 +237,8 @@ data Used tag where
   Used :: OneUse (Payload tag) %1 -> ExplainToken (Use tag) %1 -> Used tag
 
 data Copied tag where
-  Copied :: Block tag %1 -> Block tag %1 -> ExplainToken (Copy tag) %1 -> Copied tag
+  Copied
+    :: Block tag %1 -> Block tag %1 -> ExplainToken (Copy tag) %1 -> Copied tag
 
 data Replaced tag where
   Replaced :: Block tag %1 -> ExplainToken (Replace tag) %1 -> Replaced tag
@@ -296,7 +297,10 @@ data ExplainToken act where
 
 data ExplainTokens acts where
   Done :: ExplainTokens '[]
-  (:~) :: ExplainToken act %1 -> ExplainTokens acts %1 -> ExplainTokens (act : acts)
+  (:~)
+    :: ExplainToken act
+       %1 -> ExplainTokens acts
+       %1 -> ExplainTokens (act : acts)
 
 --------------------------------------------------------------------------------
 -- Trace step layer
@@ -305,7 +309,8 @@ data NoStepPayload (acts :: [Type]) =
   NoStepPayload
 
 data TraceStepWith (payload :: [Type] -> Type) where
-  ExplainedStep :: P.String -> payload acts -> Audit acts -> TraceStepWith payload
+  ExplainedStep
+    :: P.String -> payload acts -> Audit acts -> TraceStepWith payload
   DiscardedStep :: P.String -> Audit acts -> TraceStepWith payload
 
 type TraceStep = TraceStepWith NoStepPayload
@@ -466,10 +471,7 @@ explainWith label payload explainTokens =
   case explainTokensToAudit explainTokens of
     Ur audit -> emitStep (ExplainedStep label payload audit)
 
-discard ::
-     P.String
-  -> ExplainTokens acts
-     %1 -> TraceBuilderWith payload ()
+discard :: P.String -> ExplainTokens acts %1 -> TraceBuilderWith payload ()
 discard reason explainTokens =
   case explainTokensToAudit explainTokens of
     Ur audit -> emitStep (DiscardedStep reason audit)

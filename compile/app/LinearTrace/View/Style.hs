@@ -399,9 +399,7 @@ fieldExprLeaves field =
     StyleClassField _ _ -> []
 
 mapStyleExprLeaves ::
-     (forall (ty :: Type). String -> Expr ty -> a)
-  -> Style
-  -> [a]
+     (forall (ty :: Type). String -> Expr ty -> a) -> Style -> [a]
 mapStyleExprLeaves f style' = map go (styleExprLeaves style')
   where
     go leaf =
@@ -409,8 +407,7 @@ mapStyleExprLeaves f style' = map go (styleExprLeaves style')
         StyleExprLeaf name expr -> f name expr
 
 solvedStyleExprs :: Solution -> Style -> [(String, Double)]
-solvedStyleExprs solution =
-  mapMaybe solveLeaf . styleExprLeaves
+solvedStyleExprs solution = mapMaybe solveLeaf . styleExprLeaves
   where
     solveLeaf leaf =
       case leaf of
@@ -1006,9 +1003,9 @@ materializedCssAttrsWith number pixels text hsl style' =
         MaterializedCssField name value -> (name, convertValue value)
     convertValue value =
       case value of
-        CssNumberValue x      -> number x
-        CssPixelsValue x      -> pixels x
-        CssTextValue value'   -> text value'
+        CssNumberValue x            -> number x
+        CssPixelsValue x            -> pixels x
+        CssTextValue value'         -> text value'
         CssHslValue alphaValue hsl' -> hsl alphaValue hsl'
 
 fieldCss :: Double -> MaterializedField -> [MaterializedCssField]
