@@ -20,7 +20,6 @@
     canNext: boolean;
     currentStep: number;
     stepCount: number;
-    currentSeed: number | null;
     seedText?: string;
     debugEnabled?: boolean;
     onReset: () => void;
@@ -37,7 +36,6 @@
     canNext,
     currentStep,
     stepCount,
-    currentSeed,
     seedText = $bindable(''),
     debugEnabled = $bindable(false),
     onReset,
@@ -100,9 +98,6 @@
     {#if hasTrace}
       <div class="flex flex-wrap items-center gap-2" aria-label="Trace status">
         <Badge variant="secondary">Step {currentStep + 1} of {stepCount}</Badge>
-        {#if currentSeed !== null}
-          <Badge variant="outline">Seed {currentSeed}</Badge>
-        {/if}
       </div>
     {/if}
   </div>

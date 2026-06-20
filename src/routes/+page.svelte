@@ -28,7 +28,6 @@
   let staticError = $state<string | null>(null);
   let regenerateError = $state<string | null>(null);
   let latestDebug = $state<CompileDebug | null>(null);
-  let currentSeed = $state<number | null>(null);
   let seedText = $state('');
   let debugEnabled = $state(false);
 
@@ -59,7 +58,6 @@
       const seed = typeof trace.seed === 'number' ? trace.seed : null;
 
       player.setTrace(trace);
-      currentSeed = seed;
       seedText = seed === null ? '' : String(seed);
     } catch (err) {
       staticError = err instanceof Error ? err.message : String(err);
@@ -102,7 +100,6 @@
       }
 
       if (typeof payload.seed === 'number') {
-        currentSeed = payload.seed;
         seedText = String(payload.seed);
       }
 
@@ -187,7 +184,6 @@
     canPrevious={player.canPrevious}
     currentStep={player.currentStep}
     hasTrace={player.hasTrace}
-    {currentSeed}
     {loadingStatic}
     onNext={() => player.next()}
     onPrevious={() => player.previous()}
