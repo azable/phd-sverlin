@@ -75,6 +75,7 @@ module LinearTrace.View
   , useVisual
   , copyVisual
   , replaceVisual
+  , replaceUpdateVisual
   , computeVisual
   , destroyVisual
   , sealVisual
@@ -949,6 +950,18 @@ replaceVisual token =
     ReplacedToken old incoming output ->
       pure (Visual old, Visual incoming, Visual output)
 
+replaceUpdateVisual ::
+     forall tag used (events :: [Type]).
+     ViewDefinition tag used
+     %1 -> ViewToken (C.Replace tag)
+     %1 -> ViewBuilder events (ConsumedVisual tag, Visual Rendered Stable used tag)
+replaceUpdateVisual definition token =
+  case token of
+    ReplacedToken old incoming output -> do
+      rendered <- defineNewBlock definition output
+      emitRenderIntent (RenderContinue (blockRef old) (blockRef output))
+      pure (Visual incoming, rendered)
+
 computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder events (NewVisual tag)
 computeVisual token =
   case token of
@@ -963,14 +976,14 @@ destroyVisual token =
 
 sealVisual ::
      ViewToken (C.Seal owner tag)
-     %1 -> ViewBuilder events (LiveVisual owner, ConsumedVisual tag)
+     %1 -> ViewBuilder events (LiveVisual owner, LiveVisual tag)
 sealVisual token =
   case token of
     SealedToken owner child -> pure (Visual owner, Visual child)
 
 unsealVisual ::
      ViewToken (C.Unseal owner tag)
-     %1 -> ViewBuilder events (LiveVisual owner, NewVisual tag)
+     %1 -> ViewBuilder events (LiveVisual owner, LiveVisual tag)
 unsealVisual token =
   case token of
     UnsealedToken owner child -> pure (Visual owner, Visual child)
