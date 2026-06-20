@@ -12,3 +12,6 @@ node_modules
 build
 dist
 coverage
+
+# Installed Codex/shadcn skills are vendored documentation and metadata.
+.agents/skills/**

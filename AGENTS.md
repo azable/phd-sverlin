@@ -18,6 +18,9 @@ Haskell application, a JSON descriptor is outputted to `static/`, which is then 
 
 ## Engineering Rules
 
+- This project uses shadcn-svelte for reusable Svelte UI components. The project configuration is tracked in `components.json`, and the shadcn-svelte skill is installed under `.agents/skills/shadcn-svelte`.
+- When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
+
 ## Verification
 
 Before finishing:

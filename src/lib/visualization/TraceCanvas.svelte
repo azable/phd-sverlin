@@ -59,7 +59,6 @@
       linear-gradient(to right, rgba(0, 0, 0, 0.08) 1px, transparent 1px),
       linear-gradient(to bottom, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
     background-size: 20px 20px;
-    z-index: 10000;
   }
 
   .node {

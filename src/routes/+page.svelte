@@ -144,48 +144,82 @@
     onNext={() => player.next()}
     onPrevious={() => player.previous()}
     onRegenerate={regenerateTrace}
-    onReload={loadStaticTrace}
     onReset={() => player.reset()}
     {regenerating}
     stepCount={player.stepCount}
   />
 
-  <TraceDebugPanel debug={latestDebug} error={regenerateError} open={debugOpen} {regenerating} />
+  <main class="workspace">
+    {#if loadingStatic && !player.hasTrace}
+      <p class="status">Loading {staticTraceSrc}...</p>
+    {/if}
 
-  {#if loadingStatic && !player.hasTrace}
-    <p class="status">Loading {staticTraceSrc}...</p>
-  {/if}
+    {#if pageError}
+      <p class="error">{pageError}</p>
+    {/if}
 
-  {#if pageError}
-    <p class="error">{pageError}</p>
-  {/if}
+    {#if player.hasTrace}
+      <section class="canvas-panel" aria-label="Visualization canvas">
+        <div class="canvas-scroll">
+          <TraceCanvas
+            elements={player.elements}
+            height={player.canvasHeight}
+            width={player.canvasWidth}
+          />
+        </div>
+      </section>
 
-  {#if player.hasTrace}
-    <TraceCanvas
-      elements={player.elements}
-      height={player.canvasHeight}
-      width={player.canvasWidth}
-    />
-  {/if}
+      <TraceDebugPanel
+        debug={latestDebug}
+        error={regenerateError}
+        open={debugOpen || details}
+        {regenerating}
+      />
+    {/if}
+  </main>
 </div>
 
 <style>
   .page {
-    width: 100vw;
-    height: 100vh;
+    min-width: 100vw;
+    min-height: 100vh;
     overflow: auto;
-    background-color: rgb(30, 30, 30);
-    padding: 12px;
+    background: rgb(2, 6, 23);
     box-sizing: border-box;
   }
 
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+
+  .canvas-panel {
+    max-width: 100%;
+    padding: 12px;
+    border: 1px solid rgb(30, 41, 59);
+    border-radius: 8px;
+    background: rgb(15, 23, 42);
+    box-shadow: 0 18px 50px rgb(0 0 0 / 0.28);
+    box-sizing: border-box;
+  }
+
+  .canvas-scroll {
+    max-width: calc(100vw - 64px);
+    overflow: auto;
+  }
+
   .status {
-    color: white;
+    color: rgb(226, 232, 240);
     font-family: system-ui, sans-serif;
   }
 
   .error {
-    color: rgb(255, 120, 120);
+    width: min(100%, 960px);
+    color: rgb(254, 202, 202);
     font-family: system-ui, sans-serif;
   }
 </style>

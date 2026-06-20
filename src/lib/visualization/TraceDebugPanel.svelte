@@ -16,6 +16,11 @@
 
 {#if open}
   <section class="debug-panel" aria-label="Compile debug output">
+    <div class="panel-heading">
+      <h2>Run details</h2>
+      <span>{regenerating ? 'Running' : error ? 'Failed' : debug ? 'Complete' : 'Idle'}</span>
+    </div>
+
     <div class="debug-grid">
       <span>Status</span>
       <strong>{regenerating ? 'Running' : error ? 'Failed' : debug ? 'Complete' : 'Idle'}</strong>
@@ -40,12 +45,12 @@
     {/if}
 
     {#if debug?.stderr}
-      <h2>stderr</h2>
+      <h3>stderr</h3>
       <pre>{debug.stderr}</pre>
     {/if}
 
     {#if debug?.stdout}
-      <h2>stdout</h2>
+      <h3>stdout</h3>
       <pre>{debug.stdout}</pre>
     {/if}
   </section>
@@ -53,10 +58,33 @@
 
 <style>
   .debug-panel {
-    max-width: min(100%, 1200px);
-    margin-bottom: 10px;
-    color: rgb(235, 235, 235);
+    width: min(100%, 1040px);
+    padding: 14px;
+    border: 1px solid rgb(30, 41, 59);
+    border-radius: 8px;
+    background: rgb(15, 23, 42);
+    color: rgb(226, 232, 240);
+    box-sizing: border-box;
     font-family: system-ui, sans-serif;
+  }
+
+  .panel-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .panel-heading h2 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 650;
+  }
+
+  .panel-heading span {
+    color: rgb(148, 163, 184);
+    font-size: 0.82rem;
   }
 
   .debug-grid {
@@ -72,12 +100,17 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
+  .debug-grid span {
+    color: rgb(148, 163, 184);
+  }
+
   code {
     overflow-wrap: anywhere;
   }
 
-  h2 {
-    margin: 8px 0 4px;
+  h3 {
+    margin: 12px 0 6px;
+    color: rgb(203, 213, 225);
     font-size: 0.9rem;
   }
 
@@ -86,14 +119,14 @@
     overflow: auto;
     margin: 0;
     padding: 8px;
-    background: rgb(12, 12, 12);
-    border: 1px solid rgb(70, 70, 70);
+    background: rgb(2, 6, 23);
+    border: 1px solid rgb(30, 41, 59);
     border-radius: 4px;
     white-space: pre-wrap;
   }
 
   .error {
-    color: rgb(255, 150, 150);
+    color: rgb(254, 202, 202);
     margin: 8px 0;
   }
 </style>

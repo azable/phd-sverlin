@@ -1,4 +1,16 @@
 <script lang="ts">
+  import BugIcon from '@lucide/svelte/icons/bug';
+  import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+  import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
+
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Separator } from '$lib/components/ui/separator';
+  import { Switch } from '$lib/components/ui/switch';
+
   type Props = {
     loadingStatic: boolean;
     regenerating: boolean;
@@ -11,7 +23,6 @@
     seedText?: string;
     details?: boolean;
     debugOpen?: boolean;
-    onReload: () => void | Promise<void>;
     onReset: () => void;
     onPrevious: () => void;
     onNext: () => void;
@@ -30,7 +41,6 @@
     seedText = $bindable(''),
     details = $bindable(false),
     debugOpen = $bindable(false),
-    onReload,
     onReset,
     onPrevious,
     onNext,
@@ -46,42 +56,55 @@
 </script>
 
 <form class="toolbar" onsubmit={submitRegeneration}>
-  <div class="button-group" aria-label="Trace playback">
-    <button type="button" onclick={onReload} disabled={busy}>Reload</button>
-    <button type="button" onclick={onReset} disabled={!hasTrace || busy}>Reset</button>
-    <button type="button" onclick={onPrevious} disabled={!canPrevious || busy}>Previous</button>
-    <button type="button" onclick={onNext} disabled={!canNext || busy}>Next</button>
+  <div class="toolbar-section" aria-label="Trace playback">
+    <Button variant="outline" size="sm" onclick={onReset} disabled={!hasTrace || busy}>
+      <RotateCcwIcon size={15} />
+      Reset
+    </Button>
+    <Button variant="outline" size="icon" onclick={onPrevious} disabled={!canPrevious || busy}>
+      <ChevronLeftIcon size={17} />
+      <span class="sr-only">Previous</span>
+    </Button>
+    <Button variant="outline" size="icon" onclick={onNext} disabled={!canNext || busy}>
+      <ChevronRightIcon size={17} />
+      <span class="sr-only">Next</span>
+    </Button>
   </div>
 
   {#if hasTrace}
     <span class="step-label">Step {currentStep + 1} / {stepCount}</span>
   {/if}
 
-  <div class="compile-controls" aria-label="Compile controls">
-    <label class="field">
-      <span>Seed</span>
-      <input
+  <Separator orientation="vertical" class="hidden md:block" />
+
+  <div class="toolbar-section grow" aria-label="Compile controls">
+    <Label>
+      <span class="field-label">Seed</span>
+      <Input
+        class="w-[10ch]"
         bind:value={seedText}
         disabled={busy}
         inputmode="numeric"
         placeholder="random"
         type="text"
       />
-    </label>
+    </Label>
 
-    <label class="toggle">
-      <input bind:checked={details} disabled={busy} type="checkbox" />
+    <Label class="text-slate-200">
+      <Switch bind:checked={details} disabled={busy} />
       <span>Details</span>
-    </label>
+    </Label>
 
-    <label class="toggle">
-      <input bind:checked={debugOpen} type="checkbox" />
+    <Label class="text-slate-200">
+      <Switch bind:checked={debugOpen} />
+      <BugIcon size={15} />
       <span>Debug</span>
-    </label>
+    </Label>
 
-    <button type="submit" disabled={regenerating}>
+    <Button type="submit" disabled={regenerating}>
+      <RefreshCwIcon class={regenerating ? 'animate-spin' : undefined} size={15} />
       {regenerating ? 'Regenerating...' : 'Regenerate'}
-    </button>
+    </Button>
   </div>
 
   {#if latestSeed !== null}
@@ -95,52 +118,47 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
-    margin-bottom: 10px;
+    width: 100%;
+    min-height: 54px;
+    padding: 9px 16px;
+    border-bottom: 1px solid rgb(30, 41, 59);
+    background: rgb(10, 16, 28);
+    box-sizing: border-box;
     font-family: system-ui, sans-serif;
   }
 
-  .button-group,
-  .compile-controls {
+  .toolbar-section {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
   }
 
-  button {
-    min-height: 30px;
-    background-color: lightblue;
-    border: 1px solid rgb(80, 80, 80);
-    border-radius: 4px;
-    cursor: pointer;
-    padding: 0 12px;
-  }
-
-  button:disabled {
-    background-color: gray;
-    cursor: default;
+  .grow {
+    flex: 1 1 auto;
   }
 
   .step-label,
   .seed-label {
-    color: white;
+    color: rgb(203, 213, 225);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem;
     white-space: nowrap;
   }
 
-  .field,
-  .toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: white;
+  .field-label {
+    color: rgb(148, 163, 184);
   }
 
-  .field input {
-    width: 10ch;
-    min-height: 28px;
-    box-sizing: border-box;
-    border: 1px solid rgb(80, 80, 80);
-    border-radius: 4px;
-    padding: 0 6px;
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>
