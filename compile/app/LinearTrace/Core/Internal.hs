@@ -74,14 +74,18 @@ module LinearTrace.Core.Internal
   , BlockRef(..)
   , BlockSnapshot(..)
   , BlockRecord(..)
+  , TraceBuilderState(..)
   , NoStepPayload(..)
   , TraceStep
   , TraceStepWith(..)
   , -- * Public audit data
     AuditStep(..)
   , Audit(..)
+  , explainTokenToAuditStep
   , -- * Runner
-    explainWith
+    explainAuditWith
+  , explainWith
+  , discardAudit
   , discard
   , buildGraph
   ) where
@@ -469,12 +473,20 @@ explainWith ::
      %1 -> TraceBuilderWith payload ()
 explainWith label payload explainTokens =
   case explainTokensToAudit explainTokens of
-    Ur audit -> emitStep (ExplainedStep label payload audit)
+    Ur audit -> explainAuditWith label payload audit
+
+explainAuditWith ::
+     P.String -> payload acts -> Audit acts -> TraceBuilderWith payload ()
+explainAuditWith label payload audit =
+  emitStep (ExplainedStep label payload audit)
+
+discardAudit :: P.String -> Audit acts -> TraceBuilderWith payload ()
+discardAudit reason audit = emitStep (DiscardedStep reason audit)
 
 discard :: P.String -> ExplainTokens acts %1 -> TraceBuilderWith payload ()
 discard reason explainTokens =
   case explainTokensToAudit explainTokens of
-    Ur audit -> emitStep (DiscardedStep reason audit)
+    Ur audit -> discardAudit reason audit
 
 --------------------------------------------------------------------------------
 -- Primitive operations

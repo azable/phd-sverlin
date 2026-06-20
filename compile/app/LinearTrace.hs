@@ -88,13 +88,19 @@ module LinearTrace
   , setBorderStyleOnce
   , setWhiteSpaceOnce
   , setCssClassOnce
-  , ViewScript(..)
+  , ViewScript
   , VisualTraceBuilder
   , VisualTraceGraph
   ) where
 
 import           LinearTrace.Compile
-import           LinearTrace.Core
+import           LinearTrace.Core    hiding (Computed (..), Copied (..),
+                                      Created (..), Decided (..),
+                                      Destroyed (..), Observed (..),
+                                      Replaced (..), Sealed (..), Unsealed (..),
+                                      Used (..), buildGraph, compute, copy,
+                                      create, decide, destroy, discard, observe,
+                                      replace, seal, unseal, use)
 import           LinearTrace.Print
 import           LinearTrace.View
 import           Prelude             hiding ((<$>), (<*>))

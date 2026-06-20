@@ -21,8 +21,8 @@ module LinearTrace.View
   , blockViewLabel
   , mapBlockViewStyleExprLeaves
   , solvedBlockViewExprs
+  , VisualExplainToken
   , ExplainedVisual
-  , ExplainedVisuals(..)
   , RenderIntent(..)
   , Visual
   , Unrendered
@@ -126,10 +126,33 @@ module LinearTrace.View
   , (@>=@)
   , -- * Builder
     ViewBuilder
-  , ViewScript(..)
+  , ViewScript
   , VisualTraceBuilder
   , VisualTraceGraph
+  , Created(..)
+  , Observed(..)
+  , Used(..)
+  , Copied(..)
+  , Replaced(..)
+  , Computed(..)
+  , Destroyed(..)
+  , Sealed(..)
+  , Unsealed(..)
+  , Decided(..)
+  , create
+  , observe
+  , use
+  , copy
+  , replace
+  , compute
+  , destroy
+  , seal
+  , unseal
+  , decide
+  , explainVisual
   , explain
+  , discard
+  , buildGraph
   , buildCSP
   , solveCSP
   , solveCSPWithSeed
@@ -158,22 +181,24 @@ module LinearTrace.View
   , materializeViewNode
   ) where
 
-import           Control.Functor.Linear    hiding ((<$>), (<*>))
-import           Data.Kind                 (Type)
-import qualified Data.Kind                 as K
-import           GHC.TypeLits              (ErrorMessage (..), Nat, TypeError,
-                                            type (+), type CmpNat)
-import qualified LinearTrace.Core.Internal as C
-import           LinearTrace.Solver        hiding (absExpr, num, (@*@), (@+@),
-                                            (@-@), (@/@), (@<=@), (@==@),
-                                            (@>=@), (@^@))
-import qualified LinearTrace.Solver        as S
+import           Control.Functor.Linear                hiding ((<$>), (<*>))
+import qualified Control.Functor.Linear.Internal.State as LinearState
+import           Data.Kind                             (Type)
+import qualified Data.Kind                             as K
+import           GHC.TypeLits                          (ErrorMessage (..), Nat,
+                                                        TypeError, type (+),
+                                                        type CmpNat)
+import qualified LinearTrace.Core.Internal             as C
+import           LinearTrace.Solver                    hiding (absExpr, num,
+                                                        (@*@), (@+@), (@-@),
+                                                        (@/@), (@<=@), (@==@),
+                                                        (@>=@), (@^@))
+import qualified LinearTrace.Solver                    as S
 import           LinearTrace.View.Style
-import qualified Prelude                   as P
+import qualified Prelude                               as P
 import           Prelude.Linear
-import qualified Unsafe.Coerce             as Unsafe
+import qualified Unsafe.Coerce                         as Unsafe
 
-infixr 5 :&
 --------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
@@ -267,10 +292,6 @@ data ViewToken act where
     :: BlockView owner -> BlockView tag -> ViewToken (C.Unseal owner tag)
   DecidedToken :: BlockView tag -> ViewToken (C.Decide tag)
 
-data ViewTokens acts where
-  VNil :: ViewTokens '[]
-  VCons :: ViewToken act %1 -> ViewTokens acts %1 -> ViewTokens (act : acts)
-
 type family ExplainedVisual act :: Type where
   ExplainedVisual (C.Create tag) = NewVisual tag
   ExplainedVisual (C.Observe tag) = LiveVisual tag
@@ -285,12 +306,58 @@ type family ExplainedVisual act :: Type where
   ExplainedVisual (C.Unseal owner tag) = (LiveVisual owner, LiveVisual tag)
   ExplainedVisual (C.Decide tag) = ConsumedVisual tag
 
-data ExplainedVisuals acts where
-  End :: ExplainedVisuals '[]
-  (:&)
-    :: ExplainedVisual act
-       %1 -> ExplainedVisuals acts
-       %1 -> ExplainedVisuals (act : acts)
+data VisualExplainToken act where
+  VisualExplainToken :: ExplainedVisual act %1 -> VisualExplainToken act
+
+data Created tag where
+  Created
+    :: C.Block tag %1 -> VisualExplainToken (C.Create tag) %1 -> Created tag
+
+data Observed tag where
+  Observed
+    :: C.Block tag %1 -> VisualExplainToken (C.Observe tag) %1 -> Observed tag
+
+data Used tag where
+  Used
+    :: C.OneUse (C.Payload tag)
+       %1 -> VisualExplainToken (C.Use tag)
+       %1 -> Used tag
+
+data Copied tag where
+  Copied
+    :: C.Block tag
+       %1 -> C.Block tag
+       %1 -> VisualExplainToken (C.Copy tag)
+       %1 -> Copied tag
+
+data Replaced tag where
+  Replaced
+    :: C.Block tag %1 -> VisualExplainToken (C.Replace tag) %1 -> Replaced tag
+
+data Computed tag where
+  Computed
+    :: C.Block tag %1 -> VisualExplainToken (C.Compute tag) %1 -> Computed tag
+
+data Destroyed tag where
+  Destroyed :: VisualExplainToken (C.Destroy tag) %1 -> Destroyed tag
+
+data Sealed owner tag where
+  Sealed
+    :: C.Block owner
+       %1 -> C.Slot owner tag
+       %1 -> VisualExplainToken (C.Seal owner tag)
+       %1 -> Sealed owner tag
+
+data Unsealed owner tag where
+  Unsealed
+    :: C.Block owner
+       %1 -> C.Block tag
+       %1 -> VisualExplainToken (C.Unseal owner tag)
+       %1 -> Unsealed owner tag
+
+data Decided tag where
+  DecidedTrue :: VisualExplainToken (C.Decide tag) %1 -> Decided tag
+  DecidedFalse :: VisualExplainToken (C.Decide tag) %1 -> Decided tag
 
 data RenderIntent where
   RenderFresh :: C.BlockRef tag -> RenderIntent
@@ -1243,6 +1310,32 @@ data ViewOutput = ViewOutput
   , pendingRenderIntents :: [RenderIntent]
   }
 
+type family Append (lhs :: [Type]) (rhs :: [Type]) :: [Type] where
+  Append '[] rhs = rhs
+  Append (act : acts) rhs = act : Append acts rhs
+
+data SomeAudit where
+  SomeAudit :: C.Audit acts -> SomeAudit
+
+emptySomeAudit :: SomeAudit
+emptySomeAudit = SomeAudit C.EmptyAudit
+
+singletonSomeAudit :: C.AuditStep act -> SomeAudit
+singletonSomeAudit step = SomeAudit (step C.:> C.EmptyAudit)
+
+appendAudit :: C.Audit lhs -> C.Audit rhs -> C.Audit (Append lhs rhs)
+appendAudit lhs rhs =
+  case lhs of
+    C.EmptyAudit   -> rhs
+    step C.:> rest -> step C.:> appendAudit rest rhs
+
+appendSomeAudit :: SomeAudit -> SomeAudit -> SomeAudit
+appendSomeAudit lhs rhs =
+  case lhs of
+    SomeAudit lhsAudit ->
+      case rhs of
+        SomeAudit rhsAudit -> SomeAudit (appendAudit lhsAudit rhsAudit)
+
 instance Semigroup ViewOutput where
   ViewOutput nodesA constraintsA initialsA framesA pendingA <> ViewOutput nodesB constraintsB initialsB framesB pendingB =
     ViewOutput
@@ -1269,19 +1362,48 @@ data ViewState where
 type ViewBuilder a = State ViewState a
 
 data ViewScript acts where
-  ViewScript :: (ExplainedVisuals acts %1 -> ViewBuilder ()) -> ViewScript acts
+  ViewScript :: ViewOutput -> ViewScript acts
 
-type VisualTraceBuilder a = C.TraceBuilderWith ViewScript a
+data VisualTraceState where
+  VisualTraceState
+    :: Ur (C.TraceBuilderState ViewScript)
+       %1 -> Ur SomeAudit
+       %1 -> VisualTraceState
+
+type VisualTraceBuilder a = State VisualTraceState a
 
 type VisualTraceGraph = C.TraceGraphWith ViewScript
 
-explain ::
-     P.String
-  -> C.ExplainTokens acts
-     %1 -> (ExplainedVisuals acts %1 -> ViewBuilder ())
-  -> VisualTraceBuilder ()
-explain label explainTokens script =
-  C.explainWith label (ViewScript script) explainTokens
+explain :: P.String -> ViewBuilder () %1 -> VisualTraceBuilder ()
+explain label script0 =
+  case unsafeUr script0 of
+    Ur script -> do
+      audit <- takePendingAudit
+      let (_result, output) =
+            runViewBuilderWithOutput defaultViewEnv mempty script
+      case audit of
+        SomeAudit auditSteps ->
+          runCoreBuilder
+            (C.explainAuditWith label (ViewScript output) auditSteps)
+
+discard :: P.String -> VisualTraceBuilder ()
+discard reason = do
+  audit <- takePendingAudit
+  case audit of
+    SomeAudit auditSteps -> runCoreBuilder (C.discardAudit reason auditSteps)
+
+initialVisualTraceState :: VisualTraceState
+initialVisualTraceState =
+  VisualTraceState
+    (Ur (C.TraceBuilderState (Ur 0) (Ur []) (Ur [])))
+    (Ur emptySomeAudit)
+
+buildGraph :: VisualTraceBuilder () -> VisualTraceGraph
+buildGraph builder =
+  let (_result, finalState) = runState builder initialVisualTraceState
+      VisualTraceState (Ur coreState) _pendingAudit = finalState
+      C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) (Ur steps) = coreState
+   in C.TraceGraph blocks steps
 
 instance Consumable ViewState where
   consume (ViewState env output) = consume env `lseq` consume output
@@ -1292,6 +1414,40 @@ instance Dupable ViewState where
       (env1, env2) ->
         case dup2 output of
           (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
+
+instance Consumable VisualTraceState where
+  consume (VisualTraceState coreState pendingAudit) =
+    consume coreState `lseq` consume pendingAudit
+
+instance Dupable VisualTraceState where
+  dup2 (VisualTraceState coreState pendingAudit) =
+    case dup2 coreState of
+      (coreState1, coreState2) ->
+        case dup2 pendingAudit of
+          (pendingAudit1, pendingAudit2) ->
+            ( VisualTraceState coreState1 pendingAudit1
+            , VisualTraceState coreState2 pendingAudit2)
+
+runCoreBuilder :: C.TraceBuilderWith ViewScript a -> VisualTraceBuilder a
+runCoreBuilder builder =
+  LinearState.state
+    (\(VisualTraceState (Ur coreState) pendingAudit) ->
+       let (result, nextCoreState) = runState builder coreState
+        in (result, VisualTraceState (Ur nextCoreState) pendingAudit))
+
+appendPendingAudit :: C.AuditStep act -> VisualTraceBuilder ()
+appendPendingAudit step = do
+  VisualTraceState coreState (Ur pendingAudit) <- get
+  put
+    (VisualTraceState
+       coreState
+       (Ur (appendSomeAudit pendingAudit (singletonSomeAudit step))))
+
+takePendingAudit :: VisualTraceBuilder SomeAudit
+takePendingAudit = do
+  VisualTraceState coreState (Ur pendingAudit) <- get
+  put (VisualTraceState coreState (Ur emptySomeAudit))
+  return pendingAudit
 
 runViewBuilderWithOutput ::
      ViewEnv -> ViewOutput -> ViewBuilder a -> (a, ViewOutput)
@@ -1411,18 +1567,215 @@ explainedVisual token =
     UnsealedToken owner child -> (Visual owner, Visual child)
     DecidedToken block -> Visual block
 
-explainedVisuals :: ViewTokens acts %1 -> ExplainedVisuals acts
-explainedVisuals tokens =
-  case tokens of
-    VNil             -> End
-    VCons token rest -> explainedVisual token :& explainedVisuals rest
+visualExplainToken ::
+     C.ExplainToken act %1 -> VisualTraceBuilder (VisualExplainToken act)
+visualExplainToken explainToken =
+  case C.explainTokenToAuditStep explainToken of
+    Ur step -> do
+      appendPendingAudit step
+      return (VisualExplainToken (explainedVisual (viewToken step)))
+
+create ::
+     forall tag. C.Traceable tag
+  => C.Payload tag
+     %1 -> VisualTraceBuilder (Created tag)
+create payload =
+  case unsafeUr payload of
+    Ur payload' -> do
+      C.Created block explainToken <- runCoreBuilder (C.create payload')
+      token <- visualExplainToken explainToken
+      return (Created block token)
+
+observe ::
+     forall tag. C.Traceable tag
+  => C.Block tag
+     %1 -> VisualTraceBuilder (Observed tag)
+observe block0 =
+  case unsafeUr block0 of
+    Ur block0' -> do
+      C.Observed block explainToken <- runCoreBuilder (C.observe block0')
+      token <- visualExplainToken explainToken
+      return (Observed block token)
+
+use ::
+     forall tag. C.Traceable tag
+  => C.Block tag
+     %1 -> VisualTraceBuilder (Used tag)
+use block =
+  case unsafeUr block of
+    Ur block' -> do
+      C.Used payload explainToken <- runCoreBuilder (C.use block')
+      token <- visualExplainToken explainToken
+      return (Used payload token)
+
+copy ::
+     forall tag. C.Traceable tag
+  => C.Block tag
+     %1 -> VisualTraceBuilder (Copied tag)
+copy block =
+  case unsafeUr block of
+    Ur block' -> do
+      C.Copied original copy' explainToken <- runCoreBuilder (C.copy block')
+      token <- visualExplainToken explainToken
+      return (Copied original copy' token)
+
+replace ::
+     forall tag. C.Traceable tag
+  => C.Block tag
+     %1 -> C.Block tag
+     %1 -> VisualTraceBuilder (Replaced tag)
+replace oldBlock incomingBlock =
+  case unsafeUr oldBlock of
+    Ur oldBlock' ->
+      case unsafeUr incomingBlock of
+        Ur incomingBlock' -> do
+          C.Replaced output explainToken <-
+            runCoreBuilder (C.replace oldBlock' incomingBlock')
+          token <- visualExplainToken explainToken
+          return (Replaced output token)
+
+compute ::
+     forall tag. C.Traceable tag
+  => C.OneUse (C.Payload tag)
+     %1 -> VisualTraceBuilder (Computed tag)
+compute payload =
+  case unsafeUr payload of
+    Ur payload' -> do
+      C.Computed block explainToken <- runCoreBuilder (C.compute payload')
+      token <- visualExplainToken explainToken
+      return (Computed block token)
+
+destroy ::
+     forall tag. C.Traceable tag
+  => C.Block tag
+     %1 -> VisualTraceBuilder (Destroyed tag)
+destroy block =
+  case unsafeUr block of
+    Ur block' -> do
+      C.Destroyed explainToken <- runCoreBuilder (C.destroy block')
+      token <- visualExplainToken explainToken
+      return (Destroyed token)
+
+seal ::
+     forall owner tag. (C.Traceable owner, C.Traceable tag)
+  => C.Block owner
+     %1 -> C.Block tag
+     %1 -> VisualTraceBuilder (Sealed owner tag)
+seal owner child =
+  case unsafeUr owner of
+    Ur owner' ->
+      case unsafeUr child of
+        Ur child' -> do
+          C.Sealed ownerBlock childSlot explainToken <-
+            runCoreBuilder (C.seal owner' child')
+          token <- visualExplainToken explainToken
+          return (Sealed ownerBlock childSlot token)
+
+unseal ::
+     forall owner tag. (C.Traceable owner, C.Traceable tag)
+  => C.Block owner
+     %1 -> C.Slot owner tag
+     %1 -> VisualTraceBuilder (Unsealed owner tag)
+unseal owner slot =
+  case unsafeUr owner of
+    Ur owner' ->
+      case unsafeUr slot of
+        Ur slot' -> do
+          C.Unsealed ownerBlock childBlock explainToken <-
+            runCoreBuilder (C.unseal owner' slot')
+          token <- visualExplainToken explainToken
+          return (Unsealed ownerBlock childBlock token)
+
+decide ::
+     forall tag. C.Traceable tag
+  => (C.Payload tag %1 -> Bool)
+  -> C.Block tag
+     %1 -> VisualTraceBuilder (Decided tag)
+decide predicate block =
+  case unsafeUr block of
+    Ur block' -> do
+      decision <- runCoreBuilder (C.decide predicate block')
+      case decision of
+        C.DecidedTrue explainToken -> do
+          token <- visualExplainToken explainToken
+          return (DecidedTrue token)
+        C.DecidedFalse explainToken -> do
+          token <- visualExplainToken explainToken
+          return (DecidedFalse token)
+
+explainVisual :: VisualExplainToken act %1 -> ViewBuilder (ExplainedVisual act)
+explainVisual token =
+  case token of
+    VisualExplainToken visual' -> return visual'
+
+class ToNewVisual visual tag | visual -> tag where
+  toNewVisual :: visual %1 -> ViewBuilder (NewVisual tag)
+
+instance ToNewVisual (NewVisual tag) tag where
+  toNewVisual = return
+
+instance ToNewVisual (VisualExplainToken (C.Create tag)) tag where
+  toNewVisual = explainVisual
+
+instance ToNewVisual (VisualExplainToken (C.Compute tag)) tag where
+  toNewVisual = explainVisual
+
+class ToCopiedVisual visual tag | visual -> tag where
+  toCopiedVisual :: visual %1 -> ViewBuilder (CopiedVisual tag)
+
+instance ToCopiedVisual (CopiedVisual tag) tag where
+  toCopiedVisual = return
+
+instance ToCopiedVisual (VisualExplainToken (C.Copy tag)) tag where
+  toCopiedVisual = explainVisual
+
+class ToLiveVisual visual tag | visual -> tag where
+  toLiveVisual :: visual %1 -> ViewBuilder (LiveVisual tag)
+
+instance ToLiveVisual (LiveVisual tag) tag where
+  toLiveVisual = return
+
+instance ToLiveVisual (VisualExplainToken (C.Observe tag)) tag where
+  toLiveVisual = explainVisual
+
+class Removable visual where
+  remove :: visual %1 -> ViewBuilder ()
+
+instance Removable (Visual Rendered Consumed used tag) where
+  remove visual' =
+    case visual' of
+      Visual block -> emitRenderIntent (RenderRemove (blockRef block))
+
+instance Removable (VisualExplainToken (C.Use tag)) where
+  remove token = do
+    visual' <- explainVisual token
+    remove visual'
+
+instance Removable (VisualExplainToken (C.Destroy tag)) where
+  remove token = do
+    visual' <- explainVisual token
+    remove visual'
+
+instance Removable (VisualExplainToken (C.Decide tag)) where
+  remove token = do
+    visual' <- explainVisual token
+    remove visual'
 
 fresh ::
+     forall tag used visual. ToNewVisual visual tag
+  => ViewDefinition tag used
+     %1 -> visual
+     %1 -> ViewBuilder (Visual Rendered Stable used tag)
+fresh definition visual0 = do
+  visual1 <- toNewVisual visual0
+  freshRaw definition visual1
+
+freshRaw ::
      forall tag used.
      ViewDefinition tag used
      %1 -> NewVisual tag
      %1 -> ViewBuilder (Visual Rendered Stable used tag)
-fresh definition visual =
+freshRaw definition visual =
   case visual of
     Visual block -> do
       rendered <- defineNewBlock definition block
@@ -1430,11 +1783,20 @@ fresh definition visual =
       pure rendered
 
 freshCopy ::
+     forall tag used visual. ToCopiedVisual visual tag
+  => ViewDefinition tag used
+     %1 -> visual
+     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
+freshCopy definition copied0 = do
+  copied <- toCopiedVisual copied0
+  freshCopyRaw definition copied
+
+freshCopyRaw ::
      forall tag used.
      ViewDefinition tag used
      %1 -> CopiedVisual tag
      %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
-freshCopy definition copied =
+freshCopyRaw definition copied =
   case copied of
     CopiedVisual source visual ->
       case source of
@@ -1446,11 +1808,20 @@ freshCopy definition copied =
               pure (Visual sourceBlock, rendered)
 
 forkCopy ::
+     forall tag used visual. ToCopiedVisual visual tag
+  => ViewDefinition tag used
+     %1 -> visual
+     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
+forkCopy definition copied0 = do
+  copied <- toCopiedVisual copied0
+  forkCopyRaw definition copied
+
+forkCopyRaw ::
      forall tag used.
      ViewDefinition tag used
      %1 -> CopiedVisual tag
      %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
-forkCopy definition copied =
+forkCopyRaw definition copied =
   case copied of
     CopiedVisual source visual ->
       case source of
@@ -1463,12 +1834,24 @@ forkCopy definition copied =
               pure (Visual sourceBlock, rendered)
 
 continueFrom ::
+     forall tag oldTag used source visual.
+     (ToLiveVisual source oldTag, ToNewVisual visual tag)
+  => ViewDefinition tag used
+     %1 -> source
+     %1 -> visual
+     %1 -> ViewBuilder (Visual Rendered Stable used tag)
+continueFrom definition source0 visual0 = do
+  source <- toLiveVisual source0
+  visual1 <- toNewVisual visual0
+  continueFromRaw definition source visual1
+
+continueFromRaw ::
      forall tag oldTag used.
      ViewDefinition tag used
      %1 -> LiveVisual oldTag
      %1 -> NewVisual tag
      %1 -> ViewBuilder (Visual Rendered Stable used tag)
-continueFrom definition source visual =
+continueFromRaw definition source visual =
   case source of
     Visual sourceBlock ->
       case visual of
@@ -1477,11 +1860,6 @@ continueFrom definition source visual =
           emitRenderIntent
             (RenderContinue (blockRef sourceBlock) (blockRef block))
           pure rendered
-
-remove :: Visual Rendered Consumed used tag %1 -> ViewBuilder ()
-remove visual =
-  case visual of
-    Visual block -> emitRenderIntent (RenderRemove (blockRef block))
 
 complete :: Visual Rendered Stable used tag %1 -> ViewBuilder ()
 complete visual =
@@ -1568,9 +1946,8 @@ takeCenterY visual =
 -- Build a view graph
 --------------------------------------------------------------------------------
 buildCSP :: VisualTraceGraph -> ViewGraph
-buildCSP graph@(C.TraceGraph _blocks steps) =
-  let env = buildViewEnv graph
-      stepsOutput = viewTraceSteps env steps
+buildCSP (C.TraceGraph _blocks steps) =
+  let stepsOutput = viewTraceSteps steps
       viewSteps' = builtSteps stepsOutput
       nodes = builtNodes stepsOutput
       constraints = builtConstraints stepsOutput
@@ -1608,8 +1985,8 @@ data BuiltViewSteps = BuiltViewSteps
   , builtRenderFrames :: [[RenderIntent]]
   }
 
-viewTraceSteps :: ViewEnv -> [C.TraceStepWith ViewScript] -> BuiltViewSteps
-viewTraceSteps env = viewTraceStepsWith (viewTraceStep env) [] [] [] [] [] []
+viewTraceSteps :: [C.TraceStepWith ViewScript] -> BuiltViewSteps
+viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] [] []
 
 viewTraceStepsWith ::
      ([RenderIntent] -> record -> BuiltViewStep)
@@ -1664,18 +2041,12 @@ splitLeadingFresh intents =
         (freshes, tail') -> (RenderFresh ref : freshes, tail')
     _ -> ([], intents)
 
-viewTraceStep ::
-     ViewEnv -> [RenderIntent] -> C.TraceStepWith ViewScript -> BuiltViewStep
-viewTraceStep env pending step =
+viewTraceStep :: [RenderIntent] -> C.TraceStepWith ViewScript -> BuiltViewStep
+viewTraceStep pending step =
   case step of
-    C.ExplainedStep label (ViewScript script) audit ->
+    C.ExplainedStep label (ViewScript rawOutput) audit ->
       let plainStep = C.ExplainedStep label C.NoStepPayload audit
-          (_result, rawOutput) =
-            runViewBuilderWithOutput
-              env
-              mempty {pendingRenderIntents = pending}
-              (script (explainedVisuals (viewTokens audit)))
-          output = rawOutput
+          output = mergeInitialRenderIntents pending rawOutput
           nodes = emittedNodes output
           constraints = emittedConstraints output
           initialVars = emittedInitialVars output
@@ -1698,8 +2069,16 @@ viewTraceStep env pending step =
         , stepPendingRenderIntents = pending
         }
 
-buildViewEnv :: C.TraceGraphWith payload -> ViewEnv
-buildViewEnv _ = defaultViewEnv
+mergeInitialRenderIntents :: [RenderIntent] -> ViewOutput -> ViewOutput
+mergeInitialRenderIntents pending output =
+  case pending of
+    [] -> output
+    _ ->
+      case emittedRenderFrames output of
+        [] ->
+          output {pendingRenderIntents = pending ++ pendingRenderIntents output}
+        firstFrame:restFrames ->
+          output {emittedRenderFrames = (pending ++ firstFrame) : restFrames}
 
 --------------------------------------------------------------------------------
 -- Core block snapshots -> base block views
@@ -1720,15 +2099,6 @@ styleForRef ref =
 
 blockVar :: SymbolicType ty => C.BlockRef tag -> String -> Expr ty
 blockVar (C.BlockRef blockId) field = var ("B" ++ show blockId ++ "." ++ field)
-
---------------------------------------------------------------------------------
--- Core audit -> view tokens
---------------------------------------------------------------------------------
-viewTokens :: C.Audit acts -> ViewTokens acts
-viewTokens audit =
-  case audit of
-    C.EmptyAudit   -> VNil
-    step C.:> rest -> VCons (viewToken step) (viewTokens rest)
 
 viewToken :: C.AuditStep act -> ViewToken act
 viewToken step =

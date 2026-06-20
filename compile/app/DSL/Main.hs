@@ -17,22 +17,21 @@ module DSL.Main
   ) where
 
 import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
-import           LinearTrace.Core       (Block, Computed (..), Copied (..),
-                                         Created (..), Decided (..),
-                                         Destroyed (..), ExplainTokens (..),
-                                         LBool (..), LInt (..), Payload,
+import           LinearTrace.Core       (Block, LBool (..), LInt (..), Payload,
                                          PayloadView (..), Traceable (..),
-                                         Used (..), buildGraph, compute, copy,
-                                         create, decide, destroy, use, (<$>),
-                                         (<*>))
+                                         (<$>), (<*>))
 import           LinearTrace.View       (BoxDefinition, BoxVisual,
-                                         EmptyStyleDraft, ExplainedVisuals (..),
+                                         Computed (..), Copied (..),
+                                         Created (..), Decided (..),
+                                         Destroyed (..), EmptyStyleDraft,
                                          FontWeight (..), Hsl (..), HueExpr,
                                          LayoutExpr, LayoutUse (..), LiveVisual,
-                                         Style, TextAlign (..), ViewBuilder,
-                                         VisualTraceBuilder, VisualTraceGraph,
-                                         WhiteSpace (..), boxDefinition,
-                                         checkpoint, complete, ensure, explain,
+                                         Style, TextAlign (..), Used (..),
+                                         ViewBuilder, VisualTraceBuilder,
+                                         VisualTraceGraph, WhiteSpace (..),
+                                         boxDefinition, buildGraph, checkpoint,
+                                         complete, compute, copy, create,
+                                         decide, destroy, ensure, explain,
                                          finalizeStyle, forkCopy, fresh, global,
                                          num, remove, setCssClassOnce,
                                          setFillOnce, setFontFamilyOnce,
@@ -41,7 +40,7 @@ import           LinearTrace.View       (BoxDefinition, BoxVisual,
                                          setStrokeWidthOnce, setTextAlignOnce,
                                          setWhiteSpaceOnce, setZIndexOnce,
                                          takeHeight, takeLeft, takeTop,
-                                         takeWidth, (@*@), (@+@), (@<=@),
+                                         takeWidth, use, (@*@), (@+@), (@<=@),
                                          (@==@), (|>))
 import           Prelude.Linear
 
@@ -136,11 +135,10 @@ linearSearch :: SearchInput %1 -> VisualTraceBuilder ()
 linearSearch input =
   case input of
     SearchInput targetPayload valuePayloads -> do
-      Created target targetExplainToken <- create targetPayload
+      Created target targetVisual <- create targetPayload
       explain
         "Create target"
-        (targetExplainToken :~ Done)
-        \(targetVisual :& End) -> do
+        do
           renderedTarget <- fresh (valueViewDefinition TargetValue) targetVisual
           complete renderedTarget
       elements <- createElements valuePayloads
@@ -154,11 +152,10 @@ createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
-      Created element elementExplainToken <- create payload
+      Created element elementVisual <- create payload
       explain
         "Create element"
-        (elementExplainToken :~ Done)
-        \(elementVisual :& End) -> do
+        do
           renderedElement <-
             fresh (valueViewDefinition (ListValue index)) elementVisual
           complete renderedElement
@@ -169,11 +166,10 @@ searchElements :: Block Value %1 -> Elements %1 -> VisualTraceBuilder ()
 searchElements target elements =
   case elements of
     NoElements -> do
-      Destroyed targetExplainToken <- destroy target
+      Destroyed targetVisual <- destroy target
       explain
         "Search exhausted"
-        (targetExplainToken :~ Done)
-        \(targetVisual :& End) -> do
+        do
           remove targetVisual
     MoreElement element rest -> do
       comparison <- compareElement target element
@@ -188,12 +184,11 @@ searchElements target elements =
 compareElement ::
      Block Value %1 -> Block Value %1 -> VisualTraceBuilder Comparison
 compareElement target element = do
-  Copied targetAfter targetProbe targetCopyExplainToken <- copy target
-  Copied elementAfter elementProbe elementCopyExplainToken <- copy element
+  Copied targetAfter targetProbe targetCopy <- copy target
+  Copied elementAfter elementProbe elementCopy <- copy element
   explain
     "Prepare comparison"
-    (targetCopyExplainToken :~ elementCopyExplainToken :~ Done)
-    \(targetCopy :& elementCopy :& End) -> do
+    do
       (target1, renderedTargetProbe) <-
         forkCopy targetProbeViewDefinition targetCopy
       (element1, renderedElementProbe) <-
@@ -202,17 +197,14 @@ compareElement target element = do
       complete element1
       complete renderedTargetProbe
       complete renderedElementProbe
-  Used targetPayload targetUseExplainToken <- use targetProbe
-  Used elementPayload elementUseExplainToken <- use elementProbe
-  Computed match matchExplainToken <-
+      checkpoint
+  Used targetPayload targetVisual <- use targetProbe
+  Used elementPayload elementVisual <- use elementProbe
+  Computed match matchVisual <-
     compute (sameValue <$> targetPayload <*> elementPayload)
   explain
     "Compare target and element"
-    (targetUseExplainToken
-       :~ elementUseExplainToken
-       :~ matchExplainToken
-       :~ Done)
-    \(targetVisual :& elementVisual :& matchVisual :& End) -> do
+    do
       renderedMatch <- fresh matchViewDefinition matchVisual
       checkpoint
       remove targetVisual
@@ -220,38 +212,35 @@ compareElement target element = do
       complete renderedMatch
   decision <- decide (\(LBool answer) -> answer) match
   case decision of
-    DecidedTrue foundExplainToken -> do
+    DecidedTrue foundVisual -> do
       explain
         "Found target"
-        (foundExplainToken :~ Done)
-        \(matchVisual :& End) -> do
-          remove matchVisual
+        do
+          remove foundVisual
       return (IsMatch targetAfter elementAfter)
-    DecidedFalse notThisExplainToken -> do
+    DecidedFalse notThisVisual -> do
       explain
         "Not this element"
-        (notThisExplainToken :~ Done)
-        \(matchVisual :& End) -> do
-          remove matchVisual
+        do
+          remove notThisVisual
+          checkpoint
       return (IsNotMatch targetAfter elementAfter)
 
 discardChecked :: Block Value %1 -> VisualTraceBuilder ()
 discardChecked element = do
-  Destroyed elementExplainToken <- destroy element
+  Destroyed elementVisual <- destroy element
   explain
     "Discard checked element"
-    (elementExplainToken :~ Done)
-    \(elementVisual :& End) -> do
+    do
       remove elementVisual
 
 finishFound :: Block Value %1 -> Block Value %1 -> VisualTraceBuilder ()
 finishFound target element = do
-  Destroyed targetExplainToken <- destroy target
-  Destroyed elementExplainToken <- destroy element
+  Destroyed targetVisual <- destroy target
+  Destroyed elementVisual <- destroy element
   explain
     "Finish found target"
-    (targetExplainToken :~ elementExplainToken :~ Done)
-    \(targetVisual :& elementVisual :& End) -> do
+    do
       remove targetVisual
       remove elementVisual
 
@@ -260,11 +249,10 @@ discardRemaining elements =
   case elements of
     NoElements -> return ()
     MoreElement element rest -> do
-      Destroyed elementExplainToken <- destroy element
+      Destroyed elementVisual <- destroy element
       explain
         "Discard remaining element"
-        (elementExplainToken :~ Done)
-        \(elementVisual :& End) -> do
+        do
           remove elementVisual
       discardRemaining rest
 
