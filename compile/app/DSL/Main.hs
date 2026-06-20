@@ -327,17 +327,8 @@ layoutCanvasWidth = num 800
 layoutCanvasHeight :: LayoutExpr
 layoutCanvasHeight = num 600
 
-layoutAvailableWidthValue :: Double
-layoutAvailableWidthValue = 760
-
-layoutMaxCellValue :: Double
-layoutMaxCellValue = 88
-
-layoutMaxGapValue :: Double
-layoutMaxGapValue = 24
-
 layoutAvailableWidth :: LayoutExpr
-layoutAvailableWidth = num layoutAvailableWidthValue
+layoutAvailableWidth = num 760
 
 layoutStageCenter :: LayoutExpr
 layoutStageCenter = global "linear-search.stage-center"
@@ -358,25 +349,16 @@ layoutListTop :: LayoutExpr
 layoutListTop = layoutMatchTop @+@ matchHeight @+@ layoutVerticalGap
 
 layoutMaxCell :: LayoutExpr
-layoutMaxCell = num layoutMaxCellValue
-
-layoutLargeMinCell :: LayoutExpr
-layoutLargeMinCell = layoutMaxCell @*@ (num 0.86 :: LayoutExpr)
+layoutMaxCell = num 88
 
 layoutMinCell :: LayoutExpr
 layoutMinCell = num 10
 
 layoutMaxGap :: LayoutExpr
-layoutMaxGap = num layoutMaxGapValue
-
-layoutLargeMinGap :: LayoutExpr
-layoutLargeMinGap = layoutMaxGap @*@ (num 0.62 :: LayoutExpr)
+layoutMaxGap = num 24
 
 layoutGapRatio :: LayoutExpr
-layoutGapRatio = num 0.16
-
-layoutUsesMaxSize :: Bool
-layoutUsesMaxSize = layoutMaxSizedRowWidthValue <= layoutAvailableWidthValue
+layoutGapRatio = num 0.27
 
 layoutElementCountValue :: Int
 layoutElementCountValue =
@@ -391,11 +373,6 @@ layoutGapCountValue =
   case exampleElementCount <= 1 of
     True  -> 0
     False -> exampleElementCount - 1
-
-layoutMaxSizedRowWidthValue :: Double
-layoutMaxSizedRowWidthValue =
-  (fromIntegral layoutElementCountValue * layoutMaxCellValue)
-    + (fromIntegral layoutGapCountValue * layoutMaxGapValue)
 
 layoutElementCount :: LayoutExpr
 layoutElementCount = num (fromIntegral layoutElementCountValue)
@@ -414,6 +391,21 @@ layoutRowLeft = global "linear-search.row-left"
 
 layoutRowWidth :: LayoutExpr
 layoutRowWidth = global "linear-search.row-width"
+
+layoutMinExpr :: LayoutExpr -> LayoutExpr -> LayoutExpr
+layoutMinExpr lhs rhs =
+  ((lhs @+@ rhs) @-@ absExpr (lhs @-@ rhs)) @/@ (num 2 :: LayoutExpr)
+
+layoutWidthLimitedCell :: LayoutExpr
+layoutWidthLimitedCell =
+  layoutAvailableWidth
+    @/@ (layoutElementCount @+@ (layoutGapCount @*@ layoutGapRatio))
+
+layoutPreferredCell :: LayoutExpr
+layoutPreferredCell = layoutMinExpr layoutMaxCell layoutWidthLimitedCell
+
+layoutPreferredGap :: LayoutExpr
+layoutPreferredGap = layoutCell @*@ layoutGapRatio
 
 layoutStep :: LayoutExpr
 layoutStep = layoutCell @+@ layoutGap
@@ -492,6 +484,8 @@ constrainSearchLayout = do
   ensure (layoutCell @<=@ layoutMaxCell)
   ensure ((num 0 :: LayoutExpr) @<=@ layoutGap)
   ensure (layoutGap @<=@ layoutMaxGap)
+  ensure (layoutCell @==@ layoutPreferredCell)
+  ensure (layoutGap @==@ layoutPreferredGap)
   ensure
     (layoutRowWidth
        @==@ ((layoutElementCount @*@ layoutCell)
@@ -500,6 +494,7 @@ constrainSearchLayout = do
     (layoutRowLeft
        @+@ (layoutRowWidth @/@ (num 2 :: LayoutExpr))
        @==@ layoutStageCenter)
+  ensure (layoutRowWidth @<=@ layoutAvailableWidth)
   ensure (layoutHorizontalInset @<=@ layoutRowLeft)
   ensure (layoutRowLeft @+@ layoutRowWidth @<=@ layoutRightInset)
   ensure (layoutTargetTop @+@ layoutCell @<=@ layoutProbeTop)
@@ -508,17 +503,6 @@ constrainSearchLayout = do
   ensure (layoutListTop @+@ layoutCell @<=@ layoutCanvasHeight)
   ensure (layoutHorizontalInset @<=@ targetProbeLeft)
   ensure (elementProbeLeft @+@ layoutProbeSize @<=@ layoutRightInset)
-  {- HLINT ignore "Use if" -}
-  case layoutUsesMaxSize of
-    True -> do
-      ensure (layoutLargeMinCell @<=@ layoutCell)
-      {- HLINT ignore "Use if" -}
-      case exampleElementCount <= 1 of
-        True  -> ensure (layoutGap @==@ (num 0 :: LayoutExpr))
-        False -> ensure (layoutLargeMinGap @<=@ layoutGap)
-    False -> do
-      ensure (layoutGap @==@ layoutCell @*@ layoutGapRatio)
-      ensure (layoutRowWidth @==@ layoutAvailableWidth)
 
 valueTop :: BlockRef Value -> LayoutExpr
 valueTop ref =

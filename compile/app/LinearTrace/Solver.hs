@@ -29,6 +29,7 @@ module LinearTrace.Solver
   , (@*@)
   , (@/@)
   , (@^@)
+  , absExpr
   , -- * Constraints
     Constraint(..)
   , ConstrainEq(..)
@@ -251,6 +252,9 @@ binaryExpr f (Expr ty lhs) (Expr _ rhs) = Expr ty (f lhs rhs)
 
 unaryExpr :: (RawExpr -> RawExpr) -> Expr ty -> Expr ty
 unaryExpr f (Expr ty inner) = Expr ty (f inner)
+
+absExpr :: Expr ty -> Expr ty
+absExpr = unaryExpr EAbs
 
 infixl 6 @+@
 infixl 6 @-@

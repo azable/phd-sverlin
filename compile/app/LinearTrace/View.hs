@@ -132,6 +132,7 @@ module LinearTrace.View
   , (@*@)
   , (@/@)
   , (@^@)
+  , absExpr
   , (@==@)
   , (@<=@)
   , (@>=@)
@@ -180,6 +181,7 @@ import           LinearTrace.Solver          hiding
                                              , (@*@)
                                              , (@/@)
                                              , (@^@)
+                                             , absExpr
                                              , (@==@)
                                              , (@<=@)
                                              , (@>=@)
@@ -746,6 +748,9 @@ infix 4 @>=@
 
 (@^@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
 (@^@) = binaryExpr (S.@^@)
+
+absExpr :: Expr ty -> Expr ty
+absExpr = S.absExpr
 
 (@==@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
 (@==@) = relateExpr (S.@==@)
