@@ -179,7 +179,7 @@
   }
 </script>
 
-<div class="dark min-h-screen bg-background text-foreground">
+<div class="dark flex h-screen flex-col overflow-hidden bg-background text-foreground">
   <TraceToolbar
     bind:debugEnabled
     bind:seedText
@@ -197,7 +197,9 @@
     stepCount={player.stepCount}
   />
 
-  <main class="mx-auto flex w-full max-w-screen-2xl flex-col items-center gap-4 p-4">
+  <main
+    class="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col items-center gap-4 overflow-hidden p-4"
+  >
     {#if loadingStatic && !player.hasTrace}
       <Card.Root class="w-full max-w-5xl">
         <Card.Header>
@@ -219,22 +221,22 @@
     {/if}
 
     {#if player.hasTrace}
-      <Card.Root class="w-fit max-w-full" aria-label="Visualization canvas">
-        <Card.Header class="sr-only">
-          <Card.Title>Visualization canvas</Card.Title>
-        </Card.Header>
-        <Card.Content class="max-w-full p-3">
-          <ScrollArea orientation="both" class="max-w-full rounded-lg border">
-            <div class="w-max">
+      <section
+        class="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden"
+        aria-label="Visualization canvas"
+      >
+        <ScrollArea orientation="both" class="h-full w-full rounded-lg border">
+          <div class="flex h-max min-h-full w-max min-w-full items-center justify-center">
+            <div class="shrink-0">
               <TraceCanvas
                 elements={player.elements}
                 height={player.canvasHeight}
                 width={player.canvasWidth}
               />
             </div>
-          </ScrollArea>
-        </Card.Content>
-      </Card.Root>
+          </div>
+        </ScrollArea>
+      </section>
 
       <TraceDebugPanel
         debug={latestDebug}
