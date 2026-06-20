@@ -2,6 +2,10 @@
   import { deserialize } from '$app/forms';
   import { onMount } from 'svelte';
 
+  import * as Alert from '$lib/components/ui/alert';
+  import * as Card from '$lib/components/ui/card';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import TraceCanvas from '$lib/visualization/TraceCanvas.svelte';
   import TraceDebugPanel from '$lib/visualization/TraceDebugPanel.svelte';
   import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
@@ -172,7 +176,7 @@
   }
 </script>
 
-<div class="page">
+<div class="dark min-h-screen bg-background text-foreground">
   <TraceToolbar
     bind:debugEnabled
     bind:seedText
@@ -190,25 +194,44 @@
     stepCount={player.stepCount}
   />
 
-  <main class="workspace">
+  <main class="mx-auto flex w-full max-w-screen-2xl flex-col items-center gap-4 p-4">
     {#if loadingStatic && !player.hasTrace}
-      <p class="status">Loading {staticTraceSrc}...</p>
+      <Card.Root class="w-full max-w-5xl">
+        <Card.Header>
+          <Card.Title>Loading trace</Card.Title>
+          <Card.Description>{staticTraceSrc}</Card.Description>
+        </Card.Header>
+        <Card.Content class="flex flex-col gap-3">
+          <Skeleton class="h-8 w-48" />
+          <Skeleton class="h-96 w-full" />
+        </Card.Content>
+      </Card.Root>
     {/if}
 
     {#if pageError}
-      <p class="error">{pageError}</p>
+      <Alert.Root variant="destructive" class="w-full max-w-5xl">
+        <Alert.Title>Visualization error</Alert.Title>
+        <Alert.Description>{pageError}</Alert.Description>
+      </Alert.Root>
     {/if}
 
     {#if player.hasTrace}
-      <section class="canvas-panel" aria-label="Visualization canvas">
-        <div class="canvas-scroll">
-          <TraceCanvas
-            elements={player.elements}
-            height={player.canvasHeight}
-            width={player.canvasWidth}
-          />
-        </div>
-      </section>
+      <Card.Root class="w-full max-w-screen-xl" aria-label="Visualization canvas">
+        <Card.Header class="sr-only">
+          <Card.Title>Visualization canvas</Card.Title>
+        </Card.Header>
+        <Card.Content class="p-3">
+          <ScrollArea orientation="both" class="w-full rounded-lg border">
+            <div class="w-max">
+              <TraceCanvas
+                elements={player.elements}
+                height={player.canvasHeight}
+                width={player.canvasWidth}
+              />
+            </div>
+          </ScrollArea>
+        </Card.Content>
+      </Card.Root>
 
       <TraceDebugPanel
         debug={latestDebug}
@@ -219,48 +242,3 @@
     {/if}
   </main>
 </div>
-
-<style>
-  .page {
-    min-width: 100vw;
-    min-height: 100vh;
-    overflow: auto;
-    background: rgb(2, 6, 23);
-    box-sizing: border-box;
-  }
-
-  .workspace {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    padding: 20px;
-    box-sizing: border-box;
-  }
-
-  .canvas-panel {
-    max-width: 100%;
-    padding: 12px;
-    border: 1px solid rgb(30, 41, 59);
-    border-radius: 8px;
-    background: rgb(15, 23, 42);
-    box-shadow: 0 18px 50px rgb(0 0 0 / 0.28);
-    box-sizing: border-box;
-  }
-
-  .canvas-scroll {
-    max-width: calc(100vw - 64px);
-    overflow: auto;
-  }
-
-  .status {
-    color: rgb(226, 232, 240);
-    font-family: system-ui, sans-serif;
-  }
-
-  .error {
-    width: min(100%, 960px);
-    color: rgb(254, 202, 202);
-    font-family: system-ui, sans-serif;
-  }
-</style>

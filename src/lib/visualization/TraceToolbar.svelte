@@ -1,13 +1,14 @@
 <script lang="ts">
-  import BugIcon from '@lucide/svelte/icons/bug';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 
+  import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
+  import { Spinner } from '$lib/components/ui/spinner';
   import { Switch } from '$lib/components/ui/switch';
 
   type Props = {
@@ -52,157 +53,82 @@
   }
 </script>
 
-<form class="toolbar" onsubmit={submitRegeneration}>
-  <div class="toolbar-primary">
-    <div class="playback-controls" aria-label="Trace playback">
+<form
+  class="flex min-h-16 w-full flex-wrap items-center gap-3 border-b bg-background/95 px-4 py-3 text-foreground"
+  onsubmit={submitRegeneration}
+>
+  <div class="flex flex-wrap items-center gap-3">
+    <div class="flex flex-wrap items-center gap-2" aria-label="Trace playback">
       <Button variant="outline" size="sm" onclick={onReset} disabled={!hasTrace || busy}>
-        <RotateCcwIcon size={15} />
+        <RotateCcwIcon data-icon="inline-start" />
         Reset
       </Button>
-      <Button variant="outline" size="icon" onclick={onPrevious} disabled={!canPrevious || busy}>
-        <ChevronLeftIcon size={17} />
-        <span class="sr-only">Previous</span>
+      <Button
+        aria-label="Previous step"
+        variant="outline"
+        size="icon-sm"
+        onclick={onPrevious}
+        disabled={!canPrevious || busy}
+      >
+        <ChevronLeftIcon />
       </Button>
-      <Button variant="outline" size="icon" onclick={onNext} disabled={!canNext || busy}>
-        <ChevronRightIcon size={17} />
-        <span class="sr-only">Next</span>
+      <Button
+        aria-label="Next step"
+        variant="outline"
+        size="icon-sm"
+        onclick={onNext}
+        disabled={!canNext || busy}
+      >
+        <ChevronRightIcon />
       </Button>
     </div>
 
     {#if hasTrace}
-      <div class="trace-meta" aria-label="Trace status">
-        <span class="meta-pill">
-          <span>Step</span>
-          <strong>{currentStep + 1}</strong>
-          <span>of</span>
-          <strong>{stepCount}</strong>
-        </span>
-
+      <div class="flex flex-wrap items-center gap-2" aria-label="Trace status">
+        <Badge variant="secondary">Step {currentStep + 1} of {stepCount}</Badge>
         {#if currentSeed !== null}
-          <span class="meta-pill">
-            <span>Seed</span>
-            <strong>{currentSeed}</strong>
-          </span>
+          <Badge variant="outline">Seed {currentSeed}</Badge>
         {/if}
       </div>
     {/if}
   </div>
 
-  <div class="compile-controls" aria-label="Compile controls">
-    <Label class="seed-control">
-      <span class="field-label">Next seed</span>
+  <div
+    class="ml-auto flex flex-wrap items-center justify-end gap-3 max-sm:ml-0 max-sm:w-full max-sm:justify-start"
+    aria-label="Compile controls"
+  >
+    <Field.Field
+      orientation="horizontal"
+      class="w-auto flex-none items-center gap-2 [&>[data-slot=field-label]]:flex-none"
+    >
+      <Field.Label for="next-seed" class="shrink-0 text-muted-foreground">Next seed</Field.Label>
       <Input
+        id="next-seed"
+        class="w-36"
         bind:value={seedText}
         disabled={busy}
         inputmode="numeric"
         placeholder="random"
         type="text"
       />
-    </Label>
+    </Field.Field>
 
-    <Label class="debug-control">
-      <Switch bind:checked={debugEnabled} />
-      <BugIcon size={15} />
-      <span>Debug</span>
-    </Label>
+    <Field.Field
+      orientation="horizontal"
+      class="w-auto flex-none items-center gap-2 [&>[data-slot=field-label]]:flex-none"
+    >
+      <Switch id="debug-enabled" bind:checked={debugEnabled} />
+      <Field.Label for="debug-enabled" class="shrink-0 font-normal">Debug</Field.Label>
+    </Field.Field>
 
     <Button type="submit" disabled={busy}>
-      <RefreshCwIcon class={regenerating ? 'animate-spin' : undefined} size={15} />
-      {regenerating ? 'Regenerating...' : 'Regenerate'}
+      {#if regenerating}
+        <Spinner data-icon="inline-start" />
+        Regenerating
+      {:else}
+        <RefreshCwIcon data-icon="inline-start" />
+        Regenerate
+      {/if}
     </Button>
   </div>
 </form>
-
-<style>
-  .toolbar {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    width: 100%;
-    min-height: 3.75rem;
-    padding: 0.625rem 1rem;
-    border-bottom: 1px solid rgb(30, 41, 59);
-    background: rgb(10, 16, 28);
-    box-sizing: border-box;
-    font-family: system-ui, sans-serif;
-  }
-
-  .toolbar-primary {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.625rem;
-  }
-
-  .playback-controls,
-  .compile-controls,
-  .trace-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .compile-controls {
-    margin-left: auto;
-    justify-content: flex-end;
-  }
-
-  .meta-pill {
-    display: inline-flex;
-    min-height: 2rem;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.25rem 0.625rem;
-    border: 1px solid rgb(51, 65, 85);
-    border-radius: 0.375rem;
-    background: rgb(15 23 42 / 0.72);
-    color: rgb(203, 213, 225);
-    font-size: 0.875rem;
-    line-height: 1;
-    white-space: nowrap;
-  }
-
-  .meta-pill strong {
-    color: rgb(248, 250, 252);
-    font-weight: 650;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .field-label {
-    color: rgb(148, 163, 184);
-    font-size: 0.8125rem;
-  }
-
-  :global(.seed-control input) {
-    width: clamp(8rem, 14vw, 11rem);
-  }
-
-  :global(.debug-control) {
-    color: rgb(226, 232, 240);
-  }
-
-  @media (max-width: 760px) {
-    .toolbar {
-      align-items: flex-start;
-    }
-
-    .toolbar-primary,
-    .compile-controls {
-      flex: 1 1 100%;
-    }
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-</style>

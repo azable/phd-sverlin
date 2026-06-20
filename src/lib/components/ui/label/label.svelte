@@ -1,19 +1,20 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
-  import type { HTMLLabelAttributes } from 'svelte/elements';
+  import { Label as LabelPrimitive } from 'bits-ui';
+  import { cn } from '$lib/utils.js';
 
-  import { cn } from '$lib/utils';
-
-  type Props = HTMLLabelAttributes & {
-    children?: Snippet;
-  };
-
-  let { class: className, children, ...rest }: Props = $props();
+  let {
+    ref = $bindable(null),
+    class: className,
+    ...restProps
+  }: LabelPrimitive.RootProps = $props();
 </script>
 
-<label
-  class={cn('inline-flex items-center gap-2 text-sm font-medium text-slate-200', className)}
-  {...rest}
->
-  {@render children?.()}
-</label>
+<LabelPrimitive.Root
+  bind:ref
+  data-slot="label"
+  class={cn(
+    'flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50',
+    className
+  )}
+  {...restProps}
+/>

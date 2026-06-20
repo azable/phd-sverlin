@@ -54,15 +54,16 @@
   .canvas {
     position: relative;
     overflow: hidden;
-    background-color: rgb(220, 220, 220);
-    background-image:
-      linear-gradient(to right, rgba(0, 0, 0, 0.08) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
-    background-size: 20px 20px;
+    isolation: isolate;
+    background: #fff;
+    color: #000;
+    font: initial;
+    line-height: normal;
   }
 
   .node {
     box-sizing: border-box;
+    border-style: solid;
     display: flex;
     align-items: center;
     justify-content: center;
