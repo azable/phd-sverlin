@@ -12,7 +12,7 @@
   } from '$lib/visualization/types';
 
   const staticTraceSrc = '/compiled.json';
-  const regenerateSrc = '/api/visualization';
+  const regenerateSrc = '/';
 
   const player = new TracePlayer();
 
