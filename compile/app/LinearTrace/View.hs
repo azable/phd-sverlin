@@ -174,7 +174,7 @@ import qualified Data.Kind                   as K
 import           Data.Kind                   (Type)
 import           GHC.TypeLits                (ErrorMessage (..), Nat,
                                               TypeError, type (+), type CmpNat)
-import qualified LinearTrace.Core            as C
+import qualified LinearTrace.Core.Internal   as C
 import           LinearTrace.Solver          hiding
                                              ( num
                                              , (@+@)
@@ -601,8 +601,7 @@ setCssClassOnce value draft =
 data ViewDefinition tag (used :: [LayoutAttr]) where
   ViewDefinition
     :: (EmptyStyleDraft %1 -> Style)
-    -> (C.BlockRef tag
-        -> LiveVisual tag
+    -> (LiveVisual tag
            %1 -> ViewBuilder (Visual Rendered Stable used tag))
     -> ViewDefinition tag used
 
@@ -614,16 +613,14 @@ type SizeDefinition tag =
 
 boxDefinition ::
      (EmptyStyleDraft %1 -> Style)
-  -> (C.BlockRef tag
-      -> LiveVisual tag
+  -> (LiveVisual tag
          %1 -> ViewBuilder (BoxVisual tag))
   -> BoxDefinition tag
 boxDefinition = ViewDefinition
 
 sizeDefinition ::
      (EmptyStyleDraft %1 -> Style)
-  -> (C.BlockRef tag
-      -> LiveVisual tag
+  -> (LiveVisual tag
          %1 -> ViewBuilder (SizeVisual tag))
   -> SizeDefinition tag
 sizeDefinition = ViewDefinition
@@ -933,7 +930,7 @@ defineNewBlock definition block0 =
       ensureRaw (S.num 0 S.@<=@ top block)
       ensureRaw (right block S.@<=@ canvasWidth env)
       ensureRaw (bottom block S.@<=@ canvasHeight env)
-      viewDefinition (blockRef block) (Visual block)
+      viewDefinition (Visual block)
 
 --------------------------------------------------------------------------------
 -- Explicit token handling

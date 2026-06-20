@@ -3,7 +3,7 @@
 module LinearTrace
   ( -- * Core public API data
     TraceGraph
-  , TraceGraphWith(..)
+  , TraceGraphWith
   , TraceBuilder
   , TraceBuilderWith
   , Traceable(..)
@@ -39,7 +39,7 @@ module LinearTrace
   , seal
   , unseal
   , decide
-  , -- * Auditing operations
+  , -- * Evidence operations
     OneUse
   , Evidence
   , EvidenceList(Done, (:~))
@@ -59,12 +59,7 @@ module LinearTrace
   , (<$>)
   , (<*>)
   , -- * Graph building, rendering and compilation
-    Audit(..)
-  , AuditStep(..)
-  , PayloadView(..)
-  , NoStepPayload(..)
-  , TraceStep
-  , TraceStepWith(..)
+    PayloadView(..)
   , buildGraph
   , printGraph
   , printTrace

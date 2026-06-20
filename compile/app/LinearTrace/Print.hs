@@ -11,7 +11,7 @@ module LinearTrace.Print
 
 import           Data.Char              (isDigit)
 import           Data.List              (dropWhileEnd)
-import           LinearTrace.Core
+import           LinearTrace.Core.Internal
 import qualified LinearTrace.Solver     as S
 import qualified LinearTrace.View       as V
 import           Numeric                (showFFloat)

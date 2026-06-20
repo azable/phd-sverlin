@@ -25,7 +25,7 @@ import qualified Data.Aeson.Key             as Key
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
-import qualified LinearTrace.Core           as C
+import qualified LinearTrace.Core.Internal  as C
 import qualified LinearTrace.Solver         as S
 import qualified LinearTrace.View           as V
 import           Numeric                    (showFFloat)
