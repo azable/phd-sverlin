@@ -5,11 +5,14 @@ module Main where
 import           App
 import           DSL.Main
 import           Options.Applicative
+import           System.Exit         (exitFailure)
+import           System.IO           (hPutStrLn, stderr)
 import           System.Random       (randomIO)
 
 data Options = Options
   { optionShowSolverDetails :: Bool
   , optionSeed              :: Maybe Int
+  , optionJson              :: Bool
   }
 
 main :: IO ()
@@ -21,10 +24,18 @@ main = do
         App.defaultRunConfig
           { App.runSeed = seedInt
           , App.runShowDetails = optionShowSolverDetails options
+          , App.runOutputMode =
+              if optionJson options
+                then App.OutputStdout
+                else App.runOutputMode App.defaultRunConfig
           }
   result <- App.runVisualization config graph
   case result of
-    Left err        -> putStrLn err
+    Left err -> do
+      if optionJson options
+        then hPutStrLn stderr err
+        else putStrLn err
+      exitFailure
     Right _compiled -> pure ()
 
 chooseSeed :: Maybe Int -> IO Int
@@ -54,3 +65,7 @@ optionsParser =
                 <> metavar "INT"
                 <> help
                      "Use a deterministic solver seed instead of generating a random one"))
+    <*> switch
+          (long "json"
+             <> help
+                  "Write compiled visualization JSON to stdout instead of static/compiled.json")

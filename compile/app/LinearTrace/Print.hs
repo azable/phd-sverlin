@@ -7,6 +7,10 @@ module LinearTrace.Print
   , printTrace
   , printSolutionByStep
   , printSolutionSummary
+  , hPrintGraph
+  , hPrintTrace
+  , hPrintSolutionByStep
+  , hPrintSolutionSummary
   ) where
 
 import           Data.Char                 (isDigit)
@@ -19,7 +23,7 @@ import           Prelude
 import           System.Console.ANSI       (ConsoleIntensity (..),
                                             ConsoleLayer (..), SGR (..),
                                             hNowSupportsANSI, setSGRCode)
-import           System.IO                 (stdout)
+import           System.IO                 (Handle, hPutStr, stdout)
 import qualified Text.PrettyPrint.Boxes    as Box
 
 --------------------------------------------------------------------------------
@@ -99,22 +103,34 @@ data StepStyle = StepStyle
 -- Public rendering API
 --------------------------------------------------------------------------------
 printGraph :: TraceGraphWith payload -> IO ()
-printGraph = printReport . graphBox
+printGraph = hPrintGraph stdout
 
 printTrace :: TraceGraphWith payload -> IO ()
-printTrace = printReport . traceBox
+printTrace = hPrintTrace stdout
 
 printSolutionByStep :: Bool -> S.Solution -> V.ViewGraph -> IO ()
-printSolutionByStep showDetails solution =
-  printReport . solutionByStepBox showDetails solution
+printSolutionByStep = hPrintSolutionByStep stdout
 
 printSolutionSummary :: S.Solution -> IO ()
-printSolutionSummary = printReport . solutionSummaryBox
+printSolutionSummary = hPrintSolutionSummary stdout
 
-printReport :: Box.Box -> IO ()
-printReport box = do
-  supportsAnsi <- hNowSupportsANSI stdout
-  putStr (renderReport supportsAnsi box)
+hPrintGraph :: Handle -> TraceGraphWith payload -> IO ()
+hPrintGraph handle = printReport handle . graphBox
+
+hPrintTrace :: Handle -> TraceGraphWith payload -> IO ()
+hPrintTrace handle = printReport handle . traceBox
+
+hPrintSolutionByStep :: Handle -> Bool -> S.Solution -> V.ViewGraph -> IO ()
+hPrintSolutionByStep handle showDetails solution =
+  printReport handle . solutionByStepBox showDetails solution
+
+hPrintSolutionSummary :: Handle -> S.Solution -> IO ()
+hPrintSolutionSummary handle = printReport handle . solutionSummaryBox
+
+printReport :: Handle -> Box.Box -> IO ()
+printReport handle box = do
+  supportsAnsi <- hNowSupportsANSI handle
+  hPutStr handle (renderReport supportsAnsi box)
 
 renderReport :: Bool -> Box.Box -> String
 renderReport supportsAnsi box =

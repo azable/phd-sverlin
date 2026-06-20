@@ -1,409 +1,171 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { onMount } from 'svelte';
 
-  type CssValue = string | number | boolean;
+  import TraceCanvas from '$lib/visualization/TraceCanvas.svelte';
+  import TraceDebugPanel from '$lib/visualization/TraceDebugPanel.svelte';
+  import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
+  import { TracePlayer } from '$lib/visualization/trace-player.svelte';
+  import type {
+    CompileDebug,
+    CompiledTrace,
+    VisualizationResponse
+  } from '$lib/visualization/types';
 
-  type RenderStyle = Record<string, CssValue>;
+  const staticTraceSrc = '/compiled.json';
+  const regenerateSrc = '/api/visualization';
 
-  type RenderElement = {
-    blockId: number;
-    kind: string;
-    content: string;
-    style: RenderStyle;
-    className?: string;
-  };
+  const player = new TracePlayer();
 
-  type RenderId = string;
+  let loadingStatic = $state(true);
+  let regenerating = $state(false);
+  let staticError = $state<string | null>(null);
+  let regenerateError = $state<string | null>(null);
+  let latestDebug = $state<CompileDebug | null>(null);
+  let latestSeed = $state<number | null>(null);
+  let seedText = $state('');
+  let details = $state(false);
+  let debugOpen = $state(false);
 
-  type RenderOrigin = {
-    id: RenderId;
-    element: RenderElement;
-  };
-
-  type RenderPatch =
-    | {
-        kind: 'create';
-        id: RenderId;
-        element: RenderElement;
-        origin?: RenderOrigin;
-      }
-    | {
-        kind: 'update';
-        id: RenderId;
-        from: RenderElement;
-        to: RenderElement;
-      }
-    | {
-        kind: 'destroy';
-        id: RenderId;
-        element: RenderElement;
-      };
-
-  type CompiledTrace = {
-    canvas: {
-      width: number;
-      height: number;
-    };
-    frames: RenderPatch[][];
-  };
-
-  type LiveElement = RenderElement & {
-    id: RenderId;
-    exiting?: boolean;
-  };
-
-  type PatchAnimationOptions = {
-    animateCreate: boolean;
-    animateDestroy: boolean;
-  };
-
-  const src = '/compiled.json';
-  const transitionMs = 300;
-
-  let trace = $state<CompiledTrace | null>(null);
-  let elements = $state<LiveElement[]>([]);
-  let currStep = $state(0);
-  let loading = $state(true);
-  let error = $state<string | null>(null);
-
-  const lastStep = $derived((trace?.frames.length ?? 0) - 1);
-  const canvasWidth = $derived(trace?.canvas.width ?? 1200);
-  const canvasHeight = $derived(trace?.canvas.height ?? 800);
-
-  const destroyTimers = new SvelteMap<RenderId, ReturnType<typeof setTimeout>>();
-  let transitionVersion = 0;
+  const pageError = $derived(staticError ?? regenerateError);
 
   onMount(() => {
-    void loadTrace();
+    void loadStaticTrace();
 
     return () => {
-      clearDestroyTimers();
+      player.dispose();
     };
   });
 
-  async function loadTrace() {
-    loading = true;
-    error = null;
+  async function loadStaticTrace() {
+    loadingStatic = true;
+    staticError = null;
 
     try {
-      const response = await fetch(src);
+      const response = await fetch(staticTraceSrc);
 
       if (!response.ok) {
-        throw new Error(`Failed to load ${src}: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to load ${staticTraceSrc}: ${response.status} ${response.statusText}`
+        );
       }
 
-      trace = (await response.json()) as CompiledTrace;
-      currStep = trace.frames.length > 0 ? 0 : -1;
-
-      rebuildToStep(currStep);
+      player.setTrace((await response.json()) as CompiledTrace);
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      staticError = err instanceof Error ? err.message : String(err);
     } finally {
-      loading = false;
+      loadingStatic = false;
     }
   }
 
-  function recomputeLayout() {
-    if (!trace) return;
+  async function regenerateTrace() {
+    let seed: number | null;
 
-    currStep = trace.frames.length > 0 ? 0 : -1;
-    rebuildToStep(currStep);
-  }
+    try {
+      seed = parseOptionalSeed(seedText);
+    } catch (err) {
+      regenerateError = err instanceof Error ? err.message : String(err);
+      debugOpen = true;
+      return;
+    }
 
-  function nextStep() {
-    if (!trace || currStep >= lastStep) return;
+    regenerating = true;
+    regenerateError = null;
 
-    const next = currStep + 1;
-    applyFrame(trace.frames[next], { animateCreate: true, animateDestroy: true });
-    currStep = next;
-  }
-
-  function prevStep() {
-    if (!trace || currStep <= 0) return;
-
-    applyReverseFrame(trace.frames[currStep], {
-      animateCreate: true,
-      animateDestroy: true
-    });
-    currStep -= 1;
-  }
-
-  function rebuildToStep(step: number) {
-    if (!trace) return;
-
-    clearDestroyTimers();
-    transitionVersion += 1;
-
-    const next = new SvelteMap<RenderId, LiveElement>();
-
-    for (let i = 0; i <= step; i++) {
-      applyPatchesToMap(next, trace.frames[i], {
-        animateCreate: false,
-        animateDestroy: false
+    try {
+      const response = await fetch(regenerateSrc, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          seed,
+          details
+        })
       });
-    }
+      const payload = await readVisualizationResponse(response);
 
-    elements = Array.from(next.values());
-  }
-
-  function applyFrame(patches: RenderPatch[], options: PatchAnimationOptions) {
-    transitionVersion += 1;
-
-    const next = new SvelteMap<RenderId, LiveElement>();
-
-    for (const element of elements) {
-      next.set(element.id, element);
-    }
-
-    applyPatchesToMap(next, patches, options);
-
-    elements = Array.from(next.values());
-  }
-
-  function applyReverseFrame(patches: RenderPatch[], options: PatchAnimationOptions) {
-    transitionVersion += 1;
-
-    const next = new SvelteMap<RenderId, LiveElement>();
-
-    for (const element of elements) {
-      next.set(element.id, element);
-    }
-
-    applyReversePatchesToMap(next, patches, options);
-
-    elements = Array.from(next.values());
-  }
-
-  function applyPatchesToMap(
-    next: Map<RenderId, LiveElement>,
-    patches: RenderPatch[],
-    options: PatchAnimationOptions
-  ) {
-    for (const patch of patches) {
-      switch (patch.kind) {
-        case 'create': {
-          clearDestroyTimer(patch.id);
-          const originStyle =
-            options.animateCreate && patch.origin ? patch.origin.element.style : undefined;
-
-          next.set(patch.id, {
-            ...patch.element,
-            style: originStyle ?? patch.element.style,
-            id: patch.id,
-            exiting: false
-          });
-
-          if (originStyle) {
-            scheduleSettleElement(patch.id, patch.element);
-          }
-
-          break;
-        }
-
-        case 'update': {
-          clearDestroyTimer(patch.id);
-
-          next.set(patch.id, {
-            ...patch.to,
-            id: patch.id,
-            exiting: false
-          });
-
-          break;
-        }
-
-        case 'destroy': {
-          if (options.animateDestroy) {
-            const current = next.get(patch.id);
-
-            next.set(patch.id, {
-              ...(current ?? patch.element),
-              id: patch.id,
-              exiting: true
-            });
-
-            scheduleDestroy(patch.id);
-          } else {
-            clearDestroyTimer(patch.id);
-            next.delete(patch.id);
-          }
-
-          break;
-        }
+      if (payload.debug) {
+        latestDebug = payload.debug;
       }
-    }
-  }
 
-  function applyReversePatchesToMap(
-    next: Map<RenderId, LiveElement>,
-    patches: RenderPatch[],
-    options: PatchAnimationOptions
-  ) {
-    for (const patch of patches.slice().reverse()) {
-      switch (patch.kind) {
-        case 'create': {
-          const current = next.get(patch.id);
-
-          if (options.animateCreate) {
-            next.set(patch.id, {
-              ...(current ?? patch.element),
-              style: patch.origin?.element.style ?? (current ?? patch.element).style,
-              id: patch.id,
-              exiting: true
-            });
-
-            scheduleDestroy(patch.id);
-          } else {
-            clearDestroyTimer(patch.id);
-            next.delete(patch.id);
-          }
-
-          break;
-        }
-
-        case 'update': {
-          clearDestroyTimer(patch.id);
-
-          next.set(patch.id, {
-            ...patch.from,
-            id: patch.id,
-            exiting: false
-          });
-
-          break;
-        }
-
-        case 'destroy': {
-          clearDestroyTimer(patch.id);
-
-          if (options.animateDestroy) {
-            const current = next.get(patch.id);
-
-            next.set(patch.id, {
-              ...(current ?? patch.element),
-              id: patch.id,
-              exiting: true
-            });
-
-            scheduleSettleElement(patch.id, patch.element);
-          } else {
-            next.set(patch.id, {
-              ...patch.element,
-              id: patch.id,
-              exiting: false
-            });
-          }
-
-          break;
-        }
+      if (typeof payload.seed === 'number') {
+        latestSeed = payload.seed;
       }
+
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.ok ? response.statusText : payload.error);
+      }
+
+      player.setTrace(payload.trace);
+    } catch (err) {
+      regenerateError = err instanceof Error ? err.message : String(err);
+      debugOpen = true;
+    } finally {
+      regenerating = false;
     }
   }
 
-  function scheduleDestroy(id: RenderId) {
-    clearDestroyTimer(id);
+  async function readVisualizationResponse(response: Response): Promise<VisualizationResponse> {
+    const text = await response.text();
 
-    const timer = setTimeout(() => {
-      elements = elements.filter((element) => element.id !== id);
-      destroyTimers.delete(id);
-    }, transitionMs);
-
-    destroyTimers.set(id, timer);
-  }
-
-  function scheduleSettleElement(id: RenderId, element: RenderElement) {
-    const version = transitionVersion;
-
-    void tick().then(() => {
-      if (version !== transitionVersion) return;
-
-      elements = elements.map((current) =>
-        current.id === id
-          ? {
-              ...element,
-              id,
-              exiting: false
-            }
-          : current
-      );
-    });
-  }
-
-  function clearDestroyTimer(id: RenderId) {
-    const timer = destroyTimers.get(id);
-
-    if (timer) {
-      clearTimeout(timer);
-      destroyTimers.delete(id);
+    try {
+      return JSON.parse(text) as VisualizationResponse;
+    } catch {
+      throw new Error(`Server returned non-JSON response: ${text.slice(0, 240)}`);
     }
   }
 
-  function clearDestroyTimers() {
-    for (const timer of destroyTimers.values()) {
-      clearTimeout(timer);
+  function parseOptionalSeed(value: string): number | null {
+    const trimmed = value.trim();
+
+    if (!trimmed) return null;
+
+    const seed = Number(trimmed);
+
+    if (!Number.isInteger(seed) || !Number.isSafeInteger(seed)) {
+      throw new Error('Seed must be an integer that JavaScript can represent safely.');
     }
 
-    destroyTimers.clear();
-  }
-
-  function styleToString(element: LiveElement): string {
-    const style = { ...element.style };
-
-    if (element.exiting) {
-      style.opacity = 0;
-      style.transform = 'scale(0.9)';
-      style.pointerEvents = 'none';
-    }
-
-    return Object.entries(style)
-      .map(([key, value]) => `${camelToKebab(key)}: ${value};`)
-      .join(' ');
-  }
-
-  function camelToKebab(value: string): string {
-    return value.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
-  }
-
-  function classNameFor(element: LiveElement): string {
-    return ['node', element.className, element.exiting ? 'exiting' : undefined]
-      .filter(Boolean)
-      .join(' ');
+    return seed;
   }
 </script>
 
 <div class="page">
-  <div class="toolbar">
-    <button onclick={loadTrace} disabled={loading}>Reload</button>
-    <button onclick={recomputeLayout} disabled={!trace || loading}>Reset</button>
-    <button onclick={prevStep} disabled={!trace || currStep <= 0}>Previous</button>
-    <button onclick={nextStep} disabled={!trace || currStep >= lastStep}>Next</button>
+  <TraceToolbar
+    bind:debugOpen
+    bind:details
+    bind:seedText
+    canNext={player.canNext}
+    canPrevious={player.canPrevious}
+    currentStep={player.currentStep}
+    hasTrace={player.hasTrace}
+    {latestSeed}
+    {loadingStatic}
+    onNext={() => player.next()}
+    onPrevious={() => player.previous()}
+    onRegenerate={regenerateTrace}
+    onReload={loadStaticTrace}
+    onReset={() => player.reset()}
+    {regenerating}
+    stepCount={player.stepCount}
+  />
 
-    {#if trace}
-      <span class="step-label">
-        Step {currStep + 1} / {trace.frames.length}
-      </span>
-    {/if}
-  </div>
+  <TraceDebugPanel debug={latestDebug} error={regenerateError} open={debugOpen} {regenerating} />
 
-  {#if loading}
-    <p class="status">Loading {src}...</p>
-  {:else if error}
-    <p class="error">{error}</p>
-  {:else if trace}
-    <div class="canvas" style:width={`${canvasWidth}px`} style:height={`${canvasHeight}px`}>
-      {#each elements as element (element.id)}
-        <div
-          class={classNameFor(element)}
-          data-render-id={element.id}
-          data-block-id={element.blockId}
-          data-kind={element.kind}
-          style={styleToString(element)}
-        >
-          {element.content}
-        </div>
-      {/each}
-    </div>
+  {#if loadingStatic && !player.hasTrace}
+    <p class="status">Loading {staticTraceSrc}...</p>
+  {/if}
+
+  {#if pageError}
+    <p class="error">{pageError}</p>
+  {/if}
+
+  {#if player.hasTrace}
+    <TraceCanvas
+      elements={player.elements}
+      height={player.canvasHeight}
+      width={player.canvasWidth}
+    />
   {/if}
 </div>
 
@@ -417,33 +179,6 @@
     box-sizing: border-box;
   }
 
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-
-  button {
-    min-width: 100px;
-    height: 30px;
-    background-color: lightblue;
-    border: 1px solid rgb(80, 80, 80);
-    border-radius: 4px;
-    cursor: pointer;
-  }
-
-  button:disabled {
-    background-color: gray;
-    cursor: default;
-  }
-
-  .step-label {
-    color: white;
-    margin-left: 8px;
-    font-family: system-ui, sans-serif;
-  }
-
   .status {
     color: white;
     font-family: system-ui, sans-serif;
@@ -452,37 +187,5 @@
   .error {
     color: rgb(255, 120, 120);
     font-family: system-ui, sans-serif;
-  }
-
-  .canvas {
-    position: relative;
-    overflow: hidden;
-    background-color: rgb(220, 220, 220);
-    background-image:
-      linear-gradient(to right, rgba(0, 0, 0, 0.08) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
-    background-size: 20px 20px;
-    z-index: 10000;
-  }
-
-  .node {
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    user-select: none;
-
-    transition:
-      top 300ms ease,
-      left 300ms ease,
-      width 300ms ease,
-      height 300ms ease,
-      opacity 300ms ease,
-      transform 300ms ease,
-      background-color 300ms ease,
-      border-color 300ms ease,
-      border-radius 300ms ease,
-      font-size 300ms ease;
   }
 </style>
