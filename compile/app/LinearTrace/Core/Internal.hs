@@ -55,8 +55,8 @@ module LinearTrace.Core.Internal
   , decide
   , -- * Auditing operations
     OneUse(..)
-  , Evidence
-  , EvidenceList(..)
+  , ExplainToken
+  , ExplainTokens(..)
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -228,43 +228,43 @@ type Decide tag = Action 'ActionDecide tag
 -- Primitive operation result types
 --------------------------------------------------------------------------------
 data Created tag where
-  Created :: Block tag %1 -> Evidence (Create tag) %1 -> Created tag
+  Created :: Block tag %1 -> ExplainToken (Create tag) %1 -> Created tag
 
 data Observed tag where
-  Observed :: Block tag %1 -> Evidence (Observe tag) %1 -> Observed tag
+  Observed :: Block tag %1 -> ExplainToken (Observe tag) %1 -> Observed tag
 
 data Used tag where
-  Used :: OneUse (Payload tag) %1 -> Evidence (Use tag) %1 -> Used tag
+  Used :: OneUse (Payload tag) %1 -> ExplainToken (Use tag) %1 -> Used tag
 
 data Copied tag where
-  Copied :: Block tag %1 -> Block tag %1 -> Evidence (Copy tag) %1 -> Copied tag
+  Copied :: Block tag %1 -> Block tag %1 -> ExplainToken (Copy tag) %1 -> Copied tag
 
 data Replaced tag where
-  Replaced :: Block tag %1 -> Evidence (Replace tag) %1 -> Replaced tag
+  Replaced :: Block tag %1 -> ExplainToken (Replace tag) %1 -> Replaced tag
 
 data Computed tag where
-  Computed :: Block tag %1 -> Evidence (Compute tag) %1 -> Computed tag
+  Computed :: Block tag %1 -> ExplainToken (Compute tag) %1 -> Computed tag
 
 data Destroyed tag where
-  Destroyed :: Evidence (Destroy tag) %1 -> Destroyed tag
+  Destroyed :: ExplainToken (Destroy tag) %1 -> Destroyed tag
 
 data Sealed owner tag where
   Sealed
     :: Block owner
        %1 -> Slot owner tag
-       %1 -> Evidence (Seal owner tag)
+       %1 -> ExplainToken (Seal owner tag)
        %1 -> Sealed owner tag
 
 data Unsealed owner tag where
   Unsealed
     :: Block owner
        %1 -> Block tag
-       %1 -> Evidence (Unseal owner tag)
+       %1 -> ExplainToken (Unseal owner tag)
        %1 -> Unsealed owner tag
 
 data Decided tag where
-  DecidedTrue :: Evidence (Decide tag) %1 -> Decided tag
-  DecidedFalse :: Evidence (Decide tag) %1 -> Decided tag
+  DecidedTrue :: ExplainToken (Decide tag) %1 -> Decided tag
+  DecidedFalse :: ExplainToken (Decide tag) %1 -> Decided tag
 
 --------------------------------------------------------------------------------
 -- Audit data
@@ -291,12 +291,12 @@ data Audit acts where
   EmptyAudit :: Audit '[]
   (:>) :: AuditStep act -> Audit acts -> Audit (act : acts)
 
-data Evidence act where
-  Evidence :: Ur (AuditStep act) %1 -> Evidence act
+data ExplainToken act where
+  ExplainToken :: Ur (AuditStep act) %1 -> ExplainToken act
 
-data EvidenceList acts where
-  Done :: EvidenceList '[]
-  (:~) :: Evidence act %1 -> EvidenceList acts %1 -> EvidenceList (act : acts)
+data ExplainTokens acts where
+  Done :: ExplainTokens '[]
+  (:~) :: ExplainToken act %1 -> ExplainTokens acts %1 -> ExplainTokens (act : acts)
 
 --------------------------------------------------------------------------------
 -- Trace step layer
@@ -361,9 +361,9 @@ makeAuditStep1 ::
   -> Proxy tag
   -> BlockRef tag
   -> Payload tag
-  -> Evidence act
+  -> ExplainToken act
 makeAuditStep1 ctor tagProxy ref payload =
-  Evidence (Ur (ctor (makeSnapshot tagProxy ref payload)))
+  ExplainToken (Ur (ctor (makeSnapshot tagProxy ref payload)))
 
 makeAuditStep2 ::
      Traceable tag
@@ -373,9 +373,9 @@ makeAuditStep2 ::
   -> Payload tag
   -> BlockRef tag
   -> Payload tag
-  -> Evidence act
+  -> ExplainToken act
 makeAuditStep2 ctor tagProxy ref1 payload1 ref2 payload2 =
-  Evidence
+  ExplainToken
     (Ur
        (ctor
           (makeSnapshot tagProxy ref1 payload1)
@@ -392,9 +392,9 @@ makeAuditStep3 ::
   -> Payload tag
   -> BlockRef tag
   -> Payload tag
-  -> Evidence act
+  -> ExplainToken act
 makeAuditStep3 ctor tagProxy ref1 payload1 ref2 payload2 ref3 payload3 =
-  Evidence
+  ExplainToken
     (Ur
        (ctor
           (makeSnapshot tagProxy ref1 payload1)
@@ -410,23 +410,23 @@ makeAuditStep2Hetero ::
   -> Proxy right
   -> BlockRef right
   -> Payload right
-  -> Evidence act
+  -> ExplainToken act
 makeAuditStep2Hetero ctor leftProxy leftRef leftPayload rightProxy rightRef rightPayload =
-  Evidence
+  ExplainToken
     (Ur
        (ctor
           (makeSnapshot leftProxy leftRef leftPayload)
           (makeSnapshot rightProxy rightRef rightPayload)))
 
-evidenceToAuditStep :: Evidence act %1 -> Ur (AuditStep act)
-evidenceToAuditStep (Evidence step) = step
+explainTokenToAuditStep :: ExplainToken act %1 -> Ur (AuditStep act)
+explainTokenToAuditStep (ExplainToken step) = step
 
-evidenceListToAudit :: EvidenceList acts %1 -> Ur (Audit acts)
-evidenceListToAudit Done = Ur EmptyAudit
-evidenceListToAudit (evidence :~ rest) =
-  case evidenceToAuditStep evidence of
+explainTokensToAudit :: ExplainTokens acts %1 -> Ur (Audit acts)
+explainTokensToAudit Done = Ur EmptyAudit
+explainTokensToAudit (explainToken :~ rest) =
+  case explainTokenToAuditStep explainToken of
     Ur step ->
-      case evidenceListToAudit rest of
+      case explainTokensToAudit rest of
         Ur audit -> Ur (step :> audit)
 
 unsafeUr :: forall a. a %1 -> Ur a
@@ -460,18 +460,18 @@ emitStep step = do
 explainWith ::
      P.String
   -> payload acts
-  -> EvidenceList acts
+  -> ExplainTokens acts
      %1 -> TraceBuilderWith payload ()
-explainWith label payload evidenceList =
-  case evidenceListToAudit evidenceList of
+explainWith label payload explainTokens =
+  case explainTokensToAudit explainTokens of
     Ur audit -> emitStep (ExplainedStep label payload audit)
 
 discard ::
      P.String
-  -> EvidenceList acts
+  -> ExplainTokens acts
      %1 -> TraceBuilderWith payload ()
-discard reason evidenceList =
-  case evidenceListToAudit evidenceList of
+discard reason explainTokens =
+  case explainTokensToAudit explainTokens of
     Ur audit -> emitStep (DiscardedStep reason audit)
 
 --------------------------------------------------------------------------------
@@ -639,11 +639,11 @@ decide ::
      %1 -> TraceBuilderWith payload (Decided tag)
 decide predicate (Block (Ur blockId) (Ur payload)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  let evidence = makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload
+  let explainToken = makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload
   {- HLINT ignore "Use if" -}
   case predicate payload of
-    True  -> return (DecidedTrue evidence)
-    False -> return (DecidedFalse evidence)
+    True  -> return (DecidedTrue explainToken)
+    False -> return (DecidedFalse explainToken)
 
 --------------------------------------------------------------------------------
 -- Runner

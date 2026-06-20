@@ -41,10 +41,10 @@ module LinearTrace.Core
   , seal
   , unseal
   , decide
-  , -- * Evidence operations
+  , -- * ExplainToken operations
     OneUse(..)
-  , Evidence
-  , EvidenceList(..)
+  , ExplainToken
+  , ExplainTokens(..)
   , Created(..)
   , Observed(..)
   , Used(..)

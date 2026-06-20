@@ -17,83 +17,32 @@ module DSL.Main
   ) where
 
 import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
-import           LinearTrace.Core        ( Block
-                                         , Computed(..)
-                                         , Copied(..)
-                                         , Created(..)
-                                         , Decided(..)
-                                         , Destroyed(..)
-                                         , EvidenceList(..)
-                                         , LBool(..)
-                                         , LInt(..)
-                                         , Payload
-                                         , PayloadView(..)
-                                         , Traceable(..)
-                                         , Used(..)
-                                         , buildGraph
-                                         , compute
-                                         , copy
-                                         , create
-                                         , decide
-                                         , destroy
-                                         , use
-                                         , (<$>)
-                                         , (<*>)
-                                         )
-import           LinearTrace.View        ( BoxDefinition
-                                         , BoxVisual
-                                         , EmptyStyleDraft
-                                         , FontWeight(..)
-                                         , Hsl(..)
-                                         , HueExpr
-                                         , LayoutExpr
-                                         , LayoutUse(..)
-                                         , LiveVisual
-                                         , Style
-                                         , TextAlign(..)
-                                         , ViewBuilder
-                                         , ViewTokens(..)
-                                         , VisualTraceBuilder
-                                         , VisualTraceGraph
-                                         , WhiteSpace(..)
-                                         , boxDefinition
-                                         , checkpoint
-                                         , complete
-                                         , computeVisual
-                                         , copyVisual
-                                         , createVisual
-                                         , decideVisual
-                                         , destroyVisual
-                                         , ensure
-                                         , explain
-                                         , finalizeStyle
-                                         , forkCopy
-                                         , fresh
-                                         , global
-                                         , num
-                                         , remove
-                                         , setCssClassOnce
-                                         , setFillOnce
-                                         , setFontFamilyOnce
-                                         , setFontSizeOnce
-                                         , setFontWeightOnce
-                                         , setRadiusOnce
-                                         , setStrokeOnce
-                                         , setStrokeWidthOnce
-                                         , setTextAlignOnce
-                                         , setWhiteSpaceOnce
-                                         , setZIndexOnce
-                                         , takeHeight
-                                         , takeLeft
-                                         , takeTop
-                                         , takeWidth
-                                         , useVisual
-                                         , (|>)
-                                         , (@*@)
-                                         , (@+@)
-                                         , (@<=@)
-                                         , (@==@)
-                                         )
+import           LinearTrace.Core       (Block, Computed (..), Copied (..),
+                                         Created (..), Decided (..),
+                                         Destroyed (..), ExplainTokens (..),
+                                         LBool (..), LInt (..), Payload,
+                                         PayloadView (..), Traceable (..),
+                                         Used (..), buildGraph, compute, copy,
+                                         create, decide, destroy, use, (<$>),
+                                         (<*>))
+import           LinearTrace.View       (BoxDefinition, BoxVisual,
+                                         EmptyStyleDraft, ExplainedVisuals (..),
+                                         FontWeight (..), Hsl (..), HueExpr,
+                                         LayoutExpr, LayoutUse (..), LiveVisual,
+                                         Style, TextAlign (..), ViewBuilder,
+                                         VisualTraceBuilder, VisualTraceGraph,
+                                         WhiteSpace (..), boxDefinition,
+                                         checkpoint, complete, ensure, explain,
+                                         finalizeStyle, forkCopy, fresh, global,
+                                         num, remove, setCssClassOnce,
+                                         setFillOnce, setFontFamilyOnce,
+                                         setFontSizeOnce, setFontWeightOnce,
+                                         setRadiusOnce, setStrokeOnce,
+                                         setStrokeWidthOnce, setTextAlignOnce,
+                                         setWhiteSpaceOnce, setZIndexOnce,
+                                         takeHeight, takeLeft, takeTop,
+                                         takeWidth, (@*@), (@+@), (@<=@),
+                                         (@==@), (|>))
 import           Prelude.Linear
 
 --------------------------------------------------------------------------------
@@ -187,12 +136,11 @@ linearSearch :: SearchInput %1 -> VisualTraceBuilder ()
 linearSearch input =
   case input of
     SearchInput targetPayload valuePayloads -> do
-      Created target targetEvidence <- create targetPayload
+      Created target targetExplainToken <- create targetPayload
       explain
         "Create target"
-        (targetEvidence :~ Done)
-        \(VCons targetToken VNil) -> do
-          targetVisual <- createVisual targetToken
+        (targetExplainToken :~ Done)
+        \(targetVisual :& End) -> do
           renderedTarget <- fresh (valueViewDefinition TargetValue) targetVisual
           complete renderedTarget
       elements <- createElements valuePayloads
@@ -206,12 +154,11 @@ createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
-      Created element elementEvidence <- create payload
+      Created element elementExplainToken <- create payload
       explain
         "Create element"
-        (elementEvidence :~ Done)
-        \(VCons elementToken VNil) -> do
-          elementVisual <- createVisual elementToken
+        (elementExplainToken :~ Done)
+        \(elementVisual :& End) -> do
           renderedElement <-
             fresh (valueViewDefinition (ListValue index)) elementVisual
           complete renderedElement
@@ -222,12 +169,11 @@ searchElements :: Block Value %1 -> Elements %1 -> VisualTraceBuilder ()
 searchElements target elements =
   case elements of
     NoElements -> do
-      Destroyed targetEvidence <- destroy target
+      Destroyed targetExplainToken <- destroy target
       explain
         "Search exhausted"
-        (targetEvidence :~ Done)
-        \(VCons targetToken VNil) -> do
-          targetVisual <- destroyVisual targetToken
+        (targetExplainToken :~ Done)
+        \(targetVisual :& End) -> do
           remove targetVisual
     MoreElement element rest -> do
       comparison <- compareElement target element
@@ -242,14 +188,12 @@ searchElements target elements =
 compareElement ::
      Block Value %1 -> Block Value %1 -> VisualTraceBuilder Comparison
 compareElement target element = do
-  Copied targetAfter targetProbe targetCopyEvidence <- copy target
-  Copied elementAfter elementProbe elementCopyEvidence <- copy element
+  Copied targetAfter targetProbe targetCopyExplainToken <- copy target
+  Copied elementAfter elementProbe elementCopyExplainToken <- copy element
   explain
     "Prepare comparison"
-    (targetCopyEvidence :~ elementCopyEvidence :~ Done)
-    \(VCons targetToken (VCons elementToken VNil)) -> do
-      targetCopy <- copyVisual targetToken
-      elementCopy <- copyVisual elementToken
+    (targetCopyExplainToken :~ elementCopyExplainToken :~ Done)
+    \(targetCopy :& elementCopy :& End) -> do
       (target1, renderedTargetProbe) <-
         forkCopy targetProbeViewDefinition targetCopy
       (element1, renderedElementProbe) <-
@@ -258,17 +202,17 @@ compareElement target element = do
       complete element1
       complete renderedTargetProbe
       complete renderedElementProbe
-  Used targetPayload targetUseEvidence <- use targetProbe
-  Used elementPayload elementUseEvidence <- use elementProbe
-  Computed match matchEvidence <-
+  Used targetPayload targetUseExplainToken <- use targetProbe
+  Used elementPayload elementUseExplainToken <- use elementProbe
+  Computed match matchExplainToken <-
     compute (sameValue <$> targetPayload <*> elementPayload)
   explain
     "Compare target and element"
-    (targetUseEvidence :~ elementUseEvidence :~ matchEvidence :~ Done)
-    \(VCons targetToken (VCons elementToken (VCons matchToken VNil))) -> do
-      targetVisual <- useVisual targetToken
-      elementVisual <- useVisual elementToken
-      matchVisual <- computeVisual matchToken
+    (targetUseExplainToken
+       :~ elementUseExplainToken
+       :~ matchExplainToken
+       :~ Done)
+    \(targetVisual :& elementVisual :& matchVisual :& End) -> do
       renderedMatch <- fresh matchViewDefinition matchVisual
       checkpoint
       remove targetVisual
@@ -276,43 +220,38 @@ compareElement target element = do
       complete renderedMatch
   decision <- decide (\(LBool answer) -> answer) match
   case decision of
-    DecidedTrue foundEvidence -> do
+    DecidedTrue foundExplainToken -> do
       explain
         "Found target"
-        (foundEvidence :~ Done)
-        \(VCons matchToken VNil) -> do
-          matchVisual <- decideVisual matchToken
+        (foundExplainToken :~ Done)
+        \(matchVisual :& End) -> do
           remove matchVisual
       return (IsMatch targetAfter elementAfter)
-    DecidedFalse notThisEvidence -> do
+    DecidedFalse notThisExplainToken -> do
       explain
         "Not this element"
-        (notThisEvidence :~ Done)
-        \(VCons matchToken VNil) -> do
-          matchVisual <- decideVisual matchToken
+        (notThisExplainToken :~ Done)
+        \(matchVisual :& End) -> do
           remove matchVisual
       return (IsNotMatch targetAfter elementAfter)
 
 discardChecked :: Block Value %1 -> VisualTraceBuilder ()
 discardChecked element = do
-  Destroyed elementEvidence <- destroy element
+  Destroyed elementExplainToken <- destroy element
   explain
     "Discard checked element"
-    (elementEvidence :~ Done)
-    \(VCons elementToken VNil) -> do
-      elementVisual <- destroyVisual elementToken
+    (elementExplainToken :~ Done)
+    \(elementVisual :& End) -> do
       remove elementVisual
 
 finishFound :: Block Value %1 -> Block Value %1 -> VisualTraceBuilder ()
 finishFound target element = do
-  Destroyed targetEvidence <- destroy target
-  Destroyed elementEvidence <- destroy element
+  Destroyed targetExplainToken <- destroy target
+  Destroyed elementExplainToken <- destroy element
   explain
     "Finish found target"
-    (targetEvidence :~ elementEvidence :~ Done)
-    \(VCons targetToken (VCons elementToken VNil)) -> do
-      targetVisual <- destroyVisual targetToken
-      elementVisual <- destroyVisual elementToken
+    (targetExplainToken :~ elementExplainToken :~ Done)
+    \(targetVisual :& elementVisual :& End) -> do
       remove targetVisual
       remove elementVisual
 
@@ -321,12 +260,11 @@ discardRemaining elements =
   case elements of
     NoElements -> return ()
     MoreElement element rest -> do
-      Destroyed elementEvidence <- destroy element
+      Destroyed elementExplainToken <- destroy element
       explain
         "Discard remaining element"
-        (elementEvidence :~ Done)
-        \(VCons elementToken VNil) -> do
-          elementVisual <- destroyVisual elementToken
+        (elementExplainToken :~ Done)
+        \(elementVisual :& End) -> do
           remove elementVisual
       discardRemaining rest
 
@@ -446,7 +384,8 @@ valueLeft placement =
   case placement of
     TargetValue -> layoutTargetLeft
     ListValue index ->
-      layoutRowLeft @+@ ((num (fromIntegral index) :: LayoutExpr) @*@ layoutStep)
+      layoutRowLeft
+        @+@ ((num (fromIntegral index) :: LayoutExpr) @*@ layoutStep)
 
 valueSize :: LayoutExpr
 valueSize = layoutCell
@@ -524,8 +463,7 @@ constrainValueFlow placement =
         0 -> ensure (layoutOrigin @<=@ layoutRowLeft)
         _ -> return ()
 
-defineTargetProbeNode ::
-     LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
+defineTargetProbeNode :: LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
 defineTargetProbeNode visual0 = do
   LayoutUse visual1 probeLeftX <- takeLeft visual0
   LayoutUse visual2 probeTopY <- takeTop visual1
@@ -537,8 +475,7 @@ defineTargetProbeNode visual0 = do
   ensure (probeHeightY @==@ valueHeight)
   return visual4
 
-defineElementProbeNode ::
-     LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
+defineElementProbeNode :: LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
 defineElementProbeNode visual0 = do
   LayoutUse visual1 probeLeftX <- takeLeft visual0
   LayoutUse visual2 probeTopY <- takeTop visual1
@@ -551,8 +488,7 @@ defineElementProbeNode visual0 = do
   ensure (probeHeightY @==@ valueHeight)
   return visual4
 
-defineMatchNode ::
-     LiveVisual Match %1 -> ViewBuilder (BoxVisual Match)
+defineMatchNode :: LiveVisual Match %1 -> ViewBuilder (BoxVisual Match)
 defineMatchNode visual0 = do
   LayoutUse visual1 matchLeftX <- takeLeft visual0
   LayoutUse visual2 matchTopY <- takeTop visual1
@@ -566,7 +502,8 @@ defineMatchNode visual0 = do
   return visual4
 
 valueViewDefinition :: ValuePlacement -> BoxDefinition Value
-valueViewDefinition placement = boxDefinition valueNodeStyle (defineValueNode placement)
+valueViewDefinition placement =
+  boxDefinition valueNodeStyle (defineValueNode placement)
 
 targetProbeViewDefinition :: BoxDefinition Value
 targetProbeViewDefinition = boxDefinition probeNodeStyle defineTargetProbeNode

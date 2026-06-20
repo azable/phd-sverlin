@@ -21,8 +21,8 @@ module LinearTrace.View
   , blockViewLabel
   , mapBlockViewStyleExprLeaves
   , solvedBlockViewExprs
-  , ViewToken
-  , ViewTokens(..)
+  , ExplainedVisual
+  , ExplainedVisuals(..)
   , RenderIntent(..)
   , Visual
   , Unrendered
@@ -67,17 +67,6 @@ module LinearTrace.View
   , setBorderStyleOnce
   , setWhiteSpaceOnce
   , setCssClassOnce
-  , createVisual
-  , observeVisual
-  , useVisual
-  , copyVisual
-  , replaceVisual
-  , replaceUpdateVisual
-  , computeVisual
-  , destroyVisual
-  , sealVisual
-  , unsealVisual
-  , decideVisual
   , fresh
   , freshCopy
   , forkCopy
@@ -193,6 +182,8 @@ import qualified Prelude                     as P
 import           Prelude.Linear
 import qualified Unsafe.Coerce               as Unsafe
 
+infixr 5 :&
+
 --------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
@@ -295,6 +286,25 @@ data ViewToken act where
 data ViewTokens acts where
   VNil :: ViewTokens '[]
   VCons :: ViewToken act %1 -> ViewTokens acts %1 -> ViewTokens (act : acts)
+
+type family ExplainedVisual act :: Type where
+  ExplainedVisual (C.Create tag) = NewVisual tag
+  ExplainedVisual (C.Observe tag) = LiveVisual tag
+  ExplainedVisual (C.Use tag) = ConsumedVisual tag
+  ExplainedVisual (C.Copy tag) = CopiedVisual tag
+  ExplainedVisual (C.Replace tag) =
+    (ConsumedVisual tag, ConsumedVisual tag, NewVisual tag)
+  ExplainedVisual (C.Compute tag) = NewVisual tag
+  ExplainedVisual (C.Destroy tag) = ConsumedVisual tag
+  ExplainedVisual (C.Seal owner tag) = (LiveVisual owner, LiveVisual tag)
+  ExplainedVisual (C.Unseal owner tag) = (LiveVisual owner, LiveVisual tag)
+  ExplainedVisual (C.Decide tag) = ConsumedVisual tag
+
+data ExplainedVisuals acts where
+  End :: ExplainedVisuals '[]
+  (:&) :: ExplainedVisual act %1
+       -> ExplainedVisuals acts %1
+       -> ExplainedVisuals (act : acts)
 
 data RenderIntent where
   RenderFresh :: C.BlockRef tag -> RenderIntent
@@ -809,7 +819,7 @@ data ViewState where
 type ViewBuilder a = State ViewState a
 
 data ViewScript acts where
-  ViewScript :: (ViewTokens acts %1 -> ViewBuilder ()) -> ViewScript acts
+  ViewScript :: (ExplainedVisuals acts %1 -> ViewBuilder ()) -> ViewScript acts
 
 type VisualTraceBuilder a = C.TraceBuilderWith ViewScript a
 
@@ -817,11 +827,11 @@ type VisualTraceGraph = C.TraceGraphWith ViewScript
 
 explain ::
      P.String
-  -> C.EvidenceList acts
-     %1 -> (ViewTokens acts %1 -> ViewBuilder ())
+  -> C.ExplainTokens acts
+     %1 -> (ExplainedVisuals acts %1 -> ViewBuilder ())
   -> VisualTraceBuilder ()
-explain label evidenceList script =
-  C.explainWith label (ViewScript script) evidenceList
+explain label explainTokens script =
+  C.explainWith label (ViewScript script) explainTokens
 
 instance Consumable ViewState where
   consume (ViewState env output) =
@@ -935,80 +945,26 @@ defineNewBlock definition block0 =
 --------------------------------------------------------------------------------
 -- Explicit token handling
 --------------------------------------------------------------------------------
-createVisual :: ViewToken (C.Create tag) %1 -> ViewBuilder (NewVisual tag)
-createVisual token =
+explainedVisual :: ViewToken act %1 -> ExplainedVisual act
+explainedVisual token =
   case token of
-    CreatedToken block -> pure (Visual block)
-
-observeVisual :: ViewToken (C.Observe tag) %1 -> ViewBuilder (LiveVisual tag)
-observeVisual token =
-  case token of
-    ObservedToken block -> pure (Visual block)
-
-useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder (ConsumedVisual tag)
-useVisual token =
-  case token of
-    UsedToken block -> pure (Visual block)
-
-copyVisual ::
-     ViewToken (C.Copy tag)
-     %1 -> ViewBuilder (CopiedVisual tag)
-copyVisual token =
-  case token of
-    CopiedToken original copy' -> pure (CopiedVisual (Visual original) (Visual copy'))
-
-replaceVisual ::
-     ViewToken (C.Replace tag)
-     %1 -> ViewBuilder (ConsumedVisual tag, ConsumedVisual tag, NewVisual tag)
-replaceVisual token =
-  case token of
+    CreatedToken block -> Visual block
+    ObservedToken block -> Visual block
+    UsedToken block -> Visual block
+    CopiedToken original copy' -> CopiedVisual (Visual original) (Visual copy')
     ReplacedToken old incoming output ->
-      pure (Visual old, Visual incoming, Visual output)
+      (Visual old, Visual incoming, Visual output)
+    ComputedToken block -> Visual block
+    DestroyedToken block -> Visual block
+    SealedToken owner child -> (Visual owner, Visual child)
+    UnsealedToken owner child -> (Visual owner, Visual child)
+    DecidedToken block -> Visual block
 
-replaceUpdateVisual ::
-     forall tag used.
-     ViewDefinition tag used
-     %1 -> ViewToken (C.Replace tag)
-     %1 -> ViewBuilder (ConsumedVisual tag, Visual Rendered Stable used tag)
-replaceUpdateVisual definition token =
-  case token of
-    ReplacedToken old incoming output -> do
-      rendered <- defineNewBlock definition output
-      emitRenderIntent (RenderContinue (blockRef old) (blockRef output))
-      pure (Visual incoming, rendered)
-
-computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder (NewVisual tag)
-computeVisual token =
-  case token of
-    ComputedToken block -> pure (Visual block)
-
-destroyVisual ::
-     ViewToken (C.Destroy tag)
-     %1 -> ViewBuilder (ConsumedVisual tag)
-destroyVisual token =
-  case token of
-    DestroyedToken block -> pure (Visual block)
-
-sealVisual ::
-     ViewToken (C.Seal owner tag)
-     %1 -> ViewBuilder (LiveVisual owner, LiveVisual tag)
-sealVisual token =
-  case token of
-    SealedToken owner child -> pure (Visual owner, Visual child)
-
-unsealVisual ::
-     ViewToken (C.Unseal owner tag)
-     %1 -> ViewBuilder (LiveVisual owner, LiveVisual tag)
-unsealVisual token =
-  case token of
-    UnsealedToken owner child -> pure (Visual owner, Visual child)
-
-decideVisual ::
-     ViewToken (C.Decide tag)
-     %1 -> ViewBuilder (ConsumedVisual tag)
-decideVisual token =
-  case token of
-    DecidedToken block -> pure (Visual block)
+explainedVisuals :: ViewTokens acts %1 -> ExplainedVisuals acts
+explainedVisuals tokens =
+  case tokens of
+    VNil -> End
+    VCons token rest -> explainedVisual token :& explainedVisuals rest
 
 fresh ::
      forall tag used.
@@ -1264,7 +1220,7 @@ viewTraceStep env pending step =
             runViewBuilderWithOutput
               env
               mempty {pendingRenderIntents = pending}
-              (script (viewTokens audit))
+              (script (explainedVisuals (viewTokens audit)))
           output = rawOutput
           nodes = emittedNodes output
           constraints = emittedConstraints output

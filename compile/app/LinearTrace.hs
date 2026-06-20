@@ -39,10 +39,10 @@ module LinearTrace
   , seal
   , unseal
   , decide
-  , -- * Evidence operations
+  , -- * ExplainToken operations
     OneUse
-  , Evidence
-  , EvidenceList(Done, (:~))
+  , ExplainToken
+  , ExplainTokens(Done, (:~))
   , Created(..)
   , Observed(..)
   , Used(..)
