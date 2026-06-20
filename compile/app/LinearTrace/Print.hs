@@ -6,8 +6,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module LinearTrace.Print
-  ( PrintEvent(..)
-  , PrintEvents(..)
+  ( PrintEvents(..)
   , printGraph
   , printTrace
   , printSolutionByEvent
@@ -103,19 +102,16 @@ data StepStyle = StepStyle
 --------------------------------------------------------------------------------
 -- Event printing
 --------------------------------------------------------------------------------
-class PrintEvent event where
-  printEvent :: event -> String
-
 class PrintEvents events where
   printEventChoice :: EventChoice events acts -> String
 
 instance PrintEvents '[] where
   printEventChoice choice = case choice of {}
 
-instance (PrintEvent event, PrintEvents events) => PrintEvents (event : events) where
+instance (Show event, PrintEvents events) => PrintEvents (event : events) where
   printEventChoice choice =
     case choice of
-      Here event -> printEvent event
+      Here event -> show event
       There rest -> printEventChoice rest
 
 --------------------------------------------------------------------------------

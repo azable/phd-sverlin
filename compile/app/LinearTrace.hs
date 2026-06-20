@@ -62,7 +62,6 @@ module LinearTrace
     Audit(..)
   , AuditStep(..)
   , PayloadView(..)
-  , PrintEvent(..)
   , buildGraph
   , printGraph
   , printTrace

@@ -17,7 +17,6 @@ module DSL.Main
 
 import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
 import           LinearTrace.Core
-import           LinearTrace.Print      (PrintEvent (..))
 import           LinearTrace.View
 import           Prelude.Linear
 
@@ -110,19 +109,23 @@ countExampleValues values =
 --------------------------------------------------------------------------------
 data CreateTarget =
   CreateTarget
+  deriving Show
 
 type instance Actions CreateTarget = '[ Create Value]
 
 data CreateElement =
   CreateElement
+  deriving Show
 
 type instance Actions CreateElement = '[ Create Value]
 
 data Compare =
   Compare
+  deriving Show
 
 data PrepareCompare =
   PrepareCompare
+  deriving Show
 
 type instance Actions PrepareCompare = '[ Copy Value, Copy Value]
 
@@ -130,31 +133,37 @@ type instance Actions Compare = '[ Use Value, Use Value, Compute Match]
 
 data Found =
   Found
+  deriving Show
 
 type instance Actions Found = '[ Decide Match]
 
 data NotThisOne =
   NotThisOne
+  deriving Show
 
 type instance Actions NotThisOne = '[ Decide Match]
 
 data DiscardChecked =
   DiscardChecked
+  deriving Show
 
 type instance Actions DiscardChecked = '[ Destroy Value]
 
 data FinishFound =
   FinishFound
+  deriving Show
 
 type instance Actions FinishFound = '[ Destroy Value, Destroy Value]
 
 data DiscardRemaining =
   DiscardRemaining
+  deriving Show
 
 type instance Actions DiscardRemaining = '[ Destroy Value]
 
 data SearchExhausted =
   SearchExhausted
+  deriving Show
 
 type instance Actions SearchExhausted = '[ Destroy Value]
 
@@ -265,60 +274,6 @@ discardRemaining elements =
       explain DiscardRemaining (elementEvidence :~ Done)
       discardRemaining rest
 
---------------------------------------------------------------------------------
--- Printing
---------------------------------------------------------------------------------
-instance PrintEvent CreateTarget where
-  printEvent event =
-    case event of
-      CreateTarget -> "Create target"
-
-instance PrintEvent CreateElement where
-  printEvent event =
-    case event of
-      CreateElement -> "Create element"
-
-instance PrintEvent Compare where
-  printEvent event =
-    case event of
-      Compare -> "Compare"
-
-instance PrintEvent PrepareCompare where
-  printEvent event =
-    case event of
-      PrepareCompare -> "Prepare compare"
-
-instance PrintEvent Found where
-  printEvent event =
-    case event of
-      Found -> "Found"
-
-instance PrintEvent NotThisOne where
-  printEvent event =
-    case event of
-      NotThisOne -> "Not this one"
-
-instance PrintEvent DiscardChecked where
-  printEvent event =
-    case event of
-      DiscardChecked -> "Discard checked"
-
-instance PrintEvent FinishFound where
-  printEvent event =
-    case event of
-      FinishFound -> "Finish found"
-
-instance PrintEvent DiscardRemaining where
-  printEvent event =
-    case event of
-      DiscardRemaining -> "Discard remaining"
-
-instance PrintEvent SearchExhausted where
-  printEvent event =
-    case event of
-      SearchExhausted -> "Search exhausted"
-
---------------------------------------------------------------------------------
 -- View constants
 --------------------------------------------------------------------------------
 layoutCanvasWidth :: LayoutExpr
