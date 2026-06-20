@@ -56,9 +56,11 @@
       }
 
       const trace = (await response.json()) as CompiledTrace;
+      const seed = typeof trace.seed === 'number' ? trace.seed : null;
 
       player.setTrace(trace);
-      currentSeed = typeof trace.seed === 'number' ? trace.seed : null;
+      currentSeed = seed;
+      seedText = seed === null ? '' : String(seed);
     } catch (err) {
       staticError = err instanceof Error ? err.message : String(err);
     } finally {
@@ -66,11 +68,11 @@
     }
   }
 
-  async function regenerateTrace() {
+  async function regenerateTrace(nextSeedText = seedText) {
     let seed: number | null;
 
     try {
-      seed = parseOptionalSeed(seedText);
+      seed = parseOptionalSeed(nextSeedText);
     } catch (err) {
       regenerateError = err instanceof Error ? err.message : String(err);
       debugEnabled = true;
@@ -101,6 +103,7 @@
 
       if (typeof payload.seed === 'number') {
         currentSeed = payload.seed;
+        seedText = String(payload.seed);
       }
 
       if (!response.ok || !payload.ok) {
@@ -216,12 +219,12 @@
     {/if}
 
     {#if player.hasTrace}
-      <Card.Root class="w-full max-w-screen-xl" aria-label="Visualization canvas">
+      <Card.Root class="w-fit max-w-full" aria-label="Visualization canvas">
         <Card.Header class="sr-only">
           <Card.Title>Visualization canvas</Card.Title>
         </Card.Header>
-        <Card.Content class="p-3">
-          <ScrollArea orientation="both" class="w-full rounded-lg border">
+        <Card.Content class="max-w-full p-3">
+          <ScrollArea orientation="both" class="max-w-full rounded-lg border">
             <div class="w-max">
               <TraceCanvas
                 elements={player.elements}

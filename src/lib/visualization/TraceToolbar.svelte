@@ -3,6 +3,7 @@
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
+  import ShuffleIcon from '@lucide/svelte/icons/shuffle';
 
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -25,7 +26,7 @@
     onReset: () => void;
     onPrevious: () => void;
     onNext: () => void;
-    onRegenerate: () => void | Promise<void>;
+    onRegenerate: (seedText?: string) => void | Promise<void>;
   };
 
   let {
@@ -50,6 +51,19 @@
   function submitRegeneration(event: SubmitEvent) {
     event.preventDefault();
     void onRegenerate();
+  }
+
+  function randomizeAndRegenerate() {
+    const nextSeedText = randomSeedText();
+
+    seedText = nextSeedText;
+    void onRegenerate(nextSeedText);
+  }
+
+  function randomSeedText(): string {
+    const [seed] = crypto.getRandomValues(new Int32Array(1));
+
+    return String(seed);
   }
 </script>
 
@@ -111,6 +125,16 @@
         placeholder="random"
         type="text"
       />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onclick={randomizeAndRegenerate}
+        disabled={busy}
+      >
+        <ShuffleIcon data-icon="inline-start" />
+        Random
+      </Button>
     </Field.Field>
 
     <Field.Field
