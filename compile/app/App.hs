@@ -53,8 +53,9 @@ runVisualization config graph = do
   case Compile.compileSolved solved viewGraph of
     Left err -> pure (Left err)
     Right compiled -> do
-      writeCompiled (runOutputMode config) compiled
-      pure (Right compiled)
+      let seededCompiled = Compile.withSeed (runSeed config) compiled
+      writeCompiled (runOutputMode config) seededCompiled
+      pure (Right seededCompiled)
 
 diagnosticsHandle :: OutputMode -> Handle
 diagnosticsHandle outputMode =

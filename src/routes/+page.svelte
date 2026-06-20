@@ -24,7 +24,7 @@
   let staticError = $state<string | null>(null);
   let regenerateError = $state<string | null>(null);
   let latestDebug = $state<CompileDebug | null>(null);
-  let latestSeed = $state<number | null>(null);
+  let currentSeed = $state<number | null>(null);
   let seedText = $state('');
   let debugEnabled = $state(false);
 
@@ -51,7 +51,10 @@
         );
       }
 
-      player.setTrace((await response.json()) as CompiledTrace);
+      const trace = (await response.json()) as CompiledTrace;
+
+      player.setTrace(trace);
+      currentSeed = typeof trace.seed === 'number' ? trace.seed : null;
     } catch (err) {
       staticError = err instanceof Error ? err.message : String(err);
     } finally {
@@ -93,7 +96,7 @@
       }
 
       if (typeof payload.seed === 'number') {
-        latestSeed = payload.seed;
+        currentSeed = payload.seed;
       }
 
       if (!response.ok || !payload.ok) {
@@ -177,7 +180,7 @@
     canPrevious={player.canPrevious}
     currentStep={player.currentStep}
     hasTrace={player.hasTrace}
-    {latestSeed}
+    {currentSeed}
     {loadingStatic}
     onNext={() => player.next()}
     onPrevious={() => player.previous()}

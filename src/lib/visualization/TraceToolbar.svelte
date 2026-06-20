@@ -18,7 +18,7 @@
     canNext: boolean;
     currentStep: number;
     stepCount: number;
-    latestSeed: number | null;
+    currentSeed: number | null;
     seedText?: string;
     debugEnabled?: boolean;
     onReset: () => void;
@@ -35,7 +35,7 @@
     canNext,
     currentStep,
     stepCount,
-    latestSeed,
+    currentSeed,
     seedText = $bindable(''),
     debugEnabled = $bindable(false),
     onReset,
@@ -53,32 +53,44 @@
 </script>
 
 <form class="toolbar" onsubmit={submitRegeneration}>
-  <div class="playback-controls" aria-label="Trace playback">
-    <Button variant="outline" size="sm" onclick={onReset} disabled={!hasTrace || busy}>
-      <RotateCcwIcon size={15} />
-      Reset
-    </Button>
-    <Button variant="outline" size="icon" onclick={onPrevious} disabled={!canPrevious || busy}>
-      <ChevronLeftIcon size={17} />
-      <span class="sr-only">Previous</span>
-    </Button>
-    <Button variant="outline" size="icon" onclick={onNext} disabled={!canNext || busy}>
-      <ChevronRightIcon size={17} />
-      <span class="sr-only">Next</span>
-    </Button>
+  <div class="toolbar-primary">
+    <div class="playback-controls" aria-label="Trace playback">
+      <Button variant="outline" size="sm" onclick={onReset} disabled={!hasTrace || busy}>
+        <RotateCcwIcon size={15} />
+        Reset
+      </Button>
+      <Button variant="outline" size="icon" onclick={onPrevious} disabled={!canPrevious || busy}>
+        <ChevronLeftIcon size={17} />
+        <span class="sr-only">Previous</span>
+      </Button>
+      <Button variant="outline" size="icon" onclick={onNext} disabled={!canNext || busy}>
+        <ChevronRightIcon size={17} />
+        <span class="sr-only">Next</span>
+      </Button>
+    </div>
+
+    {#if hasTrace}
+      <div class="trace-meta" aria-label="Trace status">
+        <span class="meta-pill">
+          <span>Step</span>
+          <strong>{currentStep + 1}</strong>
+          <span>of</span>
+          <strong>{stepCount}</strong>
+        </span>
+
+        {#if currentSeed !== null}
+          <span class="meta-pill">
+            <span>Seed</span>
+            <strong>{currentSeed}</strong>
+          </span>
+        {/if}
+      </div>
+    {/if}
   </div>
 
-  {#if hasTrace}
-    <span class="step-label">Step {currentStep + 1} / {stepCount}</span>
-  {/if}
-
   <div class="compile-controls" aria-label="Compile controls">
-    {#if latestSeed !== null}
-      <span class="seed-label">Seed {latestSeed}</span>
-    {/if}
-
     <Label class="seed-control">
-      <span class="field-label">Seed</span>
+      <span class="field-label">Next seed</span>
       <Input
         bind:value={seedText}
         disabled={busy}
@@ -106,22 +118,30 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 0.75rem;
     width: 100%;
-    min-height: 54px;
-    padding: 9px 16px;
+    min-height: 3.75rem;
+    padding: 0.625rem 1rem;
     border-bottom: 1px solid rgb(30, 41, 59);
     background: rgb(10, 16, 28);
     box-sizing: border-box;
     font-family: system-ui, sans-serif;
   }
 
-  .playback-controls,
-  .compile-controls {
+  .toolbar-primary {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 0.625rem;
+  }
+
+  .playback-controls,
+  .compile-controls,
+  .trace-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
   .compile-controls {
@@ -129,24 +149,34 @@
     justify-content: flex-end;
   }
 
-  .step-label,
-  .seed-label {
+  .meta-pill {
+    display: inline-flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.625rem;
+    border: 1px solid rgb(51, 65, 85);
+    border-radius: 0.375rem;
+    background: rgb(15 23 42 / 0.72);
     color: rgb(203, 213, 225);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.82rem;
+    font-size: 0.875rem;
+    line-height: 1;
     white-space: nowrap;
   }
 
-  .seed-label {
-    color: rgb(148, 163, 184);
+  .meta-pill strong {
+    color: rgb(248, 250, 252);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
   }
 
   .field-label {
     color: rgb(148, 163, 184);
+    font-size: 0.8125rem;
   }
 
   :global(.seed-control input) {
-    width: clamp(7.5rem, 16vw, 12rem);
+    width: clamp(8rem, 14vw, 11rem);
   }
 
   :global(.debug-control) {
@@ -158,6 +188,7 @@
       align-items: flex-start;
     }
 
+    .toolbar-primary,
     .compile-controls {
       flex: 1 1 100%;
     }

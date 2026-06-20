@@ -10,6 +10,7 @@ module LinearTrace.Compile
   , RenderPatch(..)
   , RenderFrame(..)
   , Visualization(..)
+  , withSeed
   , compileSolved
   , compileSolvedWithViewport
   , encodeCompiledPretty
@@ -81,10 +82,14 @@ newtype RenderFrame = RenderFrame
   } deriving (Eq, Show)
 
 data Visualization = Compiled
-  { compiledWidth  :: Double
+  { compiledSeed   :: Maybe Int
+  , compiledWidth  :: Double
   , compiledHeight :: Double
   , frames         :: [RenderFrame]
   } deriving (Eq, Show)
+
+withSeed :: Int -> Visualization -> Visualization
+withSeed seed compiled = compiled {compiledSeed = Just seed}
 
 defaultCompiledWidth :: Double
 defaultCompiledWidth = 800
@@ -127,7 +132,8 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
           emptyCompileState
       pure
         Compiled
-          { compiledWidth = roundLayout viewportWidth
+          { compiledSeed = Nothing
+          , compiledWidth = roundLayout viewportWidth
           , compiledHeight = roundLayout viewportHeight
           , frames = frames'
           }
@@ -603,13 +609,14 @@ instance ToJSON RenderFrame where
 instance ToJSON Visualization where
   toJSON compiled =
     object
-      [ "canvas"
-          .= object
-               [ "width" .= roundLayout (compiledWidth compiled)
-               , "height" .= roundLayout (compiledHeight compiled)
-               ]
-      , "frames" .= frames compiled
-      ]
+      $ maybe [] (\seed -> ["seed" .= seed]) (compiledSeed compiled)
+          ++ [ "canvas"
+                 .= object
+                      [ "width" .= roundLayout (compiledWidth compiled)
+                      , "height" .= roundLayout (compiledHeight compiled)
+                      ]
+             , "frames" .= frames compiled
+             ]
 
 encodeCompiledPretty :: Visualization -> BL.ByteString
 encodeCompiledPretty = encodePretty

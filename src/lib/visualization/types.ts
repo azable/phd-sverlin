@@ -37,6 +37,7 @@ export type RenderPatch =
     };
 
 export type CompiledTrace = {
+  seed?: number;
   canvas: {
     width: number;
     height: number;

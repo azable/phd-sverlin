@@ -7,7 +7,7 @@ import           DSL.Main
 import           Options.Applicative
 import           System.Exit         (exitFailure)
 import           System.IO           (hPutStrLn, stderr)
-import           System.Random       (randomIO)
+import           System.Random       (randomRIO)
 
 data Options = Options
   { optionShowSolverDetails :: Bool
@@ -39,7 +39,13 @@ main = do
     Right _compiled -> pure ()
 
 chooseSeed :: Maybe Int -> IO Int
-chooseSeed = maybe randomIO pure
+chooseSeed = maybe (randomRIO (minSeed, maxSeed)) pure
+
+minSeed :: Int
+minSeed = -2147483648
+
+maxSeed :: Int
+maxSeed = 2147483646
 
 optionsParserInfo :: ParserInfo Options
 optionsParserInfo =
