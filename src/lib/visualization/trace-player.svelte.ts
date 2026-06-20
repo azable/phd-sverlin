@@ -8,6 +8,10 @@ type PatchAnimationOptions = {
   animateDestroy: boolean;
 };
 
+type SetTraceOptions = {
+  initialStep?: number;
+};
+
 const transitionMs = 300;
 
 export class TracePlayer {
@@ -46,9 +50,9 @@ export class TracePlayer {
     return this.trace?.canvas.height ?? 0;
   }
 
-  setTrace(trace: CompiledTrace) {
+  setTrace(trace: CompiledTrace, options: SetTraceOptions = {}) {
     this.trace = trace;
-    this.currentStep = trace.frames.length > 0 ? 0 : -1;
+    this.currentStep = this.clampStep(options.initialStep ?? 0);
     this.rebuildToStep(this.currentStep);
   }
 
@@ -101,6 +105,12 @@ export class TracePlayer {
     }
 
     this.elements = Array.from(next.values());
+  }
+
+  private clampStep(step: number) {
+    if (!this.trace || this.stepCount === 0) return -1;
+
+    return Math.min(Math.max(0, step), this.lastStep);
   }
 
   private applyFrame(patches: RenderPatch[], options: PatchAnimationOptions) {

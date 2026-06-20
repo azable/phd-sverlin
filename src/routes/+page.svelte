@@ -107,7 +107,7 @@
         throw new Error(payload.ok ? response.statusText : payload.error);
       }
 
-      player.setTrace(payload.trace);
+      player.setTrace(payload.trace, { initialStep: player.currentStep });
     } catch (err) {
       regenerateError = err instanceof Error ? err.message : String(err);
       debugEnabled = true;

@@ -51,6 +51,66 @@ describe('TracePlayer', () => {
     player.dispose();
   });
 
+  it('can install a replacement trace at the same step', () => {
+    const player = new TracePlayer();
+
+    player.setTrace({
+      canvas: { width: 100, height: 80 },
+      frames: [
+        [{ kind: 'create', id: 'a', element: element('one') }],
+        [
+          {
+            kind: 'update',
+            id: 'a',
+            from: element('one'),
+            to: element('two')
+          }
+        ]
+      ]
+    });
+    player.next();
+
+    player.setTrace(
+      {
+        canvas: { width: 100, height: 80 },
+        frames: [
+          [{ kind: 'create', id: 'a', element: element('replacement-one') }],
+          [
+            {
+              kind: 'update',
+              id: 'a',
+              from: element('replacement-one'),
+              to: element('replacement-two')
+            }
+          ]
+        ]
+      },
+      { initialStep: player.currentStep }
+    );
+
+    expect(player.currentStep).toBe(1);
+    expect(player.elements[0].content).toBe('replacement-two');
+
+    player.dispose();
+  });
+
+  it('clamps a requested replacement step to the replacement trace length', () => {
+    const player = new TracePlayer();
+
+    player.setTrace(
+      {
+        canvas: { width: 100, height: 80 },
+        frames: [[{ kind: 'create', id: 'a', element: element('one') }]]
+      },
+      { initialStep: 4 }
+    );
+
+    expect(player.currentStep).toBe(0);
+    expect(player.elements[0].content).toBe('one');
+
+    player.dispose();
+  });
+
   it('keeps destroyed elements during the transition and then removes them', () => {
     vi.useFakeTimers();
 

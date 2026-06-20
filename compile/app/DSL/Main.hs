@@ -275,103 +275,191 @@ data ValuePlacement
   | ListValue Int
 
 layoutCell :: LayoutExpr
-layoutCell = global "linear-search.cell"
+layoutCell = global "linear-search.stage.cell"
 
 layoutGap :: LayoutExpr
-layoutGap = global "linear-search.gap"
+layoutGap = global "linear-search.stage.gap"
 
 layoutTargetLeft :: LayoutExpr
-layoutTargetLeft = global "linear-search.target-left"
+layoutTargetLeft = global "linear-search.stage.target-left"
 
 layoutTargetTop :: LayoutExpr
-layoutTargetTop = global "linear-search.target-top"
+layoutTargetTop = global "linear-search.stage.target-top"
 
 layoutRowLeft :: LayoutExpr
-layoutRowLeft = global "linear-search.row-left"
+layoutRowLeft = global "linear-search.stage.row-left"
 
 layoutRowTop :: LayoutExpr
-layoutRowTop = global "linear-search.row-top"
+layoutRowTop = global "linear-search.stage.row-top"
 
 layoutStep :: LayoutExpr
 layoutStep = layoutCell @+@ layoutGap
 
 layoutProbeTop :: LayoutExpr
-layoutProbeTop = global "linear-search.probe-top"
+layoutProbeTop = global "linear-search.stage.probe-top"
 
 targetProbeLeft :: LayoutExpr
-targetProbeLeft = global "linear-search.target-probe-left"
+targetProbeLeft = global "linear-search.stage.target-probe-left"
 
 elementProbeLeft :: LayoutExpr
-elementProbeLeft = global "linear-search.element-probe-left"
+elementProbeLeft = global "linear-search.stage.element-probe-left"
 
 layoutMatchLeft :: LayoutExpr
-layoutMatchLeft = global "linear-search.match-left"
+layoutMatchLeft = global "linear-search.stage.match-left"
 
 layoutMatchTop :: LayoutExpr
-layoutMatchTop = global "linear-search.match-top"
+layoutMatchTop = global "linear-search.stage.match-top"
 
-valueFontSize :: LayoutExpr
-valueFontSize = layoutCell @*@ (num 0.46 :: LayoutExpr)
+layoutOuterLeft :: LayoutExpr
+layoutOuterLeft = num 40
+
+layoutOuterTop :: LayoutExpr
+layoutOuterTop = num 32
+
+layoutOuterRight :: LayoutExpr
+layoutOuterRight = num 760
+
+layoutOuterBottom :: LayoutExpr
+layoutOuterBottom = num 560
+
+targetWidth :: LayoutExpr
+targetWidth = (layoutCell @*@ (num 2.1 :: LayoutExpr)) @+@ layoutGap
+
+targetHeight :: LayoutExpr
+targetHeight = layoutCell @+@ (layoutGap @*@ (num 0.8 :: LayoutExpr))
+
+probeSize :: LayoutExpr
+probeSize = layoutCell @*@ (num 1.08 :: LayoutExpr)
+
+probeHeight :: LayoutExpr
+probeHeight = probeSize
+
+valueWidth :: ValuePlacement -> LayoutExpr
+valueWidth placement =
+  case placement of
+    TargetValue -> targetWidth
+    ListValue _ -> layoutCell
+
+valueHeight :: ValuePlacement -> LayoutExpr
+valueHeight placement =
+  case placement of
+    TargetValue -> targetHeight
+    ListValue _ -> layoutCell
+
+targetFontSize :: LayoutExpr
+targetFontSize = layoutCell @*@ (num 0.62 :: LayoutExpr)
+
+listFontSize :: LayoutExpr
+listFontSize = layoutCell @*@ (num 0.5 :: LayoutExpr)
 
 probeFontSize :: LayoutExpr
-probeFontSize = valueFontSize
+probeFontSize = layoutCell @*@ (num 0.56 :: LayoutExpr)
 
-valueRadius :: LayoutExpr
-valueRadius = layoutCell @*@ (num 0.11 :: LayoutExpr)
+targetRadius :: LayoutExpr
+targetRadius = layoutCell @*@ (num 0.24 :: LayoutExpr)
+
+listRadius :: LayoutExpr
+listRadius = layoutCell @*@ (num 0.18 :: LayoutExpr)
 
 probeRadius :: LayoutExpr
-probeRadius = valueRadius
+probeRadius = layoutCell @*@ (num 0.22 :: LayoutExpr)
+
+decisionRadius :: LayoutExpr
+decisionRadius = layoutCell @*@ (num 0.26 :: LayoutExpr)
 
 layoutStrokeWidth :: LayoutExpr
-layoutStrokeWidth = layoutCell @*@ (num 0.04 :: LayoutExpr)
+layoutStrokeWidth = layoutCell @*@ (num 0.035 :: LayoutExpr)
 
-valueHue :: HueExpr
-valueHue = global "linear-search.value-hue"
+emphasisStrokeWidth :: LayoutExpr
+emphasisStrokeWidth = layoutCell @*@ (num 0.05 :: LayoutExpr)
+
+targetHue :: HueExpr
+targetHue = global "linear-search.palette.target-hue"
+
+listHue :: HueExpr
+listHue = global "linear-search.palette.list-hue"
+
+probeHue :: HueExpr
+probeHue = global "linear-search.palette.probe-hue"
 
 decisionHue :: HueExpr
-decisionHue = global "linear-search.decision-hue"
+decisionHue = global "linear-search.palette.decision-hue"
 
 matchWidth :: LayoutExpr
-matchWidth = layoutCell @+@ layoutCell @+@ layoutCell @+@ layoutGap
+matchWidth = (probeSize @*@ (num 2 :: LayoutExpr)) @+@ layoutGap
 
 matchHeight :: LayoutExpr
-matchHeight = layoutCell
+matchHeight = layoutCell @*@ (num 0.72 :: LayoutExpr)
 
 matchFontSize :: LayoutExpr
-matchFontSize = valueFontSize
+matchFontSize = layoutCell @*@ (num 0.34 :: LayoutExpr)
 
-layoutOrigin :: LayoutExpr
-layoutOrigin = num 0
+listValueCount :: LayoutExpr
+listValueCount = num 5
+
+listGapCount :: LayoutExpr
+listGapCount = num 4
+
+listSpan :: LayoutExpr
+listSpan = (listValueCount @*@ layoutCell) @+@ (listGapCount @*@ layoutGap)
 
 constrainScale :: ViewBuilder ()
 constrainScale = do
-  ensure (layoutOrigin @<=@ layoutCell)
-  ensure (layoutOrigin @<=@ layoutGap)
+  ensure ((num 72 :: LayoutExpr) @<=@ layoutCell)
+  ensure (layoutCell @<=@ (num 86 :: LayoutExpr))
+  ensure ((num 26 :: LayoutExpr) @<=@ layoutGap)
+  ensure (layoutGap @<=@ (num 44 :: LayoutExpr))
 
 constrainTargetFlow :: ViewBuilder ()
 constrainTargetFlow = do
   constrainScale
-  ensure (layoutOrigin @<=@ layoutTargetLeft)
-  ensure (layoutOrigin @<=@ layoutTargetTop)
-  ensure (layoutOrigin @<=@ layoutRowTop)
-  ensure (layoutTargetTop @+@ layoutCell @+@ layoutGap @<=@ layoutRowTop)
+  ensure (layoutOuterLeft @<=@ layoutTargetLeft)
+  ensure (layoutTargetLeft @<=@ (num 128 :: LayoutExpr))
+  ensure (layoutOuterTop @<=@ layoutTargetTop)
+  ensure (layoutTargetTop @<=@ (num 86 :: LayoutExpr))
+  ensure (layoutTargetLeft @+@ targetWidth @<=@ (num 380 :: LayoutExpr))
+  ensure (layoutTargetTop @+@ targetHeight @<=@ (num 188 :: LayoutExpr))
+  ensure ((num 64 :: LayoutExpr) @<=@ layoutRowLeft)
+  ensure (layoutRowLeft @<=@ (num 112 :: LayoutExpr))
+  ensure ((num 430 :: LayoutExpr) @<=@ layoutRowTop)
+  ensure (layoutRowTop @<=@ (num 500 :: LayoutExpr))
+  ensure (layoutRowLeft @+@ listSpan @<=@ layoutOuterRight)
+  ensure (layoutRowTop @+@ layoutCell @<=@ layoutOuterBottom)
 
 constrainProbeFlow :: ViewBuilder ()
 constrainProbeFlow = do
-  ensure (layoutOrigin @<=@ targetProbeLeft)
-  ensure (layoutOrigin @<=@ elementProbeLeft)
-  ensure (layoutOrigin @<=@ layoutProbeTop)
-  ensure (layoutTargetTop @+@ layoutCell @+@ layoutGap @<=@ layoutProbeTop)
-  ensure (targetProbeLeft @+@ layoutCell @+@ layoutGap @<=@ elementProbeLeft)
+  constrainTargetFlow
+  ensure ((num 210 :: LayoutExpr) @<=@ targetProbeLeft)
+  ensure (targetProbeLeft @<=@ (num 300 :: LayoutExpr))
+  ensure ((num 520 :: LayoutExpr) @<=@ elementProbeLeft)
+  ensure (elementProbeLeft @<=@ (num 640 :: LayoutExpr))
+  ensure ((num 205 :: LayoutExpr) @<=@ layoutProbeTop)
+  ensure (layoutProbeTop @<=@ (num 270 :: LayoutExpr))
+  ensure (layoutTargetTop @+@ targetHeight @+@ layoutGap @<=@ layoutProbeTop)
+  ensure (layoutProbeTop @+@ probeHeight @+@ layoutGap @<=@ layoutRowTop)
+  ensure
+    (targetProbeLeft
+       @+@ probeSize
+       @+@ (layoutGap @*@ (num 2 :: LayoutExpr))
+       @<=@ elementProbeLeft)
 
 constrainMatchFlow :: ViewBuilder ()
 constrainMatchFlow = do
-  ensure (layoutOrigin @<=@ layoutMatchLeft)
-  ensure (layoutOrigin @<=@ layoutMatchTop)
-  ensure (layoutProbeTop @+@ layoutCell @+@ layoutGap @<=@ layoutMatchTop)
-  ensure (layoutMatchTop @+@ matchHeight @+@ layoutGap @<=@ layoutRowTop)
+  constrainProbeFlow
+  ensure ((num 330 :: LayoutExpr) @<=@ layoutMatchLeft)
+  ensure (layoutMatchLeft @<=@ (num 415 :: LayoutExpr))
+  ensure
+    (layoutProbeTop
+       @+@ probeHeight
+       @+@ (layoutGap @*@ (num 0.7 :: LayoutExpr))
+       @<=@ layoutMatchTop)
+  ensure
+    (layoutMatchTop
+       @+@ matchHeight
+       @+@ (layoutGap @*@ (num 0.7 :: LayoutExpr))
+       @<=@ layoutRowTop)
   ensure (targetProbeLeft @<=@ layoutMatchLeft)
-  ensure (layoutMatchLeft @+@ matchWidth @<=@ elementProbeLeft @+@ layoutCell)
+  ensure (layoutMatchLeft @+@ matchWidth @<=@ elementProbeLeft @+@ probeSize)
 
 valueTop :: ValuePlacement -> LayoutExpr
 valueTop placement =
@@ -387,57 +475,72 @@ valueLeft placement =
       layoutRowLeft
         @+@ ((num (fromIntegral index) :: LayoutExpr) @*@ layoutStep)
 
-valueSize :: LayoutExpr
-valueSize = layoutCell
+valueNodeStyle :: ValuePlacement -> EmptyStyleDraft %1 -> Style
+valueNodeStyle placement draft =
+  case placement of
+    TargetValue -> targetNodeStyle draft
+    ListValue _ -> listNodeStyle draft
 
-valueHeight :: LayoutExpr
-valueHeight = valueSize
-
-valueNodeStyle :: EmptyStyleDraft %1 -> Style
-valueNodeStyle draft =
+targetNodeStyle :: EmptyStyleDraft %1 -> Style
+targetNodeStyle draft =
   draft
-    |> setFillOnce (Hsl valueHue (num 0.22) (num 0.93))
-    |> setStrokeOnce (Hsl valueHue (num 0.5) (num 0.34))
-    |> setStrokeWidthOnce layoutStrokeWidth
-    |> setRadiusOnce valueRadius
-    |> setFontSizeOnce valueFontSize
-    |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
+    |> setFillOnce (Hsl targetHue (num 0.64) (num 0.84))
+    |> setStrokeOnce (Hsl targetHue (num 0.76) (num 0.36))
+    |> setStrokeWidthOnce emphasisStrokeWidth
+    |> setRadiusOnce targetRadius
+    |> setFontSizeOnce targetFontSize
+    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
     |> setFontWeightOnce FontWeightBold
     |> setTextAlignOnce TextAlignCenter
     |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-value-block"
+    |> setCssClassOnce "trace-target-card"
+    |> finalizeStyle
+
+listNodeStyle :: EmptyStyleDraft %1 -> Style
+listNodeStyle draft =
+  draft
+    |> setFillOnce (Hsl listHue (num 0.34) (num 0.92))
+    |> setStrokeOnce (Hsl listHue (num 0.58) (num 0.42))
+    |> setStrokeWidthOnce layoutStrokeWidth
+    |> setRadiusOnce listRadius
+    |> setFontSizeOnce listFontSize
+    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
+    |> setFontWeightOnce FontWeightBold
+    |> setTextAlignOnce TextAlignCenter
+    |> setWhiteSpaceOnce WhiteSpaceNoWrap
+    |> setCssClassOnce "trace-list-chip"
     |> finalizeStyle
 
 probeNodeStyle :: EmptyStyleDraft %1 -> Style
 probeNodeStyle draft =
   draft
-    |> setFillOnce (Hsl valueHue (num 0.22) (num 0.93))
-    |> setStrokeOnce (Hsl valueHue (num 0.5) (num 0.34))
+    |> setFillOnce (Hsl probeHue (num 0.5) (num 0.88))
+    |> setStrokeOnce (Hsl probeHue (num 0.78) (num 0.34))
     |> setStrokeWidthOnce layoutStrokeWidth
-    |> setZIndexOnce (num 1)
+    |> setZIndexOnce (num 3)
     |> setRadiusOnce probeRadius
     |> setFontSizeOnce probeFontSize
-    |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
+    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
     |> setFontWeightOnce FontWeightBold
     |> setTextAlignOnce TextAlignCenter
     |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-value-block"
+    |> setCssClassOnce "trace-probe-chip"
     |> finalizeStyle
 
 matchNodeStyle :: EmptyStyleDraft %1 -> Style
 matchNodeStyle draft =
   draft
-    |> setFillOnce (Hsl decisionHue (num 0.66) (num 0.9))
-    |> setStrokeOnce (Hsl decisionHue (num 0.74) (num 0.34))
-    |> setStrokeWidthOnce layoutStrokeWidth
-    |> setZIndexOnce (num 2)
-    |> setRadiusOnce valueRadius
+    |> setFillOnce (Hsl decisionHue (num 0.6) (num 0.86))
+    |> setStrokeOnce (Hsl decisionHue (num 0.82) (num 0.32))
+    |> setStrokeWidthOnce emphasisStrokeWidth
+    |> setZIndexOnce (num 4)
+    |> setRadiusOnce decisionRadius
     |> setFontSizeOnce matchFontSize
-    |> setFontFamilyOnce "ui-monospace, SFMono-Regular, Menlo, monospace"
+    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
     |> setFontWeightOnce FontWeightBold
     |> setTextAlignOnce TextAlignCenter
     |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-decision-block"
+    |> setCssClassOnce "trace-decision-pill"
     |> finalizeStyle
 
 defineValueNode ::
@@ -450,8 +553,8 @@ defineValueNode placement visual0 = do
   constrainValueFlow placement
   ensure (valueLeftX @==@ valueLeft placement)
   ensure (valueTopY @==@ valueTop placement)
-  ensure (valueWidthX @==@ valueSize)
-  ensure (valueHeightY @==@ valueHeight)
+  ensure (valueWidthX @==@ valueWidth placement)
+  ensure (valueHeightY @==@ valueHeight placement)
   return visual4
 
 constrainValueFlow :: ValuePlacement -> ViewBuilder ()
@@ -460,7 +563,7 @@ constrainValueFlow placement =
     TargetValue -> constrainTargetFlow
     ListValue index ->
       case index of
-        0 -> ensure (layoutOrigin @<=@ layoutRowLeft)
+        0 -> constrainTargetFlow
         _ -> return ()
 
 defineTargetProbeNode :: LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
@@ -469,10 +572,11 @@ defineTargetProbeNode visual0 = do
   LayoutUse visual2 probeTopY <- takeTop visual1
   LayoutUse visual3 probeWidthX <- takeWidth visual2
   LayoutUse visual4 probeHeightY <- takeHeight visual3
+  constrainProbeFlow
   ensure (probeLeftX @==@ targetProbeLeft)
   ensure (probeTopY @==@ layoutProbeTop)
-  ensure (probeWidthX @==@ valueSize)
-  ensure (probeHeightY @==@ valueHeight)
+  ensure (probeWidthX @==@ probeSize)
+  ensure (probeHeightY @==@ probeHeight)
   return visual4
 
 defineElementProbeNode :: LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
@@ -484,8 +588,8 @@ defineElementProbeNode visual0 = do
   constrainProbeFlow
   ensure (probeLeftX @==@ elementProbeLeft)
   ensure (probeTopY @==@ layoutProbeTop)
-  ensure (probeWidthX @==@ valueSize)
-  ensure (probeHeightY @==@ valueHeight)
+  ensure (probeWidthX @==@ probeSize)
+  ensure (probeHeightY @==@ probeHeight)
   return visual4
 
 defineMatchNode :: LiveVisual Match %1 -> ViewBuilder (BoxVisual Match)
@@ -503,7 +607,7 @@ defineMatchNode visual0 = do
 
 valueViewDefinition :: ValuePlacement -> BoxDefinition Value
 valueViewDefinition placement =
-  boxDefinition valueNodeStyle (defineValueNode placement)
+  boxDefinition (valueNodeStyle placement) (defineValueNode placement)
 
 targetProbeViewDefinition :: BoxDefinition Value
 targetProbeViewDefinition = boxDefinition probeNodeStyle defineTargetProbeNode
