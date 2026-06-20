@@ -1,3 +1,4 @@
+{-# LANGUAGE BlockArguments          #-}
 {-# LANGUAGE ConstraintKinds         #-}
 {-# LANGUAGE DataKinds               #-}
 {-# LANGUAGE FlexibleContexts        #-}
@@ -36,8 +37,9 @@ type instance Payload Match = LBool Match
 instance Traceable Match where
   payloadView _ payload =
     case payload of
-      LBool matched ->
+      LBool matched
         {- HLINT ignore "Use if" -}
+       ->
         case matched of
           True  -> PayloadView "Decision" "MATCH"
           False -> PayloadView "Decision" "NO MATCH"
@@ -78,7 +80,7 @@ exampleSpec =
              2
              (MoreExampleValue 7 (MoreExampleValue 1 NoExampleValues)))))
 
-example :: TraceBuilder Events ()
+example :: VisualTraceBuilder ()
 example = linearSearch (searchInput exampleSpec)
 
 searchInput :: ExampleSpec -> SearchInput
@@ -104,83 +106,6 @@ countExampleValues values =
     NoExampleValues         -> 0
     MoreExampleValue _ rest -> 1 + countExampleValues rest
 
---------------------------------------------------------------------------------
--- Events
---------------------------------------------------------------------------------
-data CreateTarget =
-  CreateTarget
-  deriving Show
-
-type instance Actions CreateTarget = '[ Create Value]
-
-data CreateElement =
-  CreateElement
-  deriving Show
-
-type instance Actions CreateElement = '[ Create Value]
-
-data Compare =
-  Compare
-  deriving Show
-
-data PrepareCompare =
-  PrepareCompare
-  deriving Show
-
-type instance Actions PrepareCompare = '[ Copy Value, Copy Value]
-
-type instance Actions Compare = '[ Use Value, Use Value, Compute Match]
-
-data Found =
-  Found
-  deriving Show
-
-type instance Actions Found = '[ Decide Match]
-
-data NotThisOne =
-  NotThisOne
-  deriving Show
-
-type instance Actions NotThisOne = '[ Decide Match]
-
-data DiscardChecked =
-  DiscardChecked
-  deriving Show
-
-type instance Actions DiscardChecked = '[ Destroy Value]
-
-data FinishFound =
-  FinishFound
-  deriving Show
-
-type instance Actions FinishFound = '[ Destroy Value, Destroy Value]
-
-data DiscardRemaining =
-  DiscardRemaining
-  deriving Show
-
-type instance Actions DiscardRemaining = '[ Destroy Value]
-
-data SearchExhausted =
-  SearchExhausted
-  deriving Show
-
-type instance Actions SearchExhausted = '[ Destroy Value]
-
-type Events
-  = '[ CreateTarget
-     , CreateElement
-     , PrepareCompare
-     , Compare
-     , Found
-     , NotThisOne
-     , DiscardChecked
-     , FinishFound
-     , DiscardRemaining
-     , SearchExhausted
-     ]
-
---------------------------------------------------------------------------------
 -- Search program
 --------------------------------------------------------------------------------
 data Elements where
@@ -191,34 +116,51 @@ data Comparison where
   IsMatch :: Block Value %1 -> Block Value %1 -> Comparison
   IsNotMatch :: Block Value %1 -> Block Value %1 -> Comparison
 
-run :: TraceBuilder Events () -> TraceGraph Events
+run :: VisualTraceBuilder () -> VisualTraceGraph
 run = buildGraph
 
-linearSearch :: SearchInput %1 -> TraceBuilder Events ()
+linearSearch :: SearchInput %1 -> VisualTraceBuilder ()
 linearSearch input =
   case input of
     SearchInput targetPayload valuePayloads -> do
       Created target targetEvidence <- create targetPayload
-      explain CreateTarget (targetEvidence :~ Done)
+      explain
+        "Create target"
+        (targetEvidence :~ Done)
+        \(VCons targetToken VNil) -> do
+          targetVisual <- createVisual targetToken
+          renderedTarget <- fresh valueViewDefinition targetVisual
+          complete renderedTarget
       elements <- createElements valuePayloads
       searchElements target elements
 
-createElements :: InputValues %1 -> TraceBuilder Events Elements
+createElements :: InputValues %1 -> VisualTraceBuilder Elements
 createElements inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
       Created element elementEvidence <- create payload
-      explain CreateElement (elementEvidence :~ Done)
+      explain
+        "Create element"
+        (elementEvidence :~ Done)
+        \(VCons elementToken VNil) -> do
+          elementVisual <- createVisual elementToken
+          renderedElement <- fresh valueViewDefinition elementVisual
+          complete renderedElement
       elements <- createElements rest
       return (MoreElement element elements)
 
-searchElements :: Block Value %1 -> Elements %1 -> TraceBuilder Events ()
+searchElements :: Block Value %1 -> Elements %1 -> VisualTraceBuilder ()
 searchElements target elements =
   case elements of
     NoElements -> do
       Destroyed targetEvidence <- destroy target
-      explain SearchExhausted (targetEvidence :~ Done)
+      explain
+        "Search exhausted"
+        (targetEvidence :~ Done)
+        \(VCons targetToken VNil) -> do
+          targetVisual <- destroyVisual targetToken
+          remove targetVisual
     MoreElement element rest -> do
       comparison <- compareElement target element
       case comparison of
@@ -230,48 +172,99 @@ searchElements target elements =
           searchElements targetAfter rest
 
 compareElement ::
-     Block Value %1 -> Block Value %1 -> TraceBuilder Events Comparison
+     Block Value %1 -> Block Value %1 -> VisualTraceBuilder Comparison
 compareElement target element = do
   Copied targetAfter targetProbe targetCopyEvidence <- copy target
   Copied elementAfter elementProbe elementCopyEvidence <- copy element
-  explain PrepareCompare (targetCopyEvidence :~ elementCopyEvidence :~ Done)
+  explain
+    "Prepare comparison"
+    (targetCopyEvidence :~ elementCopyEvidence :~ Done)
+    \(VCons targetToken (VCons elementToken VNil)) -> do
+      targetCopy <- copyVisual targetToken
+      elementCopy <- copyVisual elementToken
+      (target1, renderedTargetProbe) <-
+        forkCopy targetProbeViewDefinition targetCopy
+      (element1, renderedElementProbe) <-
+        forkCopy elementProbeViewDefinition elementCopy
+      complete target1
+      complete element1
+      complete renderedTargetProbe
+      complete renderedElementProbe
   Used targetPayload targetUseEvidence <- use targetProbe
   Used elementPayload elementUseEvidence <- use elementProbe
   Computed match matchEvidence <-
     compute (sameValue <$> targetPayload <*> elementPayload)
   explain
-    Compare
+    "Compare target and element"
     (targetUseEvidence :~ elementUseEvidence :~ matchEvidence :~ Done)
-  decision <-
-    decide
-      (\(LBool answer) -> answer)
-      match
+    \(VCons targetToken (VCons elementToken (VCons matchToken VNil))) -> do
+      targetVisual <- useVisual targetToken
+      elementVisual <- useVisual elementToken
+      matchVisual <- computeVisual matchToken
+      renderedMatch <- fresh matchViewDefinition matchVisual
+      LayoutUse renderedMatch1 matchCenterX <- takeCenterX renderedMatch
+      LayoutUse renderedMatch2 matchTop <- takeTop renderedMatch1
+      LayoutUse element1 elementBottom <- takeBottom elementVisual
+      ensure (matchCenterX @==@ layoutStageCenter)
+      ensure (matchTop @==@ elementBottom @+@ matchGap)
+      checkpoint
+      remove targetVisual
+      remove element1
+      complete renderedMatch2
+  decision <- decide (\(LBool answer) -> answer) match
   case decision of
     DecidedTrue foundEvidence -> do
-      explain Found (foundEvidence :~ Done)
+      explain
+        "Found target"
+        (foundEvidence :~ Done)
+        \(VCons matchToken VNil) -> do
+          matchVisual <- decideVisual matchToken
+          remove matchVisual
       return (IsMatch targetAfter elementAfter)
     DecidedFalse notThisEvidence -> do
-      explain NotThisOne (notThisEvidence :~ Done)
+      explain
+        "Not this element"
+        (notThisEvidence :~ Done)
+        \(VCons matchToken VNil) -> do
+          matchVisual <- decideVisual matchToken
+          remove matchVisual
       return (IsNotMatch targetAfter elementAfter)
 
-discardChecked :: Block Value %1 -> TraceBuilder Events ()
+discardChecked :: Block Value %1 -> VisualTraceBuilder ()
 discardChecked element = do
   Destroyed elementEvidence <- destroy element
-  explain DiscardChecked (elementEvidence :~ Done)
+  explain
+    "Discard checked element"
+    (elementEvidence :~ Done)
+    \(VCons elementToken VNil) -> do
+      elementVisual <- destroyVisual elementToken
+      remove elementVisual
 
-finishFound :: Block Value %1 -> Block Value %1 -> TraceBuilder Events ()
+finishFound :: Block Value %1 -> Block Value %1 -> VisualTraceBuilder ()
 finishFound target element = do
   Destroyed targetEvidence <- destroy target
   Destroyed elementEvidence <- destroy element
-  explain FinishFound (targetEvidence :~ elementEvidence :~ Done)
+  explain
+    "Finish found target"
+    (targetEvidence :~ elementEvidence :~ Done)
+    \(VCons targetToken (VCons elementToken VNil)) -> do
+      targetVisual <- destroyVisual targetToken
+      elementVisual <- destroyVisual elementToken
+      remove targetVisual
+      remove elementVisual
 
-discardRemaining :: Elements %1 -> TraceBuilder Events ()
+discardRemaining :: Elements %1 -> VisualTraceBuilder ()
 discardRemaining elements =
   case elements of
     NoElements -> return ()
     MoreElement element rest -> do
       Destroyed elementEvidence <- destroy element
-      explain DiscardRemaining (elementEvidence :~ Done)
+      explain
+        "Discard remaining element"
+        (elementEvidence :~ Done)
+        \(VCons elementToken VNil) -> do
+          elementVisual <- destroyVisual elementToken
+          remove elementVisual
       discardRemaining rest
 
 -- View constants
@@ -316,15 +309,17 @@ layoutGapRatio :: LayoutExpr
 layoutGapRatio = num 0.27
 
 layoutElementCountValue :: Int
-layoutElementCountValue =
+layoutElementCountValue
   {- HLINT ignore "Use if" -}
+ =
   case exampleElementCount <= 0 of
     True  -> 1
     False -> exampleElementCount
 
 layoutGapCountValue :: Int
-layoutGapCountValue =
+layoutGapCountValue
   {- HLINT ignore "Use if" -}
+ =
   case exampleElementCount <= 1 of
     True  -> 0
     False -> exampleElementCount - 1
@@ -373,10 +368,13 @@ layoutProbeGap = layoutProbeSize @*@ (num 0.36 :: LayoutExpr)
 
 targetProbeLeft :: LayoutExpr
 targetProbeLeft =
-  layoutStageCenter @-@ layoutProbeSize @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+  layoutStageCenter
+    @-@ layoutProbeSize
+    @-@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 elementProbeLeft :: LayoutExpr
-elementProbeLeft = layoutStageCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
+elementProbeLeft =
+  layoutStageCenter @+@ (layoutProbeGap @/@ (num 2 :: LayoutExpr))
 
 layoutHorizontalInset :: LayoutExpr
 layoutHorizontalInset =
@@ -410,7 +408,8 @@ decisionFillLightness :: UnitExpr
 decisionFillLightness = global "linear-search.decision-fill-lightness"
 
 matchWidth :: LayoutExpr
-matchWidth = (layoutCell @*@ (num 1.88 :: LayoutExpr)) @+@ (num 28 :: LayoutExpr)
+matchWidth =
+  (layoutCell @*@ (num 1.88 :: LayoutExpr)) @+@ (num 28 :: LayoutExpr)
 
 matchHeight :: LayoutExpr
 matchHeight = layoutCell @*@ (num 0.68 :: LayoutExpr)
@@ -421,10 +420,12 @@ matchFontSize = matchHeight @*@ (num 0.38 :: LayoutExpr)
 matchGap :: LayoutExpr
 matchGap = layoutCell @*@ (num 0.42 :: LayoutExpr)
 
-constrainSearchLayout :: ViewBuilder events ()
+constrainSearchLayout :: ViewBuilder ()
 constrainSearchLayout = do
-  ensure ((layoutCanvasWidth @*@ (num 0.43 :: LayoutExpr)) @<=@ layoutStageCenter)
-  ensure (layoutStageCenter @<=@ (layoutCanvasWidth @*@ (num 0.57 :: LayoutExpr)))
+  ensure
+    ((layoutCanvasWidth @*@ (num 0.43 :: LayoutExpr)) @<=@ layoutStageCenter)
+  ensure
+    (layoutStageCenter @<=@ (layoutCanvasWidth @*@ (num 0.57 :: LayoutExpr)))
   ensure ((num 24 :: LayoutExpr) @<=@ layoutTargetTop)
   ensure (layoutTargetTop @<=@ (num 52 :: LayoutExpr))
   ensure ((num 198 :: HueExpr) @<=@ valueHue)
@@ -531,9 +532,7 @@ matchNodeStyle draft =
     |> finalizeStyle
 
 defineValueNode ::
-     BlockRef Value
-  -> LiveVisual Value
-     %1 -> ViewBuilder events (BoxVisual Value)
+     BlockRef Value -> LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
 defineValueNode ref visual0 = do
   constrainSearchLayout
   LayoutUse visual1 valueLeftX <- takeLeft visual0
@@ -547,9 +546,7 @@ defineValueNode ref visual0 = do
   return visual4
 
 defineTargetProbeNode ::
-     BlockRef Value
-  -> LiveVisual Value
-     %1 -> ViewBuilder events (BoxVisual Value)
+     BlockRef Value -> LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
 defineTargetProbeNode _ref visual0 = do
   constrainSearchLayout
   LayoutUse visual1 probeLeftX <- takeLeft visual0
@@ -563,9 +560,7 @@ defineTargetProbeNode _ref visual0 = do
   return visual4
 
 defineElementProbeNode ::
-     BlockRef Value
-  -> LiveVisual Value
-     %1 -> ViewBuilder events (BoxVisual Value)
+     BlockRef Value -> LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
 defineElementProbeNode _ref visual0 = do
   constrainSearchLayout
   LayoutUse visual1 probeLeftX <- takeLeft visual0
@@ -579,9 +574,7 @@ defineElementProbeNode _ref visual0 = do
   return visual4
 
 defineMatchNode ::
-     BlockRef Match
-  -> LiveVisual Match
-     %1 -> ViewBuilder events (SizeVisual Match)
+     BlockRef Match -> LiveVisual Match %1 -> ViewBuilder (SizeVisual Match)
 defineMatchNode _ref visual0 = do
   constrainSearchLayout
   LayoutUse visual1 matchWidthX <- takeWidth visual0
@@ -601,119 +594,3 @@ elementProbeViewDefinition = boxDefinition probeNodeStyle defineElementProbeNode
 
 matchViewDefinition :: SizeDefinition Match
 matchViewDefinition = sizeDefinition matchNodeStyle defineMatchNode
-
---------------------------------------------------------------------------------
--- View events
---------------------------------------------------------------------------------
-instance ViewEvent CreateTarget where
-  viewEvent event tokens =
-    case event of
-      CreateTarget ->
-        case tokens of
-          VCons targetToken VNil -> do
-            target <- createVisual targetToken
-            renderedTarget <- fresh valueViewDefinition target
-            complete renderedTarget
-
-instance ViewEvent CreateElement where
-  viewEvent event tokens =
-    case event of
-      CreateElement ->
-        case tokens of
-          VCons elementToken VNil -> do
-            element <- createVisual elementToken
-            renderedElement <- fresh valueViewDefinition element
-            complete renderedElement
-
-instance ViewEvent PrepareCompare where
-  viewEvent event tokens =
-    case event of
-      PrepareCompare ->
-        case tokens of
-          VCons targetToken (VCons elementToken VNil) -> do
-            targetCopy <- copyVisual targetToken
-            elementCopy <- copyVisual elementToken
-            (target1, renderedTargetProbe) <-
-              forkCopy targetProbeViewDefinition targetCopy
-            (element1, renderedElementProbe) <-
-              forkCopy elementProbeViewDefinition elementCopy
-            complete target1
-            complete element1
-            complete renderedTargetProbe
-            complete renderedElementProbe
-
-instance ViewEvent Compare where
-  viewEvent event tokens =
-    case event of
-      Compare ->
-        case tokens of
-          VCons targetToken (VCons elementToken (VCons matchToken VNil)) -> do
-            target <- useVisual targetToken
-            element <- useVisual elementToken
-            match <- computeVisual matchToken
-            renderedMatch <- fresh matchViewDefinition match
-            LayoutUse renderedMatch1 matchCenterX <- takeCenterX renderedMatch
-            LayoutUse renderedMatch2 matchTop <- takeTop renderedMatch1
-            LayoutUse element1 elementBottom <- takeBottom element
-            ensure (matchCenterX @==@ layoutStageCenter)
-            ensure (matchTop @==@ elementBottom @+@ matchGap)
-            checkpoint
-            remove target
-            remove element1
-            complete renderedMatch2
-
-instance ViewEvent Found where
-  viewEvent event tokens =
-    case event of
-      Found ->
-        case tokens of
-          VCons matchToken VNil -> do
-            match <- decideVisual matchToken
-            remove match
-
-instance ViewEvent NotThisOne where
-  viewEvent event tokens =
-    case event of
-      NotThisOne ->
-        case tokens of
-          VCons matchToken VNil -> do
-            match <- decideVisual matchToken
-            remove match
-
-instance ViewEvent DiscardChecked where
-  viewEvent event tokens =
-    case event of
-      DiscardChecked ->
-        case tokens of
-          VCons elementToken VNil -> do
-            element <- destroyVisual elementToken
-            remove element
-
-instance ViewEvent FinishFound where
-  viewEvent event tokens =
-    case event of
-      FinishFound ->
-        case tokens of
-          VCons targetToken (VCons elementToken VNil) -> do
-            target <- destroyVisual targetToken
-            element <- destroyVisual elementToken
-            remove target
-            remove element
-
-instance ViewEvent DiscardRemaining where
-  viewEvent event tokens =
-    case event of
-      DiscardRemaining ->
-        case tokens of
-          VCons elementToken VNil -> do
-            element <- destroyVisual elementToken
-            remove element
-
-instance ViewEvent SearchExhausted where
-  viewEvent event tokens =
-    case event of
-      SearchExhausted ->
-        case tokens of
-          VCons targetToken VNil -> do
-            target <- destroyVisual targetToken
-            remove target

@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds              #-}
-{-# LANGUAGE EmptyCase              #-}
 {-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -138,8 +137,10 @@ module LinearTrace.View
   , (@>=@)
   , -- * Builder
     ViewBuilder
-  , ViewEvent(..)
-  , ViewEvents
+  , ViewScript(..)
+  , VisualTraceBuilder
+  , VisualTraceGraph
+  , explain
   , buildCSP
   , solveCSP
   , solveCSPWithSeed
@@ -213,17 +214,17 @@ instance HasStyle (BlockView tag) where
 data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
 
-data ViewStep events where
+data ViewStep where
   ViewStep
-    :: C.RecordedEvent events
+    :: C.TraceStep
     -> [ViewNode]
     -> [Constraint]
     -> [[RenderIntent]]
-    -> ViewStep events
+    -> ViewStep
 
-data ViewGraph events = ViewGraph
+data ViewGraph = ViewGraph
   { viewNodes       :: [ViewNode]
-  , viewSteps       :: [ViewStep events]
+  , viewSteps       :: [ViewStep]
   , viewConstraints :: [Constraint]
   , viewInitialVars :: [InitialVar]
   , viewRenderFrames :: [[RenderIntent]]
@@ -600,10 +601,9 @@ setCssClassOnce value draft =
 data ViewDefinition tag (used :: [LayoutAttr]) where
   ViewDefinition
     :: (EmptyStyleDraft %1 -> Style)
-    -> (forall (events :: [Type]).
-        C.BlockRef tag
+    -> (C.BlockRef tag
         -> LiveVisual tag
-           %1 -> ViewBuilder events (Visual Rendered Stable used tag))
+           %1 -> ViewBuilder (Visual Rendered Stable used tag))
     -> ViewDefinition tag used
 
 type BoxDefinition tag =
@@ -614,19 +614,17 @@ type SizeDefinition tag =
 
 boxDefinition ::
      (EmptyStyleDraft %1 -> Style)
-  -> (forall (events :: [Type]).
-      C.BlockRef tag
+  -> (C.BlockRef tag
       -> LiveVisual tag
-         %1 -> ViewBuilder events (BoxVisual tag))
+         %1 -> ViewBuilder (BoxVisual tag))
   -> BoxDefinition tag
 boxDefinition = ViewDefinition
 
 sizeDefinition ::
      (EmptyStyleDraft %1 -> Style)
-  -> (forall (events :: [Type]).
-      C.BlockRef tag
+  -> (C.BlockRef tag
       -> LiveVisual tag
-         %1 -> ViewBuilder events (SizeVisual tag))
+         %1 -> ViewBuilder (SizeVisual tag))
   -> SizeDefinition tag
 sizeDefinition = ViewDefinition
 
@@ -780,7 +778,7 @@ defaultViewEnv =
     , canvasHeight = num 600
     }
 
-data ViewOutput events = ViewOutput
+data ViewOutput = ViewOutput
   { emittedNodes         :: [ViewNode]
   , emittedConstraints   :: [Constraint]
   , emittedInitialVars   :: [InitialVar]
@@ -788,7 +786,7 @@ data ViewOutput events = ViewOutput
   , pendingRenderIntents :: [RenderIntent]
   }
 
-instance Semigroup (ViewOutput events) where
+instance Semigroup ViewOutput where
   ViewOutput nodesA constraintsA initialsA framesA pendingA <> ViewOutput nodesB constraintsB initialsB framesB pendingB =
     ViewOutput
       { emittedNodes = nodesA ++ nodesB
@@ -798,7 +796,7 @@ instance Semigroup (ViewOutput events) where
       , pendingRenderIntents = pendingA ++ pendingB
       }
 
-instance Monoid (ViewOutput events) where
+instance Monoid ViewOutput where
   mempty =
     ViewOutput
       { emittedNodes = []
@@ -808,16 +806,31 @@ instance Monoid (ViewOutput events) where
       , pendingRenderIntents = []
       }
 
-data ViewState events where
-  ViewState :: Ur ViewEnv %1 -> Ur (ViewOutput events) %1 -> ViewState events
+data ViewState where
+  ViewState :: Ur ViewEnv %1 -> Ur ViewOutput %1 -> ViewState
 
-type ViewBuilder events a = State (ViewState events) a
+type ViewBuilder a = State ViewState a
 
-instance Consumable (ViewState events) where
+data ViewScript acts where
+  ViewScript :: (ViewTokens acts %1 -> ViewBuilder ()) -> ViewScript acts
+
+type VisualTraceBuilder a = C.TraceBuilderWith ViewScript a
+
+type VisualTraceGraph = C.TraceGraphWith ViewScript
+
+explain ::
+     P.String
+  -> C.EvidenceList acts
+     %1 -> (ViewTokens acts %1 -> ViewBuilder ())
+  -> VisualTraceBuilder ()
+explain label evidenceList script =
+  C.explainWith label (ViewScript script) evidenceList
+
+instance Consumable ViewState where
   consume (ViewState env output) =
     consume env `lseq` consume output
 
-instance Dupable (ViewState events) where
+instance Dupable ViewState where
   dup2 (ViewState env output) =
     case dup2 env of
       (env1, env2) ->
@@ -825,24 +838,24 @@ instance Dupable (ViewState events) where
           (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
 
 runViewBuilderWithOutput ::
-     ViewEnv -> ViewOutput events -> ViewBuilder events a -> (a, ViewOutput events)
+     ViewEnv -> ViewOutput -> ViewBuilder a -> (a, ViewOutput)
 runViewBuilderWithOutput env initialOutput builder =
   let (result, ViewState _ (Ur output)) =
         runState builder (ViewState (Ur env) (Ur initialOutput))
    in (result, output)
 
-askViewEnv :: ViewBuilder events (Ur ViewEnv)
+askViewEnv :: ViewBuilder (Ur ViewEnv)
 askViewEnv = do
   ViewState (Ur env) output <- get
   put (ViewState (Ur env) output)
   return (Ur env)
 
-tellOutput :: ViewOutput events -> ViewBuilder events ()
+tellOutput :: ViewOutput -> ViewBuilder ()
 tellOutput newOutput = do
   ViewState env (Ur oldOutput) <- get
   put (ViewState env (Ur (oldOutput <> newOutput)))
 
-traverseView_ :: (a -> ViewBuilder events ()) -> [a] -> ViewBuilder events ()
+traverseView_ :: (a -> ViewBuilder ()) -> [a] -> ViewBuilder ()
 traverseView_ action values =
   case values of
     [] -> return ()
@@ -850,38 +863,38 @@ traverseView_ action values =
       action value
       traverseView_ action rest
 
-traverseMaybeView_ :: (a -> ViewBuilder events ()) -> Maybe a -> ViewBuilder events ()
+traverseMaybeView_ :: (a -> ViewBuilder ()) -> Maybe a -> ViewBuilder ()
 traverseMaybeView_ action value =
   {- HLINT ignore "Use forM_" -}
   case value of
     Nothing -> return ()
     Just x  -> action x
 
-ensure :: OneConstraint %1 -> ViewBuilder events ()
+ensure :: OneConstraint %1 -> ViewBuilder ()
 ensure oneConstraint =
   case oneConstraint of
     OneConstraint (Ur constraint) -> ensureRaw constraint
 
-ensureRaw :: Constraint -> ViewBuilder events ()
+ensureRaw :: Constraint -> ViewBuilder ()
 ensureRaw constraint = tellOutput mempty {emittedConstraints = [constraint]}
 
-encourage :: Expr ty -> ViewBuilder events ()
+encourage :: Expr ty -> ViewBuilder ()
 encourage objective = tellOutput mempty {emittedConstraints = [S.minimize objective]}
 
-registerInitialVar :: InitialVar -> ViewBuilder events ()
+registerInitialVar :: InitialVar -> ViewBuilder ()
 registerInitialVar initial = tellOutput mempty {emittedInitialVars = [initial]}
 
-registerInitialRange :: Expr ty -> Range -> ViewBuilder events ()
+registerInitialRange :: Expr ty -> Range -> ViewBuilder ()
 registerInitialRange expr range =
   traverseMaybeView_ registerInitialVar (initialRangeFor expr range)
 
-emitViewNode :: ViewNode -> ViewBuilder events ()
+emitViewNode :: ViewNode -> ViewBuilder ()
 emitViewNode node = tellOutput mempty {emittedNodes = [node]}
 
-emitRenderIntent :: RenderIntent -> ViewBuilder events ()
+emitRenderIntent :: RenderIntent -> ViewBuilder ()
 emitRenderIntent intent = tellOutput mempty {pendingRenderIntents = [intent]}
 
-flushPendingOutput :: ViewOutput events -> ViewOutput events
+flushPendingOutput :: ViewOutput -> ViewOutput
 flushPendingOutput output =
   case pendingRenderIntents output of
     [] -> output
@@ -891,7 +904,7 @@ flushPendingOutput output =
         , pendingRenderIntents = []
         }
 
-checkpoint :: ViewBuilder events ()
+checkpoint :: ViewBuilder ()
 checkpoint = do
   ViewState env (Ur output) <- get
   put (ViewState env (Ur (flushPendingOutput output)))
@@ -900,10 +913,10 @@ checkpoint = do
 -- Per-block visualisation
 --------------------------------------------------------------------------------
 defineNewBlock ::
-     forall tag used (events :: [Type]).
+     forall tag used.
      ViewDefinition tag used
      %1 -> BlockView tag
-  -> ViewBuilder events (Visual Rendered Stable used tag)
+  -> ViewBuilder (Visual Rendered Stable used tag)
 defineNewBlock definition block0 =
   case definition of
     ViewDefinition styleDefinition viewDefinition -> do
@@ -925,41 +938,41 @@ defineNewBlock definition block0 =
 --------------------------------------------------------------------------------
 -- Explicit token handling
 --------------------------------------------------------------------------------
-createVisual :: ViewToken (C.Create tag) %1 -> ViewBuilder events (NewVisual tag)
+createVisual :: ViewToken (C.Create tag) %1 -> ViewBuilder (NewVisual tag)
 createVisual token =
   case token of
     CreatedToken block -> pure (Visual block)
 
-observeVisual :: ViewToken (C.Observe tag) %1 -> ViewBuilder events (LiveVisual tag)
+observeVisual :: ViewToken (C.Observe tag) %1 -> ViewBuilder (LiveVisual tag)
 observeVisual token =
   case token of
     ObservedToken block -> pure (Visual block)
 
-useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder events (ConsumedVisual tag)
+useVisual :: ViewToken (C.Use tag) %1 -> ViewBuilder (ConsumedVisual tag)
 useVisual token =
   case token of
     UsedToken block -> pure (Visual block)
 
 copyVisual ::
      ViewToken (C.Copy tag)
-     %1 -> ViewBuilder events (CopiedVisual tag)
+     %1 -> ViewBuilder (CopiedVisual tag)
 copyVisual token =
   case token of
     CopiedToken original copy' -> pure (CopiedVisual (Visual original) (Visual copy'))
 
 replaceVisual ::
      ViewToken (C.Replace tag)
-     %1 -> ViewBuilder events (ConsumedVisual tag, ConsumedVisual tag, NewVisual tag)
+     %1 -> ViewBuilder (ConsumedVisual tag, ConsumedVisual tag, NewVisual tag)
 replaceVisual token =
   case token of
     ReplacedToken old incoming output ->
       pure (Visual old, Visual incoming, Visual output)
 
 replaceUpdateVisual ::
-     forall tag used (events :: [Type]).
+     forall tag used.
      ViewDefinition tag used
      %1 -> ViewToken (C.Replace tag)
-     %1 -> ViewBuilder events (ConsumedVisual tag, Visual Rendered Stable used tag)
+     %1 -> ViewBuilder (ConsumedVisual tag, Visual Rendered Stable used tag)
 replaceUpdateVisual definition token =
   case token of
     ReplacedToken old incoming output -> do
@@ -967,44 +980,44 @@ replaceUpdateVisual definition token =
       emitRenderIntent (RenderContinue (blockRef old) (blockRef output))
       pure (Visual incoming, rendered)
 
-computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder events (NewVisual tag)
+computeVisual :: ViewToken (C.Compute tag) %1 -> ViewBuilder (NewVisual tag)
 computeVisual token =
   case token of
     ComputedToken block -> pure (Visual block)
 
 destroyVisual ::
      ViewToken (C.Destroy tag)
-     %1 -> ViewBuilder events (ConsumedVisual tag)
+     %1 -> ViewBuilder (ConsumedVisual tag)
 destroyVisual token =
   case token of
     DestroyedToken block -> pure (Visual block)
 
 sealVisual ::
      ViewToken (C.Seal owner tag)
-     %1 -> ViewBuilder events (LiveVisual owner, LiveVisual tag)
+     %1 -> ViewBuilder (LiveVisual owner, LiveVisual tag)
 sealVisual token =
   case token of
     SealedToken owner child -> pure (Visual owner, Visual child)
 
 unsealVisual ::
      ViewToken (C.Unseal owner tag)
-     %1 -> ViewBuilder events (LiveVisual owner, LiveVisual tag)
+     %1 -> ViewBuilder (LiveVisual owner, LiveVisual tag)
 unsealVisual token =
   case token of
     UnsealedToken owner child -> pure (Visual owner, Visual child)
 
 decideVisual ::
      ViewToken (C.Decide tag)
-     %1 -> ViewBuilder events (ConsumedVisual tag)
+     %1 -> ViewBuilder (ConsumedVisual tag)
 decideVisual token =
   case token of
     DecidedToken block -> pure (Visual block)
 
 fresh ::
-     forall tag used (events :: [Type]).
+     forall tag used.
      ViewDefinition tag used
      %1 -> NewVisual tag
-     %1 -> ViewBuilder events (Visual Rendered Stable used tag)
+     %1 -> ViewBuilder (Visual Rendered Stable used tag)
 fresh definition visual =
   case visual of
     Visual block -> do
@@ -1013,10 +1026,10 @@ fresh definition visual =
       pure rendered
 
 freshCopy ::
-     forall tag used (events :: [Type]).
+     forall tag used.
      ViewDefinition tag used
      %1 -> CopiedVisual tag
-     %1 -> ViewBuilder events (LiveVisual tag, Visual Rendered Stable used tag)
+     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
 freshCopy definition copied =
   case copied of
     CopiedVisual source visual ->
@@ -1029,10 +1042,10 @@ freshCopy definition copied =
               pure (Visual sourceBlock, rendered)
 
 forkCopy ::
-     forall tag used (events :: [Type]).
+     forall tag used.
      ViewDefinition tag used
      %1 -> CopiedVisual tag
-     %1 -> ViewBuilder events (LiveVisual tag, Visual Rendered Stable used tag)
+     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
 forkCopy definition copied =
   case copied of
     CopiedVisual source visual ->
@@ -1045,11 +1058,11 @@ forkCopy definition copied =
               pure (Visual sourceBlock, rendered)
 
 continueFrom ::
-     forall tag oldTag used (events :: [Type]).
+     forall tag oldTag used.
      ViewDefinition tag used
      %1 -> LiveVisual oldTag
      %1 -> NewVisual tag
-     %1 -> ViewBuilder events (Visual Rendered Stable used tag)
+     %1 -> ViewBuilder (Visual Rendered Stable used tag)
 continueFrom definition source visual =
   case source of
     Visual sourceBlock ->
@@ -1059,12 +1072,12 @@ continueFrom definition source visual =
           emitRenderIntent (RenderContinue (blockRef sourceBlock) (blockRef block))
           pure rendered
 
-remove :: Visual Rendered Consumed used tag %1 -> ViewBuilder events ()
+remove :: Visual Rendered Consumed used tag %1 -> ViewBuilder ()
 remove visual =
   case visual of
     Visual block -> emitRenderIntent (RenderRemove (blockRef block))
 
-complete :: Visual Rendered Stable used tag %1 -> ViewBuilder events ()
+complete :: Visual Rendered Stable used tag %1 -> ViewBuilder ()
 complete visual =
   case visual of
     Visual _ -> pure ()
@@ -1072,7 +1085,7 @@ complete visual =
 takeLeft ::
      CanTakeAttr AttrLeft used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrLeft used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrLeft used) tag))
 takeLeft visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (left block))))
@@ -1080,7 +1093,7 @@ takeLeft visual =
 takeRight ::
      CanTakeAttr AttrRight used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrRight used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrRight used) tag))
 takeRight visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (right block))))
@@ -1088,7 +1101,7 @@ takeRight visual =
 takeWidth ::
      CanTakeAttr AttrWidth used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrWidth used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrWidth used) tag))
 takeWidth visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (width block))))
@@ -1096,7 +1109,7 @@ takeWidth visual =
 takeCenterX ::
      CanTakeAttr AttrCenterX used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrCenterX used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrCenterX used) tag))
 takeCenterX visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerX block))))
@@ -1104,7 +1117,7 @@ takeCenterX visual =
 takeTop ::
      CanTakeAttr AttrTop used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrTop used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrTop used) tag))
 takeTop visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (top block))))
@@ -1112,7 +1125,7 @@ takeTop visual =
 takeBottom ::
      CanTakeAttr AttrBottom used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrBottom used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrBottom used) tag))
 takeBottom visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (bottom block))))
@@ -1120,7 +1133,7 @@ takeBottom visual =
 takeHeight ::
      CanTakeAttr AttrHeight used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrHeight used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrHeight used) tag))
 takeHeight visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (height block))))
@@ -1128,49 +1141,23 @@ takeHeight visual =
 takeCenterY ::
      CanTakeAttr AttrCenterY used
   => Visual state lifecycle used tag
-     %1 -> ViewBuilder events (LayoutUse (Visual state lifecycle (Insert AttrCenterY used) tag))
+     %1 -> ViewBuilder (LayoutUse (Visual state lifecycle (Insert AttrCenterY used) tag))
 takeCenterY visual =
   case visual of
     Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (centerY block))))
 
 --------------------------------------------------------------------------------
--- Per-event visualisation
---------------------------------------------------------------------------------
-class ViewEvent event where
-  viewEvent ::
-       forall (events :: [Type]).
-       event
-    -> ViewTokens (C.Actions event)
-       %1 -> ViewBuilder events ()
-
-class ViewEvents (choices :: [Type]) where
-  viewUnion ::
-       forall (acts :: [Type]) (events :: [Type]).
-       C.EventChoice choices acts
-    -> ViewTokens acts
-       %1 -> ViewBuilder events ()
-
-instance ViewEvents '[] where
-  viewUnion union _tokens = case union of {}
-
-instance (ViewEvent event, ViewEvents rest) => ViewEvents (event : rest) where
-  viewUnion union audit =
-    case union of
-      C.Here event -> viewEvent event audit
-      C.There rest -> viewUnion rest audit
-
---------------------------------------------------------------------------------
 -- Build a view graph
 --------------------------------------------------------------------------------
-buildCSP :: ViewEvents events => C.TraceGraph events -> ViewGraph events
-buildCSP graph@(C.TraceGraph _blocks events) =
+buildCSP :: VisualTraceGraph -> ViewGraph
+buildCSP graph@(C.TraceGraph _blocks steps) =
   let env = buildViewEnv graph
-      eventsOutput = viewRecordedEvents env events
-      viewSteps' = eventSteps eventsOutput
-      nodes = eventNodes eventsOutput
-      constraints = eventConstraints eventsOutput
-      initialVars = eventInitialVars eventsOutput
-      renderFrames = eventRenderFrames eventsOutput
+      stepsOutput = viewTraceSteps env steps
+      viewSteps' = builtSteps stepsOutput
+      nodes = builtNodes stepsOutput
+      constraints = builtConstraints stepsOutput
+      initialVars = builtInitialVars stepsOutput
+      renderFrames = builtRenderFrames stepsOutput
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
@@ -1179,15 +1166,15 @@ buildCSP graph@(C.TraceGraph _blocks events) =
         , viewRenderFrames = renderFrames
         }
 
-solveCSP :: SolveConfig -> ViewGraph events -> IO Solution
+solveCSP :: SolveConfig -> ViewGraph -> IO Solution
 solveCSP config graph =
   solveWithInitialVars config (viewInitialVars graph) (viewConstraints graph)
 
-solveCSPWithSeed :: RandomSeed -> ViewGraph events -> IO Solution
+solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
 solveCSPWithSeed seed = solveCSP defaultSolveConfig {initialSeed = seed}
 
-data BuiltViewStep events = BuiltViewStep
-  { stepView        :: ViewStep events
+data BuiltViewStep = BuiltViewStep
+  { stepView        :: ViewStep
   , stepNodes       :: [ViewNode]
   , stepConstraints :: [Constraint]
   , stepInitialVars :: [InitialVar]
@@ -1195,19 +1182,18 @@ data BuiltViewStep events = BuiltViewStep
   , stepPendingRenderIntents :: [RenderIntent]
   }
 
-data BuiltViewEvents events = BuiltViewEvents
-  { eventSteps        :: [ViewStep events]
-  , eventNodes        :: [ViewNode]
-  , eventConstraints  :: [Constraint]
-  , eventInitialVars  :: [InitialVar]
-  , eventRenderFrames :: [[RenderIntent]]
+data BuiltViewSteps = BuiltViewSteps
+  { builtSteps        :: [ViewStep]
+  , builtNodes        :: [ViewNode]
+  , builtConstraints  :: [Constraint]
+  , builtInitialVars  :: [InitialVar]
+  , builtRenderFrames :: [[RenderIntent]]
   }
 
-viewRecordedEvents ::
-     ViewEvents events => ViewEnv -> [C.RecordedEvent events] -> BuiltViewEvents events
-viewRecordedEvents env =
-  viewRecordedEventsWith
-    env
+viewTraceSteps :: ViewEnv -> [C.TraceStepWith ViewScript] -> BuiltViewSteps
+viewTraceSteps env =
+  viewTraceStepsWith
+    (viewTraceStep env)
     []
     []
     []
@@ -1215,34 +1201,33 @@ viewRecordedEvents env =
     []
     []
 
-viewRecordedEventsWith ::
-     ViewEvents events
-  => ViewEnv
-  -> [ViewStep events]
+viewTraceStepsWith ::
+     ([RenderIntent] -> record -> BuiltViewStep)
+  -> [ViewStep]
   -> [ViewNode]
   -> [Constraint]
   -> [InitialVar]
   -> [[RenderIntent]]
   -> [RenderIntent]
-  -> [C.RecordedEvent events]
-  -> BuiltViewEvents events
-viewRecordedEventsWith env steps nodes constraints initialVars renderFrames pending records =
+  -> [record]
+  -> BuiltViewSteps
+viewTraceStepsWith buildStep steps nodes constraints initialVars renderFrames pending records =
   case records of
     [] ->
       let finalOutput =
             flushPendingOutput mempty {pendingRenderIntents = pending}
           finalFrames = renderFrames ++ emittedRenderFrames finalOutput
-       in BuiltViewEvents
-            { eventSteps = steps
-            , eventNodes = nodes
-            , eventConstraints = constraints
-            , eventInitialVars = initialVars
-            , eventRenderFrames = withImplicitInitialFrame finalFrames
+       in BuiltViewSteps
+            { builtSteps = steps
+            , builtNodes = nodes
+            , builtConstraints = constraints
+            , builtInitialVars = initialVars
+            , builtRenderFrames = withImplicitInitialFrame finalFrames
             }
     record:rest ->
-      let builtStep = viewRecordedEvent env pending record
-       in viewRecordedEventsWith
-            env
+      let builtStep = buildStep pending record
+       in viewTraceStepsWith
+            buildStep
             (steps ++ [stepView builtStep])
             (nodes ++ stepNodes builtStep)
             (constraints ++ stepConstraints builtStep)
@@ -1269,33 +1254,44 @@ splitLeadingFresh intents =
         (freshes, tail') -> (RenderFresh ref : freshes, tail')
     _ -> ([], intents)
 
-viewRecordedEvent ::
-     ViewEvents events
-  => ViewEnv
+viewTraceStep ::
+     ViewEnv
   -> [RenderIntent]
-  -> C.RecordedEvent events
-  -> BuiltViewStep events
-viewRecordedEvent env pending recordedEvent@(C.RecordedEvent event audit) =
-  let (_result, rawOutput) =
-        runViewBuilderWithOutput
-          env
-          mempty {pendingRenderIntents = pending}
-          (viewUnion event (viewTokens audit))
-      output = rawOutput
-      nodes = emittedNodes output
-      constraints = emittedConstraints output
-      initialVars = emittedInitialVars output
-      renderFrames = emittedRenderFrames output
-   in BuiltViewStep
-        { stepView = ViewStep recordedEvent nodes constraints []
-        , stepNodes = nodes
-        , stepConstraints = constraints
-        , stepInitialVars = initialVars
-        , stepRenderFrames = renderFrames
-        , stepPendingRenderIntents = pendingRenderIntents output
+  -> C.TraceStepWith ViewScript
+  -> BuiltViewStep
+viewTraceStep env pending step =
+  case step of
+    C.ExplainedStep label (ViewScript script) audit ->
+      let plainStep = C.ExplainedStep label C.NoStepPayload audit
+          (_result, rawOutput) =
+            runViewBuilderWithOutput
+              env
+              mempty {pendingRenderIntents = pending}
+              (script (viewTokens audit))
+          output = rawOutput
+          nodes = emittedNodes output
+          constraints = emittedConstraints output
+          initialVars = emittedInitialVars output
+          renderFrames = emittedRenderFrames output
+       in BuiltViewStep
+            { stepView = ViewStep plainStep nodes constraints []
+            , stepNodes = nodes
+            , stepConstraints = constraints
+            , stepInitialVars = initialVars
+            , stepRenderFrames = renderFrames
+            , stepPendingRenderIntents = pendingRenderIntents output
+            }
+    C.DiscardedStep reason audit ->
+      BuiltViewStep
+        { stepView = ViewStep (C.DiscardedStep reason audit) [] [] []
+        , stepNodes = []
+        , stepConstraints = []
+        , stepInitialVars = []
+        , stepRenderFrames = []
+        , stepPendingRenderIntents = pending
         }
 
-buildViewEnv :: C.TraceGraph events -> ViewEnv
+buildViewEnv :: C.TraceGraphWith payload -> ViewEnv
 buildViewEnv _ = defaultViewEnv
 
 --------------------------------------------------------------------------------
@@ -1351,7 +1347,7 @@ viewToken step =
 --------------------------------------------------------------------------------
 -- Style bounds / registration
 --------------------------------------------------------------------------------
-registerInitialStyleBounds :: Style -> ViewBuilder events ()
+registerInitialStyleBounds :: Style -> ViewBuilder ()
 registerInitialStyleBounds style' = do
   Ur env <- askViewEnv
   let canvasW = canvasWidthValue env
@@ -1362,5 +1358,5 @@ registerInitialStyleBounds style' = do
   registerInitialRange (height style') (Range 20 (max 20 (canvasH / 4)))
   traverseView_ registerInitialVar (styleInitialVars style')
 
-constrainStyle :: Style -> ViewBuilder events ()
+constrainStyle :: Style -> ViewBuilder ()
 constrainStyle style' = traverseView_ ensureRaw (styleConstraints style')

@@ -107,7 +107,7 @@ type CompileM = StateT CompileState (Either String)
 --------------------------------------------------------------------------------
 -- Public compiler
 --------------------------------------------------------------------------------
-compileSolved :: S.Solution -> V.ViewGraph events -> Either String Visualization
+compileSolved :: S.Solution -> V.ViewGraph -> Either String Visualization
 compileSolved =
   compileSolvedWithViewport defaultCompiledWidth defaultCompiledHeight
 
@@ -115,7 +115,7 @@ compileSolvedWithViewport ::
      Double
   -> Double
   -> S.Solution
-  -> V.ViewGraph events
+  -> V.ViewGraph
   -> Either String Visualization
 compileSolvedWithViewport viewportWidth viewportHeight solution graph =
   case buildBlockLookup solution graph of
@@ -397,7 +397,7 @@ requireLineage block = do
 type BlockLookup = Map C.BlockId RenderBlock
 
 buildBlockLookup ::
-     S.Solution -> V.ViewGraph events -> Either String BlockLookup
+     S.Solution -> V.ViewGraph -> Either String BlockLookup
 buildBlockLookup solution graph =
   foldM (insertMaterializedNode solution) Map.empty (V.viewNodes graph)
 

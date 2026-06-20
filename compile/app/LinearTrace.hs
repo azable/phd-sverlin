@@ -3,15 +3,13 @@
 module LinearTrace
   ( -- * Core public API data
     TraceGraph
+  , TraceGraphWith(..)
   , TraceBuilder
+  , TraceBuilderWith
   , Traceable(..)
   , Block
   , Slot
   , Payload
-  , type Actions
-  , Member
-  , EventChoice(..)
-  , RecordedEvent(..)
   , -- * Trusted linear payloads
     LUnit(..)
   , LBool(..)
@@ -56,16 +54,21 @@ module LinearTrace
   , Unsealed(..)
   , Decided(..)
   , explain
+  , explainWith
+  , discard
   , (<$>)
   , (<*>)
   , -- * Graph building, rendering and compilation
     Audit(..)
   , AuditStep(..)
   , PayloadView(..)
+  , NoStepPayload(..)
+  , TraceStep
+  , TraceStepWith(..)
   , buildGraph
   , printGraph
   , printTrace
-  , printSolutionByEvent
+  , printSolutionByStep
   , RandomSeed(..)
   , compileSolved
   , printCompiledJSON
@@ -90,8 +93,9 @@ module LinearTrace
   , setBorderStyleOnce
   , setWhiteSpaceOnce
   , setCssClassOnce
-  , ViewEvent(..)
-  , ViewEvents
+  , ViewScript(..)
+  , VisualTraceBuilder
+  , VisualTraceGraph
   ) where
 
 import           LinearTrace.Compile

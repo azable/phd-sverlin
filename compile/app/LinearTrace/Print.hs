@@ -1,15 +1,11 @@
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
-{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module LinearTrace.Print
-  ( PrintEvents(..)
-  , printGraph
+  ( printGraph
   , printTrace
-  , printSolutionByEvent
+  , printSolutionByStep
   , printSolutionSummary
   ) where
 
@@ -29,8 +25,8 @@ import qualified Text.PrettyPrint.Boxes as Box
 --------------------------------------------------------------------------------
 -- Layout constants
 --------------------------------------------------------------------------------
-eventIndexWidth :: Int
-eventIndexWidth = 3
+traceIndexWidth :: Int
+traceIndexWidth = 3
 
 blockListRefWidth :: Int
 blockListRefWidth = 8
@@ -100,33 +96,17 @@ data StepStyle = StepStyle
   }
 
 --------------------------------------------------------------------------------
--- Event printing
---------------------------------------------------------------------------------
-class PrintEvents events where
-  printEventChoice :: EventChoice events acts -> String
-
-instance PrintEvents '[] where
-  printEventChoice choice = case choice of {}
-
-instance (Show event, PrintEvents events) => PrintEvents (event : events) where
-  printEventChoice choice =
-    case choice of
-      Here event -> show event
-      There rest -> printEventChoice rest
-
---------------------------------------------------------------------------------
 -- Public rendering API
 --------------------------------------------------------------------------------
-printGraph :: PrintEvents events => TraceGraph events -> IO ()
+printGraph :: TraceGraphWith payload -> IO ()
 printGraph = printReport . graphBox
 
-printTrace :: PrintEvents events => TraceGraph events -> IO ()
+printTrace :: TraceGraphWith payload -> IO ()
 printTrace = printReport . traceBox
 
-printSolutionByEvent ::
-     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> IO ()
-printSolutionByEvent showDetails solution =
-  printReport . solutionByEventBox showDetails solution
+printSolutionByStep :: Bool -> S.Solution -> V.ViewGraph -> IO ()
+printSolutionByStep showDetails solution =
+  printReport . solutionByStepBox showDetails solution
 
 printSolutionSummary :: S.Solution -> IO ()
 printSolutionSummary = printReport . solutionSummaryBox
@@ -146,28 +126,27 @@ renderReport supportsAnsi box =
 --------------------------------------------------------------------------------
 -- Graph rendering
 --------------------------------------------------------------------------------
-graphBox :: PrintEvents events => TraceGraph events -> Box.Box
-graphBox (TraceGraph blocks events) =
+graphBox :: TraceGraphWith payload -> Box.Box
+graphBox (TraceGraph blocks steps) =
   sections
-    [ sectionBox "Graph" (summaryBox blocks events)
+    [ sectionBox "Graph" (summaryBox blocks steps)
     , blocksBox blocks
-    , eventsBox events
+    , stepsBox steps
     ]
 
-traceBox :: PrintEvents events => TraceGraph events -> Box.Box
-traceBox (TraceGraph _ events) = eventsBox events
+traceBox :: TraceGraphWith payload -> Box.Box
+traceBox (TraceGraph _ steps) = stepsBox steps
 
-summaryBox :: [BlockRecord] -> [RecordedEvent events] -> Box.Box
-summaryBox blocks events =
+summaryBox :: [BlockRecord] -> [TraceStepWith payload] -> Box.Box
+summaryBox blocks steps =
   linesBox
-    ["Blocks: " ++ show (length blocks), "Events: " ++ show (length events)]
+    ["Blocks: " ++ show (length blocks), "Steps: " ++ show (length steps)]
 
 --------------------------------------------------------------------------------
 -- Solution rendering
 --------------------------------------------------------------------------------
-solutionByEventBox ::
-     PrintEvents events => Bool -> S.Solution -> V.ViewGraph events -> Box.Box
-solutionByEventBox showDetails solution graph =
+solutionByStepBox :: Bool -> S.Solution -> V.ViewGraph -> Box.Box
+solutionByStepBox showDetails solution graph =
   sections
     $ [ sectionBox "Solution"
           $ viewSummaryBox nodes steps constraints initialVars
@@ -199,7 +178,7 @@ solutionSummaryBox solution =
 
 viewSummaryBox ::
      [V.ViewNode]
-  -> [V.ViewStep events]
+  -> [V.ViewStep]
   -> [S.Constraint]
   -> [S.InitialVar]
   -> Box.Box
@@ -425,26 +404,24 @@ solvedExprsBox solved =
 --------------------------------------------------------------------------------
 -- View trace
 --------------------------------------------------------------------------------
-viewTraceBox ::
-     PrintEvents events => Bool -> S.Solution -> [V.ViewStep events] -> Box.Box
+viewTraceBox :: Bool -> S.Solution -> [V.ViewStep] -> Box.Box
 viewTraceBox showDetails solution steps =
   sectionBox "View trace"
     $ spacedVcat
     $ zipWith (viewTraceStepBox showDetails solution) [0 :: Int ..] steps
 
 viewTraceStepBox ::
-     PrintEvents events
-  => Bool
+     Bool
   -> S.Solution
   -> Int
-  -> V.ViewStep events
+  -> V.ViewStep
   -> Box.Box
 viewTraceStepBox showDetails solution ix step =
   case step of
-    V.ViewStep event nodes constraints _renderIntents ->
+    V.ViewStep traceStep nodes constraints _renderIntents ->
       if showDetails
-        then spacedVcat (eventBox ix event : detailBoxes)
-        else eventBox ix event
+        then spacedVcat (stepBox ix traceStep : detailBoxes)
+        else stepBox ix traceStep
       where
         detailBoxes =
           concat
@@ -470,25 +447,30 @@ indentedViewNodeBox node =
         ]
 
 --------------------------------------------------------------------------------
--- Events
+-- Steps
 --------------------------------------------------------------------------------
-eventsBox :: PrintEvents events => [RecordedEvent events] -> Box.Box
-eventsBox events =
-  sectionBox "Events" $ spacedVcat $ zipWith eventBox [0 :: Int ..] events
+stepsBox :: [TraceStepWith payload] -> Box.Box
+stepsBox steps =
+  sectionBox "Steps" $ spacedVcat $ zipWith stepBox [0 :: Int ..] steps
 
-eventBox :: PrintEvents events => Int -> RecordedEvent events -> Box.Box
-eventBox ix (RecordedEvent event audit) =
+stepBox :: Int -> TraceStepWith payload -> Box.Box
+stepBox ix step =
+  case step of
+    ExplainedStep label _payload audit -> labelledStepBox ix label audit
+    DiscardedStep reason audit -> labelledStepBox ix ("Discarded: " ++ reason) audit
+
+labelledStepBox :: Int -> String -> Audit acts -> Box.Box
+labelledStepBox ix label audit =
   case audit of
-    EmptyAudit -> eventHeaderBox ix event
-    _          -> tightVcat [eventHeaderBox ix event, auditBox audit]
+    EmptyAudit -> stepHeaderBox ix label
+    _          -> tightVcat [stepHeaderBox ix label, auditBox audit]
 
-eventHeaderBox ::
-     PrintEvents events => Int -> EventChoice events acts -> Box.Box
-eventHeaderBox ix event =
+stepHeaderBox :: Int -> String -> Box.Box
+stepHeaderBox ix label =
   rowBox
-    [ rightFieldBox eventIndexWidth ("E" ++ show ix)
+    [ rightFieldBox traceIndexWidth ("S" ++ show ix)
     , Box.text "|"
-    , Box.text (printEventChoice event)
+    , Box.text label
     ]
 
 --------------------------------------------------------------------------------
@@ -727,23 +709,23 @@ colourReport = unlines . map colourLine . lines
 
 colourLine :: String -> String
 colourLine line
-  | isEventHeaderLine line = colourEventHeaderLine line
+  | isTraceHeaderLine line = colourTraceHeaderLine line
   | otherwise = colourStepNameLine line
 
-isEventHeaderLine :: String -> Bool
-isEventHeaderLine line =
-  let (prefix, rest) = splitAt eventIndexWidth line
-   in looksLikeEventIndex prefix && take 3 rest == " | "
+isTraceHeaderLine :: String -> Bool
+isTraceHeaderLine line =
+  let (prefix, rest) = splitAt traceIndexWidth line
+   in looksLikeTraceIndex prefix && take 3 rest == " | "
 
-looksLikeEventIndex :: String -> Bool
-looksLikeEventIndex textValue =
+looksLikeTraceIndex :: String -> Bool
+looksLikeTraceIndex textValue =
   case trimLeft textValue of
-    'E':digits -> not (null digits) && all isDigit digits
+    'S':digits -> not (null digits) && all isDigit digits
     _          -> False
 
-colourEventHeaderLine :: String -> String
-colourEventHeaderLine line =
-  let prefixWidth = eventIndexWidth + length " | "
+colourTraceHeaderLine :: String -> String
+colourTraceHeaderLine line =
+  let prefixWidth = traceIndexWidth + length " | "
       (prefix, title) = splitAt prefixWidth line
    in prefix ++ sgrBold ++ title ++ sgrReset
 

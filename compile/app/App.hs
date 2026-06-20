@@ -7,7 +7,6 @@ module App
 
 import           Control.Monad       (when)
 import qualified LinearTrace.Compile as Compile
-import qualified LinearTrace.Core    as Core
 import qualified LinearTrace.Print   as Print
 import qualified LinearTrace.View    as View
 
@@ -27,20 +26,18 @@ defaultRunConfig =
     , runPrintTrace = True
     }
 
-buildViewGraph ::
-     View.ViewEvents events => Core.TraceGraph events -> View.ViewGraph events
+buildViewGraph :: View.VisualTraceGraph -> View.ViewGraph
 buildViewGraph = View.buildCSP
 
 runVisualization ::
-     (Print.PrintEvents events, View.ViewEvents events)
-  => RunConfig
-  -> Core.TraceGraph events
+     RunConfig
+  -> View.VisualTraceGraph
   -> IO (Either String Compile.Visualization)
 runVisualization config graph = do
   when (runPrintTrace config) (Print.printTrace graph)
   let viewGraph = buildViewGraph graph
   solved <- View.solveCSPWithSeed (View.RandomSeed (runSeed config)) viewGraph
-  Print.printSolutionByEvent (runShowDetails config) solved viewGraph
+  Print.printSolutionByStep (runShowDetails config) solved viewGraph
   Print.printSolutionSummary solved
   case Compile.compileSolved solved viewGraph of
     Left err -> pure (Left err)
