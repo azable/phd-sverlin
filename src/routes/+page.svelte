@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
 
   type CssValue = string | number | boolean;
 
@@ -57,13 +58,8 @@
     animateDestroy: boolean;
   };
 
-  let {
-    src = '/compiled.json',
-    transitionMs = 300
-  }: {
-    src?: string;
-    transitionMs?: number;
-  } = $props();
+  const src = '/compiled.json';
+  const transitionMs = 300;
 
   let trace = $state<CompiledTrace | null>(null);
   let elements = $state<LiveElement[]>([]);
@@ -75,7 +71,7 @@
   const canvasWidth = $derived(trace?.canvas.width ?? 1200);
   const canvasHeight = $derived(trace?.canvas.height ?? 800);
 
-  const destroyTimers = new Map<RenderId, ReturnType<typeof setTimeout>>();
+  const destroyTimers = new SvelteMap<RenderId, ReturnType<typeof setTimeout>>();
   let transitionVersion = 0;
 
   onMount(() => {
@@ -139,7 +135,7 @@
     clearDestroyTimers();
     transitionVersion += 1;
 
-    const next = new Map<RenderId, LiveElement>();
+    const next = new SvelteMap<RenderId, LiveElement>();
 
     for (let i = 0; i <= step; i++) {
       applyPatchesToMap(next, trace.frames[i], {
@@ -151,13 +147,10 @@
     elements = Array.from(next.values());
   }
 
-  function applyFrame(
-    patches: RenderPatch[],
-    options: PatchAnimationOptions
-  ) {
+  function applyFrame(patches: RenderPatch[], options: PatchAnimationOptions) {
     transitionVersion += 1;
 
-    const next = new Map<RenderId, LiveElement>();
+    const next = new SvelteMap<RenderId, LiveElement>();
 
     for (const element of elements) {
       next.set(element.id, element);
@@ -171,7 +164,7 @@
   function applyReverseFrame(patches: RenderPatch[], options: PatchAnimationOptions) {
     transitionVersion += 1;
 
-    const next = new Map<RenderId, LiveElement>();
+    const next = new SvelteMap<RenderId, LiveElement>();
 
     for (const element of elements) {
       next.set(element.id, element);

@@ -7,7 +7,6 @@
 {-# LANGUAGE NoImplicitPrelude       #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE TypeFamilies            #-}
-{-# LANGUAGE TypeOperators           #-}
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -39,6 +38,7 @@ instance Traceable Match where
   payloadView _ payload =
     case payload of
       LBool matched ->
+        {- HLINT ignore "Use if" -}
         case matched of
           True  -> PayloadView "Decision" "MATCH"
           False -> PayloadView "Decision" "NO MATCH"
@@ -235,9 +235,7 @@ compareElement target element = do
     (targetUseEvidence :~ elementUseEvidence :~ matchEvidence :~ Done)
   decision <-
     decide
-      (\payload ->
-         case payload of
-           LBool answer -> answer)
+      (\(LBool answer) -> answer)
       match
   case decision of
     DecidedTrue foundEvidence -> do
@@ -382,12 +380,14 @@ layoutUsesMaxSize = layoutMaxSizedRowWidthValue <= layoutAvailableWidthValue
 
 layoutElementCountValue :: Int
 layoutElementCountValue =
+  {- HLINT ignore "Use if" -}
   case exampleElementCount <= 0 of
     True  -> 1
     False -> exampleElementCount
 
 layoutGapCountValue :: Int
 layoutGapCountValue =
+  {- HLINT ignore "Use if" -}
   case exampleElementCount <= 1 of
     True  -> 0
     False -> exampleElementCount - 1
@@ -508,9 +508,11 @@ constrainSearchLayout = do
   ensure (layoutListTop @+@ layoutCell @<=@ layoutCanvasHeight)
   ensure (layoutHorizontalInset @<=@ targetProbeLeft)
   ensure (elementProbeLeft @+@ layoutProbeSize @<=@ layoutRightInset)
+  {- HLINT ignore "Use if" -}
   case layoutUsesMaxSize of
     True -> do
       ensure (layoutLargeMinCell @<=@ layoutCell)
+      {- HLINT ignore "Use if" -}
       case exampleElementCount <= 1 of
         True  -> ensure (layoutGap @==@ (num 0 :: LayoutExpr))
         False -> ensure (layoutLargeMinGap @<=@ layoutGap)

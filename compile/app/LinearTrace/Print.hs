@@ -671,9 +671,7 @@ sectionBox title body =
 
 optionalSection :: String -> Box.Box -> [Box.Box]
 optionalSection title body =
-  if isNullBox body
-    then []
-    else [sectionBox title body]
+  [sectionBox title body | not (isNullBox body)]
 
 stepSectionBox :: String -> Box.Box -> Box.Box
 stepSectionBox title body =

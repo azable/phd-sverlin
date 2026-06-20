@@ -23,3 +23,4 @@ Haskell application, a JSON descriptor is outputted to `static/`, which is then 
 Before finishing:
 
 - If modifying the Haskell application, run `./compile.sh` from the root directory to compile and run the Haskell application.
+- Use `hlint` to check for any Haskell code style issues.

@@ -4,9 +4,7 @@
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
-{-# LANGUAGE KindSignatures         #-}
 {-# LANGUAGE LinearTypes            #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE RebindableSyntax       #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
@@ -100,6 +98,7 @@ module LinearTrace.View
   , viewSteps
   , viewConstraints
   , viewInitialVars
+  , viewRenderFrames
   , -- * Styles
     Style
   , Bounds(..)
@@ -225,6 +224,7 @@ data ViewGraph events = ViewGraph
   , viewSteps       :: [ViewStep events]
   , viewConstraints :: [Constraint]
   , viewInitialVars :: [InitialVar]
+  , viewRenderFrames :: [[RenderIntent]]
   }
 
 --------------------------------------------------------------------------------
@@ -617,8 +617,7 @@ boxDefinition ::
       -> LiveVisual tag
          %1 -> ViewBuilder events (BoxVisual tag))
   -> BoxDefinition tag
-boxDefinition styleDefinition viewDefinition =
-  ViewDefinition styleDefinition viewDefinition
+boxDefinition = ViewDefinition
 
 sizeDefinition ::
      (EmptyStyleDraft %1 -> Style)
@@ -627,8 +626,7 @@ sizeDefinition ::
       -> LiveVisual tag
          %1 -> ViewBuilder events (SizeVisual tag))
   -> SizeDefinition tag
-sizeDefinition styleDefinition viewDefinition =
-  ViewDefinition styleDefinition viewDefinition
+sizeDefinition = ViewDefinition
 
 data LayoutUse visual where
   LayoutUse :: visual %1 -> OneExpr Layout %1 -> LayoutUse visual
@@ -756,7 +754,7 @@ infix 4 @>=@
 (@<=@) = relateExpr (S.@<=@)
 
 (@>=@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
-(@>=@) = relateExpr (\lhs rhs -> rhs S.@<=@ lhs)
+(@>=@) = relateExpr (flip (S.@<=@))
 
 --------------------------------------------------------------------------------
 -- Reader + writer builder
@@ -821,10 +819,11 @@ instance Dupable (ViewState events) where
         case dup2 output of
           (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
 
-runViewBuilder :: ViewEnv -> ViewBuilder events a -> (a, ViewOutput events)
-runViewBuilder env builder =
+runViewBuilderWithOutput ::
+     ViewEnv -> ViewOutput events -> ViewBuilder events a -> (a, ViewOutput events)
+runViewBuilderWithOutput env initialOutput builder =
   let (result, ViewState _ (Ur output)) =
-        runState builder (ViewState (Ur env) (Ur mempty))
+        runState builder (ViewState (Ur env) (Ur initialOutput))
    in (result, output)
 
 askViewEnv :: ViewBuilder events (Ur ViewEnv)
@@ -848,6 +847,7 @@ traverseView_ action values =
 
 traverseMaybeView_ :: (a -> ViewBuilder events ()) -> Maybe a -> ViewBuilder events ()
 traverseMaybeView_ action value =
+  {- HLINT ignore "Use forM_" -}
   case value of
     Nothing -> return ()
     Just x  -> action x
@@ -1160,16 +1160,18 @@ instance (ViewEvent event, ViewEvents rest) => ViewEvents (event : rest) where
 buildCSP :: ViewEvents events => C.TraceGraph events -> ViewGraph events
 buildCSP graph@(C.TraceGraph _blocks events) =
   let env = buildViewEnv graph
-      stepOutputs = P.map (viewRecordedEvent env) events
-      viewSteps' = P.map stepView stepOutputs
-      nodes = P.concatMap stepNodes stepOutputs
-      constraints = P.concatMap stepConstraints stepOutputs
-      initialVars = P.concatMap stepInitialVars stepOutputs
+      eventsOutput = viewRecordedEvents env events
+      viewSteps' = eventSteps eventsOutput
+      nodes = eventNodes eventsOutput
+      constraints = eventConstraints eventsOutput
+      initialVars = eventInitialVars eventsOutput
+      renderFrames = eventRenderFrames eventsOutput
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
         , viewConstraints = constraints
         , viewInitialVars = initialVars
+        , viewRenderFrames = renderFrames
         }
 
 solveCSP :: SolveConfig -> ViewGraph events -> IO Solution
@@ -1184,26 +1186,108 @@ data BuiltViewStep events = BuiltViewStep
   , stepNodes       :: [ViewNode]
   , stepConstraints :: [Constraint]
   , stepInitialVars :: [InitialVar]
+  , stepRenderFrames :: [[RenderIntent]]
+  , stepPendingRenderIntents :: [RenderIntent]
   }
+
+data BuiltViewEvents events = BuiltViewEvents
+  { eventSteps        :: [ViewStep events]
+  , eventNodes        :: [ViewNode]
+  , eventConstraints  :: [Constraint]
+  , eventInitialVars  :: [InitialVar]
+  , eventRenderFrames :: [[RenderIntent]]
+  }
+
+viewRecordedEvents ::
+     ViewEvents events => ViewEnv -> [C.RecordedEvent events] -> BuiltViewEvents events
+viewRecordedEvents env =
+  viewRecordedEventsWith
+    env
+    []
+    []
+    []
+    []
+    []
+    []
+
+viewRecordedEventsWith ::
+     ViewEvents events
+  => ViewEnv
+  -> [ViewStep events]
+  -> [ViewNode]
+  -> [Constraint]
+  -> [InitialVar]
+  -> [[RenderIntent]]
+  -> [RenderIntent]
+  -> [C.RecordedEvent events]
+  -> BuiltViewEvents events
+viewRecordedEventsWith env steps nodes constraints initialVars renderFrames pending records =
+  case records of
+    [] ->
+      let finalOutput =
+            flushPendingOutput mempty {pendingRenderIntents = pending}
+          finalFrames = renderFrames ++ emittedRenderFrames finalOutput
+       in BuiltViewEvents
+            { eventSteps = steps
+            , eventNodes = nodes
+            , eventConstraints = constraints
+            , eventInitialVars = initialVars
+            , eventRenderFrames = withImplicitInitialFrame finalFrames
+            }
+    record:rest ->
+      let builtStep = viewRecordedEvent env pending record
+       in viewRecordedEventsWith
+            env
+            (steps ++ [stepView builtStep])
+            (nodes ++ stepNodes builtStep)
+            (constraints ++ stepConstraints builtStep)
+            (initialVars ++ stepInitialVars builtStep)
+            (renderFrames ++ stepRenderFrames builtStep)
+            (stepPendingRenderIntents builtStep)
+            rest
+
+withImplicitInitialFrame :: [[RenderIntent]] -> [[RenderIntent]]
+withImplicitInitialFrame frames =
+  case frames of
+    [] -> []
+    first:rest ->
+      case splitLeadingFresh first of
+        ([], _)         -> first : rest
+        (freshes, [])   -> freshes : rest
+        (freshes, tail') -> freshes : tail' : rest
+
+splitLeadingFresh :: [RenderIntent] -> ([RenderIntent], [RenderIntent])
+splitLeadingFresh intents =
+  case intents of
+    RenderFresh ref:rest ->
+      case splitLeadingFresh rest of
+        (freshes, tail') -> (RenderFresh ref : freshes, tail')
+    _ -> ([], intents)
 
 viewRecordedEvent ::
      ViewEvents events
   => ViewEnv
+  -> [RenderIntent]
   -> C.RecordedEvent events
   -> BuiltViewStep events
-viewRecordedEvent env recordedEvent@(C.RecordedEvent event audit) =
+viewRecordedEvent env pending recordedEvent@(C.RecordedEvent event audit) =
   let (_result, rawOutput) =
-        runViewBuilder env (viewUnion event (viewTokens audit))
-      output = flushPendingOutput rawOutput
+        runViewBuilderWithOutput
+          env
+          mempty {pendingRenderIntents = pending}
+          (viewUnion event (viewTokens audit))
+      output = rawOutput
       nodes = emittedNodes output
       constraints = emittedConstraints output
       initialVars = emittedInitialVars output
       renderFrames = emittedRenderFrames output
    in BuiltViewStep
-        { stepView = ViewStep recordedEvent nodes constraints renderFrames
+        { stepView = ViewStep recordedEvent nodes constraints []
         , stepNodes = nodes
         , stepConstraints = constraints
         , stepInitialVars = initialVars
+        , stepRenderFrames = renderFrames
+        , stepPendingRenderIntents = pendingRenderIntents output
         }
 
 buildViewEnv :: C.TraceGraph events -> ViewEnv

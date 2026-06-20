@@ -123,7 +123,7 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
     Right blocksById -> do
       frames' <-
         evalStateT
-          (compileFrames blocksById (V.viewSteps graph))
+          (compileFrames blocksById (V.viewRenderFrames graph))
           emptyCompileState
       pure
         Compiled
@@ -136,29 +136,166 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
 -- Frame compilation
 --------------------------------------------------------------------------------
 compileFrames ::
-     Map C.BlockId RenderBlock -> [V.ViewStep events] -> CompileM [RenderFrame]
-compileFrames blocksById steps = do
-  framesByStep <- traverse (compileStepFrames blocksById) steps
-  pure (concat framesByStep)
-
-compileStepFrames ::
-     Map C.BlockId RenderBlock -> V.ViewStep events -> CompileM [RenderFrame]
-compileStepFrames blocksById step =
-  case step of
-    V.ViewStep _recordedEvent _nodes _constraints renderFrames ->
-      traverse (compileRenderFrame blocksById) renderFrames
+     Map C.BlockId RenderBlock -> [[V.RenderIntent]] -> CompileM [RenderFrame]
+compileFrames blocksById renderFrames = do
+  frames' <- traverse (compileRenderFrame blocksById) renderFrames
+  pure (filter (not . null . framePatches) frames')
 
 compileRenderFrame ::
      Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM RenderFrame
 compileRenderFrame blocksById renderIntents = do
   patches <- compileRenderIntents blocksById renderIntents
-  pure RenderFrame {framePatches = patches}
+  coalesced <- lift (coalesceFramePatches patches)
+  pure RenderFrame {framePatches = coalesced}
 
 compileRenderIntents ::
      Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM [RenderPatch]
 compileRenderIntents blocksById intents = do
   patches <- traverse (compileRenderIntent blocksById) intents
   pure (concat patches)
+
+--------------------------------------------------------------------------------
+-- Frame coalescing
+--------------------------------------------------------------------------------
+data CoalescedPatch
+  = CoalescedCreate (Maybe RenderOrigin) RenderBlock
+  | CoalescedUpdate RenderBlock RenderBlock
+  | CoalescedDestroy RenderBlock
+  deriving (Eq, Show)
+
+data CoalesceState = CoalesceState
+  { coalesceOrder   :: [RenderId]
+  , coalescePatches :: Map RenderId CoalescedPatch
+  } deriving (Eq, Show)
+
+emptyCoalesceState :: CoalesceState
+emptyCoalesceState =
+  CoalesceState {coalesceOrder = [], coalescePatches = Map.empty}
+
+coalesceFramePatches :: [RenderPatch] -> Either String [RenderPatch]
+coalesceFramePatches patches = do
+  finalState <- foldM coalescePatch emptyCoalesceState patches
+  pure
+    (renderCoalescedPatches
+       (coalesceOrder finalState)
+       (coalescePatches finalState))
+
+coalescePatch :: CoalesceState -> RenderPatch -> Either String CoalesceState
+coalescePatch coalesceState patch =
+  case patch of
+    RenderCreate renderId origin block ->
+      updateCoalesced renderId (coalesceCreate renderId origin block) coalesceState
+    RenderUpdate renderId fromBlock toBlock ->
+      updateCoalesced
+        renderId
+        (coalesceUpdate renderId fromBlock toBlock)
+        coalesceState
+    RenderDestroy renderId block ->
+      updateCoalesced renderId (coalesceDestroy renderId block) coalesceState
+
+updateCoalesced ::
+     RenderId
+  -> (Maybe CoalescedPatch -> Either String (Maybe CoalescedPatch))
+  -> CoalesceState
+  -> Either String CoalesceState
+updateCoalesced renderId reducer coalesceState = do
+  reduced <- reducer (Map.lookup renderId (coalescePatches coalesceState))
+  let order' = rememberRenderId renderId (coalesceOrder coalesceState)
+  let patches' =
+        case reduced of
+          Nothing    -> Map.delete renderId (coalescePatches coalesceState)
+          Just patch -> Map.insert renderId patch (coalescePatches coalesceState)
+  pure coalesceState {coalesceOrder = order', coalescePatches = patches'}
+
+rememberRenderId :: RenderId -> [RenderId] -> [RenderId]
+rememberRenderId renderId order =
+  if renderId `elem` order
+    then order
+    else order ++ [renderId]
+
+coalesceCreate ::
+     RenderId
+  -> Maybe RenderOrigin
+  -> RenderBlock
+  -> Maybe CoalescedPatch
+  -> Either String (Maybe CoalescedPatch)
+coalesceCreate renderId origin block existing =
+  case existing of
+    Nothing -> Right (Just (CoalescedCreate origin block))
+    Just _  -> Left (duplicateLifecycleError "create" renderId)
+
+coalesceUpdate ::
+     RenderId
+  -> RenderBlock
+  -> RenderBlock
+  -> Maybe CoalescedPatch
+  -> Either String (Maybe CoalescedPatch)
+coalesceUpdate renderId fromBlock toBlock existing =
+  case existing of
+    Nothing -> Right (Just (CoalescedUpdate fromBlock toBlock))
+    Just existingPatch ->
+      case existingPatch of
+        CoalescedCreate origin currentBlock ->
+          if currentBlock == fromBlock
+            then Right (Just (CoalescedCreate origin toBlock))
+            else Left (inconsistentLifecycleError "update" renderId)
+        CoalescedUpdate firstBlock currentBlock ->
+          if currentBlock == fromBlock
+            then Right (Just (CoalescedUpdate firstBlock toBlock))
+            else Left (inconsistentLifecycleError "update" renderId)
+        CoalescedDestroy _ ->
+          Left (invalidLifecycleError "update after destroy" renderId)
+
+coalesceDestroy ::
+     RenderId
+  -> RenderBlock
+  -> Maybe CoalescedPatch
+  -> Either String (Maybe CoalescedPatch)
+coalesceDestroy renderId block existing =
+  case existing of
+    Nothing -> Right (Just (CoalescedDestroy block))
+    Just existingPatch ->
+      case existingPatch of
+        CoalescedCreate _ currentBlock ->
+          if currentBlock == block
+            then Right Nothing
+            else Left (inconsistentLifecycleError "destroy" renderId)
+        CoalescedUpdate firstBlock currentBlock ->
+          if currentBlock == block
+            then Right (Just (CoalescedDestroy firstBlock))
+            else Left (inconsistentLifecycleError "destroy" renderId)
+        CoalescedDestroy _ ->
+          Left (duplicateLifecycleError "destroy" renderId)
+
+renderCoalescedPatches ::
+     [RenderId] -> Map RenderId CoalescedPatch -> [RenderPatch]
+renderCoalescedPatches order patches =
+  case order of
+    [] -> []
+    renderId:rest ->
+      case Map.lookup renderId patches of
+        Nothing -> renderCoalescedPatches rest patches
+        Just patch ->
+          renderCoalescedPatch renderId patch : renderCoalescedPatches rest patches
+
+renderCoalescedPatch :: RenderId -> CoalescedPatch -> RenderPatch
+renderCoalescedPatch renderId patch =
+  case patch of
+    CoalescedCreate origin block -> RenderCreate renderId origin block
+    CoalescedUpdate fromBlock toBlock -> RenderUpdate renderId fromBlock toBlock
+    CoalescedDestroy block -> RenderDestroy renderId block
+
+duplicateLifecycleError :: String -> RenderId -> String
+duplicateLifecycleError operation renderId =
+  "duplicate render " ++ operation ++ " in one frame for " ++ show renderId
+
+invalidLifecycleError :: String -> RenderId -> String
+invalidLifecycleError operation renderId =
+  "invalid render lifecycle: " ++ operation ++ " for " ++ show renderId
+
+inconsistentLifecycleError :: String -> RenderId -> String
+inconsistentLifecycleError operation renderId =
+  "inconsistent render " ++ operation ++ " chain in one frame for " ++ show renderId
 
 --------------------------------------------------------------------------------
 -- Visual lifecycle semantics
