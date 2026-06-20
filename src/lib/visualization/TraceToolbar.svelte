@@ -8,7 +8,6 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  import { Separator } from '$lib/components/ui/separator';
   import { Switch } from '$lib/components/ui/switch';
 
   type Props = {
@@ -21,8 +20,7 @@
     stepCount: number;
     latestSeed: number | null;
     seedText?: string;
-    details?: boolean;
-    debugOpen?: boolean;
+    debugEnabled?: boolean;
     onReset: () => void;
     onPrevious: () => void;
     onNext: () => void;
@@ -39,8 +37,7 @@
     stepCount,
     latestSeed,
     seedText = $bindable(''),
-    details = $bindable(false),
-    debugOpen = $bindable(false),
+    debugEnabled = $bindable(false),
     onReset,
     onPrevious,
     onNext,
@@ -56,7 +53,7 @@
 </script>
 
 <form class="toolbar" onsubmit={submitRegeneration}>
-  <div class="toolbar-section" aria-label="Trace playback">
+  <div class="playback-controls" aria-label="Trace playback">
     <Button variant="outline" size="sm" onclick={onReset} disabled={!hasTrace || busy}>
       <RotateCcwIcon size={15} />
       Reset
@@ -75,13 +72,14 @@
     <span class="step-label">Step {currentStep + 1} / {stepCount}</span>
   {/if}
 
-  <Separator orientation="vertical" class="hidden md:block" />
+  <div class="compile-controls" aria-label="Compile controls">
+    {#if latestSeed !== null}
+      <span class="seed-label">Seed {latestSeed}</span>
+    {/if}
 
-  <div class="toolbar-section grow" aria-label="Compile controls">
-    <Label>
+    <Label class="seed-control">
       <span class="field-label">Seed</span>
       <Input
-        class="w-[10ch]"
         bind:value={seedText}
         disabled={busy}
         inputmode="numeric"
@@ -90,26 +88,17 @@
       />
     </Label>
 
-    <Label class="text-slate-200">
-      <Switch bind:checked={details} disabled={busy} />
-      <span>Details</span>
-    </Label>
-
-    <Label class="text-slate-200">
-      <Switch bind:checked={debugOpen} />
+    <Label class="debug-control">
+      <Switch bind:checked={debugEnabled} />
       <BugIcon size={15} />
       <span>Debug</span>
     </Label>
 
-    <Button type="submit" disabled={regenerating}>
+    <Button type="submit" disabled={busy}>
       <RefreshCwIcon class={regenerating ? 'animate-spin' : undefined} size={15} />
       {regenerating ? 'Regenerating...' : 'Regenerate'}
     </Button>
   </div>
-
-  {#if latestSeed !== null}
-    <span class="seed-label">Seed {latestSeed}</span>
-  {/if}
 </form>
 
 <style>
@@ -127,15 +116,17 @@
     font-family: system-ui, sans-serif;
   }
 
-  .toolbar-section {
+  .playback-controls,
+  .compile-controls {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
   }
 
-  .grow {
-    flex: 1 1 auto;
+  .compile-controls {
+    margin-left: auto;
+    justify-content: flex-end;
   }
 
   .step-label,
@@ -146,8 +137,30 @@
     white-space: nowrap;
   }
 
+  .seed-label {
+    color: rgb(148, 163, 184);
+  }
+
   .field-label {
     color: rgb(148, 163, 184);
+  }
+
+  :global(.seed-control input) {
+    width: clamp(7.5rem, 16vw, 12rem);
+  }
+
+  :global(.debug-control) {
+    color: rgb(226, 232, 240);
+  }
+
+  @media (max-width: 760px) {
+    .toolbar {
+      align-items: flex-start;
+    }
+
+    .compile-controls {
+      flex: 1 1 100%;
+    }
   }
 
   .sr-only {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { deserialize } from '$app/forms';
   import { onMount } from 'svelte';
 
   import TraceCanvas from '$lib/visualization/TraceCanvas.svelte';
@@ -8,11 +9,13 @@
   import type {
     CompileDebug,
     CompiledTrace,
-    VisualizationResponse
+    VisualizationFailure,
+    VisualizationResponse,
+    VisualizationSuccess
   } from '$lib/visualization/types';
 
   const staticTraceSrc = '/compiled.json';
-  const regenerateSrc = '/';
+  const regenerateSrc = '?/regenerate';
 
   const player = new TracePlayer();
 
@@ -23,8 +26,7 @@
   let latestDebug = $state<CompileDebug | null>(null);
   let latestSeed = $state<number | null>(null);
   let seedText = $state('');
-  let details = $state(false);
-  let debugOpen = $state(false);
+  let debugEnabled = $state(false);
 
   const pageError = $derived(staticError ?? regenerateError);
 
@@ -64,7 +66,7 @@
       seed = parseOptionalSeed(seedText);
     } catch (err) {
       regenerateError = err instanceof Error ? err.message : String(err);
-      debugOpen = true;
+      debugEnabled = true;
       return;
     }
 
@@ -72,15 +74,17 @@
     regenerateError = null;
 
     try {
+      const formData = new FormData();
+
+      if (seed !== null) {
+        formData.set('seed', String(seed));
+      }
+
+      formData.set('details', String(debugEnabled));
+
       const response = await fetch(regenerateSrc, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          seed,
-          details
-        })
+        body: formData
       });
       const payload = await readVisualizationResponse(response);
 
@@ -99,7 +103,7 @@
       player.setTrace(payload.trace);
     } catch (err) {
       regenerateError = err instanceof Error ? err.message : String(err);
-      debugOpen = true;
+      debugEnabled = true;
     } finally {
       regenerating = false;
     }
@@ -107,12 +111,47 @@
 
   async function readVisualizationResponse(response: Response): Promise<VisualizationResponse> {
     const text = await response.text();
+    const fallbackError = `Server returned non-action response: ${text.slice(0, 240)}`;
+    let result: ReturnType<typeof deserialize>;
 
     try {
-      return JSON.parse(text) as VisualizationResponse;
+      result = deserialize(text);
     } catch {
-      throw new Error(`Server returned non-JSON response: ${text.slice(0, 240)}`);
+      throw new Error(fallbackError);
     }
+
+    if (result.type === 'success') {
+      return (
+        (result.data as VisualizationSuccess | undefined) ?? {
+          ok: false,
+          error: 'Regeneration returned an empty success response.'
+        }
+      );
+    }
+
+    if (result.type === 'failure') {
+      return (
+        (result.data as VisualizationFailure | undefined) ?? {
+          ok: false,
+          error: `Regeneration failed with status ${result.status}.`
+        }
+      );
+    }
+
+    if (result.type === 'redirect') {
+      return {
+        ok: false,
+        error: `Regeneration redirected to ${result.location}.`
+      };
+    }
+
+    return {
+      ok: false,
+      error:
+        result.error instanceof Error
+          ? result.error.message
+          : `Regeneration failed with status ${result.status ?? response.status}.`
+    };
   }
 
   function parseOptionalSeed(value: string): number | null {
@@ -132,8 +171,7 @@
 
 <div class="page">
   <TraceToolbar
-    bind:debugOpen
-    bind:details
+    bind:debugEnabled
     bind:seedText
     canNext={player.canNext}
     canPrevious={player.canPrevious}
@@ -172,7 +210,7 @@
       <TraceDebugPanel
         debug={latestDebug}
         error={regenerateError}
-        open={debugOpen || details}
+        open={debugEnabled}
         {regenerating}
       />
     {/if}

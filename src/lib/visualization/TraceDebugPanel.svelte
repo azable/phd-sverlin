@@ -17,7 +17,7 @@
 {#if open}
   <section class="debug-panel" aria-label="Compile debug output">
     <div class="panel-heading">
-      <h2>Run details</h2>
+      <h2>Debug output</h2>
       <span>{regenerating ? 'Running' : error ? 'Failed' : debug ? 'Complete' : 'Idle'}</span>
     </div>
 
@@ -42,6 +42,10 @@
 
     {#if error}
       <p class="error">{error}</p>
+    {/if}
+
+    {#if !debug && !error && !regenerating}
+      <p class="empty">Regenerate to capture compile diagnostics.</p>
     {/if}
 
     {#if debug?.stderr}
@@ -128,5 +132,10 @@
   .error {
     color: rgb(254, 202, 202);
     margin: 8px 0;
+  }
+
+  .empty {
+    margin: 8px 0 0;
+    color: rgb(148, 163, 184);
   }
 </style>
