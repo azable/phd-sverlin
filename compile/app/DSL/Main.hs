@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LinearTypes             #-}
 {-# LANGUAGE NoImplicitPrelude       #-}
+{-# LANGUAGE OverloadedLabels        #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE UndecidableInstances    #-}
@@ -329,52 +330,52 @@ renderDestroyPair obligations =
       renderRemove elementVisual
 
 cell :: Span
-cell = globalSpan "cell"
+cell = #cell
 
 gap :: Span
-gap = globalSpan "gap"
+gap = #gap
 
 targetX :: Coord
-targetX = globalCoord "target.x"
+targetX = #target_x
 
 targetY :: Coord
-targetY = globalCoord "target.y"
+targetY = #target_y
 
 rowX :: Coord
-rowX = globalCoord "row.x"
+rowX = #row_x
 
 rowY :: Coord
-rowY = globalCoord "row.y"
+rowY = #row_y
 
 stride :: Span
 stride = cell |+| gap
 
 probeY :: Coord
-probeY = globalCoord "probe.y"
+probeY = #probe_y
 
 targetProbeX :: Coord
-targetProbeX = globalCoord "probe.target.x"
+targetProbeX = #probe_target_x
 
 elementProbeX :: Coord
-elementProbeX = globalCoord "probe.element.x"
+elementProbeX = #probe_element_x
 
 matchX :: Coord
-matchX = globalCoord "match.x"
+matchX = #match_x
 
 matchY :: Coord
-matchY = globalCoord "match.y"
+matchY = #match_y
 
 targetHue :: HueExpr
-targetHue = global "target.hue"
+targetHue = #target_hue
 
 listHue :: HueExpr
-listHue = global "list.hue"
+listHue = #list_hue
 
 probeHue :: HueExpr
-probeHue = global "probe.hue"
+probeHue = #probe_hue
 
 matchHue :: HueExpr
-matchHue = global "match.hue"
+matchHue = #match_hue
 
 cellBy :: Double -> Span
 cellBy scale = cell * num scale
@@ -403,42 +404,69 @@ matchGap = gap * num 0.7
 half :: Span -> Span
 half value = value / num 2
 
+origin :: Coord
+origin = at 0
+
+canvasBottom :: Coord
+canvasBottom = at 600
+
+midpoint :: Coord -> Coord -> Coord
+midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
+
+targetInsetX :: Span
+targetInsetX = gap |+| half targetWidth
+
+targetInsetY :: Span
+targetInsetY = gap |+| half targetHeight
+
+rowInset :: Span
+rowInset = gap |+| half cell
+
+probeOffsetX :: Span
+probeOffsetX = half targetWidth |+| gap |+| half probeSize
+
+probeOffsetY :: Span
+probeOffsetY = half targetHeight |+| gap |+| half probeSize
+
+probeGap :: Span
+probeGap = probeSize |+| gap
+
+probeRowClearance :: Span
+probeRowClearance = half probeSize |+| gap |+| half cell
+
+matchOffsetY :: Span
+matchOffsetY = half probeSize |+| matchGap |+| half matchHeight
+
+matchRowClearance :: Span
+matchRowClearance = half matchHeight |+| matchGap |+| half cell
+
 constrainScale :: ViewLayout ()
 constrainScale = do
-  constrain (by 72 <|> cell <|> by 86)
-  constrain (by 26 <|> gap <|> by 44)
+  constrain $ cell =|= by 76
+  constrain $ gap =|= half cell
 
 constrainTargetFlow :: ViewLayout ()
 constrainTargetFlow = do
   constrainScale
-  constrain (at 40 <|> targetX <|> at 128)
-  constrain (at 32 <|> targetY <|> at 86)
-  constrain (targetX <| half targetWidth |> num 180)
-  constrain (targetY <| half targetHeight |> num 188)
-  constrain (at 64 <|> rowX <|> at 112)
-  constrain (at 430 <|> rowY <|> at 500)
-  constrain (listValueX 4 <| half cell |> num 760)
-  constrain (rowY <| half cell |> num 560)
+  constrain $ origin =| targetInsetX |= targetX
+  constrain $ origin =| targetInsetY |= targetY
+  constrain $ origin =| rowInset |= rowX
+  constrain $ rowY =| rowInset |= canvasBottom
 
 constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
   constrainTargetFlow
-  constrain (at 210 <|> targetProbeX <|> at 300)
-  constrain (at 520 <|> elementProbeX <|> at 640)
-  constrain (at 205 <|> probeY <|> at 270)
-  constrain (targetY =| half targetHeight |+| gap |+| half probeSize |> probeY)
-  constrain (probeY =| half probeSize |+| gap |+| half cell |> rowY)
-  constrain (targetProbeX =| probeSize |+| gap * num 2 |> elementProbeX)
+  constrain $ targetX =| probeOffsetX |= targetProbeX
+  constrain $ targetProbeX =| probeGap |= elementProbeX
+  constrain $ targetY =| probeOffsetY |= probeY
+  constrain $ probeY <| probeRowClearance |> rowY
 
 constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
-  constrain (at 330 <|> matchX <|> at 415)
-  constrain
-    (probeY =| half probeSize |+| matchGap |+| half matchHeight |> matchY)
-  constrain (matchY =| half matchHeight |+| matchGap |+| half cell |> rowY)
-  constrain (targetProbeX <|> matchX)
-  constrain (matchX <| half matchWidth |> elementProbeX + half probeSize)
+  constrain $ matchX =|= midpoint targetProbeX elementProbeX
+  constrain $ probeY =| matchOffsetY |= matchY
+  constrain $ matchY <| matchRowClearance |> rowY
 
 listValueX :: Int -> Coord
 listValueX index = rowX + num (fromIntegral index) * stride

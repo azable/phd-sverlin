@@ -23,6 +23,7 @@ module LinearTrace.Solver
   , exprType
   , exprRaw
   , var
+  , labelName
   , num
   , (@+@)
   , (@-@)
@@ -71,6 +72,8 @@ import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Proxy                 (Proxy (..))
+import           GHC.OverloadedLabels       (IsLabel (..))
+import           GHC.TypeLits               (KnownSymbol, symbolVal)
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
 import           System.Random              (mkStdGen, randomRs)
@@ -226,6 +229,24 @@ var ::
 var name = Expr ty (EVar ty (Var name))
   where
     ty = symbolicType (Proxy :: Proxy ty)
+
+labelName :: KnownSymbol name => Proxy name -> String
+labelName proxy = dotName (symbolVal proxy)
+
+dotName :: String -> String
+dotName name =
+  case name of
+    []        -> []
+    char:rest -> dotChar char : dotName rest
+
+dotChar :: Char -> Char
+dotChar char =
+  if char == '_'
+    then '.'
+    else char
+
+instance (KnownSymbol name, SymbolicType ty) => IsLabel name (Expr ty) where
+  fromLabel = var ("global." ++ labelName (Proxy :: Proxy name))
 
 initialRangeFor :: Expr ty -> Range -> Maybe InitialVar
 initialRangeFor (Expr _ raw) range =

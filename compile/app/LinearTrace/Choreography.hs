@@ -7,6 +7,7 @@
 {-# LANGUAGE NoImplicitPrelude      #-}
 {-# LANGUAGE RebindableSyntax       #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TypeApplications       #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
 
@@ -134,6 +135,7 @@ module LinearTrace.Choreography
   , fontSize
   , fontStyle
   , fontWeight
+  , fromLabel
   , global
   , globalCoord
   , globalSpan
@@ -193,6 +195,9 @@ module LinearTrace.Choreography
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
 import qualified Data.Functor.Linear    as DFL
+import           Data.Proxy             (Proxy (..))
+import           GHC.OverloadedLabels   (IsLabel (..))
+import           GHC.TypeLits           (KnownSymbol)
 import           LinearTrace.Core       (LBool (..), LDouble (..), LInt (..),
                                          LString (..), LUnit (..), Payload,
                                          PayloadView (..), Traceable (..),
@@ -660,6 +665,12 @@ globalCoord name = mkCoord (global name :: LayoutExpr) []
 
 globalSpan :: P.String -> Span
 globalSpan name = mkSpan (global name :: LayoutExpr) []
+
+instance KnownSymbol name => IsLabel name Coord where
+  fromLabel = globalCoord (S.labelName (Proxy @name))
+
+instance KnownSymbol name => IsLabel name Span where
+  fromLabel = globalSpan (S.labelName (Proxy @name))
 
 asCoord :: Offset -> Coord
 asCoord value =
