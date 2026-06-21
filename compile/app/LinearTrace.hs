@@ -53,6 +53,7 @@ module LinearTrace
   , Sealed(..)
   , Unsealed(..)
   , Decided(..)
+  , (==>)
   , explain
   , explainWith
   , discard

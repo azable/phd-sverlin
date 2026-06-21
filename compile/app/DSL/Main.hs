@@ -1,4 +1,3 @@
-{-# LANGUAGE BlockArguments          #-}
 {-# LANGUAGE ConstraintKinds         #-}
 {-# LANGUAGE DataKinds               #-}
 {-# LANGUAGE FlexibleContexts        #-}
@@ -31,17 +30,16 @@ import           LinearTrace.View       (BoxDefinition, BoxVisual,
                                          VisualTraceGraph, WhiteSpace (..),
                                          boxDefinition, buildGraph, checkpoint,
                                          complete, compute, copy, create,
-                                         decide, destroy, ensure, explain,
-                                         finalizeStyle, forkCopy, fresh, global,
-                                         num, remove, setCssClassOnce,
-                                         setFillOnce, setFontFamilyOnce,
-                                         setFontSizeOnce, setFontWeightOnce,
-                                         setRadiusOnce, setStrokeOnce,
-                                         setStrokeWidthOnce, setTextAlignOnce,
-                                         setWhiteSpaceOnce, setZIndexOnce,
-                                         takeHeight, takeLeft, takeTop,
-                                         takeWidth, use, (@*@), (@+@), (@<=@),
-                                         (@==@), (|>))
+                                         decide, destroy, ensure, finalizeStyle,
+                                         forkCopy, fresh, global, num, remove,
+                                         setCssClassOnce, setFillOnce,
+                                         setFontFamilyOnce, setFontSizeOnce,
+                                         setFontWeightOnce, setRadiusOnce,
+                                         setStrokeOnce, setStrokeWidthOnce,
+                                         setTextAlignOnce, setWhiteSpaceOnce,
+                                         setZIndexOnce, takeHeight, takeLeft,
+                                         takeTop, takeWidth, use, (==>), (@*@),
+                                         (@+@), (@<=@), (@==@), (|>))
 import           Prelude.Linear
 
 --------------------------------------------------------------------------------
@@ -136,11 +134,9 @@ linearSearch input =
   case input of
     SearchInput targetPayload valuePayloads -> do
       Created target targetVisual <- create targetPayload
-      explain
-        "Create target"
-        do
-          renderedTarget <- fresh (valueViewDefinition TargetValue) targetVisual
-          complete renderedTarget
+      "Create target" ==> do
+        renderedTarget <- fresh (valueViewDefinition TargetValue) targetVisual
+        complete renderedTarget
       elements <- createElements valuePayloads
       searchElements target elements
 
@@ -153,12 +149,10 @@ createElementsFrom index inputs =
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
       Created element elementVisual <- create payload
-      explain
-        "Create element"
-        do
-          renderedElement <-
-            fresh (valueViewDefinition (ListValue index)) elementVisual
-          complete renderedElement
+      "Create element" ==> do
+        renderedElement <-
+          fresh (valueViewDefinition (ListValue index)) elementVisual
+        complete renderedElement
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement element elements)
 
@@ -167,10 +161,8 @@ searchElements target elements =
   case elements of
     NoElements -> do
       Destroyed targetVisual <- destroy target
-      explain
-        "Search exhausted"
-        do
-          remove targetVisual
+      "Search exhausted" ==> do
+        remove targetVisual
     MoreElement element rest -> do
       comparison <- compareElement target element
       case comparison of
@@ -186,63 +178,51 @@ compareElement ::
 compareElement target element = do
   Copied targetAfter targetProbe targetCopy <- copy target
   Copied elementAfter elementProbe elementCopy <- copy element
-  explain
-    "Prepare comparison"
-    do
-      (target1, renderedTargetProbe) <-
-        forkCopy targetProbeViewDefinition targetCopy
-      (element1, renderedElementProbe) <-
-        forkCopy elementProbeViewDefinition elementCopy
-      complete target1
-      complete element1
-      complete renderedTargetProbe
-      complete renderedElementProbe
-      checkpoint
+  "Prepare comparison" ==> do
+    (target1, renderedTargetProbe) <-
+      forkCopy targetProbeViewDefinition targetCopy
+    (element1, renderedElementProbe) <-
+      forkCopy elementProbeViewDefinition elementCopy
+    complete target1
+    complete element1
+    complete renderedTargetProbe
+    complete renderedElementProbe
+    checkpoint
   Used targetPayload targetVisual <- use targetProbe
   Used elementPayload elementVisual <- use elementProbe
   Computed match matchVisual <-
     compute (sameValue <$> targetPayload <*> elementPayload)
-  explain
-    "Compare target and element"
-    do
-      renderedMatch <- fresh matchViewDefinition matchVisual
-      checkpoint
-      remove targetVisual
-      remove elementVisual
-      complete renderedMatch
+  "Compare target and element" ==> do
+    renderedMatch <- fresh matchViewDefinition matchVisual
+    checkpoint
+    remove targetVisual
+    remove elementVisual
+    complete renderedMatch
   decision <- decide (\(LBool answer) -> answer) match
   case decision of
     DecidedTrue foundVisual -> do
-      explain
-        "Found target"
-        do
-          remove foundVisual
+      "Found target" ==> do
+        remove foundVisual
       return (IsMatch targetAfter elementAfter)
     DecidedFalse notThisVisual -> do
-      explain
-        "Not this element"
-        do
-          remove notThisVisual
-          checkpoint
+      "Not this element" ==> do
+        remove notThisVisual
+        checkpoint
       return (IsNotMatch targetAfter elementAfter)
 
 discardChecked :: Block Value %1 -> VisualTraceBuilder ()
 discardChecked element = do
   Destroyed elementVisual <- destroy element
-  explain
-    "Discard checked element"
-    do
-      remove elementVisual
+  "Discard checked element" ==> do
+    remove elementVisual
 
 finishFound :: Block Value %1 -> Block Value %1 -> VisualTraceBuilder ()
 finishFound target element = do
   Destroyed targetVisual <- destroy target
   Destroyed elementVisual <- destroy element
-  explain
-    "Finish found target"
-    do
-      remove targetVisual
-      remove elementVisual
+  "Finish found target" ==> do
+    remove targetVisual
+    remove elementVisual
 
 discardRemaining :: Elements %1 -> VisualTraceBuilder ()
 discardRemaining elements =
@@ -250,10 +230,8 @@ discardRemaining elements =
     NoElements -> return ()
     MoreElement element rest -> do
       Destroyed elementVisual <- destroy element
-      explain
-        "Discard remaining element"
-        do
-          remove elementVisual
+      "Discard remaining element" ==> do
+        remove elementVisual
       discardRemaining rest
 
 -- View model

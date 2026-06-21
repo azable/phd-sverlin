@@ -150,6 +150,7 @@ module LinearTrace.View
   , unseal
   , decide
   , explainVisual
+  , (==>)
   , explain
   , discard
   , buildGraph
@@ -1373,6 +1374,10 @@ data VisualTraceState where
 type VisualTraceBuilder a = State VisualTraceState a
 
 type VisualTraceGraph = C.TraceGraphWith ViewScript
+
+infixr 0 ==>
+(==>) :: P.String -> ViewBuilder () %1 -> VisualTraceBuilder ()
+(==>) = explain
 
 explain :: P.String -> ViewBuilder () %1 -> VisualTraceBuilder ()
 explain label script0 =
