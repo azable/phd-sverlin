@@ -86,25 +86,61 @@ module LinearTrace.Choreography
   , -- * Component and layout layer
     BoxDefinition
   , BoxVisual
+  , NodeDefinition
+  , NodeRecipe
+  , NodeVisual
   , LiveVisual
   , LayoutUse(..)
   , OneExpr
   , OneConstraint
   , Style
   , EmptyStyleDraft
+  , BorderStyle(..)
+  , Bounds(..)
+  , BoundsExpr
   , FontWeight(..)
+  , FontStyle(..)
   , Hsl(..)
+  , FreeExpr
+  , HslExpr
   , HueExpr
   , LayoutExpr
   , UnitExpr
+  , Vec2(..)
   , TextAlign(..)
   , WhiteSpace(..)
+  , alpha
+  , bold
+  , bottom
+  , bounds
+  , borderStyle
   , boxDefinition
+  , center
+  , centerX
+  , centerY
+  , centerText
   , constrain
+  , cssClass
   , encourage
+  , fill
   , finalizeStyle
+  , fontFamily
+  , fontSize
+  , fontStyle
+  , fontWeight
   , global
+  , height
+  , left
+  , noWrap
+  , node
   , num
+  , opacity
+  , placeBox
+  , placed
+  , position
+  , radius
+  , require
+  , right
   , setCssClassOnce
   , setFillOnce
   , setFontFamilyOnce
@@ -116,10 +152,22 @@ module LinearTrace.Choreography
   , setTextAlignOnce
   , setWhiteSpaceOnce
   , setZIndexOnce
+  , stroke
+  , strokeWidth
+  , style
+  , size
+  , sized
   , takeHeight
   , takeLeft
+  , takeRight
   , takeTop
   , takeWidth
+  , textAlign
+  , top
+  , vec2
+  , whiteSpace
+  , width
+  , zIndex
   , (@*@)
   , (@+@)
   , (@-@)
@@ -136,12 +184,16 @@ import           LinearTrace.Core       (LBool (..), LDouble (..), LInt (..),
                                          PayloadView (..), Traceable (..),
                                          (<$>), (<*>))
 import qualified LinearTrace.Core       as C
-import           LinearTrace.View       (BoxDefinition, BoxVisual,
-                                         EmptyStyleDraft, FontWeight (..),
-                                         Hsl (..), HueExpr, LayoutExpr,
+import           LinearTrace.Solver     (Vec2 (..), vec2)
+import qualified LinearTrace.Solver     as S
+import           LinearTrace.View       (BorderStyle (..), Bounds (..),
+                                         BoundsExpr, BoxDefinition, BoxVisual,
+                                         EmptyStyleDraft, FontStyle (..),
+                                         FontWeight (..), FreeExpr, Hsl (..),
+                                         HslExpr, HueExpr, LayoutExpr,
                                          LayoutUse (..), LiveVisual,
-                                         OneConstraint, OneExpr, Style,
-                                         TextAlign (..), UnitExpr,
+                                         OneConstraint (..), OneExpr (..),
+                                         Style, TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
                                          encourage, finalizeStyle, global, num,
                                          setCssClassOnce, setFillOnce,
@@ -150,9 +202,11 @@ import           LinearTrace.View       (BoxDefinition, BoxVisual,
                                          setStrokeOnce, setStrokeWidthOnce,
                                          setTextAlignOnce, setWhiteSpaceOnce,
                                          setZIndexOnce, takeHeight, takeLeft,
-                                         takeTop, takeWidth, (@*@), (@+@),
-                                         (@-@), (@/@), (@<=@), (@==@), (|>))
+                                         takeRight, takeTop, takeWidth, (@*@),
+                                         (@+@), (@-@), (@/@), (@<=@), (@==@),
+                                         (|>))
 import qualified LinearTrace.View       as V
+import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
 import           Prelude.Linear
 
@@ -239,9 +293,31 @@ data RenderRecipe a where
   CompleteRender :: V.Visual V.Rendered V.Stable used tag %1 -> RenderRecipe ()
   CheckpointRender :: RenderRecipe ()
 
+data NodeSpec = NodeSpec
+  { nodeSpecStyleUpdate  :: Style -> Style
+  , nodeSpecLeft         :: Maybe LayoutExpr
+  , nodeSpecTop          :: Maybe LayoutExpr
+  , nodeSpecWidth        :: Maybe LayoutExpr
+  , nodeSpecHeight       :: Maybe LayoutExpr
+  , nodeSpecRight        :: Maybe LayoutExpr
+  , nodeSpecBottom       :: Maybe LayoutExpr
+  , nodeSpecCenterX      :: Maybe LayoutExpr
+  , nodeSpecCenterY      :: Maybe LayoutExpr
+  , nodeSpecRequirements :: [ViewLayout ()]
+  }
+
+data NodeRecipe a where
+  NodeRecipe :: a %1 -> NodeSpec -> NodeRecipe a
+
 type ViewLayout a = V.ViewBuilder a
 
 type VisualTraceGraph = V.VisualTraceGraph
+
+type NodeDefinition tag = BoxDefinition tag
+
+type NodeVisual tag = BoxVisual tag
+
+type StyleRecipe = NodeRecipe
 
 type BlockHandle = C.Block
 
@@ -293,10 +369,11 @@ mapProgramWith :: (a %1 -> b) %1 -> a %1 -> Program b
 mapProgramWith f value = PureProgram (f value)
 
 liftProgramWith :: (a %1 -> b %1 -> c) %1 -> Program b %1 -> a %1 -> Program c
-liftProgramWith f rhs left = BindProgram rhs (finishProgramLift f left)
+liftProgramWith f rhs leftValue =
+  BindProgram rhs (finishProgramLift f leftValue)
 
 finishProgramLift :: (a %1 -> b %1 -> c) %1 -> a %1 -> b %1 -> Program c
-finishProgramLift f left right = PureProgram (f left right)
+finishProgramLift f leftValue rightValue = PureProgram (f leftValue rightValue)
 
 instance DFL.Functor Program where
   fmap f program = BindProgram program (mapProgramWith f)
@@ -320,10 +397,12 @@ mapFragmentWith f value = PureFragment (f value)
 
 liftFragmentWith ::
      (a %1 -> b %1 -> c) %1 -> Fragment b %1 -> a %1 -> Fragment c
-liftFragmentWith f rhs left = BindFragment rhs (finishFragmentLift f left)
+liftFragmentWith f rhs leftValue =
+  BindFragment rhs (finishFragmentLift f leftValue)
 
 finishFragmentLift :: (a %1 -> b %1 -> c) %1 -> a %1 -> b %1 -> Fragment c
-finishFragmentLift f left right = PureFragment (f left right)
+finishFragmentLift f leftValue rightValue =
+  PureFragment (f leftValue rightValue)
 
 instance DFL.Functor Fragment where
   fmap f fragment = BindFragment fragment (mapFragmentWith f)
@@ -347,10 +426,10 @@ mapRenderWith f value = PureRender (f value)
 
 liftRenderWith ::
      (a %1 -> b %1 -> c) %1 -> RenderRecipe b %1 -> a %1 -> RenderRecipe c
-liftRenderWith f rhs left = BindRender rhs (finishRenderLift f left)
+liftRenderWith f rhs leftValue = BindRender rhs (finishRenderLift f leftValue)
 
 finishRenderLift :: (a %1 -> b %1 -> c) %1 -> a %1 -> b %1 -> RenderRecipe c
-finishRenderLift f left right = PureRender (f left right)
+finishRenderLift f leftValue rightValue = PureRender (f leftValue rightValue)
 
 instance DFL.Functor RenderRecipe where
   fmap f recipe = BindRender recipe (mapRenderWith f)
@@ -368,6 +447,92 @@ instance Applicative RenderRecipe where
 
 instance Monad RenderRecipe where
   (>>=) = BindRender
+
+emptyNodeSpec :: NodeSpec
+emptyNodeSpec =
+  NodeSpec
+    { nodeSpecStyleUpdate = P.id
+    , nodeSpecLeft = Nothing
+    , nodeSpecTop = Nothing
+    , nodeSpecWidth = Nothing
+    , nodeSpecHeight = Nothing
+    , nodeSpecRight = Nothing
+    , nodeSpecBottom = Nothing
+    , nodeSpecCenterX = Nothing
+    , nodeSpecCenterY = Nothing
+    , nodeSpecRequirements = []
+    }
+
+composeStyleUpdates :: (Style -> Style) -> (Style -> Style) -> Style -> Style
+composeStyleUpdates first second style0 = second (first style0)
+
+preferLater :: Maybe a -> Maybe a -> Maybe a
+preferLater earlier later =
+  case later of
+    Nothing -> earlier
+    Just _  -> later
+
+appendNodeSpec :: NodeSpec -> NodeSpec -> NodeSpec
+appendNodeSpec first second =
+  NodeSpec
+    { nodeSpecStyleUpdate =
+        composeStyleUpdates
+          (nodeSpecStyleUpdate first)
+          (nodeSpecStyleUpdate second)
+    , nodeSpecLeft = preferLater (nodeSpecLeft first) (nodeSpecLeft second)
+    , nodeSpecTop = preferLater (nodeSpecTop first) (nodeSpecTop second)
+    , nodeSpecWidth = preferLater (nodeSpecWidth first) (nodeSpecWidth second)
+    , nodeSpecHeight =
+        preferLater (nodeSpecHeight first) (nodeSpecHeight second)
+    , nodeSpecRight = preferLater (nodeSpecRight first) (nodeSpecRight second)
+    , nodeSpecBottom =
+        preferLater (nodeSpecBottom first) (nodeSpecBottom second)
+    , nodeSpecCenterX =
+        preferLater (nodeSpecCenterX first) (nodeSpecCenterX second)
+    , nodeSpecCenterY =
+        preferLater (nodeSpecCenterY first) (nodeSpecCenterY second)
+    , nodeSpecRequirements =
+        nodeSpecRequirements first P.++ nodeSpecRequirements second
+    }
+
+bindNodeRecipe :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
+bindNodeRecipe recipe next =
+  case recipe of
+    NodeRecipe value first ->
+      case next value of
+        NodeRecipe output second ->
+          NodeRecipe output (appendNodeSpec first second)
+
+instance DFL.Functor NodeRecipe where
+  fmap f recipe =
+    case recipe of
+      NodeRecipe value spec -> NodeRecipe (f value) spec
+
+instance Functor NodeRecipe where
+  fmap f recipe =
+    case recipe of
+      NodeRecipe value spec -> NodeRecipe (f value) spec
+
+instance DFL.Applicative NodeRecipe where
+  pure value = NodeRecipe value emptyNodeSpec
+  liftA2 f lhs rhs =
+    case lhs of
+      NodeRecipe leftValue first ->
+        case rhs of
+          NodeRecipe rightValue second ->
+            NodeRecipe (f leftValue rightValue) (appendNodeSpec first second)
+
+instance Applicative NodeRecipe where
+  pure value = NodeRecipe value emptyNodeSpec
+  liftA2 f lhs rhs =
+    case lhs of
+      NodeRecipe leftValue first ->
+        case rhs of
+          NodeRecipe rightValue second ->
+            NodeRecipe (f leftValue rightValue) (appendNodeSpec first second)
+
+instance Monad NodeRecipe where
+  (>>=) = bindNodeRecipe
 
 runProgram :: Program () -> VisualTraceGraph
 runProgram program = V.buildGraph (interpretProgram program)
@@ -678,3 +843,222 @@ renderCheckpoint = CheckpointRender
 
 constrain :: OneConstraint %1 -> ViewLayout ()
 constrain = V.ensure
+
+style :: StyleRecipe () -> (EmptyStyleDraft %1 -> Style)
+style recipe =
+  case recipe of
+    NodeRecipe () spec -> V.finalizeStyleWith (nodeSpecStyleUpdate spec)
+
+setStyleWith :: (Style -> Style) -> NodeRecipe ()
+setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
+
+opacity :: UnitExpr -> NodeRecipe ()
+opacity value = setStyleWith (VS.setOpacity value)
+
+zIndex :: FreeExpr -> NodeRecipe ()
+zIndex value = setStyleWith (VS.setZIndex value)
+
+fontSize :: LayoutExpr -> NodeRecipe ()
+fontSize value = setStyleWith (VS.setFontSize value)
+
+radius :: LayoutExpr -> NodeRecipe ()
+radius value = setStyleWith (VS.setRadius value)
+
+strokeWidth :: LayoutExpr -> NodeRecipe ()
+strokeWidth value = setStyleWith (VS.setStrokeWidth value)
+
+alpha :: UnitExpr -> NodeRecipe ()
+alpha value = setStyleWith (VS.setAlpha value)
+
+fill :: HslExpr -> NodeRecipe ()
+fill value = setStyleWith (VS.setFill value)
+
+stroke :: HslExpr -> NodeRecipe ()
+stroke value = setStyleWith (VS.setStroke value)
+
+fontFamily :: P.String -> NodeRecipe ()
+fontFamily value = setStyleWith (VS.setFontFamily value)
+
+fontWeight :: FontWeight -> NodeRecipe ()
+fontWeight value = setStyleWith (VS.setFontWeight value)
+
+fontStyle :: FontStyle -> NodeRecipe ()
+fontStyle value = setStyleWith (VS.setFontStyle value)
+
+textAlign :: TextAlign -> NodeRecipe ()
+textAlign value = setStyleWith (VS.setTextAlign value)
+
+borderStyle :: BorderStyle -> NodeRecipe ()
+borderStyle value = setStyleWith (VS.setBorderStyle value)
+
+whiteSpace :: WhiteSpace -> NodeRecipe ()
+whiteSpace value = setStyleWith (VS.setWhiteSpace value)
+
+cssClass :: P.String -> NodeRecipe ()
+cssClass value = setStyleWith (VS.setCssClass value)
+
+bold :: NodeRecipe ()
+bold = fontWeight FontWeightBold
+
+centerText :: NodeRecipe ()
+centerText = textAlign TextAlignCenter
+
+noWrap :: NodeRecipe ()
+noWrap = whiteSpace WhiteSpaceNoWrap
+
+setNodeSpecWith :: (NodeSpec -> NodeSpec) -> NodeRecipe ()
+setNodeSpecWith update = NodeRecipe () (update emptyNodeSpec)
+
+left :: LayoutExpr -> NodeRecipe ()
+left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
+
+top :: LayoutExpr -> NodeRecipe ()
+top value = setNodeSpecWith (\spec -> spec {nodeSpecTop = Just value})
+
+width :: LayoutExpr -> NodeRecipe ()
+width value = setNodeSpecWith (\spec -> spec {nodeSpecWidth = Just value})
+
+height :: LayoutExpr -> NodeRecipe ()
+height value = setNodeSpecWith (\spec -> spec {nodeSpecHeight = Just value})
+
+right :: LayoutExpr -> NodeRecipe ()
+right value = setNodeSpecWith (\spec -> spec {nodeSpecRight = Just value})
+
+bottom :: LayoutExpr -> NodeRecipe ()
+bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
+
+centerX :: LayoutExpr -> NodeRecipe ()
+centerX value = setNodeSpecWith (\spec -> spec {nodeSpecCenterX = Just value})
+
+centerY :: LayoutExpr -> NodeRecipe ()
+centerY value = setNodeSpecWith (\spec -> spec {nodeSpecCenterY = Just value})
+
+position :: Vec2 LayoutExpr -> NodeRecipe ()
+position value =
+  case value of
+    Vec2 leftExpr topExpr -> do
+      left leftExpr
+      top topExpr
+
+size :: Vec2 LayoutExpr -> NodeRecipe ()
+size value =
+  case value of
+    Vec2 widthExpr heightExpr -> do
+      width widthExpr
+      height heightExpr
+
+center :: Vec2 LayoutExpr -> NodeRecipe ()
+center value =
+  case value of
+    Vec2 centerXExpr centerYExpr -> do
+      centerX centerXExpr
+      centerY centerYExpr
+
+bounds :: BoundsExpr -> NodeRecipe ()
+bounds value =
+  case value of
+    Bounds topExpr leftExpr widthExpr heightExpr -> do
+      top topExpr
+      left leftExpr
+      width widthExpr
+      height heightExpr
+
+placed :: LayoutExpr -> LayoutExpr -> LayoutExpr -> LayoutExpr -> NodeRecipe ()
+placed leftExpr topExpr widthExpr heightExpr = do
+  left leftExpr
+  top topExpr
+  width widthExpr
+  height heightExpr
+
+sized :: LayoutExpr -> LayoutExpr -> NodeRecipe ()
+sized widthExpr heightExpr = do
+  width widthExpr
+  height heightExpr
+
+require :: ViewLayout () -> NodeRecipe ()
+require action =
+  setNodeSpecWith
+    (\spec ->
+       spec {nodeSpecRequirements = nodeSpecRequirements spec P.++ [action]})
+
+node :: NodeRecipe () -> NodeDefinition tag
+node recipe =
+  case recipe of
+    NodeRecipe () spec ->
+      boxDefinition
+        (V.finalizeStyleWith (nodeSpecStyleUpdate spec))
+        (layoutNode spec)
+
+layoutNode :: NodeSpec -> LiveVisual tag %1 -> ViewLayout (NodeVisual tag)
+layoutNode spec visual0 = do
+  LayoutUse visual1 leftVar <- takeLeft visual0
+  LayoutUse visual2 topVar <- takeTop visual1
+  LayoutUse visual3 widthVar <- takeWidth visual2
+  LayoutUse visual4 heightVar <- takeHeight visual3
+  case leftVar of
+    OneExpr (Ur leftExpr) ->
+      case topVar of
+        OneExpr (Ur topExpr) ->
+          case widthVar of
+            OneExpr (Ur widthExpr) ->
+              case heightVar of
+                OneExpr (Ur heightExpr) -> do
+                  runRequirements (nodeSpecRequirements spec)
+                  constrainGeometry spec leftExpr topExpr widthExpr heightExpr
+                  return visual4
+
+runRequirements :: [ViewLayout ()] -> ViewLayout ()
+runRequirements actions =
+  case actions of
+    [] -> return ()
+    action:rest -> do
+      action
+      runRequirements rest
+
+constrainGeometry ::
+     NodeSpec
+  -> LayoutExpr
+  -> LayoutExpr
+  -> LayoutExpr
+  -> LayoutExpr
+  -> ViewLayout ()
+constrainGeometry spec leftExpr topExpr widthExpr heightExpr = do
+  constrainMaybe leftExpr (nodeSpecLeft spec)
+  constrainMaybe topExpr (nodeSpecTop spec)
+  constrainMaybe widthExpr (nodeSpecWidth spec)
+  constrainMaybe heightExpr (nodeSpecHeight spec)
+  constrainMaybe (leftExpr S.@+@ widthExpr) (nodeSpecRight spec)
+  constrainMaybe (topExpr S.@+@ heightExpr) (nodeSpecBottom spec)
+  constrainMaybe
+    (leftExpr S.@+@ (widthExpr S.@/@ (S.num 2 :: LayoutExpr)))
+    (nodeSpecCenterX spec)
+  constrainMaybe
+    (topExpr S.@+@ (heightExpr S.@/@ (S.num 2 :: LayoutExpr)))
+    (nodeSpecCenterY spec)
+
+constrainMaybe :: LayoutExpr -> Maybe LayoutExpr -> ViewLayout ()
+constrainMaybe expr maybeTarget =
+  case maybeTarget of
+    Nothing     -> return ()
+    Just target -> constrainRaw (expr S.@==@ target)
+
+constrainRaw :: S.Constraint -> ViewLayout ()
+constrainRaw constraint = V.ensure (OneConstraint (Ur constraint))
+
+placeBox ::
+     LayoutExpr
+  -> LayoutExpr
+  -> LayoutExpr
+  -> LayoutExpr
+  -> LiveVisual tag
+     %1 -> ViewLayout (BoxVisual tag)
+placeBox leftExpr topExpr widthExpr heightExpr visual0 = do
+  LayoutUse visual1 leftVar <- takeLeft visual0
+  LayoutUse visual2 topVar <- takeTop visual1
+  LayoutUse visual3 widthVar <- takeWidth visual2
+  LayoutUse visual4 heightVar <- takeHeight visual3
+  constrain (leftVar @==@ leftExpr)
+  constrain (topVar @==@ topExpr)
+  constrain (widthVar @==@ widthExpr)
+  constrain (heightVar @==@ heightExpr)
+  return visual4

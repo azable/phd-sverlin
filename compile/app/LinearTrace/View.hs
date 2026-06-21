@@ -46,12 +46,13 @@ module LinearTrace.View
   , sizeDefinition
   , ViewDefinition(..)
   , LayoutUse(..)
-  , OneExpr
-  , OneConstraint
+  , OneExpr(..)
+  , OneConstraint(..)
   , (|>)
   , StyleDraft
   , EmptyStyleDraft
   , finalizeStyle
+  , finalizeStyleWith
   , setOpacityOnce
   , setZIndexOnce
   , setFontSizeOnce
@@ -562,6 +563,11 @@ finalizeStyle ::
 finalizeStyle draft =
   case draft of
     StyleDraft (Ur style') -> style'
+
+finalizeStyleWith :: (Style -> Style) -> EmptyStyleDraft %1 -> Style
+finalizeStyleWith update draft =
+  case draft of
+    StyleDraft (Ur style') -> update style'
 
 setOpacityOnce ::
      UnitExpr

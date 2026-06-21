@@ -140,10 +140,7 @@ linearSearch :: SearchInput %1 -> Program ()
 linearSearch (SearchInput targetPayload valuePayloads) =
   manifest $ do
     target <-
-      phase
-        "Create target"
-        (createValue targetPayload)
-        (renderCreatedValue TargetValue)
+      phase "Create target" (createValue targetPayload) renderCreatedTarget
     elements <- createElements valuePayloads
     loop (SearchState target elements) searchIteration
 
@@ -159,7 +156,7 @@ createElementsFrom index inputs =
         phase
           "Create element"
           (createValue payload)
-          (renderCreatedElement (ListValue index))
+          (renderCreatedElement index)
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement element elements)
 
@@ -284,16 +281,14 @@ compareValues targetProbe elementProbe = do
 decideMatch :: BlockHandle Match %1 -> Fragment (Decided Match)
 decideMatch = decideAs (\(LBool answer) -> answer)
 
-renderCreatedValue ::
-     ValuePlacement -> Obligation (Create Value) %1 -> RenderRecipe ()
-renderCreatedValue placement obligation = do
-  renderedValue <- renderFresh (valueViewDefinition placement) obligation
+renderCreatedTarget :: Obligation (Create Value) %1 -> RenderRecipe ()
+renderCreatedTarget obligation = do
+  renderedValue <- renderFresh targetValueDefinition obligation
   renderComplete renderedValue
 
-renderCreatedElement ::
-     ValuePlacement -> Obligation (Create Value) %1 -> RenderRecipe ()
-renderCreatedElement placement obligation = do
-  renderedElement <- renderFresh (valueViewDefinition placement) obligation
+renderCreatedElement :: Int -> Obligation (Create Value) %1 -> RenderRecipe ()
+renderCreatedElement index obligation = do
+  renderedElement <- renderFresh (listValueDefinition index) obligation
   renderCheckpoint
   renderComplete renderedElement
 
@@ -332,12 +327,6 @@ renderDestroyPair obligations =
     DestroyPairObligations targetVisual elementVisual -> do
       renderRemove targetVisual
       renderRemove elementVisual
-
--- View model
---------------------------------------------------------------------------------
-data ValuePlacement
-  = TargetValue
-  | ListValue Int
 
 layoutCell :: LayoutExpr
 layoutCell = global "linear-search.stage.cell"
@@ -398,18 +387,6 @@ probeSize = layoutCell @*@ (num 1.08 :: LayoutExpr)
 
 probeHeight :: LayoutExpr
 probeHeight = probeSize
-
-valueWidth :: ValuePlacement -> LayoutExpr
-valueWidth placement =
-  case placement of
-    TargetValue -> targetWidth
-    ListValue _ -> layoutCell
-
-valueHeight :: ValuePlacement -> LayoutExpr
-valueHeight placement =
-  case placement of
-    TargetValue -> targetHeight
-    ListValue _ -> layoutCell
 
 targetFontSize :: LayoutExpr
 targetFontSize = layoutCell @*@ (num 0.62 :: LayoutExpr)
@@ -526,159 +503,98 @@ constrainMatchFlow = do
   constrain (targetProbeLeft @<=@ layoutMatchLeft)
   constrain (layoutMatchLeft @+@ matchWidth @<=@ elementProbeLeft @+@ probeSize)
 
-valueTop :: ValuePlacement -> LayoutExpr
-valueTop placement =
-  case placement of
-    TargetValue -> layoutTargetTop
-    ListValue _ -> layoutRowTop
+listValueLeft :: Int -> LayoutExpr
+listValueLeft index =
+  layoutRowLeft @+@ ((num (fromIntegral index) :: LayoutExpr) @*@ layoutStep)
 
-valueLeft :: ValuePlacement -> LayoutExpr
-valueLeft placement =
-  case placement of
-    TargetValue -> layoutTargetLeft
-    ListValue index ->
-      layoutRowLeft
-        @+@ ((num (fromIntegral index) :: LayoutExpr) @*@ layoutStep)
+valueText :: NodeRecipe ()
+valueText = do
+  fontFamily "Inter, ui-sans-serif, system-ui, sans-serif"
+  bold
+  centerText
+  noWrap
 
-valueNodeStyle :: ValuePlacement -> EmptyStyleDraft %1 -> Style
-valueNodeStyle placement draft =
-  case placement of
-    TargetValue -> targetNodeStyle draft
-    ListValue _ -> listNodeStyle draft
+targetChrome :: NodeRecipe ()
+targetChrome = do
+  fill (Hsl targetHue (num 0.64) (num 0.84))
+  stroke (Hsl targetHue (num 0.76) (num 0.36))
+  strokeWidth emphasisStrokeWidth
+  radius targetRadius
+  fontSize targetFontSize
+  cssClass "trace-target-card"
 
-targetNodeStyle :: EmptyStyleDraft %1 -> Style
-targetNodeStyle draft =
-  draft
-    |> setFillOnce (Hsl targetHue (num 0.64) (num 0.84))
-    |> setStrokeOnce (Hsl targetHue (num 0.76) (num 0.36))
-    |> setStrokeWidthOnce emphasisStrokeWidth
-    |> setRadiusOnce targetRadius
-    |> setFontSizeOnce targetFontSize
-    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
-    |> setFontWeightOnce FontWeightBold
-    |> setTextAlignOnce TextAlignCenter
-    |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-target-card"
-    |> finalizeStyle
+listChrome :: NodeRecipe ()
+listChrome = do
+  fill (Hsl listHue (num 0.34) (num 0.92))
+  stroke (Hsl listHue (num 0.58) (num 0.42))
+  strokeWidth layoutStrokeWidth
+  radius listRadius
+  fontSize listFontSize
+  cssClass "trace-list-chip"
 
-listNodeStyle :: EmptyStyleDraft %1 -> Style
-listNodeStyle draft =
-  draft
-    |> setFillOnce (Hsl listHue (num 0.34) (num 0.92))
-    |> setStrokeOnce (Hsl listHue (num 0.58) (num 0.42))
-    |> setStrokeWidthOnce layoutStrokeWidth
-    |> setRadiusOnce listRadius
-    |> setFontSizeOnce listFontSize
-    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
-    |> setFontWeightOnce FontWeightBold
-    |> setTextAlignOnce TextAlignCenter
-    |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-list-chip"
-    |> finalizeStyle
+probeChrome :: NodeRecipe ()
+probeChrome = do
+  fill (Hsl probeHue (num 0.5) (num 0.88))
+  stroke (Hsl probeHue (num 0.78) (num 0.34))
+  strokeWidth layoutStrokeWidth
+  zIndex (num 3)
+  radius probeRadius
+  fontSize probeFontSize
+  cssClass "trace-probe-chip"
 
-probeNodeStyle :: EmptyStyleDraft %1 -> Style
-probeNodeStyle draft =
-  draft
-    |> setFillOnce (Hsl probeHue (num 0.5) (num 0.88))
-    |> setStrokeOnce (Hsl probeHue (num 0.78) (num 0.34))
-    |> setStrokeWidthOnce layoutStrokeWidth
-    |> setZIndexOnce (num 3)
-    |> setRadiusOnce probeRadius
-    |> setFontSizeOnce probeFontSize
-    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
-    |> setFontWeightOnce FontWeightBold
-    |> setTextAlignOnce TextAlignCenter
-    |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-probe-chip"
-    |> finalizeStyle
+matchChrome :: NodeRecipe ()
+matchChrome = do
+  fill (Hsl decisionHue (num 0.6) (num 0.86))
+  stroke (Hsl decisionHue (num 0.82) (num 0.32))
+  strokeWidth emphasisStrokeWidth
+  zIndex (num 4)
+  radius decisionRadius
+  fontSize matchFontSize
+  cssClass "trace-decision-pill"
 
-matchNodeStyle :: EmptyStyleDraft %1 -> Style
-matchNodeStyle draft =
-  draft
-    |> setFillOnce (Hsl decisionHue (num 0.6) (num 0.86))
-    |> setStrokeOnce (Hsl decisionHue (num 0.82) (num 0.32))
-    |> setStrokeWidthOnce emphasisStrokeWidth
-    |> setZIndexOnce (num 4)
-    |> setRadiusOnce decisionRadius
-    |> setFontSizeOnce matchFontSize
-    |> setFontFamilyOnce "Inter, ui-sans-serif, system-ui, sans-serif"
-    |> setFontWeightOnce FontWeightBold
-    |> setTextAlignOnce TextAlignCenter
-    |> setWhiteSpaceOnce WhiteSpaceNoWrap
-    |> setCssClassOnce "trace-decision-pill"
-    |> finalizeStyle
+targetValueDefinition :: NodeDefinition Value
+targetValueDefinition =
+  node $ do
+    valueText
+    targetChrome
+    placed layoutTargetLeft layoutTargetTop targetWidth targetHeight
+    require constrainTargetFlow
 
-defineValueNode ::
-     ValuePlacement -> LiveVisual Value %1 -> ViewLayout (BoxVisual Value)
-defineValueNode placement visual0 = do
-  LayoutUse visual1 valueLeftX <- takeLeft visual0
-  LayoutUse visual2 valueTopY <- takeTop visual1
-  LayoutUse visual3 valueWidthX <- takeWidth visual2
-  LayoutUse visual4 valueHeightY <- takeHeight visual3
-  constrainValueFlow placement
-  constrain (valueLeftX @==@ valueLeft placement)
-  constrain (valueTopY @==@ valueTop placement)
-  constrain (valueWidthX @==@ valueWidth placement)
-  constrain (valueHeightY @==@ valueHeight placement)
-  return visual4
+listValueDefinition :: Int -> NodeDefinition Value
+listValueDefinition index =
+  node $ do
+    valueText
+    listChrome
+    position (Vec2 (listValueLeft index) layoutRowTop)
+    size (Vec2 layoutCell layoutCell)
+    requireListFlow index
 
-constrainValueFlow :: ValuePlacement -> ViewLayout ()
-constrainValueFlow placement =
-  case placement of
-    TargetValue -> constrainTargetFlow
-    ListValue index ->
-      case index of
-        0 -> constrainTargetFlow
-        _ -> return ()
+requireListFlow :: Int -> NodeRecipe ()
+requireListFlow index =
+  case index of
+    0 -> require constrainTargetFlow
+    _ -> return ()
 
-defineTargetProbeNode :: LiveVisual Value %1 -> ViewLayout (BoxVisual Value)
-defineTargetProbeNode visual0 = do
-  LayoutUse visual1 probeLeftX <- takeLeft visual0
-  LayoutUse visual2 probeTopY <- takeTop visual1
-  LayoutUse visual3 probeWidthX <- takeWidth visual2
-  LayoutUse visual4 probeHeightY <- takeHeight visual3
-  constrainProbeFlow
-  constrain (probeLeftX @==@ targetProbeLeft)
-  constrain (probeTopY @==@ layoutProbeTop)
-  constrain (probeWidthX @==@ probeSize)
-  constrain (probeHeightY @==@ probeHeight)
-  return visual4
+targetProbeViewDefinition :: NodeDefinition Value
+targetProbeViewDefinition =
+  node $ do
+    valueText
+    probeChrome
+    placed targetProbeLeft layoutProbeTop probeSize probeHeight
+    require constrainProbeFlow
 
-defineElementProbeNode :: LiveVisual Value %1 -> ViewLayout (BoxVisual Value)
-defineElementProbeNode visual0 = do
-  LayoutUse visual1 probeLeftX <- takeLeft visual0
-  LayoutUse visual2 probeTopY <- takeTop visual1
-  LayoutUse visual3 probeWidthX <- takeWidth visual2
-  LayoutUse visual4 probeHeightY <- takeHeight visual3
-  constrainProbeFlow
-  constrain (probeLeftX @==@ elementProbeLeft)
-  constrain (probeTopY @==@ layoutProbeTop)
-  constrain (probeWidthX @==@ probeSize)
-  constrain (probeHeightY @==@ probeHeight)
-  return visual4
+elementProbeViewDefinition :: NodeDefinition Value
+elementProbeViewDefinition =
+  node $ do
+    valueText
+    probeChrome
+    placed elementProbeLeft layoutProbeTop probeSize probeHeight
+    require constrainProbeFlow
 
-defineMatchNode :: LiveVisual Match %1 -> ViewLayout (BoxVisual Match)
-defineMatchNode visual0 = do
-  LayoutUse visual1 matchLeftX <- takeLeft visual0
-  LayoutUse visual2 matchTopY <- takeTop visual1
-  LayoutUse visual3 matchWidthX <- takeWidth visual2
-  LayoutUse visual4 matchHeightY <- takeHeight visual3
-  constrainMatchFlow
-  constrain (matchLeftX @==@ layoutMatchLeft)
-  constrain (matchTopY @==@ layoutMatchTop)
-  constrain (matchWidthX @==@ matchWidth)
-  constrain (matchHeightY @==@ matchHeight)
-  return visual4
-
-valueViewDefinition :: ValuePlacement -> BoxDefinition Value
-valueViewDefinition placement =
-  boxDefinition (valueNodeStyle placement) (defineValueNode placement)
-
-targetProbeViewDefinition :: BoxDefinition Value
-targetProbeViewDefinition = boxDefinition probeNodeStyle defineTargetProbeNode
-
-elementProbeViewDefinition :: BoxDefinition Value
-elementProbeViewDefinition = boxDefinition probeNodeStyle defineElementProbeNode
-
-matchViewDefinition :: BoxDefinition Match
-matchViewDefinition = boxDefinition matchNodeStyle defineMatchNode
+matchViewDefinition :: NodeDefinition Match
+matchViewDefinition =
+  node $ do
+    valueText
+    matchChrome
+    placed layoutMatchLeft layoutMatchTop matchWidth matchHeight
+    require constrainMatchFlow
