@@ -15,31 +15,8 @@ module DSL.Main
   , run
   ) where
 
-import           Control.Functor.Linear hiding (ask, (<$>), (<*>))
-import           LinearTrace.Core       (Block, LBool (..), LInt (..), Payload,
-                                         PayloadView (..), Traceable (..),
-                                         (<$>), (<*>))
-import           LinearTrace.View       (BoxDefinition, BoxVisual,
-                                         Computed (..), Copied (..),
-                                         Created (..), Decided (..),
-                                         Destroyed (..), EmptyStyleDraft,
-                                         FontWeight (..), Hsl (..), HueExpr,
-                                         LayoutExpr, LayoutUse (..), LiveVisual,
-                                         Style, TextAlign (..), Used (..),
-                                         ViewBuilder, VisualTraceBuilder,
-                                         VisualTraceGraph, WhiteSpace (..),
-                                         boxDefinition, buildGraph, checkpoint,
-                                         complete, compute, copy, create,
-                                         decide, destroy, ensure, finalizeStyle,
-                                         forkCopy, fresh, global, num, remove,
-                                         setCssClassOnce, setFillOnce,
-                                         setFontFamilyOnce, setFontSizeOnce,
-                                         setFontWeightOnce, setRadiusOnce,
-                                         setStrokeOnce, setStrokeWidthOnce,
-                                         setTextAlignOnce, setWhiteSpaceOnce,
-                                         setZIndexOnce, takeHeight, takeLeft,
-                                         takeTop, takeWidth, use, (==>), (@*@),
-                                         (@+@), (@<=@), (@==@), (|>))
+import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
+import           LinearTrace.Choreography
 import           Prelude.Linear
 
 --------------------------------------------------------------------------------
@@ -101,7 +78,7 @@ exampleSpec =
              2
              (MoreExampleValue 7 (MoreExampleValue 1 NoExampleValues)))))
 
-example :: VisualTraceBuilder ()
+example :: Program ()
 example = linearSearch (searchInput exampleSpec)
 
 searchInput :: ExampleSpec -> SearchInput
@@ -120,119 +97,241 @@ inputValues values =
 --------------------------------------------------------------------------------
 data Elements where
   NoElements :: Elements
-  MoreElement :: Block Value %1 -> Elements %1 -> Elements
+  MoreElement :: BlockHandle Value %1 -> Elements %1 -> Elements
 
 data Comparison where
-  IsMatch :: Block Value %1 -> Block Value %1 -> Comparison
-  IsNotMatch :: Block Value %1 -> Block Value %1 -> Comparison
+  IsMatch :: BlockHandle Value %1 -> BlockHandle Value %1 -> Comparison
+  IsNotMatch :: BlockHandle Value %1 -> BlockHandle Value %1 -> Comparison
 
-run :: VisualTraceBuilder () -> VisualTraceGraph
-run = buildGraph
+data SearchState where
+  SearchState :: BlockHandle Value %1 -> Elements %1 -> SearchState
 
-linearSearch :: SearchInput %1 -> VisualTraceBuilder ()
-linearSearch input =
-  case input of
-    SearchInput targetPayload valuePayloads -> do
-      Created target targetVisual <- create targetPayload
-      "Create target" ==> do
-        renderedTarget <- fresh (valueViewDefinition TargetValue) targetVisual
-        complete renderedTarget
-      elements <- createElements valuePayloads
-      searchElements target elements
+data PrepareComparisonOutput where
+  PrepareComparisonOutput
+    :: BlockHandle Value
+       %1 -> BlockHandle Value
+       %1 -> BlockHandle Value
+       %1 -> BlockHandle Value
+       %1 -> PrepareComparisonOutput
 
-createElements :: InputValues %1 -> VisualTraceBuilder Elements
+data PrepareComparisonObligations where
+  PrepareComparisonObligations
+    :: Obligation (Copy Value)
+       %1 -> Obligation (Copy Value)
+       %1 -> PrepareComparisonObligations
+
+data CompareValuesObligations where
+  CompareValuesObligations
+    :: Obligation (Use Value)
+       %1 -> Obligation (Use Value)
+       %1 -> Obligation (Compute Match)
+       %1 -> CompareValuesObligations
+
+data DestroyPairObligations where
+  DestroyPairObligations
+    :: Obligation (Destroy Value)
+       %1 -> Obligation (Destroy Value)
+       %1 -> DestroyPairObligations
+
+run :: Program () -> VisualTraceGraph
+run = runProgram
+
+linearSearch :: SearchInput %1 -> Program ()
+linearSearch (SearchInput targetPayload valuePayloads) =
+  manifest $ do
+    target <-
+      phase
+        "Create target"
+        (createValue targetPayload)
+        (renderCreatedValue TargetValue)
+    elements <- createElements valuePayloads
+    loop (SearchState target elements) searchIteration
+
+createElements :: InputValues %1 -> Program Elements
 createElements = createElementsFrom 0
 
-createElementsFrom :: Int -> InputValues %1 -> VisualTraceBuilder Elements
+createElementsFrom :: Int -> InputValues %1 -> Program Elements
 createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
-      Created element elementVisual <- create payload
-      "Create element" ==> do
-        renderedElement <-
-          fresh (valueViewDefinition (ListValue index)) elementVisual
-        complete renderedElement
+      element <-
+        phase
+          "Create element"
+          (createValue payload)
+          (renderCreatedElement (ListValue index))
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement element elements)
 
-searchElements :: Block Value %1 -> Elements %1 -> VisualTraceBuilder ()
-searchElements target elements =
-  case elements of
-    NoElements -> do
-      Destroyed targetVisual <- destroy target
-      "Search exhausted" ==> do
-        remove targetVisual
-    MoreElement element rest -> do
-      comparison <- compareElement target element
-      case comparison of
-        IsMatch targetAfter elementAfter -> do
-          finishFound targetAfter elementAfter
-          discardRemaining rest
-        IsNotMatch targetAfter elementAfter -> do
-          discardChecked elementAfter
-          searchElements targetAfter rest
+searchIteration :: SearchState %1 -> Program (LoopResult SearchState ())
+searchIteration searchState =
+  case searchState of
+    SearchState target elements ->
+      case elements of
+        NoElements -> do
+          phase "Search exhausted" (destroyValue target) renderRemove
+          return (Finish ())
+        MoreElement element rest -> do
+          comparison <- compareElement target element
+          case comparison of
+            IsMatch targetAfter elementAfter -> do
+              finishFound targetAfter elementAfter
+              discardRemaining rest
+              return (Finish ())
+            IsNotMatch targetAfter elementAfter -> do
+              discardChecked elementAfter
+              return (Continue (SearchState targetAfter rest))
 
 compareElement ::
-     Block Value %1 -> Block Value %1 -> VisualTraceBuilder Comparison
+     BlockHandle Value %1 -> BlockHandle Value %1 -> Program Comparison
 compareElement target element = do
-  Copied targetAfter targetProbe targetCopy <- copy target
-  Copied elementAfter elementProbe elementCopy <- copy element
-  "Prepare comparison" ==> do
-    (target1, renderedTargetProbe) <-
-      forkCopy targetProbeViewDefinition targetCopy
-    (element1, renderedElementProbe) <-
-      forkCopy elementProbeViewDefinition elementCopy
-    complete target1
-    complete element1
-    complete renderedTargetProbe
-    complete renderedElementProbe
-    checkpoint
-  Used targetPayload targetVisual <- use targetProbe
-  Used elementPayload elementVisual <- use elementProbe
-  Computed match matchVisual <-
-    compute (sameValue <$> targetPayload <*> elementPayload)
-  "Compare target and element" ==> do
-    renderedMatch <- fresh matchViewDefinition matchVisual
-    checkpoint
-    remove targetVisual
-    remove elementVisual
-    complete renderedMatch
-  decision <- decide (\(LBool answer) -> answer) match
-  case decision of
-    DecidedTrue foundVisual -> do
-      "Found target" ==> do
-        remove foundVisual
-      return (IsMatch targetAfter elementAfter)
-    DecidedFalse notThisVisual -> do
-      "Not this element" ==> do
-        remove notThisVisual
-        checkpoint
-      return (IsNotMatch targetAfter elementAfter)
+  PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe <-
+    phase
+      "Prepare comparison"
+      (prepareComparison target element)
+      renderPrepareComparison
+  match <-
+    phase
+      "Compare target and element"
+      (compareValues targetProbe elementProbe)
+      renderCompareValues
+  branchOn
+    (decideMatch match)
+    (BranchCase "Found target" renderRemove)
+    (BranchCase "Not this element" renderRejectedDecision)
+    (comparisonBranch targetAfter elementAfter)
 
-discardChecked :: Block Value %1 -> VisualTraceBuilder ()
+comparisonBranch ::
+     BlockHandle Value
+     %1 -> BlockHandle Value
+     %1 -> BranchDecision
+     %1 -> Program Comparison
+comparisonBranch targetAfter elementAfter branch =
+  case branch of
+    BranchTrue  -> return (IsMatch targetAfter elementAfter)
+    BranchFalse -> return (IsNotMatch targetAfter elementAfter)
+
+discardChecked :: BlockHandle Value %1 -> Program ()
 discardChecked element = do
-  Destroyed elementVisual <- destroy element
-  "Discard checked element" ==> do
-    remove elementVisual
+  phase "Discard checked element" (destroyValue element) renderRemove
 
-finishFound :: Block Value %1 -> Block Value %1 -> VisualTraceBuilder ()
+finishFound :: BlockHandle Value %1 -> BlockHandle Value %1 -> Program ()
 finishFound target element = do
-  Destroyed targetVisual <- destroy target
-  Destroyed elementVisual <- destroy element
-  "Finish found target" ==> do
-    remove targetVisual
-    remove elementVisual
+  phase "Finish found target" (destroyPair target element) renderDestroyPair
 
-discardRemaining :: Elements %1 -> VisualTraceBuilder ()
+discardRemaining :: Elements %1 -> Program ()
 discardRemaining elements =
   case elements of
     NoElements -> return ()
     MoreElement element rest -> do
-      Destroyed elementVisual <- destroy element
-      "Discard remaining element" ==> do
-        remove elementVisual
+      phase "Discard remaining element" (destroyValue element) renderRemove
       discardRemaining rest
+
+createValue ::
+     Payload Value
+     %1 -> Fragment (StepResult (BlockHandle Value) (Obligation (Create Value)))
+createValue payload = do
+  Created block obligation <- createAs payload
+  return (StepResult block obligation)
+
+destroyValue ::
+     BlockHandle Value
+     %1 -> Fragment (StepResult () (Obligation (Destroy Value)))
+destroyValue block = do
+  Destroyed obligation <- destroyAs block
+  return (StepResult () obligation)
+
+destroyPair ::
+     BlockHandle Value
+     %1 -> BlockHandle Value
+     %1 -> Fragment (StepResult () DestroyPairObligations)
+destroyPair target element = do
+  Destroyed targetVisual <- destroyAs target
+  Destroyed elementVisual <- destroyAs element
+  return (StepResult () (DestroyPairObligations targetVisual elementVisual))
+
+prepareComparison ::
+     BlockHandle Value
+     %1 -> BlockHandle Value
+     %1 -> Fragment
+       (StepResult PrepareComparisonOutput PrepareComparisonObligations)
+prepareComparison target element = do
+  Copied targetAfter targetProbe targetCopy <- copyAs target
+  Copied elementAfter elementProbe elementCopy <- copyAs element
+  return
+    (StepResult
+       (PrepareComparisonOutput
+          targetAfter
+          elementAfter
+          targetProbe
+          elementProbe)
+       (PrepareComparisonObligations targetCopy elementCopy))
+
+compareValues ::
+     BlockHandle Value
+     %1 -> BlockHandle Value
+     %1 -> Fragment (StepResult (BlockHandle Match) CompareValuesObligations)
+compareValues targetProbe elementProbe = do
+  Used targetPayload targetVisual <- useAs targetProbe
+  Used elementPayload elementVisual <- useAs elementProbe
+  Computed match matchVisual <-
+    computeAs (sameValue <$> targetPayload <*> elementPayload)
+  return
+    (StepResult
+       match
+       (CompareValuesObligations targetVisual elementVisual matchVisual))
+
+decideMatch :: BlockHandle Match %1 -> Fragment (Decided Match)
+decideMatch = decideAs (\(LBool answer) -> answer)
+
+renderCreatedValue ::
+     ValuePlacement -> Obligation (Create Value) %1 -> RenderRecipe ()
+renderCreatedValue placement obligation = do
+  renderedValue <- renderFresh (valueViewDefinition placement) obligation
+  renderComplete renderedValue
+
+renderCreatedElement ::
+     ValuePlacement -> Obligation (Create Value) %1 -> RenderRecipe ()
+renderCreatedElement placement obligation = do
+  renderedElement <- renderFresh (valueViewDefinition placement) obligation
+  renderCheckpoint
+  renderComplete renderedElement
+
+renderPrepareComparison :: PrepareComparisonObligations %1 -> RenderRecipe ()
+renderPrepareComparison obligations =
+  case obligations of
+    PrepareComparisonObligations targetCopy elementCopy -> do
+      (target1, renderedTargetProbe) <-
+        renderForkCopy targetProbeViewDefinition targetCopy
+      (element1, renderedElementProbe) <-
+        renderForkCopy elementProbeViewDefinition elementCopy
+      renderComplete target1
+      renderComplete element1
+      renderComplete renderedTargetProbe
+      renderComplete renderedElementProbe
+      renderCheckpoint
+
+renderCompareValues :: CompareValuesObligations %1 -> RenderRecipe ()
+renderCompareValues obligations =
+  case obligations of
+    CompareValuesObligations targetVisual elementVisual matchVisual -> do
+      renderedMatch <- renderFresh matchViewDefinition matchVisual
+      renderCheckpoint
+      renderRemove targetVisual
+      renderRemove elementVisual
+      renderComplete renderedMatch
+
+renderRejectedDecision :: Obligation (Decide Match) %1 -> RenderRecipe ()
+renderRejectedDecision obligation = do
+  renderRemove obligation
+  renderCheckpoint
+
+renderDestroyPair :: DestroyPairObligations %1 -> RenderRecipe ()
+renderDestroyPair obligations =
+  case obligations of
+    DestroyPairObligations targetVisual elementVisual -> do
+      renderRemove targetVisual
+      renderRemove elementVisual
 
 -- View model
 --------------------------------------------------------------------------------
@@ -369,63 +468,63 @@ listGapCount = num 4
 listSpan :: LayoutExpr
 listSpan = (listValueCount @*@ layoutCell) @+@ (listGapCount @*@ layoutGap)
 
-constrainScale :: ViewBuilder ()
+constrainScale :: ViewLayout ()
 constrainScale = do
-  ensure ((num 72 :: LayoutExpr) @<=@ layoutCell)
-  ensure (layoutCell @<=@ (num 86 :: LayoutExpr))
-  ensure ((num 26 :: LayoutExpr) @<=@ layoutGap)
-  ensure (layoutGap @<=@ (num 44 :: LayoutExpr))
+  constrain ((num 72 :: LayoutExpr) @<=@ layoutCell)
+  constrain (layoutCell @<=@ (num 86 :: LayoutExpr))
+  constrain ((num 26 :: LayoutExpr) @<=@ layoutGap)
+  constrain (layoutGap @<=@ (num 44 :: LayoutExpr))
 
-constrainTargetFlow :: ViewBuilder ()
+constrainTargetFlow :: ViewLayout ()
 constrainTargetFlow = do
   constrainScale
-  ensure (layoutOuterLeft @<=@ layoutTargetLeft)
-  ensure (layoutTargetLeft @<=@ (num 128 :: LayoutExpr))
-  ensure (layoutOuterTop @<=@ layoutTargetTop)
-  ensure (layoutTargetTop @<=@ (num 86 :: LayoutExpr))
-  ensure (layoutTargetLeft @+@ targetWidth @<=@ (num 380 :: LayoutExpr))
-  ensure (layoutTargetTop @+@ targetHeight @<=@ (num 188 :: LayoutExpr))
-  ensure ((num 64 :: LayoutExpr) @<=@ layoutRowLeft)
-  ensure (layoutRowLeft @<=@ (num 112 :: LayoutExpr))
-  ensure ((num 430 :: LayoutExpr) @<=@ layoutRowTop)
-  ensure (layoutRowTop @<=@ (num 500 :: LayoutExpr))
-  ensure (layoutRowLeft @+@ listSpan @<=@ layoutOuterRight)
-  ensure (layoutRowTop @+@ layoutCell @<=@ layoutOuterBottom)
+  constrain (layoutOuterLeft @<=@ layoutTargetLeft)
+  constrain (layoutTargetLeft @<=@ (num 128 :: LayoutExpr))
+  constrain (layoutOuterTop @<=@ layoutTargetTop)
+  constrain (layoutTargetTop @<=@ (num 86 :: LayoutExpr))
+  constrain (layoutTargetLeft @+@ targetWidth @<=@ (num 380 :: LayoutExpr))
+  constrain (layoutTargetTop @+@ targetHeight @<=@ (num 188 :: LayoutExpr))
+  constrain ((num 64 :: LayoutExpr) @<=@ layoutRowLeft)
+  constrain (layoutRowLeft @<=@ (num 112 :: LayoutExpr))
+  constrain ((num 430 :: LayoutExpr) @<=@ layoutRowTop)
+  constrain (layoutRowTop @<=@ (num 500 :: LayoutExpr))
+  constrain (layoutRowLeft @+@ listSpan @<=@ layoutOuterRight)
+  constrain (layoutRowTop @+@ layoutCell @<=@ layoutOuterBottom)
 
-constrainProbeFlow :: ViewBuilder ()
+constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
   constrainTargetFlow
-  ensure ((num 210 :: LayoutExpr) @<=@ targetProbeLeft)
-  ensure (targetProbeLeft @<=@ (num 300 :: LayoutExpr))
-  ensure ((num 520 :: LayoutExpr) @<=@ elementProbeLeft)
-  ensure (elementProbeLeft @<=@ (num 640 :: LayoutExpr))
-  ensure ((num 205 :: LayoutExpr) @<=@ layoutProbeTop)
-  ensure (layoutProbeTop @<=@ (num 270 :: LayoutExpr))
-  ensure (layoutTargetTop @+@ targetHeight @+@ layoutGap @<=@ layoutProbeTop)
-  ensure (layoutProbeTop @+@ probeHeight @+@ layoutGap @<=@ layoutRowTop)
-  ensure
+  constrain ((num 210 :: LayoutExpr) @<=@ targetProbeLeft)
+  constrain (targetProbeLeft @<=@ (num 300 :: LayoutExpr))
+  constrain ((num 520 :: LayoutExpr) @<=@ elementProbeLeft)
+  constrain (elementProbeLeft @<=@ (num 640 :: LayoutExpr))
+  constrain ((num 205 :: LayoutExpr) @<=@ layoutProbeTop)
+  constrain (layoutProbeTop @<=@ (num 270 :: LayoutExpr))
+  constrain (layoutTargetTop @+@ targetHeight @+@ layoutGap @<=@ layoutProbeTop)
+  constrain (layoutProbeTop @+@ probeHeight @+@ layoutGap @<=@ layoutRowTop)
+  constrain
     (targetProbeLeft
        @+@ probeSize
        @+@ (layoutGap @*@ (num 2 :: LayoutExpr))
        @<=@ elementProbeLeft)
 
-constrainMatchFlow :: ViewBuilder ()
+constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
-  ensure ((num 330 :: LayoutExpr) @<=@ layoutMatchLeft)
-  ensure (layoutMatchLeft @<=@ (num 415 :: LayoutExpr))
-  ensure
+  constrain ((num 330 :: LayoutExpr) @<=@ layoutMatchLeft)
+  constrain (layoutMatchLeft @<=@ (num 415 :: LayoutExpr))
+  constrain
     (layoutProbeTop
        @+@ probeHeight
        @+@ (layoutGap @*@ (num 0.7 :: LayoutExpr))
        @<=@ layoutMatchTop)
-  ensure
+  constrain
     (layoutMatchTop
        @+@ matchHeight
        @+@ (layoutGap @*@ (num 0.7 :: LayoutExpr))
        @<=@ layoutRowTop)
-  ensure (targetProbeLeft @<=@ layoutMatchLeft)
-  ensure (layoutMatchLeft @+@ matchWidth @<=@ elementProbeLeft @+@ probeSize)
+  constrain (targetProbeLeft @<=@ layoutMatchLeft)
+  constrain (layoutMatchLeft @+@ matchWidth @<=@ elementProbeLeft @+@ probeSize)
 
 valueTop :: ValuePlacement -> LayoutExpr
 valueTop placement =
@@ -510,20 +609,20 @@ matchNodeStyle draft =
     |> finalizeStyle
 
 defineValueNode ::
-     ValuePlacement -> LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
+     ValuePlacement -> LiveVisual Value %1 -> ViewLayout (BoxVisual Value)
 defineValueNode placement visual0 = do
   LayoutUse visual1 valueLeftX <- takeLeft visual0
   LayoutUse visual2 valueTopY <- takeTop visual1
   LayoutUse visual3 valueWidthX <- takeWidth visual2
   LayoutUse visual4 valueHeightY <- takeHeight visual3
   constrainValueFlow placement
-  ensure (valueLeftX @==@ valueLeft placement)
-  ensure (valueTopY @==@ valueTop placement)
-  ensure (valueWidthX @==@ valueWidth placement)
-  ensure (valueHeightY @==@ valueHeight placement)
+  constrain (valueLeftX @==@ valueLeft placement)
+  constrain (valueTopY @==@ valueTop placement)
+  constrain (valueWidthX @==@ valueWidth placement)
+  constrain (valueHeightY @==@ valueHeight placement)
   return visual4
 
-constrainValueFlow :: ValuePlacement -> ViewBuilder ()
+constrainValueFlow :: ValuePlacement -> ViewLayout ()
 constrainValueFlow placement =
   case placement of
     TargetValue -> constrainTargetFlow
@@ -532,43 +631,43 @@ constrainValueFlow placement =
         0 -> constrainTargetFlow
         _ -> return ()
 
-defineTargetProbeNode :: LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
+defineTargetProbeNode :: LiveVisual Value %1 -> ViewLayout (BoxVisual Value)
 defineTargetProbeNode visual0 = do
   LayoutUse visual1 probeLeftX <- takeLeft visual0
   LayoutUse visual2 probeTopY <- takeTop visual1
   LayoutUse visual3 probeWidthX <- takeWidth visual2
   LayoutUse visual4 probeHeightY <- takeHeight visual3
   constrainProbeFlow
-  ensure (probeLeftX @==@ targetProbeLeft)
-  ensure (probeTopY @==@ layoutProbeTop)
-  ensure (probeWidthX @==@ probeSize)
-  ensure (probeHeightY @==@ probeHeight)
+  constrain (probeLeftX @==@ targetProbeLeft)
+  constrain (probeTopY @==@ layoutProbeTop)
+  constrain (probeWidthX @==@ probeSize)
+  constrain (probeHeightY @==@ probeHeight)
   return visual4
 
-defineElementProbeNode :: LiveVisual Value %1 -> ViewBuilder (BoxVisual Value)
+defineElementProbeNode :: LiveVisual Value %1 -> ViewLayout (BoxVisual Value)
 defineElementProbeNode visual0 = do
   LayoutUse visual1 probeLeftX <- takeLeft visual0
   LayoutUse visual2 probeTopY <- takeTop visual1
   LayoutUse visual3 probeWidthX <- takeWidth visual2
   LayoutUse visual4 probeHeightY <- takeHeight visual3
   constrainProbeFlow
-  ensure (probeLeftX @==@ elementProbeLeft)
-  ensure (probeTopY @==@ layoutProbeTop)
-  ensure (probeWidthX @==@ probeSize)
-  ensure (probeHeightY @==@ probeHeight)
+  constrain (probeLeftX @==@ elementProbeLeft)
+  constrain (probeTopY @==@ layoutProbeTop)
+  constrain (probeWidthX @==@ probeSize)
+  constrain (probeHeightY @==@ probeHeight)
   return visual4
 
-defineMatchNode :: LiveVisual Match %1 -> ViewBuilder (BoxVisual Match)
+defineMatchNode :: LiveVisual Match %1 -> ViewLayout (BoxVisual Match)
 defineMatchNode visual0 = do
   LayoutUse visual1 matchLeftX <- takeLeft visual0
   LayoutUse visual2 matchTopY <- takeTop visual1
   LayoutUse visual3 matchWidthX <- takeWidth visual2
   LayoutUse visual4 matchHeightY <- takeHeight visual3
   constrainMatchFlow
-  ensure (matchLeftX @==@ layoutMatchLeft)
-  ensure (matchTopY @==@ layoutMatchTop)
-  ensure (matchWidthX @==@ matchWidth)
-  ensure (matchHeightY @==@ matchHeight)
+  constrain (matchLeftX @==@ layoutMatchLeft)
+  constrain (matchTopY @==@ layoutMatchTop)
+  constrain (matchWidthX @==@ matchWidth)
+  constrain (matchHeightY @==@ matchHeight)
   return visual4
 
 valueViewDefinition :: ValuePlacement -> BoxDefinition Value
