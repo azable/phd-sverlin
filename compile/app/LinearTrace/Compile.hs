@@ -59,11 +59,10 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId   :: C.BlockId
-  , renderContent   :: String
-  , renderKind      :: String
-  , renderStyle     :: RenderStyle
-  , renderClassName :: Maybe String
+  { renderBlockId :: C.BlockId
+  , renderContent :: String
+  , renderKind    :: String
+  , renderStyle   :: RenderStyle
   } deriving (Eq, Show)
 
 data RenderOrigin = RenderOrigin
@@ -437,7 +436,6 @@ compileMaterializedBlock block =
         , renderContent = payloadViewContent payload
         , renderKind = payloadViewKind payload
         , renderStyle = compileMaterializedStyle style
-        , renderClassName = compileCssClass style
         }
 
 compileMaterializedStyle :: V.MaterializedStyle -> RenderStyle
@@ -463,9 +461,6 @@ compileCssAttrs style =
            StyleText
            (\alpha hsl -> StyleColor (materializedHslToCss alpha hsl))
            style)
-
-compileCssClass :: V.MaterializedStyle -> Maybe String
-compileCssClass = V.materializedClassName
 
 materializedHslToCss :: Double -> V.MaterializedHsl -> String
 materializedHslToCss alpha hsl =
@@ -570,15 +565,11 @@ styleAttrPair (name, value) = Key.fromString name .= value
 instance ToJSON RenderBlock where
   toJSON block =
     object
-      ([ "blockId" .= renderBlockId block
-       , "kind" .= renderKind block
-       , "content" .= renderContent block
-       , "style" .= renderStyle block
-       ]
-         ++ maybe
-              []
-              (\className -> ["className" .= className])
-              (renderClassName block))
+      [ "blockId" .= renderBlockId block
+      , "kind" .= renderKind block
+      , "content" .= renderContent block
+      , "style" .= renderStyle block
+      ]
 
 instance ToJSON RenderOrigin where
   toJSON origin =

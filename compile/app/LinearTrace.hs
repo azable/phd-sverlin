@@ -88,7 +88,6 @@ module LinearTrace
   , setTextAlignOnce
   , setBorderStyleOnce
   , setWhiteSpaceOnce
-  , setCssClassOnce
   , ViewScript
   , VisualTraceBuilder
   , VisualTraceGraph

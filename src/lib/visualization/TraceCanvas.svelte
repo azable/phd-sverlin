@@ -30,9 +30,7 @@
   }
 
   function classNameFor(element: LiveElement): string {
-    return ['node', element.className, element.exiting ? 'exiting' : undefined]
-      .filter(Boolean)
-      .join(' ');
+    return element.exiting ? 'node exiting' : 'node';
   }
 </script>
 

@@ -328,184 +328,132 @@ renderDestroyPair obligations =
       renderRemove targetVisual
       renderRemove elementVisual
 
-layoutCell :: LayoutExpr
-layoutCell = global "linear-search.stage.cell"
+cell :: LayoutExpr
+cell = global "cell"
 
-layoutGap :: LayoutExpr
-layoutGap = global "linear-search.stage.gap"
+gap :: LayoutExpr
+gap = global "gap"
 
-layoutTargetLeft :: LayoutExpr
-layoutTargetLeft = global "linear-search.stage.target-left"
+targetX :: LayoutExpr
+targetX = global "target.x"
 
-layoutTargetTop :: LayoutExpr
-layoutTargetTop = global "linear-search.stage.target-top"
+targetY :: LayoutExpr
+targetY = global "target.y"
 
-layoutRowLeft :: LayoutExpr
-layoutRowLeft = global "linear-search.stage.row-left"
+rowX :: LayoutExpr
+rowX = global "row.x"
 
-layoutRowTop :: LayoutExpr
-layoutRowTop = global "linear-search.stage.row-top"
+rowY :: LayoutExpr
+rowY = global "row.y"
 
-layoutStep :: LayoutExpr
-layoutStep = layoutCell @+@ layoutGap
+stride :: LayoutExpr
+stride = cell @+@ gap
 
-layoutProbeTop :: LayoutExpr
-layoutProbeTop = global "linear-search.stage.probe-top"
+probeY :: LayoutExpr
+probeY = global "probe.y"
 
-targetProbeLeft :: LayoutExpr
-targetProbeLeft = global "linear-search.stage.target-probe-left"
+targetProbeX :: LayoutExpr
+targetProbeX = global "probe.target.x"
 
-elementProbeLeft :: LayoutExpr
-elementProbeLeft = global "linear-search.stage.element-probe-left"
+elementProbeX :: LayoutExpr
+elementProbeX = global "probe.element.x"
 
-layoutMatchLeft :: LayoutExpr
-layoutMatchLeft = global "linear-search.stage.match-left"
+matchX :: LayoutExpr
+matchX = global "match.x"
 
-layoutMatchTop :: LayoutExpr
-layoutMatchTop = global "linear-search.stage.match-top"
-
-layoutOuterLeft :: LayoutExpr
-layoutOuterLeft = num 40
-
-layoutOuterTop :: LayoutExpr
-layoutOuterTop = num 32
-
-layoutOuterRight :: LayoutExpr
-layoutOuterRight = num 760
-
-layoutOuterBottom :: LayoutExpr
-layoutOuterBottom = num 560
-
-targetWidth :: LayoutExpr
-targetWidth = (layoutCell @*@ (num 2.1 :: LayoutExpr)) @+@ layoutGap
-
-targetHeight :: LayoutExpr
-targetHeight = layoutCell @+@ (layoutGap @*@ (num 0.8 :: LayoutExpr))
-
-probeSize :: LayoutExpr
-probeSize = layoutCell @*@ (num 1.08 :: LayoutExpr)
-
-probeHeight :: LayoutExpr
-probeHeight = probeSize
-
-targetFontSize :: LayoutExpr
-targetFontSize = layoutCell @*@ (num 0.62 :: LayoutExpr)
-
-listFontSize :: LayoutExpr
-listFontSize = layoutCell @*@ (num 0.5 :: LayoutExpr)
-
-probeFontSize :: LayoutExpr
-probeFontSize = layoutCell @*@ (num 0.56 :: LayoutExpr)
-
-targetRadius :: LayoutExpr
-targetRadius = layoutCell @*@ (num 0.24 :: LayoutExpr)
-
-listRadius :: LayoutExpr
-listRadius = layoutCell @*@ (num 0.18 :: LayoutExpr)
-
-probeRadius :: LayoutExpr
-probeRadius = layoutCell @*@ (num 0.22 :: LayoutExpr)
-
-decisionRadius :: LayoutExpr
-decisionRadius = layoutCell @*@ (num 0.26 :: LayoutExpr)
-
-layoutStrokeWidth :: LayoutExpr
-layoutStrokeWidth = layoutCell @*@ (num 0.035 :: LayoutExpr)
-
-emphasisStrokeWidth :: LayoutExpr
-emphasisStrokeWidth = layoutCell @*@ (num 0.05 :: LayoutExpr)
+matchY :: LayoutExpr
+matchY = global "match.y"
 
 targetHue :: HueExpr
-targetHue = global "linear-search.palette.target-hue"
+targetHue = global "target.hue"
 
 listHue :: HueExpr
-listHue = global "linear-search.palette.list-hue"
+listHue = global "list.hue"
 
 probeHue :: HueExpr
-probeHue = global "linear-search.palette.probe-hue"
+probeHue = global "probe.hue"
 
-decisionHue :: HueExpr
-decisionHue = global "linear-search.palette.decision-hue"
+matchHue :: HueExpr
+matchHue = global "match.hue"
+
+len :: Double -> LayoutExpr
+len = num
+
+cellBy :: Double -> LayoutExpr
+cellBy scale = cell @*@ len scale
+
+tone :: HueExpr -> Double -> Double -> HslExpr
+tone hueExpr saturation lightness = Hsl hueExpr (num saturation) (num lightness)
+
+targetWidth :: LayoutExpr
+targetWidth = cellBy 2.1 @+@ gap
+
+targetHeight :: LayoutExpr
+targetHeight = cell @+@ gap @*@ len 0.8
+
+probeSize :: LayoutExpr
+probeSize = cellBy 1.08
 
 matchWidth :: LayoutExpr
-matchWidth = (probeSize @*@ (num 2 :: LayoutExpr)) @+@ layoutGap
+matchWidth = probeSize @*@ len 2 @+@ gap
 
 matchHeight :: LayoutExpr
-matchHeight = layoutCell @*@ (num 0.72 :: LayoutExpr)
-
-matchFontSize :: LayoutExpr
-matchFontSize = layoutCell @*@ (num 0.34 :: LayoutExpr)
-
-listValueCount :: LayoutExpr
-listValueCount = num 5
-
-listGapCount :: LayoutExpr
-listGapCount = num 4
+matchHeight = cellBy 0.72
 
 listSpan :: LayoutExpr
-listSpan = (listValueCount @*@ layoutCell) @+@ (listGapCount @*@ layoutGap)
+listSpan = len 5 @*@ cell @+@ len 4 @*@ gap
+
+matchGap :: LayoutExpr
+matchGap = gap @*@ len 0.7
 
 constrainScale :: ViewLayout ()
 constrainScale = do
-  constrain ((num 72 :: LayoutExpr) @<=@ layoutCell)
-  constrain (layoutCell @<=@ (num 86 :: LayoutExpr))
-  constrain ((num 26 :: LayoutExpr) @<=@ layoutGap)
-  constrain (layoutGap @<=@ (num 44 :: LayoutExpr))
+  constrain (len 72 @<=@ cell)
+  constrain (cell @<=@ len 86)
+  constrain (len 26 @<=@ gap)
+  constrain (gap @<=@ len 44)
 
 constrainTargetFlow :: ViewLayout ()
 constrainTargetFlow = do
   constrainScale
-  constrain (layoutOuterLeft @<=@ layoutTargetLeft)
-  constrain (layoutTargetLeft @<=@ (num 128 :: LayoutExpr))
-  constrain (layoutOuterTop @<=@ layoutTargetTop)
-  constrain (layoutTargetTop @<=@ (num 86 :: LayoutExpr))
-  constrain (layoutTargetLeft @+@ targetWidth @<=@ (num 380 :: LayoutExpr))
-  constrain (layoutTargetTop @+@ targetHeight @<=@ (num 188 :: LayoutExpr))
-  constrain ((num 64 :: LayoutExpr) @<=@ layoutRowLeft)
-  constrain (layoutRowLeft @<=@ (num 112 :: LayoutExpr))
-  constrain ((num 430 :: LayoutExpr) @<=@ layoutRowTop)
-  constrain (layoutRowTop @<=@ (num 500 :: LayoutExpr))
-  constrain (layoutRowLeft @+@ listSpan @<=@ layoutOuterRight)
-  constrain (layoutRowTop @+@ layoutCell @<=@ layoutOuterBottom)
+  constrain (len 40 @<=@ targetX)
+  constrain (targetX @<=@ len 128)
+  constrain (len 32 @<=@ targetY)
+  constrain (targetY @<=@ len 86)
+  constrain (targetX @+@ targetWidth @<=@ len 380)
+  constrain (targetY @+@ targetHeight @<=@ len 188)
+  constrain (len 64 @<=@ rowX)
+  constrain (rowX @<=@ len 112)
+  constrain (len 430 @<=@ rowY)
+  constrain (rowY @<=@ len 500)
+  constrain (rowX @+@ listSpan @<=@ len 760)
+  constrain (rowY @+@ cell @<=@ len 560)
 
 constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
   constrainTargetFlow
-  constrain ((num 210 :: LayoutExpr) @<=@ targetProbeLeft)
-  constrain (targetProbeLeft @<=@ (num 300 :: LayoutExpr))
-  constrain ((num 520 :: LayoutExpr) @<=@ elementProbeLeft)
-  constrain (elementProbeLeft @<=@ (num 640 :: LayoutExpr))
-  constrain ((num 205 :: LayoutExpr) @<=@ layoutProbeTop)
-  constrain (layoutProbeTop @<=@ (num 270 :: LayoutExpr))
-  constrain (layoutTargetTop @+@ targetHeight @+@ layoutGap @<=@ layoutProbeTop)
-  constrain (layoutProbeTop @+@ probeHeight @+@ layoutGap @<=@ layoutRowTop)
-  constrain
-    (targetProbeLeft
-       @+@ probeSize
-       @+@ (layoutGap @*@ (num 2 :: LayoutExpr))
-       @<=@ elementProbeLeft)
+  constrain (len 210 @<=@ targetProbeX)
+  constrain (targetProbeX @<=@ len 300)
+  constrain (len 520 @<=@ elementProbeX)
+  constrain (elementProbeX @<=@ len 640)
+  constrain (len 205 @<=@ probeY)
+  constrain (probeY @<=@ len 270)
+  constrain (targetY @+@ targetHeight @+@ gap @<=@ probeY)
+  constrain (probeY @+@ probeSize @+@ gap @<=@ rowY)
+  constrain (targetProbeX @+@ probeSize @+@ gap @*@ len 2 @<=@ elementProbeX)
 
 constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
-  constrain ((num 330 :: LayoutExpr) @<=@ layoutMatchLeft)
-  constrain (layoutMatchLeft @<=@ (num 415 :: LayoutExpr))
-  constrain
-    (layoutProbeTop
-       @+@ probeHeight
-       @+@ (layoutGap @*@ (num 0.7 :: LayoutExpr))
-       @<=@ layoutMatchTop)
-  constrain
-    (layoutMatchTop
-       @+@ matchHeight
-       @+@ (layoutGap @*@ (num 0.7 :: LayoutExpr))
-       @<=@ layoutRowTop)
-  constrain (targetProbeLeft @<=@ layoutMatchLeft)
-  constrain (layoutMatchLeft @+@ matchWidth @<=@ elementProbeLeft @+@ probeSize)
+  constrain (len 330 @<=@ matchX)
+  constrain (matchX @<=@ len 415)
+  constrain (probeY @+@ probeSize @+@ matchGap @<=@ matchY)
+  constrain (matchY @+@ matchHeight @+@ matchGap @<=@ rowY)
+  constrain (targetProbeX @<=@ matchX)
+  constrain (matchX @+@ matchWidth @<=@ elementProbeX @+@ probeSize)
 
 listValueLeft :: Int -> LayoutExpr
-listValueLeft index =
-  layoutRowLeft @+@ ((num (fromIntegral index) :: LayoutExpr) @*@ layoutStep)
+listValueLeft index = rowX @+@ len (fromIntegral index) @*@ stride
 
 valueText :: NodeRecipe ()
 valueText = do
@@ -516,48 +464,44 @@ valueText = do
 
 targetChrome :: NodeRecipe ()
 targetChrome = do
-  fill (Hsl targetHue (num 0.64) (num 0.84))
-  stroke (Hsl targetHue (num 0.76) (num 0.36))
-  strokeWidth emphasisStrokeWidth
-  radius targetRadius
-  fontSize targetFontSize
-  cssClass "trace-target-card"
+  fill (tone targetHue 0.64 0.84)
+  stroke (tone targetHue 0.76 0.36)
+  strokeWidth (cellBy 0.05)
+  radius (cellBy 0.24)
+  fontSize (cellBy 0.62)
 
 listChrome :: NodeRecipe ()
 listChrome = do
-  fill (Hsl listHue (num 0.34) (num 0.92))
-  stroke (Hsl listHue (num 0.58) (num 0.42))
-  strokeWidth layoutStrokeWidth
-  radius listRadius
-  fontSize listFontSize
-  cssClass "trace-list-chip"
+  fill (tone listHue 0.34 0.92)
+  stroke (tone listHue 0.58 0.42)
+  strokeWidth (cellBy 0.035)
+  radius (cellBy 0.18)
+  fontSize (cellBy 0.5)
 
 probeChrome :: NodeRecipe ()
 probeChrome = do
-  fill (Hsl probeHue (num 0.5) (num 0.88))
-  stroke (Hsl probeHue (num 0.78) (num 0.34))
-  strokeWidth layoutStrokeWidth
+  fill (tone probeHue 0.5 0.88)
+  stroke (tone probeHue 0.78 0.34)
+  strokeWidth (cellBy 0.035)
   zIndex (num 3)
-  radius probeRadius
-  fontSize probeFontSize
-  cssClass "trace-probe-chip"
+  radius (cellBy 0.22)
+  fontSize (cellBy 0.56)
 
 matchChrome :: NodeRecipe ()
 matchChrome = do
-  fill (Hsl decisionHue (num 0.6) (num 0.86))
-  stroke (Hsl decisionHue (num 0.82) (num 0.32))
-  strokeWidth emphasisStrokeWidth
+  fill (tone matchHue 0.6 0.86)
+  stroke (tone matchHue 0.82 0.32)
+  strokeWidth (cellBy 0.05)
   zIndex (num 4)
-  radius decisionRadius
-  fontSize matchFontSize
-  cssClass "trace-decision-pill"
+  radius (cellBy 0.26)
+  fontSize (cellBy 0.34)
 
 targetValueDefinition :: NodeDefinition Value
 targetValueDefinition =
   node $ do
     valueText
     targetChrome
-    placed layoutTargetLeft layoutTargetTop targetWidth targetHeight
+    placed targetX targetY targetWidth targetHeight
     require constrainTargetFlow
 
 listValueDefinition :: Int -> NodeDefinition Value
@@ -565,8 +509,8 @@ listValueDefinition index =
   node $ do
     valueText
     listChrome
-    position (Vec2 (listValueLeft index) layoutRowTop)
-    size (Vec2 layoutCell layoutCell)
+    position (Vec2 (listValueLeft index) rowY)
+    size (Vec2 cell cell)
     requireListFlow index
 
 requireListFlow :: Int -> NodeRecipe ()
@@ -580,7 +524,7 @@ targetProbeViewDefinition =
   node $ do
     valueText
     probeChrome
-    placed targetProbeLeft layoutProbeTop probeSize probeHeight
+    placed targetProbeX probeY probeSize probeSize
     require constrainProbeFlow
 
 elementProbeViewDefinition :: NodeDefinition Value
@@ -588,7 +532,7 @@ elementProbeViewDefinition =
   node $ do
     valueText
     probeChrome
-    placed elementProbeLeft layoutProbeTop probeSize probeHeight
+    placed elementProbeX probeY probeSize probeSize
     require constrainProbeFlow
 
 matchViewDefinition :: NodeDefinition Match
@@ -596,5 +540,5 @@ matchViewDefinition =
   node $ do
     valueText
     matchChrome
-    placed layoutMatchLeft layoutMatchTop matchWidth matchHeight
+    placed matchX matchY matchWidth matchHeight
     require constrainMatchFlow

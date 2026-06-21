@@ -120,7 +120,6 @@ module LinearTrace.Choreography
   , centerY
   , centerText
   , constrain
-  , cssClass
   , encourage
   , fill
   , finalizeStyle
@@ -141,7 +140,6 @@ module LinearTrace.Choreography
   , radius
   , require
   , right
-  , setCssClassOnce
   , setFillOnce
   , setFontFamilyOnce
   , setFontSizeOnce
@@ -196,15 +194,14 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          Style, TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
                                          encourage, finalizeStyle, global, num,
-                                         setCssClassOnce, setFillOnce,
-                                         setFontFamilyOnce, setFontSizeOnce,
-                                         setFontWeightOnce, setRadiusOnce,
-                                         setStrokeOnce, setStrokeWidthOnce,
-                                         setTextAlignOnce, setWhiteSpaceOnce,
-                                         setZIndexOnce, takeHeight, takeLeft,
-                                         takeRight, takeTop, takeWidth, (@*@),
-                                         (@+@), (@-@), (@/@), (@<=@), (@==@),
-                                         (|>))
+                                         setFillOnce, setFontFamilyOnce,
+                                         setFontSizeOnce, setFontWeightOnce,
+                                         setRadiusOnce, setStrokeOnce,
+                                         setStrokeWidthOnce, setTextAlignOnce,
+                                         setWhiteSpaceOnce, setZIndexOnce,
+                                         takeHeight, takeLeft, takeRight,
+                                         takeTop, takeWidth, (@*@), (@+@),
+                                         (@-@), (@/@), (@<=@), (@==@), (|>))
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
@@ -893,9 +890,6 @@ borderStyle value = setStyleWith (VS.setBorderStyle value)
 
 whiteSpace :: WhiteSpace -> NodeRecipe ()
 whiteSpace value = setStyleWith (VS.setWhiteSpace value)
-
-cssClass :: P.String -> NodeRecipe ()
-cssClass value = setStyleWith (VS.setCssClass value)
 
 bold :: NodeRecipe ()
 bold = fontWeight FontWeightBold

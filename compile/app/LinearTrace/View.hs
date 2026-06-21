@@ -67,7 +67,6 @@ module LinearTrace.View
   , setTextAlignOnce
   , setBorderStyleOnce
   , setWhiteSpaceOnce
-  , setCssClassOnce
   , fresh
   , freshCopy
   , forkCopy
@@ -178,7 +177,6 @@ module LinearTrace.View
   , materializedLeft
   , materializedWidth
   , materializedHeight
-  , materializedClassName
   , materializedCssAttrsWith
   , materializeViewNode
   ) where
@@ -504,7 +502,7 @@ type BoxVisual tag = Visual Rendered Stable BoxAttrs tag
 
 type SizeVisual tag = Visual Rendered Stable SizeAttrs tag
 
-data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace cssClass where
+data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace where
   StyleDraft
     :: Ur Style
        %1 -> StyleDraft
@@ -522,11 +520,9 @@ data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fon
          textAlign
          borderStyle
          whiteSpace
-         cssClass
 
 type EmptyStyleDraft
   = StyleDraft
-      Available
       Available
       Available
       Available
@@ -558,7 +554,6 @@ finalizeStyle ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> Style
 finalizeStyle draft =
   case draft of
@@ -586,7 +581,6 @@ setOpacityOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        Taken
        zIndex
@@ -602,7 +596,6 @@ setOpacityOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setOpacityOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setOpacity value style'))
@@ -624,7 +617,6 @@ setZIndexOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        Taken
@@ -640,7 +632,6 @@ setZIndexOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setZIndexOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setZIndex value style'))
@@ -662,7 +653,6 @@ setFontSizeOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -678,7 +668,6 @@ setFontSizeOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setFontSizeOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontSize value style'))
@@ -700,7 +689,6 @@ setRadiusOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -716,7 +704,6 @@ setRadiusOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setRadiusOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setRadius value style'))
@@ -738,7 +725,6 @@ setStrokeWidthOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -754,7 +740,6 @@ setStrokeWidthOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setStrokeWidthOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setStrokeWidth value style'))
@@ -776,7 +761,6 @@ setAlphaOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -792,7 +776,6 @@ setAlphaOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setAlphaOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setAlpha value style'))
@@ -814,7 +797,6 @@ setFillOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -830,7 +812,6 @@ setFillOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setFillOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFill value style'))
@@ -852,7 +833,6 @@ setStrokeOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -868,7 +848,6 @@ setStrokeOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setStrokeOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setStroke value style'))
@@ -890,7 +869,6 @@ setFontFamilyOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -906,7 +884,6 @@ setFontFamilyOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setFontFamilyOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontFamily value style'))
@@ -928,7 +905,6 @@ setFontWeightOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -944,7 +920,6 @@ setFontWeightOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setFontWeightOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontWeight value style'))
@@ -966,7 +941,6 @@ setFontStyleOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -982,7 +956,6 @@ setFontStyleOnce ::
        textAlign
        borderStyle
        whiteSpace
-       cssClass
 setFontStyleOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setFontStyle value style'))
@@ -1004,7 +977,6 @@ setTextAlignOnce ::
        Available
        borderStyle
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -1020,7 +992,6 @@ setTextAlignOnce ::
        Taken
        borderStyle
        whiteSpace
-       cssClass
 setTextAlignOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setTextAlign value style'))
@@ -1042,7 +1013,6 @@ setBorderStyleOnce ::
        textAlign
        Available
        whiteSpace
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -1058,7 +1028,6 @@ setBorderStyleOnce ::
        textAlign
        Taken
        whiteSpace
-       cssClass
 setBorderStyleOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setBorderStyle value style'))
@@ -1080,7 +1049,6 @@ setWhiteSpaceOnce ::
        textAlign
        borderStyle
        Available
-       cssClass
      %1 -> StyleDraft
        opacity
        zIndex
@@ -1096,48 +1064,9 @@ setWhiteSpaceOnce ::
        textAlign
        borderStyle
        Taken
-       cssClass
 setWhiteSpaceOnce value draft =
   case draft of
     StyleDraft (Ur style') -> StyleDraft (Ur (setWhiteSpace value style'))
-
-setCssClassOnce ::
-     String
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-       Available
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-       Taken
-setCssClassOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setCssClass value style'))
 
 data ViewDefinition tag (used :: [LayoutAttr]) where
   ViewDefinition

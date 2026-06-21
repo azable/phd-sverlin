@@ -68,7 +68,6 @@ module LinearTrace.View.Style
   , setTextAlign
   , setBorderStyle
   , setWhiteSpace
-  , setCssClass
   , -- * Materialization
     MaterializedStyle(..)
   , MaterializedField(..)
@@ -85,8 +84,6 @@ module LinearTrace.View.Style
   , materializedScalars
   , materializedColors
   , materializedDiscrete
-  , materializedCssClass
-  , materializedClassName
   , materializedCssFields
   , materializedCssAttrsWith
   , materializeStyle
@@ -306,7 +303,6 @@ data StyleField
   | StyleTextAlignField StyleTextSpec (Maybe TextAlign)
   | StyleBorderStyleField StyleTextSpec (Maybe BorderStyle)
   | StyleWhiteSpaceField StyleTextSpec (Maybe WhiteSpace)
-  | StyleClassField StyleTextSpec (Maybe CssText)
 
 fieldName :: StyleField -> String
 fieldName field =
@@ -322,7 +318,6 @@ fieldName field =
     StyleTextAlignField spec _   -> styleTextName spec
     StyleBorderStyleField spec _ -> styleTextName spec
     StyleWhiteSpaceField spec _  -> styleTextName spec
-    StyleClassField spec _       -> styleTextName spec
 
 data Style = Style
   { styleBounds :: BoundsExpr
@@ -396,7 +391,6 @@ fieldExprLeaves field =
     StyleTextAlignField _ _ -> []
     StyleBorderStyleField _ _ -> []
     StyleWhiteSpaceField _ _ -> []
-    StyleClassField _ _ -> []
 
 mapStyleExprLeaves ::
      (forall (ty :: Type). String -> Expr ty -> a) -> Style -> [a]
@@ -441,7 +435,6 @@ fieldInitialVars field =
     StyleTextAlignField _ _ -> []
     StyleBorderStyleField _ _ -> []
     StyleWhiteSpaceField _ _ -> []
-    StyleClassField _ _ -> []
 
 scalarInitialVars :: StyleScalarSpec -> Expr ty -> [InitialVar]
 scalarInitialVars spec expr =
@@ -474,7 +467,6 @@ fieldConstraints field =
     StyleTextAlignField _ _ -> []
     StyleBorderStyleField _ _ -> []
     StyleWhiteSpaceField _ _ -> []
-    StyleClassField _ _ -> []
 
 --------------------------------------------------------------------------------
 -- Constraint helpers used by attributes
@@ -542,25 +534,6 @@ unitScalarField ::
   -> StyleField
 unitScalarField name cssName unit range constraints expr =
   StyleUnitField
-    StyleScalarSpec
-      { styleScalarName = name
-      , styleScalarCssName = cssName
-      , styleScalarInitialRange = range
-      , styleScalarValueUnit = unit
-      , styleScalarConstraints = constraints expr
-      }
-    expr
-
-angleScalarField ::
-     String
-  -> Maybe String
-  -> StyleValueUnit
-  -> Maybe Range
-  -> (AngleExpr -> [Constraint])
-  -> AngleExpr
-  -> StyleField
-angleScalarField name cssName unit range constraints expr =
-  StyleAngleField
     StyleScalarSpec
       { styleScalarName = name
       , styleScalarCssName = cssName
@@ -784,15 +757,6 @@ setWhiteSpace :: WhiteSpace -> Style -> Style
 setWhiteSpace = setStyleField . whiteSpaceField . Just
 
 --------------------------------------------------------------------------------
--- Attribute: cssClass
---------------------------------------------------------------------------------
-cssClassField :: Maybe CssText -> StyleField
-cssClassField = StyleClassField (textSpec "cssClass" Nothing)
-
-setCssClass :: String -> Style -> Style
-setCssClass = setStyleField . cssClassField . Just . CssText
-
---------------------------------------------------------------------------------
 -- Defaults
 --------------------------------------------------------------------------------
 defaultStyleFields :: [StyleField]
@@ -811,7 +775,6 @@ defaultStyleFields =
   , textAlignField Nothing
   , borderStyleField Nothing
   , whiteSpaceField Nothing
-  , cssClassField Nothing
   ]
 
 --------------------------------------------------------------------------------
@@ -873,7 +836,6 @@ data MaterializedField
   | MaterializedTextAlignField String (Maybe String) (Maybe TextAlign)
   | MaterializedBorderStyleField String (Maybe String) (Maybe BorderStyle)
   | MaterializedWhiteSpaceField String (Maybe String) (Maybe WhiteSpace)
-  | MaterializedClassField String (Maybe CssText)
   deriving (Eq, Show)
 
 data MaterializedStyle = MaterializedStyle
@@ -896,7 +858,6 @@ data MaterializedDiscrete
   | MaterializedTextAlignAttr String (Maybe TextAlign)
   | MaterializedBorderStyleAttr String (Maybe BorderStyle)
   | MaterializedWhiteSpaceAttr String (Maybe WhiteSpace)
-  | MaterializedClassAttr String (Maybe CssText)
   deriving (Eq, Show)
 
 data MaterializedCssField =
@@ -967,20 +928,7 @@ materializedDiscrete style' =
           [MaterializedBorderStyleAttr name value]
         MaterializedWhiteSpaceField name _ value ->
           [MaterializedWhiteSpaceAttr name value]
-        MaterializedClassField name value -> [MaterializedClassAttr name value]
         _ -> []
-
-materializedCssClass :: MaterializedStyle -> Maybe CssText
-materializedCssClass style' = go (materializedFields style')
-  where
-    go fields =
-      case fields of
-        []                                        -> Nothing
-        MaterializedClassField "cssClass" value:_ -> value
-        _:rest                                    -> go rest
-
-materializedClassName :: MaterializedStyle -> Maybe String
-materializedClassName style' = cssTextString <$> materializedCssClass style'
 
 materializedCssFields :: MaterializedStyle -> [MaterializedCssField]
 materializedCssFields style' =
@@ -1034,7 +982,6 @@ fieldCss alphaValue field =
       cssStringField cssName (borderStyleCss <$> maybeValue)
     MaterializedWhiteSpaceField _ cssName maybeValue ->
       cssStringField cssName (whiteSpaceCss <$> maybeValue)
-    MaterializedClassField _ _ -> []
 
 cssTextField :: Maybe String -> Maybe CssText -> [MaterializedCssField]
 cssTextField maybeName maybeText =
@@ -1101,8 +1048,6 @@ materializeField solution field =
            (styleTextName spec)
            (styleTextCssName spec)
            value)
-    StyleClassField spec value ->
-      Just (MaterializedClassField (styleTextName spec) value)
 
 materializeScalar ::
      Solution -> StyleScalarSpec -> Expr ty -> Maybe MaterializedField

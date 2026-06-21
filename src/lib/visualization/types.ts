@@ -7,7 +7,6 @@ export type RenderElement = {
   kind: string;
   content: string;
   style: RenderStyle;
-  className?: string;
 };
 
 export type RenderId = string;
