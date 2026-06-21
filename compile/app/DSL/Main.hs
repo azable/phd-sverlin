@@ -17,7 +17,7 @@ module DSL.Main
 
 import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
 import           LinearTrace.Choreography
-import           Prelude.Linear
+import           Prelude.Linear           hiding ((*), (+), (-), (/))
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -347,7 +347,7 @@ rowY :: Coord
 rowY = globalCoord "row.y"
 
 stride :: Span
-stride = cell @+@ gap
+stride = cell |+| gap
 
 probeY :: Coord
 probeY = globalCoord "probe.y"
@@ -377,70 +377,70 @@ matchHue :: HueExpr
 matchHue = global "match.hue"
 
 cellBy :: Double -> Span
-cellBy scale = cell @*@ by scale
+cellBy scale = cell * num scale
 
 tone :: HueExpr -> Double -> Double -> HslExpr
 tone hueExpr saturation lightness = Hsl hueExpr (num saturation) (num lightness)
 
 targetWidth :: Span
-targetWidth = cellBy 2.1 @+@ gap
+targetWidth = cellBy 2.1 |+| gap
 
 targetHeight :: Span
-targetHeight = cell @+@ gap @*@ by 0.8
+targetHeight = cell |+| gap * num 0.8
 
 probeSize :: Span
 probeSize = cellBy 1.08
 
 matchWidth :: Span
-matchWidth = probeSize @*@ by 2 @+@ gap
+matchWidth = probeSize * num 2 |+| gap
 
 matchHeight :: Span
 matchHeight = cellBy 0.72
 
 listSpan :: Span
-listSpan = by 5 @*@ cell @+@ by 4 @*@ gap
+listSpan = num 5 * cell |+| num 4 * gap
 
 matchGap :: Span
-matchGap = gap @*@ by 0.7
+matchGap = gap * num 0.7
 
 constrainScale :: ViewLayout ()
 constrainScale = do
-  constrain (by 72 |<=| cell |<=| by 86)
-  constrain (by 26 |<=| gap |<=| by 44)
+  constrain (by 72 <|> cell <|> by 86)
+  constrain (by 26 <|> gap <|> by 44)
 
 constrainTargetFlow :: ViewLayout ()
 constrainTargetFlow = do
   constrainScale
-  constrain (at 40 @<=@ targetX @<=@ at 128)
-  constrain (at 32 @<=@ targetY @<=@ at 86)
-  constrain (targetX @+@ targetWidth @<=@ at 380)
-  constrain (targetY @+@ targetHeight @<=@ at 188)
-  constrain (at 64 @<=@ rowX @<=@ at 112)
-  constrain (at 430 @<=@ rowY @<=@ at 500)
-  constrain (rowX @+@ listSpan @<=@ at 760)
-  constrain (rowY @+@ cell @<=@ at 560)
+  constrain (at 40 <|> targetX <|> at 128)
+  constrain (at 32 <|> targetY <|> at 86)
+  constrain (targetX <| targetWidth |> num 180)
+  constrain (targetY <| targetHeight |> num 188)
+  constrain (at 64 <|> rowX <|> at 112)
+  constrain (at 430 <|> rowY <|> at 500)
+  constrain (rowX <| listSpan |> num 760)
+  constrain (rowY <| cell |> num 560)
 
 constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
   constrainTargetFlow
-  constrain (at 210 @<=@ targetProbeX @<=@ at 300)
-  constrain (at 520 @<=@ elementProbeX @<=@ at 640)
-  constrain (at 205 @<=@ probeY @<=@ at 270)
-  constrain (targetY @==| targetHeight @+@ gap |<=@ probeY)
-  constrain (probeY @==| probeSize @+@ gap |<=@ rowY)
-  constrain (targetProbeX @==| probeSize @+@ gap @*@ by 2 |<=@ elementProbeX)
+  constrain (at 210 <|> targetProbeX <|> at 300)
+  constrain (at 520 <|> elementProbeX <|> at 640)
+  constrain (at 205 <|> probeY <|> at 270)
+  constrain (targetY =| targetHeight |+| gap |> probeY)
+  constrain (probeY =| probeSize |+| gap |> rowY)
+  constrain (targetProbeX =| probeSize |+| gap * num 2 |> elementProbeX)
 
 constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
-  constrain (at 330 @<=@ matchX @<=@ at 415)
-  constrain (probeY @==| probeSize @+@ matchGap |<=@ matchY)
-  constrain (matchY @==| matchHeight @+@ matchGap |<=@ rowY)
-  constrain (targetProbeX @<=@ matchX)
-  constrain (matchX @+@ matchWidth @<=@ elementProbeX @+@ probeSize)
+  constrain (at 330 <|> matchX <|> at 415)
+  constrain (probeY =| probeSize |+| matchGap |> matchY)
+  constrain (matchY =| matchHeight |+| matchGap |> rowY)
+  constrain (targetProbeX <|> matchX)
+  constrain (matchX <| matchWidth |> elementProbeX + probeSize)
 
 listValueLeft :: Int -> Coord
-listValueLeft index = rowX @+@ by (fromIntegral index) @*@ stride
+listValueLeft index = rowX + num (fromIntegral index) * stride
 
 valueText :: NodeRecipe ()
 valueText = do

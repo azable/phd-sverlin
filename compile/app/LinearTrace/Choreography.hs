@@ -109,6 +109,7 @@ module LinearTrace.Choreography
   , Coord
   , Span
   , Offset
+  , Scalar
   , UnitExpr
   , Vec2(..)
   , TextAlign(..)
@@ -168,6 +169,7 @@ module LinearTrace.Choreography
   , size
   , sized
   , shift
+  , scalarExpr
   , spanExpr
   , takeHeight
   , takeLeft
@@ -180,20 +182,16 @@ module LinearTrace.Choreography
   , whiteSpace
   , width
   , zIndex
-  , (@*@)
-  , (@+@)
-  , (@-@)
-  , (@/@)
-  , (@<=|)
-  , (@<=@)
-  , (@==|)
-  , (@==@)
-  , (@>=@)
-  , (|<=|)
-  , (|<=@)
-  , (|>=|)
-  , (|==|)
-  , (|==@)
+  , (+)
+  , (-)
+  , (*)
+  , (/)
+  , (<|)
+  , (<|>)
+  , (=|)
+  , (=|=)
+  , (|+|)
+  , (|=)
   , (|>)
   ) where
 
@@ -215,18 +213,18 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          OneConstraint (..), OneExpr (..),
                                          Style, TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
-                                         encourage, finalizeStyle, global, num,
+                                         encourage, finalizeStyle, global,
                                          setFillOnce, setFontFamilyOnce,
                                          setFontSizeOnce, setFontWeightOnce,
                                          setRadiusOnce, setStrokeOnce,
                                          setStrokeWidthOnce, setTextAlignOnce,
                                          setWhiteSpaceOnce, setZIndexOnce,
                                          takeHeight, takeLeft, takeRight,
-                                         takeTop, takeWidth, (|>))
+                                         takeTop, takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
-import           Prelude.Linear
+import           Prelude.Linear         hiding ((*), (+), (-), (/))
 
 data Program a where
   PureProgram :: a %1 -> Program a
@@ -321,6 +319,10 @@ data Span =
 
 data Offset =
   Offset LayoutExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+data Scalar =
+  Scalar LayoutExpr [S.Constraint]
   deriving (P.Eq, P.Show)
 
 data CoordChain =
@@ -592,6 +594,11 @@ offsetExpr value =
   case value of
     Offset expr _ -> expr
 
+scalarExpr :: Scalar -> LayoutExpr
+scalarExpr value =
+  case value of
+    Scalar expr _ -> expr
+
 coordConstraints :: Coord -> [S.Constraint]
 coordConstraints value =
   case value of
@@ -607,6 +614,11 @@ offsetConstraints value =
   case value of
     Offset _ constraints -> constraints
 
+scalarConstraints :: Scalar -> [S.Constraint]
+scalarConstraints value =
+  case value of
+    Scalar _ constraints -> constraints
+
 nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
 
@@ -619,14 +631,35 @@ mkSpan expr constraints = Span expr (constraints P.++ [nonNegative expr])
 mkOffset :: LayoutExpr -> [S.Constraint] -> Offset
 mkOffset = Offset
 
+mkScalar :: LayoutExpr -> [S.Constraint] -> Scalar
+mkScalar = Scalar
+
+class NumExpr a where
+  num :: P.Double -> a
+
+instance S.SymbolicType ty => NumExpr (S.Expr ty) where
+  num = S.num
+
+instance NumExpr Coord where
+  num value = mkCoord (S.num value :: LayoutExpr) []
+
+instance NumExpr Span where
+  num value = mkSpan (S.num value :: LayoutExpr) []
+
+instance NumExpr Offset where
+  num value = mkOffset (S.num value :: LayoutExpr) []
+
+instance NumExpr Scalar where
+  num value = mkScalar (S.num value :: LayoutExpr) []
+
 at :: P.Double -> Coord
-at value = mkCoord (num value :: LayoutExpr) []
+at = num
 
 by :: P.Double -> Span
-by value = mkSpan (num value :: LayoutExpr) []
+by = num
 
 shift :: P.Double -> Offset
-shift value = mkOffset (num value :: LayoutExpr) []
+shift = num
 
 globalCoord :: P.String -> Coord
 globalCoord name = mkCoord (global name :: LayoutExpr) []
@@ -647,11 +680,20 @@ asSpan value =
 rawOneConstraint :: [S.Constraint] -> OneConstraint
 rawOneConstraint constraints = OneConstraint (Ur (S.All constraints))
 
-class AddExpr lhs rhs result | lhs rhs -> result where
+class AddExpr lhs rhs result | lhs rhs -> result, lhs result -> rhs where
   addExpr :: lhs -> rhs -> result
 
 instance AddExpr LayoutExpr LayoutExpr LayoutExpr where
   addExpr = (S.@+@)
+
+instance AddExpr P.Int P.Int P.Int where
+  addExpr = (P.+)
+
+instance AddExpr P.Integer P.Integer P.Integer where
+  addExpr = (P.+)
+
+instance AddExpr P.Double P.Double P.Double where
+  addExpr = (P.+)
 
 instance AddExpr Coord Span Coord where
   addExpr lhs rhs =
@@ -659,35 +701,26 @@ instance AddExpr Coord Span Coord where
       (coordExpr lhs S.@+@ spanExpr rhs)
       (coordConstraints lhs P.++ spanConstraints rhs)
 
-instance AddExpr Coord Offset Coord where
-  addExpr lhs rhs =
-    mkCoord
-      (coordExpr lhs S.@+@ offsetExpr rhs)
-      (coordConstraints lhs P.++ offsetConstraints rhs)
-
-instance AddExpr Span Span Span where
-  addExpr lhs rhs =
-    mkSpan
-      (spanExpr lhs S.@+@ spanExpr rhs)
-      (spanConstraints lhs P.++ spanConstraints rhs)
-
 instance AddExpr Offset Span Offset where
   addExpr lhs rhs =
     mkOffset
       (offsetExpr lhs S.@+@ spanExpr rhs)
       (offsetConstraints lhs P.++ spanConstraints rhs)
 
-instance AddExpr Offset Offset Offset where
-  addExpr lhs rhs =
-    mkOffset
-      (offsetExpr lhs S.@+@ offsetExpr rhs)
-      (offsetConstraints lhs P.++ offsetConstraints rhs)
-
 class SubExpr lhs rhs result | lhs rhs -> result where
   subExpr :: lhs -> rhs -> result
 
 instance SubExpr LayoutExpr LayoutExpr LayoutExpr where
   subExpr = (S.@-@)
+
+instance SubExpr P.Int P.Int P.Int where
+  subExpr = (P.-)
+
+instance SubExpr P.Integer P.Integer P.Integer where
+  subExpr = (P.-)
+
+instance SubExpr P.Double P.Double P.Double where
+  subExpr = (P.-)
 
 instance SubExpr Coord Span Offset where
   subExpr lhs rhs =
@@ -719,107 +752,170 @@ instance SubExpr Offset Offset Offset where
       (offsetExpr lhs S.@-@ offsetExpr rhs)
       (offsetConstraints lhs P.++ offsetConstraints rhs)
 
-class MulExpr lhs rhs result | lhs rhs -> result where
+class MulExpr lhs rhs result
+  | lhs rhs -> result
+  , lhs result -> rhs
+  , rhs result -> lhs
+  where
   mulExpr :: lhs -> rhs -> result
 
 instance MulExpr LayoutExpr LayoutExpr LayoutExpr where
   mulExpr = (S.@*@)
 
-instance MulExpr Span Span Span where
+instance MulExpr P.Int P.Int P.Int where
+  mulExpr = (P.*)
+
+instance MulExpr P.Integer P.Integer P.Integer where
+  mulExpr = (P.*)
+
+instance MulExpr P.Double P.Double P.Double where
+  mulExpr = (P.*)
+
+instance MulExpr Span Scalar Span where
   mulExpr lhs rhs =
     mkSpan
-      (spanExpr lhs S.@*@ spanExpr rhs)
-      (spanConstraints lhs P.++ spanConstraints rhs)
+      (spanExpr lhs S.@*@ scalarExpr rhs)
+      (spanConstraints lhs P.++ scalarConstraints rhs)
 
-instance MulExpr Offset Span Offset where
+instance MulExpr Scalar Span Span where
+  mulExpr lhs rhs =
+    mkSpan
+      (scalarExpr lhs S.@*@ spanExpr rhs)
+      (scalarConstraints lhs P.++ spanConstraints rhs)
+
+instance MulExpr Offset Scalar Offset where
   mulExpr lhs rhs =
     mkOffset
-      (offsetExpr lhs S.@*@ spanExpr rhs)
-      (offsetConstraints lhs P.++ spanConstraints rhs)
+      (offsetExpr lhs S.@*@ scalarExpr rhs)
+      (offsetConstraints lhs P.++ scalarConstraints rhs)
 
-instance MulExpr Span Offset Offset where
+instance MulExpr Scalar Offset Offset where
   mulExpr lhs rhs =
     mkOffset
-      (spanExpr lhs S.@*@ offsetExpr rhs)
-      (spanConstraints lhs P.++ offsetConstraints rhs)
+      (scalarExpr lhs S.@*@ offsetExpr rhs)
+      (scalarConstraints lhs P.++ offsetConstraints rhs)
 
-class DivExpr lhs rhs result | lhs rhs -> result where
+instance MulExpr Scalar Scalar Scalar where
+  mulExpr lhs rhs =
+    mkScalar
+      (scalarExpr lhs S.@*@ scalarExpr rhs)
+      (scalarConstraints lhs P.++ scalarConstraints rhs)
+
+class DivExpr lhs rhs result | lhs rhs -> result, lhs result -> rhs where
   divExpr :: lhs -> rhs -> result
 
 instance DivExpr LayoutExpr LayoutExpr LayoutExpr where
   divExpr = (S.@/@)
 
-instance DivExpr Span Span Span where
+instance DivExpr P.Double P.Double P.Double where
+  divExpr = (P./)
+
+instance DivExpr Span Scalar Span where
   divExpr lhs rhs =
     mkSpan
-      (spanExpr lhs S.@/@ spanExpr rhs)
-      (spanConstraints lhs P.++ spanConstraints rhs)
+      (spanExpr lhs S.@/@ scalarExpr rhs)
+      (spanConstraints lhs P.++ scalarConstraints rhs)
 
-instance DivExpr Offset Span Offset where
+instance DivExpr Offset Scalar Offset where
   divExpr lhs rhs =
     mkOffset
-      (offsetExpr lhs S.@/@ spanExpr rhs)
-      (offsetConstraints lhs P.++ spanConstraints rhs)
+      (offsetExpr lhs S.@/@ scalarExpr rhs)
+      (offsetConstraints lhs P.++ scalarConstraints rhs)
 
-infixl 6 @+@
-infixl 6 @-@
-infixl 7 @*@
-infixl 7 @/@
-(@+@) :: AddExpr lhs rhs result => lhs -> rhs -> result
-(@+@) = addExpr
+instance DivExpr Scalar Scalar Scalar where
+  divExpr lhs rhs =
+    mkScalar
+      (scalarExpr lhs S.@/@ scalarExpr rhs)
+      (scalarConstraints lhs P.++ scalarConstraints rhs)
 
-(@-@) :: SubExpr lhs rhs result => lhs -> rhs -> result
-(@-@) = subExpr
+infixl 6 +
+infixl 6 -
+infixl 6 |+|
+infixl 7 *
+infixl 7 /
+(+) :: AddExpr lhs rhs result => lhs -> rhs -> result
+(+) = addExpr
 
-(@*@) :: MulExpr lhs rhs result => lhs -> rhs -> result
-(@*@) = mulExpr
+(-) :: SubExpr lhs rhs result => lhs -> rhs -> result
+(-) = subExpr
 
-(@/@) :: DivExpr lhs rhs result => lhs -> rhs -> result
-(@/@) = divExpr
+(*) :: MulExpr lhs rhs result => lhs -> rhs -> result
+(*) = mulExpr
 
-class CoordRelate lhs rhs where
-  coordRelate ::
-       (LayoutExpr -> LayoutExpr -> S.Constraint) -> lhs -> rhs -> CoordChain
+(/) :: DivExpr lhs rhs result => lhs -> rhs -> result
+(/) = divExpr
 
-instance CoordRelate Coord Coord where
-  coordRelate op lhs rhs =
-    CoordChain
-      rhs
-      (coordConstraints lhs
-         P.++ coordConstraints rhs
-         P.++ [op (coordExpr lhs) (coordExpr rhs)])
+(|+|) :: Span -> Span -> Span
+lhs |+| rhs =
+  mkSpan
+    (spanExpr lhs S.@+@ spanExpr rhs)
+    (spanConstraints lhs P.++ spanConstraints rhs)
 
-instance CoordRelate CoordChain Coord where
-  coordRelate op lhs rhs =
-    case lhs of
-      CoordChain current constraints ->
-        CoordChain
-          rhs
-          (constraints
-             P.++ coordConstraints rhs
-             P.++ [op (coordExpr current) (coordExpr rhs)])
+coordRelate ::
+     (LayoutExpr -> LayoutExpr -> S.Constraint) -> Coord -> Coord -> CoordChain
+coordRelate op lhs rhs =
+  CoordChain
+    rhs
+    (coordConstraints lhs
+       P.++ coordConstraints rhs
+       P.++ [op (coordExpr lhs) (coordExpr rhs)])
 
-class SpanRelate lhs rhs where
-  spanRelate ::
-       (LayoutExpr -> LayoutExpr -> S.Constraint) -> lhs -> rhs -> SpanChain
+coordChainRelate ::
+     (LayoutExpr -> LayoutExpr -> S.Constraint)
+  -> CoordChain
+  -> Coord
+  -> CoordChain
+coordChainRelate op lhs rhs =
+  case lhs of
+    CoordChain current constraints ->
+      CoordChain
+        rhs
+        (constraints
+           P.++ coordConstraints rhs
+           P.++ [op (coordExpr current) (coordExpr rhs)])
 
-instance SpanRelate Span Span where
-  spanRelate op lhs rhs =
-    SpanChain
-      rhs
-      (spanConstraints lhs
-         P.++ spanConstraints rhs
-         P.++ [op (spanExpr lhs) (spanExpr rhs)])
+spanRelate ::
+     (LayoutExpr -> LayoutExpr -> S.Constraint) -> Span -> Span -> SpanChain
+spanRelate op lhs rhs =
+  SpanChain
+    rhs
+    (spanConstraints lhs
+       P.++ spanConstraints rhs
+       P.++ [op (spanExpr lhs) (spanExpr rhs)])
 
-instance SpanRelate SpanChain Span where
-  spanRelate op lhs rhs =
-    case lhs of
-      SpanChain current constraints ->
-        SpanChain
-          rhs
-          (constraints
-             P.++ spanConstraints rhs
-             P.++ [op (spanExpr current) (spanExpr rhs)])
+spanChainRelate ::
+     (LayoutExpr -> LayoutExpr -> S.Constraint)
+  -> SpanChain
+  -> Span
+  -> SpanChain
+spanChainRelate op lhs rhs =
+  case lhs of
+    SpanChain current constraints ->
+      SpanChain
+        rhs
+        (constraints
+           P.++ spanConstraints rhs
+           P.++ [op (spanExpr current) (spanExpr rhs)])
+
+class VisualRelate lhs rhs result | lhs rhs -> result, lhs result -> rhs where
+  visualOrder :: lhs -> rhs -> result
+  visualEqual :: lhs -> rhs -> result
+
+instance VisualRelate Coord Coord CoordChain where
+  visualOrder = coordRelate (S.@<=@)
+  visualEqual = coordRelate (S.@==@)
+
+instance VisualRelate CoordChain Coord CoordChain where
+  visualOrder = coordChainRelate (S.@<=@)
+  visualEqual = coordChainRelate (S.@==@)
+
+instance VisualRelate Span Span SpanChain where
+  visualOrder = spanRelate (S.@<=@)
+  visualEqual = spanRelate (S.@==@)
+
+instance VisualRelate SpanChain Span SpanChain where
+  visualOrder = spanChainRelate (S.@<=@)
+  visualEqual = spanChainRelate (S.@==@)
 
 class OpenBridge lhs where
   openBridge :: BridgeRelation -> lhs -> Span -> CoordSpanBridge
@@ -860,45 +956,29 @@ closeBridge rhsRelation bridge rhs =
            P.++ coordConstraints rhs
            P.++ [bridgeConstraint lhsRelation rhsRelation lhs spanValue rhs])
 
-infixl 4 @==@
-infixl 4 @<=@
-infix 4 @>=@
-infixl 4 |==|
-infixl 4 |<=|
-infix 4 |>=|
-infixl 4 @==|
-infixl 4 @<=|
-infixl 4 |==@
-infixl 4 |<=@
-(@==@) :: CoordRelate lhs rhs => lhs -> rhs -> CoordChain
-(@==@) = coordRelate (S.@==@)
+infixl 4 <|>
+infixl 4 =|=
+infixl 4 <|
+infixl 4 =|
+infixl 4 |>
+infixl 4 |=
+(<|>) :: VisualRelate lhs rhs result => lhs -> rhs -> result
+(<|>) = visualOrder
 
-(@<=@) :: CoordRelate lhs rhs => lhs -> rhs -> CoordChain
-(@<=@) = coordRelate (S.@<=@)
+(=|=) :: VisualRelate lhs rhs result => lhs -> rhs -> result
+(=|=) = visualEqual
 
-(@>=@) :: CoordRelate lhs rhs => lhs -> rhs -> CoordChain
-lhs @>=@ rhs = coordRelate (P.flip (S.@<=@)) lhs rhs
+(<|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
+lhs <| rhs = openBridge BridgeLoose lhs rhs
 
-(|==|) :: SpanRelate lhs rhs => lhs -> rhs -> SpanChain
-(|==|) = spanRelate (S.@==@)
+(=|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
+lhs =| rhs = openBridge BridgeExact lhs rhs
 
-(|<=|) :: SpanRelate lhs rhs => lhs -> rhs -> SpanChain
-(|<=|) = spanRelate (S.@<=@)
+(|>) :: CoordSpanBridge -> Coord -> CoordChain
+lhs |> rhs = closeBridge BridgeLoose lhs rhs
 
-(|>=|) :: SpanRelate lhs rhs => lhs -> rhs -> SpanChain
-lhs |>=| rhs = spanRelate (P.flip (S.@<=@)) lhs rhs
-
-(@==|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
-lhs @==| rhs = openBridge BridgeExact lhs rhs
-
-(@<=|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
-lhs @<=| rhs = openBridge BridgeLoose lhs rhs
-
-(|==@) :: CoordSpanBridge -> Coord -> CoordChain
-lhs |==@ rhs = closeBridge BridgeExact lhs rhs
-
-(|<=@) :: CoordSpanBridge -> Coord -> CoordChain
-lhs |<=@ rhs = closeBridge BridgeLoose lhs rhs
+(|=) :: CoordSpanBridge -> Coord -> CoordChain
+lhs |= rhs = closeBridge BridgeExact lhs rhs
 
 runProgram :: Program () -> VisualTraceGraph
 runProgram program = V.buildGraph (interpretProgram program)
