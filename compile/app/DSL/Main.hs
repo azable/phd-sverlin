@@ -397,11 +397,11 @@ matchWidth = probeSize * num 2 |+| gap
 matchHeight :: Span
 matchHeight = cellBy 0.72
 
-listSpan :: Span
-listSpan = num 5 * cell |+| num 4 * gap
-
 matchGap :: Span
 matchGap = gap * num 0.7
+
+half :: Span -> Span
+half value = value / num 2
 
 constrainScale :: ViewLayout ()
 constrainScale = do
@@ -413,12 +413,12 @@ constrainTargetFlow = do
   constrainScale
   constrain (at 40 <|> targetX <|> at 128)
   constrain (at 32 <|> targetY <|> at 86)
-  constrain (targetX <| targetWidth |> num 180)
-  constrain (targetY <| targetHeight |> num 188)
+  constrain (targetX <| half targetWidth |> num 180)
+  constrain (targetY <| half targetHeight |> num 188)
   constrain (at 64 <|> rowX <|> at 112)
   constrain (at 430 <|> rowY <|> at 500)
-  constrain (rowX <| listSpan |> num 760)
-  constrain (rowY <| cell |> num 560)
+  constrain (listValueX 4 <| half cell |> num 760)
+  constrain (rowY <| half cell |> num 560)
 
 constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
@@ -426,21 +426,22 @@ constrainProbeFlow = do
   constrain (at 210 <|> targetProbeX <|> at 300)
   constrain (at 520 <|> elementProbeX <|> at 640)
   constrain (at 205 <|> probeY <|> at 270)
-  constrain (targetY =| targetHeight |+| gap |> probeY)
-  constrain (probeY =| probeSize |+| gap |> rowY)
+  constrain (targetY =| half targetHeight |+| gap |+| half probeSize |> probeY)
+  constrain (probeY =| half probeSize |+| gap |+| half cell |> rowY)
   constrain (targetProbeX =| probeSize |+| gap * num 2 |> elementProbeX)
 
 constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
   constrain (at 330 <|> matchX <|> at 415)
-  constrain (probeY =| probeSize |+| matchGap |> matchY)
-  constrain (matchY =| matchHeight |+| matchGap |> rowY)
+  constrain
+    (probeY =| half probeSize |+| matchGap |+| half matchHeight |> matchY)
+  constrain (matchY =| half matchHeight |+| matchGap |+| half cell |> rowY)
   constrain (targetProbeX <|> matchX)
-  constrain (matchX <| matchWidth |> elementProbeX + probeSize)
+  constrain (matchX <| half matchWidth |> elementProbeX + half probeSize)
 
-listValueLeft :: Int -> Coord
-listValueLeft index = rowX + num (fromIntegral index) * stride
+listValueX :: Int -> Coord
+listValueX index = rowX + num (fromIntegral index) * stride
 
 valueText :: NodeRecipe ()
 valueText = do
@@ -488,7 +489,9 @@ targetValueDefinition =
   node $ do
     valueText
     targetChrome
-    placed targetX targetY targetWidth targetHeight
+    position (vec2 targetX targetY)
+    width targetWidth
+    height targetHeight
     require constrainTargetFlow
 
 listValueDefinition :: Int -> NodeDefinition Value
@@ -496,8 +499,9 @@ listValueDefinition index =
   node $ do
     valueText
     listChrome
-    position (Vec2 (listValueLeft index) rowY)
-    size (Vec2 cell cell)
+    position (vec2 (listValueX index) rowY)
+    width cell
+    height cell
     requireListFlow index
 
 requireListFlow :: Int -> NodeRecipe ()
@@ -511,7 +515,9 @@ targetProbeViewDefinition =
   node $ do
     valueText
     probeChrome
-    placed targetProbeX probeY probeSize probeSize
+    position (vec2 targetProbeX probeY)
+    width probeSize
+    height probeSize
     require constrainProbeFlow
 
 elementProbeViewDefinition :: NodeDefinition Value
@@ -519,7 +525,9 @@ elementProbeViewDefinition =
   node $ do
     valueText
     probeChrome
-    placed elementProbeX probeY probeSize probeSize
+    position (vec2 elementProbeX probeY)
+    width probeSize
+    height probeSize
     require constrainProbeFlow
 
 matchViewDefinition :: NodeDefinition Match
@@ -527,5 +535,7 @@ matchViewDefinition =
   node $ do
     valueText
     matchChrome
-    placed matchX matchY matchWidth matchHeight
+    position (vec2 matchX matchY)
+    width matchWidth
+    height matchHeight
     require constrainMatchFlow

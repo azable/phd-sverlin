@@ -124,9 +124,6 @@ module LinearTrace.Choreography
   , by
   , borderStyle
   , boxDefinition
-  , center
-  , centerX
-  , centerY
   , centerText
   , constrain
   , coordExpr
@@ -148,7 +145,6 @@ module LinearTrace.Choreography
   , offsetExpr
   , opacity
   , placeBox
-  , placed
   , position
   , radius
   , require
@@ -166,8 +162,6 @@ module LinearTrace.Choreography
   , stroke
   , strokeWidth
   , style
-  , size
-  , sized
   , shift
   , scalarExpr
   , spanExpr
@@ -181,6 +175,8 @@ module LinearTrace.Choreography
   , vec2
   , whiteSpace
   , width
+  , x
+  , y
   , zIndex
   , (+)
   , (-)
@@ -346,8 +342,8 @@ data NodeSpec = NodeSpec
   , nodeSpecHeight       :: Maybe Span
   , nodeSpecRight        :: Maybe Coord
   , nodeSpecBottom       :: Maybe Coord
-  , nodeSpecCenterX      :: Maybe Coord
-  , nodeSpecCenterY      :: Maybe Coord
+  , nodeSpecX            :: Maybe Coord
+  , nodeSpecY            :: Maybe Coord
   , nodeSpecRequirements :: [ViewLayout ()]
   }
 
@@ -503,8 +499,8 @@ emptyNodeSpec =
     , nodeSpecHeight = Nothing
     , nodeSpecRight = Nothing
     , nodeSpecBottom = Nothing
-    , nodeSpecCenterX = Nothing
-    , nodeSpecCenterY = Nothing
+    , nodeSpecX = Nothing
+    , nodeSpecY = Nothing
     , nodeSpecRequirements = []
     }
 
@@ -532,10 +528,8 @@ appendNodeSpec first second =
     , nodeSpecRight = preferLater (nodeSpecRight first) (nodeSpecRight second)
     , nodeSpecBottom =
         preferLater (nodeSpecBottom first) (nodeSpecBottom second)
-    , nodeSpecCenterX =
-        preferLater (nodeSpecCenterX first) (nodeSpecCenterX second)
-    , nodeSpecCenterY =
-        preferLater (nodeSpecCenterY first) (nodeSpecCenterY second)
+    , nodeSpecX = preferLater (nodeSpecX first) (nodeSpecX second)
+    , nodeSpecY = preferLater (nodeSpecY first) (nodeSpecY second)
     , nodeSpecRequirements =
         nodeSpecRequirements first P.++ nodeSpecRequirements second
     }
@@ -1404,32 +1398,18 @@ right value = setNodeSpecWith (\spec -> spec {nodeSpecRight = Just value})
 bottom :: Coord -> NodeRecipe ()
 bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
 
-centerX :: Coord -> NodeRecipe ()
-centerX value = setNodeSpecWith (\spec -> spec {nodeSpecCenterX = Just value})
+x :: Coord -> NodeRecipe ()
+x value = setNodeSpecWith (\spec -> spec {nodeSpecX = Just value})
 
-centerY :: Coord -> NodeRecipe ()
-centerY value = setNodeSpecWith (\spec -> spec {nodeSpecCenterY = Just value})
+y :: Coord -> NodeRecipe ()
+y value = setNodeSpecWith (\spec -> spec {nodeSpecY = Just value})
 
 position :: Vec2 Coord -> NodeRecipe ()
 position value =
   case value of
-    Vec2 leftExpr topExpr -> do
-      left leftExpr
-      top topExpr
-
-size :: Vec2 Span -> NodeRecipe ()
-size value =
-  case value of
-    Vec2 widthExpr heightExpr -> do
-      width widthExpr
-      height heightExpr
-
-center :: Vec2 Coord -> NodeRecipe ()
-center value =
-  case value of
-    Vec2 centerXExpr centerYExpr -> do
-      centerX centerXExpr
-      centerY centerYExpr
+    Vec2 valueX valueY -> do
+      x valueX
+      y valueY
 
 bounds :: BoundsExpr -> NodeRecipe ()
 bounds value =
@@ -1439,18 +1419,6 @@ bounds value =
       left (mkCoord leftExpr [])
       width (mkSpan widthExpr [])
       height (mkSpan heightExpr [])
-
-placed :: Coord -> Coord -> Span -> Span -> NodeRecipe ()
-placed leftExpr topExpr widthExpr heightExpr = do
-  left leftExpr
-  top topExpr
-  width widthExpr
-  height heightExpr
-
-sized :: Span -> Span -> NodeRecipe ()
-sized widthExpr heightExpr = do
-  width widthExpr
-  height heightExpr
 
 require :: ViewLayout () -> NodeRecipe ()
 require action =
@@ -1508,10 +1476,10 @@ constrainGeometry spec leftExpr topExpr widthExpr heightExpr = do
   constrainMaybeCoord (topExpr S.@+@ heightExpr) (nodeSpecBottom spec)
   constrainMaybeCoord
     (leftExpr S.@+@ (widthExpr S.@/@ (S.num 2 :: LayoutExpr)))
-    (nodeSpecCenterX spec)
+    (nodeSpecX spec)
   constrainMaybeCoord
     (topExpr S.@+@ (heightExpr S.@/@ (S.num 2 :: LayoutExpr)))
-    (nodeSpecCenterY spec)
+    (nodeSpecY spec)
 
 constrainMaybeCoord :: LayoutExpr -> Maybe Coord -> ViewLayout ()
 constrainMaybeCoord expr maybeTarget =
