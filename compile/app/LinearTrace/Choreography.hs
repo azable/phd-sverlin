@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds              #-}
+{-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
@@ -105,14 +106,21 @@ module LinearTrace.Choreography
   , HslExpr
   , HueExpr
   , LayoutExpr
+  , Coord
+  , Span
+  , Offset
   , UnitExpr
   , Vec2(..)
   , TextAlign(..)
   , WhiteSpace(..)
   , alpha
+  , asCoord
+  , asSpan
+  , at
   , bold
   , bottom
   , bounds
+  , by
   , borderStyle
   , boxDefinition
   , center
@@ -120,6 +128,7 @@ module LinearTrace.Choreography
   , centerY
   , centerText
   , constrain
+  , coordExpr
   , encourage
   , fill
   , finalizeStyle
@@ -128,11 +137,14 @@ module LinearTrace.Choreography
   , fontStyle
   , fontWeight
   , global
+  , globalCoord
+  , globalSpan
   , height
   , left
   , noWrap
   , node
   , num
+  , offsetExpr
   , opacity
   , placeBox
   , placed
@@ -155,6 +167,8 @@ module LinearTrace.Choreography
   , style
   , size
   , sized
+  , shift
+  , spanExpr
   , takeHeight
   , takeLeft
   , takeRight
@@ -170,8 +184,16 @@ module LinearTrace.Choreography
   , (@+@)
   , (@-@)
   , (@/@)
+  , (@<=|)
   , (@<=@)
+  , (@==|)
   , (@==@)
+  , (@>=@)
+  , (|<=|)
+  , (|<=@)
+  , (|>=|)
+  , (|==|)
+  , (|==@)
   , (|>)
   ) where
 
@@ -200,8 +222,7 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          setStrokeWidthOnce, setTextAlignOnce,
                                          setWhiteSpaceOnce, setZIndexOnce,
                                          takeHeight, takeLeft, takeRight,
-                                         takeTop, takeWidth, (@*@), (@+@),
-                                         (@-@), (@/@), (@<=@), (@==@), (|>))
+                                         takeTop, takeWidth, (|>))
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
@@ -290,16 +311,41 @@ data RenderRecipe a where
   CompleteRender :: V.Visual V.Rendered V.Stable used tag %1 -> RenderRecipe ()
   CheckpointRender :: RenderRecipe ()
 
+data Coord =
+  Coord LayoutExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+data Span =
+  Span LayoutExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+data Offset =
+  Offset LayoutExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+data CoordChain =
+  CoordChain Coord [S.Constraint]
+
+data SpanChain =
+  SpanChain Span [S.Constraint]
+
+data BridgeRelation
+  = BridgeLoose
+  | BridgeExact
+
+data CoordSpanBridge =
+  CoordSpanBridge BridgeRelation Coord Span [S.Constraint]
+
 data NodeSpec = NodeSpec
   { nodeSpecStyleUpdate  :: Style -> Style
-  , nodeSpecLeft         :: Maybe LayoutExpr
-  , nodeSpecTop          :: Maybe LayoutExpr
-  , nodeSpecWidth        :: Maybe LayoutExpr
-  , nodeSpecHeight       :: Maybe LayoutExpr
-  , nodeSpecRight        :: Maybe LayoutExpr
-  , nodeSpecBottom       :: Maybe LayoutExpr
-  , nodeSpecCenterX      :: Maybe LayoutExpr
-  , nodeSpecCenterY      :: Maybe LayoutExpr
+  , nodeSpecLeft         :: Maybe Coord
+  , nodeSpecTop          :: Maybe Coord
+  , nodeSpecWidth        :: Maybe Span
+  , nodeSpecHeight       :: Maybe Span
+  , nodeSpecRight        :: Maybe Coord
+  , nodeSpecBottom       :: Maybe Coord
+  , nodeSpecCenterX      :: Maybe Coord
+  , nodeSpecCenterY      :: Maybe Coord
   , nodeSpecRequirements :: [ViewLayout ()]
   }
 
@@ -530,6 +576,329 @@ instance Applicative NodeRecipe where
 
 instance Monad NodeRecipe where
   (>>=) = bindNodeRecipe
+
+coordExpr :: Coord -> LayoutExpr
+coordExpr value =
+  case value of
+    Coord expr _ -> expr
+
+spanExpr :: Span -> LayoutExpr
+spanExpr value =
+  case value of
+    Span expr _ -> expr
+
+offsetExpr :: Offset -> LayoutExpr
+offsetExpr value =
+  case value of
+    Offset expr _ -> expr
+
+coordConstraints :: Coord -> [S.Constraint]
+coordConstraints value =
+  case value of
+    Coord _ constraints -> constraints
+
+spanConstraints :: Span -> [S.Constraint]
+spanConstraints value =
+  case value of
+    Span _ constraints -> constraints
+
+offsetConstraints :: Offset -> [S.Constraint]
+offsetConstraints value =
+  case value of
+    Offset _ constraints -> constraints
+
+nonNegative :: LayoutExpr -> S.Constraint
+nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
+
+mkCoord :: LayoutExpr -> [S.Constraint] -> Coord
+mkCoord expr constraints = Coord expr (constraints P.++ [nonNegative expr])
+
+mkSpan :: LayoutExpr -> [S.Constraint] -> Span
+mkSpan expr constraints = Span expr (constraints P.++ [nonNegative expr])
+
+mkOffset :: LayoutExpr -> [S.Constraint] -> Offset
+mkOffset = Offset
+
+at :: P.Double -> Coord
+at value = mkCoord (num value :: LayoutExpr) []
+
+by :: P.Double -> Span
+by value = mkSpan (num value :: LayoutExpr) []
+
+shift :: P.Double -> Offset
+shift value = mkOffset (num value :: LayoutExpr) []
+
+globalCoord :: P.String -> Coord
+globalCoord name = mkCoord (global name :: LayoutExpr) []
+
+globalSpan :: P.String -> Span
+globalSpan name = mkSpan (global name :: LayoutExpr) []
+
+asCoord :: Offset -> Coord
+asCoord value =
+  case value of
+    Offset expr constraints -> mkCoord expr constraints
+
+asSpan :: Offset -> Span
+asSpan value =
+  case value of
+    Offset expr constraints -> mkSpan expr constraints
+
+rawOneConstraint :: [S.Constraint] -> OneConstraint
+rawOneConstraint constraints = OneConstraint (Ur (S.All constraints))
+
+class AddExpr lhs rhs result | lhs rhs -> result where
+  addExpr :: lhs -> rhs -> result
+
+instance AddExpr LayoutExpr LayoutExpr LayoutExpr where
+  addExpr = (S.@+@)
+
+instance AddExpr Coord Span Coord where
+  addExpr lhs rhs =
+    mkCoord
+      (coordExpr lhs S.@+@ spanExpr rhs)
+      (coordConstraints lhs P.++ spanConstraints rhs)
+
+instance AddExpr Coord Offset Coord where
+  addExpr lhs rhs =
+    mkCoord
+      (coordExpr lhs S.@+@ offsetExpr rhs)
+      (coordConstraints lhs P.++ offsetConstraints rhs)
+
+instance AddExpr Span Span Span where
+  addExpr lhs rhs =
+    mkSpan
+      (spanExpr lhs S.@+@ spanExpr rhs)
+      (spanConstraints lhs P.++ spanConstraints rhs)
+
+instance AddExpr Offset Span Offset where
+  addExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@+@ spanExpr rhs)
+      (offsetConstraints lhs P.++ spanConstraints rhs)
+
+instance AddExpr Offset Offset Offset where
+  addExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@+@ offsetExpr rhs)
+      (offsetConstraints lhs P.++ offsetConstraints rhs)
+
+class SubExpr lhs rhs result | lhs rhs -> result where
+  subExpr :: lhs -> rhs -> result
+
+instance SubExpr LayoutExpr LayoutExpr LayoutExpr where
+  subExpr = (S.@-@)
+
+instance SubExpr Coord Span Offset where
+  subExpr lhs rhs =
+    mkOffset
+      (coordExpr lhs S.@-@ spanExpr rhs)
+      (coordConstraints lhs P.++ spanConstraints rhs)
+
+instance SubExpr Coord Coord Offset where
+  subExpr lhs rhs =
+    mkOffset
+      (coordExpr lhs S.@-@ coordExpr rhs)
+      (coordConstraints lhs P.++ coordConstraints rhs)
+
+instance SubExpr Span Span Offset where
+  subExpr lhs rhs =
+    mkOffset
+      (spanExpr lhs S.@-@ spanExpr rhs)
+      (spanConstraints lhs P.++ spanConstraints rhs)
+
+instance SubExpr Offset Span Offset where
+  subExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@-@ spanExpr rhs)
+      (offsetConstraints lhs P.++ spanConstraints rhs)
+
+instance SubExpr Offset Offset Offset where
+  subExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@-@ offsetExpr rhs)
+      (offsetConstraints lhs P.++ offsetConstraints rhs)
+
+class MulExpr lhs rhs result | lhs rhs -> result where
+  mulExpr :: lhs -> rhs -> result
+
+instance MulExpr LayoutExpr LayoutExpr LayoutExpr where
+  mulExpr = (S.@*@)
+
+instance MulExpr Span Span Span where
+  mulExpr lhs rhs =
+    mkSpan
+      (spanExpr lhs S.@*@ spanExpr rhs)
+      (spanConstraints lhs P.++ spanConstraints rhs)
+
+instance MulExpr Offset Span Offset where
+  mulExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@*@ spanExpr rhs)
+      (offsetConstraints lhs P.++ spanConstraints rhs)
+
+instance MulExpr Span Offset Offset where
+  mulExpr lhs rhs =
+    mkOffset
+      (spanExpr lhs S.@*@ offsetExpr rhs)
+      (spanConstraints lhs P.++ offsetConstraints rhs)
+
+class DivExpr lhs rhs result | lhs rhs -> result where
+  divExpr :: lhs -> rhs -> result
+
+instance DivExpr LayoutExpr LayoutExpr LayoutExpr where
+  divExpr = (S.@/@)
+
+instance DivExpr Span Span Span where
+  divExpr lhs rhs =
+    mkSpan
+      (spanExpr lhs S.@/@ spanExpr rhs)
+      (spanConstraints lhs P.++ spanConstraints rhs)
+
+instance DivExpr Offset Span Offset where
+  divExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@/@ spanExpr rhs)
+      (offsetConstraints lhs P.++ spanConstraints rhs)
+
+infixl 6 @+@
+infixl 6 @-@
+infixl 7 @*@
+infixl 7 @/@
+(@+@) :: AddExpr lhs rhs result => lhs -> rhs -> result
+(@+@) = addExpr
+
+(@-@) :: SubExpr lhs rhs result => lhs -> rhs -> result
+(@-@) = subExpr
+
+(@*@) :: MulExpr lhs rhs result => lhs -> rhs -> result
+(@*@) = mulExpr
+
+(@/@) :: DivExpr lhs rhs result => lhs -> rhs -> result
+(@/@) = divExpr
+
+class CoordRelate lhs rhs where
+  coordRelate ::
+       (LayoutExpr -> LayoutExpr -> S.Constraint) -> lhs -> rhs -> CoordChain
+
+instance CoordRelate Coord Coord where
+  coordRelate op lhs rhs =
+    CoordChain
+      rhs
+      (coordConstraints lhs
+         P.++ coordConstraints rhs
+         P.++ [op (coordExpr lhs) (coordExpr rhs)])
+
+instance CoordRelate CoordChain Coord where
+  coordRelate op lhs rhs =
+    case lhs of
+      CoordChain current constraints ->
+        CoordChain
+          rhs
+          (constraints
+             P.++ coordConstraints rhs
+             P.++ [op (coordExpr current) (coordExpr rhs)])
+
+class SpanRelate lhs rhs where
+  spanRelate ::
+       (LayoutExpr -> LayoutExpr -> S.Constraint) -> lhs -> rhs -> SpanChain
+
+instance SpanRelate Span Span where
+  spanRelate op lhs rhs =
+    SpanChain
+      rhs
+      (spanConstraints lhs
+         P.++ spanConstraints rhs
+         P.++ [op (spanExpr lhs) (spanExpr rhs)])
+
+instance SpanRelate SpanChain Span where
+  spanRelate op lhs rhs =
+    case lhs of
+      SpanChain current constraints ->
+        SpanChain
+          rhs
+          (constraints
+             P.++ spanConstraints rhs
+             P.++ [op (spanExpr current) (spanExpr rhs)])
+
+class OpenBridge lhs where
+  openBridge :: BridgeRelation -> lhs -> Span -> CoordSpanBridge
+
+instance OpenBridge Coord where
+  openBridge relation lhs spanValue =
+    CoordSpanBridge
+      relation
+      lhs
+      spanValue
+      (coordConstraints lhs P.++ spanConstraints spanValue)
+
+instance OpenBridge CoordChain where
+  openBridge relation lhs spanValue =
+    case lhs of
+      CoordChain current constraints ->
+        CoordSpanBridge
+          relation
+          current
+          spanValue
+          (constraints P.++ spanConstraints spanValue)
+
+bridgeConstraint ::
+     BridgeRelation -> BridgeRelation -> Coord -> Span -> Coord -> S.Constraint
+bridgeConstraint lhsRelation rhsRelation lhs spanValue rhs =
+  case (lhsRelation, rhsRelation) of
+    (BridgeExact, BridgeExact) ->
+      (coordExpr lhs S.@+@ spanExpr spanValue) S.@==@ coordExpr rhs
+    _ -> (coordExpr lhs S.@+@ spanExpr spanValue) S.@<=@ coordExpr rhs
+
+closeBridge :: BridgeRelation -> CoordSpanBridge -> Coord -> CoordChain
+closeBridge rhsRelation bridge rhs =
+  case bridge of
+    CoordSpanBridge lhsRelation lhs spanValue constraints ->
+      CoordChain
+        rhs
+        (constraints
+           P.++ coordConstraints rhs
+           P.++ [bridgeConstraint lhsRelation rhsRelation lhs spanValue rhs])
+
+infixl 4 @==@
+infixl 4 @<=@
+infix 4 @>=@
+infixl 4 |==|
+infixl 4 |<=|
+infix 4 |>=|
+infixl 4 @==|
+infixl 4 @<=|
+infixl 4 |==@
+infixl 4 |<=@
+(@==@) :: CoordRelate lhs rhs => lhs -> rhs -> CoordChain
+(@==@) = coordRelate (S.@==@)
+
+(@<=@) :: CoordRelate lhs rhs => lhs -> rhs -> CoordChain
+(@<=@) = coordRelate (S.@<=@)
+
+(@>=@) :: CoordRelate lhs rhs => lhs -> rhs -> CoordChain
+lhs @>=@ rhs = coordRelate (P.flip (S.@<=@)) lhs rhs
+
+(|==|) :: SpanRelate lhs rhs => lhs -> rhs -> SpanChain
+(|==|) = spanRelate (S.@==@)
+
+(|<=|) :: SpanRelate lhs rhs => lhs -> rhs -> SpanChain
+(|<=|) = spanRelate (S.@<=@)
+
+(|>=|) :: SpanRelate lhs rhs => lhs -> rhs -> SpanChain
+lhs |>=| rhs = spanRelate (P.flip (S.@<=@)) lhs rhs
+
+(@==|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
+lhs @==| rhs = openBridge BridgeExact lhs rhs
+
+(@<=|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
+lhs @<=| rhs = openBridge BridgeLoose lhs rhs
+
+(|==@) :: CoordSpanBridge -> Coord -> CoordChain
+lhs |==@ rhs = closeBridge BridgeExact lhs rhs
+
+(|<=@) :: CoordSpanBridge -> Coord -> CoordChain
+lhs |<=@ rhs = closeBridge BridgeLoose lhs rhs
 
 runProgram :: Program () -> VisualTraceGraph
 runProgram program = V.buildGraph (interpretProgram program)
@@ -838,8 +1207,24 @@ renderComplete = CompleteRender
 renderCheckpoint :: RenderRecipe ()
 renderCheckpoint = CheckpointRender
 
-constrain :: OneConstraint %1 -> ViewLayout ()
-constrain = V.ensure
+class ConstraintLike constraint where
+  toOneConstraint :: constraint -> OneConstraint
+
+instance ConstraintLike OneConstraint where
+  toOneConstraint constraint = constraint
+
+instance ConstraintLike CoordChain where
+  toOneConstraint chain =
+    case chain of
+      CoordChain _ constraints -> rawOneConstraint constraints
+
+instance ConstraintLike SpanChain where
+  toOneConstraint chain =
+    case chain of
+      SpanChain _ constraints -> rawOneConstraint constraints
+
+constrain :: ConstraintLike constraint => constraint -> ViewLayout ()
+constrain constraint = V.ensure (toOneConstraint constraint)
 
 style :: StyleRecipe () -> (EmptyStyleDraft %1 -> Style)
 style recipe =
@@ -849,20 +1234,38 @@ style recipe =
 setStyleWith :: (Style -> Style) -> NodeRecipe ()
 setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
 
+setStyleWithConstraints :: [S.Constraint] -> (Style -> Style) -> NodeRecipe ()
+setStyleWithConstraints constraints update =
+  NodeRecipe
+    ()
+    emptyNodeSpec
+      { nodeSpecStyleUpdate = update
+      , nodeSpecRequirements = [constrainRaw (S.All constraints)]
+      }
+
 opacity :: UnitExpr -> NodeRecipe ()
 opacity value = setStyleWith (VS.setOpacity value)
 
 zIndex :: FreeExpr -> NodeRecipe ()
 zIndex value = setStyleWith (VS.setZIndex value)
 
-fontSize :: LayoutExpr -> NodeRecipe ()
-fontSize value = setStyleWith (VS.setFontSize value)
+fontSize :: Span -> NodeRecipe ()
+fontSize value =
+  setStyleWithConstraints
+    (spanConstraints value)
+    (VS.setFontSize (spanExpr value))
 
-radius :: LayoutExpr -> NodeRecipe ()
-radius value = setStyleWith (VS.setRadius value)
+radius :: Span -> NodeRecipe ()
+radius value =
+  setStyleWithConstraints
+    (spanConstraints value)
+    (VS.setRadius (spanExpr value))
 
-strokeWidth :: LayoutExpr -> NodeRecipe ()
-strokeWidth value = setStyleWith (VS.setStrokeWidth value)
+strokeWidth :: Span -> NodeRecipe ()
+strokeWidth value =
+  setStyleWithConstraints
+    (spanConstraints value)
+    (VS.setStrokeWidth (spanExpr value))
 
 alpha :: UnitExpr -> NodeRecipe ()
 alpha value = setStyleWith (VS.setAlpha value)
@@ -903,45 +1306,45 @@ noWrap = whiteSpace WhiteSpaceNoWrap
 setNodeSpecWith :: (NodeSpec -> NodeSpec) -> NodeRecipe ()
 setNodeSpecWith update = NodeRecipe () (update emptyNodeSpec)
 
-left :: LayoutExpr -> NodeRecipe ()
+left :: Coord -> NodeRecipe ()
 left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
 
-top :: LayoutExpr -> NodeRecipe ()
+top :: Coord -> NodeRecipe ()
 top value = setNodeSpecWith (\spec -> spec {nodeSpecTop = Just value})
 
-width :: LayoutExpr -> NodeRecipe ()
+width :: Span -> NodeRecipe ()
 width value = setNodeSpecWith (\spec -> spec {nodeSpecWidth = Just value})
 
-height :: LayoutExpr -> NodeRecipe ()
+height :: Span -> NodeRecipe ()
 height value = setNodeSpecWith (\spec -> spec {nodeSpecHeight = Just value})
 
-right :: LayoutExpr -> NodeRecipe ()
+right :: Coord -> NodeRecipe ()
 right value = setNodeSpecWith (\spec -> spec {nodeSpecRight = Just value})
 
-bottom :: LayoutExpr -> NodeRecipe ()
+bottom :: Coord -> NodeRecipe ()
 bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
 
-centerX :: LayoutExpr -> NodeRecipe ()
+centerX :: Coord -> NodeRecipe ()
 centerX value = setNodeSpecWith (\spec -> spec {nodeSpecCenterX = Just value})
 
-centerY :: LayoutExpr -> NodeRecipe ()
+centerY :: Coord -> NodeRecipe ()
 centerY value = setNodeSpecWith (\spec -> spec {nodeSpecCenterY = Just value})
 
-position :: Vec2 LayoutExpr -> NodeRecipe ()
+position :: Vec2 Coord -> NodeRecipe ()
 position value =
   case value of
     Vec2 leftExpr topExpr -> do
       left leftExpr
       top topExpr
 
-size :: Vec2 LayoutExpr -> NodeRecipe ()
+size :: Vec2 Span -> NodeRecipe ()
 size value =
   case value of
     Vec2 widthExpr heightExpr -> do
       width widthExpr
       height heightExpr
 
-center :: Vec2 LayoutExpr -> NodeRecipe ()
+center :: Vec2 Coord -> NodeRecipe ()
 center value =
   case value of
     Vec2 centerXExpr centerYExpr -> do
@@ -952,19 +1355,19 @@ bounds :: BoundsExpr -> NodeRecipe ()
 bounds value =
   case value of
     Bounds topExpr leftExpr widthExpr heightExpr -> do
-      top topExpr
-      left leftExpr
-      width widthExpr
-      height heightExpr
+      top (mkCoord topExpr [])
+      left (mkCoord leftExpr [])
+      width (mkSpan widthExpr [])
+      height (mkSpan heightExpr [])
 
-placed :: LayoutExpr -> LayoutExpr -> LayoutExpr -> LayoutExpr -> NodeRecipe ()
+placed :: Coord -> Coord -> Span -> Span -> NodeRecipe ()
 placed leftExpr topExpr widthExpr heightExpr = do
   left leftExpr
   top topExpr
   width widthExpr
   height heightExpr
 
-sized :: LayoutExpr -> LayoutExpr -> NodeRecipe ()
+sized :: Span -> Span -> NodeRecipe ()
 sized widthExpr heightExpr = do
   width widthExpr
   height heightExpr
@@ -1017,24 +1420,34 @@ constrainGeometry ::
   -> LayoutExpr
   -> ViewLayout ()
 constrainGeometry spec leftExpr topExpr widthExpr heightExpr = do
-  constrainMaybe leftExpr (nodeSpecLeft spec)
-  constrainMaybe topExpr (nodeSpecTop spec)
-  constrainMaybe widthExpr (nodeSpecWidth spec)
-  constrainMaybe heightExpr (nodeSpecHeight spec)
-  constrainMaybe (leftExpr S.@+@ widthExpr) (nodeSpecRight spec)
-  constrainMaybe (topExpr S.@+@ heightExpr) (nodeSpecBottom spec)
-  constrainMaybe
+  constrainMaybeCoord leftExpr (nodeSpecLeft spec)
+  constrainMaybeCoord topExpr (nodeSpecTop spec)
+  constrainMaybeSpan widthExpr (nodeSpecWidth spec)
+  constrainMaybeSpan heightExpr (nodeSpecHeight spec)
+  constrainMaybeCoord (leftExpr S.@+@ widthExpr) (nodeSpecRight spec)
+  constrainMaybeCoord (topExpr S.@+@ heightExpr) (nodeSpecBottom spec)
+  constrainMaybeCoord
     (leftExpr S.@+@ (widthExpr S.@/@ (S.num 2 :: LayoutExpr)))
     (nodeSpecCenterX spec)
-  constrainMaybe
+  constrainMaybeCoord
     (topExpr S.@+@ (heightExpr S.@/@ (S.num 2 :: LayoutExpr)))
     (nodeSpecCenterY spec)
 
-constrainMaybe :: LayoutExpr -> Maybe LayoutExpr -> ViewLayout ()
-constrainMaybe expr maybeTarget =
+constrainMaybeCoord :: LayoutExpr -> Maybe Coord -> ViewLayout ()
+constrainMaybeCoord expr maybeTarget =
   case maybeTarget of
-    Nothing     -> return ()
-    Just target -> constrainRaw (expr S.@==@ target)
+    Nothing -> return ()
+    Just target ->
+      constrainRaw
+        (S.All (coordConstraints target P.++ [expr S.@==@ coordExpr target]))
+
+constrainMaybeSpan :: LayoutExpr -> Maybe Span -> ViewLayout ()
+constrainMaybeSpan expr maybeTarget =
+  case maybeTarget of
+    Nothing -> return ()
+    Just target ->
+      constrainRaw
+        (S.All (spanConstraints target P.++ [expr S.@==@ spanExpr target]))
 
 constrainRaw :: S.Constraint -> ViewLayout ()
 constrainRaw constraint = V.ensure (OneConstraint (Ur constraint))
@@ -1051,8 +1464,8 @@ placeBox leftExpr topExpr widthExpr heightExpr visual0 = do
   LayoutUse visual2 topVar <- takeTop visual1
   LayoutUse visual3 widthVar <- takeWidth visual2
   LayoutUse visual4 heightVar <- takeHeight visual3
-  constrain (leftVar @==@ leftExpr)
-  constrain (topVar @==@ topExpr)
-  constrain (widthVar @==@ widthExpr)
-  constrain (heightVar @==@ heightExpr)
+  V.ensure (leftVar V.@==@ leftExpr)
+  V.ensure (topVar V.@==@ topExpr)
+  V.ensure (widthVar V.@==@ widthExpr)
+  V.ensure (heightVar V.@==@ heightExpr)
   return visual4

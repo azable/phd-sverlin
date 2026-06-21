@@ -328,41 +328,41 @@ renderDestroyPair obligations =
       renderRemove targetVisual
       renderRemove elementVisual
 
-cell :: LayoutExpr
-cell = global "cell"
+cell :: Span
+cell = globalSpan "cell"
 
-gap :: LayoutExpr
-gap = global "gap"
+gap :: Span
+gap = globalSpan "gap"
 
-targetX :: LayoutExpr
-targetX = global "target.x"
+targetX :: Coord
+targetX = globalCoord "target.x"
 
-targetY :: LayoutExpr
-targetY = global "target.y"
+targetY :: Coord
+targetY = globalCoord "target.y"
 
-rowX :: LayoutExpr
-rowX = global "row.x"
+rowX :: Coord
+rowX = globalCoord "row.x"
 
-rowY :: LayoutExpr
-rowY = global "row.y"
+rowY :: Coord
+rowY = globalCoord "row.y"
 
-stride :: LayoutExpr
+stride :: Span
 stride = cell @+@ gap
 
-probeY :: LayoutExpr
-probeY = global "probe.y"
+probeY :: Coord
+probeY = globalCoord "probe.y"
 
-targetProbeX :: LayoutExpr
-targetProbeX = global "probe.target.x"
+targetProbeX :: Coord
+targetProbeX = globalCoord "probe.target.x"
 
-elementProbeX :: LayoutExpr
-elementProbeX = global "probe.element.x"
+elementProbeX :: Coord
+elementProbeX = globalCoord "probe.element.x"
 
-matchX :: LayoutExpr
-matchX = global "match.x"
+matchX :: Coord
+matchX = globalCoord "match.x"
 
-matchY :: LayoutExpr
-matchY = global "match.y"
+matchY :: Coord
+matchY = globalCoord "match.y"
 
 targetHue :: HueExpr
 targetHue = global "target.hue"
@@ -376,84 +376,71 @@ probeHue = global "probe.hue"
 matchHue :: HueExpr
 matchHue = global "match.hue"
 
-len :: Double -> LayoutExpr
-len = num
-
-cellBy :: Double -> LayoutExpr
-cellBy scale = cell @*@ len scale
+cellBy :: Double -> Span
+cellBy scale = cell @*@ by scale
 
 tone :: HueExpr -> Double -> Double -> HslExpr
 tone hueExpr saturation lightness = Hsl hueExpr (num saturation) (num lightness)
 
-targetWidth :: LayoutExpr
+targetWidth :: Span
 targetWidth = cellBy 2.1 @+@ gap
 
-targetHeight :: LayoutExpr
-targetHeight = cell @+@ gap @*@ len 0.8
+targetHeight :: Span
+targetHeight = cell @+@ gap @*@ by 0.8
 
-probeSize :: LayoutExpr
+probeSize :: Span
 probeSize = cellBy 1.08
 
-matchWidth :: LayoutExpr
-matchWidth = probeSize @*@ len 2 @+@ gap
+matchWidth :: Span
+matchWidth = probeSize @*@ by 2 @+@ gap
 
-matchHeight :: LayoutExpr
+matchHeight :: Span
 matchHeight = cellBy 0.72
 
-listSpan :: LayoutExpr
-listSpan = len 5 @*@ cell @+@ len 4 @*@ gap
+listSpan :: Span
+listSpan = by 5 @*@ cell @+@ by 4 @*@ gap
 
-matchGap :: LayoutExpr
-matchGap = gap @*@ len 0.7
+matchGap :: Span
+matchGap = gap @*@ by 0.7
 
 constrainScale :: ViewLayout ()
 constrainScale = do
-  constrain (len 72 @<=@ cell)
-  constrain (cell @<=@ len 86)
-  constrain (len 26 @<=@ gap)
-  constrain (gap @<=@ len 44)
+  constrain (by 72 |<=| cell |<=| by 86)
+  constrain (by 26 |<=| gap |<=| by 44)
 
 constrainTargetFlow :: ViewLayout ()
 constrainTargetFlow = do
   constrainScale
-  constrain (len 40 @<=@ targetX)
-  constrain (targetX @<=@ len 128)
-  constrain (len 32 @<=@ targetY)
-  constrain (targetY @<=@ len 86)
-  constrain (targetX @+@ targetWidth @<=@ len 380)
-  constrain (targetY @+@ targetHeight @<=@ len 188)
-  constrain (len 64 @<=@ rowX)
-  constrain (rowX @<=@ len 112)
-  constrain (len 430 @<=@ rowY)
-  constrain (rowY @<=@ len 500)
-  constrain (rowX @+@ listSpan @<=@ len 760)
-  constrain (rowY @+@ cell @<=@ len 560)
+  constrain (at 40 @<=@ targetX @<=@ at 128)
+  constrain (at 32 @<=@ targetY @<=@ at 86)
+  constrain (targetX @+@ targetWidth @<=@ at 380)
+  constrain (targetY @+@ targetHeight @<=@ at 188)
+  constrain (at 64 @<=@ rowX @<=@ at 112)
+  constrain (at 430 @<=@ rowY @<=@ at 500)
+  constrain (rowX @+@ listSpan @<=@ at 760)
+  constrain (rowY @+@ cell @<=@ at 560)
 
 constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
   constrainTargetFlow
-  constrain (len 210 @<=@ targetProbeX)
-  constrain (targetProbeX @<=@ len 300)
-  constrain (len 520 @<=@ elementProbeX)
-  constrain (elementProbeX @<=@ len 640)
-  constrain (len 205 @<=@ probeY)
-  constrain (probeY @<=@ len 270)
-  constrain (targetY @+@ targetHeight @+@ gap @<=@ probeY)
-  constrain (probeY @+@ probeSize @+@ gap @<=@ rowY)
-  constrain (targetProbeX @+@ probeSize @+@ gap @*@ len 2 @<=@ elementProbeX)
+  constrain (at 210 @<=@ targetProbeX @<=@ at 300)
+  constrain (at 520 @<=@ elementProbeX @<=@ at 640)
+  constrain (at 205 @<=@ probeY @<=@ at 270)
+  constrain (targetY @==| targetHeight @+@ gap |<=@ probeY)
+  constrain (probeY @==| probeSize @+@ gap |<=@ rowY)
+  constrain (targetProbeX @==| probeSize @+@ gap @*@ by 2 |<=@ elementProbeX)
 
 constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
-  constrain (len 330 @<=@ matchX)
-  constrain (matchX @<=@ len 415)
-  constrain (probeY @+@ probeSize @+@ matchGap @<=@ matchY)
-  constrain (matchY @+@ matchHeight @+@ matchGap @<=@ rowY)
+  constrain (at 330 @<=@ matchX @<=@ at 415)
+  constrain (probeY @==| probeSize @+@ matchGap |<=@ matchY)
+  constrain (matchY @==| matchHeight @+@ matchGap |<=@ rowY)
   constrain (targetProbeX @<=@ matchX)
   constrain (matchX @+@ matchWidth @<=@ elementProbeX @+@ probeSize)
 
-listValueLeft :: Int -> LayoutExpr
-listValueLeft index = rowX @+@ len (fromIntegral index) @*@ stride
+listValueLeft :: Int -> Coord
+listValueLeft index = rowX @+@ by (fromIntegral index) @*@ stride
 
 valueText :: NodeRecipe ()
 valueText = do
