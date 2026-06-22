@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE RebindableSyntax       #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
+{-# LANGUAGE TypeApplications       #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE TypeOperators          #-}
 {-# LANGUAGE UndecidableInstances   #-}
@@ -19,11 +20,33 @@ module LinearTrace.View
   , BlockView
   , blockViewRef
   , blockViewLabel
+  , blockViewFacts
+  , blockViewNodeKey
+  , blockViewPieceKey
   , mapBlockViewStyleExprLeaves
   , solvedBlockViewExprs
   , VisualExplainToken
   , ExplainedVisual
   , RenderIntent(..)
+  , Query(..)
+  , QueryTerm(..)
+  , QueryValue(..)
+  , queryAtom
+  , querySymbol
+  , queryInt
+  , queryAppend
+  , queryKey
+  , querySymbolValue
+  , queryFacts
+  , queryMatches
+  , MatchSpec
+  , emptyMatchSpec
+  , matchSpecAppend
+  , matchSpecFromList
+  , matchNode
+  , matchNodeAs
+  , PairPattern(..)
+  , pairPatternKey
   , Visual
   , Unrendered
   , Rendered
@@ -68,9 +91,12 @@ module LinearTrace.View
   , setBorderStyleOnce
   , setWhiteSpaceOnce
   , fresh
+  , freshMatched
   , freshCopy
   , forkCopy
+  , forkCopyMatched
   , continueFrom
+  , continueFromMatched
   , remove
   , complete
   , checkpoint
@@ -140,11 +166,13 @@ module LinearTrace.View
   , Unsealed(..)
   , Decided(..)
   , create
+  , createTagged
   , observe
   , use
   , copy
   , replace
   , compute
+  , computeTagged
   , destroy
   , seal
   , unseal
@@ -154,6 +182,7 @@ module LinearTrace.View
   , explain
   , discard
   , buildGraph
+  , buildGraphWithSpec
   , buildCSP
   , solveCSP
   , solveCSPWithSeed
@@ -185,7 +214,12 @@ import           Control.Functor.Linear                hiding ((<$>), (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
 import           Data.Kind                             (Type)
 import qualified Data.Kind                             as K
-import           GHC.TypeLits                          (ErrorMessage (..), Nat,
+import           Data.Proxy                            (Proxy (..))
+import           Data.Type.Equality                    ((:~:) (..))
+import           Data.Typeable                         (eqT)
+import           GHC.OverloadedLabels                  (IsLabel (..))
+import           GHC.TypeLits                          (ErrorMessage (..),
+                                                        KnownSymbol, Nat,
                                                         TypeError, type (+),
                                                         type CmpNat)
 import qualified LinearTrace.Core.Internal             as C
@@ -200,12 +234,201 @@ import           Prelude.Linear
 import qualified Unsafe.Coerce                         as Unsafe
 
 --------------------------------------------------------------------------------
+-- Semantic queries and visualization matches
+--------------------------------------------------------------------------------
+data QueryValue
+  = QueryAtom
+  | QuerySymbol P.String
+  | QueryInt P.Int
+  deriving (P.Eq, P.Ord, P.Show)
+
+data QueryTerm =
+  QueryTerm P.String QueryValue
+  deriving (P.Eq, P.Ord, P.Show)
+
+newtype Query =
+  Query [QueryTerm]
+  deriving (P.Eq, P.Ord, P.Show)
+
+queryAtom :: P.String -> Query
+queryAtom name = Query [QueryTerm name QueryAtom]
+
+querySymbol :: P.String -> P.String -> Query
+querySymbol name value = Query [QueryTerm name (QuerySymbol value)]
+
+queryInt :: P.String -> P.Int -> Query
+queryInt name value = Query [QueryTerm name (QueryInt value)]
+
+queryAppend :: Query -> Query -> Query
+queryAppend lhs rhs =
+  case lhs of
+    Query leftTerms ->
+      case rhs of
+        Query rightTerms -> Query (canonicalTerms (leftTerms P.++ rightTerms))
+
+instance KnownSymbol name => IsLabel name Query where
+  fromLabel = queryAtom (S.labelName (Proxy @name))
+
+instance KnownSymbol name => IsLabel name (P.Int -> Query) where
+  fromLabel = queryInt (S.labelName (Proxy @name))
+
+instance KnownSymbol name => IsLabel name (Query -> Query) where
+  fromLabel value =
+    querySymbol (S.labelName (Proxy @name)) (querySymbolValue value)
+
+queryKey :: Query -> P.String
+queryKey query =
+  case query of
+    Query terms -> joinPath ("q" : P.map queryTermKey (canonicalTerms terms))
+
+querySymbolValue :: Query -> P.String
+querySymbolValue query =
+  case query of
+    Query [QueryTerm name QueryAtom] -> name
+    _                                -> queryKey query
+
+queryFacts :: Query -> C.Facts
+queryFacts query =
+  case query of
+    Query terms -> C.Facts (P.map queryTermToFact (canonicalTerms terms))
+
+queryTermKey :: QueryTerm -> P.String
+queryTermKey term =
+  case term of
+    QueryTerm name value ->
+      case value of
+        QueryAtom          -> safeKey name
+        QuerySymbol symbol -> safeKey name ++ "-" ++ safeKey symbol
+        QueryInt intValue  -> safeKey name ++ "-" ++ P.show intValue
+
+queryMatches :: Query -> C.Facts -> P.Bool
+queryMatches query facts =
+  case query of
+    Query terms -> P.all (`factSetContains` facts) terms
+
+factSetContains :: QueryTerm -> C.Facts -> P.Bool
+factSetContains term facts = queryTermToFact term `P.elem` C.factsToList facts
+
+queryTermToFact :: QueryTerm -> C.Fact
+queryTermToFact term =
+  case term of
+    QueryTerm name value ->
+      case value of
+        QueryAtom          -> C.factAtom name
+        QuerySymbol symbol -> C.factSymbol name symbol
+        QueryInt intValue  -> C.factInt name intValue
+
+canonicalTerms :: [QueryTerm] -> [QueryTerm]
+canonicalTerms terms = dedupeTerms (sortTerms terms)
+
+sortTerms :: [QueryTerm] -> [QueryTerm]
+sortTerms terms =
+  case terms of
+    [] -> []
+    term:rest ->
+      sortTerms [x | x <- rest, x P.<= term]
+        P.++ [term]
+        P.++ sortTerms [x | x <- rest, x P.> term]
+
+dedupeTerms :: [QueryTerm] -> [QueryTerm]
+dedupeTerms terms =
+  case terms of
+    [] -> []
+    term:rest
+      {- HLINT ignore "Use if" -}
+     ->
+      case term `P.elem` rest of
+        True  -> dedupeTerms rest
+        False -> term : dedupeTerms rest
+
+safeKey :: P.String -> P.String
+safeKey value =
+  case value of
+    [] -> []
+    ch:rest ->
+      let safeChar
+            {- HLINT ignore "Use if" -}
+           =
+            case isSafeKeyChar ch of
+              True  -> ch
+              False -> '_'
+       in safeChar : safeKey rest
+
+isSafeKeyChar :: P.Char -> P.Bool
+isSafeKeyChar ch = ch `P.elem` safeKeyChars
+
+safeKeyChars :: [P.Char]
+safeKeyChars = ['a' .. 'z'] P.++ ['A' .. 'Z'] P.++ ['0' .. '9'] P.++ "_-"
+
+data PairPattern = PairPattern
+  { pairFirstQuery  :: Query
+  , pairSecondQuery :: Query
+  , pairName        :: P.String
+  } deriving (P.Eq, P.Show)
+
+pairPatternKey :: PairPattern -> P.String
+pairPatternKey pattern' =
+  "pair."
+    ++ queryKey (pairFirstQuery pattern')
+    ++ "."
+    ++ queryKey (pairSecondQuery pattern')
+    ++ "."
+    ++ safeKey (pairName pattern')
+
+newtype MatchSpec =
+  MatchSpec [SomeMatch]
+
+data SomeMatch where
+  SomeMatch
+    :: C.Traceable tag=> Proxy tag
+    -> Query
+    -> P.String
+    -> (P.Int -> ViewDefinition tag used)
+    -> SomeMatch
+
+emptyMatchSpec :: MatchSpec
+emptyMatchSpec = MatchSpec []
+
+matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
+matchSpecAppend lhs rhs =
+  case lhs of
+    MatchSpec leftMatches ->
+      case rhs of
+        MatchSpec rightMatches -> MatchSpec (leftMatches P.++ rightMatches)
+
+matchSpecFromList :: [MatchSpec] -> MatchSpec
+matchSpecFromList specs =
+  case specs of
+    []        -> emptyMatchSpec
+    spec:rest -> matchSpecAppend spec (matchSpecFromList rest)
+
+matchNode ::
+     forall tag used. C.Traceable tag
+  => Query
+  -> (P.Int -> ViewDefinition tag used)
+  -> MatchSpec
+matchNode query = matchNodeAs query (queryKey query)
+
+matchNodeAs ::
+     forall tag used. C.Traceable tag
+  => Query
+  -> P.String
+  -> (P.Int -> ViewDefinition tag used)
+  -> MatchSpec
+matchNodeAs query nodeKey makeDefinition =
+  MatchSpec
+    [SomeMatch (Proxy :: Proxy tag) query (safeKey nodeKey) makeDefinition]
+
+--------------------------------------------------------------------------------
 -- Block views
 --------------------------------------------------------------------------------
 data BlockView tag = BlockView
-  { blockRef   :: C.BlockRef tag
-  , blockLabel :: C.PayloadView
-  , blockStyle :: Style
+  { blockRef      :: C.BlockRef tag
+  , blockLabel    :: C.PayloadView
+  , blockFacts    :: C.Facts
+  , blockNodeKey  :: P.String
+  , blockPieceKey :: P.String
+  , blockStyle    :: Style
   }
 
 instance HasBounds (BlockView tag) where
@@ -236,9 +459,11 @@ data ViewGraph = ViewGraph
 -- Materialized views
 --------------------------------------------------------------------------------
 data MaterializedBlockView tag = MaterializedBlockView
-  { materializedBlockRef   :: C.BlockRef tag
-  , materializedBlockLabel :: C.PayloadView
-  , materializedBlockStyle :: MaterializedStyle
+  { materializedBlockRef      :: C.BlockRef tag
+  , materializedBlockLabel    :: C.PayloadView
+  , materializedBlockNodeKey  :: P.String
+  , materializedBlockPieceKey :: P.String
+  , materializedBlockStyle    :: MaterializedStyle
   }
 
 data MaterializedViewNode where
@@ -248,7 +473,11 @@ materializeBlockView ::
      Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
 materializeBlockView solution block =
   P.fmap
-    (MaterializedBlockView (blockRef block) (blockLabel block))
+    (MaterializedBlockView
+       (blockRef block)
+       (blockLabel block)
+       (blockNodeKey block)
+       (blockPieceKey block))
     (materializeStyle solution (blockStyle block))
 
 materializeViewNode :: Solution -> ViewNode -> Maybe MaterializedViewNode
@@ -262,6 +491,15 @@ blockViewRef = blockRef
 
 blockViewLabel :: BlockView tag -> C.PayloadView
 blockViewLabel = blockLabel
+
+blockViewFacts :: BlockView tag -> C.Facts
+blockViewFacts = blockFacts
+
+blockViewNodeKey :: BlockView tag -> P.String
+blockViewNodeKey = blockNodeKey
+
+blockViewPieceKey :: BlockView tag -> P.String
+blockViewPieceKey = blockPieceKey
 
 mapBlockViewStyleExprLeaves ::
      (forall (ty :: Type). String -> Expr ty -> a) -> BlockView tag -> [a]
@@ -1227,6 +1465,7 @@ data ViewEnv = ViewEnv
   , canvasHeightValue :: Double
   , canvasWidth       :: LayoutExpr
   , canvasHeight      :: LayoutExpr
+  , viewMatchSpec     :: MatchSpec
   }
 
 defaultViewEnv :: ViewEnv
@@ -1236,6 +1475,7 @@ defaultViewEnv =
     , canvasHeightValue = 600
     , canvasWidth = num 800
     , canvasHeight = num 600
+    , viewMatchSpec = emptyMatchSpec
     }
 
 data ViewOutput = ViewOutput
@@ -1302,7 +1542,8 @@ data ViewScript acts where
 
 data VisualTraceState where
   VisualTraceState
-    :: Ur (C.TraceBuilderState ViewScript)
+    :: Ur ViewEnv
+       %1 -> Ur (C.TraceBuilderState ViewScript)
        %1 -> Ur SomeAudit
        %1 -> VisualTraceState
 
@@ -1318,9 +1559,10 @@ explain :: P.String -> ViewBuilder () %1 -> VisualTraceBuilder ()
 explain label script0 =
   case unsafeUr script0 of
     Ur script -> do
+      VisualTraceState (Ur env) coreState pendingAudit <- get
+      put (VisualTraceState (Ur env) coreState pendingAudit)
       audit <- takePendingAudit
-      let (_result, output) =
-            runViewBuilderWithOutput defaultViewEnv mempty script
+      let (_result, output) = runViewBuilderWithOutput env mempty script
       case audit of
         SomeAudit auditSteps ->
           runCoreBuilder
@@ -1332,16 +1574,24 @@ discard reason = do
   case audit of
     SomeAudit auditSteps -> runCoreBuilder (C.discardAudit reason auditSteps)
 
-initialVisualTraceState :: VisualTraceState
-initialVisualTraceState =
+initialVisualTraceStateWith :: ViewEnv -> VisualTraceState
+initialVisualTraceStateWith env =
   VisualTraceState
+    (Ur env)
     (Ur (C.TraceBuilderState (Ur 0) (Ur []) (Ur [])))
     (Ur emptySomeAudit)
 
 buildGraph :: VisualTraceBuilder () -> VisualTraceGraph
-buildGraph builder =
-  let (_result, finalState) = runState builder initialVisualTraceState
-      VisualTraceState (Ur coreState) _pendingAudit = finalState
+buildGraph = buildGraphWithEnv defaultViewEnv
+
+buildGraphWithSpec :: MatchSpec -> VisualTraceBuilder () -> VisualTraceGraph
+buildGraphWithSpec spec =
+  buildGraphWithEnv defaultViewEnv {viewMatchSpec = spec}
+
+buildGraphWithEnv :: ViewEnv -> VisualTraceBuilder () -> VisualTraceGraph
+buildGraphWithEnv env builder =
+  let (_result, finalState) = runState builder (initialVisualTraceStateWith env)
+      VisualTraceState _env (Ur coreState) _pendingAudit = finalState
       C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) (Ur steps) = coreState
    in C.TraceGraph blocks steps
 
@@ -1356,37 +1606,40 @@ instance Dupable ViewState where
           (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
 
 instance Consumable VisualTraceState where
-  consume (VisualTraceState coreState pendingAudit) =
-    consume coreState `lseq` consume pendingAudit
+  consume (VisualTraceState env coreState pendingAudit) =
+    consume env `lseq` consume coreState `lseq` consume pendingAudit
 
 instance Dupable VisualTraceState where
-  dup2 (VisualTraceState coreState pendingAudit) =
-    case dup2 coreState of
-      (coreState1, coreState2) ->
-        case dup2 pendingAudit of
-          (pendingAudit1, pendingAudit2) ->
-            ( VisualTraceState coreState1 pendingAudit1
-            , VisualTraceState coreState2 pendingAudit2)
+  dup2 (VisualTraceState env coreState pendingAudit) =
+    case dup2 env of
+      (env1, env2) ->
+        case dup2 coreState of
+          (coreState1, coreState2) ->
+            case dup2 pendingAudit of
+              (pendingAudit1, pendingAudit2) ->
+                ( VisualTraceState env1 coreState1 pendingAudit1
+                , VisualTraceState env2 coreState2 pendingAudit2)
 
 runCoreBuilder :: C.TraceBuilderWith ViewScript a -> VisualTraceBuilder a
 runCoreBuilder builder =
   LinearState.state
-    (\(VisualTraceState (Ur coreState) pendingAudit) ->
+    (\(VisualTraceState env (Ur coreState) pendingAudit) ->
        let (result, nextCoreState) = runState builder coreState
-        in (result, VisualTraceState (Ur nextCoreState) pendingAudit))
+        in (result, VisualTraceState env (Ur nextCoreState) pendingAudit))
 
 appendPendingAudit :: C.AuditStep act -> VisualTraceBuilder ()
 appendPendingAudit step = do
-  VisualTraceState coreState (Ur pendingAudit) <- get
+  VisualTraceState env coreState (Ur pendingAudit) <- get
   put
     (VisualTraceState
+       env
        coreState
        (Ur (appendSomeAudit pendingAudit (singletonSomeAudit step))))
 
 takePendingAudit :: VisualTraceBuilder SomeAudit
 takePendingAudit = do
-  VisualTraceState coreState (Ur pendingAudit) <- get
-  put (VisualTraceState coreState (Ur emptySomeAudit))
+  VisualTraceState env coreState (Ur pendingAudit) <- get
+  put (VisualTraceState env coreState (Ur emptySomeAudit))
   return pendingAudit
 
 runViewBuilderWithOutput ::
@@ -1480,14 +1733,92 @@ defineNewBlock definition block0 =
               { blockStyle =
                   styleDefinition (StyleDraft (Ur (blockStyle block0)))
               }
-      emitViewNode (BlockViewNode block)
       registerInitialStyleBounds (blockStyle block)
       constrainStyle (blockStyle block)
       ensureRaw (S.num 0 S.@<=@ left block)
       ensureRaw (S.num 0 S.@<=@ top block)
       ensureRaw (right block S.@<=@ canvasWidth env)
       ensureRaw (bottom block S.@<=@ canvasHeight env)
+      emitViewNode (BlockViewNode block)
       viewDefinition (Visual block)
+
+defineMatchedBlock ::
+     forall tag. C.Traceable tag
+  => BlockView tag
+  -> ViewBuilder ()
+defineMatchedBlock block = do
+  Ur env <- askViewEnv
+  case viewMatchSpec env of
+    MatchSpec matches -> defineMatchedBlockFrom 0 block matches
+
+defineMatchedBlockFrom ::
+     forall tag. C.Traceable tag
+  => P.Int
+  -> BlockView tag
+  -> [SomeMatch]
+  -> ViewBuilder ()
+defineMatchedBlockFrom _ _ [] = return ()
+defineMatchedBlockFrom pieceIndex block (match':rest) = do
+  matched <- defineMatchedPiece pieceIndex block match'
+  {- HLINT ignore "Use if" -}
+  case matched of
+    False -> defineMatchedBlockFrom pieceIndex block rest
+    True  -> defineMatchedBlockFrom (pieceIndex P.+ 1) block rest
+
+defineMatchedPiece ::
+     forall sourceTag. C.Traceable sourceTag
+  => P.Int
+  -> BlockView sourceTag
+  -> SomeMatch
+  -> ViewBuilder P.Bool
+defineMatchedPiece pieceIndex block match' =
+  case match' of
+    SomeMatch (_ :: Proxy matchedTag) query nodeKey makeDefinition ->
+      case eqT @sourceTag @matchedTag of
+        Nothing -> return False
+        Just Refl
+          {- HLINT ignore "Use if" -}
+         ->
+          case queryMatches query (blockFacts block) of
+            True -> do
+              let pieceBlock = matchedPieceBlock pieceIndex nodeKey block
+              defineMatchedPieceBlock (makeDefinition pieceIndex) pieceBlock
+              return True
+            False -> return False
+
+defineMatchedPieceBlock ::
+     forall tag used.
+     ViewDefinition tag used %1 -> BlockView tag -> ViewBuilder ()
+defineMatchedPieceBlock definition block0 =
+  case definition of
+    ViewDefinition styleDefinition viewDefinition -> do
+      Ur env <- askViewEnv
+      let block =
+            block0
+              { blockStyle =
+                  styleDefinition (StyleDraft (Ur (blockStyle block0)))
+              }
+      registerInitialStyleBounds (blockStyle block)
+      constrainStyle (blockStyle block)
+      ensureRaw (S.num 0 S.@<=@ left block)
+      ensureRaw (S.num 0 S.@<=@ top block)
+      ensureRaw (right block S.@<=@ canvasWidth env)
+      ensureRaw (bottom block S.@<=@ canvasHeight env)
+      emitViewNode (BlockViewNode block)
+      rendered <- viewDefinition (Visual block)
+      complete rendered
+
+matchedPieceBlock :: P.Int -> P.String -> BlockView tag -> BlockView tag
+matchedPieceBlock pieceIndex nodeKey block =
+  let pieceKey = "piece" P.++ P.show pieceIndex
+   in block
+        { blockNodeKey = nodeKey
+        , blockPieceKey = pieceKey
+        , blockStyle =
+            styleForBlockPath
+              (blockRef block)
+              [safeKey nodeKey, safeKey pieceKey]
+        }
 
 --------------------------------------------------------------------------------
 -- Explicit token handling
@@ -1523,6 +1854,19 @@ create payload =
   case unsafeUr payload of
     Ur payload' -> do
       C.Created block explainToken <- runCoreBuilder (C.create payload')
+      token <- visualExplainToken explainToken
+      return (Created block token)
+
+createTagged ::
+     forall tag. C.Traceable tag
+  => C.Facts
+  -> C.Payload tag
+     %1 -> VisualTraceBuilder (Created tag)
+createTagged facts payload =
+  case unsafeUr payload of
+    Ur payload' -> do
+      C.Created block explainToken <-
+        runCoreBuilder (C.createTagged facts payload')
       token <- visualExplainToken explainToken
       return (Created block token)
 
@@ -1582,6 +1926,19 @@ compute payload =
   case unsafeUr payload of
     Ur payload' -> do
       C.Computed block explainToken <- runCoreBuilder (C.compute payload')
+      token <- visualExplainToken explainToken
+      return (Computed block token)
+
+computeTagged ::
+     forall tag. C.Traceable tag
+  => C.Facts
+  -> C.OneUse (C.Payload tag)
+     %1 -> VisualTraceBuilder (Computed tag)
+computeTagged facts payload =
+  case unsafeUr payload of
+    Ur payload' -> do
+      C.Computed block explainToken <-
+        runCoreBuilder (C.computeTagged facts payload')
       token <- visualExplainToken explainToken
       return (Computed block token)
 
@@ -1722,6 +2079,24 @@ freshRaw definition visual =
       emitRenderIntent (RenderFresh (blockRef block))
       pure rendered
 
+freshMatched ::
+     forall tag visual. (C.Traceable tag, ToNewVisual visual tag)
+  => visual
+     %1 -> ViewBuilder ()
+freshMatched visual0 = do
+  visual1 <- toNewVisual visual0
+  freshMatchedRaw visual1
+
+freshMatchedRaw ::
+     forall tag. C.Traceable tag
+  => NewVisual tag
+     %1 -> ViewBuilder ()
+freshMatchedRaw visual =
+  case visual of
+    Visual block -> do
+      defineMatchedBlock block
+      emitRenderIntent (RenderFresh (blockRef block))
+
 freshCopy ::
      forall tag used visual. ToCopiedVisual visual tag
   => ViewDefinition tag used
@@ -1773,6 +2148,29 @@ forkCopyRaw definition copied =
                 (RenderFork (blockRef sourceBlock) (blockRef block))
               pure (Visual sourceBlock, rendered)
 
+forkCopyMatched ::
+     forall tag visual. (C.Traceable tag, ToCopiedVisual visual tag)
+  => visual
+     %1 -> ViewBuilder ()
+forkCopyMatched copied0 = do
+  copied <- toCopiedVisual copied0
+  forkCopyMatchedRaw copied
+
+forkCopyMatchedRaw ::
+     forall tag. C.Traceable tag
+  => CopiedVisual tag
+     %1 -> ViewBuilder ()
+forkCopyMatchedRaw copied =
+  case copied of
+    CopiedVisual source visual ->
+      case source of
+        Visual sourceBlock ->
+          case visual of
+            Visual block -> do
+              defineMatchedBlock block
+              emitRenderIntent
+                (RenderFork (blockRef sourceBlock) (blockRef block))
+
 continueFrom ::
      forall tag oldTag used source visual.
      (ToLiveVisual source oldTag, ToNewVisual visual tag)
@@ -1800,6 +2198,31 @@ continueFromRaw definition source visual =
           emitRenderIntent
             (RenderContinue (blockRef sourceBlock) (blockRef block))
           pure rendered
+
+continueFromMatched ::
+     forall tag oldTag source visual.
+     (C.Traceable tag, ToLiveVisual source oldTag, ToNewVisual visual tag)
+  => source
+     %1 -> visual
+     %1 -> ViewBuilder ()
+continueFromMatched source0 visual0 = do
+  source <- toLiveVisual source0
+  visual1 <- toNewVisual visual0
+  continueFromMatchedRaw source visual1
+
+continueFromMatchedRaw ::
+     forall tag oldTag. C.Traceable tag
+  => LiveVisual oldTag
+     %1 -> NewVisual tag
+     %1 -> ViewBuilder ()
+continueFromMatchedRaw source visual =
+  case source of
+    Visual sourceBlock ->
+      case visual of
+        Visual block -> do
+          defineMatchedBlock block
+          emitRenderIntent
+            (RenderContinue (blockRef sourceBlock) (blockRef block))
 
 complete :: Visual Rendered Stable used tag %1 -> ViewBuilder ()
 complete visual =
@@ -2024,21 +2447,45 @@ mergeInitialRenderIntents pending output =
 -- Core block snapshots -> base block views
 --------------------------------------------------------------------------------
 blockViewOfSnapshot :: C.BlockSnapshot tag -> BlockView tag
-blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView) =
+blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView facts) =
   BlockView
-    {blockRef = ref, blockLabel = payloadView, blockStyle = styleForRef ref}
+    { blockRef = ref
+    , blockLabel = payloadView
+    , blockFacts = facts
+    , blockNodeKey = defaultNodeKey
+    , blockPieceKey = defaultPieceKey
+    , blockStyle = styleForRef ref
+    }
+
+defaultNodeKey :: P.String
+defaultNodeKey = "block"
+
+defaultPieceKey :: P.String
+defaultPieceKey = "body"
 
 styleForRef :: C.BlockRef tag -> Style
-styleForRef ref =
+styleForRef ref = styleForBlockPath ref []
+
+styleForBlockPath :: C.BlockRef tag -> [P.String] -> Style
+styleForBlockPath ref path =
   styleWithBounds
     (Bounds
-       (blockVar ref "top")
-       (blockVar ref "left")
-       (blockVar ref "width")
-       (blockVar ref "height"))
+       (blockVarPath ref path "top")
+       (blockVarPath ref path "left")
+       (blockVarPath ref path "width")
+       (blockVarPath ref path "height"))
 
-blockVar :: SymbolicType ty => C.BlockRef tag -> String -> Expr ty
-blockVar (C.BlockRef blockId) field = var ("B" ++ show blockId ++ "." ++ field)
+blockVarPath ::
+     SymbolicType ty => C.BlockRef tag -> [P.String] -> P.String -> Expr ty
+blockVarPath (C.BlockRef blockId) path field =
+  var (joinPath (("B" ++ P.show blockId) : (path P.++ [field])))
+
+joinPath :: [P.String] -> P.String
+joinPath parts =
+  case parts of
+    []        -> ""
+    [part]    -> part
+    part:rest -> part ++ "." ++ joinPath rest
 
 viewToken :: C.AuditStep act -> ViewToken act
 viewToken step =

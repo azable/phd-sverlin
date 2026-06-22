@@ -36,8 +36,15 @@ newtype RenderId =
   RenderId String
   deriving (Eq, Ord, Show)
 
-freshRenderIdForBlock :: C.BlockId -> RenderId
-freshRenderIdForBlock blockId = RenderId ("lineage." ++ show blockId)
+freshRenderIdForPiece :: RenderBlock -> RenderId
+freshRenderIdForPiece block =
+  RenderId
+    ("lineage."
+       ++ show (renderBlockId block)
+       ++ "."
+       ++ renderNodeKey block
+       ++ "."
+       ++ renderPieceKey block)
 
 --------------------------------------------------------------------------------
 -- Compiled CSS style
@@ -59,10 +66,12 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId :: C.BlockId
-  , renderContent :: String
-  , renderKind    :: String
-  , renderStyle   :: RenderStyle
+  { renderBlockId  :: C.BlockId
+  , renderNodeKey  :: String
+  , renderPieceKey :: String
+  , renderContent  :: String
+  , renderKind     :: String
+  , renderStyle    :: RenderStyle
   } deriving (Eq, Show)
 
 data RenderOrigin = RenderOrigin
@@ -100,13 +109,17 @@ defaultCompiledHeight = 600
 -- Compiler state
 --------------------------------------------------------------------------------
 newtype CompileState = CompileState
-  { lineageByBlock :: Map C.BlockId RenderId
+  { lineageByBlock :: Map RenderBlockKey RenderId
   } deriving (Eq, Show)
 
 emptyCompileState :: CompileState
 emptyCompileState = CompileState {lineageByBlock = Map.empty}
 
 type CompileM = StateT CompileState (Either String)
+
+type RenderBlockKey = (C.BlockId, String, String)
+
+type RenderPieceKey = (String, String)
 
 --------------------------------------------------------------------------------
 -- Public compiler
@@ -140,21 +153,19 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
 --------------------------------------------------------------------------------
 -- Frame compilation
 --------------------------------------------------------------------------------
-compileFrames ::
-     Map C.BlockId RenderBlock -> [[V.RenderIntent]] -> CompileM [RenderFrame]
+compileFrames :: BlockLookup -> [[V.RenderIntent]] -> CompileM [RenderFrame]
 compileFrames blocksById renderFrames = do
   frames' <- traverse (compileRenderFrame blocksById) renderFrames
   pure (filter (not . null . framePatches) frames')
 
-compileRenderFrame ::
-     Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM RenderFrame
+compileRenderFrame :: BlockLookup -> [V.RenderIntent] -> CompileM RenderFrame
 compileRenderFrame blocksById renderIntents = do
   patches <- compileRenderIntents blocksById renderIntents
   coalesced <- lift (coalesceFramePatches patches)
   pure RenderFrame {framePatches = coalesced}
 
 compileRenderIntents ::
-     Map C.BlockId RenderBlock -> [V.RenderIntent] -> CompileM [RenderPatch]
+     BlockLookup -> [V.RenderIntent] -> CompileM [RenderPatch]
 compileRenderIntents blocksById intents = do
   patches <- traverse (compileRenderIntent blocksById) intents
   pure (concat patches)
@@ -312,8 +323,7 @@ inconsistentLifecycleError operation renderId =
 --------------------------------------------------------------------------------
 -- Visual lifecycle semantics
 --------------------------------------------------------------------------------
-compileRenderIntent ::
-     Map C.BlockId RenderBlock -> V.RenderIntent -> CompileM [RenderPatch]
+compileRenderIntent :: BlockLookup -> V.RenderIntent -> CompileM [RenderPatch]
 compileRenderIntent blocksById intent =
   case intent of
     V.RenderFresh ref              -> createRef blocksById ref
@@ -321,92 +331,149 @@ compileRenderIntent blocksById intent =
     V.RenderFork source target     -> forkRef blocksById source target
     V.RenderRemove ref             -> destroyRef blocksById ref
 
-createRef ::
-     Map C.BlockId RenderBlock -> C.BlockRef tag -> CompileM [RenderPatch]
+createRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderPatch]
 createRef blocksById ref = do
-  block <- requireBlockByRef blocksById ref
-  let renderId = freshRenderIdForBlock (renderBlockId block)
-  modify
-    (\st ->
-       st
-         { lineageByBlock =
-             Map.insert (renderBlockId block) renderId (lineageByBlock st)
-         })
-  pure [RenderCreate renderId Nothing block]
+  blocks <- requireBlocksByRef blocksById ref
+  traverse createBlock blocks
 
-destroyRef ::
-     Map C.BlockId RenderBlock -> C.BlockRef tag -> CompileM [RenderPatch]
+destroyRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderPatch]
 destroyRef blocksById ref = do
-  block <- requireBlockByRef blocksById ref
-  renderId <- requireLineage block
-  modify
-    (\st ->
-       st
-         {lineageByBlock = Map.delete (renderBlockId block) (lineageByBlock st)})
-  pure [RenderDestroy renderId block]
+  blocks <- requireBlocksByRef blocksById ref
+  traverse destroyBlock blocks
 
 continueRef ::
-     Map C.BlockId RenderBlock
+     BlockLookup
   -> C.BlockRef source
   -> C.BlockRef target
   -> CompileM [RenderPatch]
 continueRef blocksById sourceRef targetRef = do
-  sourceBlock <- requireBlockByRef blocksById sourceRef
-  targetBlock <- requireBlockByRef blocksById targetRef
-  renderId <- requireLineage sourceBlock
-  modify
-    (\st ->
-       st
-         { lineageByBlock =
-             Map.insert
-               (renderBlockId targetBlock)
-               renderId
-               (Map.delete (renderBlockId sourceBlock) (lineageByBlock st))
-         })
-  pure [RenderUpdate renderId sourceBlock targetBlock]
+  sourceBlocks <- requireBlocksByRef blocksById sourceRef
+  targetBlocks <- requireBlocksByRef blocksById targetRef
+  continueBlocks sourceBlocks targetBlocks
 
 forkRef ::
-     Map C.BlockId RenderBlock
+     BlockLookup
   -> C.BlockRef source
   -> C.BlockRef target
   -> CompileM [RenderPatch]
 forkRef blocksById sourceRef targetRef = do
-  sourceBlock <- requireBlockByRef blocksById sourceRef
-  sourceRenderId <- requireLineage sourceBlock
-  targetBlock <- requireBlockByRef blocksById targetRef
-  let targetRenderId = freshRenderIdForBlock (renderBlockId targetBlock)
+  sourceBlocks <- requireBlocksByRef blocksById sourceRef
+  targetBlocks <- requireBlocksByRef blocksById targetRef
+  traverse (forkBlock sourceBlocks) targetBlocks
+
+createBlock :: RenderBlock -> CompileM RenderPatch
+createBlock block = do
+  let renderId = freshRenderIdForPiece block
+  modify
+    (\st ->
+       st
+         { lineageByBlock =
+             Map.insert (renderBlockKey block) renderId (lineageByBlock st)
+         })
+  pure (RenderCreate renderId Nothing block)
+
+destroyBlock :: RenderBlock -> CompileM RenderPatch
+destroyBlock block = do
+  renderId <- requireLineage block
+  modify
+    (\st ->
+       st
+         { lineageByBlock =
+             Map.delete (renderBlockKey block) (lineageByBlock st)
+         })
+  pure (RenderDestroy renderId block)
+
+continueBlocks :: [RenderBlock] -> [RenderBlock] -> CompileM [RenderPatch]
+continueBlocks sourceBlocks targetBlocks = do
+  updates <- traverse (continueTarget sourceBlocks) targetBlocks
+  destroys <- traverse destroyBlock (sourceOnlyBlocks sourceBlocks targetBlocks)
+  pure (updates ++ destroys)
+
+continueTarget :: [RenderBlock] -> RenderBlock -> CompileM RenderPatch
+continueTarget sourceBlocks targetBlock =
+  case findMatchingPiece targetBlock sourceBlocks of
+    Just sourceBlock -> do
+      renderId <- requireLineage sourceBlock
+      modify
+        (\st ->
+           st
+             { lineageByBlock =
+                 Map.insert
+                   (renderBlockKey targetBlock)
+                   renderId
+                   (Map.delete (renderBlockKey sourceBlock) (lineageByBlock st))
+             })
+      pure (RenderUpdate renderId sourceBlock targetBlock)
+    Nothing -> createBlock targetBlock
+
+forkBlock :: [RenderBlock] -> RenderBlock -> CompileM RenderPatch
+forkBlock sourceBlocks targetBlock = do
+  let targetRenderId = freshRenderIdForPiece targetBlock
+  origin <-
+    case findMatchingPiece targetBlock sourceBlocks of
+      Nothing -> pure Nothing
+      Just sourceBlock -> do
+        sourceRenderId <- requireLineage sourceBlock
+        pure (Just (RenderOrigin sourceRenderId sourceBlock))
   modify
     (\st ->
        st
          { lineageByBlock =
              Map.insert
-               (renderBlockId targetBlock)
+               (renderBlockKey targetBlock)
                targetRenderId
                (lineageByBlock st)
          })
-  pure
-    [ RenderCreate
-        targetRenderId
-        (Just (RenderOrigin sourceRenderId sourceBlock))
-        targetBlock
-    ]
+  pure (RenderCreate targetRenderId origin targetBlock)
 
 --------------------------------------------------------------------------------
 -- Lineage lookup
 --------------------------------------------------------------------------------
+renderBlockKey :: RenderBlock -> RenderBlockKey
+renderBlockKey block =
+  (renderBlockId block, renderNodeKey block, renderPieceKey block)
+
+renderPieceIdentity :: RenderBlock -> RenderPieceKey
+renderPieceIdentity block = (renderNodeKey block, renderPieceKey block)
+
+renderBlockKeyLabel :: RenderBlock -> String
+renderBlockKeyLabel block =
+  "B"
+    ++ show (renderBlockId block)
+    ++ "."
+    ++ renderNodeKey block
+    ++ "."
+    ++ renderPieceKey block
+
+findMatchingPiece :: RenderBlock -> [RenderBlock] -> Maybe RenderBlock
+findMatchingPiece targetBlock sourceBlocks =
+  case sourceBlocks of
+    [] -> Nothing
+    sourceBlock:rest ->
+      if renderPieceIdentity sourceBlock == renderPieceIdentity targetBlock
+        then Just sourceBlock
+        else findMatchingPiece targetBlock rest
+
+sourceOnlyBlocks :: [RenderBlock] -> [RenderBlock] -> [RenderBlock]
+sourceOnlyBlocks sourceBlocks targetBlocks =
+  filter
+    (\sourceBlock ->
+       renderPieceIdentity sourceBlock
+         `notElem` map renderPieceIdentity targetBlocks)
+    sourceBlocks
+
 requireLineage :: RenderBlock -> CompileM RenderId
 requireLineage block = do
   st <- get
-  case Map.lookup (renderBlockId block) (lineageByBlock st) of
+  case Map.lookup (renderBlockKey block) (lineageByBlock st) of
     Just renderId -> pure renderId
     Nothing ->
-      lift
-        (Left ("no render lineage for block B" ++ show (renderBlockId block)))
+      lift (Left ("no render lineage for " ++ renderBlockKeyLabel block))
 
 --------------------------------------------------------------------------------
 -- Materialized block lookup
 --------------------------------------------------------------------------------
-type BlockLookup = Map C.BlockId RenderBlock
+type BlockLookup = Map C.BlockId [RenderBlock]
 
 buildBlockLookup :: S.Solution -> V.ViewGraph -> Either String BlockLookup
 buildBlockLookup solution graph =
@@ -425,7 +492,8 @@ insertMaterializedNode solution blocks node =
       case materialized of
         V.MaterializedBlockViewNode block ->
           let compiled = compileMaterializedBlock block
-           in Right (Map.insert (renderBlockId compiled) compiled blocks)
+           in Right
+                (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
 
 compileMaterializedBlock :: V.MaterializedBlockView tag -> RenderBlock
 compileMaterializedBlock block =
@@ -433,6 +501,8 @@ compileMaterializedBlock block =
       style = V.materializedBlockStyle block
    in RenderBlock
         { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
+        , renderNodeKey = V.materializedBlockNodeKey block
+        , renderPieceKey = V.materializedBlockPieceKey block
         , renderContent = payloadViewContent payload
         , renderKind = payloadViewKind payload
         , renderStyle = compileMaterializedStyle style
@@ -470,10 +540,10 @@ materializedHslToCss alpha hsl =
       a = formatCssNumber (clamp 0 1 alpha)
    in "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ " / " ++ a ++ ")"
 
-requireBlockByRef :: BlockLookup -> C.BlockRef tag -> CompileM RenderBlock
-requireBlockByRef blocksById ref =
+requireBlocksByRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderBlock]
+requireBlocksByRef blocksById ref =
   case Map.lookup (blockIdOfRef ref) blocksById of
-    Just block -> pure block
+    Just blocks -> pure blocks
     Nothing ->
       lift (Left ("no materialized block for B" ++ show (blockIdOfRef ref)))
 
@@ -566,6 +636,8 @@ instance ToJSON RenderBlock where
   toJSON block =
     object
       [ "blockId" .= renderBlockId block
+      , "nodeKey" .= renderNodeKey block
+      , "pieceKey" .= renderPieceKey block
       , "kind" .= renderKind block
       , "content" .= renderContent block
       , "style" .= renderStyle block

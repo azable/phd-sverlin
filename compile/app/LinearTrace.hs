@@ -10,6 +10,15 @@ module LinearTrace
   , Block
   , Slot
   , Payload
+  , FactValue(..)
+  , Fact(..)
+  , Facts(..)
+  , emptyFacts
+  , factAtom
+  , factSymbol
+  , factInt
+  , factsUnion
+  , factsToList
   , -- * Trusted linear payloads
     LUnit(..)
   , LBool(..)
@@ -30,11 +39,13 @@ module LinearTrace
   , type Decide
   , -- * Primitive operations
     create
+  , createTagged
   , observe
   , use
   , copy
   , replace
   , compute
+  , computeTagged
   , destroy
   , seal
   , unseal
@@ -98,8 +109,9 @@ import           LinearTrace.Core    hiding (Computed (..), Copied (..),
                                       Created (..), Decided (..),
                                       Destroyed (..), Observed (..),
                                       Replaced (..), Sealed (..), Unsealed (..),
-                                      Used (..), buildGraph, compute, copy,
-                                      create, decide, destroy, discard, observe,
+                                      Used (..), buildGraph, compute,
+                                      computeTagged, copy, create, createTagged,
+                                      decide, destroy, discard, observe,
                                       replace, seal, unseal, use)
 import           LinearTrace.Print
 import           LinearTrace.View

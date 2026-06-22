@@ -9,6 +9,15 @@ module LinearTrace.Core
   , Block
   , Slot
   , Payload
+  , FactValue(..)
+  , Fact(..)
+  , Facts(..)
+  , emptyFacts
+  , factAtom
+  , factSymbol
+  , factInt
+  , factsUnion
+  , factsToList
   , PayloadView(..)
   , Traceable(..)
   , -- * Trusted linear payloads
@@ -32,11 +41,13 @@ module LinearTrace.Core
   , type Decide
   , -- * Primitive operations
     create
+  , createTagged
   , observe
   , use
   , copy
   , replace
   , compute
+  , computeTagged
   , destroy
   , seal
   , unseal

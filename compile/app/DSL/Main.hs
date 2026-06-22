@@ -18,7 +18,8 @@ module DSL.Main
 
 import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
 import           LinearTrace.Choreography
-import           Prelude.Linear           hiding ((*), (+), (-), (/))
+import           Prelude.Linear           hiding (fromInteger, fromRational,
+                                           (*), (+), (-), (/), (<>))
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -141,7 +142,10 @@ linearSearch :: SearchInput %1 -> Program ()
 linearSearch (SearchInput targetPayload valuePayloads) =
   manifest $ do
     target <-
-      phase "Create target" (createValue targetPayload) renderCreatedTarget
+      phase
+        "Create target"
+        (createValueTagged (#int <> #target) targetPayload)
+        renderCreatedTarget
     elements <- createElements valuePayloads
     loop (SearchState target elements) searchIteration
 
@@ -156,7 +160,9 @@ createElementsFrom index inputs =
       element <-
         phase
           "Create element"
-          (createValue payload)
+          (createValueTagged
+             (#int <> #array (#values :: Query) <> #index index)
+             payload)
           (renderCreatedElement index)
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement element elements)
@@ -188,13 +194,13 @@ compareElement target element = do
       "Prepare comparison"
       (prepareComparison target element)
       renderPrepareComparison
-  match <-
+  matchBlock <-
     phase
       "Compare target and element"
       (compareValues targetProbe elementProbe)
       renderCompareValues
   branchOn
-    (decideMatch match)
+    (decideMatch matchBlock)
     (BranchCase "Found target" renderRemove)
     (BranchCase "Not this element" renderRejectedDecision)
     (comparisonBranch targetAfter elementAfter)
@@ -225,11 +231,12 @@ discardRemaining elements =
       phase "Discard remaining element" (destroyValue element) renderRemove
       discardRemaining rest
 
-createValue ::
-     Payload Value
+createValueTagged ::
+     Query
+  -> Payload Value
      %1 -> Fragment (StepResult (BlockHandle Value) (Obligation (Create Value)))
-createValue payload = do
-  Created block obligation <- createAs payload
+createValueTagged facts payload = do
+  Created block obligation <- createTaggedAs facts payload
   return (StepResult block obligation)
 
 destroyValue ::
@@ -272,11 +279,13 @@ compareValues ::
 compareValues targetProbe elementProbe = do
   Used targetPayload targetVisual <- useAs targetProbe
   Used elementPayload elementVisual <- useAs elementProbe
-  Computed match matchVisual <-
-    computeAs (sameValue <$> targetPayload <*> elementPayload)
+  Computed matchBlock matchVisual <-
+    computeTaggedAs
+      (#decision <> #match)
+      (sameValue <$> targetPayload <*> elementPayload)
   return
     (StepResult
-       match
+       matchBlock
        (CompareValuesObligations targetVisual elementVisual matchVisual))
 
 decideMatch :: BlockHandle Match %1 -> Fragment (Decided Match)
@@ -329,147 +338,97 @@ renderDestroyPair obligations =
       renderRemove targetVisual
       renderRemove elementVisual
 
-cell :: Span
-cell = #cell
-
-gap :: Span
-gap = #gap
-
-targetX :: Coord
-targetX = #target_x
-
-targetY :: Coord
-targetY = #target_y
-
-rowX :: Coord
-rowX = #row_x
-
-rowY :: Coord
-rowY = #row_y
-
 stride :: Span
-stride = cell |+| gap
+stride = #cell |+| #gap
 
-probeY :: Coord
-probeY = #probe_y
+cellBy :: Scalar -> Span
+cellBy scale = #cell * scale
 
-targetProbeX :: Coord
-targetProbeX = #probe_target_x
+gapBy :: Scalar -> Span
+gapBy scale = #gap * scale
 
-elementProbeX :: Coord
-elementProbeX = #probe_element_x
-
-matchX :: Coord
-matchX = #match_x
-
-matchY :: Coord
-matchY = #match_y
-
-targetHue :: HueExpr
-targetHue = #target_hue
-
-listHue :: HueExpr
-listHue = #list_hue
-
-probeHue :: HueExpr
-probeHue = #probe_hue
-
-matchHue :: HueExpr
-matchHue = #match_hue
-
-cellBy :: Double -> Span
-cellBy scale = cell * num scale
-
-tone :: HueExpr -> Double -> Double -> HslExpr
-tone hueExpr saturation lightness = Hsl hueExpr (num saturation) (num lightness)
+tone :: HueExpr -> UnitExpr -> UnitExpr -> HslExpr
+tone = Hsl
 
 targetWidth :: Span
-targetWidth = cellBy 2.1 |+| gap
+targetWidth = cellBy 2.1 |+| #gap
 
 targetHeight :: Span
-targetHeight = cell |+| gap * num 0.8
+targetHeight = #cell |+| gapBy 0.8
 
 probeSize :: Span
 probeSize = cellBy 1.08
 
 matchWidth :: Span
-matchWidth = probeSize * num 2 |+| gap
+matchWidth = probeSize * 2 |+| #gap
 
 matchHeight :: Span
 matchHeight = cellBy 0.72
 
 matchGap :: Span
-matchGap = gap * num 0.7
+matchGap = gapBy 0.7
 
 half :: Span -> Span
-half value = value / num 2
-
-origin :: Coord
-origin = at 0
-
-canvasBottom :: Coord
-canvasBottom = at 600
+half value = value / 2
 
 midpoint :: Coord -> Coord -> Coord
 midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
 
 targetInsetX :: Span
-targetInsetX = gap |+| half targetWidth
+targetInsetX = #gap |+| half targetWidth
 
 targetInsetY :: Span
-targetInsetY = gap |+| half targetHeight
+targetInsetY = #gap |+| half targetHeight
 
 rowInset :: Span
-rowInset = gap |+| half cell
-
-probeOffsetX :: Span
-probeOffsetX = half targetWidth |+| gap |+| half probeSize
+rowInset = #gap |+| half #cell
 
 probeOffsetY :: Span
-probeOffsetY = half targetHeight |+| gap |+| half probeSize
+probeOffsetY = half targetHeight |+| #gap |+| half probeSize
 
 probeGap :: Span
-probeGap = probeSize |+| gap
+probeGap = probeSize |+| #gap
 
 probeRowClearance :: Span
-probeRowClearance = half probeSize |+| gap |+| half cell
+probeRowClearance = half probeSize |+| #gap |+| half #cell
 
 matchOffsetY :: Span
 matchOffsetY = half probeSize |+| matchGap |+| half matchHeight
 
 matchRowClearance :: Span
-matchRowClearance = half matchHeight |+| matchGap |+| half cell
+matchRowClearance = half matchHeight |+| matchGap |+| half #cell
 
 constrainScale :: ViewLayout ()
 constrainScale = do
-  constrain $ cell =|= by 76
-  constrain $ gap =|= half cell
+  constrain $ (#cell :: Span) =|= by 76
+  constrain $ (#gap :: Span) =|= half #cell
 
 constrainTargetFlow :: ViewLayout ()
 constrainTargetFlow = do
   constrainScale
-  constrain $ origin =| targetInsetX |= targetX
-  constrain $ origin =| targetInsetY |= targetY
-  constrain $ origin =| rowInset |= rowX
-  constrain $ rowY =| rowInset |= canvasBottom
+  constrain $ at 0 =| targetInsetX |= #target_x
+  constrain $ at 0 =| targetInsetY |= #target_y
+  constrain $ at 0 =| rowInset |= #row_x
+  constrain $ (#row_y :: Coord) =| rowInset |= at 600
 
 constrainProbeFlow :: ViewLayout ()
 constrainProbeFlow = do
   constrainTargetFlow
-  constrain $ targetX =| probeOffsetX |= targetProbeX
-  constrain $ targetProbeX =| probeGap |= elementProbeX
-  constrain $ targetY =| probeOffsetY |= probeY
-  constrain $ probeY <| probeRowClearance |> rowY
+  constrain $ (#target_x :: Coord) =| 211 |= #probe_target_x
+  constrain $ (#probe_target_x :: Coord) =| probeGap |= #probe_element_x
+  constrain $ (#target_y :: Coord) =| probeOffsetY |= #probe_y
+  constrain $ (#probe_y :: Coord) <| probeRowClearance |> #row_y
 
 constrainMatchFlow :: ViewLayout ()
 constrainMatchFlow = do
   constrainProbeFlow
-  constrain $ matchX =|= midpoint targetProbeX elementProbeX
-  constrain $ probeY =| matchOffsetY |= matchY
-  constrain $ matchY <| matchRowClearance |> rowY
+  constrain $ (#match_x :: Coord) =|= midpoint #probe_target_x #probe_element_x
+  constrain $ (#probe_y :: Coord) =| matchOffsetY |= #match_y
+  constrain $ (#match_y :: Coord) <| matchRowClearance |> #row_y
 
 listValueX :: Int -> Coord
-listValueX index = rowX + num (fromIntegral index) * stride
+listValueX index =
+  (#row_x :: Coord) + (num (fromIntegral index) :: Scalar) * stride
 
 valueText :: NodeRecipe ()
 valueText = do
@@ -480,35 +439,35 @@ valueText = do
 
 targetChrome :: NodeRecipe ()
 targetChrome = do
-  fill (tone targetHue 0.64 0.84)
-  stroke (tone targetHue 0.76 0.36)
+  fill (tone #target_hue 0.64 0.84)
+  stroke (tone #target_hue 0.76 0.36)
   strokeWidth (cellBy 0.05)
   radius (cellBy 0.24)
   fontSize (cellBy 0.62)
 
 listChrome :: NodeRecipe ()
 listChrome = do
-  fill (tone listHue 0.34 0.92)
-  stroke (tone listHue 0.58 0.42)
+  fill (tone #list_hue 0.34 0.92)
+  stroke (tone #list_hue 0.58 0.42)
   strokeWidth (cellBy 0.035)
   radius (cellBy 0.18)
   fontSize (cellBy 0.5)
 
 probeChrome :: NodeRecipe ()
 probeChrome = do
-  fill (tone probeHue 0.5 0.88)
-  stroke (tone probeHue 0.78 0.34)
+  fill (tone #probe_hue 0.5 0.88)
+  stroke (tone #probe_hue 0.78 0.34)
   strokeWidth (cellBy 0.035)
-  zIndex (num 3)
+  zIndex 3
   radius (cellBy 0.22)
   fontSize (cellBy 0.56)
 
 matchChrome :: NodeRecipe ()
 matchChrome = do
-  fill (tone matchHue 0.6 0.86)
-  stroke (tone matchHue 0.82 0.32)
+  fill (tone #match_hue 0.6 0.86)
+  stroke (tone #match_hue 0.82 0.32)
   strokeWidth (cellBy 0.05)
-  zIndex (num 4)
+  zIndex 4
   radius (cellBy 0.26)
   fontSize (cellBy 0.34)
 
@@ -517,7 +476,7 @@ targetValueDefinition =
   node $ do
     valueText
     targetChrome
-    position (vec2 targetX targetY)
+    position (vec2 #target_x #target_y)
     width targetWidth
     height targetHeight
     require constrainTargetFlow
@@ -527,9 +486,9 @@ listValueDefinition index =
   node $ do
     valueText
     listChrome
-    position (vec2 (listValueX index) rowY)
-    width cell
-    height cell
+    position (vec2 (listValueX index) #row_y)
+    width #cell
+    height #cell
     requireListFlow index
 
 requireListFlow :: Int -> NodeRecipe ()
@@ -543,7 +502,7 @@ targetProbeViewDefinition =
   node $ do
     valueText
     probeChrome
-    position (vec2 targetProbeX probeY)
+    position (vec2 #probe_target_x #probe_y)
     width probeSize
     height probeSize
     require constrainProbeFlow
@@ -553,7 +512,7 @@ elementProbeViewDefinition =
   node $ do
     valueText
     probeChrome
-    position (vec2 elementProbeX probeY)
+    position (vec2 #probe_element_x #probe_y)
     width probeSize
     height probeSize
     require constrainProbeFlow
@@ -563,7 +522,7 @@ matchViewDefinition =
   node $ do
     valueText
     matchChrome
-    position (vec2 matchX matchY)
+    position (vec2 #match_x #match_y)
     width matchWidth
     height matchHeight
     require constrainMatchFlow

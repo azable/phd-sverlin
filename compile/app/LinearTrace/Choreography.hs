@@ -19,6 +19,7 @@ module LinearTrace.Choreography
   , ViewLayout
   , VisualTraceGraph
   , runProgram
+  , runProgramWith
   , manifest
   , StepResult(..)
   , BranchCase(..)
@@ -36,6 +37,15 @@ module LinearTrace.Choreography
   , Obligation
   , -- * Payloads and trace tags
     Payload
+  , FactValue(..)
+  , Fact(..)
+  , Facts(..)
+  , emptyFacts
+  , factAtom
+  , factSymbol
+  , factInt
+  , factsUnion
+  , factsToList
   , PayloadView(..)
   , Traceable(..)
   , LUnit(..)
@@ -67,24 +77,44 @@ module LinearTrace.Choreography
   , Unsealed(..)
   , Decided(..)
   , createAs
+  , createTaggedAs
   , observeAs
   , useAs
   , copyAs
   , replaceAs
   , computeAs
+  , computeTaggedAs
   , destroyAs
   , sealAs
   , unsealAs
   , decideAs
   , -- * Render recipes
     FreshObligation
+  , FreshMatchedObligation
   , RemoveObligation
   , renderFresh
+  , renderFreshMatched
   , renderForkCopy
+  , renderForkCopyMatched
   , renderContinueFrom
+  , renderContinueFromMatched
   , renderRemove
   , renderComplete
   , renderCheckpoint
+  , Query
+  , MatchSpec
+  , PairPattern(..)
+  , emptyMatchSpec
+  , matchSpecAppend
+  , matchSpecFromList
+  , match
+  , matchAs
+  , pair
+  , queryAtom
+  , querySymbol
+  , queryInt
+  , queryFacts
+  , (<>)
   , -- * Component and layout layer
     BoxDefinition
   , BoxVisual
@@ -144,6 +174,8 @@ module LinearTrace.Choreography
   , noWrap
   , node
   , num
+  , fromInteger
+  , fromRational
   , offsetExpr
   , opacity
   , placeBox
@@ -198,9 +230,12 @@ import qualified Data.Functor.Linear    as DFL
 import           Data.Proxy             (Proxy (..))
 import           GHC.OverloadedLabels   (IsLabel (..))
 import           GHC.TypeLits           (KnownSymbol)
-import           LinearTrace.Core       (LBool (..), LDouble (..), LInt (..),
+import           LinearTrace.Core       (Fact (..), FactValue (..), Facts (..),
+                                         LBool (..), LDouble (..), LInt (..),
                                          LString (..), LUnit (..), Payload,
                                          PayloadView (..), Traceable (..),
+                                         emptyFacts, factAtom, factInt,
+                                         factSymbol, factsToList, factsUnion,
                                          (<$>), (<*>))
 import qualified LinearTrace.Core       as C
 import           LinearTrace.Solver     (Vec2 (..), vec2)
@@ -210,22 +245,28 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          EmptyStyleDraft, FontStyle (..),
                                          FontWeight (..), FreeExpr, Hsl (..),
                                          HslExpr, HueExpr, LayoutExpr,
-                                         LayoutUse (..), LiveVisual,
+                                         LayoutUse (..), LiveVisual, MatchSpec,
                                          OneConstraint (..), OneExpr (..),
-                                         Style, TextAlign (..), UnitExpr,
+                                         PairPattern (..), Query, Style,
+                                         TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
-                                         encourage, finalizeStyle, global,
-                                         setFillOnce, setFontFamilyOnce,
-                                         setFontSizeOnce, setFontWeightOnce,
-                                         setRadiusOnce, setStrokeOnce,
-                                         setStrokeWidthOnce, setTextAlignOnce,
-                                         setWhiteSpaceOnce, setZIndexOnce,
-                                         takeHeight, takeLeft, takeRight,
-                                         takeTop, takeWidth)
+                                         emptyMatchSpec, encourage,
+                                         finalizeStyle, global, matchNode,
+                                         matchNodeAs, matchSpecAppend,
+                                         matchSpecFromList, queryAppend,
+                                         queryAtom, queryFacts, queryInt,
+                                         querySymbol, setFillOnce,
+                                         setFontFamilyOnce, setFontSizeOnce,
+                                         setFontWeightOnce, setRadiusOnce,
+                                         setStrokeOnce, setStrokeWidthOnce,
+                                         setTextAlignOnce, setWhiteSpaceOnce,
+                                         setZIndexOnce, takeHeight, takeLeft,
+                                         takeRight, takeTop, takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
-import           Prelude.Linear         hiding ((*), (+), (-), (/))
+import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
+                                         (+), (-), (/), (<>))
 
 data Program a where
   PureProgram :: a %1 -> Program a
@@ -256,6 +297,8 @@ data Fragment a where
   BindFragment :: Fragment a %1 -> (a %1 -> Fragment b) %1 -> Fragment b
   CreateAsFragment
     :: C.Traceable tag => C.Payload tag %1 -> Fragment (Created tag)
+  CreateTaggedAsFragment
+    :: C.Traceable tag => C.Facts -> C.Payload tag %1 -> Fragment (Created tag)
   ObserveAsFragment
     :: C.Traceable tag => BlockHandle tag %1 -> Fragment (Observed tag)
   UseAsFragment :: C.Traceable tag => BlockHandle tag %1 -> Fragment (Used tag)
@@ -267,6 +310,10 @@ data Fragment a where
        %1 -> Fragment (Replaced tag)
   ComputeAsFragment
     :: C.Traceable tag => PayloadHandle tag %1 -> Fragment (Computed tag)
+  ComputeTaggedAsFragment
+    :: C.Traceable tag=> C.Facts
+    -> PayloadHandle tag
+       %1 -> Fragment (Computed tag)
   DestroyAsFragment
     :: C.Traceable tag => BlockHandle tag %1 -> Fragment (Destroyed tag)
   SealAsFragment
@@ -294,16 +341,26 @@ data RenderRecipe a where
     :: V.ViewDefinition tag used
        %1 -> Obligation (Compute tag)
        %1 -> RenderRecipe (V.Visual V.Rendered V.Stable used tag)
+  FreshMatchedCreateRender
+    :: C.Traceable tag => Obligation (Create tag) %1 -> RenderRecipe ()
+  FreshMatchedComputeRender
+    :: C.Traceable tag => Obligation (Compute tag) %1 -> RenderRecipe ()
   ForkCopyRender
     :: V.ViewDefinition tag used
        %1 -> Obligation (Copy tag)
        %1 -> RenderRecipe
          (LiveVisual tag, V.Visual V.Rendered V.Stable used tag)
+  ForkCopyMatchedRender
+    :: C.Traceable tag => Obligation (Copy tag) %1 -> RenderRecipe ()
   ContinueFromRender
     :: V.ViewDefinition tag used
        %1 -> Obligation (Observe source)
        %1 -> Obligation (Create tag)
        %1 -> RenderRecipe (V.Visual V.Rendered V.Stable used tag)
+  ContinueFromMatchedRender
+    :: (C.Traceable source, C.Traceable tag)=> Obligation (Observe source)
+       %1 -> Obligation (Create tag)
+       %1 -> RenderRecipe ()
   RemoveUseRender :: Obligation (Use tag) %1 -> RenderRecipe ()
   RemoveDestroyRender :: Obligation (Destroy tag) %1 -> RenderRecipe ()
   RemoveDecideRender :: Obligation (Decide tag) %1 -> RenderRecipe ()
@@ -636,20 +693,74 @@ mkScalar = Scalar
 class NumExpr a where
   num :: P.Double -> a
 
+class IntegerLiteral a where
+  integerLiteral :: P.Integer -> a
+
+class RationalLiteral a where
+  rationalLiteral :: P.Rational -> a
+
+fromInteger :: IntegerLiteral a => P.Integer -> a
+fromInteger = integerLiteral
+
+fromRational :: RationalLiteral a => P.Rational -> a
+fromRational = rationalLiteral
+
 instance S.SymbolicType ty => NumExpr (S.Expr ty) where
   num = S.num
+
+instance S.SymbolicType ty => IntegerLiteral (S.Expr ty) where
+  integerLiteral value = S.num (P.fromInteger value)
+
+instance S.SymbolicType ty => RationalLiteral (S.Expr ty) where
+  rationalLiteral value = S.num (P.fromRational value)
+
+instance IntegerLiteral P.Int where
+  integerLiteral = P.fromInteger
+
+instance IntegerLiteral P.Integer where
+  integerLiteral = P.fromInteger
+
+instance IntegerLiteral P.Double where
+  integerLiteral = P.fromInteger
+
+instance RationalLiteral P.Double where
+  rationalLiteral = P.fromRational
 
 instance NumExpr Coord where
   num value = mkCoord (S.num value :: LayoutExpr) []
 
+instance IntegerLiteral Coord where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Coord where
+  rationalLiteral value = num (P.fromRational value)
+
 instance NumExpr Span where
   num value = mkSpan (S.num value :: LayoutExpr) []
+
+instance IntegerLiteral Span where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Span where
+  rationalLiteral value = num (P.fromRational value)
 
 instance NumExpr Offset where
   num value = mkOffset (S.num value :: LayoutExpr) []
 
+instance IntegerLiteral Offset where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Offset where
+  rationalLiteral value = num (P.fromRational value)
+
 instance NumExpr Scalar where
   num value = mkScalar (S.num value :: LayoutExpr) []
+
+instance IntegerLiteral Scalar where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Scalar where
+  rationalLiteral value = num (P.fromRational value)
 
 at :: P.Double -> Coord
 at = num
@@ -988,6 +1099,10 @@ lhs |= rhs = closeBridge BridgeExact lhs rhs
 runProgram :: Program () -> VisualTraceGraph
 runProgram program = V.buildGraph (interpretProgram program)
 
+runProgramWith :: MatchSpec -> Program () -> VisualTraceGraph
+runProgramWith spec program =
+  V.buildGraphWithSpec spec (interpretProgram program)
+
 manifest :: Program () %1 -> Program ()
 manifest program = program
 
@@ -1079,6 +1194,9 @@ interpretFragment fragment =
     CreateAsFragment payload -> do
       V.Created block token <- V.create payload
       return (Created block (Obligation token))
+    CreateTaggedAsFragment facts payload -> do
+      V.Created block token <- V.createTagged facts payload
+      return (Created block (Obligation token))
     ObserveAsFragment block -> do
       V.Observed next token <- V.observe block
       return (Observed next (Obligation token))
@@ -1093,6 +1211,9 @@ interpretFragment fragment =
       return (Replaced output (Obligation token))
     ComputeAsFragment payload -> do
       V.Computed block token <- V.compute payload
+      return (Computed block (Obligation token))
+    ComputeTaggedAsFragment facts payload -> do
+      V.Computed block token <- V.computeTagged facts payload
       return (Computed block (Obligation token))
     DestroyAsFragment block -> do
       V.Destroyed token <- V.destroy block
@@ -1122,14 +1243,28 @@ interpretRender recipe =
     FreshComputeRender definition obligation ->
       case obligation of
         Obligation token -> V.fresh definition token
+    FreshMatchedCreateRender obligation ->
+      case obligation of
+        Obligation token -> V.freshMatched token
+    FreshMatchedComputeRender obligation ->
+      case obligation of
+        Obligation token -> V.freshMatched token
     ForkCopyRender definition obligation ->
       case obligation of
         Obligation token -> V.forkCopy definition token
+    ForkCopyMatchedRender obligation ->
+      case obligation of
+        Obligation token -> V.forkCopyMatched token
     ContinueFromRender definition sourceObligation newObligation ->
       case sourceObligation of
         Obligation source ->
           case newObligation of
             Obligation new -> V.continueFrom definition source new
+    ContinueFromMatchedRender sourceObligation newObligation ->
+      case sourceObligation of
+        Obligation source ->
+          case newObligation of
+            Obligation new -> V.continueFromMatched source new
     RemoveUseRender obligation ->
       case obligation of
         Obligation token -> V.remove token
@@ -1191,6 +1326,13 @@ createAs ::
      %1 -> Fragment (Created tag)
 createAs = CreateAsFragment
 
+createTaggedAs ::
+     forall tag. C.Traceable tag
+  => Query
+  -> C.Payload tag
+     %1 -> Fragment (Created tag)
+createTaggedAs query = CreateTaggedAsFragment (queryFacts query)
+
 observeAs ::
      forall tag. C.Traceable tag
   => BlockHandle tag
@@ -1221,6 +1363,13 @@ computeAs ::
   => PayloadHandle tag
      %1 -> Fragment (Computed tag)
 computeAs = ComputeAsFragment
+
+computeTaggedAs ::
+     forall tag. C.Traceable tag
+  => Query
+  -> PayloadHandle tag
+     %1 -> Fragment (Computed tag)
+computeTaggedAs query = ComputeTaggedAsFragment (queryFacts query)
 
 destroyAs ::
      forall tag. C.Traceable tag
@@ -1261,11 +1410,28 @@ instance FreshObligation (Create tag) tag where
 instance FreshObligation (Compute tag) tag where
   renderFresh = FreshComputeRender
 
+renderFreshMatched ::
+     FreshMatchedObligation act => Obligation act %1 -> RenderRecipe ()
+renderFreshMatched = renderFreshMatchedObligation
+
+class FreshMatchedObligation act where
+  renderFreshMatchedObligation :: Obligation act %1 -> RenderRecipe ()
+
+instance C.Traceable tag => FreshMatchedObligation (Create tag) where
+  renderFreshMatchedObligation = FreshMatchedCreateRender
+
+instance C.Traceable tag => FreshMatchedObligation (Compute tag) where
+  renderFreshMatchedObligation = FreshMatchedComputeRender
+
 renderForkCopy ::
      V.ViewDefinition tag used
      %1 -> Obligation (Copy tag)
      %1 -> RenderRecipe (LiveVisual tag, V.Visual V.Rendered V.Stable used tag)
 renderForkCopy = ForkCopyRender
+
+renderForkCopyMatched ::
+     C.Traceable tag => Obligation (Copy tag) %1 -> RenderRecipe ()
+renderForkCopyMatched = ForkCopyMatchedRender
 
 renderContinueFrom ::
      V.ViewDefinition tag used
@@ -1273,6 +1439,13 @@ renderContinueFrom ::
      %1 -> Obligation (Create tag)
      %1 -> RenderRecipe (V.Visual V.Rendered V.Stable used tag)
 renderContinueFrom = ContinueFromRender
+
+renderContinueFromMatched ::
+     (C.Traceable source, C.Traceable tag)
+  => Obligation (Observe source)
+     %1 -> Obligation (Create tag)
+     %1 -> RenderRecipe ()
+renderContinueFromMatched = ContinueFromMatchedRender
 
 class RemoveObligation act where
   renderRemove :: Obligation act %1 -> RenderRecipe ()
@@ -1444,6 +1617,32 @@ node recipe =
       boxDefinition
         (V.finalizeStyleWith (nodeSpecStyleUpdate spec))
         (layoutNode spec)
+
+match ::
+     forall tag. C.Traceable tag
+  => Query
+  -> (P.Int -> NodeDefinition tag)
+  -> MatchSpec
+match = matchNode
+
+matchAs ::
+     forall tag. C.Traceable tag
+  => Query
+  -> Query
+  -> (P.Int -> NodeDefinition tag)
+  -> MatchSpec
+matchAs query alias = matchNodeAs query (V.queryKey alias)
+
+pair :: Query -> Query -> Query -> PairPattern
+pair firstQuery secondQuery name =
+  V.PairPattern
+    { V.pairFirstQuery = firstQuery
+    , V.pairSecondQuery = secondQuery
+    , V.pairName = V.queryKey name
+    }
+
+(<>) :: Query -> Query -> Query
+(<>) = queryAppend
 
 layoutNode :: NodeSpec -> LiveVisual tag %1 -> ViewLayout (NodeVisual tag)
 layoutNode spec visual0 = do

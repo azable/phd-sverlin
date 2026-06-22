@@ -552,10 +552,10 @@ snapshotBox snapshot =
     ]
 
 renderSnapshotPayload :: BlockSnapshot tag -> String
-renderSnapshotPayload (BlockSnapshot _ _ view) = renderPayloadView view
+renderSnapshotPayload (BlockSnapshot _ _ view _) = renderPayloadView view
 
 snapshotRef :: BlockSnapshot tag -> BlockRef tag
-snapshotRef (BlockSnapshot ref _ _) = ref
+snapshotRef (BlockSnapshot ref _ _ _) = ref
 
 renderBlockRef :: BlockRef tag -> String
 renderBlockRef (BlockRef blockId) = "[B" ++ show blockId ++ "]"
