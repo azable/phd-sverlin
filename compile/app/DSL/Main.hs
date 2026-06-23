@@ -83,6 +83,9 @@ exampleSpec =
 example :: Program ()
 example = linearSearch (searchInput exampleSpec)
 
+run :: Program () -> VisualTraceGraph
+run = runProgramWith visualization
+
 searchInput :: ExampleSpec -> SearchInput
 searchInput spec =
   case spec of
@@ -99,7 +102,7 @@ inputValues values =
 --------------------------------------------------------------------------------
 data Elements where
   NoElements :: Elements
-  MoreElement :: BlockHandle Value %1 -> Elements %1 -> Elements
+  MoreElement :: Int -> BlockHandle Value %1 -> Elements %1 -> Elements
 
 data Comparison where
   IsMatch :: BlockHandle Value %1 -> BlockHandle Value %1 -> Comparison
@@ -135,9 +138,6 @@ data DestroyPairObligations where
        %1 -> Obligation (Destroy Value)
        %1 -> DestroyPairObligations
 
-run :: Program () -> VisualTraceGraph
-run = runProgram
-
 linearSearch :: SearchInput %1 -> Program ()
 linearSearch (SearchInput targetPayload valuePayloads) =
   manifest $ do
@@ -163,9 +163,9 @@ createElementsFrom index inputs =
           (createValueTagged
              (#int <> #array (#values :: Query) <> #index index)
              payload)
-          (renderCreatedElement index)
+          renderCreatedElement
       elements <- createElementsFrom (index + 1) rest
-      return (MoreElement element elements)
+      return (MoreElement index element elements)
 
 searchIteration :: SearchState %1 -> Program (LoopResult SearchState ())
 searchIteration searchState =
@@ -175,8 +175,8 @@ searchIteration searchState =
         NoElements -> do
           phase "Search exhausted" (destroyValue target) renderRemove
           return (Finish ())
-        MoreElement element rest -> do
-          comparison <- compareElement target element
+        MoreElement index element rest -> do
+          comparison <- compareElement target index element
           case comparison of
             IsMatch targetAfter elementAfter -> do
               finishFound targetAfter elementAfter
@@ -187,12 +187,12 @@ searchIteration searchState =
               return (Continue (SearchState targetAfter rest))
 
 compareElement ::
-     BlockHandle Value %1 -> BlockHandle Value %1 -> Program Comparison
-compareElement target element = do
+     BlockHandle Value %1 -> Int -> BlockHandle Value %1 -> Program Comparison
+compareElement target index element = do
   PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe <-
     phase
       "Prepare comparison"
-      (prepareComparison target element)
+      (prepareComparison target index element)
       renderPrepareComparison
   matchBlock <-
     phase
@@ -227,7 +227,7 @@ discardRemaining :: Elements %1 -> Program ()
 discardRemaining elements =
   case elements of
     NoElements -> return ()
-    MoreElement element rest -> do
+    MoreElement _ element rest -> do
       phase "Discard remaining element" (destroyValue element) renderRemove
       discardRemaining rest
 
@@ -257,12 +257,15 @@ destroyPair target element = do
 
 prepareComparison ::
      BlockHandle Value
-     %1 -> BlockHandle Value
+     %1 -> Int
+  -> BlockHandle Value
      %1 -> Fragment
        (StepResult PrepareComparisonOutput PrepareComparisonObligations)
-prepareComparison target element = do
-  Copied targetAfter targetProbe targetCopy <- copyAs target
-  Copied elementAfter elementProbe elementCopy <- copyAs element
+prepareComparison target index element = do
+  Copied targetAfter targetProbe targetCopy <-
+    copyTaggedAs (#int <> #probe (#target :: Query)) target
+  Copied elementAfter elementProbe elementCopy <-
+    copyTaggedAs (#int <> #probe (#element :: Query) <> #index index) element
   return
     (StepResult
        (PrepareComparisonOutput
@@ -292,39 +295,29 @@ decideMatch :: BlockHandle Match %1 -> Fragment (Decided Match)
 decideMatch = decideAs (\(LBool answer) -> answer)
 
 renderCreatedTarget :: Obligation (Create Value) %1 -> RenderRecipe ()
-renderCreatedTarget obligation = do
-  renderedValue <- renderFresh targetValueDefinition obligation
-  renderComplete renderedValue
+renderCreatedTarget = renderFreshMatched
 
-renderCreatedElement :: Int -> Obligation (Create Value) %1 -> RenderRecipe ()
-renderCreatedElement index obligation = do
-  renderedElement <- renderFresh (listValueDefinition index) obligation
+renderCreatedElement :: Obligation (Create Value) %1 -> RenderRecipe ()
+renderCreatedElement obligation = do
+  renderFreshMatched obligation
   renderCheckpoint
-  renderComplete renderedElement
 
 renderPrepareComparison :: PrepareComparisonObligations %1 -> RenderRecipe ()
 renderPrepareComparison obligations =
   case obligations of
     PrepareComparisonObligations targetCopy elementCopy -> do
-      (target1, renderedTargetProbe) <-
-        renderForkCopy targetProbeViewDefinition targetCopy
-      (element1, renderedElementProbe) <-
-        renderForkCopy elementProbeViewDefinition elementCopy
-      renderComplete target1
-      renderComplete element1
-      renderComplete renderedTargetProbe
-      renderComplete renderedElementProbe
+      renderForkCopyMatched targetCopy
+      renderForkCopyMatched elementCopy
       renderCheckpoint
 
 renderCompareValues :: CompareValuesObligations %1 -> RenderRecipe ()
 renderCompareValues obligations =
   case obligations of
     CompareValuesObligations targetVisual elementVisual matchVisual -> do
-      renderedMatch <- renderFresh matchViewDefinition matchVisual
+      renderFreshMatched matchVisual
       renderCheckpoint
       renderRemove targetVisual
       renderRemove elementVisual
-      renderComplete renderedMatch
 
 renderRejectedDecision :: Obligation (Decide Match) %1 -> RenderRecipe ()
 renderRejectedDecision obligation = do
@@ -338,9 +331,81 @@ renderDestroyPair obligations =
       renderRemove targetVisual
       renderRemove elementVisual
 
-stride :: Span
-stride = #cell |+| #gap
+--------------------------------------------------------------------------------
+-- Visualisation
+--------------------------------------------------------------------------------
+visualization :: MatchSpec
+visualization =
+  visualize $ do
+    match (#int <> #target) (const targetValueDefinition)
+    matchAs
+      (#int <> #probe (#target :: Query))
+      (#int <> #target)
+      (const targetProbeViewDefinition)
+    match
+      (#int <> #array (#values :: Query) <> #index (0 :: Int))
+      (const (listValueDefinition 0))
+    matchAs
+      (#int <> #probe (#element :: Query) <> #index (0 :: Int))
+      (#int <> #array (#values :: Query) <> #index (0 :: Int))
+      (const elementProbeViewDefinition)
+    adjacent
+      (pair
+         (#int <> #array (#values :: Query) <> #index (0 :: Int))
+         (#int <> #array (#values :: Query) <> #index (1 :: Int))
+         (#adjacent :: Query))
+      #gap
+    match
+      (#int <> #array (#values :: Query) <> #index (1 :: Int))
+      (const (listValueDefinition 1))
+    matchAs
+      (#int <> #probe (#element :: Query) <> #index (1 :: Int))
+      (#int <> #array (#values :: Query) <> #index (1 :: Int))
+      (const elementProbeViewDefinition)
+    adjacent
+      (pair
+         (#int <> #array (#values :: Query) <> #index (1 :: Int))
+         (#int <> #array (#values :: Query) <> #index (2 :: Int))
+         (#adjacent :: Query))
+      #gap
+    match
+      (#int <> #array (#values :: Query) <> #index (2 :: Int))
+      (const (listValueDefinition 2))
+    matchAs
+      (#int <> #probe (#element :: Query) <> #index (2 :: Int))
+      (#int <> #array (#values :: Query) <> #index (2 :: Int))
+      (const elementProbeViewDefinition)
+    adjacent
+      (pair
+         (#int <> #array (#values :: Query) <> #index (2 :: Int))
+         (#int <> #array (#values :: Query) <> #index (3 :: Int))
+         (#adjacent :: Query))
+      #gap
+    match
+      (#int <> #array (#values :: Query) <> #index (3 :: Int))
+      (const (listValueDefinition 3))
+    matchAs
+      (#int <> #probe (#element :: Query) <> #index (3 :: Int))
+      (#int <> #array (#values :: Query) <> #index (3 :: Int))
+      (const elementProbeViewDefinition)
+    adjacent
+      (pair
+         (#int <> #array (#values :: Query) <> #index (3 :: Int))
+         (#int <> #array (#values :: Query) <> #index (4 :: Int))
+         (#adjacent :: Query))
+      #gap
+    match
+      (#int <> #array (#values :: Query) <> #index (4 :: Int))
+      (const (listValueDefinition 4))
+    matchAs
+      (#int <> #probe (#element :: Query) <> #index (4 :: Int))
+      (#int <> #array (#values :: Query) <> #index (4 :: Int))
+      (const elementProbeViewDefinition)
+    match (#decision <> #match) (const matchViewDefinition)
 
+--------------------------------------------------------------------------------
+-- Layout
+--------------------------------------------------------------------------------
 cellBy :: Scalar -> Span
 cellBy scale = #cell * scale
 
@@ -426,10 +491,6 @@ constrainMatchFlow = do
   constrain $ (#probe_y :: Coord) =| matchOffsetY |= #match_y
   constrain $ (#match_y :: Coord) <| matchRowClearance |> #row_y
 
-listValueX :: Int -> Coord
-listValueX index =
-  (#row_x :: Coord) + (num (fromIntegral index) :: Scalar) * stride
-
 valueText :: NodeRecipe ()
 valueText = do
   fontFamily "Inter, ui-sans-serif, system-ui, sans-serif"
@@ -486,10 +547,16 @@ listValueDefinition index =
   node $ do
     valueText
     listChrome
-    position (vec2 (listValueX index) #row_y)
+    listValuePosition index
     width #cell
     height #cell
     requireListFlow index
+
+listValuePosition :: Int -> NodeRecipe ()
+listValuePosition index =
+  case index of
+    0 -> position (vec2 #row_x #row_y)
+    _ -> return ()
 
 requireListFlow :: Int -> NodeRecipe ()
 requireListFlow index =

@@ -45,6 +45,7 @@ module LinearTrace.Core
   , observe
   , use
   , copy
+  , copyTagged
   , replace
   , compute
   , computeTagged

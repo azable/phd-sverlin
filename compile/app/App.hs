@@ -41,7 +41,9 @@ runVisualization ::
   -> IO (Either String Compile.Visualization)
 runVisualization config graph = do
   let diagnostics = diagnosticsHandle (runOutputMode config)
-  when (runPrintTrace config) (Print.hPrintTrace diagnostics graph)
+  when
+    (runPrintTrace config)
+    (Print.hPrintTrace diagnostics (View.visualTraceCore graph))
   let viewGraph = buildViewGraph graph
   solved <- View.solveCSPWithSeed (View.RandomSeed (runSeed config)) viewGraph
   Print.hPrintSolutionByStep

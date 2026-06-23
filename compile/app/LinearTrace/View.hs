@@ -45,6 +45,7 @@ module LinearTrace.View
   , matchSpecFromList
   , matchNode
   , matchNodeAs
+  , matchPairAdjacent
   , PairPattern(..)
   , pairPatternKey
   , Visual
@@ -155,6 +156,7 @@ module LinearTrace.View
   , ViewScript
   , VisualTraceBuilder
   , VisualTraceGraph
+  , visualTraceCore
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -170,6 +172,7 @@ module LinearTrace.View
   , observe
   , use
   , copy
+  , copyTagged
   , replace
   , compute
   , computeTagged
@@ -375,8 +378,8 @@ pairPatternKey pattern' =
     ++ "."
     ++ safeKey (pairName pattern')
 
-newtype MatchSpec =
-  MatchSpec [SomeMatch]
+data MatchSpec =
+  MatchSpec [SomeMatch] [PairConstraint]
 
 data SomeMatch where
   SomeMatch
@@ -386,15 +389,22 @@ data SomeMatch where
     -> (P.Int -> ViewDefinition tag used)
     -> SomeMatch
 
+data PairConstraint where
+  PairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> PairConstraint
+
+data MatchedBlock tag =
+  MatchedBlock Query (BlockView tag)
+
 emptyMatchSpec :: MatchSpec
-emptyMatchSpec = MatchSpec []
+emptyMatchSpec = MatchSpec [] []
 
 matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
 matchSpecAppend lhs rhs =
   case lhs of
-    MatchSpec leftMatches ->
+    MatchSpec leftMatches leftPairs ->
       case rhs of
-        MatchSpec rightMatches -> MatchSpec (leftMatches P.++ rightMatches)
+        MatchSpec rightMatches rightPairs ->
+          MatchSpec (leftMatches P.++ rightMatches) (leftPairs P.++ rightPairs)
 
 matchSpecFromList :: [MatchSpec] -> MatchSpec
 matchSpecFromList specs =
@@ -418,6 +428,11 @@ matchNodeAs ::
 matchNodeAs query nodeKey makeDefinition =
   MatchSpec
     [SomeMatch (Proxy :: Proxy tag) query (safeKey nodeKey) makeDefinition]
+    []
+
+matchPairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> MatchSpec
+matchPairAdjacent pattern' gap constraints =
+  MatchSpec [] [PairAdjacent pattern' gap constraints]
 
 --------------------------------------------------------------------------------
 -- Block views
@@ -1549,7 +1564,13 @@ data VisualTraceState where
 
 type VisualTraceBuilder a = State VisualTraceState a
 
-type VisualTraceGraph = C.TraceGraphWith ViewScript
+data VisualTraceGraph =
+  VisualTraceGraph MatchSpec (C.TraceGraphWith ViewScript)
+
+visualTraceCore :: VisualTraceGraph -> C.TraceGraphWith ViewScript
+visualTraceCore graph =
+  case graph of
+    VisualTraceGraph _ coreGraph -> coreGraph
 
 infixr 0 ==>
 (==>) :: P.String -> ViewBuilder () %1 -> VisualTraceBuilder ()
@@ -1593,7 +1614,7 @@ buildGraphWithEnv env builder =
   let (_result, finalState) = runState builder (initialVisualTraceStateWith env)
       VisualTraceState _env (Ur coreState) _pendingAudit = finalState
       C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) (Ur steps) = coreState
-   in C.TraceGraph blocks steps
+   in VisualTraceGraph (viewMatchSpec env) (C.TraceGraph blocks steps)
 
 instance Consumable ViewState where
   consume (ViewState env output) = consume env `lseq` consume output
@@ -1749,46 +1770,52 @@ defineMatchedBlock ::
 defineMatchedBlock block = do
   Ur env <- askViewEnv
   case viewMatchSpec env of
-    MatchSpec matches -> defineMatchedBlockFrom 0 block matches
+    MatchSpec matches _ -> do
+      matched <- defineMatchedBlockFrom 0 block matches
+      case unsafeUr matched of
+        Ur matched' -> constrainImplicitParents matched'
 
 defineMatchedBlockFrom ::
      forall tag. C.Traceable tag
   => P.Int
   -> BlockView tag
   -> [SomeMatch]
-  -> ViewBuilder ()
-defineMatchedBlockFrom _ _ [] = return ()
+  -> ViewBuilder [MatchedBlock tag]
+defineMatchedBlockFrom _ _ [] = return []
 defineMatchedBlockFrom pieceIndex block (match':rest) = do
   matched <- defineMatchedPiece pieceIndex block match'
   {- HLINT ignore "Use if" -}
   case matched of
-    False -> defineMatchedBlockFrom pieceIndex block rest
-    True  -> defineMatchedBlockFrom (pieceIndex P.+ 1) block rest
+    Nothing -> defineMatchedBlockFrom pieceIndex block rest
+    Just matchedBlock -> do
+      matchedRest <- defineMatchedBlockFrom (pieceIndex P.+ 1) block rest
+      return (matchedBlock : matchedRest)
 
 defineMatchedPiece ::
      forall sourceTag. C.Traceable sourceTag
   => P.Int
   -> BlockView sourceTag
   -> SomeMatch
-  -> ViewBuilder P.Bool
+  -> ViewBuilder (Maybe (MatchedBlock sourceTag))
 defineMatchedPiece pieceIndex block match' =
   case match' of
     SomeMatch (_ :: Proxy matchedTag) query nodeKey makeDefinition ->
       case eqT @sourceTag @matchedTag of
-        Nothing -> return False
+        Nothing -> return Nothing
         Just Refl
           {- HLINT ignore "Use if" -}
          ->
           case queryMatches query (blockFacts block) of
             True -> do
               let pieceBlock = matchedPieceBlock pieceIndex nodeKey block
-              defineMatchedPieceBlock (makeDefinition pieceIndex) pieceBlock
-              return True
-            False -> return False
+              matchedBlock <-
+                defineMatchedPieceBlock (makeDefinition pieceIndex) pieceBlock
+              return (Just (MatchedBlock query matchedBlock))
+            False -> return Nothing
 
 defineMatchedPieceBlock ::
      forall tag used.
-     ViewDefinition tag used %1 -> BlockView tag -> ViewBuilder ()
+     ViewDefinition tag used %1 -> BlockView tag -> ViewBuilder (BlockView tag)
 defineMatchedPieceBlock definition block0 =
   case definition of
     ViewDefinition styleDefinition viewDefinition -> do
@@ -1807,6 +1834,65 @@ defineMatchedPieceBlock definition block0 =
       emitViewNode (BlockViewNode block)
       rendered <- viewDefinition (Visual block)
       complete rendered
+      return block
+
+constrainImplicitParents :: forall tag. [MatchedBlock tag] -> ViewBuilder ()
+constrainImplicitParents matched =
+  traverseView_ (constrainImplicitParent matched) matched
+
+constrainImplicitParent ::
+     forall tag. [MatchedBlock tag] -> MatchedBlock tag -> ViewBuilder ()
+constrainImplicitParent matched parent =
+  case parent of
+    MatchedBlock parentQuery parentBlock ->
+      let children = immediateMatchedChildren parentQuery matched
+       in case children of
+            [] -> return ()
+            _ -> do
+              traverseView_ (constrainParentContains parentBlock) children
+              encourage (width parentBlock)
+              encourage (height parentBlock)
+
+immediateMatchedChildren :: Query -> [MatchedBlock tag] -> [BlockView tag]
+immediateMatchedChildren parentQuery matched =
+  case matched of
+    [] -> []
+    MatchedBlock childQuery childBlock:rest ->
+      case isImmediateMatchedChild childQuery parentQuery matched of
+        True  -> childBlock : immediateMatchedChildren parentQuery rest
+        False -> immediateMatchedChildren parentQuery rest
+
+isImmediateMatchedChild :: Query -> Query -> [MatchedBlock tag] -> P.Bool
+isImmediateMatchedChild childQuery parentQuery matched =
+  queryStrictSubset childQuery parentQuery
+    P.&& P.not (hasIntermediateQuery childQuery parentQuery matched)
+
+hasIntermediateQuery :: Query -> Query -> [MatchedBlock tag] -> P.Bool
+hasIntermediateQuery childQuery parentQuery matched =
+  case matched of
+    [] -> False
+    MatchedBlock middleQuery _block:rest ->
+      (queryStrictSubset childQuery middleQuery
+         P.&& queryStrictSubset middleQuery parentQuery)
+        P.|| hasIntermediateQuery childQuery parentQuery rest
+
+queryStrictSubset :: Query -> Query -> P.Bool
+queryStrictSubset child parent = child P./= parent P.&& querySubset child parent
+
+querySubset :: Query -> Query -> P.Bool
+querySubset child parent = P.all (`P.elem` queryTerms parent) (queryTerms child)
+
+queryTerms :: Query -> [QueryTerm]
+queryTerms query =
+  case query of
+    Query terms -> canonicalTerms terms
+
+constrainParentContains :: BlockView tag -> BlockView tag -> ViewBuilder ()
+constrainParentContains parentBlock childBlock = do
+  ensureRaw (left parentBlock S.@<=@ left childBlock)
+  ensureRaw (right childBlock S.@<=@ right parentBlock)
+  ensureRaw (top parentBlock S.@<=@ top childBlock)
+  ensureRaw (bottom childBlock S.@<=@ bottom parentBlock)
 
 matchedPieceBlock :: P.Int -> P.String -> BlockView tag -> BlockView tag
 matchedPieceBlock pieceIndex nodeKey block =
@@ -1900,6 +1986,19 @@ copy block =
   case unsafeUr block of
     Ur block' -> do
       C.Copied original copy' explainToken <- runCoreBuilder (C.copy block')
+      token <- visualExplainToken explainToken
+      return (Copied original copy' token)
+
+copyTagged ::
+     forall tag. C.Traceable tag
+  => C.Facts
+  -> C.Block tag
+     %1 -> VisualTraceBuilder (Copied tag)
+copyTagged facts block =
+  case unsafeUr block of
+    Ur block' -> do
+      C.Copied original copy' explainToken <-
+        runCoreBuilder (C.copyTagged facts block')
       token <- visualExplainToken explainToken
       return (Copied original copy' token)
 
@@ -2309,11 +2408,12 @@ takeCenterY visual =
 -- Build a view graph
 --------------------------------------------------------------------------------
 buildCSP :: VisualTraceGraph -> ViewGraph
-buildCSP (C.TraceGraph _blocks steps) =
+buildCSP (VisualTraceGraph spec (C.TraceGraph _blocks steps)) =
   let stepsOutput = viewTraceSteps steps
       viewSteps' = builtSteps stepsOutput
       nodes = builtNodes stepsOutput
-      constraints = builtConstraints stepsOutput
+      constraints =
+        builtConstraints stepsOutput P.++ matchSpecConstraints spec nodes
       initialVars = builtInitialVars stepsOutput
       renderFrames = builtRenderFrames stepsOutput
    in ViewGraph
@@ -2330,6 +2430,58 @@ solveCSP config graph =
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
 solveCSPWithSeed seed = solveCSP defaultSolveConfig {initialSeed = seed}
+
+data AnyBlockView where
+  AnyBlockView :: BlockView tag -> AnyBlockView
+
+matchSpecConstraints :: MatchSpec -> [ViewNode] -> [Constraint]
+matchSpecConstraints spec nodes =
+  case spec of
+    MatchSpec _ pairConstraints ->
+      P.concatMap
+        (pairConstraintConstraints (viewNodeBlocks nodes))
+        pairConstraints
+
+viewNodeBlocks :: [ViewNode] -> [AnyBlockView]
+viewNodeBlocks nodes =
+  case nodes of
+    [] -> []
+    node:rest ->
+      case node of
+        BlockViewNode block -> AnyBlockView block : viewNodeBlocks rest
+
+pairConstraintConstraints :: [AnyBlockView] -> PairConstraint -> [Constraint]
+pairConstraintConstraints blocks pairConstraint =
+  case pairConstraint of
+    PairAdjacent pattern' gap gapConstraints ->
+      P.concatMap
+        (adjacentPairConstraints gap gapConstraints)
+        (matchingPairs pattern' blocks)
+
+matchingPairs :: PairPattern -> [AnyBlockView] -> [(AnyBlockView, AnyBlockView)]
+matchingPairs pattern' blocks =
+  [ (firstBlock, secondBlock)
+  | firstBlock <- blocks
+  , anyBlockMatches (pairFirstQuery pattern') firstBlock
+  , secondBlock <- blocks
+  , anyBlockMatches (pairSecondQuery pattern') secondBlock
+  ]
+
+anyBlockMatches :: Query -> AnyBlockView -> P.Bool
+anyBlockMatches query anyBlock =
+  case anyBlock of
+    AnyBlockView block -> queryMatches query (blockFacts block)
+
+adjacentPairConstraints ::
+     LayoutExpr -> [Constraint] -> (AnyBlockView, AnyBlockView) -> [Constraint]
+adjacentPairConstraints gap gapConstraints pair' =
+  case pair' of
+    (AnyBlockView firstBlock, AnyBlockView secondBlock) ->
+      gapConstraints
+        P.++ [ right firstBlock S.@+@ gap S.@==@ left secondBlock
+             , top firstBlock S.@==@ top secondBlock
+             , height firstBlock S.@==@ height secondBlock
+             ]
 
 data BuiltViewStep = BuiltViewStep
   { stepView                 :: ViewStep

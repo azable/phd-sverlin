@@ -81,6 +81,7 @@ module LinearTrace.Choreography
   , observeAs
   , useAs
   , copyAs
+  , copyTaggedAs
   , replaceAs
   , computeAs
   , computeTaggedAs
@@ -103,13 +104,16 @@ module LinearTrace.Choreography
   , renderCheckpoint
   , Query
   , MatchSpec
+  , VisualizationBuilder
   , PairPattern(..)
+  , visualize
   , emptyMatchSpec
   , matchSpecAppend
   , matchSpecFromList
   , match
   , matchAs
   , pair
+  , adjacent
   , queryAtom
   , querySymbol
   , queryInt
@@ -252,10 +256,10 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          WhiteSpace (..), boxDefinition,
                                          emptyMatchSpec, encourage,
                                          finalizeStyle, global, matchNode,
-                                         matchNodeAs, matchSpecAppend,
-                                         matchSpecFromList, queryAppend,
-                                         queryAtom, queryFacts, queryInt,
-                                         querySymbol, setFillOnce,
+                                         matchNodeAs, matchPairAdjacent,
+                                         matchSpecAppend, matchSpecFromList,
+                                         queryAppend, queryAtom, queryFacts,
+                                         queryInt, querySymbol, setFillOnce,
                                          setFontFamilyOnce, setFontSizeOnce,
                                          setFontWeightOnce, setRadiusOnce,
                                          setStrokeOnce, setStrokeWidthOnce,
@@ -304,6 +308,8 @@ data Fragment a where
   UseAsFragment :: C.Traceable tag => BlockHandle tag %1 -> Fragment (Used tag)
   CopyAsFragment
     :: C.Traceable tag => BlockHandle tag %1 -> Fragment (Copied tag)
+  CopyTaggedAsFragment
+    :: C.Traceable tag => C.Facts -> BlockHandle tag %1 -> Fragment (Copied tag)
   ReplaceAsFragment
     :: C.Traceable tag=> BlockHandle tag
        %1 -> BlockHandle tag
@@ -411,6 +417,9 @@ data NodeSpec = NodeSpec
 
 data NodeRecipe a where
   NodeRecipe :: a %1 -> NodeSpec -> NodeRecipe a
+
+data VisualizationBuilder a where
+  VisualizationBuilder :: a %1 -> MatchSpec -> VisualizationBuilder a
 
 type ViewLayout a = V.ViewBuilder a
 
@@ -634,6 +643,52 @@ instance Applicative NodeRecipe where
 
 instance Monad NodeRecipe where
   (>>=) = bindNodeRecipe
+
+bindVisualizationBuilder ::
+     VisualizationBuilder a
+     %1 -> (a %1 -> VisualizationBuilder b)
+     %1 -> VisualizationBuilder b
+bindVisualizationBuilder builder next =
+  case builder of
+    VisualizationBuilder value first ->
+      case next value of
+        VisualizationBuilder output second ->
+          VisualizationBuilder output (matchSpecAppend first second)
+
+instance DFL.Functor VisualizationBuilder where
+  fmap f builder =
+    case builder of
+      VisualizationBuilder value spec -> VisualizationBuilder (f value) spec
+
+instance Functor VisualizationBuilder where
+  fmap f builder =
+    case builder of
+      VisualizationBuilder value spec -> VisualizationBuilder (f value) spec
+
+instance DFL.Applicative VisualizationBuilder where
+  pure value = VisualizationBuilder value emptyMatchSpec
+  liftA2 f lhs rhs =
+    case lhs of
+      VisualizationBuilder leftValue first ->
+        case rhs of
+          VisualizationBuilder rightValue second ->
+            VisualizationBuilder
+              (f leftValue rightValue)
+              (matchSpecAppend first second)
+
+instance Applicative VisualizationBuilder where
+  pure value = VisualizationBuilder value emptyMatchSpec
+  liftA2 f lhs rhs =
+    case lhs of
+      VisualizationBuilder leftValue first ->
+        case rhs of
+          VisualizationBuilder rightValue second ->
+            VisualizationBuilder
+              (f leftValue rightValue)
+              (matchSpecAppend first second)
+
+instance Monad VisualizationBuilder where
+  (>>=) = bindVisualizationBuilder
 
 coordExpr :: Coord -> LayoutExpr
 coordExpr value =
@@ -1206,6 +1261,9 @@ interpretFragment fragment =
     CopyAsFragment block -> do
       V.Copied original copy' token <- V.copy block
       return (Copied original copy' (Obligation token))
+    CopyTaggedAsFragment facts block -> do
+      V.Copied original copy' token <- V.copyTagged facts block
+      return (Copied original copy' (Obligation token))
     ReplaceAsFragment oldBlock incomingBlock -> do
       V.Replaced output token <- V.replace oldBlock incomingBlock
       return (Replaced output (Obligation token))
@@ -1350,6 +1408,13 @@ copyAs ::
   => BlockHandle tag
      %1 -> Fragment (Copied tag)
 copyAs = CopyAsFragment
+
+copyTaggedAs ::
+     forall tag. C.Traceable tag
+  => Query
+  -> BlockHandle tag
+     %1 -> Fragment (Copied tag)
+copyTaggedAs query = CopyTaggedAsFragment (queryFacts query)
 
 replaceAs ::
      forall tag. C.Traceable tag
@@ -1618,20 +1683,27 @@ node recipe =
         (V.finalizeStyleWith (nodeSpecStyleUpdate spec))
         (layoutNode spec)
 
+visualize :: VisualizationBuilder () -> MatchSpec
+visualize builder =
+  case builder of
+    VisualizationBuilder () spec -> spec
+
 match ::
      forall tag. C.Traceable tag
   => Query
   -> (P.Int -> NodeDefinition tag)
-  -> MatchSpec
-match = matchNode
+  -> VisualizationBuilder ()
+match query makeDefinition =
+  VisualizationBuilder () (matchNode query makeDefinition)
 
 matchAs ::
      forall tag. C.Traceable tag
   => Query
   -> Query
   -> (P.Int -> NodeDefinition tag)
-  -> MatchSpec
-matchAs query alias = matchNodeAs query (V.queryKey alias)
+  -> VisualizationBuilder ()
+matchAs query alias makeDefinition =
+  VisualizationBuilder () (matchNodeAs query (V.queryKey alias) makeDefinition)
 
 pair :: Query -> Query -> Query -> PairPattern
 pair firstQuery secondQuery name =
@@ -1640,6 +1712,12 @@ pair firstQuery secondQuery name =
     , V.pairSecondQuery = secondQuery
     , V.pairName = V.queryKey name
     }
+
+adjacent :: PairPattern -> Span -> VisualizationBuilder ()
+adjacent pattern' gap =
+  VisualizationBuilder
+    ()
+    (matchPairAdjacent pattern' (spanExpr gap) (spanConstraints gap))
 
 (<>) :: Query -> Query -> Query
 (<>) = queryAppend

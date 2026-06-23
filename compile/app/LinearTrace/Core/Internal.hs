@@ -57,6 +57,7 @@ module LinearTrace.Core.Internal
   , observe
   , use
   , copy
+  , copyTagged
   , replace
   , compute
   , computeTagged
@@ -622,6 +623,30 @@ copy (Block (Ur originalId) (Ur payload) (Ur facts)) = do
           copyRef
           copiedPayload
           facts))
+
+copyTagged ::
+     forall payload tag. Traceable tag
+  => Facts
+  -> Block tag
+     %1 -> TraceBuilderWith payload (Copied tag)
+copyTagged copyFacts (Block (Ur originalId) (Ur payload) (Ur sourceFacts)) = do
+  (Ur copyId, Ur copiedPayload) <-
+    allocateBlock (Proxy :: Proxy tag) copyFacts payload
+  let originalRef = makeBlockRef (Proxy :: Proxy tag) originalId
+  let copyRef = makeBlockRef (Proxy :: Proxy tag) copyId
+  return
+    (Copied
+       (Block (Ur originalId) (Ur payload) (Ur sourceFacts))
+       (Block (Ur copyId) (Ur copiedPayload) (Ur copyFacts))
+       (makeAuditStep2
+          CopyStep
+          (Proxy :: Proxy tag)
+          originalRef
+          payload
+          sourceFacts
+          copyRef
+          copiedPayload
+          copyFacts))
 
 replace ::
      forall payload tag. Traceable tag
