@@ -70,6 +70,8 @@ module LinearTrace.View
   , matchPatternNode
   , matchPatternNodeAs
   , matchPairAdjacent
+  , matchGlobalLayout
+  , matchPatternLayout
   , matchPatternPair
   , PairPattern(..)
   , pairPatternKey
@@ -655,7 +657,7 @@ pairPatternKey pattern' =
     ++ safeKey (pairName pattern')
 
 data MatchSpec =
-  MatchSpec [SomeMatch] [PairConstraint]
+  MatchSpec [SomeMatch] [LayoutRule]
 
 data SomeMatch where
   SomeMatch
@@ -671,13 +673,15 @@ data SomeMatch where
     -> (P.Int -> ViewDefinition tag used)
     -> SomeMatch
 
-data PairConstraint where
-  PairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> PairConstraint
+data LayoutRule where
+  GlobalLayout :: ViewBuilder () -> LayoutRule
+  PatternLayout :: Pattern -> (MatchedNode -> ViewBuilder ()) -> LayoutRule
+  PairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> LayoutRule
   PairPatternLayout
     :: Pattern
     -> Pattern
     -> (MatchedNode -> MatchedNode -> ViewBuilder ())
-    -> PairConstraint
+    -> LayoutRule
 
 data MatchedBlock tag =
   MatchedBlock Query (BlockView tag)
@@ -743,6 +747,12 @@ matchPatternNodeAs pattern' nodeKey makeDefinition =
 matchPairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> MatchSpec
 matchPairAdjacent pattern' gap constraints =
   MatchSpec [] [PairAdjacent pattern' gap constraints]
+
+matchGlobalLayout :: ViewBuilder () -> MatchSpec
+matchGlobalLayout body = MatchSpec [] [GlobalLayout body]
+
+matchPatternLayout :: Pattern -> (MatchedNode -> ViewBuilder ()) -> MatchSpec
+matchPatternLayout pattern' body = MatchSpec [] [PatternLayout pattern' body]
 
 matchPatternPair ::
      Pattern
@@ -2803,10 +2813,8 @@ data AnyBlockView where
 matchSpecConstraints :: MatchSpec -> [ViewNode] -> [Constraint]
 matchSpecConstraints spec nodes =
   case spec of
-    MatchSpec _ pairConstraints ->
-      P.concatMap
-        (pairConstraintConstraints (viewNodeBlocks nodes))
-        pairConstraints
+    MatchSpec _ layoutRules ->
+      P.concatMap (layoutRuleConstraints (viewNodeBlocks nodes)) layoutRules
 
 viewNodeBlocks :: [ViewNode] -> [AnyBlockView]
 viewNodeBlocks nodes =
@@ -2816,9 +2824,14 @@ viewNodeBlocks nodes =
       case node of
         BlockViewNode block -> AnyBlockView block : viewNodeBlocks rest
 
-pairConstraintConstraints :: [AnyBlockView] -> PairConstraint -> [Constraint]
-pairConstraintConstraints blocks pairConstraint =
-  case pairConstraint of
+layoutRuleConstraints :: [AnyBlockView] -> LayoutRule -> [Constraint]
+layoutRuleConstraints blocks layoutRule =
+  case layoutRule of
+    GlobalLayout body -> layoutConstraints body
+    PatternLayout pattern' body ->
+      P.concatMap
+        (patternNodeConstraints body)
+        (matchingPatternNodes pattern' blocks)
     PairAdjacent pattern' gap gapConstraints ->
       P.concatMap
         (adjacentPairConstraints gap gapConstraints)
@@ -2841,6 +2854,13 @@ anyBlockMatches :: Query -> AnyBlockView -> P.Bool
 anyBlockMatches query anyBlock =
   case anyBlock of
     AnyBlockView block -> queryMatches query (blockFacts block)
+
+matchingPatternNodes :: Pattern -> [AnyBlockView] -> [MatchedNode]
+matchingPatternNodes pattern' blocks =
+  [ matchedNode
+  | anyBlock <- blocks
+  , (matchedNode, _bindings) <- anyBlockPatternMatches pattern' anyBlock
+  ]
 
 matchingPatternPairs ::
      Pattern -> Pattern -> [AnyBlockView] -> [(MatchedNode, MatchedNode)]
@@ -2897,13 +2917,16 @@ patternPairConstraints ::
   -> [Constraint]
 patternPairConstraints body pair' =
   case pair' of
-    (firstNode, secondNode) ->
-      let (_result, output) =
-            runViewBuilderWithOutput
-              defaultViewEnv
-              mempty
-              (body firstNode secondNode)
-       in emittedConstraints output
+    (firstNode, secondNode) -> layoutConstraints (body firstNode secondNode)
+
+patternNodeConstraints ::
+     (MatchedNode -> ViewBuilder ()) -> MatchedNode -> [Constraint]
+patternNodeConstraints body node = layoutConstraints (body node)
+
+layoutConstraints :: ViewBuilder () -> [Constraint]
+layoutConstraints body =
+  let (_result, output) = runViewBuilderWithOutput defaultViewEnv mempty body
+   in emittedConstraints output
 
 data BuiltViewStep = BuiltViewStep
   { stepView                 :: ViewStep

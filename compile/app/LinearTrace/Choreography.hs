@@ -117,8 +117,10 @@ module LinearTrace.Choreography
   , emptyMatchSpec
   , matchSpecAppend
   , matchSpecFromList
+  , layout
   , match
   , matchAs
+  , matchLayout
   , pair
   , adjacent
   , queryAtom
@@ -269,14 +271,16 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
                                          emptyMatchSpec, encourage,
-                                         finalizeStyle, global, matchNode,
+                                         finalizeStyle, global,
+                                         matchGlobalLayout, matchNode,
                                          matchNodeAs, matchPairAdjacent,
-                                         matchPatternNode, matchPatternNodeAs,
-                                         matchPatternPair, matchSpecAppend,
-                                         matchSpecFromList, patternAppend,
-                                         patternIntAdd, patternIntConst,
-                                         queryAppend, queryAtom, queryFacts,
-                                         queryInt, querySymbol, setFillOnce,
+                                         matchPatternLayout, matchPatternNode,
+                                         matchPatternNodeAs, matchPatternPair,
+                                         matchSpecAppend, matchSpecFromList,
+                                         patternAppend, patternIntAdd,
+                                         patternIntConst, queryAppend,
+                                         queryAtom, queryFacts, queryInt,
+                                         querySymbol, setFillOnce,
                                          setFontFamilyOnce, setFontSizeOnce,
                                          setFontWeightOnce, setRadiusOnce,
                                          setStrokeOnce, setStrokeWidthOnce,
@@ -1747,6 +1751,9 @@ visualize builder =
   case builder of
     VisualizationBuilder () spec -> spec
 
+layout :: ViewLayout () -> VisualizationBuilder ()
+layout body = VisualizationBuilder () (matchGlobalLayout body)
+
 class NodeMatchBody body tag | body -> tag where
   nodeMatchDefinition :: body -> P.Int -> NodeDefinition tag
 
@@ -1798,6 +1805,11 @@ instance (C.Traceable tag, NodeMatchBody body tag) =>
          pattern'
          (V.patternKey alias)
          (nodeMatchDefinition body))
+
+matchLayout ::
+     Pattern -> (MatchedNode -> ViewLayout ()) -> VisualizationBuilder ()
+matchLayout pattern' body =
+  VisualizationBuilder () (matchPatternLayout pattern' body)
 
 pair :: Query -> Query -> Query -> PairPattern
 pair firstQuery secondQuery name =
