@@ -104,8 +104,15 @@ module LinearTrace.Choreography
   , renderCheckpoint
   , Query
   , MatchSpec
+  , MatchedNode
+  , Pattern
+  , PatternInt
   , VisualizationBuilder
   , PairPattern(..)
+  , MatchRule
+  , MatchAsRule
+  , NodeMatchBody
+  , QueryAppend
   , visualize
   , emptyMatchSpec
   , matchSpecAppend
@@ -149,6 +156,12 @@ module LinearTrace.Choreography
   , Vec2(..)
   , TextAlign(..)
   , WhiteSpace(..)
+  , Left
+  , Top
+  , Right
+  , Bottom
+  , Width
+  , Height
   , alpha
   , asCoord
   , asSpan
@@ -250,14 +263,18 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          FontWeight (..), FreeExpr, Hsl (..),
                                          HslExpr, HueExpr, LayoutExpr,
                                          LayoutUse (..), LiveVisual, MatchSpec,
-                                         OneConstraint (..), OneExpr (..),
-                                         PairPattern (..), Query, Style,
+                                         MatchedNode, OneConstraint (..),
+                                         OneExpr (..), PairPattern (..),
+                                         Pattern, PatternInt, Query, Style,
                                          TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
                                          emptyMatchSpec, encourage,
                                          finalizeStyle, global, matchNode,
                                          matchNodeAs, matchPairAdjacent,
-                                         matchSpecAppend, matchSpecFromList,
+                                         matchPatternNode, matchPatternNodeAs,
+                                         matchPatternPair, matchSpecAppend,
+                                         matchSpecFromList, patternAppend,
+                                         patternIntAdd, patternIntConst,
                                          queryAppend, queryAtom, queryFacts,
                                          queryInt, querySymbol, setFillOnce,
                                          setFontFamilyOnce, setFontSizeOnce,
@@ -817,6 +834,9 @@ instance IntegerLiteral Scalar where
 instance RationalLiteral Scalar where
   rationalLiteral value = num (P.fromRational value)
 
+instance IntegerLiteral PatternInt where
+  integerLiteral value = patternIntConst (P.fromInteger value)
+
 at :: P.Double -> Coord
 at = num
 
@@ -865,6 +885,9 @@ instance AddExpr P.Integer P.Integer P.Integer where
 
 instance AddExpr P.Double P.Double P.Double where
   addExpr = (P.+)
+
+instance AddExpr PatternInt P.Int PatternInt where
+  addExpr = patternIntAdd
 
 instance AddExpr Coord Span Coord where
   addExpr lhs rhs =
@@ -1629,23 +1652,59 @@ noWrap = whiteSpace WhiteSpaceNoWrap
 setNodeSpecWith :: (NodeSpec -> NodeSpec) -> NodeRecipe ()
 setNodeSpecWith update = NodeRecipe () (update emptyNodeSpec)
 
-left :: Coord -> NodeRecipe ()
-left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
+class Left input output | input -> output, output -> input where
+  left :: input -> output
 
-top :: Coord -> NodeRecipe ()
-top value = setNodeSpecWith (\spec -> spec {nodeSpecTop = Just value})
+class Top input output | input -> output, output -> input where
+  top :: input -> output
 
-width :: Span -> NodeRecipe ()
-width value = setNodeSpecWith (\spec -> spec {nodeSpecWidth = Just value})
+class Width input output | input -> output, output -> input where
+  width :: input -> output
 
-height :: Span -> NodeRecipe ()
-height value = setNodeSpecWith (\spec -> spec {nodeSpecHeight = Just value})
+class Height input output | input -> output, output -> input where
+  height :: input -> output
 
-right :: Coord -> NodeRecipe ()
-right value = setNodeSpecWith (\spec -> spec {nodeSpecRight = Just value})
+class Right input output | input -> output, output -> input where
+  right :: input -> output
 
-bottom :: Coord -> NodeRecipe ()
-bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
+class Bottom input output | input -> output, output -> input where
+  bottom :: input -> output
+
+instance Left Coord (NodeRecipe ()) where
+  left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
+
+instance Top Coord (NodeRecipe ()) where
+  top value = setNodeSpecWith (\spec -> spec {nodeSpecTop = Just value})
+
+instance Width Span (NodeRecipe ()) where
+  width value = setNodeSpecWith (\spec -> spec {nodeSpecWidth = Just value})
+
+instance Height Span (NodeRecipe ()) where
+  height value = setNodeSpecWith (\spec -> spec {nodeSpecHeight = Just value})
+
+instance Right Coord (NodeRecipe ()) where
+  right value = setNodeSpecWith (\spec -> spec {nodeSpecRight = Just value})
+
+instance Bottom Coord (NodeRecipe ()) where
+  bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
+
+instance Left MatchedNode Coord where
+  left matched = mkCoord (V.matchedLeft matched) []
+
+instance Top MatchedNode Coord where
+  top matched = mkCoord (V.matchedTop matched) []
+
+instance Right MatchedNode Coord where
+  right matched = mkCoord (V.matchedRight matched) []
+
+instance Bottom MatchedNode Coord where
+  bottom matched = mkCoord (V.matchedBottom matched) []
+
+instance Width MatchedNode Span where
+  width matched = mkSpan (V.matchedWidth matched) []
+
+instance Height MatchedNode Span where
+  height matched = mkSpan (V.matchedHeight matched) []
 
 x :: Coord -> NodeRecipe ()
 x value = setNodeSpecWith (\spec -> spec {nodeSpecX = Just value})
@@ -1688,22 +1747,57 @@ visualize builder =
   case builder of
     VisualizationBuilder () spec -> spec
 
-match ::
-     forall tag. C.Traceable tag
-  => Query
-  -> (P.Int -> NodeDefinition tag)
-  -> VisualizationBuilder ()
-match query makeDefinition =
-  VisualizationBuilder () (matchNode query makeDefinition)
+class NodeMatchBody body tag | body -> tag where
+  nodeMatchDefinition :: body -> P.Int -> NodeDefinition tag
 
-matchAs ::
-     forall tag. C.Traceable tag
-  => Query
-  -> Query
-  -> (P.Int -> NodeDefinition tag)
-  -> VisualizationBuilder ()
-matchAs query alias makeDefinition =
-  VisualizationBuilder () (matchNodeAs query (V.queryKey alias) makeDefinition)
+instance NodeMatchBody (NodeDefinition tag) tag where
+  nodeMatchDefinition definition _index = definition
+
+instance NodeMatchBody (P.Int -> NodeDefinition tag) tag where
+  nodeMatchDefinition makeDefinition = makeDefinition
+
+class MatchRule selector body where
+  match :: selector -> body -> VisualizationBuilder ()
+
+instance (C.Traceable tag, NodeMatchBody body tag) => MatchRule Query body where
+  match query body =
+    VisualizationBuilder () (matchNode query (nodeMatchDefinition body))
+
+instance (C.Traceable tag, NodeMatchBody body tag) => MatchRule Pattern body where
+  match pattern' body =
+    VisualizationBuilder
+      ()
+      (matchPatternNode pattern' (nodeMatchDefinition body))
+
+instance MatchRule
+           (Pattern, Pattern)
+           ((MatchedNode, MatchedNode) -> ViewLayout ()) where
+  match patterns body =
+    case patterns of
+      (firstPattern, secondPattern) ->
+        VisualizationBuilder
+          ()
+          (matchPatternPair firstPattern secondPattern (P.curry body))
+
+class MatchAsRule selector alias body where
+  matchAs :: selector -> alias -> body -> VisualizationBuilder ()
+
+instance (C.Traceable tag, NodeMatchBody body tag) =>
+         MatchAsRule Query Query body where
+  matchAs query alias body =
+    VisualizationBuilder
+      ()
+      (matchNodeAs query (V.queryKey alias) (nodeMatchDefinition body))
+
+instance (C.Traceable tag, NodeMatchBody body tag) =>
+         MatchAsRule Pattern Pattern body where
+  matchAs pattern' alias body =
+    VisualizationBuilder
+      ()
+      (matchPatternNodeAs
+         pattern'
+         (V.patternKey alias)
+         (nodeMatchDefinition body))
 
 pair :: Query -> Query -> Query -> PairPattern
 pair firstQuery secondQuery name =
@@ -1719,8 +1813,17 @@ adjacent pattern' gap =
     ()
     (matchPairAdjacent pattern' (spanExpr gap) (spanConstraints gap))
 
-(<>) :: Query -> Query -> Query
-(<>) = queryAppend
+class QueryAppend query where
+  appendQuery :: query -> query -> query
+
+instance QueryAppend Query where
+  appendQuery = queryAppend
+
+instance QueryAppend Pattern where
+  appendQuery = patternAppend
+
+(<>) :: QueryAppend query => query -> query -> query
+(<>) = appendQuery
 
 layoutNode :: NodeSpec -> LiveVisual tag %1 -> ViewLayout (NodeVisual tag)
 layoutNode spec visual0 = do

@@ -39,13 +39,38 @@ module LinearTrace.View
   , querySymbolValue
   , queryFacts
   , queryMatches
+  , Pattern(..)
+  , PatternTerm(..)
+  , PatternValue(..)
+  , PatternInt(..)
+  , PatternBindings
+  , patternAtom
+  , patternSymbol
+  , patternInt
+  , patternIntConst
+  , patternIntVar
+  , patternIntAdd
+  , patternAppend
+  , patternKey
+  , patternMatches
+  , patternBindingValue
+  , MatchedNode
+  , matchedLeft
+  , matchedRight
+  , matchedTop
+  , matchedBottom
+  , matchedWidth
+  , matchedHeight
   , MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
   , matchSpecFromList
   , matchNode
   , matchNodeAs
+  , matchPatternNode
+  , matchPatternNodeAs
   , matchPairAdjacent
+  , matchPatternPair
   , PairPattern(..)
   , pairPatternKey
   , Visual
@@ -309,6 +334,257 @@ queryMatches query facts =
   case query of
     Query terms -> P.all (`factSetContains` facts) terms
 
+data PatternInt
+  = PatternIntConst P.Int
+  | PatternIntVar P.String
+  | PatternIntAdd PatternInt P.Int
+  deriving (P.Eq, P.Ord, P.Show)
+
+data PatternValue
+  = PatternAtom
+  | PatternSymbol P.String
+  | PatternIntValue PatternInt
+  deriving (P.Eq, P.Ord, P.Show)
+
+data PatternTerm =
+  PatternTerm P.String PatternValue
+  deriving (P.Eq, P.Ord, P.Show)
+
+newtype Pattern =
+  Pattern [PatternTerm]
+  deriving (P.Eq, P.Ord, P.Show)
+
+type PatternBindings = [(P.String, P.Int)]
+
+patternAtom :: P.String -> Pattern
+patternAtom name = Pattern [PatternTerm name PatternAtom]
+
+patternSymbol :: P.String -> P.String -> Pattern
+patternSymbol name value = Pattern [PatternTerm name (PatternSymbol value)]
+
+patternInt :: P.String -> PatternInt -> Pattern
+patternInt name value = Pattern [PatternTerm name (PatternIntValue value)]
+
+patternIntConst :: P.Int -> PatternInt
+patternIntConst = PatternIntConst
+
+patternIntVar :: P.String -> PatternInt
+patternIntVar = PatternIntVar
+
+patternIntAdd :: PatternInt -> P.Int -> PatternInt
+patternIntAdd = PatternIntAdd
+
+patternAppend :: Pattern -> Pattern -> Pattern
+patternAppend lhs rhs =
+  case lhs of
+    Pattern leftTerms ->
+      case rhs of
+        Pattern rightTerms ->
+          Pattern (canonicalPatternTerms (leftTerms P.++ rightTerms))
+
+instance KnownSymbol name => IsLabel name Pattern where
+  fromLabel = patternAtom (S.labelName (Proxy @name))
+
+instance KnownSymbol name => IsLabel name (P.Int -> Pattern) where
+  fromLabel value =
+    patternInt (S.labelName (Proxy @name)) (PatternIntConst value)
+
+instance KnownSymbol name => IsLabel name (PatternInt -> Pattern) where
+  fromLabel = patternInt (S.labelName (Proxy @name))
+
+instance KnownSymbol name => IsLabel name (Query -> Pattern) where
+  fromLabel value =
+    patternSymbol (S.labelName (Proxy @name)) (querySymbolValue value)
+
+instance KnownSymbol name => IsLabel name (Pattern -> Pattern) where
+  fromLabel value =
+    patternSymbol (S.labelName (Proxy @name)) (patternSymbolValue value)
+
+instance KnownSymbol name => IsLabel name PatternInt where
+  fromLabel = patternIntVar (S.labelName (Proxy @name))
+
+patternKey :: Pattern -> P.String
+patternKey pattern' =
+  case pattern' of
+    Pattern terms ->
+      joinPath ("p" : P.map patternTermKey (canonicalPatternTerms terms))
+
+patternSymbolValue :: Pattern -> P.String
+patternSymbolValue pattern' =
+  case pattern' of
+    Pattern [PatternTerm name PatternAtom] -> name
+    _                                      -> patternKey pattern'
+
+patternTermKey :: PatternTerm -> P.String
+patternTermKey term =
+  case term of
+    PatternTerm name value ->
+      case value of
+        PatternAtom            -> safeKey name
+        PatternSymbol symbol   -> safeKey name ++ "-" ++ safeKey symbol
+        PatternIntValue intPat -> safeKey name ++ "-" ++ patternIntKey intPat
+
+patternIntKey :: PatternInt -> P.String
+patternIntKey intPattern =
+  case intPattern of
+    PatternIntConst value     -> P.show value
+    PatternIntVar name        -> "$" ++ safeKey name
+    PatternIntAdd base offset -> patternIntKey base ++ "+" ++ P.show offset
+
+patternMatches :: Pattern -> C.Facts -> Maybe PatternBindings
+patternMatches pattern' facts =
+  case pattern' of
+    Pattern terms -> matchPatternTerms (canonicalPatternTerms terms) facts []
+
+patternBindingValue :: PatternBindings -> P.Int -> P.Int
+patternBindingValue bindings fallback =
+  case bindings of
+    []               -> fallback
+    (_name, value):_ -> value
+
+matchPatternTerms ::
+     [PatternTerm] -> C.Facts -> PatternBindings -> Maybe PatternBindings
+matchPatternTerms terms facts bindings =
+  case terms of
+    [] -> Just bindings
+    term:rest ->
+      case matchPatternTerm term (C.factsToList facts) bindings of
+        Nothing           -> Nothing
+        Just nextBindings -> matchPatternTerms rest facts nextBindings
+
+matchPatternTerm ::
+     PatternTerm -> [C.Fact] -> PatternBindings -> Maybe PatternBindings
+matchPatternTerm term facts bindings =
+  firstJust (P.map (\fact -> matchPatternFact term fact bindings) facts)
+
+matchPatternFact ::
+     PatternTerm -> C.Fact -> PatternBindings -> Maybe PatternBindings
+matchPatternFact term fact bindings =
+  case term of
+    PatternTerm expectedName expectedValue ->
+      case fact of
+        C.Fact actualName actualValue
+          | expectedName P.== actualName ->
+            matchPatternValue expectedValue actualValue bindings
+        _ -> Nothing
+
+matchPatternValue ::
+     PatternValue -> C.FactValue -> PatternBindings -> Maybe PatternBindings
+matchPatternValue expected actual bindings =
+  case expected of
+    PatternAtom ->
+      case actual of
+        C.FactAtom -> Just bindings
+        _          -> Nothing
+    PatternSymbol expectedSymbol ->
+      case actual of
+        C.FactSymbol actualSymbol
+          | expectedSymbol P.== actualSymbol -> Just bindings
+        _ -> Nothing
+    PatternIntValue expectedInt ->
+      case actual of
+        C.FactInt actualInt -> matchPatternInt expectedInt actualInt bindings
+        _                   -> Nothing
+
+matchPatternInt ::
+     PatternInt -> P.Int -> PatternBindings -> Maybe PatternBindings
+matchPatternInt intPattern actual bindings =
+  case intPattern of
+    PatternIntConst expected
+      | expected P.== actual -> Just bindings
+      | otherwise -> Nothing
+    PatternIntVar name -> bindPatternInt name actual bindings
+    PatternIntAdd base offset ->
+      matchPatternInt base (actual P.- offset) bindings
+
+bindPatternInt :: P.String -> P.Int -> PatternBindings -> Maybe PatternBindings
+bindPatternInt name value bindings =
+  case lookupPatternBinding name bindings of
+    Nothing -> Just (bindings P.++ [(name, value)])
+    Just existing
+      | existing P.== value -> Just bindings
+      | otherwise -> Nothing
+
+lookupPatternBinding :: P.String -> PatternBindings -> Maybe P.Int
+lookupPatternBinding name bindings =
+  case bindings of
+    [] -> Nothing
+    (bindingName, bindingValue):rest
+      | name P.== bindingName -> Just bindingValue
+      | otherwise -> lookupPatternBinding name rest
+
+firstJust :: [Maybe a] -> Maybe a
+firstJust values =
+  case values of
+    []           -> Nothing
+    Nothing:rest -> firstJust rest
+    Just value:_ -> Just value
+
+instantiatePattern :: Pattern -> PatternBindings -> Maybe Query
+instantiatePattern pattern' bindings =
+  case pattern' of
+    Pattern terms ->
+      case traverseMaybe patternTermToQueryTerm terms bindings of
+        Nothing          -> Nothing
+        Just queryTerms' -> Just (Query (canonicalTerms queryTerms'))
+
+patternTermToQueryTerm :: PatternTerm -> PatternBindings -> Maybe QueryTerm
+patternTermToQueryTerm term bindings =
+  case term of
+    PatternTerm name value ->
+      case value of
+        PatternAtom -> Just (QueryTerm name QueryAtom)
+        PatternSymbol symbol -> Just (QueryTerm name (QuerySymbol symbol))
+        PatternIntValue intPattern ->
+          case resolvePatternInt intPattern bindings of
+            Nothing     -> Nothing
+            Just value' -> Just (QueryTerm name (QueryInt value'))
+
+resolvePatternInt :: PatternInt -> PatternBindings -> Maybe P.Int
+resolvePatternInt intPattern bindings =
+  case intPattern of
+    PatternIntConst value -> Just value
+    PatternIntVar name -> lookupPatternBinding name bindings
+    PatternIntAdd base offset ->
+      case resolvePatternInt base bindings of
+        Nothing    -> Nothing
+        Just value -> Just (value P.+ offset)
+
+traverseMaybe :: (a -> b -> Maybe c) -> [a] -> b -> Maybe [c]
+traverseMaybe action values context =
+  case values of
+    [] -> Just []
+    value:rest ->
+      case action value context of
+        Nothing -> Nothing
+        Just mapped ->
+          case traverseMaybe action rest context of
+            Nothing         -> Nothing
+            Just mappedRest -> Just (mapped : mappedRest)
+
+canonicalPatternTerms :: [PatternTerm] -> [PatternTerm]
+canonicalPatternTerms terms = dedupePatternTerms (sortPatternTerms terms)
+
+sortPatternTerms :: [PatternTerm] -> [PatternTerm]
+sortPatternTerms terms =
+  case terms of
+    [] -> []
+    term:rest ->
+      sortPatternTerms [x | x <- rest, x P.<= term]
+        P.++ [term]
+        P.++ sortPatternTerms [x | x <- rest, x P.> term]
+
+dedupePatternTerms :: [PatternTerm] -> [PatternTerm]
+dedupePatternTerms terms =
+  case terms of
+    [] -> []
+    term:rest
+      {- HLINT ignore "Use if" -}
+     ->
+      case term `P.elem` rest of
+        True  -> dedupePatternTerms rest
+        False -> term : dedupePatternTerms rest
+
 factSetContains :: QueryTerm -> C.Facts -> P.Bool
 factSetContains term facts = queryTermToFact term `P.elem` C.factsToList facts
 
@@ -388,9 +664,20 @@ data SomeMatch where
     -> P.String
     -> (P.Int -> ViewDefinition tag used)
     -> SomeMatch
+  SomePatternMatch
+    :: C.Traceable tag=> Proxy tag
+    -> Pattern
+    -> P.String
+    -> (P.Int -> ViewDefinition tag used)
+    -> SomeMatch
 
 data PairConstraint where
   PairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> PairConstraint
+  PairPatternLayout
+    :: Pattern
+    -> Pattern
+    -> (MatchedNode -> MatchedNode -> ViewBuilder ())
+    -> PairConstraint
 
 data MatchedBlock tag =
   MatchedBlock Query (BlockView tag)
@@ -430,9 +717,40 @@ matchNodeAs query nodeKey makeDefinition =
     [SomeMatch (Proxy :: Proxy tag) query (safeKey nodeKey) makeDefinition]
     []
 
+matchPatternNode ::
+     forall tag used. C.Traceable tag
+  => Pattern
+  -> (P.Int -> ViewDefinition tag used)
+  -> MatchSpec
+matchPatternNode pattern' = matchPatternNodeAs pattern' (patternKey pattern')
+
+matchPatternNodeAs ::
+     forall tag used. C.Traceable tag
+  => Pattern
+  -> P.String
+  -> (P.Int -> ViewDefinition tag used)
+  -> MatchSpec
+matchPatternNodeAs pattern' nodeKey makeDefinition =
+  MatchSpec
+    [ SomePatternMatch
+        (Proxy :: Proxy tag)
+        pattern'
+        (safeKey nodeKey)
+        makeDefinition
+    ]
+    []
+
 matchPairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> MatchSpec
 matchPairAdjacent pattern' gap constraints =
   MatchSpec [] [PairAdjacent pattern' gap constraints]
+
+matchPatternPair ::
+     Pattern
+  -> Pattern
+  -> (MatchedNode -> MatchedNode -> ViewBuilder ())
+  -> MatchSpec
+matchPatternPair firstPattern secondPattern body =
+  MatchSpec [] [PairPatternLayout firstPattern secondPattern body]
 
 --------------------------------------------------------------------------------
 -- Block views
@@ -454,6 +772,39 @@ instance HasBounds (BlockView tag) where
 
 instance HasStyle (BlockView tag) where
   style = blockStyle
+
+data MatchedNode where
+  MatchedNode :: BlockView tag -> MatchedNode
+
+matchedLeft :: MatchedNode -> LayoutExpr
+matchedLeft node =
+  case node of
+    MatchedNode block -> left block
+
+matchedRight :: MatchedNode -> LayoutExpr
+matchedRight node =
+  case node of
+    MatchedNode block -> right block
+
+matchedTop :: MatchedNode -> LayoutExpr
+matchedTop node =
+  case node of
+    MatchedNode block -> top block
+
+matchedBottom :: MatchedNode -> LayoutExpr
+matchedBottom node =
+  case node of
+    MatchedNode block -> bottom block
+
+matchedWidth :: MatchedNode -> LayoutExpr
+matchedWidth node =
+  case node of
+    MatchedNode block -> width block
+
+matchedHeight :: MatchedNode -> LayoutExpr
+matchedHeight node =
+  case node of
+    MatchedNode block -> height block
 
 data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
@@ -1802,9 +2153,7 @@ defineMatchedPiece pieceIndex block match' =
     SomeMatch (_ :: Proxy matchedTag) query nodeKey makeDefinition ->
       case eqT @sourceTag @matchedTag of
         Nothing -> return Nothing
-        Just Refl
-          {- HLINT ignore "Use if" -}
-         ->
+        Just Refl ->
           case queryMatches query (blockFacts block) of
             True -> do
               let pieceBlock = matchedPieceBlock pieceIndex nodeKey block
@@ -1812,6 +2161,23 @@ defineMatchedPiece pieceIndex block match' =
                 defineMatchedPieceBlock (makeDefinition pieceIndex) pieceBlock
               return (Just (MatchedBlock query matchedBlock))
             False -> return Nothing
+    SomePatternMatch (_ :: Proxy matchedTag) pattern' nodeKey makeDefinition ->
+      case eqT @sourceTag @matchedTag of
+        Nothing -> return Nothing
+        Just Refl ->
+          case patternMatches pattern' (blockFacts block) of
+            Nothing -> return Nothing
+            Just bindings ->
+              case instantiatePattern pattern' bindings of
+                Nothing -> return Nothing
+                Just query -> do
+                  let matchedIndex = patternBindingValue bindings pieceIndex
+                      pieceBlock = matchedPieceBlock pieceIndex nodeKey block
+                  matchedBlock <-
+                    defineMatchedPieceBlock
+                      (makeDefinition matchedIndex)
+                      pieceBlock
+                  return (Just (MatchedBlock query matchedBlock))
 
 defineMatchedPieceBlock ::
      forall tag used.
@@ -2457,6 +2823,10 @@ pairConstraintConstraints blocks pairConstraint =
       P.concatMap
         (adjacentPairConstraints gap gapConstraints)
         (matchingPairs pattern' blocks)
+    PairPatternLayout firstPattern secondPattern body ->
+      P.concatMap
+        (patternPairConstraints body)
+        (matchingPatternPairs firstPattern secondPattern blocks)
 
 matchingPairs :: PairPattern -> [AnyBlockView] -> [(AnyBlockView, AnyBlockView)]
 matchingPairs pattern' blocks =
@@ -2472,6 +2842,44 @@ anyBlockMatches query anyBlock =
   case anyBlock of
     AnyBlockView block -> queryMatches query (blockFacts block)
 
+matchingPatternPairs ::
+     Pattern -> Pattern -> [AnyBlockView] -> [(MatchedNode, MatchedNode)]
+matchingPatternPairs firstPattern secondPattern blocks =
+  [ (firstNode, secondNode)
+  | firstAnyBlock <- blocks
+  , (firstNode, firstBindings) <-
+      anyBlockPatternMatches firstPattern firstAnyBlock
+  , secondAnyBlock <- blocks
+  , (secondNode, secondBindings) <-
+      anyBlockPatternMatches secondPattern secondAnyBlock
+  , bindingsCompatible firstBindings secondBindings
+  ]
+
+anyBlockPatternMatches ::
+     Pattern -> AnyBlockView -> [(MatchedNode, PatternBindings)]
+anyBlockPatternMatches pattern' anyBlock =
+  case anyBlock of
+    AnyBlockView block ->
+      case patternMatches pattern' (blockFacts block) of
+        Nothing       -> []
+        Just bindings -> [(MatchedNode block, bindings)]
+
+bindingsCompatible :: PatternBindings -> PatternBindings -> P.Bool
+bindingsCompatible lhs rhs =
+  case mergePatternBindings lhs rhs of
+    Nothing -> False
+    Just _  -> True
+
+mergePatternBindings ::
+     PatternBindings -> PatternBindings -> Maybe PatternBindings
+mergePatternBindings lhs rhs =
+  case rhs of
+    [] -> Just lhs
+    (name, value):rest ->
+      case bindPatternInt name value lhs of
+        Nothing     -> Nothing
+        Just merged -> mergePatternBindings merged rest
+
 adjacentPairConstraints ::
      LayoutExpr -> [Constraint] -> (AnyBlockView, AnyBlockView) -> [Constraint]
 adjacentPairConstraints gap gapConstraints pair' =
@@ -2482,6 +2890,20 @@ adjacentPairConstraints gap gapConstraints pair' =
              , top firstBlock S.@==@ top secondBlock
              , height firstBlock S.@==@ height secondBlock
              ]
+
+patternPairConstraints ::
+     (MatchedNode -> MatchedNode -> ViewBuilder ())
+  -> (MatchedNode, MatchedNode)
+  -> [Constraint]
+patternPairConstraints body pair' =
+  case pair' of
+    (firstNode, secondNode) ->
+      let (_result, output) =
+            runViewBuilderWithOutput
+              defaultViewEnv
+              mempty
+              (body firstNode secondNode)
+       in emittedConstraints output
 
 data BuiltViewStep = BuiltViewStep
   { stepView                 :: ViewStep

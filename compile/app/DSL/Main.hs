@@ -337,71 +337,30 @@ renderDestroyPair obligations =
 visualization :: MatchSpec
 visualization =
   visualize $ do
-    match (#int <> #target) (const targetValueDefinition)
+    match ((#int <> #target) :: Query) targetValueDefinition
     matchAs
-      (#int <> #probe (#target :: Query))
-      (#int <> #target)
-      (const targetProbeViewDefinition)
+      ((#int <> #probe (#target :: Query)) :: Query)
+      ((#int <> #target) :: Query)
+      targetProbeViewDefinition
     match
-      (#int <> #array (#values :: Query) <> #index (0 :: Int))
-      (const (listValueDefinition 0))
+      (#int <> #array (#values :: Query) <> #index (#i :: PatternInt) :: Pattern)
+      listValueDefinition
     matchAs
-      (#int <> #probe (#element :: Query) <> #index (0 :: Int))
-      (#int <> #array (#values :: Query) <> #index (0 :: Int))
-      (const elementProbeViewDefinition)
-    adjacent
-      (pair
-         (#int <> #array (#values :: Query) <> #index (0 :: Int))
-         (#int <> #array (#values :: Query) <> #index (1 :: Int))
-         (#adjacent :: Query))
-      #gap
+      (#int <> #probe (#element :: Query) <> #index (#i :: PatternInt) :: Pattern)
+      (#int <> #array (#values :: Query) <> #index (#i :: PatternInt) :: Pattern)
+      elementProbeViewDefinition
     match
-      (#int <> #array (#values :: Query) <> #index (1 :: Int))
-      (const (listValueDefinition 1))
-    matchAs
-      (#int <> #probe (#element :: Query) <> #index (1 :: Int))
-      (#int <> #array (#values :: Query) <> #index (1 :: Int))
-      (const elementProbeViewDefinition)
-    adjacent
-      (pair
-         (#int <> #array (#values :: Query) <> #index (1 :: Int))
-         (#int <> #array (#values :: Query) <> #index (2 :: Int))
-         (#adjacent :: Query))
-      #gap
-    match
-      (#int <> #array (#values :: Query) <> #index (2 :: Int))
-      (const (listValueDefinition 2))
-    matchAs
-      (#int <> #probe (#element :: Query) <> #index (2 :: Int))
-      (#int <> #array (#values :: Query) <> #index (2 :: Int))
-      (const elementProbeViewDefinition)
-    adjacent
-      (pair
-         (#int <> #array (#values :: Query) <> #index (2 :: Int))
-         (#int <> #array (#values :: Query) <> #index (3 :: Int))
-         (#adjacent :: Query))
-      #gap
-    match
-      (#int <> #array (#values :: Query) <> #index (3 :: Int))
-      (const (listValueDefinition 3))
-    matchAs
-      (#int <> #probe (#element :: Query) <> #index (3 :: Int))
-      (#int <> #array (#values :: Query) <> #index (3 :: Int))
-      (const elementProbeViewDefinition)
-    adjacent
-      (pair
-         (#int <> #array (#values :: Query) <> #index (3 :: Int))
-         (#int <> #array (#values :: Query) <> #index (4 :: Int))
-         (#adjacent :: Query))
-      #gap
-    match
-      (#int <> #array (#values :: Query) <> #index (4 :: Int))
-      (const (listValueDefinition 4))
-    matchAs
-      (#int <> #probe (#element :: Query) <> #index (4 :: Int))
-      (#int <> #array (#values :: Query) <> #index (4 :: Int))
-      (const elementProbeViewDefinition)
-    match (#decision <> #match) (const matchViewDefinition)
+      ( #int <> #array (#values :: Query) <> #index (#i :: PatternInt) :: Pattern
+      , #int
+          <> #array (#values :: Query)
+          <> #index (((#i :: PatternInt) + (1 :: Int)) :: PatternInt) :: Pattern)
+      ((\(previous, next) -> do
+          constrain $ right previous =| #gap |= left next
+          constrain $ top previous =|= top next
+          constrain $ height previous =|= height next) :: ( MatchedNode
+                                                          , MatchedNode) -> ViewLayout
+                                                                              ())
+    match ((#decision <> #match) :: Query) matchViewDefinition
 
 --------------------------------------------------------------------------------
 -- Layout
