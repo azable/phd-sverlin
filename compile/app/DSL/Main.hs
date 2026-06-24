@@ -7,6 +7,7 @@
 {-# LANGUAGE NoImplicitPrelude       #-}
 {-# LANGUAGE OverloadedLabels        #-}
 {-# LANGUAGE RebindableSyntax        #-}
+{-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -144,7 +145,7 @@ linearSearch (SearchInput targetPayload valuePayloads) =
     target <-
       phase
         "Create target"
-        (createValueTagged (#int <> #target) targetPayload)
+        (createValueTagged (#int <> #target <> #source) targetPayload)
         renderCreatedTarget
     elements <- createElements valuePayloads
     loop (SearchState target elements) searchIteration
@@ -160,9 +161,7 @@ createElementsFrom index inputs =
       element <-
         phase
           "Create element"
-          (createValueTagged
-             (#int <> #array (#values :: Query) <> #index index)
-             payload)
+          (createValueTagged (#int <> #array <> #index index) payload)
           renderCreatedElement
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement index element elements)
@@ -263,9 +262,9 @@ prepareComparison ::
        (StepResult PrepareComparisonOutput PrepareComparisonObligations)
 prepareComparison target index element = do
   Copied targetAfter targetProbe targetCopy <-
-    copyTaggedAs (#int <> #probe (#target :: Query)) target
+    copyTaggedAs (#int <> #target <> #probe) target
   Copied elementAfter elementProbe elementCopy <-
-    copyTaggedAs (#int <> #probe (#element :: Query) <> #index index) element
+    copyTaggedAs (#int <> #probe <> #index index) element
   return
     (StepResult
        (PrepareComparisonOutput
@@ -308,7 +307,7 @@ renderPrepareComparison obligations =
     PrepareComparisonObligations targetCopy elementCopy -> do
       renderForkCopyMatched targetCopy
       renderForkCopyMatched elementCopy
-      renderCheckpoint
+      --renderCheckpoint
 
 renderCompareValues :: CompareValuesObligations %1 -> RenderRecipe ()
 renderCompareValues obligations =
@@ -336,160 +335,151 @@ renderDestroyPair obligations =
 --------------------------------------------------------------------------------
 visualization :: MatchSpec
 visualization =
-  visualize $ do
-    layout $ do
-      constrain $ (#cell :: Span) =|= by 76
-      constrain $ (#gap :: Span) =|= half #cell
-      constrain $ at 0 =| targetInsetX |= #target_x
-      constrain $ at 0 =| targetInsetY |= #target_y
-      constrain $ at 0 =| rowInset |= #row_x
-      constrain $ (#row_y :: Coord) =| rowInset |= at 600
-      constrain $ (#target_x :: Coord) =| 211 |= #probe_target_x
-      constrain $ (#probe_target_x :: Coord) =| probeGap |= #probe_element_x
-      constrain $ (#target_y :: Coord) =| probeOffsetY |= #probe_y
-      constrain $ (#probe_y :: Coord) <| probeRowClearance |> #row_y
-      constrain
-        $ (#match_x :: Coord) =|= midpoint #probe_target_x #probe_element_x
-      constrain $ (#probe_y :: Coord) =| matchOffsetY |= #match_y
-      constrain $ (#match_y :: Coord) <| matchRowClearance |> #row_y
-    match
-      ((#int <> #target) :: Query)
-      ((node $ do
-          centerText
-          fill (tone #target_hue 0.64 0.84)
-          stroke (tone #target_hue 0.76 0.36)
-          strokeWidth (cellBy 0.05)
-          radius (cellBy 0.24)
-          fontSize (cellBy 0.62)
-          position (vec2 #target_x #target_y)
-          width targetWidth
-          height targetHeight) :: NodeDefinition Value)
-    matchAs
-      ((#int <> #probe (#target :: Query)) :: Query)
-      ((#int <> #target) :: Query)
-      ((node $ do
-          centerText
-          fill (tone #probe_hue 0.5 0.88)
-          stroke (tone #probe_hue 0.78 0.34)
-          strokeWidth (cellBy 0.035)
-          zIndex 3
-          radius (cellBy 0.22)
-          fontSize (cellBy 0.56)
-          position (vec2 #probe_target_x #probe_y)
-          width probeSize
-          height probeSize) :: NodeDefinition Value)
-    match
-      (#int <> #array (#values :: Query) <> #index (#i :: PatternInt) :: Pattern)
-      ((node $ do
-          centerText
-          fill (tone #list_hue 0.34 0.92)
-          stroke (tone #list_hue 0.58 0.42)
-          strokeWidth (cellBy 0.035)
-          radius (cellBy 0.18)
-          fontSize (cellBy 0.5)
-          width #cell
-          height #cell) :: NodeDefinition Value)
-    matchLayout
-      (#int <> #array (#values :: Query) <> #index (0 :: Int) :: Pattern)
-      ((\first -> do
-          constrain $ left first =| half #cell |= #row_x
-          constrain $ top first =| half #cell |= #row_y) :: MatchedNode -> ViewLayout
-                                                                             ())
-    matchAs
-      (#int <> #probe (#element :: Query) <> #index (#i :: PatternInt) :: Pattern)
-      (#int <> #array (#values :: Query) <> #index (#i :: PatternInt) :: Pattern)
-      ((node $ do
-          centerText
-          fill (tone #probe_hue 0.5 0.88)
-          stroke (tone #probe_hue 0.78 0.34)
-          strokeWidth (cellBy 0.035)
-          zIndex 3
-          radius (cellBy 0.22)
-          fontSize (cellBy 0.56)
-          position (vec2 #probe_element_x #probe_y)
-          width probeSize
-          height probeSize) :: NodeDefinition Value)
-    match
-      ( #int <> #array (#values :: Query) <> #index (#i :: PatternInt) :: Pattern
-      , #int
-          <> #array (#values :: Query)
-          <> #index (((#i :: PatternInt) + (1 :: Int)) :: PatternInt) :: Pattern)
-      ((\(previous, next) -> do
-          constrain $ right previous =| gapBy 2 |= left next
-          constrain $ top previous =|= top next
-          constrain $ height previous =|= height next) :: ( MatchedNode
-                                                          , MatchedNode) -> ViewLayout
-                                                                              ())
-    match
-      ((#decision <> #match) :: Query)
-      ((node $ do
-          centerText
-          fill (tone #match_hue 0.6 0.86)
-          stroke (tone #match_hue 0.82 0.32)
-          strokeWidth (cellBy 0.05)
-          zIndex 4
-          radius (cellBy 0.26)
-          fontSize (cellBy 0.34)
-          position (vec2 #match_x #match_y)
-          width matchWidth
-          height matchHeight) :: NodeDefinition Match)
-
---------------------------------------------------------------------------------
--- Layout
---------------------------------------------------------------------------------
-cellBy :: Scalar -> Span
-cellBy scale = #cell * scale
-
-gapBy :: Scalar -> Span
-gapBy scale = #gap * scale
-
-tone :: HueExpr -> UnitExpr -> UnitExpr -> HslExpr
-tone = Hsl
-
-targetWidth :: Span
-targetWidth = cellBy 2.1 |+| #gap
-
-targetHeight :: Span
-targetHeight = #cell |+| gapBy 0.8
-
-probeSize :: Span
-probeSize = cellBy 1.08
-
-matchWidth :: Span
-matchWidth = probeSize * 2 |+| #gap
-
-matchHeight :: Span
-matchHeight = cellBy 0.72
-
-matchGap :: Span
-matchGap = gapBy 0.7
-
-half :: Span -> Span
-half value = value / 2
-
-midpoint :: Coord -> Coord -> Coord
-midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
-
-targetInsetX :: Span
-targetInsetX = #gap |+| half targetWidth
-
-targetInsetY :: Span
-targetInsetY = #gap |+| half targetHeight
-
-rowInset :: Span
-rowInset = #gap |+| half #cell
-
-probeOffsetY :: Span
-probeOffsetY = half targetHeight |+| #gap |+| half probeSize
-
-probeGap :: Span
-probeGap = probeSize |+| #gap
-
-probeRowClearance :: Span
-probeRowClearance = half probeSize |+| #gap |+| half #cell
-
-matchOffsetY :: Span
-matchOffsetY = half probeSize |+| matchGap |+| half matchHeight
-
-matchRowClearance :: Span
-matchRowClearance = half matchHeight |+| matchGap |+| half #cell
+  let cell :: Span
+      cell = by 76
+      gap :: Span
+      gap = half cell
+      targetX :: Coord
+      targetX = #target_x
+      targetY :: Coord
+      targetY = #target_y
+      probeTargetX :: Coord
+      probeTargetX = #probe_target_x
+      probeElementX :: Coord
+      probeElementX = #probe_element_x
+      probeY :: Coord
+      probeY = #probe_y
+      matchX :: Coord
+      matchX = #match_x
+      matchY :: Coord
+      matchY = #match_y
+      targetHue :: HueExpr
+      targetHue = #target_hue
+      listHue :: HueExpr
+      listHue = #list_hue
+      probeHue :: HueExpr
+      probeHue = #probe_hue
+      matchHue :: HueExpr
+      matchHue = #match_hue
+      i :: PatternInt
+      i = #i
+      cellBy :: Scalar -> Span
+      cellBy scale = cell * scale
+      gapBy :: Scalar -> Span
+      gapBy scale = gap * scale
+      tone :: HueExpr -> UnitExpr -> UnitExpr -> HslExpr
+      tone = Hsl
+      targetWidth :: Span
+      targetWidth = cellBy 2.1 |+| gap
+      targetHeight :: Span
+      targetHeight = cell |+| gapBy 0.8
+      probeSize :: Span
+      probeSize = cellBy 1.08
+      matchWidth :: Span
+      matchWidth = probeSize * 2 |+| gap
+      matchHeight :: Span
+      matchHeight = cellBy 0.72
+      matchGap :: Span
+      matchGap = gapBy 0.7
+      half :: Span -> Span
+      half value = value / 2
+      midpoint :: Coord -> Coord -> Coord
+      midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
+   in visualize $ do
+        layout $ do
+          constrain $ probeTargetX =| probeSize |+| gap |= probeElementX
+          constrain $ matchX =|= midpoint probeTargetX probeElementX
+          constrain
+            $ probeY
+                =| half probeSize
+                |+| matchGap
+                |+| half matchHeight
+                |= matchY
+        match
+          (#int <> #target <> #source)
+          (node @Value $ do
+             centerText
+             fill (tone targetHue #lum 0.84)
+             stroke (tone targetHue 0.76 0.36)
+             strokeWidth (cellBy 0.05)
+             radius (cellBy 0.24)
+             fontSize (cellBy 0.62)
+             position (vec2 targetX targetY)
+             width targetWidth
+             height targetHeight)
+        matchAs
+          (#int <> #target <> #probe)
+          (#int <> #target <> #source)
+          (node @Value $ do
+             centerText
+             fill (tone probeHue 0.5 0.88)
+             stroke (tone probeHue 0.78 0.34)
+             strokeWidth (cellBy 0.035)
+             zIndex 3
+             radius (cellBy 0.22)
+             fontSize (cellBy 0.56)
+             position (vec2 probeTargetX probeY)
+             width probeSize
+             height probeSize)
+        match
+          (#int <> #array <> #index i)
+          (node @Value $ do
+             centerText
+             fill (tone listHue #lum 0.92)
+             stroke (tone listHue 0.58 0.42)
+             strokeWidth (cellBy 0.035)
+             radius (cellBy 0.18)
+             fontSize (cellBy 0.5)
+             width cell
+             height cell)
+        match
+          (#int <> #target <> #source, #int <> #array <> #index i)
+          ((\(target, element) ->
+              constrain $ bottom target <| gap |> top element) :: ( MatchedNode
+                                                                  , MatchedNode) -> ViewLayout
+                                                                                      ())
+        match
+          (#int <> #target <> #source, #int <> #probe <> #index i)
+          ((\(target, probe) -> constrain $ bottom target <| gap |> top probe) :: ( MatchedNode
+                                                                                  , MatchedNode) -> ViewLayout
+                                                                                                      ())
+        matchAs
+          (#int <> #probe <> #index i)
+          (#int <> #array <> #index i)
+          (node @Value $ do
+             centerText
+             fill (tone probeHue 0.5 0.88)
+             stroke (tone probeHue 0.78 0.34)
+             strokeWidth (cellBy 0.035)
+             zIndex 3
+             radius (cellBy 0.22)
+             fontSize (cellBy 0.56)
+             position (vec2 probeElementX probeY)
+             width probeSize
+             height probeSize)
+        match
+          (#int <> #probe <> #index i, #int <> #array <> #index i)
+          ((\(probe, element) -> constrain $ bottom probe <| gap |> top element) :: ( MatchedNode
+                                                                                    , MatchedNode) -> ViewLayout
+                                                                                                        ())
+        match
+          ( #int <> #array <> #index i
+          , #int <> #array <> #index (i + (1 :: Int)))
+          ((\(previous, next) -> do
+              constrain $ right previous =| gapBy 2 |= left next
+              constrain $ top previous =|= top next) :: ( MatchedNode
+                                                        , MatchedNode) -> ViewLayout
+                                                                            ())
+        match
+          (#decision <> #match)
+          (node @Match $ do
+             centerText
+             fill (tone matchHue 0.6 0.86)
+             stroke (tone matchHue 0.82 0.32)
+             strokeWidth (cellBy 0.05)
+             zIndex 4
+             radius (cellBy 0.26)
+             fontSize (cellBy 0.34)
+             position (vec2 matchX matchY)
+             width matchWidth
+             height matchHeight)

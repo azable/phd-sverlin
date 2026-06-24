@@ -124,7 +124,6 @@ module LinearTrace.Choreography
   , pair
   , adjacent
   , queryAtom
-  , querySymbol
   , queryInt
   , queryFacts
   , (<>)
@@ -272,21 +271,20 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          WhiteSpace (..), boxDefinition,
                                          emptyMatchSpec, encourage,
                                          finalizeStyle, global,
-                                         matchGlobalLayout, matchNode,
-                                         matchNodeAs, matchPairAdjacent,
+                                         matchGlobalLayout, matchPairAdjacent,
                                          matchPatternLayout, matchPatternNode,
                                          matchPatternNodeAs, matchPatternPair,
                                          matchSpecAppend, matchSpecFromList,
                                          patternAppend, patternIntAdd,
                                          patternIntConst, queryAppend,
                                          queryAtom, queryFacts, queryInt,
-                                         querySymbol, setFillOnce,
-                                         setFontFamilyOnce, setFontSizeOnce,
-                                         setFontWeightOnce, setRadiusOnce,
-                                         setStrokeOnce, setStrokeWidthOnce,
-                                         setTextAlignOnce, setWhiteSpaceOnce,
-                                         setZIndexOnce, takeHeight, takeLeft,
-                                         takeRight, takeTop, takeWidth)
+                                         setFillOnce, setFontFamilyOnce,
+                                         setFontSizeOnce, setFontWeightOnce,
+                                         setRadiusOnce, setStrokeOnce,
+                                         setStrokeWidthOnce, setTextAlignOnce,
+                                         setWhiteSpaceOnce, setZIndexOnce,
+                                         takeHeight, takeLeft, takeRight,
+                                         takeTop, takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
@@ -1763,14 +1761,16 @@ instance NodeMatchBody (NodeDefinition tag) tag where
 instance NodeMatchBody (P.Int -> NodeDefinition tag) tag where
   nodeMatchDefinition makeDefinition = makeDefinition
 
-class MatchRule selector body where
+class MatchRule selector body | body -> selector where
   match :: selector -> body -> VisualizationBuilder ()
 
-instance (C.Traceable tag, NodeMatchBody body tag) => MatchRule Query body where
-  match query body =
-    VisualizationBuilder () (matchNode query (nodeMatchDefinition body))
+instance C.Traceable tag => MatchRule Pattern (NodeDefinition tag) where
+  match pattern' body =
+    VisualizationBuilder
+      ()
+      (matchPatternNode pattern' (nodeMatchDefinition body))
 
-instance (C.Traceable tag, NodeMatchBody body tag) => MatchRule Pattern body where
+instance C.Traceable tag => MatchRule Pattern (P.Int -> NodeDefinition tag) where
   match pattern' body =
     VisualizationBuilder
       ()
@@ -1786,18 +1786,20 @@ instance MatchRule
           ()
           (matchPatternPair firstPattern secondPattern (P.curry body))
 
-class MatchAsRule selector alias body where
+class MatchAsRule selector alias body | body -> selector alias where
   matchAs :: selector -> alias -> body -> VisualizationBuilder ()
 
-instance (C.Traceable tag, NodeMatchBody body tag) =>
-         MatchAsRule Query Query body where
-  matchAs query alias body =
+instance C.Traceable tag => MatchAsRule Pattern Pattern (NodeDefinition tag) where
+  matchAs pattern' alias body =
     VisualizationBuilder
       ()
-      (matchNodeAs query (V.queryKey alias) (nodeMatchDefinition body))
+      (matchPatternNodeAs
+         pattern'
+         (V.patternKey alias)
+         (nodeMatchDefinition body))
 
-instance (C.Traceable tag, NodeMatchBody body tag) =>
-         MatchAsRule Pattern Pattern body where
+instance C.Traceable tag =>
+         MatchAsRule Pattern Pattern (P.Int -> NodeDefinition tag) where
   matchAs pattern' alias body =
     VisualizationBuilder
       ()
@@ -1811,12 +1813,12 @@ matchLayout ::
 matchLayout pattern' body =
   VisualizationBuilder () (matchPatternLayout pattern' body)
 
-pair :: Query -> Query -> Query -> PairPattern
-pair firstQuery secondQuery name =
+pair :: Pattern -> Pattern -> Pattern -> PairPattern
+pair firstPattern secondPattern name =
   V.PairPattern
-    { V.pairFirstQuery = firstQuery
-    , V.pairSecondQuery = secondQuery
-    , V.pairName = V.queryKey name
+    { V.pairFirstPattern = firstPattern
+    , V.pairSecondPattern = secondPattern
+    , V.pairName = V.patternKey name
     }
 
 adjacent :: PairPattern -> Span -> VisualizationBuilder ()

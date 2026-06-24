@@ -32,11 +32,9 @@ module LinearTrace.View
   , QueryTerm(..)
   , QueryValue(..)
   , queryAtom
-  , querySymbol
   , queryInt
   , queryAppend
   , queryKey
-  , querySymbolValue
   , queryFacts
   , queryMatches
   , Pattern(..)
@@ -45,7 +43,6 @@ module LinearTrace.View
   , PatternInt(..)
   , PatternBindings
   , patternAtom
-  , patternSymbol
   , patternInt
   , patternIntConst
   , patternIntVar
@@ -268,7 +265,6 @@ import qualified Unsafe.Coerce                         as Unsafe
 --------------------------------------------------------------------------------
 data QueryValue
   = QueryAtom
-  | QuerySymbol P.String
   | QueryInt P.Int
   deriving (P.Eq, P.Ord, P.Show)
 
@@ -282,9 +278,6 @@ newtype Query =
 
 queryAtom :: P.String -> Query
 queryAtom name = Query [QueryTerm name QueryAtom]
-
-querySymbol :: P.String -> P.String -> Query
-querySymbol name value = Query [QueryTerm name (QuerySymbol value)]
 
 queryInt :: P.String -> P.Int -> Query
 queryInt name value = Query [QueryTerm name (QueryInt value)]
@@ -302,20 +295,10 @@ instance KnownSymbol name => IsLabel name Query where
 instance KnownSymbol name => IsLabel name (P.Int -> Query) where
   fromLabel = queryInt (S.labelName (Proxy @name))
 
-instance KnownSymbol name => IsLabel name (Query -> Query) where
-  fromLabel value =
-    querySymbol (S.labelName (Proxy @name)) (querySymbolValue value)
-
 queryKey :: Query -> P.String
 queryKey query =
   case query of
     Query terms -> joinPath ("q" : P.map queryTermKey (canonicalTerms terms))
-
-querySymbolValue :: Query -> P.String
-querySymbolValue query =
-  case query of
-    Query [QueryTerm name QueryAtom] -> name
-    _                                -> queryKey query
 
 queryFacts :: Query -> C.Facts
 queryFacts query =
@@ -327,9 +310,8 @@ queryTermKey term =
   case term of
     QueryTerm name value ->
       case value of
-        QueryAtom          -> safeKey name
-        QuerySymbol symbol -> safeKey name ++ "-" ++ safeKey symbol
-        QueryInt intValue  -> safeKey name ++ "-" ++ P.show intValue
+        QueryAtom         -> safeKey name
+        QueryInt intValue -> safeKey name ++ "-" ++ P.show intValue
 
 queryMatches :: Query -> C.Facts -> P.Bool
 queryMatches query facts =
@@ -344,7 +326,6 @@ data PatternInt
 
 data PatternValue
   = PatternAtom
-  | PatternSymbol P.String
   | PatternIntValue PatternInt
   deriving (P.Eq, P.Ord, P.Show)
 
@@ -360,9 +341,6 @@ type PatternBindings = [(P.String, P.Int)]
 
 patternAtom :: P.String -> Pattern
 patternAtom name = Pattern [PatternTerm name PatternAtom]
-
-patternSymbol :: P.String -> P.String -> Pattern
-patternSymbol name value = Pattern [PatternTerm name (PatternSymbol value)]
 
 patternInt :: P.String -> PatternInt -> Pattern
 patternInt name value = Pattern [PatternTerm name (PatternIntValue value)]
@@ -394,14 +372,6 @@ instance KnownSymbol name => IsLabel name (P.Int -> Pattern) where
 instance KnownSymbol name => IsLabel name (PatternInt -> Pattern) where
   fromLabel = patternInt (S.labelName (Proxy @name))
 
-instance KnownSymbol name => IsLabel name (Query -> Pattern) where
-  fromLabel value =
-    patternSymbol (S.labelName (Proxy @name)) (querySymbolValue value)
-
-instance KnownSymbol name => IsLabel name (Pattern -> Pattern) where
-  fromLabel value =
-    patternSymbol (S.labelName (Proxy @name)) (patternSymbolValue value)
-
 instance KnownSymbol name => IsLabel name PatternInt where
   fromLabel = patternIntVar (S.labelName (Proxy @name))
 
@@ -411,19 +381,12 @@ patternKey pattern' =
     Pattern terms ->
       joinPath ("p" : P.map patternTermKey (canonicalPatternTerms terms))
 
-patternSymbolValue :: Pattern -> P.String
-patternSymbolValue pattern' =
-  case pattern' of
-    Pattern [PatternTerm name PatternAtom] -> name
-    _                                      -> patternKey pattern'
-
 patternTermKey :: PatternTerm -> P.String
 patternTermKey term =
   case term of
     PatternTerm name value ->
       case value of
         PatternAtom            -> safeKey name
-        PatternSymbol symbol   -> safeKey name ++ "-" ++ safeKey symbol
         PatternIntValue intPat -> safeKey name ++ "-" ++ patternIntKey intPat
 
 patternIntKey :: PatternInt -> P.String
@@ -478,11 +441,6 @@ matchPatternValue expected actual bindings =
       case actual of
         C.FactAtom -> Just bindings
         _          -> Nothing
-    PatternSymbol expectedSymbol ->
-      case actual of
-        C.FactSymbol actualSymbol
-          | expectedSymbol P.== actualSymbol -> Just bindings
-        _ -> Nothing
     PatternIntValue expectedInt ->
       case actual of
         C.FactInt actualInt -> matchPatternInt expectedInt actualInt bindings
@@ -536,7 +494,6 @@ patternTermToQueryTerm term bindings =
     PatternTerm name value ->
       case value of
         PatternAtom -> Just (QueryTerm name QueryAtom)
-        PatternSymbol symbol -> Just (QueryTerm name (QuerySymbol symbol))
         PatternIntValue intPattern ->
           case resolvePatternInt intPattern bindings of
             Nothing     -> Nothing
@@ -595,9 +552,8 @@ queryTermToFact term =
   case term of
     QueryTerm name value ->
       case value of
-        QueryAtom          -> C.factAtom name
-        QuerySymbol symbol -> C.factSymbol name symbol
-        QueryInt intValue  -> C.factInt name intValue
+        QueryAtom         -> C.factAtom name
+        QueryInt intValue -> C.factInt name intValue
 
 canonicalTerms :: [QueryTerm] -> [QueryTerm]
 canonicalTerms terms = dedupeTerms (sortTerms terms)
@@ -642,17 +598,17 @@ safeKeyChars :: [P.Char]
 safeKeyChars = ['a' .. 'z'] P.++ ['A' .. 'Z'] P.++ ['0' .. '9'] P.++ "_-"
 
 data PairPattern = PairPattern
-  { pairFirstQuery  :: Query
-  , pairSecondQuery :: Query
-  , pairName        :: P.String
+  { pairFirstPattern  :: Pattern
+  , pairSecondPattern :: Pattern
+  , pairName          :: P.String
   } deriving (P.Eq, P.Show)
 
 pairPatternKey :: PairPattern -> P.String
 pairPatternKey pattern' =
   "pair."
-    ++ queryKey (pairFirstQuery pattern')
+    ++ patternKey (pairFirstPattern pattern')
     ++ "."
-    ++ queryKey (pairSecondQuery pattern')
+    ++ patternKey (pairSecondPattern pattern')
     ++ "."
     ++ safeKey (pairName pattern')
 
@@ -2845,15 +2801,13 @@ matchingPairs :: PairPattern -> [AnyBlockView] -> [(AnyBlockView, AnyBlockView)]
 matchingPairs pattern' blocks =
   [ (firstBlock, secondBlock)
   | firstBlock <- blocks
-  , anyBlockMatches (pairFirstQuery pattern') firstBlock
+  , (_firstNode, firstBindings) <-
+      anyBlockPatternMatches (pairFirstPattern pattern') firstBlock
   , secondBlock <- blocks
-  , anyBlockMatches (pairSecondQuery pattern') secondBlock
+  , (_secondNode, secondBindings) <-
+      anyBlockPatternMatches (pairSecondPattern pattern') secondBlock
+  , bindingsCompatible firstBindings secondBindings
   ]
-
-anyBlockMatches :: Query -> AnyBlockView -> P.Bool
-anyBlockMatches query anyBlock =
-  case anyBlock of
-    AnyBlockView block -> queryMatches query (blockFacts block)
 
 matchingPatternNodes :: Pattern -> [AnyBlockView] -> [MatchedNode]
 matchingPatternNodes pattern' blocks =
