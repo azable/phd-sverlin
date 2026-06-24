@@ -425,7 +425,7 @@ fieldInitialVars field =
         Nothing -> []
         Just hsl ->
           concat
-            [ maybeToList (initialRangeFor (hue hsl) (Range 0 360))
+            [ exprInitialVars (hue hsl)
             , maybeToList (initialRangeFor (saturation hsl) (Range 0 1))
             , maybeToList (initialRangeFor (lightness hsl) (Range 0 1))
             ]
@@ -456,11 +456,7 @@ fieldConstraints field =
       case maybeHsl of
         Nothing -> []
         Just hsl ->
-          concat
-            [ angleConstraints (hue hsl)
-            , unitConstraints (saturation hsl)
-            , unitConstraints (lightness hsl)
-            ]
+          unitConstraints (saturation hsl) ++ unitConstraints (lightness hsl)
     StyleTextField _ _ -> []
     StyleFontWeightField _ _ -> []
     StyleFontStyleField _ _ -> []
@@ -479,9 +475,6 @@ nonNegativeConstraints expr = [num 0 @<=@ expr]
 
 unitConstraints :: UnitExpr -> [Constraint]
 unitConstraints expr = [num 0 @<=@ expr, expr @<=@ num 1]
-
-angleConstraints :: AngleExpr -> [Constraint]
-angleConstraints expr = [num 0 @<=@ expr, expr @<=@ num 360]
 
 --------------------------------------------------------------------------------
 -- Field constructors

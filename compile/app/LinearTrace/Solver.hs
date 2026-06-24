@@ -17,6 +17,7 @@ module LinearTrace.Solver
     Var(..)
   , InitialVar(..)
   , initialRangeFor
+  , exprInitialVars
   , varName
   , Expr
   , RawExpr(..)
@@ -259,6 +260,17 @@ initialRangeFor (Expr _ raw) range =
           , initialVarBounds = rangeToInitialBounds range
           }
     _ -> Nothing
+
+exprInitialVars :: Expr ty -> [InitialVar]
+exprInitialVars (Expr _ raw) = map initialVar (Map.toAscList vars)
+  where
+    vars = collectRawExprVarTypes raw
+    initialVar (name, ty) =
+      InitialVar
+        { initialVarName = name
+        , initialVarType = ty
+        , initialVarBounds = typeInitialBounds ty
+        }
 
 num ::
      forall ty. SymbolicType ty
@@ -843,7 +855,19 @@ lowerExpr vars expr =
 -- Evaluating symbolic expressions against a solution
 --------------------------------------------------------------------------------
 evalExpr :: Solution -> Expr ty -> Maybe Double
-evalExpr solution (Expr _ expr) = evalRawExpr solution expr
+evalExpr solution (Expr ty expr) =
+  normalizeByType ty <$> evalRawExpr solution expr
+
+normalizeByType :: ScalarType -> Double -> Double
+normalizeByType ty value =
+  case typeCircularPeriod ty of
+    Just period
+      | period > 0 -> positiveModulo period value
+    _ -> value
+
+positiveModulo :: Double -> Double -> Double
+positiveModulo period value =
+  value - period * fromInteger (floor (value / period) :: Integer)
 
 evalRawExpr :: Solution -> RawExpr -> Maybe Double
 evalRawExpr solution expr =

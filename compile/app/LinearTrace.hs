@@ -47,6 +47,7 @@ module LinearTrace
   , replace
   , compute
   , computeTagged
+  , computeTaggedWith
   , destroy
   , seal
   , unseal
@@ -111,9 +112,10 @@ import           LinearTrace.Core    hiding (Computed (..), Copied (..),
                                       Destroyed (..), Observed (..),
                                       Replaced (..), Sealed (..), Unsealed (..),
                                       Used (..), buildGraph, compute,
-                                      computeTagged, copy, copyTagged, create,
-                                      createTagged, decide, destroy, discard,
-                                      observe, replace, seal, unseal, use)
+                                      computeTagged, computeTaggedWith, copy,
+                                      copyTagged, create, createTagged, decide,
+                                      destroy, discard, observe, replace, seal,
+                                      unseal, use)
 import           LinearTrace.Print
 import           LinearTrace.View
 import           Prelude             hiding ((<$>), (<*>))

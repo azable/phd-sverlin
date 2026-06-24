@@ -61,6 +61,7 @@ module LinearTrace.Core.Internal
   , replace
   , compute
   , computeTagged
+  , computeTaggedWith
   , destroy
   , seal
   , unseal
@@ -690,13 +691,25 @@ computeTagged ::
   => Facts
   -> OneUse (Payload tag)
      %1 -> TraceBuilderWith payload (Computed tag)
-computeTagged facts (OneUse payload0) = do
-  (Ur blockId, Ur payload) <- allocateBlock (Proxy :: Proxy tag) facts payload0
-  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  return
-    (Computed
-       (Block (Ur blockId) (Ur payload) (Ur facts))
-       (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload facts))
+computeTagged facts = computeTaggedWith facts (P.const emptyFacts)
+
+computeTaggedWith ::
+     forall payload tag. Traceable tag
+  => Facts
+  -> (Payload tag -> Facts)
+  -> OneUse (Payload tag)
+     %1 -> TraceBuilderWith payload (Computed tag)
+computeTaggedWith baseFacts selectFacts (OneUse payload0) =
+  case unsafeUr payload0 of
+    Ur payload0' -> do
+      let facts = factsUnion baseFacts (selectFacts payload0')
+      (Ur blockId, Ur payload) <-
+        allocateBlock (Proxy :: Proxy tag) facts payload0'
+      let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
+      return
+        (Computed
+           (Block (Ur blockId) (Ur payload) (Ur facts))
+           (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload facts))
 
 destroy ::
      forall payload tag. Traceable tag

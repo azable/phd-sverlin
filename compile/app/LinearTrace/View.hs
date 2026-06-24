@@ -31,6 +31,7 @@ module LinearTrace.View
   , Query(..)
   , QueryTerm(..)
   , QueryValue(..)
+  , emptyQuery
   , queryAtom
   , queryInt
   , queryAppend
@@ -200,6 +201,7 @@ module LinearTrace.View
   , replace
   , compute
   , computeTagged
+  , computeTaggedWith
   , destroy
   , seal
   , unseal
@@ -277,6 +279,9 @@ data QueryTerm =
 newtype Query =
   Query [QueryTerm]
   deriving (P.Eq, P.Ord, P.Show)
+
+emptyQuery :: Query
+emptyQuery = Query []
 
 queryAtom :: P.String -> Query
 queryAtom name = Query [QueryTerm name QueryAtom]
@@ -2427,11 +2432,19 @@ computeTagged ::
   => C.Facts
   -> C.OneUse (C.Payload tag)
      %1 -> VisualTraceBuilder (Computed tag)
-computeTagged facts payload =
+computeTagged facts = computeTaggedWith facts (P.const C.emptyFacts)
+
+computeTaggedWith ::
+     forall tag. C.Traceable tag
+  => C.Facts
+  -> (C.Payload tag -> C.Facts)
+  -> C.OneUse (C.Payload tag)
+     %1 -> VisualTraceBuilder (Computed tag)
+computeTaggedWith facts selectFacts payload =
   case unsafeUr payload of
     Ur payload' -> do
       C.Computed block explainToken <-
-        runCoreBuilder (C.computeTagged facts payload')
+        runCoreBuilder (C.computeTaggedWith facts selectFacts payload')
       token <- visualExplainToken explainToken
       return (Computed block token)
 

@@ -49,6 +49,7 @@ module LinearTrace.Core
   , replace
   , compute
   , computeTagged
+  , computeTaggedWith
   , destroy
   , seal
   , unseal

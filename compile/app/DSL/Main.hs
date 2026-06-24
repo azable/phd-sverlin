@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE GADTs                   #-}
+{-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE LinearTypes             #-}
 {-# LANGUAGE NoImplicitPrelude       #-}
 {-# LANGUAGE OverloadedLabels        #-}
@@ -103,27 +104,26 @@ inputValues values =
 --------------------------------------------------------------------------------
 data Elements where
   NoElements :: Elements
-  MoreElement :: Int -> BlockHandle Value %1 -> Elements %1 -> Elements
+  MoreElement :: Int -> Block Value %1 -> Elements %1 -> Elements
 
 data Comparison where
-  IsMatch :: BlockHandle Value %1 -> BlockHandle Value %1 -> Comparison
-  IsNotMatch :: BlockHandle Value %1 -> BlockHandle Value %1 -> Comparison
+  IsMatch :: Block Value %1 -> Block Value %1 -> Comparison
+  IsNotMatch :: Block Value %1 -> Block Value %1 -> Comparison
 
 data SearchState where
-  SearchState :: BlockHandle Value %1 -> Elements %1 -> SearchState
+  SearchState :: Block Value %1 -> Elements %1 -> SearchState
 
 data PrepareComparisonOutput where
   PrepareComparisonOutput
-    :: BlockHandle Value
-       %1 -> BlockHandle Value
-       %1 -> BlockHandle Value
-       %1 -> BlockHandle Value
+    :: Block Value
+       %1 -> Block Value
+       %1 -> Block Value
+       %1 -> Block Value
        %1 -> PrepareComparisonOutput
 
 linearSearch :: SearchInput %1 -> Program ()
 linearSearch (SearchInput targetPayload valuePayloads) = do
   target <- create (#int <> #target <> #source) targetPayload
-  checkpoint "Create target"
   elements <- createElements valuePayloads
   loop (SearchState target elements) searchIteration
 
@@ -136,7 +136,6 @@ createElementsFrom index inputs =
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
       element <- create (#int <> #array <> #index index) payload
-      checkpoint "Create element"
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement index element elements)
 
@@ -160,8 +159,7 @@ searchIteration searchState =
               discardChecked elementAfter
               return (Continue (SearchState targetAfter rest))
 
-compareElement ::
-     BlockHandle Value %1 -> Int -> BlockHandle Value %1 -> Program Comparison
+compareElement :: Block Value %1 -> Int -> Block Value %1 -> Program Comparison
 compareElement target index element = do
   PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe <-
     prepareComparison target index element
@@ -176,25 +174,11 @@ compareElement target index element = do
       comparisonBranch targetAfter elementAfter BranchFalse
 
 comparisonBranch ::
-     BlockHandle Value
-     %1 -> BlockHandle Value
-     %1 -> BranchDecision
-     %1 -> Program Comparison
+     Block Value %1 -> Block Value %1 -> BranchDecision %1 -> Program Comparison
 comparisonBranch targetAfter elementAfter branch =
   case branch of
     BranchTrue  -> return (IsMatch targetAfter elementAfter)
     BranchFalse -> return (IsNotMatch targetAfter elementAfter)
-
-discardChecked :: BlockHandle Value %1 -> Program ()
-discardChecked element = do
-  destroy element
-  checkpoint "Discard checked element"
-
-finishFound :: BlockHandle Value %1 -> BlockHandle Value %1 -> Program ()
-finishFound target element = do
-  destroy target
-  destroy element
-  checkpoint "Finish found target"
 
 discardRemaining :: Elements %1 -> Program ()
 discardRemaining elements =
@@ -206,10 +190,7 @@ discardRemaining elements =
       discardRemaining rest
 
 prepareComparison ::
-     BlockHandle Value
-     %1 -> Int
-  -> BlockHandle Value
-     %1 -> Program PrepareComparisonOutput
+     Block Value %1 -> Int -> Block Value %1 -> Program PrepareComparisonOutput
 prepareComparison target index element = do
   (targetAfter, targetProbe) <- copy (#int <> #target <> #probe) target
   (elementAfter, elementProbe) <- copy (#int <> #probe <> #index index) element
@@ -217,17 +198,30 @@ prepareComparison target index element = do
   return
     (PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe)
 
-compareValues ::
-     BlockHandle Value %1 -> BlockHandle Value %1 -> Program (BlockHandle Match)
+compareValues :: Block Value %1 -> Block Value %1 -> Program (Block Match)
 compareValues targetProbe elementProbe = do
   targetPayload <- use targetProbe
   elementPayload <- use elementProbe
   matchBlock <-
-    compute
+    computeWithTags
       (#decision <> #match)
+      (\case
+         LBool True -> #matched
+         LBool False -> #not_matched)
       (sameValue <$> targetPayload <*> elementPayload)
   checkpoint "Compare target and element"
   return matchBlock
+
+discardChecked :: Block Value %1 -> Program ()
+discardChecked element = do
+  destroy element
+  checkpoint "Discard checked element"
+
+finishFound :: Block Value %1 -> Block Value %1 -> Program ()
+finishFound target element = do
+  destroy target
+  destroy element
+  checkpoint "Finish found target"
 
 --------------------------------------------------------------------------------
 -- Visualisation
@@ -260,6 +254,8 @@ visualization =
       probeHue = #probe_hue
       matchHue :: HueExpr
       matchHue = #match_hue
+      oppositeMatchHue :: HueExpr
+      oppositeMatchHue = matchHue + 180
       i :: PatternInt
       i = #i
       cellBy :: Scalar -> Span
@@ -370,11 +366,24 @@ visualization =
                                                         , MatchedNode) -> ViewLayout
                                                                             ())
         match
-          (#decision <> #match)
+          (#decision <> #match <> #matched)
           (node @Match $ do
              centerText
              fill (tone matchHue 0.6 0.86)
              stroke (tone matchHue 0.82 0.32)
+             strokeWidth (cellBy 0.05)
+             zIndex 4
+             radius (cellBy 0.26)
+             fontSize (cellBy 0.34)
+             position (vec2 matchX matchY)
+             width matchWidth
+             height matchHeight)
+        match
+          (#decision <> #match <> #not_matched)
+          (node @Match $ do
+             centerText
+             fill (tone oppositeMatchHue 0.34 0.9)
+             stroke (tone oppositeMatchHue 0.68 0.34)
              strokeWidth (cellBy 0.05)
              zIndex 4
              radius (cellBy 0.26)

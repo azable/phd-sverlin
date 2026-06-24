@@ -24,12 +24,13 @@ module LinearTrace.Choreography
   , copy
   , use
   , compute
+  , computeWithTags
   , destroy
   , decide
   , checkpoint
   , loop
   , -- * Handles
-    BlockHandle
+    Block
   , SlotHandle
   , PayloadHandle
   , -- * Payloads and trace tags
@@ -83,6 +84,7 @@ module LinearTrace.Choreography
   , matchLayout
   , pair
   , adjacent
+  , emptyQuery
   , queryAtom
   , queryInt
   , queryFacts
@@ -208,13 +210,13 @@ import qualified Data.Functor.Linear    as DFL
 import           Data.Proxy             (Proxy (..))
 import           GHC.OverloadedLabels   (IsLabel (..))
 import           GHC.TypeLits           (KnownSymbol)
-import           LinearTrace.Core       (Fact (..), FactValue (..), Facts (..),
-                                         LBool (..), LDouble (..), LInt (..),
-                                         LString (..), LUnit (..), Payload,
-                                         PayloadView (..), Traceable (..),
-                                         emptyFacts, factAtom, factInt,
-                                         factSymbol, factsToList, factsUnion,
-                                         (<$>), (<*>))
+import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
+                                         Facts (..), LBool (..), LDouble (..),
+                                         LInt (..), LString (..), LUnit (..),
+                                         Payload, PayloadView (..),
+                                         Traceable (..), emptyFacts, factAtom,
+                                         factInt, factSymbol, factsToList,
+                                         factsUnion, (<$>), (<*>))
 import qualified LinearTrace.Core       as C
 import           LinearTrace.Solver     (Vec2 (..), vec2)
 import qualified LinearTrace.Solver     as S
@@ -229,7 +231,7 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          Pattern, PatternInt, Query, Style,
                                          TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
-                                         emptyMatchSpec, encourage,
+                                         emptyMatchSpec, emptyQuery, encourage,
                                          finalizeStyle, global,
                                          matchGlobalLayout, matchPairAdjacent,
                                          matchPatternLayout, matchPatternNode,
@@ -255,23 +257,21 @@ data Program a where
   PureProgram :: a %1 -> Program a
   BindProgram :: Program a %1 -> (a %1 -> Program b) %1 -> Program b
   CreateProgram
-    :: C.Traceable tag=> C.Facts
-    -> C.Payload tag
-       %1 -> Program (BlockHandle tag)
-  UseProgram
-    :: C.Traceable tag => BlockHandle tag %1 -> Program (PayloadHandle tag)
+    :: C.Traceable tag => C.Facts -> C.Payload tag %1 -> Program (Block tag)
+  UseProgram :: C.Traceable tag => Block tag %1 -> Program (PayloadHandle tag)
   CopyProgram
     :: C.Traceable tag=> C.Facts
-    -> BlockHandle tag
-       %1 -> Program (BlockHandle tag, BlockHandle tag)
+    -> Block tag
+       %1 -> Program (Block tag, Block tag)
   ComputeProgram
     :: C.Traceable tag=> C.Facts
+    -> (C.Payload tag -> C.Facts)
     -> PayloadHandle tag
-       %1 -> Program (BlockHandle tag)
-  DestroyProgram :: C.Traceable tag => BlockHandle tag %1 -> Program ()
+       %1 -> Program (Block tag)
+  DestroyProgram :: C.Traceable tag => Block tag %1 -> Program ()
   DecideProgram
     :: C.Traceable tag=> (C.Payload tag %1 -> Bool)
-    -> BlockHandle tag
+    -> Block tag
        %1 -> Program BranchDecision
   CheckpointProgram :: P.String -> Program ()
   LoopProgram
@@ -336,8 +336,6 @@ type NodeDefinition tag = BoxDefinition tag
 type NodeVisual tag = BoxVisual tag
 
 type StyleRecipe = NodeRecipe
-
-type BlockHandle = C.Block
 
 type SlotHandle = C.Slot
 
@@ -692,10 +690,14 @@ asSpan value =
 rawOneConstraint :: [S.Constraint] -> OneConstraint
 rawOneConstraint constraints = OneConstraint (Ur (S.All constraints))
 
-class AddExpr lhs rhs result | lhs rhs -> result, lhs result -> rhs where
+class AddExpr lhs rhs result
+  | lhs rhs -> result
+  , lhs result -> rhs
+  , result -> lhs rhs
+  where
   addExpr :: lhs -> rhs -> result
 
-instance AddExpr LayoutExpr LayoutExpr LayoutExpr where
+instance S.SymbolicType ty => AddExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
   addExpr = (S.@+@)
 
 instance AddExpr P.Int P.Int P.Int where
@@ -725,7 +727,7 @@ instance AddExpr Offset Span Offset where
 class SubExpr lhs rhs result | lhs rhs -> result where
   subExpr :: lhs -> rhs -> result
 
-instance SubExpr LayoutExpr LayoutExpr LayoutExpr where
+instance S.SymbolicType ty => SubExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
   subExpr = (S.@-@)
 
 instance SubExpr P.Int P.Int P.Int where
@@ -774,7 +776,7 @@ class MulExpr lhs rhs result
   where
   mulExpr :: lhs -> rhs -> result
 
-instance MulExpr LayoutExpr LayoutExpr LayoutExpr where
+instance S.SymbolicType ty => MulExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
   mulExpr = (S.@*@)
 
 instance MulExpr P.Int P.Int P.Int where
@@ -819,7 +821,7 @@ instance MulExpr Scalar Scalar Scalar where
 class DivExpr lhs rhs result | lhs rhs -> result, lhs result -> rhs where
   divExpr :: lhs -> rhs -> result
 
-instance DivExpr LayoutExpr LayoutExpr LayoutExpr where
+instance S.SymbolicType ty => DivExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
   divExpr = (S.@/@)
 
 instance DivExpr P.Double P.Double P.Double where
@@ -1006,39 +1008,50 @@ create ::
      forall tag. C.Traceable tag
   => Query
   -> C.Payload tag
-     %1 -> Program (BlockHandle tag)
+     %1 -> Program (Block tag)
 create query = CreateProgram (queryFacts query)
 
 use ::
      forall tag. C.Traceable tag
-  => BlockHandle tag
+  => Block tag
      %1 -> Program (PayloadHandle tag)
 use = UseProgram
 
 copy ::
      forall tag. C.Traceable tag
   => Query
-  -> BlockHandle tag
-     %1 -> Program (BlockHandle tag, BlockHandle tag)
+  -> Block tag
+     %1 -> Program (Block tag, Block tag)
 copy query = CopyProgram (queryFacts query)
 
 compute ::
      forall tag. C.Traceable tag
   => Query
   -> PayloadHandle tag
-     %1 -> Program (BlockHandle tag)
-compute query = ComputeProgram (queryFacts query)
+     %1 -> Program (Block tag)
+compute query = computeWithTags query (P.const emptyQuery)
+
+computeWithTags ::
+     forall tag. C.Traceable tag
+  => Query
+  -> (Payload tag -> Query)
+  -> PayloadHandle tag
+     %1 -> Program (Block tag)
+computeWithTags query selectQuery =
+  ComputeProgram (queryFacts query) selectFacts
+  where
+    selectFacts payload = queryFacts (selectQuery payload)
 
 destroy ::
      forall tag. C.Traceable tag
-  => BlockHandle tag
+  => Block tag
      %1 -> Program ()
 destroy = DestroyProgram
 
 decide ::
      forall tag. C.Traceable tag
   => (C.Payload tag %1 -> Bool)
-  -> BlockHandle tag
+  -> Block tag
      %1 -> Program BranchDecision
 decide = DecideProgram
 
@@ -1070,8 +1083,8 @@ interpretProgram program =
       V.Copied original copy' token <- V.copyTagged facts block
       V.appendTraceView (V.forkCopyMatched token)
       return (original, copy')
-    ComputeProgram facts payload -> do
-      V.Computed block token <- V.computeTagged facts payload
+    ComputeProgram facts selectFacts payload -> do
+      V.Computed block token <- V.computeTaggedWith facts selectFacts payload
       V.appendTraceView (V.freshMatched token)
       return block
     DestroyProgram block -> do
