@@ -205,6 +205,8 @@ module LinearTrace.View
   , unseal
   , decide
   , explainVisual
+  , appendTraceView
+  , checkpointTrace
   , (==>)
   , explain
   , discard
@@ -1877,6 +1879,7 @@ data VisualTraceState where
     :: Ur ViewEnv
        %1 -> Ur (C.TraceBuilderState ViewScript)
        %1 -> Ur SomeAudit
+       %1 -> Ur ViewOutput
        %1 -> VisualTraceState
 
 type VisualTraceBuilder a = State VisualTraceState a
@@ -1894,21 +1897,14 @@ infixr 0 ==>
 (==>) = explain
 
 explain :: P.String -> ViewBuilder () %1 -> VisualTraceBuilder ()
-explain label script0 =
-  case unsafeUr script0 of
-    Ur script -> do
-      VisualTraceState (Ur env) coreState pendingAudit <- get
-      put (VisualTraceState (Ur env) coreState pendingAudit)
-      audit <- takePendingAudit
-      let (_result, output) = runViewBuilderWithOutput env mempty script
-      case audit of
-        SomeAudit auditSteps ->
-          runCoreBuilder
-            (C.explainAuditWith label (ViewScript output) auditSteps)
+explain label script = do
+  appendTraceView script
+  checkpointTrace label
 
 discard :: P.String -> VisualTraceBuilder ()
 discard reason = do
   audit <- takePendingAudit
+  Ur _output <- takePendingOutput
   case audit of
     SomeAudit auditSteps -> runCoreBuilder (C.discardAudit reason auditSteps)
 
@@ -1918,6 +1914,7 @@ initialVisualTraceStateWith env =
     (Ur env)
     (Ur (C.TraceBuilderState (Ur 0) (Ur []) (Ur [])))
     (Ur emptySomeAudit)
+    (Ur mempty)
 
 buildGraph :: VisualTraceBuilder () -> VisualTraceGraph
 buildGraph = buildGraphWithEnv defaultViewEnv
@@ -1929,7 +1926,8 @@ buildGraphWithSpec spec =
 buildGraphWithEnv :: ViewEnv -> VisualTraceBuilder () -> VisualTraceGraph
 buildGraphWithEnv env builder =
   let (_result, finalState) = runState builder (initialVisualTraceStateWith env)
-      VisualTraceState _env (Ur coreState) _pendingAudit = finalState
+      VisualTraceState _env (Ur coreState) _pendingAudit _pendingOutput =
+        finalState
       C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) (Ur steps) = coreState
    in VisualTraceGraph (viewMatchSpec env) (C.TraceGraph blocks steps)
 
@@ -1944,41 +1942,79 @@ instance Dupable ViewState where
           (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
 
 instance Consumable VisualTraceState where
-  consume (VisualTraceState env coreState pendingAudit) =
-    consume env `lseq` consume coreState `lseq` consume pendingAudit
+  consume (VisualTraceState env coreState pendingAudit pendingOutput) =
+    consume env
+      `lseq` consume coreState
+      `lseq` consume pendingAudit
+      `lseq` consume pendingOutput
 
 instance Dupable VisualTraceState where
-  dup2 (VisualTraceState env coreState pendingAudit) =
+  dup2 (VisualTraceState env coreState pendingAudit pendingOutput) =
     case dup2 env of
       (env1, env2) ->
         case dup2 coreState of
           (coreState1, coreState2) ->
             case dup2 pendingAudit of
               (pendingAudit1, pendingAudit2) ->
-                ( VisualTraceState env1 coreState1 pendingAudit1
-                , VisualTraceState env2 coreState2 pendingAudit2)
+                case dup2 pendingOutput of
+                  (pendingOutput1, pendingOutput2) ->
+                    ( VisualTraceState
+                        env1
+                        coreState1
+                        pendingAudit1
+                        pendingOutput1
+                    , VisualTraceState
+                        env2
+                        coreState2
+                        pendingAudit2
+                        pendingOutput2)
 
 runCoreBuilder :: C.TraceBuilderWith ViewScript a -> VisualTraceBuilder a
 runCoreBuilder builder =
   LinearState.state
-    (\(VisualTraceState env (Ur coreState) pendingAudit) ->
+    (\(VisualTraceState env (Ur coreState) pendingAudit pendingOutput) ->
        let (result, nextCoreState) = runState builder coreState
-        in (result, VisualTraceState env (Ur nextCoreState) pendingAudit))
+        in ( result
+           , VisualTraceState env (Ur nextCoreState) pendingAudit pendingOutput))
 
 appendPendingAudit :: C.AuditStep act -> VisualTraceBuilder ()
 appendPendingAudit step = do
-  VisualTraceState env coreState (Ur pendingAudit) <- get
+  VisualTraceState env coreState (Ur pendingAudit) pendingOutput <- get
   put
     (VisualTraceState
        env
        coreState
-       (Ur (appendSomeAudit pendingAudit (singletonSomeAudit step))))
+       (Ur (appendSomeAudit pendingAudit (singletonSomeAudit step)))
+       pendingOutput)
 
 takePendingAudit :: VisualTraceBuilder SomeAudit
 takePendingAudit = do
-  VisualTraceState env coreState (Ur pendingAudit) <- get
-  put (VisualTraceState env coreState (Ur emptySomeAudit))
+  VisualTraceState env coreState (Ur pendingAudit) pendingOutput <- get
+  put (VisualTraceState env coreState (Ur emptySomeAudit) pendingOutput)
   return pendingAudit
+
+appendTraceView :: ViewBuilder () %1 -> VisualTraceBuilder ()
+appendTraceView script0 =
+  case unsafeUr script0 of
+    Ur script -> do
+      VisualTraceState (Ur env) coreState pendingAudit (Ur pendingOutput) <- get
+      let (_result, output) = runViewBuilderWithOutput env pendingOutput script
+      put (VisualTraceState (Ur env) coreState pendingAudit (Ur output))
+
+takePendingOutput :: VisualTraceBuilder (Ur ViewOutput)
+takePendingOutput = do
+  VisualTraceState env coreState pendingAudit (Ur pendingOutput) <- get
+  put (VisualTraceState env coreState pendingAudit (Ur mempty))
+  return (Ur pendingOutput)
+
+checkpointTrace :: P.String -> VisualTraceBuilder ()
+checkpointTrace label = do
+  audit <- takePendingAudit
+  Ur output <- takePendingOutput
+  let output' = flushPendingOutput output
+  case audit of
+    SomeAudit auditSteps ->
+      runCoreBuilder (C.explainAuditWith label (ViewScript output') auditSteps)
 
 runViewBuilderWithOutput ::
      ViewEnv -> ViewOutput -> ViewBuilder a -> (a, ViewOutput)
@@ -2045,9 +2081,35 @@ flushPendingOutput output =
     [] -> output
     intents ->
       output
-        { emittedRenderFrames = emittedRenderFrames output ++ [intents]
+        { emittedRenderFrames =
+            emittedRenderFrames output ++ renderIntentFrames intents
         , pendingRenderIntents = []
         }
+
+renderIntentFrames :: [RenderIntent] -> [[RenderIntent]]
+renderIntentFrames intents =
+  case splitRenderIntents intents of
+    ([], [])                  -> []
+    (introductions, [])       -> [introductions]
+    ([], removals)            -> [removals]
+    (introductions, removals) -> [introductions, removals]
+
+splitRenderIntents :: [RenderIntent] -> ([RenderIntent], [RenderIntent])
+splitRenderIntents intents =
+  case intents of
+    [] -> ([], [])
+    intent:rest ->
+      case splitRenderIntents rest of
+        (introductions, removals) ->
+          case isRemovalIntent intent of
+            True  -> (introductions, intent : removals)
+            False -> (intent : introductions, removals)
+
+isRemovalIntent :: RenderIntent -> P.Bool
+isRemovalIntent intent =
+  case intent of
+    RenderRemove _ -> True
+    _              -> False
 
 checkpoint :: ViewBuilder ()
 checkpoint = do

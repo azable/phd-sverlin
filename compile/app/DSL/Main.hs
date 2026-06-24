@@ -120,35 +120,12 @@ data PrepareComparisonOutput where
        %1 -> BlockHandle Value
        %1 -> PrepareComparisonOutput
 
-data PrepareComparisonObligations where
-  PrepareComparisonObligations
-    :: Obligation (Copy Value)
-       %1 -> Obligation (Copy Value)
-       %1 -> PrepareComparisonObligations
-
-data CompareValuesObligations where
-  CompareValuesObligations
-    :: Obligation (Use Value)
-       %1 -> Obligation (Use Value)
-       %1 -> Obligation (Compute Match)
-       %1 -> CompareValuesObligations
-
-data DestroyPairObligations where
-  DestroyPairObligations
-    :: Obligation (Destroy Value)
-       %1 -> Obligation (Destroy Value)
-       %1 -> DestroyPairObligations
-
 linearSearch :: SearchInput %1 -> Program ()
-linearSearch (SearchInput targetPayload valuePayloads) =
-  manifest $ do
-    target <-
-      phase
-        "Create target"
-        (createValueTagged (#int <> #target <> #source) targetPayload)
-        renderCreatedTarget
-    elements <- createElements valuePayloads
-    loop (SearchState target elements) searchIteration
+linearSearch (SearchInput targetPayload valuePayloads) = do
+  target <- create (#int <> #target <> #source) targetPayload
+  checkpoint "Create target"
+  elements <- createElements valuePayloads
+  loop (SearchState target elements) searchIteration
 
 createElements :: InputValues %1 -> Program Elements
 createElements = createElementsFrom 0
@@ -158,11 +135,8 @@ createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue payload rest -> do
-      element <-
-        phase
-          "Create element"
-          (createValueTagged (#int <> #array <> #index index) payload)
-          renderCreatedElement
+      element <- create (#int <> #array <> #index index) payload
+      checkpoint "Create element"
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement index element elements)
 
@@ -172,7 +146,8 @@ searchIteration searchState =
     SearchState target elements ->
       case elements of
         NoElements -> do
-          phase "Search exhausted" (destroyValue target) renderRemove
+          destroy target
+          checkpoint "Search exhausted"
           return (Finish ())
         MoreElement index element rest -> do
           comparison <- compareElement target index element
@@ -189,20 +164,16 @@ compareElement ::
      BlockHandle Value %1 -> Int -> BlockHandle Value %1 -> Program Comparison
 compareElement target index element = do
   PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe <-
-    phase
-      "Prepare comparison"
-      (prepareComparison target index element)
-      renderPrepareComparison
-  matchBlock <-
-    phase
-      "Compare target and element"
-      (compareValues targetProbe elementProbe)
-      renderCompareValues
-  branchOn
-    (decideMatch matchBlock)
-    (BranchCase "Found target" renderRemove)
-    (BranchCase "Not this element" renderRejectedDecision)
-    (comparisonBranch targetAfter elementAfter)
+    prepareComparison target index element
+  matchBlock <- compareValues targetProbe elementProbe
+  branch <- decide (\(LBool answer) -> answer) matchBlock
+  case branch of
+    BranchTrue -> do
+      checkpoint "Found target"
+      comparisonBranch targetAfter elementAfter BranchTrue
+    BranchFalse -> do
+      checkpoint "Not this element"
+      comparisonBranch targetAfter elementAfter BranchFalse
 
 comparisonBranch ::
      BlockHandle Value
@@ -216,119 +187,47 @@ comparisonBranch targetAfter elementAfter branch =
 
 discardChecked :: BlockHandle Value %1 -> Program ()
 discardChecked element = do
-  phase "Discard checked element" (destroyValue element) renderRemove
+  destroy element
+  checkpoint "Discard checked element"
 
 finishFound :: BlockHandle Value %1 -> BlockHandle Value %1 -> Program ()
 finishFound target element = do
-  phase "Finish found target" (destroyPair target element) renderDestroyPair
+  destroy target
+  destroy element
+  checkpoint "Finish found target"
 
 discardRemaining :: Elements %1 -> Program ()
 discardRemaining elements =
   case elements of
     NoElements -> return ()
     MoreElement _ element rest -> do
-      phase "Discard remaining element" (destroyValue element) renderRemove
+      destroy element
+      checkpoint "Discard remaining element"
       discardRemaining rest
-
-createValueTagged ::
-     Query
-  -> Payload Value
-     %1 -> Fragment (StepResult (BlockHandle Value) (Obligation (Create Value)))
-createValueTagged facts payload = do
-  Created block obligation <- createTaggedAs facts payload
-  return (StepResult block obligation)
-
-destroyValue ::
-     BlockHandle Value
-     %1 -> Fragment (StepResult () (Obligation (Destroy Value)))
-destroyValue block = do
-  Destroyed obligation <- destroyAs block
-  return (StepResult () obligation)
-
-destroyPair ::
-     BlockHandle Value
-     %1 -> BlockHandle Value
-     %1 -> Fragment (StepResult () DestroyPairObligations)
-destroyPair target element = do
-  Destroyed targetVisual <- destroyAs target
-  Destroyed elementVisual <- destroyAs element
-  return (StepResult () (DestroyPairObligations targetVisual elementVisual))
 
 prepareComparison ::
      BlockHandle Value
      %1 -> Int
   -> BlockHandle Value
-     %1 -> Fragment
-       (StepResult PrepareComparisonOutput PrepareComparisonObligations)
+     %1 -> Program PrepareComparisonOutput
 prepareComparison target index element = do
-  Copied targetAfter targetProbe targetCopy <-
-    copyTaggedAs (#int <> #target <> #probe) target
-  Copied elementAfter elementProbe elementCopy <-
-    copyTaggedAs (#int <> #probe <> #index index) element
+  (targetAfter, targetProbe) <- copy (#int <> #target <> #probe) target
+  (elementAfter, elementProbe) <- copy (#int <> #probe <> #index index) element
+  checkpoint "Prepare comparison"
   return
-    (StepResult
-       (PrepareComparisonOutput
-          targetAfter
-          elementAfter
-          targetProbe
-          elementProbe)
-       (PrepareComparisonObligations targetCopy elementCopy))
+    (PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe)
 
 compareValues ::
-     BlockHandle Value
-     %1 -> BlockHandle Value
-     %1 -> Fragment (StepResult (BlockHandle Match) CompareValuesObligations)
+     BlockHandle Value %1 -> BlockHandle Value %1 -> Program (BlockHandle Match)
 compareValues targetProbe elementProbe = do
-  Used targetPayload targetVisual <- useAs targetProbe
-  Used elementPayload elementVisual <- useAs elementProbe
-  Computed matchBlock matchVisual <-
-    computeTaggedAs
+  targetPayload <- use targetProbe
+  elementPayload <- use elementProbe
+  matchBlock <-
+    compute
       (#decision <> #match)
       (sameValue <$> targetPayload <*> elementPayload)
-  return
-    (StepResult
-       matchBlock
-       (CompareValuesObligations targetVisual elementVisual matchVisual))
-
-decideMatch :: BlockHandle Match %1 -> Fragment (Decided Match)
-decideMatch = decideAs (\(LBool answer) -> answer)
-
-renderCreatedTarget :: Obligation (Create Value) %1 -> RenderRecipe ()
-renderCreatedTarget = renderFreshMatched
-
-renderCreatedElement :: Obligation (Create Value) %1 -> RenderRecipe ()
-renderCreatedElement obligation = do
-  renderFreshMatched obligation
-  renderCheckpoint
-
-renderPrepareComparison :: PrepareComparisonObligations %1 -> RenderRecipe ()
-renderPrepareComparison obligations =
-  case obligations of
-    PrepareComparisonObligations targetCopy elementCopy -> do
-      renderForkCopyMatched targetCopy
-      renderForkCopyMatched elementCopy
-      --renderCheckpoint
-
-renderCompareValues :: CompareValuesObligations %1 -> RenderRecipe ()
-renderCompareValues obligations =
-  case obligations of
-    CompareValuesObligations targetVisual elementVisual matchVisual -> do
-      renderFreshMatched matchVisual
-      renderCheckpoint
-      renderRemove targetVisual
-      renderRemove elementVisual
-
-renderRejectedDecision :: Obligation (Decide Match) %1 -> RenderRecipe ()
-renderRejectedDecision obligation = do
-  renderRemove obligation
-  renderCheckpoint
-
-renderDestroyPair :: DestroyPairObligations %1 -> RenderRecipe ()
-renderDestroyPair obligations =
-  case obligations of
-    DestroyPairObligations targetVisual elementVisual -> do
-      renderRemove targetVisual
-      renderRemove elementVisual
+  checkpoint "Compare target and element"
+  return matchBlock
 
 --------------------------------------------------------------------------------
 -- Visualisation
