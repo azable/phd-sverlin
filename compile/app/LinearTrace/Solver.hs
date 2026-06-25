@@ -74,7 +74,6 @@ import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Proxy                 (Proxy (..))
-import           GHC.OverloadedLabels       (IsLabel (..))
 import           GHC.TypeLits               (KnownSymbol, symbolVal)
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
@@ -246,9 +245,6 @@ dotChar char =
   if char == '_'
     then '.'
     else char
-
-instance (KnownSymbol name, SymbolicType ty) => IsLabel name (Expr ty) where
-  fromLabel = var ("global." ++ labelName (Proxy :: Proxy name))
 
 initialRangeFor :: Expr ty -> Range -> Maybe InitialVar
 initialRangeFor (Expr _ raw) range =

@@ -69,13 +69,6 @@ module LinearTrace.View
   , payloadDoublePattern
   , payloadStringPattern
   , payloadUnitPattern
-  , MatchedNode
-  , matchedLeft
-  , matchedRight
-  , matchedTop
-  , matchedBottom
-  , matchedWidth
-  , matchedHeight
   , ContentMode(..)
   , LayoutPin(..)
   , NodePatch(..)
@@ -86,23 +79,12 @@ module LinearTrace.View
   , MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
-  , matchSpecFromList
-  , matchTagNode
-  , matchNode
   , matchPatternNode
-  , matchPayloadNode
   , matchPatternPayloadNode
   , matchVirtualNode
-  , matchPartNode
-  , matchPatternPartNode
-  , matchPairAdjacent
   , matchGlobalLayout
-  , matchPatternLayout
-  , matchPatternPair
   , matchSelectionRelation
   , matchSelectionBridge
-  , PairPattern(..)
-  , pairPatternKey
   , Visual
   , Unrendered
   , Rendered
@@ -411,9 +393,6 @@ instance KnownSymbol name => IsLabel name Pattern where
 instance KnownSymbol name => IsLabel name (PatternInt -> Pattern) where
   fromLabel = patternInt (S.labelName (Proxy @name))
 
-instance KnownSymbol name => IsLabel name PatternInt where
-  fromLabel = patternIntVar (S.labelName (Proxy @name))
-
 patternKey :: Pattern -> P.String
 patternKey pattern' =
   case pattern' of
@@ -693,21 +672,6 @@ isSafeKeyChar ch = ch `P.elem` safeKeyChars
 safeKeyChars :: [P.Char]
 safeKeyChars = ['a' .. 'z'] P.++ ['A' .. 'Z'] P.++ ['0' .. '9'] P.++ "_-"
 
-data PairPattern = PairPattern
-  { pairFirstPattern  :: Pattern
-  , pairSecondPattern :: Pattern
-  , pairName          :: P.String
-  } deriving (P.Eq, P.Show)
-
-pairPatternKey :: PairPattern -> P.String
-pairPatternKey pattern' =
-  "pair."
-    ++ patternKey (pairFirstPattern pattern')
-    ++ "."
-    ++ patternKey (pairSecondPattern pattern')
-    ++ "."
-    ++ safeKey (pairName pattern')
-
 data ContentMode
   = ContentEmpty
   | ContentText P.String
@@ -791,20 +755,9 @@ data LayoutRelation
   deriving (P.Eq, P.Show)
 
 data MatchSpec =
-  MatchSpec [NodeRule] [PartRule] [LayoutRule] [VirtualRule]
+  MatchSpec [NodeRule] [LayoutRule] [VirtualRule]
 
 data NodeRule where
-  TagNodeRule
-    :: C.Traceable tag=> Proxy tag
-    -> PayloadPattern tag
-    -> (MatchContext tag -> NodePatch)
-    -> NodeRule
-  QueryNodeRule
-    :: C.Traceable tag=> Proxy tag
-    -> Query
-    -> PayloadPattern tag
-    -> (MatchContext tag -> NodePatch)
-    -> NodeRule
   PatternNodeRule
     :: C.Traceable tag=> Proxy tag
     -> Pattern
@@ -812,29 +765,8 @@ data NodeRule where
     -> (MatchContext tag -> NodePatch)
     -> NodeRule
 
-data PartRule where
-  QueryPartRule
-    :: C.Traceable tag=> Proxy tag
-    -> Query
-    -> P.String
-    -> (P.Int -> NodePatch)
-    -> PartRule
-  PatternPartRule
-    :: C.Traceable tag=> Proxy tag
-    -> Pattern
-    -> P.String
-    -> (P.Int -> NodePatch)
-    -> PartRule
-
 data LayoutRule where
   GlobalLayout :: ViewBuilder () -> LayoutRule
-  PatternLayout :: Pattern -> (MatchedNode -> ViewBuilder ()) -> LayoutRule
-  PairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> LayoutRule
-  PairPatternLayout
-    :: Pattern
-    -> Pattern
-    -> (MatchedNode -> MatchedNode -> ViewBuilder ())
-    -> LayoutRule
   SelectionRelationLayout
     :: NodeSelection
     -> LayoutAttr
@@ -857,48 +789,18 @@ data VirtualRule =
   VirtualRule P.String Pattern NodePatch
 
 emptyMatchSpec :: MatchSpec
-emptyMatchSpec = MatchSpec [] [] [] []
+emptyMatchSpec = MatchSpec [] [] []
 
 matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
 matchSpecAppend lhs rhs =
   case lhs of
-    MatchSpec leftNodes leftParts leftLayouts leftVirtuals ->
+    MatchSpec leftNodes leftLayouts leftVirtuals ->
       case rhs of
-        MatchSpec rightNodes rightParts rightLayouts rightVirtuals ->
+        MatchSpec rightNodes rightLayouts rightVirtuals ->
           MatchSpec
             (leftNodes P.++ rightNodes)
-            (leftParts P.++ rightParts)
             (leftLayouts P.++ rightLayouts)
             (leftVirtuals P.++ rightVirtuals)
-
-matchSpecFromList :: [MatchSpec] -> MatchSpec
-matchSpecFromList specs =
-  case specs of
-    []        -> emptyMatchSpec
-    spec:rest -> matchSpecAppend spec (matchSpecFromList rest)
-
-matchTagNode ::
-     forall tag. C.Traceable tag
-  => (MatchContext tag -> NodePatch)
-  -> MatchSpec
-matchTagNode makePatch =
-  MatchSpec
-    [TagNodeRule (Proxy :: Proxy tag) anyPayloadPattern makePatch]
-    []
-    []
-    []
-
-matchNode ::
-     forall tag. C.Traceable tag
-  => Query
-  -> (MatchContext tag -> NodePatch)
-  -> MatchSpec
-matchNode query makePatch =
-  MatchSpec
-    [QueryNodeRule (Proxy :: Proxy tag) query anyPayloadPattern makePatch]
-    []
-    []
-    []
 
 matchPatternNode ::
      forall tag. C.Traceable tag
@@ -910,15 +812,6 @@ matchPatternNode pattern' makePatch =
     [PatternNodeRule (Proxy :: Proxy tag) pattern' anyPayloadPattern makePatch]
     []
     []
-    []
-
-matchPayloadNode ::
-     forall tag. C.Traceable tag
-  => PayloadPattern tag
-  -> (MatchContext tag -> NodePatch)
-  -> MatchSpec
-matchPayloadNode payloadPattern makePatch =
-  MatchSpec [TagNodeRule (Proxy :: Proxy tag) payloadPattern makePatch] [] [] []
 
 matchPatternPayloadNode ::
      forall tag. C.Traceable tag
@@ -931,56 +824,13 @@ matchPatternPayloadNode pattern' payloadPattern makePatch =
     [PatternNodeRule (Proxy :: Proxy tag) pattern' payloadPattern makePatch]
     []
     []
-    []
 
 matchVirtualNode :: P.String -> Pattern -> NodePatch -> MatchSpec
 matchVirtualNode key pattern' patch =
-  MatchSpec [] [] [] [VirtualRule (safeKey key) pattern' patch]
-
-matchPartNode ::
-     forall tag. C.Traceable tag
-  => Query
-  -> P.String
-  -> (P.Int -> NodePatch)
-  -> MatchSpec
-matchPartNode query nodeKey makePatch =
-  MatchSpec
-    []
-    [QueryPartRule (Proxy :: Proxy tag) query (safeKey nodeKey) makePatch]
-    []
-    []
-
-matchPatternPartNode ::
-     forall tag. C.Traceable tag
-  => Pattern
-  -> P.String
-  -> (P.Int -> NodePatch)
-  -> MatchSpec
-matchPatternPartNode pattern' nodeKey makePatch =
-  MatchSpec
-    []
-    [PatternPartRule (Proxy :: Proxy tag) pattern' (safeKey nodeKey) makePatch]
-    []
-    []
-
-matchPairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> MatchSpec
-matchPairAdjacent pattern' gap constraints =
-  MatchSpec [] [] [PairAdjacent pattern' gap constraints] []
+  MatchSpec [] [] [VirtualRule (safeKey key) pattern' patch]
 
 matchGlobalLayout :: ViewBuilder () -> MatchSpec
-matchGlobalLayout body = MatchSpec [] [] [GlobalLayout body] []
-
-matchPatternLayout :: Pattern -> (MatchedNode -> ViewBuilder ()) -> MatchSpec
-matchPatternLayout pattern' body =
-  MatchSpec [] [] [PatternLayout pattern' body] []
-
-matchPatternPair ::
-     Pattern
-  -> Pattern
-  -> (MatchedNode -> MatchedNode -> ViewBuilder ())
-  -> MatchSpec
-matchPatternPair firstPattern secondPattern body =
-  MatchSpec [] [] [PairPatternLayout firstPattern secondPattern body] []
+matchGlobalLayout body = MatchSpec [] [GlobalLayout body] []
 
 matchSelectionRelation ::
      NodeSelection
@@ -990,7 +840,7 @@ matchSelectionRelation ::
   -> LayoutAttr
   -> MatchSpec
 matchSelectionRelation lhs lhsAttr relation rhs rhsAttr =
-  MatchSpec [] [] [SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr] []
+  MatchSpec [] [SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr] []
 
 matchSelectionBridge ::
      NodeSelection
@@ -1004,7 +854,6 @@ matchSelectionBridge ::
   -> MatchSpec
 matchSelectionBridge lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr =
   MatchSpec
-    []
     []
     [ SelectionBridgeLayout
         lhs
@@ -1061,39 +910,6 @@ instance HasBounds (VirtualView tag) where
 
 instance HasStyle (VirtualView tag) where
   style = virtualStyle
-
-data MatchedNode where
-  MatchedNode :: BlockView tag -> MatchedNode
-
-matchedLeft :: MatchedNode -> LayoutExpr
-matchedLeft node =
-  case node of
-    MatchedNode block -> left block
-
-matchedRight :: MatchedNode -> LayoutExpr
-matchedRight node =
-  case node of
-    MatchedNode block -> right block
-
-matchedTop :: MatchedNode -> LayoutExpr
-matchedTop node =
-  case node of
-    MatchedNode block -> top block
-
-matchedBottom :: MatchedNode -> LayoutExpr
-matchedBottom node =
-  case node of
-    MatchedNode block -> bottom block
-
-matchedWidth :: MatchedNode -> LayoutExpr
-matchedWidth node =
-  case node of
-    MatchedNode block -> width block
-
-matchedHeight :: MatchedNode -> LayoutExpr
-matchedHeight node =
-  case node of
-    MatchedNode block -> height block
 
 data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
@@ -2506,11 +2322,10 @@ defineMatchedBlock ::
 defineMatchedBlock block = do
   Ur env <- askViewEnv
   case viewMatchSpec env of
-    MatchSpec nodeRules partRules _ _ -> do
+    MatchSpec nodeRules _ _ ->
       case matchedNodePatch block nodeRules of
         Nothing    -> return ()
         Just patch -> definePatchedBlock patch block
-      defineMatchedParts block partRules
 
 matchedNodePatch ::
      forall tag. C.Traceable tag
@@ -2540,24 +2355,6 @@ nodeRulePatch ::
   -> Maybe NodePatch
 nodeRulePatch matchIndex block rule =
   case rule of
-    TagNodeRule (_ :: Proxy matchedTag) payloadPattern makePatch ->
-      case eqT @sourceTag @matchedTag of
-        Nothing -> Nothing
-        Just Refl ->
-          matchedPayloadNodePatch matchIndex [] block payloadPattern makePatch
-    QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
-      case eqT @sourceTag @matchedTag of
-        Nothing -> Nothing
-        Just Refl ->
-          case queryMatches query (blockFacts block) of
-            True ->
-              matchedPayloadNodePatch
-                matchIndex
-                []
-                block
-                payloadPattern
-                makePatch
-            False -> Nothing
     PatternNodeRule (_ :: Proxy matchedTag) pattern' payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
@@ -2606,59 +2403,6 @@ foldNodePatchesFrom current patches =
   case patches of
     []         -> current
     patch:rest -> foldNodePatchesFrom (appendNodePatch current patch) rest
-
-defineMatchedParts ::
-     forall tag. C.Traceable tag
-  => BlockView tag
-  -> [PartRule]
-  -> ViewBuilder ()
-defineMatchedParts = defineMatchedPartsFrom 0
-
-defineMatchedPartsFrom ::
-     forall tag. C.Traceable tag
-  => P.Int
-  -> BlockView tag
-  -> [PartRule]
-  -> ViewBuilder ()
-defineMatchedPartsFrom _ _ [] = return ()
-defineMatchedPartsFrom matchIndex block (rule:rest) =
-  case partRuleMatch matchIndex block rule of
-    Nothing -> defineMatchedPartsFrom matchIndex block rest
-    Just matched -> do
-      case matched of
-        MatchedPart nodeKey patch -> do
-          definePatchedBlock patch (matchedPieceBlock matchIndex nodeKey block)
-          defineMatchedPartsFrom (matchIndex P.+ 1) block rest
-
-data MatchedPart =
-  MatchedPart P.String NodePatch
-
-partRuleMatch ::
-     forall sourceTag. C.Traceable sourceTag
-  => P.Int
-  -> BlockView sourceTag
-  -> PartRule
-  -> Maybe MatchedPart
-partRuleMatch matchIndex block rule =
-  case rule of
-    QueryPartRule (_ :: Proxy matchedTag) query nodeKey makePatch ->
-      case eqT @sourceTag @matchedTag of
-        Nothing -> Nothing
-        Just Refl ->
-          case queryMatches query (blockFacts block) of
-            True  -> Just (MatchedPart nodeKey (makePatch matchIndex))
-            False -> Nothing
-    PatternPartRule (_ :: Proxy matchedTag) pattern' nodeKey makePatch ->
-      case eqT @sourceTag @matchedTag of
-        Nothing -> Nothing
-        Just Refl ->
-          case patternMatches pattern' (blockFacts block) of
-            Nothing -> Nothing
-            Just bindings ->
-              Just
-                (MatchedPart
-                   nodeKey
-                   (makePatch (patternBindingValue bindings matchIndex)))
 
 definePatchedBlock :: NodePatch -> BlockView tag -> ViewBuilder ()
 definePatchedBlock patch block0 = do
@@ -2709,18 +2453,6 @@ constrainMaybePin expr maybePin =
       case pin of
         LayoutPin target constraints ->
           ensureRaw (S.All (constraints P.++ [expr S.@==@ target]))
-
-matchedPieceBlock :: P.Int -> P.String -> BlockView tag -> BlockView tag
-matchedPieceBlock pieceIndex nodeKey block =
-  let pieceKey = "piece" P.++ P.show pieceIndex
-   in block
-        { blockNodeKey = nodeKey
-        , blockPieceKey = pieceKey
-        , blockStyle =
-            styleForBlockPath
-              (blockRef block)
-              [safeKey nodeKey, safeKey pieceKey]
-        }
 
 --------------------------------------------------------------------------------
 -- Explicit token handling
@@ -3325,7 +3057,7 @@ data AnyLayoutView where
 matchSpecConstraints :: MatchSpec -> [ViewNode] -> [Constraint]
 matchSpecConstraints spec nodes =
   case spec of
-    MatchSpec _ _ layoutRules _ ->
+    MatchSpec _ layoutRules _ ->
       P.concatMap (layoutRuleConstraints nodes) layoutRules
 
 viewNodeBlocks :: [ViewNode] -> [AnyBlockView]
@@ -3341,18 +3073,6 @@ layoutRuleConstraints :: [ViewNode] -> LayoutRule -> [Constraint]
 layoutRuleConstraints nodes layoutRule =
   case layoutRule of
     GlobalLayout body -> layoutConstraints body
-    PatternLayout pattern' body ->
-      P.concatMap
-        (patternNodeConstraints body)
-        (matchingPatternNodes pattern' blocks)
-    PairAdjacent pattern' gap gapConstraints ->
-      P.concatMap
-        (adjacentPairConstraints gap gapConstraints)
-        (matchingPairs pattern' blocks)
-    PairPatternLayout firstPattern secondPattern body ->
-      P.concatMap
-        (patternPairConstraints body)
-        (matchingPatternPairs firstPattern secondPattern blocks)
     SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr ->
       P.concatMap
         (selectionRelationConstraints lhsAttr relation rhsAttr)
@@ -3367,40 +3087,6 @@ layoutRuleConstraints nodes layoutRule =
            rhsRelation
            rhsAttr)
         (matchingSelectionPairs lhs rhs nodes)
-  where
-    blocks = viewNodeBlocks nodes
-
-matchingPairs :: PairPattern -> [AnyBlockView] -> [(AnyBlockView, AnyBlockView)]
-matchingPairs pattern' blocks =
-  [ (firstBlock, secondBlock)
-  | firstBlock <- blocks
-  , (_firstNode, firstBindings) <-
-      anyBlockPatternMatches (pairFirstPattern pattern') firstBlock
-  , secondBlock <- blocks
-  , (_secondNode, secondBindings) <-
-      anyBlockPatternMatches (pairSecondPattern pattern') secondBlock
-  , bindingsCompatible firstBindings secondBindings
-  ]
-
-matchingPatternNodes :: Pattern -> [AnyBlockView] -> [MatchedNode]
-matchingPatternNodes pattern' blocks =
-  [ matchedNode
-  | anyBlock <- blocks
-  , (matchedNode, _bindings) <- anyBlockPatternMatches pattern' anyBlock
-  ]
-
-matchingPatternPairs ::
-     Pattern -> Pattern -> [AnyBlockView] -> [(MatchedNode, MatchedNode)]
-matchingPatternPairs firstPattern secondPattern blocks =
-  [ (firstNode, secondNode)
-  | firstAnyBlock <- blocks
-  , (firstNode, firstBindings) <-
-      anyBlockPatternMatches firstPattern firstAnyBlock
-  , secondAnyBlock <- blocks
-  , (secondNode, secondBindings) <-
-      anyBlockPatternMatches secondPattern secondAnyBlock
-  , bindingsCompatible firstBindings secondBindings
-  ]
 
 matchingSelectionPairs ::
      NodeSelection
@@ -3444,13 +3130,13 @@ selectionNodeMatches selection node =
           | otherwise -> []
 
 anyBlockPatternMatches ::
-     Pattern -> AnyBlockView -> [(MatchedNode, PatternBindings)]
+     Pattern -> AnyBlockView -> [(AnyBlockView, PatternBindings)]
 anyBlockPatternMatches pattern' anyBlock =
   case anyBlock of
     AnyBlockView block ->
       case patternMatches pattern' (blockFacts block) of
         Nothing       -> []
-        Just bindings -> [(MatchedNode block, bindings)]
+        Just bindings -> [(anyBlock, bindings)]
 
 bindingsCompatible :: PatternBindings -> PatternBindings -> P.Bool
 bindingsCompatible lhs rhs =
@@ -3467,29 +3153,6 @@ mergePatternBindings lhs rhs =
       case bindPatternInt name value lhs of
         Nothing     -> Nothing
         Just merged -> mergePatternBindings merged rest
-
-adjacentPairConstraints ::
-     LayoutExpr -> [Constraint] -> (AnyBlockView, AnyBlockView) -> [Constraint]
-adjacentPairConstraints gap gapConstraints pair' =
-  case pair' of
-    (AnyBlockView firstBlock, AnyBlockView secondBlock) ->
-      gapConstraints
-        P.++ [ right firstBlock S.@+@ gap S.@==@ left secondBlock
-             , top firstBlock S.@==@ top secondBlock
-             , height firstBlock S.@==@ height secondBlock
-             ]
-
-patternPairConstraints ::
-     (MatchedNode -> MatchedNode -> ViewBuilder ())
-  -> (MatchedNode, MatchedNode)
-  -> [Constraint]
-patternPairConstraints body pair' =
-  case pair' of
-    (firstNode, secondNode) -> layoutConstraints (body firstNode secondNode)
-
-patternNodeConstraints ::
-     (MatchedNode -> ViewBuilder ()) -> MatchedNode -> [Constraint]
-patternNodeConstraints body node = layoutConstraints (body node)
 
 selectionRelationConstraints ::
      LayoutAttr
@@ -3571,7 +3234,7 @@ layoutConstraints body =
 virtualNodesForSpec :: MatchSpec -> [ViewNode] -> [ViewNode]
 virtualNodesForSpec spec nodes =
   case spec of
-    MatchSpec _ _ _ virtualRules ->
+    MatchSpec _ _ virtualRules ->
       maybeVirtualNodes (mergedVirtualRules virtualRules)
   where
     blocks = viewNodeBlocks nodes

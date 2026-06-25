@@ -71,9 +71,13 @@ module LinearTrace.Choreography
   , Pattern
   , PatternInt
   , patternIndex
+  , TagSelector
   , Selector
   , Selection
   , Selected
+  , Variable(..)
+  , Bound(..)
+  , NodeBinding(..)
   , NodeRef
   , Node
   , StyleTarget
@@ -128,6 +132,7 @@ module LinearTrace.Choreography
   , Height
   , ContentValue
   , alpha
+  , asUnit
   , asCoord
   , asSpan
   , at
@@ -137,14 +142,15 @@ module LinearTrace.Choreography
   , by
   , borderStyle
   , boxDefinition
+  , bindContent
+  , bindInt
   , centerText
   , content
   , defineNode
   , payload
   , text
   , constrain
-  , derive
-  , Derived
+  , variable
   , coordExpr
   , encourage
   , fill
@@ -155,8 +161,6 @@ module LinearTrace.Choreography
   , fontWeight
   , fromLabel
   , global
-  , globalCoord
-  , globalSpan
   , height
   , left
   , noWrap
@@ -217,8 +221,8 @@ import           Control.Functor.Linear hiding ((<$>), (<*>))
 import qualified Data.Functor.Linear    as DFL
 import           Data.Proxy             (Proxy (..))
 import           Data.Typeable          (Typeable, typeRep)
+import           GHC.Exts               (Multiplicity (Many))
 import           GHC.OverloadedLabels   (IsLabel (..))
-import           GHC.TypeLits           (KnownSymbol)
 import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          Facts (..), LBool (..), LDouble (..),
                                          LInt (..), LString (..), LUnit (..),
@@ -252,7 +256,8 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          matchSelectionRelation,
                                          matchSpecAppend, matchVirtualNode,
                                          patternAppend, patternIntAdd,
-                                         patternIntConst, payloadBindingPattern,
+                                         patternIntConst, patternIntVar,
+                                         payloadBindingPattern,
                                          payloadBoolPattern,
                                          payloadDoublePattern,
                                          payloadIntPattern,
@@ -272,7 +277,6 @@ import qualified Prelude                as P
 import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
                                          (+), (-), (/), (<>))
 import qualified Text.Read              as Read
-import qualified Unsafe.Linear          as Unsafe
 
 infixr 6 <>
 infixl 9 #:
@@ -329,6 +333,9 @@ newtype Binding =
 data Selector tag =
   Selector Pattern (Maybe (PayloadPattern tag))
 
+newtype TagSelector =
+  TagSelector Pattern
+
 data Selection a where
   Selection :: a %1 -> MatchSpec -> Selection a
 
@@ -337,6 +344,15 @@ data NodeRef tag where
   VirtualNodeRef :: P.String -> Pattern -> NodeRef tag
 
 type Selected tag = Selection (NodeRef tag)
+
+data Variable a where
+  Variable :: a %Many -> Variable a
+
+data Bound a where
+  Bound :: a %Many -> Bound a
+
+data NodeBinding a where
+  Selected :: a %Many -> NodeBinding a
 
 data SelectedCoord tag =
   SelectedCoord (Selected tag) LayoutAttr
@@ -362,9 +378,6 @@ data ContentValue
   = ContentLiteral P.String
   | ContentBinding Binding
 
-tag :: Pattern -> Pattern
-tag pattern' = pattern'
-
 withPayload ::
      forall tag selector. PayloadSelector tag selector
   => Pattern
@@ -379,11 +392,11 @@ text = ContentLiteral
 payload :: forall tag. ContentValue -> Selector tag
 payload selector = Selector (Pattern []) (Just (payloadSelector @tag selector))
 
+tag :: Pattern -> TagSelector
+tag = TagSelector
+
 instance IsString ContentValue where
   fromString = ContentLiteral
-
-instance KnownSymbol name => IsLabel name ContentValue where
-  fromLabel = ContentBinding (Binding (S.labelName (Proxy @name)))
 
 data ContentSpec
   = LiteralContent P.String
@@ -416,8 +429,12 @@ data NodeSpec = NodeSpec
 data NodeRecipe a where
   NodeRecipe :: a %1 -> NodeSpec -> NodeRecipe a
 
+data VisualizationResult a where
+  VisualizationResult :: a %1 -> P.Int -> MatchSpec -> VisualizationResult a
+
 data VisualizationBuilder a where
-  VisualizationBuilder :: a %1 -> MatchSpec -> VisualizationBuilder a
+  VisualizationBuilder
+    :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
 type ViewLayout a = V.ViewBuilder a
 
@@ -575,113 +592,107 @@ instance Applicative NodeRecipe where
 instance Monad NodeRecipe where
   (>>=) = bindNodeRecipe
 
-bindNodeRecipeMany :: NodeRecipe a -> (a -> NodeRecipe b) -> NodeRecipe b
-bindNodeRecipeMany recipe next =
-  case recipe of
-    NodeRecipe value first ->
-      case next value of
-        NodeRecipe output second ->
-          NodeRecipe output (appendNodeSpec first second)
-
-instance P.Functor NodeRecipe where
-  fmap f recipe =
-    case recipe of
-      NodeRecipe value spec -> NodeRecipe (Unsafe.toLinear f value) spec
-
-instance P.Applicative NodeRecipe where
-  pure value = NodeRecipe value emptyNodeSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      NodeRecipe leftValue first ->
-        case rhs of
-          NodeRecipe rightValue second ->
-            NodeRecipe
-              (Unsafe.toLinear
-                 (\leftValue' -> Unsafe.toLinear (f leftValue') rightValue)
-                 leftValue)
-              (appendNodeSpec first second)
-
-instance P.Monad NodeRecipe where
-  (>>=) = bindNodeRecipeMany
-
 bindVisualizationBuilder ::
      VisualizationBuilder a
      %1 -> (a %1 -> VisualizationBuilder b)
      %1 -> VisualizationBuilder b
 bindVisualizationBuilder builder next =
   case builder of
-    VisualizationBuilder value first ->
-      case next value of
-        VisualizationBuilder output second ->
-          VisualizationBuilder output (matchSpecAppend first second)
+    VisualizationBuilder runFirst ->
+      VisualizationBuilder
+        (\counter0 ->
+           case runFirst counter0 of
+             VisualizationResult value counter1 first ->
+               case next value of
+                 VisualizationBuilder runSecond ->
+                   case runSecond counter1 of
+                     VisualizationResult output counter2 second ->
+                       VisualizationResult
+                         output
+                         counter2
+                         (matchSpecAppend first second))
+
+emptyVisualizationBuilder :: a -> VisualizationBuilder a
+emptyVisualizationBuilder value =
+  VisualizationBuilder
+    (\counter -> VisualizationResult value counter emptyMatchSpec)
+
+emptyVisualizationBuilderLinear :: a %1 -> VisualizationBuilder a
+emptyVisualizationBuilderLinear value =
+  VisualizationBuilder
+    (\counter -> VisualizationResult value counter emptyMatchSpec)
+
+emitVisualizationBuilder :: a -> MatchSpec -> VisualizationBuilder a
+emitVisualizationBuilder value spec =
+  VisualizationBuilder (\counter -> VisualizationResult value counter spec)
+
+freshVisualizationValue :: P.String -> (P.String -> a) -> VisualizationBuilder a
+freshVisualizationValue prefix build =
+  VisualizationBuilder
+    (\counter ->
+       VisualizationResult
+         (build (prefix P.++ P.show counter))
+         (counter P.+ 1)
+         emptyMatchSpec)
 
 instance DFL.Functor VisualizationBuilder where
   fmap f builder =
     case builder of
-      VisualizationBuilder value spec -> VisualizationBuilder (f value) spec
+      VisualizationBuilder run ->
+        VisualizationBuilder
+          (\counter0 ->
+             case run counter0 of
+               VisualizationResult value counter1 spec ->
+                 VisualizationResult (f value) counter1 spec)
 
 instance Functor VisualizationBuilder where
   fmap f builder =
     case builder of
-      VisualizationBuilder value spec -> VisualizationBuilder (f value) spec
+      VisualizationBuilder run ->
+        VisualizationBuilder
+          (\counter0 ->
+             case run counter0 of
+               VisualizationResult value counter1 spec ->
+                 VisualizationResult (f value) counter1 spec)
 
 instance DFL.Applicative VisualizationBuilder where
-  pure value = VisualizationBuilder value emptyMatchSpec
+  pure = emptyVisualizationBuilder
   liftA2 f lhs rhs =
     case lhs of
-      VisualizationBuilder leftValue first ->
+      VisualizationBuilder runLeft ->
         case rhs of
-          VisualizationBuilder rightValue second ->
+          VisualizationBuilder runRight ->
             VisualizationBuilder
-              (f leftValue rightValue)
-              (matchSpecAppend first second)
+              (\counter0 ->
+                 case runLeft counter0 of
+                   VisualizationResult leftValue counter1 first ->
+                     case runRight counter1 of
+                       VisualizationResult rightValue counter2 second ->
+                         VisualizationResult
+                           (f leftValue rightValue)
+                           counter2
+                           (matchSpecAppend first second))
 
 instance Applicative VisualizationBuilder where
-  pure value = VisualizationBuilder value emptyMatchSpec
+  pure = emptyVisualizationBuilderLinear
   liftA2 f lhs rhs =
     case lhs of
-      VisualizationBuilder leftValue first ->
+      VisualizationBuilder runLeft ->
         case rhs of
-          VisualizationBuilder rightValue second ->
+          VisualizationBuilder runRight ->
             VisualizationBuilder
-              (f leftValue rightValue)
-              (matchSpecAppend first second)
+              (\counter0 ->
+                 case runLeft counter0 of
+                   VisualizationResult leftValue counter1 first ->
+                     case runRight counter1 of
+                       VisualizationResult rightValue counter2 second ->
+                         VisualizationResult
+                           (f leftValue rightValue)
+                           counter2
+                           (matchSpecAppend first second))
 
 instance Monad VisualizationBuilder where
   (>>=) = bindVisualizationBuilder
-
-bindVisualizationBuilderMany ::
-     VisualizationBuilder a
-  -> (a -> VisualizationBuilder b)
-  -> VisualizationBuilder b
-bindVisualizationBuilderMany builder next =
-  case builder of
-    VisualizationBuilder value first ->
-      case Unsafe.toLinear next value of
-        VisualizationBuilder output second ->
-          VisualizationBuilder output (matchSpecAppend first second)
-
-instance P.Functor VisualizationBuilder where
-  fmap f builder =
-    case builder of
-      VisualizationBuilder value spec ->
-        VisualizationBuilder (Unsafe.toLinear f value) spec
-
-instance P.Applicative VisualizationBuilder where
-  pure value = VisualizationBuilder value emptyMatchSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      VisualizationBuilder leftValue first ->
-        case rhs of
-          VisualizationBuilder rightValue second ->
-            VisualizationBuilder
-              (Unsafe.toLinear
-                 (\leftValue' -> Unsafe.toLinear (f leftValue') rightValue)
-                 leftValue)
-              (matchSpecAppend first second)
-
-instance P.Monad VisualizationBuilder where
-  (>>=) = bindVisualizationBuilderMany
 
 bindSelection :: Selection a %1 -> (a %1 -> Selection b) %1 -> Selection b
 bindSelection selection next =
@@ -721,35 +732,6 @@ instance Applicative Selection where
 
 instance Monad Selection where
   (>>=) = bindSelection
-
-bindSelectionMany :: Selection a -> (a -> Selection b) -> Selection b
-bindSelectionMany selection next =
-  case selection of
-    Selection value first ->
-      case next value of
-        Selection output second ->
-          Selection output (matchSpecAppend first second)
-
-instance P.Functor Selection where
-  fmap f selection =
-    case selection of
-      Selection value spec -> Selection (Unsafe.toLinear f value) spec
-
-instance P.Applicative Selection where
-  pure value = Selection value emptyMatchSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      Selection leftValue first ->
-        case rhs of
-          Selection rightValue second ->
-            Selection
-              (Unsafe.toLinear
-                 (\leftValue' -> Unsafe.toLinear (f leftValue') rightValue)
-                 leftValue)
-              (matchSpecAppend first second)
-
-instance P.Monad Selection where
-  (>>=) = bindSelectionMany
 
 coordExpr :: Coord -> LayoutExpr
 coordExpr value =
@@ -885,7 +867,7 @@ patternIndex :: P.Int -> PatternInt
 patternIndex = patternIntConst
 
 (#:) :: (PatternInt -> Pattern) -> PatternInt -> Pattern
-(#:) field = field
+(#:) buildField = buildField
 
 at :: P.Double -> Coord
 at = num
@@ -902,11 +884,16 @@ globalCoord name = mkCoord (global name :: LayoutExpr) []
 globalSpan :: P.String -> Span
 globalSpan name = mkSpan (global name :: LayoutExpr) []
 
-instance KnownSymbol name => IsLabel name Coord where
-  fromLabel = globalCoord (S.labelName (Proxy @name))
+patternIntExpr :: S.SymbolicType ty => PatternInt -> S.Expr ty
+patternIntExpr patternIntValue =
+  case patternIntValue of
+    PatternIntConst value -> S.num (P.fromIntegral value)
+    PatternIntVar name -> global name
+    PatternIntAdd base offset ->
+      patternIntExpr base S.@+@ S.num (P.fromIntegral offset)
 
-instance KnownSymbol name => IsLabel name Span where
-  fromLabel = globalSpan (S.labelName (Proxy @name))
+asUnit :: PatternInt -> UnitExpr
+asUnit = patternIntExpr
 
 asCoord :: Offset -> Coord
 asCoord value =
@@ -1353,7 +1340,7 @@ instance Constrain CoordChain where
 
 instance Constrain LiftedConstraint where
   constrain constraint =
-    VisualizationBuilder () (liftedConstraintSpec constraint)
+    emitVisualizationBuilder () (liftedConstraintSpec constraint)
 
 liftedConstraintSpec :: LiftedConstraint -> MatchSpec
 liftedConstraintSpec constraint =
@@ -1399,62 +1386,80 @@ selectedCoordAttr selected =
   case selected of
     SelectedCoord _ attr -> attr
 
-class Derived value where
-  derive :: value -> value -> VisualizationBuilder value
+class VariableValue value where
+  namedVariable :: P.String -> value
+  variableSpec :: value -> value -> MatchSpec
 
-deriveLayoutExpr ::
-     value
-  -> LayoutExpr
-  -> [S.Constraint]
-  -> LayoutExpr
-  -> [S.Constraint]
-  -> VisualizationBuilder value
-deriveLayoutExpr value lhs lhsConstraints rhs rhsConstraints =
-  VisualizationBuilder
-    value
-    (matchGlobalLayout
-       (constrainRaw
-          (S.All (lhsConstraints P.++ rhsConstraints P.++ [lhs S.@==@ rhs]))))
+layoutVariableSpec ::
+     LayoutExpr -> [S.Constraint] -> LayoutExpr -> [S.Constraint] -> MatchSpec
+layoutVariableSpec lhs lhsConstraints rhs rhsConstraints =
+  matchGlobalLayout
+    (constrainRaw
+       (S.All (lhsConstraints P.++ rhsConstraints P.++ [lhs S.@==@ rhs])))
 
-instance Derived Coord where
-  derive lhs rhs =
-    deriveLayoutExpr
-      lhs
+instance VariableValue Coord where
+  namedVariable = globalCoord
+  variableSpec lhs rhs =
+    layoutVariableSpec
       (coordExpr lhs)
       (coordConstraints lhs)
       (coordExpr rhs)
       (coordConstraints rhs)
 
-instance Derived Span where
-  derive lhs rhs =
-    deriveLayoutExpr
-      lhs
+instance VariableValue Span where
+  namedVariable = globalSpan
+  variableSpec lhs rhs =
+    layoutVariableSpec
       (spanExpr lhs)
       (spanConstraints lhs)
       (spanExpr rhs)
       (spanConstraints rhs)
 
-instance Derived Offset where
-  derive lhs rhs =
-    deriveLayoutExpr
-      lhs
+instance VariableValue Offset where
+  namedVariable name = mkOffset (global name :: LayoutExpr) []
+  variableSpec lhs rhs =
+    layoutVariableSpec
       (offsetExpr lhs)
       (offsetConstraints lhs)
       (offsetExpr rhs)
       (offsetConstraints rhs)
 
-instance Derived Scalar where
-  derive lhs rhs =
-    deriveLayoutExpr
-      lhs
+instance VariableValue Scalar where
+  namedVariable name = mkScalar (global name :: LayoutExpr) []
+  variableSpec lhs rhs =
+    layoutVariableSpec
       (scalarExpr lhs)
       (scalarConstraints lhs)
       (scalarExpr rhs)
       (scalarConstraints rhs)
 
-instance S.SymbolicType ty => Derived (S.Expr ty) where
-  derive lhs rhs =
-    VisualizationBuilder lhs (matchGlobalLayout (constrainRaw (lhs S.@==@ rhs)))
+instance S.SymbolicType ty => VariableValue (S.Expr ty) where
+  namedVariable = global
+  variableSpec lhs rhs = matchGlobalLayout (constrainRaw (lhs S.@==@ rhs))
+
+bindInt :: VisualizationBuilder (Bound PatternInt)
+bindInt = freshVisualizationValue "view.bind." (Bound P.. patternIntVar)
+
+bindContent :: VisualizationBuilder (Bound ContentValue)
+bindContent =
+  freshVisualizationValue "view.bind." (Bound P.. ContentBinding P.. Binding)
+
+class VariableSource value result where
+  variable :: result
+
+instance VariableValue value =>
+         VariableSource value (VisualizationBuilder (Variable value)) where
+  variable = freshVisualizationValue "view.var." (Variable P.. namedVariable)
+
+instance (VariableValue value, arg ~ value) =>
+         VariableSource value (arg -> VisualizationBuilder (Variable value)) where
+  variable rhs =
+    freshVisualizationValue
+      "view.var."
+      (\name ->
+         let value = namedVariable name
+          in Variable value) >>= \(Variable value) ->
+      emitVisualizationBuilder (Variable value) (variableSpec value rhs)
 
 class StyleTarget target result | target -> result where
   style :: target -> result
@@ -1743,21 +1748,35 @@ spanPin value =
     Span expr constraints -> V.LayoutPin expr constraints
 
 instance C.Traceable tag =>
-         Node tag (Selector tag) (VisualizationBuilder (Selected tag)) where
+         Node
+           tag
+           TagSelector
+           (VisualizationBuilder (NodeBinding (Selected tag))) where
   node selector =
-    VisualizationBuilder
-      (Selection (TraceNodeRef selector) emptyMatchSpec)
-      emptyMatchSpec
+    case selector of
+      TagSelector pattern' ->
+        emitVisualizationBuilder
+          (Selected
+             (Selection
+                (TraceNodeRef (Selector pattern' Nothing))
+                emptyMatchSpec))
+          emptyMatchSpec
 
 instance C.Traceable tag =>
-         Node tag Pattern (VisualizationBuilder (Selected tag)) where
-  node pattern' =
-    VisualizationBuilder
-      (Selection (TraceNodeRef (Selector pattern' Nothing)) emptyMatchSpec)
+         Node
+           tag
+           (Selector tag)
+           (VisualizationBuilder (NodeBinding (Selected tag))) where
+  node selector =
+    emitVisualizationBuilder
+      (Selected (Selection (TraceNodeRef selector) emptyMatchSpec))
       emptyMatchSpec
 
 instance Typeable tag =>
-         Node tag (Selected child) (VisualizationBuilder (Selected tag)) where
+         Node
+           tag
+           (Selected child)
+           (VisualizationBuilder (NodeBinding (Selected tag))) where
   node children =
     case children of
       Selection child childSpec ->
@@ -1765,28 +1784,53 @@ instance Typeable tag =>
             key = virtualNodeKey @tag
             virtualSpec = matchVirtualNode key pattern' V.emptyNodePatch
          in VisualizationBuilder
-              (Selection (VirtualNodeRef key pattern') emptyMatchSpec)
-              (matchSpecAppend childSpec virtualSpec)
+              (\counter ->
+                 VisualizationResult
+                   (Selected
+                      (Selection (VirtualNodeRef key pattern') emptyMatchSpec))
+                   counter
+                   (matchSpecAppend childSpec virtualSpec))
 
 instance Typeable tag =>
          Node
            tag
-           (VisualizationBuilder (Selected child))
-           (VisualizationBuilder (Selected tag)) where
+           (NodeBinding (Selected child))
+           (VisualizationBuilder (NodeBinding (Selected tag))) where
+  node binding =
+    case binding of
+      Selected children -> node @tag children
+
+instance Typeable tag =>
+         Node
+           tag
+           (VisualizationBuilder (NodeBinding (Selected child)))
+           (VisualizationBuilder (NodeBinding (Selected tag))) where
   node childrenBuilder =
     case childrenBuilder of
-      VisualizationBuilder children first ->
-        case node @tag children of
-          VisualizationBuilder selected second ->
-            VisualizationBuilder selected (matchSpecAppend first second)
+      VisualizationBuilder runFirst ->
+        VisualizationBuilder
+          (\counter0 ->
+             case runFirst counter0 of
+               VisualizationResult binding counter1 first ->
+                 case node @tag binding of
+                   VisualizationBuilder runSecond ->
+                     case runSecond counter1 of
+                       VisualizationResult selected counter2 second ->
+                         VisualizationResult
+                           selected
+                           counter2
+                           (matchSpecAppend first second))
 
 instance StyleTarget (Selected tag) (NodeRecipe () -> VisualizationBuilder ()) where
   style selection recipe =
     case selection of
       Selection handle spec ->
         VisualizationBuilder
-          ()
-          (matchSpecAppend spec (nodeRefStyleSpec handle recipe))
+          (\counter ->
+             VisualizationResult
+               ()
+               counter
+               (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
 
 nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
 nodeRefStyleSpec handle recipe =
@@ -1819,10 +1863,12 @@ virtualNodeKey = P.show (typeRep (Proxy @tag))
 visualize :: VisualizationBuilder () -> MatchSpec
 visualize builder =
   case builder of
-    VisualizationBuilder () spec -> spec
+    VisualizationBuilder run ->
+      case run 0 of
+        VisualizationResult () _ spec -> spec
 
 layout :: ViewLayout () -> VisualizationBuilder ()
-layout body = VisualizationBuilder () (matchGlobalLayout body)
+layout body = emitVisualizationBuilder () (matchGlobalLayout body)
 
 class PayloadSelector tag selector where
   payloadSelector :: selector -> PayloadPattern tag
