@@ -36,15 +36,7 @@ data Match
 
 type instance Payload Match = LBool Match
 
-instance Traceable Match where
-  payloadView _ payload =
-    case payload of
-      LBool matched
-        {- HLINT ignore "Use if" -}
-       ->
-        case matched of
-          True  -> PayloadView "Decision" "MATCH"
-          False -> PayloadView "Decision" "NO MATCH"
+instance Traceable Match
 
 sameValue :: Payload Value %1 -> Payload Value %1 -> Payload Match
 sameValue lhsPayload rhsPayload =
@@ -262,107 +254,85 @@ visualization =
                 |+| matchGap
                 |+| half matchHeight
                 |= #match_y
-        match
+        match @Value $ do
+          contentDebug
+          centerText
+        match @Match $ do
+          centerText
+        match @Value (whereFacts (#int <> #target <> #source)) $ do
+          fill (Hsl #target_hue #lum 0.84)
+          stroke (Hsl #target_hue 0.76 0.36)
+          strokeWidth (cellBy 0.05)
+          radius (cellBy 0.24)
+          fontSize (cellBy 0.62)
+          position (vec2 #target_x #target_y)
+          width targetWidth
+          height targetHeight
+        match @Value (whereFacts (#int <> #target <> #probe)) $ do
+          fill (Hsl #probe_hue 0.5 0.88)
+          stroke (Hsl #probe_hue 0.78 0.34)
+          strokeWidth (cellBy 0.035)
+          zIndex 3
+          radius (cellBy 0.22)
+          fontSize (cellBy 0.56)
+          position (vec2 #probe_target_x #probe_y)
+          width probeSize
+          height probeSize
+        match @Value (whereFacts (#int <> #array <> patternIntField #index #i)) $ do
+          fill (Hsl #list_hue #sat 0.92)
+          stroke (Hsl #list_hue 0.58 0.42)
+          strokeWidth (cellBy 0.035)
+          radius (cellBy 0.18)
+          fontSize (cellBy 0.5)
+          width cell
+          height cell
+        matchPair
           (#int <> #target <> #source)
-          (node @Value $ do
-             centerText
-             fill (Hsl #target_hue #lum 0.84)
-             stroke (Hsl #target_hue 0.76 0.36)
-             strokeWidth (cellBy 0.05)
-             radius (cellBy 0.24)
-             fontSize (cellBy 0.62)
-             position (vec2 #target_x #target_y)
-             width targetWidth
-             height targetHeight)
-        matchAs
-          (#int <> #target <> #probe)
-          (#int <> #target <> #source)
-          (node @Value $ do
-             centerText
-             fill (Hsl #probe_hue 0.5 0.88)
-             stroke (Hsl #probe_hue 0.78 0.34)
-             strokeWidth (cellBy 0.035)
-             zIndex 3
-             radius (cellBy 0.22)
-             fontSize (cellBy 0.56)
-             position (vec2 #probe_target_x #probe_y)
-             width probeSize
-             height probeSize)
-        match
           (#int <> #array <> patternIntField #index #i)
-          (node @Value $ do
-             centerText
-             fill (Hsl #list_hue #sat 0.92)
-             stroke (Hsl #list_hue 0.58 0.42)
-             strokeWidth (cellBy 0.035)
-             radius (cellBy 0.18)
-             fontSize (cellBy 0.5)
-             width cell
-             height cell)
-        match
-          ( #int <> #target <> #source
-          , #int <> #array <> patternIntField #index #i)
-          ((\(target, element) ->
-              constrain $ bottom target <| gap |> top element) :: ( MatchedNode
-                                                                  , MatchedNode) -> ViewLayout
-                                                                                      ())
-        match
-          ( #int <> #target <> #source
-          , #int <> #probe <> patternIntField #index #i)
-          ((\(target, probe) -> constrain $ bottom target <| gap |> top probe) :: ( MatchedNode
-                                                                                  , MatchedNode) -> ViewLayout
-                                                                                                      ())
-        matchAs
+          (\target element -> constrain $ bottom target <| gap |> top element)
+        matchPair
+          (#int <> #target <> #source)
+          (#int <> #probe <> patternIntField #index #i)
+          (\target probe -> constrain $ bottom target <| gap |> top probe)
+        match @Value (whereFacts (#int <> #probe <> patternIntField #index #i)) $ do
+          fill (Hsl #probe_hue 0.5 0.88)
+          stroke (Hsl #probe_hue 0.78 0.34)
+          strokeWidth (cellBy 0.035)
+          zIndex 3
+          radius (cellBy 0.22)
+          fontSize (cellBy 0.56)
+          position (vec2 #probe_element_x #probe_y)
+          width probeSize
+          height probeSize
+        matchPair
           (#int <> #probe <> patternIntField #index #i)
           (#int <> #array <> patternIntField #index #i)
-          (node @Value $ do
-             centerText
-             fill (Hsl #probe_hue 0.5 0.88)
-             stroke (Hsl #probe_hue 0.78 0.34)
-             strokeWidth (cellBy 0.035)
-             zIndex 3
-             radius (cellBy 0.22)
-             fontSize (cellBy 0.56)
-             position (vec2 #probe_element_x #probe_y)
-             width probeSize
-             height probeSize)
-        match
-          ( #int <> #probe <> patternIntField #index #i
-          , #int <> #array <> patternIntField #index #i)
-          ((\(probe, element) -> constrain $ bottom probe <| gap |> top element) :: ( MatchedNode
-                                                                                    , MatchedNode) -> ViewLayout
-                                                                                                        ())
-        match
-          ( #int <> #array <> patternIntField #index #i
-          , #int <> #array <> patternIntField #index (#i + 1))
-          ((\(previous, next) -> do
-              constrain $ right previous =| gapBy 2 |= left next
-              constrain $ top previous =|= top next) :: ( MatchedNode
-                                                        , MatchedNode) -> ViewLayout
-                                                                            ())
-        match
-          (#decision <> #match <> #matched)
-          (node @Match $ do
-             centerText
-             fill (Hsl #match_hue 0.6 0.86)
-             stroke (Hsl #match_hue 0.82 0.32)
-             strokeWidth (cellBy 0.05)
-             zIndex 4
-             radius (cellBy 0.26)
-             fontSize (cellBy 0.34)
-             position (vec2 #match_x #match_y)
-             width matchWidth
-             height matchHeight)
-        match
-          (#decision <> #match <> #not_matched)
-          (node @Match $ do
-             centerText
-             fill (Hsl (#match_hue + 180) 0.34 0.9)
-             stroke (Hsl (#match_hue + 180) 0.68 0.34)
-             strokeWidth (cellBy 0.05)
-             zIndex 4
-             radius (cellBy 0.26)
-             fontSize (cellBy 0.34)
-             position (vec2 #match_x #match_y)
-             width matchWidth
-             height matchHeight)
+          (\probe element -> constrain $ bottom probe <| gap |> top element)
+        matchPair
+          (#int <> #array <> patternIntField #index #i)
+          (#int <> #array <> patternIntField #index (#i + 1))
+          (\previous next -> do
+             constrain $ right previous =| gapBy 2 |= left next
+             constrain $ top previous =|= top next)
+        match @Match (whereFacts (#decision <> #match <> #matched)) $ do
+          content "MATCH"
+          fill (Hsl #match_hue 0.6 0.86)
+          stroke (Hsl #match_hue 0.82 0.32)
+          strokeWidth (cellBy 0.05)
+          zIndex 4
+          radius (cellBy 0.26)
+          fontSize (cellBy 0.34)
+          position (vec2 #match_x #match_y)
+          width matchWidth
+          height matchHeight
+        match @Match (whereFacts (#decision <> #match <> #not_matched)) $ do
+          content "NO MATCH"
+          fill (Hsl (#match_hue + 180) 0.34 0.9)
+          stroke (Hsl (#match_hue + 180) 0.68 0.34)
+          strokeWidth (cellBy 0.05)
+          zIndex 4
+          radius (cellBy 0.26)
+          fontSize (cellBy 0.34)
+          position (vec2 #match_x #match_y)
+          width matchWidth
+          height matchHeight

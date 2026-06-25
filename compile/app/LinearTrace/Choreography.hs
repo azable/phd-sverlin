@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes    #-}
 {-# LANGUAGE DataKinds              #-}
 {-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances      #-}
@@ -73,8 +74,6 @@ module LinearTrace.Choreography
   , VisualizationBuilder
   , PairPattern(..)
   , MatchRule
-  , MatchAsRule
-  , NodeMatchBody
   , QueryAppend
   , visualize
   , emptyMatchSpec
@@ -82,8 +81,10 @@ module LinearTrace.Choreography
   , matchSpecFromList
   , layout
   , match
-  , matchAs
+  , part
+  , whereFacts
   , matchLayout
+  , matchPair
   , pair
   , adjacent
   , emptyQuery
@@ -138,6 +139,8 @@ module LinearTrace.Choreography
   , borderStyle
   , boxDefinition
   , centerText
+  , content
+  , contentDebug
   , constrain
   , coordExpr
   , encourage
@@ -237,18 +240,18 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          finalizeStyle, global,
                                          matchGlobalLayout, matchPairAdjacent,
                                          matchPatternLayout, matchPatternNode,
-                                         matchPatternNodeAs, matchPatternPair,
+                                         matchPatternPair, matchPatternPartNode,
                                          matchSpecAppend, matchSpecFromList,
-                                         patternAppend, patternIntAdd,
-                                         patternIntConst, queryAppend,
-                                         queryAtom, queryFacts, queryInt,
-                                         setFillOnce, setFontFamilyOnce,
-                                         setFontSizeOnce, setFontWeightOnce,
-                                         setRadiusOnce, setStrokeOnce,
-                                         setStrokeWidthOnce, setTextAlignOnce,
-                                         setWhiteSpaceOnce, setZIndexOnce,
-                                         takeHeight, takeLeft, takeRight,
-                                         takeTop, takeWidth)
+                                         matchTagNode, patternAppend,
+                                         patternIntAdd, patternIntConst,
+                                         queryAppend, queryAtom, queryFacts,
+                                         queryInt, setFillOnce,
+                                         setFontFamilyOnce, setFontSizeOnce,
+                                         setFontWeightOnce, setRadiusOnce,
+                                         setStrokeOnce, setStrokeWidthOnce,
+                                         setTextAlignOnce, setWhiteSpaceOnce,
+                                         setZIndexOnce, takeHeight, takeLeft,
+                                         takeRight, takeTop, takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
@@ -309,6 +312,7 @@ data CoordSpanBridge =
 
 data NodeSpec = NodeSpec
   { nodeSpecStyleUpdate  :: Style -> Style
+  , nodeSpecContent      :: Maybe V.ContentMode
   , nodeSpecLeft         :: Maybe Coord
   , nodeSpecTop          :: Maybe Coord
   , nodeSpecWidth        :: Maybe Span
@@ -399,6 +403,7 @@ emptyNodeSpec :: NodeSpec
 emptyNodeSpec =
   NodeSpec
     { nodeSpecStyleUpdate = P.id
+    , nodeSpecContent = Nothing
     , nodeSpecLeft = Nothing
     , nodeSpecTop = Nothing
     , nodeSpecWidth = Nothing
@@ -426,6 +431,8 @@ appendNodeSpec first second =
         composeStyleUpdates
           (nodeSpecStyleUpdate first)
           (nodeSpecStyleUpdate second)
+    , nodeSpecContent =
+        preferLater (nodeSpecContent first) (nodeSpecContent second)
     , nodeSpecLeft = preferLater (nodeSpecLeft first) (nodeSpecLeft second)
     , nodeSpecTop = preferLater (nodeSpecTop first) (nodeSpecTop second)
     , nodeSpecWidth = preferLater (nodeSpecWidth first) (nodeSpecWidth second)
@@ -1136,6 +1143,14 @@ bold = fontWeight FontWeightBold
 centerText :: NodeRecipe ()
 centerText = textAlign TextAlignCenter
 
+content :: P.String -> NodeRecipe ()
+content value =
+  setNodeSpecWith (\spec -> spec {nodeSpecContent = Just (V.ContentText value)})
+
+contentDebug :: NodeRecipe ()
+contentDebug =
+  setNodeSpecWith (\spec -> spec {nodeSpecContent = Just V.ContentDebug})
+
 noWrap :: NodeRecipe ()
 noWrap = whiteSpace WhiteSpaceNoWrap
 
@@ -1232,6 +1247,34 @@ node recipe =
         (V.finalizeStyleWith (nodeSpecStyleUpdate spec))
         (layoutNode spec)
 
+nodePatch :: NodeRecipe () -> V.NodePatch
+nodePatch recipe =
+  case recipe of
+    NodeRecipe () spec ->
+      V.NodePatch
+        { V.nodePatchStyleUpdate = nodeSpecStyleUpdate spec
+        , V.nodePatchContent = nodeSpecContent spec
+        , V.nodePatchLeft = P.fmap coordPin (nodeSpecLeft spec)
+        , V.nodePatchTop = P.fmap coordPin (nodeSpecTop spec)
+        , V.nodePatchWidth = P.fmap spanPin (nodeSpecWidth spec)
+        , V.nodePatchHeight = P.fmap spanPin (nodeSpecHeight spec)
+        , V.nodePatchRight = P.fmap coordPin (nodeSpecRight spec)
+        , V.nodePatchBottom = P.fmap coordPin (nodeSpecBottom spec)
+        , V.nodePatchX = P.fmap coordPin (nodeSpecX spec)
+        , V.nodePatchY = P.fmap coordPin (nodeSpecY spec)
+        , V.nodePatchRequirements = nodeSpecRequirements spec
+        }
+
+coordPin :: Coord -> V.LayoutPin
+coordPin value =
+  case value of
+    Coord expr constraints -> V.LayoutPin expr constraints
+
+spanPin :: Span -> V.LayoutPin
+spanPin value =
+  case value of
+    Span expr constraints -> V.LayoutPin expr constraints
+
 visualize :: VisualizationBuilder () -> MatchSpec
 visualize builder =
   case builder of
@@ -1240,66 +1283,47 @@ visualize builder =
 layout :: ViewLayout () -> VisualizationBuilder ()
 layout body = VisualizationBuilder () (matchGlobalLayout body)
 
-class NodeMatchBody body tag | body -> tag where
-  nodeMatchDefinition :: body -> P.Int -> NodeDefinition tag
-
-instance NodeMatchBody (NodeDefinition tag) tag where
-  nodeMatchDefinition definition _index = definition
-
-instance NodeMatchBody (P.Int -> NodeDefinition tag) tag where
-  nodeMatchDefinition makeDefinition = makeDefinition
-
-class MatchRule selector body | body -> selector where
-  match :: selector -> body -> VisualizationBuilder ()
-
-instance C.Traceable tag => MatchRule Pattern (NodeDefinition tag) where
-  match pattern' body =
-    VisualizationBuilder
-      ()
-      (matchPatternNode pattern' (nodeMatchDefinition body))
-
-instance C.Traceable tag => MatchRule Pattern (P.Int -> NodeDefinition tag) where
-  match pattern' body =
-    VisualizationBuilder
-      ()
-      (matchPatternNode pattern' (nodeMatchDefinition body))
-
-instance MatchRule
-           (Pattern, Pattern)
-           ((MatchedNode, MatchedNode) -> ViewLayout ()) where
-  match patterns body =
-    case patterns of
-      (firstPattern, secondPattern) ->
-        VisualizationBuilder
-          ()
-          (matchPatternPair firstPattern secondPattern (P.curry body))
-
-class MatchAsRule selector alias body | body -> selector alias where
-  matchAs :: selector -> alias -> body -> VisualizationBuilder ()
-
-instance C.Traceable tag => MatchAsRule Pattern Pattern (NodeDefinition tag) where
-  matchAs pattern' alias body =
-    VisualizationBuilder
-      ()
-      (matchPatternNodeAs
-         pattern'
-         (V.patternKey alias)
-         (nodeMatchDefinition body))
+class MatchRule tag selector result | tag selector -> result where
+  match :: selector -> result
 
 instance C.Traceable tag =>
-         MatchAsRule Pattern Pattern (P.Int -> NodeDefinition tag) where
-  matchAs pattern' alias body =
+         MatchRule tag (NodeRecipe ()) (VisualizationBuilder ()) where
+  match recipe =
+    VisualizationBuilder () (matchTagNode @tag (\_index -> nodePatch recipe))
+
+instance C.Traceable tag =>
+         MatchRule tag Pattern (NodeRecipe () -> VisualizationBuilder ()) where
+  match pattern' recipe =
     VisualizationBuilder
       ()
-      (matchPatternNodeAs
-         pattern'
-         (V.patternKey alias)
-         (nodeMatchDefinition body))
+      (matchPatternNode @tag pattern' (\_index -> nodePatch recipe))
+
+part ::
+     forall tag. C.Traceable tag
+  => P.String
+  -> Pattern
+  -> NodeRecipe ()
+  -> VisualizationBuilder ()
+part nodeKey pattern' recipe =
+  VisualizationBuilder
+    ()
+    (matchPatternPartNode @tag pattern' nodeKey (\_index -> nodePatch recipe))
+
+whereFacts :: Pattern -> Pattern
+whereFacts pattern' = pattern'
 
 matchLayout ::
      Pattern -> (MatchedNode -> ViewLayout ()) -> VisualizationBuilder ()
 matchLayout pattern' body =
   VisualizationBuilder () (matchPatternLayout pattern' body)
+
+matchPair ::
+     Pattern
+  -> Pattern
+  -> (MatchedNode -> MatchedNode -> ViewLayout ())
+  -> VisualizationBuilder ()
+matchPair firstPattern secondPattern body =
+  VisualizationBuilder () (matchPatternPair firstPattern secondPattern body)
 
 pair :: Pattern -> Pattern -> Pattern -> PairPattern
 pair firstPattern secondPattern name =

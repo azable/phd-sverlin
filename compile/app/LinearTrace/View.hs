@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes    #-}
 {-# LANGUAGE DataKinds              #-}
 {-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances      #-}
@@ -59,14 +60,20 @@ module LinearTrace.View
   , matchedBottom
   , matchedWidth
   , matchedHeight
+  , ContentMode(..)
+  , LayoutPin(..)
+  , NodePatch(..)
+  , emptyNodePatch
+  , appendNodePatch
   , MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
   , matchSpecFromList
+  , matchTagNode
   , matchNode
-  , matchNodeAs
   , matchPatternNode
-  , matchPatternNodeAs
+  , matchPartNode
+  , matchPatternPartNode
   , matchPairAdjacent
   , matchGlobalLayout
   , matchPatternLayout
@@ -483,47 +490,6 @@ firstJust values =
     Nothing:rest -> firstJust rest
     Just value:_ -> Just value
 
-instantiatePattern :: Pattern -> PatternBindings -> Maybe Query
-instantiatePattern pattern' bindings =
-  case pattern' of
-    Pattern terms ->
-      case traverseMaybe patternTermToQueryTerm terms bindings of
-        Nothing          -> Nothing
-        Just queryTerms' -> Just (Query (canonicalTerms queryTerms'))
-
-patternTermToQueryTerm :: PatternTerm -> PatternBindings -> Maybe QueryTerm
-patternTermToQueryTerm term bindings =
-  case term of
-    PatternTerm name value ->
-      case value of
-        PatternAtom -> Just (QueryTerm name QueryAtom)
-        PatternIntValue intPattern ->
-          case resolvePatternInt intPattern bindings of
-            Nothing     -> Nothing
-            Just value' -> Just (QueryTerm name (QueryInt value'))
-
-resolvePatternInt :: PatternInt -> PatternBindings -> Maybe P.Int
-resolvePatternInt intPattern bindings =
-  case intPattern of
-    PatternIntConst value -> Just value
-    PatternIntVar name -> lookupPatternBinding name bindings
-    PatternIntAdd base offset ->
-      case resolvePatternInt base bindings of
-        Nothing    -> Nothing
-        Just value -> Just (value P.+ offset)
-
-traverseMaybe :: (a -> b -> Maybe c) -> [a] -> b -> Maybe [c]
-traverseMaybe action values context =
-  case values of
-    [] -> Just []
-    value:rest ->
-      case action value context of
-        Nothing -> Nothing
-        Just mapped ->
-          case traverseMaybe action rest context of
-            Nothing         -> Nothing
-            Just mappedRest -> Just (mapped : mappedRest)
-
 canonicalPatternTerms :: [PatternTerm] -> [PatternTerm]
 canonicalPatternTerms terms = dedupePatternTerms (sortPatternTerms terms)
 
@@ -615,22 +581,106 @@ pairPatternKey pattern' =
     ++ "."
     ++ safeKey (pairName pattern')
 
-data MatchSpec =
-  MatchSpec [SomeMatch] [LayoutRule]
+data ContentMode
+  = ContentEmpty
+  | ContentDebug
+  | ContentText P.String
+  deriving (P.Eq, P.Show)
 
-data SomeMatch where
-  SomeMatch
+data LayoutPin =
+  LayoutPin LayoutExpr [Constraint]
+
+data NodePatch = NodePatch
+  { nodePatchStyleUpdate  :: Style -> Style
+  , nodePatchContent      :: Maybe ContentMode
+  , nodePatchLeft         :: Maybe LayoutPin
+  , nodePatchTop          :: Maybe LayoutPin
+  , nodePatchWidth        :: Maybe LayoutPin
+  , nodePatchHeight       :: Maybe LayoutPin
+  , nodePatchRight        :: Maybe LayoutPin
+  , nodePatchBottom       :: Maybe LayoutPin
+  , nodePatchX            :: Maybe LayoutPin
+  , nodePatchY            :: Maybe LayoutPin
+  , nodePatchRequirements :: [ViewBuilder ()]
+  }
+
+emptyNodePatch :: NodePatch
+emptyNodePatch =
+  NodePatch
+    { nodePatchStyleUpdate = P.id
+    , nodePatchContent = Nothing
+    , nodePatchLeft = Nothing
+    , nodePatchTop = Nothing
+    , nodePatchWidth = Nothing
+    , nodePatchHeight = Nothing
+    , nodePatchRight = Nothing
+    , nodePatchBottom = Nothing
+    , nodePatchX = Nothing
+    , nodePatchY = Nothing
+    , nodePatchRequirements = []
+    }
+
+appendNodePatch :: NodePatch -> NodePatch -> NodePatch
+appendNodePatch first second =
+  NodePatch
+    { nodePatchStyleUpdate =
+        composeStyleUpdates
+          (nodePatchStyleUpdate first)
+          (nodePatchStyleUpdate second)
+    , nodePatchContent =
+        preferLater (nodePatchContent first) (nodePatchContent second)
+    , nodePatchLeft = preferLater (nodePatchLeft first) (nodePatchLeft second)
+    , nodePatchTop = preferLater (nodePatchTop first) (nodePatchTop second)
+    , nodePatchWidth =
+        preferLater (nodePatchWidth first) (nodePatchWidth second)
+    , nodePatchHeight =
+        preferLater (nodePatchHeight first) (nodePatchHeight second)
+    , nodePatchRight =
+        preferLater (nodePatchRight first) (nodePatchRight second)
+    , nodePatchBottom =
+        preferLater (nodePatchBottom first) (nodePatchBottom second)
+    , nodePatchX = preferLater (nodePatchX first) (nodePatchX second)
+    , nodePatchY = preferLater (nodePatchY first) (nodePatchY second)
+    , nodePatchRequirements =
+        nodePatchRequirements first P.++ nodePatchRequirements second
+    }
+
+composeStyleUpdates :: (Style -> Style) -> (Style -> Style) -> Style -> Style
+composeStyleUpdates first second style0 = second (first style0)
+
+preferLater :: Maybe a -> Maybe a -> Maybe a
+preferLater earlier later =
+  case later of
+    Nothing -> earlier
+    Just _  -> later
+
+data MatchSpec =
+  MatchSpec [NodeRule] [PartRule] [LayoutRule]
+
+data NodeRule where
+  TagNodeRule
+    :: C.Traceable tag => Proxy tag -> (P.Int -> NodePatch) -> NodeRule
+  QueryNodeRule
+    :: C.Traceable tag => Proxy tag -> Query -> (P.Int -> NodePatch) -> NodeRule
+  PatternNodeRule
+    :: C.Traceable tag=> Proxy tag
+    -> Pattern
+    -> (P.Int -> NodePatch)
+    -> NodeRule
+
+data PartRule where
+  QueryPartRule
     :: C.Traceable tag=> Proxy tag
     -> Query
     -> P.String
-    -> (P.Int -> ViewDefinition tag used)
-    -> SomeMatch
-  SomePatternMatch
+    -> (P.Int -> NodePatch)
+    -> PartRule
+  PatternPartRule
     :: C.Traceable tag=> Proxy tag
     -> Pattern
     -> P.String
-    -> (P.Int -> ViewDefinition tag used)
-    -> SomeMatch
+    -> (P.Int -> NodePatch)
+    -> PartRule
 
 data LayoutRule where
   GlobalLayout :: ViewBuilder () -> LayoutRule
@@ -642,19 +692,19 @@ data LayoutRule where
     -> (MatchedNode -> MatchedNode -> ViewBuilder ())
     -> LayoutRule
 
-data MatchedBlock tag =
-  MatchedBlock Query (BlockView tag)
-
 emptyMatchSpec :: MatchSpec
-emptyMatchSpec = MatchSpec [] []
+emptyMatchSpec = MatchSpec [] [] []
 
 matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
 matchSpecAppend lhs rhs =
   case lhs of
-    MatchSpec leftMatches leftPairs ->
+    MatchSpec leftNodes leftParts leftLayouts ->
       case rhs of
-        MatchSpec rightMatches rightPairs ->
-          MatchSpec (leftMatches P.++ rightMatches) (leftPairs P.++ rightPairs)
+        MatchSpec rightNodes rightParts rightLayouts ->
+          MatchSpec
+            (leftNodes P.++ rightNodes)
+            (leftParts P.++ rightParts)
+            (leftLayouts P.++ rightLayouts)
 
 matchSpecFromList :: [MatchSpec] -> MatchSpec
 matchSpecFromList specs =
@@ -662,56 +712,62 @@ matchSpecFromList specs =
     []        -> emptyMatchSpec
     spec:rest -> matchSpecAppend spec (matchSpecFromList rest)
 
-matchNode ::
-     forall tag used. C.Traceable tag
-  => Query
-  -> (P.Int -> ViewDefinition tag used)
+matchTagNode ::
+     forall tag. C.Traceable tag
+  => (P.Int -> NodePatch)
   -> MatchSpec
-matchNode query = matchNodeAs query (queryKey query)
+matchTagNode makePatch =
+  MatchSpec [TagNodeRule (Proxy :: Proxy tag) makePatch] [] []
 
-matchNodeAs ::
-     forall tag used. C.Traceable tag
+matchNode ::
+     forall tag. C.Traceable tag
   => Query
-  -> P.String
-  -> (P.Int -> ViewDefinition tag used)
+  -> (P.Int -> NodePatch)
   -> MatchSpec
-matchNodeAs query nodeKey makeDefinition =
-  MatchSpec
-    [SomeMatch (Proxy :: Proxy tag) query (safeKey nodeKey) makeDefinition]
-    []
+matchNode query makePatch =
+  MatchSpec [QueryNodeRule (Proxy :: Proxy tag) query makePatch] [] []
 
 matchPatternNode ::
-     forall tag used. C.Traceable tag
+     forall tag. C.Traceable tag
   => Pattern
-  -> (P.Int -> ViewDefinition tag used)
+  -> (P.Int -> NodePatch)
   -> MatchSpec
-matchPatternNode pattern' = matchPatternNodeAs pattern' (patternKey pattern')
+matchPatternNode pattern' makePatch =
+  MatchSpec [PatternNodeRule (Proxy :: Proxy tag) pattern' makePatch] [] []
 
-matchPatternNodeAs ::
-     forall tag used. C.Traceable tag
+matchPartNode ::
+     forall tag. C.Traceable tag
+  => Query
+  -> P.String
+  -> (P.Int -> NodePatch)
+  -> MatchSpec
+matchPartNode query nodeKey makePatch =
+  MatchSpec
+    []
+    [QueryPartRule (Proxy :: Proxy tag) query (safeKey nodeKey) makePatch]
+    []
+
+matchPatternPartNode ::
+     forall tag. C.Traceable tag
   => Pattern
   -> P.String
-  -> (P.Int -> ViewDefinition tag used)
+  -> (P.Int -> NodePatch)
   -> MatchSpec
-matchPatternNodeAs pattern' nodeKey makeDefinition =
+matchPatternPartNode pattern' nodeKey makePatch =
   MatchSpec
-    [ SomePatternMatch
-        (Proxy :: Proxy tag)
-        pattern'
-        (safeKey nodeKey)
-        makeDefinition
-    ]
+    []
+    [PatternPartRule (Proxy :: Proxy tag) pattern' (safeKey nodeKey) makePatch]
     []
 
 matchPairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> MatchSpec
 matchPairAdjacent pattern' gap constraints =
-  MatchSpec [] [PairAdjacent pattern' gap constraints]
+  MatchSpec [] [] [PairAdjacent pattern' gap constraints]
 
 matchGlobalLayout :: ViewBuilder () -> MatchSpec
-matchGlobalLayout body = MatchSpec [] [GlobalLayout body]
+matchGlobalLayout body = MatchSpec [] [] [GlobalLayout body]
 
 matchPatternLayout :: Pattern -> (MatchedNode -> ViewBuilder ()) -> MatchSpec
-matchPatternLayout pattern' body = MatchSpec [] [PatternLayout pattern' body]
+matchPatternLayout pattern' body = MatchSpec [] [] [PatternLayout pattern' body]
 
 matchPatternPair ::
      Pattern
@@ -719,7 +775,7 @@ matchPatternPair ::
   -> (MatchedNode -> MatchedNode -> ViewBuilder ())
   -> MatchSpec
 matchPatternPair firstPattern secondPattern body =
-  MatchSpec [] [PairPatternLayout firstPattern secondPattern body]
+  MatchSpec [] [] [PairPatternLayout firstPattern secondPattern body]
 
 --------------------------------------------------------------------------------
 -- Block views
@@ -727,6 +783,7 @@ matchPatternPair firstPattern secondPattern body =
 data BlockView tag = BlockView
   { blockRef      :: C.BlockRef tag
   , blockLabel    :: C.PayloadView
+  , blockContent  :: ContentMode
   , blockFacts    :: C.Facts
   , blockNodeKey  :: P.String
   , blockPieceKey :: P.String
@@ -796,6 +853,7 @@ data ViewGraph = ViewGraph
 data MaterializedBlockView tag = MaterializedBlockView
   { materializedBlockRef      :: C.BlockRef tag
   , materializedBlockLabel    :: C.PayloadView
+  , materializedBlockContent  :: P.String
   , materializedBlockNodeKey  :: P.String
   , materializedBlockPieceKey :: P.String
   , materializedBlockStyle    :: MaterializedStyle
@@ -811,9 +869,17 @@ materializeBlockView solution block =
     (MaterializedBlockView
        (blockRef block)
        (blockLabel block)
+       (materializeContent (blockContent block) (blockLabel block))
        (blockNodeKey block)
        (blockPieceKey block))
     (materializeStyle solution (blockStyle block))
+
+materializeContent :: ContentMode -> C.PayloadView -> P.String
+materializeContent contentMode payloadView =
+  case contentMode of
+    ContentEmpty      -> ""
+    ContentDebug      -> C.payloadContent payloadView
+    ContentText value -> value
 
 materializeViewNode :: Solution -> ViewNode -> Maybe MaterializedViewNode
 materializeViewNode solution node =
@@ -2150,144 +2216,174 @@ defineMatchedBlock ::
 defineMatchedBlock block = do
   Ur env <- askViewEnv
   case viewMatchSpec env of
-    MatchSpec matches _ -> do
-      matched <- defineMatchedBlockFrom 0 block matches
-      case unsafeUr matched of
-        Ur matched' -> constrainImplicitParents matched'
+    MatchSpec nodeRules partRules _ -> do
+      case matchedNodePatch block nodeRules of
+        Nothing    -> return ()
+        Just patch -> definePatchedBlock patch block
+      defineMatchedParts block partRules
 
-defineMatchedBlockFrom ::
+matchedNodePatch ::
+     forall tag. C.Traceable tag
+  => BlockView tag
+  -> [NodeRule]
+  -> Maybe NodePatch
+matchedNodePatch block rules =
+  foldNodePatches (matchingNodePatches 0 block rules)
+
+matchingNodePatches ::
      forall tag. C.Traceable tag
   => P.Int
   -> BlockView tag
-  -> [SomeMatch]
-  -> ViewBuilder [MatchedBlock tag]
-defineMatchedBlockFrom _ _ [] = return []
-defineMatchedBlockFrom pieceIndex block (match':rest) = do
-  matched <- defineMatchedPiece pieceIndex block match'
-  {- HLINT ignore "Use if" -}
-  case matched of
-    Nothing -> defineMatchedBlockFrom pieceIndex block rest
-    Just matchedBlock -> do
-      matchedRest <- defineMatchedBlockFrom (pieceIndex P.+ 1) block rest
-      return (matchedBlock : matchedRest)
+  -> [NodeRule]
+  -> [NodePatch]
+matchingNodePatches _ _ [] = []
+matchingNodePatches matchIndex block (rule:rest) =
+  case nodeRulePatch matchIndex block rule of
+    Nothing    -> matchingNodePatches matchIndex block rest
+    Just patch -> patch : matchingNodePatches (matchIndex P.+ 1) block rest
 
-defineMatchedPiece ::
+nodeRulePatch ::
      forall sourceTag. C.Traceable sourceTag
   => P.Int
   -> BlockView sourceTag
-  -> SomeMatch
-  -> ViewBuilder (Maybe (MatchedBlock sourceTag))
-defineMatchedPiece pieceIndex block match' =
-  case match' of
-    SomeMatch (_ :: Proxy matchedTag) query nodeKey makeDefinition ->
+  -> NodeRule
+  -> Maybe NodePatch
+nodeRulePatch matchIndex block rule =
+  case rule of
+    TagNodeRule (_ :: Proxy matchedTag) makePatch ->
       case eqT @sourceTag @matchedTag of
-        Nothing -> return Nothing
+        Nothing   -> Nothing
+        Just Refl -> Just (makePatch matchIndex)
+    QueryNodeRule (_ :: Proxy matchedTag) query makePatch ->
+      case eqT @sourceTag @matchedTag of
+        Nothing -> Nothing
         Just Refl ->
           case queryMatches query (blockFacts block) of
-            True -> do
-              let pieceBlock = matchedPieceBlock pieceIndex nodeKey block
-              matchedBlock <-
-                defineMatchedPieceBlock (makeDefinition pieceIndex) pieceBlock
-              return (Just (MatchedBlock query matchedBlock))
-            False -> return Nothing
-    SomePatternMatch (_ :: Proxy matchedTag) pattern' nodeKey makeDefinition ->
+            True  -> Just (makePatch matchIndex)
+            False -> Nothing
+    PatternNodeRule (_ :: Proxy matchedTag) pattern' makePatch ->
       case eqT @sourceTag @matchedTag of
-        Nothing -> return Nothing
+        Nothing -> Nothing
         Just Refl ->
           case patternMatches pattern' (blockFacts block) of
-            Nothing -> return Nothing
+            Nothing -> Nothing
             Just bindings ->
-              case instantiatePattern pattern' bindings of
-                Nothing -> return Nothing
-                Just query -> do
-                  let matchedIndex = patternBindingValue bindings pieceIndex
-                      pieceBlock = matchedPieceBlock pieceIndex nodeKey block
-                  matchedBlock <-
-                    defineMatchedPieceBlock
-                      (makeDefinition matchedIndex)
-                      pieceBlock
-                  return (Just (MatchedBlock query matchedBlock))
+              Just (makePatch (patternBindingValue bindings matchIndex))
 
-defineMatchedPieceBlock ::
-     forall tag used.
-     ViewDefinition tag used %1 -> BlockView tag -> ViewBuilder (BlockView tag)
-defineMatchedPieceBlock definition block0 =
-  case definition of
-    ViewDefinition styleDefinition viewDefinition -> do
-      Ur env <- askViewEnv
-      let block =
-            block0
-              { blockStyle =
-                  styleDefinition (StyleDraft (Ur (blockStyle block0)))
-              }
-      registerInitialStyleBounds (blockStyle block)
-      constrainStyle (blockStyle block)
-      ensureRaw (S.num 0 S.@<=@ left block)
-      ensureRaw (S.num 0 S.@<=@ top block)
-      ensureRaw (right block S.@<=@ canvasWidth env)
-      ensureRaw (bottom block S.@<=@ canvasHeight env)
-      emitViewNode (BlockViewNode block)
-      rendered <- viewDefinition (Visual block)
-      complete rendered
-      return block
+foldNodePatches :: [NodePatch] -> Maybe NodePatch
+foldNodePatches patches =
+  case patches of
+    []         -> Nothing
+    patch:rest -> Just (foldNodePatchesFrom patch rest)
 
-constrainImplicitParents :: forall tag. [MatchedBlock tag] -> ViewBuilder ()
-constrainImplicitParents matched =
-  traverseView_ (constrainImplicitParent matched) matched
+foldNodePatchesFrom :: NodePatch -> [NodePatch] -> NodePatch
+foldNodePatchesFrom current patches =
+  case patches of
+    []         -> current
+    patch:rest -> foldNodePatchesFrom (appendNodePatch current patch) rest
 
-constrainImplicitParent ::
-     forall tag. [MatchedBlock tag] -> MatchedBlock tag -> ViewBuilder ()
-constrainImplicitParent matched parent =
-  case parent of
-    MatchedBlock parentQuery parentBlock ->
-      let children = immediateMatchedChildren parentQuery matched
-       in case children of
-            [] -> return ()
-            _ -> do
-              traverseView_ (constrainParentContains parentBlock) children
-              encourage (width parentBlock)
-              encourage (height parentBlock)
+defineMatchedParts ::
+     forall tag. C.Traceable tag
+  => BlockView tag
+  -> [PartRule]
+  -> ViewBuilder ()
+defineMatchedParts = defineMatchedPartsFrom 0
 
-immediateMatchedChildren :: Query -> [MatchedBlock tag] -> [BlockView tag]
-immediateMatchedChildren parentQuery matched =
-  case matched of
-    [] -> []
-    MatchedBlock childQuery childBlock:rest ->
-      case isImmediateMatchedChild childQuery parentQuery matched of
-        True  -> childBlock : immediateMatchedChildren parentQuery rest
-        False -> immediateMatchedChildren parentQuery rest
+defineMatchedPartsFrom ::
+     forall tag. C.Traceable tag
+  => P.Int
+  -> BlockView tag
+  -> [PartRule]
+  -> ViewBuilder ()
+defineMatchedPartsFrom _ _ [] = return ()
+defineMatchedPartsFrom matchIndex block (rule:rest) =
+  case partRuleMatch matchIndex block rule of
+    Nothing -> defineMatchedPartsFrom matchIndex block rest
+    Just matched -> do
+      case matched of
+        MatchedPart nodeKey patch -> do
+          definePatchedBlock patch (matchedPieceBlock matchIndex nodeKey block)
+          defineMatchedPartsFrom (matchIndex P.+ 1) block rest
 
-isImmediateMatchedChild :: Query -> Query -> [MatchedBlock tag] -> P.Bool
-isImmediateMatchedChild childQuery parentQuery matched =
-  queryStrictSubset childQuery parentQuery
-    P.&& P.not (hasIntermediateQuery childQuery parentQuery matched)
+data MatchedPart =
+  MatchedPart P.String NodePatch
 
-hasIntermediateQuery :: Query -> Query -> [MatchedBlock tag] -> P.Bool
-hasIntermediateQuery childQuery parentQuery matched =
-  case matched of
-    [] -> False
-    MatchedBlock middleQuery _block:rest ->
-      (queryStrictSubset childQuery middleQuery
-         P.&& queryStrictSubset middleQuery parentQuery)
-        P.|| hasIntermediateQuery childQuery parentQuery rest
+partRuleMatch ::
+     forall sourceTag. C.Traceable sourceTag
+  => P.Int
+  -> BlockView sourceTag
+  -> PartRule
+  -> Maybe MatchedPart
+partRuleMatch matchIndex block rule =
+  case rule of
+    QueryPartRule (_ :: Proxy matchedTag) query nodeKey makePatch ->
+      case eqT @sourceTag @matchedTag of
+        Nothing -> Nothing
+        Just Refl ->
+          case queryMatches query (blockFacts block) of
+            True  -> Just (MatchedPart nodeKey (makePatch matchIndex))
+            False -> Nothing
+    PatternPartRule (_ :: Proxy matchedTag) pattern' nodeKey makePatch ->
+      case eqT @sourceTag @matchedTag of
+        Nothing -> Nothing
+        Just Refl ->
+          case patternMatches pattern' (blockFacts block) of
+            Nothing -> Nothing
+            Just bindings ->
+              Just
+                (MatchedPart
+                   nodeKey
+                   (makePatch (patternBindingValue bindings matchIndex)))
 
-queryStrictSubset :: Query -> Query -> P.Bool
-queryStrictSubset child parent = child P./= parent P.&& querySubset child parent
+definePatchedBlock :: NodePatch -> BlockView tag -> ViewBuilder ()
+definePatchedBlock patch block0 = do
+  Ur env <- askViewEnv
+  let block =
+        block0
+          { blockStyle = nodePatchStyleUpdate patch (blockStyle block0)
+          , blockContent =
+              case nodePatchContent patch of
+                Nothing      -> blockContent block0
+                Just content -> content
+          }
+  registerInitialStyleBounds (blockStyle block)
+  constrainStyle (blockStyle block)
+  ensureRaw (S.num 0 S.@<=@ left block)
+  ensureRaw (S.num 0 S.@<=@ top block)
+  ensureRaw (right block S.@<=@ canvasWidth env)
+  ensureRaw (bottom block S.@<=@ canvasHeight env)
+  constrainPatchGeometry patch block
+  runPatchRequirements (nodePatchRequirements patch)
+  emitViewNode (BlockViewNode block)
+  return ()
 
-querySubset :: Query -> Query -> P.Bool
-querySubset child parent = P.all (`P.elem` queryTerms parent) (queryTerms child)
+runPatchRequirements :: [ViewBuilder ()] -> ViewBuilder ()
+runPatchRequirements actions =
+  case actions of
+    [] -> return ()
+    action:rest -> do
+      action
+      runPatchRequirements rest
 
-queryTerms :: Query -> [QueryTerm]
-queryTerms query =
-  case query of
-    Query terms -> canonicalTerms terms
+constrainPatchGeometry :: NodePatch -> BlockView tag -> ViewBuilder ()
+constrainPatchGeometry patch block = do
+  constrainMaybePin (left block) (nodePatchLeft patch)
+  constrainMaybePin (top block) (nodePatchTop patch)
+  constrainMaybePin (width block) (nodePatchWidth patch)
+  constrainMaybePin (height block) (nodePatchHeight patch)
+  constrainMaybePin (right block) (nodePatchRight patch)
+  constrainMaybePin (bottom block) (nodePatchBottom patch)
+  constrainMaybePin (centerX block) (nodePatchX patch)
+  constrainMaybePin (centerY block) (nodePatchY patch)
 
-constrainParentContains :: BlockView tag -> BlockView tag -> ViewBuilder ()
-constrainParentContains parentBlock childBlock = do
-  ensureRaw (left parentBlock S.@<=@ left childBlock)
-  ensureRaw (right childBlock S.@<=@ right parentBlock)
-  ensureRaw (top parentBlock S.@<=@ top childBlock)
-  ensureRaw (bottom childBlock S.@<=@ bottom parentBlock)
+constrainMaybePin :: LayoutExpr -> Maybe LayoutPin -> ViewBuilder ()
+constrainMaybePin expr maybePin =
+  case maybePin of
+    Nothing -> return ()
+    Just pin ->
+      case pin of
+        LayoutPin target constraints ->
+          ensureRaw (S.All (constraints P.++ [expr S.@==@ target]))
 
 matchedPieceBlock :: P.Int -> P.String -> BlockView tag -> BlockView tag
 matchedPieceBlock pieceIndex nodeKey block =
@@ -2840,7 +2936,7 @@ data AnyBlockView where
 matchSpecConstraints :: MatchSpec -> [ViewNode] -> [Constraint]
 matchSpecConstraints spec nodes =
   case spec of
-    MatchSpec _ layoutRules ->
+    MatchSpec _ _ layoutRules ->
       P.concatMap (layoutRuleConstraints (viewNodeBlocks nodes)) layoutRules
 
 viewNodeBlocks :: [ViewNode] -> [AnyBlockView]
@@ -3073,6 +3169,7 @@ blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView facts) =
   BlockView
     { blockRef = ref
     , blockLabel = payloadView
+    , blockContent = ContentEmpty
     , blockFacts = facts
     , blockNodeKey = defaultNodeKey
     , blockPieceKey = defaultPieceKey

@@ -503,7 +503,7 @@ compileMaterializedBlock block =
         { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
         , renderNodeKey = V.materializedBlockNodeKey block
         , renderPieceKey = V.materializedBlockPieceKey block
-        , renderContent = payloadViewContent payload
+        , renderContent = V.materializedBlockContent block
         , renderKind = payloadViewKind payload
         , renderStyle = compileMaterializedStyle style
         }
@@ -544,18 +544,12 @@ requireBlocksByRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderBlock]
 requireBlocksByRef blocksById ref =
   case Map.lookup (blockIdOfRef ref) blocksById of
     Just blocks -> pure blocks
-    Nothing ->
-      lift (Left ("no materialized block for B" ++ show (blockIdOfRef ref)))
+    Nothing     -> pure []
 
 blockIdOfRef :: C.BlockRef tag -> C.BlockId
 blockIdOfRef ref =
   case ref of
     C.BlockRef blockId -> blockId
-
-payloadViewContent :: C.PayloadView -> String
-payloadViewContent payloadView =
-  case payloadView of
-    C.PayloadView _kind content -> content
 
 payloadViewKind :: C.PayloadView -> String
 payloadViewKind payloadView =
