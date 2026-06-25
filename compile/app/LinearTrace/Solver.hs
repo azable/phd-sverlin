@@ -42,6 +42,7 @@ module LinearTrace.Solver
   , (@>=@)
   , minimize
   , flattenConstraint
+  , flattenConstraints
   , -- * Symbolic vector containers
     Vec2(..)
   , Vec3(..)
@@ -74,6 +75,7 @@ import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Proxy                 (Proxy (..))
+import qualified Data.Set                   as Set
 import           GHC.TypeLits               (KnownSymbol, symbolVal)
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
@@ -216,12 +218,12 @@ data RawExpr
   | EAbs RawExpr
   | ESignum RawExpr
   | EPow RawExpr RawExpr
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 data Expr ty = Expr
   { exprType :: ScalarType
   , exprRaw  :: RawExpr
-  } deriving (Eq, Show)
+  } deriving (Eq, Ord, Show)
 
 var ::
      forall ty. SymbolicType ty
@@ -435,7 +437,7 @@ data Constraint
   | LessOrEqual RawExpr RawExpr
   | Minimize RawExpr
   | All [Constraint]
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 instance Semigroup Constraint where
   lhs <> rhs = All (flattenConstraint lhs ++ flattenConstraint rhs)
@@ -489,6 +491,73 @@ flattenConstraint constraint =
   case constraint of
     All constraints -> concatMap flattenConstraint constraints
     _               -> [constraint]
+
+flattenConstraints :: [Constraint] -> [Constraint]
+flattenConstraints =
+  dedupeConstraints
+    . concatMap (filter (not . redundantConstraint) . flattenConstraint)
+
+dedupeConstraints :: [Constraint] -> [Constraint]
+dedupeConstraints = go Set.empty
+  where
+    go _ [] = []
+    go seen (constraint:rest)
+      | Set.member constraint seen = go seen rest
+      | otherwise = constraint : go (Set.insert constraint seen) rest
+
+redundantConstraint :: Constraint -> Bool
+redundantConstraint constraint =
+  case constraint of
+    Equals _ lhs rhs
+      | lhs == rhs -> True
+    LessOrEqual lhs rhs
+      | lhs == rhs -> True
+    _ -> satisfiedConstantConstraint constraint
+
+satisfiedConstantConstraint :: Constraint -> Bool
+satisfiedConstantConstraint constraint =
+  case constraint of
+    Equals ty lhs rhs ->
+      case (constantRawExprValue lhs, constantRawExprValue rhs) of
+        (Just lhsValue, Just rhsValue) -> constantEquals ty lhsValue rhsValue
+        _                              -> False
+    LessOrEqual lhs rhs ->
+      case (constantRawExprValue lhs, constantRawExprValue rhs) of
+        (Just lhsValue, Just rhsValue) -> lhsValue <= rhsValue + equalityEpsilon
+        _                              -> False
+    Minimize _ -> False
+    All _ -> False
+
+constantEquals :: ScalarType -> Double -> Double -> Bool
+constantEquals ty lhs rhs =
+  case typeCircularPeriod ty of
+    Just period
+      | period > 0 ->
+        let nearestTurns = fromInteger (round ((lhs - rhs) / period) :: Integer)
+         in abs (lhs - rhs - period * nearestTurns) <= equalityEpsilon
+    _ -> abs (lhs - rhs) <= equalityEpsilon
+
+equalityEpsilon :: Double
+equalityEpsilon = 1e-9
+
+constantRawExprValue :: RawExpr -> Maybe Double
+constantRawExprValue expr =
+  case expr of
+    EVar _ _      -> Nothing
+    ELit value    -> Just value
+    EAdd lhs rhs  -> binaryConstant (+) lhs rhs
+    ESub lhs rhs  -> binaryConstant (-) lhs rhs
+    EMul lhs rhs  -> binaryConstant (*) lhs rhs
+    EDiv lhs rhs  -> binaryConstant (/) lhs rhs
+    ENeg inner    -> negate <$> constantRawExprValue inner
+    EAbs inner    -> abs <$> constantRawExprValue inner
+    ESignum inner -> signum <$> constantRawExprValue inner
+    EPow base to  -> binaryConstant (**) base to
+
+binaryConstant ::
+     (Double -> Double -> Double) -> RawExpr -> RawExpr -> Maybe Double
+binaryConstant op lhs rhs =
+  op <$> constantRawExprValue lhs <*> constantRawExprValue rhs
 
 minimize :: Expr ty -> Constraint
 minimize (Expr _ objective) = Minimize objective
@@ -713,7 +782,7 @@ compileConstraints :: SolveConfig -> [InitialVar] -> [Constraint] -> NamedCSP
 compileConstraints config initialVars constraints =
   NamedCSP {namedVars = vars, namedCSP = csp}
   where
-    flatConstraints = concatMap flattenConstraint constraints
+    flatConstraints = flattenConstraints constraints
     varTypes =
       mergeVarTypeMaps
         (collectInitialVarTypes initialVars)

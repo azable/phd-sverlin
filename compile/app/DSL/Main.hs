@@ -40,6 +40,10 @@ instance Traceable Match
 
 data Array
 
+data ProbeRow
+
+data ResultRow
+
 sameValue :: Payload Value %1 -> Payload Value %1 -> Payload Match
 sameValue lhsPayload rhsPayload =
   case lhsPayload of
@@ -216,119 +220,119 @@ compareValues targetProbe elementProbe = do
 --------------------------------------------------------------------------------
 visualization :: MatchSpec
 visualization =
-  let half :: Span -> Span
-      half value = value / 2
-      midpoint :: Coord -> Coord -> Coord
-      midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
-   in visualize $ do
-        Variable cell <- variable @Span (by 76)
-        Variable gap <- variable @Span (cell / 2)
-        Variable targetWidth <- variable @Span (cell * 2.1 |+| gap)
-        Variable targetHeight <- variable @Span (cell |+| gap * 0.8)
-        Variable probeSize <- variable @Span (cell * 1.08)
-        Variable matchWidth <- variable @Span (probeSize * 2 |+| gap)
-        Variable matchHeight <- variable @Span (cell * 0.72)
-        Variable matchGap <- variable @Span (gap * 0.7)
-        Variable targetHue <- variable @Hue
-        Variable probeHue <- variable @Hue
-        Variable listHue <- variable @Hue
-        Variable matchHue <- variable @Hue
-        Variable notMatchedHue <- variable @Hue (matchHue + 180)
-        Variable lum <- variable @UnitExpr
-        Variable targetX <- variable @Coord
-        Variable targetY <- variable @Coord
-        Variable probeTargetX <- variable @Coord
-        Variable probeElementX <- variable @Coord
-        Variable matchX <- variable @Coord
-        Variable probeY <- variable @Coord
-        Variable matchY <- variable @Coord
-        constrain $ probeTargetX =| probeSize |+| gap |= probeElementX
-        constrain $ matchX =|= midpoint probeTargetX probeElementX
-        constrain
-          $ probeY =| half probeSize |+| matchGap |+| half matchHeight |= matchY
-        Bound v <- bindContent
-        Bound i <- bindInt
-        Selected valueContent <- select @Value (payload v)
-        Selected result <- select @Match #result
-        Selected resultTrue <- select @Match (#result <> payload True)
-        Selected resultFalse <- select @Match (#result <> payload False)
-        Selected targetSource <- select @Value (#target <> #source)
-        Selected targetProbe <- select @Value (#target <> #probe)
-        Selected probe <- select @Value #probe
-        Selected probeItem <- select @Value (#probe <> #index i)
-        Selected arrayItems <- select @Value #array
-        Selected array <- node @Array arrayItems
-        Selected arrayItem <- select @Value (#array <> #index i)
-        Selected nextArrayItem <- select @Value (#array <> #index #: (i + 1))
-        Selected processedItem <-
-          select @Value (#array <> #processed <> #index i)
-        style valueContent $ do
-          content v
-          centerText
-        style result $ do
-          centerText
-          strokeWidth (cell * 0.05)
-          zIndex 4
-          radius (cell * 0.26)
-          fontSize (cell * 0.34)
-          position (vec2 matchX matchY)
-          width matchWidth
-          height matchHeight
-        style targetSource $ do
-          fill (Hsl targetHue lum 0.84)
-          stroke (Hsl targetHue 0.76 0.36)
-          strokeWidth (cell * 0.05)
-          radius (cell * 0.24)
-          fontSize (cell * 0.62)
-          position (vec2 targetX targetY)
-          width targetWidth
-          height targetHeight
-        style probe $ do
-          fill (Hsl probeHue 0.5 0.88)
-          stroke (Hsl probeHue 0.78 0.34)
-          strokeWidth (cell * 0.035)
-          zIndex 3
-          radius (cell * 0.22)
-          fontSize (cell * 0.56)
-          width probeSize
-          height probeSize
-        style targetProbe $ do
-          position (vec2 probeTargetX probeY)
-        style array $ do
-          fill (Hsl listHue 0.08 0.96)
-          stroke (Hsl listHue 0.32 0.72)
-          strokeWidth (cell * 0.02)
-          radius (cell * 0.24)
-          zIndex 0
-        style arrayItem $ do
-          fill (Hsl listHue (asUnit i * 0.2) 0.92)
-          stroke (Hsl listHue 0.58 0.42)
-          strokeWidth (cell * 0.035)
-          radius (cell * 0.18)
-          fontSize (cell * 0.5)
-          zIndex 2
-          width cell
-          height cell
-        style processedItem $ do
-          fill (Hsl 220 0.04 0.84)
-          stroke (Hsl 220 0.08 0.58)
-          strokeWidth (cell * 0.025)
-          opacity 0.62
-        constrain $ bottom targetSource <| gap |> top arrayItem
-        constrain $ bottom targetSource <| gap |> top probeItem
-        style probeItem $ do
-          position (vec2 probeElementX probeY)
-        constrain $ bottom probeItem <| gap |> top arrayItem
-        constrain $ bottom targetProbe <| matchGap |> top result
-        constrain $ bottom probeItem <| matchGap |> top result
-        constrain $ bottom result <| gap |> top arrayItem
-        constrain $ right arrayItem =| gap * 2 |= left nextArrayItem
-        constrain $ top arrayItem =|= top nextArrayItem
-        style resultTrue $ do
-          content "MATCH"
-          fill (Hsl matchHue 0.6 0.86)
-          stroke (Hsl matchHue 0.82 0.32)
-        style resultFalse $ do
-          content "NO MATCH"
-          fill (Hsl notMatchedHue 0.34 0.9)
-          stroke (Hsl notMatchedHue 0.68 0.34)
+  visualize $ do
+    Variable cell <- variable @Span (by 70)
+    Variable gap <- variable @Span (cell / 2.8)
+    Variable targetWidth <- variable @Span (cell * 2.1 |+| gap)
+    Variable targetHeight <- variable @Span (cell * 0.92)
+    Variable probeSize <- variable @Span (cell * 1.05)
+    Variable resultWidth <- variable @Span (probeSize * 2 |+| gap)
+    Variable resultHeight <- variable @Span (cell * 0.58)
+    Variable rowLeft <- variable @Coord (at 78)
+    Variable targetTop <- variable @Coord (at 44)
+    Variable targetHue <- variable @Hue
+    Variable probeHue <- variable @Hue
+    Variable listHue <- variable @Hue
+    Variable matchHue <- variable @Hue
+    Variable notMatchedHue <- variable @Hue (matchHue + 180)
+    Bound v <- bindContent
+    Bound i <- bindInt
+    Selected valueContent <- select @Value (payload v)
+    Selected result <- select @Match #result
+    Selected resultTrue <- select @Match (#result <> payload True)
+    Selected resultFalse <- select @Match (#result <> payload False)
+    Selected targetSource <- select @Value (#target <> #source)
+    Selected targetProbe <- select @Value (#target <> #probe)
+    Selected probe <- select @Value #probe
+    Selected probes <- node @ProbeRow probe
+    Selected results <- node @ResultRow result
+    Selected probeItem <- select @Value (#probe <> #index i)
+    Selected arrayItems <- select @Value #array
+    Selected array <- node @Array arrayItems
+    Selected arrayItem <- select @Value (#array <> #index i)
+    Selected nextArrayItem <- select @Value (#array <> #index #: (i + 1))
+    Selected processedItem <- select @Value (#array <> #processed <> #index i)
+    style valueContent $ do
+      content v
+      centerText
+    style result $ do
+      centerText
+      strokeWidth (cell * 0.04)
+      zIndex 4
+      radius (cell * 0.18)
+      fontSize (cell * 0.3)
+      width resultWidth
+      height resultHeight
+    style targetSource $ do
+      fill (Hsl targetHue 0.54 0.88)
+      stroke (Hsl targetHue 0.7 0.42)
+      strokeWidth (cell * 0.05)
+      radius (cell * 0.2)
+      fontSize (cell * 0.56)
+      left rowLeft
+      top targetTop
+      width targetWidth
+      height targetHeight
+    style probe $ do
+      fill (Hsl probeHue 0.42 0.9)
+      stroke (Hsl probeHue 0.64 0.38)
+      strokeWidth (cell * 0.04)
+      zIndex 3
+      radius (cell * 0.18)
+      fontSize (cell * 0.48)
+      width probeSize
+      height probeSize
+    style targetProbe $ do
+      left rowLeft
+    style probeItem $ do
+      left (rowLeft + (probeSize |+| gap))
+    style probes $ do
+      fill (Hsl probeHue 0.12 0.96)
+      stroke (Hsl probeHue 0.22 0.74)
+      strokeWidth (cell * 0.025)
+      radius (cell * 0.22)
+      zIndex 1
+    style results $ do
+      fill (Hsl 214 0.08 0.97)
+      stroke (Hsl 214 0.16 0.78)
+      strokeWidth (cell * 0.025)
+      radius (cell * 0.2)
+      zIndex 1
+    style array $ do
+      fill (Hsl listHue 0.12 0.95)
+      stroke (Hsl listHue 0.28 0.68)
+      strokeWidth (cell * 0.025)
+      radius (cell * 0.22)
+      zIndex 0
+    style arrayItem $ do
+      fill (Hsl listHue (0.18 + asUnit i * 0.11) 0.9)
+      stroke (Hsl listHue 0.42 0.46)
+      strokeWidth (cell * 0.04)
+      radius (cell * 0.15)
+      fontSize (cell * 0.48)
+      zIndex 2
+      width cell
+      height cell
+    style processedItem $ do
+      fill (Hsl 218 0.05 0.84)
+      stroke (Hsl 218 0.1 0.58)
+      strokeWidth (cell * 0.025)
+      opacity 0.58
+    constrain $ bottom targetSource =| gap |= top probes
+    constrain $ top probe =|= top probes
+    constrain $ bottom probes =| gap |= top results
+    constrain $ left results =|= left probes
+    constrain $ top result =|= top results
+    constrain $ left result =|= left results
+    constrain $ bottom results =| gap |= top array
+    constrain $ left array =|= left targetSource
+    constrain $ top arrayItem =|= top array
+    constrain $ right arrayItem =| gap |= left nextArrayItem
+    style resultTrue $ do
+      content "MATCH"
+      fill (Hsl matchHue 0.52 0.86)
+      stroke (Hsl matchHue 0.72 0.34)
+    style resultFalse $ do
+      content "NO MATCH"
+      fill (Hsl notMatchedHue 0.34 0.9)
+      stroke (Hsl notMatchedHue 0.56 0.38)

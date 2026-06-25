@@ -285,7 +285,7 @@ data RenderedConstraint = RenderedConstraint
   }
 
 flattenConstraints :: [S.Constraint] -> [S.Constraint]
-flattenConstraints = concatMap S.flattenConstraint
+flattenConstraints = S.flattenConstraints
 
 renderConstraintParts :: S.Constraint -> RenderedConstraint
 renderConstraintParts constraint =

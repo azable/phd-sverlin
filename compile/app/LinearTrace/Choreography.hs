@@ -1355,54 +1355,21 @@ selectedCoordAttr selected =
 
 class VariableValue value where
   namedVariable :: P.String -> value
-  variableSpec :: value -> value -> MatchSpec
-
-layoutVariableSpec ::
-     LayoutExpr -> [S.Constraint] -> LayoutExpr -> [S.Constraint] -> MatchSpec
-layoutVariableSpec lhs lhsConstraints rhs rhsConstraints =
-  matchGlobalLayout
-    (constrainRaw
-       (S.All (lhsConstraints P.++ rhsConstraints P.++ [lhs S.@==@ rhs])))
 
 instance VariableValue Coord where
   namedVariable = globalCoord
-  variableSpec lhs rhs =
-    layoutVariableSpec
-      (coordExpr lhs)
-      (coordConstraints lhs)
-      (coordExpr rhs)
-      (coordConstraints rhs)
 
 instance VariableValue Span where
   namedVariable = globalSpan
-  variableSpec lhs rhs =
-    layoutVariableSpec
-      (spanExpr lhs)
-      (spanConstraints lhs)
-      (spanExpr rhs)
-      (spanConstraints rhs)
 
 instance VariableValue Offset where
   namedVariable name = mkOffset (global name :: LayoutExpr) []
-  variableSpec lhs rhs =
-    layoutVariableSpec
-      (offsetExpr lhs)
-      (offsetConstraints lhs)
-      (offsetExpr rhs)
-      (offsetConstraints rhs)
 
 instance VariableValue Scalar where
   namedVariable name = mkScalar (global name :: LayoutExpr) []
-  variableSpec lhs rhs =
-    layoutVariableSpec
-      (scalarExpr lhs)
-      (scalarConstraints lhs)
-      (scalarExpr rhs)
-      (scalarConstraints rhs)
 
 instance S.SymbolicType ty => VariableValue (S.Expr ty) where
   namedVariable = global
-  variableSpec lhs rhs = matchGlobalLayout (constrainRaw (lhs S.@==@ rhs))
 
 bindInt :: VisualizationBuilder (Bound QueryInt)
 bindInt = freshVisualizationValue "view.bind." (Bound P.. queryIntVar)
@@ -1420,13 +1387,7 @@ instance VariableValue value =>
 
 instance (VariableValue value, arg ~ value) =>
          VariableSource value (arg -> VisualizationBuilder (Variable value)) where
-  variable rhs =
-    freshVisualizationValue
-      "view.var."
-      (\name ->
-         let value = namedVariable name
-          in Variable value) >>= \(Variable value) ->
-      emitVisualizationBuilder (Variable value) (variableSpec value rhs)
+  variable rhs = emptyVisualizationBuilder (Variable rhs)
 
 class StyleTarget target result | target -> result where
   style :: target -> result
