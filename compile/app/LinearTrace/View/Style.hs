@@ -12,6 +12,7 @@ module LinearTrace.View.Style
   , LayoutExpr
   , UnitExpr
   , AngleExpr
+  , Hue
   , HueExpr
   , HslExpr
   , MaterializedHsl
@@ -105,9 +106,11 @@ type UnitExpr = Expr Unit
 
 type AngleExpr = Expr Angle
 
-type HueExpr = Expr Angle
+type Hue = Expr Angle
 
-type HslExpr = Hsl HueExpr UnitExpr
+type HueExpr = Hue
+
+type HslExpr = Hsl Hue UnitExpr
 
 type MaterializedHsl = Hsl Double Double
 

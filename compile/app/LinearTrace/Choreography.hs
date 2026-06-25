@@ -84,7 +84,7 @@ module LinearTrace.Choreography
   , layout
   , match
   , part
-  , whereFacts
+  , where_
   , matchLayout
   , matchPair
   , pair
@@ -114,6 +114,7 @@ module LinearTrace.Choreography
   , Hsl(..)
   , FreeExpr
   , HslExpr
+  , Hue
   , HueExpr
   , LayoutExpr
   , Coord
@@ -145,12 +146,6 @@ module LinearTrace.Choreography
   , contentDebug
   , constrain
   , derive
-  , deriveCoord
-  , deriveSpan
-  , deriveOffset
-  , deriveScalar
-  , deriveExpr
-  , deriveHue
   , Derived
   , coordExpr
   , encourage
@@ -239,7 +234,7 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          BoundsExpr, BoxDefinition, BoxVisual,
                                          EmptyStyleDraft, FontStyle (..),
                                          FontWeight (..), FreeExpr, Hsl (..),
-                                         HslExpr, HueExpr, LayoutExpr,
+                                         HslExpr, Hue, HueExpr, LayoutExpr,
                                          LayoutUse (..), LiveVisual, MatchSpec,
                                          MatchedNode, OneConstraint (..),
                                          OneExpr (..), PairPattern (..),
@@ -1146,23 +1141,8 @@ instance Derived Scalar where
       (scalarExpr rhs)
       (scalarConstraints rhs)
 
-deriveCoord :: Coord -> Coord -> ViewLayout ()
-deriveCoord = derive
-
-deriveSpan :: Span -> Span -> ViewLayout ()
-deriveSpan = derive
-
-deriveOffset :: Offset -> Offset -> ViewLayout ()
-deriveOffset = derive
-
-deriveScalar :: Scalar -> Scalar -> ViewLayout ()
-deriveScalar = derive
-
-deriveExpr :: S.SymbolicType ty => S.Expr ty -> S.Expr ty -> ViewLayout ()
-deriveExpr lhs rhs = constrainRaw (lhs S.@==@ rhs)
-
-deriveHue :: HueExpr -> HueExpr -> ViewLayout ()
-deriveHue = deriveExpr
+instance S.SymbolicType ty => Derived (S.Expr ty) where
+  derive lhs rhs = constrainRaw (lhs S.@==@ rhs)
 
 style :: StyleRecipe () -> (EmptyStyleDraft %1 -> Style)
 style recipe =
@@ -1404,8 +1384,8 @@ part nodeKey pattern' recipe =
     ()
     (matchPatternPartNode @tag pattern' nodeKey (\_index -> nodePatch recipe))
 
-whereFacts :: Pattern -> Pattern
-whereFacts pattern' = pattern'
+where_ :: Pattern -> Pattern
+where_ pattern' = pattern'
 
 matchLayout ::
      Pattern -> (MatchedNode -> ViewLayout ()) -> VisualizationBuilder ()
