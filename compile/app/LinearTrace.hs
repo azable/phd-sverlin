@@ -84,23 +84,6 @@ module LinearTrace
   , writeCompiledJSON
   , -- * Application pipeline
     ViewDefinition(..)
-  , StyleDraft
-  , EmptyStyleDraft
-  , finalizeStyle
-  , setOpacityOnce
-  , setZIndexOnce
-  , setFontSizeOnce
-  , setRadiusOnce
-  , setFillOnce
-  , setStrokeOnce
-  , setStrokeWidthOnce
-  , setAlphaOnce
-  , setFontFamilyOnce
-  , setFontWeightOnce
-  , setFontStyleOnce
-  , setTextAlignOnce
-  , setBorderStyleOnce
-  , setWhiteSpaceOnce
   , ViewScript
   , VisualTraceBuilder
   , VisualTraceGraph

@@ -68,9 +68,8 @@ module LinearTrace.Choreography
   , (<*>)
   , Query
   , MatchSpec
-  , Pattern
-  , PatternInt
-  , patternIndex
+  , QueryInt
+  , queryIndex
   , TraceQuery
   , Selection
   , Selected
@@ -102,7 +101,6 @@ module LinearTrace.Choreography
   , OneExpr
   , OneConstraint
   , Style
-  , EmptyStyleDraft
   , BorderStyle(..)
   , Bounds(..)
   , BoundsExpr
@@ -152,7 +150,6 @@ module LinearTrace.Choreography
   , coordExpr
   , encourage
   , fill
-  , finalizeStyle
   , fontFamily
   , fontSize
   , fontStyle
@@ -173,16 +170,6 @@ module LinearTrace.Choreography
   , radius
   , require
   , right
-  , setFillOnce
-  , setFontFamilyOnce
-  , setFontSizeOnce
-  , setFontWeightOnce
-  , setRadiusOnce
-  , setStrokeOnce
-  , setStrokeWidthOnce
-  , setTextAlignOnce
-  , setWhiteSpaceOnce
-  , setZIndexOnce
   , stroke
   , strokeWidth
   , style
@@ -234,42 +221,34 @@ import           LinearTrace.Solver     (Vec2 (..), vec2)
 import qualified LinearTrace.Solver     as S
 import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          BoundsExpr, BoxDefinition, BoxVisual,
-                                         EmptyStyleDraft, FontStyle (..),
-                                         FontWeight (..), FreeExpr, Hsl (..),
-                                         HslExpr, Hue, HueExpr, LayoutAttr (..),
-                                         LayoutExpr, LayoutRelation (..),
-                                         LayoutUse (..), LiveVisual,
-                                         MatchBindings, MatchSpec,
+                                         FontStyle (..), FontWeight (..),
+                                         FreeExpr, Hsl (..), HslExpr, Hue,
+                                         HueExpr, LayoutAttr (..), LayoutExpr,
+                                         LayoutRelation (..), LayoutUse (..),
+                                         LiveVisual, MatchBindings, MatchSpec,
                                          NodeSelection (..), OneConstraint (..),
-                                         OneExpr (..), Pattern (..),
-                                         PatternInt (..), PayloadPattern, Query,
-                                         Style, TextAlign (..), UnitExpr,
-                                         WhiteSpace (..), anyPayloadPattern,
-                                         boxDefinition, emptyMatchSpec,
-                                         emptyQuery, encourage, finalizeStyle,
+                                         OneExpr (..), PayloadPattern, Query,
+                                         QueryInt (..), Style, TextAlign (..),
+                                         UnitExpr, WhiteSpace (..),
+                                         anyPayloadPattern, boxDefinition,
+                                         emptyMatchSpec, emptyQuery, encourage,
                                          global, matchBindingValue,
                                          matchContextBindings,
                                          matchGlobalLayout,
-                                         matchPatternPayloadNode,
+                                         matchQueryPayloadNode,
                                          matchSelectionBridge,
                                          matchSelectionRelation,
                                          matchSpecAppend, matchVirtualNode,
-                                         patternAppend, patternAtom, patternInt,
-                                         patternIntAdd, patternIntConst,
-                                         patternIntVar, payloadBindingPattern,
+                                         payloadBindingPattern,
                                          payloadBoolPattern,
                                          payloadDoublePattern,
                                          payloadIntPattern,
                                          payloadStringPattern,
                                          payloadUnitPattern, queryAppend,
                                          queryAtom, queryFacts, queryInt,
-                                         setFillOnce, setFontFamilyOnce,
-                                         setFontSizeOnce, setFontWeightOnce,
-                                         setRadiusOnce, setStrokeOnce,
-                                         setStrokeWidthOnce, setTextAlignOnce,
-                                         setWhiteSpaceOnce, setZIndexOnce,
-                                         takeHeight, takeLeft, takeRight,
-                                         takeTop, takeWidth)
+                                         queryIntAdd, queryIntConst,
+                                         queryIntVar, takeHeight, takeLeft,
+                                         takeRight, takeTop, takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
@@ -330,14 +309,14 @@ newtype Binding =
   deriving (P.Eq, P.Show)
 
 data TraceQuery tag =
-  TraceQuery Pattern (Maybe (PayloadPattern tag))
+  TraceQuery Query (Maybe (PayloadPattern tag))
 
 data Selection a where
   Selection :: a %1 -> MatchSpec -> Selection a
 
 data NodeRef tag where
   TraceNodeRef :: C.Traceable tag => TraceQuery tag -> NodeRef tag
-  VirtualNodeRef :: P.String -> Pattern -> NodeRef tag
+  VirtualNodeRef :: P.String -> Query -> NodeRef tag
 
 type Selected tag = Selection (NodeRef tag)
 
@@ -381,8 +360,7 @@ payload ::
      forall tag selector. PayloadSelector tag selector
   => selector
   -> TraceQuery tag
-payload selector =
-  TraceQuery (Pattern []) (Just (payloadSelector @tag selector))
+payload selector = TraceQuery emptyQuery (Just (payloadSelector @tag selector))
 
 instance IsString ContentValue where
   fromString = ContentLiteral
@@ -849,13 +827,13 @@ instance IntegerLiteral Scalar where
 instance RationalLiteral Scalar where
   rationalLiteral value = num (P.fromRational value)
 
-instance IntegerLiteral PatternInt where
-  integerLiteral value = patternIntConst (P.fromInteger value)
+instance IntegerLiteral QueryInt where
+  integerLiteral value = queryIntConst (P.fromInteger value)
 
-patternIndex :: P.Int -> PatternInt
-patternIndex = patternIntConst
+queryIndex :: P.Int -> QueryInt
+queryIndex = queryIntConst
 
-(#:) :: (PatternInt -> query) -> PatternInt -> query
+(#:) :: (QueryInt -> query) -> QueryInt -> query
 (#:) buildField = buildField
 
 at :: P.Double -> Coord
@@ -873,16 +851,16 @@ globalCoord name = mkCoord (global name :: LayoutExpr) []
 globalSpan :: P.String -> Span
 globalSpan name = mkSpan (global name :: LayoutExpr) []
 
-patternIntExpr :: S.SymbolicType ty => PatternInt -> S.Expr ty
-patternIntExpr patternIntValue =
-  case patternIntValue of
-    PatternIntConst value -> S.num (P.fromIntegral value)
-    PatternIntVar name -> global name
-    PatternIntAdd base offset ->
-      patternIntExpr base S.@+@ S.num (P.fromIntegral offset)
+queryIntExpr :: S.SymbolicType ty => QueryInt -> S.Expr ty
+queryIntExpr queryIntValue =
+  case queryIntValue of
+    QueryIntConst value -> S.num (P.fromIntegral value)
+    QueryIntVar name -> global name
+    QueryIntAdd base offset ->
+      queryIntExpr base S.@+@ S.num (P.fromIntegral offset)
 
-asUnit :: PatternInt -> UnitExpr
-asUnit = patternIntExpr
+asUnit :: QueryInt -> UnitExpr
+asUnit = queryIntExpr
 
 asCoord :: Offset -> Coord
 asCoord value =
@@ -916,8 +894,8 @@ instance AddExpr P.Integer P.Integer P.Integer where
 instance AddExpr P.Double P.Double P.Double where
   addExpr = (P.+)
 
-instance AddExpr PatternInt P.Int PatternInt where
-  addExpr = patternIntAdd
+instance AddExpr QueryInt P.Int QueryInt where
+  addExpr = queryIntAdd
 
 instance AddExpr Coord Span Coord where
   addExpr lhs rhs =
@@ -1426,8 +1404,8 @@ instance S.SymbolicType ty => VariableValue (S.Expr ty) where
   namedVariable = global
   variableSpec lhs rhs = matchGlobalLayout (constrainRaw (lhs S.@==@ rhs))
 
-bindInt :: VisualizationBuilder (Bound PatternInt)
-bindInt = freshVisualizationValue "view.bind." (Bound P.. patternIntVar)
+bindInt :: VisualizationBuilder (Bound QueryInt)
+bindInt = freshVisualizationValue "view.bind." (Bound P.. queryIntVar)
 
 bindContent :: VisualizationBuilder (Bound ContentValue)
 bindContent =
@@ -1453,13 +1431,13 @@ instance (VariableValue value, arg ~ value) =>
 class StyleTarget target result | target -> result where
   style :: target -> result
 
-instance StyleTarget (StyleRecipe ()) (EmptyStyleDraft %1 -> Style) where
+instance StyleTarget (StyleRecipe ()) (Style -> Style) where
   style = styleDefinition
 
-styleDefinition :: StyleRecipe () -> (EmptyStyleDraft %1 -> Style)
+styleDefinition :: StyleRecipe () -> Style -> Style
 styleDefinition recipe =
   case recipe of
-    NodeRecipe () spec -> V.finalizeStyleWith (nodeSpecStyleUpdate spec)
+    NodeRecipe () spec -> nodeSpecStyleUpdate spec
 
 setStyleWith :: (Style -> Style) -> NodeRecipe ()
 setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
@@ -1642,9 +1620,7 @@ nodeDefinition :: NodeRecipe () -> NodeDefinition tag
 nodeDefinition recipe =
   case recipe of
     NodeRecipe () spec ->
-      boxDefinition
-        (V.finalizeStyleWith (nodeSpecStyleUpdate spec))
-        (layoutNode spec)
+      boxDefinition (nodeSpecStyleUpdate spec) (layoutNode spec)
 
 nodePatch :: MatchBindings -> NodeRecipe () -> V.NodePatch
 nodePatch bindings recipe =
@@ -1753,14 +1729,14 @@ instance Typeable tag =>
   node children =
     case children of
       Selection child childSpec ->
-        let pattern' = nodeRefPattern child
+        let query = nodeRefQuery child
             key = virtualNodeKey @tag
-            virtualSpec = matchVirtualNode key pattern' V.emptyNodePatch
+            virtualSpec = matchVirtualNode key query V.emptyNodePatch
          in VisualizationBuilder
               (\counter ->
                  VisualizationResult
                    (Selected
-                      (Selection (VirtualNodeRef key pattern') emptyMatchSpec))
+                      (Selection (VirtualNodeRef key query) emptyMatchSpec))
                    counter
                    (matchSpecAppend childSpec virtualSpec))
 
@@ -1809,24 +1785,23 @@ nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
 nodeRefStyleSpec handle recipe =
   case handle of
     TraceNodeRef selector ->
-      matchPatternPayloadNode
-        (traceQueryPattern selector)
+      matchQueryPayloadNode
+        (traceQueryQuery selector)
         (traceQueryPayloadPattern selector)
         (\context -> nodePatch (matchContextBindings context) recipe)
-    VirtualNodeRef key pattern' ->
-      matchVirtualNode key pattern' (nodePatch [] recipe)
+    VirtualNodeRef key query -> matchVirtualNode key query (nodePatch [] recipe)
 
-nodeRefPattern :: NodeRef tag -> Pattern
-nodeRefPattern handle =
+nodeRefQuery :: NodeRef tag -> Query
+nodeRefQuery handle =
   case handle of
-    TraceNodeRef selector     -> traceQueryPattern selector
-    VirtualNodeRef _ pattern' -> pattern'
+    TraceNodeRef selector  -> traceQueryQuery selector
+    VirtualNodeRef _ query -> query
 
 nodeSelection :: NodeRef tag -> NodeSelection
 nodeSelection handle =
   case handle of
-    TraceNodeRef selector       -> TraceSelection (traceQueryPattern selector)
-    VirtualNodeRef key pattern' -> VirtualSelection key pattern'
+    TraceNodeRef selector    -> TraceSelection (traceQueryQuery selector)
+    VirtualNodeRef key query -> VirtualSelection key query
 
 virtualNodeKey ::
      forall tag. Typeable tag
@@ -1870,10 +1845,10 @@ instance (Payload tag ~ LString tag) => PayloadSelector tag P.String where
 instance (Payload tag ~ LUnit tag) => PayloadSelector tag () where
   payloadSelector = payloadUnitPattern
 
-traceQueryPattern :: TraceQuery tag -> Pattern
-traceQueryPattern query =
+traceQueryQuery :: TraceQuery tag -> Query
+traceQueryQuery query =
   case query of
-    TraceQuery pattern' _ -> pattern'
+    TraceQuery query' _ -> query'
 
 traceQueryPayloadPattern :: TraceQuery tag -> PayloadPattern tag
 traceQueryPayloadPattern query =
@@ -1884,28 +1859,25 @@ traceQueryPayloadPattern query =
 traceQueryAppend :: TraceQuery tag -> TraceQuery tag -> TraceQuery tag
 traceQueryAppend lhs rhs =
   case lhs of
-    TraceQuery leftPattern leftPayload ->
+    TraceQuery leftQuery leftPayload ->
       case rhs of
-        TraceQuery rightPattern rightPayload ->
+        TraceQuery rightQuery rightPayload ->
           TraceQuery
-            (patternAppend leftPattern rightPattern)
+            (queryAppend leftQuery rightQuery)
             (preferLater leftPayload rightPayload)
 
 instance KnownSymbol name => IsLabel name (TraceQuery tag) where
-  fromLabel = TraceQuery (patternAtom (S.labelName (Proxy @name))) Nothing
+  fromLabel = TraceQuery (queryAtom (S.labelName (Proxy @name))) Nothing
 
-instance KnownSymbol name => IsLabel name (PatternInt -> TraceQuery tag) where
+instance KnownSymbol name => IsLabel name (QueryInt -> TraceQuery tag) where
   fromLabel value =
-    TraceQuery (patternInt (S.labelName (Proxy @name)) value) Nothing
+    TraceQuery (queryInt (S.labelName (Proxy @name)) value) Nothing
 
 class QueryAppend query where
   appendQuery :: query -> query -> query
 
 instance QueryAppend Query where
   appendQuery = queryAppend
-
-instance QueryAppend Pattern where
-  appendQuery = patternAppend
 
 instance QueryAppend (TraceQuery tag) where
   appendQuery = traceQueryAppend

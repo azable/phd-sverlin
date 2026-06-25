@@ -40,20 +40,12 @@ module LinearTrace.View
   , queryKey
   , queryFacts
   , queryMatches
-  , Pattern(..)
-  , PatternTerm(..)
-  , PatternValue(..)
-  , PatternInt(..)
-  , PatternBindings
-  , patternAtom
-  , patternInt
-  , patternIntConst
-  , patternIntVar
-  , patternIntAdd
-  , patternAppend
-  , patternKey
-  , patternMatches
-  , patternBindingValue
+  , QueryInt(..)
+  , QueryBindings
+  , queryIntConst
+  , queryIntVar
+  , queryIntAdd
+  , queryBindingValue
   , MatchBinding(..)
   , MatchBindings
   , MatchContext
@@ -79,8 +71,8 @@ module LinearTrace.View
   , MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
-  , matchPatternNode
-  , matchPatternPayloadNode
+  , matchQueryNode
+  , matchQueryPayloadNode
   , matchVirtualNode
   , matchGlobalLayout
   , matchSelectionRelation
@@ -91,8 +83,6 @@ module LinearTrace.View
   , Stable
   , Consumed
   , LayoutAttr(..)
-  , Available
-  , Taken
   , NewVisual
   , LiveVisual
   , ConsumedVisual
@@ -110,24 +100,6 @@ module LinearTrace.View
   , OneExpr(..)
   , OneConstraint(..)
   , (|>)
-  , StyleDraft
-  , EmptyStyleDraft
-  , finalizeStyle
-  , finalizeStyleWith
-  , setOpacityOnce
-  , setZIndexOnce
-  , setFontSizeOnce
-  , setRadiusOnce
-  , setFillOnce
-  , setStrokeOnce
-  , setStrokeWidthOnce
-  , setAlphaOnce
-  , setFontFamilyOnce
-  , setFontWeightOnce
-  , setFontStyleOnce
-  , setTextAlignOnce
-  , setBorderStyleOnce
-  , setWhiteSpaceOnce
   , fresh
   , freshMatched
   , freshCopy
@@ -285,9 +257,15 @@ import qualified Unsafe.Coerce                         as Unsafe
 --------------------------------------------------------------------------------
 -- Semantic queries and visualization matches
 --------------------------------------------------------------------------------
+data QueryInt
+  = QueryIntConst P.Int
+  | QueryIntVar P.String
+  | QueryIntAdd QueryInt P.Int
+  deriving (P.Eq, P.Ord, P.Show)
+
 data QueryValue
   = QueryAtom
-  | QueryInt P.Int
+  | QueryIntValue QueryInt
   deriving (P.Eq, P.Ord, P.Show)
 
 data QueryTerm =
@@ -298,14 +276,25 @@ newtype Query =
   Query [QueryTerm]
   deriving (P.Eq, P.Ord, P.Show)
 
+type QueryBindings = [(P.String, P.Int)]
+
 emptyQuery :: Query
 emptyQuery = Query []
 
 queryAtom :: P.String -> Query
 queryAtom name = Query [QueryTerm name QueryAtom]
 
-queryInt :: P.String -> P.Int -> Query
-queryInt name value = Query [QueryTerm name (QueryInt value)]
+queryInt :: P.String -> QueryInt -> Query
+queryInt name value = Query [QueryTerm name (QueryIntValue value)]
+
+queryIntConst :: P.Int -> QueryInt
+queryIntConst = QueryIntConst
+
+queryIntVar :: P.String -> QueryInt
+queryIntVar = QueryIntVar
+
+queryIntAdd :: QueryInt -> P.Int -> QueryInt
+queryIntAdd = QueryIntAdd
 
 queryAppend :: Query -> Query -> Query
 queryAppend lhs rhs =
@@ -318,6 +307,9 @@ instance KnownSymbol name => IsLabel name Query where
   fromLabel = queryAtom (S.labelName (Proxy @name))
 
 instance KnownSymbol name => IsLabel name (P.Int -> Query) where
+  fromLabel value = queryInt (S.labelName (Proxy @name)) (queryIntConst value)
+
+instance KnownSymbol name => IsLabel name (QueryInt -> Query) where
   fromLabel = queryInt (S.labelName (Proxy @name))
 
 queryKey :: Query -> P.String
@@ -335,92 +327,23 @@ queryTermKey term =
   case term of
     QueryTerm name value ->
       case value of
-        QueryAtom         -> safeKey name
-        QueryInt intValue -> safeKey name ++ "-" ++ P.show intValue
+        QueryAtom             -> safeKey name
+        QueryIntValue intTerm -> safeKey name ++ "-" ++ queryIntKey intTerm
 
-queryMatches :: Query -> C.Facts -> P.Bool
+queryIntKey :: QueryInt -> P.String
+queryIntKey intPattern =
+  case intPattern of
+    QueryIntConst value     -> P.show value
+    QueryIntVar name        -> "$" ++ safeKey name
+    QueryIntAdd base offset -> queryIntKey base ++ "+" ++ P.show offset
+
+queryMatches :: Query -> C.Facts -> Maybe QueryBindings
 queryMatches query facts =
   case query of
-    Query terms -> P.all (`factSetContains` facts) terms
+    Query terms -> matchQueryTerms (canonicalTerms terms) facts []
 
-data PatternInt
-  = PatternIntConst P.Int
-  | PatternIntVar P.String
-  | PatternIntAdd PatternInt P.Int
-  deriving (P.Eq, P.Ord, P.Show)
-
-data PatternValue
-  = PatternAtom
-  | PatternIntValue PatternInt
-  deriving (P.Eq, P.Ord, P.Show)
-
-data PatternTerm =
-  PatternTerm P.String PatternValue
-  deriving (P.Eq, P.Ord, P.Show)
-
-newtype Pattern =
-  Pattern [PatternTerm]
-  deriving (P.Eq, P.Ord, P.Show)
-
-type PatternBindings = [(P.String, P.Int)]
-
-patternAtom :: P.String -> Pattern
-patternAtom name = Pattern [PatternTerm name PatternAtom]
-
-patternInt :: P.String -> PatternInt -> Pattern
-patternInt name value = Pattern [PatternTerm name (PatternIntValue value)]
-
-patternIntConst :: P.Int -> PatternInt
-patternIntConst = PatternIntConst
-
-patternIntVar :: P.String -> PatternInt
-patternIntVar = PatternIntVar
-
-patternIntAdd :: PatternInt -> P.Int -> PatternInt
-patternIntAdd = PatternIntAdd
-
-patternAppend :: Pattern -> Pattern -> Pattern
-patternAppend lhs rhs =
-  case lhs of
-    Pattern leftTerms ->
-      case rhs of
-        Pattern rightTerms ->
-          Pattern (canonicalPatternTerms (leftTerms P.++ rightTerms))
-
-instance KnownSymbol name => IsLabel name Pattern where
-  fromLabel = patternAtom (S.labelName (Proxy @name))
-
-instance KnownSymbol name => IsLabel name (PatternInt -> Pattern) where
-  fromLabel = patternInt (S.labelName (Proxy @name))
-
-patternKey :: Pattern -> P.String
-patternKey pattern' =
-  case pattern' of
-    Pattern terms ->
-      joinPath ("p" : P.map patternTermKey (canonicalPatternTerms terms))
-
-patternTermKey :: PatternTerm -> P.String
-patternTermKey term =
-  case term of
-    PatternTerm name value ->
-      case value of
-        PatternAtom            -> safeKey name
-        PatternIntValue intPat -> safeKey name ++ "-" ++ patternIntKey intPat
-
-patternIntKey :: PatternInt -> P.String
-patternIntKey intPattern =
-  case intPattern of
-    PatternIntConst value     -> P.show value
-    PatternIntVar name        -> "$" ++ safeKey name
-    PatternIntAdd base offset -> patternIntKey base ++ "+" ++ P.show offset
-
-patternMatches :: Pattern -> C.Facts -> Maybe PatternBindings
-patternMatches pattern' facts =
-  case pattern' of
-    Pattern terms -> matchPatternTerms (canonicalPatternTerms terms) facts []
-
-patternBindingValue :: PatternBindings -> P.Int -> P.Int
-patternBindingValue bindings fallback =
+queryBindingValue :: QueryBindings -> P.Int -> P.Int
+queryBindingValue bindings fallback =
   case bindings of
     []               -> fallback
     (_name, value):_ -> value
@@ -452,12 +375,12 @@ matchBindingValue name bindings =
           | name P.== bindingName -> Just bindingValue
           | otherwise -> Nothing
 
-patternMatchBindings :: PatternBindings -> MatchBindings
-patternMatchBindings bindings =
+queryMatchBindings :: QueryBindings -> MatchBindings
+queryMatchBindings bindings =
   case bindings of
     [] -> []
     (name, value):rest ->
-      MatchBinding name (P.show value) : patternMatchBindings rest
+      MatchBinding name (P.show value) : queryMatchBindings rest
 
 newtype PayloadPattern tag =
   PayloadPattern (C.Payload tag -> C.PayloadView -> Maybe MatchBindings)
@@ -523,71 +446,67 @@ payloadUnitPattern () =
        case payload of
          C.LUnit -> Just [])
 
-matchPatternTerms ::
-     [PatternTerm] -> C.Facts -> PatternBindings -> Maybe PatternBindings
-matchPatternTerms terms facts bindings =
+matchQueryTerms ::
+     [QueryTerm] -> C.Facts -> QueryBindings -> Maybe QueryBindings
+matchQueryTerms terms facts bindings =
   case terms of
     [] -> Just bindings
     term:rest ->
-      case matchPatternTerm term (C.factsToList facts) bindings of
+      case matchQueryTerm term (C.factsToList facts) bindings of
         Nothing           -> Nothing
-        Just nextBindings -> matchPatternTerms rest facts nextBindings
+        Just nextBindings -> matchQueryTerms rest facts nextBindings
 
-matchPatternTerm ::
-     PatternTerm -> [C.Fact] -> PatternBindings -> Maybe PatternBindings
-matchPatternTerm term facts bindings =
-  firstJust (P.map (\fact -> matchPatternFact term fact bindings) facts)
+matchQueryTerm :: QueryTerm -> [C.Fact] -> QueryBindings -> Maybe QueryBindings
+matchQueryTerm term facts bindings =
+  firstJust (P.map (\fact -> matchQueryFact term fact bindings) facts)
 
-matchPatternFact ::
-     PatternTerm -> C.Fact -> PatternBindings -> Maybe PatternBindings
-matchPatternFact term fact bindings =
+matchQueryFact :: QueryTerm -> C.Fact -> QueryBindings -> Maybe QueryBindings
+matchQueryFact term fact bindings =
   case term of
-    PatternTerm expectedName expectedValue ->
+    QueryTerm expectedName expectedValue ->
       case fact of
         C.Fact actualName actualValue
           | expectedName P.== actualName ->
-            matchPatternValue expectedValue actualValue bindings
+            matchQueryValue expectedValue actualValue bindings
         _ -> Nothing
 
-matchPatternValue ::
-     PatternValue -> C.FactValue -> PatternBindings -> Maybe PatternBindings
-matchPatternValue expected actual bindings =
+matchQueryValue ::
+     QueryValue -> C.FactValue -> QueryBindings -> Maybe QueryBindings
+matchQueryValue expected actual bindings =
   case expected of
-    PatternAtom ->
+    QueryAtom ->
       case actual of
         C.FactAtom -> Just bindings
         _          -> Nothing
-    PatternIntValue expectedInt ->
+    QueryIntValue expectedInt ->
       case actual of
-        C.FactInt actualInt -> matchPatternInt expectedInt actualInt bindings
+        C.FactInt actualInt -> matchQueryInt expectedInt actualInt bindings
         _                   -> Nothing
 
-matchPatternInt ::
-     PatternInt -> P.Int -> PatternBindings -> Maybe PatternBindings
-matchPatternInt intPattern actual bindings =
+matchQueryInt :: QueryInt -> P.Int -> QueryBindings -> Maybe QueryBindings
+matchQueryInt intPattern actual bindings =
   case intPattern of
-    PatternIntConst expected
+    QueryIntConst expected
       | expected P.== actual -> Just bindings
       | otherwise -> Nothing
-    PatternIntVar name -> bindPatternInt name actual bindings
-    PatternIntAdd base offset ->
-      matchPatternInt base (actual P.- offset) bindings
+    QueryIntVar name -> bindQueryInt name actual bindings
+    QueryIntAdd base offset -> matchQueryInt base (actual P.- offset) bindings
 
-bindPatternInt :: P.String -> P.Int -> PatternBindings -> Maybe PatternBindings
-bindPatternInt name value bindings =
-  case lookupPatternBinding name bindings of
+bindQueryInt :: P.String -> P.Int -> QueryBindings -> Maybe QueryBindings
+bindQueryInt name value bindings =
+  case lookupQueryBinding name bindings of
     Nothing -> Just (bindings P.++ [(name, value)])
     Just existing
       | existing P.== value -> Just bindings
       | otherwise -> Nothing
 
-lookupPatternBinding :: P.String -> PatternBindings -> Maybe P.Int
-lookupPatternBinding name bindings =
+lookupQueryBinding :: P.String -> QueryBindings -> Maybe P.Int
+lookupQueryBinding name bindings =
   case bindings of
     [] -> Nothing
     (bindingName, bindingValue):rest
       | name P.== bindingName -> Just bindingValue
-      | otherwise -> lookupPatternBinding name rest
+      | otherwise -> lookupQueryBinding name rest
 
 firstJust :: [Maybe a] -> Maybe a
 firstJust values =
@@ -596,39 +515,27 @@ firstJust values =
     Nothing:rest -> firstJust rest
     Just value:_ -> Just value
 
-canonicalPatternTerms :: [PatternTerm] -> [PatternTerm]
-canonicalPatternTerms terms = dedupePatternTerms (sortPatternTerms terms)
-
-sortPatternTerms :: [PatternTerm] -> [PatternTerm]
-sortPatternTerms terms =
-  case terms of
-    [] -> []
-    term:rest ->
-      sortPatternTerms [x | x <- rest, x P.<= term]
-        P.++ [term]
-        P.++ sortPatternTerms [x | x <- rest, x P.> term]
-
-dedupePatternTerms :: [PatternTerm] -> [PatternTerm]
-dedupePatternTerms terms =
-  case terms of
-    [] -> []
-    term:rest
-      {- HLINT ignore "Use if" -}
-     ->
-      case term `P.elem` rest of
-        True  -> dedupePatternTerms rest
-        False -> term : dedupePatternTerms rest
-
-factSetContains :: QueryTerm -> C.Facts -> P.Bool
-factSetContains term facts = queryTermToFact term `P.elem` C.factsToList facts
-
 queryTermToFact :: QueryTerm -> C.Fact
 queryTermToFact term =
   case term of
     QueryTerm name value ->
       case value of
-        QueryAtom         -> C.factAtom name
-        QueryInt intValue -> C.factInt name intValue
+        QueryAtom -> C.factAtom name
+        QueryIntValue intValue ->
+          case queryIntConcrete intValue of
+            Nothing ->
+              P.error ("Cannot materialize non-concrete query term #" P.++ name)
+            Just actualValue -> C.factInt name actualValue
+
+queryIntConcrete :: QueryInt -> Maybe P.Int
+queryIntConcrete value =
+  case value of
+    QueryIntConst actualValue -> Just actualValue
+    QueryIntVar _ -> Nothing
+    QueryIntAdd base offset ->
+      case queryIntConcrete base of
+        Nothing          -> Nothing
+        Just actualValue -> Just (actualValue P.+ offset)
 
 canonicalTerms :: [QueryTerm] -> [QueryTerm]
 canonicalTerms terms = dedupeTerms (sortTerms terms)
@@ -745,8 +652,8 @@ preferLater earlier later =
     Just _  -> later
 
 data NodeSelection
-  = TraceSelection Pattern
-  | VirtualSelection P.String Pattern
+  = TraceSelection Query
+  | VirtualSelection P.String Query
   deriving (P.Eq, P.Show)
 
 data LayoutRelation
@@ -758,9 +665,9 @@ data MatchSpec =
   MatchSpec [NodeRule] [LayoutRule] [VirtualRule]
 
 data NodeRule where
-  PatternNodeRule
+  QueryNodeRule
     :: C.Traceable tag=> Proxy tag
-    -> Pattern
+    -> Query
     -> PayloadPattern tag
     -> (MatchContext tag -> NodePatch)
     -> NodeRule
@@ -786,7 +693,7 @@ data LayoutRule where
     -> LayoutRule
 
 data VirtualRule =
-  VirtualRule P.String Pattern NodePatch
+  VirtualRule P.String Query NodePatch
 
 emptyMatchSpec :: MatchSpec
 emptyMatchSpec = MatchSpec [] [] []
@@ -802,32 +709,32 @@ matchSpecAppend lhs rhs =
             (leftLayouts P.++ rightLayouts)
             (leftVirtuals P.++ rightVirtuals)
 
-matchPatternNode ::
+matchQueryNode ::
      forall tag. C.Traceable tag
-  => Pattern
+  => Query
   -> (MatchContext tag -> NodePatch)
   -> MatchSpec
-matchPatternNode pattern' makePatch =
+matchQueryNode query makePatch =
   MatchSpec
-    [PatternNodeRule (Proxy :: Proxy tag) pattern' anyPayloadPattern makePatch]
+    [QueryNodeRule (Proxy :: Proxy tag) query anyPayloadPattern makePatch]
     []
     []
 
-matchPatternPayloadNode ::
+matchQueryPayloadNode ::
      forall tag. C.Traceable tag
-  => Pattern
+  => Query
   -> PayloadPattern tag
   -> (MatchContext tag -> NodePatch)
   -> MatchSpec
-matchPatternPayloadNode pattern' payloadPattern makePatch =
+matchQueryPayloadNode query payloadPattern makePatch =
   MatchSpec
-    [PatternNodeRule (Proxy :: Proxy tag) pattern' payloadPattern makePatch]
+    [QueryNodeRule (Proxy :: Proxy tag) query payloadPattern makePatch]
     []
     []
 
-matchVirtualNode :: P.String -> Pattern -> NodePatch -> MatchSpec
-matchVirtualNode key pattern' patch =
-  MatchSpec [] [] [VirtualRule (safeKey key) pattern' patch]
+matchVirtualNode :: P.String -> Query -> NodePatch -> MatchSpec
+matchVirtualNode key query patch =
+  MatchSpec [] [] [VirtualRule (safeKey key) query patch]
 
 matchGlobalLayout :: ViewBuilder () -> MatchSpec
 matchGlobalLayout body = MatchSpec [] [GlobalLayout body] []
@@ -894,7 +801,7 @@ data VirtualView tag = VirtualView
   { virtualRef      :: C.BlockRef tag
   , virtualLabel    :: C.PayloadView
   , virtualContent  :: ContentMode
-  , virtualPattern  :: Pattern
+  , virtualQuery    :: Query
   , virtualNodeKey  :: P.String
   , virtualPieceKey :: P.String
   , virtualStyle    :: Style
@@ -1118,10 +1025,6 @@ data Stable
 
 data Consumed
 
-data Available
-
-data Taken
-
 data LayoutAttr
   = AttrLeft
   | AttrRight
@@ -1247,575 +1150,9 @@ type BoxVisual tag = Visual Rendered Stable BoxAttrs tag
 
 type SizeVisual tag = Visual Rendered Stable SizeAttrs tag
 
-data StyleDraft opacity zIndex fontSize radius strokeWidth alpha fill stroke fontFamily fontWeight fontStyle textAlign borderStyle whiteSpace where
-  StyleDraft
-    :: Ur Style
-       %1 -> StyleDraft
-         opacity
-         zIndex
-         fontSize
-         radius
-         strokeWidth
-         alpha
-         fill
-         stroke
-         fontFamily
-         fontWeight
-         fontStyle
-         textAlign
-         borderStyle
-         whiteSpace
-
-type EmptyStyleDraft
-  = StyleDraft
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-      Available
-
-finalizeStyle ::
-     StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> Style
-finalizeStyle draft =
-  case draft of
-    StyleDraft (Ur style') -> style'
-
-finalizeStyleWith :: (Style -> Style) -> EmptyStyleDraft %1 -> Style
-finalizeStyleWith update draft =
-  case draft of
-    StyleDraft (Ur style') -> update style'
-
-setOpacityOnce ::
-     UnitExpr
-  -> StyleDraft
-       Available
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       Taken
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setOpacityOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setOpacity value style'))
-
-setZIndexOnce ::
-     FreeExpr
-  -> StyleDraft
-       opacity
-       Available
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       Taken
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setZIndexOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setZIndex value style'))
-
-setFontSizeOnce ::
-     LayoutExpr
-  -> StyleDraft
-       opacity
-       zIndex
-       Available
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       Taken
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setFontSizeOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setFontSize value style'))
-
-setRadiusOnce ::
-     LayoutExpr
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       Available
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       Taken
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setRadiusOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setRadius value style'))
-
-setStrokeWidthOnce ::
-     LayoutExpr
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       Available
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       Taken
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setStrokeWidthOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setStrokeWidth value style'))
-
-setAlphaOnce ::
-     UnitExpr
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       Available
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       Taken
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setAlphaOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setAlpha value style'))
-
-setFillOnce ::
-     HslExpr
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       Available
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       Taken
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setFillOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setFill value style'))
-
-setStrokeOnce ::
-     HslExpr
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       Available
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       Taken
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setStrokeOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setStroke value style'))
-
-setFontFamilyOnce ::
-     String
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       Available
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       Taken
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setFontFamilyOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setFontFamily value style'))
-
-setFontWeightOnce ::
-     FontWeight
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       Available
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       Taken
-       fontStyle
-       textAlign
-       borderStyle
-       whiteSpace
-setFontWeightOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setFontWeight value style'))
-
-setFontStyleOnce ::
-     FontStyle
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       Available
-       textAlign
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       Taken
-       textAlign
-       borderStyle
-       whiteSpace
-setFontStyleOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setFontStyle value style'))
-
-setTextAlignOnce ::
-     TextAlign
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       Available
-       borderStyle
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       Taken
-       borderStyle
-       whiteSpace
-setTextAlignOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setTextAlign value style'))
-
-setBorderStyleOnce ::
-     BorderStyle
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       Available
-       whiteSpace
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       Taken
-       whiteSpace
-setBorderStyleOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setBorderStyle value style'))
-
-setWhiteSpaceOnce ::
-     WhiteSpace
-  -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       Available
-     %1 -> StyleDraft
-       opacity
-       zIndex
-       fontSize
-       radius
-       strokeWidth
-       alpha
-       fill
-       stroke
-       fontFamily
-       fontWeight
-       fontStyle
-       textAlign
-       borderStyle
-       Taken
-setWhiteSpaceOnce value draft =
-  case draft of
-    StyleDraft (Ur style') -> StyleDraft (Ur (setWhiteSpace value style'))
-
 data ViewDefinition tag (used :: [LayoutAttr]) where
   ViewDefinition
-    :: (EmptyStyleDraft %1 -> Style)
+    :: (Style -> Style)
     -> (LiveVisual tag %1 -> ViewBuilder (Visual Rendered Stable used tag))
     -> ViewDefinition tag used
 
@@ -1824,13 +1161,13 @@ type BoxDefinition tag = ViewDefinition tag BoxAttrs
 type SizeDefinition tag = ViewDefinition tag SizeAttrs
 
 boxDefinition ::
-     (EmptyStyleDraft %1 -> Style)
+     (Style -> Style)
   -> (LiveVisual tag %1 -> ViewBuilder (BoxVisual tag))
   -> BoxDefinition tag
 boxDefinition = ViewDefinition
 
 sizeDefinition ::
-     (EmptyStyleDraft %1 -> Style)
+     (Style -> Style)
   -> (LiveVisual tag %1 -> ViewBuilder (SizeVisual tag))
   -> SizeDefinition tag
 sizeDefinition = ViewDefinition
@@ -2301,11 +1638,7 @@ defineNewBlock definition block0 =
   case definition of
     ViewDefinition styleDefinition viewDefinition -> do
       Ur env <- askViewEnv
-      let block =
-            block0
-              { blockStyle =
-                  styleDefinition (StyleDraft (Ur (blockStyle block0)))
-              }
+      let block = block0 {blockStyle = styleDefinition (blockStyle block0)}
       registerInitialStyleBounds (blockStyle block)
       constrainStyle (blockStyle block)
       ensureRaw (S.num 0 S.@<=@ left block)
@@ -2355,16 +1688,16 @@ nodeRulePatch ::
   -> Maybe NodePatch
 nodeRulePatch matchIndex block rule =
   case rule of
-    PatternNodeRule (_ :: Proxy matchedTag) pattern' payloadPattern makePatch ->
+    QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
         Just Refl ->
-          case patternMatches pattern' (blockFacts block) of
+          case queryMatches query (blockFacts block) of
             Nothing -> Nothing
             Just bindings ->
               matchedPayloadNodePatch
                 matchIndex
-                (patternMatchBindings bindings)
+                (queryMatchBindings bindings)
                 block
                 payloadPattern
                 makePatch
@@ -3097,11 +2430,11 @@ matchingSelectionPairs lhs rhs nodes =
   [ (firstNode, secondNode)
   | (firstNode, firstBindings) <- matchingSelectionNodes lhs nodes
   , (secondNode, secondBindings) <- matchingSelectionNodes rhs nodes
-  , bindingsCompatible firstBindings secondBindings
+  , queryBindingsCompatible firstBindings secondBindings
   ]
 
 matchingSelectionNodes ::
-     NodeSelection -> [ViewNode] -> [(AnyLayoutView, PatternBindings)]
+     NodeSelection -> [ViewNode] -> [(AnyLayoutView, QueryBindings)]
 matchingSelectionNodes selection nodes =
   case nodes of
     [] -> []
@@ -3110,49 +2443,46 @@ matchingSelectionNodes selection nodes =
         P.++ matchingSelectionNodes selection rest
 
 selectionNodeMatches ::
-     NodeSelection -> ViewNode -> [(AnyLayoutView, PatternBindings)]
+     NodeSelection -> ViewNode -> [(AnyLayoutView, QueryBindings)]
 selectionNodeMatches selection node =
   case selection of
-    TraceSelection pattern' ->
+    TraceSelection query ->
       case node of
         BlockViewNode block ->
-          case patternMatches pattern' (blockFacts block) of
+          case queryMatches query (blockFacts block) of
             Nothing       -> []
             Just bindings -> [(AnyLayoutBlock block, bindings)]
         VirtualViewNode _ -> []
-    VirtualSelection key pattern' ->
+    VirtualSelection key query ->
       case node of
         BlockViewNode _ -> []
         VirtualViewNode virtual
-          | key P.== virtualNodeKey virtual
-              P.&& pattern' P.== virtualPattern virtual ->
+          | key P.== virtualNodeKey virtual P.&& query P.== virtualQuery virtual ->
             [(AnyLayoutVirtual virtual, [])]
           | otherwise -> []
 
-anyBlockPatternMatches ::
-     Pattern -> AnyBlockView -> [(AnyBlockView, PatternBindings)]
-anyBlockPatternMatches pattern' anyBlock =
+anyBlockQueryMatches :: Query -> AnyBlockView -> [(AnyBlockView, QueryBindings)]
+anyBlockQueryMatches query anyBlock =
   case anyBlock of
     AnyBlockView block ->
-      case patternMatches pattern' (blockFacts block) of
+      case queryMatches query (blockFacts block) of
         Nothing       -> []
         Just bindings -> [(anyBlock, bindings)]
 
-bindingsCompatible :: PatternBindings -> PatternBindings -> P.Bool
-bindingsCompatible lhs rhs =
-  case mergePatternBindings lhs rhs of
+queryBindingsCompatible :: QueryBindings -> QueryBindings -> P.Bool
+queryBindingsCompatible lhs rhs =
+  case mergeQueryBindings lhs rhs of
     Nothing -> False
     Just _  -> True
 
-mergePatternBindings ::
-     PatternBindings -> PatternBindings -> Maybe PatternBindings
-mergePatternBindings lhs rhs =
+mergeQueryBindings :: QueryBindings -> QueryBindings -> Maybe QueryBindings
+mergeQueryBindings lhs rhs =
   case rhs of
     [] -> Just lhs
     (name, value):rest ->
-      case bindPatternInt name value lhs of
+      case bindQueryInt name value lhs of
         Nothing     -> Nothing
-        Just merged -> mergePatternBindings merged rest
+        Just merged -> mergeQueryBindings merged rest
 
 selectionRelationConstraints ::
      LayoutAttr
@@ -3250,58 +2580,57 @@ mergedVirtualRules :: [VirtualRule] -> [VirtualRule]
 mergedVirtualRules rules =
   case rules of
     [] -> []
-    VirtualRule key pattern' patch:rest ->
-      case mergeVirtualRule key pattern' patch rest of
+    VirtualRule key query patch:rest ->
+      case mergeVirtualRule key query patch rest of
         (mergedPatch, remaining) ->
-          VirtualRule key pattern' mergedPatch : mergedVirtualRules remaining
+          VirtualRule key query mergedPatch : mergedVirtualRules remaining
 
 mergeVirtualRule ::
      P.String
-  -> Pattern
+  -> Query
   -> NodePatch
   -> [VirtualRule]
   -> (NodePatch, [VirtualRule])
-mergeVirtualRule key pattern' patch rules =
+mergeVirtualRule key query patch rules =
   case rules of
     [] -> (patch, [])
-    VirtualRule nextKey nextPattern nextPatch:rest ->
-      case key P.== nextKey P.&& pattern' P.== nextPattern of
+    VirtualRule nextKey nextQuery nextPatch:rest ->
+      case key P.== nextKey P.&& query P.== nextQuery of
         True ->
-          mergeVirtualRule key pattern' (appendNodePatch patch nextPatch) rest
+          mergeVirtualRule key query (appendNodePatch patch nextPatch) rest
         False ->
-          case mergeVirtualRule key pattern' patch rest of
+          case mergeVirtualRule key query patch rest of
             (mergedPatch, remaining) ->
-              ( mergedPatch
-              , VirtualRule nextKey nextPattern nextPatch : remaining)
+              (mergedPatch, VirtualRule nextKey nextQuery nextPatch : remaining)
 
 virtualNodeForRule :: [AnyBlockView] -> VirtualRule -> Maybe ViewNode
 virtualNodeForRule blocks rule =
   case rule of
-    VirtualRule key pattern' patch ->
-      case matchingPatternBlocks pattern' blocks of
+    VirtualRule key query patch ->
+      case matchingQueryBlocks query blocks of
         [] -> Nothing
         children ->
           Just
             (VirtualViewNode
-               (virtualViewForRule key pattern' patch children :: VirtualView ()))
+               (virtualViewForRule key query patch children :: VirtualView ()))
 
-matchingPatternBlocks :: Pattern -> [AnyBlockView] -> [AnyBlockView]
-matchingPatternBlocks pattern' blocks =
+matchingQueryBlocks :: Query -> [AnyBlockView] -> [AnyBlockView]
+matchingQueryBlocks query blocks =
   [ anyBlock
   | anyBlock <- blocks
-  , (_matchedNode, _bindings) <- anyBlockPatternMatches pattern' anyBlock
+  , (_matchedNode, _bindings) <- anyBlockQueryMatches query anyBlock
   ]
 
 virtualViewForRule ::
-     P.String -> Pattern -> NodePatch -> [AnyBlockView] -> VirtualView tag
-virtualViewForRule key pattern' patch children =
-  let ref = C.BlockRef (virtualBlockId key pattern')
-      baseStyle = styleForVirtual key pattern'
+     P.String -> Query -> NodePatch -> [AnyBlockView] -> VirtualView tag
+virtualViewForRule key query patch children =
+  let ref = C.BlockRef (virtualBlockId key query)
+      baseStyle = styleForVirtual key query
    in VirtualView
         { virtualRef = ref
         , virtualLabel = C.PayloadView ("Virtual." P.++ key) ""
         , virtualContent = Maybe.fromMaybe ContentEmpty (nodePatchContent patch)
-        , virtualPattern = pattern'
+        , virtualQuery = query
         , virtualNodeKey = key
         , virtualPieceKey = defaultPieceKey
         , virtualStyle = nodePatchStyleUpdate patch baseStyle
@@ -3309,9 +2638,9 @@ virtualViewForRule key pattern' patch children =
         , virtualChildren = children
         }
 
-virtualBlockId :: P.String -> Pattern -> C.BlockId
-virtualBlockId key pattern' =
-  negate (1 P.+ positiveHash (key P.++ ":" P.++ patternKey pattern'))
+virtualBlockId :: P.String -> Query -> C.BlockId
+virtualBlockId key query =
+  negate (1 P.+ positiveHash (key P.++ ":" P.++ queryKey query))
 
 positiveHash :: P.String -> P.Int
 positiveHash = positiveHashFrom 5381
@@ -3325,18 +2654,18 @@ positiveHashFrom current text =
         ((current P.* 33 P.+ P.fromEnum char) `P.mod` 1000000000)
         rest
 
-styleForVirtual :: P.String -> Pattern -> Style
-styleForVirtual key pattern' =
+styleForVirtual :: P.String -> Query -> Style
+styleForVirtual key query =
   styleWithBounds
     (Bounds
-       (virtualVar key pattern' "top")
-       (virtualVar key pattern' "left")
-       (virtualVar key pattern' "width")
-       (virtualVar key pattern' "height"))
+       (virtualVar key query "top")
+       (virtualVar key query "left")
+       (virtualVar key query "width")
+       (virtualVar key query "height"))
 
-virtualVar :: SymbolicType ty => P.String -> Pattern -> P.String -> Expr ty
-virtualVar key pattern' field =
-  var (joinPath ["V", key, safeKey (patternKey pattern'), field])
+virtualVar :: SymbolicType ty => P.String -> Query -> P.String -> Expr ty
+virtualVar key query field =
+  var (joinPath ["V", key, safeKey (queryKey query), field])
 
 virtualNodeConstraints :: ViewNode -> [Constraint]
 virtualNodeConstraints node =
