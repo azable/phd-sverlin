@@ -628,8 +628,13 @@ instance Floating a => Floating (EnergyExpr a) where
 --------------------------------------------------------------------------------
 -- Problem builder
 --------------------------------------------------------------------------------
+data TermKind
+  = HardTerm
+  | SoftTerm
+  deriving (Eq)
+
 data Term =
-  Term Rational (forall a. Floating a => EnergyExpr a)
+  Term TermKind Rational (forall a. Floating a => EnergyExpr a)
 
 data CSPState = CSPState
   { nextVarId     :: Int
@@ -649,17 +654,27 @@ newInternalVar initial = do
   put st {nextVarId = i + 1, initialValues = initialValues st ++ [initial]}
   pure (InternalVar i)
 
-addTerm :: Rational -> (forall a. Floating a => EnergyExpr a) -> BuildCSP ()
-addTerm weight expr = do
+addHardTerm :: Rational -> (forall a. Floating a => EnergyExpr a) -> BuildCSP ()
+addHardTerm = addTerm HardTerm
+
+addSoftTerm :: Rational -> (forall a. Floating a => EnergyExpr a) -> BuildCSP ()
+addSoftTerm = addTerm SoftTerm
+
+addTerm ::
+     TermKind
+  -> Rational
+  -> (forall a. Floating a => EnergyExpr a)
+  -> BuildCSP ()
+addTerm kind weight expr = do
   st <- get
-  put st {energyTerms = energyTerms st ++ [Term weight expr]}
+  put st {energyTerms = energyTerms st ++ [Term kind weight expr]}
 
 addRangeTerms :: Rational -> InternalVar -> Range -> BuildCSP ()
 addRangeTerms weight internal range = do
-  addTerm
+  addHardTerm
     weight
     (sq (clipNegative (constant (rangeLower range) - valueOf internal)))
-  addTerm
+  addHardTerm
     weight
     (sq (clipNegative (valueOf internal - constant (rangeUpper range))))
 
@@ -667,23 +682,36 @@ addRangeTerms weight internal range = do
 -- Compilation
 --------------------------------------------------------------------------------
 data CSP =
-  CSP [Double] (forall a. Floating a => [a] -> a)
+  CSP
+    [Double]
+    (forall a. Floating a => [a] -> a)
+    (forall a. Floating a => [a] -> a)
 
 compileReturning :: BuildCSP a -> (a, CSP)
-compileReturning build = (result, CSP initials energy)
+compileReturning build = (result, CSP initials totalEnergy hardEnergy)
   where
     (result, st) = runState build emptyCSP
     initials = initialValues st
     terms = energyTerms st
-    energy xs =
-      sum
-        [ fromRational weight * runEnergyExpr expr xs
-        | Term weight expr <- terms
-        ]
+    totalEnergy xs =
+      sum [weightedTerm weight expr xs | Term _ weight expr <- terms]
+    hardEnergy xs =
+      sum [weightedTerm weight expr xs | Term HardTerm weight expr <- terms]
 
 solveCSP :: CSP -> IO (Opt.Result [Double])
-solveCSP (CSP initials energy) =
-  Opt.minimize Opt.LBFGS Opt.def energy Nothing [] initials
+solveCSP (CSP initials totalEnergy _hardEnergy) =
+  Opt.minimize Opt.LBFGS Opt.def totalEnergy Nothing [] initials
+
+cspHardEnergy :: CSP -> [Double] -> Double
+cspHardEnergy (CSP _ _ hardEnergy) = hardEnergy
+
+weightedTerm ::
+     Floating a
+  => Rational
+  -> (forall b. Floating b => EnergyExpr b)
+  -> [a]
+  -> a
+weightedTerm weight expr xs = fromRational weight * runEnergyExpr expr xs
 
 --------------------------------------------------------------------------------
 -- Seeded initial value generation
@@ -765,6 +793,7 @@ solveWithInitialVars config initialVars constraints = do
   let named = compileConstraints config initialVars constraints
   result <- solveCSP (namedCSP named)
   let vector = Opt.resultSolution result
+      hardEnergy = cspHardEnergy (namedCSP named) vector
       lookupValue (InternalVar i)
         | i < length vector = Just (vector !! i)
         | otherwise = Nothing
@@ -773,7 +802,7 @@ solveWithInitialVars config initialVars constraints = do
     Solution
       { solutionSuccess = Opt.resultSuccess result
       , solutionSeed = initialSeed config
-      , solutionEnergy = Opt.resultValue result
+      , solutionEnergy = hardEnergy
       , solutionValues = values
       , solutionVector = vector
       }
@@ -918,19 +947,19 @@ lowerConstraint config vars constraint =
       case typeCircularPeriod ty of
         Just period
           | period > 0 ->
-            addTerm
+            addHardTerm
               (ensureWeight config)
               (circularEnergy period (lowerExpr vars lhs - lowerExpr vars rhs))
         _ ->
-          addTerm
+          addHardTerm
             (ensureWeight config)
             (sq (lowerExpr vars lhs - lowerExpr vars rhs))
     LessOrEqual lhs rhs ->
-      addTerm
+      addHardTerm
         (ensureWeight config)
         (sq (clipNegative (lowerExpr vars lhs - lowerExpr vars rhs)))
     Minimize objective ->
-      addTerm (encourageWeight config) (lowerExpr vars objective)
+      addSoftTerm (encourageWeight config) (lowerExpr vars objective)
     All constraints -> traverse_ (lowerConstraint config vars) constraints
 
 lowerExpr :: Floating a => Map String InternalVar -> RawExpr -> EnergyExpr a

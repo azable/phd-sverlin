@@ -2689,46 +2689,75 @@ virtualFitConstraints :: VirtualView tag -> [Constraint]
 virtualFitConstraints virtual =
   case virtualChildren virtual of
     [] -> []
-    child:children ->
-      [ left virtual
-          S.@==@ foldLayoutExpr
-                   minLayoutExpr
-                   (anyBlockLeft child)
-                   (P.map anyBlockLeft children)
-      , top virtual
-          S.@==@ foldLayoutExpr
-                   minLayoutExpr
-                   (anyBlockTop child)
-                   (P.map anyBlockTop children)
-      , right virtual
-          S.@==@ foldLayoutExpr
-                   maxLayoutExpr
-                   (anyBlockRight child)
-                   (P.map anyBlockRight children)
-      , bottom virtual
-          S.@==@ foldLayoutExpr
-                   maxLayoutExpr
-                   (anyBlockBottom child)
-                   (P.map anyBlockBottom children)
-      ]
+    [child] -> virtualExactFitConstraints virtual child
+    children ->
+      P.concatMap (virtualContainmentConstraints virtual) children
+        P.++ virtualAnchorFitConstraints virtual children
 
-foldLayoutExpr ::
-     (LayoutExpr -> LayoutExpr -> LayoutExpr)
-  -> LayoutExpr
-  -> [LayoutExpr]
-  -> LayoutExpr
-foldLayoutExpr op initial exprs =
-  case exprs of
-    []        -> initial
-    expr:rest -> foldLayoutExpr op (op initial expr) rest
+virtualExactFitConstraints :: VirtualView tag -> AnyBlockView -> [Constraint]
+virtualExactFitConstraints virtual child =
+  [ left virtual S.@==@ anyBlockLeft child
+  , top virtual S.@==@ anyBlockTop child
+  , right virtual S.@==@ anyBlockRight child
+  , bottom virtual S.@==@ anyBlockBottom child
+  ]
 
-minLayoutExpr :: LayoutExpr -> LayoutExpr -> LayoutExpr
-minLayoutExpr lhs rhs =
-  (lhs S.@+@ rhs S.@-@ S.absExpr (lhs S.@-@ rhs)) S.@/@ S.num 2
+virtualAnchorFitConstraints :: VirtualView tag -> [AnyBlockView] -> [Constraint]
+virtualAnchorFitConstraints virtual children =
+  case children of
+    [] -> []
+    child:rest ->
+      let first = firstFitChild child rest
+          last' = lastFitChild child rest
+       in [ left virtual S.@==@ anyBlockLeft first
+          , top virtual S.@==@ anyBlockTop first
+          , right virtual S.@==@ anyBlockRight last'
+          , bottom virtual S.@==@ anyBlockBottom last'
+          ]
 
-maxLayoutExpr :: LayoutExpr -> LayoutExpr -> LayoutExpr
-maxLayoutExpr lhs rhs =
-  (lhs S.@+@ rhs S.@+@ S.absExpr (lhs S.@-@ rhs)) S.@/@ S.num 2
+virtualContainmentConstraints :: VirtualView tag -> AnyBlockView -> [Constraint]
+virtualContainmentConstraints virtual child =
+  [ left virtual S.@<=@ anyBlockLeft child
+  , top virtual S.@<=@ anyBlockTop child
+  , anyBlockRight child S.@<=@ right virtual
+  , anyBlockBottom child S.@<=@ bottom virtual
+  ]
+
+firstFitChild :: AnyBlockView -> [AnyBlockView] -> AnyBlockView
+firstFitChild current children =
+  case children of
+    [] -> current
+    child:rest
+      | fitChildOrder child P.< fitChildOrder current ->
+        firstFitChild child rest
+      | otherwise -> firstFitChild current rest
+
+lastFitChild :: AnyBlockView -> [AnyBlockView] -> AnyBlockView
+lastFitChild current children =
+  case children of
+    [] -> current
+    child:rest
+      | fitChildOrder child P.>= fitChildOrder current ->
+        lastFitChild child rest
+      | otherwise -> lastFitChild current rest
+
+fitChildOrder :: AnyBlockView -> Maybe P.Int
+fitChildOrder = anyBlockIndex
+
+anyBlockIndex :: AnyBlockView -> Maybe P.Int
+anyBlockIndex anyBlock =
+  case anyBlock of
+    AnyBlockView child -> indexFactValue (C.factsToList (blockFacts child))
+
+indexFactValue :: [C.Fact] -> Maybe P.Int
+indexFactValue facts =
+  case facts of
+    [] -> Nothing
+    C.Fact name value:rest ->
+      case value of
+        C.FactInt actual
+          | name P.== "index" -> Just actual
+        _ -> indexFactValue rest
 
 anyBlockLeft :: AnyBlockView -> LayoutExpr
 anyBlockLeft anyBlock =
