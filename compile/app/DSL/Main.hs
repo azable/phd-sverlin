@@ -248,20 +248,20 @@ visualization =
           $ probeY =| half probeSize |+| matchGap |+| half matchHeight |= matchY
         Bound v <- bindContent
         Bound i <- bindInt
-        Selected valueContent <- node @Value (payload @Value v)
-        Selected result <- node @Match (tag #result)
-        Selected resultTrue <- node @Match (withPayload @Match #result True)
-        Selected resultFalse <- node @Match (withPayload @Match #result False)
-        Selected targetSource <- node @Value (tag (#target <> #source))
-        Selected targetProbe <- node @Value (tag (#target <> #probe))
-        Selected probe <- node @Value (tag #probe)
-        Selected probeItem <- node @Value (tag (#probe <> #index i))
-        Selected array <- node @Array (node @Value (tag #array))
-        Selected arrayItem <- node @Value (tag (#array <> #index i))
-        Selected nextArrayItem <-
-          node @Value (tag (#array <> #index #: (i + 1)))
+        Selected valueContent <- select @Value (payload v)
+        Selected result <- select @Match #result
+        Selected resultTrue <- select @Match (#result <> payload True)
+        Selected resultFalse <- select @Match (#result <> payload False)
+        Selected targetSource <- select @Value (#target <> #source)
+        Selected targetProbe <- select @Value (#target <> #probe)
+        Selected probe <- select @Value #probe
+        Selected probeItem <- select @Value (#probe <> #index i)
+        Selected arrayItems <- select @Value #array
+        Selected array <- node @Array arrayItems
+        Selected arrayItem <- select @Value (#array <> #index i)
+        Selected nextArrayItem <- select @Value (#array <> #index #: (i + 1))
         Selected processedItem <-
-          node @Value (tag (#array <> #processed <> #index i))
+          select @Value (#array <> #processed <> #index i)
         style valueContent $ do
           content v
           centerText

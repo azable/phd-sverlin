@@ -71,8 +71,7 @@ module LinearTrace.Choreography
   , Pattern
   , PatternInt
   , patternIndex
-  , TagSelector
-  , Selector
+  , TraceQuery
   , Selection
   , Selected
   , Variable(..)
@@ -81,8 +80,7 @@ module LinearTrace.Choreography
   , NodeRef
   , Node
   , StyleTarget
-  , tag
-  , withPayload
+  , select
   , VisualizationBuilder
   , QueryAppend
   , visualize
@@ -223,6 +221,7 @@ import           Data.Proxy             (Proxy (..))
 import           Data.Typeable          (Typeable, typeRep)
 import           GHC.Exts               (Multiplicity (Many))
 import           GHC.OverloadedLabels   (IsLabel (..))
+import           GHC.TypeLits           (KnownSymbol)
 import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          Facts (..), LBool (..), LDouble (..),
                                          LInt (..), LString (..), LUnit (..),
@@ -255,9 +254,9 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          matchSelectionBridge,
                                          matchSelectionRelation,
                                          matchSpecAppend, matchVirtualNode,
-                                         patternAppend, patternIntAdd,
-                                         patternIntConst, patternIntVar,
-                                         payloadBindingPattern,
+                                         patternAppend, patternAtom, patternInt,
+                                         patternIntAdd, patternIntConst,
+                                         patternIntVar, payloadBindingPattern,
                                          payloadBoolPattern,
                                          payloadDoublePattern,
                                          payloadIntPattern,
@@ -330,17 +329,14 @@ newtype Binding =
   Binding P.String
   deriving (P.Eq, P.Show)
 
-data Selector tag =
-  Selector Pattern (Maybe (PayloadPattern tag))
-
-newtype TagSelector =
-  TagSelector Pattern
+data TraceQuery tag =
+  TraceQuery Pattern (Maybe (PayloadPattern tag))
 
 data Selection a where
   Selection :: a %1 -> MatchSpec -> Selection a
 
 data NodeRef tag where
-  TraceNodeRef :: C.Traceable tag => Selector tag -> NodeRef tag
+  TraceNodeRef :: C.Traceable tag => TraceQuery tag -> NodeRef tag
   VirtualNodeRef :: P.String -> Pattern -> NodeRef tag
 
 type Selected tag = Selection (NodeRef tag)
@@ -378,22 +374,15 @@ data ContentValue
   = ContentLiteral P.String
   | ContentBinding Binding
 
-withPayload ::
-     forall tag selector. PayloadSelector tag selector
-  => Pattern
-  -> selector
-  -> Selector tag
-withPayload pattern' selector =
-  Selector pattern' (Just (payloadSelector @tag selector))
-
 text :: P.String -> ContentValue
 text = ContentLiteral
 
-payload :: forall tag. ContentValue -> Selector tag
-payload selector = Selector (Pattern []) (Just (payloadSelector @tag selector))
-
-tag :: Pattern -> TagSelector
-tag = TagSelector
+payload ::
+     forall tag selector. PayloadSelector tag selector
+  => selector
+  -> TraceQuery tag
+payload selector =
+  TraceQuery (Pattern []) (Just (payloadSelector @tag selector))
 
 instance IsString ContentValue where
   fromString = ContentLiteral
@@ -866,7 +855,7 @@ instance IntegerLiteral PatternInt where
 patternIndex :: P.Int -> PatternInt
 patternIndex = patternIntConst
 
-(#:) :: (PatternInt -> Pattern) -> PatternInt -> Pattern
+(#:) :: (PatternInt -> query) -> PatternInt -> query
 (#:) buildField = buildField
 
 at :: P.Double -> Coord
@@ -1637,6 +1626,15 @@ require action =
 class Node tag input result | tag input -> result where
   node :: input -> result
 
+select ::
+     forall tag. C.Traceable tag
+  => TraceQuery tag
+  -> VisualizationBuilder (NodeBinding (Selected tag))
+select query =
+  emitVisualizationBuilder
+    (Selected (Selection (TraceNodeRef query) emptyMatchSpec))
+    emptyMatchSpec
+
 defineNode :: NodeRecipe () -> NodeDefinition tag
 defineNode = nodeDefinition
 
@@ -1747,31 +1745,6 @@ spanPin value =
   case value of
     Span expr constraints -> V.LayoutPin expr constraints
 
-instance C.Traceable tag =>
-         Node
-           tag
-           TagSelector
-           (VisualizationBuilder (NodeBinding (Selected tag))) where
-  node selector =
-    case selector of
-      TagSelector pattern' ->
-        emitVisualizationBuilder
-          (Selected
-             (Selection
-                (TraceNodeRef (Selector pattern' Nothing))
-                emptyMatchSpec))
-          emptyMatchSpec
-
-instance C.Traceable tag =>
-         Node
-           tag
-           (Selector tag)
-           (VisualizationBuilder (NodeBinding (Selected tag))) where
-  node selector =
-    emitVisualizationBuilder
-      (Selected (Selection (TraceNodeRef selector) emptyMatchSpec))
-      emptyMatchSpec
-
 instance Typeable tag =>
          Node
            tag
@@ -1837,8 +1810,8 @@ nodeRefStyleSpec handle recipe =
   case handle of
     TraceNodeRef selector ->
       matchPatternPayloadNode
-        (selectorPattern selector)
-        (selectorPayloadPattern selector)
+        (traceQueryPattern selector)
+        (traceQueryPayloadPattern selector)
         (\context -> nodePatch (matchContextBindings context) recipe)
     VirtualNodeRef key pattern' ->
       matchVirtualNode key pattern' (nodePatch [] recipe)
@@ -1846,13 +1819,13 @@ nodeRefStyleSpec handle recipe =
 nodeRefPattern :: NodeRef tag -> Pattern
 nodeRefPattern handle =
   case handle of
-    TraceNodeRef selector     -> selectorPattern selector
+    TraceNodeRef selector     -> traceQueryPattern selector
     VirtualNodeRef _ pattern' -> pattern'
 
 nodeSelection :: NodeRef tag -> NodeSelection
 nodeSelection handle =
   case handle of
-    TraceNodeRef selector       -> TraceSelection (selectorPattern selector)
+    TraceNodeRef selector       -> TraceSelection (traceQueryPattern selector)
     VirtualNodeRef key pattern' -> VirtualSelection key pattern'
 
 virtualNodeKey ::
@@ -1897,26 +1870,33 @@ instance (Payload tag ~ LString tag) => PayloadSelector tag P.String where
 instance (Payload tag ~ LUnit tag) => PayloadSelector tag () where
   payloadSelector = payloadUnitPattern
 
-selectorPattern :: Selector tag -> Pattern
-selectorPattern selector =
-  case selector of
-    Selector pattern' _ -> pattern'
+traceQueryPattern :: TraceQuery tag -> Pattern
+traceQueryPattern query =
+  case query of
+    TraceQuery pattern' _ -> pattern'
 
-selectorPayloadPattern :: Selector tag -> PayloadPattern tag
-selectorPayloadPattern selector =
-  case selector of
-    Selector _ Nothing               -> anyPayloadPattern
-    Selector _ (Just payloadPattern) -> payloadPattern
+traceQueryPayloadPattern :: TraceQuery tag -> PayloadPattern tag
+traceQueryPayloadPattern query =
+  case query of
+    TraceQuery _ Nothing               -> anyPayloadPattern
+    TraceQuery _ (Just payloadPattern) -> payloadPattern
 
-selectorAppend :: Selector tag -> Selector tag -> Selector tag
-selectorAppend lhs rhs =
+traceQueryAppend :: TraceQuery tag -> TraceQuery tag -> TraceQuery tag
+traceQueryAppend lhs rhs =
   case lhs of
-    Selector leftPattern leftPayload ->
+    TraceQuery leftPattern leftPayload ->
       case rhs of
-        Selector rightPattern rightPayload ->
-          Selector
+        TraceQuery rightPattern rightPayload ->
+          TraceQuery
             (patternAppend leftPattern rightPattern)
             (preferLater leftPayload rightPayload)
+
+instance KnownSymbol name => IsLabel name (TraceQuery tag) where
+  fromLabel = TraceQuery (patternAtom (S.labelName (Proxy @name))) Nothing
+
+instance KnownSymbol name => IsLabel name (PatternInt -> TraceQuery tag) where
+  fromLabel value =
+    TraceQuery (patternInt (S.labelName (Proxy @name)) value) Nothing
 
 class QueryAppend query where
   appendQuery :: query -> query -> query
@@ -1927,8 +1907,8 @@ instance QueryAppend Query where
 instance QueryAppend Pattern where
   appendQuery = patternAppend
 
-instance QueryAppend (Selector tag) where
-  appendQuery = selectorAppend
+instance QueryAppend (TraceQuery tag) where
+  appendQuery = traceQueryAppend
 
 (<>) :: QueryAppend query => query -> query -> query
 (<>) = appendQuery
