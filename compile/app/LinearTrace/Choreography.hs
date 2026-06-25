@@ -142,6 +142,14 @@ module LinearTrace.Choreography
   , content
   , contentDebug
   , constrain
+  , derive
+  , deriveCoord
+  , deriveSpan
+  , deriveOffset
+  , deriveScalar
+  , deriveExpr
+  , deriveHue
+  , Derived
   , coordExpr
   , encourage
   , fill
@@ -785,6 +793,7 @@ class MulExpr lhs rhs result
   | lhs rhs -> result
   , lhs result -> rhs
   , rhs result -> lhs
+  , result -> lhs rhs
   where
   mulExpr :: lhs -> rhs -> result
 
@@ -806,23 +815,11 @@ instance MulExpr Span Scalar Span where
       (spanExpr lhs S.@*@ scalarExpr rhs)
       (spanConstraints lhs P.++ scalarConstraints rhs)
 
-instance MulExpr Scalar Span Span where
-  mulExpr lhs rhs =
-    mkSpan
-      (scalarExpr lhs S.@*@ spanExpr rhs)
-      (scalarConstraints lhs P.++ spanConstraints rhs)
-
 instance MulExpr Offset Scalar Offset where
   mulExpr lhs rhs =
     mkOffset
       (offsetExpr lhs S.@*@ scalarExpr rhs)
       (offsetConstraints lhs P.++ scalarConstraints rhs)
-
-instance MulExpr Scalar Offset Offset where
-  mulExpr lhs rhs =
-    mkOffset
-      (scalarExpr lhs S.@*@ offsetExpr rhs)
-      (scalarConstraints lhs P.++ offsetConstraints rhs)
 
 instance MulExpr Scalar Scalar Scalar where
   mulExpr lhs rhs =
@@ -830,7 +827,11 @@ instance MulExpr Scalar Scalar Scalar where
       (scalarExpr lhs S.@*@ scalarExpr rhs)
       (scalarConstraints lhs P.++ scalarConstraints rhs)
 
-class DivExpr lhs rhs result | lhs rhs -> result, lhs result -> rhs where
+class DivExpr lhs rhs result
+  | lhs rhs -> result
+  , lhs result -> rhs
+  , result -> lhs rhs
+  where
   divExpr :: lhs -> rhs -> result
 
 instance S.SymbolicType ty => DivExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
@@ -1068,6 +1069,69 @@ instance ConstraintLike CoordChain where
 
 constrain :: ConstraintLike constraint => constraint -> ViewLayout ()
 constrain constraint = V.ensure (toOneConstraint constraint)
+
+class Derived value where
+  derive :: value -> value -> ViewLayout ()
+
+deriveLayoutExpr ::
+     LayoutExpr
+  -> [S.Constraint]
+  -> LayoutExpr
+  -> [S.Constraint]
+  -> ViewLayout ()
+deriveLayoutExpr lhs lhsConstraints rhs rhsConstraints =
+  constrainRaw
+    (S.All (lhsConstraints P.++ rhsConstraints P.++ [lhs S.@==@ rhs]))
+
+instance Derived Coord where
+  derive lhs rhs =
+    deriveLayoutExpr
+      (coordExpr lhs)
+      (coordConstraints lhs)
+      (coordExpr rhs)
+      (coordConstraints rhs)
+
+instance Derived Span where
+  derive lhs rhs =
+    deriveLayoutExpr
+      (spanExpr lhs)
+      (spanConstraints lhs)
+      (spanExpr rhs)
+      (spanConstraints rhs)
+
+instance Derived Offset where
+  derive lhs rhs =
+    deriveLayoutExpr
+      (offsetExpr lhs)
+      (offsetConstraints lhs)
+      (offsetExpr rhs)
+      (offsetConstraints rhs)
+
+instance Derived Scalar where
+  derive lhs rhs =
+    deriveLayoutExpr
+      (scalarExpr lhs)
+      (scalarConstraints lhs)
+      (scalarExpr rhs)
+      (scalarConstraints rhs)
+
+deriveCoord :: Coord -> Coord -> ViewLayout ()
+deriveCoord = derive
+
+deriveSpan :: Span -> Span -> ViewLayout ()
+deriveSpan = derive
+
+deriveOffset :: Offset -> Offset -> ViewLayout ()
+deriveOffset = derive
+
+deriveScalar :: Scalar -> Scalar -> ViewLayout ()
+deriveScalar = derive
+
+deriveExpr :: S.SymbolicType ty => S.Expr ty -> S.Expr ty -> ViewLayout ()
+deriveExpr lhs rhs = constrainRaw (lhs S.@==@ rhs)
+
+deriveHue :: HueExpr -> HueExpr -> ViewLayout ()
+deriveHue = deriveExpr
 
 style :: StyleRecipe () -> (EmptyStyleDraft %1 -> Style)
 style recipe =

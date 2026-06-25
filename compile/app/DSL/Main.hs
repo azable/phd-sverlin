@@ -178,7 +178,6 @@ discardRemaining elements =
     NoElements -> return ()
     MoreElement _ element rest -> do
       destroy element
-      checkpoint "Discard remaining element"
       discardRemaining rest
 
 prepareComparison ::
@@ -207,52 +206,42 @@ compareValues targetProbe elementProbe = do
 discardChecked :: Block Value %1 -> Program ()
 discardChecked element = do
   destroy element
-  checkpoint "Discard checked element"
+  -- checkpoint "Discard checked element"
 
 finishFound :: Block Value %1 -> Block Value %1 -> Program ()
 finishFound target element = do
   destroy target
   destroy element
-  checkpoint "Finish found target"
+  -- checkpoint "Finish found target"
 
 --------------------------------------------------------------------------------
 -- Visualisation
 --------------------------------------------------------------------------------
 visualization :: MatchSpec
 visualization =
-  let cell :: Span
-      cell = by 76
-      gap :: Span
-      gap = half cell
-      cellBy :: Scalar -> Span
-      cellBy scale = cell * scale
-      gapBy :: Scalar -> Span
-      gapBy scale = gap * scale
-      targetWidth :: Span
-      targetWidth = cellBy 2.1 |+| gap
-      targetHeight :: Span
-      targetHeight = cell |+| gapBy 0.8
-      probeSize :: Span
-      probeSize = cellBy 1.08
-      matchWidth :: Span
-      matchWidth = probeSize * 2 |+| gap
-      matchHeight :: Span
-      matchHeight = cellBy 0.72
-      matchGap :: Span
-      matchGap = gapBy 0.7
-      half :: Span -> Span
+  let half :: Span -> Span
       half value = value / 2
       midpoint :: Coord -> Coord -> Coord
       midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
    in visualize $ do
         layout $ do
-          constrain $ #probe_target_x =| probeSize |+| gap |= #probe_element_x
+          deriveSpan #cell (by 76)
+          deriveSpan #gap (#cell / 2)
+          deriveSpan #target_width (#cell * 2.1 |+| #gap)
+          deriveSpan #target_height (#cell |+| #gap * 0.8)
+          deriveSpan #probe_size (#cell * 1.08)
+          deriveSpan #match_width (#probe_size * 2 |+| #gap)
+          deriveSpan #match_height (#cell * 0.72)
+          deriveSpan #match_gap (#gap * 0.7)
+          deriveHue #not_matched_hue (#match_hue + 180)
+          constrain
+            $ #probe_target_x =| #probe_size |+| #gap |= #probe_element_x
           constrain $ #match_x =|= midpoint #probe_target_x #probe_element_x
           constrain
             $ #probe_y
-                =| half probeSize
-                |+| matchGap
-                |+| half matchHeight
+                =| half #probe_size
+                |+| #match_gap
+                |+| half #match_height
                 |= #match_y
         match @Value $ do
           contentDebug
@@ -262,77 +251,77 @@ visualization =
         match @Value (whereFacts (#int <> #target <> #source)) $ do
           fill (Hsl #target_hue #lum 0.84)
           stroke (Hsl #target_hue 0.76 0.36)
-          strokeWidth (cellBy 0.05)
-          radius (cellBy 0.24)
-          fontSize (cellBy 0.62)
+          strokeWidth (#cell * 0.05)
+          radius (#cell * 0.24)
+          fontSize (#cell * 0.62)
           position (vec2 #target_x #target_y)
-          width targetWidth
-          height targetHeight
+          width #target_width
+          height #target_height
         match @Value (whereFacts (#int <> #target <> #probe)) $ do
           fill (Hsl #probe_hue 0.5 0.88)
           stroke (Hsl #probe_hue 0.78 0.34)
-          strokeWidth (cellBy 0.035)
+          strokeWidth (#cell * 0.035)
           zIndex 3
-          radius (cellBy 0.22)
-          fontSize (cellBy 0.56)
+          radius (#cell * 0.22)
+          fontSize (#cell * 0.56)
           position (vec2 #probe_target_x #probe_y)
-          width probeSize
-          height probeSize
+          width #probe_size
+          height #probe_size
         match @Value (whereFacts (#int <> #array <> patternIntField #index #i)) $ do
           fill (Hsl #list_hue #sat 0.92)
           stroke (Hsl #list_hue 0.58 0.42)
-          strokeWidth (cellBy 0.035)
-          radius (cellBy 0.18)
-          fontSize (cellBy 0.5)
-          width cell
-          height cell
+          strokeWidth (#cell * 0.035)
+          radius (#cell * 0.18)
+          fontSize (#cell * 0.5)
+          width #cell
+          height #cell
         matchPair
           (#int <> #target <> #source)
           (#int <> #array <> patternIntField #index #i)
-          (\target element -> constrain $ bottom target <| gap |> top element)
+          (\target element -> constrain $ bottom target <| #gap |> top element)
         matchPair
           (#int <> #target <> #source)
           (#int <> #probe <> patternIntField #index #i)
-          (\target probe -> constrain $ bottom target <| gap |> top probe)
+          (\target probe -> constrain $ bottom target <| #gap |> top probe)
         match @Value (whereFacts (#int <> #probe <> patternIntField #index #i)) $ do
           fill (Hsl #probe_hue 0.5 0.88)
           stroke (Hsl #probe_hue 0.78 0.34)
-          strokeWidth (cellBy 0.035)
+          strokeWidth (#cell * 0.035)
           zIndex 3
-          radius (cellBy 0.22)
-          fontSize (cellBy 0.56)
+          radius (#cell * 0.22)
+          fontSize (#cell * 0.56)
           position (vec2 #probe_element_x #probe_y)
-          width probeSize
-          height probeSize
+          width #probe_size
+          height #probe_size
         matchPair
           (#int <> #probe <> patternIntField #index #i)
           (#int <> #array <> patternIntField #index #i)
-          (\probe element -> constrain $ bottom probe <| gap |> top element)
+          (\probe element -> constrain $ bottom probe <| #gap |> top element)
         matchPair
           (#int <> #array <> patternIntField #index #i)
           (#int <> #array <> patternIntField #index (#i + 1))
           (\previous next -> do
-             constrain $ right previous =| gapBy 2 |= left next
+             constrain $ right previous =| #gap * 2 |= left next
              constrain $ top previous =|= top next)
         match @Match (whereFacts (#decision <> #match <> #matched)) $ do
           content "MATCH"
           fill (Hsl #match_hue 0.6 0.86)
           stroke (Hsl #match_hue 0.82 0.32)
-          strokeWidth (cellBy 0.05)
+          strokeWidth (#cell * 0.05)
           zIndex 4
-          radius (cellBy 0.26)
-          fontSize (cellBy 0.34)
+          radius (#cell * 0.26)
+          fontSize (#cell * 0.34)
           position (vec2 #match_x #match_y)
-          width matchWidth
-          height matchHeight
+          width #match_width
+          height #match_height
         match @Match (whereFacts (#decision <> #match <> #not_matched)) $ do
           content "NO MATCH"
-          fill (Hsl (#match_hue + 180) 0.34 0.9)
-          stroke (Hsl (#match_hue + 180) 0.68 0.34)
-          strokeWidth (cellBy 0.05)
+          fill (Hsl #not_matched_hue 0.34 0.9)
+          stroke (Hsl #not_matched_hue 0.68 0.34)
+          strokeWidth (#cell * 0.05)
           zIndex 4
-          radius (cellBy 0.26)
-          fontSize (cellBy 0.34)
+          radius (#cell * 0.26)
+          fontSize (#cell * 0.34)
           position (vec2 #match_x #match_y)
-          width matchWidth
-          height matchHeight
+          width #match_width
+          height #match_height
