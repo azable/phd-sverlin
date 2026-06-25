@@ -3,10 +3,10 @@
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE GADTs                   #-}
-{-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE LinearTypes             #-}
 {-# LANGUAGE NoImplicitPrelude       #-}
 {-# LANGUAGE OverloadedLabels        #-}
+{-# LANGUAGE OverloadedStrings       #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
@@ -128,8 +128,8 @@ createElementsFrom :: Int -> InputValues %1 -> Program Elements
 createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
-    MoreInputValue payload rest -> do
-      element <- create (#array <> #index index) payload
+    MoreInputValue valuePayload rest -> do
+      element <- create (#array <> #index index) valuePayload
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement index element elements)
 
@@ -207,12 +207,7 @@ compareValues :: Block Value %1 -> Block Value %1 -> Program (Block Match)
 compareValues targetProbe elementProbe = do
   targetPayload <- use targetProbe
   elementPayload <- use elementProbe
-  computeWithTags
-    #result
-    (\case
-       LBool True -> #matched
-       LBool False -> #not_matched)
-    (sameValue <$> targetPayload <*> elementPayload)
+  compute #result (sameValue <$> targetPayload <*> elementPayload)
 
 --------------------------------------------------------------------------------
 -- Visualisation
@@ -243,10 +238,10 @@ visualization =
                 |+| #match_gap
                 |+| half #match_height
                 |= #match_y
-        match @Value $ do
-          contentDebug
+        match @Value (payload #v) $ do
+          content #v
           centerText
-        match @Match (where_ #result) $ do
+        match @Match (tagged #result) $ do
           centerText
           strokeWidth (#cell * 0.05)
           zIndex 4
@@ -255,7 +250,7 @@ visualization =
           position (vec2 #match_x #match_y)
           width #match_width
           height #match_height
-        match @Value (where_ (#target <> #source)) $ do
+        match @Value (tagged (#target <> #source)) $ do
           fill (Hsl #target_hue #lum 0.84)
           stroke (Hsl #target_hue 0.76 0.36)
           strokeWidth (#cell * 0.05)
@@ -264,7 +259,7 @@ visualization =
           position (vec2 #target_x #target_y)
           width #target_width
           height #target_height
-        match @Value (where_ #probe) $ do
+        match @Value (tagged #probe) $ do
           fill (Hsl #probe_hue 0.5 0.88)
           stroke (Hsl #probe_hue 0.78 0.34)
           strokeWidth (#cell * 0.035)
@@ -273,59 +268,58 @@ visualization =
           fontSize (#cell * 0.56)
           width #probe_size
           height #probe_size
-        match @Value (where_ (#target <> #probe)) $ do
+        match @Value (tagged (#target <> #probe)) $ do
           position (vec2 #probe_target_x #probe_y)
-        match @Value (where_ (#array <> patternIntField #index #i)) $ do
-          fill (Hsl #list_hue #sat 0.92)
+        match @Value (tagged (#array <> #index #: #i)) $ do
+          fill (Hsl #list_hue (#i * 0.2) 0.92)
           stroke (Hsl #list_hue 0.58 0.42)
           strokeWidth (#cell * 0.035)
           radius (#cell * 0.18)
           fontSize (#cell * 0.5)
           width #cell
           height #cell
-        match @Value
-          (where_ (#array <> #processed <> patternIntField #index #i)) $ do
+        match @Value (tagged (#array <> #processed <> #index #: #i)) $ do
           fill (Hsl 220 0.04 0.84)
           stroke (Hsl 220 0.08 0.58)
           strokeWidth (#cell * 0.025)
           opacity 0.62
         matchPair
           (#target <> #source)
-          (#array <> patternIntField #index #i)
+          (#array <> #index #: #i)
           (\target element -> constrain $ bottom target <| #gap |> top element)
         matchPair
           (#target <> #source)
-          (#probe <> patternIntField #index #i)
+          (#probe <> #index #: #i)
           (\target probe -> constrain $ bottom target <| #gap |> top probe)
-        match @Value (where_ (#probe <> patternIntField #index #i)) $ do
+        match @Value (tagged (#probe <> #index #: #i)) $ do
           position (vec2 #probe_element_x #probe_y)
         matchPair
-          (#probe <> patternIntField #index #i)
-          (#array <> patternIntField #index #i)
+          (#probe <> #index #: #i)
+          (#array <> #index #: #i)
           (\probe element -> constrain $ bottom probe <| #gap |> top element)
         matchPair
           (#target <> #probe)
           #result
           (\probe result -> constrain $ bottom probe <| #match_gap |> top result)
         matchPair
-          (#probe <> patternIntField #index #i)
+          (#probe <> #index #: #i)
           #result
           (\probe result -> constrain $ bottom probe <| #match_gap |> top result)
         matchPair
           #result
-          (#array <> patternIntField #index #i)
+          (#array <> #index #: #i)
           (\result element -> constrain $ bottom result <| #gap |> top element)
         matchPair
-          (#array <> patternIntField #index #i)
-          (#array <> patternIntField #index (#i + 1))
+          (#array <> #index #: #i)
+          (#array <> #index #: (#i + 1))
           (\previous next -> do
              constrain $ right previous =| #gap * 2 |= left next
              constrain $ top previous =|= top next)
-        match @Match (where_ (#result <> #matched)) $ do
+        match @Match (taggedPayload #result True) $ do
           content "MATCH"
           fill (Hsl #match_hue 0.6 0.86)
           stroke (Hsl #match_hue 0.82 0.32)
-        match @Match (where_ (#result <> #not_matched)) $ do
+        match @Match (taggedPayload #result False) $ do
           content "NO MATCH"
           fill (Hsl #not_matched_hue 0.34 0.9)
           stroke (Hsl #not_matched_hue 0.68 0.34)

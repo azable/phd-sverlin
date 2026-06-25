@@ -72,7 +72,9 @@ module LinearTrace.Choreography
   , Pattern
   , PatternInt
   , patternIndex
-  , patternIntField
+  , Tagged
+  , tagged
+  , taggedPayload
   , VisualizationBuilder
   , PairPattern(..)
   , MatchRule
@@ -84,7 +86,6 @@ module LinearTrace.Choreography
   , layout
   , match
   , part
-  , where_
   , matchLayout
   , matchPair
   , pair
@@ -94,6 +95,7 @@ module LinearTrace.Choreography
   , queryInt
   , queryFacts
   , (<>)
+  , (#:)
   , -- * Component and layout layer
     BoxDefinition
   , BoxVisual
@@ -131,6 +133,7 @@ module LinearTrace.Choreography
   , Bottom
   , Width
   , Height
+  , ContentValue
   , alpha
   , asCoord
   , asSpan
@@ -143,7 +146,8 @@ module LinearTrace.Choreography
   , boxDefinition
   , centerText
   , content
-  , contentDebug
+  , payload
+  , text
   , constrain
   , derive
   , Derived
@@ -235,34 +239,46 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          EmptyStyleDraft, FontStyle (..),
                                          FontWeight (..), FreeExpr, Hsl (..),
                                          HslExpr, Hue, HueExpr, LayoutExpr,
-                                         LayoutUse (..), LiveVisual, MatchSpec,
-                                         MatchedNode, OneConstraint (..),
-                                         OneExpr (..), PairPattern (..),
-                                         Pattern, PatternInt, Query, Style,
-                                         TextAlign (..), UnitExpr,
+                                         LayoutUse (..), LiveVisual,
+                                         MatchBindings, MatchSpec, MatchedNode,
+                                         OneConstraint (..), OneExpr (..),
+                                         PairPattern (..), Pattern,
+                                         PatternInt (..), PayloadPattern, Query,
+                                         Style, TextAlign (..), UnitExpr,
                                          WhiteSpace (..), boxDefinition,
                                          emptyMatchSpec, emptyQuery, encourage,
                                          finalizeStyle, global,
+                                         matchBindingValue,
+                                         matchContextBindings,
                                          matchGlobalLayout, matchPairAdjacent,
                                          matchPatternLayout, matchPatternNode,
                                          matchPatternPair, matchPatternPartNode,
-                                         matchSpecAppend, matchSpecFromList,
-                                         matchTagNode, patternAppend,
-                                         patternIntAdd, patternIntConst,
-                                         queryAppend, queryAtom, queryFacts,
-                                         queryInt, setFillOnce,
-                                         setFontFamilyOnce, setFontSizeOnce,
-                                         setFontWeightOnce, setRadiusOnce,
-                                         setStrokeOnce, setStrokeWidthOnce,
-                                         setTextAlignOnce, setWhiteSpaceOnce,
-                                         setZIndexOnce, takeHeight, takeLeft,
-                                         takeRight, takeTop, takeWidth)
+                                         matchPatternPayloadNode,
+                                         matchPayloadNode, matchSpecAppend,
+                                         matchSpecFromList, matchTagNode,
+                                         patternAppend, patternIntAdd,
+                                         patternIntConst, payloadBindingPattern,
+                                         payloadBoolPattern,
+                                         payloadDoublePattern,
+                                         payloadIntPattern,
+                                         payloadStringPattern,
+                                         payloadUnitPattern, queryAppend,
+                                         queryAtom, queryFacts, queryInt,
+                                         setFillOnce, setFontFamilyOnce,
+                                         setFontSizeOnce, setFontWeightOnce,
+                                         setRadiusOnce, setStrokeOnce,
+                                         setStrokeWidthOnce, setTextAlignOnce,
+                                         setWhiteSpaceOnce, setZIndexOnce,
+                                         takeHeight, takeLeft, takeRight,
+                                         takeTop, takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
 import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
                                          (+), (-), (/), (<>))
 
+infixr 6 <>
+infixl 9 #:
 data Program a where
   PureProgram :: a %1 -> Program a
   BindProgram :: Program a %1 -> (a %1 -> Program b) %1 -> Program b
@@ -309,6 +325,43 @@ data Scalar =
   Scalar LayoutExpr [S.Constraint]
   deriving (P.Eq, P.Show)
 
+newtype Binding =
+  Binding P.String
+  deriving (P.Eq, P.Show)
+
+newtype Tagged =
+  Tagged Pattern
+  deriving (P.Eq, P.Show)
+
+data TaggedPayload selector =
+  TaggedPayload Pattern selector
+
+data ContentValue
+  = ContentLiteral P.String
+  | ContentBinding Binding
+
+tagged :: Pattern -> Tagged
+tagged = Tagged
+
+taggedPayload :: Pattern -> selector -> TaggedPayload selector
+taggedPayload = TaggedPayload
+
+text :: P.String -> ContentValue
+text = ContentLiteral
+
+payload :: ContentValue -> ContentValue
+payload value = value
+
+instance IsString ContentValue where
+  fromString = ContentLiteral
+
+instance KnownSymbol name => IsLabel name ContentValue where
+  fromLabel = ContentBinding (Binding (S.labelName (Proxy @name)))
+
+data ContentSpec
+  = LiteralContent P.String
+  | BoundContent Binding
+
 data CoordChain =
   CoordChain Coord [S.Constraint]
 
@@ -321,7 +374,7 @@ data CoordSpanBridge =
 
 data NodeSpec = NodeSpec
   { nodeSpecStyleUpdate  :: Style -> Style
-  , nodeSpecContent      :: Maybe V.ContentMode
+  , nodeSpecContent      :: Maybe ContentSpec
   , nodeSpecLeft         :: Maybe Coord
   , nodeSpecTop          :: Maybe Coord
   , nodeSpecWidth        :: Maybe Span
@@ -674,8 +727,8 @@ instance IntegerLiteral PatternInt where
 patternIndex :: P.Int -> PatternInt
 patternIndex = patternIntConst
 
-patternIntField :: (PatternInt -> Pattern) -> PatternInt -> Pattern
-patternIntField field = field
+(#:) :: (PatternInt -> Pattern) -> PatternInt -> Pattern
+(#:) field = field
 
 at :: P.Double -> Coord
 at = num
@@ -984,7 +1037,7 @@ computeWithTags ::
 computeWithTags query selectQuery =
   ComputeProgram (queryFacts query) selectFacts
   where
-    selectFacts payload = queryFacts (selectQuery payload)
+    selectFacts outputPayload = queryFacts (selectQuery outputPayload)
 
 replace ::
      forall tag. C.Traceable tag
@@ -1029,20 +1082,21 @@ interpretProgram program =
     BindProgram first next -> do
       value <- interpretProgram first
       interpretProgram (next value)
-    CreateProgram facts payload -> do
-      V.Created block token <- V.createTagged facts payload
+    CreateProgram facts createPayload -> do
+      V.Created block token <- V.createTagged facts createPayload
       V.appendTraceView (V.freshMatched token)
       return block
     UseProgram block -> do
-      V.Used payload token <- V.use block
+      V.Used usedPayload token <- V.use block
       V.appendTraceView (V.remove token)
-      return payload
+      return usedPayload
     CopyProgram facts block -> do
       V.Copied original copy' token <- V.copyTagged facts block
       V.appendTraceView (V.forkCopyMatched token)
       return (original, copy')
-    ComputeProgram facts selectFacts payload -> do
-      V.Computed block token <- V.computeTaggedWith facts selectFacts payload
+    ComputeProgram facts selectFacts computePayload -> do
+      V.Computed block token <-
+        V.computeTaggedWith facts selectFacts computePayload
       V.appendTraceView (V.freshMatched token)
       return block
     ReplaceProgram oldBlock incomingBlock -> do
@@ -1218,13 +1272,16 @@ bold = fontWeight FontWeightBold
 centerText :: NodeRecipe ()
 centerText = textAlign TextAlignCenter
 
-content :: P.String -> NodeRecipe ()
+content :: ContentValue -> NodeRecipe ()
 content value =
-  setNodeSpecWith (\spec -> spec {nodeSpecContent = Just (V.ContentText value)})
+  setNodeSpecWith
+    (\spec -> spec {nodeSpecContent = Just (contentValueSpec value)})
 
-contentDebug :: NodeRecipe ()
-contentDebug =
-  setNodeSpecWith (\spec -> spec {nodeSpecContent = Just V.ContentDebug})
+contentValueSpec :: ContentValue -> ContentSpec
+contentValueSpec value =
+  case value of
+    ContentLiteral textValue -> LiteralContent textValue
+    ContentBinding binding   -> BoundContent binding
 
 noWrap :: NodeRecipe ()
 noWrap = whiteSpace WhiteSpaceNoWrap
@@ -1322,13 +1379,14 @@ node recipe =
         (V.finalizeStyleWith (nodeSpecStyleUpdate spec))
         (layoutNode spec)
 
-nodePatch :: NodeRecipe () -> V.NodePatch
-nodePatch recipe =
+nodePatch :: MatchBindings -> NodeRecipe () -> V.NodePatch
+nodePatch bindings recipe =
   case recipe of
     NodeRecipe () spec ->
       V.NodePatch
         { V.nodePatchStyleUpdate = nodeSpecStyleUpdate spec
-        , V.nodePatchContent = nodeSpecContent spec
+        , V.nodePatchContent =
+            P.fmap (contentMode bindings) (nodeSpecContent spec)
         , V.nodePatchLeft = P.fmap coordPin (nodeSpecLeft spec)
         , V.nodePatchTop = P.fmap coordPin (nodeSpecTop spec)
         , V.nodePatchWidth = P.fmap spanPin (nodeSpecWidth spec)
@@ -1339,6 +1397,21 @@ nodePatch recipe =
         , V.nodePatchY = P.fmap coordPin (nodeSpecY spec)
         , V.nodePatchRequirements = nodeSpecRequirements spec
         }
+
+contentMode :: MatchBindings -> ContentSpec -> V.ContentMode
+contentMode bindings spec =
+  case spec of
+    LiteralContent value -> V.ContentText value
+    BoundContent binding -> V.ContentText (bindingContent bindings binding)
+
+bindingContent :: MatchBindings -> Binding -> P.String
+bindingContent bindings binding =
+  case binding of
+    Binding name ->
+      case matchBindingValue name bindings of
+        Nothing ->
+          P.error ("Unbound view binding #" P.++ name P.++ " in content")
+        Just value -> value
 
 coordPin :: Coord -> V.LayoutPin
 coordPin value =
@@ -1358,20 +1431,124 @@ visualize builder =
 layout :: ViewLayout () -> VisualizationBuilder ()
 layout body = VisualizationBuilder () (matchGlobalLayout body)
 
+class PayloadSelector tag selector where
+  payloadSelector :: selector -> PayloadPattern tag
+
+instance PayloadSelector tag ContentValue where
+  payloadSelector selector =
+    case selector of
+      ContentBinding binding ->
+        case binding of
+          Binding name -> payloadBindingPattern name
+      ContentLiteral _ ->
+        P.error "Literal content cannot be used as a payload binding selector"
+
+instance (Payload tag ~ LBool tag) => PayloadSelector tag P.Bool where
+  payloadSelector = payloadBoolPattern
+
+instance (Payload tag ~ LInt tag) => PayloadSelector tag P.Int where
+  payloadSelector = payloadIntPattern
+
+instance (Payload tag ~ LDouble tag) => PayloadSelector tag P.Double where
+  payloadSelector = payloadDoublePattern
+
+instance (Payload tag ~ LString tag) => PayloadSelector tag P.String where
+  payloadSelector = payloadStringPattern
+
+instance (Payload tag ~ LUnit tag) => PayloadSelector tag () where
+  payloadSelector = payloadUnitPattern
+
 class MatchRule tag selector result | tag selector -> result where
   match :: selector -> result
+
+matchPayloadRecipe ::
+     forall tag. C.Traceable tag
+  => PayloadPattern tag
+  -> NodeRecipe ()
+  -> VisualizationBuilder ()
+matchPayloadRecipe payloadPattern recipe =
+  VisualizationBuilder
+    ()
+    (matchPayloadNode @tag
+       payloadPattern
+       (\context -> nodePatch (matchContextBindings context) recipe))
+
+matchTaggedRecipe ::
+     forall tag. C.Traceable tag
+  => Pattern
+  -> NodeRecipe ()
+  -> VisualizationBuilder ()
+matchTaggedRecipe pattern' recipe =
+  VisualizationBuilder
+    ()
+    (matchPatternNode @tag
+       pattern'
+       (\context -> nodePatch (matchContextBindings context) recipe))
+
+matchTaggedPayloadRecipe ::
+     forall tag. C.Traceable tag
+  => Pattern
+  -> PayloadPattern tag
+  -> NodeRecipe ()
+  -> VisualizationBuilder ()
+matchTaggedPayloadRecipe pattern' payloadPattern recipe =
+  VisualizationBuilder
+    ()
+    (matchPatternPayloadNode @tag
+       pattern'
+       payloadPattern
+       (\context -> nodePatch (matchContextBindings context) recipe))
 
 instance C.Traceable tag =>
          MatchRule tag (NodeRecipe ()) (VisualizationBuilder ()) where
   match recipe =
-    VisualizationBuilder () (matchTagNode @tag (\_index -> nodePatch recipe))
-
-instance C.Traceable tag =>
-         MatchRule tag Pattern (NodeRecipe () -> VisualizationBuilder ()) where
-  match pattern' recipe =
     VisualizationBuilder
       ()
-      (matchPatternNode @tag pattern' (\_index -> nodePatch recipe))
+      (matchTagNode @tag
+         (\context -> nodePatch (matchContextBindings context) recipe))
+
+instance (C.Traceable tag, Payload tag ~ LBool tag) =>
+         MatchRule tag P.Bool (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector = matchPayloadRecipe @tag (payloadSelector @tag selector)
+
+instance (C.Traceable tag, Payload tag ~ LInt tag) =>
+         MatchRule tag P.Int (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector = matchPayloadRecipe @tag (payloadSelector @tag selector)
+
+instance (C.Traceable tag, Payload tag ~ LDouble tag) =>
+         MatchRule tag P.Double (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector = matchPayloadRecipe @tag (payloadSelector @tag selector)
+
+instance (C.Traceable tag, Payload tag ~ LString tag) =>
+         MatchRule tag P.String (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector = matchPayloadRecipe @tag (payloadSelector @tag selector)
+
+instance (C.Traceable tag, Payload tag ~ LUnit tag) =>
+         MatchRule tag () (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector = matchPayloadRecipe @tag (payloadSelector @tag selector)
+
+instance C.Traceable tag =>
+         MatchRule tag ContentValue (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector = matchPayloadRecipe @tag (payloadSelector @tag selector)
+
+instance C.Traceable tag =>
+         MatchRule tag Tagged (NodeRecipe () -> VisualizationBuilder ()) where
+  match selector recipe =
+    case selector of
+      Tagged pattern' -> matchTaggedRecipe @tag pattern' recipe
+
+instance (C.Traceable tag, PayloadSelector tag selector) =>
+         MatchRule
+           tag
+           (TaggedPayload selector)
+           (NodeRecipe () -> VisualizationBuilder ()) where
+  match taggedPayload' recipe =
+    case taggedPayload' of
+      TaggedPayload pattern' selector ->
+        matchTaggedPayloadRecipe @tag
+          pattern'
+          (payloadSelector @tag selector)
+          recipe
 
 part ::
      forall tag. C.Traceable tag
@@ -1382,10 +1559,7 @@ part ::
 part nodeKey pattern' recipe =
   VisualizationBuilder
     ()
-    (matchPatternPartNode @tag pattern' nodeKey (\_index -> nodePatch recipe))
-
-where_ :: Pattern -> Pattern
-where_ pattern' = pattern'
+    (matchPatternPartNode @tag pattern' nodeKey (\_index -> nodePatch [] recipe))
 
 matchLayout ::
      Pattern -> (MatchedNode -> ViewLayout ()) -> VisualizationBuilder ()

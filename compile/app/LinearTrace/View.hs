@@ -53,6 +53,21 @@ module LinearTrace.View
   , patternKey
   , patternMatches
   , patternBindingValue
+  , MatchBinding(..)
+  , MatchBindings
+  , MatchContext
+  , matchContextIndex
+  , matchContextBindings
+  , matchBinding
+  , matchBindingValue
+  , PayloadPattern
+  , anyPayloadPattern
+  , payloadBindingPattern
+  , payloadBoolPattern
+  , payloadIntPattern
+  , payloadDoublePattern
+  , payloadStringPattern
+  , payloadUnitPattern
   , MatchedNode
   , matchedLeft
   , matchedRight
@@ -72,6 +87,8 @@ module LinearTrace.View
   , matchTagNode
   , matchNode
   , matchPatternNode
+  , matchPayloadNode
+  , matchPatternPayloadNode
   , matchPartNode
   , matchPatternPartNode
   , matchPairAdjacent
@@ -421,6 +438,104 @@ patternBindingValue bindings fallback =
     []               -> fallback
     (_name, value):_ -> value
 
+data MatchBinding =
+  MatchBinding P.String P.String
+  deriving (P.Eq, P.Show)
+
+type MatchBindings = [MatchBinding]
+
+data MatchContext tag = MatchContext
+  { matchContextIndex    :: P.Int
+  , matchContextPayload  :: C.Payload tag
+  , matchContextLabel    :: C.PayloadView
+  , matchContextBindings :: MatchBindings
+  }
+
+matchBinding :: P.String -> P.String -> MatchBinding
+matchBinding = MatchBinding
+
+matchBindingValue :: P.String -> MatchBindings -> Maybe P.String
+matchBindingValue name bindings =
+  case bindings of
+    [] -> Nothing
+    MatchBinding bindingName bindingValue:rest ->
+      case matchBindingValue name rest of
+        Just later -> Just later
+        Nothing
+          | name P.== bindingName -> Just bindingValue
+          | otherwise -> Nothing
+
+patternMatchBindings :: PatternBindings -> MatchBindings
+patternMatchBindings bindings =
+  case bindings of
+    [] -> []
+    (name, value):rest ->
+      MatchBinding name (P.show value) : patternMatchBindings rest
+
+newtype PayloadPattern tag =
+  PayloadPattern (C.Payload tag -> C.PayloadView -> Maybe MatchBindings)
+
+payloadPatternMatches ::
+     PayloadPattern tag -> C.Payload tag -> C.PayloadView -> Maybe MatchBindings
+payloadPatternMatches payloadPattern payload payloadView =
+  case payloadPattern of
+    PayloadPattern matchPayload -> matchPayload payload payloadView
+
+anyPayloadPattern :: PayloadPattern tag
+anyPayloadPattern = PayloadPattern (\_payload _payloadView -> Just [])
+
+payloadBindingPattern :: P.String -> PayloadPattern tag
+payloadBindingPattern name =
+  PayloadPattern
+    (\_payload payloadView ->
+       Just [MatchBinding name (C.payloadContent payloadView)])
+
+payloadBoolPattern ::
+     (C.Payload tag ~ C.LBool tag) => P.Bool -> PayloadPattern tag
+payloadBoolPattern expected =
+  PayloadPattern
+    (\payload _payloadView ->
+       case payload of
+         C.LBool actual
+           | actual P.== expected -> Just []
+           | otherwise -> Nothing)
+
+payloadIntPattern :: (C.Payload tag ~ C.LInt tag) => P.Int -> PayloadPattern tag
+payloadIntPattern expected =
+  PayloadPattern
+    (\payload _payloadView ->
+       case payload of
+         C.LInt actual
+           | actual P.== expected -> Just []
+           | otherwise -> Nothing)
+
+payloadDoublePattern ::
+     (C.Payload tag ~ C.LDouble tag) => P.Double -> PayloadPattern tag
+payloadDoublePattern expected =
+  PayloadPattern
+    (\payload _payloadView ->
+       case payload of
+         C.LDouble actual
+           | actual P.== expected -> Just []
+           | otherwise -> Nothing)
+
+payloadStringPattern ::
+     (C.Payload tag ~ C.LString tag) => P.String -> PayloadPattern tag
+payloadStringPattern expected =
+  PayloadPattern
+    (\payload _payloadView ->
+       case payload of
+         C.LString actual
+           | actual P.== expected -> Just []
+           | otherwise -> Nothing)
+
+payloadUnitPattern :: (C.Payload tag ~ C.LUnit tag) => () -> PayloadPattern tag
+payloadUnitPattern () =
+  PayloadPattern
+    (\payload _payloadView ->
+       case payload of
+         C.LUnit -> Just [])
+
 matchPatternTerms ::
      [PatternTerm] -> C.Facts -> PatternBindings -> Maybe PatternBindings
 matchPatternTerms terms facts bindings =
@@ -587,7 +702,6 @@ pairPatternKey pattern' =
 
 data ContentMode
   = ContentEmpty
-  | ContentDebug
   | ContentText P.String
   deriving (P.Eq, P.Show)
 
@@ -663,13 +777,21 @@ data MatchSpec =
 
 data NodeRule where
   TagNodeRule
-    :: C.Traceable tag => Proxy tag -> (P.Int -> NodePatch) -> NodeRule
+    :: C.Traceable tag=> Proxy tag
+    -> PayloadPattern tag
+    -> (MatchContext tag -> NodePatch)
+    -> NodeRule
   QueryNodeRule
-    :: C.Traceable tag => Proxy tag -> Query -> (P.Int -> NodePatch) -> NodeRule
+    :: C.Traceable tag=> Proxy tag
+    -> Query
+    -> PayloadPattern tag
+    -> (MatchContext tag -> NodePatch)
+    -> NodeRule
   PatternNodeRule
     :: C.Traceable tag=> Proxy tag
     -> Pattern
-    -> (P.Int -> NodePatch)
+    -> PayloadPattern tag
+    -> (MatchContext tag -> NodePatch)
     -> NodeRule
 
 data PartRule where
@@ -718,26 +840,52 @@ matchSpecFromList specs =
 
 matchTagNode ::
      forall tag. C.Traceable tag
-  => (P.Int -> NodePatch)
+  => (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchTagNode makePatch =
-  MatchSpec [TagNodeRule (Proxy :: Proxy tag) makePatch] [] []
+  MatchSpec [TagNodeRule (Proxy :: Proxy tag) anyPayloadPattern makePatch] [] []
 
 matchNode ::
      forall tag. C.Traceable tag
   => Query
-  -> (P.Int -> NodePatch)
+  -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchNode query makePatch =
-  MatchSpec [QueryNodeRule (Proxy :: Proxy tag) query makePatch] [] []
+  MatchSpec
+    [QueryNodeRule (Proxy :: Proxy tag) query anyPayloadPattern makePatch]
+    []
+    []
 
 matchPatternNode ::
      forall tag. C.Traceable tag
   => Pattern
-  -> (P.Int -> NodePatch)
+  -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchPatternNode pattern' makePatch =
-  MatchSpec [PatternNodeRule (Proxy :: Proxy tag) pattern' makePatch] [] []
+  MatchSpec
+    [PatternNodeRule (Proxy :: Proxy tag) pattern' anyPayloadPattern makePatch]
+    []
+    []
+
+matchPayloadNode ::
+     forall tag. C.Traceable tag
+  => PayloadPattern tag
+  -> (MatchContext tag -> NodePatch)
+  -> MatchSpec
+matchPayloadNode payloadPattern makePatch =
+  MatchSpec [TagNodeRule (Proxy :: Proxy tag) payloadPattern makePatch] [] []
+
+matchPatternPayloadNode ::
+     forall tag. C.Traceable tag
+  => Pattern
+  -> PayloadPattern tag
+  -> (MatchContext tag -> NodePatch)
+  -> MatchSpec
+matchPatternPayloadNode pattern' payloadPattern makePatch =
+  MatchSpec
+    [PatternNodeRule (Proxy :: Proxy tag) pattern' payloadPattern makePatch]
+    []
+    []
 
 matchPartNode ::
      forall tag. C.Traceable tag
@@ -786,6 +934,7 @@ matchPatternPair firstPattern secondPattern body =
 --------------------------------------------------------------------------------
 data BlockView tag = BlockView
   { blockRef      :: C.BlockRef tag
+  , blockPayload  :: C.Payload tag
   , blockLabel    :: C.PayloadView
   , blockContent  :: ContentMode
   , blockFacts    :: C.Facts
@@ -873,16 +1022,15 @@ materializeBlockView solution block =
     (MaterializedBlockView
        (blockRef block)
        (blockLabel block)
-       (materializeContent (blockContent block) (blockLabel block))
+       (materializeContent (blockContent block))
        (blockNodeKey block)
        (blockPieceKey block))
     (materializeStyle solution (blockStyle block))
 
-materializeContent :: ContentMode -> C.PayloadView -> P.String
-materializeContent contentMode payloadView =
+materializeContent :: ContentMode -> P.String
+materializeContent contentMode =
   case contentMode of
     ContentEmpty      -> ""
-    ContentDebug      -> C.payloadContent payloadView
     ContentText value -> value
 
 materializeViewNode :: Solution -> ViewNode -> Maybe MaterializedViewNode
@@ -2254,25 +2402,60 @@ nodeRulePatch ::
   -> Maybe NodePatch
 nodeRulePatch matchIndex block rule =
   case rule of
-    TagNodeRule (_ :: Proxy matchedTag) makePatch ->
+    TagNodeRule (_ :: Proxy matchedTag) payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
-        Nothing   -> Nothing
-        Just Refl -> Just (makePatch matchIndex)
-    QueryNodeRule (_ :: Proxy matchedTag) query makePatch ->
+        Nothing -> Nothing
+        Just Refl ->
+          matchedPayloadNodePatch matchIndex [] block payloadPattern makePatch
+    QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
         Just Refl ->
           case queryMatches query (blockFacts block) of
-            True  -> Just (makePatch matchIndex)
+            True ->
+              matchedPayloadNodePatch
+                matchIndex
+                []
+                block
+                payloadPattern
+                makePatch
             False -> Nothing
-    PatternNodeRule (_ :: Proxy matchedTag) pattern' makePatch ->
+    PatternNodeRule (_ :: Proxy matchedTag) pattern' payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
         Just Refl ->
           case patternMatches pattern' (blockFacts block) of
             Nothing -> Nothing
             Just bindings ->
-              Just (makePatch (patternBindingValue bindings matchIndex))
+              matchedPayloadNodePatch
+                matchIndex
+                (patternMatchBindings bindings)
+                block
+                payloadPattern
+                makePatch
+
+matchedPayloadNodePatch ::
+     P.Int
+  -> MatchBindings
+  -> BlockView tag
+  -> PayloadPattern tag
+  -> (MatchContext tag -> NodePatch)
+  -> Maybe NodePatch
+matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
+  case payloadPatternMatches
+         payloadPattern
+         (blockPayload block)
+         (blockLabel block) of
+    Nothing -> Nothing
+    Just payloadBindings ->
+      Just
+        (makePatch
+           (MatchContext
+              { matchContextIndex = matchIndex
+              , matchContextPayload = blockPayload block
+              , matchContextLabel = blockLabel block
+              , matchContextBindings = factBindings P.++ payloadBindings
+              }))
 
 foldNodePatches :: [NodePatch] -> Maybe NodePatch
 foldNodePatches patches =
@@ -2645,20 +2828,20 @@ instance Removable (Visual Rendered Consumed used tag) where
     case visual' of
       Visual block -> emitRenderIntent (RenderRemove (blockRef block))
 
-instance Removable (VisualExplainToken (C.Use tag)) where
-  remove token = do
-    visual' <- explainVisual token
-    remove visual'
+instance forall (tag :: Type). Removable (VisualExplainToken (C.Use tag)) where
+  remove token =
+    case token of
+      VisualExplainToken (visual' :: ConsumedVisual tag) -> remove visual'
 
-instance Removable (VisualExplainToken (C.Destroy tag)) where
-  remove token = do
-    visual' <- explainVisual token
-    remove visual'
+instance forall (tag :: Type). Removable (VisualExplainToken (C.Destroy tag)) where
+  remove token =
+    case token of
+      VisualExplainToken (visual' :: ConsumedVisual tag) -> remove visual'
 
-instance Removable (VisualExplainToken (C.Decide tag)) where
-  remove token = do
-    visual' <- explainVisual token
-    remove visual'
+instance forall (tag :: Type). Removable (VisualExplainToken (C.Decide tag)) where
+  remove token =
+    case token of
+      VisualExplainToken (visual' :: ConsumedVisual tag) -> remove visual'
 
 fresh ::
      forall tag used visual. ToNewVisual visual tag
@@ -2826,13 +3009,15 @@ continueFromMatchedRaw source visual =
           emitRenderIntent
             (RenderContinue (blockRef sourceBlock) (blockRef block))
 
-completeCopy :: VisualExplainToken (C.Copy tag) %1 -> ViewBuilder ()
-completeCopy token = do
-  copied <- explainVisual token
-  case copied of
-    CopiedVisual source copy' -> do
-      completeAnyVisual source
-      completeAnyVisual copy'
+completeCopy ::
+     forall (tag :: Type). VisualExplainToken (C.Copy tag) %1 -> ViewBuilder ()
+completeCopy token =
+  case token of
+    VisualExplainToken (copied :: CopiedVisual tag) ->
+      case copied of
+        CopiedVisual source copy' -> do
+          completeAnyVisual source
+          completeAnyVisual copy'
 
 replaceMatched ::
      forall tag. C.Traceable tag
@@ -3217,9 +3402,10 @@ mergeInitialRenderIntents pending output =
 -- Core block snapshots -> base block views
 --------------------------------------------------------------------------------
 blockViewOfSnapshot :: C.BlockSnapshot tag -> BlockView tag
-blockViewOfSnapshot (C.BlockSnapshot ref _payload payloadView facts) =
+blockViewOfSnapshot (C.BlockSnapshot ref payload payloadView facts) =
   BlockView
     { blockRef = ref
+    , blockPayload = payload
     , blockLabel = payloadView
     , blockContent = ContentEmpty
     , blockFacts = facts
