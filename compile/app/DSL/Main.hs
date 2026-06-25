@@ -232,38 +232,10 @@ visualization =
       cell = by 76
       gap :: Span
       gap = half cell
-      targetX :: Coord
-      targetX = #target_x
-      targetY :: Coord
-      targetY = #target_y
-      probeTargetX :: Coord
-      probeTargetX = #probe_target_x
-      probeElementX :: Coord
-      probeElementX = #probe_element_x
-      probeY :: Coord
-      probeY = #probe_y
-      matchX :: Coord
-      matchX = #match_x
-      matchY :: Coord
-      matchY = #match_y
-      targetHue :: HueExpr
-      targetHue = #target_hue
-      listHue :: HueExpr
-      listHue = #list_hue
-      probeHue :: HueExpr
-      probeHue = #probe_hue
-      matchHue :: HueExpr
-      matchHue = #match_hue
-      oppositeMatchHue :: HueExpr
-      oppositeMatchHue = matchHue + 180
-      i :: PatternInt
-      i = #i
       cellBy :: Scalar -> Span
       cellBy scale = cell * scale
       gapBy :: Scalar -> Span
       gapBy scale = gap * scale
-      tone :: HueExpr -> UnitExpr -> UnitExpr -> HslExpr
-      tone = Hsl
       targetWidth :: Span
       targetWidth = cellBy 2.1 |+| gap
       targetHeight :: Span
@@ -282,24 +254,24 @@ visualization =
       midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
    in visualize $ do
         layout $ do
-          constrain $ probeTargetX =| probeSize |+| gap |= probeElementX
-          constrain $ matchX =|= midpoint probeTargetX probeElementX
+          constrain $ #probe_target_x =| probeSize |+| gap |= #probe_element_x
+          constrain $ #match_x =|= midpoint #probe_target_x #probe_element_x
           constrain
-            $ probeY
+            $ #probe_y
                 =| half probeSize
                 |+| matchGap
                 |+| half matchHeight
-                |= matchY
+                |= #match_y
         match
           (#int <> #target <> #source)
           (node @Value $ do
              centerText
-             fill (tone targetHue #lum 0.84)
-             stroke (tone targetHue 0.76 0.36)
+             fill (Hsl #target_hue #lum 0.84)
+             stroke (Hsl #target_hue 0.76 0.36)
              strokeWidth (cellBy 0.05)
              radius (cellBy 0.24)
              fontSize (cellBy 0.62)
-             position (vec2 targetX targetY)
+             position (vec2 #target_x #target_y)
              width targetWidth
              height targetHeight)
         matchAs
@@ -307,59 +279,62 @@ visualization =
           (#int <> #target <> #source)
           (node @Value $ do
              centerText
-             fill (tone probeHue 0.5 0.88)
-             stroke (tone probeHue 0.78 0.34)
+             fill (Hsl #probe_hue 0.5 0.88)
+             stroke (Hsl #probe_hue 0.78 0.34)
              strokeWidth (cellBy 0.035)
              zIndex 3
              radius (cellBy 0.22)
              fontSize (cellBy 0.56)
-             position (vec2 probeTargetX probeY)
+             position (vec2 #probe_target_x #probe_y)
              width probeSize
              height probeSize)
         match
-          (#int <> #array <> #index i)
+          (#int <> #array <> patternIntField #index #i)
           (node @Value $ do
              centerText
-             fill (tone listHue #lum 0.92)
-             stroke (tone listHue 0.58 0.42)
+             fill (Hsl #list_hue #sat 0.92)
+             stroke (Hsl #list_hue 0.58 0.42)
              strokeWidth (cellBy 0.035)
              radius (cellBy 0.18)
              fontSize (cellBy 0.5)
              width cell
              height cell)
         match
-          (#int <> #target <> #source, #int <> #array <> #index i)
+          ( #int <> #target <> #source
+          , #int <> #array <> patternIntField #index #i)
           ((\(target, element) ->
               constrain $ bottom target <| gap |> top element) :: ( MatchedNode
                                                                   , MatchedNode) -> ViewLayout
                                                                                       ())
         match
-          (#int <> #target <> #source, #int <> #probe <> #index i)
+          ( #int <> #target <> #source
+          , #int <> #probe <> patternIntField #index #i)
           ((\(target, probe) -> constrain $ bottom target <| gap |> top probe) :: ( MatchedNode
                                                                                   , MatchedNode) -> ViewLayout
                                                                                                       ())
         matchAs
-          (#int <> #probe <> #index i)
-          (#int <> #array <> #index i)
+          (#int <> #probe <> patternIntField #index #i)
+          (#int <> #array <> patternIntField #index #i)
           (node @Value $ do
              centerText
-             fill (tone probeHue 0.5 0.88)
-             stroke (tone probeHue 0.78 0.34)
+             fill (Hsl #probe_hue 0.5 0.88)
+             stroke (Hsl #probe_hue 0.78 0.34)
              strokeWidth (cellBy 0.035)
              zIndex 3
              radius (cellBy 0.22)
              fontSize (cellBy 0.56)
-             position (vec2 probeElementX probeY)
+             position (vec2 #probe_element_x #probe_y)
              width probeSize
              height probeSize)
         match
-          (#int <> #probe <> #index i, #int <> #array <> #index i)
+          ( #int <> #probe <> patternIntField #index #i
+          , #int <> #array <> patternIntField #index #i)
           ((\(probe, element) -> constrain $ bottom probe <| gap |> top element) :: ( MatchedNode
                                                                                     , MatchedNode) -> ViewLayout
                                                                                                         ())
         match
-          ( #int <> #array <> #index i
-          , #int <> #array <> #index (i + (1 :: Int)))
+          ( #int <> #array <> patternIntField #index #i
+          , #int <> #array <> patternIntField #index (#i + 1))
           ((\(previous, next) -> do
               constrain $ right previous =| gapBy 2 |= left next
               constrain $ top previous =|= top next) :: ( MatchedNode
@@ -369,25 +344,25 @@ visualization =
           (#decision <> #match <> #matched)
           (node @Match $ do
              centerText
-             fill (tone matchHue 0.6 0.86)
-             stroke (tone matchHue 0.82 0.32)
+             fill (Hsl #match_hue 0.6 0.86)
+             stroke (Hsl #match_hue 0.82 0.32)
              strokeWidth (cellBy 0.05)
              zIndex 4
              radius (cellBy 0.26)
              fontSize (cellBy 0.34)
-             position (vec2 matchX matchY)
+             position (vec2 #match_x #match_y)
              width matchWidth
              height matchHeight)
         match
           (#decision <> #match <> #not_matched)
           (node @Match $ do
              centerText
-             fill (tone oppositeMatchHue 0.34 0.9)
-             stroke (tone oppositeMatchHue 0.68 0.34)
+             fill (Hsl (#match_hue + 180) 0.34 0.9)
+             stroke (Hsl (#match_hue + 180) 0.68 0.34)
              strokeWidth (cellBy 0.05)
              zIndex 4
              radius (cellBy 0.26)
              fontSize (cellBy 0.34)
-             position (vec2 matchX matchY)
+             position (vec2 #match_x #match_y)
              width matchWidth
              height matchHeight)

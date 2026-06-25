@@ -372,10 +372,6 @@ patternAppend lhs rhs =
 instance KnownSymbol name => IsLabel name Pattern where
   fromLabel = patternAtom (S.labelName (Proxy @name))
 
-instance KnownSymbol name => IsLabel name (P.Int -> Pattern) where
-  fromLabel value =
-    patternInt (S.labelName (Proxy @name)) (PatternIntConst value)
-
 instance KnownSymbol name => IsLabel name (PatternInt -> Pattern) where
   fromLabel = patternInt (S.labelName (Proxy @name))
 

@@ -68,6 +68,8 @@ module LinearTrace.Choreography
   , MatchedNode
   , Pattern
   , PatternInt
+  , patternIndex
+  , patternIntField
   , VisualizationBuilder
   , PairPattern(..)
   , MatchRule
@@ -297,9 +299,6 @@ data Scalar =
 
 data CoordChain =
   CoordChain Coord [S.Constraint]
-
-data SpanChain =
-  SpanChain Span [S.Constraint]
 
 data BridgeRelation
   = BridgeLoose
@@ -656,6 +655,12 @@ instance RationalLiteral Scalar where
 instance IntegerLiteral PatternInt where
   integerLiteral value = patternIntConst (P.fromInteger value)
 
+patternIndex :: P.Int -> PatternInt
+patternIndex = patternIntConst
+
+patternIntField :: (PatternInt -> Pattern) -> PatternInt -> Pattern
+patternIntField field = field
+
 at :: P.Double -> Coord
 at = num
 
@@ -877,83 +882,13 @@ coordRelate op lhs rhs =
        P.++ coordConstraints rhs
        P.++ [op (coordExpr lhs) (coordExpr rhs)])
 
-coordChainRelate ::
-     (LayoutExpr -> LayoutExpr -> S.Constraint)
-  -> CoordChain
-  -> Coord
-  -> CoordChain
-coordChainRelate op lhs rhs =
-  case lhs of
-    CoordChain current constraints ->
-      CoordChain
-        rhs
-        (constraints
-           P.++ coordConstraints rhs
-           P.++ [op (coordExpr current) (coordExpr rhs)])
-
-spanRelate ::
-     (LayoutExpr -> LayoutExpr -> S.Constraint) -> Span -> Span -> SpanChain
-spanRelate op lhs rhs =
-  SpanChain
-    rhs
-    (spanConstraints lhs
-       P.++ spanConstraints rhs
-       P.++ [op (spanExpr lhs) (spanExpr rhs)])
-
-spanChainRelate ::
-     (LayoutExpr -> LayoutExpr -> S.Constraint)
-  -> SpanChain
-  -> Span
-  -> SpanChain
-spanChainRelate op lhs rhs =
-  case lhs of
-    SpanChain current constraints ->
-      SpanChain
-        rhs
-        (constraints
-           P.++ spanConstraints rhs
-           P.++ [op (spanExpr current) (spanExpr rhs)])
-
-class VisualRelate lhs rhs result | lhs rhs -> result, lhs result -> rhs where
-  visualOrder :: lhs -> rhs -> result
-  visualEqual :: lhs -> rhs -> result
-
-instance VisualRelate Coord Coord CoordChain where
-  visualOrder = coordRelate (S.@<=@)
-  visualEqual = coordRelate (S.@==@)
-
-instance VisualRelate CoordChain Coord CoordChain where
-  visualOrder = coordChainRelate (S.@<=@)
-  visualEqual = coordChainRelate (S.@==@)
-
-instance VisualRelate Span Span SpanChain where
-  visualOrder = spanRelate (S.@<=@)
-  visualEqual = spanRelate (S.@==@)
-
-instance VisualRelate SpanChain Span SpanChain where
-  visualOrder = spanChainRelate (S.@<=@)
-  visualEqual = spanChainRelate (S.@==@)
-
-class OpenBridge lhs where
-  openBridge :: BridgeRelation -> lhs -> Span -> CoordSpanBridge
-
-instance OpenBridge Coord where
-  openBridge relation lhs spanValue =
-    CoordSpanBridge
-      relation
-      lhs
-      spanValue
-      (coordConstraints lhs P.++ spanConstraints spanValue)
-
-instance OpenBridge CoordChain where
-  openBridge relation lhs spanValue =
-    case lhs of
-      CoordChain current constraints ->
-        CoordSpanBridge
-          relation
-          current
-          spanValue
-          (constraints P.++ spanConstraints spanValue)
+openBridge :: BridgeRelation -> Coord -> Span -> CoordSpanBridge
+openBridge relation lhs spanValue =
+  CoordSpanBridge
+    relation
+    lhs
+    spanValue
+    (coordConstraints lhs P.++ spanConstraints spanValue)
 
 bridgeConstraint ::
      BridgeRelation -> BridgeRelation -> Coord -> Span -> Coord -> S.Constraint
@@ -979,16 +914,16 @@ infixl 4 <|
 infixl 4 =|
 infixl 4 |>
 infixl 4 |=
-(<|>) :: VisualRelate lhs rhs result => lhs -> rhs -> result
-(<|>) = visualOrder
+(<|>) :: Coord -> Coord -> CoordChain
+(<|>) = coordRelate (S.@<=@)
 
-(=|=) :: VisualRelate lhs rhs result => lhs -> rhs -> result
-(=|=) = visualEqual
+(=|=) :: Coord -> Coord -> CoordChain
+(=|=) = coordRelate (S.@==@)
 
-(<|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
+(<|) :: Coord -> Span -> CoordSpanBridge
 lhs <| rhs = openBridge BridgeLoose lhs rhs
 
-(=|) :: OpenBridge lhs => lhs -> Span -> CoordSpanBridge
+(=|) :: Coord -> Span -> CoordSpanBridge
 lhs =| rhs = openBridge BridgeExact lhs rhs
 
 (|>) :: CoordSpanBridge -> Coord -> CoordChain
@@ -1123,11 +1058,6 @@ instance ConstraintLike CoordChain where
   toOneConstraint chain =
     case chain of
       CoordChain _ constraints -> rawOneConstraint constraints
-
-instance ConstraintLike SpanChain where
-  toOneConstraint chain =
-    case chain of
-      SpanChain _ constraints -> rawOneConstraint constraints
 
 constrain :: ConstraintLike constraint => constraint -> ViewLayout ()
 constrain constraint = V.ensure (toOneConstraint constraint)
