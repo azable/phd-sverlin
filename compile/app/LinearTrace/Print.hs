@@ -228,6 +228,7 @@ viewNodeBox :: V.ViewNode -> Box.Box
 viewNodeBox node =
   case node of
     V.BlockViewNode block -> blockViewBox block
+    V.VirtualViewNode _   -> Box.text "virtual node"
 
 blockViewBox :: V.BlockView tag -> Box.Box
 blockViewBox block =
@@ -391,6 +392,7 @@ solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
 solveViewNodeExprs solution node =
   case node of
     V.BlockViewNode block -> solveBlockViewExprs solution block
+    V.VirtualViewNode _   -> []
 
 solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
 solveBlockViewExprs solution block =
@@ -452,6 +454,7 @@ indentedViewNodeBox node =
         [ Box.text (renderBlockRefPlain (V.blockViewRef block))
         , Box.text (renderPayloadView (V.blockViewLabel block))
         ]
+    V.VirtualViewNode _ -> Box.text "virtual node"
 
 --------------------------------------------------------------------------------
 -- Steps

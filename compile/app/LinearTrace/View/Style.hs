@@ -42,6 +42,7 @@ module LinearTrace.View.Style
   , styleFields
   , defaultStyleFields
   , setStyleField
+  , mapStyleExprs
   , mapStyleExprLeaves
   , solvedStyleExprs
   , styleInitialVars
@@ -346,6 +347,30 @@ instance HasStyle Style where
 setStyleField :: StyleField -> Style -> Style
 setStyleField newField style' =
   style' {styleFields = replaceByName fieldName newField (styleFields style')}
+
+mapStyleExprs :: (forall (ty :: Type). Expr ty -> Expr ty) -> Style -> Style
+mapStyleExprs f style' =
+  Style
+    { styleBounds = fmap f (styleBounds style')
+    , styleFields = map (mapStyleFieldExprs f) (styleFields style')
+    }
+
+mapStyleFieldExprs ::
+     (forall (ty :: Type). Expr ty -> Expr ty) -> StyleField -> StyleField
+mapStyleFieldExprs f field =
+  case field of
+    StyleFreeField spec expr -> StyleFreeField spec (f expr)
+    StyleLayoutField spec expr -> StyleLayoutField spec (f expr)
+    StyleUnitField spec expr -> StyleUnitField spec (f expr)
+    StyleAngleField spec expr -> StyleAngleField spec (f expr)
+    StyleColorField spec maybeHsl ->
+      StyleColorField spec (fmap (fmap f) maybeHsl)
+    StyleTextField _ _ -> field
+    StyleFontWeightField _ _ -> field
+    StyleFontStyleField _ _ -> field
+    StyleTextAlignField _ _ -> field
+    StyleBorderStyleField _ _ -> field
+    StyleWhiteSpaceField _ _ -> field
 
 replaceByName :: (a -> String) -> a -> [a] -> [a]
 replaceByName getName newValue = go

@@ -24,6 +24,7 @@ module LinearTrace.Solver
   , exprType
   , exprRaw
   , var
+  , substituteExprVars
   , labelName
   , num
   , (@+@)
@@ -288,6 +289,39 @@ unaryExpr f (Expr ty inner) = Expr ty (f inner)
 
 absExpr :: Expr ty -> Expr ty
 absExpr = unaryExpr EAbs
+
+substituteExprVars :: [(String, Double)] -> Expr ty -> Expr ty
+substituteExprVars substitutions (Expr ty raw) =
+  Expr ty (substituteRawExprVars substitutions raw)
+
+substituteRawExprVars :: [(String, Double)] -> RawExpr -> RawExpr
+substituteRawExprVars substitutions expr =
+  case expr of
+    EVar _ variable -> maybe expr ELit (lookup (varName variable) substitutions)
+    ELit _ -> expr
+    EAdd lhs rhs ->
+      EAdd
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    ESub lhs rhs ->
+      ESub
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    EMul lhs rhs ->
+      EMul
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    EDiv lhs rhs ->
+      EDiv
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    ENeg inner -> ENeg (substituteRawExprVars substitutions inner)
+    EAbs inner -> EAbs (substituteRawExprVars substitutions inner)
+    ESignum inner -> ESignum (substituteRawExprVars substitutions inner)
+    EPow base to ->
+      EPow
+        (substituteRawExprVars substitutions base)
+        (substituteRawExprVars substitutions to)
 
 infixl 6 @+@
 infixl 6 @-@

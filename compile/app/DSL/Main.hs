@@ -7,6 +7,7 @@
 {-# LANGUAGE NoImplicitPrelude       #-}
 {-# LANGUAGE OverloadedLabels        #-}
 {-# LANGUAGE OverloadedStrings       #-}
+{-# LANGUAGE QualifiedDo             #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
@@ -20,6 +21,7 @@ module DSL.Main
 
 import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
 import           LinearTrace.Choreography
+import qualified Prelude                  as P
 import           Prelude.Linear           hiding (fromInteger, fromRational,
                                            (*), (+), (-), (/), (<>))
 
@@ -37,6 +39,8 @@ data Match
 type instance Payload Match = LBool Match
 
 instance Traceable Match
+
+data Array
 
 sameValue :: Payload Value %1 -> Payload Value %1 -> Payload Match
 sameValue lhsPayload rhsPayload =
@@ -218,108 +222,110 @@ visualization =
       half value = value / 2
       midpoint :: Coord -> Coord -> Coord
       midpoint lhs rhs = lhs + half (asSpan (rhs - lhs))
-   in visualize $ do
-        layout $ do
-          derive @Span #cell (by 76)
-          derive @Span #gap (#cell / 2)
-          derive @Span #target_width (#cell * 2.1 |+| #gap)
-          derive @Span #target_height (#cell |+| #gap * 0.8)
-          derive @Span #probe_size (#cell * 1.08)
-          derive @Span #match_width (#probe_size * 2 |+| #gap)
-          derive @Span #match_height (#cell * 0.72)
-          derive @Span #match_gap (#gap * 0.7)
-          derive @Hue #not_matched_hue (#match_hue + 180)
-          constrain
-            $ #probe_target_x =| #probe_size |+| #gap |= #probe_element_x
-          constrain $ #match_x =|= midpoint #probe_target_x #probe_element_x
-          constrain
-            $ #probe_y
-                =| half #probe_size
-                |+| #match_gap
-                |+| half #match_height
-                |= #match_y
-        match @Value (payload #v) $ do
+   in visualize $ P.do
+        cell <- derive @Span #cell (by 76)
+        gap <- derive @Span #gap (cell / 2)
+        targetWidth <- derive @Span #target_width (cell * 2.1 |+| gap)
+        targetHeight <- derive @Span #target_height (cell |+| gap * 0.8)
+        probeSize <- derive @Span #probe_size (cell * 1.08)
+        matchWidth <- derive @Span #match_width (probeSize * 2 |+| gap)
+        matchHeight <- derive @Span #match_height (cell * 0.72)
+        matchGap <- derive @Span #match_gap (gap * 0.7)
+        notMatchedHue <- derive @Hue #not_matched_hue (#match_hue + 180)
+        let probeTargetX :: Coord
+            probeTargetX = #probe_target_x
+            probeElementX :: Coord
+            probeElementX = #probe_element_x
+            matchX :: Coord
+            matchX = #match_x
+            probeY :: Coord
+            probeY = #probe_y
+            matchY :: Coord
+            matchY = #match_y
+        constrain $ probeTargetX =| probeSize |+| gap |= probeElementX
+        constrain $ matchX =|= midpoint probeTargetX probeElementX
+        constrain
+          $ probeY =| half probeSize |+| matchGap |+| half matchHeight |= matchY
+        valueContent <- node @Value (payload @Value #v)
+        result <- node @Match (tag #result)
+        resultTrue <- node @Match (withPayload @Match (tag #result) True)
+        resultFalse <- node @Match (withPayload @Match (tag #result) False)
+        targetSource <- node @Value (tag (#target <> #source))
+        targetProbe <- node @Value (tag (#target <> #probe))
+        probe <- node @Value (tag #probe)
+        probeItem <- node @Value (tag (#probe <> #index #: #i))
+        array <- node @Array (node @Value (tag #array))
+        arrayItem <- node @Value (tag (#array <> #index #: #i))
+        nextArrayItem <- node @Value (tag (#array <> #index #: (#i + 1)))
+        processedItem <-
+          node @Value (tag (#array <> #processed <> #index #: #i))
+        style valueContent $ do
           content #v
           centerText
-        match @Match (tagged #result) $ do
+        style result $ do
           centerText
-          strokeWidth (#cell * 0.05)
+          strokeWidth (cell * 0.05)
           zIndex 4
-          radius (#cell * 0.26)
-          fontSize (#cell * 0.34)
+          radius (cell * 0.26)
+          fontSize (cell * 0.34)
           position (vec2 #match_x #match_y)
-          width #match_width
-          height #match_height
-        match @Value (tagged (#target <> #source)) $ do
+          width matchWidth
+          height matchHeight
+        style targetSource $ do
           fill (Hsl #target_hue #lum 0.84)
           stroke (Hsl #target_hue 0.76 0.36)
-          strokeWidth (#cell * 0.05)
-          radius (#cell * 0.24)
-          fontSize (#cell * 0.62)
+          strokeWidth (cell * 0.05)
+          radius (cell * 0.24)
+          fontSize (cell * 0.62)
           position (vec2 #target_x #target_y)
-          width #target_width
-          height #target_height
-        match @Value (tagged #probe) $ do
+          width targetWidth
+          height targetHeight
+        style probe $ do
           fill (Hsl #probe_hue 0.5 0.88)
           stroke (Hsl #probe_hue 0.78 0.34)
-          strokeWidth (#cell * 0.035)
+          strokeWidth (cell * 0.035)
           zIndex 3
-          radius (#cell * 0.22)
-          fontSize (#cell * 0.56)
-          width #probe_size
-          height #probe_size
-        match @Value (tagged (#target <> #probe)) $ do
+          radius (cell * 0.22)
+          fontSize (cell * 0.56)
+          width probeSize
+          height probeSize
+        style targetProbe $ do
           position (vec2 #probe_target_x #probe_y)
-        match @Value (tagged (#array <> #index #: #i)) $ do
+        style array $ do
+          fill (Hsl #list_hue 0.08 0.96)
+          stroke (Hsl #list_hue 0.32 0.72)
+          strokeWidth (cell * 0.02)
+          radius (cell * 0.24)
+          zIndex 0
+        style arrayItem $ do
           fill (Hsl #list_hue (#i * 0.2) 0.92)
           stroke (Hsl #list_hue 0.58 0.42)
-          strokeWidth (#cell * 0.035)
-          radius (#cell * 0.18)
-          fontSize (#cell * 0.5)
-          width #cell
-          height #cell
-        match @Value (tagged (#array <> #processed <> #index #: #i)) $ do
+          strokeWidth (cell * 0.035)
+          radius (cell * 0.18)
+          fontSize (cell * 0.5)
+          zIndex 2
+          width cell
+          height cell
+        style processedItem $ do
           fill (Hsl 220 0.04 0.84)
           stroke (Hsl 220 0.08 0.58)
-          strokeWidth (#cell * 0.025)
+          strokeWidth (cell * 0.025)
           opacity 0.62
-        matchPair
-          (#target <> #source)
-          (#array <> #index #: #i)
-          (\target element -> constrain $ bottom target <| #gap |> top element)
-        matchPair
-          (#target <> #source)
-          (#probe <> #index #: #i)
-          (\target probe -> constrain $ bottom target <| #gap |> top probe)
-        match @Value (tagged (#probe <> #index #: #i)) $ do
+        constrain $ bottom targetSource <| gap |> top arrayItem
+        constrain $ bottom targetSource <| gap |> top probeItem
+        style probeItem $ do
           position (vec2 #probe_element_x #probe_y)
-        matchPair
-          (#probe <> #index #: #i)
-          (#array <> #index #: #i)
-          (\probe element -> constrain $ bottom probe <| #gap |> top element)
-        matchPair
-          (#target <> #probe)
-          #result
-          (\probe result -> constrain $ bottom probe <| #match_gap |> top result)
-        matchPair
-          (#probe <> #index #: #i)
-          #result
-          (\probe result -> constrain $ bottom probe <| #match_gap |> top result)
-        matchPair
-          #result
-          (#array <> #index #: #i)
-          (\result element -> constrain $ bottom result <| #gap |> top element)
-        matchPair
-          (#array <> #index #: #i)
-          (#array <> #index #: (#i + 1))
-          (\previous next -> do
-             constrain $ right previous =| #gap * 2 |= left next
-             constrain $ top previous =|= top next)
-        match @Match (taggedPayload #result True) $ do
+        constrain $ bottom probeItem <| gap |> top arrayItem
+        constrain $ bottom targetProbe <| matchGap |> top result
+        constrain $ bottom probeItem <| matchGap |> top result
+        constrain $ bottom result <| gap |> top arrayItem
+        constrain $ right arrayItem =| gap * 2 |= left nextArrayItem
+        constrain $ top arrayItem =|= top nextArrayItem
+        style resultTrue $ do
           content "MATCH"
           fill (Hsl #match_hue 0.6 0.86)
           stroke (Hsl #match_hue 0.82 0.32)
-        match @Match (taggedPayload #result False) $ do
+        style resultFalse $ do
           content "NO MATCH"
-          fill (Hsl #not_matched_hue 0.34 0.9)
-          stroke (Hsl #not_matched_hue 0.68 0.34)
+          fill (Hsl notMatchedHue 0.34 0.9)
+          stroke (Hsl notMatchedHue 0.68 0.34)

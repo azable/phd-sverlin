@@ -19,6 +19,7 @@ module LinearTrace.View
   , ViewNode(..)
   , ViewStep(..)
   , BlockView
+  , VirtualView
   , blockViewRef
   , blockViewLabel
   , blockViewFacts
@@ -80,6 +81,8 @@ module LinearTrace.View
   , NodePatch(..)
   , emptyNodePatch
   , appendNodePatch
+  , NodeSelection(..)
+  , LayoutRelation(..)
   , MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
@@ -89,12 +92,15 @@ module LinearTrace.View
   , matchPatternNode
   , matchPayloadNode
   , matchPatternPayloadNode
+  , matchVirtualNode
   , matchPartNode
   , matchPatternPartNode
   , matchPairAdjacent
   , matchGlobalLayout
   , matchPatternLayout
   , matchPatternPair
+  , matchSelectionRelation
+  , matchSelectionBridge
   , PairPattern(..)
   , pairPatternKey
   , Visual
@@ -260,6 +266,7 @@ module LinearTrace.View
   , -- * Materialization
     MaterializedStyle
   , MaterializedBlockView(..)
+  , MaterializedVirtualView(..)
   , MaterializedViewNode(..)
   , materializedTop
   , materializedLeft
@@ -273,6 +280,7 @@ import           Control.Functor.Linear                hiding ((<$>), (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
 import           Data.Kind                             (Type)
 import qualified Data.Kind                             as K
+import qualified Data.Maybe                            as Maybe
 import           Data.Proxy                            (Proxy (..))
 import           Data.Type.Equality                    ((:~:) (..))
 import           Data.Typeable                         (eqT)
@@ -772,8 +780,18 @@ preferLater earlier later =
     Nothing -> earlier
     Just _  -> later
 
+data NodeSelection
+  = TraceSelection Pattern
+  | VirtualSelection P.String Pattern
+  deriving (P.Eq, P.Show)
+
+data LayoutRelation
+  = LayoutEqual
+  | LayoutLessOrEqual
+  deriving (P.Eq, P.Show)
+
 data MatchSpec =
-  MatchSpec [NodeRule] [PartRule] [LayoutRule]
+  MatchSpec [NodeRule] [PartRule] [LayoutRule] [VirtualRule]
 
 data NodeRule where
   TagNodeRule
@@ -817,20 +835,41 @@ data LayoutRule where
     -> Pattern
     -> (MatchedNode -> MatchedNode -> ViewBuilder ())
     -> LayoutRule
+  SelectionRelationLayout
+    :: NodeSelection
+    -> LayoutAttr
+    -> LayoutRelation
+    -> NodeSelection
+    -> LayoutAttr
+    -> LayoutRule
+  SelectionBridgeLayout
+    :: NodeSelection
+    -> LayoutAttr
+    -> LayoutRelation
+    -> LayoutExpr
+    -> [Constraint]
+    -> LayoutRelation
+    -> NodeSelection
+    -> LayoutAttr
+    -> LayoutRule
+
+data VirtualRule =
+  VirtualRule P.String Pattern NodePatch
 
 emptyMatchSpec :: MatchSpec
-emptyMatchSpec = MatchSpec [] [] []
+emptyMatchSpec = MatchSpec [] [] [] []
 
 matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
 matchSpecAppend lhs rhs =
   case lhs of
-    MatchSpec leftNodes leftParts leftLayouts ->
+    MatchSpec leftNodes leftParts leftLayouts leftVirtuals ->
       case rhs of
-        MatchSpec rightNodes rightParts rightLayouts ->
+        MatchSpec rightNodes rightParts rightLayouts rightVirtuals ->
           MatchSpec
             (leftNodes P.++ rightNodes)
             (leftParts P.++ rightParts)
             (leftLayouts P.++ rightLayouts)
+            (leftVirtuals P.++ rightVirtuals)
 
 matchSpecFromList :: [MatchSpec] -> MatchSpec
 matchSpecFromList specs =
@@ -843,7 +882,11 @@ matchTagNode ::
   => (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchTagNode makePatch =
-  MatchSpec [TagNodeRule (Proxy :: Proxy tag) anyPayloadPattern makePatch] [] []
+  MatchSpec
+    [TagNodeRule (Proxy :: Proxy tag) anyPayloadPattern makePatch]
+    []
+    []
+    []
 
 matchNode ::
      forall tag. C.Traceable tag
@@ -853,6 +896,7 @@ matchNode ::
 matchNode query makePatch =
   MatchSpec
     [QueryNodeRule (Proxy :: Proxy tag) query anyPayloadPattern makePatch]
+    []
     []
     []
 
@@ -866,6 +910,7 @@ matchPatternNode pattern' makePatch =
     [PatternNodeRule (Proxy :: Proxy tag) pattern' anyPayloadPattern makePatch]
     []
     []
+    []
 
 matchPayloadNode ::
      forall tag. C.Traceable tag
@@ -873,7 +918,7 @@ matchPayloadNode ::
   -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchPayloadNode payloadPattern makePatch =
-  MatchSpec [TagNodeRule (Proxy :: Proxy tag) payloadPattern makePatch] [] []
+  MatchSpec [TagNodeRule (Proxy :: Proxy tag) payloadPattern makePatch] [] [] []
 
 matchPatternPayloadNode ::
      forall tag. C.Traceable tag
@@ -886,6 +931,11 @@ matchPatternPayloadNode pattern' payloadPattern makePatch =
     [PatternNodeRule (Proxy :: Proxy tag) pattern' payloadPattern makePatch]
     []
     []
+    []
+
+matchVirtualNode :: P.String -> Pattern -> NodePatch -> MatchSpec
+matchVirtualNode key pattern' patch =
+  MatchSpec [] [] [] [VirtualRule (safeKey key) pattern' patch]
 
 matchPartNode ::
      forall tag. C.Traceable tag
@@ -897,6 +947,7 @@ matchPartNode query nodeKey makePatch =
   MatchSpec
     []
     [QueryPartRule (Proxy :: Proxy tag) query (safeKey nodeKey) makePatch]
+    []
     []
 
 matchPatternPartNode ::
@@ -910,16 +961,18 @@ matchPatternPartNode pattern' nodeKey makePatch =
     []
     [PatternPartRule (Proxy :: Proxy tag) pattern' (safeKey nodeKey) makePatch]
     []
+    []
 
 matchPairAdjacent :: PairPattern -> LayoutExpr -> [Constraint] -> MatchSpec
 matchPairAdjacent pattern' gap constraints =
-  MatchSpec [] [] [PairAdjacent pattern' gap constraints]
+  MatchSpec [] [] [PairAdjacent pattern' gap constraints] []
 
 matchGlobalLayout :: ViewBuilder () -> MatchSpec
-matchGlobalLayout body = MatchSpec [] [] [GlobalLayout body]
+matchGlobalLayout body = MatchSpec [] [] [GlobalLayout body] []
 
 matchPatternLayout :: Pattern -> (MatchedNode -> ViewBuilder ()) -> MatchSpec
-matchPatternLayout pattern' body = MatchSpec [] [] [PatternLayout pattern' body]
+matchPatternLayout pattern' body =
+  MatchSpec [] [] [PatternLayout pattern' body] []
 
 matchPatternPair ::
      Pattern
@@ -927,7 +980,43 @@ matchPatternPair ::
   -> (MatchedNode -> MatchedNode -> ViewBuilder ())
   -> MatchSpec
 matchPatternPair firstPattern secondPattern body =
-  MatchSpec [] [] [PairPatternLayout firstPattern secondPattern body]
+  MatchSpec [] [] [PairPatternLayout firstPattern secondPattern body] []
+
+matchSelectionRelation ::
+     NodeSelection
+  -> LayoutAttr
+  -> LayoutRelation
+  -> NodeSelection
+  -> LayoutAttr
+  -> MatchSpec
+matchSelectionRelation lhs lhsAttr relation rhs rhsAttr =
+  MatchSpec [] [] [SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr] []
+
+matchSelectionBridge ::
+     NodeSelection
+  -> LayoutAttr
+  -> LayoutRelation
+  -> LayoutExpr
+  -> [Constraint]
+  -> LayoutRelation
+  -> NodeSelection
+  -> LayoutAttr
+  -> MatchSpec
+matchSelectionBridge lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr =
+  MatchSpec
+    []
+    []
+    [ SelectionBridgeLayout
+        lhs
+        lhsAttr
+        lhsRelation
+        gap
+        gapConstraints
+        rhsRelation
+        rhs
+        rhsAttr
+    ]
+    []
 
 --------------------------------------------------------------------------------
 -- Block views
@@ -951,6 +1040,27 @@ instance HasBounds (BlockView tag) where
 
 instance HasStyle (BlockView tag) where
   style = blockStyle
+
+data VirtualView tag = VirtualView
+  { virtualRef      :: C.BlockRef tag
+  , virtualLabel    :: C.PayloadView
+  , virtualContent  :: ContentMode
+  , virtualPattern  :: Pattern
+  , virtualNodeKey  :: P.String
+  , virtualPieceKey :: P.String
+  , virtualStyle    :: Style
+  , virtualPatch    :: NodePatch
+  , virtualChildren :: [AnyBlockView]
+  }
+
+instance HasBounds (VirtualView tag) where
+  top virtual = top (virtualStyle virtual)
+  left virtual = left (virtualStyle virtual)
+  width virtual = width (virtualStyle virtual)
+  height virtual = height (virtualStyle virtual)
+
+instance HasStyle (VirtualView tag) where
+  style = virtualStyle
 
 data MatchedNode where
   MatchedNode :: BlockView tag -> MatchedNode
@@ -987,6 +1097,7 @@ matchedHeight node =
 
 data ViewNode where
   BlockViewNode :: BlockView tag -> ViewNode
+  VirtualViewNode :: VirtualView tag -> ViewNode
 
 data ViewStep where
   ViewStep
@@ -1012,8 +1123,19 @@ data MaterializedBlockView tag = MaterializedBlockView
   , materializedBlockStyle    :: MaterializedStyle
   }
 
+data MaterializedVirtualView tag = MaterializedVirtualView
+  { materializedVirtualRef      :: C.BlockRef tag
+  , materializedVirtualLabel    :: C.PayloadView
+  , materializedVirtualContent  :: P.String
+  , materializedVirtualNodeKey  :: P.String
+  , materializedVirtualPieceKey :: P.String
+  , materializedVirtualStyle    :: MaterializedStyle
+  }
+
 data MaterializedViewNode where
   MaterializedBlockViewNode :: MaterializedBlockView tag -> MaterializedViewNode
+  MaterializedVirtualViewNode
+    :: MaterializedVirtualView tag -> MaterializedViewNode
 
 materializeBlockView ::
      Solution -> BlockView tag -> Maybe (MaterializedBlockView tag)
@@ -1027,6 +1149,18 @@ materializeBlockView solution block =
        (blockPieceKey block))
     (materializeStyle solution (blockStyle block))
 
+materializeVirtualView ::
+     Solution -> VirtualView tag -> Maybe (MaterializedVirtualView tag)
+materializeVirtualView solution virtual =
+  P.fmap
+    (MaterializedVirtualView
+       (virtualRef virtual)
+       (virtualLabel virtual)
+       (materializeContent (virtualContent virtual))
+       (virtualNodeKey virtual)
+       (virtualPieceKey virtual))
+    (materializeStyle solution (virtualStyle virtual))
+
 materializeContent :: ContentMode -> P.String
 materializeContent contentMode =
   case contentMode of
@@ -1038,6 +1172,10 @@ materializeViewNode solution node =
   case node of
     BlockViewNode block ->
       P.fmap MaterializedBlockViewNode (materializeBlockView solution block)
+    VirtualViewNode virtual ->
+      P.fmap
+        MaterializedVirtualViewNode
+        (materializeVirtualView solution virtual)
 
 blockViewRef :: BlockView tag -> C.BlockRef tag
 blockViewRef = blockRef
@@ -2368,7 +2506,7 @@ defineMatchedBlock ::
 defineMatchedBlock block = do
   Ur env <- askViewEnv
   case viewMatchSpec env of
-    MatchSpec nodeRules partRules _ -> do
+    MatchSpec nodeRules partRules _ _ -> do
       case matchedNodePatch block nodeRules of
         Nothing    -> return ()
         Just patch -> definePatchedBlock patch block
@@ -3146,12 +3284,19 @@ takeCenterY visual =
 buildCSP :: VisualTraceGraph -> ViewGraph
 buildCSP (VisualTraceGraph spec (C.TraceGraph _blocks steps)) =
   let stepsOutput = viewTraceSteps steps
+      traceNodes = builtNodes stepsOutput
+      virtualNodes = virtualNodesForSpec spec traceNodes
+      nodes = traceNodes P.++ virtualNodes
       viewSteps' = builtSteps stepsOutput
-      nodes = builtNodes stepsOutput
+      virtualConstraints = P.concatMap virtualNodeConstraints virtualNodes
+      virtualInitialVars = P.concatMap virtualNodeInitialVars virtualNodes
       constraints =
-        builtConstraints stepsOutput P.++ matchSpecConstraints spec nodes
-      initialVars = builtInitialVars stepsOutput
-      renderFrames = builtRenderFrames stepsOutput
+        builtConstraints stepsOutput
+          P.++ virtualConstraints
+          P.++ matchSpecConstraints spec nodes
+      initialVars = builtInitialVars stepsOutput P.++ virtualInitialVars
+      renderFrames =
+        addVirtualRenderFrames virtualNodes (builtRenderFrames stepsOutput)
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
@@ -3170,11 +3315,18 @@ solveCSPWithSeed seed = solveCSP defaultSolveConfig {initialSeed = seed}
 data AnyBlockView where
   AnyBlockView :: BlockView tag -> AnyBlockView
 
+data AnyVirtualView where
+  AnyVirtualView :: VirtualView tag -> AnyVirtualView
+
+data AnyLayoutView where
+  AnyLayoutBlock :: BlockView tag -> AnyLayoutView
+  AnyLayoutVirtual :: VirtualView tag -> AnyLayoutView
+
 matchSpecConstraints :: MatchSpec -> [ViewNode] -> [Constraint]
 matchSpecConstraints spec nodes =
   case spec of
-    MatchSpec _ _ layoutRules ->
-      P.concatMap (layoutRuleConstraints (viewNodeBlocks nodes)) layoutRules
+    MatchSpec _ _ layoutRules _ ->
+      P.concatMap (layoutRuleConstraints nodes) layoutRules
 
 viewNodeBlocks :: [ViewNode] -> [AnyBlockView]
 viewNodeBlocks nodes =
@@ -3183,9 +3335,10 @@ viewNodeBlocks nodes =
     node:rest ->
       case node of
         BlockViewNode block -> AnyBlockView block : viewNodeBlocks rest
+        VirtualViewNode _   -> viewNodeBlocks rest
 
-layoutRuleConstraints :: [AnyBlockView] -> LayoutRule -> [Constraint]
-layoutRuleConstraints blocks layoutRule =
+layoutRuleConstraints :: [ViewNode] -> LayoutRule -> [Constraint]
+layoutRuleConstraints nodes layoutRule =
   case layoutRule of
     GlobalLayout body -> layoutConstraints body
     PatternLayout pattern' body ->
@@ -3200,6 +3353,22 @@ layoutRuleConstraints blocks layoutRule =
       P.concatMap
         (patternPairConstraints body)
         (matchingPatternPairs firstPattern secondPattern blocks)
+    SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr ->
+      P.concatMap
+        (selectionRelationConstraints lhsAttr relation rhsAttr)
+        (matchingSelectionPairs lhs rhs nodes)
+    SelectionBridgeLayout lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr ->
+      P.concatMap
+        (selectionBridgeConstraints
+           lhsAttr
+           lhsRelation
+           gap
+           gapConstraints
+           rhsRelation
+           rhsAttr)
+        (matchingSelectionPairs lhs rhs nodes)
+  where
+    blocks = viewNodeBlocks nodes
 
 matchingPairs :: PairPattern -> [AnyBlockView] -> [(AnyBlockView, AnyBlockView)]
 matchingPairs pattern' blocks =
@@ -3232,6 +3401,47 @@ matchingPatternPairs firstPattern secondPattern blocks =
       anyBlockPatternMatches secondPattern secondAnyBlock
   , bindingsCompatible firstBindings secondBindings
   ]
+
+matchingSelectionPairs ::
+     NodeSelection
+  -> NodeSelection
+  -> [ViewNode]
+  -> [(AnyLayoutView, AnyLayoutView)]
+matchingSelectionPairs lhs rhs nodes =
+  [ (firstNode, secondNode)
+  | (firstNode, firstBindings) <- matchingSelectionNodes lhs nodes
+  , (secondNode, secondBindings) <- matchingSelectionNodes rhs nodes
+  , bindingsCompatible firstBindings secondBindings
+  ]
+
+matchingSelectionNodes ::
+     NodeSelection -> [ViewNode] -> [(AnyLayoutView, PatternBindings)]
+matchingSelectionNodes selection nodes =
+  case nodes of
+    [] -> []
+    node:rest ->
+      selectionNodeMatches selection node
+        P.++ matchingSelectionNodes selection rest
+
+selectionNodeMatches ::
+     NodeSelection -> ViewNode -> [(AnyLayoutView, PatternBindings)]
+selectionNodeMatches selection node =
+  case selection of
+    TraceSelection pattern' ->
+      case node of
+        BlockViewNode block ->
+          case patternMatches pattern' (blockFacts block) of
+            Nothing       -> []
+            Just bindings -> [(AnyLayoutBlock block, bindings)]
+        VirtualViewNode _ -> []
+    VirtualSelection key pattern' ->
+      case node of
+        BlockViewNode _ -> []
+        VirtualViewNode virtual
+          | key P.== virtualNodeKey virtual
+              P.&& pattern' P.== virtualPattern virtual ->
+            [(AnyLayoutVirtual virtual, [])]
+          | otherwise -> []
 
 anyBlockPatternMatches ::
      Pattern -> AnyBlockView -> [(MatchedNode, PatternBindings)]
@@ -3281,10 +3491,410 @@ patternNodeConstraints ::
      (MatchedNode -> ViewBuilder ()) -> MatchedNode -> [Constraint]
 patternNodeConstraints body node = layoutConstraints (body node)
 
+selectionRelationConstraints ::
+     LayoutAttr
+  -> LayoutRelation
+  -> LayoutAttr
+  -> (AnyLayoutView, AnyLayoutView)
+  -> [Constraint]
+selectionRelationConstraints lhsAttr relation rhsAttr pair' =
+  case pair' of
+    (lhs, rhs) ->
+      [ relationConstraint
+          relation
+          (layoutViewAttr lhsAttr lhs)
+          (layoutViewAttr rhsAttr rhs)
+      ]
+
+selectionBridgeConstraints ::
+     LayoutAttr
+  -> LayoutRelation
+  -> LayoutExpr
+  -> [Constraint]
+  -> LayoutRelation
+  -> LayoutAttr
+  -> (AnyLayoutView, AnyLayoutView)
+  -> [Constraint]
+selectionBridgeConstraints lhsAttr lhsRelation gap gapConstraints rhsRelation rhsAttr pair' =
+  case pair' of
+    (lhs, rhs) ->
+      gapConstraints
+        P.++ [ bridgeRelationConstraint
+                 lhsRelation
+                 rhsRelation
+                 (layoutViewAttr lhsAttr lhs)
+                 gap
+                 (layoutViewAttr rhsAttr rhs)
+             ]
+
+relationConstraint :: LayoutRelation -> LayoutExpr -> LayoutExpr -> Constraint
+relationConstraint relation lhs rhs =
+  case relation of
+    LayoutEqual       -> lhs S.@==@ rhs
+    LayoutLessOrEqual -> lhs S.@<=@ rhs
+
+bridgeRelationConstraint ::
+     LayoutRelation
+  -> LayoutRelation
+  -> LayoutExpr
+  -> LayoutExpr
+  -> LayoutExpr
+  -> Constraint
+bridgeRelationConstraint lhsRelation rhsRelation lhs gap rhs =
+  case (lhsRelation, rhsRelation) of
+    (LayoutEqual, LayoutEqual) -> lhs S.@+@ gap S.@==@ rhs
+    _                          -> lhs S.@+@ gap S.@<=@ rhs
+
+layoutViewAttr :: LayoutAttr -> AnyLayoutView -> LayoutExpr
+layoutViewAttr attr view =
+  case view of
+    AnyLayoutBlock block     -> boundsAttr attr block
+    AnyLayoutVirtual virtual -> boundsAttr attr virtual
+
+boundsAttr :: HasBounds bounds => LayoutAttr -> bounds -> LayoutExpr
+boundsAttr attr bounds' =
+  case attr of
+    AttrLeft    -> left bounds'
+    AttrRight   -> right bounds'
+    AttrWidth   -> width bounds'
+    AttrCenterX -> centerX bounds'
+    AttrTop     -> top bounds'
+    AttrBottom  -> bottom bounds'
+    AttrHeight  -> height bounds'
+    AttrCenterY -> centerY bounds'
+
 layoutConstraints :: ViewBuilder () -> [Constraint]
 layoutConstraints body =
   let (_result, output) = runViewBuilderWithOutput defaultViewEnv mempty body
    in emittedConstraints output
+
+virtualNodesForSpec :: MatchSpec -> [ViewNode] -> [ViewNode]
+virtualNodesForSpec spec nodes =
+  case spec of
+    MatchSpec _ _ _ virtualRules ->
+      maybeVirtualNodes (mergedVirtualRules virtualRules)
+  where
+    blocks = viewNodeBlocks nodes
+    maybeVirtualNodes rules =
+      case rules of
+        [] -> []
+        rule:rest ->
+          case virtualNodeForRule blocks rule of
+            Nothing   -> maybeVirtualNodes rest
+            Just node -> node : maybeVirtualNodes rest
+
+mergedVirtualRules :: [VirtualRule] -> [VirtualRule]
+mergedVirtualRules rules =
+  case rules of
+    [] -> []
+    VirtualRule key pattern' patch:rest ->
+      case mergeVirtualRule key pattern' patch rest of
+        (mergedPatch, remaining) ->
+          VirtualRule key pattern' mergedPatch : mergedVirtualRules remaining
+
+mergeVirtualRule ::
+     P.String
+  -> Pattern
+  -> NodePatch
+  -> [VirtualRule]
+  -> (NodePatch, [VirtualRule])
+mergeVirtualRule key pattern' patch rules =
+  case rules of
+    [] -> (patch, [])
+    VirtualRule nextKey nextPattern nextPatch:rest ->
+      case key P.== nextKey P.&& pattern' P.== nextPattern of
+        True ->
+          mergeVirtualRule key pattern' (appendNodePatch patch nextPatch) rest
+        False ->
+          case mergeVirtualRule key pattern' patch rest of
+            (mergedPatch, remaining) ->
+              ( mergedPatch
+              , VirtualRule nextKey nextPattern nextPatch : remaining)
+
+virtualNodeForRule :: [AnyBlockView] -> VirtualRule -> Maybe ViewNode
+virtualNodeForRule blocks rule =
+  case rule of
+    VirtualRule key pattern' patch ->
+      case matchingPatternBlocks pattern' blocks of
+        [] -> Nothing
+        children ->
+          Just
+            (VirtualViewNode
+               (virtualViewForRule key pattern' patch children :: VirtualView ()))
+
+matchingPatternBlocks :: Pattern -> [AnyBlockView] -> [AnyBlockView]
+matchingPatternBlocks pattern' blocks =
+  [ anyBlock
+  | anyBlock <- blocks
+  , (_matchedNode, _bindings) <- anyBlockPatternMatches pattern' anyBlock
+  ]
+
+virtualViewForRule ::
+     P.String -> Pattern -> NodePatch -> [AnyBlockView] -> VirtualView tag
+virtualViewForRule key pattern' patch children =
+  let ref = C.BlockRef (virtualBlockId key pattern')
+      baseStyle = styleForVirtual key pattern'
+   in VirtualView
+        { virtualRef = ref
+        , virtualLabel = C.PayloadView ("Virtual." P.++ key) ""
+        , virtualContent = Maybe.fromMaybe ContentEmpty (nodePatchContent patch)
+        , virtualPattern = pattern'
+        , virtualNodeKey = key
+        , virtualPieceKey = defaultPieceKey
+        , virtualStyle = nodePatchStyleUpdate patch baseStyle
+        , virtualPatch = patch
+        , virtualChildren = children
+        }
+
+virtualBlockId :: P.String -> Pattern -> C.BlockId
+virtualBlockId key pattern' =
+  negate (1 P.+ positiveHash (key P.++ ":" P.++ patternKey pattern'))
+
+positiveHash :: P.String -> P.Int
+positiveHash = positiveHashFrom 5381
+
+positiveHashFrom :: P.Int -> P.String -> P.Int
+positiveHashFrom current text =
+  case text of
+    [] -> P.abs current
+    char:rest ->
+      positiveHashFrom
+        ((current P.* 33 P.+ P.fromEnum char) `P.mod` 1000000000)
+        rest
+
+styleForVirtual :: P.String -> Pattern -> Style
+styleForVirtual key pattern' =
+  styleWithBounds
+    (Bounds
+       (virtualVar key pattern' "top")
+       (virtualVar key pattern' "left")
+       (virtualVar key pattern' "width")
+       (virtualVar key pattern' "height"))
+
+virtualVar :: SymbolicType ty => P.String -> Pattern -> P.String -> Expr ty
+virtualVar key pattern' field =
+  var (joinPath ["V", key, safeKey (patternKey pattern'), field])
+
+virtualNodeConstraints :: ViewNode -> [Constraint]
+virtualNodeConstraints node =
+  case node of
+    BlockViewNode _ -> []
+    VirtualViewNode virtual ->
+      styleConstraints (virtualStyle virtual)
+        P.++ virtualCanvasConstraints virtual
+        P.++ virtualFitConstraints virtual
+        P.++ virtualPatchGeometryConstraints virtual
+
+virtualCanvasConstraints :: VirtualView tag -> [Constraint]
+virtualCanvasConstraints virtual =
+  [ S.num 0 S.@<=@ left virtual
+  , S.num 0 S.@<=@ top virtual
+  , S.num 0 S.@<=@ width virtual
+  , S.num 0 S.@<=@ height virtual
+  ]
+
+virtualFitConstraints :: VirtualView tag -> [Constraint]
+virtualFitConstraints virtual =
+  case virtualChildren virtual of
+    [] -> []
+    child:children ->
+      [ left virtual
+          S.@==@ foldLayoutExpr
+                   minLayoutExpr
+                   (anyBlockLeft child)
+                   (P.map anyBlockLeft children)
+      , top virtual
+          S.@==@ foldLayoutExpr
+                   minLayoutExpr
+                   (anyBlockTop child)
+                   (P.map anyBlockTop children)
+      , right virtual
+          S.@==@ foldLayoutExpr
+                   maxLayoutExpr
+                   (anyBlockRight child)
+                   (P.map anyBlockRight children)
+      , bottom virtual
+          S.@==@ foldLayoutExpr
+                   maxLayoutExpr
+                   (anyBlockBottom child)
+                   (P.map anyBlockBottom children)
+      ]
+
+foldLayoutExpr ::
+     (LayoutExpr -> LayoutExpr -> LayoutExpr)
+  -> LayoutExpr
+  -> [LayoutExpr]
+  -> LayoutExpr
+foldLayoutExpr op initial exprs =
+  case exprs of
+    []        -> initial
+    expr:rest -> foldLayoutExpr op (op initial expr) rest
+
+minLayoutExpr :: LayoutExpr -> LayoutExpr -> LayoutExpr
+minLayoutExpr lhs rhs =
+  (lhs S.@+@ rhs S.@-@ S.absExpr (lhs S.@-@ rhs)) S.@/@ S.num 2
+
+maxLayoutExpr :: LayoutExpr -> LayoutExpr -> LayoutExpr
+maxLayoutExpr lhs rhs =
+  (lhs S.@+@ rhs S.@+@ S.absExpr (lhs S.@-@ rhs)) S.@/@ S.num 2
+
+anyBlockLeft :: AnyBlockView -> LayoutExpr
+anyBlockLeft anyBlock =
+  case anyBlock of
+    AnyBlockView child -> left child
+
+anyBlockTop :: AnyBlockView -> LayoutExpr
+anyBlockTop anyBlock =
+  case anyBlock of
+    AnyBlockView child -> top child
+
+anyBlockRight :: AnyBlockView -> LayoutExpr
+anyBlockRight anyBlock =
+  case anyBlock of
+    AnyBlockView child -> right child
+
+anyBlockBottom :: AnyBlockView -> LayoutExpr
+anyBlockBottom anyBlock =
+  case anyBlock of
+    AnyBlockView child -> bottom child
+
+virtualPatchGeometryConstraints :: VirtualView tag -> [Constraint]
+virtualPatchGeometryConstraints virtual =
+  pinConstraints (left virtual) (nodePatchLeft patch)
+    P.++ pinConstraints (top virtual) (nodePatchTop patch)
+    P.++ pinConstraints (width virtual) (nodePatchWidth patch)
+    P.++ pinConstraints (height virtual) (nodePatchHeight patch)
+    P.++ pinConstraints (right virtual) (nodePatchRight patch)
+    P.++ pinConstraints (bottom virtual) (nodePatchBottom patch)
+    P.++ pinConstraints (centerX virtual) (nodePatchX patch)
+    P.++ pinConstraints (centerY virtual) (nodePatchY patch)
+  where
+    patch = virtualPatch virtual
+
+pinConstraints :: LayoutExpr -> Maybe LayoutPin -> [Constraint]
+pinConstraints expr maybePin =
+  case maybePin of
+    Nothing -> []
+    Just pin ->
+      case pin of
+        LayoutPin target constraints -> constraints P.++ [expr S.@==@ target]
+
+virtualNodeInitialVars :: ViewNode -> [InitialVar]
+virtualNodeInitialVars node =
+  case node of
+    BlockViewNode _ -> []
+    VirtualViewNode virtual ->
+      boundsInitialVars (styleBounds (virtualStyle virtual))
+        P.++ styleInitialVars (virtualStyle virtual)
+
+boundsInitialVars :: BoundsExpr -> [InitialVar]
+boundsInitialVars bounds' =
+  case bounds' of
+    Bounds topExpr leftExpr widthExpr heightExpr ->
+      exprInitialVars topExpr
+        P.++ exprInitialVars leftExpr
+        P.++ exprInitialVars widthExpr
+        P.++ exprInitialVars heightExpr
+
+addVirtualRenderFrames :: [ViewNode] -> [[RenderIntent]] -> [[RenderIntent]]
+addVirtualRenderFrames nodes frames =
+  let lifecycles = virtualLifecycles nodes
+   in case lifecycles of
+        [] -> frames
+        _  -> addVirtualLifecycleFrames lifecycles frames
+
+data VirtualLifecycle =
+  VirtualLifecycle AnyVirtualView [C.BlockId] [C.BlockId]
+
+virtualLifecycles :: [ViewNode] -> [VirtualLifecycle]
+virtualLifecycles nodes =
+  [ VirtualLifecycle (AnyVirtualView virtual) (virtualChildIds virtual) []
+  | VirtualViewNode virtual <- nodes
+  ]
+
+virtualChildIds :: VirtualView tag -> [C.BlockId]
+virtualChildIds virtual =
+  [blockRefId (blockRef child) | AnyBlockView child <- virtualChildren virtual]
+
+addVirtualLifecycleFrames ::
+     [VirtualLifecycle] -> [[RenderIntent]] -> [[RenderIntent]]
+addVirtualLifecycleFrames lifecycles frames =
+  case frames of
+    [] -> []
+    frame:rest ->
+      let (nextLifecycles, virtualIntents) =
+            updateVirtualLifecycles frame lifecycles
+       in (frame P.++ virtualIntents)
+            : addVirtualLifecycleFrames nextLifecycles rest
+
+updateVirtualLifecycles ::
+     [RenderIntent]
+  -> [VirtualLifecycle]
+  -> ([VirtualLifecycle], [RenderIntent])
+updateVirtualLifecycles frame lifecycles =
+  case lifecycles of
+    [] -> ([], [])
+    lifecycle:rest ->
+      let (nextLifecycle, intents) = updateVirtualLifecycle frame lifecycle
+          (nextRest, restIntents) = updateVirtualLifecycles frame rest
+       in (nextLifecycle : nextRest, intents P.++ restIntents)
+
+updateVirtualLifecycle ::
+     [RenderIntent] -> VirtualLifecycle -> (VirtualLifecycle, [RenderIntent])
+updateVirtualLifecycle frame lifecycle =
+  case lifecycle of
+    VirtualLifecycle virtual childIds liveIds ->
+      let wasLive = P.not (P.null liveIds)
+          nextLiveIds =
+            P.foldl (applyVirtualRenderIntent childIds) liveIds frame
+          isLive = P.not (P.null nextLiveIds)
+          nextLifecycle = VirtualLifecycle virtual childIds nextLiveIds
+          lifecycleIntents =
+            case (wasLive, isLive) of
+              (False, True) -> [virtualFreshIntent virtual]
+              (True, False) -> [virtualRemoveIntent virtual]
+              _             -> []
+       in (nextLifecycle, lifecycleIntents)
+
+applyVirtualRenderIntent ::
+     [C.BlockId] -> [C.BlockId] -> RenderIntent -> [C.BlockId]
+applyVirtualRenderIntent childIds liveIds intent =
+  case intent of
+    RenderFresh ref -> addLiveChild childIds (blockRefId ref) liveIds
+    RenderFork _ ref -> addLiveChild childIds (blockRefId ref) liveIds
+    RenderContinue source target ->
+      addLiveChild
+        childIds
+        (blockRefId target)
+        (removeLiveChild (blockRefId source) liveIds)
+    RenderRemove ref -> removeLiveChild (blockRefId ref) liveIds
+
+addLiveChild :: [C.BlockId] -> C.BlockId -> [C.BlockId] -> [C.BlockId]
+addLiveChild childIds blockId liveIds =
+  case blockId `P.elem` childIds of
+    False -> liveIds
+    True ->
+      case blockId `P.elem` liveIds of
+        True  -> liveIds
+        False -> blockId : liveIds
+
+removeLiveChild :: C.BlockId -> [C.BlockId] -> [C.BlockId]
+removeLiveChild blockId = P.filter (P./= blockId)
+
+virtualFreshIntent :: AnyVirtualView -> RenderIntent
+virtualFreshIntent anyVirtual =
+  case anyVirtual of
+    AnyVirtualView virtual -> RenderFresh (virtualRef virtual)
+
+virtualRemoveIntent :: AnyVirtualView -> RenderIntent
+virtualRemoveIntent anyVirtual =
+  case anyVirtual of
+    AnyVirtualView virtual -> RenderRemove (virtualRef virtual)
+
+blockRefId :: C.BlockRef tag -> C.BlockId
+blockRefId ref =
+  case ref of
+    C.BlockRef blockId -> blockId
 
 data BuiltViewStep = BuiltViewStep
   { stepView                 :: ViewStep

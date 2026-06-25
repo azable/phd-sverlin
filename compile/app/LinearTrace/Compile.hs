@@ -494,6 +494,10 @@ insertMaterializedNode solution blocks node =
           let compiled = compileMaterializedBlock block
            in Right
                 (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
+        V.MaterializedVirtualViewNode virtual ->
+          let compiled = compileMaterializedVirtual virtual
+           in Right
+                (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
 
 compileMaterializedBlock :: V.MaterializedBlockView tag -> RenderBlock
 compileMaterializedBlock block =
@@ -504,6 +508,19 @@ compileMaterializedBlock block =
         , renderNodeKey = V.materializedBlockNodeKey block
         , renderPieceKey = V.materializedBlockPieceKey block
         , renderContent = V.materializedBlockContent block
+        , renderKind = payloadViewKind payload
+        , renderStyle = compileMaterializedStyle style
+        }
+
+compileMaterializedVirtual :: V.MaterializedVirtualView tag -> RenderBlock
+compileMaterializedVirtual virtual =
+  let payload = V.materializedVirtualLabel virtual
+      style = V.materializedVirtualStyle virtual
+   in RenderBlock
+        { renderBlockId = blockIdOfRef (V.materializedVirtualRef virtual)
+        , renderNodeKey = V.materializedVirtualNodeKey virtual
+        , renderPieceKey = V.materializedVirtualPieceKey virtual
+        , renderContent = V.materializedVirtualContent virtual
         , renderKind = payloadViewKind payload
         , renderStyle = compileMaterializedStyle style
         }
