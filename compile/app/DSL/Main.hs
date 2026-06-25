@@ -98,26 +98,28 @@ data Elements where
   NoElements :: Elements
   MoreElement :: Int -> Block Value %1 -> Elements %1 -> Elements
 
-data Comparison where
-  IsMatch :: Block Value %1 -> Block Value %1 -> Comparison
-  IsNotMatch :: Block Value %1 -> Block Value %1 -> Comparison
+data ProcessedElements where
+  NoProcessedElements :: ProcessedElements
+  MoreProcessedElement
+    :: Block Value %1 -> ProcessedElements %1 -> ProcessedElements
 
 data SearchState where
-  SearchState :: Block Value %1 -> Elements %1 -> SearchState
+  SearchState
+    :: Block Value %1 -> ProcessedElements %1 -> Elements %1 -> SearchState
 
-data PrepareComparisonOutput where
-  PrepareComparisonOutput
+data PreparedComparison where
+  PreparedComparison
     :: Block Value
        %1 -> Block Value
        %1 -> Block Value
        %1 -> Block Value
-       %1 -> PrepareComparisonOutput
+       %1 -> PreparedComparison
 
 linearSearch :: SearchInput %1 -> Program ()
 linearSearch (SearchInput targetPayload valuePayloads) = do
   target <- create (#int <> #target <> #source) targetPayload
   elements <- createElements valuePayloads
-  loop (SearchState target elements) searchIteration
+  loop (SearchState target NoProcessedElements elements) searchIteration
 
 createElements :: InputValues %1 -> Program Elements
 createElements = createElementsFrom 0
@@ -134,85 +136,83 @@ createElementsFrom index inputs =
 searchIteration :: SearchState %1 -> Program (LoopResult SearchState ())
 searchIteration searchState =
   case searchState of
-    SearchState target elements ->
+    SearchState target processed elements ->
       case elements of
         NoElements -> do
           destroy target
+          destroyProcessed processed
           checkpoint "Search exhausted"
           return (Finish ())
         MoreElement index element rest -> do
-          comparison <- compareElement target index element
-          case comparison of
-            IsMatch targetAfter elementAfter -> do
-              finishFound targetAfter elementAfter
-              discardRemaining rest
+          PreparedComparison targetAfter elementAfter targetProbe elementProbe <-
+            prepareComparison target index element
+          checkpoint "Prepare comparison"
+          matchBlock <- compareValues targetProbe elementProbe
+          branch <- decide (\(LBool answer) -> answer) matchBlock
+          case branch of
+            BranchTrue -> do
+              checkpoint "Found target"
+              finishSearch targetAfter elementAfter processed rest
+              checkpoint "Search complete"
               return (Finish ())
-            IsNotMatch targetAfter elementAfter -> do
-              discardChecked elementAfter
-              return (Continue (SearchState targetAfter rest))
+            BranchFalse -> do
+              processedElement <- markProcessed index elementAfter
+              checkpoint "Not this element"
+              return
+                (Continue
+                   (SearchState
+                      targetAfter
+                      (MoreProcessedElement processedElement processed)
+                      rest))
 
-compareElement :: Block Value %1 -> Int -> Block Value %1 -> Program Comparison
-compareElement target index element = do
-  PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe <-
-    prepareComparison target index element
-  matchBlock <- compareValues targetProbe elementProbe
-  branch <- decide (\(LBool answer) -> answer) matchBlock
-  case branch of
-    BranchTrue -> do
-      checkpoint "Found target"
-      comparisonBranch targetAfter elementAfter BranchTrue
-    BranchFalse -> do
-      checkpoint "Not this element"
-      comparisonBranch targetAfter elementAfter BranchFalse
+destroyProcessed :: ProcessedElements %1 -> Program ()
+destroyProcessed processed =
+  case processed of
+    NoProcessedElements -> return ()
+    MoreProcessedElement element rest -> do
+      destroy element
+      destroyProcessed rest
 
-comparisonBranch ::
-     Block Value %1 -> Block Value %1 -> BranchDecision %1 -> Program Comparison
-comparisonBranch targetAfter elementAfter branch =
-  case branch of
-    BranchTrue  -> return (IsMatch targetAfter elementAfter)
-    BranchFalse -> return (IsNotMatch targetAfter elementAfter)
-
-discardRemaining :: Elements %1 -> Program ()
-discardRemaining elements =
+destroyRemaining :: Elements %1 -> Program ()
+destroyRemaining elements =
   case elements of
     NoElements -> return ()
     MoreElement _ element rest -> do
       destroy element
-      discardRemaining rest
+      destroyRemaining rest
+
+finishSearch ::
+     Block Value
+     %1 -> Block Value
+     %1 -> ProcessedElements
+     %1 -> Elements
+     %1 -> Program ()
+finishSearch target foundElement processed remaining = do
+  destroy target
+  destroy foundElement
+  destroyProcessed processed
+  destroyRemaining remaining
+
+markProcessed :: Int -> Block Value %1 -> Program (Block Value)
+markProcessed index = retag (#int <> #array <> #processed <> #index index)
 
 prepareComparison ::
-     Block Value %1 -> Int -> Block Value %1 -> Program PrepareComparisonOutput
+     Block Value %1 -> Int -> Block Value %1 -> Program PreparedComparison
 prepareComparison target index element = do
   (targetAfter, targetProbe) <- copy (#int <> #target <> #probe) target
   (elementAfter, elementProbe) <- copy (#int <> #probe <> #index index) element
-  checkpoint "Prepare comparison"
-  return
-    (PrepareComparisonOutput targetAfter elementAfter targetProbe elementProbe)
+  return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
 
 compareValues :: Block Value %1 -> Block Value %1 -> Program (Block Match)
 compareValues targetProbe elementProbe = do
   targetPayload <- use targetProbe
   elementPayload <- use elementProbe
-  matchBlock <-
-    computeWithTags
-      (#decision <> #match)
-      (\case
-         LBool True -> #matched
-         LBool False -> #not_matched)
-      (sameValue <$> targetPayload <*> elementPayload)
-  checkpoint "Compare target and element"
-  return matchBlock
-
-discardChecked :: Block Value %1 -> Program ()
-discardChecked element = do
-  destroy element
-  -- checkpoint "Discard checked element"
-
-finishFound :: Block Value %1 -> Block Value %1 -> Program ()
-finishFound target element = do
-  destroy target
-  destroy element
-  -- checkpoint "Finish found target"
+  computeWithTags
+    (#decision <> #match)
+    (\case
+       LBool True -> #matched
+       LBool False -> #not_matched)
+    (sameValue <$> targetPayload <*> elementPayload)
 
 --------------------------------------------------------------------------------
 -- Visualisation
@@ -275,6 +275,13 @@ visualization =
           fontSize (#cell * 0.5)
           width #cell
           height #cell
+        match @Value
+          (whereFacts
+             (#int <> #array <> #processed <> patternIntField #index #i)) $ do
+          fill (Hsl 220 0.04 0.84)
+          stroke (Hsl 220 0.08 0.58)
+          strokeWidth (#cell * 0.025)
+          opacity 0.62
         matchPair
           (#int <> #target <> #source)
           (#int <> #array <> patternIntField #index #i)
@@ -297,6 +304,18 @@ visualization =
           (#int <> #probe <> patternIntField #index #i)
           (#int <> #array <> patternIntField #index #i)
           (\probe element -> constrain $ bottom probe <| #gap |> top element)
+        matchPair
+          (#int <> #target <> #probe)
+          (#decision <> #match)
+          (\probe result -> constrain $ bottom probe <| #match_gap |> top result)
+        matchPair
+          (#int <> #probe <> patternIntField #index #i)
+          (#decision <> #match)
+          (\probe result -> constrain $ bottom probe <| #match_gap |> top result)
+        matchPair
+          (#decision <> #match)
+          (#int <> #array <> patternIntField #index #i)
+          (\result element -> constrain $ bottom result <| #gap |> top element)
         matchPair
           (#int <> #array <> patternIntField #index #i)
           (#int <> #array <> patternIntField #index (#i + 1))

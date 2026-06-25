@@ -26,6 +26,8 @@ module LinearTrace.Choreography
   , use
   , compute
   , computeWithTags
+  , replace
+  , retag
   , destroy
   , decide
   , checkpoint
@@ -281,6 +283,10 @@ data Program a where
     -> (C.Payload tag -> C.Facts)
     -> PayloadHandle tag
        %1 -> Program (Block tag)
+  ReplaceProgram
+    :: C.Traceable tag => Block tag %1 -> Block tag %1 -> Program (Block tag)
+  RetagProgram
+    :: C.Traceable tag => C.Facts -> Block tag %1 -> Program (Block tag)
   DestroyProgram :: C.Traceable tag => Block tag %1 -> Program ()
   DecideProgram
     :: C.Traceable tag=> (C.Payload tag %1 -> Bool)
@@ -985,6 +991,20 @@ computeWithTags query selectQuery =
   where
     selectFacts payload = queryFacts (selectQuery payload)
 
+replace ::
+     forall tag. C.Traceable tag
+  => Block tag
+     %1 -> Block tag
+     %1 -> Program (Block tag)
+replace = ReplaceProgram
+
+retag ::
+     forall tag. C.Traceable tag
+  => Query
+  -> Block tag
+     %1 -> Program (Block tag)
+retag query = RetagProgram (queryFacts query)
+
 destroy ::
      forall tag. C.Traceable tag
   => Block tag
@@ -1030,6 +1050,17 @@ interpretProgram program =
       V.Computed block token <- V.computeTaggedWith facts selectFacts payload
       V.appendTraceView (V.freshMatched token)
       return block
+    ReplaceProgram oldBlock incomingBlock -> do
+      V.Replaced output token <- V.replace oldBlock incomingBlock
+      V.appendTraceView (V.replaceMatched token)
+      return output
+    RetagProgram facts block -> do
+      V.Copied original incoming copyToken <- V.copyTagged facts block
+      V.Replaced output token <- V.replace original incoming
+      V.appendTraceView $ do
+        V.completeCopy copyToken
+        V.replaceMatchedOutput token
+      return output
     DestroyProgram block -> do
       V.Destroyed token <- V.destroy block
       V.appendTraceView (V.remove token)

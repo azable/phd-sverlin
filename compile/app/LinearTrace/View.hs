@@ -130,6 +130,9 @@ module LinearTrace.View
   , forkCopyMatched
   , continueFrom
   , continueFromMatched
+  , completeCopy
+  , replaceMatched
+  , replaceMatchedOutput
   , remove
   , complete
   , checkpoint
@@ -2814,6 +2817,54 @@ continueFromMatchedRaw ::
      %1 -> NewVisual tag
      %1 -> ViewBuilder ()
 continueFromMatchedRaw source visual =
+  case source of
+    Visual sourceBlock ->
+      case visual of
+        Visual block -> do
+          defineMatchedBlock block
+          emitRenderIntent
+            (RenderContinue (blockRef sourceBlock) (blockRef block))
+
+completeCopy :: VisualExplainToken (C.Copy tag) %1 -> ViewBuilder ()
+completeCopy token = do
+  copied <- explainVisual token
+  case copied of
+    CopiedVisual source copy' -> do
+      completeAnyVisual source
+      completeAnyVisual copy'
+
+replaceMatched ::
+     forall tag. C.Traceable tag
+  => VisualExplainToken (C.Replace tag)
+     %1 -> ViewBuilder ()
+replaceMatched token = do
+  (oldVisual, incomingVisual, outputVisual) <- explainVisual token
+  continueConsumedFromMatched oldVisual outputVisual
+  remove incomingVisual
+
+replaceMatchedOutput ::
+     forall tag. C.Traceable tag
+  => VisualExplainToken (C.Replace tag)
+     %1 -> ViewBuilder ()
+replaceMatchedOutput token = do
+  (oldVisual, incomingVisual, outputVisual) <- explainVisual token
+  continueConsumedFromMatched oldVisual outputVisual
+  completeConsumed incomingVisual
+
+completeConsumed :: ConsumedVisual tag %1 -> ViewBuilder ()
+completeConsumed = completeAnyVisual
+
+completeAnyVisual :: Visual state lifecycle used tag %1 -> ViewBuilder ()
+completeAnyVisual visual =
+  case visual of
+    Visual _ -> return ()
+
+continueConsumedFromMatched ::
+     forall tag. C.Traceable tag
+  => ConsumedVisual tag
+     %1 -> NewVisual tag
+     %1 -> ViewBuilder ()
+continueConsumedFromMatched source visual =
   case source of
     Visual sourceBlock ->
       case visual of
