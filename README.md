@@ -1,42 +1,87 @@
-# sv
+# sverlin
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+`sverlin` is a SvelteKit trace viewer backed by a Haskell trace compiler and visualization solver.
 
-## Creating a project
+The Haskell application under `compile/` builds a linear-search trace, solves a visual layout for it, and writes the compiled visualization descriptor to `static/compiled.json`. The SvelteKit app reads that JSON and renders an interactive step-by-step visualization in the browser.
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Project Structure
 
-```sh
-# create a new project
-npx sv create my-app
-```
+- `src/` contains the SvelteKit application.
+- `src/lib/visualization/` contains the trace player, canvas, toolbar, debug panel, and shared visualization types.
+- `src/lib/server/compile-visualization.ts` runs the Haskell compiler from the SvelteKit server action used by the UI.
+- `static/compiled.json` is the generated visualization consumed by the frontend.
+- `compile/app/` contains the Haskell application and visualization DSL.
+- `compile/app/DSL/Main.hs` defines the current example program and its visual styling/constraints.
+- `compile/app/LinearTrace/` contains the core trace model, choreography DSL, solver, view compiler, and JSON output pipeline.
+- `compile.sh` runs the Haskell app from the repository root.
 
-To recreate this project with the same configuration:
+## Requirements
 
-```sh
-# recreate this project
-pnpm dlx sv create --template minimal --types ts --add eslint vitest="usages:unit,component" tailwindcss="plugins:typography" prettier --install pnpm sverlin
-```
+- Node.js and `pnpm` for the SvelteKit app.
+- GHC/Cabal for the Haskell compiler under `compile/`.
+- `hlint`, `hindent`, and `stylish-haskell` for Haskell checks/formatting.
 
-## Developing
+## Generate Visualization JSON
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
+Run the Haskell compiler from the repository root:
 
 ```sh
-npm run build
+./compile.sh
 ```
 
-You can preview the production build with `npm run preview`.
+This prints trace/solver diagnostics and writes:
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+```text
+static/compiled.json
+```
+
+Useful compiler options:
+
+```sh
+./compile.sh --seed -1988735004
+./compile.sh --details
+./compile.sh --json
+```
+
+`--seed` makes the solver deterministic for a specific run. `--json` writes the compiled visualization to stdout instead of `static/compiled.json`.
+
+## Run The Frontend
+
+Install dependencies, then start Vite:
+
+```sh
+pnpm install
+pnpm run dev
+```
+
+Open the printed local URL. The page loads `static/compiled.json` by default and can regenerate the visualization through the server action in the UI.
+
+## Frontend Checks
+
+```sh
+pnpm run check
+pnpm run lint
+pnpm run test
+```
+
+## Haskell Checks
+
+After changing Haskell source:
+
+```sh
+./compile.sh
+hlint compile/app
+```
+
+Before finishing Haskell edits, run the same formatter pipeline used by the editor:
+
+```sh
+find compile/app -name '*.hs' -print0 | xargs -0 hindent
+find compile/app -name '*.hs' -print0 | xargs -0 stylish-haskell -i
+```
+
+`stylish-haskell -i` should be the final source-modifying formatter pass.
+
+## TODO
+
+- Consider a clearer unified presentation API for visualization styles: keep assignment/override semantics distinct from relational constraints, e.g. an explicit `set`-style API for properties while reserving `ensure`/`encourage` for relationships.

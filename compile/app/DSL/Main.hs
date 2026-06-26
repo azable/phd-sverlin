@@ -200,7 +200,7 @@ prepareComparison ::
      Block Value %1 -> Int -> Block Value %1 -> Program PreparedComparison
 prepareComparison target index element = do
   (targetAfter, targetProbe) <- copy (#target <&&> #probe) target
-  (elementAfter, elementProbe) <- copy (#probe <&&> #index index) element
+  (elementAfter, elementProbe) <- copy (#index index <&&> #probe) element
   return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
 
 compareValues :: Block Value %1 -> Block Value %1 -> Program (Block Match)
@@ -217,48 +217,36 @@ visualization =
   visualize $ do
     -- Geometry uses relative relationships only; the view layer already keeps
     -- every node on-canvas, so the solver can vary placement between runs.
-    Variable cell <- variable @Span (by 104)
+    Variable cell <- variable @Span
+    ensure $ cell .>=. by 80
     Variable gap <- variable @Span (cell / 3.5)
-    Variable probeSize <- variable @Span (cell * 1.05)
+    Variable probeSize <- variable @Span (cell * 1.08)
+    Variable valueHue <- variable @Hue
     Bound v <- bindContent
     Bound i <- bindInt
-    -- Shared payload styling: every value block renders its payload. More
-    -- specific styles below decide how each block participates in the step.
+    -- Every value has the same visual representation. Probe copies only scale
+    -- this base shape up slightly while they are being compared.
     Selected valueContent <- select @Value (payload v)
     style valueContent $ do
       content v
       centerText
-    -- Target row: a wide source value that anchors the rest of the layout.
-    Variable targetWidth <- variable @Span (probeSize * 2 |+| gap)
-    Variable targetHeight <- variable @Span (cell * 0.82)
-    Selected targetSource <- select @Value (#target <&&> #source)
-    style targetSource $ do
-      fill (Hsl 42 0.62 0.86)
-      stroke (Hsl 38 0.75 0.38)
-      strokeWidth (cell * 0.04)
-      radius (cell * 0.16)
-      fontSize (cell * 0.46)
+      fill (Hsl valueHue 0.24 0.9)
+      stroke (Hsl valueHue 0.46 0.34)
+      strokeWidth (by 3)
+      radius (cell * 0.12)
+      fontSize (cell * 0.44)
       zIndex 2
-      width targetWidth
-      height targetHeight
+      width cell
+      height cell
+    -- Target row: a source value that anchors the rest of the layout.
+    Selected targetSource <- select @Value (#target <&&> #source)
     -- Probe row: the copied target and current array element sit side by side.
     Selected targetProbe <- select @Value (#target <&&> #probe)
     Selected probe <- select @Value #probe
     Selected probes <- node probe
     Selected probeItem <- select @Value (#probe <&&> #index @: i)
-    style probes $ do
-      fill (Hsl 204 0.12 0.96)
-      stroke (Hsl 204 0.24 0.72)
-      strokeWidth (cell * 0.022)
-      radius (cell * 0.18)
-      zIndex 1
     style probe $ do
-      fill (Hsl 204 0.44 0.9)
-      stroke (Hsl 204 0.62 0.36)
-      strokeWidth (cell * 0.035)
       zIndex 3
-      radius (cell * 0.16)
-      fontSize (cell * 0.44)
       width probeSize
       height probeSize
     -- Result row: a compact badge records the branch decision.
@@ -296,22 +284,14 @@ visualization =
     style array $ do
       zIndex 0
       fill grey
-    style arrayItem $ do
-      fill (Hsl 166 (0.2 + asUnit i * 0.08) 0.88)
-      stroke (Hsl 166 0.46 0.38)
-      strokeWidth (cell * 0.035)
-      radius (cell * 0.12)
-      fontSize (cell * 0.44)
-      zIndex 2
-      width cell
-      height cell
     Selected processedItem <- select @AnyPayload #processed
     let processedGrey :: HslExpr
         processedGrey = Hsl 0 0 0.8
+    style processedItem $ do
+      fill processedGrey
+      stroke processedGrey
     -- Hard constraints define structure. Soft constraints keep rows visually
     -- related without pinning them to absolute coordinates.
-    ensure $ fill processedItem .==. processedGrey
-    ensure $ stroke processedItem .==. processedGrey
     -- Rows are ordered by minimum gaps, leaving vertical slack free.
     ensure $ bottom targetSource =| gap |= top probes
     ensure $ bottom probes =| gap |= top result
