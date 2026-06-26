@@ -252,8 +252,11 @@ module LinearTrace.View
 
 import           Control.Functor.Linear                hiding ((<$>), (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
+import qualified Data.Char                             as Char
 import           Data.Kind                             (Type)
 import qualified Data.Kind                             as K
+import qualified Data.List                             as List
+import qualified Data.Map.Strict                       as Map
 import qualified Data.Maybe                            as Maybe
 import           Data.Proxy                            (Proxy (..))
 import           Data.Type.Equality                    ((:~:) (..))
@@ -1645,14 +1648,6 @@ traverseView_ action values =
       action value
       traverseView_ action rest
 
-traverseMaybeView_ :: (a -> ViewBuilder ()) -> Maybe a -> ViewBuilder ()
-traverseMaybeView_ action value
-  {- HLINT ignore "Use forM_" -}
- =
-  case value of
-    Nothing -> return ()
-    Just x  -> action x
-
 ensure :: OneConstraint %1 -> ViewBuilder ()
 ensure oneConstraint =
   case oneConstraint of
@@ -1669,13 +1664,6 @@ encourageConstraint oneConstraint =
 encourage :: Expr ty -> ViewBuilder ()
 encourage objective =
   tellOutput mempty {emittedConstraints = [S.minimize objective]}
-
-registerInitialVar :: InitialVar -> ViewBuilder ()
-registerInitialVar initial = tellOutput mempty {emittedInitialVars = [initial]}
-
-registerInitialRange :: Expr ty -> Range -> ViewBuilder ()
-registerInitialRange expr range =
-  traverseMaybeView_ registerInitialVar (initialRangeFor expr range)
 
 emitViewNode :: ViewNode -> ViewBuilder ()
 emitViewNode node = tellOutput mempty {emittedNodes = [node]}
@@ -1737,7 +1725,6 @@ defineNewBlock definition block0 =
     ViewDefinition styleDefinition viewDefinition -> do
       Ur env <- askViewEnv
       let block = block0 {blockStyle = styleDefinition (blockStyle block0)}
-      registerInitialStyleBounds (blockStyle block)
       constrainStyle (blockStyle block)
       ensureRaw (S.num 0 S.@<=@ left block)
       ensureRaw (S.num 0 S.@<=@ top block)
@@ -1850,7 +1837,6 @@ definePatchedBlock patch block0 = do
                 Nothing      -> blockContent block0
                 Just content -> content
           }
-  registerInitialStyleBounds (blockStyle block)
   constrainStyle (blockStyle block)
   ensureRaw (S.num 0 S.@<=@ left block)
   ensureRaw (S.num 0 S.@<=@ top block)
@@ -2467,7 +2453,9 @@ buildCSP (VisualTraceGraph spec (C.TraceGraph _blocks steps)) =
           P.++ virtualConstraints
           P.++ matchSpecConstraints spec nodes
       initialVars =
-        builtInitialVars stepsOutput P.++ P.concatMap viewNodeInitialVars nodes
+        dedupeInitialVars
+          (builtInitialVars stepsOutput
+             P.++ P.concatMap (viewNodeInitialVars defaultViewEnv) nodes)
       renderFrames =
         addVirtualRenderFrames virtualNodes (builtRenderFrames stepsOutput)
    in ViewGraph
@@ -2483,7 +2471,201 @@ solveCSP config graph =
   solveWithInitialVars config (viewInitialVars graph) (viewConstraints graph)
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
-solveCSPWithSeed seed = solveCSP defaultSolveConfig {initialSeed = seed}
+solveCSPWithSeed seed =
+  solveCSP
+    defaultSolveConfig
+      {initialSeed = seed, initialValuesFor = viewInitialValues defaultViewEnv}
+
+data LayoutInitialField
+  = LayoutInitialLeft
+  | LayoutInitialTop
+  | LayoutInitialWidth
+  | LayoutInitialHeight
+
+data LayoutInitialGroup = LayoutInitialGroup
+  { layoutInitialLeft   :: Maybe InitialValueSpec
+  , layoutInitialTop    :: Maybe InitialValueSpec
+  , layoutInitialWidth  :: Maybe InitialValueSpec
+  , layoutInitialHeight :: Maybe InitialValueSpec
+  }
+
+emptyLayoutInitialGroup :: LayoutInitialGroup
+emptyLayoutInitialGroup =
+  LayoutInitialGroup
+    { layoutInitialLeft = Nothing
+    , layoutInitialTop = Nothing
+    , layoutInitialWidth = Nothing
+    , layoutInitialHeight = Nothing
+    }
+
+viewInitialValues ::
+     ViewEnv -> RandomSeed -> [InitialValueSpec] -> Map.Map P.String P.Double
+viewInitialValues env seed specs =
+  let defaults = S.initialValuesFor S.defaultSolveConfig seed specs
+      groups = layoutInitialGroups specs
+      sampled =
+        P.foldl
+          Map.union
+          Map.empty
+          (P.map
+             (layoutGroupInitialValues env seed defaults)
+             (Map.toList groups))
+   in Map.union sampled defaults
+
+layoutInitialGroups :: [InitialValueSpec] -> Map.Map P.String LayoutInitialGroup
+layoutInitialGroups = P.foldl addSpec Map.empty
+  where
+    addSpec groups spec =
+      case layoutInitialField spec of
+        Nothing -> groups
+        Just (groupName, field) ->
+          Map.alter (mergeLayoutInitialField field spec) groupName groups
+
+mergeLayoutInitialField ::
+     LayoutInitialField
+  -> InitialValueSpec
+  -> Maybe LayoutInitialGroup
+  -> Maybe LayoutInitialGroup
+mergeLayoutInitialField field spec maybeGroup =
+  Just
+    (setLayoutInitialField
+       field
+       spec
+       (Maybe.fromMaybe emptyLayoutInitialGroup maybeGroup))
+
+layoutInitialField :: InitialValueSpec -> Maybe (P.String, LayoutInitialField)
+layoutInitialField spec
+  | typeName (initialValueSpecType spec) P./= "length" = Nothing
+  | otherwise =
+    firstMatchingLayoutField
+      (initialValueSpecName spec)
+      [ (".left", LayoutInitialLeft)
+      , (".top", LayoutInitialTop)
+      , (".width", LayoutInitialWidth)
+      , (".height", LayoutInitialHeight)
+      ]
+
+firstMatchingLayoutField ::
+     P.String
+  -> [(P.String, LayoutInitialField)]
+  -> Maybe (P.String, LayoutInitialField)
+firstMatchingLayoutField name fields =
+  case fields of
+    [] -> Nothing
+    (suffix, field):rest ->
+      case stripSuffix suffix name of
+        Nothing -> firstMatchingLayoutField name rest
+        Just groupName
+          | layoutInitialGroupName groupName -> Just (groupName, field)
+          | otherwise -> Nothing
+
+layoutInitialGroupName :: P.String -> P.Bool
+layoutInitialGroupName name =
+  List.isPrefixOf "V." name P.|| blockInitialGroupName name
+
+blockInitialGroupName :: P.String -> P.Bool
+blockInitialGroupName name =
+  case name of
+    'B':rest -> rest P./= "" P.&& P.all Char.isDigit rest
+    _        -> False
+
+stripSuffix :: P.String -> P.String -> Maybe P.String
+stripSuffix suffix value =
+  case suffix `List.isSuffixOf` value of
+    False -> Nothing
+    True  -> Just (P.take (P.length value P.- P.length suffix) value)
+
+setLayoutInitialField ::
+     LayoutInitialField
+  -> InitialValueSpec
+  -> LayoutInitialGroup
+  -> LayoutInitialGroup
+setLayoutInitialField field spec group =
+  case field of
+    LayoutInitialLeft   -> group {layoutInitialLeft = Just spec}
+    LayoutInitialTop    -> group {layoutInitialTop = Just spec}
+    LayoutInitialWidth  -> group {layoutInitialWidth = Just spec}
+    LayoutInitialHeight -> group {layoutInitialHeight = Just spec}
+
+layoutGroupInitialValues ::
+     ViewEnv
+  -> RandomSeed
+  -> Map.Map P.String P.Double
+  -> (P.String, LayoutInitialGroup)
+  -> Map.Map P.String P.Double
+layoutGroupInitialValues env seed (defaults :: Map.Map P.String P.Double) (groupName, group) =
+  case ( layoutInitialLeft group
+       , layoutInitialTop group
+       , layoutInitialWidth group
+       , layoutInitialHeight group) of
+    (Just leftSpec, Just topSpec, Just widthSpec, Just heightSpec) ->
+      let widthValue =
+            boundedInitialValue defaults 20 (canvasWidthValue env) widthSpec
+          heightValue =
+            boundedInitialValue defaults 20 (canvasHeightValue env) heightSpec
+          leftValue =
+            sampledOrigin
+              (canvasWidthValue env)
+              widthValue
+              (randomUnitFor seed (groupName P.++ ".centerX"))
+              leftSpec
+          topValue =
+            sampledOrigin
+              (canvasHeightValue env)
+              heightValue
+              (randomUnitFor seed (groupName P.++ ".centerY"))
+              topSpec
+       in Map.fromList
+            [ (initialValueSpecName leftSpec, leftValue)
+            , (initialValueSpecName topSpec, topValue)
+            , (initialValueSpecName widthSpec, widthValue)
+            , (initialValueSpecName heightSpec, heightValue)
+            ]
+    _ -> Map.empty
+
+boundedInitialValue ::
+     Map.Map P.String P.Double
+  -> P.Double
+  -> P.Double
+  -> InitialValueSpec
+  -> P.Double
+boundedInitialValue defaults fallbackLower fallbackUpper spec =
+  let bounds = initialValueSpecBounds spec
+      lower = Maybe.fromMaybe fallbackLower (initialLower bounds)
+      upper = P.max lower (Maybe.fromMaybe fallbackUpper (initialUpper bounds))
+      fallback =
+        lower
+          P.+ randomSampleUnit (initialValueSpecSample spec)
+                P.* (upper P.- lower)
+   in clamp
+        lower
+        upper
+        (Map.findWithDefault fallback (initialValueSpecName spec) defaults)
+
+sampledOrigin ::
+     P.Double -> P.Double -> P.Double -> InitialValueSpec -> P.Double
+sampledOrigin canvasSize objectSize t spec =
+  let bounds = initialValueSpecBounds spec
+      lower = P.max 0 (Maybe.fromMaybe 0 (initialLower bounds))
+      upper =
+        P.max
+          lower
+          (P.min
+             (canvasSize P.- objectSize)
+             (Maybe.fromMaybe (canvasSize P.- objectSize) (initialUpper bounds)))
+   in lower P.+ t P.* (upper P.- lower)
+
+randomUnitFor :: RandomSeed -> P.String -> P.Double
+randomUnitFor seed salt =
+  case seed of
+    RandomSeed seedInt ->
+      case S.randomUnitsFromSeed
+             (RandomSeed (positiveHash (P.show seedInt P.++ ":" P.++ salt))) of
+        []      -> 0.5
+        value:_ -> value
+
+clamp :: P.Double -> P.Double -> P.Double -> P.Double
+clamp lower upper value = P.max lower (P.min upper value)
 
 data AnyBlockView where
   AnyBlockView :: BlockView tag -> AnyBlockView
@@ -3196,24 +3378,85 @@ viewNodeStyleConstraints node =
     BlockViewNode block     -> styleConstraints (blockStyle block)
     VirtualViewNode virtual -> styleConstraints (virtualStyle virtual)
 
-viewNodeInitialVars :: ViewNode -> [InitialVar]
-viewNodeInitialVars node =
+viewNodeInitialVars :: ViewEnv -> ViewNode -> [InitialVar]
+viewNodeInitialVars env node =
   case node of
     BlockViewNode block ->
-      boundsInitialVars (styleBounds (blockStyle block))
+      blockBoundsInitialVars env (styleBounds (blockStyle block))
         P.++ styleInitialVars (blockStyle block)
     VirtualViewNode virtual ->
-      boundsInitialVars (styleBounds (virtualStyle virtual))
+      virtualBoundsInitialVars env (styleBounds (virtualStyle virtual))
         P.++ styleInitialVars (virtualStyle virtual)
 
-boundsInitialVars :: BoundsExpr -> [InitialVar]
-boundsInitialVars bounds' =
+boundsInitialVars ::
+     ViewEnv -> P.Double -> P.Double -> BoundsExpr -> [InitialVar]
+boundsInitialVars env maxWidth maxHeight bounds' =
   case bounds' of
     Bounds topExpr leftExpr widthExpr heightExpr ->
-      exprInitialVars topExpr
-        P.++ exprInitialVars leftExpr
-        P.++ exprInitialVars widthExpr
-        P.++ exprInitialVars heightExpr
+      exprInitialVarsWithRange topExpr (Range 0 (canvasHeightValue env))
+        P.++ exprInitialVarsWithRange leftExpr (Range 0 (canvasWidthValue env))
+        P.++ exprInitialVarsWithRange widthExpr (Range 20 maxWidth)
+        P.++ exprInitialVarsWithRange heightExpr (Range 20 maxHeight)
+
+blockBoundsInitialVars :: ViewEnv -> BoundsExpr -> [InitialVar]
+blockBoundsInitialVars env =
+  boundsInitialVars
+    env
+    (P.max 20 (canvasWidthValue env P./ 4))
+    (P.max 20 (canvasHeightValue env P./ 4))
+
+virtualBoundsInitialVars :: ViewEnv -> BoundsExpr -> [InitialVar]
+virtualBoundsInitialVars env =
+  boundsInitialVars env (canvasWidthValue env) (canvasHeightValue env)
+
+exprInitialVarsWithRange :: Expr ty -> Range -> [InitialVar]
+exprInitialVarsWithRange expr range =
+  case initialRangeFor expr range of
+    Nothing      -> exprInitialVars expr
+    Just initial -> [initial]
+
+dedupeInitialVars :: [InitialVar] -> [InitialVar]
+dedupeInitialVars initials = Map.elems (P.foldl addInitial Map.empty initials)
+  where
+    addInitial grouped initial =
+      Map.alter (mergeMaybeInitialVar initial) (initialVarName initial) grouped
+
+mergeMaybeInitialVar :: InitialVar -> Maybe InitialVar -> Maybe InitialVar
+mergeMaybeInitialVar initial maybeInitial =
+  Just (mergeInitialVar initial (Maybe.fromMaybe initial maybeInitial))
+
+mergeInitialVar :: InitialVar -> InitialVar -> InitialVar
+mergeInitialVar new old
+  | initialVarType new P.== initialVarType old =
+    old
+      { initialVarBounds =
+          mergeViewInitialBounds (initialVarBounds old) (initialVarBounds new)
+      }
+  | otherwise =
+    P.error
+      ("initial variable used with incompatible symbolic types: "
+         P.++ initialVarName old)
+
+mergeViewInitialBounds :: InitialBounds -> InitialBounds -> InitialBounds
+mergeViewInitialBounds old new =
+  InitialBounds
+    { initialLower = mergeViewInitialLower (initialLower old) (initialLower new)
+    , initialUpper = mergeViewInitialUpper (initialUpper old) (initialUpper new)
+    }
+
+mergeViewInitialLower :: Maybe P.Double -> Maybe P.Double -> Maybe P.Double
+mergeViewInitialLower old new =
+  case (old, new) of
+    (Nothing, value)     -> value
+    (value, Nothing)     -> value
+    (Just lhs, Just rhs) -> Just (P.max lhs rhs)
+
+mergeViewInitialUpper :: Maybe P.Double -> Maybe P.Double -> Maybe P.Double
+mergeViewInitialUpper old new =
+  case (old, new) of
+    (Nothing, value)     -> value
+    (value, Nothing)     -> value
+    (Just lhs, Just rhs) -> Just (P.min lhs rhs)
 
 addVirtualRenderFrames :: [ViewNode] -> [[RenderIntent]] -> [[RenderIntent]]
 addVirtualRenderFrames nodes frames =
@@ -3493,20 +3736,6 @@ viewToken step =
     C.UnsealStep owner child ->
       UnsealedToken (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
     C.DecideStep snapshot -> DecidedToken (blockViewOfSnapshot snapshot)
-
---------------------------------------------------------------------------------
--- Style bounds / registration
---------------------------------------------------------------------------------
-registerInitialStyleBounds :: Style -> ViewBuilder ()
-registerInitialStyleBounds style' = do
-  Ur env <- askViewEnv
-  let canvasW = canvasWidthValue env
-      canvasH = canvasHeightValue env
-  registerInitialRange (left style') (Range 0 canvasW)
-  registerInitialRange (top style') (Range 0 canvasH)
-  registerInitialRange (width style') (Range 20 (max 20 (canvasW / 4)))
-  registerInitialRange (height style') (Range 20 (max 20 (canvasH / 4)))
-  traverseView_ registerInitialVar (styleInitialVars style')
 
 constrainStyle :: Style -> ViewBuilder ()
 constrainStyle style' = traverseView_ ensureRaw (styleConstraints style')

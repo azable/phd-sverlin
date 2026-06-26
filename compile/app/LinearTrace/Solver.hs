@@ -60,6 +60,7 @@ module LinearTrace.Solver
   , -- * Seeded initial value generation
     RandomSeed(..)
   , RandomSample(..)
+  , InitialValueSpec(..)
   , randomSamplesFromSeed
   , randomUnitsFromSeed
   , -- * Solving
@@ -667,21 +668,21 @@ data Term =
   Term TermKind Rational (forall a. Floating a => EnergyExpr a)
 
 data CSPState = CSPState
-  { nextVarId     :: Int
-  , initialValues :: [Double]
-  , energyTerms   :: [Term]
+  { nextVarId        :: Int
+  , initialValuesRev :: [Double]
+  , energyTermsRev   :: [Term]
   }
 
 type BuildCSP = State CSPState
 
 emptyCSP :: CSPState
-emptyCSP = CSPState {nextVarId = 0, initialValues = [], energyTerms = []}
+emptyCSP = CSPState {nextVarId = 0, initialValuesRev = [], energyTermsRev = []}
 
 newInternalVar :: Double -> BuildCSP InternalVar
 newInternalVar initial = do
   st <- get
   let i = nextVarId st
-  put st {nextVarId = i + 1, initialValues = initialValues st ++ [initial]}
+  put st {nextVarId = i + 1, initialValuesRev = initial : initialValuesRev st}
   pure (InternalVar i)
 
 addHardTerm :: Rational -> (forall a. Floating a => EnergyExpr a) -> BuildCSP ()
@@ -697,7 +698,7 @@ addTerm ::
   -> BuildCSP ()
 addTerm kind weight expr = do
   st <- get
-  put st {energyTerms = energyTerms st ++ [Term kind weight expr]}
+  put st {energyTermsRev = Term kind weight expr : energyTermsRev st}
 
 addRangeTerms :: Rational -> InternalVar -> Range -> BuildCSP ()
 addRangeTerms weight internal range = do
@@ -721,8 +722,8 @@ compileReturning :: BuildCSP a -> (a, CSP)
 compileReturning build = (result, CSP initials totalEnergy hardEnergy)
   where
     (result, st) = runState build emptyCSP
-    initials = initialValues st
-    terms = energyTerms st
+    initials = reverse (initialValuesRev st)
+    terms = reverse (energyTermsRev st)
     totalEnergy xs =
       sum [weightedTerm weight expr xs | Term _ weight expr <- terms]
     hardEnergy xs =
@@ -755,6 +756,13 @@ data RandomSample = RandomSample
   , randomSampleUnit  :: Double
   } deriving (Eq, Show)
 
+data InitialValueSpec = InitialValueSpec
+  { initialValueSpecSample :: RandomSample
+  , initialValueSpecName   :: String
+  , initialValueSpecType   :: ScalarType
+  , initialValueSpecBounds :: InitialBounds
+  } deriving (Eq, Show)
+
 randomSamplesFromSeed :: RandomSeed -> [RandomSample]
 randomSamplesFromSeed seed =
   zipWith RandomSample [0 ..] (randomUnitsFromSeed seed)
@@ -766,18 +774,18 @@ randomUnitsFromSeed (RandomSeed seed) = randomRs (0.0, 1.0) (mkStdGen seed)
 -- Named constraint solving
 --------------------------------------------------------------------------------
 data SolveConfig = SolveConfig
-  { initialSeed :: RandomSeed
-  , initialValueFor :: RandomSample -> String -> ScalarType -> InitialBounds -> Double
-  , ensureWeight :: Rational
-  , encourageWeight :: Rational
-  , rangeWeight :: Rational
+  { initialSeed      :: RandomSeed
+  , initialValuesFor :: RandomSeed -> [InitialValueSpec] -> Map String Double
+  , ensureWeight     :: Rational
+  , encourageWeight  :: Rational
+  , rangeWeight      :: Rational
   }
 
 defaultSolveConfig :: SolveConfig
 defaultSolveConfig =
   SolveConfig
     { initialSeed = RandomSeed 0
-    , initialValueFor = defaultInitialValue
+    , initialValuesFor = defaultInitialValues
     , ensureWeight = 100
     , encourageWeight = 1
     , rangeWeight = 100
@@ -787,6 +795,19 @@ defaultInitialValue ::
      RandomSample -> String -> ScalarType -> InitialBounds -> Double
 defaultInitialValue sample _name _ty bounds =
   chooseInitialValue bounds (randomSampleUnit sample)
+
+defaultInitialValues :: RandomSeed -> [InitialValueSpec] -> Map String Double
+defaultInitialValues _seed specs =
+  Map.fromList (map defaultInitialValuePair specs)
+
+defaultInitialValuePair :: InitialValueSpec -> (String, Double)
+defaultInitialValuePair spec =
+  ( initialValueSpecName spec
+  , defaultInitialValue
+      (initialValueSpecSample spec)
+      (initialValueSpecName spec)
+      (initialValueSpecType spec)
+      (initialValueSpecBounds spec))
 
 chooseInitialValue :: InitialBounds -> Double -> Double
 chooseInitialValue bounds t =
@@ -851,22 +872,31 @@ compileConstraints config initialVars constraints =
         mergeInitialBounds
         (collectInitialVarBounds initialVars)
         (inferInitialBounds flatConstraints)
-    variableInputs =
-      zip (randomSamplesFromSeed (initialSeed config)) (Map.toAscList varTypes)
+    initialSpecs =
+      zipWith
+        makeInitialValueSpec
+        (randomSamplesFromSeed (initialSeed config))
+        (Map.toAscList varTypes)
+    configuredInitialValues =
+      initialValuesFor config (initialSeed config) initialSpecs
     build = do
       pairs <-
         traverse
-          (\(sample, (name, ty)) -> do
-             let bounds =
-                   typeInitialBounds ty
-                     `mergeInitialBounds` Map.findWithDefault
-                                            unboundedInitialBounds
-                                            name
-                                            inferredBounds
-                 initial = initialValueFor config sample name ty bounds
+          (\spec -> do
+             let name = initialValueSpecName spec
+                 ty = initialValueSpecType spec
+                 initial =
+                   Map.findWithDefault
+                     (defaultInitialValue
+                        (initialValueSpecSample spec)
+                        name
+                        ty
+                        (initialValueSpecBounds spec))
+                     name
+                     configuredInitialValues
              internal <- newInternalVar initial
              pure (name, ty, internal))
-          variableInputs
+          initialSpecs
       let vars' =
             Map.fromList [(name, internal) | (name, _ty, internal) <- pairs]
       traverse_
@@ -876,6 +906,18 @@ compileConstraints config initialVars constraints =
       traverse_ (lowerConstraint config vars') flatConstraints
       pure vars'
     (vars, csp) = compileReturning build
+    makeInitialValueSpec sample (name, ty) =
+      InitialValueSpec
+        { initialValueSpecSample = sample
+        , initialValueSpecName = name
+        , initialValueSpecType = ty
+        , initialValueSpecBounds =
+            typeInitialBounds ty
+              `mergeInitialBounds` Map.findWithDefault
+                                     unboundedInitialBounds
+                                     name
+                                     inferredBounds
+        }
 
 --------------------------------------------------------------------------------
 -- Symbol collection and inferred initial ranges
