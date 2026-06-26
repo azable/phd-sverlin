@@ -1,16 +1,16 @@
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LinearTypes #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RebindableSyntax #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds         #-}
+{-# LANGUAGE DataKinds               #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE GADTs                   #-}
+{-# LANGUAGE LinearTypes             #-}
+{-# LANGUAGE NoImplicitPrelude       #-}
+{-# LANGUAGE OverloadedLabels        #-}
+{-# LANGUAGE OverloadedStrings       #-}
+{-# LANGUAGE RebindableSyntax        #-}
+{-# LANGUAGE TypeApplications        #-}
+{-# LANGUAGE TypeFamilies            #-}
+{-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module DSL.Main
@@ -18,18 +18,10 @@ module DSL.Main
   , run
   ) where
 
-import Control.Functor.Linear hiding ((<$>), (<*>), ask)
-import LinearTrace.Choreography
-import Prelude.Linear hiding
-  ( (*)
-  , (+)
-  , (-)
-  , (/)
-  , (/=)
-  , (<>)
-  , fromInteger
-  , fromRational
-  )
+import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
+import           LinearTrace.Choreography
+import           Prelude.Linear           hiding (fromInteger, fromRational,
+                                           (*), (+), (-), (/), (/=), (<>))
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -306,18 +298,17 @@ visualization =
     style processedItem $ do
       fill processedColor
       stroke processedColor
-    -- Hard constraints define structure. Soft constraints keep rows visually
-    -- related without pinning them to absolute coordinates.
+    -- Hard constraints define structure. Rows are linked by gap and centered
+    -- together as a group so seed variation can move the whole cluster.
     -- Rows are ordered by minimum gaps, leaving vertical slack free.
     ensure $ bottom targetSource =| gap |= top probes
     ensure $ bottom probes =| gap |= top result
     ensure $ bottom result =| gap |= top array
+    ensure $ x targetSource .==. x array
+    ensure $ x probes .==. x targetSource
+    ensure $ x result .==. x targetSource
     -- Containers describe row membership; children can spread horizontally.
     ensure $ y probe .==. y probes
     ensure $ y arrayItem .==. y array
     ensure $ right targetProbe =| gap |= left probeItem
     ensure $ right arrayItem =| gap |= left nextArrayItem
-    -- The composition prefers a common center line but can vary by seed.
-    encourage $ x probes .==. x targetSource
-    encourage $ x result .==. x probes
-    encourage $ x array .==. x targetSource

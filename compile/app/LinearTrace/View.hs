@@ -3080,8 +3080,12 @@ virtualCanvasConstraints :: VirtualView tag -> [Constraint]
 virtualCanvasConstraints virtual =
   [ S.num 0 S.@<=@ left virtual
   , S.num 0 S.@<=@ top virtual
+  , left virtual S.@<=@ canvasWidth defaultViewEnv
+  , top virtual S.@<=@ canvasHeight defaultViewEnv
   , S.num 0 S.@<=@ width virtual
   , S.num 0 S.@<=@ height virtual
+  , right virtual S.@<=@ canvasWidth defaultViewEnv
+  , bottom virtual S.@<=@ canvasHeight defaultViewEnv
   ]
 
 virtualFitConstraints :: VirtualView tag -> [Constraint]
