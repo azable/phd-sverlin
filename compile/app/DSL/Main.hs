@@ -317,7 +317,6 @@ visualization =
     Selected array <- node arrayItems
     Selected arrayItem <- select @Value (#array <&&> #index @: i)
     Selected nextArrayItem <- select @Value (#array <&&> #index @: (i + 1))
-    Selected processedItem <- select @Value #processed
     style array $ do
       fill (Hsl 166 0.12 0.95)
       stroke (Hsl 166 0.28 0.64)
@@ -336,11 +335,10 @@ visualization =
       top arrayTop
       width cell
       height cell
+    Selected processedItem <- select @AnyPayload #processed
     style processedItem $ do
       fill (Hsl 218 0.05 0.84)
       stroke (Hsl 218 0.1 0.58)
-      strokeWidth (cell * 0.022)
-      opacity 0.58
     -- Bound the free row variables to a broad composition, then let loose gaps
     -- protect the top-to-bottom reading order.
     ensure $ at 56 <|> rowLeft

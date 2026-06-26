@@ -77,8 +77,10 @@ module LinearTrace.Choreography
   , Bound(..)
   , NodeBinding(..)
   , NodeRef
+  , AnyPayload
   , Node
   , StyleTarget
+  , Select
   , select
   , VisualizationBuilder
   , QueryAppend
@@ -228,7 +230,7 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          UnitExpr, WhiteSpace (..),
                                          anyPayloadPattern, boxDefinition,
                                          emptyMatchSpec, emptyQuery, global,
-                                         matchBindingValue,
+                                         matchAnyQueryNode, matchBindingValue,
                                          matchContextBindings,
                                          matchGlobalLayout,
                                          matchQueryPayloadNode,
@@ -310,8 +312,11 @@ data TraceQuery tag =
 data Selection a where
   Selection :: a %1 -> MatchSpec -> Selection a
 
+data AnyPayload
+
 data NodeRef tag where
   TraceNodeRef :: C.Traceable tag => TraceQuery tag -> NodeRef tag
+  AnyNodeRef :: Query -> NodeRef AnyPayload
   VirtualNodeRef :: P.String -> Query -> NodeRef tag
 
 type Selected tag = Selection (NodeRef tag)
@@ -1590,14 +1595,31 @@ data VirtualNode
 class Node input result | input -> result where
   node :: input -> result
 
+type family SelectQuery payload where
+  SelectQuery AnyPayload = Query
+  SelectQuery payload = TraceQuery payload
+
+class Select payload query where
+  selectWithPayload ::
+       query -> VisualizationBuilder (NodeBinding (Selected payload))
+
+instance Select AnyPayload Query where
+  selectWithPayload query =
+    emitVisualizationBuilder
+      (Selected (Selection (AnyNodeRef query) emptyMatchSpec))
+      emptyMatchSpec
+
+instance C.Traceable tag => Select tag (TraceQuery tag) where
+  selectWithPayload query =
+    emitVisualizationBuilder
+      (Selected (Selection (TraceNodeRef query) emptyMatchSpec))
+      emptyMatchSpec
+
 select ::
-     forall tag. C.Traceable tag
-  => TraceQuery tag
-  -> VisualizationBuilder (NodeBinding (Selected tag))
-select query =
-  emitVisualizationBuilder
-    (Selected (Selection (TraceNodeRef query) emptyMatchSpec))
-    emptyMatchSpec
+     forall payload. Select payload (SelectQuery payload)
+  => SelectQuery payload
+  -> VisualizationBuilder (NodeBinding (Selected payload))
+select = selectWithPayload @payload @(SelectQuery payload)
 
 defineNode :: NodeRecipe () -> NodeDefinition tag
 defineNode = nodeDefinition
@@ -1764,6 +1786,7 @@ instance StyleTarget (Selected tag) (NodeRecipe () -> VisualizationBuilder ()) w
 nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
 nodeRefStyleSpec handle recipe =
   case handle of
+    AnyNodeRef query -> matchAnyQueryNode query (`nodePatch` recipe)
     TraceNodeRef selector ->
       matchQueryPayloadNode
         (traceQueryQuery selector)
@@ -1774,12 +1797,14 @@ nodeRefStyleSpec handle recipe =
 nodeRefQuery :: NodeRef tag -> Query
 nodeRefQuery handle =
   case handle of
+    AnyNodeRef query       -> query
     TraceNodeRef selector  -> traceQueryQuery selector
     VirtualNodeRef _ query -> query
 
 nodeSelection :: NodeRef tag -> NodeSelection
 nodeSelection handle =
   case handle of
+    AnyNodeRef query         -> TraceSelection query
     TraceNodeRef selector    -> TraceSelection (traceQueryQuery selector)
     VirtualNodeRef key query -> VirtualSelection key query
 

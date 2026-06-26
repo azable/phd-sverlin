@@ -73,6 +73,7 @@ module LinearTrace.View
   , emptyMatchSpec
   , matchSpecAppend
   , matchQueryNode
+  , matchAnyQueryNode
   , matchQueryPayloadNode
   , matchVirtualNode
   , matchGlobalLayout
@@ -678,6 +679,7 @@ data NodeRule where
     -> PayloadPattern tag
     -> (MatchContext tag -> NodePatch)
     -> NodeRule
+  AnyQueryNodeRule :: Query -> (MatchBindings -> NodePatch) -> NodeRule
 
 data LayoutRule where
   GlobalLayout :: ViewBuilder () -> LayoutRule
@@ -728,6 +730,10 @@ matchQueryNode query makePatch =
     [QueryNodeRule (Proxy :: Proxy tag) query anyPayloadPattern makePatch]
     []
     []
+
+matchAnyQueryNode :: Query -> (MatchBindings -> NodePatch) -> MatchSpec
+matchAnyQueryNode query makePatch =
+  MatchSpec [AnyQueryNodeRule query makePatch] [] []
 
 matchQueryPayloadNode ::
      forall tag. C.Traceable tag
@@ -1708,6 +1714,10 @@ nodeRulePatch ::
   -> Maybe NodePatch
 nodeRulePatch matchIndex block rule =
   case rule of
+    AnyQueryNodeRule query makePatch ->
+      case queryMatches query (blockFacts block) of
+        Nothing       -> Nothing
+        Just bindings -> Just (makePatch (queryMatchBindings bindings))
     QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
