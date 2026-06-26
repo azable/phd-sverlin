@@ -127,6 +127,8 @@ module LinearTrace.Choreography
   , Bottom
   , Width
   , Height
+  , X
+  , Y
   , ContentValue
   , alpha
   , asUnit
@@ -142,6 +144,7 @@ module LinearTrace.Choreography
   , bindContent
   , bindInt
   , centerText
+  , center
   , content
   , defineNode
   , payload
@@ -164,6 +167,7 @@ module LinearTrace.Choreography
   , fromInteger
   , fromRational
   , opacity
+  , pos
   , placeBox
   , position
   , radius
@@ -172,7 +176,9 @@ module LinearTrace.Choreography
   , stroke
   , strokeWidth
   , style
+  , sat
   , shift
+  , size
   , takeHeight
   , takeLeft
   , takeRight
@@ -191,13 +197,22 @@ module LinearTrace.Choreography
   , (*)
   , (/)
   , (@:)
+  , (.<=.)
+  , (.>=.)
+  , (.==.)
   , (<|)
   , (<|>)
+  , (</)
   , (=|)
+  , (=/)
   , (=|=)
   , (|+|)
   , (|=)
   , (|>)
+  , (/>)
+  , (/<)
+  , (>/)
+  , (/=)
   ) where
 
 import           Control.Functor.Linear hiding ((<$>), (<*>))
@@ -220,23 +235,32 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          BoundsExpr, BoxDefinition, BoxVisual,
                                          ConstraintStrength (..),
                                          FontStyle (..), FontWeight (..),
-                                         FreeExpr, Hsl (..), HslExpr, Hue,
-                                         HueExpr, LayoutAttr (..), LayoutExpr,
+                                         FreeExpr, Hsl (..), HslExpr,
+                                         HslPart (..), Hue, HueExpr,
+                                         LayoutAttr (..), LayoutExpr,
                                          LayoutRelation (..), LayoutUse (..),
                                          LiveVisual, MatchBindings, MatchSpec,
                                          NodeSelection (..), OneConstraint (..),
                                          OneExpr (..), PayloadPattern, Query,
-                                         QueryInt (..), Style, TextAlign (..),
-                                         UnitExpr, WhiteSpace (..),
+                                         QueryInt (..), Style,
+                                         StyleColorAttr (..),
+                                         StyleFreeAttr (..),
+                                         StyleLayoutAttr (..),
+                                         StyleUnitAttr (..),
+                                         SymmetricRelation (..), TextAlign (..),
+                                         UnitExpr, ValueAccess, ValueComponent,
+                                         ValueEndpoint, WhiteSpace (..),
                                          anyPayloadPattern, boxDefinition,
                                          emptyMatchSpec, emptyQuery, global,
-                                         matchAnyQueryNode, matchBindingValue,
+                                         layoutValueAccess, matchAnyQueryNode,
+                                         matchBindingValue,
                                          matchContextBindings,
                                          matchGlobalLayout,
-                                         matchQueryPayloadNode,
-                                         matchSelectionBridge,
-                                         matchSelectionRelation,
-                                         matchSpecAppend, matchVirtualNode,
+                                         matchQueryPayloadNode, matchSpecAppend,
+                                         matchValueDirectedBridge,
+                                         matchValueRelation,
+                                         matchValueSymmetricBridge,
+                                         matchVirtualNode,
                                          payloadBindingPattern,
                                          payloadBoolPattern,
                                          payloadDoublePattern,
@@ -245,13 +269,19 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          payloadUnitPattern, queryAppend,
                                          queryAtom, queryFacts, queryInt,
                                          queryIntAdd, queryIntConst,
-                                         queryIntVar, takeHeight, takeLeft,
-                                         takeRight, takeTop, takeWidth)
+                                         queryIntVar, rawValueEndpoint,
+                                         selectionValueEndpoint,
+                                         styleColorPartValueAccess,
+                                         styleFreeValueAccess,
+                                         styleLayoutValueAccess,
+                                         styleUnitValueAccess, takeHeight,
+                                         takeLeft, takeRight, takeTop,
+                                         takeWidth, valueComponent)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
 import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
-                                         (+), (-), (/), (<>))
+                                         (+), (-), (/), (/=), (<>))
 import qualified Text.Read              as Read
 
 infixr 6 <&&>
@@ -330,25 +360,28 @@ data Bound a where
 data NodeBinding a where
   Selected :: a %Many -> NodeBinding a
 
-data SelectedCoord tag =
-  SelectedCoord (Selected tag) LayoutAttr
-
-data SelectedCoordBridge tag =
-  SelectedCoordBridge LayoutRelation (SelectedCoord tag) Span
+data SelectedExpr ty tag =
+  SelectedExpr (Selected tag) ValueAccess
 
 data LiftedConstraint where
-  LiftedCoordRelation
-    :: SelectedCoord lhs
+  LiftedValueRelation
+    :: ValueTerm -> LayoutRelation -> ValueTerm -> LiftedConstraint
+  LiftedDirectedBridge
+    :: ValueTerm
     -> LayoutRelation
-    -> SelectedCoord rhs
+    -> ValueTerm
+    -> LayoutRelation
+    -> ValueTerm
     -> LiftedConstraint
-  LiftedCoordBridge
-    :: SelectedCoord lhs
-    -> LayoutRelation
-    -> Span
-    -> LayoutRelation
-    -> SelectedCoord rhs
+  LiftedSymmetricBridge
+    :: ValueTerm
+    -> SymmetricRelation
+    -> ValueTerm
+    -> ValueTerm
     -> LiftedConstraint
+
+data ValueTerm =
+  ValueTerm MatchSpec [ValueEndpoint]
 
 data ContentValue
   = ContentLiteral P.String
@@ -369,16 +402,6 @@ instance IsString ContentValue where
 data ContentSpec
   = LiteralContent P.String
   | BoundContent Binding
-
-data CoordChain =
-  CoordChain Coord [S.Constraint]
-
-data BridgeRelation
-  = BridgeLoose
-  | BridgeExact
-
-data CoordSpanBridge =
-  CoordSpanBridge BridgeRelation Coord Span [S.Constraint]
 
 data NodeSpec = NodeSpec
   { nodeSpecStyleUpdate  :: Style -> Style
@@ -741,6 +764,77 @@ scalarConstraints value =
   case value of
     Scalar _ constraints -> constraints
 
+class ConstraintValue value where
+  valueTerm :: value -> ValueTerm
+
+rawValueTerm :: ValueComponent -> ValueTerm
+rawValueTerm component = ValueTerm emptyMatchSpec [rawValueEndpoint component]
+
+rawExprValueTerm ::
+     S.SymbolicType ty => S.Expr ty -> [S.Constraint] -> ValueTerm
+rawExprValueTerm expr constraints =
+  rawValueTerm (valueComponent expr constraints)
+
+selectedValueTerm :: Selected tag -> ValueAccess -> ValueTerm
+selectedValueTerm selected access =
+  ValueTerm
+    (selectedSpec selected)
+    [selectionValueEndpoint (selectedNodeSelection selected) access]
+
+appendValueTerm :: ValueTerm -> ValueTerm -> ValueTerm
+appendValueTerm lhs rhs =
+  case lhs of
+    ValueTerm lhsSpec lhsEndpoints ->
+      case rhs of
+        ValueTerm rhsSpec rhsEndpoints ->
+          ValueTerm
+            (lhsSpec `matchSpecAppend` rhsSpec)
+            (lhsEndpoints P.++ rhsEndpoints)
+
+instance ConstraintValue Coord where
+  valueTerm value = rawExprValueTerm (coordExpr value) (coordConstraints value)
+
+instance ConstraintValue Span where
+  valueTerm value = rawExprValueTerm (spanExpr value) (spanConstraints value)
+
+instance ConstraintValue Scalar where
+  valueTerm value =
+    rawExprValueTerm (scalarExpr value) (scalarConstraints value)
+
+instance ConstraintValue Offset where
+  valueTerm value =
+    rawExprValueTerm (offsetExpr value) (offsetConstraints value)
+
+instance S.SymbolicType ty => ConstraintValue (S.Expr ty) where
+  valueTerm expr = rawExprValueTerm expr []
+
+instance ConstraintValue (SelectedExpr ty tag) where
+  valueTerm selected =
+    case selected of
+      SelectedExpr selection access -> selectedValueTerm selection access
+
+instance (ConstraintValue x, ConstraintValue y) => ConstraintValue (Vec2 x) where
+  valueTerm value =
+    case value of
+      Vec2 valueX valueY -> valueTerm valueX `appendValueTerm` valueTerm valueY
+
+instance (ConstraintValue hue, ConstraintValue unit) =>
+         ConstraintValue (Hsl hue unit) where
+  valueTerm value =
+    valueTerm (hue value)
+      `appendValueTerm` valueTerm (saturation value)
+      `appendValueTerm` valueTerm (lightness value)
+
+selectedSpec :: Selected tag -> MatchSpec
+selectedSpec selected =
+  case selected of
+    Selection _ spec -> spec
+
+selectedNodeSelection :: Selected tag -> NodeSelection
+selectedNodeSelection selected =
+  case selected of
+    Selection handle _ -> nodeSelection handle
+
 nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
 
@@ -872,9 +966,6 @@ asSpan :: Offset -> Span
 asSpan value =
   case value of
     Offset expr constraints -> mkSpan expr constraints
-
-rawOneConstraint :: [S.Constraint] -> OneConstraint
-rawOneConstraint constraints = OneConstraint (Ur (S.All constraints))
 
 class AddExpr lhs rhs result
   | lhs rhs -> result
@@ -1047,105 +1138,155 @@ lhs |+| rhs =
     (spanExpr lhs S.@+@ spanExpr rhs)
     (spanConstraints lhs P.++ spanConstraints rhs)
 
-class CoordRelate lhs rhs result | lhs rhs -> result where
-  coordRelate :: LayoutRelation -> lhs -> rhs -> result
+class RelateValues lhs rhs where
+  relateValues :: LayoutRelation -> lhs -> rhs -> LiftedConstraint
 
-instance CoordRelate Coord Coord CoordChain where
-  coordRelate relation lhs rhs =
-    CoordChain
-      rhs
-      (coordConstraints lhs
-         P.++ coordConstraints rhs
-         P.++ [relationConstraint relation (coordExpr lhs) (coordExpr rhs)])
+instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue rhs) =>
+         RelateValues lhs rhs where
+  relateValues relation lhs rhs =
+    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
-instance CoordRelate (SelectedCoord lhs) (SelectedCoord rhs) LiftedConstraint where
-  coordRelate relation lhs = LiftedCoordRelation lhs relation
+instance {-# OVERLAPPING #-} S.SymbolicType ty =>
+         RelateValues (SelectedExpr ty tag) (S.Expr ty) where
+  relateValues relation lhs rhs =
+    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
-class OpenBridge lhs rhs result | lhs rhs -> result where
-  openBridge :: LayoutRelation -> lhs -> rhs -> result
+instance {-# OVERLAPPING #-} S.SymbolicType ty =>
+         RelateValues (S.Expr ty) (SelectedExpr ty tag) where
+  relateValues relation lhs rhs =
+    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
-instance OpenBridge Coord Span CoordSpanBridge where
-  openBridge relation lhs spanValue =
-    CoordSpanBridge
-      (bridgeRelation relation)
-      lhs
-      spanValue
-      (coordConstraints lhs P.++ spanConstraints spanValue)
+instance {-# OVERLAPPING #-} RelateValues
+           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag))
+           HslExpr where
+  relateValues relation lhs rhs =
+    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
-instance OpenBridge (SelectedCoord tag) Span (SelectedCoordBridge tag) where
-  openBridge = SelectedCoordBridge
+instance {-# OVERLAPPING #-} RelateValues
+           HslExpr
+           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
+  relateValues relation lhs rhs =
+    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
-class CloseBridge bridge rhs result | bridge rhs -> result where
-  closeBridge :: LayoutRelation -> bridge -> rhs -> result
+data DirectedBridge =
+  DirectedBridge LayoutRelation ValueTerm ValueTerm
 
-instance CloseBridge CoordSpanBridge Coord CoordChain where
-  closeBridge rhsRelation bridge rhs =
+class OpenDirectedBridge lhs gap where
+  openDirectedBridge :: LayoutRelation -> lhs -> gap -> DirectedBridge
+
+instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue gap) =>
+         OpenDirectedBridge lhs gap where
+  openDirectedBridge relation lhs gap =
+    DirectedBridge relation (valueTerm lhs) (valueTerm gap)
+
+class CloseDirectedBridge bridge rhs where
+  closeDirectedBridge :: LayoutRelation -> bridge -> rhs -> LiftedConstraint
+
+instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
+         CloseDirectedBridge DirectedBridge rhs where
+  closeDirectedBridge rhsRelation bridge rhs =
     case bridge of
-      CoordSpanBridge lhsRelation lhs spanValue constraints ->
-        CoordChain
-          rhs
-          (constraints
-             P.++ coordConstraints rhs
-             P.++ [ bridgeConstraint
-                      lhsRelation
-                      (bridgeRelation rhsRelation)
-                      lhs
-                      spanValue
-                      rhs
-                  ])
+      DirectedBridge lhsRelation lhs gap ->
+        LiftedDirectedBridge lhs lhsRelation gap rhsRelation (valueTerm rhs)
 
-instance CloseBridge
-           (SelectedCoordBridge lhs)
-           (SelectedCoord rhs)
-           LiftedConstraint where
-  closeBridge rhsRelation bridge rhs =
+data SymmetricBridge =
+  SymmetricBridge SymmetricRelation ValueTerm ValueTerm
+
+class OpenSymmetricBridge lhs delta where
+  openSymmetricBridge :: SymmetricRelation -> lhs -> delta -> SymmetricBridge
+
+instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue delta) =>
+         OpenSymmetricBridge lhs delta where
+  openSymmetricBridge relation lhs delta =
+    SymmetricBridge relation (valueTerm lhs) (valueTerm delta)
+
+instance {-# OVERLAPPING #-} S.SymbolicType ty =>
+         OpenSymmetricBridge (SelectedExpr ty tag) (S.Expr ty) where
+  openSymmetricBridge relation lhs delta =
+    SymmetricBridge relation (valueTerm lhs) (valueTerm delta)
+
+instance {-# OVERLAPPING #-} OpenSymmetricBridge
+           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag))
+           HslExpr where
+  openSymmetricBridge relation lhs delta =
+    SymmetricBridge relation (valueTerm lhs) (valueTerm delta)
+
+class CloseSymmetricBridge bridge rhs where
+  closeSymmetricBridge :: bridge -> rhs -> LiftedConstraint
+
+instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
+         CloseSymmetricBridge SymmetricBridge rhs where
+  closeSymmetricBridge bridge rhs =
     case bridge of
-      SelectedCoordBridge lhsRelation lhs spanValue ->
-        LiftedCoordBridge lhs lhsRelation spanValue rhsRelation rhs
+      SymmetricBridge relation lhs delta ->
+        LiftedSymmetricBridge lhs relation delta (valueTerm rhs)
 
-bridgeRelation :: LayoutRelation -> BridgeRelation
-bridgeRelation relation =
-  case relation of
-    LayoutEqual       -> BridgeExact
-    LayoutLessOrEqual -> BridgeLoose
+instance {-# OVERLAPPING #-} S.SymbolicType ty =>
+         CloseSymmetricBridge SymmetricBridge (S.Expr ty) where
+  closeSymmetricBridge bridge rhs =
+    case bridge of
+      SymmetricBridge relation lhs delta ->
+        LiftedSymmetricBridge lhs relation delta (valueTerm rhs)
 
-relationConstraint :: LayoutRelation -> LayoutExpr -> LayoutExpr -> S.Constraint
-relationConstraint relation lhs rhs =
-  case relation of
-    LayoutEqual       -> lhs S.@==@ rhs
-    LayoutLessOrEqual -> lhs S.@<=@ rhs
-
-bridgeConstraint ::
-     BridgeRelation -> BridgeRelation -> Coord -> Span -> Coord -> S.Constraint
-bridgeConstraint lhsRelation rhsRelation lhs spanValue rhs =
-  case (lhsRelation, rhsRelation) of
-    (BridgeExact, BridgeExact) ->
-      (coordExpr lhs S.@+@ spanExpr spanValue) S.@==@ coordExpr rhs
-    _ -> (coordExpr lhs S.@+@ spanExpr spanValue) S.@<=@ coordExpr rhs
-
+infixl 4 .<=.
+infixl 4 .>=.
+infixl 4 .==.
 infixl 4 <|>
 infixl 4 =|=
 infixl 4 <|
 infixl 4 =|
 infixl 4 |>
 infixl 4 |=
-(<|>) :: CoordRelate lhs rhs result => lhs -> rhs -> result
-(<|>) = coordRelate LayoutLessOrEqual
+infixl 4 </
+infixl 4 =/
+infixl 4 >/
+infixl 4 />
+infixl 4 /=
+infixl 4 /<
+(.<=.) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
+(.<=.) = relateValues LayoutLessOrEqual
 
-(=|=) :: CoordRelate lhs rhs result => lhs -> rhs -> result
-(=|=) = coordRelate LayoutEqual
+(.>=.) :: RelateValues rhs lhs => lhs -> rhs -> LiftedConstraint
+lhs .>=. rhs = relateValues LayoutLessOrEqual rhs lhs
 
-(<|) :: OpenBridge lhs Span result => lhs -> Span -> result
-lhs <| rhs = openBridge LayoutLessOrEqual lhs rhs
+(.==.) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
+(.==.) = relateValues LayoutEqual
 
-(=|) :: OpenBridge lhs Span result => lhs -> Span -> result
-lhs =| rhs = openBridge LayoutEqual lhs rhs
+(<|>) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
+(<|>) = (.<=.)
 
-(|>) :: CloseBridge bridge rhs result => bridge -> rhs -> result
-lhs |> rhs = closeBridge LayoutLessOrEqual lhs rhs
+(=|=) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
+(=|=) = (.==.)
 
-(|=) :: CloseBridge bridge rhs result => bridge -> rhs -> result
-lhs |= rhs = closeBridge LayoutEqual lhs rhs
+(<|) :: OpenDirectedBridge lhs gap => lhs -> gap -> DirectedBridge
+lhs <| rhs = openDirectedBridge LayoutLessOrEqual lhs rhs
+
+(=|) :: OpenDirectedBridge lhs gap => lhs -> gap -> DirectedBridge
+lhs =| rhs = openDirectedBridge LayoutEqual lhs rhs
+
+(|>) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+lhs |> rhs = closeDirectedBridge LayoutLessOrEqual lhs rhs
+
+(|=) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+lhs |= rhs = closeDirectedBridge LayoutEqual lhs rhs
+
+(</) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
+lhs </ delta = openSymmetricBridge SymmetricAtLeast lhs delta
+
+(=/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
+lhs =/ delta = openSymmetricBridge SymmetricEqual lhs delta
+
+(>/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
+lhs >/ delta = openSymmetricBridge SymmetricAtMost lhs delta
+
+(/>) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+lhs /> rhs = closeSymmetricBridge lhs rhs
+
+(/=) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+lhs /= rhs = closeSymmetricBridge lhs rhs
+
+(/<) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+lhs /< rhs = closeSymmetricBridge lhs rhs
 
 runProgram :: Program () -> VisualTraceGraph
 runProgram program = V.buildGraph (interpretProgram program)
@@ -1295,9 +1436,6 @@ class Ensure constraint where
 instance Ensure OneConstraint where
   ensure = emitConstraint EnsureConstraint
 
-instance Ensure CoordChain where
-  ensure = emitConstraint EnsureConstraint
-
 instance Ensure LiftedConstraint where
   ensure = emitConstraint EnsureConstraint
 
@@ -1308,9 +1446,6 @@ instance Encourage (S.Expr ty) where
   encourage objective = layout (V.encourage objective)
 
 instance Encourage OneConstraint where
-  encourage = emitConstraint EncourageConstraint
-
-instance Encourage CoordChain where
   encourage = emitConstraint EncourageConstraint
 
 instance Encourage LiftedConstraint where
@@ -1325,12 +1460,6 @@ instance EmitConstraint OneConstraint where
       EnsureConstraint    -> layout (V.ensure constraint)
       EncourageConstraint -> layout (V.encourageConstraint constraint)
 
-instance EmitConstraint CoordChain where
-  emitConstraint strength chain =
-    case chain of
-      CoordChain _ constraints ->
-        emitConstraint strength (rawOneConstraint constraints)
-
 instance EmitConstraint LiftedConstraint where
   emitConstraint strength constraint =
     emitVisualizationBuilder () (liftedConstraintSpec strength constraint)
@@ -1338,48 +1467,45 @@ instance EmitConstraint LiftedConstraint where
 liftedConstraintSpec :: ConstraintStrength -> LiftedConstraint -> MatchSpec
 liftedConstraintSpec strength constraint =
   case constraint of
-    LiftedCoordRelation lhs relation rhs ->
-      selectedCoordSpec lhs
-        `matchSpecAppend` selectedCoordSpec rhs
-        `matchSpecAppend` matchSelectionRelation
+    LiftedValueRelation lhs relation rhs ->
+      valueTermSpec lhs
+        `matchSpecAppend` valueTermSpec rhs
+        `matchSpecAppend` matchValueRelation
                             strength
-                            (selectedCoordNodeSelection lhs)
-                            (selectedCoordAttr lhs)
+                            (valueTermEndpoints lhs)
                             relation
-                            (selectedCoordNodeSelection rhs)
-                            (selectedCoordAttr rhs)
-    LiftedCoordBridge lhs lhsRelation gap rhsRelation rhs ->
-      selectedCoordSpec lhs
-        `matchSpecAppend` selectedCoordSpec rhs
-        `matchSpecAppend` matchSelectionBridge
+                            (valueTermEndpoints rhs)
+    LiftedDirectedBridge lhs lhsRelation gap rhsRelation rhs ->
+      valueTermSpec lhs
+        `matchSpecAppend` valueTermSpec gap
+        `matchSpecAppend` valueTermSpec rhs
+        `matchSpecAppend` matchValueDirectedBridge
                             strength
-                            (selectedCoordNodeSelection lhs)
-                            (selectedCoordAttr lhs)
+                            (valueTermEndpoints lhs)
                             lhsRelation
-                            (spanExpr gap)
-                            (spanConstraints gap)
+                            (valueTermEndpoints gap)
                             rhsRelation
-                            (selectedCoordNodeSelection rhs)
-                            (selectedCoordAttr rhs)
+                            (valueTermEndpoints rhs)
+    LiftedSymmetricBridge lhs relation delta rhs ->
+      valueTermSpec lhs
+        `matchSpecAppend` valueTermSpec delta
+        `matchSpecAppend` valueTermSpec rhs
+        `matchSpecAppend` matchValueSymmetricBridge
+                            strength
+                            (valueTermEndpoints lhs)
+                            relation
+                            (valueTermEndpoints delta)
+                            (valueTermEndpoints rhs)
 
-selectedCoordSpec :: SelectedCoord tag -> MatchSpec
-selectedCoordSpec selected =
-  case selected of
-    SelectedCoord selection _ ->
-      case selection of
-        Selection _ spec -> spec
+valueTermSpec :: ValueTerm -> MatchSpec
+valueTermSpec term =
+  case term of
+    ValueTerm spec _ -> spec
 
-selectedCoordNodeSelection :: SelectedCoord tag -> NodeSelection
-selectedCoordNodeSelection selected =
-  case selected of
-    SelectedCoord selection _ ->
-      case selection of
-        Selection handle _ -> nodeSelection handle
-
-selectedCoordAttr :: SelectedCoord tag -> LayoutAttr
-selectedCoordAttr selected =
-  case selected of
-    SelectedCoord _ attr -> attr
+valueTermEndpoints :: ValueTerm -> [ValueEndpoint]
+valueTermEndpoints term =
+  case term of
+    ValueTerm _ endpoints -> endpoints
 
 class VariableValue value where
   namedVariable :: P.String -> value
@@ -1440,38 +1566,109 @@ setStyleWithConstraints constraints update =
       , nodeSpecRequirements = [constrainRaw (S.All constraints)]
       }
 
-opacity :: UnitExpr -> NodeRecipe ()
-opacity value = setStyleWith (VS.setOpacity value)
+class Opacity input output | input -> output, output -> input where
+  opacity :: input -> output
 
-zIndex :: FreeExpr -> NodeRecipe ()
-zIndex value = setStyleWith (VS.setZIndex value)
+class ZIndex input output | input -> output, output -> input where
+  zIndex :: input -> output
 
-fontSize :: Span -> NodeRecipe ()
-fontSize value =
-  setStyleWithConstraints
-    (spanConstraints value)
-    (VS.setFontSize (spanExpr value))
+class FontSize input output | input -> output, output -> input where
+  fontSize :: input -> output
 
-radius :: Span -> NodeRecipe ()
-radius value =
-  setStyleWithConstraints
-    (spanConstraints value)
-    (VS.setRadius (spanExpr value))
+class Radius input output | input -> output, output -> input where
+  radius :: input -> output
 
-strokeWidth :: Span -> NodeRecipe ()
-strokeWidth value =
-  setStyleWithConstraints
-    (spanConstraints value)
-    (VS.setStrokeWidth (spanExpr value))
+class StrokeWidth input output | input -> output, output -> input where
+  strokeWidth :: input -> output
 
-alpha :: UnitExpr -> NodeRecipe ()
-alpha value = setStyleWith (VS.setAlpha value)
+class Alpha input output | input -> output, output -> input where
+  alpha :: input -> output
 
-fill :: HslExpr -> NodeRecipe ()
-fill value = setStyleWith (VS.setFill value)
+class Fill input output | input -> output, output -> input where
+  fill :: input -> output
 
-stroke :: HslExpr -> NodeRecipe ()
-stroke value = setStyleWith (VS.setStroke value)
+class Stroke input output | input -> output, output -> input where
+  stroke :: input -> output
+
+instance Opacity UnitExpr (NodeRecipe ()) where
+  opacity value = setStyleWith (VS.setOpacity value)
+
+instance Opacity (Selection (NodeRef tag)) (SelectedExpr S.Unit tag) where
+  opacity selection = SelectedExpr selection (styleUnitValueAccess StyleOpacity)
+
+instance ZIndex FreeExpr (NodeRecipe ()) where
+  zIndex value = setStyleWith (VS.setZIndex value)
+
+instance ZIndex (Selection (NodeRef tag)) (SelectedExpr S.Free tag) where
+  zIndex selection = SelectedExpr selection (styleFreeValueAccess StyleZIndex)
+
+instance FontSize Span (NodeRecipe ()) where
+  fontSize value =
+    setStyleWithConstraints
+      (spanConstraints value)
+      (VS.setFontSize (spanExpr value))
+
+instance FontSize (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  fontSize selection =
+    SelectedExpr selection (styleLayoutValueAccess StyleFontSize)
+
+instance Radius Span (NodeRecipe ()) where
+  radius value =
+    setStyleWithConstraints
+      (spanConstraints value)
+      (VS.setRadius (spanExpr value))
+
+instance Radius (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  radius selection = SelectedExpr selection (styleLayoutValueAccess StyleRadius)
+
+instance StrokeWidth Span (NodeRecipe ()) where
+  strokeWidth value =
+    setStyleWithConstraints
+      (spanConstraints value)
+      (VS.setStrokeWidth (spanExpr value))
+
+instance StrokeWidth (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  strokeWidth selection =
+    SelectedExpr selection (styleLayoutValueAccess StyleStrokeWidth)
+
+instance Alpha UnitExpr (NodeRecipe ()) where
+  alpha value = setStyleWith (VS.setAlpha value)
+
+instance Alpha (Selection (NodeRef tag)) (SelectedExpr S.Unit tag) where
+  alpha selection = SelectedExpr selection (styleUnitValueAccess StyleAlpha)
+
+instance Fill HslExpr (NodeRecipe ()) where
+  fill value = setStyleWith (VS.setFill value)
+
+instance Fill
+           (Selection (NodeRef tag))
+           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
+  fill selection =
+    Hsl
+      (SelectedExpr selection (styleColorPartValueAccess StyleFill HslHue))
+      (SelectedExpr
+         selection
+         (styleColorPartValueAccess StyleFill HslSaturation))
+      (SelectedExpr selection (styleColorPartValueAccess StyleFill HslLightness))
+
+instance Stroke HslExpr (NodeRecipe ()) where
+  stroke value = setStyleWith (VS.setStroke value)
+
+instance Stroke
+           (Selection (NodeRef tag))
+           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
+  stroke selection =
+    Hsl
+      (SelectedExpr selection (styleColorPartValueAccess StyleStroke HslHue))
+      (SelectedExpr
+         selection
+         (styleColorPartValueAccess StyleStroke HslSaturation))
+      (SelectedExpr
+         selection
+         (styleColorPartValueAccess StyleStroke HslLightness))
+
+sat :: Hsl hue unit -> unit
+sat = saturation
 
 fontFamily :: P.String -> NodeRecipe ()
 fontFamily value = setStyleWith (VS.setFontFamily value)
@@ -1532,6 +1729,12 @@ class Right input output | input -> output, output -> input where
 class Bottom input output | input -> output, output -> input where
   bottom :: input -> output
 
+class X input output | input -> output, output -> input where
+  x :: input -> output
+
+class Y input output | input -> output, output -> input where
+  y :: input -> output
+
 instance Left Coord (NodeRecipe ()) where
   left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
 
@@ -1550,23 +1753,44 @@ instance Right Coord (NodeRecipe ()) where
 instance Bottom Coord (NodeRecipe ()) where
   bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
 
-instance Left (Selection (NodeRef tag)) (SelectedCoord tag) where
-  left selection = SelectedCoord selection AttrLeft
+instance Left (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  left selection = SelectedExpr selection (layoutValueAccess AttrLeft)
 
-instance Top (Selection (NodeRef tag)) (SelectedCoord tag) where
-  top selection = SelectedCoord selection AttrTop
+instance Top (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  top selection = SelectedExpr selection (layoutValueAccess AttrTop)
 
-instance Right (Selection (NodeRef tag)) (SelectedCoord tag) where
-  right selection = SelectedCoord selection AttrRight
+instance Width (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  width selection = SelectedExpr selection (layoutValueAccess AttrWidth)
 
-instance Bottom (Selection (NodeRef tag)) (SelectedCoord tag) where
-  bottom selection = SelectedCoord selection AttrBottom
+instance Height (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  height selection = SelectedExpr selection (layoutValueAccess AttrHeight)
 
-x :: Coord -> NodeRecipe ()
-x value = setNodeSpecWith (\spec -> spec {nodeSpecX = Just value})
+instance Right (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  right selection = SelectedExpr selection (layoutValueAccess AttrRight)
 
-y :: Coord -> NodeRecipe ()
-y value = setNodeSpecWith (\spec -> spec {nodeSpecY = Just value})
+instance Bottom (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  bottom selection = SelectedExpr selection (layoutValueAccess AttrBottom)
+
+instance X Coord (NodeRecipe ()) where
+  x value = setNodeSpecWith (\spec -> spec {nodeSpecX = Just value})
+
+instance Y Coord (NodeRecipe ()) where
+  y value = setNodeSpecWith (\spec -> spec {nodeSpecY = Just value})
+
+instance X (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  x selection = SelectedExpr selection (layoutValueAccess AttrCenterX)
+
+instance Y (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  y selection = SelectedExpr selection (layoutValueAccess AttrCenterY)
+
+pos :: (Left input value, Top input value) => input -> Vec2 value
+pos selection = vec2 (left selection) (top selection)
+
+center :: (X input value, Y input value) => input -> Vec2 value
+center selection = vec2 (x selection) (y selection)
+
+size :: (Width input value, Height input value) => input -> Vec2 value
+size selection = vec2 (width selection) (height selection)
 
 position :: Vec2 Coord -> NodeRecipe ()
 position value =

@@ -69,6 +69,23 @@ module LinearTrace.View
   , NodeSelection(..)
   , ConstraintStrength(..)
   , LayoutRelation(..)
+  , ValueComponent
+  , ValueEndpoint
+  , ValueAccess
+  , StyleLayoutAttr(..)
+  , StyleUnitAttr(..)
+  , StyleFreeAttr(..)
+  , StyleColorAttr(..)
+  , HslPart(..)
+  , SymmetricRelation(..)
+  , valueComponent
+  , rawValueEndpoint
+  , selectionValueEndpoint
+  , layoutValueAccess
+  , styleLayoutValueAccess
+  , styleUnitValueAccess
+  , styleFreeValueAccess
+  , styleColorPartValueAccess
   , MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
@@ -77,8 +94,9 @@ module LinearTrace.View
   , matchQueryPayloadNode
   , matchVirtualNode
   , matchGlobalLayout
-  , matchSelectionRelation
-  , matchSelectionBridge
+  , matchValueRelation
+  , matchValueDirectedBridge
+  , matchValueSymmetricBridge
   , Visual
   , Unrendered
   , Rendered
@@ -669,6 +687,52 @@ data LayoutRelation
   | LayoutLessOrEqual
   deriving (P.Eq, P.Show)
 
+data SymmetricRelation
+  = SymmetricEqual
+  | SymmetricAtLeast
+  | SymmetricAtMost
+  deriving (P.Eq, P.Show)
+
+data ValueComponent =
+  ValueComponent ScalarType RawExpr [Constraint]
+
+data StyleLayoutAttr
+  = StyleFontSize
+  | StyleRadius
+  | StyleStrokeWidth
+  deriving (P.Eq, P.Show)
+
+data StyleUnitAttr
+  = StyleOpacity
+  | StyleAlpha
+  deriving (P.Eq, P.Show)
+
+data StyleFreeAttr =
+  StyleZIndex
+  deriving (P.Eq, P.Show)
+
+data StyleColorAttr
+  = StyleFill
+  | StyleStroke
+  deriving (P.Eq, P.Show)
+
+data HslPart
+  = HslHue
+  | HslSaturation
+  | HslLightness
+  deriving (P.Eq, P.Show)
+
+newtype StyleMaterialization =
+  MaterializeColor StyleColorAttr
+  deriving (P.Eq, P.Show)
+
+data ValueAccess =
+  ValueAccess [StyleMaterialization] (AnyLayoutView -> ValueComponent)
+
+data ValueEndpoint
+  = RawValueEndpoint ValueComponent
+  | SelectionValueEndpoint NodeSelection ValueAccess
+
 data MatchSpec =
   MatchSpec [NodeRule] [LayoutRule] [VirtualRule]
 
@@ -683,24 +747,26 @@ data NodeRule where
 
 data LayoutRule where
   GlobalLayout :: ViewBuilder () -> LayoutRule
-  SelectionRelationLayout
+  ValueRelationLayout
     :: ConstraintStrength
-    -> NodeSelection
-    -> LayoutAttr
+    -> [ValueEndpoint]
     -> LayoutRelation
-    -> NodeSelection
-    -> LayoutAttr
+    -> [ValueEndpoint]
     -> LayoutRule
-  SelectionBridgeLayout
+  ValueDirectedBridgeLayout
     :: ConstraintStrength
-    -> NodeSelection
-    -> LayoutAttr
+    -> [ValueEndpoint]
     -> LayoutRelation
-    -> LayoutExpr
-    -> [Constraint]
+    -> [ValueEndpoint]
     -> LayoutRelation
-    -> NodeSelection
-    -> LayoutAttr
+    -> [ValueEndpoint]
+    -> LayoutRule
+  ValueSymmetricBridgeLayout
+    :: ConstraintStrength
+    -> [ValueEndpoint]
+    -> SymmetricRelation
+    -> [ValueEndpoint]
+    -> [ValueEndpoint]
     -> LayoutRule
 
 data VirtualRule =
@@ -754,46 +820,67 @@ matchVirtualNode key query patch =
 matchGlobalLayout :: ViewBuilder () -> MatchSpec
 matchGlobalLayout body = MatchSpec [] [GlobalLayout body] []
 
-matchSelectionRelation ::
+valueComponent :: SymbolicType ty => Expr ty -> [Constraint] -> ValueComponent
+valueComponent expr = ValueComponent (exprType expr) (exprRaw expr)
+
+rawValueEndpoint :: ValueComponent -> ValueEndpoint
+rawValueEndpoint = RawValueEndpoint
+
+selectionValueEndpoint :: NodeSelection -> ValueAccess -> ValueEndpoint
+selectionValueEndpoint = SelectionValueEndpoint
+
+layoutValueAccess :: LayoutAttr -> ValueAccess
+layoutValueAccess attr =
+  ValueAccess [] (\view -> valueComponent (layoutViewAttr attr view) [])
+
+styleLayoutValueAccess :: StyleLayoutAttr -> ValueAccess
+styleLayoutValueAccess attr =
+  ValueAccess [] (\view -> valueComponent (styleLayoutAttr attr view) [])
+
+styleUnitValueAccess :: StyleUnitAttr -> ValueAccess
+styleUnitValueAccess attr =
+  ValueAccess [] (\view -> valueComponent (styleUnitAttr attr view) [])
+
+styleFreeValueAccess :: StyleFreeAttr -> ValueAccess
+styleFreeValueAccess attr =
+  ValueAccess [] (\view -> valueComponent (styleFreeAttr attr view) [])
+
+styleColorPartValueAccess :: StyleColorAttr -> HslPart -> ValueAccess
+styleColorPartValueAccess color part =
+  ValueAccess [MaterializeColor color] (styleColorPartComponent color part)
+
+matchValueRelation ::
      ConstraintStrength
-  -> NodeSelection
-  -> LayoutAttr
+  -> [ValueEndpoint]
   -> LayoutRelation
-  -> NodeSelection
-  -> LayoutAttr
+  -> [ValueEndpoint]
   -> MatchSpec
-matchSelectionRelation strength lhs lhsAttr relation rhs rhsAttr =
+matchValueRelation strength lhs relation rhs =
+  MatchSpec [] [ValueRelationLayout strength lhs relation rhs] []
+
+matchValueDirectedBridge ::
+     ConstraintStrength
+  -> [ValueEndpoint]
+  -> LayoutRelation
+  -> [ValueEndpoint]
+  -> LayoutRelation
+  -> [ValueEndpoint]
+  -> MatchSpec
+matchValueDirectedBridge strength lhs lhsRelation gap rhsRelation rhs =
   MatchSpec
     []
-    [SelectionRelationLayout strength lhs lhsAttr relation rhs rhsAttr]
+    [ValueDirectedBridgeLayout strength lhs lhsRelation gap rhsRelation rhs]
     []
 
-matchSelectionBridge ::
+matchValueSymmetricBridge ::
      ConstraintStrength
-  -> NodeSelection
-  -> LayoutAttr
-  -> LayoutRelation
-  -> LayoutExpr
-  -> [Constraint]
-  -> LayoutRelation
-  -> NodeSelection
-  -> LayoutAttr
+  -> [ValueEndpoint]
+  -> SymmetricRelation
+  -> [ValueEndpoint]
+  -> [ValueEndpoint]
   -> MatchSpec
-matchSelectionBridge strength lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr =
-  MatchSpec
-    []
-    [ SelectionBridgeLayout
-        strength
-        lhs
-        lhsAttr
-        lhsRelation
-        gap
-        gapConstraints
-        rhsRelation
-        rhs
-        rhsAttr
-    ]
-    []
+matchValueSymmetricBridge strength lhs relation delta rhs =
+  MatchSpec [] [ValueSymmetricBridgeLayout strength lhs relation delta rhs] []
 
 --------------------------------------------------------------------------------
 -- Block views
@@ -2379,17 +2466,23 @@ takeCenterY visual =
 buildCSP :: VisualTraceGraph -> ViewGraph
 buildCSP (VisualTraceGraph spec (C.TraceGraph _blocks steps)) =
   let stepsOutput = viewTraceSteps steps
-      traceNodes = builtNodes stepsOutput
-      virtualNodes = virtualNodesForSpec spec traceNodes
-      nodes = traceNodes P.++ virtualNodes
+      traceNodes = materializeNodesForSpec spec (builtNodes stepsOutput)
+      virtualNodes =
+        materializeNodesForSpec spec (virtualNodesForSpec spec traceNodes)
+      nodes = materializeNodesForSpec spec (traceNodes P.++ virtualNodes)
       viewSteps' = builtSteps stepsOutput
-      virtualConstraints = P.concatMap virtualNodeConstraints virtualNodes
-      virtualInitialVars = P.concatMap virtualNodeInitialVars virtualNodes
+      virtualConstraints = P.concatMap virtualNodeConstraints nodes
+      -- Block styles are first registered while building trace steps. Layout
+      -- rules can later materialize optional style fields, so collect style
+      -- constraints again after materialization.
+      nodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
       constraints =
         builtConstraints stepsOutput
+          P.++ nodeStyleConstraints
           P.++ virtualConstraints
           P.++ matchSpecConstraints spec nodes
-      initialVars = builtInitialVars stepsOutput P.++ virtualInitialVars
+      initialVars =
+        builtInitialVars stepsOutput P.++ P.concatMap viewNodeInitialVars nodes
       renderFrames =
         addVirtualRenderFrames virtualNodes (builtRenderFrames stepsOutput)
    in ViewGraph
@@ -2436,24 +2529,24 @@ layoutRuleConstraints :: [ViewNode] -> LayoutRule -> [Constraint]
 layoutRuleConstraints nodes layoutRule =
   case layoutRule of
     GlobalLayout body -> layoutConstraints body
-    SelectionRelationLayout strength lhs lhsAttr relation rhs rhsAttr ->
+    ValueRelationLayout strength lhs relation rhs ->
       applyConstraintStrength
         strength
         (P.concatMap
-           (selectionRelationConstraints lhsAttr relation rhsAttr)
-           (matchingSelectionPairs lhs rhs nodes))
-    SelectionBridgeLayout strength lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr ->
+           (valueRelationConstraints relation)
+           (matchingValueTerms lhs rhs nodes))
+    ValueDirectedBridgeLayout strength lhs lhsRelation gap rhsRelation rhs ->
       applyConstraintStrength
         strength
         (P.concatMap
-           (selectionBridgeConstraints
-              lhsAttr
-              lhsRelation
-              gap
-              gapConstraints
-              rhsRelation
-              rhsAttr)
-           (matchingSelectionPairs lhs rhs nodes))
+           (valueDirectedBridgeConstraints lhsRelation rhsRelation)
+           (matchingValueTermTriples lhs gap rhs nodes))
+    ValueSymmetricBridgeLayout strength lhs relation delta rhs ->
+      applyConstraintStrength
+        strength
+        (P.concatMap
+           (valueSymmetricBridgeConstraints relation)
+           (matchingValueTermTriples lhs delta rhs nodes))
 
 applyConstraintStrength :: ConstraintStrength -> [Constraint] -> [Constraint]
 applyConstraintStrength strength constraints =
@@ -2461,17 +2554,58 @@ applyConstraintStrength strength constraints =
     EnsureConstraint    -> constraints
     EncourageConstraint -> P.map S.soften constraints
 
-matchingSelectionPairs ::
-     NodeSelection
-  -> NodeSelection
+data LayoutEndpointMatch =
+  LayoutEndpointMatch ValueComponent QueryBindings
+
+matchingValueTerms ::
+     [ValueEndpoint]
+  -> [ValueEndpoint]
   -> [ViewNode]
-  -> [(AnyLayoutView, AnyLayoutView)]
-matchingSelectionPairs lhs rhs nodes =
-  [ (firstNode, secondNode)
-  | (firstNode, firstBindings) <- matchingSelectionNodes lhs nodes
-  , (secondNode, secondBindings) <- matchingSelectionNodes rhs nodes
-  , queryBindingsCompatible firstBindings secondBindings
+  -> [([ValueComponent], [ValueComponent])]
+matchingValueTerms lhs rhs nodes =
+  [ (lhsComponents, rhsComponents)
+  | (lhsComponents, lhsBindings) <- matchingValueTerm lhs nodes
+  , (rhsComponents, rhsBindings) <- matchingValueTerm rhs nodes
+  , queryBindingsCompatible lhsBindings rhsBindings
   ]
+
+matchingValueTermTriples ::
+     [ValueEndpoint]
+  -> [ValueEndpoint]
+  -> [ValueEndpoint]
+  -> [ViewNode]
+  -> [([ValueComponent], [ValueComponent], [ValueComponent])]
+matchingValueTermTriples first second third nodes =
+  [ (firstComponents, secondComponents, thirdComponents)
+  | (firstComponents, firstBindings) <- matchingValueTerm first nodes
+  , (secondComponents, secondBindings) <- matchingValueTerm second nodes
+  , queryBindingsCompatible firstBindings secondBindings
+  , (thirdComponents, thirdBindings) <- matchingValueTerm third nodes
+  , queryBindingsCompatible firstBindings thirdBindings
+  , queryBindingsCompatible secondBindings thirdBindings
+  ]
+
+matchingValueTerm ::
+     [ValueEndpoint] -> [ViewNode] -> [([ValueComponent], QueryBindings)]
+matchingValueTerm endpoints nodes =
+  case endpoints of
+    [] -> [([], [])]
+    endpoint:rest ->
+      [ (component : restComponents, mergedBindings)
+      | LayoutEndpointMatch component bindings <-
+          matchingEndpointNodes endpoint nodes
+      , (restComponents, restBindings) <- matchingValueTerm rest nodes
+      , Just mergedBindings <- [mergeQueryBindings bindings restBindings]
+      ]
+
+matchingEndpointNodes :: ValueEndpoint -> [ViewNode] -> [LayoutEndpointMatch]
+matchingEndpointNodes endpoint nodes =
+  case endpoint of
+    RawValueEndpoint component -> [LayoutEndpointMatch component []]
+    SelectionValueEndpoint selection access ->
+      [ LayoutEndpointMatch (valueAccessComponent access node) bindings
+      | (node, bindings) <- matchingSelectionNodes selection nodes
+      ]
 
 matchingSelectionNodes ::
      NodeSelection -> [ViewNode] -> [(AnyLayoutView, QueryBindings)]
@@ -2524,65 +2658,227 @@ mergeQueryBindings lhs rhs =
         Nothing     -> Nothing
         Just merged -> mergeQueryBindings merged rest
 
-selectionRelationConstraints ::
-     LayoutAttr
-  -> LayoutRelation
-  -> LayoutAttr
-  -> (AnyLayoutView, AnyLayoutView)
-  -> [Constraint]
-selectionRelationConstraints lhsAttr relation rhsAttr pair' =
+valueRelationConstraints ::
+     LayoutRelation -> ([ValueComponent], [ValueComponent]) -> [Constraint]
+valueRelationConstraints relation pair' =
   case pair' of
-    (lhs, rhs) ->
-      [ relationConstraint
-          relation
-          (layoutViewAttr lhsAttr lhs)
-          (layoutViewAttr rhsAttr rhs)
-      ]
+    (lhsComponents, rhsComponents) ->
+      zipValueComponentsWith
+        (relationConstraint relation)
+        lhsComponents
+        rhsComponents
 
-selectionBridgeConstraints ::
-     LayoutAttr
+valueDirectedBridgeConstraints ::
+     LayoutRelation
   -> LayoutRelation
-  -> LayoutExpr
+  -> ([ValueComponent], [ValueComponent], [ValueComponent])
   -> [Constraint]
-  -> LayoutRelation
-  -> LayoutAttr
-  -> (AnyLayoutView, AnyLayoutView)
-  -> [Constraint]
-selectionBridgeConstraints lhsAttr lhsRelation gap gapConstraints rhsRelation rhsAttr pair' =
-  case pair' of
-    (lhs, rhs) ->
-      gapConstraints
-        P.++ [ bridgeRelationConstraint
-                 lhsRelation
-                 rhsRelation
-                 (layoutViewAttr lhsAttr lhs)
-                 gap
-                 (layoutViewAttr rhsAttr rhs)
-             ]
+valueDirectedBridgeConstraints lhsRelation rhsRelation triple =
+  case triple of
+    (lhsComponents, gapComponents, rhsComponents) ->
+      zipValueComponentTriplesWith
+        (bridgeRelationConstraint lhsRelation rhsRelation)
+        lhsComponents
+        gapComponents
+        rhsComponents
 
-relationConstraint :: LayoutRelation -> LayoutExpr -> LayoutExpr -> Constraint
+valueSymmetricBridgeConstraints ::
+     SymmetricRelation
+  -> ([ValueComponent], [ValueComponent], [ValueComponent])
+  -> [Constraint]
+valueSymmetricBridgeConstraints relation triple =
+  case triple of
+    (lhsComponents, deltaComponents, rhsComponents) ->
+      zipValueComponentTriplesWith
+        (symmetricRelationConstraint relation)
+        lhsComponents
+        deltaComponents
+        rhsComponents
+
+zipValueComponentsWith ::
+     (ValueComponent -> ValueComponent -> Constraint)
+  -> [ValueComponent]
+  -> [ValueComponent]
+  -> [Constraint]
+zipValueComponentsWith f lhs rhs =
+  case (lhs, rhs) of
+    ([], []) -> []
+    (leftComponent:leftRest, rightComponent:rightRest) ->
+      valueComponentConstraints leftComponent
+        P.++ valueComponentConstraints rightComponent
+        P.++ [f leftComponent rightComponent]
+        P.++ zipValueComponentsWith f leftRest rightRest
+    _ -> P.error "Cannot relate values with different component counts."
+
+zipValueComponentTriplesWith ::
+     (ValueComponent -> ValueComponent -> ValueComponent -> Constraint)
+  -> [ValueComponent]
+  -> [ValueComponent]
+  -> [ValueComponent]
+  -> [Constraint]
+zipValueComponentTriplesWith f lhs middle rhs =
+  case (lhs, middle, rhs) of
+    ([], [], []) -> []
+    (leftComponent:leftRest, middleComponent:middleRest, rightComponent:rightRest) ->
+      valueComponentConstraints leftComponent
+        P.++ valueComponentConstraints middleComponent
+        P.++ valueComponentConstraints rightComponent
+        P.++ [f leftComponent middleComponent rightComponent]
+        P.++ zipValueComponentTriplesWith f leftRest middleRest rightRest
+    _ -> P.error "Cannot relate values with different component counts."
+
+valueComponentConstraints :: ValueComponent -> [Constraint]
+valueComponentConstraints component =
+  case component of
+    ValueComponent _ _ constraints -> constraints
+
+relationConstraint ::
+     LayoutRelation -> ValueComponent -> ValueComponent -> Constraint
 relationConstraint relation lhs rhs =
-  case relation of
-    LayoutEqual       -> lhs S.@==@ rhs
-    LayoutLessOrEqual -> lhs S.@<=@ rhs
+  case (lhs, rhs) of
+    (ValueComponent lhsType lhsRaw _, ValueComponent rhsType rhsRaw _) ->
+      case lhsType P.== rhsType of
+        True ->
+          case relation of
+            LayoutEqual       -> Equals lhsType lhsRaw rhsRaw
+            LayoutLessOrEqual -> LessOrEqual lhsRaw rhsRaw
+        False -> componentTypeError lhsType rhsType
 
 bridgeRelationConstraint ::
      LayoutRelation
   -> LayoutRelation
-  -> LayoutExpr
-  -> LayoutExpr
-  -> LayoutExpr
+  -> ValueComponent
+  -> ValueComponent
+  -> ValueComponent
   -> Constraint
 bridgeRelationConstraint lhsRelation rhsRelation lhs gap rhs =
-  case (lhsRelation, rhsRelation) of
-    (LayoutEqual, LayoutEqual) -> lhs S.@+@ gap S.@==@ rhs
-    _                          -> lhs S.@+@ gap S.@<=@ rhs
+  case (lhs, gap, rhs) of
+    (ValueComponent lhsType lhsRaw _, ValueComponent gapType gapRaw _, ValueComponent rhsType rhsRaw _) ->
+      case lhsType P.== gapType P.&& lhsType P.== rhsType of
+        True ->
+          case (lhsRelation, rhsRelation) of
+            (LayoutEqual, LayoutEqual) ->
+              Equals lhsType (EAdd lhsRaw gapRaw) rhsRaw
+            _ -> LessOrEqual (EAdd lhsRaw gapRaw) rhsRaw
+        False -> componentTypeError lhsType rhsType
+
+symmetricRelationConstraint ::
+     SymmetricRelation
+  -> ValueComponent
+  -> ValueComponent
+  -> ValueComponent
+  -> Constraint
+symmetricRelationConstraint relation lhs delta rhs =
+  case (lhs, delta, rhs) of
+    (ValueComponent lhsType lhsRaw _, ValueComponent deltaType deltaRaw _, ValueComponent rhsType rhsRaw _) ->
+      case lhsType P.== deltaType P.&& lhsType P.== rhsType of
+        True ->
+          let difference = EAbs (ESub lhsRaw rhsRaw)
+           in case relation of
+                SymmetricEqual   -> Equals lhsType difference deltaRaw
+                SymmetricAtLeast -> LessOrEqual deltaRaw difference
+                SymmetricAtMost  -> LessOrEqual difference deltaRaw
+        False -> componentTypeError lhsType rhsType
+
+componentTypeError :: ScalarType -> ScalarType -> Constraint
+componentTypeError lhs rhs =
+  P.error
+    ("Cannot relate values with different scalar types: "
+       P.++ typeName lhs
+       P.++ " and "
+       P.++ typeName rhs)
 
 layoutViewAttr :: LayoutAttr -> AnyLayoutView -> LayoutExpr
 layoutViewAttr attr view =
   case view of
     AnyLayoutBlock block     -> boundsAttr attr block
     AnyLayoutVirtual virtual -> boundsAttr attr virtual
+
+valueAccessComponent :: ValueAccess -> AnyLayoutView -> ValueComponent
+valueAccessComponent access view =
+  case access of
+    ValueAccess _ project -> project view
+
+valueAccessMaterializations :: ValueAccess -> [StyleMaterialization]
+valueAccessMaterializations access =
+  case access of
+    ValueAccess materializations _ -> materializations
+
+layoutViewStyle :: AnyLayoutView -> Style
+layoutViewStyle view =
+  case view of
+    AnyLayoutBlock block     -> blockStyle block
+    AnyLayoutVirtual virtual -> virtualStyle virtual
+
+styleLayoutAttr :: StyleLayoutAttr -> AnyLayoutView -> LayoutExpr
+styleLayoutAttr attr view =
+  let style' = layoutViewStyle view
+   in case attr of
+        StyleFontSize    -> fontSize style'
+        StyleRadius      -> radius style'
+        StyleStrokeWidth -> strokeWidth style'
+
+styleUnitAttr :: StyleUnitAttr -> AnyLayoutView -> UnitExpr
+styleUnitAttr attr view =
+  let style' = layoutViewStyle view
+   in case attr of
+        StyleOpacity -> opacity style'
+        StyleAlpha   -> alpha style'
+
+styleFreeAttr :: StyleFreeAttr -> AnyLayoutView -> FreeExpr
+styleFreeAttr attr view =
+  let style' = layoutViewStyle view
+   in case attr of
+        StyleZIndex -> zIndex style'
+
+styleColorPartComponent ::
+     StyleColorAttr -> HslPart -> AnyLayoutView -> ValueComponent
+styleColorPartComponent color part view =
+  case part of
+    HslHue        -> valueComponent (styleColorHue color view) []
+    HslSaturation -> valueComponent (styleColorSaturation color view) []
+    HslLightness  -> valueComponent (styleColorLightness color view) []
+
+styleColorHue :: StyleColorAttr -> AnyLayoutView -> HueExpr
+styleColorHue color view = hue (styleColorValue color view)
+
+styleColorSaturation :: StyleColorAttr -> AnyLayoutView -> UnitExpr
+styleColorSaturation color view = saturation (styleColorValue color view)
+
+styleColorLightness :: StyleColorAttr -> AnyLayoutView -> UnitExpr
+styleColorLightness color view = lightness (styleColorValue color view)
+
+styleColorValue :: StyleColorAttr -> AnyLayoutView -> HslExpr
+styleColorValue color view =
+  Maybe.fromMaybe (materializedStyleColor color view)
+    $ case color of
+        StyleFill   -> fill (layoutViewStyle view)
+        StyleStroke -> stroke (layoutViewStyle view)
+
+materializedStyleColor :: StyleColorAttr -> AnyLayoutView -> HslExpr
+materializedStyleColor color view =
+  Hsl
+    (styleColorVar color view "hue")
+    (styleColorVar color view "saturation")
+    (styleColorVar color view "lightness")
+
+styleColorVar ::
+     SymbolicType ty => StyleColorAttr -> AnyLayoutView -> P.String -> Expr ty
+styleColorVar color view part =
+  case view of
+    AnyLayoutBlock block ->
+      blockVarPath (blockRef block) ["style", styleColorName color] part
+    AnyLayoutVirtual virtual ->
+      virtualVar
+        (virtualNodeKey virtual)
+        (virtualQuery virtual)
+        ("style." P.++ styleColorName color P.++ "." P.++ part)
+
+styleColorName :: StyleColorAttr -> P.String
+styleColorName color =
+  case color of
+    StyleFill   -> "fill"
+    StyleStroke -> "stroke"
 
 boundsAttr :: HasBounds bounds => LayoutAttr -> bounds -> LayoutExpr
 boundsAttr attr bounds' =
@@ -2600,6 +2896,104 @@ layoutConstraints :: ViewBuilder () -> [Constraint]
 layoutConstraints body =
   let (_result, output) = runViewBuilderWithOutput defaultViewEnv mempty body
    in emittedConstraints output
+
+materializeNodesForSpec :: MatchSpec -> [ViewNode] -> [ViewNode]
+materializeNodesForSpec spec nodes =
+  case spec of
+    MatchSpec _ layoutRules _ ->
+      P.map (materializeNodeForRules layoutRules) nodes
+
+materializeNodeForRules :: [LayoutRule] -> ViewNode -> ViewNode
+materializeNodeForRules rules node =
+  case rules of
+    []        -> node
+    rule:rest -> materializeNodeForRules rest (materializeNodeForRule rule node)
+
+materializeNodeForRule :: LayoutRule -> ViewNode -> ViewNode
+materializeNodeForRule rule node =
+  case rule of
+    GlobalLayout _ -> node
+    ValueRelationLayout _ lhs _ rhs ->
+      materializeNodeForEndpoints (lhs P.++ rhs) node
+    ValueDirectedBridgeLayout _ lhs _ gap _ rhs ->
+      materializeNodeForEndpoints (lhs P.++ gap P.++ rhs) node
+    ValueSymmetricBridgeLayout _ lhs _ delta rhs ->
+      materializeNodeForEndpoints (lhs P.++ delta P.++ rhs) node
+
+materializeNodeForEndpoints :: [ValueEndpoint] -> ViewNode -> ViewNode
+materializeNodeForEndpoints endpoints node =
+  case endpoints of
+    [] -> node
+    endpoint:rest ->
+      materializeNodeForEndpoints
+        rest
+        (materializeNodeForEndpoint endpoint node)
+
+materializeNodeForEndpoint :: ValueEndpoint -> ViewNode -> ViewNode
+materializeNodeForEndpoint endpoint node =
+  case endpoint of
+    RawValueEndpoint _ -> node
+    SelectionValueEndpoint selection access ->
+      case nodeMatchesSelection selection node of
+        False -> node
+        True ->
+          applyStyleMaterializations (valueAccessMaterializations access) node
+
+nodeMatchesSelection :: NodeSelection -> ViewNode -> P.Bool
+nodeMatchesSelection selection node =
+  case selectionNodeMatches selection node of
+    [] -> False
+    _  -> True
+
+applyStyleMaterializations :: [StyleMaterialization] -> ViewNode -> ViewNode
+applyStyleMaterializations materializations node =
+  case materializations of
+    [] -> node
+    materialization:rest ->
+      applyStyleMaterializations
+        rest
+        (applyStyleMaterialization materialization node)
+
+applyStyleMaterialization :: StyleMaterialization -> ViewNode -> ViewNode
+applyStyleMaterialization materialization node =
+  case node of
+    BlockViewNode block ->
+      BlockViewNode
+        block
+          { blockStyle =
+              materializeStyleForView
+                (AnyLayoutBlock block)
+                materialization
+                (blockStyle block)
+          }
+    VirtualViewNode virtual ->
+      VirtualViewNode
+        virtual
+          { virtualStyle =
+              materializeStyleForView
+                (AnyLayoutVirtual virtual)
+                materialization
+                (virtualStyle virtual)
+          }
+
+materializeStyleForView ::
+     AnyLayoutView -> StyleMaterialization -> Style -> Style
+materializeStyleForView view materialization style' =
+  case materialization of
+    MaterializeColor color ->
+      materializeColorField color (materializedStyleColor color view) style'
+
+materializeColorField :: StyleColorAttr -> HslExpr -> Style -> Style
+materializeColorField color value style' =
+  case color of
+    StyleFill ->
+      case fill style' of
+        Nothing -> setFill value style'
+        Just _  -> style'
+    StyleStroke ->
+      case stroke style' of
+        Nothing -> setStroke value style'
+        Just _  -> style'
 
 virtualNodesForSpec :: MatchSpec -> [ViewNode] -> [ViewNode]
 virtualNodesForSpec spec nodes =
@@ -2840,10 +3234,18 @@ pinConstraints expr maybePin =
       case pin of
         LayoutPin target constraints -> constraints P.++ [expr S.@==@ target]
 
-virtualNodeInitialVars :: ViewNode -> [InitialVar]
-virtualNodeInitialVars node =
+viewNodeStyleConstraints :: ViewNode -> [Constraint]
+viewNodeStyleConstraints node =
   case node of
-    BlockViewNode _ -> []
+    BlockViewNode block     -> styleConstraints (blockStyle block)
+    VirtualViewNode virtual -> styleConstraints (virtualStyle virtual)
+
+viewNodeInitialVars :: ViewNode -> [InitialVar]
+viewNodeInitialVars node =
+  case node of
+    BlockViewNode block ->
+      boundsInitialVars (styleBounds (blockStyle block))
+        P.++ styleInitialVars (blockStyle block)
     VirtualViewNode virtual ->
       boundsInitialVars (styleBounds (virtualStyle virtual))
         P.++ styleInitialVars (virtualStyle virtual)

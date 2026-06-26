@@ -21,7 +21,7 @@ module DSL.Main
 import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
 import           LinearTrace.Choreography
 import           Prelude.Linear           hiding (fromInteger, fromRational,
-                                           (*), (+), (-), (/), (<>))
+                                           (*), (+), (-), (/), (/=), (<>))
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -215,14 +215,15 @@ compareValues targetProbe elementProbe = do
 visualization :: MatchSpec
 visualization =
   visualize $ do
-    -- Geometry is sized for the default 800x600 canvas. Row anchors are free
-    -- variables, bounded below, then softly pulled toward a spacious layout.
+    -- Geometry is sized for the default 800x600 canvas. Container nodes carry
+    -- the row anchors, so constraints read in terms of the shapes they place.
     Variable cell <- variable @Span (by 104)
     Variable gap <- variable @Span (cell / 3.5)
-    Variable rowGap <- variable @Span (cell / 2.8)
-    Variable sectionGap <- variable @Span (cell / 2)
+    let rowGap :: Span
+        rowGap = cell / (2.8 :: Scalar)
+    let sectionGap :: Span
+        sectionGap = cell / (2 :: Scalar)
     Variable probeSize <- variable @Span (cell * 1.05)
-    Variable rowLeft <- variable @Coord
     Bound v <- bindContent
     Bound i <- bindInt
     -- Shared payload styling: every value block renders its payload. More
@@ -232,7 +233,6 @@ visualization =
       content v
       centerText
     -- Target row: a wide source value that anchors the rest of the layout.
-    Variable targetTop <- variable @Coord
     Variable targetWidth <- variable @Span (probeSize * 2 |+| gap)
     Variable targetHeight <- variable @Span (cell * 0.82)
     Selected targetSource <- select @Value (#target <&&> #source)
@@ -243,12 +243,9 @@ visualization =
       radius (cell * 0.16)
       fontSize (cell * 0.46)
       zIndex 2
-      left rowLeft
-      top targetTop
       width targetWidth
       height targetHeight
     -- Probe row: the copied target and current array element sit side by side.
-    Variable probeTop <- variable @Coord
     Selected targetProbe <- select @Value (#target <&&> #probe)
     Selected probe <- select @Value #probe
     Selected probes <- node probe
@@ -259,8 +256,6 @@ visualization =
       strokeWidth (cell * 0.022)
       radius (cell * 0.18)
       zIndex 1
-      left rowLeft
-      top probeTop
     style probe $ do
       fill (Hsl 204 0.44 0.9)
       stroke (Hsl 204 0.62 0.36)
@@ -268,15 +263,9 @@ visualization =
       zIndex 3
       radius (cell * 0.16)
       fontSize (cell * 0.44)
-      top probeTop
       width probeSize
       height probeSize
-    style targetProbe $ do
-      left rowLeft
-    style probeItem $ do
-      left (rowLeft + (probeSize |+| gap))
     -- Result row: a compact badge records the branch decision.
-    Variable resultTop <- variable @Coord
     Variable resultWidth <- variable @Span (probeSize * 2 |+| gap)
     Variable resultHeight <- variable @Span (cell * 0.68)
     Selected result <- select @Match #result
@@ -289,8 +278,6 @@ visualization =
       strokeWidth (cell * 0.022)
       radius (cell * 0.16)
       zIndex 1
-      left rowLeft
-      top resultTop
     style result $ do
       centerText
       fill (Hsl 214 0.06 0.94)
@@ -299,8 +286,6 @@ visualization =
       zIndex 4
       radius (cell * 0.14)
       fontSize (cell * 0.26)
-      left rowLeft
-      top resultTop
       width resultWidth
       height resultHeight
     style resultTrue $ do
@@ -312,19 +297,16 @@ visualization =
       fill (Hsl 8 0.44 0.9)
       stroke (Hsl 8 0.62 0.38)
     -- Array row: unprocessed values stay prominent; consumed values recede.
-    Variable arrayTop <- variable @Coord
     Selected arrayItems <- select @Value #array
     Selected array <- node arrayItems
     Selected arrayItem <- select @Value (#array <&&> #index @: i)
     Selected nextArrayItem <- select @Value (#array <&&> #index @: (i + 1))
     style array $ do
-      fill (Hsl 166 0.12 0.95)
-      stroke (Hsl 166 0.28 0.64)
-      strokeWidth (cell * 0.022)
-      radius (cell * 0.18)
+      -- fill (Hsl 166 0.12 0.95)
+      -- stroke (Hsl 166 0.28 0.64)
+      -- strokeWidth (cell * 0.022)
+      -- radius (cell * 0.18)
       zIndex 0
-      left rowLeft
-      top arrayTop
     style arrayItem $ do
       fill (Hsl 166 (0.2 + asUnit i * 0.08) 0.88)
       stroke (Hsl 166 0.46 0.38)
@@ -332,38 +314,41 @@ visualization =
       radius (cell * 0.12)
       fontSize (cell * 0.44)
       zIndex 2
-      top arrayTop
       width cell
       height cell
     Selected processedItem <- select @AnyPayload #processed
-    style processedItem $ do
-      fill (Hsl 218 0.05 0.84)
-      stroke (Hsl 218 0.1 0.58)
-    -- Bound the free row variables to a broad composition, then let loose gaps
-    -- protect the top-to-bottom reading order.
-    ensure $ at 56 <|> rowLeft
-    ensure $ rowLeft <|> at 88
-    ensure $ at 36 <|> targetTop
-    ensure $ targetTop <|> at 52
-    ensure $ at 174 <|> probeTop
-    ensure $ probeTop <|> at 198
-    ensure $ at 336 <|> resultTop
-    ensure $ resultTop <|> at 368
-    ensure $ at 446 <|> arrayTop
-    ensure $ arrayTop <|> at 474
-    encourage $ rowLeft =|= at 72
-    encourage $ targetTop =|= at 44
-    encourage $ probeTop =|= at 184
-    encourage $ resultTop =|= at 352
-    encourage $ arrayTop =|= at 462
+    let processedGrey :: HslExpr
+        processedGrey = Hsl 0 0 0.8
+    -- Bounds keep the composition on-canvas. Encouragements make those bands
+    -- preferences rather than hidden anchor variables.
+    ensure $ fill processedItem .==. processedGrey
+    ensure $ stroke processedItem .==. processedGrey
+    ensure $ at 56 .<=. left targetSource
+    ensure $ left targetSource .<=. at 88
+    ensure $ at 36 .<=. top targetSource
+    ensure $ top targetSource .<=. at 52
+    ensure $ at 174 .<=. top probes
+    ensure $ top probes .<=. at 198
+    ensure $ at 336 .<=. top results
+    ensure $ top results .<=. at 368
+    ensure $ at 446 .<=. top array
+    ensure $ top array .<=. at 474
+    encourage $ left targetSource .==. at 72
+    encourage $ top targetSource .==. at 44
+    encourage $ top probes .==. at 184
+    encourage $ top results .==. at 352
+    encourage $ top array .==. at 462
     -- Row alignment and item spacing are exact; vertical gaps are minimums.
     ensure $ bottom targetSource <| rowGap |> top probes
-    ensure $ top probe =|= top probes
+    ensure $ left probes .==. left targetSource
+    ensure $ top probe .==. top probes
+    ensure $ left targetProbe .==. left probes
+    ensure $ right targetProbe =| gap |= left probeItem
     ensure $ bottom probes <| sectionGap |> top results
-    ensure $ left results =|= left probes
-    ensure $ top result =|= top results
-    ensure $ left result =|= left results
+    ensure $ left results .==. left probes
+    ensure $ top result .==. top results
+    ensure $ left result .==. left results
     ensure $ bottom results <| rowGap |> top array
-    ensure $ left array =|= left targetSource
-    ensure $ top arrayItem =|= top array
+    ensure $ left array .==. left targetSource
+    ensure $ top arrayItem .==. top array
     ensure $ right arrayItem =| gap |= left nextArrayItem
