@@ -41,6 +41,7 @@ module LinearTrace.Solver
   , (@<=@)
   , (@>=@)
   , minimize
+  , soften
   , flattenConstraint
   , flattenConstraints
   , -- * Symbolic vector containers
@@ -436,6 +437,7 @@ data Constraint
   = Equals ScalarType RawExpr RawExpr
   | LessOrEqual RawExpr RawExpr
   | Minimize RawExpr
+  | Soft Constraint
   | All [Constraint]
   deriving (Eq, Ord, Show)
 
@@ -490,6 +492,7 @@ flattenConstraint :: Constraint -> [Constraint]
 flattenConstraint constraint =
   case constraint of
     All constraints -> concatMap flattenConstraint constraints
+    Soft inner      -> fmap Soft (flattenConstraint inner)
     _               -> [constraint]
 
 flattenConstraints :: [Constraint] -> [Constraint]
@@ -526,6 +529,7 @@ satisfiedConstantConstraint constraint =
         (Just lhsValue, Just rhsValue) -> lhsValue <= rhsValue + equalityEpsilon
         _                              -> False
     Minimize _ -> False
+    Soft inner -> satisfiedConstantConstraint inner
     All _ -> False
 
 constantEquals :: ScalarType -> Double -> Double -> Bool
@@ -561,6 +565,12 @@ binaryConstant op lhs rhs =
 
 minimize :: Expr ty -> Constraint
 minimize (Expr _ objective) = Minimize objective
+
+soften :: Constraint -> Constraint
+soften constraint =
+  case constraint of
+    Soft _ -> constraint
+    _      -> Soft constraint
 
 --------------------------------------------------------------------------------
 -- Solver-facing compiled expressions
@@ -914,6 +924,7 @@ collectConstraintVarTypes = foldMap collectOne
             (collectRawExprVarTypes lhs)
             (collectRawExprVarTypes rhs)
         Minimize objective -> collectRawExprVarTypes objective
+        Soft inner -> collectConstraintVarTypes [inner]
         All constraints -> collectConstraintVarTypes constraints
 
 inferInitialBounds :: [Constraint] -> Map String InitialBounds
@@ -933,6 +944,7 @@ addConstraint bounds constraint =
         (Just . addInitialUpper hi . fromMaybe unboundedInitialBounds)
         (varName v)
         bounds
+    Soft _ -> bounds
     All constraints -> foldl' addConstraint bounds constraints
     _ -> bounds
 
@@ -941,26 +953,49 @@ addConstraint bounds constraint =
 --------------------------------------------------------------------------------
 lowerConstraint ::
      SolveConfig -> Map String InternalVar -> Constraint -> BuildCSP ()
-lowerConstraint config vars constraint =
+lowerConstraint = lowerConstraintWith HardTerm
+
+lowerConstraintWith ::
+     TermKind
+  -> SolveConfig
+  -> Map String InternalVar
+  -> Constraint
+  -> BuildCSP ()
+lowerConstraintWith kind config vars constraint =
   case constraint of
     Equals ty lhs rhs ->
       case typeCircularPeriod ty of
         Just period
           | period > 0 ->
-            addHardTerm
-              (ensureWeight config)
+            addWeightedTerm
+              kind
+              config
               (circularEnergy period (lowerExpr vars lhs - lowerExpr vars rhs))
         _ ->
-          addHardTerm
-            (ensureWeight config)
+          addWeightedTerm
+            kind
+            config
             (sq (lowerExpr vars lhs - lowerExpr vars rhs))
     LessOrEqual lhs rhs ->
-      addHardTerm
-        (ensureWeight config)
+      addWeightedTerm
+        kind
+        config
         (sq (clipNegative (lowerExpr vars lhs - lowerExpr vars rhs)))
     Minimize objective ->
       addSoftTerm (encourageWeight config) (lowerExpr vars objective)
-    All constraints -> traverse_ (lowerConstraint config vars) constraints
+    Soft inner -> lowerConstraintWith SoftTerm config vars inner
+    All constraints ->
+      traverse_ (lowerConstraintWith kind config vars) constraints
+
+addWeightedTerm ::
+     TermKind
+  -> SolveConfig
+  -> (forall a. Floating a => EnergyExpr a)
+  -> BuildCSP ()
+addWeightedTerm kind config =
+  case kind of
+    HardTerm -> addHardTerm (ensureWeight config)
+    SoftTerm -> addSoftTerm (encourageWeight config)
 
 lowerExpr :: Floating a => Map String InternalVar -> RawExpr -> EnergyExpr a
 lowerExpr vars expr =

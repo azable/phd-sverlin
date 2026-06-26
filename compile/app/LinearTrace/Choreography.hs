@@ -88,8 +88,7 @@ module LinearTrace.Choreography
   , queryAtom
   , queryInt
   , queryFacts
-  , (<>)
-  , (#:)
+  , (<&&>)
   , -- * Component and layout layer
     BoxDefinition
   , BoxVisual
@@ -145,9 +144,8 @@ module LinearTrace.Choreography
   , defineNode
   , payload
   , text
-  , constrain
+  , ensure
   , variable
-  , coordExpr
   , encourage
   , fill
   , fontFamily
@@ -163,7 +161,6 @@ module LinearTrace.Choreography
   , num
   , fromInteger
   , fromRational
-  , offsetExpr
   , opacity
   , placeBox
   , position
@@ -174,8 +171,6 @@ module LinearTrace.Choreography
   , strokeWidth
   , style
   , shift
-  , scalarExpr
-  , spanExpr
   , takeHeight
   , takeLeft
   , takeRight
@@ -193,6 +188,7 @@ module LinearTrace.Choreography
   , (-)
   , (*)
   , (/)
+  , (@:)
   , (<|)
   , (<|>)
   , (=|)
@@ -205,7 +201,6 @@ module LinearTrace.Choreography
 import           Control.Functor.Linear hiding ((<$>), (<*>))
 import qualified Data.Functor.Linear    as DFL
 import           Data.Proxy             (Proxy (..))
-import           Data.Typeable          (Typeable, typeRep)
 import           GHC.Exts               (Multiplicity (Many))
 import           GHC.OverloadedLabels   (IsLabel (..))
 import           GHC.TypeLits           (KnownSymbol)
@@ -221,6 +216,7 @@ import           LinearTrace.Solver     (Vec2 (..), vec2)
 import qualified LinearTrace.Solver     as S
 import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          BoundsExpr, BoxDefinition, BoxVisual,
+                                         ConstraintStrength (..),
                                          FontStyle (..), FontWeight (..),
                                          FreeExpr, Hsl (..), HslExpr, Hue,
                                          HueExpr, LayoutAttr (..), LayoutExpr,
@@ -231,8 +227,8 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          QueryInt (..), Style, TextAlign (..),
                                          UnitExpr, WhiteSpace (..),
                                          anyPayloadPattern, boxDefinition,
-                                         emptyMatchSpec, emptyQuery, encourage,
-                                         global, matchBindingValue,
+                                         emptyMatchSpec, emptyQuery, global,
+                                         matchBindingValue,
                                          matchContextBindings,
                                          matchGlobalLayout,
                                          matchQueryPayloadNode,
@@ -256,8 +252,8 @@ import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
                                          (+), (-), (/), (<>))
 import qualified Text.Read              as Read
 
-infixr 6 <>
-infixl 9 #:
+infixr 6 <&&>
+infixl 9 @:
 data Program a where
   PureProgram :: a %1 -> Program a
   BindProgram :: Program a %1 -> (a %1 -> Program b) %1 -> Program b
@@ -833,8 +829,8 @@ instance IntegerLiteral QueryInt where
 queryIndex :: P.Int -> QueryInt
 queryIndex = queryIntConst
 
-(#:) :: (QueryInt -> query) -> QueryInt -> query
-(#:) buildField = buildField
+(@:) :: (QueryInt -> query) -> QueryInt -> query
+(@:) buildField = buildField
 
 at :: P.Double -> Coord
 at = num
@@ -1288,34 +1284,60 @@ interpretLoop loopState body = do
     Continue nextState -> interpretLoop nextState body
     Finish output      -> return output
 
-class ConstraintLike constraint where
-  toOneConstraint :: constraint -> OneConstraint
+class Ensure constraint where
+  ensure :: constraint -> VisualizationBuilder ()
 
-instance ConstraintLike OneConstraint where
-  toOneConstraint constraint = constraint
+instance Ensure OneConstraint where
+  ensure = emitConstraint EnsureConstraint
 
-instance ConstraintLike CoordChain where
-  toOneConstraint chain =
+instance Ensure CoordChain where
+  ensure = emitConstraint EnsureConstraint
+
+instance Ensure LiftedConstraint where
+  ensure = emitConstraint EnsureConstraint
+
+class Encourage objective where
+  encourage :: objective -> VisualizationBuilder ()
+
+instance Encourage (S.Expr ty) where
+  encourage objective = layout (V.encourage objective)
+
+instance Encourage OneConstraint where
+  encourage = emitConstraint EncourageConstraint
+
+instance Encourage CoordChain where
+  encourage = emitConstraint EncourageConstraint
+
+instance Encourage LiftedConstraint where
+  encourage = emitConstraint EncourageConstraint
+
+class EmitConstraint constraint where
+  emitConstraint :: ConstraintStrength -> constraint -> VisualizationBuilder ()
+
+instance EmitConstraint OneConstraint where
+  emitConstraint strength constraint =
+    case strength of
+      EnsureConstraint    -> layout (V.ensure constraint)
+      EncourageConstraint -> layout (V.encourageConstraint constraint)
+
+instance EmitConstraint CoordChain where
+  emitConstraint strength chain =
     case chain of
-      CoordChain _ constraints -> rawOneConstraint constraints
+      CoordChain _ constraints ->
+        emitConstraint strength (rawOneConstraint constraints)
 
-class Constrain constraint where
-  constrain :: constraint -> VisualizationBuilder ()
+instance EmitConstraint LiftedConstraint where
+  emitConstraint strength constraint =
+    emitVisualizationBuilder () (liftedConstraintSpec strength constraint)
 
-instance Constrain CoordChain where
-  constrain constraint = layout (V.ensure (toOneConstraint constraint))
-
-instance Constrain LiftedConstraint where
-  constrain constraint =
-    emitVisualizationBuilder () (liftedConstraintSpec constraint)
-
-liftedConstraintSpec :: LiftedConstraint -> MatchSpec
-liftedConstraintSpec constraint =
+liftedConstraintSpec :: ConstraintStrength -> LiftedConstraint -> MatchSpec
+liftedConstraintSpec strength constraint =
   case constraint of
     LiftedCoordRelation lhs relation rhs ->
       selectedCoordSpec lhs
         `matchSpecAppend` selectedCoordSpec rhs
         `matchSpecAppend` matchSelectionRelation
+                            strength
                             (selectedCoordNodeSelection lhs)
                             (selectedCoordAttr lhs)
                             relation
@@ -1325,6 +1347,7 @@ liftedConstraintSpec constraint =
       selectedCoordSpec lhs
         `matchSpecAppend` selectedCoordSpec rhs
         `matchSpecAppend` matchSelectionBridge
+                            strength
                             (selectedCoordNodeSelection lhs)
                             (selectedCoordAttr lhs)
                             lhsRelation
@@ -1562,7 +1585,9 @@ require action =
     (\spec ->
        spec {nodeSpecRequirements = nodeSpecRequirements spec P.++ [action]})
 
-class Node tag input result | tag input -> result where
+data VirtualNode
+
+class Node input result | input -> result where
   node :: input -> result
 
 select ::
@@ -1682,39 +1707,33 @@ spanPin value =
   case value of
     Span expr constraints -> V.LayoutPin expr constraints
 
-instance Typeable tag =>
-         Node
-           tag
+instance Node
            (Selected child)
-           (VisualizationBuilder (NodeBinding (Selected tag))) where
+           (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
   node children =
     case children of
       Selection child childSpec ->
         let query = nodeRefQuery child
-            key = virtualNodeKey @tag
-            virtualSpec = matchVirtualNode key query V.emptyNodePatch
          in VisualizationBuilder
               (\counter ->
-                 VisualizationResult
-                   (Selected
-                      (Selection (VirtualNodeRef key query) emptyMatchSpec))
-                   counter
-                   (matchSpecAppend childSpec virtualSpec))
+                 let key = virtualNodeKey counter
+                     virtualSpec = matchVirtualNode key query V.emptyNodePatch
+                  in VisualizationResult
+                       (Selected
+                          (Selection (VirtualNodeRef key query) emptyMatchSpec))
+                       (counter P.+ 1)
+                       (matchSpecAppend childSpec virtualSpec))
 
-instance Typeable tag =>
-         Node
-           tag
+instance Node
            (NodeBinding (Selected child))
-           (VisualizationBuilder (NodeBinding (Selected tag))) where
+           (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
   node binding =
     case binding of
-      Selected children -> node @tag children
+      Selected children -> node children
 
-instance Typeable tag =>
-         Node
-           tag
+instance Node
            (VisualizationBuilder (NodeBinding (Selected child)))
-           (VisualizationBuilder (NodeBinding (Selected tag))) where
+           (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
   node childrenBuilder =
     case childrenBuilder of
       VisualizationBuilder runFirst ->
@@ -1722,7 +1741,7 @@ instance Typeable tag =>
           (\counter0 ->
              case runFirst counter0 of
                VisualizationResult binding counter1 first ->
-                 case node @tag binding of
+                 case node binding of
                    VisualizationBuilder runSecond ->
                      case runSecond counter1 of
                        VisualizationResult selected counter2 second ->
@@ -1764,10 +1783,8 @@ nodeSelection handle =
     TraceNodeRef selector    -> TraceSelection (traceQueryQuery selector)
     VirtualNodeRef key query -> VirtualSelection key query
 
-virtualNodeKey ::
-     forall tag. Typeable tag
-  => P.String
-virtualNodeKey = P.show (typeRep (Proxy @tag))
+virtualNodeKey :: P.Int -> P.String
+virtualNodeKey counter = "virtual-node-" P.++ P.show counter
 
 visualize :: VisualizationBuilder () -> MatchSpec
 visualize builder =
@@ -1843,8 +1860,8 @@ instance QueryAppend Query where
 instance QueryAppend (TraceQuery tag) where
   appendQuery = traceQueryAppend
 
-(<>) :: QueryAppend query => query -> query -> query
-(<>) = appendQuery
+(<&&>) :: QueryAppend query => query -> query -> query
+(<&&>) = appendQuery
 
 layoutNode :: NodeSpec -> LiveVisual tag %1 -> ViewLayout (NodeVisual tag)
 layoutNode spec visual0 = do

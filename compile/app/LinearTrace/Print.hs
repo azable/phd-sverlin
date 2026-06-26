@@ -308,6 +308,12 @@ renderConstraintParts constraint =
         , renderedConstraintOp = "minimize"
         , renderedConstraintRhs = rawExprText expr
         }
+    S.Soft inner ->
+      let rendered = renderConstraintParts inner
+       in rendered
+            { renderedConstraintOp =
+                "encourage " ++ renderedConstraintOp rendered
+            }
     S.All constraints ->
       RenderedConstraint
         { renderedConstraintLhs = ""
@@ -360,6 +366,7 @@ constraintMentionsVar constraint =
     S.Equals _ lhs rhs    -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
     S.LessOrEqual lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
     S.Minimize expr       -> rawExprMentionsVar expr
+    S.Soft inner          -> constraintMentionsVar inner
     S.All constraints     -> any constraintMentionsVar constraints
 
 rawExprMentionsVar :: S.RawExpr -> Bool

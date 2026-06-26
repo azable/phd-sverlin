@@ -67,6 +67,7 @@ module LinearTrace.View
   , emptyNodePatch
   , appendNodePatch
   , NodeSelection(..)
+  , ConstraintStrength(..)
   , LayoutRelation(..)
   , MatchSpec
   , emptyMatchSpec
@@ -207,6 +208,7 @@ module LinearTrace.View
   , solveCSPWithSeed
   , RandomSeed(..)
   , ensure
+  , encourageConstraint
   , encourage
   , -- * Style accessors
     opacity
@@ -656,6 +658,11 @@ data NodeSelection
   | VirtualSelection P.String Query
   deriving (P.Eq, P.Show)
 
+data ConstraintStrength
+  = EnsureConstraint
+  | EncourageConstraint
+  deriving (P.Eq, P.Show)
+
 data LayoutRelation
   = LayoutEqual
   | LayoutLessOrEqual
@@ -675,14 +682,16 @@ data NodeRule where
 data LayoutRule where
   GlobalLayout :: ViewBuilder () -> LayoutRule
   SelectionRelationLayout
-    :: NodeSelection
+    :: ConstraintStrength
+    -> NodeSelection
     -> LayoutAttr
     -> LayoutRelation
     -> NodeSelection
     -> LayoutAttr
     -> LayoutRule
   SelectionBridgeLayout
-    :: NodeSelection
+    :: ConstraintStrength
+    -> NodeSelection
     -> LayoutAttr
     -> LayoutRelation
     -> LayoutExpr
@@ -740,17 +749,22 @@ matchGlobalLayout :: ViewBuilder () -> MatchSpec
 matchGlobalLayout body = MatchSpec [] [GlobalLayout body] []
 
 matchSelectionRelation ::
-     NodeSelection
+     ConstraintStrength
+  -> NodeSelection
   -> LayoutAttr
   -> LayoutRelation
   -> NodeSelection
   -> LayoutAttr
   -> MatchSpec
-matchSelectionRelation lhs lhsAttr relation rhs rhsAttr =
-  MatchSpec [] [SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr] []
+matchSelectionRelation strength lhs lhsAttr relation rhs rhsAttr =
+  MatchSpec
+    []
+    [SelectionRelationLayout strength lhs lhsAttr relation rhs rhsAttr]
+    []
 
 matchSelectionBridge ::
-     NodeSelection
+     ConstraintStrength
+  -> NodeSelection
   -> LayoutAttr
   -> LayoutRelation
   -> LayoutExpr
@@ -759,10 +773,11 @@ matchSelectionBridge ::
   -> NodeSelection
   -> LayoutAttr
   -> MatchSpec
-matchSelectionBridge lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr =
+matchSelectionBridge strength lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr =
   MatchSpec
     []
     [ SelectionBridgeLayout
+        strength
         lhs
         lhsAttr
         lhsRelation
@@ -1567,6 +1582,11 @@ ensure oneConstraint =
 
 ensureRaw :: Constraint -> ViewBuilder ()
 ensureRaw constraint = tellOutput mempty {emittedConstraints = [constraint]}
+
+encourageConstraint :: OneConstraint %1 -> ViewBuilder ()
+encourageConstraint oneConstraint =
+  case oneConstraint of
+    OneConstraint (Ur constraint) -> ensureRaw (S.soften constraint)
 
 encourage :: Expr ty -> ViewBuilder ()
 encourage objective =
@@ -2406,20 +2426,30 @@ layoutRuleConstraints :: [ViewNode] -> LayoutRule -> [Constraint]
 layoutRuleConstraints nodes layoutRule =
   case layoutRule of
     GlobalLayout body -> layoutConstraints body
-    SelectionRelationLayout lhs lhsAttr relation rhs rhsAttr ->
-      P.concatMap
-        (selectionRelationConstraints lhsAttr relation rhsAttr)
-        (matchingSelectionPairs lhs rhs nodes)
-    SelectionBridgeLayout lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr ->
-      P.concatMap
-        (selectionBridgeConstraints
-           lhsAttr
-           lhsRelation
-           gap
-           gapConstraints
-           rhsRelation
-           rhsAttr)
-        (matchingSelectionPairs lhs rhs nodes)
+    SelectionRelationLayout strength lhs lhsAttr relation rhs rhsAttr ->
+      applyConstraintStrength
+        strength
+        (P.concatMap
+           (selectionRelationConstraints lhsAttr relation rhsAttr)
+           (matchingSelectionPairs lhs rhs nodes))
+    SelectionBridgeLayout strength lhs lhsAttr lhsRelation gap gapConstraints rhsRelation rhs rhsAttr ->
+      applyConstraintStrength
+        strength
+        (P.concatMap
+           (selectionBridgeConstraints
+              lhsAttr
+              lhsRelation
+              gap
+              gapConstraints
+              rhsRelation
+              rhsAttr)
+           (matchingSelectionPairs lhs rhs nodes))
+
+applyConstraintStrength :: ConstraintStrength -> [Constraint] -> [Constraint]
+applyConstraintStrength strength constraints =
+  case strength of
+    EnsureConstraint    -> constraints
+    EncourageConstraint -> P.map S.soften constraints
 
 matchingSelectionPairs ::
      NodeSelection
