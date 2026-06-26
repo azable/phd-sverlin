@@ -382,6 +382,8 @@ rawExprMentionsVar expr =
     S.EAbs inner    -> rawExprMentionsVar inner
     S.ESignum inner -> rawExprMentionsVar inner
     S.EPow base to  -> rawExprMentionsVar base || rawExprMentionsVar to
+    S.EMin lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.EMax lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
 
 --------------------------------------------------------------------------------
 -- Solved view values
@@ -630,6 +632,16 @@ rawExprTextPrec precedence expr =
         "^"
         (rawExprTextPrec powerPrecedence base)
         (rawExprTextPrec (powerPrecedence + 1) to)
+    S.EMin lhs rhs ->
+      binaryFunctionExprText
+        "min"
+        (rawExprTextPrec 0 lhs)
+        (rawExprTextPrec 0 rhs)
+    S.EMax lhs rhs ->
+      binaryFunctionExprText
+        "max"
+        (rawExprTextPrec 0 lhs)
+        (rawExprTextPrec 0 rhs)
 
 infixExprText :: Int -> Int -> String -> String -> String -> String
 infixExprText outerPrecedence innerPrecedence operator lhs rhs =
@@ -639,6 +651,9 @@ infixExprText outerPrecedence innerPrecedence operator lhs rhs =
 functionExprText :: String -> S.RawExpr -> String
 functionExprText name inner =
   name ++ " " ++ rawExprTextPrec unaryPrecedence inner
+
+binaryFunctionExprText :: String -> String -> String -> String
+binaryFunctionExprText name lhs rhs = name ++ "(" ++ lhs ++ ", " ++ rhs ++ ")"
 
 addPrecedence :: Int
 addPrecedence = 6

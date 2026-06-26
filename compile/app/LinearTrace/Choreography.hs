@@ -200,18 +200,10 @@ module LinearTrace.Choreography
   , (.<=.)
   , (.>=.)
   , (.==.)
-  , (<|)
-  , (<|>)
-  , (</)
   , (=|)
   , (=/)
-  , (=|=)
   , (|+|)
   , (|=)
-  , (|>)
-  , (/>)
-  , (/<)
-  , (>/)
   , (/=)
   ) where
 
@@ -246,8 +238,7 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          StyleColorAttr (..),
                                          StyleFreeAttr (..),
                                          StyleLayoutAttr (..),
-                                         StyleUnitAttr (..),
-                                         SymmetricRelation (..), TextAlign (..),
+                                         StyleUnitAttr (..), TextAlign (..),
                                          UnitExpr, ValueAccess, ValueComponent,
                                          ValueEndpoint, WhiteSpace (..),
                                          anyPayloadPattern, boxDefinition,
@@ -367,18 +358,9 @@ data LiftedConstraint where
   LiftedValueRelation
     :: ValueTerm -> LayoutRelation -> ValueTerm -> LiftedConstraint
   LiftedDirectedBridge
-    :: ValueTerm
-    -> LayoutRelation
-    -> ValueTerm
-    -> LayoutRelation
-    -> ValueTerm
-    -> LiftedConstraint
+    :: ValueTerm -> ValueTerm -> ValueTerm -> LiftedConstraint
   LiftedSymmetricBridge
-    :: ValueTerm
-    -> SymmetricRelation
-    -> ValueTerm
-    -> ValueTerm
-    -> LiftedConstraint
+    :: ValueTerm -> ValueTerm -> ValueTerm -> LiftedConstraint
 
 data ValueTerm =
   ValueTerm MatchSpec [ValueEndpoint]
@@ -1169,47 +1151,45 @@ instance {-# OVERLAPPING #-} RelateValues
     LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 data DirectedBridge =
-  DirectedBridge LayoutRelation ValueTerm ValueTerm
+  DirectedBridge ValueTerm ValueTerm
 
 class OpenDirectedBridge lhs gap where
-  openDirectedBridge :: LayoutRelation -> lhs -> gap -> DirectedBridge
+  openDirectedBridge :: lhs -> gap -> DirectedBridge
 
 instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue gap) =>
          OpenDirectedBridge lhs gap where
-  openDirectedBridge relation lhs gap =
-    DirectedBridge relation (valueTerm lhs) (valueTerm gap)
+  openDirectedBridge lhs gap = DirectedBridge (valueTerm lhs) (valueTerm gap)
 
 class CloseDirectedBridge bridge rhs where
-  closeDirectedBridge :: LayoutRelation -> bridge -> rhs -> LiftedConstraint
+  closeDirectedBridge :: bridge -> rhs -> LiftedConstraint
 
 instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
          CloseDirectedBridge DirectedBridge rhs where
-  closeDirectedBridge rhsRelation bridge rhs =
+  closeDirectedBridge bridge rhs =
     case bridge of
-      DirectedBridge lhsRelation lhs gap ->
-        LiftedDirectedBridge lhs lhsRelation gap rhsRelation (valueTerm rhs)
+      DirectedBridge lhs gap -> LiftedDirectedBridge lhs gap (valueTerm rhs)
 
 data SymmetricBridge =
-  SymmetricBridge SymmetricRelation ValueTerm ValueTerm
+  SymmetricBridge ValueTerm ValueTerm
 
 class OpenSymmetricBridge lhs delta where
-  openSymmetricBridge :: SymmetricRelation -> lhs -> delta -> SymmetricBridge
+  openSymmetricBridge :: lhs -> delta -> SymmetricBridge
 
 instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue delta) =>
          OpenSymmetricBridge lhs delta where
-  openSymmetricBridge relation lhs delta =
-    SymmetricBridge relation (valueTerm lhs) (valueTerm delta)
+  openSymmetricBridge lhs delta =
+    SymmetricBridge (valueTerm lhs) (valueTerm delta)
 
 instance {-# OVERLAPPING #-} S.SymbolicType ty =>
          OpenSymmetricBridge (SelectedExpr ty tag) (S.Expr ty) where
-  openSymmetricBridge relation lhs delta =
-    SymmetricBridge relation (valueTerm lhs) (valueTerm delta)
+  openSymmetricBridge lhs delta =
+    SymmetricBridge (valueTerm lhs) (valueTerm delta)
 
 instance {-# OVERLAPPING #-} OpenSymmetricBridge
            (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag))
            HslExpr where
-  openSymmetricBridge relation lhs delta =
-    SymmetricBridge relation (valueTerm lhs) (valueTerm delta)
+  openSymmetricBridge lhs delta =
+    SymmetricBridge (valueTerm lhs) (valueTerm delta)
 
 class CloseSymmetricBridge bridge rhs where
   closeSymmetricBridge :: bridge -> rhs -> LiftedConstraint
@@ -1218,31 +1198,23 @@ instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
          CloseSymmetricBridge SymmetricBridge rhs where
   closeSymmetricBridge bridge rhs =
     case bridge of
-      SymmetricBridge relation lhs delta ->
-        LiftedSymmetricBridge lhs relation delta (valueTerm rhs)
+      SymmetricBridge lhs delta ->
+        LiftedSymmetricBridge lhs delta (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} S.SymbolicType ty =>
          CloseSymmetricBridge SymmetricBridge (S.Expr ty) where
   closeSymmetricBridge bridge rhs =
     case bridge of
-      SymmetricBridge relation lhs delta ->
-        LiftedSymmetricBridge lhs relation delta (valueTerm rhs)
+      SymmetricBridge lhs delta ->
+        LiftedSymmetricBridge lhs delta (valueTerm rhs)
 
 infixl 4 .<=.
 infixl 4 .>=.
 infixl 4 .==.
-infixl 4 <|>
-infixl 4 =|=
-infixl 4 <|
 infixl 4 =|
-infixl 4 |>
 infixl 4 |=
-infixl 4 </
 infixl 4 =/
-infixl 4 >/
-infixl 4 />
 infixl 4 /=
-infixl 4 /<
 (.<=.) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
 (.<=.) = relateValues LayoutLessOrEqual
 
@@ -1252,41 +1224,17 @@ lhs .>=. rhs = relateValues LayoutLessOrEqual rhs lhs
 (.==.) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
 (.==.) = relateValues LayoutEqual
 
-(<|>) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
-(<|>) = (.<=.)
-
-(=|=) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
-(=|=) = (.==.)
-
-(<|) :: OpenDirectedBridge lhs gap => lhs -> gap -> DirectedBridge
-lhs <| rhs = openDirectedBridge LayoutLessOrEqual lhs rhs
-
 (=|) :: OpenDirectedBridge lhs gap => lhs -> gap -> DirectedBridge
-lhs =| rhs = openDirectedBridge LayoutEqual lhs rhs
-
-(|>) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> LiftedConstraint
-lhs |> rhs = closeDirectedBridge LayoutLessOrEqual lhs rhs
+lhs =| rhs = openDirectedBridge lhs rhs
 
 (|=) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> LiftedConstraint
-lhs |= rhs = closeDirectedBridge LayoutEqual lhs rhs
-
-(</) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
-lhs </ delta = openSymmetricBridge SymmetricAtLeast lhs delta
+lhs |= rhs = closeDirectedBridge lhs rhs
 
 (=/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
-lhs =/ delta = openSymmetricBridge SymmetricEqual lhs delta
-
-(>/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
-lhs >/ delta = openSymmetricBridge SymmetricAtMost lhs delta
-
-(/>) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
-lhs /> rhs = closeSymmetricBridge lhs rhs
+lhs =/ delta = openSymmetricBridge lhs delta
 
 (/=) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
 lhs /= rhs = closeSymmetricBridge lhs rhs
-
-(/<) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
-lhs /< rhs = closeSymmetricBridge lhs rhs
 
 runProgram :: Program () -> VisualTraceGraph
 runProgram program = V.buildGraph (interpretProgram program)
@@ -1475,25 +1423,22 @@ liftedConstraintSpec strength constraint =
                             (valueTermEndpoints lhs)
                             relation
                             (valueTermEndpoints rhs)
-    LiftedDirectedBridge lhs lhsRelation gap rhsRelation rhs ->
+    LiftedDirectedBridge lhs gap rhs ->
       valueTermSpec lhs
         `matchSpecAppend` valueTermSpec gap
         `matchSpecAppend` valueTermSpec rhs
         `matchSpecAppend` matchValueDirectedBridge
                             strength
                             (valueTermEndpoints lhs)
-                            lhsRelation
                             (valueTermEndpoints gap)
-                            rhsRelation
                             (valueTermEndpoints rhs)
-    LiftedSymmetricBridge lhs relation delta rhs ->
+    LiftedSymmetricBridge lhs delta rhs ->
       valueTermSpec lhs
         `matchSpecAppend` valueTermSpec delta
         `matchSpecAppend` valueTermSpec rhs
         `matchSpecAppend` matchValueSymmetricBridge
                             strength
                             (valueTermEndpoints lhs)
-                            relation
                             (valueTermEndpoints delta)
                             (valueTermEndpoints rhs)
 

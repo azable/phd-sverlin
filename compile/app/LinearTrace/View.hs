@@ -77,7 +77,6 @@ module LinearTrace.View
   , StyleFreeAttr(..)
   , StyleColorAttr(..)
   , HslPart(..)
-  , SymmetricRelation(..)
   , valueComponent
   , rawValueEndpoint
   , selectionValueEndpoint
@@ -687,12 +686,6 @@ data LayoutRelation
   | LayoutLessOrEqual
   deriving (P.Eq, P.Show)
 
-data SymmetricRelation
-  = SymmetricEqual
-  | SymmetricAtLeast
-  | SymmetricAtMost
-  deriving (P.Eq, P.Show)
-
 data ValueComponent =
   ValueComponent ScalarType RawExpr [Constraint]
 
@@ -756,15 +749,12 @@ data LayoutRule where
   ValueDirectedBridgeLayout
     :: ConstraintStrength
     -> [ValueEndpoint]
-    -> LayoutRelation
     -> [ValueEndpoint]
-    -> LayoutRelation
     -> [ValueEndpoint]
     -> LayoutRule
   ValueSymmetricBridgeLayout
     :: ConstraintStrength
     -> [ValueEndpoint]
-    -> SymmetricRelation
     -> [ValueEndpoint]
     -> [ValueEndpoint]
     -> LayoutRule
@@ -861,26 +851,20 @@ matchValueRelation strength lhs relation rhs =
 matchValueDirectedBridge ::
      ConstraintStrength
   -> [ValueEndpoint]
-  -> LayoutRelation
   -> [ValueEndpoint]
-  -> LayoutRelation
   -> [ValueEndpoint]
   -> MatchSpec
-matchValueDirectedBridge strength lhs lhsRelation gap rhsRelation rhs =
-  MatchSpec
-    []
-    [ValueDirectedBridgeLayout strength lhs lhsRelation gap rhsRelation rhs]
-    []
+matchValueDirectedBridge strength lhs gap rhs =
+  MatchSpec [] [ValueDirectedBridgeLayout strength lhs gap rhs] []
 
 matchValueSymmetricBridge ::
      ConstraintStrength
   -> [ValueEndpoint]
-  -> SymmetricRelation
   -> [ValueEndpoint]
   -> [ValueEndpoint]
   -> MatchSpec
-matchValueSymmetricBridge strength lhs relation delta rhs =
-  MatchSpec [] [ValueSymmetricBridgeLayout strength lhs relation delta rhs] []
+matchValueSymmetricBridge strength lhs delta rhs =
+  MatchSpec [] [ValueSymmetricBridgeLayout strength lhs delta rhs] []
 
 --------------------------------------------------------------------------------
 -- Block views
@@ -2535,17 +2519,17 @@ layoutRuleConstraints nodes layoutRule =
         (P.concatMap
            (valueRelationConstraints relation)
            (matchingValueTerms lhs rhs nodes))
-    ValueDirectedBridgeLayout strength lhs lhsRelation gap rhsRelation rhs ->
+    ValueDirectedBridgeLayout strength lhs gap rhs ->
       applyConstraintStrength
         strength
         (P.concatMap
-           (valueDirectedBridgeConstraints lhsRelation rhsRelation)
+           valueDirectedBridgeConstraints
            (matchingValueTermTriples lhs gap rhs nodes))
-    ValueSymmetricBridgeLayout strength lhs relation delta rhs ->
+    ValueSymmetricBridgeLayout strength lhs delta rhs ->
       applyConstraintStrength
         strength
         (P.concatMap
-           (valueSymmetricBridgeConstraints relation)
+           valueSymmetricBridgeConstraints
            (matchingValueTermTriples lhs delta rhs nodes))
 
 applyConstraintStrength :: ConstraintStrength -> [Constraint] -> [Constraint]
@@ -2669,28 +2653,23 @@ valueRelationConstraints relation pair' =
         rhsComponents
 
 valueDirectedBridgeConstraints ::
-     LayoutRelation
-  -> LayoutRelation
-  -> ([ValueComponent], [ValueComponent], [ValueComponent])
-  -> [Constraint]
-valueDirectedBridgeConstraints lhsRelation rhsRelation triple =
+     ([ValueComponent], [ValueComponent], [ValueComponent]) -> [Constraint]
+valueDirectedBridgeConstraints triple =
   case triple of
     (lhsComponents, gapComponents, rhsComponents) ->
       zipValueComponentTriplesWith
-        (bridgeRelationConstraint lhsRelation rhsRelation)
+        directedBridgeConstraint
         lhsComponents
         gapComponents
         rhsComponents
 
 valueSymmetricBridgeConstraints ::
-     SymmetricRelation
-  -> ([ValueComponent], [ValueComponent], [ValueComponent])
-  -> [Constraint]
-valueSymmetricBridgeConstraints relation triple =
+     ([ValueComponent], [ValueComponent], [ValueComponent]) -> [Constraint]
+valueSymmetricBridgeConstraints triple =
   case triple of
     (lhsComponents, deltaComponents, rhsComponents) ->
       zipValueComponentTriplesWith
-        (symmetricRelationConstraint relation)
+        symmetricBridgeConstraint
         lhsComponents
         deltaComponents
         rhsComponents
@@ -2744,40 +2723,24 @@ relationConstraint relation lhs rhs =
             LayoutLessOrEqual -> LessOrEqual lhsRaw rhsRaw
         False -> componentTypeError lhsType rhsType
 
-bridgeRelationConstraint ::
-     LayoutRelation
-  -> LayoutRelation
-  -> ValueComponent
-  -> ValueComponent
-  -> ValueComponent
-  -> Constraint
-bridgeRelationConstraint lhsRelation rhsRelation lhs gap rhs =
+directedBridgeConstraint ::
+     ValueComponent -> ValueComponent -> ValueComponent -> Constraint
+directedBridgeConstraint lhs gap rhs =
   case (lhs, gap, rhs) of
     (ValueComponent lhsType lhsRaw _, ValueComponent gapType gapRaw _, ValueComponent rhsType rhsRaw _) ->
       case lhsType P.== gapType P.&& lhsType P.== rhsType of
-        True ->
-          case (lhsRelation, rhsRelation) of
-            (LayoutEqual, LayoutEqual) ->
-              Equals lhsType (EAdd lhsRaw gapRaw) rhsRaw
-            _ -> LessOrEqual (EAdd lhsRaw gapRaw) rhsRaw
+        True  -> Equals lhsType (EAdd lhsRaw gapRaw) rhsRaw
         False -> componentTypeError lhsType rhsType
 
-symmetricRelationConstraint ::
-     SymmetricRelation
-  -> ValueComponent
-  -> ValueComponent
-  -> ValueComponent
-  -> Constraint
-symmetricRelationConstraint relation lhs delta rhs =
+symmetricBridgeConstraint ::
+     ValueComponent -> ValueComponent -> ValueComponent -> Constraint
+symmetricBridgeConstraint lhs delta rhs =
   case (lhs, delta, rhs) of
     (ValueComponent lhsType lhsRaw _, ValueComponent deltaType deltaRaw _, ValueComponent rhsType rhsRaw _) ->
       case lhsType P.== deltaType P.&& lhsType P.== rhsType of
         True ->
           let difference = EAbs (ESub lhsRaw rhsRaw)
-           in case relation of
-                SymmetricEqual   -> Equals lhsType difference deltaRaw
-                SymmetricAtLeast -> LessOrEqual deltaRaw difference
-                SymmetricAtMost  -> LessOrEqual difference deltaRaw
+           in Equals lhsType difference deltaRaw
         False -> componentTypeError lhsType rhsType
 
 componentTypeError :: ScalarType -> ScalarType -> Constraint
@@ -2915,9 +2878,9 @@ materializeNodeForRule rule node =
     GlobalLayout _ -> node
     ValueRelationLayout _ lhs _ rhs ->
       materializeNodeForEndpoints (lhs P.++ rhs) node
-    ValueDirectedBridgeLayout _ lhs _ gap _ rhs ->
+    ValueDirectedBridgeLayout _ lhs gap rhs ->
       materializeNodeForEndpoints (lhs P.++ gap P.++ rhs) node
-    ValueSymmetricBridgeLayout _ lhs _ delta rhs ->
+    ValueSymmetricBridgeLayout _ lhs delta rhs ->
       materializeNodeForEndpoints (lhs P.++ delta P.++ rhs) node
 
 materializeNodeForEndpoints :: [ValueEndpoint] -> ViewNode -> ViewNode
@@ -3122,11 +3085,9 @@ virtualCanvasConstraints virtual =
 virtualFitConstraints :: VirtualView tag -> [Constraint]
 virtualFitConstraints virtual =
   case virtualChildren virtual of
-    [] -> []
-    [child] -> virtualExactFitConstraints virtual child
-    children ->
-      P.concatMap (virtualContainmentConstraints virtual) children
-        P.++ virtualAnchorFitConstraints virtual children
+    []       -> []
+    [child]  -> virtualExactFitConstraints virtual child
+    children -> virtualTightFitConstraints virtual children
 
 virtualExactFitConstraints :: VirtualView tag -> AnyBlockView -> [Constraint]
 virtualExactFitConstraints virtual child =
@@ -3136,62 +3097,40 @@ virtualExactFitConstraints virtual child =
   , bottom virtual S.@==@ anyBlockBottom child
   ]
 
-virtualAnchorFitConstraints :: VirtualView tag -> [AnyBlockView] -> [Constraint]
-virtualAnchorFitConstraints virtual children =
+virtualTightFitConstraints :: VirtualView tag -> [AnyBlockView] -> [Constraint]
+virtualTightFitConstraints virtual children =
   case children of
     [] -> []
     child:rest ->
-      let first = firstFitChild child rest
-          last' = lastFitChild child rest
-       in [ left virtual S.@==@ anyBlockLeft first
-          , top virtual S.@==@ anyBlockTop first
-          , right virtual S.@==@ anyBlockRight last'
-          , bottom virtual S.@==@ anyBlockBottom last'
+      let allChildren = child : rest
+       in [ left virtual S.@==@ minChildEdge anyBlockLeft allChildren
+          , top virtual S.@==@ minChildEdge anyBlockTop allChildren
+          , right virtual S.@==@ maxChildEdge anyBlockRight allChildren
+          , bottom virtual S.@==@ maxChildEdge anyBlockBottom allChildren
           ]
 
-virtualContainmentConstraints :: VirtualView tag -> AnyBlockView -> [Constraint]
-virtualContainmentConstraints virtual child =
-  [ left virtual S.@<=@ anyBlockLeft child
-  , top virtual S.@<=@ anyBlockTop child
-  , anyBlockRight child S.@<=@ right virtual
-  , anyBlockBottom child S.@<=@ bottom virtual
-  ]
-
-firstFitChild :: AnyBlockView -> [AnyBlockView] -> AnyBlockView
-firstFitChild current children =
+minChildEdge :: (AnyBlockView -> LayoutExpr) -> [AnyBlockView] -> LayoutExpr
+minChildEdge edge children =
   case children of
-    [] -> current
-    child:rest
-      | fitChildOrder child P.< fitChildOrder current ->
-        firstFitChild child rest
-      | otherwise -> firstFitChild current rest
+    []         -> P.error "Cannot shrinkwrap an empty virtual node."
+    child:rest -> foldChildEdge S.minExpr edge (edge child) rest
 
-lastFitChild :: AnyBlockView -> [AnyBlockView] -> AnyBlockView
-lastFitChild current children =
+maxChildEdge :: (AnyBlockView -> LayoutExpr) -> [AnyBlockView] -> LayoutExpr
+maxChildEdge edge children =
   case children of
-    [] -> current
-    child:rest
-      | fitChildOrder child P.>= fitChildOrder current ->
-        lastFitChild child rest
-      | otherwise -> lastFitChild current rest
+    []         -> P.error "Cannot shrinkwrap an empty virtual node."
+    child:rest -> foldChildEdge S.maxExpr edge (edge child) rest
 
-fitChildOrder :: AnyBlockView -> Maybe P.Int
-fitChildOrder = anyBlockIndex
-
-anyBlockIndex :: AnyBlockView -> Maybe P.Int
-anyBlockIndex anyBlock =
-  case anyBlock of
-    AnyBlockView child -> indexFactValue (C.factsToList (blockFacts child))
-
-indexFactValue :: [C.Fact] -> Maybe P.Int
-indexFactValue facts =
-  case facts of
-    [] -> Nothing
-    C.Fact name value:rest ->
-      case value of
-        C.FactInt actual
-          | name P.== "index" -> Just actual
-        _ -> indexFactValue rest
+foldChildEdge ::
+     (LayoutExpr -> LayoutExpr -> LayoutExpr)
+  -> (AnyBlockView -> LayoutExpr)
+  -> LayoutExpr
+  -> [AnyBlockView]
+  -> LayoutExpr
+foldChildEdge combine edge current children =
+  case children of
+    []         -> current
+    child:rest -> foldChildEdge combine edge (combine current (edge child)) rest
 
 anyBlockLeft :: AnyBlockView -> LayoutExpr
 anyBlockLeft anyBlock =

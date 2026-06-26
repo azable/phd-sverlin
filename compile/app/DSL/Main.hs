@@ -215,14 +215,10 @@ compareValues targetProbe elementProbe = do
 visualization :: MatchSpec
 visualization =
   visualize $ do
-    -- Geometry is sized for the default 800x600 canvas. Container nodes carry
-    -- the row anchors, so constraints read in terms of the shapes they place.
+    -- Geometry uses relative relationships only; the view layer already keeps
+    -- every node on-canvas, so the solver can vary placement between runs.
     Variable cell <- variable @Span (by 104)
     Variable gap <- variable @Span (cell / 3.5)
-    let rowGap :: Span
-        rowGap = cell / (2.8 :: Scalar)
-    let sectionGap :: Span
-        sectionGap = cell / (2 :: Scalar)
     Variable probeSize <- variable @Span (cell * 1.05)
     Bound v <- bindContent
     Bound i <- bindInt
@@ -269,15 +265,8 @@ visualization =
     Variable resultWidth <- variable @Span (probeSize * 2 |+| gap)
     Variable resultHeight <- variable @Span (cell * 0.68)
     Selected result <- select @Match #result
-    Selected results <- node result
     Selected resultTrue <- select @Match (#result <&&> payload True)
     Selected resultFalse <- select @Match (#result <&&> payload False)
-    style results $ do
-      fill (Hsl 214 0.08 0.97)
-      stroke (Hsl 214 0.16 0.78)
-      strokeWidth (cell * 0.022)
-      radius (cell * 0.16)
-      zIndex 1
     style result $ do
       centerText
       fill (Hsl 214 0.06 0.94)
@@ -300,13 +289,13 @@ visualization =
     Selected arrayItems <- select @Value #array
     Selected array <- node arrayItems
     Selected arrayItem <- select @Value (#array <&&> #index @: i)
+    Selected firstArrayItem <- select @Value (#array <&&> #index @: 0)
     Selected nextArrayItem <- select @Value (#array <&&> #index @: (i + 1))
+    let grey :: HslExpr
+        grey = Hsl 0 0 0.9
     style array $ do
-      -- fill (Hsl 166 0.12 0.95)
-      -- stroke (Hsl 166 0.28 0.64)
-      -- strokeWidth (cell * 0.022)
-      -- radius (cell * 0.18)
       zIndex 0
+      fill grey
     style arrayItem $ do
       fill (Hsl 166 (0.2 + asUnit i * 0.08) 0.88)
       stroke (Hsl 166 0.46 0.38)
@@ -319,36 +308,21 @@ visualization =
     Selected processedItem <- select @AnyPayload #processed
     let processedGrey :: HslExpr
         processedGrey = Hsl 0 0 0.8
-    -- Bounds keep the composition on-canvas. Encouragements make those bands
-    -- preferences rather than hidden anchor variables.
+    -- Hard constraints define structure. Soft constraints keep rows visually
+    -- related without pinning them to absolute coordinates.
     ensure $ fill processedItem .==. processedGrey
     ensure $ stroke processedItem .==. processedGrey
-    ensure $ at 56 .<=. left targetSource
-    ensure $ left targetSource .<=. at 88
-    ensure $ at 36 .<=. top targetSource
-    ensure $ top targetSource .<=. at 52
-    ensure $ at 174 .<=. top probes
-    ensure $ top probes .<=. at 198
-    ensure $ at 336 .<=. top results
-    ensure $ top results .<=. at 368
-    ensure $ at 446 .<=. top array
-    ensure $ top array .<=. at 474
-    encourage $ left targetSource .==. at 72
-    encourage $ top targetSource .==. at 44
-    encourage $ top probes .==. at 184
-    encourage $ top results .==. at 352
-    encourage $ top array .==. at 462
-    -- Row alignment and item spacing are exact; vertical gaps are minimums.
-    ensure $ bottom targetSource <| rowGap |> top probes
-    ensure $ left probes .==. left targetSource
-    ensure $ top probe .==. top probes
-    ensure $ left targetProbe .==. left probes
+    -- Rows are ordered by minimum gaps, leaving vertical slack free.
+    ensure $ bottom targetSource =| gap |= top probes
+    ensure $ bottom probes =| gap |= top result
+    ensure $ bottom result =| gap |= top array
+    -- Containers describe row membership; children can spread horizontally.
+    ensure $ y probe .==. y probes
+    ensure $ y arrayItem .==. y array
+    ensure $ left firstArrayItem .==. left array
     ensure $ right targetProbe =| gap |= left probeItem
-    ensure $ bottom probes <| sectionGap |> top results
-    ensure $ left results .==. left probes
-    ensure $ top result .==. top results
-    ensure $ left result .==. left results
-    ensure $ bottom results <| rowGap |> top array
-    ensure $ left array .==. left targetSource
-    ensure $ top arrayItem .==. top array
     ensure $ right arrayItem =| gap |= left nextArrayItem
+    -- The composition prefers a common center line but can vary by seed.
+    encourage $ x probes .==. x targetSource
+    encourage $ x result .==. x probes
+    encourage $ x array .==. x targetSource

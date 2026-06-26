@@ -33,6 +33,8 @@ module LinearTrace.Solver
   , (@/@)
   , (@^@)
   , absExpr
+  , minExpr
+  , maxExpr
   , -- * Constraints
     Constraint(..)
   , ConstrainEq(..)
@@ -219,6 +221,8 @@ data RawExpr
   | EAbs RawExpr
   | ESignum RawExpr
   | EPow RawExpr RawExpr
+  | EMin RawExpr RawExpr
+  | EMax RawExpr RawExpr
   deriving (Eq, Ord, Show)
 
 data Expr ty = Expr
@@ -289,6 +293,12 @@ unaryExpr f (Expr ty inner) = Expr ty (f inner)
 absExpr :: Expr ty -> Expr ty
 absExpr = unaryExpr EAbs
 
+minExpr :: Expr ty -> Expr ty -> Expr ty
+minExpr = binaryExpr EMin
+
+maxExpr :: Expr ty -> Expr ty -> Expr ty
+maxExpr = binaryExpr EMax
+
 substituteExprVars :: [(String, Double)] -> Expr ty -> Expr ty
 substituteExprVars substitutions (Expr ty raw) =
   Expr ty (substituteRawExprVars substitutions raw)
@@ -321,6 +331,14 @@ substituteRawExprVars substitutions expr =
       EPow
         (substituteRawExprVars substitutions base)
         (substituteRawExprVars substitutions to)
+    EMin lhs rhs ->
+      EMin
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    EMax lhs rhs ->
+      EMax
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
 
 infixl 6 @+@
 infixl 6 @-@
@@ -557,6 +575,8 @@ constantRawExprValue expr =
     EAbs inner    -> abs <$> constantRawExprValue inner
     ESignum inner -> signum <$> constantRawExprValue inner
     EPow base to  -> binaryConstant (**) base to
+    EMin lhs rhs  -> binaryConstant min lhs rhs
+    EMax lhs rhs  -> binaryConstant max lhs rhs
 
 binaryConstant ::
      (Double -> Double -> Double) -> RawExpr -> RawExpr -> Maybe Double
@@ -895,6 +915,10 @@ collectRawExprVarTypes expr =
     ESignum inner -> collectRawExprVarTypes inner
     EPow base to ->
       mergeVarTypeMaps (collectRawExprVarTypes base) (collectRawExprVarTypes to)
+    EMin lhs rhs ->
+      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
+    EMax lhs rhs ->
+      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
 
 mergeVarTypeMaps ::
      Map String ScalarType -> Map String ScalarType -> Map String ScalarType
@@ -1013,6 +1037,8 @@ lowerExpr vars expr =
     EAbs inner -> abs (lowerExpr vars inner)
     ESignum inner -> signum (lowerExpr vars inner)
     EPow base to -> lowerExpr vars base ** lowerExpr vars to
+    EMin lhs rhs -> minE (lowerExpr vars lhs) (lowerExpr vars rhs)
+    EMax lhs rhs -> maxE (lowerExpr vars lhs) (lowerExpr vars rhs)
 
 --------------------------------------------------------------------------------
 -- Evaluating symbolic expressions against a solution
@@ -1052,3 +1078,7 @@ evalRawExpr solution expr =
     ESignum inner -> signum <$> evalRawExpr solution inner
     EPow base to ->
       (**) <$> evalRawExpr solution base <*> evalRawExpr solution to
+    EMin lhs rhs ->
+      min <$> evalRawExpr solution lhs <*> evalRawExpr solution rhs
+    EMax lhs rhs ->
+      max <$> evalRawExpr solution lhs <*> evalRawExpr solution rhs
