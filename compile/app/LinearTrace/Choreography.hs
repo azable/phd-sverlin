@@ -155,6 +155,7 @@ module LinearTrace.Choreography
   , fill
   , fontFamily
   , fontSize
+  , padding
   , fontStyle
   , fontWeight
   , fromLabel
@@ -1520,6 +1521,9 @@ class ZIndex input output | input -> output, output -> input where
 class FontSize input output | input -> output, output -> input where
   fontSize :: input -> output
 
+class Padding input output | input -> output, output -> input where
+  padding :: input -> output
+
 class Radius input output | input -> output, output -> input where
   radius :: input -> output
 
@@ -1556,6 +1560,16 @@ instance FontSize Span (NodeRecipe ()) where
 instance FontSize (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
   fontSize selection =
     SelectedExpr selection (styleLayoutValueAccess StyleFontSize)
+
+instance Padding Span (NodeRecipe ()) where
+  padding value =
+    setStyleWithConstraints
+      (spanConstraints value)
+      (VS.setPadding (spanExpr value))
+
+instance Padding (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+  padding selection =
+    SelectedExpr selection (styleLayoutValueAccess StylePadding)
 
 instance Radius Span (NodeRecipe ()) where
   radius value =

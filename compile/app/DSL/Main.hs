@@ -1,16 +1,16 @@
-{-# LANGUAGE ConstraintKinds         #-}
-{-# LANGUAGE DataKinds               #-}
-{-# LANGUAGE FlexibleContexts        #-}
-{-# LANGUAGE FlexibleInstances       #-}
-{-# LANGUAGE GADTs                   #-}
-{-# LANGUAGE LinearTypes             #-}
-{-# LANGUAGE NoImplicitPrelude       #-}
-{-# LANGUAGE OverloadedLabels        #-}
-{-# LANGUAGE OverloadedStrings       #-}
-{-# LANGUAGE RebindableSyntax        #-}
-{-# LANGUAGE TypeApplications        #-}
-{-# LANGUAGE TypeFamilies            #-}
-{-# LANGUAGE UndecidableInstances    #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE LinearTypes #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RebindableSyntax #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module DSL.Main
@@ -18,10 +18,18 @@ module DSL.Main
   , run
   ) where
 
-import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
-import           LinearTrace.Choreography
-import           Prelude.Linear           hiding (fromInteger, fromRational,
-                                           (*), (+), (-), (/), (/=), (<>))
+import Control.Functor.Linear hiding ((<$>), (<*>), ask)
+import LinearTrace.Choreography
+import Prelude.Linear hiding
+  ( (*)
+  , (+)
+  , (-)
+  , (/)
+  , (/=)
+  , (<>)
+  , fromInteger
+  , fromRational
+  )
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -223,7 +231,7 @@ visualization =
     ensure $ cell .>=. by 80
     ensure $ cell .<=. by 104
     encourage $ cell .>=. by 96
-    Variable gap <- variable @Span (cell / 3.5)
+    Variable gap <- variable @Span (cell / 4)
     Variable probeSize <- variable @Span (cell * 1.08)
     Variable valueHue <- variable @Hue
     Bound v <- bindContent
@@ -231,13 +239,15 @@ visualization =
     -- Every value has the same visual representation. Probe copies only scale
     -- this base shape up slightly while they are being compared.
     Selected valueContent <- select @Value (payload v)
+    let valueRadius = cell * 0.12
     style valueContent $ do
       content v
       centerText
       fill (Hsl valueHue 0.24 0.9)
       stroke (Hsl valueHue 0.46 0.34)
       strokeWidth (by 3)
-      radius (cell * 0.12)
+      padding (cell * 0.08)
+      radius valueRadius
       fontSize (cell * 0.44)
       zIndex 2
       width cell
@@ -264,6 +274,7 @@ visualization =
       fill (Hsl 214 0.06 0.94)
       stroke (Hsl 214 0.12 0.52)
       strokeWidth (cell * 0.035)
+      padding (cell * 0.05)
       zIndex 4
       radius (cell * 0.14)
       fontSize (cell * 0.26)
@@ -281,19 +292,20 @@ visualization =
     Selected arrayItems <- select @Value #array
     Selected array <- node arrayItems
     Selected arrayItem <- select @Value (#array <&&> #index @: i)
-    Selected firstArrayItem <- select @Value (#array <&&> #index @: 0)
     Selected nextArrayItem <- select @Value (#array <&&> #index @: (i + 1))
-    let grey :: HslExpr
-        grey = Hsl 0 0 0.9
+    let arrayBackground = Hsl valueHue 0.14 0.95
     style array $ do
       zIndex 0
-      fill grey
+      padding gap
+      radius (valueRadius * 1.3)
+      fill arrayBackground
+      stroke arrayBackground
     Selected processedItem <- select @AnyPayload #processed
-    let processedGrey :: HslExpr
-        processedGrey = Hsl 0 0 0.8
+    let processedColor :: HslExpr
+        processedColor = Hsl valueHue 0.16 0.78
     style processedItem $ do
-      fill processedGrey
-      stroke processedGrey
+      fill processedColor
+      stroke processedColor
     -- Hard constraints define structure. Soft constraints keep rows visually
     -- related without pinning them to absolute coordinates.
     -- Rows are ordered by minimum gaps, leaving vertical slack free.
@@ -303,7 +315,6 @@ visualization =
     -- Containers describe row membership; children can spread horizontally.
     ensure $ y probe .==. y probes
     ensure $ y arrayItem .==. y array
-    ensure $ left firstArrayItem .==. left array
     ensure $ right targetProbe =| gap |= left probeItem
     ensure $ right arrayItem =| gap |= left nextArrayItem
     -- The composition prefers a common center line but can vary by seed.

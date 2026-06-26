@@ -50,6 +50,7 @@ module LinearTrace.View.Style
   , -- * Public style accessors/setters
     opacity
   , zIndex
+  , padding
   , fontSize
   , radius
   , strokeWidth
@@ -58,6 +59,7 @@ module LinearTrace.View.Style
   , stroke
   , setOpacity
   , setZIndex
+  , setPadding
   , setFontSize
   , setRadius
   , setFill
@@ -611,6 +613,27 @@ setZIndex :: FreeExpr -> Style -> Style
 setZIndex = setStyleField . zIndexField
 
 --------------------------------------------------------------------------------
+-- Attribute: padding
+--------------------------------------------------------------------------------
+paddingDefault :: LayoutExpr
+paddingDefault = num 0
+
+paddingField :: LayoutExpr -> StyleField
+paddingField =
+  layoutScalarField
+    "padding"
+    (Just "padding")
+    StylePixels
+    (Just (Range 0 24))
+    nonNegativeConstraints
+
+padding :: HasStyle a => a -> LayoutExpr
+padding value = lookupLayoutField "padding" paddingDefault (style value)
+
+setPadding :: LayoutExpr -> Style -> Style
+setPadding = setStyleField . paddingField
+
+--------------------------------------------------------------------------------
 -- Attribute: fontSize
 --------------------------------------------------------------------------------
 fontSizeDefault :: LayoutExpr
@@ -784,6 +807,7 @@ defaultStyleFields :: [StyleField]
 defaultStyleFields =
   [ opacityField opacityDefault
   , zIndexField zIndexDefault
+  , paddingField paddingDefault
   , fontSizeField fontSizeDefault
   , radiusField radiusDefault
   , strokeWidthField strokeWidthDefault

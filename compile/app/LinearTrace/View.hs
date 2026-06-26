@@ -692,6 +692,7 @@ data ValueComponent =
 data StyleLayoutAttr
   = StyleFontSize
   | StyleRadius
+  | StylePadding
   | StyleStrokeWidth
   deriving (P.Eq, P.Show)
 
@@ -2779,6 +2780,7 @@ styleLayoutAttr attr view =
    in case attr of
         StyleFontSize    -> fontSize style'
         StyleRadius      -> radius style'
+        StylePadding     -> padding style'
         StyleStrokeWidth -> strokeWidth style'
 
 styleUnitAttr :: StyleUnitAttr -> AnyLayoutView -> UnitExpr
@@ -3091,10 +3093,10 @@ virtualFitConstraints virtual =
 
 virtualExactFitConstraints :: VirtualView tag -> AnyBlockView -> [Constraint]
 virtualExactFitConstraints virtual child =
-  [ left virtual S.@==@ anyBlockLeft child
-  , top virtual S.@==@ anyBlockTop child
-  , right virtual S.@==@ anyBlockRight child
-  , bottom virtual S.@==@ anyBlockBottom child
+  [ left virtual S.@==@ (anyBlockLeft child @-@ virtualPadding virtual)
+  , top virtual S.@==@ (anyBlockTop child @-@ virtualPadding virtual)
+  , right virtual S.@==@ (anyBlockRight child @+@ virtualPadding virtual)
+  , bottom virtual S.@==@ (anyBlockBottom child @+@ virtualPadding virtual)
   ]
 
 virtualTightFitConstraints :: VirtualView tag -> [AnyBlockView] -> [Constraint]
@@ -3103,11 +3105,22 @@ virtualTightFitConstraints virtual children =
     [] -> []
     child:rest ->
       let allChildren = child : rest
-       in [ left virtual S.@==@ minChildEdge anyBlockLeft allChildren
-          , top virtual S.@==@ minChildEdge anyBlockTop allChildren
-          , right virtual S.@==@ maxChildEdge anyBlockRight allChildren
-          , bottom virtual S.@==@ maxChildEdge anyBlockBottom allChildren
+       in [ left virtual
+              S.@==@ (minChildEdge anyBlockLeft allChildren
+                        @-@ virtualPadding virtual)
+          , top virtual
+              S.@==@ (minChildEdge anyBlockTop allChildren
+                        @-@ virtualPadding virtual)
+          , right virtual
+              S.@==@ (maxChildEdge anyBlockRight allChildren
+                        @+@ virtualPadding virtual)
+          , bottom virtual
+              S.@==@ (maxChildEdge anyBlockBottom allChildren
+                        @+@ virtualPadding virtual)
           ]
+
+virtualPadding :: VirtualView tag -> LayoutExpr
+virtualPadding virtual = padding (virtualStyle virtual)
 
 minChildEdge :: (AnyBlockView -> LayoutExpr) -> [AnyBlockView] -> LayoutExpr
 minChildEdge edge children =
