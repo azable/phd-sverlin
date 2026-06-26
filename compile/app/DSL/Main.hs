@@ -218,7 +218,11 @@ visualization =
     -- Geometry uses relative relationships only; the view layer already keeps
     -- every node on-canvas, so the solver can vary placement between runs.
     Variable cell <- variable @Span
+    -- Keep cells in a useful range and softly prefer the larger end while
+    -- still leaving some seed-driven variation in the solved layout.
     ensure $ cell .>=. by 80
+    ensure $ cell .<=. by 104
+    encourage $ cell .>=. by 96
     Variable gap <- variable @Span (cell / 3.5)
     Variable probeSize <- variable @Span (cell * 1.08)
     Variable valueHue <- variable @Hue
