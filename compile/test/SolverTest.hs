@@ -2,9 +2,10 @@
 
 module Main where
 
-import           Control.Exception   (ErrorCall, evaluate, try)
-import qualified Data.List           as List
-import qualified Data.Map.Strict     as Map
+import           Control.Exception      (ErrorCall, evaluate, try)
+import qualified Data.List              as List
+import qualified Data.Map.Strict        as Map
+import qualified LinearTrace.View.Style as Style
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -34,6 +35,7 @@ main =
        , componentTests
        , cyclicDomainTests
        , categoricalTests
+       , styleChoiceTests
        , seededFixtureTests
        , problemInspectionTests
        ])
@@ -240,6 +242,18 @@ categoricalTests =
         solution <- solveProblem defaultSolveConfig problem
         evalChoice solution lhs @?= Just (category "no-match")
         evalChoice solution rhs @?= Just (category "no-match")
+    , testCase "solves free category choices" $ do
+        let probe = choice "test.choice.free" :: Choice TestProbe
+            problem = solverProblemWithChoices [] [freeChoice probe]
+            inspected =
+              compiledInspection (compileProblem defaultSolveConfig problem)
+        inspectedChoiceCount inspected @?= 1
+        inspectedChoiceBranchCount inspected @?= 2
+        solution <- solveProblem defaultSolveConfig problem
+        assertBool
+          "expected a sampled category from the probe domain"
+          (evalChoice solution probe
+             `elem` [Just (category "match"), Just (category "no-match")])
     , testCase "enforces categorical branch limit" $ do
         let lhs = choice "test.choice.limit.lhs" :: Choice TestProbe
             rhs = choice "test.choice.limit.rhs" :: Choice TestProbe
@@ -252,6 +266,72 @@ categoricalTests =
              (inspectedChoiceBranchCount
                 (compiledInspection (compileProblem config problem))))
     ]
+
+styleChoiceTests :: TestTree
+styleChoiceTests =
+  testGroup
+    "choice-backed styles"
+    [ testCase "fixed categorical styles do not create solver branches" $ do
+        let style' = Style.setFontWeight Style.FontWeightBold literalStyle
+            inspected =
+              compiledInspection
+                (compileProblem defaultSolveConfig (styleProblem style' []))
+        inspectedChoiceCount inspected @?= 0
+        inspectedChoiceBranchCount inspected @?= 0
+        solution <- solveProblem defaultSolveConfig (styleProblem style' [])
+        materialized <- assertMaterializedStyle solution style'
+        lookupCss "fontWeight" materialized @?= Just "bold"
+    , testCase "solved categorical styles materialize through solver choices" $ do
+        let selected = choice "test.style.fontWeight" :: Choice Style.FontWeight
+            style' = Style.setFontWeightChoice selected literalStyle
+            problem = styleProblem style' [choose selected (category "bold")]
+            inspected =
+              compiledInspection (compileProblem defaultSolveConfig problem)
+        inspectedChoiceCount inspected @?= 1
+        assertBool
+          "expected solved style choice to register a finite domain"
+          (inspectedChoiceBranchCount inspected > 0)
+        solution <- solveProblem defaultSolveConfig problem
+        materialized <- assertMaterializedStyle solution style'
+        lookupCss "fontWeight" materialized @?= Just "bold"
+        lookupFontWeight materialized @?= Just Style.FontWeightBold
+    ]
+
+literalStyle :: Style.Style
+literalStyle =
+  Style.styleWithBounds
+    (Style.Bounds
+       (num 0 :: Style.LayoutExpr)
+       (num 0 :: Style.LayoutExpr)
+       (num 100 :: Style.LayoutExpr)
+       (num 40 :: Style.LayoutExpr))
+
+styleProblem :: Style.Style -> [ChoiceConstraint] -> SolverProblem
+styleProblem style' choiceConstraints =
+  solverProblemWithChoices
+    (Style.styleConstraints style')
+    (Style.styleChoiceConstraints style' ++ choiceConstraints)
+
+assertMaterializedStyle :: Solution -> Style.Style -> IO Style.MaterializedStyle
+assertMaterializedStyle solution style' =
+  case Style.materializeStyle solution style' of
+    Nothing           -> assertFailure "expected style to materialize"
+    Just materialized -> pure materialized
+
+lookupCss :: String -> Style.MaterializedStyle -> Maybe String
+lookupCss name style' =
+  lookup
+    name
+    (Style.materializedCssAttrsWith (const "") (const "") id (\_ _ -> "") style')
+
+lookupFontWeight :: Style.MaterializedStyle -> Maybe Style.FontWeight
+lookupFontWeight style' =
+  case [ value
+       | Style.MaterializedFontWeightAttr _ value <-
+           Style.materializedDiscrete style'
+       ] of
+    [value] -> value
+    _       -> Nothing
 
 seededFixtureTests :: TestTree
 seededFixtureTests =

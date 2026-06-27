@@ -2471,7 +2471,11 @@ solveCSP :: SolveConfig -> ViewGraph -> IO Solution
 solveCSP config graph = S.solveProblem config (viewSolveProblem graph)
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
-solveCSPWithSeed seed = solveCSP (viewSolveConfig seed)
+solveCSPWithSeed seed graph =
+  solveCSP (viewSolveConfig seed) graph P.>>= \solution ->
+    case viewSolutionAcceptable solution of
+      True  -> P.pure solution
+      False -> solveCSP (viewRetrySolveConfig seed) graph
 
 viewSolveConfig :: RandomSeed -> SolveConfig
 viewSolveConfig seed =
@@ -2481,8 +2485,33 @@ viewSolveConfig seed =
         (P.fromInteger (1 :: P.Integer))
     $ S.withInitialSeed seed S.defaultSolveConfig
 
+viewRetrySolveConfig :: RandomSeed -> SolveConfig
+viewRetrySolveConfig seed =
+  S.withMaxOptimizerIterations 3000
+    $ S.withOptimizerTolerances (Just 1e-7) (Just 1e-5)
+    $ S.withConstraintWeights
+        (P.fromInteger (10 :: P.Integer))
+        (P.fromInteger (1 :: P.Integer))
+    $ S.withInitialSeed seed S.defaultSolveConfig
+
+viewSolutionAcceptable :: Solution -> P.Bool
+viewSolutionAcceptable solution = solutionEnergy solution P.<= 1e-4
+
 viewSolveProblem :: ViewGraph -> SolverProblem
-viewSolveProblem graph = S.solverProblem (viewConstraints graph)
+viewSolveProblem graph =
+  S.solverProblemWithChoices
+    (viewConstraints graph)
+    (viewStyleChoiceConstraints graph)
+
+viewStyleChoiceConstraints :: ViewGraph -> [ChoiceConstraint]
+viewStyleChoiceConstraints graph =
+  P.concatMap viewNodeStyleChoiceConstraints (viewNodes graph)
+
+viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
+viewNodeStyleChoiceConstraints node =
+  case node of
+    BlockViewNode block     -> styleChoiceConstraints (blockStyle block)
+    VirtualViewNode virtual -> styleChoiceConstraints (virtualStyle virtual)
 
 data AnyBlockView where
   AnyBlockView :: BlockView tag -> AnyBlockView

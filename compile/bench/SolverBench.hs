@@ -38,18 +38,26 @@ defaultOptions =
     }
 
 data BenchRun = BenchRun
-  { benchFixtureName   :: String
-  , benchSeed          :: Int
-  , benchIteration     :: Int
-  , benchCompileMs     :: Double
-  , benchSolveMs       :: Double
-  , benchDurationMs    :: Double
-  , benchSolverSuccess :: Bool
-  , benchEnergy        :: Double
-  , benchIterations    :: Int
-  , benchFuncEvals     :: Int
-  , benchGradEvals     :: Int
-  , benchFailures      :: [String]
+  { benchFixtureName    :: String
+  , benchSeed           :: Int
+  , benchIteration      :: Int
+  , benchCompileMs      :: Double
+  , benchSolveMs        :: Double
+  , benchDurationMs     :: Double
+  , benchSolverSuccess  :: Bool
+  , benchEnergy         :: Double
+  , benchVariables      :: Int
+  , benchNativeBounds   :: Int
+  , benchEnergyTerms    :: Int
+  , benchRawTerms       :: Int
+  , benchCanonical      :: Int
+  , benchEliminated     :: Int
+  , benchChoices        :: Int
+  , benchChoiceBranches :: Int
+  , benchIterations     :: Int
+  , benchFuncEvals      :: Int
+  , benchGradEvals      :: Int
+  , benchFailures       :: [String]
   }
 
 main :: IO ()
@@ -86,7 +94,8 @@ timeFixtureSolve iteration fixture seed = do
   let config = withInitialSeed seed defaultSolveConfig
       problem = solverProblem (fixtureConstraints fixture)
       compiled = compileProblem config problem
-  _ <- evaluate (forceInspection (compiledInspection compiled))
+      inspection = compiledInspection compiled
+  _ <- evaluate (forceInspection inspection)
   compiledAt <- getMonotonicTimeNSec
   solution <- solveCompiledProblem compiled
   end <- getMonotonicTimeNSec
@@ -103,6 +112,14 @@ timeFixtureSolve iteration fixture seed = do
       , benchDurationMs = compileMs + solveMs
       , benchSolverSuccess = solutionSuccess solution
       , benchEnergy = solutionEnergy solution
+      , benchVariables = inspectedVariableCount inspection
+      , benchNativeBounds = inspectedNativeBoundCount inspection
+      , benchEnergyTerms = inspectedEnergyTermCount inspection
+      , benchRawTerms = inspectedRawCount inspection
+      , benchCanonical = inspectedCanonicalCount inspection
+      , benchEliminated = inspectedEliminatedCount inspection
+      , benchChoices = inspectedChoiceCount inspection
+      , benchChoiceBranches = inspectedChoiceBranchCount inspection
       , benchIterations = solutionIterations solution
       , benchFuncEvals = solutionFunctionEvaluations solution
       , benchGradEvals = solutionGradientEvaluations solution
@@ -260,6 +277,14 @@ runJson run =
     , "durationMs" .= benchDurationMs run
     , "solverSuccess" .= benchSolverSuccess run
     , "energy" .= benchEnergy run
+    , "variables" .= benchVariables run
+    , "nativeBounds" .= benchNativeBounds run
+    , "energyTerms" .= benchEnergyTerms run
+    , "rawTerms" .= benchRawTerms run
+    , "canonicalTerms" .= benchCanonical run
+    , "eliminatedTerms" .= benchEliminated run
+    , "choices" .= benchChoices run
+    , "choiceBranches" .= benchChoiceBranches run
     , "iterations" .= benchIterations run
     , "functionEvaluations" .= benchFuncEvals run
     , "gradientEvaluations" .= benchGradEvals run
@@ -286,6 +311,13 @@ printTextBenchmark fixtures runs = do
          , "solve=" ++ formatMs (benchSolveMs run)
          , "total=" ++ formatMs (benchDurationMs run)
          , "energy=" ++ printf "%.6g" (benchEnergy run)
+         , "vars=" ++ show (benchVariables run)
+         , "bounds=" ++ show (benchNativeBounds run)
+         , "terms=" ++ show (benchEnergyTerms run)
+         , "raw=" ++ show (benchRawTerms run)
+         , "canon=" ++ show (benchCanonical run)
+         , "elim=" ++ show (benchEliminated run)
+         , "choices=" ++ show (benchChoices run)
          , "iters=" ++ show (benchIterations run)
          , "evals=" ++ show (benchFuncEvals run)
          ])

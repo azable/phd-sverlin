@@ -9,6 +9,7 @@ module Solver.Choice
   , choiceName
   , CategoricalType(..)
   , ChoiceConstraint
+  , freeChoice
   , choose
   , sameChoice
   , differentChoice
@@ -58,10 +59,14 @@ data ChoiceSpec = ChoiceSpec
   } deriving (Eq, Ord, Show)
 
 data ChoiceConstraint
-  = ChoiceIs ChoiceSpec String
+  = ChoiceFree ChoiceSpec
+  | ChoiceIs ChoiceSpec String
   | ChoiceSame ChoiceSpec ChoiceSpec
   | ChoiceDifferent ChoiceSpec ChoiceSpec
   deriving (Eq, Ord, Show)
+
+freeChoice :: Choice ty -> ChoiceConstraint
+freeChoice selected = ChoiceFree (choiceSpec selected)
 
 choose :: Choice ty -> Category ty -> ChoiceConstraint
 choose selected value = ChoiceIs (choiceSpec selected) (categoryName value)
@@ -82,6 +87,7 @@ choiceSpec selected =
 choiceConstraintSpecs :: ChoiceConstraint -> [(String, [String])]
 choiceConstraintSpecs constraint =
   case constraint of
+    ChoiceFree spec         -> [specEntry spec]
     ChoiceIs spec _         -> [specEntry spec]
     ChoiceSame lhs rhs      -> [specEntry lhs, specEntry rhs]
     ChoiceDifferent lhs rhs -> [specEntry lhs, specEntry rhs]
@@ -92,6 +98,7 @@ specEntry spec = (choiceSpecName spec, choiceSpecCategories spec)
 choiceConstraintSatisfied :: Map String String -> ChoiceConstraint -> Bool
 choiceConstraintSatisfied values constraint =
   case constraint of
+    ChoiceFree spec -> Map.member (choiceSpecName spec) values
     ChoiceIs spec expected ->
       Map.lookup (choiceSpecName spec) values == Just expected
     ChoiceSame lhs rhs -> relationSatisfied (==) values lhs rhs

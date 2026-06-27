@@ -14,11 +14,16 @@ data FixtureLayout
 
 data FixtureAngle
 
+data FixtureUnit
+
 instance SymbolicType FixtureLayout where
   symbolicDomain _ = realDomain "fixture-layout"
 
 instance SymbolicType FixtureAngle where
   symbolicDomain _ = cyclicDomain "fixture-angle" 360
+
+instance SymbolicType FixtureUnit where
+  symbolicDomain _ = realDomain "fixture-unit"
 
 data SolverFixture = SolverFixture
   { fixtureName        :: String
@@ -27,7 +32,7 @@ data SolverFixture = SolverFixture
   }
 
 availableFixtures :: [SolverFixture]
-availableFixtures = [boundedRowFixture, cyclicHueFixture]
+availableFixtures = [boundedRowFixture, cyclicHueFixture, appShapedFixture]
 
 defaultBenchmarkSeeds :: [RandomSeed]
 defaultBenchmarkSeeds =
@@ -48,6 +53,7 @@ validateFixtureSolution fixture solution =
   case fixtureName fixture of
     "bounded-row" -> validateBoundedRow solution
     "cyclic-hue"  -> validateCyclicHue solution
+    "app-shaped"  -> validateAppShaped solution
     _             -> []
 
 boundedRowFixture :: SolverFixture
@@ -201,3 +207,195 @@ validateCyclicHue solution =
           | abs (value - expected) <= 1e-3 -> []
           | otherwise ->
             [label ++ " expected " ++ show expected ++ ", got " ++ show value]
+
+appShapedFixture :: SolverFixture
+appShapedFixture =
+  SolverFixture
+    { fixtureName = "app-shaped"
+    , fixtureDescription =
+        "A visualization-like grid with layout, colour variables, native bounds, bridge equalities, and soft style preferences."
+    , fixtureConstraints =
+        appNativeBoundsConstraints
+          ++ appGridConstraints
+          ++ appStylePreferenceConstraints
+    }
+
+appColumns :: Int
+appColumns = 4
+
+appRows :: Int
+appRows = 3
+
+appNodeCount :: Int
+appNodeCount = appColumns * appRows
+
+appIndices :: [Int]
+appIndices = [0 .. appNodeCount - 1]
+
+appRowIndices :: [Int]
+appRowIndices = [0 .. appRows - 1]
+
+appHorizontalGapIndices :: [(Int, Int)]
+appHorizontalGapIndices =
+  [(row, col) | row <- appRowIndices, col <- [0 .. appColumns - 2]]
+
+appVerticalGapIndices :: [Int]
+appVerticalGapIndices = [0 .. appRows - 2]
+
+appIndex :: Int -> Int -> Int
+appIndex row col = row * appColumns + col
+
+appLeft :: Int -> Expr FixtureLayout
+appLeft i = var ("fixture.app." ++ show i ++ ".left")
+
+appTop :: Int -> Expr FixtureLayout
+appTop i = var ("fixture.app." ++ show i ++ ".top")
+
+appWidth :: Int -> Expr FixtureLayout
+appWidth i = var ("fixture.app." ++ show i ++ ".width")
+
+appHeight :: Int -> Expr FixtureLayout
+appHeight i = var ("fixture.app." ++ show i ++ ".height")
+
+appHue :: Int -> Expr FixtureAngle
+appHue i = var ("fixture.app." ++ show i ++ ".hue")
+
+appSaturation :: Int -> Expr FixtureUnit
+appSaturation i = var ("fixture.app." ++ show i ++ ".saturation")
+
+appLightness :: Int -> Expr FixtureUnit
+appLightness i = var ("fixture.app." ++ show i ++ ".lightness")
+
+appHorizontalGap :: Int -> Int -> Expr FixtureLayout
+appHorizontalGap row col =
+  var ("fixture.app.gap.x." ++ show row ++ "." ++ show col)
+
+appVerticalGap :: Int -> Expr FixtureLayout
+appVerticalGap row = var ("fixture.app.gap.y." ++ show row)
+
+appNativeBoundsConstraints :: [Constraint]
+appNativeBoundsConstraints =
+  concat
+    [ [ within (appLeft i) (Range 0 760)
+      , within (appTop i) (Range 0 560)
+      , within (appWidth i) (Range 24 90)
+      , within (appHeight i) (Range 20 72)
+      , within (appHue i) (Range 0 360)
+      , within (appSaturation i) (Range 0.35 0.75)
+      , within (appLightness i) (Range 0.35 0.75)
+      ]
+    | i <- appIndices
+    ]
+    ++ [ within (appHorizontalGap row col) (Range 8 28)
+       | (row, col) <- appHorizontalGapIndices
+       ]
+    ++ [ within (appVerticalGap row) (Range 12 36)
+       | row <- appVerticalGapIndices
+       ]
+
+appGridConstraints :: [Constraint]
+appGridConstraints =
+  [appLeft 0 @==@ num 32, appTop 0 @==@ num 64]
+    ++ concatMap appRowConstraints appRowIndices
+    ++ concatMap appNextRowConstraints [0 .. appRows - 2]
+    ++ [appHeight i @==@ appWidth i @*@ num 0.72 | i <- appIndices]
+
+appRowConstraints :: Int -> [Constraint]
+appRowConstraints row =
+  concat
+    [ [ appLeft next
+          @==@ appLeft current
+          @+@ appWidth current
+          @+@ appHorizontalGap row col
+      , appTop next @==@ appTop current
+      ]
+    | col <- [0 .. appColumns - 2]
+    , let current = appIndex row col
+    , let next = appIndex row (col + 1)
+    ]
+
+appNextRowConstraints :: Int -> [Constraint]
+appNextRowConstraints row =
+  [ appLeft nextFirst @==@ appLeft 0
+  , appTop nextFirst
+      @==@ appTop currentFirst
+      @+@ appHeight currentFirst
+      @+@ appVerticalGap row
+  ]
+  where
+    currentFirst = appIndex row 0
+    nextFirst = appIndex (row + 1) 0
+
+appStylePreferenceConstraints :: [Constraint]
+appStylePreferenceConstraints =
+  [soften (appWidth i @==@ num 48) | i <- appIndices]
+    ++ [ soften (appHue i @==@ num (fromIntegral ((i * 23 + 20) `mod` 360)))
+       | i <- appIndices
+       ]
+    ++ [soften (appSaturation i @==@ num 0.58) | i <- appIndices]
+    ++ [soften (appLightness i @==@ num 0.52) | i <- appIndices]
+    ++ [ soften (appHorizontalGap row col @==@ num 14)
+       | (row, col) <- appHorizontalGapIndices
+       ]
+    ++ [soften (appVerticalGap row @==@ num 20) | row <- appVerticalGapIndices]
+
+validateAppShaped :: Solution -> [String]
+validateAppShaped solution =
+  catMaybes
+    [ if solutionEnergy solution < 1e-4
+        then Nothing
+        else Just
+               ("expected app hard energy < 1e-4, got "
+                  ++ show (solutionEnergy solution))
+    ]
+    ++ concatMap validateNode appIndices
+    ++ concatMap validateHorizontal appHorizontalGapIndices
+    ++ concatMap validateVertical appVerticalGapIndices
+  where
+    validateNode i =
+      concat
+        [ expectRange ("app left " ++ show i) 0 760 (appLeft i)
+        , expectRange ("app top " ++ show i) 0 560 (appTop i)
+        , expectRange ("app width " ++ show i) 24 90 (appWidth i)
+        , expectRange ("app height " ++ show i) 20 72 (appHeight i)
+        , expectRange ("app hue " ++ show i) 0 360 (appHue i)
+        , expectRange ("app saturation " ++ show i) 0.35 0.75 (appSaturation i)
+        , expectRange ("app lightness " ++ show i) 0.35 0.75 (appLightness i)
+        , expectNear
+            ("app aspect " ++ show i)
+            (appHeight i)
+            (appWidth i @*@ num 0.72)
+        ]
+    validateHorizontal (row, col) =
+      let current = appIndex row col
+          next = appIndex row (col + 1)
+       in expectNear
+            ("app horizontal " ++ show row ++ "." ++ show col)
+            (appLeft next)
+            (appLeft current @+@ appWidth current @+@ appHorizontalGap row col)
+    validateVertical row =
+      let currentFirst = appIndex row 0
+          nextFirst = appIndex (row + 1) 0
+       in expectNear
+            ("app vertical " ++ show row)
+            (appTop nextFirst)
+            (appTop currentFirst
+               @+@ appHeight currentFirst
+               @+@ appVerticalGap row)
+    expectRange label lower upper expr =
+      case evalExpr solution expr of
+        Nothing -> ["missing " ++ label]
+        Just value
+          | not (finite value) -> [label ++ " is not finite: " ++ show value]
+          | value < lower - 1e-3 ->
+            [label ++ " below lower bound: " ++ show value]
+          | value > upper + 1e-3 ->
+            [label ++ " above upper bound: " ++ show value]
+          | otherwise -> []
+    expectNear label lhs rhs =
+      case (evalExpr solution lhs, evalExpr solution rhs) of
+        (Just lhsValue, Just rhsValue)
+          | abs (lhsValue - rhsValue) <= 1e-3 -> []
+          | otherwise ->
+            [label ++ " mismatch: " ++ show lhsValue ++ " vs " ++ show rhsValue]
+        _ -> ["missing " ++ label]
