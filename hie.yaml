@@ -1,4 +1,12 @@
 cradle:
   cabal:
+    - path: './compile/src'
+      component: 'compile:lib:compile'
     - path: './compile/app'
       component: 'compile:exe:compile-app'
+    - path: './compile/test'
+      component: 'compile:test:solver-test'
+    - path: './compile/test-support'
+      component: 'compile:test:solver-test'
+    - path: './compile/bench'
+      component: 'compile:exe:solver-bench'

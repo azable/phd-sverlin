@@ -12,6 +12,7 @@ node_modules
 build
 dist
 coverage
+compile/dist-newstyle*
 
 # Installed Codex/shadcn skills are vendored documentation and metadata.
 .agents/skills/**

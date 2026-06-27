@@ -20,6 +20,7 @@ data RunConfig = RunConfig
   { runSeed        :: Int
   , runShowDetails :: Bool
   , runOutputMode  :: OutputMode
+  , runDiagnostics :: Bool
   , runPrintTrace  :: Bool
   }
 
@@ -29,6 +30,7 @@ defaultRunConfig =
     { runSeed = 0
     , runShowDetails = False
     , runOutputMode = OutputFile "static/compiled.json"
+    , runDiagnostics = True
     , runPrintTrace = True
     }
 
@@ -42,16 +44,17 @@ runVisualization ::
 runVisualization config graph = do
   let diagnostics = diagnosticsHandle (runOutputMode config)
   when
-    (runPrintTrace config)
+    (runDiagnostics config && runPrintTrace config)
     (Print.hPrintTrace diagnostics (View.visualTraceCore graph))
   let viewGraph = buildViewGraph graph
   solved <- View.solveCSPWithSeed (View.RandomSeed (runSeed config)) viewGraph
-  Print.hPrintSolutionByStep
-    diagnostics
-    (runShowDetails config)
-    solved
-    viewGraph
-  Print.hPrintSolutionSummary diagnostics solved
+  when (runDiagnostics config) $ do
+    Print.hPrintSolutionByStep
+      diagnostics
+      (runShowDetails config)
+      solved
+      viewGraph
+    Print.hPrintSolutionSummary diagnostics solved
   case Compile.compileSolved solved viewGraph of
     Left err -> pure (Left err)
     Right compiled -> do

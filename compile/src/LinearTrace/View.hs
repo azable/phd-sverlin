@@ -77,7 +77,6 @@ module LinearTrace.View
   , StyleFreeAttr(..)
   , StyleColorAttr(..)
   , HslPart(..)
-  , valueComponent
   , rawValueEndpoint
   , selectionValueEndpoint
   , layoutValueAccess
@@ -143,7 +142,6 @@ module LinearTrace.View
   , viewNodes
   , viewSteps
   , viewConstraints
-  , viewInitialVars
   , viewRenderFrames
   , -- * Styles
     Style
@@ -252,10 +250,8 @@ module LinearTrace.View
 
 import           Control.Functor.Linear                hiding ((<$>), (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
-import qualified Data.Char                             as Char
 import           Data.Kind                             (Type)
 import qualified Data.Kind                             as K
-import qualified Data.List                             as List
 import qualified Data.Map.Strict                       as Map
 import qualified Data.Maybe                            as Maybe
 import           Data.Proxy                            (Proxy (..))
@@ -267,14 +263,15 @@ import           GHC.TypeLits                          (ErrorMessage (..),
                                                         TypeError, type (+),
                                                         type CmpNat)
 import qualified LinearTrace.Core.Internal             as C
-import           LinearTrace.Solver                    hiding (absExpr, num,
-                                                        (@*@), (@+@), (@-@),
-                                                        (@/@), (@<=@), (@==@),
-                                                        (@>=@), (@^@))
-import qualified LinearTrace.Solver                    as S
 import           LinearTrace.View.Style
 import qualified Prelude                               as P
 import           Prelude.Linear
+import qualified Solver                                as S
+import           Solver                                hiding (absExpr,
+                                                        component, num, (@*@),
+                                                        (@+@), (@-@), (@/@),
+                                                        (@<=@), (@==@), (@>=@),
+                                                        (@^@))
 import qualified Unsafe.Coerce                         as Unsafe
 
 --------------------------------------------------------------------------------
@@ -689,8 +686,7 @@ data LayoutRelation
   | LayoutLessOrEqual
   deriving (P.Eq, P.Show)
 
-data ValueComponent =
-  ValueComponent ScalarType RawExpr [Constraint]
+type ValueComponent = Component
 
 data StyleLayoutAttr
   = StyleFontSize
@@ -814,9 +810,6 @@ matchVirtualNode key query patch =
 matchGlobalLayout :: ViewBuilder () -> MatchSpec
 matchGlobalLayout body = MatchSpec [] [GlobalLayout body] []
 
-valueComponent :: SymbolicType ty => Expr ty -> [Constraint] -> ValueComponent
-valueComponent expr = ValueComponent (exprType expr) (exprRaw expr)
-
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
 
@@ -825,19 +818,19 @@ selectionValueEndpoint = SelectionValueEndpoint
 
 layoutValueAccess :: LayoutAttr -> ValueAccess
 layoutValueAccess attr =
-  ValueAccess [] (\view -> valueComponent (layoutViewAttr attr view) [])
+  ValueAccess [] (\view -> S.component (layoutViewAttr attr view) [])
 
 styleLayoutValueAccess :: StyleLayoutAttr -> ValueAccess
 styleLayoutValueAccess attr =
-  ValueAccess [] (\view -> valueComponent (styleLayoutAttr attr view) [])
+  ValueAccess [] (\view -> S.component (styleLayoutAttr attr view) [])
 
 styleUnitValueAccess :: StyleUnitAttr -> ValueAccess
 styleUnitValueAccess attr =
-  ValueAccess [] (\view -> valueComponent (styleUnitAttr attr view) [])
+  ValueAccess [] (\view -> S.component (styleUnitAttr attr view) [])
 
 styleFreeValueAccess :: StyleFreeAttr -> ValueAccess
 styleFreeValueAccess attr =
-  ValueAccess [] (\view -> valueComponent (styleFreeAttr attr view) [])
+  ValueAccess [] (\view -> S.component (styleFreeAttr attr view) [])
 
 styleColorPartValueAccess :: StyleColorAttr -> HslPart -> ValueAccess
 styleColorPartValueAccess color part =
@@ -926,7 +919,6 @@ data ViewGraph = ViewGraph
   { viewNodes        :: [ViewNode]
   , viewSteps        :: [ViewStep]
   , viewConstraints  :: [Constraint]
-  , viewInitialVars  :: [InitialVar]
   , viewRenderFrames :: [[RenderIntent]]
   }
 
@@ -1421,7 +1413,6 @@ defaultViewEnv =
 data ViewOutput = ViewOutput
   { emittedNodes         :: [ViewNode]
   , emittedConstraints   :: [Constraint]
-  , emittedInitialVars   :: [InitialVar]
   , emittedRenderFrames  :: [[RenderIntent]]
   , pendingRenderIntents :: [RenderIntent]
   }
@@ -1453,11 +1444,10 @@ appendSomeAudit lhs rhs =
         SomeAudit rhsAudit -> SomeAudit (appendAudit lhsAudit rhsAudit)
 
 instance Semigroup ViewOutput where
-  ViewOutput nodesA constraintsA initialsA framesA pendingA <> ViewOutput nodesB constraintsB initialsB framesB pendingB =
+  ViewOutput nodesA constraintsA framesA pendingA <> ViewOutput nodesB constraintsB framesB pendingB =
     ViewOutput
       { emittedNodes = nodesA ++ nodesB
       , emittedConstraints = constraintsA ++ constraintsB
-      , emittedInitialVars = initialsA ++ initialsB
       , emittedRenderFrames = framesA ++ framesB
       , pendingRenderIntents = pendingA ++ pendingB
       }
@@ -1467,7 +1457,6 @@ instance Monoid ViewOutput where
     ViewOutput
       { emittedNodes = []
       , emittedConstraints = []
-      , emittedInitialVars = []
       , emittedRenderFrames = []
       , pendingRenderIntents = []
       }
@@ -2443,225 +2432,35 @@ buildCSP (VisualTraceGraph spec (C.TraceGraph _blocks steps)) =
       -- rules can later materialize optional style fields, so collect style
       -- constraints again after materialization.
       nodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
+      nodeRangeConstraints =
+        P.concatMap (viewNodeRangeConstraints defaultViewEnv) nodes
       constraints =
         builtConstraints stepsOutput
           P.++ nodeStyleConstraints
+          P.++ nodeRangeConstraints
           P.++ virtualConstraints
           P.++ matchSpecConstraints spec nodes
-      initialVars =
-        dedupeInitialVars
-          (builtInitialVars stepsOutput
-             P.++ P.concatMap (viewNodeInitialVars defaultViewEnv) nodes)
       renderFrames =
         addVirtualRenderFrames virtualNodes (builtRenderFrames stepsOutput)
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
         , viewConstraints = constraints
-        , viewInitialVars = initialVars
         , viewRenderFrames = renderFrames
         }
 
 solveCSP :: SolveConfig -> ViewGraph -> IO Solution
-solveCSP config graph =
-  solveWithInitialVars config (viewInitialVars graph) (viewConstraints graph)
+solveCSP config graph = S.solveProblem config (viewSolveProblem graph)
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
-solveCSPWithSeed seed =
-  solveCSP
-    defaultSolveConfig
-      {initialSeed = seed, initialValuesFor = viewInitialValues defaultViewEnv}
+solveCSPWithSeed seed = solveCSP S.defaultSolveConfig {initialSeed = seed}
 
-data LayoutInitialField
-  = LayoutInitialLeft
-  | LayoutInitialTop
-  | LayoutInitialWidth
-  | LayoutInitialHeight
-
-data LayoutInitialGroup = LayoutInitialGroup
-  { layoutInitialLeft   :: Maybe InitialValueSpec
-  , layoutInitialTop    :: Maybe InitialValueSpec
-  , layoutInitialWidth  :: Maybe InitialValueSpec
-  , layoutInitialHeight :: Maybe InitialValueSpec
-  }
-
-emptyLayoutInitialGroup :: LayoutInitialGroup
-emptyLayoutInitialGroup =
-  LayoutInitialGroup
-    { layoutInitialLeft = Nothing
-    , layoutInitialTop = Nothing
-    , layoutInitialWidth = Nothing
-    , layoutInitialHeight = Nothing
+viewSolveProblem :: ViewGraph -> SolverProblem
+viewSolveProblem graph =
+  S.SolverProblem
+    { S.solverConstraints = viewConstraints graph
+    , S.solverInitialOverrides = Map.empty
     }
-
-viewInitialValues ::
-     ViewEnv -> RandomSeed -> [InitialValueSpec] -> Map.Map P.String P.Double
-viewInitialValues env seed specs =
-  let defaults = S.initialValuesFor S.defaultSolveConfig seed specs
-      groups = layoutInitialGroups specs
-      sampled =
-        P.foldl
-          Map.union
-          Map.empty
-          (P.map
-             (layoutGroupInitialValues env seed defaults)
-             (Map.toList groups))
-   in Map.union sampled defaults
-
-layoutInitialGroups :: [InitialValueSpec] -> Map.Map P.String LayoutInitialGroup
-layoutInitialGroups = P.foldl addSpec Map.empty
-  where
-    addSpec groups spec =
-      case layoutInitialField spec of
-        Nothing -> groups
-        Just (groupName, field) ->
-          Map.alter (mergeLayoutInitialField field spec) groupName groups
-
-mergeLayoutInitialField ::
-     LayoutInitialField
-  -> InitialValueSpec
-  -> Maybe LayoutInitialGroup
-  -> Maybe LayoutInitialGroup
-mergeLayoutInitialField field spec maybeGroup =
-  Just
-    (setLayoutInitialField
-       field
-       spec
-       (Maybe.fromMaybe emptyLayoutInitialGroup maybeGroup))
-
-layoutInitialField :: InitialValueSpec -> Maybe (P.String, LayoutInitialField)
-layoutInitialField spec
-  | typeName (initialValueSpecType spec) P./= "length" = Nothing
-  | otherwise =
-    firstMatchingLayoutField
-      (initialValueSpecName spec)
-      [ (".left", LayoutInitialLeft)
-      , (".top", LayoutInitialTop)
-      , (".width", LayoutInitialWidth)
-      , (".height", LayoutInitialHeight)
-      ]
-
-firstMatchingLayoutField ::
-     P.String
-  -> [(P.String, LayoutInitialField)]
-  -> Maybe (P.String, LayoutInitialField)
-firstMatchingLayoutField name fields =
-  case fields of
-    [] -> Nothing
-    (suffix, field):rest ->
-      case stripSuffix suffix name of
-        Nothing -> firstMatchingLayoutField name rest
-        Just groupName
-          | layoutInitialGroupName groupName -> Just (groupName, field)
-          | otherwise -> Nothing
-
-layoutInitialGroupName :: P.String -> P.Bool
-layoutInitialGroupName name =
-  List.isPrefixOf "V." name P.|| blockInitialGroupName name
-
-blockInitialGroupName :: P.String -> P.Bool
-blockInitialGroupName name =
-  case name of
-    'B':rest -> rest P./= "" P.&& P.all Char.isDigit rest
-    _        -> False
-
-stripSuffix :: P.String -> P.String -> Maybe P.String
-stripSuffix suffix value =
-  case suffix `List.isSuffixOf` value of
-    False -> Nothing
-    True  -> Just (P.take (P.length value P.- P.length suffix) value)
-
-setLayoutInitialField ::
-     LayoutInitialField
-  -> InitialValueSpec
-  -> LayoutInitialGroup
-  -> LayoutInitialGroup
-setLayoutInitialField field spec group =
-  case field of
-    LayoutInitialLeft   -> group {layoutInitialLeft = Just spec}
-    LayoutInitialTop    -> group {layoutInitialTop = Just spec}
-    LayoutInitialWidth  -> group {layoutInitialWidth = Just spec}
-    LayoutInitialHeight -> group {layoutInitialHeight = Just spec}
-
-layoutGroupInitialValues ::
-     ViewEnv
-  -> RandomSeed
-  -> Map.Map P.String P.Double
-  -> (P.String, LayoutInitialGroup)
-  -> Map.Map P.String P.Double
-layoutGroupInitialValues env seed (defaults :: Map.Map P.String P.Double) (groupName, group) =
-  case ( layoutInitialLeft group
-       , layoutInitialTop group
-       , layoutInitialWidth group
-       , layoutInitialHeight group) of
-    (Just leftSpec, Just topSpec, Just widthSpec, Just heightSpec) ->
-      let widthValue =
-            boundedInitialValue defaults 20 (canvasWidthValue env) widthSpec
-          heightValue =
-            boundedInitialValue defaults 20 (canvasHeightValue env) heightSpec
-          leftValue =
-            sampledOrigin
-              (canvasWidthValue env)
-              widthValue
-              (randomUnitFor seed (groupName P.++ ".centerX"))
-              leftSpec
-          topValue =
-            sampledOrigin
-              (canvasHeightValue env)
-              heightValue
-              (randomUnitFor seed (groupName P.++ ".centerY"))
-              topSpec
-       in Map.fromList
-            [ (initialValueSpecName leftSpec, leftValue)
-            , (initialValueSpecName topSpec, topValue)
-            , (initialValueSpecName widthSpec, widthValue)
-            , (initialValueSpecName heightSpec, heightValue)
-            ]
-    _ -> Map.empty
-
-boundedInitialValue ::
-     Map.Map P.String P.Double
-  -> P.Double
-  -> P.Double
-  -> InitialValueSpec
-  -> P.Double
-boundedInitialValue defaults fallbackLower fallbackUpper spec =
-  let bounds = initialValueSpecBounds spec
-      lower = Maybe.fromMaybe fallbackLower (initialLower bounds)
-      upper = P.max lower (Maybe.fromMaybe fallbackUpper (initialUpper bounds))
-      fallback =
-        lower
-          P.+ randomSampleUnit (initialValueSpecSample spec)
-                P.* (upper P.- lower)
-   in clamp
-        lower
-        upper
-        (Map.findWithDefault fallback (initialValueSpecName spec) defaults)
-
-sampledOrigin ::
-     P.Double -> P.Double -> P.Double -> InitialValueSpec -> P.Double
-sampledOrigin canvasSize objectSize t spec =
-  let bounds = initialValueSpecBounds spec
-      lower = P.max 0 (Maybe.fromMaybe 0 (initialLower bounds))
-      upper =
-        P.max
-          lower
-          (P.min
-             (canvasSize P.- objectSize)
-             (Maybe.fromMaybe (canvasSize P.- objectSize) (initialUpper bounds)))
-   in lower P.+ t P.* (upper P.- lower)
-
-randomUnitFor :: RandomSeed -> P.String -> P.Double
-randomUnitFor seed salt =
-  case seed of
-    RandomSeed seedInt ->
-      case S.randomUnitsFromSeed
-             (RandomSeed (positiveHash (P.show seedInt P.++ ":" P.++ salt))) of
-        []      -> 0.5
-        value:_ -> value
-
-clamp :: P.Double -> P.Double -> P.Double -> P.Double
-clamp lower upper value = P.max lower (P.min upper value)
 
 data AnyBlockView where
   AnyBlockView :: BlockView tag -> AnyBlockView
@@ -2727,9 +2526,8 @@ matchingValueTerms ::
   -> [([ValueComponent], [ValueComponent])]
 matchingValueTerms lhs rhs nodes =
   [ (lhsComponents, rhsComponents)
-  | (lhsComponents, lhsBindings) <- matchingValueTerm lhs nodes
-  , (rhsComponents, rhsBindings) <- matchingValueTerm rhs nodes
-  , queryBindingsCompatible lhsBindings rhsBindings
+  | ([lhsComponents, rhsComponents], _) <-
+      matchingValueTermGroups [lhs, rhs] nodes
   ]
 
 matchingValueTermTriples ::
@@ -2740,13 +2538,21 @@ matchingValueTermTriples ::
   -> [([ValueComponent], [ValueComponent], [ValueComponent])]
 matchingValueTermTriples first second third nodes =
   [ (firstComponents, secondComponents, thirdComponents)
-  | (firstComponents, firstBindings) <- matchingValueTerm first nodes
-  , (secondComponents, secondBindings) <- matchingValueTerm second nodes
-  , queryBindingsCompatible firstBindings secondBindings
-  , (thirdComponents, thirdBindings) <- matchingValueTerm third nodes
-  , queryBindingsCompatible firstBindings thirdBindings
-  , queryBindingsCompatible secondBindings thirdBindings
+  | ([firstComponents, secondComponents, thirdComponents], _) <-
+      matchingValueTermGroups [first, second, third] nodes
   ]
+
+matchingValueTermGroups ::
+     [[ValueEndpoint]] -> [ViewNode] -> [([[ValueComponent]], QueryBindings)]
+matchingValueTermGroups endpointGroups nodes =
+  case endpointGroups of
+    [] -> [([], [])]
+    endpoints:rest ->
+      [ (components : restComponents, mergedBindings)
+      | (components, bindings) <- matchingValueTerm endpoints nodes
+      , (restComponents, restBindings) <- matchingValueTermGroups rest nodes
+      , Just mergedBindings <- [mergeQueryBindings bindings restBindings]
+      ]
 
 matchingValueTerm ::
      [ValueEndpoint] -> [ViewNode] -> [([ValueComponent], QueryBindings)]
@@ -2806,12 +2612,6 @@ anyBlockQueryMatches query anyBlock =
         Nothing       -> []
         Just bindings -> [(anyBlock, bindings)]
 
-queryBindingsCompatible :: QueryBindings -> QueryBindings -> P.Bool
-queryBindingsCompatible lhs rhs =
-  case mergeQueryBindings lhs rhs of
-    Nothing -> False
-    Just _  -> True
-
 mergeQueryBindings :: QueryBindings -> QueryBindings -> Maybe QueryBindings
 mergeQueryBindings lhs rhs =
   case rhs of
@@ -2826,109 +2626,27 @@ valueRelationConstraints ::
 valueRelationConstraints relation pair' =
   case pair' of
     (lhsComponents, rhsComponents) ->
-      zipValueComponentsWith
-        (relationConstraint relation)
-        lhsComponents
-        rhsComponents
+      S.relateComponents (termRelation relation) lhsComponents rhsComponents
+
+termRelation :: LayoutRelation -> S.ComponentRelation
+termRelation relation =
+  case relation of
+    LayoutEqual       -> S.ComponentEqual
+    LayoutLessOrEqual -> S.ComponentLessOrEqual
 
 valueDirectedBridgeConstraints ::
      ([ValueComponent], [ValueComponent], [ValueComponent]) -> [Constraint]
 valueDirectedBridgeConstraints triple =
   case triple of
     (lhsComponents, gapComponents, rhsComponents) ->
-      zipValueComponentTriplesWith
-        directedBridgeConstraint
-        lhsComponents
-        gapComponents
-        rhsComponents
+      S.directedBridgeComponents lhsComponents gapComponents rhsComponents
 
 valueSymmetricBridgeConstraints ::
      ([ValueComponent], [ValueComponent], [ValueComponent]) -> [Constraint]
 valueSymmetricBridgeConstraints triple =
   case triple of
     (lhsComponents, deltaComponents, rhsComponents) ->
-      zipValueComponentTriplesWith
-        symmetricBridgeConstraint
-        lhsComponents
-        deltaComponents
-        rhsComponents
-
-zipValueComponentsWith ::
-     (ValueComponent -> ValueComponent -> Constraint)
-  -> [ValueComponent]
-  -> [ValueComponent]
-  -> [Constraint]
-zipValueComponentsWith f lhs rhs =
-  case (lhs, rhs) of
-    ([], []) -> []
-    (leftComponent:leftRest, rightComponent:rightRest) ->
-      valueComponentConstraints leftComponent
-        P.++ valueComponentConstraints rightComponent
-        P.++ [f leftComponent rightComponent]
-        P.++ zipValueComponentsWith f leftRest rightRest
-    _ -> P.error "Cannot relate values with different component counts."
-
-zipValueComponentTriplesWith ::
-     (ValueComponent -> ValueComponent -> ValueComponent -> Constraint)
-  -> [ValueComponent]
-  -> [ValueComponent]
-  -> [ValueComponent]
-  -> [Constraint]
-zipValueComponentTriplesWith f lhs middle rhs =
-  case (lhs, middle, rhs) of
-    ([], [], []) -> []
-    (leftComponent:leftRest, middleComponent:middleRest, rightComponent:rightRest) ->
-      valueComponentConstraints leftComponent
-        P.++ valueComponentConstraints middleComponent
-        P.++ valueComponentConstraints rightComponent
-        P.++ [f leftComponent middleComponent rightComponent]
-        P.++ zipValueComponentTriplesWith f leftRest middleRest rightRest
-    _ -> P.error "Cannot relate values with different component counts."
-
-valueComponentConstraints :: ValueComponent -> [Constraint]
-valueComponentConstraints component =
-  case component of
-    ValueComponent _ _ constraints -> constraints
-
-relationConstraint ::
-     LayoutRelation -> ValueComponent -> ValueComponent -> Constraint
-relationConstraint relation lhs rhs =
-  case (lhs, rhs) of
-    (ValueComponent lhsType lhsRaw _, ValueComponent rhsType rhsRaw _) ->
-      case lhsType P.== rhsType of
-        True ->
-          case relation of
-            LayoutEqual       -> Equals lhsType lhsRaw rhsRaw
-            LayoutLessOrEqual -> LessOrEqual lhsRaw rhsRaw
-        False -> componentTypeError lhsType rhsType
-
-directedBridgeConstraint ::
-     ValueComponent -> ValueComponent -> ValueComponent -> Constraint
-directedBridgeConstraint lhs gap rhs =
-  case (lhs, gap, rhs) of
-    (ValueComponent lhsType lhsRaw _, ValueComponent gapType gapRaw _, ValueComponent rhsType rhsRaw _) ->
-      case lhsType P.== gapType P.&& lhsType P.== rhsType of
-        True  -> Equals lhsType (EAdd lhsRaw gapRaw) rhsRaw
-        False -> componentTypeError lhsType rhsType
-
-symmetricBridgeConstraint ::
-     ValueComponent -> ValueComponent -> ValueComponent -> Constraint
-symmetricBridgeConstraint lhs delta rhs =
-  case (lhs, delta, rhs) of
-    (ValueComponent lhsType lhsRaw _, ValueComponent deltaType deltaRaw _, ValueComponent rhsType rhsRaw _) ->
-      case lhsType P.== deltaType P.&& lhsType P.== rhsType of
-        True ->
-          let difference = EAbs (ESub lhsRaw rhsRaw)
-           in Equals lhsType difference deltaRaw
-        False -> componentTypeError lhsType rhsType
-
-componentTypeError :: ScalarType -> ScalarType -> Constraint
-componentTypeError lhs rhs =
-  P.error
-    ("Cannot relate values with different scalar types: "
-       P.++ typeName lhs
-       P.++ " and "
-       P.++ typeName rhs)
+      S.symmetricBridgeComponents lhsComponents deltaComponents rhsComponents
 
 layoutViewAttr :: LayoutAttr -> AnyLayoutView -> LayoutExpr
 layoutViewAttr attr view =
@@ -2978,9 +2696,9 @@ styleColorPartComponent ::
      StyleColorAttr -> HslPart -> AnyLayoutView -> ValueComponent
 styleColorPartComponent color part view =
   case part of
-    HslHue        -> valueComponent (styleColorHue color view) []
-    HslSaturation -> valueComponent (styleColorSaturation color view) []
-    HslLightness  -> valueComponent (styleColorLightness color view) []
+    HslHue        -> S.component (styleColorHue color view) []
+    HslSaturation -> S.component (styleColorSaturation color view) []
+    HslLightness  -> S.component (styleColorLightness color view) []
 
 styleColorHue :: StyleColorAttr -> AnyLayoutView -> HueExpr
 styleColorHue color view = hue (styleColorValue color view)
@@ -3368,105 +3086,55 @@ viewNodeStyleConstraints node =
     BlockViewNode block     -> styleConstraints (blockStyle block)
     VirtualViewNode virtual -> styleConstraints (virtualStyle virtual)
 
-viewNodeInitialVars :: ViewEnv -> ViewNode -> [InitialVar]
-viewNodeInitialVars env node =
+viewNodeRangeConstraints :: ViewEnv -> ViewNode -> [Constraint]
+viewNodeRangeConstraints env node =
   case node of
     BlockViewNode block ->
-      blockBoundsInitialVars env (styleBounds (blockStyle block))
-        P.++ styleInitialVars (blockStyle block)
+      blockBoundsRangeConstraints env (styleBounds (blockStyle block))
     VirtualViewNode virtual ->
-      virtualBoundsInitialVars env (styleBounds (virtualStyle virtual))
-        P.++ styleInitialVars (virtualStyle virtual)
+      virtualBoundsRangeConstraints env (styleBounds (virtualStyle virtual))
 
-boundsInitialVars ::
+boundsRangeConstraints ::
      ViewEnv
   -> P.Double
   -> P.Double
   -> P.Double
   -> P.Double
   -> BoundsExpr
-  -> [InitialVar]
-boundsInitialVars env minWidth minHeight maxWidth maxHeight bounds' =
+  -> [Constraint]
+boundsRangeConstraints env minWidth minHeight maxWidth maxHeight bounds' =
   case bounds' of
     Bounds topExpr leftExpr widthExpr heightExpr ->
-      exprInitialVarsWithRange
-        topExpr
-        (Range 0 (P.max 0 (canvasHeightValue env P.- minHeight)))
-        P.++ exprInitialVarsWithRange
-               leftExpr
-               (Range 0 (P.max 0 (canvasWidthValue env P.- minWidth)))
-        P.++ exprInitialVarsWithRange widthExpr (Range minWidth maxWidth)
-        P.++ exprInitialVarsWithRange heightExpr (Range minHeight maxHeight)
+      [ S.within
+          topExpr
+          (Range 0 (P.max 0 (canvasHeightValue env P.- minHeight)))
+      , S.within
+          leftExpr
+          (Range 0 (P.max 0 (canvasWidthValue env P.- minWidth)))
+      , S.within widthExpr (Range minWidth maxWidth)
+      , S.within heightExpr (Range minHeight maxHeight)
+      ]
 
 minimumLayoutExtent :: P.Double
 minimumLayoutExtent = 20
 
-blockBoundsInitialVars :: ViewEnv -> BoundsExpr -> [InitialVar]
-blockBoundsInitialVars env =
-  boundsInitialVars
+blockBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
+blockBoundsRangeConstraints env =
+  boundsRangeConstraints
     env
     minimumLayoutExtent
     minimumLayoutExtent
     (P.max 20 (canvasWidthValue env P./ 2))
     (P.max 20 (canvasHeightValue env P./ 2))
 
-virtualBoundsInitialVars :: ViewEnv -> BoundsExpr -> [InitialVar]
-virtualBoundsInitialVars env =
-  boundsInitialVars
+virtualBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
+virtualBoundsRangeConstraints env =
+  boundsRangeConstraints
     env
     minimumLayoutExtent
     minimumLayoutExtent
     (canvasWidthValue env)
     (canvasHeightValue env)
-
-exprInitialVarsWithRange :: Expr ty -> Range -> [InitialVar]
-exprInitialVarsWithRange expr range =
-  case initialRangeFor expr range of
-    Nothing      -> exprInitialVars expr
-    Just initial -> [initial]
-
-dedupeInitialVars :: [InitialVar] -> [InitialVar]
-dedupeInitialVars initials = Map.elems (P.foldl addInitial Map.empty initials)
-  where
-    addInitial grouped initial =
-      Map.alter (mergeMaybeInitialVar initial) (initialVarName initial) grouped
-
-mergeMaybeInitialVar :: InitialVar -> Maybe InitialVar -> Maybe InitialVar
-mergeMaybeInitialVar initial maybeInitial =
-  Just (mergeInitialVar initial (Maybe.fromMaybe initial maybeInitial))
-
-mergeInitialVar :: InitialVar -> InitialVar -> InitialVar
-mergeInitialVar new old
-  | initialVarType new P.== initialVarType old =
-    old
-      { initialVarBounds =
-          mergeViewInitialBounds (initialVarBounds old) (initialVarBounds new)
-      }
-  | otherwise =
-    P.error
-      ("initial variable used with incompatible symbolic types: "
-         P.++ initialVarName old)
-
-mergeViewInitialBounds :: InitialBounds -> InitialBounds -> InitialBounds
-mergeViewInitialBounds old new =
-  InitialBounds
-    { initialLower = mergeViewInitialLower (initialLower old) (initialLower new)
-    , initialUpper = mergeViewInitialUpper (initialUpper old) (initialUpper new)
-    }
-
-mergeViewInitialLower :: Maybe P.Double -> Maybe P.Double -> Maybe P.Double
-mergeViewInitialLower old new =
-  case (old, new) of
-    (Nothing, value)     -> value
-    (value, Nothing)     -> value
-    (Just lhs, Just rhs) -> Just (P.max lhs rhs)
-
-mergeViewInitialUpper :: Maybe P.Double -> Maybe P.Double -> Maybe P.Double
-mergeViewInitialUpper old new =
-  case (old, new) of
-    (Nothing, value)     -> value
-    (value, Nothing)     -> value
-    (Just lhs, Just rhs) -> Just (P.min lhs rhs)
 
 addVirtualRenderFrames :: [ViewNode] -> [[RenderIntent]] -> [[RenderIntent]]
 addVirtualRenderFrames nodes frames =
@@ -3572,7 +3240,6 @@ data BuiltViewStep = BuiltViewStep
   { stepView                 :: ViewStep
   , stepNodes                :: [ViewNode]
   , stepConstraints          :: [Constraint]
-  , stepInitialVars          :: [InitialVar]
   , stepRenderFrames         :: [[RenderIntent]]
   , stepPendingRenderIntents :: [RenderIntent]
   }
@@ -3581,24 +3248,22 @@ data BuiltViewSteps = BuiltViewSteps
   { builtSteps        :: [ViewStep]
   , builtNodes        :: [ViewNode]
   , builtConstraints  :: [Constraint]
-  , builtInitialVars  :: [InitialVar]
   , builtRenderFrames :: [[RenderIntent]]
   }
 
 viewTraceSteps :: [C.TraceStepWith ViewScript] -> BuiltViewSteps
-viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] [] []
+viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] []
 
 viewTraceStepsWith ::
      ([RenderIntent] -> record -> BuiltViewStep)
   -> [ViewStep]
   -> [ViewNode]
   -> [Constraint]
-  -> [InitialVar]
   -> [[RenderIntent]]
   -> [RenderIntent]
   -> [record]
   -> BuiltViewSteps
-viewTraceStepsWith buildStep steps nodes constraints initialVars renderFrames pending records =
+viewTraceStepsWith buildStep steps nodes constraints renderFrames pending records =
   case records of
     [] ->
       let finalOutput =
@@ -3608,7 +3273,6 @@ viewTraceStepsWith buildStep steps nodes constraints initialVars renderFrames pe
             { builtSteps = steps
             , builtNodes = nodes
             , builtConstraints = constraints
-            , builtInitialVars = initialVars
             , builtRenderFrames = withImplicitInitialFrame finalFrames
             }
     record:rest ->
@@ -3618,7 +3282,6 @@ viewTraceStepsWith buildStep steps nodes constraints initialVars renderFrames pe
             (steps ++ [stepView builtStep])
             (nodes ++ stepNodes builtStep)
             (constraints ++ stepConstraints builtStep)
-            (initialVars ++ stepInitialVars builtStep)
             (renderFrames ++ stepRenderFrames builtStep)
             (stepPendingRenderIntents builtStep)
             rest
@@ -3649,13 +3312,11 @@ viewTraceStep pending step =
           output = mergeInitialRenderIntents pending rawOutput
           nodes = emittedNodes output
           constraints = emittedConstraints output
-          initialVars = emittedInitialVars output
           renderFrames = emittedRenderFrames output
        in BuiltViewStep
             { stepView = ViewStep plainStep nodes constraints []
             , stepNodes = nodes
             , stepConstraints = constraints
-            , stepInitialVars = initialVars
             , stepRenderFrames = renderFrames
             , stepPendingRenderIntents = pendingRenderIntents output
             }
@@ -3664,7 +3325,6 @@ viewTraceStep pending step =
         { stepView = ViewStep (C.DiscardedStep reason audit) [] [] []
         , stepNodes = []
         , stepConstraints = []
-        , stepInitialVars = []
         , stepRenderFrames = []
         , stepPendingRenderIntents = pending
         }

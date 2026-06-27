@@ -16,10 +16,10 @@ module LinearTrace.Print
 import           Data.Char                 (isDigit)
 import           Data.List                 (dropWhileEnd)
 import           LinearTrace.Core.Internal
-import qualified LinearTrace.Solver        as S
 import qualified LinearTrace.View          as V
 import           Numeric                   (showFFloat)
 import           Prelude
+import qualified Solver                    as S
 import           System.Console.ANSI       (ConsoleIntensity (..),
                                             ConsoleLayer (..), SGR (..),
                                             hNowSupportsANSI, setSGRCode)
@@ -164,8 +164,7 @@ summaryBox blocks steps =
 solutionByStepBox :: Bool -> S.Solution -> V.ViewGraph -> Box.Box
 solutionByStepBox showDetails solution graph =
   sections
-    $ [ sectionBox "Solution"
-          $ viewSummaryBox nodes steps constraints initialVars
+    $ [ sectionBox "Solution" $ viewSummaryBox nodes steps constraints
       , solutionSummaryBox solution
       ]
         ++ detailBoxes
@@ -174,11 +173,8 @@ solutionByStepBox showDetails solution graph =
     nodes = V.viewNodes graph
     steps = V.viewSteps graph
     constraints = V.viewConstraints graph
-    initialVars = V.viewInitialVars graph
     detailBoxes
-      | showDetails =
-        optionalSection "View nodes" (viewNodesBox nodes)
-          ++ optionalSection "Initial variables" (initialVarsBox initialVars)
+      | showDetails = optionalSection "View nodes" (viewNodesBox nodes)
       | otherwise = []
 
 solutionSummaryBox :: S.Solution -> Box.Box
@@ -192,14 +188,12 @@ solutionSummaryBox solution =
   where
     V.RandomSeed seed = S.solutionSeed solution
 
-viewSummaryBox ::
-     [V.ViewNode] -> [V.ViewStep] -> [S.Constraint] -> [S.InitialVar] -> Box.Box
-viewSummaryBox nodes steps constraints initialVars =
+viewSummaryBox :: [V.ViewNode] -> [V.ViewStep] -> [S.Constraint] -> Box.Box
+viewSummaryBox nodes steps constraints =
   linesBox
     [ "View nodes: " ++ show (length nodes)
     , "View steps: " ++ show (length steps)
     , "Constraints: " ++ show (length (flattenConstraints constraints))
-    , "Initial vars: " ++ show (length initialVars)
     ]
 
 --------------------------------------------------------------------------------
@@ -251,29 +245,6 @@ blockStyleBox block =
 styleFieldBox :: String -> S.Expr ty -> Box.Box
 styleFieldBox name expr =
   rowBox [fieldBox styleFieldWidth name, Box.text "=", Box.text (exprText expr)]
-
---------------------------------------------------------------------------------
--- Initial variables
---------------------------------------------------------------------------------
-initialVarsBox :: [S.InitialVar] -> Box.Box
-initialVarsBox initialVars =
-  assignmentsBox
-    2
-    [ (name, renderInitialVarValue ty bounds)
-    | S.InitialVar name ty bounds <- initialVars
-    ]
-
-renderInitialVarValue :: S.ScalarType -> S.InitialBounds -> String
-renderInitialVarValue ty bounds =
-  S.typeName ty ++ " " ++ renderInitialBounds bounds
-
-renderInitialBounds :: S.InitialBounds -> String
-renderInitialBounds bounds =
-  case (S.initialLower bounds, S.initialUpper bounds) of
-    (Just lo, Just hi) -> "[" ++ fixed2 lo ++ ", " ++ fixed2 hi ++ "]"
-    (Just lo, Nothing) -> "[" ++ fixed2 lo ++ ", ∞)"
-    (Nothing, Just hi) -> "(-∞, " ++ fixed2 hi ++ "]"
-    (Nothing, Nothing) -> "(-∞, ∞)"
 
 --------------------------------------------------------------------------------
 -- View constraints

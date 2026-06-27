@@ -32,6 +32,8 @@ main = do
           { App.runSeed = seedInt
           , App.runShowDetails = optionShowSolverDetails options
           , App.runOutputMode = outputMode
+          , App.runDiagnostics =
+              not (optionJson options) || optionShowSolverDetails options
           }
   result <- App.runVisualization config graph
   case result of

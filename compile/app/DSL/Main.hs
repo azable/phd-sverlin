@@ -18,7 +18,7 @@ module DSL.Main
   , run
   ) where
 
-import           Control.Functor.Linear   hiding (ask, (<$>), (<*>))
+import           Control.Functor.Linear   hiding (ask, (<$>), (<&>), (<*>))
 import           LinearTrace.Choreography
 import           Prelude.Linear           hiding (fromInteger, fromRational,
                                            (*), (+), (-), (/), (/=), (<>))
@@ -117,7 +117,7 @@ data PreparedComparison where
 
 linearSearch :: SearchInput %1 -> Program ()
 linearSearch (SearchInput targetPayload valuePayloads) = do
-  target <- create (#target <&&> #source) targetPayload
+  target <- create (#target <&> #source) targetPayload
   elements <- createElements valuePayloads
   loop (SearchState target NoProcessedElements elements) searchIteration
 
@@ -129,7 +129,7 @@ createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue valuePayload rest -> do
-      element <- create (#array <&&> #index index) valuePayload
+      element <- create (#array <&> #index index) valuePayload
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement index element elements)
 
@@ -194,13 +194,13 @@ finishSearch target foundElement processed remaining = do
   destroyRemaining remaining
 
 markProcessed :: Int -> Block Value %1 -> Program (Block Value)
-markProcessed index = retag (#array <&&> #processed <&&> #index index)
+markProcessed index = retag (#array <&> #processed <&> #index index)
 
 prepareComparison ::
      Block Value %1 -> Int -> Block Value %1 -> Program PreparedComparison
 prepareComparison target index element = do
-  (targetAfter, targetProbe) <- copy (#target <&&> #probe) target
-  (elementAfter, elementProbe) <- copy (#index index <&&> #probe) element
+  (targetAfter, targetProbe) <- copy (#target <&> #probe) target
+  (elementAfter, elementProbe) <- copy (#index index <&> #probe) element
   return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
 
 compareValues :: Block Value %1 -> Block Value %1 -> Program (Block Match)
@@ -253,17 +253,17 @@ visualization =
       width cell
       height cell
     -- Target row: a source value that anchors the rest of the layout.
-    Selected targetSource <- select @Value (#target <&&> #source)
+    Selected targetSource <- select @Value (#target <&> #source)
     style targetSource $ do
       width targetSize
       height targetSize
       fontSize (targetSize * 0.44)
       strokeWidth (by 6)
     -- Probe row: the copied target and current array element sit side by side.
-    Selected targetProbe <- select @Value (#target <&&> #probe)
+    Selected targetProbe <- select @Value (#target <&> #probe)
     Selected probe <- select @Value #probe
     Selected probes <- node probe
-    Selected probeItem <- select @Value (#probe <&&> #index @: i)
+    Selected probeItem <- select @Value (#probe <&> #index @: i)
     style probe $ do
       zIndex 3
       width probeSize
@@ -272,8 +272,8 @@ visualization =
     Variable resultWidth <- variable @Span (probeSize * 2 |+| gap)
     Variable resultHeight <- variable @Span (cell * 0.68)
     Selected result <- select @Match #result
-    Selected resultTrue <- select @Match (#result <&&> payload True)
-    Selected resultFalse <- select @Match (#result <&&> payload False)
+    Selected resultTrue <- select @Match (#result <&> payload True)
+    Selected resultFalse <- select @Match (#result <&> payload False)
     style result $ do
       centerText
       fill (Hsl 214 0.06 0.94)
@@ -296,8 +296,8 @@ visualization =
     -- Array row: unprocessed values stay prominent; consumed values recede.
     Selected arrayItems <- select @Value #array
     Selected array <- node arrayItems
-    Selected arrayItem <- select @Value (#array <&&> #index @: i)
-    Selected nextArrayItem <- select @Value (#array <&&> #index @: (i + 1))
+    Selected arrayItem <- select @Value (#array <&> #index @: i)
+    Selected nextArrayItem <- select @Value (#array <&> #index @: (i + 1))
     let arrayBackground = Hsl valueHue 0.14 0.95
     style array $ do
       zIndex 0

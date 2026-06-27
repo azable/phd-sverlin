@@ -53,31 +53,7 @@ extra-doc-files:    CHANGELOG.md
 common warnings
     ghc-options: -Wall
 
-executable compile-app
-    -- Import common warning flags.
-    import:           warnings
-
-    -- .hs or .lhs file containing the Main module.
-    main-is:          Main.hs
-
-    -- Modules included in this executable, other than Main.
-    other-modules:
-        LinearTrace
-        LinearTrace.Choreography
-        LinearTrace.Core
-        LinearTrace.Core.Internal
-        LinearTrace.View
-        LinearTrace.View.Style
-        LinearTrace.Print
-        LinearTrace.Solver
-        LinearTrace.Compile
-        DSL.Main
-        App
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
-
-    -- Other library packages from which modules are imported.
+common app-dependencies
     build-depends:    base ^>=4.18.3.0,
                       containers,
                       random,
@@ -91,10 +67,87 @@ executable compile-app
                       optparse-applicative,
                       boxes,
                       ansi-terminal,
-                      unix,
+                      unix
 
-    -- Directories containing source files.
+    default-language: GHC2021
+
+library
+    -- Import common warning flags.
+    import:           warnings
+    import:           app-dependencies
+
+    exposed-modules:
+        LinearTrace
+        LinearTrace.Choreography
+        LinearTrace.Core
+        LinearTrace.Core.Internal
+        LinearTrace.View
+        LinearTrace.View.Style
+        LinearTrace.Print
+        Solver
+        LinearTrace.Compile
+
+    other-modules:
+        Solver.Backend
+        Solver.Constraint
+        Solver.Expr
+        Solver.Problem
+
+    hs-source-dirs:   src
+
+executable compile-app
+    -- Import common warning flags.
+    import:           warnings
+    import:           app-dependencies
+
+    -- .hs or .lhs file containing the Main module.
+    main-is:          Main.hs
+
+    other-modules:
+        App
+        DSL.Main
+
+    build-depends:    compile
+
     hs-source-dirs:   app
 
     -- Base language which the package is written in.
+    default-language: GHC2021
+
+executable solver-bench
+    import:           warnings
+
+    main-is:          SolverBench.hs
+
+    build-depends:    aeson,
+                      base ^>=4.18.3.0,
+                      bytestring,
+                      compile
+
+    hs-source-dirs:   bench,
+                      test-support
+
+    other-modules:
+        Solver.TestFixtures
+
+    default-language: GHC2021
+
+test-suite solver-test
+    import:           warnings
+
+    type:             exitcode-stdio-1.0
+    main-is:          SolverTest.hs
+
+    build-depends:    base ^>=4.18.3.0,
+                      containers,
+                      compile,
+                      tasty,
+                      tasty-hunit
+
+    hs-source-dirs:   test,
+                      test-support
+
+    other-modules:
+        Solver.TestFixtures
+
     default-language: GHC2021

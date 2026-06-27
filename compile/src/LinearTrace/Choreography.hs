@@ -90,7 +90,7 @@ module LinearTrace.Choreography
   , queryAtom
   , queryInt
   , queryFacts
-  , (<&&>)
+  , (<&>)
   , -- * Component and layout layer
     BoxDefinition
   , BoxVisual
@@ -208,7 +208,7 @@ module LinearTrace.Choreography
   , (/=)
   ) where
 
-import           Control.Functor.Linear hiding ((<$>), (<*>))
+import           Control.Functor.Linear hiding ((<$>), (<&>), (<*>))
 import qualified Data.Functor.Linear    as DFL
 import           Data.Proxy             (Proxy (..))
 import           GHC.Exts               (Multiplicity (Many))
@@ -222,8 +222,6 @@ import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          factInt, factSymbol, factsToList,
                                          factsUnion, (<$>), (<*>))
 import qualified LinearTrace.Core       as C
-import           LinearTrace.Solver     (Vec2 (..), vec2)
-import qualified LinearTrace.Solver     as S
 import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          BoundsExpr, BoxDefinition, BoxVisual,
                                          ConstraintStrength (..),
@@ -240,12 +238,11 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          StyleFreeAttr (..),
                                          StyleLayoutAttr (..),
                                          StyleUnitAttr (..), TextAlign (..),
-                                         UnitExpr, ValueAccess, ValueComponent,
-                                         ValueEndpoint, WhiteSpace (..),
-                                         anyPayloadPattern, boxDefinition,
-                                         emptyMatchSpec, emptyQuery, global,
-                                         layoutValueAccess, matchAnyQueryNode,
-                                         matchBindingValue,
+                                         UnitExpr, ValueAccess, ValueEndpoint,
+                                         WhiteSpace (..), anyPayloadPattern,
+                                         boxDefinition, emptyMatchSpec,
+                                         emptyQuery, global, layoutValueAccess,
+                                         matchAnyQueryNode, matchBindingValue,
                                          matchContextBindings,
                                          matchGlobalLayout,
                                          matchQueryPayloadNode, matchSpecAppend,
@@ -268,15 +265,17 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          styleLayoutValueAccess,
                                          styleUnitValueAccess, takeHeight,
                                          takeLeft, takeRight, takeTop,
-                                         takeWidth, valueComponent)
+                                         takeWidth)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
 import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
                                          (+), (-), (/), (/=), (<>))
+import qualified Solver                 as S
+import           Solver                 (Vec2 (..), vec2)
 import qualified Text.Read              as Read
 
-infixr 6 <&&>
+infixr 6 <&>
 infixl 9 @:
 data Program a where
   PureProgram :: a %1 -> Program a
@@ -355,13 +354,13 @@ data NodeBinding a where
 data SelectedExpr ty tag =
   SelectedExpr (Selected tag) ValueAccess
 
-data LiftedConstraint where
-  LiftedValueRelation
-    :: ValueTerm -> LayoutRelation -> ValueTerm -> LiftedConstraint
-  LiftedDirectedBridge
-    :: ValueTerm -> ValueTerm -> ValueTerm -> LiftedConstraint
-  LiftedSymmetricBridge
-    :: ValueTerm -> ValueTerm -> ValueTerm -> LiftedConstraint
+data VisualConstraint where
+  VisualValueRelation
+    :: ValueTerm -> LayoutRelation -> ValueTerm -> VisualConstraint
+  VisualDirectedBridge
+    :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
+  VisualSymmetricBridge
+    :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
 
 data ValueTerm =
   ValueTerm MatchSpec [ValueEndpoint]
@@ -750,13 +749,12 @@ scalarConstraints value =
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
 
-rawValueTerm :: ValueComponent -> ValueTerm
+rawValueTerm :: S.Component -> ValueTerm
 rawValueTerm component = ValueTerm emptyMatchSpec [rawValueEndpoint component]
 
 rawExprValueTerm ::
      S.SymbolicType ty => S.Expr ty -> [S.Constraint] -> ValueTerm
-rawExprValueTerm expr constraints =
-  rawValueTerm (valueComponent expr constraints)
+rawExprValueTerm expr constraints = rawValueTerm (S.component expr constraints)
 
 selectedValueTerm :: Selected tag -> ValueAccess -> ValueTerm
 selectedValueTerm selected access =
@@ -1122,34 +1120,34 @@ lhs |+| rhs =
     (spanConstraints lhs P.++ spanConstraints rhs)
 
 class RelateValues lhs rhs where
-  relateValues :: LayoutRelation -> lhs -> rhs -> LiftedConstraint
+  relateValues :: LayoutRelation -> lhs -> rhs -> VisualConstraint
 
 instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue rhs) =>
          RelateValues lhs rhs where
   relateValues relation lhs rhs =
-    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
+    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} S.SymbolicType ty =>
          RelateValues (SelectedExpr ty tag) (S.Expr ty) where
   relateValues relation lhs rhs =
-    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
+    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} S.SymbolicType ty =>
          RelateValues (S.Expr ty) (SelectedExpr ty tag) where
   relateValues relation lhs rhs =
-    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
+    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} RelateValues
            (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag))
            HslExpr where
   relateValues relation lhs rhs =
-    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
+    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} RelateValues
            HslExpr
            (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
   relateValues relation lhs rhs =
-    LiftedValueRelation (valueTerm lhs) relation (valueTerm rhs)
+    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 data DirectedBridge =
   DirectedBridge ValueTerm ValueTerm
@@ -1162,13 +1160,13 @@ instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue gap) =>
   openDirectedBridge lhs gap = DirectedBridge (valueTerm lhs) (valueTerm gap)
 
 class CloseDirectedBridge bridge rhs where
-  closeDirectedBridge :: bridge -> rhs -> LiftedConstraint
+  closeDirectedBridge :: bridge -> rhs -> VisualConstraint
 
 instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
          CloseDirectedBridge DirectedBridge rhs where
   closeDirectedBridge bridge rhs =
     case bridge of
-      DirectedBridge lhs gap -> LiftedDirectedBridge lhs gap (valueTerm rhs)
+      DirectedBridge lhs gap -> VisualDirectedBridge lhs gap (valueTerm rhs)
 
 data SymmetricBridge =
   SymmetricBridge ValueTerm ValueTerm
@@ -1193,21 +1191,21 @@ instance {-# OVERLAPPING #-} OpenSymmetricBridge
     SymmetricBridge (valueTerm lhs) (valueTerm delta)
 
 class CloseSymmetricBridge bridge rhs where
-  closeSymmetricBridge :: bridge -> rhs -> LiftedConstraint
+  closeSymmetricBridge :: bridge -> rhs -> VisualConstraint
 
 instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
          CloseSymmetricBridge SymmetricBridge rhs where
   closeSymmetricBridge bridge rhs =
     case bridge of
       SymmetricBridge lhs delta ->
-        LiftedSymmetricBridge lhs delta (valueTerm rhs)
+        VisualSymmetricBridge lhs delta (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} S.SymbolicType ty =>
          CloseSymmetricBridge SymmetricBridge (S.Expr ty) where
   closeSymmetricBridge bridge rhs =
     case bridge of
       SymmetricBridge lhs delta ->
-        LiftedSymmetricBridge lhs delta (valueTerm rhs)
+        VisualSymmetricBridge lhs delta (valueTerm rhs)
 
 infixl 4 .<=.
 infixl 4 .>=.
@@ -1216,25 +1214,25 @@ infixl 4 =|
 infixl 4 |=
 infixl 4 =/
 infixl 4 /=
-(.<=.) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
+(.<=.) :: RelateValues lhs rhs => lhs -> rhs -> VisualConstraint
 (.<=.) = relateValues LayoutLessOrEqual
 
-(.>=.) :: RelateValues rhs lhs => lhs -> rhs -> LiftedConstraint
+(.>=.) :: RelateValues rhs lhs => lhs -> rhs -> VisualConstraint
 lhs .>=. rhs = relateValues LayoutLessOrEqual rhs lhs
 
-(.==.) :: RelateValues lhs rhs => lhs -> rhs -> LiftedConstraint
+(.==.) :: RelateValues lhs rhs => lhs -> rhs -> VisualConstraint
 (.==.) = relateValues LayoutEqual
 
 (=|) :: OpenDirectedBridge lhs gap => lhs -> gap -> DirectedBridge
 lhs =| rhs = openDirectedBridge lhs rhs
 
-(|=) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+(|=) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> VisualConstraint
 lhs |= rhs = closeDirectedBridge lhs rhs
 
 (=/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
 lhs =/ delta = openSymmetricBridge lhs delta
 
-(/=) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> LiftedConstraint
+(/=) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> VisualConstraint
 lhs /= rhs = closeSymmetricBridge lhs rhs
 
 runProgram :: Program () -> VisualTraceGraph
@@ -1385,7 +1383,7 @@ class Ensure constraint where
 instance Ensure OneConstraint where
   ensure = emitConstraint EnsureConstraint
 
-instance Ensure LiftedConstraint where
+instance Ensure VisualConstraint where
   ensure = emitConstraint EnsureConstraint
 
 class Encourage objective where
@@ -1397,7 +1395,7 @@ instance Encourage (S.Expr ty) where
 instance Encourage OneConstraint where
   encourage = emitConstraint EncourageConstraint
 
-instance Encourage LiftedConstraint where
+instance Encourage VisualConstraint where
   encourage = emitConstraint EncourageConstraint
 
 class EmitConstraint constraint where
@@ -1409,14 +1407,14 @@ instance EmitConstraint OneConstraint where
       EnsureConstraint    -> layout (V.ensure constraint)
       EncourageConstraint -> layout (V.encourageConstraint constraint)
 
-instance EmitConstraint LiftedConstraint where
+instance EmitConstraint VisualConstraint where
   emitConstraint strength constraint =
-    emitVisualizationBuilder () (liftedConstraintSpec strength constraint)
+    emitVisualizationBuilder () (visualConstraintSpec strength constraint)
 
-liftedConstraintSpec :: ConstraintStrength -> LiftedConstraint -> MatchSpec
-liftedConstraintSpec strength constraint =
+visualConstraintSpec :: ConstraintStrength -> VisualConstraint -> MatchSpec
+visualConstraintSpec strength constraint =
   case constraint of
-    LiftedValueRelation lhs relation rhs ->
+    VisualValueRelation lhs relation rhs ->
       valueTermSpec lhs
         `matchSpecAppend` valueTermSpec rhs
         `matchSpecAppend` matchValueRelation
@@ -1424,7 +1422,7 @@ liftedConstraintSpec strength constraint =
                             (valueTermEndpoints lhs)
                             relation
                             (valueTermEndpoints rhs)
-    LiftedDirectedBridge lhs gap rhs ->
+    VisualDirectedBridge lhs gap rhs ->
       valueTermSpec lhs
         `matchSpecAppend` valueTermSpec gap
         `matchSpecAppend` valueTermSpec rhs
@@ -1433,7 +1431,7 @@ liftedConstraintSpec strength constraint =
                             (valueTermEndpoints lhs)
                             (valueTermEndpoints gap)
                             (valueTermEndpoints rhs)
-    LiftedSymmetricBridge lhs delta rhs ->
+    VisualSymmetricBridge lhs delta rhs ->
       valueTermSpec lhs
         `matchSpecAppend` valueTermSpec delta
         `matchSpecAppend` valueTermSpec rhs
@@ -2068,8 +2066,8 @@ instance QueryAppend Query where
 instance QueryAppend (TraceQuery tag) where
   appendQuery = traceQueryAppend
 
-(<&&>) :: QueryAppend query => query -> query -> query
-(<&&>) = appendQuery
+(<&>) :: QueryAppend query => query -> query -> query
+(<&>) = appendQuery
 
 layoutNode :: NodeSpec -> LiveVisual tag %1 -> ViewLayout (NodeVisual tag)
 layoutNode spec visual0 = do

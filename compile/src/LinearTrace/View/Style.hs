@@ -45,7 +45,6 @@ module LinearTrace.View.Style
   , mapStyleExprs
   , mapStyleExprLeaves
   , solvedStyleExprs
-  , styleInitialVars
   , styleConstraints
   , -- * Public style accessors/setters
     opacity
@@ -93,10 +92,10 @@ module LinearTrace.View.Style
   , materializeStyle
   ) where
 
-import           Data.Kind          (Type)
-import           Data.Maybe         (mapMaybe, maybeToList)
-import           LinearTrace.Solver
+import           Data.Kind  (Type)
+import           Data.Maybe (mapMaybe)
 import           Prelude
+import           Solver
 
 --------------------------------------------------------------------------------
 -- Expression aliases
@@ -440,38 +439,6 @@ solvedStyleExprs solution = mapMaybe solveLeaf . styleExprLeaves
             Nothing    -> Nothing
             Just value -> Just (name, value)
 
-styleInitialVars :: Style -> [InitialVar]
-styleInitialVars style' = concatMap fieldInitialVars (styleFields style')
-
-fieldInitialVars :: StyleField -> [InitialVar]
-fieldInitialVars field =
-  case field of
-    StyleFreeField spec expr -> scalarInitialVars spec expr
-    StyleLayoutField spec expr -> scalarInitialVars spec expr
-    StyleUnitField spec expr -> scalarInitialVars spec expr
-    StyleAngleField spec expr -> scalarInitialVars spec expr
-    StyleColorField _ maybeHsl ->
-      case maybeHsl of
-        Nothing -> []
-        Just hsl ->
-          concat
-            [ exprInitialVars (hue hsl)
-            , maybeToList (initialRangeFor (saturation hsl) (Range 0 1))
-            , maybeToList (initialRangeFor (lightness hsl) (Range 0 1))
-            ]
-    StyleTextField _ _ -> []
-    StyleFontWeightField _ _ -> []
-    StyleFontStyleField _ _ -> []
-    StyleTextAlignField _ _ -> []
-    StyleBorderStyleField _ _ -> []
-    StyleWhiteSpaceField _ _ -> []
-
-scalarInitialVars :: StyleScalarSpec -> Expr ty -> [InitialVar]
-scalarInitialVars spec expr =
-  case styleScalarInitialRange spec of
-    Nothing    -> []
-    Just range -> maybeToList (initialRangeFor expr range)
-
 styleConstraints :: Style -> [Constraint]
 styleConstraints style' = concatMap fieldConstraints (styleFields style')
 
@@ -486,8 +453,10 @@ fieldConstraints field =
       case maybeHsl of
         Nothing -> []
         Just hsl ->
-          unitComponentConstraints (saturation hsl)
-            ++ unitComponentConstraints (lightness hsl)
+          [ within (hue hsl) (Range 0 360)
+          , within (saturation hsl) (Range 0 1)
+          , within (lightness hsl) (Range 0 1)
+          ]
     StyleTextField _ _ -> []
     StyleFontWeightField _ _ -> []
     StyleFontStyleField _ _ -> []
@@ -495,18 +464,12 @@ fieldConstraints field =
     StyleBorderStyleField _ _ -> []
     StyleWhiteSpaceField _ _ -> []
 
-scalarConstraints :: StyleScalarSpec -> Expr ty -> [Constraint]
+scalarConstraints ::
+     SymbolicType ty => StyleScalarSpec -> Expr ty -> [Constraint]
 scalarConstraints spec expr =
   case styleScalarInitialRange spec of
-    Just range
-      | Just _ <- initialRangeFor expr range -> []
-    _ -> styleScalarConstraints spec
-
-unitComponentConstraints :: UnitExpr -> [Constraint]
-unitComponentConstraints expr =
-  case initialRangeFor expr (Range 0 1) of
-    Just _  -> []
-    Nothing -> unitConstraints expr
+    Just range -> within expr range : styleScalarConstraints spec
+    Nothing    -> styleScalarConstraints spec
 
 --------------------------------------------------------------------------------
 -- Constraint helpers used by attributes

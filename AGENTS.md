@@ -9,7 +9,9 @@ Haskell application, a JSON descriptor is outputted to `static/`, which is then 
 ## How To Navigate
 
 - The SvelteKit application is located in the root directory, and its source code can be found in the `src/` directory.
-- The Haskell application is located in the `compile/` directory, and its source code can be found in the `src/` directory within `compile/`.
+- The Haskell application is located in the `compile/` directory. Reusable Haskell library modules live in `compile/src/`; executable-only modules and the current example live in `compile/app/`.
+- Stable direct solver fixtures live in `compile/test-support/Solver/TestFixtures.hs`; use these for solver tests and benchmarks instead of depending on the changing example in `compile/app/DSL/Main.hs`.
+- Use the top-level `Solver` module as the solver API. Modules under `compile/src/Solver/` are implementation modules unless a task explicitly requires changing solver internals.
 
 ## Commands
 
@@ -21,11 +23,15 @@ Haskell application, a JSON descriptor is outputted to `static/`, which is then 
 - This project uses shadcn-svelte for reusable Svelte UI components. The project configuration is tracked in `components.json`, and the shadcn-svelte skill is installed under `.agents/skills/shadcn-svelte`.
 - When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
 - When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
+- When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
+- When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. Use `pnpm run bench:compile` as an additional end-to-end check when the compile server path or generated JSON pipeline can be affected. Write benchmark result JSON to `/tmp` unless the user explicitly asks to save it in the repo.
 
 ## Verification
 
 Before finishing:
 
 - If modifying the Haskell application, run `./compile.sh` from the root directory to compile and run the Haskell application.
-- Use `hlint` to check for any Haskell code style issues.
+- For solver or view-solver changes, run `pnpm run test:solver`.
+- Use `hlint compile/src compile/app compile/test compile/bench compile/test-support` to check for any Haskell code style issues.
 - After any Haskell source change, run the same formatter pipeline as VSCode on all Haskell source files: first `hindent`, then `stylish-haskell -i`. The `stylish-haskell -i` pass should be the final source-modifying step.
+- For performance-sensitive solver changes, also run `pnpm run bench:solver`; use `pnpm run bench:compile` for end-to-end compile performance.
