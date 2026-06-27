@@ -91,6 +91,7 @@ executable compile-app
                       optparse-applicative,
                       boxes,
                       ansi-terminal,
+                      unix,
 
     -- Directories containing source files.
     hs-source-dirs:   app

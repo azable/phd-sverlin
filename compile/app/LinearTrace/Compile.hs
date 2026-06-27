@@ -14,6 +14,7 @@ module LinearTrace.Compile
   , compileSolved
   , compileSolvedWithViewport
   , encodeCompiledPretty
+  , hPrintCompiledJSON
   , printCompiledJSON
   , writeCompiledJSON
   ) where
@@ -31,6 +32,7 @@ import qualified LinearTrace.Solver         as S
 import qualified LinearTrace.View           as V
 import           Numeric                    (showFFloat)
 import           Prelude
+import           System.IO                  (Handle, hFlush, stdout)
 
 newtype RenderId =
   RenderId String
@@ -700,4 +702,9 @@ writeCompiledJSON path compiled =
   BL.writeFile path (encodeCompiledPretty compiled)
 
 printCompiledJSON :: Visualization -> IO ()
-printCompiledJSON compiled = BL.putStr (encodeCompiledPretty compiled)
+printCompiledJSON = hPrintCompiledJSON stdout
+
+hPrintCompiledJSON :: Handle -> Visualization -> IO ()
+hPrintCompiledJSON handle compiled = do
+  BL.hPut handle (encodeCompiledPretty compiled)
+  hFlush handle

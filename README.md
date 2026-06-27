@@ -19,6 +19,7 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 
 - Node.js and `pnpm` for the SvelteKit app.
 - GHC/Cabal for the Haskell compiler under `compile/`.
+- L-BFGS-B 3.0 available as `liblbfgsb` for the bounded layout solver. The devcontainer builds this from the official Fortran source.
 - `hlint`, `hindent`, and `stylish-haskell` for Haskell checks/formatting.
 
 ## Generate Visualization JSON

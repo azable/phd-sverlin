@@ -1,1 +1,4 @@
 packages: ./compile
+
+package numeric-optimization
+  flags: +with-lbfgsb

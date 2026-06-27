@@ -24,6 +24,7 @@ RUN apt-get update \
     gcc \
     git \
     gnupg \
+    gfortran \
     less \
     libc6-dev \
     libffi-dev \
@@ -44,6 +45,23 @@ RUN apt-get update \
     liblapack-dev \
     bubblewrap \
   && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L --fail --silent --show-error \
+      https://users.iems.northwestern.edu/~nocedal/Software/Lbfgsb.3.0.tar.gz \
+      -o /tmp/Lbfgsb.3.0.tar.gz \
+  && tar -xzf /tmp/Lbfgsb.3.0.tar.gz -C /tmp \
+  && sed -i \
+      -e "/Positive dir derivative in projection/d" \
+      -e "/Using the backtracking step/d" \
+      /tmp/Lbfgsb.3.0/lbfgsb.f \
+  && gfortran -O2 -fPIC -shared \
+      /tmp/Lbfgsb.3.0/lbfgsb.f \
+      /tmp/Lbfgsb.3.0/linpack.f \
+      /tmp/Lbfgsb.3.0/blas.f \
+      /tmp/Lbfgsb.3.0/timer.f \
+      -o /usr/local/lib/liblbfgsb.so \
+  && ldconfig \
+  && rm -rf /tmp/Lbfgsb.3.0 /tmp/Lbfgsb.3.0.tar.gz
 
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \
   && chmod 0440 /etc/sudoers.d/node

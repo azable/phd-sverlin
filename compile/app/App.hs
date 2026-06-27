@@ -14,7 +14,7 @@ import           System.IO           (Handle, stderr, stdout)
 
 data OutputMode
   = OutputFile FilePath
-  | OutputStdout
+  | OutputStdout Handle
 
 data RunConfig = RunConfig
   { runSeed        :: Int
@@ -62,8 +62,8 @@ runVisualization config graph = do
 diagnosticsHandle :: OutputMode -> Handle
 diagnosticsHandle outputMode =
   case outputMode of
-    OutputFile _ -> stdout
-    OutputStdout -> stderr
+    OutputFile _       -> stdout
+    OutputStdout _json -> stderr
 
 writeCompiled :: OutputMode -> Compile.Visualization -> IO ()
 writeCompiled outputMode compiled =
@@ -71,4 +71,4 @@ writeCompiled outputMode compiled =
     OutputFile path -> do
       Compile.writeCompiledJSON path compiled
       putStrLn ("Compiled JSON at: " ++ path)
-    OutputStdout -> Compile.printCompiledJSON compiled
+    OutputStdout handle -> Compile.hPrintCompiledJSON handle compiled

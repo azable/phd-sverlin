@@ -6,7 +6,10 @@ import           App
 import           DSL.Main
 import           Options.Applicative
 import           System.Exit         (exitFailure)
-import           System.IO           (hPutStrLn, stderr)
+import           System.IO           (Handle, hFlush, hPutStrLn, stderr, stdout)
+import           System.Posix.IO     (OpenMode (WriteOnly), closeFd,
+                                      defaultFileFlags, dup, dupTo, fdToHandle,
+                                      openFd, stdOutput)
 import           System.Random       (randomRIO)
 
 data Options = Options
@@ -19,15 +22,16 @@ main :: IO ()
 main = do
   options <- execParser optionsParserInfo
   seedInt <- chooseSeed (optionSeed options)
+  outputMode <-
+    if optionJson options
+      then App.OutputStdout <$> prepareJsonStdout
+      else pure (App.runOutputMode App.defaultRunConfig)
   let graph = run example
       config =
         App.defaultRunConfig
           { App.runSeed = seedInt
           , App.runShowDetails = optionShowSolverDetails options
-          , App.runOutputMode =
-              if optionJson options
-                then App.OutputStdout
-                else App.runOutputMode App.defaultRunConfig
+          , App.runOutputMode = outputMode
           }
   result <- App.runVisualization config graph
   case result of
@@ -37,6 +41,15 @@ main = do
         else putStrLn err
       exitFailure
     Right _compiled -> pure ()
+
+prepareJsonStdout :: IO Handle
+prepareJsonStdout = do
+  hFlush stdout
+  jsonOutput <- fdToHandle =<< dup stdOutput
+  nullOutput <- openFd "/dev/null" WriteOnly defaultFileFlags
+  _ <- dupTo nullOutput stdOutput
+  closeFd nullOutput
+  pure jsonOutput
 
 chooseSeed :: Maybe Int -> IO Int
 chooseSeed = maybe (randomRIO (minSeed, maxSeed)) pure

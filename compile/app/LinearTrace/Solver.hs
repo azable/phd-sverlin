@@ -1,7 +1,8 @@
-{-# LANGUAGE DeriveTraversable   #-}
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveTraversable        #-}
+{-# LANGUAGE FlexibleInstances        #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
 
 module LinearTrace.Solver
   ( -- * Symbolic scalar domains
@@ -72,17 +73,24 @@ module LinearTrace.Solver
   , evalExpr
   ) where
 
+import           Control.Exception          (bracket)
 import           Control.Monad.State.Strict
-import           Data.Foldable              (for_, traverse_)
+import           Data.Foldable              (traverse_)
 import           Data.List                  (foldl')
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Proxy                 (Proxy (..))
 import qualified Data.Set                   as Set
+import           Foreign.C.Types            (CInt (..))
+import           Foreign.Ptr                (Ptr, nullPtr)
 import           GHC.TypeLits               (KnownSymbol, symbolVal)
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
+import qualified System.IO                  as IO
+import           System.Posix.IO            (OpenMode (WriteOnly), closeFd,
+                                             defaultFileFlags, dup, dupTo,
+                                             openFd, stdOutput)
 import           System.Random              (mkStdGen, randomRs)
 
 --------------------------------------------------------------------------------
@@ -99,6 +107,7 @@ data ScalarType = ScalarType
   , typeCircularPeriod :: Maybe Double
   } deriving (Eq, Ord, Show)
 
+-- Finite initial bounds are also passed to the optimizer as native bounds.
 data InitialBounds = InitialBounds
   { initialLower :: Maybe Double
   , initialUpper :: Maybe Double
@@ -607,9 +616,6 @@ newtype EnergyExpr a = EnergyExpr
 valueOf :: InternalVar -> EnergyExpr a
 valueOf (InternalVar i) = EnergyExpr (!! i)
 
-constant :: Floating a => Double -> EnergyExpr a
-constant x = EnergyExpr (const (realToFrac x))
-
 sq :: Num a => a -> a
 sq x = x * x
 
@@ -668,21 +674,33 @@ data Term =
   Term TermKind Rational (forall a. Floating a => EnergyExpr a)
 
 data CSPState = CSPState
-  { nextVarId        :: Int
-  , initialValuesRev :: [Double]
-  , energyTermsRev   :: [Term]
+  { nextVarId       :: Int
+  , initialValueRev :: [Double]
+  , nativeBoundsRev :: [NativeBounds]
+  , energyTermsRev  :: [Term]
   }
 
 type BuildCSP = State CSPState
 
 emptyCSP :: CSPState
-emptyCSP = CSPState {nextVarId = 0, initialValuesRev = [], energyTermsRev = []}
+emptyCSP =
+  CSPState
+    { nextVarId = 0
+    , initialValueRev = []
+    , nativeBoundsRev = []
+    , energyTermsRev = []
+    }
 
-newInternalVar :: Double -> BuildCSP InternalVar
-newInternalVar initial = do
+newInternalVar :: Double -> NativeBounds -> BuildCSP InternalVar
+newInternalVar initial nativeBounds = do
   st <- get
   let i = nextVarId st
-  put st {nextVarId = i + 1, initialValuesRev = initial : initialValuesRev st}
+  put
+    st
+      { nextVarId = i + 1
+      , initialValueRev = initial : initialValueRev st
+      , nativeBoundsRev = nativeBounds : nativeBoundsRev st
+      }
   pure (InternalVar i)
 
 addHardTerm :: Rational -> (forall a. Floating a => EnergyExpr a) -> BuildCSP ()
@@ -700,29 +718,25 @@ addTerm kind weight expr = do
   st <- get
   put st {energyTermsRev = Term kind weight expr : energyTermsRev st}
 
-addRangeTerms :: Rational -> InternalVar -> Range -> BuildCSP ()
-addRangeTerms weight internal range = do
-  addHardTerm
-    weight
-    (sq (clipNegative (constant (rangeLower range) - valueOf internal)))
-  addHardTerm
-    weight
-    (sq (clipNegative (valueOf internal - constant (rangeUpper range))))
-
 --------------------------------------------------------------------------------
 -- Compilation
 --------------------------------------------------------------------------------
+type NativeBounds = (Double, Double)
+
 data CSP =
   CSP
     [Double]
+    [NativeBounds]
     (forall a. Floating a => [a] -> a)
     (forall a. Floating a => [a] -> a)
 
 compileReturning :: BuildCSP a -> (a, CSP)
-compileReturning build = (result, CSP initials totalEnergy hardEnergy)
+compileReturning build =
+  (result, CSP initials nativeBounds totalEnergy hardEnergy)
   where
     (result, st) = runState build emptyCSP
-    initials = reverse (initialValuesRev st)
+    initials = reverse (initialValueRev st)
+    nativeBounds = reverse (nativeBoundsRev st)
     terms = reverse (energyTermsRev st)
     totalEnergy xs =
       sum [weightedTerm weight expr xs | Term _ weight expr <- terms]
@@ -730,11 +744,48 @@ compileReturning build = (result, CSP initials totalEnergy hardEnergy)
       sum [weightedTerm weight expr xs | Term HardTerm weight expr <- terms]
 
 solveCSP :: CSP -> IO (Opt.Result [Double])
-solveCSP (CSP initials totalEnergy _hardEnergy) =
-  Opt.minimize Opt.LBFGS Opt.def totalEnergy Nothing [] initials
+solveCSP (CSP initials nativeBounds totalEnergy _hardEnergy)
+  | Opt.isSupportedMethod Opt.LBFGSB =
+    suppressNativeStdout
+      (Opt.minimize
+         Opt.LBFGSB
+         Opt.def
+         totalEnergy
+         (Just nativeBounds)
+         []
+         initials)
+  | otherwise =
+    ioError
+      (userError
+         "L-BFGS-B is not supported by numeric-optimization; enable the +with-lbfgsb package flag.")
+
+suppressNativeStdout :: IO a -> IO a
+suppressNativeStdout =
+  bracket
+    (do
+       IO.hFlush IO.stdout
+       flushNativeOutput
+       savedStdout <- dup stdOutput
+       nullOutput <- openFd "/dev/null" WriteOnly defaultFileFlags
+       _ <- dupTo nullOutput stdOutput
+       closeFd nullOutput
+       pure savedStdout)
+    (\savedStdout -> do
+       flushNativeOutput
+       IO.hFlush IO.stdout
+       _ <- dupTo savedStdout stdOutput
+       closeFd savedStdout)
+    . const
+
+flushNativeOutput :: IO ()
+flushNativeOutput = do
+  _ <- c_fflush nullPtr
+  pure ()
+
+foreign import ccall unsafe "stdio.h fflush" c_fflush :: Ptr () -> IO CInt
 
 cspHardEnergy :: CSP -> [Double] -> Double
-cspHardEnergy (CSP _ _ hardEnergy) = hardEnergy
+cspHardEnergy (CSP _ _ _ hardEnergy) = hardEnergy
 
 weightedTerm ::
      Floating a
@@ -778,7 +829,6 @@ data SolveConfig = SolveConfig
   , initialValuesFor :: RandomSeed -> [InitialValueSpec] -> Map String Double
   , ensureWeight     :: Rational
   , encourageWeight  :: Rational
-  , rangeWeight      :: Rational
   }
 
 defaultSolveConfig :: SolveConfig
@@ -788,7 +838,6 @@ defaultSolveConfig =
     , initialValuesFor = defaultInitialValues
     , ensureWeight = 100
     , encourageWeight = 1
-    , rangeWeight = 100
     }
 
 defaultInitialValue ::
@@ -885,24 +934,24 @@ compileConstraints config initialVars constraints =
           (\spec -> do
              let name = initialValueSpecName spec
                  ty = initialValueSpecType spec
+                 nativeBounds =
+                   nativeBoundsFor name (initialValueSpecBounds spec)
                  initial =
-                   Map.findWithDefault
-                     (defaultInitialValue
-                        (initialValueSpecSample spec)
+                   clampInitialValue
+                     nativeBounds
+                     (Map.findWithDefault
+                        (defaultInitialValue
+                           (initialValueSpecSample spec)
+                           name
+                           ty
+                           (initialValueSpecBounds spec))
                         name
-                        ty
-                        (initialValueSpecBounds spec))
-                     name
-                     configuredInitialValues
-             internal <- newInternalVar initial
+                        configuredInitialValues)
+             internal <- newInternalVar initial nativeBounds
              pure (name, ty, internal))
           initialSpecs
       let vars' =
             Map.fromList [(name, internal) | (name, _ty, internal) <- pairs]
-      traverse_
-        (\(_name, ty, internal) ->
-           for_ (typeRange ty) (addRangeTerms (rangeWeight config) internal))
-        pairs
       traverse_ (lowerConstraint config vars') flatConstraints
       pure vars'
     (vars, csp) = compileReturning build
@@ -918,6 +967,30 @@ compileConstraints config initialVars constraints =
                                      name
                                      inferredBounds
         }
+
+nativeBoundsFor :: String -> InitialBounds -> NativeBounds
+nativeBoundsFor name bounds
+  | lower <= upper = (lower, upper)
+  | otherwise =
+    error
+      ("inconsistent native bounds for solver variable "
+         ++ show name
+         ++ ": lower "
+         ++ show lower
+         ++ " is greater than upper "
+         ++ show upper)
+  where
+    lower = fromMaybe negativeInfinity (initialLower bounds)
+    upper = fromMaybe positiveInfinity (initialUpper bounds)
+
+positiveInfinity :: Double
+positiveInfinity = 1 / 0
+
+negativeInfinity :: Double
+negativeInfinity = -positiveInfinity
+
+clampInitialValue :: NativeBounds -> Double -> Double
+clampInitialValue (lower, upper) = min upper . max lower
 
 --------------------------------------------------------------------------------
 -- Symbol collection and inferred initial ranges
