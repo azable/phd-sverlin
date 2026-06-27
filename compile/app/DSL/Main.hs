@@ -223,8 +223,16 @@ visualization =
     ensure $ cell .>=. by 80
     ensure $ cell .<=. by 104
     encourage $ cell .>=. by 96
-    Variable gap <- variable @Span (cell / 4)
+    Variable gap <- variable @Span
+    ensure $ gap .>=. by 8
+    ensure $ gap .<=. by 16
+    encourage $ gap .>=. by 12
     Variable probeSize <- variable @Span (cell * 1.08)
+    Variable targetSize <- variable @Span
+    ensure $ targetSize .>=. by 80
+    ensure $ targetSize .<=. by 208
+    ensure $ targetSize .>=. cell
+    ensure $ targetSize .<=. cell * (2 :: Scalar)
     Variable valueHue <- variable @Hue
     Bound v <- bindContent
     Bound i <- bindInt
@@ -246,6 +254,11 @@ visualization =
       height cell
     -- Target row: a source value that anchors the rest of the layout.
     Selected targetSource <- select @Value (#target <&&> #source)
+    style targetSource $ do
+      width targetSize
+      height targetSize
+      fontSize (targetSize * 0.44)
+      strokeWidth (by 6)
     -- Probe row: the copied target and current array element sit side by side.
     Selected targetProbe <- select @Value (#target <&&> #probe)
     Selected probe <- select @Value #probe

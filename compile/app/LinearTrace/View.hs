@@ -1726,8 +1726,6 @@ defineNewBlock definition block0 =
       Ur env <- askViewEnv
       let block = block0 {blockStyle = styleDefinition (blockStyle block0)}
       constrainStyle (blockStyle block)
-      ensureRaw (S.num 0 S.@<=@ left block)
-      ensureRaw (S.num 0 S.@<=@ top block)
       ensureRaw (right block S.@<=@ canvasWidth env)
       ensureRaw (bottom block S.@<=@ canvasHeight env)
       emitViewNode (BlockViewNode block)
@@ -1838,8 +1836,6 @@ definePatchedBlock patch block0 = do
                 Just content -> content
           }
   constrainStyle (blockStyle block)
-  ensureRaw (S.num 0 S.@<=@ left block)
-  ensureRaw (S.num 0 S.@<=@ top block)
   ensureRaw (right block S.@<=@ canvasWidth env)
   ensureRaw (bottom block S.@<=@ canvasHeight env)
   constrainPatchGeometry patch block
@@ -3260,13 +3256,7 @@ virtualNodeConstraints node =
 
 virtualCanvasConstraints :: VirtualView tag -> [Constraint]
 virtualCanvasConstraints virtual =
-  [ S.num 0 S.@<=@ left virtual
-  , S.num 0 S.@<=@ top virtual
-  , left virtual S.@<=@ canvasWidth defaultViewEnv
-  , top virtual S.@<=@ canvasHeight defaultViewEnv
-  , S.num 0 S.@<=@ width virtual
-  , S.num 0 S.@<=@ height virtual
-  , right virtual S.@<=@ canvasWidth defaultViewEnv
+  [ right virtual S.@<=@ canvasWidth defaultViewEnv
   , bottom virtual S.@<=@ canvasHeight defaultViewEnv
   ]
 
@@ -3389,25 +3379,45 @@ viewNodeInitialVars env node =
         P.++ styleInitialVars (virtualStyle virtual)
 
 boundsInitialVars ::
-     ViewEnv -> P.Double -> P.Double -> BoundsExpr -> [InitialVar]
-boundsInitialVars env maxWidth maxHeight bounds' =
+     ViewEnv
+  -> P.Double
+  -> P.Double
+  -> P.Double
+  -> P.Double
+  -> BoundsExpr
+  -> [InitialVar]
+boundsInitialVars env minWidth minHeight maxWidth maxHeight bounds' =
   case bounds' of
     Bounds topExpr leftExpr widthExpr heightExpr ->
-      exprInitialVarsWithRange topExpr (Range 0 (canvasHeightValue env))
-        P.++ exprInitialVarsWithRange leftExpr (Range 0 (canvasWidthValue env))
-        P.++ exprInitialVarsWithRange widthExpr (Range 20 maxWidth)
-        P.++ exprInitialVarsWithRange heightExpr (Range 20 maxHeight)
+      exprInitialVarsWithRange
+        topExpr
+        (Range 0 (P.max 0 (canvasHeightValue env P.- minHeight)))
+        P.++ exprInitialVarsWithRange
+               leftExpr
+               (Range 0 (P.max 0 (canvasWidthValue env P.- minWidth)))
+        P.++ exprInitialVarsWithRange widthExpr (Range minWidth maxWidth)
+        P.++ exprInitialVarsWithRange heightExpr (Range minHeight maxHeight)
+
+minimumLayoutExtent :: P.Double
+minimumLayoutExtent = 20
 
 blockBoundsInitialVars :: ViewEnv -> BoundsExpr -> [InitialVar]
 blockBoundsInitialVars env =
   boundsInitialVars
     env
-    (P.max 20 (canvasWidthValue env P./ 4))
-    (P.max 20 (canvasHeightValue env P./ 4))
+    minimumLayoutExtent
+    minimumLayoutExtent
+    (P.max 20 (canvasWidthValue env P./ 2))
+    (P.max 20 (canvasHeightValue env P./ 2))
 
 virtualBoundsInitialVars :: ViewEnv -> BoundsExpr -> [InitialVar]
 virtualBoundsInitialVars env =
-  boundsInitialVars env (canvasWidthValue env) (canvasHeightValue env)
+  boundsInitialVars
+    env
+    minimumLayoutExtent
+    minimumLayoutExtent
+    (canvasWidthValue env)
+    (canvasHeightValue env)
 
 exprInitialVarsWithRange :: Expr ty -> Range -> [InitialVar]
 exprInitialVarsWithRange expr range =

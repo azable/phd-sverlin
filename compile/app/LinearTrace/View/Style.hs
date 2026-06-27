@@ -478,21 +478,35 @@ styleConstraints style' = concatMap fieldConstraints (styleFields style')
 fieldConstraints :: StyleField -> [Constraint]
 fieldConstraints field =
   case field of
-    StyleFreeField spec _ -> styleScalarConstraints spec
-    StyleLayoutField spec _ -> styleScalarConstraints spec
-    StyleUnitField spec _ -> styleScalarConstraints spec
-    StyleAngleField spec _ -> styleScalarConstraints spec
+    StyleFreeField spec expr -> scalarConstraints spec expr
+    StyleLayoutField spec expr -> scalarConstraints spec expr
+    StyleUnitField spec expr -> scalarConstraints spec expr
+    StyleAngleField spec expr -> scalarConstraints spec expr
     StyleColorField _ maybeHsl ->
       case maybeHsl of
         Nothing -> []
         Just hsl ->
-          unitConstraints (saturation hsl) ++ unitConstraints (lightness hsl)
+          unitComponentConstraints (saturation hsl)
+            ++ unitComponentConstraints (lightness hsl)
     StyleTextField _ _ -> []
     StyleFontWeightField _ _ -> []
     StyleFontStyleField _ _ -> []
     StyleTextAlignField _ _ -> []
     StyleBorderStyleField _ _ -> []
     StyleWhiteSpaceField _ _ -> []
+
+scalarConstraints :: StyleScalarSpec -> Expr ty -> [Constraint]
+scalarConstraints spec expr =
+  case styleScalarInitialRange spec of
+    Just range
+      | Just _ <- initialRangeFor expr range -> []
+    _ -> styleScalarConstraints spec
+
+unitComponentConstraints :: UnitExpr -> [Constraint]
+unitComponentConstraints expr =
+  case initialRangeFor expr (Range 0 1) of
+    Just _  -> []
+    Nothing -> unitConstraints expr
 
 --------------------------------------------------------------------------------
 -- Constraint helpers used by attributes

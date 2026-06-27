@@ -76,7 +76,7 @@ module LinearTrace.Solver
 import           Control.Exception          (bracket)
 import           Control.Monad.State.Strict
 import           Data.Foldable              (traverse_)
-import           Data.List                  (foldl')
+import           Data.List                  (foldl', isPrefixOf)
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import           Data.Maybe                 (fromMaybe)
@@ -921,13 +921,18 @@ compileConstraints config initialVars constraints =
         mergeInitialBounds
         (collectInitialVarBounds initialVars)
         (inferInitialBounds flatConstraints)
+    energyConstraints = filter (not . nativeBoundConstraint) flatConstraints
     initialSpecs =
       zipWith
         makeInitialValueSpec
         (randomSamplesFromSeed (initialSeed config))
         (Map.toAscList varTypes)
-    configuredInitialValues =
+    baseInitialValues =
       initialValuesFor config (initialSeed config) initialSpecs
+    rangeInitialValues =
+      seedRangeInitialValues flatConstraints initialSpecs baseInitialValues
+    configuredInitialValues =
+      seedDerivedInitialValues flatConstraints rangeInitialValues
     build = do
       pairs <-
         traverse
@@ -952,7 +957,7 @@ compileConstraints config initialVars constraints =
           initialSpecs
       let vars' =
             Map.fromList [(name, internal) | (name, _ty, internal) <- pairs]
-      traverse_ (lowerConstraint config vars') flatConstraints
+      traverse_ (lowerConstraint config vars') energyConstraints
       pure vars'
     (vars, csp) = compileReturning build
     makeInitialValueSpec sample (name, ty) =
@@ -991,6 +996,169 @@ negativeInfinity = -positiveInfinity
 
 clampInitialValue :: NativeBounds -> Double -> Double
 clampInitialValue (lower, upper) = min upper . max lower
+
+nativeBoundConstraint :: Constraint -> Bool
+nativeBoundConstraint constraint =
+  case constraint of
+    LessOrEqual (ELit _) (EVar _ _) -> True
+    LessOrEqual (EVar _ _) (ELit _) -> True
+    _                               -> False
+
+seedRangeInitialValues ::
+     [Constraint]
+  -> [InitialValueSpec]
+  -> Map String Double
+  -> Map String Double
+seedRangeInitialValues constraints specs values =
+  foldl' seedRangeInitialValue values specs
+  where
+    ranges = dynamicInitialBounds constraints values
+    seedRangeInitialValue seeded spec =
+      case Map.lookup (initialValueSpecName spec) ranges of
+        Nothing -> seeded
+        Just rangeBounds ->
+          let bounds =
+                initialValueSpecBounds spec `mergeInitialBounds` rangeBounds
+              nativeBounds = nativeBoundsFor (initialValueSpecName spec) bounds
+              sampled =
+                defaultInitialValue
+                  (initialValueSpecSample spec)
+                  (initialValueSpecName spec)
+                  (initialValueSpecType spec)
+                  bounds
+           in Map.insert
+                (initialValueSpecName spec)
+                (clampInitialValue nativeBounds sampled)
+                seeded
+
+dynamicInitialBounds ::
+     [Constraint] -> Map String Double -> Map String InitialBounds
+dynamicInitialBounds constraints values =
+  foldl' (addDynamicInitialBound values) Map.empty constraints
+
+addDynamicInitialBound ::
+     Map String Double
+  -> Map String InitialBounds
+  -> Constraint
+  -> Map String InitialBounds
+addDynamicInitialBound values bounds constraint =
+  case constraint of
+    LessOrEqual lhs rhs ->
+      addDynamicUpper values lhs rhs (addDynamicLower values lhs rhs bounds)
+    Soft _ -> bounds
+    All constraints -> foldl' (addDynamicInitialBound values) bounds constraints
+    _ -> bounds
+
+addDynamicLower ::
+     Map String Double
+  -> RawExpr
+  -> RawExpr
+  -> Map String InitialBounds
+  -> Map String InitialBounds
+addDynamicLower values lowerBoundExpr target =
+  addDynamicBound values addInitialLower target lowerBoundExpr
+
+addDynamicUpper ::
+     Map String Double
+  -> RawExpr
+  -> RawExpr
+  -> Map String InitialBounds
+  -> Map String InitialBounds
+addDynamicUpper values = addDynamicBound values addInitialUpper
+
+addDynamicBound ::
+     Map String Double
+  -> (Double -> InitialBounds -> InitialBounds)
+  -> RawExpr
+  -> RawExpr
+  -> Map String InitialBounds
+  -> Map String InitialBounds
+addDynamicBound values addBound target expr bounds =
+  case target of
+    EVar _ variable
+      | not (rawExprMentions name expr) ->
+        case evalInitialRawExpr values expr of
+          Just value
+            | finiteInitialValue value ->
+              Map.alter
+                (Just . addBound value . fromMaybe unboundedInitialBounds)
+                name
+                bounds
+          _ -> bounds
+      where
+        name = varName variable
+    _ -> bounds
+
+seedDerivedInitialValues ::
+     [Constraint] -> Map String Double -> Map String Double
+seedDerivedInitialValues constraints values =
+  foldl' seedDerivedInitialValue values constraints
+
+seedDerivedInitialValue :: Map String Double -> Constraint -> Map String Double
+seedDerivedInitialValue values constraint =
+  case constraint of
+    Equals _ lhs rhs -> seedEqualityInitialValue values lhs rhs
+    _                -> values
+
+seedEqualityInitialValue ::
+     Map String Double -> RawExpr -> RawExpr -> Map String Double
+seedEqualityInitialValue values lhs rhs =
+  seedInitialVarFromExpr (seedInitialVarFromExpr values lhs rhs) rhs lhs
+
+seedInitialVarFromExpr ::
+     Map String Double -> RawExpr -> RawExpr -> Map String Double
+seedInitialVarFromExpr values target expr =
+  case target of
+    EVar _ variable
+      | derivedInitialVarName name
+      , independentInitialExpr expr
+      , not (rawExprMentions name expr) ->
+        case evalInitialRawExpr values expr of
+          Just value
+            | finiteInitialValue value -> Map.insert name value values
+          _ -> values
+      where
+        name = varName variable
+    _ -> values
+
+derivedInitialVarName :: String -> Bool
+derivedInitialVarName = not . independentInitialVarName
+
+independentInitialVarName :: String -> Bool
+independentInitialVarName = isPrefixOf "global."
+
+independentInitialExpr :: RawExpr -> Bool
+independentInitialExpr expr =
+  all independentInitialVarName (Map.keys (collectRawExprVarTypes expr))
+
+rawExprMentions :: String -> RawExpr -> Bool
+rawExprMentions name expr = Map.member name (collectRawExprVarTypes expr)
+
+finiteInitialValue :: Double -> Bool
+finiteInitialValue value = not (isNaN value) && not (isInfinite value)
+
+evalInitialRawExpr :: Map String Double -> RawExpr -> Maybe Double
+evalInitialRawExpr values expr =
+  case expr of
+    EVar _ variable -> Map.lookup (varName variable) values
+    ELit value -> Just value
+    EAdd lhs rhs ->
+      (+) <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
+    ESub lhs rhs ->
+      (-) <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
+    EMul lhs rhs ->
+      (*) <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
+    EDiv lhs rhs ->
+      (/) <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
+    ENeg inner -> negate <$> evalInitialRawExpr values inner
+    EAbs inner -> abs <$> evalInitialRawExpr values inner
+    ESignum inner -> signum <$> evalInitialRawExpr values inner
+    EPow base to ->
+      (**) <$> evalInitialRawExpr values base <*> evalInitialRawExpr values to
+    EMin lhs rhs ->
+      min <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
+    EMax lhs rhs ->
+      max <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
 
 --------------------------------------------------------------------------------
 -- Symbol collection and inferred initial ranges
