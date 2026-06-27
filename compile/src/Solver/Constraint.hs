@@ -7,12 +7,17 @@ module Solver.Constraint
   , (@==@)
   , (@<=@)
   , (@>=@)
+  , allOf
   , within
   , minimize
   , soften
   , flattenConstraint
   , flattenConstraints
+  , constraintView
+  , constraintViews
+  , constraintCount
   , equalityEpsilon
+  , ConstraintView(..)
   , Component
   , ComponentRelation(..)
   , component
@@ -30,12 +35,20 @@ import           Solver.Expr
 -- Constraints
 --------------------------------------------------------------------------------
 data Constraint
-  = Equals ScalarType RawExpr RawExpr
+  = Equals Domain RawExpr RawExpr
   | LessOrEqual RawExpr RawExpr
   | Minimize RawExpr
   | Soft Constraint
   | All [Constraint]
   deriving (Eq, Ord, Show)
+
+data ConstraintView
+  = ConstraintEqual Domain ExprView ExprView
+  | ConstraintLessOrEqual ExprView ExprView
+  | ConstraintMinimize ExprView
+  | ConstraintSoft ConstraintView
+  | ConstraintAll [ConstraintView]
+  deriving (Eq, Show)
 
 instance Semigroup Constraint where
   lhs <> rhs = All (flattenConstraint lhs ++ flattenConstraint rhs)
@@ -63,7 +76,7 @@ infix 4 @>=@
 lhs @>=@ rhs = rhs @<=@ lhs
 
 instance ConstrainEq (Expr ty) where
-  constrainEqual (Expr ty lhs) (Expr _ rhs) = Equals ty lhs rhs
+  constrainEqual (Expr domain lhs) (Expr _ rhs) = Equals domain lhs rhs
 
 instance ConstrainOrd (Expr ty) where
   constrainLessOrEqual (Expr _ lhs) (Expr _ rhs) = LessOrEqual lhs rhs
@@ -94,7 +107,39 @@ flattenConstraint constraint =
 flattenConstraints :: [Constraint] -> [Constraint]
 flattenConstraints =
   dedupeConstraints
-    . concatMap (filter (not . redundantConstraint) . flattenConstraint)
+    . filter (not . redundantConstraint)
+    . map canonicalConstraint
+    . concatMap flattenConstraint
+
+canonicalConstraint :: Constraint -> Constraint
+canonicalConstraint constraint =
+  case constraint of
+    Equals domain lhs rhs
+      | rhs < lhs -> Equals domain rhs lhs
+      | otherwise -> constraint
+    Soft inner -> Soft (canonicalConstraint inner)
+    All constraints -> All (map canonicalConstraint constraints)
+    _ -> constraint
+
+allOf :: [Constraint] -> Constraint
+allOf = All
+
+constraintView :: Constraint -> ConstraintView
+constraintView constraint =
+  case constraint of
+    Equals domain lhs rhs ->
+      ConstraintEqual domain (rawExprView lhs) (rawExprView rhs)
+    LessOrEqual lhs rhs ->
+      ConstraintLessOrEqual (rawExprView lhs) (rawExprView rhs)
+    Minimize objective -> ConstraintMinimize (rawExprView objective)
+    Soft inner -> ConstraintSoft (constraintView inner)
+    All constraints -> ConstraintAll (map constraintView constraints)
+
+constraintViews :: [Constraint] -> [ConstraintView]
+constraintViews = map constraintView . flattenConstraints
+
+constraintCount :: [Constraint] -> Int
+constraintCount = length . flattenConstraints
 
 dedupeConstraints :: [Constraint] -> [Constraint]
 dedupeConstraints = go Set.empty
@@ -128,9 +173,9 @@ satisfiedConstantConstraint constraint =
     Soft inner -> satisfiedConstantConstraint inner
     All _ -> False
 
-constantEquals :: ScalarType -> Double -> Double -> Bool
+constantEquals :: Domain -> Double -> Double -> Bool
 constantEquals ty lhs rhs =
-  case typeCircularPeriod ty of
+  case domainCircularPeriod ty of
     Just period
       | period > 0 ->
         let nearestTurns = fromInteger (round ((lhs - rhs) / period) :: Integer)
@@ -179,7 +224,7 @@ soften constraint =
 -- Multi-component constraint helpers
 --------------------------------------------------------------------------------
 data Component =
-  Component ScalarType RawExpr [Constraint]
+  Component Domain RawExpr [Constraint]
   deriving (Eq, Ord, Show)
 
 data ComponentRelation
@@ -188,7 +233,7 @@ data ComponentRelation
   deriving (Eq, Ord, Show)
 
 component :: SymbolicType ty => Expr ty -> [Constraint] -> Component
-component expr = Component (exprType expr) (exprRaw expr)
+component expr = Component (exprDomain expr) (exprRaw expr)
 
 exprComponent :: SymbolicType ty => Expr ty -> Component
 exprComponent expr = component expr []
@@ -269,20 +314,20 @@ symmetricBridgeComponent lhs delta rhs =
               in Equals lhsType difference deltaRaw
         else componentTypeError3 lhsType deltaType rhsType
 
-componentTypeError :: ScalarType -> ScalarType -> Constraint
+componentTypeError :: Domain -> Domain -> Constraint
 componentTypeError lhs rhs =
   error
     ("Cannot relate values with different scalar types: "
-       ++ typeName lhs
+       ++ domainName lhs
        ++ " and "
-       ++ typeName rhs)
+       ++ domainName rhs)
 
-componentTypeError3 :: ScalarType -> ScalarType -> ScalarType -> Constraint
+componentTypeError3 :: Domain -> Domain -> Domain -> Constraint
 componentTypeError3 first second third =
   error
     ("Cannot relate values with different scalar types: "
-       ++ typeName first
+       ++ domainName first
        ++ ", "
-       ++ typeName second
+       ++ domainName second
        ++ ", and "
-       ++ typeName third)
+       ++ domainName third)

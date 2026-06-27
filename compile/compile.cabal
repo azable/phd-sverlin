@@ -55,6 +55,7 @@ common warnings
 
 common app-dependencies
     build-depends:    base ^>=4.18.3.0,
+                      array,
                       containers,
                       random,
                       mtl,
@@ -89,6 +90,7 @@ library
 
     other-modules:
         Solver.Backend
+        Solver.Choice
         Solver.Constraint
         Solver.Expr
         Solver.Problem

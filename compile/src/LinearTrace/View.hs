@@ -160,7 +160,11 @@ module LinearTrace.View
   , mapStyleExprLeaves
   , solvedStyleExprs
   , -- * Expressions
-    Expr
+    Free
+  , Layout
+  , Unit
+  , Angle
+  , Expr
   , Constraint
   , FreeExpr
   , LayoutExpr
@@ -252,7 +256,6 @@ import           Control.Functor.Linear                hiding ((<$>), (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
 import           Data.Kind                             (Type)
 import qualified Data.Kind                             as K
-import qualified Data.Map.Strict                       as Map
 import qualified Data.Maybe                            as Maybe
 import           Data.Proxy                            (Proxy (..))
 import           Data.Type.Equality                    ((:~:) (..))
@@ -260,8 +263,8 @@ import           Data.Typeable                         (eqT)
 import           GHC.OverloadedLabels                  (IsLabel (..))
 import           GHC.TypeLits                          (ErrorMessage (..),
                                                         KnownSymbol, Nat,
-                                                        TypeError, type (+),
-                                                        type CmpNat)
+                                                        TypeError, symbolVal,
+                                                        type (+), type CmpNat)
 import qualified LinearTrace.Core.Internal             as C
 import           LinearTrace.View.Style
 import qualified Prelude                               as P
@@ -323,14 +326,29 @@ queryAppend lhs rhs =
       case rhs of
         Query rightTerms -> Query (canonicalTerms (leftTerms P.++ rightTerms))
 
+labelName :: KnownSymbol name => Proxy name -> P.String
+labelName proxy = dotName (symbolVal proxy)
+
+dotName :: P.String -> P.String
+dotName name =
+  case name of
+    []        -> []
+    char:rest -> dotChar char : dotName rest
+
+dotChar :: P.Char -> P.Char
+dotChar char =
+  case char P.== '_' of
+    P.True  -> '.'
+    P.False -> char
+
 instance KnownSymbol name => IsLabel name Query where
-  fromLabel = queryAtom (S.labelName (Proxy @name))
+  fromLabel = queryAtom (labelName (Proxy @name))
 
 instance KnownSymbol name => IsLabel name (P.Int -> Query) where
-  fromLabel value = queryInt (S.labelName (Proxy @name)) (queryIntConst value)
+  fromLabel value = queryInt (labelName (Proxy @name)) (queryIntConst value)
 
 instance KnownSymbol name => IsLabel name (QueryInt -> Query) where
-  fromLabel = queryInt (S.labelName (Proxy @name))
+  fromLabel = queryInt (labelName (Proxy @name))
 
 queryKey :: Query -> P.String
 queryKey query =
@@ -1858,7 +1876,7 @@ constrainMaybePin expr maybePin =
     Just pin ->
       case pin of
         LayoutPin target constraints ->
-          ensureRaw (S.All (constraints P.++ [expr S.@==@ target]))
+          ensureRaw (S.allOf (constraints P.++ [expr S.@==@ target]))
 
 --------------------------------------------------------------------------------
 -- Explicit token handling
@@ -2453,14 +2471,18 @@ solveCSP :: SolveConfig -> ViewGraph -> IO Solution
 solveCSP config graph = S.solveProblem config (viewSolveProblem graph)
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> IO Solution
-solveCSPWithSeed seed = solveCSP S.defaultSolveConfig {initialSeed = seed}
+solveCSPWithSeed seed = solveCSP (viewSolveConfig seed)
+
+viewSolveConfig :: RandomSeed -> SolveConfig
+viewSolveConfig seed =
+  S.withOptimizerTolerances (Just 1e-5) (Just 1e-3)
+    $ S.withConstraintWeights
+        (P.fromInteger (10 :: P.Integer))
+        (P.fromInteger (1 :: P.Integer))
+    $ S.withInitialSeed seed S.defaultSolveConfig
 
 viewSolveProblem :: ViewGraph -> SolverProblem
-viewSolveProblem graph =
-  S.SolverProblem
-    { S.solverConstraints = viewConstraints graph
-    , S.solverInitialOverrides = Map.empty
-    }
+viewSolveProblem graph = S.solverProblem (viewConstraints graph)
 
 data AnyBlockView where
   AnyBlockView :: BlockView tag -> AnyBlockView

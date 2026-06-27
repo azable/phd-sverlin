@@ -13,7 +13,7 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 - `compile/app/` contains executable-only Haskell modules and the current visualization example.
 - `compile/app/DSL/Main.hs` defines the current example program and its visual styling/constraints. Query terms are intersected with `<&>`, for example `#array <&> #index @: i`.
 - `compile/src/LinearTrace/` contains the reusable trace model, choreography DSL, view compiler, and JSON output pipeline.
-- `compile/src/Solver.hs` is the public solver API. Implementation modules live under `compile/src/Solver/` and should normally be imported through the top-level `Solver` facade.
+- `compile/src/Solver.hs` is the public solver API. It exposes opaque numeric expressions/constraints, finite categorical choices, generic real/cyclic domains, diagnostic views, preprocessing inspection, and solve/compile entrypoints. Implementation modules live under `compile/src/Solver/` and should normally be imported through the top-level `Solver` facade.
 - `compile/test-support/Solver/TestFixtures.hs` contains stable synthetic solver fixtures used by tests and benchmarks.
 - `compile/test/` contains direct Haskell tests, using `tasty`, that do not run the full visualization pipeline.
 - `compile/bench/` contains direct Haskell benchmarks for fixed solver fixtures.
@@ -58,13 +58,17 @@ Use the direct solver benchmark when changing the solver, constraint lowering, o
 pnpm run bench:solver
 ```
 
-This runs fixed synthetic solver fixtures from `Solver.TestFixtures` and reports only in-process solve durations. Useful options:
+This runs fixed synthetic solver fixtures from `Solver.TestFixtures` and reports compile/lowering time, backend solve time, and total in-process duration. Useful options:
 
 ```sh
 pnpm run bench:solver --iterations 3
 pnpm run bench:solver --seed 1,320994595
 pnpm run bench:solver --json
 ```
+
+The solver preprocessing step flattens conjunctions, removes redundant or duplicate canonical constraints, merges direct and single-variable affine `within` ranges into native L-BFGS-B bounds, removes linear inequalities already implied by native bounds, and reports raw/canonical/eliminated counts through `ProblemInspection`. Finite categorical choices use `Choice`/`Category` plus `choose`, `sameChoice`, and `differentChoice`; they are sampled from satisfying finite assignments before numeric solving, with `withMaxCategoricalBranches` guarding accidental branch explosions.
+
+The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`. This keeps direct solver tests conservative while avoiding very long regeneration tails. `./compile.sh --details` prints variables, native bounds, energy terms, eliminated constraints, optimizer iterations, and function/gradient evaluations; use those numbers when investigating slow seeds.
 
 Use the full compile benchmark when changing the Haskell-to-JSON path, frontend server action, or anything where end-to-end behavior matters:
 
@@ -127,8 +131,8 @@ hlint compile/src compile/app compile/test compile/bench compile/test-support
 Before finishing Haskell edits, run the same formatter pipeline used by the editor:
 
 ```sh
-find compile -name '*.hs' -print0 | xargs -0 hindent
-find compile -name '*.hs' -print0 | xargs -0 stylish-haskell -i
+find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 hindent
+find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 stylish-haskell -i
 ```
 
 `stylish-haskell -i` should be the final source-modifying formatter pass.

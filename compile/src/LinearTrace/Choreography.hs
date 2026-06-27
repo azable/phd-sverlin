@@ -213,7 +213,7 @@ import qualified Data.Functor.Linear    as DFL
 import           Data.Proxy             (Proxy (..))
 import           GHC.Exts               (Multiplicity (Many))
 import           GHC.OverloadedLabels   (IsLabel (..))
-import           GHC.TypeLits           (KnownSymbol)
+import           GHC.TypeLits           (KnownSymbol, symbolVal)
 import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          Facts (..), LBool (..), LDouble (..),
                                          LInt (..), LString (..), LUnit (..),
@@ -222,12 +222,12 @@ import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          factInt, factSymbol, factsToList,
                                          factsUnion, (<$>), (<*>))
 import qualified LinearTrace.Core       as C
-import           LinearTrace.View       (BorderStyle (..), Bounds (..),
+import           LinearTrace.View       (Angle, BorderStyle (..), Bounds (..),
                                          BoundsExpr, BoxDefinition, BoxVisual,
                                          ConstraintStrength (..),
-                                         FontStyle (..), FontWeight (..),
+                                         FontStyle (..), FontWeight (..), Free,
                                          FreeExpr, Hsl (..), HslExpr,
-                                         HslPart (..), Hue, HueExpr,
+                                         HslPart (..), Hue, HueExpr, Layout,
                                          LayoutAttr (..), LayoutExpr,
                                          LayoutRelation (..), LayoutUse (..),
                                          LiveVisual, MatchBindings, MatchSpec,
@@ -238,11 +238,12 @@ import           LinearTrace.View       (BorderStyle (..), Bounds (..),
                                          StyleFreeAttr (..),
                                          StyleLayoutAttr (..),
                                          StyleUnitAttr (..), TextAlign (..),
-                                         UnitExpr, ValueAccess, ValueEndpoint,
-                                         WhiteSpace (..), anyPayloadPattern,
-                                         boxDefinition, emptyMatchSpec,
-                                         emptyQuery, global, layoutValueAccess,
-                                         matchAnyQueryNode, matchBindingValue,
+                                         Unit, UnitExpr, ValueAccess,
+                                         ValueEndpoint, WhiteSpace (..),
+                                         anyPayloadPattern, boxDefinition,
+                                         emptyMatchSpec, emptyQuery, global,
+                                         layoutValueAccess, matchAnyQueryNode,
+                                         matchBindingValue,
                                          matchContextBindings,
                                          matchGlobalLayout,
                                          matchQueryPayloadNode, matchSpecAppend,
@@ -273,10 +274,26 @@ import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
                                          (+), (-), (/), (/=), (<>))
 import qualified Solver                 as S
 import           Solver                 (Vec2 (..), vec2)
+import qualified Solver.Expr            as SolverExpr
 import qualified Text.Read              as Read
 
 infixr 6 <&>
 infixl 9 @:
+labelName :: KnownSymbol name => Proxy name -> P.String
+labelName proxy = dotName (symbolVal proxy)
+
+dotName :: P.String -> P.String
+dotName name =
+  case name of
+    []        -> []
+    char:rest -> dotChar char : dotName rest
+
+dotChar :: P.Char -> P.Char
+dotChar char =
+  case char P.== '_' of
+    P.True  -> '.'
+    P.False -> char
+
 data Program a where
   PureProgram :: a %1 -> Program a
   BindProgram :: Program a %1 -> (a %1 -> Program b) %1 -> Program b
@@ -1138,14 +1155,14 @@ instance {-# OVERLAPPING #-} S.SymbolicType ty =>
     VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} RelateValues
-           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag))
+           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag))
            HslExpr where
   relateValues relation lhs rhs =
     VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 instance {-# OVERLAPPING #-} RelateValues
            HslExpr
-           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
+           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag)) where
   relateValues relation lhs rhs =
     VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
@@ -1185,7 +1202,7 @@ instance {-# OVERLAPPING #-} S.SymbolicType ty =>
     SymmetricBridge (valueTerm lhs) (valueTerm delta)
 
 instance {-# OVERLAPPING #-} OpenSymmetricBridge
-           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag))
+           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag))
            HslExpr where
   openSymmetricBridge lhs delta =
     SymmetricBridge (valueTerm lhs) (valueTerm delta)
@@ -1507,7 +1524,7 @@ setStyleWithConstraints constraints update =
     ()
     emptyNodeSpec
       { nodeSpecStyleUpdate = update
-      , nodeSpecRequirements = [constrainRaw (S.All constraints)]
+      , nodeSpecRequirements = [constrainRaw (S.allOf constraints)]
       }
 
 class Opacity input output | input -> output, output -> input where
@@ -1540,13 +1557,13 @@ class Stroke input output | input -> output, output -> input where
 instance Opacity UnitExpr (NodeRecipe ()) where
   opacity value = setStyleWith (VS.setOpacity value)
 
-instance Opacity (Selection (NodeRef tag)) (SelectedExpr S.Unit tag) where
+instance Opacity (Selection (NodeRef tag)) (SelectedExpr Unit tag) where
   opacity selection = SelectedExpr selection (styleUnitValueAccess StyleOpacity)
 
 instance ZIndex FreeExpr (NodeRecipe ()) where
   zIndex value = setStyleWith (VS.setZIndex value)
 
-instance ZIndex (Selection (NodeRef tag)) (SelectedExpr S.Free tag) where
+instance ZIndex (Selection (NodeRef tag)) (SelectedExpr Free tag) where
   zIndex selection = SelectedExpr selection (styleFreeValueAccess StyleZIndex)
 
 instance FontSize Span (NodeRecipe ()) where
@@ -1555,7 +1572,7 @@ instance FontSize Span (NodeRecipe ()) where
       (spanConstraints value)
       (VS.setFontSize (spanExpr value))
 
-instance FontSize (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance FontSize (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   fontSize selection =
     SelectedExpr selection (styleLayoutValueAccess StyleFontSize)
 
@@ -1565,7 +1582,7 @@ instance Padding Span (NodeRecipe ()) where
       (spanConstraints value)
       (VS.setPadding (spanExpr value))
 
-instance Padding (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Padding (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   padding selection =
     SelectedExpr selection (styleLayoutValueAccess StylePadding)
 
@@ -1575,7 +1592,7 @@ instance Radius Span (NodeRecipe ()) where
       (spanConstraints value)
       (VS.setRadius (spanExpr value))
 
-instance Radius (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Radius (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   radius selection = SelectedExpr selection (styleLayoutValueAccess StyleRadius)
 
 instance StrokeWidth Span (NodeRecipe ()) where
@@ -1584,14 +1601,14 @@ instance StrokeWidth Span (NodeRecipe ()) where
       (spanConstraints value)
       (VS.setStrokeWidth (spanExpr value))
 
-instance StrokeWidth (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance StrokeWidth (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   strokeWidth selection =
     SelectedExpr selection (styleLayoutValueAccess StyleStrokeWidth)
 
 instance Alpha UnitExpr (NodeRecipe ()) where
   alpha value = setStyleWith (VS.setAlpha value)
 
-instance Alpha (Selection (NodeRef tag)) (SelectedExpr S.Unit tag) where
+instance Alpha (Selection (NodeRef tag)) (SelectedExpr Unit tag) where
   alpha selection = SelectedExpr selection (styleUnitValueAccess StyleAlpha)
 
 instance Fill HslExpr (NodeRecipe ()) where
@@ -1599,7 +1616,7 @@ instance Fill HslExpr (NodeRecipe ()) where
 
 instance Fill
            (Selection (NodeRef tag))
-           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
+           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag)) where
   fill selection =
     Hsl
       (SelectedExpr selection (styleColorPartValueAccess StyleFill HslHue))
@@ -1613,7 +1630,7 @@ instance Stroke HslExpr (NodeRecipe ()) where
 
 instance Stroke
            (Selection (NodeRef tag))
-           (Hsl (SelectedExpr S.Angle tag) (SelectedExpr S.Unit tag)) where
+           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag)) where
   stroke selection =
     Hsl
       (SelectedExpr selection (styleColorPartValueAccess StyleStroke HslHue))
@@ -1710,22 +1727,22 @@ instance Right Coord (NodeRecipe ()) where
 instance Bottom Coord (NodeRecipe ()) where
   bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
 
-instance Left (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Left (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   left selection = SelectedExpr selection (layoutValueAccess AttrLeft)
 
-instance Top (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Top (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   top selection = SelectedExpr selection (layoutValueAccess AttrTop)
 
-instance Width (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Width (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   width selection = SelectedExpr selection (layoutValueAccess AttrWidth)
 
-instance Height (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Height (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   height selection = SelectedExpr selection (layoutValueAccess AttrHeight)
 
-instance Right (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Right (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   right selection = SelectedExpr selection (layoutValueAccess AttrRight)
 
-instance Bottom (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Bottom (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   bottom selection = SelectedExpr selection (layoutValueAccess AttrBottom)
 
 instance X Coord (NodeRecipe ()) where
@@ -1734,10 +1751,10 @@ instance X Coord (NodeRecipe ()) where
 instance Y Coord (NodeRecipe ()) where
   y value = setNodeSpecWith (\spec -> spec {nodeSpecY = Just value})
 
-instance X (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance X (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   x selection = SelectedExpr selection (layoutValueAccess AttrCenterX)
 
-instance Y (Selection (NodeRef tag)) (SelectedExpr S.Layout tag) where
+instance Y (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   y selection = SelectedExpr selection (layoutValueAccess AttrCenterY)
 
 pos :: (Left input value, Top input value) => input -> Vec2 value
@@ -1857,14 +1874,15 @@ nodePatch bindings recipe =
 
 substituteStyleBindings :: MatchBindings -> Style -> Style
 substituteStyleBindings bindings =
-  VS.mapStyleExprs (S.substituteExprVars (bindingExprSubstitutions bindings))
+  VS.mapStyleExprs
+    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
 
 substituteCoordBindings :: MatchBindings -> Coord -> Coord
 substituteCoordBindings bindings value =
   case value of
     Coord expr constraints ->
       Coord
-        (S.substituteExprVars (bindingExprSubstitutions bindings) expr)
+        (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings) expr)
         constraints
 
 substituteSpanBindings :: MatchBindings -> Span -> Span
@@ -1872,7 +1890,7 @@ substituteSpanBindings bindings value =
   case value of
     Span expr constraints ->
       Span
-        (S.substituteExprVars (bindingExprSubstitutions bindings) expr)
+        (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings) expr)
         constraints
 
 bindingExprSubstitutions :: MatchBindings -> [(P.String, P.Double)]
@@ -2051,11 +2069,11 @@ traceQueryAppend lhs rhs =
             (preferLater leftPayload rightPayload)
 
 instance KnownSymbol name => IsLabel name (TraceQuery tag) where
-  fromLabel = TraceQuery (queryAtom (S.labelName (Proxy @name))) Nothing
+  fromLabel = TraceQuery (queryAtom (labelName (Proxy @name))) Nothing
 
 instance KnownSymbol name => IsLabel name (QueryInt -> TraceQuery tag) where
   fromLabel value =
-    TraceQuery (queryInt (S.labelName (Proxy @name)) value) Nothing
+    TraceQuery (queryInt (labelName (Proxy @name)) value) Nothing
 
 class QueryAppend query where
   appendQuery :: query -> query -> query
@@ -2122,7 +2140,7 @@ constrainMaybeCoord expr maybeTarget =
     Nothing -> return ()
     Just target ->
       constrainRaw
-        (S.All (coordConstraints target P.++ [expr S.@==@ coordExpr target]))
+        (S.allOf (coordConstraints target P.++ [expr S.@==@ coordExpr target]))
 
 constrainMaybeSpan :: LayoutExpr -> Maybe Span -> ViewLayout ()
 constrainMaybeSpan expr maybeTarget =
@@ -2130,7 +2148,7 @@ constrainMaybeSpan expr maybeTarget =
     Nothing -> return ()
     Just target ->
       constrainRaw
-        (S.All (spanConstraints target P.++ [expr S.@==@ spanExpr target]))
+        (S.allOf (spanConstraints target P.++ [expr S.@==@ spanExpr target]))
 
 constrainRaw :: S.Constraint -> ViewLayout ()
 constrainRaw constraint = V.ensure (OneConstraint (Ur constraint))

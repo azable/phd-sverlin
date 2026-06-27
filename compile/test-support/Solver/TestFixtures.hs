@@ -10,6 +10,16 @@ module Solver.TestFixtures
 import           Data.Maybe (catMaybes)
 import           Solver
 
+data FixtureLayout
+
+data FixtureAngle
+
+instance SymbolicType FixtureLayout where
+  symbolicDomain _ = realDomain "fixture-layout"
+
+instance SymbolicType FixtureAngle where
+  symbolicDomain _ = cyclicDomain "fixture-angle" 360
+
 data SolverFixture = SolverFixture
   { fixtureName        :: String
   , fixtureDescription :: String
@@ -17,7 +27,7 @@ data SolverFixture = SolverFixture
   }
 
 availableFixtures :: [SolverFixture]
-availableFixtures = [boundedRowFixture]
+availableFixtures = [boundedRowFixture, cyclicHueFixture]
 
 defaultBenchmarkSeeds :: [RandomSeed]
 defaultBenchmarkSeeds =
@@ -31,12 +41,13 @@ fixtureByName name =
 
 solveFixture :: SolverFixture -> RandomSeed -> IO Solution
 solveFixture fixture seed =
-  solve defaultSolveConfig {initialSeed = seed} (fixtureConstraints fixture)
+  solve (withInitialSeed seed defaultSolveConfig) (fixtureConstraints fixture)
 
 validateFixtureSolution :: SolverFixture -> Solution -> [String]
 validateFixtureSolution fixture solution =
   case fixtureName fixture of
     "bounded-row" -> validateBoundedRow solution
+    "cyclic-hue"  -> validateCyclicHue solution
     _             -> []
 
 boundedRowFixture :: SolverFixture
@@ -58,19 +69,19 @@ rowIndices = [0 .. rowItemCount - 1]
 rowGapIndices :: [Int]
 rowGapIndices = [0 .. rowItemCount - 2]
 
-rowLeft :: Int -> Expr Layout
+rowLeft :: Int -> Expr FixtureLayout
 rowLeft i = var ("fixture.row." ++ show i ++ ".left")
 
-rowTop :: Int -> Expr Layout
+rowTop :: Int -> Expr FixtureLayout
 rowTop i = var ("fixture.row." ++ show i ++ ".top")
 
-rowWidth :: Int -> Expr Layout
+rowWidth :: Int -> Expr FixtureLayout
 rowWidth i = var ("fixture.row." ++ show i ++ ".width")
 
-rowHeight :: Int -> Expr Layout
+rowHeight :: Int -> Expr FixtureLayout
 rowHeight i = var ("fixture.row." ++ show i ++ ".height")
 
-rowGap :: Int -> Expr Layout
+rowGap :: Int -> Expr FixtureLayout
 rowGap i = var ("fixture.row.gap." ++ show i)
 
 nativeBoundsConstraints :: [Constraint]
@@ -149,3 +160,44 @@ validateBoundedRow solution =
 
 finite :: Double -> Bool
 finite value = not (isNaN value) && not (isInfinite value)
+
+cyclicHueFixture :: SolverFixture
+cyclicHueFixture =
+  SolverFixture
+    { fixtureName = "cyclic-hue"
+    , fixtureDescription =
+        "A pair of cyclic hue variables with native range bounds and modular equality."
+    , fixtureConstraints =
+        [ within hueA (Range 0 360)
+        , within hueB (Range 0 360)
+        , hueA @==@ (num 10 :: Expr FixtureAngle)
+        , hueB @==@ (num 10 :: Expr FixtureAngle)
+        , hueA @==@ hueB
+        ]
+    }
+
+hueA :: Expr FixtureAngle
+hueA = var "fixture.hue.a"
+
+hueB :: Expr FixtureAngle
+hueB = var "fixture.hue.b"
+
+validateCyclicHue :: Solution -> [String]
+validateCyclicHue solution =
+  catMaybes
+    [ if solutionEnergy solution < 1e-4
+        then Nothing
+        else Just
+               ("expected cyclic hard energy < 1e-4, got "
+                  ++ show (solutionEnergy solution))
+    ]
+    ++ expectNear "hue a" 10 hueA
+    ++ expectNear "hue b" 10 hueB
+  where
+    expectNear label expected expr =
+      case evalExpr solution expr of
+        Nothing -> ["missing " ++ label]
+        Just value
+          | abs (value - expected) <= 1e-3 -> []
+          | otherwise ->
+            [label ++ " expected " ++ show expected ++ ", got " ++ show value]

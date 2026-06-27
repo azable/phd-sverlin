@@ -5,6 +5,8 @@ module Solver.Backend
   ( InternalVar(..)
   , EnergyExpr
   , TermKind(..)
+  , OptimizerConfig(..)
+  , defaultOptimizerConfig
   , NativeBounds
   , CSP
   , BuildCSP
@@ -22,13 +24,17 @@ module Solver.Backend
   , circularEnergy
   ) where
 
+import           Control.Concurrent.MVar    (MVar, newMVar, withMVar)
 import           Control.Exception          (bracket)
 import           Control.Monad.State.Strict
+import           Data.Array                 (Array, listArray, (!))
+import           Data.List                  (foldl')
 import           Foreign.C.Types            (CInt (..))
 import           Foreign.Ptr                (Ptr, nullPtr)
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
 import qualified System.IO                  as IO
+import           System.IO.Unsafe           (unsafePerformIO)
 import           System.Posix.IO            (OpenMode (WriteOnly), closeFd,
                                              defaultFileFlags, dup, dupTo,
                                              openFd, stdOutput)
@@ -40,11 +46,19 @@ newtype InternalVar =
   deriving (Eq, Ord, Show)
 
 newtype EnergyExpr a = EnergyExpr
-  { runEnergyExpr :: [a] -> a
+  { runEnergyExpr :: EnergyEnv a -> a
   }
 
+newtype EnergyEnv a =
+  EnergyEnv (Array Int a)
+
 valueOf :: InternalVar -> EnergyExpr a
-valueOf (InternalVar i) = EnergyExpr (!! i)
+valueOf (InternalVar i) = EnergyExpr (valueAt i)
+
+valueAt :: Int -> EnergyEnv a -> a
+valueAt i env =
+  case env of
+    EnergyEnv values -> values ! i
 
 sq :: Num a => a -> a
 sq x = x * x
@@ -99,6 +113,22 @@ data TermKind
   = HardTerm
   | SoftTerm
   deriving (Eq)
+
+data OptimizerConfig = OptimizerConfig
+  { optimizerFTolerance     :: Maybe Double
+  , optimizerGTolerance     :: Maybe Double
+  , optimizerMaxIterations  :: Maybe Int
+  , optimizerMaxCorrections :: Maybe Int
+  } deriving (Eq, Show)
+
+defaultOptimizerConfig :: OptimizerConfig
+defaultOptimizerConfig =
+  OptimizerConfig
+    { optimizerFTolerance = Nothing
+    , optimizerGTolerance = Nothing
+    , optimizerMaxIterations = Nothing
+    , optimizerMaxCorrections = Nothing
+    }
 
 data Term =
   Term TermKind Rational (forall a. Floating a => EnergyExpr a)
@@ -168,27 +198,49 @@ compileReturning build =
     initials = reverse (initialValueRev st)
     nativeBounds = reverse (nativeBoundsRev st)
     terms = reverse (energyTermsRev st)
-    totalEnergy xs =
-      sum [weightedTerm weight expr xs | Term _ weight expr <- terms]
-    hardEnergy xs =
-      sum [weightedTerm weight expr xs | Term HardTerm weight expr <- terms]
+    totalEnergy xs = evalTerms terms (energyEnv xs)
+    hardEnergy xs = evalTerms hardTerms (energyEnv xs)
+    hardTerms = [term | term@(Term HardTerm _ _) <- terms]
 
-solveCSP :: CSP -> IO (Opt.Result [Double])
-solveCSP (CSP initials nativeBounds totalEnergy _hardEnergy)
+energyEnv :: [a] -> EnergyEnv a
+energyEnv values = EnergyEnv (listArray (0, length values - 1) values)
+
+evalTerms :: Floating a => [Term] -> EnergyEnv a -> a
+evalTerms terms env =
+  foldl' (\total term -> total + weightedTerm term env) 0 terms
+
+solveCSP :: OptimizerConfig -> CSP -> IO (Opt.Result [Double])
+solveCSP optimizerConfig (CSP initials nativeBounds totalEnergy _hardEnergy)
   | Opt.isSupportedMethod Opt.LBFGSB =
-    suppressNativeStdout
-      (Opt.minimize
-         Opt.LBFGSB
-         Opt.def
-         totalEnergy
-         (Just nativeBounds)
-         []
-         initials)
+    withMVar
+      nativeStdoutLock
+      (const
+         (suppressNativeStdout
+            (Opt.minimize
+               Opt.LBFGSB
+               (optimizerParams optimizerConfig)
+               totalEnergy
+               (Just nativeBounds)
+               []
+               initials)))
   | otherwise =
     ioError
       (userError
          "L-BFGS-B is not supported by numeric-optimization; enable the +with-lbfgsb package flag.")
 
+optimizerParams :: OptimizerConfig -> Opt.Params [Double]
+optimizerParams config =
+  Opt.def
+    { Opt.paramsFTol = optimizerFTolerance config
+    , Opt.paramsGTol = optimizerGTolerance config
+    , Opt.paramsMaxIters = optimizerMaxIterations config
+    , Opt.paramsMaxCorrections = optimizerMaxCorrections config
+    }
+
+nativeStdoutLock :: MVar ()
+nativeStdoutLock = unsafePerformIO (newMVar ())
+
+{-# NOINLINE nativeStdoutLock #-}
 suppressNativeStdout :: IO a -> IO a
 suppressNativeStdout =
   bracket
@@ -217,11 +269,8 @@ foreign import ccall unsafe "stdio.h fflush" c_fflush :: Ptr () -> IO CInt
 cspHardEnergy :: CSP -> [Double] -> Double
 cspHardEnergy (CSP _ _ _ hardEnergy) = hardEnergy
 
-weightedTerm ::
-     Floating a
-  => Rational
-  -> (forall b. Floating b => EnergyExpr b)
-  -> [a]
-  -> a
-weightedTerm weight expr xs = fromRational weight * runEnergyExpr expr xs
+weightedTerm :: Floating a => Term -> EnergyEnv a -> a
+weightedTerm term env =
+  case term of
+    Term _ weight expr -> fromRational weight * runEnergyExpr expr env
 --------------------------------------------------------------------------------

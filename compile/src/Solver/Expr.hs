@@ -1,18 +1,19 @@
+{-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Solver.Expr
   ( Range(..)
-  , ScalarType(..)
+  , Domain
+  , domainName
+  , domainCircularPeriod
+  , realDomain
+  , cyclicDomain
   , InitialBounds(..)
+  , NumericType
   , SymbolicType(..)
-  , Free
-  , Layout
-  , Unit
-  , Angle
   , unboundedInitialBounds
-  , rangeToInitialBounds
-  , typeInitialBounds
+  , domainInitialBounds
   , mergeInitialBounds
   , addInitialLower
   , addInitialUpper
@@ -20,11 +21,14 @@ module Solver.Expr
   , varName
   , Expr(..)
   , RawExpr(..)
+  , ExprView(..)
   , var
   , substituteExprVars
   , substituteRawExprVars
   , labelName
   , num
+  , exprView
+  , rawExprView
   , (@+@)
   , (@-@)
   , (@*@)
@@ -52,11 +56,17 @@ data Range = Range
   , rangeUpper :: Double
   } deriving (Eq, Ord, Show)
 
-data ScalarType = ScalarType
-  { typeName           :: String
-  , typeRange          :: Maybe Range
-  , typeCircularPeriod :: Maybe Double
+data Domain = Domain
+  { domainName           :: String
+  , domainCircularPeriod :: Maybe Double
   } deriving (Eq, Ord, Show)
+
+realDomain :: String -> Domain
+realDomain name = Domain {domainName = name, domainCircularPeriod = Nothing}
+
+cyclicDomain :: String -> Double -> Domain
+cyclicDomain name period =
+  Domain {domainName = name, domainCircularPeriod = Just period}
 
 -- Finite initial bounds are also passed to the optimizer as native bounds.
 data InitialBounds = InitialBounds
@@ -65,56 +75,16 @@ data InitialBounds = InitialBounds
   } deriving (Eq, Show)
 
 class SymbolicType ty where
-  symbolicType :: Proxy ty -> ScalarType
+  symbolicDomain :: Proxy ty -> Domain
 
-data Free
-
-data Layout
-
-data Unit
-
-data Angle
-
-instance SymbolicType Free where
-  symbolicType _ =
-    ScalarType
-      {typeName = "free", typeRange = Nothing, typeCircularPeriod = Nothing}
-
-instance SymbolicType Layout where
-  symbolicType _ =
-    ScalarType
-      {typeName = "length", typeRange = Nothing, typeCircularPeriod = Nothing}
-
-instance SymbolicType Unit where
-  symbolicType _ =
-    ScalarType
-      { typeName = "unit"
-      , typeRange = Just (Range 0 1)
-      , typeCircularPeriod = Nothing
-      }
-
-instance SymbolicType Angle where
-  symbolicType _ =
-    ScalarType
-      { typeName = "angle"
-      , typeRange = Just (Range 0 360)
-      , typeCircularPeriod = Just 360
-      }
+type NumericType ty = SymbolicType ty
 
 unboundedInitialBounds :: InitialBounds
 unboundedInitialBounds =
   InitialBounds {initialLower = Nothing, initialUpper = Nothing}
 
-rangeToInitialBounds :: Range -> InitialBounds
-rangeToInitialBounds range =
-  InitialBounds
-    { initialLower = Just (rangeLower range)
-    , initialUpper = Just (rangeUpper range)
-    }
-
-typeInitialBounds :: ScalarType -> InitialBounds
-typeInitialBounds ty =
-  maybe unboundedInitialBounds rangeToInitialBounds (typeRange ty)
+domainInitialBounds :: Domain -> InitialBounds
+domainInitialBounds _ = unboundedInitialBounds
 
 mergeInitialBounds :: InitialBounds -> InitialBounds -> InitialBounds
 mergeInitialBounds a b =
@@ -166,7 +136,7 @@ varName :: Var -> String
 varName (Var name) = name
 
 data RawExpr
-  = EVar ScalarType Var
+  = EVar Domain Var
   | ELit Double
   | EAdd RawExpr RawExpr
   | ESub RawExpr RawExpr
@@ -181,17 +151,32 @@ data RawExpr
   deriving (Eq, Ord, Show)
 
 data Expr ty = Expr
-  { exprType :: ScalarType
-  , exprRaw  :: RawExpr
+  { exprDomain :: Domain
+  , exprRaw    :: RawExpr
   } deriving (Eq, Ord, Show)
+
+data ExprView
+  = ExprVar Domain String
+  | ExprLit Double
+  | ExprAdd ExprView ExprView
+  | ExprSub ExprView ExprView
+  | ExprMul ExprView ExprView
+  | ExprDiv ExprView ExprView
+  | ExprNeg ExprView
+  | ExprAbs ExprView
+  | ExprSignum ExprView
+  | ExprPow ExprView ExprView
+  | ExprMin ExprView ExprView
+  | ExprMax ExprView ExprView
+  deriving (Eq, Show)
 
 var ::
      forall ty. SymbolicType ty
   => String
   -> Expr ty
-var name = Expr ty (EVar ty (Var name))
+var name = Expr domain (EVar domain (Var name))
   where
-    ty = symbolicType (Proxy :: Proxy ty)
+    domain = symbolicDomain (Proxy :: Proxy ty)
 
 labelName :: KnownSymbol name => Proxy name -> String
 labelName proxy = dotName (symbolVal proxy)
@@ -212,9 +197,9 @@ num ::
      forall ty. SymbolicType ty
   => Double
   -> Expr ty
-num value = Expr ty (ELit value)
+num value = Expr domain (ELit value)
   where
-    ty = symbolicType (Proxy :: Proxy ty)
+    domain = symbolicDomain (Proxy :: Proxy ty)
 
 binaryExpr :: (RawExpr -> RawExpr -> RawExpr) -> Expr ty -> Expr ty -> Expr ty
 binaryExpr f (Expr ty lhs) (Expr _ rhs) = Expr ty (f lhs rhs)
@@ -271,6 +256,25 @@ substituteRawExprVars substitutions expr =
       EMax
         (substituteRawExprVars substitutions lhs)
         (substituteRawExprVars substitutions rhs)
+
+exprView :: Expr ty -> ExprView
+exprView = rawExprView . exprRaw
+
+rawExprView :: RawExpr -> ExprView
+rawExprView expr =
+  case expr of
+    EVar domain variable -> ExprVar domain (varName variable)
+    ELit value           -> ExprLit value
+    EAdd lhs rhs         -> ExprAdd (rawExprView lhs) (rawExprView rhs)
+    ESub lhs rhs         -> ExprSub (rawExprView lhs) (rawExprView rhs)
+    EMul lhs rhs         -> ExprMul (rawExprView lhs) (rawExprView rhs)
+    EDiv lhs rhs         -> ExprDiv (rawExprView lhs) (rawExprView rhs)
+    ENeg inner           -> ExprNeg (rawExprView inner)
+    EAbs inner           -> ExprAbs (rawExprView inner)
+    ESignum inner        -> ExprSignum (rawExprView inner)
+    EPow base to         -> ExprPow (rawExprView base) (rawExprView to)
+    EMin lhs rhs         -> ExprMin (rawExprView lhs) (rawExprView rhs)
+    EMax lhs rhs         -> ExprMax (rawExprView lhs) (rawExprView rhs)
 
 infixl 6 @+@
 infixl 6 @-@

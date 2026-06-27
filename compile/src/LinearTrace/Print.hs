@@ -184,16 +184,28 @@ solutionSummaryBox solution =
         [ "Solved: " ++ show (S.solutionSuccess solution)
         , "Energy: " ++ formatSignedDouble (S.solutionEnergy solution)
         , "Seed: " ++ show seed
+        , "Variables: " ++ show (S.inspectedVariableCount inspection)
+        , "Native bounds: " ++ show (S.inspectedNativeBoundCount inspection)
+        , "Energy terms: " ++ show (S.inspectedEnergyTermCount inspection)
+        , "Raw constraints: " ++ show (S.inspectedRawCount inspection)
+        , "Canonical constraints: "
+            ++ show (S.inspectedCanonicalCount inspection)
+        , "Eliminated constraints: "
+            ++ show (S.inspectedEliminatedCount inspection)
+        , "Iterations: " ++ show (S.solutionIterations solution)
+        , "Function evals: " ++ show (S.solutionFunctionEvaluations solution)
+        , "Gradient evals: " ++ show (S.solutionGradientEvaluations solution)
         ]
   where
     V.RandomSeed seed = S.solutionSeed solution
+    inspection = S.solutionInspection solution
 
 viewSummaryBox :: [V.ViewNode] -> [V.ViewStep] -> [S.Constraint] -> Box.Box
 viewSummaryBox nodes steps constraints =
   linesBox
     [ "View nodes: " ++ show (length nodes)
     , "View steps: " ++ show (length steps)
-    , "Constraints: " ++ show (length (flattenConstraints constraints))
+    , "Constraints: " ++ show (S.constraintCount constraints)
     ]
 
 --------------------------------------------------------------------------------
@@ -255,63 +267,59 @@ data RenderedConstraint = RenderedConstraint
   , renderedConstraintRhs :: String
   }
 
-flattenConstraints :: [S.Constraint] -> [S.Constraint]
-flattenConstraints = S.flattenConstraints
-
-renderConstraintParts :: S.Constraint -> RenderedConstraint
+renderConstraintParts :: S.ConstraintView -> RenderedConstraint
 renderConstraintParts constraint =
   case constraint of
-    S.Equals ty lhs rhs ->
+    S.ConstraintEqual domain lhs rhs ->
       RenderedConstraint
         { renderedConstraintLhs = rawExprText lhs
-        , renderedConstraintOp = renderEqualityOperator ty
-        , renderedConstraintRhs = renderEqualityRhs ty rhs
+        , renderedConstraintOp = renderEqualityOperator domain
+        , renderedConstraintRhs = renderEqualityRhs domain rhs
         }
-    S.LessOrEqual lhs rhs ->
+    S.ConstraintLessOrEqual lhs rhs ->
       RenderedConstraint
         { renderedConstraintLhs = rawExprText lhs
         , renderedConstraintOp = "<="
         , renderedConstraintRhs = rawExprText rhs
         }
-    S.Minimize expr ->
+    S.ConstraintMinimize expr ->
       RenderedConstraint
         { renderedConstraintLhs = ""
         , renderedConstraintOp = "minimize"
         , renderedConstraintRhs = rawExprText expr
         }
-    S.Soft inner ->
+    S.ConstraintSoft inner ->
       let rendered = renderConstraintParts inner
        in rendered
             { renderedConstraintOp =
                 "encourage " ++ renderedConstraintOp rendered
             }
-    S.All constraints ->
+    S.ConstraintAll constraints ->
       RenderedConstraint
         { renderedConstraintLhs = ""
         , renderedConstraintOp = "all"
-        , renderedConstraintRhs =
-            show (length (flattenConstraints constraints)) ++ " constraints"
+        , renderedConstraintRhs = show (length constraints) ++ " constraints"
         }
 
-renderEqualityOperator :: S.ScalarType -> String
-renderEqualityOperator ty =
-  case S.typeCircularPeriod ty of
+renderEqualityOperator :: S.Domain -> String
+renderEqualityOperator domain =
+  case S.domainCircularPeriod domain of
     Nothing -> "=="
     Just _  -> "≡"
 
-renderEqualityRhs :: S.ScalarType -> S.RawExpr -> String
-renderEqualityRhs ty rhs =
-  case S.typeCircularPeriod ty of
+renderEqualityRhs :: S.Domain -> S.ExprView -> String
+renderEqualityRhs domain rhs =
+  case S.domainCircularPeriod domain of
     Nothing     -> rawExprText rhs
     Just period -> rawExprText rhs ++ " (mod " ++ fixed2 period ++ ")"
 
 stepConstraintsBoxes :: [S.Constraint] -> [Box.Box]
 stepConstraintsBoxes constraints =
-  case filter constraintMentionsVar (flattenConstraints constraints) of
+  case filter constraintMentionsVar (S.constraintViews constraints) of
     []      -> []
     visible -> [stepSectionBox "constraints" (constraintTableBox visible)]
 
-constraintTableBox :: [S.Constraint] -> Box.Box
+constraintTableBox :: [S.ConstraintView] -> Box.Box
 constraintTableBox constraints = tightVcat (map row rendered)
   where
     rendered = map renderConstraintParts constraints
@@ -331,30 +339,32 @@ constraintTableBox constraints = tightVcat (map row rendered)
         , Box.text (renderedConstraintRhs constraint)
         ]
 
-constraintMentionsVar :: S.Constraint -> Bool
+constraintMentionsVar :: S.ConstraintView -> Bool
 constraintMentionsVar constraint =
   case constraint of
-    S.Equals _ lhs rhs    -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.LessOrEqual lhs rhs -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.Minimize expr       -> rawExprMentionsVar expr
-    S.Soft inner          -> constraintMentionsVar inner
-    S.All constraints     -> any constraintMentionsVar constraints
+    S.ConstraintEqual _ lhs rhs ->
+      rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ConstraintLessOrEqual lhs rhs ->
+      rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ConstraintMinimize expr -> rawExprMentionsVar expr
+    S.ConstraintSoft inner -> constraintMentionsVar inner
+    S.ConstraintAll constraints -> any constraintMentionsVar constraints
 
-rawExprMentionsVar :: S.RawExpr -> Bool
+rawExprMentionsVar :: S.ExprView -> Bool
 rawExprMentionsVar expr =
   case expr of
-    S.EVar _ _      -> True
-    S.ELit _        -> False
-    S.EAdd lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.ESub lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.EMul lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.EDiv lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.ENeg inner    -> rawExprMentionsVar inner
-    S.EAbs inner    -> rawExprMentionsVar inner
-    S.ESignum inner -> rawExprMentionsVar inner
-    S.EPow base to  -> rawExprMentionsVar base || rawExprMentionsVar to
-    S.EMin lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
-    S.EMax lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ExprVar _ _      -> True
+    S.ExprLit _        -> False
+    S.ExprAdd lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ExprSub lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ExprMul lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ExprDiv lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ExprNeg inner    -> rawExprMentionsVar inner
+    S.ExprAbs inner    -> rawExprMentionsVar inner
+    S.ExprSignum inner -> rawExprMentionsVar inner
+    S.ExprPow base to  -> rawExprMentionsVar base || rawExprMentionsVar to
+    S.ExprMin lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
+    S.ExprMax lhs rhs  -> rawExprMentionsVar lhs || rawExprMentionsVar rhs
 
 --------------------------------------------------------------------------------
 -- Solved view values
@@ -553,62 +563,62 @@ renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
 -- Expression rendering
 --------------------------------------------------------------------------------
 exprText :: S.Expr ty -> String
-exprText = rawExprText . S.exprRaw
+exprText = rawExprText . S.exprView
 
-rawExprText :: S.RawExpr -> String
+rawExprText :: S.ExprView -> String
 rawExprText = rawExprTextPrec 0
 
-rawExprTextPrec :: Int -> S.RawExpr -> String
+rawExprTextPrec :: Int -> S.ExprView -> String
 rawExprTextPrec precedence expr =
   case expr of
-    S.EVar _ variable -> S.varName variable
-    S.ELit value -> fixed2 value
-    S.EAdd lhs rhs ->
+    S.ExprVar _ variable -> variable
+    S.ExprLit value -> fixed2 value
+    S.ExprAdd lhs rhs ->
       infixExprText
         precedence
         addPrecedence
         "+"
         (rawExprTextPrec addPrecedence lhs)
         (rawExprTextPrec addPrecedence rhs)
-    S.ESub lhs rhs ->
+    S.ExprSub lhs rhs ->
       infixExprText
         precedence
         addPrecedence
         "-"
         (rawExprTextPrec addPrecedence lhs)
         (rawExprTextPrec (addPrecedence + 1) rhs)
-    S.EMul lhs rhs ->
+    S.ExprMul lhs rhs ->
       infixExprText
         precedence
         mulPrecedence
         "*"
         (rawExprTextPrec mulPrecedence lhs)
         (rawExprTextPrec mulPrecedence rhs)
-    S.EDiv lhs rhs ->
+    S.ExprDiv lhs rhs ->
       infixExprText
         precedence
         mulPrecedence
         "/"
         (rawExprTextPrec mulPrecedence lhs)
         (rawExprTextPrec (mulPrecedence + 1) rhs)
-    S.ENeg inner ->
+    S.ExprNeg inner ->
       parenthesizeText (precedence > unaryPrecedence)
         $ "-" ++ rawExprTextPrec unaryPrecedence inner
-    S.EAbs inner -> functionExprText "abs" inner
-    S.ESignum inner -> functionExprText "signum" inner
-    S.EPow base to ->
+    S.ExprAbs inner -> functionExprText "abs" inner
+    S.ExprSignum inner -> functionExprText "signum" inner
+    S.ExprPow base to ->
       infixExprText
         precedence
         powerPrecedence
         "^"
         (rawExprTextPrec powerPrecedence base)
         (rawExprTextPrec (powerPrecedence + 1) to)
-    S.EMin lhs rhs ->
+    S.ExprMin lhs rhs ->
       binaryFunctionExprText
         "min"
         (rawExprTextPrec 0 lhs)
         (rawExprTextPrec 0 rhs)
-    S.EMax lhs rhs ->
+    S.ExprMax lhs rhs ->
       binaryFunctionExprText
         "max"
         (rawExprTextPrec 0 lhs)
@@ -619,7 +629,7 @@ infixExprText outerPrecedence innerPrecedence operator lhs rhs =
   parenthesizeText (outerPrecedence > innerPrecedence)
     $ lhs ++ " " ++ operator ++ " " ++ rhs
 
-functionExprText :: String -> S.RawExpr -> String
+functionExprText :: String -> S.ExprView -> String
 functionExprText name inner =
   name ++ " " ++ rawExprTextPrec unaryPrecedence inner
 

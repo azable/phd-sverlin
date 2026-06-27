@@ -7,16 +7,29 @@ module Solver.Problem
   , randomUnitsFromSeed
   , SolveConfig(..)
   , defaultSolveConfig
+  , withInitialSeed
+  , withInitialOverrides
+  , withConstraintWeights
+  , withMaxCategoricalBranches
+  , withOptimizerTolerances
+  , withMaxOptimizerIterations
+  , withOptimizerMaxCorrections
   , SolverProblem(..)
+  , solverProblem
+  , solverProblemWithChoices
+  , withChoiceConstraints
+  , withProblemInitialOverrides
   , CompiledProblem
   , compiledInspection
   , ProblemInspection(..)
   , Solution(..)
   , solve
   , solveProblem
+  , solveCompiledProblem
   , compileProblem
   , inspectConstraints
   , evalExpr
+  , evalChoice
   ) where
 
 import           Data.Foldable           (traverse_)
@@ -27,6 +40,7 @@ import           Data.Maybe              (fromMaybe)
 import qualified Numeric.Optimization.AD as Opt
 import           Prelude
 import           Solver.Backend
+import           Solver.Choice
 import           Solver.Constraint
 import           Solver.Expr
 import           System.Random           (mkStdGen, randomRs)
@@ -53,10 +67,12 @@ randomUnitsFromSeed (RandomSeed seed) = randomRs (0.0, 1.0) (mkStdGen seed)
 -- Named constraint solving
 --------------------------------------------------------------------------------
 data SolveConfig = SolveConfig
-  { initialSeed      :: RandomSeed
-  , initialOverrides :: Map String Double
-  , ensureWeight     :: Rational
-  , encourageWeight  :: Rational
+  { initialSeed       :: RandomSeed
+  , initialOverrides  :: Map String Double
+  , ensureWeight      :: Rational
+  , encourageWeight   :: Rational
+  , maxChoiceBranches :: Int
+  , optimizerConfig   :: OptimizerConfig
   }
 
 defaultSolveConfig :: SolveConfig
@@ -66,6 +82,45 @@ defaultSolveConfig =
     , initialOverrides = Map.empty
     , ensureWeight = 100
     , encourageWeight = 1
+    , maxChoiceBranches = 256
+    , optimizerConfig = defaultOptimizerConfig
+    }
+
+withInitialSeed :: RandomSeed -> SolveConfig -> SolveConfig
+withInitialSeed seed config = config {initialSeed = seed}
+
+withInitialOverrides :: Map String Double -> SolveConfig -> SolveConfig
+withInitialOverrides overrides config = config {initialOverrides = overrides}
+
+withConstraintWeights :: Rational -> Rational -> SolveConfig -> SolveConfig
+withConstraintWeights hardWeight softWeight config =
+  config {ensureWeight = hardWeight, encourageWeight = softWeight}
+
+withMaxCategoricalBranches :: Int -> SolveConfig -> SolveConfig
+withMaxCategoricalBranches branchLimit config =
+  config {maxChoiceBranches = max 1 branchLimit}
+
+withOptimizerTolerances ::
+     Maybe Double -> Maybe Double -> SolveConfig -> SolveConfig
+withOptimizerTolerances ftol gtol config =
+  config
+    { optimizerConfig =
+        (optimizerConfig config)
+          {optimizerFTolerance = ftol, optimizerGTolerance = gtol}
+    }
+
+withMaxOptimizerIterations :: Int -> SolveConfig -> SolveConfig
+withMaxOptimizerIterations iterations config =
+  config
+    { optimizerConfig =
+        (optimizerConfig config) {optimizerMaxIterations = Just iterations}
+    }
+
+withOptimizerMaxCorrections :: Int -> SolveConfig -> SolveConfig
+withOptimizerMaxCorrections corrections config =
+  config
+    { optimizerConfig =
+        (optimizerConfig config) {optimizerMaxCorrections = Just corrections}
     }
 
 sampleInitialWithinBounds :: InitialBounds -> Double -> Double
@@ -87,47 +142,90 @@ data NamedCSP = NamedCSP
   }
 
 data SolverProblem = SolverProblem
-  { solverConstraints      :: [Constraint]
-  , solverInitialOverrides :: Map String Double
+  { solverConstraints       :: [Constraint]
+  , solverChoiceConstraints :: [ChoiceConstraint]
+  , solverInitialOverrides  :: Map String Double
   } deriving (Eq, Show)
 
+solverProblem :: [Constraint] -> SolverProblem
+solverProblem constraints =
+  SolverProblem
+    { solverConstraints = constraints
+    , solverChoiceConstraints = []
+    , solverInitialOverrides = Map.empty
+    }
+
+solverProblemWithChoices :: [Constraint] -> [ChoiceConstraint] -> SolverProblem
+solverProblemWithChoices constraints choiceConstraints =
+  SolverProblem
+    { solverConstraints = constraints
+    , solverChoiceConstraints = choiceConstraints
+    , solverInitialOverrides = Map.empty
+    }
+
+withChoiceConstraints :: [ChoiceConstraint] -> SolverProblem -> SolverProblem
+withChoiceConstraints choiceConstraints problem =
+  problem
+    { solverChoiceConstraints =
+        solverChoiceConstraints problem ++ choiceConstraints
+    }
+
+withProblemInitialOverrides ::
+     Map String Double -> SolverProblem -> SolverProblem
+withProblemInitialOverrides overrides problem =
+  problem {solverInitialOverrides = overrides}
+
 data CompiledProblem = CompiledProblem
-  { compiledVars       :: Map String InternalVar
+  { compiledSeed       :: RandomSeed
+  , compiledVars       :: Map String InternalVar
   , compiledCSP        :: CSP
+  , compiledChoices    :: Map String String
+  , compiledOptimizer  :: OptimizerConfig
   , compiledInspection :: ProblemInspection
   }
 
 data ProblemInspection = ProblemInspection
-  { inspectedVariableCount    :: Int
-  , inspectedNativeBoundCount :: Int
-  , inspectedEnergyTermCount  :: Int
-  , inspectedFlattenedCount   :: Int
-  , inspectedNativeBoundNames :: [String]
+  { inspectedVariableCount     :: Int
+  , inspectedNativeBoundCount  :: Int
+  , inspectedEnergyTermCount   :: Int
+  , inspectedFlattenedCount    :: Int
+  , inspectedRawCount          :: Int
+  , inspectedCanonicalCount    :: Int
+  , inspectedEliminatedCount   :: Int
+  , inspectedChoiceCount       :: Int
+  , inspectedChoiceBranchCount :: Int
+  , inspectedNativeBoundNames  :: [String]
   } deriving (Eq, Show)
 
 data Solution = Solution
-  { solutionSuccess :: Bool
-  , solutionSeed    :: RandomSeed
-  , solutionEnergy  :: Double
-  , solutionValues  :: Map String Double
-  , solutionVector  :: [Double]
+  { solutionSuccess             :: Bool
+  , solutionSeed                :: RandomSeed
+  , solutionEnergy              :: Double
+  , solutionValues              :: Map String Double
+  , solutionChoices             :: Map String String
+  , solutionInspection          :: ProblemInspection
+  , solutionIterations          :: Int
+  , solutionFunctionEvaluations :: Int
+  , solutionGradientEvaluations :: Int
+  , solutionVector              :: [Double]
   } deriving (Eq, Show)
 
 solve :: SolveConfig -> [Constraint] -> IO Solution
-solve config constraints =
-  solveProblem
-    config
-    SolverProblem
-      {solverConstraints = constraints, solverInitialOverrides = Map.empty}
+solve config constraints = solveProblem config (solverProblem constraints)
 
 solveProblem :: SolveConfig -> SolverProblem -> IO Solution
-solveProblem config problem = do
-  let compiled = compileProblem config problem
-      named =
+solveProblem config = solveCompiledProblem . compileProblem config
+
+solveCompiledProblem :: CompiledProblem -> IO Solution
+solveCompiledProblem compiled = do
+  let choiceValues = compiledChoices compiled
+  choiceValues `seq` pure ()
+  let named =
         NamedCSP
           {namedVars = compiledVars compiled, namedCSP = compiledCSP compiled}
-  result <- solveCSP (compiledCSP compiled)
+  result <- solveCSP (compiledOptimizer compiled) (compiledCSP compiled)
   let vector = Opt.resultSolution result
+      stats = Opt.resultStatistics result
       hardEnergy = cspHardEnergy (compiledCSP compiled) vector
       lookupValue (InternalVar i)
         | i < length vector = Just (vector !! i)
@@ -136,37 +234,63 @@ solveProblem config problem = do
   pure
     Solution
       { solutionSuccess = Opt.resultSuccess result
-      , solutionSeed = initialSeed config
+      , solutionSeed = compiledSeed compiled
       , solutionEnergy = hardEnergy
       , solutionValues = values
+      , solutionChoices = choiceValues
+      , solutionInspection = compiledInspection compiled
+      , solutionIterations = Opt.totalIters stats
+      , solutionFunctionEvaluations = Opt.funcEvals stats
+      , solutionGradientEvaluations = Opt.gradEvals stats
       , solutionVector = vector
       }
 
 compileProblem :: SolveConfig -> SolverProblem -> CompiledProblem
 compileProblem config problem =
   CompiledProblem
-    { compiledVars = vars
+    { compiledSeed = initialSeed config
+    , compiledVars = vars
     , compiledCSP = csp
+    , compiledChoices = choiceValues
+    , compiledOptimizer = optimizerConfig config
     , compiledInspection =
-        ProblemInspection
-          { inspectedVariableCount = Map.size vars
-          , inspectedNativeBoundCount = length nativeBoundNames
-          , inspectedEnergyTermCount = length energyConstraints
-          , inspectedFlattenedCount = length flatConstraints
-          , inspectedNativeBoundNames = nativeBoundNames
-          }
+        choiceValues
+          `seq` boundsValidation
+          `seq` ProblemInspection
+                  { inspectedVariableCount = Map.size vars
+                  , inspectedNativeBoundCount = length nativeBoundNames
+                  , inspectedEnergyTermCount = length energyConstraints
+                  , inspectedFlattenedCount = length flatConstraints
+                  , inspectedRawCount = length rawConstraints
+                  , inspectedCanonicalCount = length flatConstraints
+                  , inspectedEliminatedCount =
+                      max 0 (length rawConstraints - length flatConstraints)
+                  , inspectedChoiceCount = Map.size choiceValues
+                  , inspectedChoiceBranchCount = choiceBranchCount
+                  , inspectedNativeBoundNames = nativeBoundNames
+                  }
     }
   where
     constraints = solverConstraints problem
+    rawConstraints = concatMap flattenConstraint constraints
     flatConstraints = flattenConstraints constraints
+    (choiceValues, choiceBranchCount) =
+      solveChoiceConstraints config (solverChoiceConstraints problem)
     varTypes = collectConstraintVarTypes flatConstraints
     inferredBounds = inferInitialBounds flatConstraints
-    energyConstraints = filter (not . nativeBoundConstraint) flatConstraints
-    nativeBoundNames =
-      Map.keys
-        (Map.filter
-           finiteInitialBounds
-           (Map.mapWithKey finalInitialBounds varTypes))
+    finalBounds =
+      Map.mapWithKey
+        (\name ty -> validateInitialBounds name (finalInitialBounds name ty))
+        varTypes
+    energyConstraints =
+      filter (not . loweredByNativeBounds finalBounds) flatConstraints
+    boundsValidation =
+      foldl'
+        (\checked (name, bounds) ->
+           checked `seq` validateInitialBounds name bounds `seq` ())
+        ()
+        (Map.toAscList finalBounds)
+    nativeBoundNames = Map.keys (Map.filter finiteInitialBounds finalBounds)
     initialSpecs =
       zipWith
         makeInitialSpec
@@ -209,19 +333,87 @@ compileProblem config problem =
         { initialSpecSample = sample
         , initialSpecName = name
         , initialSpecType = ty
-        , initialSpecBounds = finalInitialBounds name ty
+        , initialSpecBounds =
+            Map.findWithDefault unboundedInitialBounds name finalBounds
         }
     finalInitialBounds name ty =
-      typeInitialBounds ty
+      domainInitialBounds ty
         `mergeInitialBounds` Map.findWithDefault
                                unboundedInitialBounds
                                name
                                inferredBounds
 
+validateInitialBounds :: String -> InitialBounds -> InitialBounds
+validateInitialBounds name bounds =
+  case nativeBoundsFor name bounds of
+    (lower, upper) -> lower `seq` upper `seq` bounds
+
+solveChoiceConstraints ::
+     SolveConfig -> [ChoiceConstraint] -> (Map String String, Int)
+solveChoiceConstraints _ [] = (Map.empty, 0)
+solveChoiceConstraints config constraints =
+  if branchCount > maxChoiceBranches config
+    then error
+           ("categorical solver branch count "
+              ++ show branchCount
+              ++ " exceeds configured limit "
+              ++ show (maxChoiceBranches config))
+    else case validAssignments of
+           [] ->
+             error
+               "categorical solver constraints have no satisfying assignment"
+           valid -> (valid !! selectedIndex valid, branchCount)
+  where
+    domains = choiceDomains constraints
+    choices = Map.toAscList domains
+    branchCount = product (map (length . snd) choices)
+    assignments = enumerateChoiceAssignments choices
+    validAssignments =
+      filter
+        (\assignment -> all (choiceConstraintSatisfied assignment) constraints)
+        assignments
+    selectedIndex valid =
+      min
+        (length valid - 1)
+        (floor
+           (head (randomUnitsFromSeed (initialSeed config))
+              * fromIntegral (length valid)))
+
+choiceDomains :: [ChoiceConstraint] -> Map String [String]
+choiceDomains = foldl' addConstraint Map.empty
+  where
+    addConstraint domains constraint =
+      foldl' addSpec domains (choiceConstraintSpecs constraint)
+    addSpec domains (name, categories)
+      | null categories =
+        error ("categorical choice " ++ show name ++ " has an empty domain")
+      | otherwise =
+        Map.alter (Just . mergeChoiceDomain name categories) name domains
+
+mergeChoiceDomain :: String -> [String] -> Maybe [String] -> [String]
+mergeChoiceDomain _ categories Nothing = categories
+mergeChoiceDomain name categories (Just old)
+  | old == categories = old
+  | otherwise =
+    error
+      ("categorical choice "
+         ++ show name
+         ++ " was used with incompatible domains")
+
+enumerateChoiceAssignments :: [(String, [String])] -> [Map String String]
+enumerateChoiceAssignments choices =
+  case choices of
+    [] -> [Map.empty]
+    (name, categories):rest ->
+      [ Map.insert name categoryValue assignment
+      | categoryValue <- categories
+      , assignment <- enumerateChoiceAssignments rest
+      ]
+
 data InitialSpec = InitialSpec
   { initialSpecSample :: RandomSample
   , initialSpecName   :: String
-  , initialSpecType   :: ScalarType
+  , initialSpecType   :: Domain
   , initialSpecBounds :: InitialBounds
   } deriving (Eq, Show)
 
@@ -233,11 +425,7 @@ finiteInitialBounds bounds =
 
 inspectConstraints :: SolveConfig -> [Constraint] -> ProblemInspection
 inspectConstraints config constraints =
-  compiledInspection
-    (compileProblem
-       config
-       SolverProblem
-         {solverConstraints = constraints, solverInitialOverrides = Map.empty})
+  compiledInspection (compileProblem config (solverProblem constraints))
 
 nativeBoundsFor :: String -> InitialBounds -> NativeBounds
 nativeBoundsFor name bounds
@@ -266,9 +454,53 @@ clampInitialValue (lower, upper) = min upper . max lower
 nativeBoundConstraint :: Constraint -> Bool
 nativeBoundConstraint constraint =
   case constraint of
-    LessOrEqual (ELit _) (EVar _ _) -> True
-    LessOrEqual (EVar _ _) (ELit _) -> True
-    _                               -> False
+    LessOrEqual lhs rhs -> singleVariableNativeBound lhs rhs
+    _                   -> False
+
+singleVariableNativeBound :: RawExpr -> RawExpr -> Bool
+singleVariableNativeBound lhs rhs =
+  case linearRawExpr (rawSub lhs rhs) of
+    Nothing -> False
+    Just (coefficients, constant) ->
+      case nonZeroLinearTerms coefficients of
+        [(_, coeff)] ->
+          abs coeff > equalityEpsilon
+            && finiteInitialValue ((-constant) / coeff)
+        _ -> False
+
+nonZeroLinearTerms :: Map String Double -> [(String, Double)]
+nonZeroLinearTerms =
+  filter (\(_, coeff) -> abs coeff > equalityEpsilon) . Map.toAscList
+
+loweredByNativeBounds :: Map String InitialBounds -> Constraint -> Bool
+loweredByNativeBounds bounds constraint =
+  nativeBoundConstraint constraint || impliedByNativeBounds bounds constraint
+
+impliedByNativeBounds :: Map String InitialBounds -> Constraint -> Bool
+impliedByNativeBounds bounds constraint =
+  case constraint of
+    LessOrEqual lhs rhs ->
+      case linearRawExpr (rawSub lhs rhs) of
+        Nothing -> False
+        Just (coefficients, constant) ->
+          case maximumLinearValue bounds coefficients constant of
+            Nothing    -> False
+            Just value -> value <= equalityEpsilon
+    _ -> False
+
+maximumLinearValue ::
+     Map String InitialBounds -> Map String Double -> Double -> Maybe Double
+maximumLinearValue bounds coefficients constant =
+  foldl' addTermMax (Just constant) (nonZeroLinearTerms coefficients)
+  where
+    addTermMax acc (name, coeff) = do
+      total <- acc
+      variableBounds <- Map.lookup name bounds
+      bound <-
+        if coeff > 0
+          then initialUpper variableBounds
+          else initialLower variableBounds
+      pure (total + coeff * bound)
 
 seedRangeInitialValues ::
      [Constraint] -> [InitialSpec] -> Map String Double -> Map String Double
@@ -420,7 +652,7 @@ evalInitialRawExpr values expr =
     EMax lhs rhs ->
       max <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
 
-collectRawExprVarTypes :: RawExpr -> Map String ScalarType
+collectRawExprVarTypes :: RawExpr -> Map String Domain
 collectRawExprVarTypes expr =
   case expr of
     EVar ty v -> Map.singleton (varName v) ty
@@ -443,11 +675,10 @@ collectRawExprVarTypes expr =
     EMax lhs rhs ->
       mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
 
-mergeVarTypeMaps ::
-     Map String ScalarType -> Map String ScalarType -> Map String ScalarType
+mergeVarTypeMaps :: Map String Domain -> Map String Domain -> Map String Domain
 mergeVarTypeMaps = Map.unionWith mergeVarTypes
 
-mergeVarTypes :: ScalarType -> ScalarType -> ScalarType
+mergeVarTypes :: Domain -> Domain -> Domain
 mergeVarTypes a b
   | a == b = a
   | otherwise =
@@ -457,7 +688,7 @@ mergeVarTypes a b
          ++ " and "
          ++ show b)
 
-collectConstraintVarTypes :: [Constraint] -> Map String ScalarType
+collectConstraintVarTypes :: [Constraint] -> Map String Domain
 collectConstraintVarTypes = foldMap collectOne
   where
     collectOne constraint =
@@ -641,7 +872,7 @@ lowerConstraintWith ::
 lowerConstraintWith kind config vars constraint =
   case constraint of
     Equals ty lhs rhs ->
-      case typeCircularPeriod ty of
+      case domainCircularPeriod ty of
         Just period
           | period > 0 ->
             addWeightedTerm
@@ -700,9 +931,13 @@ evalExpr :: Solution -> Expr ty -> Maybe Double
 evalExpr solution (Expr ty expr) =
   normalizeByType ty <$> evalRawExpr solution expr
 
-normalizeByType :: ScalarType -> Double -> Double
+evalChoice :: Solution -> Choice ty -> Maybe (Category ty)
+evalChoice solution selected =
+  category <$> Map.lookup (choiceName selected) (solutionChoices solution)
+
+normalizeByType :: Domain -> Double -> Double
 normalizeByType ty value =
-  case typeCircularPeriod ty of
+  case domainCircularPeriod ty of
     Just period
       | period > 0 -> positiveModulo period value
     _ -> value

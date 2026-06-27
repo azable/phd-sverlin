@@ -2,11 +2,13 @@
 
 module Main where
 
+import           Control.Exception          (evaluate)
 import           Control.Monad              (forM, forM_, unless, when)
 import           Data.Aeson                 (object, (.=))
 import qualified Data.Aeson                 as Aeson
 import qualified Data.ByteString.Lazy.Char8 as ByteString
 import           Data.List                  (intercalate, sort)
+import           Data.Word                  (Word64)
 import           GHC.Clock                  (getMonotonicTimeNSec)
 import           Solver
 import           Solver.TestFixtures
@@ -39,9 +41,14 @@ data BenchRun = BenchRun
   { benchFixtureName   :: String
   , benchSeed          :: Int
   , benchIteration     :: Int
+  , benchCompileMs     :: Double
+  , benchSolveMs       :: Double
   , benchDurationMs    :: Double
   , benchSolverSuccess :: Bool
   , benchEnergy        :: Double
+  , benchIterations    :: Int
+  , benchFuncEvals     :: Int
+  , benchGradEvals     :: Int
   , benchFailures      :: [String]
   }
 
@@ -76,19 +83,48 @@ runIteration options fixtures iteration =
 timeFixtureSolve :: Int -> SolverFixture -> RandomSeed -> IO BenchRun
 timeFixtureSolve iteration fixture seed = do
   start <- getMonotonicTimeNSec
-  solution <- solveFixture fixture seed
+  let config = withInitialSeed seed defaultSolveConfig
+      problem = solverProblem (fixtureConstraints fixture)
+      compiled = compileProblem config problem
+  _ <- evaluate (forceInspection (compiledInspection compiled))
+  compiledAt <- getMonotonicTimeNSec
+  solution <- solveCompiledProblem compiled
   end <- getMonotonicTimeNSec
   let failures = validateFixtureSolution fixture solution
+      compileMs = durationMs start compiledAt
+      solveMs = durationMs compiledAt end
   pure
     BenchRun
       { benchFixtureName = fixtureName fixture
       , benchSeed = seedInt seed
       , benchIteration = iteration
-      , benchDurationMs = fromIntegral (end - start) / 1000000
+      , benchCompileMs = compileMs
+      , benchSolveMs = solveMs
+      , benchDurationMs = compileMs + solveMs
       , benchSolverSuccess = solutionSuccess solution
       , benchEnergy = solutionEnergy solution
+      , benchIterations = solutionIterations solution
+      , benchFuncEvals = solutionFunctionEvaluations solution
+      , benchGradEvals = solutionGradientEvaluations solution
       , benchFailures = failures
       }
+
+forceInspection :: ProblemInspection -> ()
+forceInspection inspection =
+  inspectedVariableCount inspection
+    `seq` inspectedNativeBoundCount inspection
+    `seq` inspectedEnergyTermCount inspection
+    `seq` inspectedFlattenedCount inspection
+    `seq` inspectedRawCount inspection
+    `seq` inspectedCanonicalCount inspection
+    `seq` inspectedEliminatedCount inspection
+    `seq` inspectedChoiceCount inspection
+    `seq` inspectedChoiceBranchCount inspection
+    `seq` length (inspectedNativeBoundNames inspection)
+    `seq` ()
+
+durationMs :: Word64 -> Word64 -> Double
+durationMs start end = fromIntegral (end - start) / 1000000
 
 resolveFixtures :: [String] -> IO [SolverFixture]
 resolveFixtures names =
@@ -192,7 +228,14 @@ summaryJson runs =
     [ "runCount" .= length runs
     , "successCount" .= length (filter (null . benchFailures) runs)
     , "failureCount" .= length (filter (not . null . benchFailures) runs)
+    , "compileMs" .= statsJson (map benchCompileMs runs)
+    , "solveMs" .= statsJson (map benchSolveMs runs)
     , "durationMs" .= statsJson (map benchDurationMs runs)
+    , "iterations" .= statsJson (map (fromIntegral . benchIterations) runs)
+    , "functionEvaluations"
+        .= statsJson (map (fromIntegral . benchFuncEvals) runs)
+    , "gradientEvaluations"
+        .= statsJson (map (fromIntegral . benchGradEvals) runs)
     ]
 
 statsJson :: [Double] -> Aeson.Value
@@ -212,9 +255,14 @@ runJson run =
     [ "fixture" .= benchFixtureName run
     , "seed" .= benchSeed run
     , "iteration" .= benchIteration run
+    , "compileMs" .= benchCompileMs run
+    , "solveMs" .= benchSolveMs run
     , "durationMs" .= benchDurationMs run
     , "solverSuccess" .= benchSolverSuccess run
     , "energy" .= benchEnergy run
+    , "iterations" .= benchIterations run
+    , "functionEvaluations" .= benchFuncEvals run
+    , "gradientEvaluations" .= benchGradEvals run
     , "ok" .= null (benchFailures run)
     , "failures" .= benchFailures run
     ]
@@ -234,15 +282,23 @@ printTextBenchmark fixtures runs = do
              ++ if null (benchFailures run)
                   then "ok"
                   else "fail"
-         , "duration=" ++ formatMs (benchDurationMs run)
+         , "compile=" ++ formatMs (benchCompileMs run)
+         , "solve=" ++ formatMs (benchSolveMs run)
+         , "total=" ++ formatMs (benchDurationMs run)
          , "energy=" ++ printf "%.6g" (benchEnergy run)
+         , "iters=" ++ show (benchIterations run)
+         , "evals=" ++ show (benchFuncEvals run)
          ])
-  let summary = stats (map benchDurationMs runs)
+  let compileSummary = stats (map benchCompileMs runs)
+      solveSummary = stats (map benchSolveMs runs)
+      summary = stats (map benchDurationMs runs)
   putStrLn ""
   putStrLn ("runs:     " ++ show (length runs))
   putStrLn ("success:  " ++ show (length (filter (null . benchFailures) runs)))
   putStrLn
     ("failures: " ++ show (length (filter (not . null . benchFailures) runs)))
+  putStrLn ("compile mean: " ++ formatMaybeMs (statMean compileSummary))
+  putStrLn ("solve mean:   " ++ formatMaybeMs (statMean solveSummary))
   putStrLn ("min:      " ++ formatMaybeMs (statMin summary))
   putStrLn ("mean:     " ++ formatMaybeMs (statMean summary))
   putStrLn ("median:   " ++ formatMaybeMs (statMedian summary))

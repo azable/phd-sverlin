@@ -8,7 +8,11 @@
 
 module LinearTrace.View.Style
   ( -- * Expression aliases
-    FreeExpr
+    Free
+  , Layout
+  , Unit
+  , Angle
+  , FreeExpr
   , LayoutExpr
   , UnitExpr
   , AngleExpr
@@ -100,6 +104,26 @@ import           Solver
 --------------------------------------------------------------------------------
 -- Expression aliases
 --------------------------------------------------------------------------------
+data Free
+
+data Layout
+
+data Unit
+
+data Angle
+
+instance SymbolicType Free where
+  symbolicDomain _ = realDomain "free"
+
+instance SymbolicType Layout where
+  symbolicDomain _ = realDomain "layout"
+
+instance SymbolicType Unit where
+  symbolicDomain _ = realDomain "unit"
+
+instance SymbolicType Angle where
+  symbolicDomain _ = cyclicDomain "angle" 360
+
 type FreeExpr = Expr Free
 
 type LayoutExpr = Expr Layout
@@ -151,7 +175,7 @@ instance ConstrainEq a => ConstrainEq (Bounds a) where
   constrainEqual lhs rhs =
     case (lhs, rhs) of
       (Bounds at al aw ah, Bounds bt bl bw bh) ->
-        All [at @==@ bt, al @==@ bl, aw @==@ bw, ah @==@ bh]
+        allOf [at @==@ bt, al @==@ bl, aw @==@ bw, ah @==@ bh]
 
 class HasBounds a where
   top :: a -> LayoutExpr
