@@ -20,6 +20,7 @@ describe('_readCompileQuery', () => {
 
     if (result.ok) {
       expect(Number.isInteger(result.seed)).toBe(true);
+      expect(result.seed).toBeGreaterThan(0);
       expect(result.details).toBe(false);
     }
   });
@@ -28,7 +29,17 @@ describe('_readCompileQuery', () => {
     expect(_readCompileQuery(new URL('http://localhost/api/visualization?seed=bad'))).toEqual({
       ok: false,
       status: 400,
-      error: '`seed` must be a safe integer when provided.'
+      error: '`seed` must be a positive safe integer when provided.'
+    });
+    expect(_readCompileQuery(new URL('http://localhost/api/visualization?seed=-1'))).toEqual({
+      ok: false,
+      status: 400,
+      error: '`seed` must be a positive safe integer when provided.'
+    });
+    expect(_readCompileQuery(new URL('http://localhost/api/visualization?seed=0'))).toEqual({
+      ok: false,
+      status: 400,
+      error: '`seed` must be a positive safe integer when provided.'
     });
     expect(_readCompileQuery(new URL('http://localhost/api/visualization?details=bad'))).toEqual({
       ok: false,

@@ -24,7 +24,7 @@ type CompileQuery =
       status: number;
     };
 
-const minSeed = -2147483648;
+const minSeed = 1;
 const maxSeedExclusive = 2147483647;
 
 let activeJobId: string | null = null;
@@ -216,11 +216,11 @@ export function _readCompileQuery(url: URL): CompileQuery {
 
   const seed = Number(seedValue);
 
-  if (!Number.isInteger(seed) || !Number.isSafeInteger(seed)) {
+  if (!Number.isInteger(seed) || !Number.isSafeInteger(seed) || seed < minSeed) {
     return {
       ok: false,
       status: 400,
-      error: '`seed` must be a safe integer when provided.'
+      error: '`seed` must be a positive safe integer when provided.'
     };
   }
 

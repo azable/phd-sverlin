@@ -45,6 +45,8 @@
   }: Props = $props();
 
   const busy = $derived(loadingTrace || regenerating);
+  const minSeed = 1;
+  const maxSeedExclusive = 2147483647;
 
   function submitRegeneration(event: SubmitEvent) {
     event.preventDefault();
@@ -59,7 +61,8 @@
   }
 
   function randomSeedText(): string {
-    const [seed] = crypto.getRandomValues(new Int32Array(1));
+    const [value] = crypto.getRandomValues(new Uint32Array(1));
+    const seed = (value % (maxSeedExclusive - minSeed)) + minSeed;
 
     return String(seed);
   }

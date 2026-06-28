@@ -38,10 +38,10 @@ Manual JSON generation requires an explicit output file:
 Useful compiler options:
 
 ```sh
-./compile.sh --output /tmp/sverlin-compiled.json --seed -1988735004
+./compile.sh --output /tmp/sverlin-compiled.json --seed 1988735004
 ./compile.sh --output /tmp/sverlin-compiled.json --details
 ./compile.sh --output /tmp/sverlin-compiled.json --json
-pnpm run compile -- --output /tmp/sverlin-compiled.json --seed -1988735004
+pnpm run compile -- --output /tmp/sverlin-compiled.json --seed 1988735004
 ```
 
 `--seed` makes the solver deterministic for a specific run. `--json` is accepted for compatibility, but compiled visualization JSON is always written to a file. The web app no longer reads or writes `static/compiled.json`; `compile.sh` and direct `compile-app` invocations, including `pnpm run compile`, must pass `--output FILE`.
@@ -104,7 +104,7 @@ pnpm install
 pnpm run dev
 ```
 
-Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. The seed can be supplied through the UI and is sent to `/api/visualization` as a query parameter.
+Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. The seed can be supplied through the UI and is sent to `/api/visualization` as a positive integer query parameter.
 
 The devcontainer post-create step runs one compile into `/tmp` to warm Cabal's build artifacts before the first browser-triggered regeneration. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 

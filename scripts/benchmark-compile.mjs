@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-const defaultSeeds = [1, 320994595, -1988735004, 1731275846, 1999326623];
+const defaultSeeds = [1, 320994595, 1988735004, 1731275846, 1999326623];
 
 const options = parseArgs(process.argv.slice(2));
 
@@ -152,8 +152,8 @@ function parseSeeds(value) {
     .filter(Boolean)
     .map((seed) => Number.parseInt(seed, 10));
 
-  if (seeds.length === 0 || seeds.some((seed) => !Number.isInteger(seed))) {
-    throw new Error('--seed must be a comma-separated list of integers');
+  if (seeds.length === 0 || seeds.some((seed) => !Number.isInteger(seed) || seed <= 0)) {
+    throw new Error('--seed must be a comma-separated list of positive integers');
   }
 
   return seeds;
@@ -428,7 +428,7 @@ Options:
   --iterations N    Runs per seed. Default: 1
   --warmup N        Warmup invocations before measurement. Default: 1
   --timeout-ms N    Per-run timeout. Default: 20000
-  --seed A,B,C      Override default seed list
+  --seed A,B,C      Override default positive seed list
   --output PATH     Write full JSON results
   --details         Include compile backend --details diagnostics
   --help            Show this message

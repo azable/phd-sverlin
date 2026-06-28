@@ -30,6 +30,7 @@
   let seedText = $state('');
   let debugEnabled = $state(false);
   let activeCompileSource: EventSource | null = null;
+  let initialRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let compileRunId = 0;
 
   const compiling = $derived(loadingTrace || regenerating);
@@ -44,6 +45,7 @@
     startCompile({ phase: 'initial' });
 
     return () => {
+      clearInitialRetry();
       activeCompileSource?.close();
       player.dispose();
     };
@@ -69,6 +71,7 @@
     const runId = compileRunId + 1;
     compileRunId = runId;
     activeCompileSource?.close();
+    clearInitialRetry();
 
     if (phase === 'initial') {
       loadingTrace = true;
@@ -97,6 +100,17 @@
 
     function fail(error: string, payload?: CompileStreamFailure) {
       if (!isCurrentRun()) return;
+
+      if (phase === 'initial' && payload?.status === 409) {
+        source.close();
+        activeCompileSource = null;
+        initialRetryTimer = setTimeout(() => {
+          if (compileRunId === runId && !player.hasTrace) {
+            startCompile({ phase: 'initial', nextSeedText });
+          }
+        }, 1_000);
+        return;
+      }
 
       if (payload?.debug) {
         latestDebug = payload.debug;
@@ -184,6 +198,13 @@
     startCompile({ phase: 'regenerate', nextSeedText });
   }
 
+  function clearInitialRetry() {
+    if (initialRetryTimer === null) return;
+
+    clearTimeout(initialRetryTimer);
+    initialRetryTimer = null;
+  }
+
   function compileUrl(seed: number | null) {
     const url = new URL(compileSrc, window.location.origin);
 
@@ -232,8 +253,8 @@
 
     const seed = Number(trimmed);
 
-    if (!Number.isInteger(seed) || !Number.isSafeInteger(seed)) {
-      throw new Error('Seed must be an integer that JavaScript can represent safely.');
+    if (!Number.isInteger(seed) || !Number.isSafeInteger(seed) || seed <= 0) {
+      throw new Error('Seed must be a positive integer that JavaScript can represent safely.');
     }
 
     return seed;
