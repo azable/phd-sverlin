@@ -27,7 +27,8 @@ type CompileRun = CompileDebug & {
   timedOut: boolean;
 };
 
-const compileTimeoutMs = 15_000;
+const compileTimeoutMs = 60_000;
+const timeoutKillGraceMs = 1_000;
 
 export async function compileVisualization({
   seed,
@@ -101,22 +102,61 @@ export async function compileVisualization({
   }
 }
 
-function runCompile(command: string, args: string[], cwd: string): Promise<CompileRun> {
+export function runCompile(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs = compileTimeoutMs
+): Promise<CompileRun> {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     const child = spawn(command, args, {
       cwd,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe']
     });
     let stdout = '';
     let stderr = '';
     let settled = false;
     let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
-    }, compileTimeoutMs);
+      terminateCompile(child.pid, 'SIGTERM');
+
+      killTimer = setTimeout(() => {
+        terminateCompile(child.pid, 'SIGKILL');
+      }, timeoutKillGraceMs);
+
+      settleTimer = setTimeout(() => {
+        settle({
+          command,
+          args,
+          cwd,
+          durationMs: Date.now() - startedAt,
+          exitCode: null,
+          stdout,
+          stderr,
+          timedOut
+        });
+      }, timeoutKillGraceMs * 2);
+    }, timeoutMs);
+
+    function clearTimers() {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+    }
+
+    function settle(result: CompileRun) {
+      if (settled) return;
+
+      settled = true;
+      clearTimers();
+      resolve(result);
+    }
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -130,11 +170,7 @@ function runCompile(command: string, args: string[], cwd: string): Promise<Compi
     });
 
     child.on('error', (err) => {
-      if (settled) return;
-
-      settled = true;
-      clearTimeout(timer);
-      resolve({
+      settle({
         command,
         args,
         cwd,
@@ -148,11 +184,7 @@ function runCompile(command: string, args: string[], cwd: string): Promise<Compi
     });
 
     child.on('close', (exitCode) => {
-      if (settled) return;
-
-      settled = true;
-      clearTimeout(timer);
-      resolve({
+      settle({
         command,
         args,
         cwd,
@@ -164,4 +196,18 @@ function runCompile(command: string, args: string[], cwd: string): Promise<Compi
       });
     });
   });
+}
+
+function terminateCompile(pid: number | undefined, signal: NodeJS.Signals) {
+  if (pid === undefined) return;
+
+  try {
+    process.kill(process.platform === 'win32' ? pid : -pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // The process may already have exited between the timeout and signal.
+    }
+  }
 }

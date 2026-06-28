@@ -4,12 +4,12 @@
   "build": {
     "dockerfile": "Dockerfile",
     "args": {
-      "GHC_VERSION": "9.6.7",
-      "CABAL_VERSION": "3.14.2.0",
+      "GHC_VERSION": "9.10.3",
+      "CABAL_VERSION": "3.16.1.0",
       "HLS_VERSION": "2.14.0.0",
-      "STACK_VERSION": "3.7.1",
+      "STACK_VERSION": "3.11.1",
       "PNPM_VERSION": "10.12.1",
-      "EXTRA_CABAL_TOOLS": "stylish-haskell hindent"
+      "EXTRA_CABAL_TOOLS": "hlint hindent stylish-haskell"
     }
   },
 

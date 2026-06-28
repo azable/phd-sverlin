@@ -23,8 +23,8 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 
 - Node.js and `pnpm` for the SvelteKit app.
 - GHC/Cabal for the Haskell compiler under `compile/`.
-- L-BFGS-B 3.0 available as `liblbfgsb` for the bounded layout solver. The devcontainer builds this from the official Fortran source.
-- `hlint`, `hindent`, and `stylish-haskell` for Haskell checks/formatting.
+- L-BFGS-B available as `liblbfgsb` for the bounded layout solver. The devcontainer installs Debian's `liblbfgsb-dev` package.
+- `hlint`, `hindent`, and `stylish-haskell` for Haskell checks/formatting. The devcontainer installs these into `/home/node/.cabal/bin`.
 
 ## Generate Visualization JSON
 
