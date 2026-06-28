@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { CompileDebug, CompiledTrace } from '$lib/visualization/types';
@@ -33,13 +35,26 @@ export async function compileVisualization({
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
   const command = path.join(cwd, 'compile.sh');
-  const args = ['--json', '--seed', String(seed)];
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-compile-'));
+  const outputPath = path.join(tempDir, 'compiled.json');
+  const args = ['--output', outputPath, '--json', '--seed', String(seed)];
 
   if (details) {
     args.push('--details');
   }
 
-  const debug = await runCompile(command, args, cwd);
+  let debug = await runCompile(command, args, cwd);
+  let compiledJson = '';
+
+  try {
+    compiledJson = await readFile(outputPath, 'utf8');
+  } catch {
+    compiledJson = '';
+  }
+
+  debug = { ...debug, outputPath, compiledJson };
+
+  await rm(tempDir, { recursive: true, force: true });
 
   if (debug.error) {
     return {
@@ -71,13 +86,13 @@ export async function compileVisualization({
   try {
     return {
       ok: true,
-      trace: JSON.parse(debug.stdout) as CompiledTrace,
+      trace: JSON.parse(compiledJson) as CompiledTrace,
       debug
     };
   } catch (err) {
     return {
       ok: false,
-      error: `Compile backend returned invalid JSON: ${
+      error: `Compile backend wrote invalid JSON: ${
         err instanceof Error ? err.message : String(err)
       }`,
       debug,

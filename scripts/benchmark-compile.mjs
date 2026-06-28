@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
@@ -158,9 +159,12 @@ function parseSeeds(value) {
   return seeds;
 }
 
-function runCompile({ command, cwd, seed, details, timeoutMs }) {
+async function runCompile({ command, cwd, seed, details, timeoutMs }) {
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-bench-compile-'));
+  const outputPath = path.join(tempDir, 'compiled.json');
+
   return new Promise((resolve) => {
-    const args = ['--json', '--seed', String(seed)];
+    const args = ['--output', outputPath, '--json', '--seed', String(seed)];
     if (details) {
       args.push('--details');
     }
@@ -196,26 +200,71 @@ function runCompile({ command, cwd, seed, details, timeoutMs }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(finishRun({ seed, args, started, stdout, stderr, timedOut, exitCode: null, error }));
+      resolve(
+        finishRun({
+          seed,
+          args,
+          started,
+          stdout,
+          stderr,
+          timedOut,
+          exitCode: null,
+          error,
+          outputPath,
+          tempDir
+        })
+      );
     });
 
     child.on('close', (exitCode) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(finishRun({ seed, args, started, stdout, stderr, timedOut, exitCode }));
+      resolve(
+        finishRun({
+          seed,
+          args,
+          started,
+          stdout,
+          stderr,
+          timedOut,
+          exitCode,
+          outputPath,
+          tempDir
+        })
+      );
     });
   });
 }
 
-function finishRun({ seed, args, started, stdout, stderr, timedOut, exitCode, error }) {
+async function finishRun({
+  seed,
+  args,
+  started,
+  stdout,
+  stderr,
+  timedOut,
+  exitCode,
+  error,
+  outputPath,
+  tempDir
+}) {
   const durationMs = performance.now() - started;
   let jsonOk = false;
   let parseError = null;
+  let compiledJson = '';
+
+  try {
+    compiledJson = await readFile(outputPath, 'utf8');
+  } catch {
+    compiledJson = '';
+  }
+
+  await rm(tempDir, { recursive: true, force: true });
 
   if (!error && exitCode === 0 && !timedOut) {
     try {
-      JSON.parse(stdout);
+      JSON.parse(compiledJson);
       jsonOk = true;
     } catch (err) {
       parseError = err instanceof Error ? err.message : String(err);
@@ -232,6 +281,7 @@ function finishRun({ seed, args, started, stdout, stderr, timedOut, exitCode, er
     jsonOk,
     stdoutBytes: Buffer.byteLength(stdout, 'utf8'),
     stderrBytes: Buffer.byteLength(stderr, 'utf8'),
+    compiledBytes: Buffer.byteLength(compiledJson, 'utf8'),
     error: error ? error.message : null,
     parseError
   };
@@ -287,6 +337,7 @@ function printRun(run, iteration) {
       `seed=${run.seed}`,
       `status=${status}`,
       `duration=${formatMs(run.durationMs)}`,
+      `compiled=${run.compiledBytes}`,
       `stdout=${run.stdoutBytes}`,
       `stderr=${run.stderrBytes}`
     ].join(' ')

@@ -67,8 +67,7 @@ common app-dependencies
                       bytestring,
                       optparse-applicative,
                       boxes,
-                      ansi-terminal,
-                      unix
+                      ansi-terminal
 
     default-language: GHC2021
 

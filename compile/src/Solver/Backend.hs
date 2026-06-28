@@ -1,5 +1,4 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Solver.Backend
   ( InternalVar(..)
@@ -24,20 +23,11 @@ module Solver.Backend
   , circularEnergy
   ) where
 
-import           Control.Concurrent.MVar    (MVar, newMVar, withMVar)
-import           Control.Exception          (bracket)
 import           Control.Monad.State.Strict
 import           Data.Array                 (Array, listArray, (!))
 import           Data.List                  (foldl')
-import           Foreign.C.Types            (CInt (..))
-import           Foreign.Ptr                (Ptr, nullPtr)
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
-import qualified System.IO                  as IO
-import           System.IO.Unsafe           (unsafePerformIO)
-import           System.Posix.IO            (OpenMode (WriteOnly), closeFd,
-                                             defaultFileFlags, dup, dupTo,
-                                             openFd, stdOutput)
 
 -- Solver-facing compiled expressions
 --------------------------------------------------------------------------------
@@ -212,17 +202,13 @@ evalTerms terms env =
 solveCSP :: OptimizerConfig -> CSP -> IO (Opt.Result [Double])
 solveCSP optimizerConfig (CSP initials nativeBounds totalEnergy _hardEnergy)
   | Opt.isSupportedMethod Opt.LBFGSB =
-    withMVar
-      nativeStdoutLock
-      (const
-         (suppressNativeStdout
-            (Opt.minimize
-               Opt.LBFGSB
-               (optimizerParams optimizerConfig)
-               totalEnergy
-               (Just nativeBounds)
-               []
-               initials)))
+    Opt.minimize
+      Opt.LBFGSB
+      (optimizerParams optimizerConfig)
+      totalEnergy
+      (Just nativeBounds)
+      []
+      initials
   | otherwise =
     ioError
       (userError
@@ -236,35 +222,6 @@ optimizerParams config =
     , Opt.paramsMaxIters = optimizerMaxIterations config
     , Opt.paramsMaxCorrections = optimizerMaxCorrections config
     }
-
-nativeStdoutLock :: MVar ()
-nativeStdoutLock = unsafePerformIO (newMVar ())
-
-{-# NOINLINE nativeStdoutLock #-}
-suppressNativeStdout :: IO a -> IO a
-suppressNativeStdout =
-  bracket
-    (do
-       IO.hFlush IO.stdout
-       flushNativeOutput
-       savedStdout <- dup stdOutput
-       nullOutput <- openFd "/dev/null" WriteOnly defaultFileFlags
-       _ <- dupTo nullOutput stdOutput
-       closeFd nullOutput
-       pure savedStdout)
-    (\savedStdout -> do
-       flushNativeOutput
-       IO.hFlush IO.stdout
-       _ <- dupTo savedStdout stdOutput
-       closeFd savedStdout)
-    . const
-
-flushNativeOutput :: IO ()
-flushNativeOutput = do
-  _ <- c_fflush nullPtr
-  pure ()
-
-foreign import ccall unsafe "stdio.h fflush" c_fflush :: Ptr () -> IO CInt
 
 cspHardEnergy :: CSP -> [Double] -> Double
 cspHardEnergy (CSP _ _ _ hardEnergy) = hardEnergy

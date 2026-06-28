@@ -26,10 +26,12 @@
     error ? 'destructive' : regenerating ? 'secondary' : debug ? 'default' : 'outline'
   );
   const diagnosticsOutput = $derived(
-    debug?.stderr ? debug.stderr : 'No diagnostics were written to stderr.'
+    debug?.stdout || debug?.stderr
+      ? [debug.stdout, debug.stderr].filter(Boolean).join('\n')
+      : 'No diagnostics were written to stdout or stderr.'
   );
   const compiledOutput = $derived(
-    debug?.stdout ? debug.stdout : 'No compiled JSON was written to stdout.'
+    debug?.compiledJson ? debug.compiledJson : 'No compiled JSON was written.'
   );
 </script>
 
@@ -59,6 +61,13 @@
           <dd class="min-w-0">
             <code class="font-mono break-words">{debug.cwd}</code>
           </dd>
+
+          {#if debug.outputPath}
+            <dt class="text-muted-foreground">Output file</dt>
+            <dd class="min-w-0">
+              <code class="font-mono break-words">{debug.outputPath}</code>
+            </dd>
+          {/if}
 
           <dt class="text-muted-foreground">Duration</dt>
           <dd>

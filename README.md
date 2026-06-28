@@ -48,7 +48,7 @@ Useful compiler options:
 ./compile.sh --json
 ```
 
-`--seed` makes the solver deterministic for a specific run. `--json` writes the compiled visualization to stdout instead of `static/compiled.json`.
+`--seed` makes the solver deterministic for a specific run. `--json` is accepted for compatibility, but compiled visualization JSON is always written to a file. `compile.sh` writes `static/compiled.json` by default; direct `compile-app` invocations must pass `--output FILE`.
 
 ## Compile Performance Benchmark
 
@@ -79,10 +79,10 @@ pnpm run bench:compile
 The default benchmark runs the same path used by the SvelteKit server action:
 
 ```sh
-./compile.sh --json --seed <seed>
+./compile.sh --output <temp-file> --json --seed <seed>
 ```
 
-It uses a fixed seed set, validates that stdout is valid JSON, and reports min/mean/median/p95/max durations. To compare changes over time, write benchmark artifacts outside the repo:
+It uses a fixed seed set, validates the generated JSON file, and reports min/mean/median/p95/max durations. To compare changes over time, write benchmark artifacts outside the repo:
 
 ```sh
 pnpm run bench:compile -- --output /tmp/compile-before.json
@@ -97,7 +97,7 @@ pnpm run bench:compile -- --seed 1,320994595
 pnpm run bench:compile -- --details
 ```
 
-Benchmark `--details` separately because it intentionally includes diagnostic rendering and stderr output that the normal JSON server path suppresses.
+Benchmark `--details` separately because it intentionally includes diagnostic rendering and extra stdout/stderr output.
 
 ## Run The Frontend
 

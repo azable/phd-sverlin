@@ -55,10 +55,12 @@ export type CompileDebug = {
   command: string;
   args: string[];
   cwd: string;
+  outputPath?: string;
   durationMs: number;
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  compiledJson?: string;
   error?: string;
 };
 

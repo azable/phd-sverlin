@@ -1,6 +1,5 @@
 module App
-  ( OutputMode(..)
-  , RunConfig(..)
+  ( RunConfig(..)
   , defaultRunConfig
   , buildViewGraph
   , runVisualization
@@ -14,17 +13,12 @@ import qualified LinearTrace.Compile  as Compile
 import qualified LinearTrace.Print    as Print
 import qualified LinearTrace.View     as View
 import           Numeric              (showFFloat)
-import           System.IO            (Handle, hFlush, hPutStrLn, stderr,
-                                       stdout)
-
-data OutputMode
-  = OutputFile FilePath
-  | OutputStdout Handle
+import           System.IO            (Handle, hPutStrLn, stdout)
 
 data RunConfig = RunConfig
   { runSeed        :: Int
   , runShowDetails :: Bool
-  , runOutputMode  :: OutputMode
+  , runOutputPath  :: FilePath
   , runDiagnostics :: Bool
   , runPrintTrace  :: Bool
   }
@@ -34,7 +28,7 @@ defaultRunConfig =
   RunConfig
     { runSeed = 0
     , runShowDetails = False
-    , runOutputMode = OutputFile "static/compiled.json"
+    , runOutputPath = "static/compiled.json"
     , runDiagnostics = True
     , runPrintTrace = True
     }
@@ -47,7 +41,7 @@ runVisualization ::
   -> View.VisualTraceGraph
   -> IO (Either String Compile.Visualization)
 runVisualization config graph = do
-  let diagnostics = diagnosticsHandle (runOutputMode config)
+  let diagnostics = stdout
   when
     (runDiagnostics config && runPrintTrace config)
     (Print.hPrintTrace diagnostics (View.visualTraceCore graph))
@@ -71,7 +65,7 @@ runVisualization config graph = do
     Right compiled -> do
       let seededCompiled = Compile.withSeed (runSeed config) compiled
       (encoded, encodeMs) <- timedPhase (evaluate (forceEncoded seededCompiled))
-      ((), writeMs) <- timedPhase (writeCompiled (runOutputMode config) encoded)
+      ((), writeMs) <- timedPhase (writeCompiled (runOutputPath config) encoded)
       when
         (runDiagnostics config)
         (hPrintPhaseTimings
@@ -122,19 +116,7 @@ hPrintPhaseTimings handle timings = do
 formatMs :: Double -> String
 formatMs value = showFFloat (Just 1) value "ms"
 
-diagnosticsHandle :: OutputMode -> Handle
-diagnosticsHandle outputMode =
-  case outputMode of
-    OutputFile _       -> stdout
-    OutputStdout _json -> stderr
-
-writeCompiled :: OutputMode -> BL.ByteString -> IO ()
-writeCompiled outputMode encoded =
-  case outputMode of
-    OutputFile path -> do
-      BL.writeFile path encoded
-      putStrLn ("Compiled JSON at: " ++ path)
-    OutputStdout handle -> do
-      BL.hPut handle encoded
-      hPutStrLn handle ""
-      hFlush handle
+writeCompiled :: FilePath -> BL.ByteString -> IO ()
+writeCompiled path encoded = do
+  BL.writeFile path encoded
+  putStrLn ("Compiled JSON at: " ++ path)
