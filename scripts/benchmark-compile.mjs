@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
+import { acquireCompileLock } from '../src/lib/server/compile-lock.js';
+
 const defaultSeeds = [1, 320994595, 1988735004, 1731275846, 1999326623];
 
 const options = parseArgs(process.argv.slice(2));
@@ -162,47 +164,116 @@ function parseSeeds(value) {
 async function runCompile({ command, cwd, seed, details, timeoutMs }) {
   const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-bench-compile-'));
   const outputPath = path.join(tempDir, 'compiled.json');
+  const args = [
+    'run',
+    '-v0',
+    'compile-app',
+    '--builddir=compile/dist-newstyle',
+    '--',
+    '--output',
+    outputPath,
+    '--json',
+    '--seed',
+    String(seed)
+  ];
+  if (details) {
+    args.push('--details');
+  }
 
-  return new Promise((resolve) => {
-    const args = [
-      'run',
-      '-v0',
-      'compile-app',
-      '--builddir=compile/dist-newstyle',
-      '--',
-      '--output',
-      outputPath,
-      '--json',
-      '--seed',
-      String(seed)
-    ];
-    if (details) {
-      args.push('--details');
-    }
+  const lockStarted = performance.now();
+  const lockResult = await acquireCompileLock({
+    owner: 'bench',
+    cwd,
+    command,
+    args,
+    seed,
+    details,
+    outputPath
+  });
 
-    const started = performance.now();
-    const child = spawn(command, args, {
-      cwd,
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
+  if (!lockResult.acquired) {
+    await rm(tempDir, { recursive: true, force: true });
 
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    let timedOut = false;
-    let killTimer;
-    let settleTimer;
+    return {
+      seed,
+      args,
+      durationMs: performance.now() - lockStarted,
+      exitCode: null,
+      timedOut: false,
+      ok: false,
+      jsonOk: false,
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      compiledBytes: 0,
+      error: lockResult.message,
+      parseError: null
+    };
+  }
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminateCompile(child.pid, 'SIGTERM');
+  try {
+    return await new Promise((resolve) => {
+      const started = performance.now();
+      const child = spawn(command, args, {
+        cwd,
+        detached: process.platform !== 'win32',
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
 
-      killTimer = setTimeout(() => {
-        terminateCompile(child.pid, 'SIGKILL');
-      }, 1_000);
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      let timedOut = false;
+      let killTimer;
+      let settleTimer;
 
-      settleTimer = setTimeout(() => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        terminateCompile(child.pid, 'SIGTERM');
+
+        killTimer = setTimeout(() => {
+          terminateCompile(child.pid, 'SIGKILL');
+        }, 1_000);
+
+        settleTimer = setTimeout(() => {
+          settle({
+            seed,
+            args,
+            started,
+            stdout,
+            stderr,
+            timedOut,
+            exitCode: null,
+            outputPath,
+            tempDir
+          });
+        }, 2_000);
+      }, timeoutMs);
+
+      function clearTimers() {
+        clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        if (settleTimer) clearTimeout(settleTimer);
+      }
+
+      function settle(result) {
+        if (settled) return;
+        settled = true;
+        clearTimers();
+        resolve(finishRun(result));
+      }
+
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+
+      child.on('error', (error) => {
         settle({
           seed,
           args,
@@ -211,65 +282,29 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
           stderr,
           timedOut,
           exitCode: null,
+          error,
           outputPath,
           tempDir
         });
-      }, 2_000);
-    }, timeoutMs);
+      });
 
-    function clearTimers() {
-      clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      if (settleTimer) clearTimeout(settleTimer);
-    }
-
-    function settle(result) {
-      if (settled) return;
-      settled = true;
-      clearTimers();
-      resolve(finishRun(result));
-    }
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-
-    child.on('error', (error) => {
-      settle({
-        seed,
-        args,
-        started,
-        stdout,
-        stderr,
-        timedOut,
-        exitCode: null,
-        error,
-        outputPath,
-        tempDir
+      child.on('close', (exitCode) => {
+        settle({
+          seed,
+          args,
+          started,
+          stdout,
+          stderr,
+          timedOut,
+          exitCode,
+          outputPath,
+          tempDir
+        });
       });
     });
-
-    child.on('close', (exitCode) => {
-      settle({
-        seed,
-        args,
-        started,
-        stdout,
-        stderr,
-        timedOut,
-        exitCode,
-        outputPath,
-        tempDir
-      });
-    });
-  });
+  } finally {
+    await lockResult.lock.release();
+  }
 }
 
 function terminateCompile(pid, signal) {

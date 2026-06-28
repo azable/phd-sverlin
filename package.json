@@ -10,7 +10,7 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "compile": "cabal run -v0 compile-app --builddir=compile/dist-newstyle --",
+    "compile": "node scripts/run-compile.mjs",
     "lint": "prettier --check . && eslint .",
     "lint:haskell": "hlint compile/src compile/app compile/test compile/bench compile/test-support",
     "test:unit": "vitest",

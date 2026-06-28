@@ -3,7 +3,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { CompileDebug, CompiledTrace } from '$lib/visualization/types';
+import type { CompileDebug, CompileLockHolder, CompiledTrace } from '$lib/visualization/types';
+
+import { acquireCompileLock } from './compile-lock.js';
 
 export type CompileVisualizationOptions = {
   seed: number;
@@ -23,6 +25,7 @@ export type CompileVisualizationResult =
       error: string;
       debug: CompileDebug;
       status: number;
+      lock?: CompileLockHolder;
     };
 
 export type CompileVisualizationEvent =
@@ -71,85 +74,111 @@ export async function compileVisualization({
   const { command, args } = compileCommand(seed, details, outputPath);
 
   const timeoutMs = readCompileTimeoutMs();
-  onEvent?.({
-    type: 'started',
-    debug: {
-      command,
-      args,
-      cwd,
-      outputPath,
-      timeoutMs,
-      durationMs: 0,
-      exitCode: null,
-      stdout: '',
-      stderr: ''
-    }
+  const startedDebug: CompileDebug = {
+    command,
+    args,
+    cwd,
+    outputPath,
+    timeoutMs,
+    durationMs: 0,
+    exitCode: null,
+    stdout: '',
+    stderr: ''
+  };
+  const lockResult = await acquireCompileLock({
+    owner: 'web',
+    cwd,
+    command,
+    args,
+    seed,
+    details,
+    outputPath
   });
 
-  let debug = await runCompile(command, args, cwd, timeoutMs, {
-    signal,
-    onStdout: (chunk, stdout) => {
-      onEvent?.({ type: 'stdout', chunk, stdout });
-    },
-    onStderr: (chunk, stderr) => {
-      onEvent?.({ type: 'stderr', chunk, stderr });
-    }
-  });
-  let compiledJson = '';
+  if (!lockResult.acquired) {
+    await rm(tempDir, { recursive: true, force: true });
 
-  try {
-    compiledJson = await readFile(outputPath, 'utf8');
-  } catch {
-    compiledJson = '';
-  }
-
-  debug = { ...debug, outputPath, compiledJson };
-  onEvent?.({ type: 'finished', debug });
-
-  await rm(tempDir, { recursive: true, force: true });
-
-  if (debug.error) {
     return {
       ok: false,
-      error: debug.error,
-      debug,
-      status: 500
-    };
-  }
-
-  if (debug.timedOut) {
-    return {
-      ok: false,
-      error: `Compile backend timed out after ${formatDuration(timeoutMs)}.`,
-      debug,
-      status: 504
-    };
-  }
-
-  if (debug.exitCode !== 0) {
-    return {
-      ok: false,
-      error: `Compile backend exited with code ${debug.exitCode}.`,
-      debug,
-      status: 500
+      error: lockResult.message,
+      debug: { ...startedDebug, stderr: lockResult.message },
+      status: 409,
+      ...(lockResult.holder ? { lock: lockResult.holder } : {})
     };
   }
 
   try {
-    return {
-      ok: true,
-      trace: JSON.parse(compiledJson) as CompiledTrace,
-      debug
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      error: `Compile backend wrote invalid JSON: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-      debug,
-      status: 502
-    };
+    onEvent?.({
+      type: 'started',
+      debug: startedDebug
+    });
+
+    let debug = await runCompile(command, args, cwd, timeoutMs, {
+      signal,
+      onStdout: (chunk, stdout) => {
+        onEvent?.({ type: 'stdout', chunk, stdout });
+      },
+      onStderr: (chunk, stderr) => {
+        onEvent?.({ type: 'stderr', chunk, stderr });
+      }
+    });
+    let compiledJson = '';
+
+    try {
+      compiledJson = await readFile(outputPath, 'utf8');
+    } catch {
+      compiledJson = '';
+    }
+
+    debug = { ...debug, outputPath, compiledJson };
+    onEvent?.({ type: 'finished', debug });
+
+    if (debug.error) {
+      return {
+        ok: false,
+        error: debug.error,
+        debug,
+        status: 500
+      };
+    }
+
+    if (debug.timedOut) {
+      return {
+        ok: false,
+        error: `Compile backend timed out after ${formatDuration(timeoutMs)}.`,
+        debug,
+        status: 504
+      };
+    }
+
+    if (debug.exitCode !== 0) {
+      return {
+        ok: false,
+        error: `Compile backend exited with code ${debug.exitCode}.`,
+        debug,
+        status: 500
+      };
+    }
+
+    try {
+      return {
+        ok: true,
+        trace: JSON.parse(compiledJson) as CompiledTrace,
+        debug
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Compile backend wrote invalid JSON: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        debug,
+        status: 502
+      };
+    }
+  } finally {
+    await lockResult.lock.release();
+    await rm(tempDir, { recursive: true, force: true });
   }
 }
 

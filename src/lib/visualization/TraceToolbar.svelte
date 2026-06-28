@@ -15,6 +15,7 @@
   type Props = {
     loadingTrace: boolean;
     regenerating: boolean;
+    externalCompiling?: boolean;
     hasTrace: boolean;
     canPrevious: boolean;
     canNext: boolean;
@@ -31,6 +32,7 @@
   let {
     loadingTrace,
     regenerating,
+    externalCompiling = false,
     hasTrace,
     canPrevious,
     canNext,
@@ -44,7 +46,7 @@
     onRegenerate
   }: Props = $props();
 
-  const busy = $derived(loadingTrace || regenerating);
+  const busy = $derived(loadingTrace || regenerating || externalCompiling);
   const minSeed = 1;
   const maxSeedExclusive = 2147483647;
 
@@ -147,6 +149,9 @@
       {#if regenerating}
         <Spinner data-icon="inline-start" />
         Regenerating
+      {:else if externalCompiling}
+        <Spinner data-icon="inline-start" />
+        Compiling
       {:else}
         <RefreshCwIcon data-icon="inline-start" />
         Regenerate

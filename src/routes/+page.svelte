@@ -11,6 +11,8 @@
   import { TracePlayer } from '$lib/visualization/trace-player.svelte';
   import type {
     CompileDebug,
+    CompileLockHolder,
+    CompileStatus,
     CompileStreamFailure,
     CompileStreamOutput,
     CompileStreamStatus,
@@ -20,6 +22,7 @@
   type CompilePhase = 'initial' | 'regenerate';
 
   const compileSrc = '/api/visualization';
+  const compileStatusStreamSrc = '/api/visualization/status/stream';
 
   const player = new TracePlayer();
 
@@ -30,10 +33,20 @@
   let seedText = $state('');
   let debugEnabled = $state(false);
   let activeCompileSource: EventSource | null = null;
-  let initialRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let activeCompileStatusSource: EventSource | null = null;
+  let compileRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let externalCompileLock = $state<CompileLockHolder | null>(null);
   let compileRunId = 0;
+  const compileBusyRetryMs = 1_000;
 
   const compiling = $derived(loadingTrace || regenerating);
+  const externalCompileActive = $derived(externalCompileLock !== null && !compiling);
+  const toolbarExternalCompiling = $derived(externalCompileLock !== null && !loadingTrace);
+  const displayedDebug = $derived(
+    externalCompileActive && externalCompileLock !== null
+      ? lockStatusDebug(externalCompileLock)
+      : latestDebug
+  );
   const pageError = $derived(compileError);
   const initialCompileOutput = $derived(
     latestDebug?.stdout || latestDebug?.stderr
@@ -43,9 +56,11 @@
 
   onMount(() => {
     startCompile({ phase: 'initial' });
+    startCompileStatusStream();
 
     return () => {
-      clearInitialRetry();
+      clearCompileRetry();
+      stopCompileStatusStream();
       activeCompileSource?.close();
       player.dispose();
     };
@@ -71,7 +86,7 @@
     const runId = compileRunId + 1;
     compileRunId = runId;
     activeCompileSource?.close();
-    clearInitialRetry();
+    clearCompileRetry();
 
     if (phase === 'initial') {
       loadingTrace = true;
@@ -79,6 +94,7 @@
       regenerating = true;
     }
 
+    externalCompileLock = null;
     compileError = null;
     latestDebug = null;
 
@@ -101,14 +117,20 @@
     function fail(error: string, payload?: CompileStreamFailure) {
       if (!isCurrentRun()) return;
 
-      if (phase === 'initial' && payload?.status === 409) {
+      if (payload?.status === 409) {
+        latestDebug = payload.debug ?? busyDebug(error, payload);
+
+        if (typeof payload?.seed === 'number') {
+          seedText = String(payload.seed);
+        }
+
         source.close();
         activeCompileSource = null;
-        initialRetryTimer = setTimeout(() => {
-          if (compileRunId === runId && !player.hasTrace) {
-            startCompile({ phase: 'initial', nextSeedText });
+        compileRetryTimer = setTimeout(() => {
+          if (compileRunId === runId) {
+            startCompile({ phase, nextSeedText });
           }
-        }, 1_000);
+        }, compileBusyRetryMs);
         return;
       }
 
@@ -198,11 +220,44 @@
     startCompile({ phase: 'regenerate', nextSeedText });
   }
 
-  function clearInitialRetry() {
-    if (initialRetryTimer === null) return;
+  function startCompileStatusStream() {
+    const source = new EventSource(compileStatusStreamSrc);
+    activeCompileStatusSource = source;
 
-    clearTimeout(initialRetryTimer);
-    initialRetryTimer = null;
+    source.addEventListener('status', (event) => {
+      if (activeCompileStatusSource !== source) return;
+
+      try {
+        applyCompileStatus(readStreamEvent<CompileStatus>(event));
+      } catch {
+        externalCompileLock = null;
+      }
+    });
+  }
+
+  function stopCompileStatusStream() {
+    activeCompileStatusSource?.close();
+    activeCompileStatusSource = null;
+  }
+
+  function applyCompileStatus(status: CompileStatus) {
+    if (compiling) {
+      externalCompileLock = null;
+      return;
+    }
+
+    externalCompileLock = status.running ? status : null;
+
+    if (status.running && typeof status.seed === 'number') {
+      seedText = String(status.seed);
+    }
+  }
+
+  function clearCompileRetry() {
+    if (compileRetryTimer === null) return;
+
+    clearTimeout(compileRetryTimer);
+    compileRetryTimer = null;
   }
 
   function compileUrl(seed: number | null) {
@@ -246,6 +301,41 @@
     };
   }
 
+  function busyDebug(error: string, payload?: CompileStreamFailure): CompileDebug {
+    const lock = payload?.lock;
+    const owner = lock ? `${lock.owner} pid ${lock.pid}` : 'another compile process';
+
+    return {
+      command: lock?.command ?? '',
+      args: lock?.args ?? [],
+      cwd: lock?.cwd ?? '',
+      outputPath: lock?.outputPath,
+      durationMs: 0,
+      exitCode: null,
+      stdout: '',
+      stderr: `${error}\nWaiting for ${owner} to finish before retrying.`
+    };
+  }
+
+  function lockStatusDebug(lock: CompileLockHolder): CompileDebug {
+    return {
+      command: lock.command,
+      args: lock.args,
+      cwd: lock.cwd,
+      outputPath: lock.outputPath,
+      durationMs: Date.now() - Date.parse(lock.startedAt),
+      exitCode: null,
+      stdout: '',
+      stderr: [
+        `External ${lock.owner} compile is running under pid ${lock.pid}.`,
+        typeof lock.seed === 'number' ? `Seed: ${lock.seed}.` : null,
+        `Started at ${lock.startedAt}.`
+      ]
+        .filter(Boolean)
+        .join('\n')
+    };
+  }
+
   function parseOptionalSeed(value: string): number | null {
     const trimmed = value.trim();
 
@@ -268,6 +358,7 @@
     canNext={player.canNext}
     canPrevious={player.canPrevious}
     currentStep={player.currentStep}
+    externalCompiling={toolbarExternalCompiling}
     hasTrace={player.hasTrace}
     {loadingTrace}
     onNext={() => player.next()}
@@ -287,7 +378,11 @@
           <Card.Title>{player.hasTrace ? 'Trace visualization' : 'Compiling trace'}</Card.Title>
           <Card.Description>
             {#if player.hasTrace}
-              Seed {seedText || 'random'}
+              {#if externalCompileActive && externalCompileLock !== null}
+                External {externalCompileLock.owner} compile running
+              {:else}
+                Seed {seedText || 'random'}
+              {/if}
             {:else}
               {compileSrc}
             {/if}
@@ -339,11 +434,11 @@
     {/if}
 
     <TraceDebugPanel
-      debug={latestDebug}
+      debug={displayedDebug}
       error={compileError}
-      open={(debugEnabled || compiling || compileError !== null) &&
+      open={(debugEnabled || compiling || externalCompileActive || compileError !== null) &&
         (!loadingTrace || player.hasTrace)}
-      regenerating={compiling}
+      regenerating={compiling || externalCompileActive}
     />
   </main>
 </div>

@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 
 import { compileVisualization } from '$lib/server/compile-visualization';
 import type {
@@ -27,10 +27,7 @@ type CompileQuery =
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
 
-let activeJobId: string | null = null;
-
 export const GET: RequestHandler = ({ request, url }) => {
-  const jobId = randomUUID();
   const parsedQuery = _readCompileQuery(url);
   const abortController = new AbortController();
   const encoder = new TextEncoder();
@@ -59,7 +56,6 @@ export const GET: RequestHandler = ({ request, url }) => {
       if (!parsedQuery.ok) {
         send('error', {
           ok: false,
-          jobId,
           status: parsedQuery.status,
           error: parsedQuery.error
         } satisfies CompileStreamFailure);
@@ -67,25 +63,12 @@ export const GET: RequestHandler = ({ request, url }) => {
         return;
       }
 
-      if (activeJobId !== null) {
-        send('error', {
-          ok: false,
-          jobId,
-          status: 409,
-          error: `Compile backend is already running job ${activeJobId}.`
-        } satisfies CompileStreamFailure);
-        close();
-        return;
-      }
-
-      activeJobId = jobId;
       const { seed, details } = parsedQuery;
       const abortCompile = () => abortController.abort();
       request.signal.addEventListener('abort', abortCompile, { once: true });
 
       send('status', {
         ok: true,
-        jobId,
         status: 'starting',
         seed,
         details
@@ -101,7 +84,6 @@ export const GET: RequestHandler = ({ request, url }) => {
               if (event.type === 'started') {
                 send('status', {
                   ok: true,
-                  jobId,
                   status: 'running',
                   seed,
                   details,
@@ -110,19 +92,16 @@ export const GET: RequestHandler = ({ request, url }) => {
               } else if (event.type === 'stdout') {
                 send('stdout', {
                   ok: true,
-                  jobId,
                   chunk: event.chunk
                 } satisfies CompileStreamOutput);
               } else if (event.type === 'stderr') {
                 send('stderr', {
                   ok: true,
-                  jobId,
                   chunk: event.chunk
                 } satisfies CompileStreamOutput);
               } else {
                 send('status', {
                   ok: true,
-                  jobId,
                   status: 'complete',
                   seed,
                   details,
@@ -139,7 +118,6 @@ export const GET: RequestHandler = ({ request, url }) => {
           if (result.ok) {
             send('trace', {
               ok: true,
-              jobId,
               trace: result.trace,
               seed,
               details,
@@ -148,19 +126,18 @@ export const GET: RequestHandler = ({ request, url }) => {
           } else {
             send('error', {
               ok: false,
-              jobId,
               status: result.status,
               error: result.error,
               seed,
               details,
-              debug: result.debug
+              debug: result.debug,
+              ...(result.lock ? { lock: result.lock } : {})
             } satisfies CompileStreamFailure);
           }
         } catch (err) {
           if (!abortController.signal.aborted) {
             send('error', {
               ok: false,
-              jobId,
               status: 500,
               error: err instanceof Error ? err.message : String(err),
               seed,
@@ -169,11 +146,6 @@ export const GET: RequestHandler = ({ request, url }) => {
           }
         } finally {
           request.signal.removeEventListener('abort', abortCompile);
-
-          if (activeJobId === jobId) {
-            activeJobId = null;
-          }
-
           close();
         }
       })();

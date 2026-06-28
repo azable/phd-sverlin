@@ -66,6 +66,25 @@ export type CompileDebug = {
   error?: string;
 };
 
+export type CompileLockHolder = {
+  owner: string;
+  pid: number;
+  startedAt: string;
+  cwd: string;
+  command: string;
+  args: string[];
+  seed?: number;
+  details?: boolean;
+  outputPath?: string;
+  lockPath: string;
+};
+
+export type CompileStatus =
+  | {
+      running: false;
+    }
+  | ({ running: true } & CompileLockHolder);
+
 export type VisualizationSuccess = {
   ok: true;
   trace: CompiledTrace;
@@ -80,11 +99,11 @@ export type VisualizationFailure = {
   seed?: number;
   details?: boolean;
   debug?: CompileDebug;
+  lock?: CompileLockHolder;
 };
 
 export type CompileStreamStatus = {
   ok: true;
-  jobId: string;
   status: 'starting' | 'running' | 'complete';
   seed: number;
   details: boolean;
@@ -93,15 +112,11 @@ export type CompileStreamStatus = {
 
 export type CompileStreamOutput = {
   ok: true;
-  jobId: string;
   chunk: string;
 };
 
-export type CompileStreamSuccess = VisualizationSuccess & {
-  jobId: string;
-};
+export type CompileStreamSuccess = VisualizationSuccess;
 
 export type CompileStreamFailure = VisualizationFailure & {
-  jobId: string;
   status: number;
 };
