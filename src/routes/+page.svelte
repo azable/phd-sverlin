@@ -34,6 +34,11 @@
 
   const compiling = $derived(loadingTrace || regenerating);
   const pageError = $derived(compileError);
+  const initialCompileOutput = $derived(
+    latestDebug?.stdout || latestDebug?.stderr
+      ? [latestDebug.stdout, latestDebug.stderr].filter(Boolean).join('\n')
+      : ''
+  );
 
   onMount(() => {
     startCompile({ phase: 'initial' });
@@ -255,15 +260,52 @@
   <main
     class="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col items-center gap-4 overflow-hidden p-4"
   >
-    {#if loadingTrace && !player.hasTrace}
-      <Card.Root class="w-full max-w-5xl">
+    {#if loadingTrace || player.hasTrace}
+      <Card.Root class="flex min-h-0 w-full max-w-5xl flex-none">
         <Card.Header>
-          <Card.Title>Compiling trace</Card.Title>
-          <Card.Description>{compileSrc}</Card.Description>
+          <Card.Title>{player.hasTrace ? 'Trace visualization' : 'Compiling trace'}</Card.Title>
+          <Card.Description>
+            {#if player.hasTrace}
+              Seed {seedText || 'random'}
+            {:else}
+              {compileSrc}
+            {/if}
+          </Card.Description>
         </Card.Header>
-        <Card.Content class="flex flex-col gap-3">
-          <Skeleton class="h-8 w-48" />
-          <Skeleton class="h-96 w-full" />
+
+        <Card.Content class="flex min-h-0 flex-col gap-3">
+          {#if player.hasTrace}
+            <ScrollArea
+              orientation="both"
+              class="min-h-0 rounded-lg border"
+              style={`height: ${player.canvasHeight + 24}px`}
+              aria-label="Visualization canvas"
+            >
+              <div class="flex h-max min-h-full w-max min-w-full items-start justify-center py-3">
+                <div class="shrink-0">
+                  <TraceCanvas
+                    elements={player.elements}
+                    height={player.canvasHeight}
+                    width={player.canvasWidth}
+                  />
+                </div>
+              </div>
+            </ScrollArea>
+          {:else}
+            <Skeleton class="h-8 w-48" />
+            <ScrollArea class="h-96 rounded-lg border bg-muted/40">
+              {#if initialCompileOutput}
+                <pre
+                  class="p-3 font-mono text-xs break-words whitespace-pre-wrap">{initialCompileOutput}</pre>
+              {:else}
+                <div class="flex h-full flex-col gap-3 p-3">
+                  <Skeleton class="h-4 w-2/3" />
+                  <Skeleton class="h-4 w-5/6" />
+                  <Skeleton class="h-4 w-1/2" />
+                </div>
+              {/if}
+            </ScrollArea>
+          {/if}
         </Card.Content>
       </Card.Root>
     {/if}
@@ -275,29 +317,11 @@
       </Alert.Root>
     {/if}
 
-    {#if player.hasTrace}
-      <section
-        class="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden"
-        aria-label="Visualization canvas"
-      >
-        <ScrollArea orientation="both" class="h-full w-full rounded-lg border">
-          <div class="flex h-max min-h-full w-max min-w-full items-start justify-center py-3">
-            <div class="shrink-0">
-              <TraceCanvas
-                elements={player.elements}
-                height={player.canvasHeight}
-                width={player.canvasWidth}
-              />
-            </div>
-          </div>
-        </ScrollArea>
-      </section>
-    {/if}
-
     <TraceDebugPanel
       debug={latestDebug}
       error={compileError}
-      open={debugEnabled || compiling || compileError !== null}
+      open={(debugEnabled || compiling || compileError !== null) &&
+        (!loadingTrace || player.hasTrace)}
       regenerating={compiling}
     />
   </main>
