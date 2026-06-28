@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { CompileDebug, CompileLockHolder, CompiledTrace } from '$lib/visualization/types';
 
 import { acquireCompileLock } from './compile-lock.js';
+import { mkdtempInWorkspaceOutputs } from './workspace-output.js';
 
 export type CompileVisualizationOptions = {
   seed: number;
@@ -69,7 +69,7 @@ export async function compileVisualization({
   onEvent
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
-  const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-compile-'));
+  const tempDir = await mkdtempInWorkspaceOutputs('compile-');
   const outputPath = path.join(tempDir, 'compiled.json');
   const { command, args } = compileCommand(seed, details, outputPath);
 
@@ -178,7 +178,6 @@ export async function compileVisualization({
     }
   } finally {
     await lockResult.lock.release();
-    await rm(tempDir, { recursive: true, force: true });
   }
 }
 

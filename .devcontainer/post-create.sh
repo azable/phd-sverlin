@@ -9,7 +9,8 @@ sudo chown -R node:node "${repo_root}/.pnpm-store" "${repo_root}/node_modules"
 pnpm config set store-dir "${repo_root}/.pnpm-store"
 pnpm install --frozen-lockfile
 
-warmup_output="${TMPDIR:-/tmp}/sverlin-post-create-compiled.json"
+mkdir -p "${repo_root}/outputs"
+warmup_output="${repo_root}/outputs/sverlin-post-create-compiled.json"
 pnpm run compile -- --output "${warmup_output}" --json --seed 1
 rm -f "${warmup_output}"
 

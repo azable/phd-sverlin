@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import { readWorkspaceOutputDir } from './workspace-output.js';
 
 /** @typedef {'web' | 'manual' | 'bench' | string} CompileLockOwner */
 
@@ -169,7 +170,7 @@ export async function readActiveCompileLock(lockPath = readCompileLockPath()) {
 
 export function readCompileLockPath() {
   const configuredPath = process.env[compileLockPathEnvVar]?.trim();
-  return configuredPath ? configuredPath : path.join(tmpdir(), defaultLockFileName);
+  return configuredPath ? configuredPath : path.join(readWorkspaceOutputDir(), defaultLockFileName);
 }
 
 /**

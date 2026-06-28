@@ -31,7 +31,7 @@
   let compileError = $state<string | null>(null);
   let latestDebug = $state<CompileDebug | null>(null);
   let seedText = $state('');
-  let debugEnabled = $state(false);
+  let debugEnabled = $state(true);
   let activeCompileSource: EventSource | null = null;
   let activeCompileStatusSource: EventSource | null = null;
   let compileRetryTimer: ReturnType<typeof setTimeout> | null = null;

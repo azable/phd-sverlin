@@ -38,7 +38,7 @@
 {#if open}
   <Card.Root
     size="sm"
-    class="flex h-80 max-h-[40vh] min-h-0 w-full max-w-5xl flex-none"
+    class="flex min-h-0 w-full max-w-5xl flex-1 overflow-hidden"
     aria-label="Compile debug output"
   >
     <Card.Header class="flex-none">
@@ -92,20 +92,20 @@
         <p class="text-sm text-muted-foreground">Compile to capture diagnostics.</p>
       {/if}
 
-      <Tabs.Root value="diagnostics" class="min-h-0 flex-1">
-        <Tabs.List>
+      <Tabs.Root value="diagnostics" class="flex min-h-0 flex-1 flex-col">
+        <Tabs.List class="flex-none">
           <Tabs.Trigger value="diagnostics">Diagnostics</Tabs.Trigger>
           <Tabs.Trigger value="compiled">Compiled JSON</Tabs.Trigger>
         </Tabs.List>
 
-        <Tabs.Content value="diagnostics" class="min-h-0">
+        <Tabs.Content value="diagnostics" class="min-h-0 flex-1">
           <ScrollArea class="h-full rounded-lg border bg-muted/40">
             <pre
               class="p-3 font-mono text-xs break-words whitespace-pre-wrap">{diagnosticsOutput}</pre>
           </ScrollArea>
         </Tabs.Content>
 
-        <Tabs.Content value="compiled" class="min-h-0">
+        <Tabs.Content value="compiled" class="min-h-0 flex-1">
           <ScrollArea class="h-full rounded-lg border bg-muted/40">
             <pre
               class="p-3 font-mono text-xs break-words whitespace-pre-wrap">{compiledOutput}</pre>

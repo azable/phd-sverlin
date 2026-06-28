@@ -2,6 +2,8 @@ node_modules
 .pnpm-store
 
 # Output
+/outputs/
+/tmp/
 .output
 .vercel
 .netlify

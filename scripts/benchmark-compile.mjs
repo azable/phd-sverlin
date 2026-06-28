@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { acquireCompileLock } from '../src/lib/server/compile-lock.js';
+import { mkdtempInWorkspaceOutputs } from '../src/lib/server/workspace-output.js';
 
 const defaultSeeds = [1, 320994595, 1988735004, 1731275846, 1999326623];
 
@@ -162,7 +162,7 @@ function parseSeeds(value) {
 }
 
 async function runCompile({ command, cwd, seed, details, timeoutMs }) {
-  const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-bench-compile-'));
+  const tempDir = await mkdtempInWorkspaceOutputs('bench-compile-');
   const outputPath = path.join(tempDir, 'compiled.json');
   const args = [
     'run',
@@ -330,8 +330,7 @@ async function finishRun({
   timedOut,
   exitCode,
   error,
-  outputPath,
-  tempDir
+  outputPath
 }) {
   const durationMs = performance.now() - started;
   let jsonOk = false;
@@ -343,8 +342,6 @@ async function finishRun({
   } catch {
     compiledJson = '';
   }
-
-  await rm(tempDir, { recursive: true, force: true });
 
   if (!error && exitCode === 0 && !timedOut) {
     try {
@@ -358,6 +355,7 @@ async function finishRun({
   return {
     seed,
     args,
+    outputPath,
     durationMs,
     exitCode,
     timedOut,
