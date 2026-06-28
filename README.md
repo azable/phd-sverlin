@@ -2,14 +2,14 @@
 
 `sverlin` is a SvelteKit trace viewer backed by a Haskell trace compiler and visualization solver.
 
-The Haskell application under `compile/` builds a linear-search trace, solves a visual layout for it, and writes the compiled visualization descriptor to `static/compiled.json`. The SvelteKit app reads that JSON and renders an interactive step-by-step visualization in the browser.
+The Haskell application under `compile/` builds a linear-search trace, solves a visual layout for it, and writes a compiled visualization descriptor. The SvelteKit app streams backend compilation logs through `/api/visualization` and renders the visualization only after the backend has successfully produced valid JSON.
 
 ## Project Structure
 
 - `src/` contains the SvelteKit application.
 - `src/lib/visualization/` contains the trace player, canvas, toolbar, debug panel, and shared visualization types.
-- `src/lib/server/compile-visualization.ts` runs the Haskell compiler from the SvelteKit server action used by the UI.
-- `static/compiled.json` is the generated visualization consumed by the frontend.
+- `src/lib/server/compile-visualization.ts` runs the Haskell compiler and streams diagnostics for the UI.
+- `src/routes/api/visualization/+server.ts` exposes the backend visualization stream used by the frontend.
 - `compile/app/` contains executable-only Haskell modules and the current visualization example.
 - `compile/app/DSL/Main.hs` defines the current example program and its visual styling/constraints. Query terms are intersected with `<&>`, for example `#array <&> #index @: i`.
 - `compile/src/LinearTrace/` contains the reusable trace model, choreography DSL, view compiler, and JSON output pipeline.
@@ -17,38 +17,34 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 - `compile/test-support/Solver/TestFixtures.hs` contains stable synthetic solver fixtures used by tests and benchmarks.
 - `compile/test/` contains direct Haskell tests, using `tasty`, that do not run the full visualization pipeline.
 - `compile/bench/` contains direct Haskell benchmarks for fixed solver fixtures.
-- `compile.sh` runs the Haskell app from the repository root.
+- `cabal.project` anchors the Haskell project at the repository root. Project scripts and wrappers pass `--builddir=compile/dist-newstyle` so Cabal build artifacts stay under `compile/`.
+- `compile.sh` is a compatibility wrapper for running the Haskell app from the repository root.
 
 ## Requirements
 
 - Node.js and `pnpm` for the SvelteKit app.
-- GHC/Cabal for the Haskell compiler under `compile/`.
+- GHC/Cabal for the Haskell compiler under `compile/`. The devcontainer uses GHC 9.10.3 and the Haskell package defaults to `GHC2024`.
 - L-BFGS-B available as `liblbfgsb` for the bounded layout solver. The devcontainer installs Debian's `liblbfgsb-dev` package.
 - `hlint`, `hindent`, and `stylish-haskell` for Haskell checks/formatting. The devcontainer installs these into `/home/node/.cabal/bin`.
 
-## Generate Visualization JSON
+## Generate Visualization JSON Manually
 
-Run the Haskell compiler from the repository root:
+Manual JSON generation requires an explicit output file:
 
 ```sh
-./compile.sh
-```
-
-This prints trace/solver diagnostics and writes:
-
-```text
-static/compiled.json
+./compile.sh --output /tmp/sverlin-compiled.json
 ```
 
 Useful compiler options:
 
 ```sh
-./compile.sh --seed -1988735004
-./compile.sh --details
-./compile.sh --json
+./compile.sh --output /tmp/sverlin-compiled.json --seed -1988735004
+./compile.sh --output /tmp/sverlin-compiled.json --details
+./compile.sh --output /tmp/sverlin-compiled.json --json
+pnpm run compile -- --output /tmp/sverlin-compiled.json --seed -1988735004
 ```
 
-`--seed` makes the solver deterministic for a specific run. `--json` is accepted for compatibility, but compiled visualization JSON is always written to a file. `compile.sh` writes `static/compiled.json` by default; direct `compile-app` invocations must pass `--output FILE`.
+`--seed` makes the solver deterministic for a specific run. `--json` is accepted for compatibility, but compiled visualization JSON is always written to a file. The web app no longer reads or writes `static/compiled.json`; `compile.sh` and direct `compile-app` invocations, including `pnpm run compile`, must pass `--output FILE`.
 
 ## Compile Performance Benchmark
 
@@ -68,18 +64,18 @@ pnpm run bench:solver --json
 
 The solver preprocessing step flattens conjunctions, removes redundant or duplicate canonical constraints, merges direct and single-variable affine `within` ranges into native L-BFGS-B bounds, removes linear inequalities already implied by native bounds, and reports raw/canonical/eliminated counts through `ProblemInspection`. Finite categorical choices use `Choice`/`Category` plus `freeChoice`, `choose`, `sameChoice`, and `differentChoice`; they are sampled from satisfying finite assignments before numeric solving, with `withMaxCategoricalBranches` guarding accidental branch explosions.
 
-The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. This keeps direct solver tests conservative while avoiding very long regeneration tails. `./compile.sh --details` prints variables, native bounds, energy terms, eliminated constraints, optimizer iterations, function/gradient evaluations, and phase timings for view graph construction, solve, materialization, JSON encoding, and JSON writing; use those numbers when investigating slow seeds.
+The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. This keeps direct solver tests conservative while avoiding very long regeneration tails. `./compile.sh --output /tmp/sverlin-compiled.json --details` prints variables, native bounds, energy terms, eliminated constraints, optimizer iterations, function/gradient evaluations, and phase timings for view graph construction, solve, materialization, JSON encoding, and JSON writing; use those numbers when investigating slow seeds.
 
-Use the full compile benchmark when changing the Haskell-to-JSON path, frontend server action, or anything where end-to-end behavior matters:
+Use the full compile benchmark when changing the Haskell-to-JSON path, frontend compile stream, or anything where end-to-end behavior matters:
 
 ```sh
 pnpm run bench:compile
 ```
 
-The default benchmark runs the same path used by the SvelteKit server action:
+The default benchmark runs the same Haskell command used by the SvelteKit compile stream:
 
 ```sh
-./compile.sh --output <temp-file> --json --seed <seed>
+cabal run -v0 compile-app --builddir=compile/dist-newstyle -- --output <temp-file> --json --seed <seed>
 ```
 
 It uses a fixed seed set, validates the generated JSON file, and reports min/mean/median/p95/max durations. To compare changes over time, write benchmark artifacts outside the repo:
@@ -108,7 +104,9 @@ pnpm install
 pnpm run dev
 ```
 
-Open the printed local URL. The page loads `static/compiled.json` by default and can regenerate the visualization through the server action in the UI.
+Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. The seed can be supplied through the UI and is sent to `/api/visualization` as a query parameter.
+
+The devcontainer post-create step runs one compile into `/tmp` to warm Cabal's build artifacts before the first browser-triggered regeneration. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 
 ## Frontend Checks
 
@@ -123,16 +121,15 @@ pnpm run test
 After changing Haskell source:
 
 ```sh
-./compile.sh
+./compile.sh --output /tmp/sverlin-compiled.json
 pnpm run test:solver
-hlint compile/src compile/app compile/test compile/bench compile/test-support
+pnpm run lint:haskell
 ```
 
 Before finishing Haskell edits, run the same formatter pipeline used by the editor:
 
 ```sh
-find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 hindent
-find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 stylish-haskell -i
+pnpm run format:haskell
 ```
 
 `stylish-haskell -i` should be the final source-modifying formatter pass.

@@ -13,7 +13,7 @@
   import { Switch } from '$lib/components/ui/switch';
 
   type Props = {
-    loadingStatic: boolean;
+    loadingTrace: boolean;
     regenerating: boolean;
     hasTrace: boolean;
     canPrevious: boolean;
@@ -29,7 +29,7 @@
   };
 
   let {
-    loadingStatic,
+    loadingTrace,
     regenerating,
     hasTrace,
     canPrevious,
@@ -44,7 +44,7 @@
     onRegenerate
   }: Props = $props();
 
-  const busy = $derived(loadingStatic || regenerating);
+  const busy = $derived(loadingTrace || regenerating);
 
   function submitRegeneration(event: SubmitEvent) {
     event.preventDefault();

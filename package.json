@@ -10,13 +10,16 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+    "compile": "cabal run -v0 compile-app --builddir=compile/dist-newstyle --",
     "lint": "prettier --check . && eslint .",
+    "lint:haskell": "hlint compile/src compile/app compile/test compile/bench compile/test-support",
     "test:unit": "vitest",
     "test:solver": "cabal test -v0 solver-test --builddir=compile/dist-newstyle --test-show-details=direct",
     "test": "npm run test:unit -- --run",
     "bench:solver": "cabal run -v0 solver-bench --builddir=compile/dist-newstyle --",
     "bench:compile": "node scripts/benchmark-compile.mjs",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "format:haskell": "find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 hindent && find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 stylish-haskell -i"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.1",

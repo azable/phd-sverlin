@@ -56,6 +56,8 @@ export type CompileDebug = {
   args: string[];
   cwd: string;
   outputPath?: string;
+  timeoutMs?: number;
+  timedOut?: boolean;
   durationMs: number;
   exitCode: number | null;
   stdout: string;
@@ -80,4 +82,26 @@ export type VisualizationFailure = {
   debug?: CompileDebug;
 };
 
-export type VisualizationResponse = VisualizationSuccess | VisualizationFailure;
+export type CompileStreamStatus = {
+  ok: true;
+  jobId: string;
+  status: 'starting' | 'running' | 'complete';
+  seed: number;
+  details: boolean;
+  debug?: CompileDebug;
+};
+
+export type CompileStreamOutput = {
+  ok: true;
+  jobId: string;
+  chunk: string;
+};
+
+export type CompileStreamSuccess = VisualizationSuccess & {
+  jobId: string;
+};
+
+export type CompileStreamFailure = VisualizationFailure & {
+  jobId: string;
+  status: number;
+};

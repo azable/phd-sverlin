@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { deserialize } from '$app/forms';
   import { onMount } from 'svelte';
 
   import * as Alert from '$lib/components/ui/alert';
@@ -12,152 +11,212 @@
   import { TracePlayer } from '$lib/visualization/trace-player.svelte';
   import type {
     CompileDebug,
-    CompiledTrace,
-    VisualizationFailure,
-    VisualizationResponse,
-    VisualizationSuccess
+    CompileStreamFailure,
+    CompileStreamOutput,
+    CompileStreamStatus,
+    CompileStreamSuccess
   } from '$lib/visualization/types';
 
-  const staticTraceSrc = '/compiled.json';
-  const regenerateSrc = '?/regenerate';
+  type CompilePhase = 'initial' | 'regenerate';
+
+  const compileSrc = '/api/visualization';
 
   const player = new TracePlayer();
 
-  let loadingStatic = $state(true);
+  let loadingTrace = $state(true);
   let regenerating = $state(false);
-  let staticError = $state<string | null>(null);
-  let regenerateError = $state<string | null>(null);
+  let compileError = $state<string | null>(null);
   let latestDebug = $state<CompileDebug | null>(null);
   let seedText = $state('');
   let debugEnabled = $state(false);
+  let activeCompileSource: EventSource | null = null;
+  let compileRunId = 0;
 
-  const pageError = $derived(staticError ?? regenerateError);
+  const compiling = $derived(loadingTrace || regenerating);
+  const pageError = $derived(compileError);
 
   onMount(() => {
-    void loadStaticTrace();
+    startCompile({ phase: 'initial' });
 
     return () => {
+      activeCompileSource?.close();
       player.dispose();
     };
   });
 
-  async function loadStaticTrace() {
-    loadingStatic = true;
-    staticError = null;
-
-    try {
-      const response = await fetch(staticTraceSrc);
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to load ${staticTraceSrc}: ${response.status} ${response.statusText}`
-        );
-      }
-
-      const trace = (await response.json()) as CompiledTrace;
-      const seed = typeof trace.seed === 'number' ? trace.seed : null;
-
-      player.setTrace(trace);
-      seedText = seed === null ? '' : String(seed);
-    } catch (err) {
-      staticError = err instanceof Error ? err.message : String(err);
-    } finally {
-      loadingStatic = false;
-    }
-  }
-
-  async function regenerateTrace(nextSeedText = seedText) {
+  function startCompile({
+    phase = 'regenerate',
+    nextSeedText = seedText
+  }: {
+    phase?: CompilePhase;
+    nextSeedText?: string;
+  } = {}) {
     let seed: number | null;
 
     try {
       seed = parseOptionalSeed(nextSeedText);
     } catch (err) {
-      regenerateError = err instanceof Error ? err.message : String(err);
+      compileError = err instanceof Error ? err.message : String(err);
       debugEnabled = true;
       return;
     }
 
-    regenerating = true;
-    regenerateError = null;
+    const runId = compileRunId + 1;
+    compileRunId = runId;
+    activeCompileSource?.close();
 
-    try {
-      const formData = new FormData();
+    if (phase === 'initial') {
+      loadingTrace = true;
+    } else {
+      regenerating = true;
+    }
 
-      if (seed !== null) {
-        formData.set('seed', String(seed));
-      }
+    compileError = null;
+    latestDebug = null;
 
-      formData.set('details', String(debugEnabled));
+    const source = new EventSource(compileUrl(seed));
+    activeCompileSource = source;
 
-      const response = await fetch(regenerateSrc, {
-        method: 'POST',
-        body: formData
-      });
-      const payload = await readVisualizationResponse(response);
+    function isCurrentRun() {
+      return compileRunId === runId && activeCompileSource === source;
+    }
 
-      if (payload.debug) {
+    function finish() {
+      if (!isCurrentRun()) return;
+
+      source.close();
+      activeCompileSource = null;
+      loadingTrace = false;
+      regenerating = false;
+    }
+
+    function fail(error: string, payload?: CompileStreamFailure) {
+      if (!isCurrentRun()) return;
+
+      if (payload?.debug) {
         latestDebug = payload.debug;
       }
 
-      if (typeof payload.seed === 'number') {
+      if (typeof payload?.seed === 'number') {
         seedText = String(payload.seed);
       }
 
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.ok ? response.statusText : payload.error);
-      }
-
-      player.setTrace(payload.trace, { initialStep: player.currentStep });
-    } catch (err) {
-      regenerateError = err instanceof Error ? err.message : String(err);
+      compileError = error;
       debugEnabled = true;
-    } finally {
-      regenerating = false;
+      finish();
     }
+
+    source.addEventListener('status', (event) => {
+      if (!isCurrentRun()) return;
+
+      try {
+        const payload = readStreamEvent<CompileStreamStatus>(event);
+        seedText = String(payload.seed);
+
+        if (payload.debug) {
+          latestDebug = payload.debug;
+        }
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    source.addEventListener('stdout', (event) => {
+      if (!isCurrentRun()) return;
+
+      try {
+        const payload = readStreamEvent<CompileStreamOutput>(event);
+        appendDebugOutput('stdout', payload.chunk);
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    source.addEventListener('stderr', (event) => {
+      if (!isCurrentRun()) return;
+
+      try {
+        const payload = readStreamEvent<CompileStreamOutput>(event);
+        appendDebugOutput('stderr', payload.chunk);
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    source.addEventListener('trace', (event) => {
+      if (!isCurrentRun()) return;
+
+      try {
+        const payload = readStreamEvent<CompileStreamSuccess>(event);
+        latestDebug = payload.debug;
+        seedText = String(payload.seed);
+        player.setTrace(payload.trace, {
+          initialStep: phase === 'initial' ? 0 : player.currentStep
+        });
+        finish();
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    source.addEventListener('error', (event) => {
+      if (!isCurrentRun()) return;
+
+      if (event instanceof MessageEvent && event.data) {
+        try {
+          const payload = readStreamEvent<CompileStreamFailure>(event);
+          fail(payload.error, payload);
+        } catch (err) {
+          fail(err instanceof Error ? err.message : String(err));
+        }
+      } else {
+        fail('Compile stream connection failed.');
+      }
+    });
   }
 
-  async function readVisualizationResponse(response: Response): Promise<VisualizationResponse> {
-    const text = await response.text();
-    const fallbackError = `Server returned non-action response: ${text.slice(0, 240)}`;
-    let result: ReturnType<typeof deserialize>;
+  function regenerateTrace(nextSeedText = seedText) {
+    startCompile({ phase: 'regenerate', nextSeedText });
+  }
 
-    try {
-      result = deserialize(text);
-    } catch {
-      throw new Error(fallbackError);
+  function compileUrl(seed: number | null) {
+    const url = new URL(compileSrc, window.location.origin);
+
+    if (seed !== null) {
+      url.searchParams.set('seed', String(seed));
     }
 
-    if (result.type === 'success') {
-      return (
-        (result.data as VisualizationSuccess | undefined) ?? {
-          ok: false,
-          error: 'Regeneration returned an empty success response.'
-        }
-      );
+    url.searchParams.set('details', String(debugEnabled));
+
+    return url;
+  }
+
+  function readStreamEvent<T>(event: Event): T {
+    if (!(event instanceof MessageEvent) || typeof event.data !== 'string') {
+      throw new Error('Compile stream sent an unreadable event.');
     }
 
-    if (result.type === 'failure') {
-      return (
-        (result.data as VisualizationFailure | undefined) ?? {
-          ok: false,
-          error: `Regeneration failed with status ${result.status}.`
-        }
-      );
-    }
+    return JSON.parse(event.data) as T;
+  }
 
-    if (result.type === 'redirect') {
-      return {
-        ok: false,
-        error: `Regeneration redirected to ${result.location}.`
-      };
-    }
+  function appendDebugOutput(field: 'stdout' | 'stderr', chunk: string) {
+    const debug = latestDebug ?? emptyDebug();
 
+    latestDebug = {
+      ...debug,
+      [field]: debug[field] + chunk
+    };
+  }
+
+  function emptyDebug(): CompileDebug {
     return {
-      ok: false,
-      error:
-        result.error instanceof Error
-          ? result.error.message
-          : `Regeneration failed with status ${result.status ?? response.status}.`
+      command: '',
+      args: [],
+      cwd: '',
+      durationMs: 0,
+      exitCode: null,
+      stdout: '',
+      stderr: ''
     };
   }
 
@@ -184,7 +243,7 @@
     canPrevious={player.canPrevious}
     currentStep={player.currentStep}
     hasTrace={player.hasTrace}
-    {loadingStatic}
+    {loadingTrace}
     onNext={() => player.next()}
     onPrevious={() => player.previous()}
     onRegenerate={regenerateTrace}
@@ -196,11 +255,11 @@
   <main
     class="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col items-center gap-4 overflow-hidden p-4"
   >
-    {#if loadingStatic && !player.hasTrace}
+    {#if loadingTrace && !player.hasTrace}
       <Card.Root class="w-full max-w-5xl">
         <Card.Header>
-          <Card.Title>Loading trace</Card.Title>
-          <Card.Description>{staticTraceSrc}</Card.Description>
+          <Card.Title>Compiling trace</Card.Title>
+          <Card.Description>{compileSrc}</Card.Description>
         </Card.Header>
         <Card.Content class="flex flex-col gap-3">
           <Skeleton class="h-8 w-48" />
@@ -222,7 +281,7 @@
         aria-label="Visualization canvas"
       >
         <ScrollArea orientation="both" class="h-full w-full rounded-lg border">
-          <div class="flex h-max min-h-full w-max min-w-full items-center justify-center">
+          <div class="flex h-max min-h-full w-max min-w-full items-start justify-center py-3">
             <div class="shrink-0">
               <TraceCanvas
                 elements={player.elements}
@@ -233,13 +292,13 @@
           </div>
         </ScrollArea>
       </section>
-
-      <TraceDebugPanel
-        debug={latestDebug}
-        error={regenerateError}
-        open={debugEnabled}
-        {regenerating}
-      />
     {/if}
+
+    <TraceDebugPanel
+      debug={latestDebug}
+      error={compileError}
+      open={debugEnabled || compiling || compileError !== null}
+      regenerating={compiling}
+    />
   </main>
 </div>

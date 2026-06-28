@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:24-bookworm-slim
 
 ARG GHC_VERSION=9.10.3
@@ -21,7 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BOOTSTRAP_HASKELL_MINIMAL=1 \
     BOOTSTRAP_HASKELL_ADJUST_BASHRC=0 \
     PATH=/home/node/.ghcup/bin:/home/node/.cabal/bin:/home/node/.local/bin:$PATH
-    
+
 USER root
 
 RUN set -eux; \
@@ -63,42 +65,66 @@ RUN set -eux; \
   chown -R node:node /workspaces
 
 RUN set -eux; \
+  mkdir -p \
+    /home/node/.ghcup/cache \
+    /home/node/.ghcup/tmp \
+    /home/node/.cabal/bin \
+    /home/node/.cache/cabal/packages \
+    /home/node/.cache/cabal/logs \
+    /home/node/.local/state/cabal/store; \
+  chown -R node:node \
+    /home/node/.ghcup \
+    /home/node/.cabal \
+    /home/node/.cache \
+    /home/node/.local
+
+RUN set -eux; \
   npm install -g "pnpm@${PNPM_VERSION}"
 
 USER node
 
 WORKDIR /workspaces/phd-sverlin
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
+  set -eux; \
   curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh; \
   ghcup --version
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
+  set -eux; \
   ghcup install ghc "${GHC_VERSION}"; \
   ghcup set ghc "${GHC_VERSION}"; \
   ghc --version; \
-  rm -rf /home/node/.ghcup/tmp /home/node/.ghcup/cache
+  rm -rf /home/node/.ghcup/tmp
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
+  --mount=type=cache,target=/home/node/.cache/cabal/packages,uid=1000,gid=1000 \
+  --mount=type=cache,target=/home/node/.cache/cabal/logs,uid=1000,gid=1000 \
+  set -eux; \
   ghcup install cabal "${CABAL_VERSION}"; \
   ghcup set cabal "${CABAL_VERSION}"; \
   cabal --version; \
   cabal update; \
-  rm -rf /home/node/.ghcup/tmp /home/node/.ghcup/cache
+  rm -rf /home/node/.ghcup/tmp
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
+  set -eux; \
   ghcup install hls "${HLS_VERSION}"; \
   ghcup set hls "${HLS_VERSION}"; \
   haskell-language-server-wrapper --version; \
-  rm -rf /home/node/.ghcup/tmp /home/node/.ghcup/cache
+  rm -rf /home/node/.ghcup/tmp
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
+  set -eux; \
   ghcup install stack "${STACK_VERSION}"; \
   ghcup set stack "${STACK_VERSION}"; \
   stack --version; \
-  rm -rf /home/node/.ghcup/tmp /home/node/.ghcup/cache
+  rm -rf /home/node/.ghcup/tmp
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/home/node/.cache/cabal/packages,uid=1000,gid=1000 \
+  --mount=type=cache,target=/home/node/.cache/cabal/logs,uid=1000,gid=1000 \
+  --mount=type=cache,target=/home/node/.local/state/cabal/store,uid=1000,gid=1000 \
+  set -eux; \
   if [[ -n "${EXTRA_CABAL_TOOLS}" ]]; then \
     cabal install ${EXTRA_CABAL_TOOLS} \
       --installdir=/home/node/.cabal/bin \
@@ -107,6 +133,9 @@ RUN set -eux; \
   for tool in ${EXTRA_CABAL_TOOLS}; do \
     command -v "${tool}"; \
   done
+
+RUN set -eux; \
+  cabal update
 
 RUN set -eux; \
   ghc --version; \

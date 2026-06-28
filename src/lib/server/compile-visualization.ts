@@ -8,6 +8,8 @@ import type { CompileDebug, CompiledTrace } from '$lib/visualization/types';
 export type CompileVisualizationOptions = {
   seed: number;
   details: boolean;
+  signal?: AbortSignal;
+  onEvent?: (event: CompileVisualizationEvent) => void;
 };
 
 export type CompileVisualizationResult =
@@ -23,28 +25,76 @@ export type CompileVisualizationResult =
       status: number;
     };
 
+export type CompileVisualizationEvent =
+  | {
+      type: 'started';
+      debug: CompileDebug;
+    }
+  | {
+      type: 'stdout';
+      chunk: string;
+      stdout: string;
+    }
+  | {
+      type: 'stderr';
+      chunk: string;
+      stderr: string;
+    }
+  | {
+      type: 'finished';
+      debug: CompileDebug;
+    };
+
 type CompileRun = CompileDebug & {
   timedOut: boolean;
 };
 
-const compileTimeoutMs = 60_000;
+type RunCompileOptions = {
+  signal?: AbortSignal;
+  onStdout?: (chunk: string, stdout: string) => void;
+  onStderr?: (chunk: string, stderr: string) => void;
+};
+
+const defaultCompileTimeoutMs = 300_000;
 const timeoutKillGraceMs = 1_000;
+const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
 
 export async function compileVisualization({
   seed,
-  details
+  details,
+  signal,
+  onEvent
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
-  const command = path.join(cwd, 'compile.sh');
   const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-compile-'));
   const outputPath = path.join(tempDir, 'compiled.json');
-  const args = ['--output', outputPath, '--json', '--seed', String(seed)];
+  const { command, args } = compileCommand(seed, details, outputPath);
 
-  if (details) {
-    args.push('--details');
-  }
+  const timeoutMs = readCompileTimeoutMs();
+  onEvent?.({
+    type: 'started',
+    debug: {
+      command,
+      args,
+      cwd,
+      outputPath,
+      timeoutMs,
+      durationMs: 0,
+      exitCode: null,
+      stdout: '',
+      stderr: ''
+    }
+  });
 
-  let debug = await runCompile(command, args, cwd);
+  let debug = await runCompile(command, args, cwd, timeoutMs, {
+    signal,
+    onStdout: (chunk, stdout) => {
+      onEvent?.({ type: 'stdout', chunk, stdout });
+    },
+    onStderr: (chunk, stderr) => {
+      onEvent?.({ type: 'stderr', chunk, stderr });
+    }
+  });
   let compiledJson = '';
 
   try {
@@ -54,6 +104,7 @@ export async function compileVisualization({
   }
 
   debug = { ...debug, outputPath, compiledJson };
+  onEvent?.({ type: 'finished', debug });
 
   await rm(tempDir, { recursive: true, force: true });
 
@@ -69,7 +120,7 @@ export async function compileVisualization({
   if (debug.timedOut) {
     return {
       ok: false,
-      error: 'Compile backend timed out.',
+      error: `Compile backend timed out after ${formatDuration(timeoutMs)}.`,
       debug,
       status: 504
     };
@@ -106,7 +157,8 @@ export function runCompile(
   command: string,
   args: string[],
   cwd: string,
-  timeoutMs = compileTimeoutMs
+  timeoutMs = readCompileTimeoutMs(),
+  options: RunCompileOptions = {}
 ): Promise<CompileRun> {
   return new Promise((resolve) => {
     const startedAt = Date.now();
@@ -119,35 +171,66 @@ export function runCompile(
     let stderr = '';
     let settled = false;
     let timedOut = false;
+    let cancelled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
+    function terminate(signal: NodeJS.Signals) {
+      terminateCompile(child.pid, signal);
+    }
+
+    function forceSettle(error?: string) {
+      settle({
+        command,
+        args,
+        cwd,
+        timeoutMs,
+        durationMs: Date.now() - startedAt,
+        exitCode: null,
+        stdout,
+        stderr,
+        error,
+        timedOut
+      });
+    }
+
     const timer = setTimeout(() => {
       timedOut = true;
-      terminateCompile(child.pid, 'SIGTERM');
+      terminate('SIGTERM');
 
       killTimer = setTimeout(() => {
-        terminateCompile(child.pid, 'SIGKILL');
+        terminate('SIGKILL');
       }, timeoutKillGraceMs);
 
       settleTimer = setTimeout(() => {
-        settle({
-          command,
-          args,
-          cwd,
-          durationMs: Date.now() - startedAt,
-          exitCode: null,
-          stdout,
-          stderr,
-          timedOut
-        });
+        forceSettle();
       }, timeoutKillGraceMs * 2);
     }, timeoutMs);
+
+    const abortCompile = () => {
+      cancelled = true;
+      terminate('SIGTERM');
+
+      killTimer = setTimeout(() => {
+        terminate('SIGKILL');
+      }, timeoutKillGraceMs);
+
+      settleTimer = setTimeout(() => {
+        forceSettle('Compile backend was cancelled.');
+      }, timeoutKillGraceMs * 2);
+    };
+
+    if (options.signal?.aborted) {
+      abortCompile();
+    } else {
+      options.signal?.addEventListener('abort', abortCompile, { once: true });
+    }
 
     function clearTimers() {
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       if (settleTimer) clearTimeout(settleTimer);
+      options.signal?.removeEventListener('abort', abortCompile);
     }
 
     function settle(result: CompileRun) {
@@ -163,10 +246,12 @@ export function runCompile(
 
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk;
+      options.onStdout?.(chunk, stdout);
     });
 
     child.stderr.on('data', (chunk: string) => {
       stderr += chunk;
+      options.onStderr?.(chunk, stderr);
     });
 
     child.on('error', (err) => {
@@ -174,6 +259,7 @@ export function runCompile(
         command,
         args,
         cwd,
+        timeoutMs,
         durationMs: Date.now() - startedAt,
         exitCode: null,
         stdout,
@@ -184,18 +270,43 @@ export function runCompile(
     });
 
     child.on('close', (exitCode) => {
+      const error = cancelled ? 'Compile backend was cancelled.' : undefined;
+
       settle({
         command,
         args,
         cwd,
+        timeoutMs,
         durationMs: Date.now() - startedAt,
         exitCode,
         stdout,
         stderr,
+        error,
         timedOut
       });
     });
   });
+}
+
+function compileCommand(seed: number, details: boolean, outputPath: string) {
+  const args = [
+    'run',
+    '-v0',
+    'compile-app',
+    '--builddir=compile/dist-newstyle',
+    '--',
+    '--output',
+    outputPath,
+    '--json',
+    '--seed',
+    String(seed)
+  ];
+
+  if (details) {
+    args.push('--details');
+  }
+
+  return { command: 'cabal', args };
 }
 
 function terminateCompile(pid: number | undefined, signal: NodeJS.Signals) {
@@ -210,4 +321,20 @@ function terminateCompile(pid: number | undefined, signal: NodeJS.Signals) {
       // The process may already have exited between the timeout and signal.
     }
   }
+}
+
+function readCompileTimeoutMs() {
+  const rawValue = process.env[compileTimeoutEnvVar];
+  if (!rawValue) return defaultCompileTimeoutMs;
+
+  const parsedValue = Number(rawValue);
+  if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+    return defaultCompileTimeoutMs;
+  }
+
+  return parsedValue;
+}
+
+function formatDuration(timeoutMs: number) {
+  return timeoutMs % 1_000 === 0 ? `${timeoutMs / 1_000}s` : `${timeoutMs}ms`;
 }

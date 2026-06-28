@@ -16,6 +16,9 @@
   "workspaceFolder": "/workspaces/phd-sverlin",
   "remoteUser": "node",
   "runArgs": ["--security-opt=seccomp=unconfined"],
+  "remoteEnv": {
+    "SVERLIN_COMPILE_TIMEOUT_MS": "300000"
+  },
 
   "customizations": {
     "vscode": {
@@ -35,7 +38,7 @@
           "*.hs-boot": "haskell",
           "*.hsc": "haskell",
           "*.cabal": "cabal",
-          "cabal.project": "cabal"
+          "cabal.project": "plaintext"
         },
 
         "haskell.manageHLS": "PATH",
@@ -78,7 +81,7 @@
     "type=volume,source=${localWorkspaceFolderBasename}-node-modules,target=/workspaces/phd-sverlin/node_modules"
   ],
 
-  "postCreateCommand": "sudo mkdir -p /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && sudo chown -R node:node /workspaces/phd-sverlin/.pnpm-store /workspaces/phd-sverlin/node_modules && pnpm config set store-dir /workspaces/phd-sverlin/.pnpm-store && sudo npm install -g @openai/codex"
+  "postCreateCommand": ".devcontainer/post-create.sh"
 
   // temp fix for syntax highlighting https://github.com/haskell/vscode-haskell/issues/1376
   // npx --yes ovsx get justusadam.language-haskell -o /tmp/language-haskell.vsix

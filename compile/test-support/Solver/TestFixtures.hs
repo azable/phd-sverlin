@@ -382,6 +382,7 @@ validateAppShaped solution =
             (appTop currentFirst
                @+@ appHeight currentFirst
                @+@ appVerticalGap row)
+    expectRange :: String -> Double -> Double -> Expr tag -> [String]
     expectRange label lower upper expr =
       case evalExpr solution expr of
         Nothing -> ["missing " ++ label]

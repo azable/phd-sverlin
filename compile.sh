@@ -9,8 +9,9 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$has_output" -eq 1 ]; then
-  cabal run -v0 compile-app --builddir=compile/dist-newstyle -- "$@"
-else
-  cabal run -v0 compile-app --builddir=compile/dist-newstyle -- --output static/compiled.json "$@"
+if [ "$has_output" -ne 1 ]; then
+  echo "compile.sh requires --output FILE. The web app now streams compiled visualizations from the backend instead of reading static/compiled.json." >&2
+  exit 2
 fi
+
+cabal run -v0 compile-app --builddir=compile/dist-newstyle -- "$@"

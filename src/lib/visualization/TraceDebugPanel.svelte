@@ -38,7 +38,7 @@
 {#if open}
   <Card.Root
     size="sm"
-    class="flex max-h-[40vh] min-h-0 w-full max-w-5xl flex-none"
+    class="flex h-80 max-h-[40vh] min-h-0 w-full max-w-5xl flex-none"
     aria-label="Compile debug output"
   >
     <Card.Header class="flex-none">
@@ -89,13 +89,13 @@
       {/if}
 
       {#if !debug && !error && !regenerating}
-        <p class="text-sm text-muted-foreground">Regenerate to capture compile diagnostics.</p>
+        <p class="text-sm text-muted-foreground">Compile to capture diagnostics.</p>
       {/if}
 
       <Tabs.Root value="diagnostics" class="min-h-0 flex-1">
         <Tabs.List>
           <Tabs.Trigger value="diagnostics">Diagnostics</Tabs.Trigger>
-          <Tabs.Trigger value="compiled">compiled.json</Tabs.Trigger>
+          <Tabs.Trigger value="compiled">Compiled JSON</Tabs.Trigger>
         </Tabs.List>
 
         <Tabs.Content value="diagnostics" class="min-h-0">

@@ -16,7 +16,7 @@ if (options.help) {
 }
 
 const repoRoot = process.cwd();
-const command = path.join(repoRoot, 'compile.sh');
+const command = 'cabal';
 const startedAt = new Date().toISOString();
 
 for (let i = 0; i < options.warmup; i += 1) {
@@ -51,7 +51,7 @@ printSummary(summary);
 const result = {
   startedAt,
   finishedAt: new Date().toISOString(),
-  command: './compile.sh',
+  command: 'cabal run -v0 compile-app --',
   mode: options.details ? 'json+details' : 'json',
   options: {
     seeds: options.seeds,
@@ -164,7 +164,18 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
   const outputPath = path.join(tempDir, 'compiled.json');
 
   return new Promise((resolve) => {
-    const args = ['--output', outputPath, '--json', '--seed', String(seed)];
+    const args = [
+      'run',
+      '-v0',
+      'compile-app',
+      '--builddir=compile/dist-newstyle',
+      '--',
+      '--output',
+      outputPath,
+      '--json',
+      '--seed',
+      String(seed)
+    ];
     if (details) {
       args.push('--details');
     }
@@ -172,6 +183,7 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
     const started = performance.now();
     const child = spawn(command, args, {
       cwd,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -179,11 +191,44 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
     let stderr = '';
     let settled = false;
     let timedOut = false;
+    let killTimer;
+    let settleTimer;
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      terminateCompile(child.pid, 'SIGTERM');
+
+      killTimer = setTimeout(() => {
+        terminateCompile(child.pid, 'SIGKILL');
+      }, 1_000);
+
+      settleTimer = setTimeout(() => {
+        settle({
+          seed,
+          args,
+          started,
+          stdout,
+          stderr,
+          timedOut,
+          exitCode: null,
+          outputPath,
+          tempDir
+        });
+      }, 2_000);
     }, timeoutMs);
+
+    function clearTimers() {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+    }
+
+    function settle(result) {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      resolve(finishRun(result));
+    }
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -197,44 +242,48 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
     });
 
     child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(
-        finishRun({
-          seed,
-          args,
-          started,
-          stdout,
-          stderr,
-          timedOut,
-          exitCode: null,
-          error,
-          outputPath,
-          tempDir
-        })
-      );
+      settle({
+        seed,
+        args,
+        started,
+        stdout,
+        stderr,
+        timedOut,
+        exitCode: null,
+        error,
+        outputPath,
+        tempDir
+      });
     });
 
     child.on('close', (exitCode) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(
-        finishRun({
-          seed,
-          args,
-          started,
-          stdout,
-          stderr,
-          timedOut,
-          exitCode,
-          outputPath,
-          tempDir
-        })
-      );
+      settle({
+        seed,
+        args,
+        started,
+        stdout,
+        stderr,
+        timedOut,
+        exitCode,
+        outputPath,
+        tempDir
+      });
     });
   });
+}
+
+function terminateCompile(pid, signal) {
+  if (pid === undefined) return;
+
+  try {
+    process.kill(process.platform === 'win32' ? pid : -pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // The process may already have exited between the timeout and signal.
+    }
+  }
 }
 
 async function finishRun({

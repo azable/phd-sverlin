@@ -188,7 +188,9 @@ compileReturning build =
     initials = reverse (initialValueRev st)
     nativeBounds = reverse (nativeBoundsRev st)
     terms = reverse (energyTermsRev st)
+    totalEnergy :: Floating a => [a] -> a
     totalEnergy xs = evalTerms terms (energyEnv xs)
+    hardEnergy :: Floating a => [a] -> a
     hardEnergy xs = evalTerms hardTerms (energyEnv xs)
     hardTerms = [term | term@(Term HardTerm _ _) <- terms]
 

@@ -4,7 +4,8 @@
     "*.hs": "haskell",
     "*.hs-boot": "haskell",
     "*.hsc": "haskell",
-    "*.cabal": "cabal"
+    "*.cabal": "cabal",
+    "cabal.project": "plaintext"
   },
 
   "editor.formatOnSave": true,

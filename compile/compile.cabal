@@ -69,7 +69,7 @@ common app-dependencies
                       boxes,
                       ansi-terminal
 
-    default-language: GHC2021
+    default-language: GHC2024
 
 library
     -- Import common warning flags.
@@ -113,7 +113,7 @@ executable compile-app
     hs-source-dirs:   app
 
     -- Base language which the package is written in.
-    default-language: GHC2021
+    default-language: GHC2024
 
 executable solver-bench
     import:           warnings
@@ -131,7 +131,7 @@ executable solver-bench
     other-modules:
         Solver.TestFixtures
 
-    default-language: GHC2021
+    default-language: GHC2024
 
 test-suite solver-test
     import:           warnings
@@ -151,4 +151,4 @@ test-suite solver-test
     other-modules:
         Solver.TestFixtures
 
-    default-language: GHC2021
+    default-language: GHC2024
