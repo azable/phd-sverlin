@@ -26,25 +26,30 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 - L-BFGS-B available as `liblbfgsb` for the bounded layout solver. The devcontainer installs Debian's `liblbfgsb-dev` package.
 - `hlint`, `hindent`, and `stylish-haskell` for Haskell checks/formatting. The devcontainer installs these into `/home/node/.cabal/bin`.
 
-## Generate Visualization JSON Manually
+## Generate Visualization JSON
 
-Manual JSON generation requires an explicit output file:
+Seeded `pnpm run compile` commands use the shared workspace output layout when no
+explicit output file is provided:
 
 ```sh
-pnpm run compile -- --output outputs/sverlin-compiled.json
+pnpm run compile -- --seed 1988735004
 ```
+
+This writes to a path like `outputs/seed-1988735004/manual-abc123/compiled-seed-1988735004.json`.
+Pass `--output` when you want a specific file path or when you omit `--seed`.
+Direct `compile-app` invocations still require `--output FILE`.
 
 Useful compiler options:
 
 ```sh
-pnpm run compile -- --output outputs/sverlin-compiled.json --seed 1988735004
+pnpm run compile -- --output outputs/sverlin-seed-1988735004.json --seed 1988735004
 pnpm run compile -- --output outputs/sverlin-compiled.json --details
 pnpm run compile -- --output outputs/sverlin-compiled.json --json
 ```
 
-`--seed` makes the solver deterministic for a specific run. `--json` is accepted for compatibility, but compiled visualization JSON is always written to a file. The web app no longer reads or writes `static/compiled.json`; `pnpm run compile` and direct `compile-app` invocations must pass `--output FILE`.
+`--seed` makes the solver deterministic for a specific run. `--json` is accepted for compatibility, but compiled visualization JSON is always written to a file. The web app no longer reads or writes `static/compiled.json`.
 
-Supported compile entrypoints share a filesystem lock at `outputs/sverlin-compile.lock` by default so the web app, `pnpm run compile`, devcontainer warmup, and `pnpm run bench:compile` do not run `compile-app` concurrently. Generated web and benchmark compile outputs are kept under the ignored workspace `outputs/` directory for inspection. Set `SVERLIN_OUTPUT_DIR` to override that workspace output root. A manual compile fails fast if another supported compile is active, while the web UI reports active external compiles, syncs their seed when known, and retries instead of starting a conflicting backend build. Raw ad hoc `cabal run ... compile-app` commands bypass this coordination and should be avoided during frontend development.
+Supported compile entrypoints share a filesystem lock at `outputs/sverlin-compile.lock` by default so the web app, `pnpm run compile`, and `pnpm run bench:compile` do not run `compile-app` concurrently. Generated web, benchmark, and seeded manual compile outputs are kept under the ignored workspace `outputs/` directory for inspection, grouped by seed with paths like `outputs/seed-1/web-abc123/compiled-seed-1.json` or `outputs/seed-1/bench-def456/compiled-seed-1.json`. Set `SVERLIN_OUTPUT_DIR` to override that workspace output root. A manual compile fails fast if another supported compile is active, while the web UI reports active external compiles, syncs their seed when known, and retries instead of starting a conflicting backend build. Raw ad hoc `cabal run ... compile-app` commands bypass this coordination and should be avoided during frontend development.
 
 ## Compile Performance Benchmark
 
@@ -64,7 +69,7 @@ pnpm run bench:solver --json
 
 The solver preprocessing step flattens conjunctions, removes redundant or duplicate canonical constraints, merges direct and single-variable affine `within` ranges into native L-BFGS-B bounds, removes linear inequalities already implied by native bounds, and reports raw/canonical/eliminated counts through `ProblemInspection`. Finite categorical choices use `Choice`/`Category` plus `freeChoice`, `choose`, `sameChoice`, and `differentChoice`; they are sampled from satisfying finite assignments before numeric solving, with `withMaxCategoricalBranches` guarding accidental branch explosions.
 
-The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. This keeps direct solver tests conservative while avoiding very long regeneration tails. `pnpm run compile -- --output outputs/sverlin-compiled.json --details` prints variables, native bounds, energy terms, eliminated constraints, optimizer iterations, function/gradient evaluations, and phase timings for view graph construction, solve, materialization, JSON encoding, and JSON writing; use those numbers when investigating slow seeds.
+The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. This keeps direct solver tests conservative while avoiding very long regeneration tails. `pnpm run compile -- --output outputs/sverlin-seed-1.json --seed 1 --details` prints variables, native bounds, energy terms, eliminated constraints, optimizer iterations, function/gradient evaluations, and phase timings for view graph construction, solve, materialization, JSON encoding, and JSON writing; use those numbers when investigating slow seeds.
 
 Use the full compile benchmark when changing the Haskell-to-JSON path, frontend compile stream, or anything where end-to-end behavior matters:
 
@@ -75,10 +80,10 @@ pnpm run bench:compile
 The default benchmark runs the same Haskell command used by the SvelteKit compile stream and participates in the shared compile lock:
 
 ```sh
-cabal run -v0 compile-app --builddir=compile/dist-newstyle -- --output <temp-file> --json --seed <seed>
+cabal run -v0 compile-app --builddir=compile/dist-newstyle -- --output <generated-seed-output-file> --json --seed <seed>
 ```
 
-It uses a fixed seed set, validates the generated JSON file, and reports min/mean/median/p95/max durations. To compare changes over time, write benchmark artifacts under the ignored workspace `outputs/` directory:
+It writes compile artifacts under paths like `outputs/seed-1/bench-abc123/compiled-seed-1.json`, validates the generated JSON file, and reports min/mean/median/p95/max durations. To compare changes over time, write benchmark artifacts under the ignored workspace `outputs/` directory:
 
 ```sh
 pnpm run bench:compile -- --output outputs/compile-before.json
@@ -106,7 +111,7 @@ pnpm run dev
 
 Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. If another supported compile command is already running, the page shows a busy compile state and retries instead of launching a conflicting backend build; it also subscribes to a compile-lock status stream so manual and benchmark compiles are visible while the page is open. The seed can be supplied through the UI and is sent to `/api/visualization` as a positive integer query parameter.
 
-The devcontainer post-create step runs one compile into workspace `outputs/` to warm Cabal's build artifacts before the first browser-triggered regeneration, removing the warmup output after success. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
+The devcontainer post-create step runs `cabal build -v0 compile-app --builddir=compile/dist-newstyle` to warm Cabal's build artifacts before the first browser-triggered regeneration; it does not need to produce visualization JSON. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 
 ## Frontend Checks
 
@@ -121,7 +126,7 @@ pnpm run test
 After changing Haskell source:
 
 ```sh
-pnpm run compile -- --output outputs/sverlin-compiled.json
+pnpm run compile -- --seed 1
 pnpm run test:solver
 pnpm run lint:haskell
 ```

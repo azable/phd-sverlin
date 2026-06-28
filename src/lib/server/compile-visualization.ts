@@ -1,11 +1,10 @@
 import { spawn } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
-import path from 'node:path';
 
 import type { CompileDebug, CompileLockHolder, CompiledTrace } from '$lib/visualization/types';
 
 import { acquireCompileLock } from './compile-lock.js';
-import { mkdtempInWorkspaceOutputs } from './workspace-output.js';
+import { createCompileOutput } from './workspace-output.js';
 
 export type CompileVisualizationOptions = {
   seed: number;
@@ -69,8 +68,7 @@ export async function compileVisualization({
   onEvent
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
-  const tempDir = await mkdtempInWorkspaceOutputs('compile-');
-  const outputPath = path.join(tempDir, 'compiled.json');
+  const { outputDir, outputPath } = await createCompileOutput({ owner: 'web', seed });
   const { command, args } = compileCommand(seed, details, outputPath);
 
   const timeoutMs = readCompileTimeoutMs();
@@ -96,7 +94,7 @@ export async function compileVisualization({
   });
 
   if (!lockResult.acquired) {
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(outputDir, { recursive: true, force: true });
 
     return {
       ok: false,

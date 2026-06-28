@@ -1,12 +1,25 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { rm } from 'node:fs/promises';
 
 import { acquireCompileLock } from '../src/lib/server/compile-lock.js';
+import { createCompileOutput } from '../src/lib/server/workspace-output.js';
 
 const repoRoot = process.cwd();
 const command = 'cabal';
-const userArgs = dropLeadingSeparator(process.argv.slice(2));
+let userArgs = dropLeadingSeparator(process.argv.slice(2));
+const seed = readPositiveIntFlag(userArgs, '--seed') ?? undefined;
+const generatedOutput = readFlagValue(userArgs, '--output')
+  ? null
+  : seed
+    ? await createCompileOutput({ owner: 'manual', seed })
+    : null;
+
+if (generatedOutput) {
+  userArgs = [...userArgs, '--output', generatedOutput.outputPath];
+}
+
 const args = ['run', '-v0', 'compile-app', '--builddir=compile/dist-newstyle', '--', ...userArgs];
 
 const lockResult = await acquireCompileLock({
@@ -14,12 +27,16 @@ const lockResult = await acquireCompileLock({
   cwd: repoRoot,
   command,
   args,
-  seed: readPositiveIntFlag(userArgs, '--seed') ?? undefined,
+  seed,
   details: userArgs.includes('--details'),
   outputPath: readFlagValue(userArgs, '--output') ?? undefined
 });
 
 if (!lockResult.acquired) {
+  if (generatedOutput) {
+    await rm(generatedOutput.outputDir, { recursive: true, force: true });
+  }
+
   await writeStderr(`${lockResult.message}\n`);
   process.exitCode = 75;
 } else {

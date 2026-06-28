@@ -10,9 +10,7 @@ pnpm config set store-dir "${repo_root}/.pnpm-store"
 pnpm install --frozen-lockfile
 
 mkdir -p "${repo_root}/outputs"
-warmup_output="${repo_root}/outputs/sverlin-post-create-compiled.json"
-pnpm run compile -- --output "${warmup_output}" --json --seed 1
-rm -f "${warmup_output}"
+cabal build -v0 compile-app --builddir=compile/dist-newstyle
 
 sudo npm install -g @openai/codex
 

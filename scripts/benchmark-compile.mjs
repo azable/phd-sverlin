@@ -6,7 +6,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { acquireCompileLock } from '../src/lib/server/compile-lock.js';
-import { mkdtempInWorkspaceOutputs } from '../src/lib/server/workspace-output.js';
+import { createCompileOutput } from '../src/lib/server/workspace-output.js';
 
 const defaultSeeds = [1, 320994595, 1988735004, 1731275846, 1999326623];
 
@@ -162,8 +162,7 @@ function parseSeeds(value) {
 }
 
 async function runCompile({ command, cwd, seed, details, timeoutMs }) {
-  const tempDir = await mkdtempInWorkspaceOutputs('bench-compile-');
-  const outputPath = path.join(tempDir, 'compiled.json');
+  const { outputDir, outputPath } = await createCompileOutput({ owner: 'bench', seed });
   const args = [
     'run',
     '-v0',
@@ -192,7 +191,7 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
   });
 
   if (!lockResult.acquired) {
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(outputDir, { recursive: true, force: true });
 
     return {
       seed,
@@ -243,8 +242,7 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
             stderr,
             timedOut,
             exitCode: null,
-            outputPath,
-            tempDir
+            outputPath
           });
         }, 2_000);
       }, timeoutMs);
@@ -283,8 +281,7 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
           timedOut,
           exitCode: null,
           error,
-          outputPath,
-          tempDir
+          outputPath
         });
       });
 
@@ -297,8 +294,7 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
           stderr,
           timedOut,
           exitCode,
-          outputPath,
-          tempDir
+          outputPath
         });
       });
     });

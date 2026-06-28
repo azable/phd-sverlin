@@ -66,9 +66,12 @@ describe('runCompile', () => {
 describe('compileVisualization', () => {
   it('returns 409 without spawning when the shared compile lock is held', async () => {
     const compileLockPathEnvVar = 'SVERLIN_COMPILE_LOCK_PATH';
+    const workspaceOutputDirEnvVar = 'SVERLIN_OUTPUT_DIR';
     const previousLockPath = process.env[compileLockPathEnvVar];
+    const previousOutputDir = process.env[workspaceOutputDirEnvVar];
     const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-compile-lock-test-'));
     process.env[compileLockPathEnvVar] = path.join(tempDir, 'compile.lock');
+    process.env[workspaceOutputDirEnvVar] = path.join(tempDir, 'outputs');
 
     const lockResult = await acquireCompileLock({
       owner: 'manual',
@@ -89,6 +92,9 @@ describe('compileVisualization', () => {
         expect(result.status).toBe(409);
         expect(result.error).toContain('Compile backend is already running');
         expect(result.lock?.owner).toBe('manual');
+        expect(result.debug.outputPath).toMatch(
+          /[\\/]seed-1[\\/]web-[^\\/]+[\\/]compiled-seed-1\.json$/
+        );
         expect(result.debug.stderr).toContain('Compile backend is already running');
       }
     } finally {
@@ -98,6 +104,12 @@ describe('compileVisualization', () => {
         delete process.env[compileLockPathEnvVar];
       } else {
         process.env[compileLockPathEnvVar] = previousLockPath;
+      }
+
+      if (previousOutputDir === undefined) {
+        delete process.env[workspaceOutputDirEnvVar];
+      } else {
+        process.env[workspaceOutputDirEnvVar] = previousOutputDir;
       }
 
       await rm(tempDir, { recursive: true, force: true });
