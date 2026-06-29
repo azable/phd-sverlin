@@ -2,9 +2,10 @@
 
 module Main where
 
-import           Control.Exception   (ErrorCall, evaluate, try)
-import qualified Data.List           as List
-import qualified Data.Map.Strict     as Map
+import qualified Choreography.TestFixtures as ChoreographyFixtures
+import           Control.Exception         (ErrorCall, evaluate, try)
+import qualified Data.List                 as List
+import qualified Data.Map.Strict           as Map
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -46,7 +47,22 @@ main =
        , categoricalTests
        , seededFixtureTests
        , problemInspectionTests
+       , choreographyBridgeTests
        ])
+
+choreographyBridgeTests :: TestTree
+choreographyBridgeTests =
+  testGroup
+    "choreography bridge"
+    [ testCase "payload selector controls matched blocks"
+        $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
+                ChoreographyFixtures.payloadMatchedStats
+           in nodeCount @?= 1
+    , testCase "virtual grouping matches neutral view tags"
+        $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
+                ChoreographyFixtures.virtualGroupStats
+           in nodeCount @?= 3
+    ]
 
 nativeBoundsTests :: TestTree
 nativeBoundsTests =

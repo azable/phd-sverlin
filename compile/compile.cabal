@@ -87,6 +87,8 @@ library
         LinearTrace.Compile
 
     other-modules:
+        LinearTrace.Choreography.Match
+        LinearTrace.Choreography.Query
         LinearTrace.Choreography.Types
         LinearTrace.View
         LinearTrace.View.Primitives
@@ -146,6 +148,7 @@ test-suite solver-test
     build-depends:    base >=4.18.3.0 && <4.23,
                       containers,
                       compile,
+                      linear-base,
                       tasty,
                       tasty-hunit
 
@@ -153,6 +156,7 @@ test-suite solver-test
                       test-support
 
     other-modules:
+        Choreography.TestFixtures
         Solver.TestFixtures
 
     default-language: GHC2024

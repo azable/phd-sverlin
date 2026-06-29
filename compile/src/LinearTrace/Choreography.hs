@@ -197,7 +197,50 @@ import qualified Data.Functor.Linear                   as DFL
 import           Data.Proxy                            (Proxy (..))
 import           GHC.Exts                              (Multiplicity (Many))
 import           GHC.OverloadedLabels                  (IsLabel (..))
-import           GHC.TypeLits                          (KnownSymbol, symbolVal)
+import           GHC.TypeLits                          (KnownSymbol)
+import           LinearTrace.Choreography.Match        (ConstraintStrength (..),
+                                                        LayoutRelation (..),
+                                                        MatchSpec,
+                                                        NodeSelection (..),
+                                                        ValueAccess,
+                                                        ValueEndpoint,
+                                                        blockViewOfEventBlock,
+                                                        buildMatchedViewGraph,
+                                                        emptyMatchSpec,
+                                                        layoutValueAccess,
+                                                        matchAnyQueryNode,
+                                                        matchQueryPayloadNode,
+                                                        matchSpecAppend,
+                                                        matchValueDirectedBridge,
+                                                        matchValueRelation,
+                                                        matchValueSymmetricBridge,
+                                                        matchVirtualNode,
+                                                        matchedBlockOutput,
+                                                        rawValueEndpoint,
+                                                        selectionValueEndpoint,
+                                                        styleColorPartValueAccess,
+                                                        styleFreeValueAccess,
+                                                        styleLayoutValueAccess,
+                                                        styleUnitValueAccess)
+import           LinearTrace.Choreography.Query        (MatchBinding (..),
+                                                        MatchBindings,
+                                                        PayloadPattern, Query,
+                                                        QueryInt (..),
+                                                        anyPayloadPattern,
+                                                        emptyQuery, labelName,
+                                                        matchBindingValue,
+                                                        matchContextBindings,
+                                                        payloadBindingPattern,
+                                                        payloadBoolPattern,
+                                                        payloadDoublePattern,
+                                                        payloadIntPattern,
+                                                        payloadStringPattern,
+                                                        payloadUnitPattern,
+                                                        queryAppend, queryAtom,
+                                                        queryFacts, queryInt,
+                                                        queryIntAdd,
+                                                        queryIntConst,
+                                                        queryIntVar)
 import           LinearTrace.Choreography.Types        (Angle, Bounds (..),
                                                         BoundsExpr, Color, Free,
                                                         Hsl (..), LayoutExpr,
@@ -217,55 +260,16 @@ import           LinearTrace.Core                      (Block, Fact (..),
 import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View                      (BorderStyle (..),
-                                                        ConstraintStrength (..),
                                                         FontStyle (..),
                                                         FontWeight (..),
                                                         HslPart (..),
-                                                        LayoutAttr (..),
-                                                        LayoutRelation (..),
-                                                        MatchBindings,
-                                                        MatchSpec,
-                                                        NodeSelection (..),
-                                                        PayloadPattern, Query,
-                                                        QueryInt (..), Style,
+                                                        LayoutAttr (..), Style,
                                                         StyleColorAttr (..),
                                                         StyleFreeAttr (..),
                                                         StyleLayoutAttr (..),
                                                         StyleUnitAttr (..),
                                                         TextAlign (..),
-                                                        ValueAccess,
-                                                        ValueEndpoint,
-                                                        WhiteSpace (..),
-                                                        anyPayloadPattern,
-                                                        emptyMatchSpec,
-                                                        emptyQuery,
-                                                        layoutValueAccess,
-                                                        matchAnyQueryNode,
-                                                        matchBindingValue,
-                                                        matchContextBindings,
-                                                        matchQueryPayloadNode,
-                                                        matchSpecAppend,
-                                                        matchValueDirectedBridge,
-                                                        matchValueRelation,
-                                                        matchValueSymmetricBridge,
-                                                        matchVirtualNode,
-                                                        payloadBindingPattern,
-                                                        payloadBoolPattern,
-                                                        payloadDoublePattern,
-                                                        payloadIntPattern,
-                                                        payloadStringPattern,
-                                                        payloadUnitPattern,
-                                                        queryAppend, queryAtom,
-                                                        queryFacts, queryInt,
-                                                        queryIntAdd,
-                                                        queryIntConst,
-                                                        queryIntVar,
-                                                        rawValueEndpoint,
-                                                        selectionValueEndpoint,
-                                                        styleColorPartValueAccess,
-                                                        styleFreeValueAccess,
-                                                        styleLayoutValueAccess,
-                                                        styleUnitValueAccess)
+                                                        WhiteSpace (..))
 import qualified LinearTrace.View                      as V
 import qualified LinearTrace.View.Style                as VS
 import qualified Prelude                               as P
@@ -281,21 +285,6 @@ import qualified Unsafe.Coerce                         as Unsafe
 
 infixr 6 <&>
 infixl 9 @:
-labelName :: KnownSymbol name => Proxy name -> P.String
-labelName proxy = dotName (symbolVal proxy)
-
-dotName :: P.String -> P.String
-dotName name =
-  case name of
-    []        -> []
-    char:rest -> dotChar char : dotName rest
-
-dotChar :: P.Char -> P.Char
-dotChar char =
-  case char P.== '_' of
-    P.True  -> '.'
-    P.False -> char
-
 data Program a where
   PureProgram :: a %1 -> Program a
   BindProgram :: Program a %1 -> (a %1 -> Program b) %1 -> Program b
@@ -326,10 +315,13 @@ data Program a where
        %1 -> (state %1 -> Program (LoopResult state output))
     -> Program output
 
+data ViewScript acts where
+  ViewScript :: V.ViewOutput -> ViewScript acts
+
 data VisualTraceState where
   VisualTraceState
     :: Ur MatchSpec
-       %1 -> Ur (E.TraceBuilderState V.ViewScript)
+       %1 -> Ur (E.TraceBuilderState ViewScript)
        %1 -> Ur E.EventLog
        %1 -> Ur V.ViewOutput
        %1 -> VisualTraceState
@@ -471,7 +463,7 @@ data VisualizationBuilder a where
     :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
 data VisualTraceGraph =
-  VisualTraceGraph MatchSpec (C.TraceGraphWith V.ViewScript)
+  VisualTraceGraph MatchSpec (C.TraceGraphWith ViewScript)
 
 data Retagged tag where
   Retagged
@@ -482,7 +474,7 @@ data Retagged tag where
 
 type ViewGraph = V.ViewGraph
 
-visualTraceCore :: VisualTraceGraph -> C.TraceGraphWith V.ViewScript
+visualTraceCore :: VisualTraceGraph -> C.TraceGraphWith ViewScript
 visualTraceCore graph =
   case graph of
     VisualTraceGraph _ coreGraph -> coreGraph
@@ -490,7 +482,14 @@ visualTraceCore graph =
 buildViewGraph :: VisualTraceGraph -> ViewGraph
 buildViewGraph graph =
   case graph of
-    VisualTraceGraph spec coreGraph -> V.buildCSP spec coreGraph
+    VisualTraceGraph spec coreGraph ->
+      let stepsOutput = viewTraceSteps (E.traceGraphSteps coreGraph)
+       in buildMatchedViewGraph
+            spec
+            (builtSteps stepsOutput)
+            (builtNodes stepsOutput)
+            (builtConstraints stepsOutput)
+            (builtRenderFrames stepsOutput)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
@@ -501,6 +500,86 @@ viewGraphStats graph =
   , P.length (V.viewSteps graph)
   , P.length (V.viewConstraints graph)
   , P.length (V.viewRenderFrames graph))
+
+data BuiltViewStep = BuiltViewStep
+  { stepView                 :: V.ViewStep
+  , stepNodes                :: [V.ViewNode]
+  , stepConstraints          :: [S.Constraint]
+  , stepRenderFrames         :: [[V.RenderIntent]]
+  , stepPendingRenderIntents :: [V.RenderIntent]
+  }
+
+data BuiltViewSteps = BuiltViewSteps
+  { builtSteps        :: [V.ViewStep]
+  , builtNodes        :: [V.ViewNode]
+  , builtConstraints  :: [S.Constraint]
+  , builtRenderFrames :: [[V.RenderIntent]]
+  }
+
+viewTraceSteps :: [E.TraceStepWith ViewScript] -> BuiltViewSteps
+viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] []
+
+viewTraceStepsWith ::
+     ([V.RenderIntent] -> record -> BuiltViewStep)
+  -> [V.ViewStep]
+  -> [V.ViewNode]
+  -> [S.Constraint]
+  -> [[V.RenderIntent]]
+  -> [V.RenderIntent]
+  -> [record]
+  -> BuiltViewSteps
+viewTraceStepsWith buildStep steps nodes constraints renderFrames pending records =
+  case records of
+    [] ->
+      let finalOutput =
+            V.flushViewOutput
+              V.ViewOutput
+                { V.emittedNodes = []
+                , V.emittedConstraints = []
+                , V.emittedRenderFrames = []
+                , V.pendingRenderIntents = pending
+                }
+          finalFrames = renderFrames P.++ V.emittedRenderFrames finalOutput
+       in BuiltViewSteps
+            { builtSteps = steps
+            , builtNodes = nodes
+            , builtConstraints = constraints
+            , builtRenderFrames = V.withImplicitInitialFrame finalFrames
+            }
+    record:rest ->
+      let builtStep = buildStep pending record
+       in viewTraceStepsWith
+            buildStep
+            (steps P.++ [stepView builtStep])
+            (nodes P.++ stepNodes builtStep)
+            (constraints P.++ stepConstraints builtStep)
+            (renderFrames P.++ stepRenderFrames builtStep)
+            (stepPendingRenderIntents builtStep)
+            rest
+
+viewTraceStep :: [V.RenderIntent] -> E.TraceStepWith ViewScript -> BuiltViewStep
+viewTraceStep pending step =
+  case E.traceStepOutput step of
+    E.ExplainedTraceStep label (ViewScript rawOutput) _plainStep ->
+      let output = V.mergeInitialRenderIntents pending rawOutput
+          nodes = V.emittedNodes output
+          constraints = V.emittedConstraints output
+          renderFrames = V.emittedRenderFrames output
+       in BuiltViewStep
+            { stepView = V.ViewStep label nodes constraints []
+            , stepNodes = nodes
+            , stepConstraints = constraints
+            , stepRenderFrames = renderFrames
+            , stepPendingRenderIntents = V.pendingRenderIntents output
+            }
+    E.DiscardedTraceStep reason _plainStep ->
+      BuiltViewStep
+        { stepView = V.ViewStep ("Discarded: " P.++ reason) [] [] []
+        , stepNodes = []
+        , stepConstraints = []
+        , stepRenderFrames = []
+        , stepPendingRenderIntents = pending
+        }
 
 type StyleRecipe = NodeRecipe
 
@@ -1293,7 +1372,7 @@ runVisualTraceBuilder spec builder =
         finalState
    in VisualTraceGraph spec (E.traceBuilderStateGraph coreState)
 
-runCoreBuilder :: C.TraceBuilderWith V.ViewScript a -> VisualTraceBuilder a
+runCoreBuilder :: C.TraceBuilderWith ViewScript a -> VisualTraceBuilder a
 runCoreBuilder builder =
   LinearState.state
     (\(VisualTraceState spec (Ur coreState) pendingEvents pendingOutput) ->
@@ -1310,7 +1389,7 @@ retagCore ::
      C.Traceable tag
   => C.Facts
   -> C.Block tag
-     %1 -> C.TraceBuilderWith V.ViewScript (Retagged tag)
+     %1 -> C.TraceBuilderWith ViewScript (Retagged tag)
 retagCore facts block = do
   C.Copied original incoming copyToken <- C.copyTagged facts block
   C.Replaced output replaceToken <- C.replace original incoming
@@ -1361,51 +1440,13 @@ appendExplainEvent explainToken =
   case E.eventTokenFromExplainToken explainToken of
     Ur eventToken -> appendPendingEvent eventToken
 
-blockViewOfEventBlock :: E.EventBlock tag -> V.BlockView tag
-blockViewOfEventBlock block =
-  let ref = coreViewRef (E.eventBlockRef block)
-   in V.BlockView
-        { V.blockRef = ref
-        , V.blockPayload = E.eventBlockPayload block
-        , V.blockPayloadView = E.eventBlockPayloadView block
-        , V.blockLabel =
-            viewLabelFromPayloadView (E.eventBlockPayloadView block)
-        , V.blockContent = V.ContentEmpty
-        , V.blockFacts = E.eventBlockFacts block
-        , V.blockTags = viewTagsFromFacts (E.eventBlockFacts block)
-        , V.blockNodeKey = V.defaultNodeKey
-        , V.blockPieceKey = V.defaultPieceKey
-        , V.blockStyle = V.styleForRef ref
-        }
-
-coreViewRef :: E.BlockRef tag -> V.ViewRef tag
-coreViewRef ref = V.syntheticViewRef (E.blockRefId ref)
-
-viewLabelFromPayloadView :: C.PayloadView -> V.ViewLabel
-viewLabelFromPayloadView payloadViewValue =
-  case payloadViewValue of
-    C.PayloadView kind contentValue -> V.ViewLabel kind contentValue
-
-viewTagsFromFacts :: C.Facts -> V.ViewTags
-viewTagsFromFacts facts =
-  V.ViewTags (P.map viewTagFromFact (C.factsToList facts))
-
-viewTagFromFact :: C.Fact -> (P.String, V.ViewTagValue)
-viewTagFromFact fact =
-  case fact of
-    C.Fact name value ->
-      case value of
-        C.FactAtom     -> (name, V.ViewTagAtom)
-        C.FactInt int  -> (name, V.ViewTagInt int)
-        C.FactSymbol _ -> (name, V.ViewTagAtom)
-
 appendMatchedBlock ::
-     C.Traceable tag => V.BlockView tag -> VisualTraceBuilder ()
+     C.Traceable tag => E.EventBlock tag -> VisualTraceBuilder ()
 appendMatchedBlock block =
   LinearState.state
     (\(VisualTraceState (Ur spec) coreState pendingEvents (Ur oldOutput)) ->
        let nextOutput =
-             V.appendViewOutput oldOutput (V.matchedBlockOutput spec block)
+             V.appendViewOutput oldOutput (matchedBlockOutput spec block)
         in ( ()
            , VisualTraceState (Ur spec) coreState pendingEvents (Ur nextOutput)))
 
@@ -1417,10 +1458,10 @@ checkpointTrace label = do
   Ur eventLog <- takePendingEvents
   Ur output <- takePendingOutput
   let output' = V.flushViewOutput output
-  runCoreBuilder (E.explainEventLogWith label (V.ViewScript output') eventLog)
+  runCoreBuilder (E.explainEventLogWith label (ViewScript output') eventLog)
 
 runProgram :: Program () -> VisualTraceGraph
-runProgram = runProgramWith V.emptyMatchSpec
+runProgram = runProgramWith emptyMatchSpec
 
 runProgramWith :: MatchSpec -> Program () -> VisualTraceGraph
 runProgramWith spec program =
@@ -1516,7 +1557,7 @@ interpretProgram program =
           case event of
             E.TraceCreate eventBlock -> do
               let viewBlock = blockViewOfEventBlock eventBlock
-              appendMatchedBlock viewBlock
+              appendMatchedBlock eventBlock
               appendRenderIntent (V.RenderFresh (V.blockViewRef viewBlock))
               return block
     UseProgram block -> do
@@ -1539,7 +1580,7 @@ interpretProgram program =
             E.TraceCopy originalEvent copyEvent -> do
               let originalBlock = blockViewOfEventBlock originalEvent
               let copyBlock = blockViewOfEventBlock copyEvent
-              appendMatchedBlock copyBlock
+              appendMatchedBlock copyEvent
               appendRenderIntent
                 (V.RenderFork
                    (V.blockViewRef originalBlock)
@@ -1554,7 +1595,7 @@ interpretProgram program =
           case event of
             E.TraceCompute eventBlock -> do
               let viewBlock = blockViewOfEventBlock eventBlock
-              appendMatchedBlock viewBlock
+              appendMatchedBlock eventBlock
               appendRenderIntent (V.RenderFresh (V.blockViewRef viewBlock))
               return block
     ReplaceProgram oldBlock incomingBlock -> do
@@ -1570,7 +1611,7 @@ interpretProgram program =
                   let oldView = blockViewOfEventBlock oldEvent
                   let incomingView = blockViewOfEventBlock incomingEvent
                   let outputView = blockViewOfEventBlock outputEvent
-                  appendMatchedBlock outputView
+                  appendMatchedBlock outputEvent
                   appendRenderIntent
                     (V.RenderContinue
                        (V.blockViewRef oldView)
@@ -1589,7 +1630,7 @@ interpretProgram program =
             E.TraceReplace oldEvent _incomingEvent outputEvent -> do
               let oldView = blockViewOfEventBlock oldEvent
               let outputView = blockViewOfEventBlock outputEvent
-              appendMatchedBlock outputView
+              appendMatchedBlock outputEvent
               appendRenderIntent
                 (V.RenderContinue
                    (V.blockViewRef oldView)
@@ -2082,7 +2123,7 @@ bindingExprSubstitutions :: MatchBindings -> [(P.String, P.Double)]
 bindingExprSubstitutions bindings =
   case bindings of
     [] -> []
-    V.MatchBinding name value:rest ->
+    MatchBinding name value:rest ->
       case Read.readMaybe value of
         Nothing -> bindingExprSubstitutions rest
         Just numericValue ->
