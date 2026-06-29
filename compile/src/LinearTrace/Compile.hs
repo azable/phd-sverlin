@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies      #-}
 
 module LinearTrace.Compile
   ( RenderId(..)
@@ -22,17 +23,18 @@ module LinearTrace.Compile
 import           Control.Monad
 import           Control.Monad.State.Strict
 import           Data.Aeson
-import           Data.Aeson.Encode.Pretty   (encodePretty)
-import qualified Data.Aeson.Key             as Key
-import qualified Data.ByteString.Lazy       as BL
-import           Data.Map.Strict            (Map)
-import qualified Data.Map.Strict            as Map
-import qualified LinearTrace.View           as V
-import qualified LinearTrace.View.Style     as VS
-import           Numeric                    (showFFloat)
+import           Data.Aeson.Encode.Pretty     (encodePretty)
+import qualified Data.Aeson.Key               as Key
+import qualified Data.ByteString.Lazy         as BL
+import           Data.Map.Strict              (Map)
+import qualified Data.Map.Strict              as Map
+import qualified LinearTrace.View             as V
+import qualified LinearTrace.View.Materialize as VM
+import qualified LinearTrace.View.Style       as VS
+import           Numeric                      (showFFloat)
 import           Prelude
-import qualified Solver                     as S
-import           System.IO                  (Handle, hFlush, stdout)
+import qualified Solver                       as S
+import           System.IO                    (Handle, hFlush, stdout)
 
 newtype RenderId =
   RenderId String
@@ -58,6 +60,18 @@ data StyleValue
   | StyleColor String
   | StyleBool Bool
   deriving (Eq, Show)
+
+data CssTarget =
+  CssTarget
+
+class StyleCompileTarget target where
+  type TargetStyleValue target
+  targetStyleAttrs ::
+       target -> VM.ConcreteStyle -> Map String (TargetStyleValue target)
+
+instance StyleCompileTarget CssTarget where
+  type TargetStyleValue CssTarget = StyleValue
+  targetStyleAttrs _ = cssStyleAttrs
 
 data RenderStyle = RenderStyle
   { renderTop    :: Double
@@ -137,12 +151,13 @@ compileSolvedWithViewport ::
   -> V.ViewGraph
   -> Either String Visualization
 compileSolvedWithViewport viewportWidth viewportHeight solution graph =
-  case buildBlockLookup solution graph of
+  case VM.materializeViewGraph solution graph of
     Left err -> Left err
-    Right blocksById -> do
+    Right concreteGraph -> do
+      let blocksById = buildBlockLookup concreteGraph
       frames' <-
         evalStateT
-          (compileFrames blocksById (V.viewRenderFrames graph))
+          (compileFrames blocksById (VM.concreteViewRenderFrames concreteGraph))
           emptyCompileState
       pure
         Compiled
@@ -477,94 +492,90 @@ requireLineage block = do
 --------------------------------------------------------------------------------
 type BlockLookup = Map Int [RenderBlock]
 
-buildBlockLookup :: S.Solution -> V.ViewGraph -> Either String BlockLookup
-buildBlockLookup solution graph =
-  foldM (insertSolvedNode solution) Map.empty (V.viewNodes graph)
+buildBlockLookup :: VM.ConcreteViewGraph -> BlockLookup
+buildBlockLookup graph =
+  foldl insertConcreteNode Map.empty (VM.concreteViewNodes graph)
 
-insertSolvedNode ::
-     S.Solution -> BlockLookup -> V.ViewNode -> Either String BlockLookup
-insertSolvedNode solution blocks node =
-  case compileSolvedViewNode solution node of
-    Left err -> Left err
-    Right compiled ->
-      Right (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
+insertConcreteNode :: BlockLookup -> VM.ConcreteViewNode -> BlockLookup
+insertConcreteNode blocks node =
+  let compiled = compileConcreteViewNode node
+   in Map.insertWith (++) (renderBlockId compiled) [compiled] blocks
 
-compileSolvedViewNode :: S.Solution -> V.ViewNode -> Either String RenderBlock
-compileSolvedViewNode solution node =
+compileConcreteViewNode :: VM.ConcreteViewNode -> RenderBlock
+compileConcreteViewNode node =
   case node of
-    V.BlockViewNode block     -> compileSolvedBlock solution block
-    V.VirtualViewNode virtual -> compileSolvedVirtual solution virtual
+    VM.ConcreteBlockViewNode block     -> compileConcreteBlock block
+    VM.ConcreteVirtualViewNode virtual -> compileConcreteVirtual virtual
 
-compileSolvedBlock :: S.Solution -> V.BlockView tag -> Either String RenderBlock
-compileSolvedBlock solution block = do
-  style <- requireMaterializedStyle solution (V.blockStyle block)
-  pure
-    RenderBlock
-      { renderBlockId = blockIdOfRef (V.blockRef block)
-      , renderNodeKey = V.blockNodeKey block
-      , renderPieceKey = V.blockPieceKey block
-      , renderContent = materializeContent (V.blockContent block)
-      , renderKind = payloadViewKind (V.blockLabel block)
-      , renderStyle = compileMaterializedStyle style
-      }
+compileConcreteBlock :: VM.ConcreteBlockView tag -> RenderBlock
+compileConcreteBlock block =
+  RenderBlock
+    { renderBlockId = blockIdOfRef (VM.concreteBlockRef block)
+    , renderNodeKey = VM.concreteBlockNodeKey block
+    , renderPieceKey = VM.concreteBlockPieceKey block
+    , renderContent = VM.concreteBlockContent block
+    , renderKind = payloadViewKind (VM.concreteBlockLabel block)
+    , renderStyle = compileConcreteStyle CssTarget (VM.concreteBlockStyle block)
+    }
 
-compileSolvedVirtual ::
-     S.Solution -> V.VirtualView tag -> Either String RenderBlock
-compileSolvedVirtual solution virtual = do
-  style <- requireMaterializedStyle solution (V.virtualStyle virtual)
-  pure
-    RenderBlock
-      { renderBlockId = blockIdOfRef (V.virtualRef virtual)
-      , renderNodeKey = V.virtualNodeKey virtual
-      , renderPieceKey = V.virtualPieceKey virtual
-      , renderContent = materializeContent (V.virtualContent virtual)
-      , renderKind = payloadViewKind (V.virtualLabel virtual)
-      , renderStyle = compileMaterializedStyle style
-      }
+compileConcreteVirtual :: VM.ConcreteVirtualView tag -> RenderBlock
+compileConcreteVirtual virtual =
+  RenderBlock
+    { renderBlockId = blockIdOfRef (VM.concreteVirtualRef virtual)
+    , renderNodeKey = VM.concreteVirtualNodeKey virtual
+    , renderPieceKey = VM.concreteVirtualPieceKey virtual
+    , renderContent = VM.concreteVirtualContent virtual
+    , renderKind = payloadViewKind (VM.concreteVirtualLabel virtual)
+    , renderStyle =
+        compileConcreteStyle CssTarget (VM.concreteVirtualStyle virtual)
+    }
 
-requireMaterializedStyle ::
-     S.Solution -> V.Style -> Either String V.MaterializedStyle
-requireMaterializedStyle solution style =
-  case VS.materializeStyle solution style of
-    Just materialized -> Right materialized
-    Nothing ->
-      Left
-        "could not materialize a view node from the solver solution; \
-       \a style or geometry Expr probably references a variable that was not \
-       \included in any constraint"
-
-materializeContent :: V.ContentMode -> String
-materializeContent contentMode =
-  case contentMode of
-    V.ContentEmpty      -> ""
-    V.ContentText value -> value
-
-compileMaterializedStyle :: V.MaterializedStyle -> RenderStyle
-compileMaterializedStyle style =
+compileConcreteStyle :: CssTarget -> VM.ConcreteStyle -> RenderStyle
+compileConcreteStyle target style =
   RenderStyle
-    { renderTop = roundLayout (V.materializedTop style)
-    , renderLeft = roundLayout (V.materializedLeft style)
-    , renderWidth = roundLayout (V.materializedWidth style)
-    , renderHeight = roundLayout (V.materializedHeight style)
-    , renderAttrs = compileCssAttrs style
+    { renderTop = roundLayout (VM.concreteTop style)
+    , renderLeft = roundLayout (VM.concreteLeft style)
+    , renderWidth = roundLayout (VM.concreteWidth style)
+    , renderHeight = roundLayout (VM.concreteHeight style)
+    , renderAttrs = targetStyleAttrs target style
     }
 
 --------------------------------------------------------------------------------
 -- CSS mapping
 --------------------------------------------------------------------------------
-compileCssAttrs :: V.MaterializedStyle -> Map String StyleValue
-compileCssAttrs style =
+cssStyleAttrs :: VM.ConcreteStyle -> Map String StyleValue
+cssStyleAttrs style =
   Map.fromList
     (("position", StyleText "absolute")
-       : V.materializedCssAttrsWith
-           (StyleNumber . roundLayout)
-           (StylePixels . roundLayout)
-           StyleText
-           (\alpha hsl -> StyleColor (materializedHslToCss alpha hsl))
-           style)
+       : concatMap (concreteFieldCssAttrs alphaValue) (VM.concreteFields style))
+  where
+    alphaValue = VM.concreteScalarValue "alpha" 1 style
 
-materializedHslToCss :: Double -> V.MaterializedHsl -> String
-materializedHslToCss alpha hsl =
+concreteFieldCssAttrs :: Double -> VM.ConcreteField -> [(String, StyleValue)]
+concreteFieldCssAttrs alphaValue field =
+  case field of
+    VM.ConcreteScalarField _ attrName value unit ->
+      case (attrName, unit) of
+        (Just name, VS.StyleNumber) -> [(name, StyleNumber (roundLayout value))]
+        (Just name, VS.StylePixels) -> [(name, StylePixels (roundLayout value))]
+        _                           -> []
+    VM.ConcreteColorField _ attrName maybeHsl ->
+      case (attrName, maybeHsl) of
+        (Just name, Just hsl) -> [(name, StyleColor (hslToCss alphaValue hsl))]
+        _                     -> []
+    VM.ConcreteTextField _ attrName maybeText ->
+      stringCssAttr attrName (VS.styleTextString <$> maybeText)
+    VM.ConcreteChoiceField _ attrName maybeToken _ ->
+      stringCssAttr attrName maybeToken
+
+stringCssAttr :: Maybe String -> Maybe String -> [(String, StyleValue)]
+stringCssAttr maybeName maybeValue =
+  case (maybeName, maybeValue) of
+    (Just name, Just value) -> [(name, StyleText value)]
+    _                       -> []
+
+hslToCss :: Double -> VM.ConcreteHsl -> String
+hslToCss alpha hsl =
   let h = formatCssNumber (V.hue hsl)
       s = formatCssPercent01 (V.saturation hsl)
       l = formatCssPercent01 (V.lightness hsl)

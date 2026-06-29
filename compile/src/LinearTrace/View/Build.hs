@@ -67,14 +67,7 @@ emptyViewOutput :: ViewOutput
 emptyViewOutput = P.mempty
 
 appendViewOutput :: ViewOutput -> ViewOutput -> ViewOutput
-appendViewOutput lhs rhs =
-  ViewOutput
-    { emittedNodes = emittedNodes lhs P.++ emittedNodes rhs
-    , emittedConstraints = emittedConstraints lhs P.++ emittedConstraints rhs
-    , emittedRenderFrames = emittedRenderFrames lhs P.++ emittedRenderFrames rhs
-    , pendingRenderIntents =
-        pendingRenderIntents lhs P.++ pendingRenderIntents rhs
-    }
+appendViewOutput = (<>)
 
 flushViewOutput :: ViewOutput -> ViewOutput
 flushViewOutput = flushPendingOutput

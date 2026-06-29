@@ -60,10 +60,9 @@ module LinearTrace.View
     Style
   , Bounds(..)
   , BoundsExpr
-  , MaterializedBounds
   , Hsl(..)
-  , CssText(..)
-  , cssTextString
+  , StyleText(..)
+  , styleTextString
   , FontWeight(..)
   , FontStyle(..)
   , TextAlign(..)
@@ -84,7 +83,6 @@ module LinearTrace.View
   , UnitExpr
   , AngleExpr
   , ColorExpr
-  , MaterializedHsl
   , global
   , num
   , absExpr
@@ -108,13 +106,6 @@ module LinearTrace.View
   , alpha
   , fill
   , stroke
-  , -- * Materialization
-    MaterializedStyle
-  , materializedTop
-  , materializedLeft
-  , materializedWidth
-  , materializedHeight
-  , materializedCssAttrsWith
   ) where
 
 import           LinearTrace.View.Access

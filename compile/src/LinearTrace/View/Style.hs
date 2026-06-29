@@ -20,18 +20,18 @@ module LinearTrace.View.Style
   , UnitExpr
   , AngleExpr
   , ColorExpr
-  , MaterializedHsl
+  , ConcreteHsl
   , unitRange
   , angleRange
   , -- * Bounds
     Bounds(..)
   , BoundsExpr
-  , MaterializedBounds
+  , ConcreteBounds
   , HasBounds(..)
   , -- * Basic CSS/style values
     Hsl(..)
-  , CssText(..)
-  , cssTextString
+  , StyleText(..)
+  , styleTextString
   , FontWeight(..)
   , FontStyle(..)
   , TextAlign(..)
@@ -46,6 +46,7 @@ module LinearTrace.View.Style
   , StyleTextSpec(..)
   , StyleChoiceSpec(..)
   , StyleChoiceValue(..)
+  , DiscreteStyleValue(..)
   , StyleField(..)
   , styleBounds
   , styleFields
@@ -86,25 +87,6 @@ module LinearTrace.View.Style
   , setBorderStyleChoice
   , setWhiteSpace
   , setWhiteSpaceChoice
-  , -- * Materialization
-    MaterializedStyle(..)
-  , MaterializedField(..)
-  , MaterializedScalar(..)
-  , MaterializedColor(..)
-  , MaterializedDiscrete(..)
-  , MaterializedCssField(..)
-  , MaterializedCssValue(..)
-  , materializedTop
-  , materializedLeft
-  , materializedWidth
-  , materializedHeight
-  , materializedScalarValue
-  , materializedScalars
-  , materializedColors
-  , materializedDiscrete
-  , materializedCssFields
-  , materializedCssAttrsWith
-  , materializeStyle
   ) where
 
 import           Data.Kind                   (Type)
@@ -114,14 +96,14 @@ import           LinearTrace.View.Primitives
 import           Prelude
 import           Solver                      hiding (num)
 
-newtype CssText =
-  CssText String
+newtype StyleText =
+  StyleText String
   deriving (Eq, Show)
 
-cssTextString :: CssText -> String
-cssTextString cssText =
-  case cssText of
-    CssText text -> text
+styleTextString :: StyleText -> String
+styleTextString styleText =
+  case styleText of
+    StyleText text -> text
 
 data FontWeight
   = FontWeightNormal
@@ -159,8 +141,8 @@ data WhiteSpace
   | WhiteSpacePreWrap
   deriving (Eq, Show)
 
-fontWeightCss :: FontWeight -> String
-fontWeightCss value =
+fontWeightToken :: FontWeight -> String
+fontWeightToken value =
   case value of
     FontWeightNormal   -> "normal"
     FontWeightBold     -> "bold"
@@ -168,23 +150,23 @@ fontWeightCss value =
     FontWeightLighter  -> "lighter"
     FontWeightNumber n -> show n
 
-fontStyleCss :: FontStyle -> String
-fontStyleCss value =
+fontStyleToken :: FontStyle -> String
+fontStyleToken value =
   case value of
     FontStyleNormal  -> "normal"
     FontStyleItalic  -> "italic"
     FontStyleOblique -> "oblique"
 
-textAlignCss :: TextAlign -> String
-textAlignCss value =
+textAlignToken :: TextAlign -> String
+textAlignToken value =
   case value of
     TextAlignLeft    -> "left"
     TextAlignCenter  -> "center"
     TextAlignRight   -> "right"
     TextAlignJustify -> "justify"
 
-borderStyleCss :: BorderStyle -> String
-borderStyleCss value =
+borderStyleToken :: BorderStyle -> String
+borderStyleToken value =
   case value of
     BorderNone   -> "none"
     BorderSolid  -> "solid"
@@ -192,8 +174,8 @@ borderStyleCss value =
     BorderDotted -> "dotted"
     BorderDouble -> "double"
 
-whiteSpaceCss :: WhiteSpace -> String
-whiteSpaceCss value =
+whiteSpaceToken :: WhiteSpace -> String
+whiteSpaceToken value =
   case value of
     WhiteSpaceNormal  -> "normal"
     WhiteSpaceNoWrap  -> "nowrap"
@@ -221,19 +203,19 @@ whiteSpaceChoices =
   [WhiteSpaceNormal, WhiteSpaceNoWrap, WhiteSpacePre, WhiteSpacePreWrap]
 
 instance CategoricalType FontWeight where
-  categoricalDomain _ = map (category . fontWeightCss) fontWeightChoices
+  categoricalDomain _ = map (category . fontWeightToken) fontWeightChoices
 
 instance CategoricalType FontStyle where
-  categoricalDomain _ = map (category . fontStyleCss) fontStyleChoices
+  categoricalDomain _ = map (category . fontStyleToken) fontStyleChoices
 
 instance CategoricalType TextAlign where
-  categoricalDomain _ = map (category . textAlignCss) textAlignChoices
+  categoricalDomain _ = map (category . textAlignToken) textAlignChoices
 
 instance CategoricalType BorderStyle where
-  categoricalDomain _ = map (category . borderStyleCss) borderStyleChoices
+  categoricalDomain _ = map (category . borderStyleToken) borderStyleChoices
 
 instance CategoricalType WhiteSpace where
-  categoricalDomain _ = map (category . whiteSpaceCss) whiteSpaceChoices
+  categoricalDomain _ = map (category . whiteSpaceToken) whiteSpaceChoices
 
 --------------------------------------------------------------------------------
 -- Unified style representation
@@ -246,7 +228,7 @@ data StyleValueUnit
 
 data StyleScalarSpec = StyleScalarSpec
   { styleScalarName         :: String
-  , styleScalarCssName      :: Maybe String
+  , styleScalarAttrName     :: Maybe String
   , styleScalarInitialRange :: Maybe Range
   , styleScalarValueUnit    :: StyleValueUnit
   , styleScalarConstraints  :: [Constraint]
@@ -269,8 +251,8 @@ sameStyleScalarKind lhs rhs =
     _                                      -> Nothing
 
 data StyleTextSpec = StyleTextSpec
-  { styleTextName    :: String
-  , styleTextCssName :: Maybe String
+  { styleTextName     :: String
+  , styleTextAttrName :: Maybe String
   }
 
 data StyleChoiceValue value
@@ -278,13 +260,21 @@ data StyleChoiceValue value
   | SolvedStyleChoice (Choice value)
   deriving (Eq, Show)
 
+data DiscreteStyleValue
+  = DiscreteFontWeight String (Maybe FontWeight)
+  | DiscreteFontStyle String (Maybe FontStyle)
+  | DiscreteTextAlign String (Maybe TextAlign)
+  | DiscreteBorderStyle String (Maybe BorderStyle)
+  | DiscreteWhiteSpace String (Maybe WhiteSpace)
+  deriving (Eq, Show)
+
 data StyleChoiceSpec value = StyleChoiceSpec
   { styleChoiceName          :: String
-  , styleChoiceCssName       :: Maybe String
+  , styleChoiceAttrName      :: Maybe String
   , styleChoiceDomainValues  :: [value]
   , styleChoiceCategoryName  :: value -> String
-  , styleChoiceCssValue      :: value -> String
-  , styleChoiceDiscreteValue :: Maybe value -> MaterializedDiscrete
+  , styleChoiceAttrValue     :: value -> String
+  , styleChoiceDiscreteValue :: Maybe value -> DiscreteStyleValue
   }
 
 data StyleField where
@@ -294,7 +284,7 @@ data StyleField where
     -> Expr ty
     -> StyleField
   StyleColorField :: StyleTextSpec -> Maybe ColorExpr -> StyleField
-  StyleTextField :: StyleTextSpec -> Maybe CssText -> StyleField
+  StyleTextField :: StyleTextSpec -> Maybe StyleText -> StyleField
   StyleChoiceField
     :: StyleChoiceSpec value -> Maybe (StyleChoiceValue value) -> StyleField
 
@@ -470,7 +460,7 @@ scalarField kind name cssName unit range constraints expr =
     kind
     StyleScalarSpec
       { styleScalarName = name
-      , styleScalarCssName = cssName
+      , styleScalarAttrName = cssName
       , styleScalarInitialRange = range
       , styleScalarValueUnit = unit
       , styleScalarConstraints = constraints expr
@@ -479,22 +469,22 @@ scalarField kind name cssName unit range constraints expr =
 
 textSpec :: String -> Maybe String -> StyleTextSpec
 textSpec name cssName =
-  StyleTextSpec {styleTextName = name, styleTextCssName = cssName}
+  StyleTextSpec {styleTextName = name, styleTextAttrName = cssName}
 
 choiceSpec ::
      String
   -> Maybe String
   -> [value]
   -> (value -> String)
-  -> (Maybe value -> MaterializedDiscrete)
+  -> (Maybe value -> DiscreteStyleValue)
   -> StyleChoiceSpec value
-choiceSpec name cssName values toCss toDiscrete =
+choiceSpec name attrName values toToken toDiscrete =
   StyleChoiceSpec
     { styleChoiceName = name
-    , styleChoiceCssName = cssName
+    , styleChoiceAttrName = attrName
     , styleChoiceDomainValues = values
-    , styleChoiceCategoryName = toCss
-    , styleChoiceCssValue = toCss
+    , styleChoiceCategoryName = toToken
+    , styleChoiceAttrValue = toToken
     , styleChoiceDiscreteValue = toDiscrete
     }
 
@@ -700,11 +690,11 @@ setStroke = setStyleField . strokeField . Just
 --------------------------------------------------------------------------------
 -- Attribute: fontFamily
 --------------------------------------------------------------------------------
-fontFamilyField :: Maybe CssText -> StyleField
+fontFamilyField :: Maybe StyleText -> StyleField
 fontFamilyField = StyleTextField (textSpec "fontFamily" (Just "fontFamily"))
 
 setFontFamily :: String -> Style -> Style
-setFontFamily = setStyleField . fontFamilyField . Just . CssText
+setFontFamily = setStyleField . fontFamilyField . Just . StyleText
 
 --------------------------------------------------------------------------------
 -- Attribute: fontWeight
@@ -715,8 +705,8 @@ fontWeightSpec =
     "fontWeight"
     (Just "fontWeight")
     fontWeightChoices
-    fontWeightCss
-    (MaterializedFontWeightAttr "fontWeight")
+    fontWeightToken
+    (DiscreteFontWeight "fontWeight")
 
 fontWeightField :: Maybe (StyleChoiceValue FontWeight) -> StyleField
 fontWeightField = choiceField fontWeightSpec
@@ -736,8 +726,8 @@ fontStyleSpec =
     "fontStyle"
     (Just "fontStyle")
     fontStyleChoices
-    fontStyleCss
-    (MaterializedFontStyleAttr "fontStyle")
+    fontStyleToken
+    (DiscreteFontStyle "fontStyle")
 
 fontStyleField :: Maybe (StyleChoiceValue FontStyle) -> StyleField
 fontStyleField = choiceField fontStyleSpec
@@ -757,8 +747,8 @@ textAlignSpec =
     "textAlign"
     (Just "textAlign")
     textAlignChoices
-    textAlignCss
-    (MaterializedTextAlignAttr "textAlign")
+    textAlignToken
+    (DiscreteTextAlign "textAlign")
 
 textAlignField :: Maybe (StyleChoiceValue TextAlign) -> StyleField
 textAlignField = choiceField textAlignSpec
@@ -778,8 +768,8 @@ borderStyleSpec =
     "borderStyle"
     (Just "borderStyle")
     borderStyleChoices
-    borderStyleCss
-    (MaterializedBorderStyleAttr "borderStyle")
+    borderStyleToken
+    (DiscreteBorderStyle "borderStyle")
 
 borderStyleField :: Maybe (StyleChoiceValue BorderStyle) -> StyleField
 borderStyleField = choiceField borderStyleSpec
@@ -800,8 +790,8 @@ whiteSpaceSpec =
     "whiteSpace"
     (Just "whiteSpace")
     whiteSpaceChoices
-    whiteSpaceCss
-    (MaterializedWhiteSpaceAttr "whiteSpace")
+    whiteSpaceToken
+    (DiscreteWhiteSpace "whiteSpace")
 
 whiteSpaceField :: Maybe (StyleChoiceValue WhiteSpace) -> StyleField
 whiteSpaceField = choiceField whiteSpaceSpec
@@ -859,227 +849,3 @@ lookupColorField name fallback style' = go (styleFields style')
           | styleTextName spec == name -> value
           | otherwise -> go rest
         _:rest -> go rest
-
---------------------------------------------------------------------------------
--- Materialization
---------------------------------------------------------------------------------
-data MaterializedField
-  = MaterializedScalarField String (Maybe String) Double StyleValueUnit
-  | MaterializedColorField String (Maybe String) (Maybe MaterializedHsl)
-  | MaterializedTextField String (Maybe String) (Maybe CssText)
-  | MaterializedChoiceField
-      String
-      (Maybe String)
-      (Maybe String)
-      MaterializedDiscrete
-  deriving (Eq, Show)
-
-data MaterializedStyle = MaterializedStyle
-  { materializedBounds :: MaterializedBounds
-  , materializedFields :: [MaterializedField]
-  } deriving (Eq, Show)
-
-data MaterializedScalar =
-  MaterializedScalar String Double StyleValueUnit
-  deriving (Eq, Show)
-
-data MaterializedColor =
-  MaterializedColor String (Maybe MaterializedHsl)
-  deriving (Eq, Show)
-
-data MaterializedDiscrete
-  = MaterializedTextAttr String (Maybe CssText)
-  | MaterializedFontWeightAttr String (Maybe FontWeight)
-  | MaterializedFontStyleAttr String (Maybe FontStyle)
-  | MaterializedTextAlignAttr String (Maybe TextAlign)
-  | MaterializedBorderStyleAttr String (Maybe BorderStyle)
-  | MaterializedWhiteSpaceAttr String (Maybe WhiteSpace)
-  deriving (Eq, Show)
-
-data MaterializedCssField =
-  MaterializedCssField String MaterializedCssValue
-  deriving (Eq, Show)
-
-data MaterializedCssValue
-  = CssNumberValue Double
-  | CssPixelsValue Double
-  | CssTextValue String
-  | CssHslValue Double MaterializedHsl
-  deriving (Eq, Show)
-
-materializedTop :: MaterializedStyle -> Double
-materializedTop = boundsTop . materializedBounds
-
-materializedLeft :: MaterializedStyle -> Double
-materializedLeft = boundsLeft . materializedBounds
-
-materializedWidth :: MaterializedStyle -> Double
-materializedWidth = boundsWidth . materializedBounds
-
-materializedHeight :: MaterializedStyle -> Double
-materializedHeight = boundsHeight . materializedBounds
-
-materializedScalarValue :: String -> Double -> MaterializedStyle -> Double
-materializedScalarValue name fallback style' = go (materializedFields style')
-  where
-    go fields =
-      case fields of
-        [] -> fallback
-        MaterializedScalarField name' _ value _:rest
-          | name == name' -> value
-          | otherwise -> go rest
-        _:rest -> go rest
-
-materializedScalars :: MaterializedStyle -> [MaterializedScalar]
-materializedScalars style' = concatMap fieldScalar (materializedFields style')
-  where
-    fieldScalar field =
-      case field of
-        MaterializedScalarField name _ value unit ->
-          [MaterializedScalar name value unit]
-        _ -> []
-
-materializedColors :: MaterializedStyle -> [MaterializedColor]
-materializedColors style' = concatMap fieldColor (materializedFields style')
-  where
-    fieldColor field =
-      case field of
-        MaterializedColorField name _ value -> [MaterializedColor name value]
-        _                                   -> []
-
-materializedDiscrete :: MaterializedStyle -> [MaterializedDiscrete]
-materializedDiscrete style' =
-  concatMap fieldDiscrete (materializedFields style')
-  where
-    fieldDiscrete field =
-      case field of
-        MaterializedTextField name _ value -> [MaterializedTextAttr name value]
-        MaterializedChoiceField _ _ _ discrete -> [discrete]
-        _ -> []
-
-materializedCssFields :: MaterializedStyle -> [MaterializedCssField]
-materializedCssFields style' =
-  concatMap (fieldCss alphaValue) (materializedFields style')
-  where
-    alphaValue = materializedScalarValue "alpha" 1 style'
-
-materializedCssAttrsWith ::
-     (Double -> a)
-  -> (Double -> a)
-  -> (String -> a)
-  -> (Double -> MaterializedHsl -> a)
-  -> MaterializedStyle
-  -> [(String, a)]
-materializedCssAttrsWith number pixels text hsl style' =
-  map convertField (materializedCssFields style')
-  where
-    convertField field =
-      case field of
-        MaterializedCssField name value -> (name, convertValue value)
-    convertValue value =
-      case value of
-        CssNumberValue x            -> number x
-        CssPixelsValue x            -> pixels x
-        CssTextValue value'         -> text value'
-        CssHslValue alphaValue hsl' -> hsl alphaValue hsl'
-
-fieldCss :: Double -> MaterializedField -> [MaterializedCssField]
-fieldCss alphaValue field =
-  case field of
-    MaterializedScalarField _ cssName value unit ->
-      case (cssName, unit) of
-        (Just name, StyleNumber) ->
-          [MaterializedCssField name (CssNumberValue value)]
-        (Just name, StylePixels) ->
-          [MaterializedCssField name (CssPixelsValue value)]
-        _ -> []
-    MaterializedColorField _ cssName maybeHsl ->
-      case (cssName, maybeHsl) of
-        (Just name, Just hsl) ->
-          [MaterializedCssField name (CssHslValue alphaValue hsl)]
-        _ -> []
-    MaterializedTextField _ cssName maybeText -> cssTextField cssName maybeText
-    MaterializedChoiceField _ cssName maybeCss _ ->
-      cssStringField cssName maybeCss
-
-cssTextField :: Maybe String -> Maybe CssText -> [MaterializedCssField]
-cssTextField maybeName maybeText =
-  cssStringField maybeName (cssTextString <$> maybeText)
-
-cssStringField :: Maybe String -> Maybe String -> [MaterializedCssField]
-cssStringField maybeName maybeText =
-  case (maybeName, maybeText) of
-    (Just name, Just text) -> [MaterializedCssField name (CssTextValue text)]
-    _                      -> []
-
-materializeStyle :: Solution -> Style -> Maybe MaterializedStyle
-materializeStyle solution style' =
-  MaterializedStyle
-    <$> materializeBounds solution (styleBounds style')
-    <*> traverse (materializeField solution) (styleFields style')
-
-materializeBounds :: Solution -> BoundsExpr -> Maybe MaterializedBounds
-materializeBounds solution = traverse (evalExpr solution)
-
-materializeField :: Solution -> StyleField -> Maybe MaterializedField
-materializeField solution field =
-  case field of
-    StyleScalarField _ spec expr -> materializeScalar solution spec expr
-    StyleColorField spec maybeHsl ->
-      MaterializedColorField (styleTextName spec) (styleTextCssName spec)
-        <$> traverse (materializeHsl solution) maybeHsl
-    StyleTextField spec value ->
-      Just
-        (MaterializedTextField
-           (styleTextName spec)
-           (styleTextCssName spec)
-           value)
-    StyleChoiceField spec value -> materializeChoiceField solution spec value
-
-materializeChoiceField ::
-     Solution
-  -> StyleChoiceSpec value
-  -> Maybe (StyleChoiceValue value)
-  -> Maybe MaterializedField
-materializeChoiceField solution spec maybeValue = do
-  materializedValue <-
-    traverse (materializeChoiceValue solution spec) maybeValue
-  pure
-    (MaterializedChoiceField
-       (styleChoiceName spec)
-       (styleChoiceCssName spec)
-       (styleChoiceCssValue spec <$> materializedValue)
-       (styleChoiceDiscreteValue spec materializedValue))
-
-materializeChoiceValue ::
-     Solution -> StyleChoiceSpec value -> StyleChoiceValue value -> Maybe value
-materializeChoiceValue solution spec value =
-  case value of
-    FixedStyleChoice fixed -> Just fixed
-    SolvedStyleChoice selected -> do
-      selectedCategory <- evalChoice solution selected
-      lookupChoiceValue spec (categoryName selectedCategory)
-
-lookupChoiceValue :: StyleChoiceSpec value -> String -> Maybe value
-lookupChoiceValue spec name = go (styleChoiceDomainValues spec)
-  where
-    go values =
-      case values of
-        [] -> Nothing
-        value:rest
-          | styleChoiceCategoryName spec value == name -> Just value
-          | otherwise -> go rest
-
-materializeScalar ::
-     Solution -> StyleScalarSpec -> Expr ty -> Maybe MaterializedField
-materializeScalar solution spec expr =
-  MaterializedScalarField (styleScalarName spec) (styleScalarCssName spec)
-    <$> evalExpr solution expr
-    <*> pure (styleScalarValueUnit spec)
-
-materializeHsl :: Solution -> ColorExpr -> Maybe MaterializedHsl
-materializeHsl solution hsl =
-  Hsl
-    <$> evalExpr solution (hue hsl)
-    <*> evalExpr solution (saturation hsl)
-    <*> evalExpr solution (lightness hsl)

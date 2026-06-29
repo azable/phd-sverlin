@@ -10,6 +10,8 @@
 module Choreography.TestFixtures
   ( payloadMatchedStats
   , virtualGroupStats
+  , selectedColorGraph
+  , styledGraph
   ) where
 
 import           Control.Functor.Linear   hiding ((<$>), (<&>), (<*>))
@@ -29,9 +31,17 @@ payloadMatchedStats = fixtureStats payloadMatchedSpec
 virtualGroupStats :: (Int, Int, Int, Int)
 virtualGroupStats = fixtureStats virtualGroupSpec
 
+selectedColorGraph :: ViewGraph
+selectedColorGraph = buildGraph selectedColorSpec
+
+styledGraph :: ViewGraph
+styledGraph = buildGraph styledSpec
+
 fixtureStats :: MatchSpec -> (Int, Int, Int, Int)
-fixtureStats spec =
-  viewGraphStats (buildViewGraph (runProgramWith spec fixture))
+fixtureStats spec = viewGraphStats (buildGraph spec)
+
+buildGraph :: MatchSpec -> ViewGraph
+buildGraph spec = buildViewGraph (runProgramWith spec fixture)
 
 fixture :: Program ()
 fixture = do
@@ -60,3 +70,24 @@ virtualGroupSpec =
     Selected group <- node item
     style group $ do
       padding (by 8)
+
+selectedColorSpec :: MatchSpec
+selectedColorSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    style item $ do
+      width (by 80)
+      height (by 80)
+    ensure $ fill item .==. Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit)
+
+styledSpec :: MatchSpec
+styledSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    style item $ do
+      width (by 80)
+      height (by 80)
+      padding (by 4)
+      fontFamily "Inter"
+      fontWeight FontWeightBold
+      fill (Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit))

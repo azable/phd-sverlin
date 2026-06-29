@@ -6,6 +6,8 @@ import qualified Choreography.TestFixtures as ChoreographyFixtures
 import           Control.Exception         (ErrorCall, evaluate, try)
 import qualified Data.List                 as List
 import qualified Data.Map.Strict           as Map
+import qualified LinearTrace.Choreography  as Choreography
+import qualified LinearTrace.Compile       as Compile
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -48,6 +50,7 @@ main =
        , seededFixtureTests
        , problemInspectionTests
        , choreographyBridgeTests
+       , viewMaterializationTests
        ])
 
 choreographyBridgeTests :: TestTree
@@ -62,6 +65,39 @@ choreographyBridgeTests =
         $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
                 ChoreographyFixtures.virtualGroupStats
            in nodeCount @?= 3
+    ]
+
+viewMaterializationTests :: TestTree
+viewMaterializationTests =
+  testGroup
+    "view materialization"
+    [ testCase "selected color access adds a compiled color style" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 11)
+            ChoreographyFixtures.selectedColorGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.selectedColorGraph
+        assertBool
+          "expected selected fill access to compile a backgroundColor"
+          (any hasBackgroundColor (compiledRenderBlocks compiled))
+    , testCase
+        "compileSolved lowers concrete scalar text choice and color fields" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 12)
+            ChoreographyFixtures.styledGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.styledGraph
+        case compiledRenderBlocks compiled of
+          block:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle block)
+            Map.lookup "position" attrs @?= Just (Compile.StyleText "absolute")
+            Map.lookup "padding" attrs @?= Just (Compile.StylePixels 4)
+            Map.lookup "fontFamily" attrs @?= Just (Compile.StyleText "Inter")
+            Map.lookup "fontWeight" attrs @?= Just (Compile.StyleText "bold")
+            assertStyleColor "backgroundColor" attrs
+          [] -> assertFailure "expected at least one compiled render block"
     ]
 
 nativeBoundsTests :: TestTree
@@ -393,6 +429,42 @@ assertErrorContains label expected action = do
         (label ++ " error did not contain " ++ show expected ++ ": " ++ show err)
         (expected `List.isInfixOf` show err)
     Right _ -> assertFailure (label ++ " did not throw an error")
+
+assertCompileSolved ::
+     Solution -> Choreography.ViewGraph -> IO Compile.Visualization
+assertCompileSolved solution graph =
+  case Compile.compileSolved solution graph of
+    Left err       -> assertFailure err >> pure (error err)
+    Right compiled -> pure compiled
+
+compiledRenderBlocks :: Compile.Visualization -> [Compile.RenderBlock]
+compiledRenderBlocks compiled = concatMap frameBlocks (Compile.frames compiled)
+  where
+    frameBlocks frame =
+      case frame of
+        Compile.RenderFrame patches -> concatMap patchBlocks patches
+    patchBlocks patch =
+      case patch of
+        Compile.RenderCreate _ _ block -> [block]
+        Compile.RenderUpdate _ _ block -> [block]
+        Compile.RenderDestroy _ block  -> [block]
+
+hasBackgroundColor :: Compile.RenderBlock -> Bool
+hasBackgroundColor block =
+  case Map.lookup "backgroundColor" attrs of
+    Just (Compile.StyleColor _) -> True
+    _                           -> False
+  where
+    attrs = Compile.renderAttrs (Compile.renderStyle block)
+
+assertStyleColor :: String -> Map.Map String Compile.StyleValue -> Assertion
+assertStyleColor name attrs =
+  case Map.lookup name attrs of
+    Just (Compile.StyleColor value) ->
+      assertBool
+        (name ++ " should be an hsl color, got " ++ value)
+        ("hsl(" `List.isPrefixOf` value)
+    other -> assertFailure (name ++ " was not a color: " ++ show other)
 
 epsilon :: Double
 epsilon = 1e-6

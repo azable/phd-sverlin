@@ -314,10 +314,12 @@ buildMatchedViewGraph ::
   -> [[V.RenderIntent]]
   -> V.ViewGraph
 buildMatchedViewGraph spec viewSteps' builtNodes builtConstraints renderFrames =
-  let traceNodes = materializeNodesForSpec spec builtNodes
+  let traceNodes = applyAccessRequirementsForSpec spec builtNodes
       virtualNodes =
-        materializeNodesForSpec spec (virtualNodesForSpec spec traceNodes)
-      nodes = materializeNodesForSpec spec (traceNodes P.++ virtualNodes)
+        applyAccessRequirementsForSpec
+          spec
+          (virtualNodesForSpec spec traceNodes)
+      nodes = traceNodes P.++ virtualNodes
       constraints = builtConstraints P.++ matchSpecConstraints spec nodes
    in V.finalizeViewGraph nodes viewSteps' constraints renderFrames
 
@@ -490,39 +492,43 @@ valueSymmetricBridgeConstraints triple =
     (lhsComponents, deltaComponents, rhsComponents) ->
       S.symmetricBridgeComponents lhsComponents deltaComponents rhsComponents
 
-materializeNodesForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
-materializeNodesForSpec spec nodes =
+applyAccessRequirementsForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
+applyAccessRequirementsForSpec spec nodes =
   case spec of
     MatchSpec _ layoutRules _ ->
-      P.map (materializeNodeForRules layoutRules) nodes
+      P.map (applyAccessRequirementsForRules layoutRules) nodes
 
-materializeNodeForRules :: [LayoutRule] -> V.ViewNode -> V.ViewNode
-materializeNodeForRules rules node =
+applyAccessRequirementsForRules :: [LayoutRule] -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForRules rules node =
   case rules of
-    []        -> node
-    rule:rest -> materializeNodeForRules rest (materializeNodeForRule rule node)
+    [] -> node
+    rule:rest ->
+      applyAccessRequirementsForRules
+        rest
+        (applyAccessRequirementsForRule rule node)
 
-materializeNodeForRule :: LayoutRule -> V.ViewNode -> V.ViewNode
-materializeNodeForRule rule node =
+applyAccessRequirementsForRule :: LayoutRule -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForRule rule node =
   case rule of
     ValueRelationLayout _ lhs _ rhs ->
-      materializeNodeForEndpoints (lhs P.++ rhs) node
+      applyAccessRequirementsForEndpoints (lhs P.++ rhs) node
     ValueDirectedBridgeLayout _ lhs gap rhs ->
-      materializeNodeForEndpoints (lhs P.++ gap P.++ rhs) node
+      applyAccessRequirementsForEndpoints (lhs P.++ gap P.++ rhs) node
     ValueSymmetricBridgeLayout _ lhs delta rhs ->
-      materializeNodeForEndpoints (lhs P.++ delta P.++ rhs) node
+      applyAccessRequirementsForEndpoints (lhs P.++ delta P.++ rhs) node
 
-materializeNodeForEndpoints :: [ValueEndpoint] -> V.ViewNode -> V.ViewNode
-materializeNodeForEndpoints endpoints node =
+applyAccessRequirementsForEndpoints ::
+     [ValueEndpoint] -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForEndpoints endpoints node =
   case endpoints of
     [] -> node
     endpoint:rest ->
-      materializeNodeForEndpoints
+      applyAccessRequirementsForEndpoints
         rest
-        (materializeNodeForEndpoint endpoint node)
+        (applyAccessRequirementsForEndpoint endpoint node)
 
-materializeNodeForEndpoint :: ValueEndpoint -> V.ViewNode -> V.ViewNode
-materializeNodeForEndpoint endpoint node =
+applyAccessRequirementsForEndpoint :: ValueEndpoint -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForEndpoint endpoint node =
   case endpoint of
     RawValueEndpoint _ -> node
     SelectionValueEndpoint selection access ->

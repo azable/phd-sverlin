@@ -93,6 +93,7 @@ library
         LinearTrace.View.Access
         LinearTrace.View.Build
         LinearTrace.View.Graph
+        LinearTrace.View.Materialize
         LinearTrace.View.Patch
         LinearTrace.View.Primitives
         LinearTrace.View.Solve

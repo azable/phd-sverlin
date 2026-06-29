@@ -18,14 +18,14 @@ module LinearTrace.View.Primitives
   , ColorExpr
   , Bounds(..)
   , BoundsExpr
-  , MaterializedBounds
+  , ConcreteBounds
   , boundsTop
   , boundsLeft
   , boundsWidth
   , boundsHeight
   , HasBounds(..)
   , Hsl(..)
-  , MaterializedHsl
+  , ConcreteHsl
   , unitRange
   , angleRange
   , global
@@ -98,7 +98,7 @@ data Bounds a =
 
 type BoundsExpr = Bounds Layout
 
-type MaterializedBounds = Bounds Double
+type ConcreteBounds = Bounds Double
 
 boundsTop :: Bounds a -> a
 boundsTop bounds =
@@ -158,4 +158,4 @@ data Hsl hue unit = Hsl
   , lightness  :: unit
   } deriving (Eq, Show, Functor, Foldable, Traversable)
 
-type MaterializedHsl = Hsl Double Double
+type ConcreteHsl = Hsl Double Double
