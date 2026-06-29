@@ -142,7 +142,6 @@ function element(content: string): RenderElement {
   return {
     blockId: 1,
     nodeKey: 'block',
-    pieceKey: 'body',
     kind: 'Value',
     content,
     style: {

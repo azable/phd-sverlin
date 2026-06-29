@@ -15,7 +15,7 @@ module LinearTrace.View.Build
   , -- * Graph construction
     -- | Applies node patches and finalizes accumulated output into a view
     -- graph with canvas/style constraints.
-    patchedBlockOutput
+    patchedNodeOutput
   , finalizeViewGraph
   ) where
 
@@ -125,24 +125,24 @@ isRemovalIntent intent =
     RenderRemove _ -> P.True
     _              -> P.False
 
-patchedBlockOutput :: Patch.NodePatch -> BlockView tag -> ViewOutput
-patchedBlockOutput patch block0 =
-  let block =
-        block0
-          { blockStyle = Patch.nodePatchStyleUpdate patch (blockStyle block0)
-          , blockContent =
+patchedNodeOutput :: Patch.NodePatch -> Node tag -> ViewOutput
+patchedNodeOutput patch node0 =
+  let node =
+        node0
+          { nodeStyle = Patch.nodePatchStyleUpdate patch (nodeStyle node0)
+          , nodeContent =
               case Patch.nodePatchContent patch of
-                Nothing      -> blockContent block0
+                Nothing      -> nodeContent node0
                 Just content -> content
           }
       constraints =
-        styleConstraints (blockStyle block)
-          P.++ [ right block S.@<=@ canvasWidth defaultViewEnv
-               , bottom block S.@<=@ canvasHeight defaultViewEnv
+        styleConstraints (nodeStyle node)
+          P.++ [ right node S.@<=@ canvasWidth defaultViewEnv
+               , bottom node S.@<=@ canvasHeight defaultViewEnv
                ]
-          P.++ Patch.patchGeometryConstraints patch block
+          P.++ Patch.patchGeometryConstraints patch node
    in P.mempty
-        {emittedNodes = [BlockViewNode block], emittedConstraints = constraints}
+        {emittedNodes = [ViewNode node], emittedConstraints = constraints}
 
 finalizeViewGraph ::
      [ViewNode]
@@ -152,7 +152,7 @@ finalizeViewGraph ::
   -> [[RenderIntent]]
   -> ViewGraph
 finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderFrames =
-  let virtualConstraints = P.concatMap virtualNodeConstraints nodes
+  let compoundConstraints = P.concatMap compoundNodeConstraints nodes
       -- Block styles are first registered while building trace steps. Layout
       -- rules can later require optional style fields, so collect style
       -- constraints again after requirements are applied.
@@ -165,9 +165,9 @@ finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderF
         baseConstraints
           P.++ nodeStyleConstraints
           P.++ nodeRangeConstraints
-          P.++ virtualConstraints
+          P.++ compoundConstraints
       choiceConstraints = baseChoiceConstraints P.++ nodeStyleChoiceConstraints
-      frames = addVirtualRenderFrames nodes renderFrames
+      frames = addCompoundRenderFrames nodes renderFrames
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
@@ -176,121 +176,117 @@ finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderF
         , viewRenderFrames = frames
         }
 
-virtualNodeConstraints :: ViewNode -> [Constraint]
-virtualNodeConstraints node =
-  case node of
-    BlockViewNode _ -> []
-    VirtualViewNode virtual ->
-      virtualCanvasConstraints virtual
-        P.++ virtualFitConstraints virtual
-        P.++ virtualConstraints virtual
+compoundNodeConstraints :: ViewNode -> [Constraint]
+compoundNodeConstraints wrapped =
+  case wrapped of
+    ViewNode node ->
+      nodeConstraints node P.++ structureConstraints node (nodeStructure node)
 
-virtualCanvasConstraints :: VirtualView tag -> [Constraint]
-virtualCanvasConstraints virtual =
-  [ right virtual S.@<=@ canvasWidth defaultViewEnv
-  , bottom virtual S.@<=@ canvasHeight defaultViewEnv
+structureConstraints :: Node tag -> NodeStructure -> [Constraint]
+structureConstraints node structure =
+  case structure of
+    LeafNode -> []
+    CompoundNode ShrinkWrapChildren children ->
+      compoundCanvasConstraints node P.++ compoundFitConstraints node children
+
+compoundCanvasConstraints :: Node tag -> [Constraint]
+compoundCanvasConstraints node =
+  [ right node S.@<=@ canvasWidth defaultViewEnv
+  , bottom node S.@<=@ canvasHeight defaultViewEnv
   ]
 
-virtualFitConstraints :: VirtualView tag -> [Constraint]
-virtualFitConstraints virtual =
-  case virtualChildren virtual of
-    []       -> []
-    [child]  -> virtualExactFitConstraints virtual child
-    children -> virtualTightFitConstraints virtual children
+compoundFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
+compoundFitConstraints node children =
+  case children of
+    []      -> []
+    [child] -> compoundExactFitConstraints node child
+    _       -> compoundTightFitConstraints node children
 
-virtualExactFitConstraints :: VirtualView tag -> AnyBlockView -> [Constraint]
-virtualExactFitConstraints virtual child =
-  [ left virtual S.@==@ (anyBlockLeft child S.@-@ virtualPadding virtual)
-  , top virtual S.@==@ (anyBlockTop child S.@-@ virtualPadding virtual)
-  , right virtual S.@==@ (anyBlockRight child S.@+@ virtualPadding virtual)
-  , bottom virtual S.@==@ (anyBlockBottom child S.@+@ virtualPadding virtual)
+compoundExactFitConstraints :: Node tag -> NodeChild -> [Constraint]
+compoundExactFitConstraints node child =
+  [ left node S.@==@ (nodeChildLeft child S.@-@ compoundPadding node)
+  , top node S.@==@ (nodeChildTop child S.@-@ compoundPadding node)
+  , right node S.@==@ (nodeChildRight child S.@+@ compoundPadding node)
+  , bottom node S.@==@ (nodeChildBottom child S.@+@ compoundPadding node)
   ]
 
-virtualTightFitConstraints :: VirtualView tag -> [AnyBlockView] -> [Constraint]
-virtualTightFitConstraints virtual children =
+compoundTightFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
+compoundTightFitConstraints node children =
   case children of
     [] -> []
     child:rest ->
       let allChildren = child : rest
-       in [ left virtual
-              S.@==@ (minChildEdge anyBlockLeft allChildren
-                        S.@-@ virtualPadding virtual)
-          , top virtual
-              S.@==@ (minChildEdge anyBlockTop allChildren
-                        S.@-@ virtualPadding virtual)
-          , right virtual
-              S.@==@ (maxChildEdge anyBlockRight allChildren
-                        S.@+@ virtualPadding virtual)
-          , bottom virtual
-              S.@==@ (maxChildEdge anyBlockBottom allChildren
-                        S.@+@ virtualPadding virtual)
+       in [ left node
+              S.@==@ (minChildEdge nodeChildLeft allChildren
+                        S.@-@ compoundPadding node)
+          , top node
+              S.@==@ (minChildEdge nodeChildTop allChildren
+                        S.@-@ compoundPadding node)
+          , right node
+              S.@==@ (maxChildEdge nodeChildRight allChildren
+                        S.@+@ compoundPadding node)
+          , bottom node
+              S.@==@ (maxChildEdge nodeChildBottom allChildren
+                        S.@+@ compoundPadding node)
           ]
 
-virtualPadding :: VirtualView tag -> LayoutExpr
-virtualPadding virtual = padding (virtualStyle virtual)
+compoundPadding :: Node tag -> LayoutExpr
+compoundPadding node = padding (nodeStyle node)
 
-minChildEdge :: (AnyBlockView -> LayoutExpr) -> [AnyBlockView] -> LayoutExpr
+nodeChildLeft :: NodeChild -> LayoutExpr
+nodeChildLeft child = left (nodeChildBounds child)
+
+nodeChildTop :: NodeChild -> LayoutExpr
+nodeChildTop child = top (nodeChildBounds child)
+
+nodeChildRight :: NodeChild -> LayoutExpr
+nodeChildRight child = right (nodeChildBounds child)
+
+nodeChildBottom :: NodeChild -> LayoutExpr
+nodeChildBottom child = bottom (nodeChildBounds child)
+
+minChildEdge :: (NodeChild -> LayoutExpr) -> [NodeChild] -> LayoutExpr
 minChildEdge edge children =
   case children of
-    []         -> P.error "Cannot shrinkwrap an empty virtual node."
+    []         -> P.error "Cannot shrinkwrap an empty compound node."
     child:rest -> foldChildEdge S.minExpr edge (edge child) rest
 
-maxChildEdge :: (AnyBlockView -> LayoutExpr) -> [AnyBlockView] -> LayoutExpr
+maxChildEdge :: (NodeChild -> LayoutExpr) -> [NodeChild] -> LayoutExpr
 maxChildEdge edge children =
   case children of
-    []         -> P.error "Cannot shrinkwrap an empty virtual node."
+    []         -> P.error "Cannot shrinkwrap an empty compound node."
     child:rest -> foldChildEdge S.maxExpr edge (edge child) rest
 
 foldChildEdge ::
      (LayoutExpr -> LayoutExpr -> LayoutExpr)
-  -> (AnyBlockView -> LayoutExpr)
+  -> (NodeChild -> LayoutExpr)
   -> LayoutExpr
-  -> [AnyBlockView]
+  -> [NodeChild]
   -> LayoutExpr
 foldChildEdge combine edge current children =
   case children of
     []         -> current
     child:rest -> foldChildEdge combine edge (combine current (edge child)) rest
 
-anyBlockLeft :: AnyBlockView -> LayoutExpr
-anyBlockLeft anyBlock =
-  case anyBlock of
-    AnyBlockView child -> left child
-
-anyBlockTop :: AnyBlockView -> LayoutExpr
-anyBlockTop anyBlock =
-  case anyBlock of
-    AnyBlockView child -> top child
-
-anyBlockRight :: AnyBlockView -> LayoutExpr
-anyBlockRight anyBlock =
-  case anyBlock of
-    AnyBlockView child -> right child
-
-anyBlockBottom :: AnyBlockView -> LayoutExpr
-anyBlockBottom anyBlock =
-  case anyBlock of
-    AnyBlockView child -> bottom child
-
 viewNodeStyleConstraints :: ViewNode -> [Constraint]
 viewNodeStyleConstraints node =
   case node of
-    BlockViewNode block     -> styleConstraints (blockStyle block)
-    VirtualViewNode virtual -> styleConstraints (virtualStyle virtual)
+    ViewNode viewNode -> styleConstraints (nodeStyle viewNode)
 
 viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
 viewNodeStyleChoiceConstraints node =
   case node of
-    BlockViewNode block     -> styleCategoryConstraints (blockStyle block)
-    VirtualViewNode virtual -> styleCategoryConstraints (virtualStyle virtual)
+    ViewNode viewNode -> styleCategoryConstraints (nodeStyle viewNode)
 
 viewNodeRangeConstraints :: ViewEnv -> ViewNode -> [Constraint]
 viewNodeRangeConstraints env node =
   case node of
-    BlockViewNode block ->
-      blockBoundsRangeConstraints env (styleBounds (blockStyle block))
-    VirtualViewNode virtual ->
-      virtualBoundsRangeConstraints env (styleBounds (virtualStyle virtual))
+    ViewNode viewNode ->
+      case nodeStructure viewNode of
+        LeafNode ->
+          blockBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
+        CompoundNode _ _ ->
+          compoundBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
 
 boundsRangeConstraints ::
      ViewEnv
@@ -325,8 +321,8 @@ blockBoundsRangeConstraints env =
     (P.max 20 (canvasWidthValue env P./ 2))
     (P.max 20 (canvasHeightValue env P./ 2))
 
-virtualBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
-virtualBoundsRangeConstraints env =
+compoundBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
+compoundBoundsRangeConstraints env =
   boundsRangeConstraints
     env
     minimumLayoutExtent
@@ -334,68 +330,72 @@ virtualBoundsRangeConstraints env =
     (canvasWidthValue env)
     (canvasHeightValue env)
 
-addVirtualRenderFrames :: [ViewNode] -> [[RenderIntent]] -> [[RenderIntent]]
-addVirtualRenderFrames nodes frames =
-  let lifecycles = virtualLifecycles nodes
+addCompoundRenderFrames :: [ViewNode] -> [[RenderIntent]] -> [[RenderIntent]]
+addCompoundRenderFrames nodes frames =
+  let lifecycles = compoundLifecycles nodes
    in case lifecycles of
         [] -> frames
-        _  -> addVirtualLifecycleFrames lifecycles frames
+        _  -> addCompoundLifecycleFrames lifecycles frames
 
-data VirtualLifecycle =
-  VirtualLifecycle AnyVirtualView [ViewId] [ViewId]
+data CompoundLifecycle =
+  CompoundLifecycle ViewNode [ViewId] [ViewId]
 
-virtualLifecycles :: [ViewNode] -> [VirtualLifecycle]
-virtualLifecycles nodes =
-  [ VirtualLifecycle (AnyVirtualView virtual) (virtualChildIds virtual) []
-  | VirtualViewNode virtual <- nodes
-  ]
+compoundLifecycles :: [ViewNode] -> [CompoundLifecycle]
+compoundLifecycles nodes =
+  case nodes of
+    [] -> []
+    wrapped@(ViewNode node):rest ->
+      case nodeStructure node of
+        CompoundNode _ children ->
+          CompoundLifecycle wrapped (compoundChildIds children) []
+            : compoundLifecycles rest
+        LeafNode -> compoundLifecycles rest
 
-virtualChildIds :: VirtualView tag -> [ViewId]
-virtualChildIds virtual =
-  [viewRefId (blockRef child) | AnyBlockView child <- virtualChildren virtual]
+compoundChildIds :: [NodeChild] -> [ViewId]
+compoundChildIds = P.map nodeChildId
 
-addVirtualLifecycleFrames ::
-     [VirtualLifecycle] -> [[RenderIntent]] -> [[RenderIntent]]
-addVirtualLifecycleFrames lifecycles frames =
+addCompoundLifecycleFrames ::
+     [CompoundLifecycle] -> [[RenderIntent]] -> [[RenderIntent]]
+addCompoundLifecycleFrames lifecycles frames =
   case frames of
     [] -> []
     frame:rest ->
-      let (nextLifecycles, virtualIntents) =
-            updateVirtualLifecycles frame lifecycles
-       in (frame P.++ virtualIntents)
-            : addVirtualLifecycleFrames nextLifecycles rest
+      let (nextLifecycles, compoundIntents) =
+            updateCompoundLifecycles frame lifecycles
+       in (frame P.++ compoundIntents)
+            : addCompoundLifecycleFrames nextLifecycles rest
 
-updateVirtualLifecycles ::
+updateCompoundLifecycles ::
      [RenderIntent]
-  -> [VirtualLifecycle]
-  -> ([VirtualLifecycle], [RenderIntent])
-updateVirtualLifecycles frame lifecycles =
+  -> [CompoundLifecycle]
+  -> ([CompoundLifecycle], [RenderIntent])
+updateCompoundLifecycles frame lifecycles =
   case lifecycles of
     [] -> ([], [])
     lifecycle:rest ->
-      let (nextLifecycle, intents) = updateVirtualLifecycle frame lifecycle
-          (nextRest, restIntents) = updateVirtualLifecycles frame rest
+      let (nextLifecycle, intents) = updateCompoundLifecycle frame lifecycle
+          (nextRest, restIntents) = updateCompoundLifecycles frame rest
        in (nextLifecycle : nextRest, intents P.++ restIntents)
 
-updateVirtualLifecycle ::
-     [RenderIntent] -> VirtualLifecycle -> (VirtualLifecycle, [RenderIntent])
-updateVirtualLifecycle frame lifecycle =
+updateCompoundLifecycle ::
+     [RenderIntent] -> CompoundLifecycle -> (CompoundLifecycle, [RenderIntent])
+updateCompoundLifecycle frame lifecycle =
   case lifecycle of
-    VirtualLifecycle virtual childIds liveIds ->
+    CompoundLifecycle node childIds liveIds ->
       let wasLive = P.not (P.null liveIds)
           nextLiveIds =
-            P.foldl (applyVirtualRenderIntent childIds) liveIds frame
+            P.foldl (applyCompoundRenderIntent childIds) liveIds frame
           isLive = P.not (P.null nextLiveIds)
-          nextLifecycle = VirtualLifecycle virtual childIds nextLiveIds
+          nextLifecycle = CompoundLifecycle node childIds nextLiveIds
           lifecycleIntents =
             case (wasLive, isLive) of
-              (P.False, P.True) -> [virtualFreshIntent virtual]
-              (P.True, P.False) -> [virtualRemoveIntent virtual]
+              (P.False, P.True) -> [compoundFreshIntent node]
+              (P.True, P.False) -> [compoundRemoveIntent node]
               _                 -> []
        in (nextLifecycle, lifecycleIntents)
 
-applyVirtualRenderIntent :: [ViewId] -> [ViewId] -> RenderIntent -> [ViewId]
-applyVirtualRenderIntent childIds liveIds intent =
+applyCompoundRenderIntent :: [ViewId] -> [ViewId] -> RenderIntent -> [ViewId]
+applyCompoundRenderIntent childIds liveIds intent =
   case intent of
     RenderFresh ref -> addLiveChild childIds (viewRefId ref) liveIds
     RenderFork _ ref -> addLiveChild childIds (viewRefId ref) liveIds
@@ -418,15 +418,15 @@ addLiveChild childIds blockId liveIds =
 removeLiveChild :: ViewId -> [ViewId] -> [ViewId]
 removeLiveChild blockId = P.filter (P./= blockId)
 
-virtualFreshIntent :: AnyVirtualView -> RenderIntent
-virtualFreshIntent anyVirtual =
-  case anyVirtual of
-    AnyVirtualView virtual -> RenderFresh (virtualRef virtual)
+compoundFreshIntent :: ViewNode -> RenderIntent
+compoundFreshIntent wrapped =
+  case wrapped of
+    ViewNode node -> RenderFresh (nodeRef node)
 
-virtualRemoveIntent :: AnyVirtualView -> RenderIntent
-virtualRemoveIntent anyVirtual =
-  case anyVirtual of
-    AnyVirtualView virtual -> RenderRemove (virtualRef virtual)
+compoundRemoveIntent :: ViewNode -> RenderIntent
+compoundRemoveIntent wrapped =
+  case wrapped of
+    ViewNode node -> RenderRemove (nodeRef node)
 
 withImplicitInitialFrame :: [[RenderIntent]] -> [[RenderIntent]]
 withImplicitInitialFrame frames =

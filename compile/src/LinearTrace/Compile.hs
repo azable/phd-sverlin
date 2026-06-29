@@ -52,15 +52,10 @@ newtype RenderId =
   RenderId String
   deriving (Eq, Ord, Show)
 
-freshRenderIdForPiece :: RenderBlock -> RenderId
-freshRenderIdForPiece block =
+freshRenderIdForBlock :: RenderBlock -> RenderId
+freshRenderIdForBlock block =
   RenderId
-    ("lineage."
-       ++ show (renderBlockId block)
-       ++ "."
-       ++ renderNodeKey block
-       ++ "."
-       ++ renderPieceKey block)
+    ("lineage." ++ show (renderBlockId block) ++ "." ++ renderNodeKey block)
 
 --------------------------------------------------------------------------------
 -- Compiled CSS style
@@ -93,12 +88,11 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId  :: Int
-  , renderNodeKey  :: String
-  , renderPieceKey :: String
-  , renderContent  :: String
-  , renderKind     :: String
-  , renderStyle    :: RenderStyle
+  { renderBlockId :: Int
+  , renderNodeKey :: String
+  , renderContent :: String
+  , renderKind    :: String
+  , renderStyle   :: RenderStyle
   } deriving (Eq, Show)
 
 data RenderOrigin = RenderOrigin
@@ -144,9 +138,7 @@ emptyCompileState = CompileState {lineageByBlock = Map.empty}
 
 type CompileM = StateT CompileState (Either String)
 
-type RenderBlockKey = (Int, String, String)
-
-type RenderPieceKey = (String, String)
+type RenderBlockKey = (Int, String)
 
 --------------------------------------------------------------------------------
 -- Public compiler
@@ -391,7 +383,7 @@ forkRef blocksById sourceRef targetRef = do
 
 createBlock :: RenderBlock -> CompileM RenderPatch
 createBlock block = do
-  let renderId = freshRenderIdForPiece block
+  let renderId = freshRenderIdForBlock block
   modify
     (\st ->
        st
@@ -419,7 +411,7 @@ continueBlocks sourceBlocks targetBlocks = do
 
 continueTarget :: [RenderBlock] -> RenderBlock -> CompileM RenderPatch
 continueTarget sourceBlocks targetBlock =
-  case findMatchingPiece targetBlock sourceBlocks of
+  case findMatchingBlock targetBlock sourceBlocks of
     Just sourceBlock -> do
       renderId <- requireLineage sourceBlock
       modify
@@ -436,9 +428,9 @@ continueTarget sourceBlocks targetBlock =
 
 forkBlock :: [RenderBlock] -> RenderBlock -> CompileM RenderPatch
 forkBlock sourceBlocks targetBlock = do
-  let targetRenderId = freshRenderIdForPiece targetBlock
+  let targetRenderId = freshRenderIdForBlock targetBlock
   origin <-
-    case findMatchingPiece targetBlock sourceBlocks of
+    case findMatchingBlock targetBlock sourceBlocks of
       Nothing -> pure Nothing
       Just sourceBlock -> do
         sourceRenderId <- requireLineage sourceBlock
@@ -458,36 +450,26 @@ forkBlock sourceBlocks targetBlock = do
 -- Lineage lookup
 --------------------------------------------------------------------------------
 renderBlockKey :: RenderBlock -> RenderBlockKey
-renderBlockKey block =
-  (renderBlockId block, renderNodeKey block, renderPieceKey block)
-
-renderPieceIdentity :: RenderBlock -> RenderPieceKey
-renderPieceIdentity block = (renderNodeKey block, renderPieceKey block)
+renderBlockKey block = (renderBlockId block, renderNodeKey block)
 
 renderBlockKeyLabel :: RenderBlock -> String
 renderBlockKeyLabel block =
-  "B"
-    ++ show (renderBlockId block)
-    ++ "."
-    ++ renderNodeKey block
-    ++ "."
-    ++ renderPieceKey block
+  "B" ++ show (renderBlockId block) ++ "." ++ renderNodeKey block
 
-findMatchingPiece :: RenderBlock -> [RenderBlock] -> Maybe RenderBlock
-findMatchingPiece targetBlock sourceBlocks =
+findMatchingBlock :: RenderBlock -> [RenderBlock] -> Maybe RenderBlock
+findMatchingBlock targetBlock sourceBlocks =
   case sourceBlocks of
     [] -> Nothing
     sourceBlock:rest ->
-      if renderPieceIdentity sourceBlock == renderPieceIdentity targetBlock
+      if renderNodeKey sourceBlock == renderNodeKey targetBlock
         then Just sourceBlock
-        else findMatchingPiece targetBlock rest
+        else findMatchingBlock targetBlock rest
 
 sourceOnlyBlocks :: [RenderBlock] -> [RenderBlock] -> [RenderBlock]
 sourceOnlyBlocks sourceBlocks targetBlocks =
   filter
     (\sourceBlock ->
-       renderPieceIdentity sourceBlock
-         `notElem` map renderPieceIdentity targetBlocks)
+       renderNodeKey sourceBlock `notElem` map renderNodeKey targetBlocks)
     sourceBlocks
 
 requireLineage :: RenderBlock -> CompileM RenderId
@@ -515,30 +497,16 @@ insertConcreteNode blocks node =
 compileConcreteViewNode :: VM.ConcreteViewNode -> RenderBlock
 compileConcreteViewNode node =
   case node of
-    VM.ConcreteBlockViewNode block     -> compileConcreteBlock block
-    VM.ConcreteVirtualViewNode virtual -> compileConcreteVirtual virtual
+    VM.ConcreteViewNode concrete -> compileConcreteNode concrete
 
-compileConcreteBlock :: VM.ConcreteBlockView tag -> RenderBlock
-compileConcreteBlock block =
+compileConcreteNode :: VM.ConcreteNode tag -> RenderBlock
+compileConcreteNode node =
   RenderBlock
-    { renderBlockId = blockIdOfRef (VM.concreteBlockRef block)
-    , renderNodeKey = VM.concreteBlockNodeKey block
-    , renderPieceKey = VM.concreteBlockPieceKey block
-    , renderContent = VM.concreteBlockContent block
-    , renderKind = payloadViewKind (VM.concreteBlockLabel block)
-    , renderStyle = compileConcreteStyle CssTarget (VM.concreteBlockStyle block)
-    }
-
-compileConcreteVirtual :: VM.ConcreteVirtualView tag -> RenderBlock
-compileConcreteVirtual virtual =
-  RenderBlock
-    { renderBlockId = blockIdOfRef (VM.concreteVirtualRef virtual)
-    , renderNodeKey = VM.concreteVirtualNodeKey virtual
-    , renderPieceKey = VM.concreteVirtualPieceKey virtual
-    , renderContent = VM.concreteVirtualContent virtual
-    , renderKind = payloadViewKind (VM.concreteVirtualLabel virtual)
-    , renderStyle =
-        compileConcreteStyle CssTarget (VM.concreteVirtualStyle virtual)
+    { renderBlockId = blockIdOfRef (VM.concreteNodeRef node)
+    , renderNodeKey = VM.concreteNodeKey node
+    , renderContent = VM.concreteNodeContent node
+    , renderKind = payloadViewKind (VM.concreteNodeLabel node)
+    , renderStyle = compileConcreteStyle CssTarget (VM.concreteNodeStyle node)
     }
 
 compileConcreteStyle :: CssTarget -> VM.ConcreteStyle -> RenderStyle
@@ -677,7 +645,6 @@ instance ToJSON RenderBlock where
     object
       [ "blockId" .= renderBlockId block
       , "nodeKey" .= renderNodeKey block
-      , "pieceKey" .= renderPieceKey block
       , "kind" .= renderKind block
       , "content" .= renderContent block
       , "style" .= renderStyle block

@@ -240,26 +240,23 @@ viewNodesBox nodes = spacedVcat (map viewNodeBox nodes)
 viewNodeBox :: V.ViewNode -> Box.Box
 viewNodeBox node =
   case node of
-    V.BlockViewNode block -> blockViewBox block
-    V.VirtualViewNode _   -> Box.text "virtual node"
+    V.ViewNode viewNode -> nodeBox viewNode
 
-blockViewBox :: V.BlockView tag -> Box.Box
-blockViewBox block =
+nodeBox :: V.Node tag -> Box.Box
+nodeBox node =
   tightVcat
     [ indentBox 2
         $ rowBox
-            [ fieldBox
-                blockListRefWidth
-                (renderViewRefPlain (V.blockViewRef block))
-            , Box.text (renderViewLabel (V.blockViewLabel block))
+            [ fieldBox blockListRefWidth (renderViewRefPlain (V.nodeRef node))
+            , Box.text (renderViewLabel (V.nodeLabel node))
             ]
-    , blockStyleBox block
+    , nodeStyleBox node
     ]
 
-blockStyleBox :: V.BlockView tag -> Box.Box
-blockStyleBox block =
+nodeStyleBox :: V.Node tag -> Box.Box
+nodeStyleBox node =
   stepSectionBox "style"
-    $ tightVcat (V.mapBlockViewStyleExprLeaves styleFieldBox block)
+    $ tightVcat (V.mapNodeStyleExprLeaves styleFieldBox node)
 
 styleFieldBox :: String -> S.Expr ty -> Box.Box
 styleFieldBox name expr =
@@ -388,14 +385,13 @@ stepSolutionBoxes solution nodes _constraints =
 solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
 solveViewNodeExprs solution node =
   case node of
-    V.BlockViewNode block -> solveBlockViewExprs solution block
-    V.VirtualViewNode _   -> []
+    V.ViewNode viewNode -> solveNodeExprs solution viewNode
 
-solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
-solveBlockViewExprs solution block =
-  let blockName = renderViewRefPlain (V.blockViewRef block)
+solveNodeExprs :: S.Solution -> V.Node tag -> [SolvedExpr]
+solveNodeExprs solution node =
+  let blockName = renderViewRefPlain (V.nodeRef node)
    in [ SolvedExpr (blockName ++ "." ++ name) value
-      | (name, value) <- V.solvedBlockViewExprs solution block
+      | (name, value) <- V.solvedNodeExprs solution node
       ]
 
 dedupeSolvedExprs :: [SolvedExpr] -> [SolvedExpr]
@@ -446,12 +442,11 @@ stepViewNodeBoxes nodes =
 indentedViewNodeBox :: V.ViewNode -> Box.Box
 indentedViewNodeBox node =
   case node of
-    V.BlockViewNode block ->
+    V.ViewNode viewNode ->
       rowBox
-        [ Box.text (renderViewRefPlain (V.blockViewRef block))
-        , Box.text (renderViewLabel (V.blockViewLabel block))
+        [ Box.text (renderViewRefPlain (V.nodeRef viewNode))
+        , Box.text (renderViewLabel (V.nodeLabel viewNode))
         ]
-    V.VirtualViewNode _ -> Box.text "virtual node"
 
 --------------------------------------------------------------------------------
 -- Steps

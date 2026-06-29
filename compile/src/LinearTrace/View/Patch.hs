@@ -7,8 +7,8 @@ module LinearTrace.View.Patch
     -- it. Choreography layout combinators construct these.
     LayoutPin(..)
   , -- * Node patches
-    -- | Content, style, and geometry updates for a selected block or virtual
-    -- node. Later patches win when specs are appended.
+    -- | Content, style, and geometry updates for a selected view node. Later
+    -- patches win when specs are appended.
     NodePatch(..)
   , emptyNodePatch
   , appendNodePatch

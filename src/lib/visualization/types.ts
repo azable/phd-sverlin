@@ -5,7 +5,6 @@ export type RenderStyle = Record<string, CssValue>;
 export type RenderElement = {
   blockId: number;
   nodeKey: string;
-  pieceKey: string;
   kind: string;
   content: string;
   style: RenderStyle;

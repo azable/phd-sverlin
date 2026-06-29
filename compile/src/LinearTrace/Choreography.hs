@@ -223,7 +223,6 @@ import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         MatchSpec,
                                                         NodeSelection (..),
                                                         ValueEndpoint,
-                                                        blockViewOfEventBlock,
                                                         buildMatchedViewGraph,
                                                         emptyMatchSpec,
                                                         matchAnyQueryNode,
@@ -238,7 +237,8 @@ import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         rawCategoryEndpoint,
                                                         rawValueEndpoint,
                                                         selectionCategoryEndpoint,
-                                                        selectionValueEndpoint)
+                                                        selectionValueEndpoint,
+                                                        traceNodeOfEventBlock)
 import           LinearTrace.Choreography.Query        (MatchBinding (..),
                                                         MatchBindings,
                                                         PayloadPattern, Query,
@@ -1739,9 +1739,9 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceCreate eventBlock -> do
-              let viewBlock = blockViewOfEventBlock eventBlock
+              let viewNode = traceNodeOfEventBlock eventBlock
               appendMatchedBlock eventBlock
-              appendRenderIntent (V.RenderFresh (V.blockViewRef viewBlock))
+              appendRenderIntent (V.RenderFresh (V.nodeRef viewNode))
               return block
     UseProgram block -> do
       case unsafeUr block of
@@ -1750,8 +1750,8 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceUse eventBlock -> do
-              let viewBlock = blockViewOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              let viewNode = traceNodeOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
               return usedPayload
     CopyProgram facts block -> do
       case unsafeUr block of
@@ -1761,13 +1761,11 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceCopy originalEvent copyEvent -> do
-              let originalBlock = blockViewOfEventBlock originalEvent
-              let copyBlock = blockViewOfEventBlock copyEvent
+              let originalNode = traceNodeOfEventBlock originalEvent
+              let copyNode = traceNodeOfEventBlock copyEvent
               appendMatchedBlock copyEvent
               appendRenderIntent
-                (V.RenderFork
-                   (V.blockViewRef originalBlock)
-                   (V.blockViewRef copyBlock))
+                (V.RenderFork (V.nodeRef originalNode) (V.nodeRef copyNode))
               return (original, copy')
     ComputeProgram facts selectFacts computePayload -> do
       case unsafeUr computePayload of
@@ -1777,9 +1775,9 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceCompute eventBlock -> do
-              let viewBlock = blockViewOfEventBlock eventBlock
+              let viewNode = traceNodeOfEventBlock eventBlock
               appendMatchedBlock eventBlock
-              appendRenderIntent (V.RenderFresh (V.blockViewRef viewBlock))
+              appendRenderIntent (V.RenderFresh (V.nodeRef viewNode))
               return block
     ReplaceProgram oldBlock incomingBlock -> do
       case unsafeUr oldBlock of
@@ -1791,16 +1789,13 @@ interpretProgram program =
               event <- recordExplainEvent explainToken
               case event of
                 E.TraceReplace oldEvent incomingEvent outputEvent -> do
-                  let oldView = blockViewOfEventBlock oldEvent
-                  let incomingView = blockViewOfEventBlock incomingEvent
-                  let outputView = blockViewOfEventBlock outputEvent
+                  let oldView = traceNodeOfEventBlock oldEvent
+                  let incomingView = traceNodeOfEventBlock incomingEvent
+                  let outputView = traceNodeOfEventBlock outputEvent
                   appendMatchedBlock outputEvent
                   appendRenderIntent
-                    (V.RenderContinue
-                       (V.blockViewRef oldView)
-                       (V.blockViewRef outputView))
-                  appendRenderIntent
-                    (V.RenderRemove (V.blockViewRef incomingView))
+                    (V.RenderContinue (V.nodeRef oldView) (V.nodeRef outputView))
+                  appendRenderIntent (V.RenderRemove (V.nodeRef incomingView))
                   return output
     RetagProgram facts block -> do
       case unsafeUr block of
@@ -1811,13 +1806,11 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceReplace oldEvent _incomingEvent outputEvent -> do
-              let oldView = blockViewOfEventBlock oldEvent
-              let outputView = blockViewOfEventBlock outputEvent
+              let oldView = traceNodeOfEventBlock oldEvent
+              let outputView = traceNodeOfEventBlock outputEvent
               appendMatchedBlock outputEvent
               appendRenderIntent
-                (V.RenderContinue
-                   (V.blockViewRef oldView)
-                   (V.blockViewRef outputView))
+                (V.RenderContinue (V.nodeRef oldView) (V.nodeRef outputView))
               return output
     DestroyProgram block -> do
       case unsafeUr block of
@@ -1826,8 +1819,8 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceDestroy eventBlock -> do
-              let viewBlock = blockViewOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              let viewNode = traceNodeOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
               return ()
     DecideProgram predicate block -> do
       decision <-
@@ -1838,15 +1831,15 @@ interpretProgram program =
           event <- recordExplainEvent explainToken
           case event of
             E.TraceDecide eventBlock -> do
-              let viewBlock = blockViewOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              let viewNode = traceNodeOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
               return BranchTrue
         C.DecidedFalse explainToken -> do
           event <- recordExplainEvent explainToken
           case event of
             E.TraceDecide eventBlock -> do
-              let viewBlock = blockViewOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              let viewNode = traceNodeOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
               return BranchFalse
     CheckpointProgram label -> checkpointTrace label
     LoopProgram loopState body -> interpretLoop loopState body

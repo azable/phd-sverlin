@@ -12,22 +12,14 @@ module LinearTrace.View.Materialize
   , concreteFields
   , ConcreteField(..)
   , -- * Concrete view nodes
-    -- | Solved block and virtual nodes. Constructors remain hidden except for
-    -- the existential node wrapper needed by compile traversal.
-    ConcreteBlockView
-  , concreteBlockRef
-  , concreteBlockLabel
-  , concreteBlockContent
-  , concreteBlockNodeKey
-  , concreteBlockPieceKey
-  , concreteBlockStyle
-  , ConcreteVirtualView
-  , concreteVirtualRef
-  , concreteVirtualLabel
-  , concreteVirtualContent
-  , concreteVirtualNodeKey
-  , concreteVirtualPieceKey
-  , concreteVirtualStyle
+    -- | Solved view nodes. Constructors remain hidden except for the
+    -- existential node wrapper needed by compile traversal.
+    ConcreteNode
+  , concreteNodeRef
+  , concreteNodeLabel
+  , concreteNodeContent
+  , concreteNodeKey
+  , concreteNodeStyle
   , ConcreteViewNode(..)
   , -- * Concrete graph
     -- | Whole solved graph and render frames produced from a solver solution.
@@ -68,27 +60,16 @@ data ConcreteField
   | ConcreteTokenField String (Maybe String) (Maybe String)
   deriving (Eq, Show)
 
-data ConcreteBlockView tag = ConcreteBlockView
-  { concreteBlockRef      :: ViewRef tag
-  , concreteBlockLabel    :: ViewLabel
-  , concreteBlockContent  :: String
-  , concreteBlockNodeKey  :: String
-  , concreteBlockPieceKey :: String
-  , concreteBlockStyle    :: ConcreteStyle
-  }
-
-data ConcreteVirtualView tag = ConcreteVirtualView
-  { concreteVirtualRef      :: ViewRef tag
-  , concreteVirtualLabel    :: ViewLabel
-  , concreteVirtualContent  :: String
-  , concreteVirtualNodeKey  :: String
-  , concreteVirtualPieceKey :: String
-  , concreteVirtualStyle    :: ConcreteStyle
+data ConcreteNode tag = ConcreteNode
+  { concreteNodeRef     :: ViewRef tag
+  , concreteNodeLabel   :: ViewLabel
+  , concreteNodeContent :: String
+  , concreteNodeKey     :: String
+  , concreteNodeStyle   :: ConcreteStyle
   }
 
 data ConcreteViewNode where
-  ConcreteBlockViewNode :: ConcreteBlockView tag -> ConcreteViewNode
-  ConcreteVirtualViewNode :: ConcreteVirtualView tag -> ConcreteViewNode
+  ConcreteViewNode :: ConcreteNode tag -> ConcreteViewNode
 
 data ConcreteViewGraph = ConcreteViewGraph
   { concreteViewNodes        :: [ConcreteViewNode]
@@ -130,37 +111,18 @@ materializeViewGraph solution graph = do
 materializeViewNode :: Solution -> ViewNode -> Either String ConcreteViewNode
 materializeViewNode solution node =
   case node of
-    BlockViewNode block ->
-      ConcreteBlockViewNode <$> materializeBlockView solution block
-    VirtualViewNode virtual ->
-      ConcreteVirtualViewNode <$> materializeVirtualView solution virtual
+    ViewNode viewNode -> ConcreteViewNode <$> materializeNode solution viewNode
 
-materializeBlockView ::
-     Solution -> BlockView tag -> Either String (ConcreteBlockView tag)
-materializeBlockView solution block = do
-  concreteStyle <- materializeStyle solution (blockStyle block)
+materializeNode :: Solution -> Node tag -> Either String (ConcreteNode tag)
+materializeNode solution node = do
+  concreteStyle <- materializeStyle solution (nodeStyle node)
   pure
-    ConcreteBlockView
-      { concreteBlockRef = blockRef block
-      , concreteBlockLabel = blockLabel block
-      , concreteBlockContent = materializeContent (blockContent block)
-      , concreteBlockNodeKey = blockNodeKey block
-      , concreteBlockPieceKey = blockPieceKey block
-      , concreteBlockStyle = concreteStyle
-      }
-
-materializeVirtualView ::
-     Solution -> VirtualView tag -> Either String (ConcreteVirtualView tag)
-materializeVirtualView solution virtual = do
-  concreteStyle <- materializeStyle solution (virtualStyle virtual)
-  pure
-    ConcreteVirtualView
-      { concreteVirtualRef = virtualRef virtual
-      , concreteVirtualLabel = virtualLabel virtual
-      , concreteVirtualContent = materializeContent (virtualContent virtual)
-      , concreteVirtualNodeKey = virtualNodeKey virtual
-      , concreteVirtualPieceKey = virtualPieceKey virtual
-      , concreteVirtualStyle = concreteStyle
+    ConcreteNode
+      { concreteNodeRef = nodeRef node
+      , concreteNodeLabel = nodeLabel node
+      , concreteNodeContent = materializeContent (nodeContent node)
+      , concreteNodeKey = nodeKey node
+      , concreteNodeStyle = concreteStyle
       }
 
 materializeContent :: ContentMode -> String

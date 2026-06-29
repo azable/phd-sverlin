@@ -11,94 +11,97 @@ module LinearTrace.View.Graph
     -- view builder, solver, materializer, and diagnostics.
     ViewGraph(..)
   , ViewNode(..)
+  , Node(..)
+  , NodeOrigin(..)
+  , SyntheticMeta(..)
+  , NodeStructure(..)
+  , CompoundFit(..)
+  , NodeChild(..)
   , ViewStep(..)
-  , BlockView(..)
-  , VirtualView(..)
   , RenderIntent(..)
   , LayoutAttr(..)
-  , AnyBlockView(..)
-  , AnyVirtualView(..)
+  , AnyTraceNode(..)
   , AnyLayoutView(..)
   , -- * Lookups and helpers
     -- | Accessors and stable key helpers used by choreography matching,
     -- printing, and compile identity tracking.
-    blockViewRef
-  , blockViewLabel
-  , blockViewTags
-  , blockViewNodeKey
-  , blockViewPieceKey
+    traceNodeTags
+  , syntheticNodeMeta
   , defaultNodeKey
-  , defaultPieceKey
   , styleForRef
-  , styleForVirtualKey
-  , virtualBlockId
+  , styleForSyntheticKey
+  , syntheticNodeId
   , blockVarName
   , blockVarPath
-  , virtualVarName
-  , virtualVar
+  , syntheticVarName
+  , syntheticVar
+  , nodeChildFromTraceNode
   , -- * Solver diagnostics
     -- | Style expression traversal helpers used by printing to show solved
     -- view values by step.
-    mapBlockViewStyleExprLeaves
-  , solvedBlockViewExprs
-  , viewNodeBlocks
+    mapNodeStyleExprLeaves
+  , solvedNodeExprs
+  , viewTraceNodes
   ) where
 
 import           Data.Kind                   (Type)
-import           LinearTrace.View.Primitives (Bounds (..), HasBounds (..))
+import           LinearTrace.View.Primitives (Bounds (..), BoundsExpr,
+                                              HasBounds (..))
 import           LinearTrace.View.Style      (HasStyle (..), Style,
                                               mapStyleExprLeaves,
-                                              solvedStyleExprs, styleWithBounds)
-import           LinearTrace.View.Types      (ContentMode, ViewLabel, ViewRef,
-                                              ViewTags, viewRefInt)
+                                              solvedStyleExprs, styleBounds,
+                                              styleWithBounds)
+import           LinearTrace.View.Types      (ContentMode, ViewId, ViewLabel,
+                                              ViewRef, ViewTags, viewRefId,
+                                              viewRefInt)
 import qualified Prelude                     as P
 import qualified Solver                      as S
 import           Solver                      (ChoiceConstraint, Constraint,
                                               Expr, Solution, SymbolicType)
 
-data BlockView tag = BlockView
-  { blockRef      :: ViewRef tag
-  , blockLabel    :: ViewLabel
-  , blockContent  :: ContentMode
-  , blockTags     :: ViewTags
-  , blockNodeKey  :: P.String
-  , blockPieceKey :: P.String
-  , blockStyle    :: Style
+data Node tag = Node
+  { nodeRef         :: ViewRef tag
+  , nodeLabel       :: ViewLabel
+  , nodeContent     :: ContentMode
+  , nodeKey         :: P.String
+  , nodeStyle       :: Style
+  , nodeOrigin      :: NodeOrigin
+  , nodeStructure   :: NodeStructure
+  , nodeConstraints :: [Constraint]
   }
 
-instance HasBounds (BlockView tag) where
-  top block = top (blockStyle block)
-  left block = left (blockStyle block)
-  width block = width (blockStyle block)
-  height block = height (blockStyle block)
+data NodeOrigin
+  = TraceOrigin ViewTags
+  | SyntheticOrigin SyntheticMeta
 
-instance HasStyle (BlockView tag) where
-  style = blockStyle
-
-data VirtualView tag = VirtualView
-  { virtualRef         :: ViewRef tag
-  , virtualLabel       :: ViewLabel
-  , virtualContent     :: ContentMode
-  , virtualQueryKey    :: P.String
-  , virtualNodeKey     :: P.String
-  , virtualPieceKey    :: P.String
-  , virtualStyle       :: Style
-  , virtualConstraints :: [Constraint]
-  , virtualChildren    :: [AnyBlockView]
+data SyntheticMeta = SyntheticMeta
+  { syntheticKey      :: P.String
+  , syntheticQueryKey :: P.String
   }
 
-instance HasBounds (VirtualView tag) where
-  top virtual = top (virtualStyle virtual)
-  left virtual = left (virtualStyle virtual)
-  width virtual = width (virtualStyle virtual)
-  height virtual = height (virtualStyle virtual)
+data NodeStructure
+  = LeafNode
+  | CompoundNode CompoundFit [NodeChild]
 
-instance HasStyle (VirtualView tag) where
-  style = virtualStyle
+data CompoundFit =
+  ShrinkWrapChildren
+
+data NodeChild = NodeChild
+  { nodeChildId     :: ViewId
+  , nodeChildBounds :: BoundsExpr
+  }
+
+instance HasBounds (Node tag) where
+  top node = top (nodeStyle node)
+  left node = left (nodeStyle node)
+  width node = width (nodeStyle node)
+  height node = height (nodeStyle node)
+
+instance HasStyle (Node tag) where
+  style = nodeStyle
 
 data ViewNode where
-  BlockViewNode :: BlockView tag -> ViewNode
-  VirtualViewNode :: VirtualView tag -> ViewNode
+  ViewNode :: Node tag -> ViewNode
 
 data ViewStep where
   ViewStep
@@ -128,53 +131,53 @@ data LayoutAttr
   | AttrHeight
   | AttrCenterY
 
-data AnyBlockView where
-  AnyBlockView :: BlockView tag -> AnyBlockView
-
-data AnyVirtualView where
-  AnyVirtualView :: VirtualView tag -> AnyVirtualView
+data AnyTraceNode where
+  AnyTraceNode :: Node tag -> AnyTraceNode
 
 data AnyLayoutView where
-  AnyLayoutBlock :: BlockView tag -> AnyLayoutView
-  AnyLayoutVirtual :: VirtualView tag -> AnyLayoutView
+  AnyLayoutView :: Node tag -> AnyLayoutView
 
-blockViewRef :: BlockView tag -> ViewRef tag
-blockViewRef = blockRef
+traceNodeTags :: Node tag -> P.Maybe ViewTags
+traceNodeTags node =
+  case nodeOrigin node of
+    TraceOrigin tags  -> P.Just tags
+    SyntheticOrigin _ -> P.Nothing
 
-blockViewLabel :: BlockView tag -> ViewLabel
-blockViewLabel = blockLabel
+syntheticNodeMeta :: Node tag -> P.Maybe SyntheticMeta
+syntheticNodeMeta node =
+  case nodeOrigin node of
+    TraceOrigin _        -> P.Nothing
+    SyntheticOrigin meta -> P.Just meta
 
-blockViewTags :: BlockView tag -> ViewTags
-blockViewTags = blockTags
+nodeChildFromTraceNode :: AnyTraceNode -> NodeChild
+nodeChildFromTraceNode anyNode =
+  case anyNode of
+    AnyTraceNode node ->
+      NodeChild
+        { nodeChildId = viewRefId (nodeRef node)
+        , nodeChildBounds = styleBounds (nodeStyle node)
+        }
 
-blockViewNodeKey :: BlockView tag -> P.String
-blockViewNodeKey = blockNodeKey
+mapNodeStyleExprLeaves ::
+     (forall (ty :: Type). P.String -> Expr ty -> a) -> Node tag -> [a]
+mapNodeStyleExprLeaves f node = mapStyleExprLeaves f (nodeStyle node)
 
-blockViewPieceKey :: BlockView tag -> P.String
-blockViewPieceKey = blockPieceKey
+solvedNodeExprs :: Solution -> Node tag -> [(P.String, P.Double)]
+solvedNodeExprs solution node = solvedStyleExprs solution (nodeStyle node)
 
-mapBlockViewStyleExprLeaves ::
-     (forall (ty :: Type). P.String -> Expr ty -> a) -> BlockView tag -> [a]
-mapBlockViewStyleExprLeaves f block = mapStyleExprLeaves f (blockStyle block)
-
-solvedBlockViewExprs :: Solution -> BlockView tag -> [(P.String, P.Double)]
-solvedBlockViewExprs solution block =
-  solvedStyleExprs solution (blockStyle block)
-
-viewNodeBlocks :: [ViewNode] -> [AnyBlockView]
-viewNodeBlocks nodes =
+viewTraceNodes :: [ViewNode] -> [AnyTraceNode]
+viewTraceNodes nodes =
   case nodes of
     [] -> []
     node:rest ->
       case node of
-        BlockViewNode block -> AnyBlockView block : viewNodeBlocks rest
-        VirtualViewNode _   -> viewNodeBlocks rest
+        ViewNode viewNode ->
+          case nodeOrigin viewNode of
+            TraceOrigin _     -> AnyTraceNode viewNode : viewTraceNodes rest
+            SyntheticOrigin _ -> viewTraceNodes rest
 
 defaultNodeKey :: P.String
 defaultNodeKey = "block"
-
-defaultPieceKey :: P.String
-defaultPieceKey = "body"
 
 styleForRef :: ViewRef tag -> Style
 styleForRef ref = styleForBlockPath ref []
@@ -196,25 +199,25 @@ blockVarPath ::
      SymbolicType ty => ViewRef tag -> [P.String] -> P.String -> Expr ty
 blockVarPath ref path field = S.var (blockVarName ref path field)
 
-virtualBlockId :: P.String -> P.String -> P.Int
-virtualBlockId key queryKey' =
+syntheticNodeId :: P.String -> P.String -> P.Int
+syntheticNodeId key queryKey' =
   P.negate (1 P.+ positiveHash (key P.++ ":" P.++ queryKey'))
 
-styleForVirtualKey :: P.String -> P.String -> Style
-styleForVirtualKey key queryKey' =
+styleForSyntheticKey :: P.String -> P.String -> Style
+styleForSyntheticKey key queryKey' =
   styleWithBounds
     (Bounds
-       (virtualVar key queryKey' "top")
-       (virtualVar key queryKey' "left")
-       (virtualVar key queryKey' "width")
-       (virtualVar key queryKey' "height"))
+       (syntheticVar key queryKey' "top")
+       (syntheticVar key queryKey' "left")
+       (syntheticVar key queryKey' "width")
+       (syntheticVar key queryKey' "height"))
 
-virtualVarName :: P.String -> P.String -> P.String -> P.String
-virtualVarName key queryKey' field =
+syntheticVarName :: P.String -> P.String -> P.String -> P.String
+syntheticVarName key queryKey' field =
   joinPath ["V", key, safeKey queryKey', field]
 
-virtualVar :: SymbolicType ty => P.String -> P.String -> P.String -> Expr ty
-virtualVar key queryKey' field = S.var (virtualVarName key queryKey' field)
+syntheticVar :: SymbolicType ty => P.String -> P.String -> P.String -> Expr ty
+syntheticVar key queryKey' field = S.var (syntheticVarName key queryKey' field)
 
 positiveHash :: P.String -> P.Int
 positiveHash = positiveHashFrom 5381

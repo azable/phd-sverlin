@@ -159,14 +159,12 @@ categoryAccessRequirements access =
 layoutViewAttr :: LayoutAttr -> AnyLayoutView -> LayoutExpr
 layoutViewAttr attr view =
   case view of
-    AnyLayoutBlock block     -> boundsAttr attr block
-    AnyLayoutVirtual virtual -> boundsAttr attr virtual
+    AnyLayoutView node -> boundsAttr attr node
 
 layoutViewStyle :: AnyLayoutView -> Style
 layoutViewStyle view =
   case view of
-    AnyLayoutBlock block     -> blockStyle block
-    AnyLayoutVirtual virtual -> virtualStyle virtual
+    AnyLayoutView node -> nodeStyle node
 
 styleLayoutAttr :: StyleLayoutAttr -> AnyLayoutView -> LayoutExpr
 styleLayoutAttr attr view =
@@ -227,13 +225,15 @@ styleColorVar ::
      SymbolicType ty => StyleColorAttr -> AnyLayoutView -> P.String -> Expr ty
 styleColorVar color view part =
   case view of
-    AnyLayoutBlock block ->
-      blockVarPath (blockRef block) ["style", styleColorName color] part
-    AnyLayoutVirtual virtual ->
-      virtualVar
-        (virtualNodeKey virtual)
-        (virtualQueryKey virtual)
-        ("style." P.++ styleColorName color P.++ "." P.++ part)
+    AnyLayoutView node ->
+      case nodeOrigin node of
+        TraceOrigin _ ->
+          blockVarPath (nodeRef node) ["style", styleColorName color] part
+        SyntheticOrigin meta ->
+          syntheticVar
+            (syntheticKey meta)
+            (syntheticQueryKey meta)
+            ("style." P.++ styleColorName color P.++ "." P.++ part)
 
 styleColorName :: StyleColorAttr -> P.String
 styleColorName color =
@@ -275,13 +275,15 @@ styleCategoryChoice attr view =
 styleCategoryChoiceName :: StyleCategoryAttr value -> AnyLayoutView -> P.String
 styleCategoryChoiceName attr view =
   case view of
-    AnyLayoutBlock block ->
-      blockVarName (blockRef block) ["style"] (styleCategoryAccessName attr)
-    AnyLayoutVirtual virtual ->
-      virtualVarName
-        (virtualNodeKey virtual)
-        (virtualQueryKey virtual)
-        ("style." P.++ styleCategoryAccessName attr)
+    AnyLayoutView node ->
+      case nodeOrigin node of
+        TraceOrigin _ ->
+          blockVarName (nodeRef node) ["style"] (styleCategoryAccessName attr)
+        SyntheticOrigin meta ->
+          syntheticVarName
+            (syntheticKey meta)
+            (syntheticQueryKey meta)
+            ("style." P.++ styleCategoryAccessName attr)
 
 styleCategoryAccessName :: StyleCategoryAttr value -> P.String
 styleCategoryAccessName attr =
@@ -315,23 +317,14 @@ applyStyleRequirements requirements node =
 applyStyleRequirement :: StyleRequirement -> ViewNode -> ViewNode
 applyStyleRequirement requirement node =
   case node of
-    BlockViewNode block ->
-      BlockViewNode
-        block
-          { blockStyle =
+    ViewNode viewNode ->
+      ViewNode
+        viewNode
+          { nodeStyle =
               requireStyleForView
-                (AnyLayoutBlock block)
+                (AnyLayoutView viewNode)
                 requirement
-                (blockStyle block)
-          }
-    VirtualViewNode virtual ->
-      VirtualViewNode
-        virtual
-          { virtualStyle =
-              requireStyleForView
-                (AnyLayoutVirtual virtual)
-                requirement
-                (virtualStyle virtual)
+                (nodeStyle viewNode)
           }
 
 requireStyleForView :: AnyLayoutView -> StyleRequirement -> Style -> Style

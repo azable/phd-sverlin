@@ -20,29 +20,30 @@ module LinearTrace.View
   , viewTagsToList
   , ViewGraph
   , ViewNode(..)
+  , Node(..)
+  , NodeOrigin(..)
+  , SyntheticMeta(..)
+  , NodeStructure(..)
+  , CompoundFit(..)
+  , NodeChild(..)
   , ViewStep(..)
-  , BlockView(..)
-  , VirtualView(..)
-  , blockViewRef
-  , blockViewLabel
-  , blockViewTags
-  , blockViewNodeKey
-  , blockViewPieceKey
   , defaultNodeKey
-  , defaultPieceKey
   , styleForRef
-  , mapBlockViewStyleExprLeaves
-  , solvedBlockViewExprs
+  , mapNodeStyleExprLeaves
+  , solvedNodeExprs
   , RenderIntent(..)
   , ContentMode(..)
   , LayoutAttr(..)
-  , AnyBlockView(..)
+  , AnyTraceNode(..)
   , AnyLayoutView(..)
-  , viewNodeBlocks
-  , patchedBlockOutput
+  , traceNodeTags
+  , syntheticNodeMeta
+  , nodeChildFromTraceNode
+  , viewTraceNodes
+  , patchedNodeOutput
   , finalizeViewGraph
-  , styleForVirtualKey
-  , virtualBlockId
+  , styleForSyntheticKey
+  , syntheticNodeId
   , viewNodes
   , viewSteps
   , viewConstraints

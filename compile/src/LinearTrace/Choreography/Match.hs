@@ -37,7 +37,7 @@ module LinearTrace.Choreography.Match
   , -- * View graph assembly
     -- | Internal bridge from core event blocks to view nodes. Choreography is
     -- the intended caller; this is not re-exported directly to DSL users.
-    blockViewOfEventBlock
+    traceNodeOfEventBlock
   , matchedBlockOutput
   , buildMatchedViewGraph
   ) where
@@ -230,18 +230,19 @@ matchValueSymmetricBridge ::
 matchValueSymmetricBridge strength lhs delta rhs =
   MatchSpec [] [ValueSymmetricBridgeLayout strength lhs delta rhs] []
 
-blockViewOfEventBlock :: E.EventBlock tag -> V.BlockView tag
-blockViewOfEventBlock block =
+traceNodeOfEventBlock :: E.EventBlock tag -> V.Node tag
+traceNodeOfEventBlock block =
   let ref = coreViewRef (E.eventBlockRef block)
-   in V.BlockView
-        { V.blockRef = ref
-        , V.blockLabel =
-            viewLabelFromPayloadView (E.eventBlockPayloadView block)
-        , V.blockContent = V.ContentEmpty
-        , V.blockTags = viewTagsFromFacts (E.eventBlockFacts block)
-        , V.blockNodeKey = V.defaultNodeKey
-        , V.blockPieceKey = V.defaultPieceKey
-        , V.blockStyle = V.styleForRef ref
+   in V.Node
+        { V.nodeRef = ref
+        , V.nodeLabel = viewLabelFromPayloadView (E.eventBlockPayloadView block)
+        , V.nodeContent = V.ContentEmpty
+        , V.nodeKey = V.defaultNodeKey
+        , V.nodeStyle = V.styleForRef ref
+        , V.nodeOrigin =
+            V.TraceOrigin (viewTagsFromFacts (E.eventBlockFacts block))
+        , V.nodeStructure = V.LeafNode
+        , V.nodeConstraints = []
         }
 
 matchedBlockOutput ::
@@ -249,10 +250,10 @@ matchedBlockOutput ::
 matchedBlockOutput spec eventBlock =
   case spec of
     MatchSpec nodeRules _ _ ->
-      let block = blockViewOfEventBlock eventBlock
+      let node = traceNodeOfEventBlock eventBlock
        in case matchedNodePatch eventBlock nodeRules of
             Nothing    -> V.emptyViewOutput
-            Just patch -> V.patchedBlockOutput patch block
+            Just patch -> V.patchedNodeOutput patch node
 
 coreViewRef :: E.BlockRef tag -> V.ViewRef tag
 coreViewRef ref = V.syntheticViewRef (E.blockRefId ref)
@@ -564,32 +565,36 @@ matchingSelectionNodes selection nodes =
 
 selectionNodeMatches ::
      NodeSelection -> V.ViewNode -> [(V.AnyLayoutView, QueryBindings)]
-selectionNodeMatches selection node =
-  case selection of
-    TraceSelection query ->
-      case node of
-        V.BlockViewNode block ->
-          case Q.queryMatchesTags query (V.blockTags block) of
-            Nothing       -> []
-            Just bindings -> [(V.AnyLayoutBlock block, bindings)]
-        V.VirtualViewNode _ -> []
-    VirtualSelection key query ->
-      case node of
-        V.BlockViewNode _ -> []
-        V.VirtualViewNode virtual
-          | key P.== V.virtualNodeKey virtual
-              P.&& Q.queryKey query P.== V.virtualQueryKey virtual ->
-            [(V.AnyLayoutVirtual virtual, [])]
-          | otherwise -> []
+selectionNodeMatches selection wrapped =
+  case wrapped of
+    V.ViewNode node ->
+      case selection of
+        TraceSelection query ->
+          case V.traceNodeTags node of
+            Nothing -> []
+            Just tags ->
+              case Q.queryMatchesTags query tags of
+                Nothing       -> []
+                Just bindings -> [(V.AnyLayoutView node, bindings)]
+        VirtualSelection key query ->
+          case V.syntheticNodeMeta node of
+            Just meta
+              | key P.== V.syntheticKey meta
+                  P.&& Q.queryKey query P.== V.syntheticQueryKey meta ->
+                [(V.AnyLayoutView node, [])]
+            _ -> []
 
-anyBlockQueryMatches ::
-     Query -> V.AnyBlockView -> [(V.AnyBlockView, QueryBindings)]
-anyBlockQueryMatches query anyBlock =
-  case anyBlock of
-    V.AnyBlockView block ->
-      case Q.queryMatchesTags query (V.blockTags block) of
-        Nothing       -> []
-        Just bindings -> [(anyBlock, bindings)]
+traceNodeQueryMatches ::
+     Query -> V.AnyTraceNode -> [(V.AnyTraceNode, QueryBindings)]
+traceNodeQueryMatches query anyNode =
+  case anyNode of
+    V.AnyTraceNode node ->
+      case V.traceNodeTags node of
+        Nothing -> []
+        Just tags ->
+          case Q.queryMatchesTags query tags of
+            Nothing       -> []
+            Just bindings -> [(anyNode, bindings)]
 
 mergeQueryBindings :: QueryBindings -> QueryBindings -> Maybe QueryBindings
 mergeQueryBindings lhs rhs =
@@ -827,12 +832,12 @@ virtualNodesForSpec spec nodes =
     MatchSpec _ _ virtualRules ->
       maybeVirtualNodes (mergedVirtualRules virtualRules)
   where
-    blocks = V.viewNodeBlocks nodes
+    traceNodes = V.viewTraceNodes nodes
     maybeVirtualNodes rules =
       case rules of
         [] -> []
         rule:rest ->
-          case virtualNodeForRule blocks rule of
+          case virtualNodeForRule traceNodes rule of
             Nothing   -> maybeVirtualNodes rest
             Just node -> node : maybeVirtualNodes rest
 
@@ -863,40 +868,45 @@ mergeVirtualRule key query patch rules =
             (mergedPatch, remaining) ->
               (mergedPatch, VirtualRule nextKey nextQuery nextPatch : remaining)
 
-virtualNodeForRule :: [V.AnyBlockView] -> VirtualRule -> Maybe V.ViewNode
-virtualNodeForRule blocks rule =
+virtualNodeForRule :: [V.AnyTraceNode] -> VirtualRule -> Maybe V.ViewNode
+virtualNodeForRule traceNodes rule =
   case rule of
     VirtualRule key query patch ->
-      case matchingQueryBlocks query blocks of
+      case matchingQueryTraceNodes query traceNodes of
         [] -> Nothing
         children ->
           Just
-            (V.VirtualViewNode
-               (virtualViewForRule key query patch children :: V.VirtualView ()))
+            (V.ViewNode
+               (syntheticCompoundNodeForRule key query patch children :: V.Node
+                  ()))
 
-matchingQueryBlocks :: Query -> [V.AnyBlockView] -> [V.AnyBlockView]
-matchingQueryBlocks query blocks =
-  [ anyBlock
-  | anyBlock <- blocks
-  , (_matchedNode, _bindings) <- anyBlockQueryMatches query anyBlock
+matchingQueryTraceNodes :: Query -> [V.AnyTraceNode] -> [V.AnyTraceNode]
+matchingQueryTraceNodes query nodes =
+  [ anyNode
+  | anyNode <- nodes
+  , (_matchedNode, _bindings) <- traceNodeQueryMatches query anyNode
   ]
 
-virtualViewForRule ::
-     P.String -> Query -> NodePatch -> [V.AnyBlockView] -> V.VirtualView tag
-virtualViewForRule key query patch children =
+syntheticCompoundNodeForRule ::
+     P.String -> Query -> NodePatch -> [V.AnyTraceNode] -> V.Node tag
+syntheticCompoundNodeForRule key query patch children =
   let queryKey' = Q.queryKey query
-      ref = V.syntheticViewRef (V.virtualBlockId key queryKey')
-      baseStyle = V.styleForVirtualKey key queryKey'
-      virtualStyle = VP.nodePatchStyleUpdate patch baseStyle
-   in V.VirtualView
-        { V.virtualRef = ref
-        , V.virtualLabel = V.ViewLabel ("Virtual." P.++ key) ""
-        , V.virtualContent =
-            fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
-        , V.virtualQueryKey = queryKey'
-        , V.virtualNodeKey = key
-        , V.virtualPieceKey = V.defaultPieceKey
-        , V.virtualStyle = virtualStyle
-        , V.virtualConstraints = VP.patchGeometryConstraints patch virtualStyle
-        , V.virtualChildren = children
+      ref = V.syntheticViewRef (V.syntheticNodeId key queryKey')
+      baseStyle = V.styleForSyntheticKey key queryKey'
+      style' = VP.nodePatchStyleUpdate patch baseStyle
+   in V.Node
+        { V.nodeRef = ref
+        , V.nodeLabel = V.ViewLabel ("Virtual." P.++ key) ""
+        , V.nodeContent = fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
+        , V.nodeKey = key
+        , V.nodeStyle = style'
+        , V.nodeOrigin =
+            V.SyntheticOrigin
+              V.SyntheticMeta
+                {V.syntheticKey = key, V.syntheticQueryKey = queryKey'}
+        , V.nodeStructure =
+            V.CompoundNode
+              V.ShrinkWrapChildren
+              (P.map V.nodeChildFromTraceNode children)
+        , V.nodeConstraints = VP.patchGeometryConstraints patch style'
         }
