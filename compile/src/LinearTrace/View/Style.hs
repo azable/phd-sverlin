@@ -6,31 +6,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module LinearTrace.View.Style
-  ( -- * Expression aliases
-    FreeDomain
-  , LayoutDomain
-  , UnitDomain
-  , AngleDomain
-  , Free
-  , Layout
-  , Unit
-  , Angle
-  , FreeExpr
-  , LayoutExpr
-  , UnitExpr
-  , AngleExpr
-  , ColorExpr
-  , ConcreteHsl
-  , unitRange
-  , angleRange
-  , -- * Bounds
-    Bounds(..)
-  , BoundsExpr
-  , ConcreteBounds
-  , HasBounds(..)
-  , -- * Basic CSS/style values
-    Hsl(..)
-  , StyleText(..)
+  ( -- * Style values
+    StyleText
   , styleTextString
   , FontWeight(..)
   , FontStyle(..)
@@ -46,12 +23,10 @@ module LinearTrace.View.Style
   , StyleTextSpec(..)
   , StyleChoiceSpec(..)
   , StyleChoiceValue(..)
-  , DiscreteStyleValue(..)
+  , DiscreteStyleValue
   , StyleField(..)
   , styleBounds
   , styleFields
-  , defaultStyleFields
-  , setStyleField
   , mapStyleExprs
   , mapStyleExprLeaves
   , solvedStyleExprs

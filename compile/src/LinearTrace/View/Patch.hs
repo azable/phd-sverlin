@@ -6,12 +6,13 @@ module LinearTrace.View.Patch
   , patchGeometryConstraints
   ) where
 
-import           LinearTrace.View.Style (HasBounds (..), LayoutExpr, Style)
-import           LinearTrace.View.Types (ContentMode)
-import           Prelude                (Maybe (..))
-import qualified Prelude                as P
-import qualified Solver                 as S
-import           Solver                 (Constraint)
+import           LinearTrace.View.Primitives (HasBounds (..), LayoutExpr)
+import           LinearTrace.View.Style      (Style)
+import           LinearTrace.View.Types      (ContentMode)
+import           Prelude                     (Maybe (..))
+import qualified Prelude                     as P
+import qualified Solver                      as S
+import           Solver                      (Constraint)
 
 data LayoutPin =
   LayoutPin LayoutExpr [Constraint]

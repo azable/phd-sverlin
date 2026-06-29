@@ -28,22 +28,6 @@ module LinearTrace.View
   , solvedBlockViewExprs
   , RenderIntent(..)
   , ContentMode(..)
-  , ValueComponent
-  , ValueAccess
-  , StyleLayoutAttr(..)
-  , StyleUnitAttr(..)
-  , StyleFreeAttr(..)
-  , StyleColorAttr(..)
-  , HslPart(..)
-  , StyleRequirement(..)
-  , layoutValueAccess
-  , styleLayoutValueAccess
-  , styleUnitValueAccess
-  , styleFreeValueAccess
-  , styleColorPartValueAccess
-  , valueAccessComponent
-  , valueAccessRequirements
-  , applyStyleRequirements
   , LayoutAttr(..)
   , AnyBlockView(..)
   , AnyLayoutView(..)
@@ -61,16 +45,11 @@ module LinearTrace.View
   , Bounds(..)
   , BoundsExpr
   , Hsl(..)
-  , StyleText(..)
-  , styleTextString
   , FontWeight(..)
   , FontStyle(..)
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
-  , styleBounds
-  , mapStyleExprLeaves
-  , solvedStyleExprs
   , -- * Expressions
     Free
   , Layout
@@ -94,21 +73,10 @@ module LinearTrace.View
   , renderIntentOutput
   , mergeInitialRenderIntents
   , withImplicitInitialFrame
-  , solveCSP
   , solveCSPWithSeed
   , RandomSeed(..)
-  , -- * Style accessors
-    opacity
-  , zIndex
-  , fontSize
-  , radius
-  , strokeWidth
-  , alpha
-  , fill
-  , stroke
   ) where
 
-import           LinearTrace.View.Access
 import           LinearTrace.View.Build
 import           LinearTrace.View.Graph
 import           LinearTrace.View.Primitives

@@ -18,13 +18,14 @@ module LinearTrace.View.Access
   , applyStyleRequirements
   ) where
 
-import qualified Data.Maybe             as Maybe
+import qualified Data.Maybe                  as Maybe
 import           LinearTrace.View.Graph
+import           LinearTrace.View.Primitives
 import           LinearTrace.View.Style
-import           Prelude                (Maybe (..))
-import qualified Prelude                as P
-import qualified Solver                 as S
-import           Solver                 (Component, Expr, SymbolicType)
+import           Prelude                     (Maybe (..))
+import qualified Prelude                     as P
+import qualified Solver                      as S
+import           Solver                      (Component, Expr, SymbolicType)
 
 type ValueComponent = Component
 

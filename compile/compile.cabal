@@ -81,7 +81,6 @@ library
         LinearTrace.Choreography
         LinearTrace.Core
         LinearTrace.Core.Events
-        LinearTrace.Core.Internal
         LinearTrace.Print
         Solver
         LinearTrace.Compile
@@ -89,6 +88,7 @@ library
     other-modules:
         LinearTrace.Choreography.Match
         LinearTrace.Choreography.Query
+        LinearTrace.Core.Internal
         LinearTrace.View
         LinearTrace.View.Access
         LinearTrace.View.Build

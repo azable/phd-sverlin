@@ -58,7 +58,6 @@ data StyleValue
   | StylePixels Double
   | StyleText String
   | StyleColor String
-  | StyleBool Bool
   deriving (Eq, Show)
 
 data CssTarget =
@@ -488,7 +487,7 @@ requireLineage block = do
       lift (Left ("no render lineage for " ++ renderBlockKeyLabel block))
 
 --------------------------------------------------------------------------------
--- Solved block lookup
+-- Concrete block lookup
 --------------------------------------------------------------------------------
 type BlockLookup = Map Int [RenderBlock]
 
@@ -649,7 +648,6 @@ instance ToJSON StyleValue where
       StylePixels x   -> toJSON (formatCssPixels x)
       StyleText text  -> toJSON text
       StyleColor text -> toJSON text
-      StyleBool bool  -> toJSON bool
 
 instance ToJSON RenderStyle where
   toJSON style =

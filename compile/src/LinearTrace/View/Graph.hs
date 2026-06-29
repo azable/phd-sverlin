@@ -30,17 +30,17 @@ module LinearTrace.View.Graph
   , viewNodeBlocks
   ) where
 
-import           Data.Kind              (Type)
-import           LinearTrace.View.Style (Bounds (..), HasBounds (..),
-                                         HasStyle (..), Style,
-                                         mapStyleExprLeaves, solvedStyleExprs,
-                                         styleWithBounds)
-import           LinearTrace.View.Types (ContentMode, ViewLabel, ViewRef,
-                                         ViewTags, viewRefInt)
-import qualified Prelude                as P
-import qualified Solver                 as S
-import           Solver                 (Constraint, Expr, Solution,
-                                         SymbolicType)
+import           Data.Kind                   (Type)
+import           LinearTrace.View.Primitives (Bounds (..), HasBounds (..))
+import           LinearTrace.View.Style      (HasStyle (..), Style,
+                                              mapStyleExprLeaves,
+                                              solvedStyleExprs, styleWithBounds)
+import           LinearTrace.View.Types      (ContentMode, ViewLabel, ViewRef,
+                                              ViewTags, viewRefInt)
+import qualified Prelude                     as P
+import qualified Solver                      as S
+import           Solver                      (Constraint, Expr, Solution,
+                                              SymbolicType)
 
 data BlockView tag = BlockView
   { blockRef      :: ViewRef tag

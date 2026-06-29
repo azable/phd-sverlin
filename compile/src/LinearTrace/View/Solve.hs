@@ -1,6 +1,5 @@
 module LinearTrace.View.Solve
-  ( solveCSP
-  , solveCSPWithSeed
+  ( solveCSPWithSeed
   ) where
 
 import           LinearTrace.View.Graph

@@ -1,30 +1,34 @@
 {-# LANGUAGE GADTs #-}
 
 module LinearTrace.View.Materialize
-  ( ConcreteBounds
-  , ConcreteHsl
-  , ConcreteStyle(..)
+  ( ConcreteHsl
+  , ConcreteStyle
+  , concreteFields
   , ConcreteField(..)
-  , ConcreteScalar(..)
-  , ConcreteColor(..)
-  , ConcreteDiscrete
-  , ConcreteBlockView(..)
-  , ConcreteVirtualView(..)
+  , ConcreteBlockView
+  , concreteBlockRef
+  , concreteBlockLabel
+  , concreteBlockContent
+  , concreteBlockNodeKey
+  , concreteBlockPieceKey
+  , concreteBlockStyle
+  , ConcreteVirtualView
+  , concreteVirtualRef
+  , concreteVirtualLabel
+  , concreteVirtualContent
+  , concreteVirtualNodeKey
+  , concreteVirtualPieceKey
+  , concreteVirtualStyle
   , ConcreteViewNode(..)
-  , ConcreteViewGraph(..)
+  , ConcreteViewGraph
+  , concreteViewNodes
+  , concreteViewRenderFrames
   , concreteTop
   , concreteLeft
   , concreteWidth
   , concreteHeight
   , concreteScalarValue
-  , concreteScalars
-  , concreteColors
-  , concreteDiscrete
   , materializeViewGraph
-  , materializeViewNode
-  , materializeStyle
-  , materializeBounds
-  , materializeHsl
   ) where
 
 import           LinearTrace.View.Graph
@@ -47,16 +51,6 @@ data ConcreteField
   | ConcreteTextField String (Maybe String) (Maybe StyleText)
   | ConcreteChoiceField String (Maybe String) (Maybe String) DiscreteStyleValue
   deriving (Eq, Show)
-
-data ConcreteScalar =
-  ConcreteScalar String Double StyleValueUnit
-  deriving (Eq, Show)
-
-data ConcreteColor =
-  ConcreteColor String (Maybe ConcreteHsl)
-  deriving (Eq, Show)
-
-type ConcreteDiscrete = DiscreteStyleValue
 
 data ConcreteBlockView tag = ConcreteBlockView
   { concreteBlockRef      :: ViewRef tag
@@ -107,31 +101,6 @@ concreteScalarValue name fallback style' = go (concreteFields style')
           | name == name' -> value
           | otherwise -> go rest
         _:rest -> go rest
-
-concreteScalars :: ConcreteStyle -> [ConcreteScalar]
-concreteScalars style' = concatMap fieldScalar (concreteFields style')
-  where
-    fieldScalar field =
-      case field of
-        ConcreteScalarField name _ value unit ->
-          [ConcreteScalar name value unit]
-        _ -> []
-
-concreteColors :: ConcreteStyle -> [ConcreteColor]
-concreteColors style' = concatMap fieldColor (concreteFields style')
-  where
-    fieldColor field =
-      case field of
-        ConcreteColorField name _ value -> [ConcreteColor name value]
-        _                               -> []
-
-concreteDiscrete :: ConcreteStyle -> [ConcreteDiscrete]
-concreteDiscrete style' = concatMap fieldDiscrete (concreteFields style')
-  where
-    fieldDiscrete field =
-      case field of
-        ConcreteChoiceField _ _ _ discrete -> [discrete]
-        _                                  -> []
 
 materializeViewGraph :: Solution -> ViewGraph -> Either String ConcreteViewGraph
 materializeViewGraph solution graph = do
