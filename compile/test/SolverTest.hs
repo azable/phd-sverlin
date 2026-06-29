@@ -2,10 +2,12 @@
 
 module Main where
 
-import           Control.Exception      (ErrorCall, evaluate, try)
-import qualified Data.List              as List
-import qualified Data.Map.Strict        as Map
-import qualified LinearTrace.View.Style as Style
+import qualified ChoreographySemanticTest as Semantic
+import           Control.Exception        (ErrorCall, evaluate, try)
+import qualified Data.List                as List
+import qualified Data.Map.Strict          as Map
+import qualified LinearTrace.View         as View
+import qualified LinearTrace.View.Style   as Style
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -36,6 +38,7 @@ main =
        , cyclicDomainTests
        , categoricalTests
        , styleChoiceTests
+       , semanticViewTests
        , seededFixtureTests
        , problemInspectionTests
        ])
@@ -295,6 +298,26 @@ styleChoiceTests =
         materialized <- assertMaterializedStyle solution style'
         lookupCss "fontWeight" materialized @?= Just "bold"
         lookupFontWeight materialized @?= Just Style.FontWeightBold
+    ]
+
+semanticViewTests :: TestTree
+semanticViewTests =
+  testGroup
+    "semantic view values"
+    [ testCase "unit variables carry native 0-1 bounds" $ do
+        let inspected =
+              inspectConstraints
+                defaultSolveConfig
+                (View.viewConstraints Semantic.unitViewGraph)
+        inspectedNativeBoundNames inspected @?= ["global.view.var.0"]
+        inspectedNativeBoundCount inspected @?= 1
+    , testCase "angle variables carry native 0-360 bounds" $ do
+        let inspected =
+              inspectConstraints
+                defaultSolveConfig
+                (View.viewConstraints Semantic.angleViewGraph)
+        inspectedNativeBoundNames inspected @?= ["global.view.var.0"]
+        inspectedNativeBoundCount inspected @?= 1
     ]
 
 literalStyle :: Style.Style

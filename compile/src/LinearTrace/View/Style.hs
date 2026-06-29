@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
@@ -8,7 +7,11 @@
 
 module LinearTrace.View.Style
   ( -- * Expression aliases
-    Free
+    FreeDomain
+  , LayoutDomain
+  , UnitDomain
+  , AngleDomain
+  , Free
   , Layout
   , Unit
   , Angle
@@ -18,8 +21,13 @@ module LinearTrace.View.Style
   , AngleExpr
   , Hue
   , HueExpr
+  , ColorExpr
   , HslExpr
   , MaterializedHsl
+  , unitRange
+  , angleRange
+  , unitConstraints
+  , angleConstraints
   , -- * Bounds
     Bounds(..)
   , BoundsExpr
@@ -104,121 +112,13 @@ module LinearTrace.View.Style
   , materializeStyle
   ) where
 
-import           Data.Kind  (Type)
-import           Data.Maybe (mapMaybe)
+import           Data.Kind                 (Type)
+import           Data.Maybe                (mapMaybe)
+import           LinearTrace.View.Color    hiding (MaterializedColor)
+import           LinearTrace.View.Geometry
+import           LinearTrace.View.Numeric
 import           Prelude
 import           Solver
-
---------------------------------------------------------------------------------
--- Expression aliases
---------------------------------------------------------------------------------
-data Free
-
-data Layout
-
-data Unit
-
-data Angle
-
-instance SymbolicType Free where
-  symbolicDomain _ = realDomain "free"
-
-instance SymbolicType Layout where
-  symbolicDomain _ = realDomain "layout"
-
-instance SymbolicType Unit where
-  symbolicDomain _ = realDomain "unit"
-
-instance SymbolicType Angle where
-  symbolicDomain _ = cyclicDomain "angle" 360
-
-type FreeExpr = Expr Free
-
-type LayoutExpr = Expr Layout
-
-type UnitExpr = Expr Unit
-
-type AngleExpr = Expr Angle
-
-type Hue = Expr Angle
-
-type HueExpr = Hue
-
-type HslExpr = Hsl Hue UnitExpr
-
-type MaterializedHsl = Hsl Double Double
-
---------------------------------------------------------------------------------
--- Bounds
---------------------------------------------------------------------------------
-data Bounds a =
-  Bounds a a a a
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-type BoundsExpr = Bounds LayoutExpr
-
-type MaterializedBounds = Bounds Double
-
-boundsTop :: Bounds a -> a
-boundsTop bounds =
-  case bounds of
-    Bounds t _ _ _ -> t
-
-boundsLeft :: Bounds a -> a
-boundsLeft bounds =
-  case bounds of
-    Bounds _ l _ _ -> l
-
-boundsWidth :: Bounds a -> a
-boundsWidth bounds =
-  case bounds of
-    Bounds _ _ w _ -> w
-
-boundsHeight :: Bounds a -> a
-boundsHeight bounds =
-  case bounds of
-    Bounds _ _ _ h -> h
-
-instance ConstrainEq a => ConstrainEq (Bounds a) where
-  constrainEqual lhs rhs =
-    case (lhs, rhs) of
-      (Bounds at al aw ah, Bounds bt bl bw bh) ->
-        allOf [at @==@ bt, al @==@ bl, aw @==@ bw, ah @==@ bh]
-
-class HasBounds a where
-  top :: a -> LayoutExpr
-  left :: a -> LayoutExpr
-  width :: a -> LayoutExpr
-  height :: a -> LayoutExpr
-  right :: a -> LayoutExpr
-  right x = left x @+@ width x
-  bottom :: a -> LayoutExpr
-  bottom x = top x @+@ height x
-  centerX :: a -> LayoutExpr
-  centerX x = left x @+@ (width x @/@ num 2)
-  centerY :: a -> LayoutExpr
-  centerY x = top x @+@ (height x @/@ num 2)
-  center :: a -> Vec2 LayoutExpr
-  center x = Vec2 (centerX x) (centerY x)
-  position :: a -> Vec2 LayoutExpr
-  position x = Vec2 (left x) (top x)
-  size :: a -> Vec2 LayoutExpr
-  size x = Vec2 (width x) (height x)
-
-instance HasBounds BoundsExpr where
-  top = boundsTop
-  left = boundsLeft
-  width = boundsWidth
-  height = boundsHeight
-
---------------------------------------------------------------------------------
--- Basic style values
---------------------------------------------------------------------------------
-data Hsl hue unit = Hsl
-  { hue        :: hue
-  , saturation :: unit
-  , lightness  :: unit
-  } deriving (Eq, Show, Functor, Foldable, Traversable)
 
 newtype CssText =
   CssText String
@@ -523,9 +423,9 @@ fieldConstraints field =
       case maybeHsl of
         Nothing -> []
         Just hsl ->
-          [ within (hue hsl) (Range 0 360)
-          , within (saturation hsl) (Range 0 1)
-          , within (lightness hsl) (Range 0 1)
+          [ within (hue hsl) angleRange
+          , within (saturation hsl) unitRange
+          , within (lightness hsl) unitRange
           ]
     StyleTextField _ _ -> []
     StyleChoiceField _ _ -> []
@@ -552,9 +452,6 @@ noConstraints _ = []
 
 nonNegativeConstraints :: SymbolicType ty => Expr ty -> [Constraint]
 nonNegativeConstraints expr = [num 0 @<=@ expr]
-
-unitConstraints :: UnitExpr -> [Constraint]
-unitConstraints expr = [num 0 @<=@ expr, expr @<=@ num 1]
 
 --------------------------------------------------------------------------------
 -- Field constructors
@@ -653,8 +550,8 @@ opacityField =
     "opacity"
     (Just "opacity")
     StyleNumber
-    (Just (Range 0 1))
-    unitConstraints
+    (Just unitRange)
+    noConstraints
 
 opacity :: HasStyle a => a -> UnitExpr
 opacity value = lookupUnitField "opacity" opacityDefault (style value)
@@ -776,7 +673,7 @@ alphaDefault = num 1
 
 alphaField :: UnitExpr -> StyleField
 alphaField =
-  unitScalarField "alpha" Nothing StyleHidden (Just (Range 0 1)) unitConstraints
+  unitScalarField "alpha" Nothing StyleHidden (Just unitRange) noConstraints
 
 alpha :: HasStyle a => a -> UnitExpr
 alpha value = lookupUnitField "alpha" alphaDefault (style value)

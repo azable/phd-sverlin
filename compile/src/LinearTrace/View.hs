@@ -134,6 +134,7 @@ module LinearTrace.View
   , AngleExpr
   , Hue
   , HueExpr
+  , ColorExpr
   , HslExpr
   , MaterializedHsl
   , global

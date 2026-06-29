@@ -83,6 +83,9 @@ library
         LinearTrace.Core.Events
         LinearTrace.Core.Internal
         LinearTrace.View
+        LinearTrace.View.Color
+        LinearTrace.View.Geometry
+        LinearTrace.View.Numeric
         LinearTrace.View.Style
         LinearTrace.Print
         Solver
@@ -143,6 +146,7 @@ test-suite solver-test
     build-depends:    base >=4.18.3.0 && <4.23,
                       containers,
                       compile,
+                      linear-base,
                       tasty,
                       tasty-hunit
 
@@ -150,6 +154,7 @@ test-suite solver-test
                       test-support
 
     other-modules:
+        ChoreographySemanticTest
         Solver.TestFixtures
 
     default-language: GHC2024

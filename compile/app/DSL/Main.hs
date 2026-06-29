@@ -233,7 +233,7 @@ visualization =
     ensure $ targetSize .<=. by 208
     ensure $ targetSize .>=. cell
     ensure $ targetSize .<=. cell * (2 :: Scalar)
-    Variable valueHue <- variable @Hue
+    Variable valueHue <- variable @Angle
     Bound v <- bindContent
     Bound i <- bindInt
     -- Every value has the same visual representation. Probe copies only scale
@@ -306,7 +306,7 @@ visualization =
       fill arrayBackground
       stroke arrayBackground
     Selected processedItem <- select @AnyPayload #processed
-    let processedColor :: HslExpr
+    let processedColor :: Color
         processedColor = Hsl valueHue 0.16 0.78
     style processedItem $ do
       fill processedColor

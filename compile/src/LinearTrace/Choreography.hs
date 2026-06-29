@@ -70,12 +70,10 @@ module LinearTrace.Choreography
   , QueryInt
   , queryIndex
   , TraceQuery
-  , Selection
   , Selected
   , Variable(..)
   , Bound(..)
   , NodeBinding(..)
-  , NodeRef
   , AnyPayload
   , Node
   , StyleTarget
@@ -94,20 +92,17 @@ module LinearTrace.Choreography
   , Style
   , BorderStyle(..)
   , Bounds(..)
-  , BoundsExpr
   , FontWeight(..)
   , FontStyle(..)
   , Hsl(..)
-  , FreeExpr
-  , HslExpr
-  , Hue
-  , HueExpr
-  , LayoutExpr
+  , Free
+  , Unit
+  , Angle
+  , Color
   , Coord
   , Span
   , Offset
   , Scalar
-  , UnitExpr
   , Vec2(..)
   , TextAlign(..)
   , WhiteSpace(..)
@@ -203,11 +198,11 @@ import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          factInt, factSymbol, factsToList,
                                          factsUnion, (<$>), (<*>))
 import qualified LinearTrace.Core       as C
-import           LinearTrace.View       (Angle, BorderStyle (..), Bounds (..),
-                                         BoundsExpr, ConstraintStrength (..),
-                                         FontStyle (..), FontWeight (..), Free,
-                                         FreeExpr, Hsl (..), HslExpr,
-                                         HslPart (..), Hue, HueExpr, Layout,
+import           LinearTrace.View       (AngleExpr, BorderStyle (..),
+                                         Bounds (..), BoundsExpr, ColorExpr,
+                                         ConstraintStrength (..),
+                                         FontStyle (..), FontWeight (..),
+                                         FreeExpr, Hsl (..), HslPart (..),
                                          LayoutAttr (..), LayoutExpr,
                                          LayoutRelation (..), MatchBindings,
                                          MatchSpec, NodeSelection (..),
@@ -216,11 +211,11 @@ import           LinearTrace.View       (Angle, BorderStyle (..), Bounds (..),
                                          StyleFreeAttr (..),
                                          StyleLayoutAttr (..),
                                          StyleUnitAttr (..), TextAlign (..),
-                                         Unit, UnitExpr, ValueAccess,
-                                         ValueEndpoint, WhiteSpace (..),
-                                         anyPayloadPattern, emptyMatchSpec,
-                                         emptyQuery, global, layoutValueAccess,
-                                         matchAnyQueryNode, matchBindingValue,
+                                         UnitExpr, ValueAccess, ValueEndpoint,
+                                         WhiteSpace (..), anyPayloadPattern,
+                                         emptyMatchSpec, emptyQuery,
+                                         layoutValueAccess, matchAnyQueryNode,
+                                         matchBindingValue,
                                          matchContextBindings,
                                          matchQueryPayloadNode, matchSpecAppend,
                                          matchValueDirectedBridge,
@@ -314,6 +309,20 @@ data Scalar =
   Scalar LayoutExpr [S.Constraint]
   deriving (P.Eq, P.Show)
 
+data Unit =
+  Unit UnitExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+data Angle =
+  Angle AngleExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+data Free =
+  Free FreeExpr [S.Constraint]
+  deriving (P.Eq, P.Show)
+
+type Color = Hsl Angle Unit
+
 newtype Binding =
   Binding P.String
   deriving (P.Eq, P.Show)
@@ -331,7 +340,8 @@ data NodeRef tag where
   AnyNodeRef :: Query -> NodeRef AnyPayload
   VirtualNodeRef :: P.String -> Query -> NodeRef tag
 
-type Selected tag = Selection (NodeRef tag)
+data Selected tag where
+  SelectedHandle :: Selection (NodeRef tag) -> Selected tag
 
 data Variable a where
   Variable :: a %Many -> Variable a
@@ -342,8 +352,8 @@ data Bound a where
 data NodeBinding a where
   Selected :: a %Many -> NodeBinding a
 
-data SelectedExpr ty tag =
-  SelectedExpr (Selected tag) ValueAccess
+data SelectionValue value tag =
+  SelectionValue (Selected tag) ValueAccess
 
 data VisualConstraint where
   VisualValueRelation
@@ -707,6 +717,30 @@ scalarExpr value =
   case value of
     Scalar expr _ -> expr
 
+unitExpr :: Unit -> UnitExpr
+unitExpr value =
+  case value of
+    Unit expr _ -> expr
+
+angleExpr :: Angle -> AngleExpr
+angleExpr value =
+  case value of
+    Angle expr _ -> expr
+
+freeExpr :: Free -> FreeExpr
+freeExpr value =
+  case value of
+    Free expr _ -> expr
+
+colorExpr :: Color -> ColorExpr
+colorExpr color =
+  case color of
+    Hsl hueValue saturationValue lightnessValue ->
+      Hsl
+        (angleExpr hueValue)
+        (unitExpr saturationValue)
+        (unitExpr lightnessValue)
+
 coordConstraints :: Coord -> [S.Constraint]
 coordConstraints value =
   case value of
@@ -726,6 +760,21 @@ scalarConstraints :: Scalar -> [S.Constraint]
 scalarConstraints value =
   case value of
     Scalar _ constraints -> constraints
+
+unitValueConstraints :: Unit -> [S.Constraint]
+unitValueConstraints value =
+  case value of
+    Unit _ constraints -> constraints
+
+angleValueConstraints :: Angle -> [S.Constraint]
+angleValueConstraints value =
+  case value of
+    Angle _ constraints -> constraints
+
+freeValueConstraints :: Free -> [S.Constraint]
+freeValueConstraints value =
+  case value of
+    Free _ constraints -> constraints
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -763,6 +812,18 @@ instance ConstraintValue Scalar where
   valueTerm value =
     rawExprValueTerm (scalarExpr value) (scalarConstraints value)
 
+instance ConstraintValue Unit where
+  valueTerm value =
+    rawExprValueTerm (unitExpr value) (unitValueConstraints value)
+
+instance ConstraintValue Angle where
+  valueTerm value =
+    rawExprValueTerm (angleExpr value) (angleValueConstraints value)
+
+instance ConstraintValue Free where
+  valueTerm value =
+    rawExprValueTerm (freeExpr value) (freeValueConstraints value)
+
 instance ConstraintValue Offset where
   valueTerm value =
     rawExprValueTerm (offsetExpr value) (offsetConstraints value)
@@ -770,10 +831,10 @@ instance ConstraintValue Offset where
 instance S.SymbolicType ty => ConstraintValue (S.Expr ty) where
   valueTerm expr = rawExprValueTerm expr []
 
-instance ConstraintValue (SelectedExpr ty tag) where
+instance ConstraintValue (SelectionValue value tag) where
   valueTerm selected =
     case selected of
-      SelectedExpr selection access -> selectedValueTerm selection access
+      SelectionValue selection access -> selectedValueTerm selection access
 
 instance (ConstraintValue x, ConstraintValue y) => ConstraintValue (Vec2 x) where
   valueTerm value =
@@ -790,12 +851,16 @@ instance (ConstraintValue hue, ConstraintValue unit) =>
 selectedSpec :: Selected tag -> MatchSpec
 selectedSpec selected =
   case selected of
-    Selection _ spec -> spec
+    SelectedHandle selection ->
+      case selection of
+        Selection _ spec -> spec
 
 selectedNodeSelection :: Selected tag -> NodeSelection
 selectedNodeSelection selected =
   case selected of
-    Selection handle _ -> nodeSelection handle
+    SelectedHandle selection ->
+      case selection of
+        Selection handle _ -> nodeSelection handle
 
 nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
@@ -811,6 +876,17 @@ mkOffset = Offset
 
 mkScalar :: LayoutExpr -> [S.Constraint] -> Scalar
 mkScalar = Scalar
+
+mkUnit :: UnitExpr -> [S.Constraint] -> Unit
+mkUnit expr constraints =
+  Unit expr (constraints P.++ [S.within expr (S.Range 0 1)])
+
+mkAngle :: AngleExpr -> [S.Constraint] -> Angle
+mkAngle expr constraints =
+  Angle expr (constraints P.++ [S.within expr (S.Range 0 360)])
+
+mkFree :: FreeExpr -> [S.Constraint] -> Free
+mkFree = Free
 
 class NumExpr a where
   num :: P.Double -> a
@@ -884,6 +960,33 @@ instance IntegerLiteral Scalar where
 instance RationalLiteral Scalar where
   rationalLiteral value = num (P.fromRational value)
 
+instance NumExpr Unit where
+  num value = mkUnit (S.num value :: UnitExpr) []
+
+instance IntegerLiteral Unit where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Unit where
+  rationalLiteral value = num (P.fromRational value)
+
+instance NumExpr Angle where
+  num value = mkAngle (S.num value :: AngleExpr) []
+
+instance IntegerLiteral Angle where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Angle where
+  rationalLiteral value = num (P.fromRational value)
+
+instance NumExpr Free where
+  num value = mkFree (S.num value :: FreeExpr) []
+
+instance IntegerLiteral Free where
+  integerLiteral value = num (P.fromInteger value)
+
+instance RationalLiteral Free where
+  rationalLiteral value = num (P.fromRational value)
+
 instance IntegerLiteral QueryInt where
   integerLiteral value = queryIntConst (P.fromInteger value)
 
@@ -902,6 +1005,9 @@ by = num
 shift :: P.Double -> Offset
 shift = num
 
+global :: VariableValue value => P.String -> value
+global = namedVariable
+
 globalCoord :: P.String -> Coord
 globalCoord name = mkCoord (global name :: LayoutExpr) []
 
@@ -912,12 +1018,12 @@ queryIntExpr :: S.SymbolicType ty => QueryInt -> S.Expr ty
 queryIntExpr queryIntValue =
   case queryIntValue of
     QueryIntConst value -> S.num (P.fromIntegral value)
-    QueryIntVar name -> global name
+    QueryIntVar name -> V.global name
     QueryIntAdd base offset ->
       queryIntExpr base S.@+@ S.num (P.fromIntegral offset)
 
-asUnit :: QueryInt -> UnitExpr
-asUnit = queryIntExpr
+asUnit :: QueryInt -> Unit
+asUnit value = mkUnit (queryIntExpr value) []
 
 asCoord :: Offset -> Coord
 asCoord value =
@@ -1108,28 +1214,6 @@ instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue rhs) =>
   relateValues relation lhs rhs =
     VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
-instance {-# OVERLAPPING #-} S.SymbolicType ty =>
-         RelateValues (SelectedExpr ty tag) (S.Expr ty) where
-  relateValues relation lhs rhs =
-    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
-
-instance {-# OVERLAPPING #-} S.SymbolicType ty =>
-         RelateValues (S.Expr ty) (SelectedExpr ty tag) where
-  relateValues relation lhs rhs =
-    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
-
-instance {-# OVERLAPPING #-} RelateValues
-           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag))
-           HslExpr where
-  relateValues relation lhs rhs =
-    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
-
-instance {-# OVERLAPPING #-} RelateValues
-           HslExpr
-           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag)) where
-  relateValues relation lhs rhs =
-    VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
-
 data DirectedBridge =
   DirectedBridge ValueTerm ValueTerm
 
@@ -1160,29 +1244,11 @@ instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue delta) =>
   openSymmetricBridge lhs delta =
     SymmetricBridge (valueTerm lhs) (valueTerm delta)
 
-instance {-# OVERLAPPING #-} S.SymbolicType ty =>
-         OpenSymmetricBridge (SelectedExpr ty tag) (S.Expr ty) where
-  openSymmetricBridge lhs delta =
-    SymmetricBridge (valueTerm lhs) (valueTerm delta)
-
-instance {-# OVERLAPPING #-} OpenSymmetricBridge
-           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag))
-           HslExpr where
-  openSymmetricBridge lhs delta =
-    SymmetricBridge (valueTerm lhs) (valueTerm delta)
-
 class CloseSymmetricBridge bridge rhs where
   closeSymmetricBridge :: bridge -> rhs -> VisualConstraint
 
 instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
          CloseSymmetricBridge SymmetricBridge rhs where
-  closeSymmetricBridge bridge rhs =
-    case bridge of
-      SymmetricBridge lhs delta ->
-        VisualSymmetricBridge lhs delta (valueTerm rhs)
-
-instance {-# OVERLAPPING #-} S.SymbolicType ty =>
-         CloseSymmetricBridge SymmetricBridge (S.Expr ty) where
   closeSymmetricBridge bridge rhs =
     case bridge of
       SymmetricBridge lhs delta ->
@@ -1424,8 +1490,17 @@ instance VariableValue Offset where
 instance VariableValue Scalar where
   namedVariable name = mkScalar (global name :: LayoutExpr) []
 
+instance VariableValue Unit where
+  namedVariable name = mkUnit (V.global name :: UnitExpr) []
+
+instance VariableValue Angle where
+  namedVariable name = mkAngle (V.global name :: AngleExpr) []
+
+instance VariableValue Free where
+  namedVariable name = mkFree (V.global name :: FreeExpr) []
+
 instance S.SymbolicType ty => VariableValue (S.Expr ty) where
-  namedVariable = global
+  namedVariable = V.global
 
 bindInt :: VisualizationBuilder (Bound QueryInt)
 bindInt = freshVisualizationValue "view.bind." (Bound P.. queryIntVar)
@@ -1486,78 +1561,82 @@ class Fill input output | input -> output, output -> input where
 class Stroke input output | input -> output, output -> input where
   stroke :: input -> output
 
-instance Opacity UnitExpr (NodeRecipe ()) where
-  opacity value = setStyleWith (VS.setOpacity value)
+instance Opacity Unit (NodeRecipe ()) where
+  opacity value = setStyleWith (VS.setOpacity (unitExpr value))
 
-instance Opacity (Selection (NodeRef tag)) (SelectedExpr Unit tag) where
-  opacity selection = SelectedExpr selection (styleUnitValueAccess StyleOpacity)
+instance Opacity (Selected tag) (SelectionValue Unit tag) where
+  opacity selection =
+    SelectionValue selection (styleUnitValueAccess StyleOpacity)
 
-instance ZIndex FreeExpr (NodeRecipe ()) where
-  zIndex value = setStyleWith (VS.setZIndex value)
+instance ZIndex Free (NodeRecipe ()) where
+  zIndex value = setStyleWith (VS.setZIndex (freeExpr value))
 
-instance ZIndex (Selection (NodeRef tag)) (SelectedExpr Free tag) where
-  zIndex selection = SelectedExpr selection (styleFreeValueAccess StyleZIndex)
+instance ZIndex (Selected tag) (SelectionValue Free tag) where
+  zIndex selection = SelectionValue selection (styleFreeValueAccess StyleZIndex)
 
 instance FontSize Span (NodeRecipe ()) where
   fontSize value = setStyleWith (VS.setFontSize (spanExpr value))
 
-instance FontSize (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
+instance FontSize (Selected tag) (SelectionValue Span tag) where
   fontSize selection =
-    SelectedExpr selection (styleLayoutValueAccess StyleFontSize)
+    SelectionValue selection (styleLayoutValueAccess StyleFontSize)
 
 instance Padding Span (NodeRecipe ()) where
   padding value = setStyleWith (VS.setPadding (spanExpr value))
 
-instance Padding (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
+instance Padding (Selected tag) (SelectionValue Span tag) where
   padding selection =
-    SelectedExpr selection (styleLayoutValueAccess StylePadding)
+    SelectionValue selection (styleLayoutValueAccess StylePadding)
 
 instance Radius Span (NodeRecipe ()) where
   radius value = setStyleWith (VS.setRadius (spanExpr value))
 
-instance Radius (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  radius selection = SelectedExpr selection (styleLayoutValueAccess StyleRadius)
+instance Radius (Selected tag) (SelectionValue Span tag) where
+  radius selection =
+    SelectionValue selection (styleLayoutValueAccess StyleRadius)
 
 instance StrokeWidth Span (NodeRecipe ()) where
   strokeWidth value = setStyleWith (VS.setStrokeWidth (spanExpr value))
 
-instance StrokeWidth (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
+instance StrokeWidth (Selected tag) (SelectionValue Span tag) where
   strokeWidth selection =
-    SelectedExpr selection (styleLayoutValueAccess StyleStrokeWidth)
+    SelectionValue selection (styleLayoutValueAccess StyleStrokeWidth)
 
-instance Alpha UnitExpr (NodeRecipe ()) where
-  alpha value = setStyleWith (VS.setAlpha value)
+instance Alpha Unit (NodeRecipe ()) where
+  alpha value = setStyleWith (VS.setAlpha (unitExpr value))
 
-instance Alpha (Selection (NodeRef tag)) (SelectedExpr Unit tag) where
-  alpha selection = SelectedExpr selection (styleUnitValueAccess StyleAlpha)
+instance Alpha (Selected tag) (SelectionValue Unit tag) where
+  alpha selection = SelectionValue selection (styleUnitValueAccess StyleAlpha)
 
-instance Fill HslExpr (NodeRecipe ()) where
-  fill value = setStyleWith (VS.setFill value)
+instance Fill Color (NodeRecipe ()) where
+  fill value = setStyleWith (VS.setFill (colorExpr value))
 
 instance Fill
-           (Selection (NodeRef tag))
-           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag)) where
+           (Selected tag)
+           (Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)) where
   fill selection =
     Hsl
-      (SelectedExpr selection (styleColorPartValueAccess StyleFill HslHue))
-      (SelectedExpr
+      (SelectionValue selection (styleColorPartValueAccess StyleFill HslHue))
+      (SelectionValue
          selection
          (styleColorPartValueAccess StyleFill HslSaturation))
-      (SelectedExpr selection (styleColorPartValueAccess StyleFill HslLightness))
+      (SelectionValue
+         selection
+         (styleColorPartValueAccess StyleFill HslLightness))
 
-instance Stroke HslExpr (NodeRecipe ()) where
-  stroke value = setStyleWith (VS.setStroke value)
+instance Stroke Color (NodeRecipe ()) where
+  stroke value = setStyleWith (VS.setStroke (colorExpr value))
 
 instance Stroke
-           (Selection (NodeRef tag))
-           (Hsl (SelectedExpr Angle tag) (SelectedExpr Unit tag)) where
+           (Selected tag)
+           (Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)) where
   stroke selection =
     Hsl
-      (SelectedExpr selection (styleColorPartValueAccess StyleStroke HslHue))
-      (SelectedExpr
+      (SelectionValue selection (styleColorPartValueAccess StyleStroke HslHue))
+      (SelectionValue
          selection
          (styleColorPartValueAccess StyleStroke HslSaturation))
-      (SelectedExpr
+      (SelectionValue
          selection
          (styleColorPartValueAccess StyleStroke HslLightness))
 
@@ -1647,23 +1726,23 @@ instance Right Coord (NodeRecipe ()) where
 instance Bottom Coord (NodeRecipe ()) where
   bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
 
-instance Left (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  left selection = SelectedExpr selection (layoutValueAccess AttrLeft)
+instance Left (Selected tag) (SelectionValue Coord tag) where
+  left selection = SelectionValue selection (layoutValueAccess AttrLeft)
 
-instance Top (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  top selection = SelectedExpr selection (layoutValueAccess AttrTop)
+instance Top (Selected tag) (SelectionValue Coord tag) where
+  top selection = SelectionValue selection (layoutValueAccess AttrTop)
 
-instance Width (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  width selection = SelectedExpr selection (layoutValueAccess AttrWidth)
+instance Width (Selected tag) (SelectionValue Span tag) where
+  width selection = SelectionValue selection (layoutValueAccess AttrWidth)
 
-instance Height (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  height selection = SelectedExpr selection (layoutValueAccess AttrHeight)
+instance Height (Selected tag) (SelectionValue Span tag) where
+  height selection = SelectionValue selection (layoutValueAccess AttrHeight)
 
-instance Right (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  right selection = SelectedExpr selection (layoutValueAccess AttrRight)
+instance Right (Selected tag) (SelectionValue Coord tag) where
+  right selection = SelectionValue selection (layoutValueAccess AttrRight)
 
-instance Bottom (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  bottom selection = SelectedExpr selection (layoutValueAccess AttrBottom)
+instance Bottom (Selected tag) (SelectionValue Coord tag) where
+  bottom selection = SelectionValue selection (layoutValueAccess AttrBottom)
 
 instance X Coord (NodeRecipe ()) where
   x value = setNodeSpecWith (\spec -> spec {nodeSpecX = Just value})
@@ -1671,11 +1750,11 @@ instance X Coord (NodeRecipe ()) where
 instance Y Coord (NodeRecipe ()) where
   y value = setNodeSpecWith (\spec -> spec {nodeSpecY = Just value})
 
-instance X (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  x selection = SelectedExpr selection (layoutValueAccess AttrCenterX)
+instance X (Selected tag) (SelectionValue Coord tag) where
+  x selection = SelectionValue selection (layoutValueAccess AttrCenterX)
 
-instance Y (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
-  y selection = SelectedExpr selection (layoutValueAccess AttrCenterY)
+instance Y (Selected tag) (SelectionValue Coord tag) where
+  y selection = SelectionValue selection (layoutValueAccess AttrCenterY)
 
 pos :: (Left input value, Top input value) => input -> Vec2 value
 pos selection = vec2 (left selection) (top selection)
@@ -1718,13 +1797,13 @@ class Select payload query where
 instance Select AnyPayload Query where
   selectWithPayload query =
     emitVisualizationBuilder
-      (Selected (Selection (AnyNodeRef query) emptyMatchSpec))
+      (Selected (SelectedHandle (Selection (AnyNodeRef query) emptyMatchSpec)))
       emptyMatchSpec
 
 instance C.Traceable tag => Select tag (TraceQuery tag) where
   selectWithPayload query =
     emitVisualizationBuilder
-      (Selected (Selection (TraceNodeRef query) emptyMatchSpec))
+      (Selected (SelectedHandle (Selection (TraceNodeRef query) emptyMatchSpec)))
       emptyMatchSpec
 
 select ::
@@ -1837,17 +1916,23 @@ instance Node
            (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
   node children =
     case children of
-      Selection child childSpec ->
-        let query = nodeRefQuery child
-         in VisualizationBuilder
-              (\counter ->
-                 let key = virtualNodeKey counter
-                     virtualSpec = matchVirtualNode key query V.emptyNodePatch
-                  in VisualizationResult
-                       (Selected
-                          (Selection (VirtualNodeRef key query) emptyMatchSpec))
-                       (counter P.+ 1)
-                       (matchSpecAppend childSpec virtualSpec))
+      SelectedHandle selection ->
+        case selection of
+          Selection child childSpec ->
+            let query = nodeRefQuery child
+             in VisualizationBuilder
+                  (\counter ->
+                     let key = virtualNodeKey counter
+                         virtualSpec =
+                           matchVirtualNode key query V.emptyNodePatch
+                      in VisualizationResult
+                           (Selected
+                              (SelectedHandle
+                                 (Selection
+                                    (VirtualNodeRef key query)
+                                    emptyMatchSpec)))
+                           (counter P.+ 1)
+                           (matchSpecAppend childSpec virtualSpec))
 
 instance Node
            (NodeBinding (Selected child))
@@ -1878,13 +1963,15 @@ instance Node
 instance StyleTarget (Selected tag) (NodeRecipe () -> VisualizationBuilder ()) where
   style selection recipe =
     case selection of
-      Selection handle spec ->
-        VisualizationBuilder
-          (\counter ->
-             VisualizationResult
-               ()
-               counter
-               (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
+      SelectedHandle selected ->
+        case selected of
+          Selection handle spec ->
+            VisualizationBuilder
+              (\counter ->
+                 VisualizationResult
+                   ()
+                   counter
+                   (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
 
 nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
 nodeRefStyleSpec handle recipe =
