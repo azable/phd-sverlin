@@ -23,13 +23,15 @@ import           LinearTrace.View.Graph
 import qualified LinearTrace.View.Patch      as Patch
 import           LinearTrace.View.Primitives
 import           LinearTrace.View.Style      (padding, styleBounds,
+                                              styleCategoryConstraints,
                                               styleConstraints)
 import           LinearTrace.View.Types      (ViewId, viewRefId)
 import           Prelude                     (Maybe (..), Monoid (..),
                                               Semigroup (..))
 import qualified Prelude                     as P
 import qualified Solver                      as S
-import           Solver                      (Constraint, Range (..))
+import           Solver                      (ChoiceConstraint, Constraint,
+                                              Range (..))
 
 data ViewEnv = ViewEnv
   { canvasWidthValue  :: P.Double
@@ -48,17 +50,19 @@ defaultViewEnv =
     }
 
 data ViewOutput = ViewOutput
-  { emittedNodes         :: [ViewNode]
-  , emittedConstraints   :: [Constraint]
-  , emittedRenderFrames  :: [[RenderIntent]]
-  , pendingRenderIntents :: [RenderIntent]
+  { emittedNodes             :: [ViewNode]
+  , emittedConstraints       :: [Constraint]
+  , emittedChoiceConstraints :: [ChoiceConstraint]
+  , emittedRenderFrames      :: [[RenderIntent]]
+  , pendingRenderIntents     :: [RenderIntent]
   }
 
 instance Semigroup ViewOutput where
-  ViewOutput nodesA constraintsA framesA pendingA <> ViewOutput nodesB constraintsB framesB pendingB =
+  ViewOutput nodesA constraintsA choicesA framesA pendingA <> ViewOutput nodesB constraintsB choicesB framesB pendingB =
     ViewOutput
       { emittedNodes = nodesA P.++ nodesB
       , emittedConstraints = constraintsA P.++ constraintsB
+      , emittedChoiceConstraints = choicesA P.++ choicesB
       , emittedRenderFrames = framesA P.++ framesB
       , pendingRenderIntents = pendingA P.++ pendingB
       }
@@ -68,6 +72,7 @@ instance Monoid ViewOutput where
     ViewOutput
       { emittedNodes = []
       , emittedConstraints = []
+      , emittedChoiceConstraints = []
       , emittedRenderFrames = []
       , pendingRenderIntents = []
       }
@@ -140,13 +145,20 @@ patchedBlockOutput patch block0 =
         {emittedNodes = [BlockViewNode block], emittedConstraints = constraints}
 
 finalizeViewGraph ::
-     [ViewNode] -> [ViewStep] -> [Constraint] -> [[RenderIntent]] -> ViewGraph
-finalizeViewGraph nodes viewSteps' baseConstraints renderFrames =
+     [ViewNode]
+  -> [ViewStep]
+  -> [Constraint]
+  -> [ChoiceConstraint]
+  -> [[RenderIntent]]
+  -> ViewGraph
+finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderFrames =
   let virtualConstraints = P.concatMap virtualNodeConstraints nodes
       -- Block styles are first registered while building trace steps. Layout
       -- rules can later require optional style fields, so collect style
       -- constraints again after requirements are applied.
       nodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
+      nodeStyleChoiceConstraints =
+        P.concatMap viewNodeStyleChoiceConstraints nodes
       nodeRangeConstraints =
         P.concatMap (viewNodeRangeConstraints defaultViewEnv) nodes
       constraints =
@@ -154,11 +166,13 @@ finalizeViewGraph nodes viewSteps' baseConstraints renderFrames =
           P.++ nodeStyleConstraints
           P.++ nodeRangeConstraints
           P.++ virtualConstraints
+      choiceConstraints = baseChoiceConstraints P.++ nodeStyleChoiceConstraints
       frames = addVirtualRenderFrames nodes renderFrames
    in ViewGraph
         { viewNodes = nodes
         , viewSteps = viewSteps'
         , viewConstraints = constraints
+        , viewChoiceConstraints = choiceConstraints
         , viewRenderFrames = frames
         }
 
@@ -167,8 +181,7 @@ virtualNodeConstraints node =
   case node of
     BlockViewNode _ -> []
     VirtualViewNode virtual ->
-      styleConstraints (virtualStyle virtual)
-        P.++ virtualCanvasConstraints virtual
+      virtualCanvasConstraints virtual
         P.++ virtualFitConstraints virtual
         P.++ virtualConstraints virtual
 
@@ -264,6 +277,12 @@ viewNodeStyleConstraints node =
   case node of
     BlockViewNode block     -> styleConstraints (blockStyle block)
     VirtualViewNode virtual -> styleConstraints (virtualStyle virtual)
+
+viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
+viewNodeStyleChoiceConstraints node =
+  case node of
+    BlockViewNode block     -> styleCategoryConstraints (blockStyle block)
+    VirtualViewNode virtual -> styleCategoryConstraints (virtualStyle virtual)
 
 viewNodeRangeConstraints :: ViewEnv -> ViewNode -> [Constraint]
 viewNodeRangeConstraints env node =

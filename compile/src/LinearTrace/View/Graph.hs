@@ -32,7 +32,9 @@ module LinearTrace.View.Graph
   , styleForRef
   , styleForVirtualKey
   , virtualBlockId
+  , blockVarName
   , blockVarPath
+  , virtualVarName
   , virtualVar
   , -- * Solver diagnostics
     -- | Style expression traversal helpers used by printing to show solved
@@ -51,8 +53,8 @@ import           LinearTrace.View.Types      (ContentMode, ViewLabel, ViewRef,
                                               ViewTags, viewRefInt)
 import qualified Prelude                     as P
 import qualified Solver                      as S
-import           Solver                      (Constraint, Expr, Solution,
-                                              SymbolicType)
+import           Solver                      (ChoiceConstraint, Constraint,
+                                              Expr, Solution, SymbolicType)
 
 data BlockView tag = BlockView
   { blockRef      :: ViewRef tag
@@ -103,10 +105,11 @@ data ViewStep where
     :: P.String -> [ViewNode] -> [Constraint] -> [[RenderIntent]] -> ViewStep
 
 data ViewGraph = ViewGraph
-  { viewNodes        :: [ViewNode]
-  , viewSteps        :: [ViewStep]
-  , viewConstraints  :: [Constraint]
-  , viewRenderFrames :: [[RenderIntent]]
+  { viewNodes             :: [ViewNode]
+  , viewSteps             :: [ViewStep]
+  , viewConstraints       :: [Constraint]
+  , viewChoiceConstraints :: [ChoiceConstraint]
+  , viewRenderFrames      :: [[RenderIntent]]
   }
 
 data RenderIntent where
@@ -185,10 +188,13 @@ styleForBlockPath ref path =
        (blockVarPath ref path "width")
        (blockVarPath ref path "height"))
 
+blockVarName :: ViewRef tag -> [P.String] -> P.String -> P.String
+blockVarName ref path field =
+  joinPath (("B" P.++ P.show (viewRefInt ref)) : (path P.++ [field]))
+
 blockVarPath ::
      SymbolicType ty => ViewRef tag -> [P.String] -> P.String -> Expr ty
-blockVarPath ref path field =
-  S.var (joinPath (("B" P.++ P.show (viewRefInt ref)) : (path P.++ [field])))
+blockVarPath ref path field = S.var (blockVarName ref path field)
 
 virtualBlockId :: P.String -> P.String -> P.Int
 virtualBlockId key queryKey' =
@@ -203,9 +209,12 @@ styleForVirtualKey key queryKey' =
        (virtualVar key queryKey' "width")
        (virtualVar key queryKey' "height"))
 
+virtualVarName :: P.String -> P.String -> P.String -> P.String
+virtualVarName key queryKey' field =
+  joinPath ["V", key, safeKey queryKey', field]
+
 virtualVar :: SymbolicType ty => P.String -> P.String -> P.String -> Expr ty
-virtualVar key queryKey' field =
-  S.var (joinPath ["V", key, safeKey queryKey', field])
+virtualVar key queryKey' field = S.var (virtualVarName key queryKey' field)
 
 positiveHash :: P.String -> P.Int
 positiveHash = positiveHashFrom 5381

@@ -12,13 +12,14 @@ module LinearTrace.View.Style
   ( -- * Style values
     -- | CSS-like fixed style tokens and text values. These stay independent of
     -- layout primitives except where style fields reference symbolic values.
-    StyleText
-  , styleTextString
+    FontFamily(..)
   , FontWeight(..)
   , FontStyle(..)
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
+  , StyleCategoryType(..)
+  , StyleCategory(..)
   , -- * Unified style representation
     -- | Internal style field model shared by build constraints, choice solving,
     -- and materialization. Callers should prefer the named setters/accessors
@@ -28,10 +29,8 @@ module LinearTrace.View.Style
   , HasStyle(..)
   , StyleValueUnit(..)
   , StyleScalarSpec(..)
-  , StyleTextSpec(..)
-  , StyleChoiceSpec(..)
-  , StyleChoiceValue(..)
-  , DiscreteStyleValue
+  , StyleAttrSpec(..)
+  , StyleCategorySpec(..)
   , StyleField(..)
   , styleBounds
   , styleFields
@@ -39,7 +38,7 @@ module LinearTrace.View.Style
   , mapStyleExprLeaves
   , solvedStyleExprs
   , styleConstraints
-  , styleChoiceConstraints
+  , styleCategoryConstraints
   , -- * Public style accessors/setters
     -- | Named style accessors and setters used by choreography and view access.
     -- These are the intended API for manipulating symbolic style values.
@@ -52,6 +51,12 @@ module LinearTrace.View.Style
   , alpha
   , fill
   , stroke
+  , fontFamily
+  , fontWeight
+  , fontStyle
+  , textAlign
+  , borderStyle
+  , whiteSpace
   , setOpacity
   , setZIndex
   , setPadding
@@ -63,32 +68,26 @@ module LinearTrace.View.Style
   , setAlpha
   , setFontFamily
   , setFontWeight
-  , setFontWeightChoice
   , setFontStyle
-  , setFontStyleChoice
   , setTextAlign
-  , setTextAlignChoice
   , setBorderStyle
-  , setBorderStyleChoice
   , setWhiteSpace
-  , setWhiteSpaceChoice
   ) where
 
 import           Data.Kind                   (Type)
 import           Data.Maybe                  (mapMaybe)
 import           Data.Type.Equality          ((:~:) (..))
+import           Data.Typeable               (Typeable, cast)
 import           LinearTrace.View.Primitives
 import           Prelude
 import           Solver                      hiding (num)
 
-newtype StyleText =
-  StyleText String
+data FontFamily
+  = FontInter
+  | FontSystem
+  | FontMono
+  | FontSerif
   deriving (Eq, Show)
-
-styleTextString :: StyleText -> String
-styleTextString styleText =
-  case styleText of
-    StyleText text -> text
 
 data FontWeight
   = FontWeightNormal
@@ -125,6 +124,20 @@ data WhiteSpace
   | WhiteSpacePre
   | WhiteSpacePreWrap
   deriving (Eq, Show)
+
+class (CategoricalType value, Typeable value) =>
+      StyleCategoryType value
+  where
+  styleCategoryDomain :: [value]
+  styleCategoryToken :: value -> String
+
+fontFamilyToken :: FontFamily -> String
+fontFamilyToken value =
+  case value of
+    FontInter  -> "Inter"
+    FontSystem -> "system-ui"
+    FontMono   -> "monospace"
+    FontSerif  -> "serif"
 
 fontWeightToken :: FontWeight -> String
 fontWeightToken value =
@@ -167,6 +180,9 @@ whiteSpaceToken value =
     WhiteSpacePre     -> "pre"
     WhiteSpacePreWrap -> "pre-wrap"
 
+fontFamilyChoices :: [FontFamily]
+fontFamilyChoices = [FontInter, FontSystem, FontMono, FontSerif]
+
 fontWeightChoices :: [FontWeight]
 fontWeightChoices =
   [FontWeightNormal, FontWeightBold, FontWeightBolder, FontWeightLighter]
@@ -187,20 +203,47 @@ whiteSpaceChoices :: [WhiteSpace]
 whiteSpaceChoices =
   [WhiteSpaceNormal, WhiteSpaceNoWrap, WhiteSpacePre, WhiteSpacePreWrap]
 
+instance CategoricalType FontFamily where
+  categoricalDomain _ = map (category . fontFamilyToken) fontFamilyChoices
+
+instance StyleCategoryType FontFamily where
+  styleCategoryDomain = fontFamilyChoices
+  styleCategoryToken = fontFamilyToken
+
 instance CategoricalType FontWeight where
   categoricalDomain _ = map (category . fontWeightToken) fontWeightChoices
+
+instance StyleCategoryType FontWeight where
+  styleCategoryDomain = fontWeightChoices
+  styleCategoryToken = fontWeightToken
 
 instance CategoricalType FontStyle where
   categoricalDomain _ = map (category . fontStyleToken) fontStyleChoices
 
+instance StyleCategoryType FontStyle where
+  styleCategoryDomain = fontStyleChoices
+  styleCategoryToken = fontStyleToken
+
 instance CategoricalType TextAlign where
   categoricalDomain _ = map (category . textAlignToken) textAlignChoices
+
+instance StyleCategoryType TextAlign where
+  styleCategoryDomain = textAlignChoices
+  styleCategoryToken = textAlignToken
 
 instance CategoricalType BorderStyle where
   categoricalDomain _ = map (category . borderStyleToken) borderStyleChoices
 
+instance StyleCategoryType BorderStyle where
+  styleCategoryDomain = borderStyleChoices
+  styleCategoryToken = borderStyleToken
+
 instance CategoricalType WhiteSpace where
   categoricalDomain _ = map (category . whiteSpaceToken) whiteSpaceChoices
+
+instance StyleCategoryType WhiteSpace where
+  styleCategoryDomain = whiteSpaceChoices
+  styleCategoryToken = whiteSpaceToken
 
 --------------------------------------------------------------------------------
 -- Unified style representation
@@ -235,31 +278,21 @@ sameStyleScalarKind lhs rhs =
     (StyleAngleScalar, StyleAngleScalar)   -> Just Refl
     _                                      -> Nothing
 
-data StyleTextSpec = StyleTextSpec
-  { styleTextName     :: String
-  , styleTextAttrName :: Maybe String
+data StyleAttrSpec = StyleAttrSpec
+  { styleAttrName    :: String
+  , styleAttrCssName :: Maybe String
   }
 
-data StyleChoiceValue value
-  = FixedStyleChoice value
-  | SolvedStyleChoice (Choice value)
+data StyleCategory value
+  = FixedCategory value
+  | VariableCategory (Choice value)
   deriving (Eq, Show)
 
-data DiscreteStyleValue
-  = DiscreteFontWeight String (Maybe FontWeight)
-  | DiscreteFontStyle String (Maybe FontStyle)
-  | DiscreteTextAlign String (Maybe TextAlign)
-  | DiscreteBorderStyle String (Maybe BorderStyle)
-  | DiscreteWhiteSpace String (Maybe WhiteSpace)
-  deriving (Eq, Show)
-
-data StyleChoiceSpec value = StyleChoiceSpec
-  { styleChoiceName          :: String
-  , styleChoiceAttrName      :: Maybe String
-  , styleChoiceDomainValues  :: [value]
-  , styleChoiceCategoryName  :: value -> String
-  , styleChoiceAttrValue     :: value -> String
-  , styleChoiceDiscreteValue :: Maybe value -> DiscreteStyleValue
+data StyleCategorySpec value = StyleCategorySpec
+  { styleCategoryName         :: String
+  , styleCategoryAttrName     :: Maybe String
+  , styleCategoryDomainValues :: [value]
+  , styleCategoryValueToken   :: value -> String
   }
 
 data StyleField where
@@ -268,18 +301,18 @@ data StyleField where
     -> StyleScalarSpec
     -> Expr ty
     -> StyleField
-  StyleColorField :: StyleTextSpec -> Maybe ColorExpr -> StyleField
-  StyleTextField :: StyleTextSpec -> Maybe StyleText -> StyleField
-  StyleChoiceField
-    :: StyleChoiceSpec value -> Maybe (StyleChoiceValue value) -> StyleField
+  StyleColorField :: StyleAttrSpec -> Maybe ColorExpr -> StyleField
+  StyleCategoryField
+    :: StyleCategoryType value=> StyleCategorySpec value
+    -> Maybe (StyleCategory value)
+    -> StyleField
 
 fieldName :: StyleField -> String
 fieldName field =
   case field of
     StyleScalarField _ spec _ -> styleScalarName spec
-    StyleColorField spec _    -> styleTextName spec
-    StyleTextField spec _     -> styleTextName spec
-    StyleChoiceField spec _   -> styleChoiceName spec
+    StyleColorField spec _    -> styleAttrName spec
+    StyleCategoryField spec _ -> styleCategoryName spec
 
 data Style = Style
   { styleBounds :: BoundsExpr
@@ -320,8 +353,7 @@ mapStyleFieldExprs f field =
     StyleScalarField kind spec expr -> StyleScalarField kind spec (f expr)
     StyleColorField spec maybeHsl ->
       StyleColorField spec (fmap (fmap f) maybeHsl)
-    StyleTextField _ _ -> field
-    StyleChoiceField _ _ -> field
+    StyleCategoryField _ _ -> field
 
 replaceByName :: (a -> String) -> a -> [a] -> [a]
 replaceByName getName newValue = go
@@ -357,12 +389,11 @@ fieldExprLeaves field =
       case maybeHsl of
         Nothing -> []
         Just hsl ->
-          [ StyleExprLeaf (styleTextName spec ++ ".hue") (hue hsl)
-          , StyleExprLeaf (styleTextName spec ++ ".saturation") (saturation hsl)
-          , StyleExprLeaf (styleTextName spec ++ ".lightness") (lightness hsl)
+          [ StyleExprLeaf (styleAttrName spec ++ ".hue") (hue hsl)
+          , StyleExprLeaf (styleAttrName spec ++ ".saturation") (saturation hsl)
+          , StyleExprLeaf (styleAttrName spec ++ ".lightness") (lightness hsl)
           ]
-    StyleTextField _ _ -> []
-    StyleChoiceField _ _ -> []
+    StyleCategoryField _ _ -> []
 
 mapStyleExprLeaves ::
      (forall (ty :: Type). String -> Expr ty -> a) -> Style -> [a]
@@ -385,9 +416,9 @@ solvedStyleExprs solution = mapMaybe solveLeaf . styleExprLeaves
 styleConstraints :: Style -> [Constraint]
 styleConstraints style' = concatMap fieldConstraints (styleFields style')
 
-styleChoiceConstraints :: Style -> [ChoiceConstraint]
-styleChoiceConstraints style' =
-  concatMap fieldChoiceConstraints (styleFields style')
+styleCategoryConstraints :: Style -> [ChoiceConstraint]
+styleCategoryConstraints style' =
+  concatMap fieldCategoryConstraints (styleFields style')
 
 fieldConstraints :: StyleField -> [Constraint]
 fieldConstraints field =
@@ -401,13 +432,12 @@ fieldConstraints field =
           , within (saturation hsl) unitRange
           , within (lightness hsl) unitRange
           ]
-    StyleTextField _ _ -> []
-    StyleChoiceField _ _ -> []
+    StyleCategoryField _ _ -> []
 
-fieldChoiceConstraints :: StyleField -> [ChoiceConstraint]
-fieldChoiceConstraints field =
+fieldCategoryConstraints :: StyleField -> [ChoiceConstraint]
+fieldCategoryConstraints field =
   case field of
-    StyleChoiceField _ (Just (SolvedStyleChoice selected)) ->
+    StyleCategoryField _ (Just (VariableCategory selected)) ->
       [freeChoice selected]
     _ -> []
 
@@ -452,30 +482,29 @@ scalarField kind name cssName unit range constraints expr =
       }
     expr
 
-textSpec :: String -> Maybe String -> StyleTextSpec
-textSpec name cssName =
-  StyleTextSpec {styleTextName = name, styleTextAttrName = cssName}
+attrSpec :: String -> Maybe String -> StyleAttrSpec
+attrSpec name cssName =
+  StyleAttrSpec {styleAttrName = name, styleAttrCssName = cssName}
 
-choiceSpec ::
-     String
+categorySpec ::
+     StyleCategoryType value
+  => String
   -> Maybe String
-  -> [value]
-  -> (value -> String)
-  -> (Maybe value -> DiscreteStyleValue)
-  -> StyleChoiceSpec value
-choiceSpec name attrName values toToken toDiscrete =
-  StyleChoiceSpec
-    { styleChoiceName = name
-    , styleChoiceAttrName = attrName
-    , styleChoiceDomainValues = values
-    , styleChoiceCategoryName = toToken
-    , styleChoiceAttrValue = toToken
-    , styleChoiceDiscreteValue = toDiscrete
+  -> StyleCategorySpec value
+categorySpec name attrName =
+  StyleCategorySpec
+    { styleCategoryName = name
+    , styleCategoryAttrName = attrName
+    , styleCategoryDomainValues = styleCategoryDomain
+    , styleCategoryValueToken = styleCategoryToken
     }
 
-choiceField ::
-     StyleChoiceSpec value -> Maybe (StyleChoiceValue value) -> StyleField
-choiceField = StyleChoiceField
+categoryField ::
+     StyleCategoryType value
+  => StyleCategorySpec value
+  -> Maybe (StyleCategory value)
+  -> StyleField
+categoryField = StyleCategoryField
 
 --------------------------------------------------------------------------------
 -- Attribute: opacity
@@ -649,7 +678,7 @@ fillDefault :: Maybe ColorExpr
 fillDefault = Nothing
 
 fillField :: Maybe ColorExpr -> StyleField
-fillField = StyleColorField (textSpec "fill" (Just "backgroundColor"))
+fillField = StyleColorField (attrSpec "fill" (Just "backgroundColor"))
 
 fill :: HasStyle a => a -> Maybe ColorExpr
 fill value = lookupColorField "fill" fillDefault (style value)
@@ -664,7 +693,7 @@ strokeDefault :: Maybe ColorExpr
 strokeDefault = Nothing
 
 strokeField :: Maybe ColorExpr -> StyleField
-strokeField = StyleColorField (textSpec "stroke" (Just "borderColor"))
+strokeField = StyleColorField (attrSpec "stroke" (Just "borderColor"))
 
 stroke :: HasStyle a => a -> Maybe ColorExpr
 stroke value = lookupColorField "stroke" strokeDefault (style value)
@@ -675,117 +704,92 @@ setStroke = setStyleField . strokeField . Just
 --------------------------------------------------------------------------------
 -- Attribute: fontFamily
 --------------------------------------------------------------------------------
-fontFamilyField :: Maybe StyleText -> StyleField
-fontFamilyField = StyleTextField (textSpec "fontFamily" (Just "fontFamily"))
+fontFamilySpec :: StyleCategorySpec FontFamily
+fontFamilySpec = categorySpec "fontFamily" (Just "fontFamily")
 
-setFontFamily :: String -> Style -> Style
-setFontFamily = setStyleField . fontFamilyField . Just . StyleText
+fontFamilyField :: Maybe (StyleCategory FontFamily) -> StyleField
+fontFamilyField = categoryField fontFamilySpec
+
+fontFamily :: HasStyle a => a -> Maybe (StyleCategory FontFamily)
+fontFamily value = lookupCategoryField "fontFamily" Nothing (style value)
+
+setFontFamily :: StyleCategory FontFamily -> Style -> Style
+setFontFamily = setStyleField . fontFamilyField . Just
 
 --------------------------------------------------------------------------------
 -- Attribute: fontWeight
 --------------------------------------------------------------------------------
-fontWeightSpec :: StyleChoiceSpec FontWeight
-fontWeightSpec =
-  choiceSpec
-    "fontWeight"
-    (Just "fontWeight")
-    fontWeightChoices
-    fontWeightToken
-    (DiscreteFontWeight "fontWeight")
+fontWeightSpec :: StyleCategorySpec FontWeight
+fontWeightSpec = categorySpec "fontWeight" (Just "fontWeight")
 
-fontWeightField :: Maybe (StyleChoiceValue FontWeight) -> StyleField
-fontWeightField = choiceField fontWeightSpec
+fontWeightField :: Maybe (StyleCategory FontWeight) -> StyleField
+fontWeightField = categoryField fontWeightSpec
 
-setFontWeight :: FontWeight -> Style -> Style
-setFontWeight = setStyleField . fontWeightField . Just . FixedStyleChoice
+fontWeight :: HasStyle a => a -> Maybe (StyleCategory FontWeight)
+fontWeight value = lookupCategoryField "fontWeight" Nothing (style value)
 
-setFontWeightChoice :: Choice FontWeight -> Style -> Style
-setFontWeightChoice = setStyleField . fontWeightField . Just . SolvedStyleChoice
+setFontWeight :: StyleCategory FontWeight -> Style -> Style
+setFontWeight = setStyleField . fontWeightField . Just
 
 --------------------------------------------------------------------------------
 -- Attribute: fontStyle
 --------------------------------------------------------------------------------
-fontStyleSpec :: StyleChoiceSpec FontStyle
-fontStyleSpec =
-  choiceSpec
-    "fontStyle"
-    (Just "fontStyle")
-    fontStyleChoices
-    fontStyleToken
-    (DiscreteFontStyle "fontStyle")
+fontStyleSpec :: StyleCategorySpec FontStyle
+fontStyleSpec = categorySpec "fontStyle" (Just "fontStyle")
 
-fontStyleField :: Maybe (StyleChoiceValue FontStyle) -> StyleField
-fontStyleField = choiceField fontStyleSpec
+fontStyleField :: Maybe (StyleCategory FontStyle) -> StyleField
+fontStyleField = categoryField fontStyleSpec
 
-setFontStyle :: FontStyle -> Style -> Style
-setFontStyle = setStyleField . fontStyleField . Just . FixedStyleChoice
+fontStyle :: HasStyle a => a -> Maybe (StyleCategory FontStyle)
+fontStyle value = lookupCategoryField "fontStyle" Nothing (style value)
 
-setFontStyleChoice :: Choice FontStyle -> Style -> Style
-setFontStyleChoice = setStyleField . fontStyleField . Just . SolvedStyleChoice
+setFontStyle :: StyleCategory FontStyle -> Style -> Style
+setFontStyle = setStyleField . fontStyleField . Just
 
 --------------------------------------------------------------------------------
 -- Attribute: textAlign
 --------------------------------------------------------------------------------
-textAlignSpec :: StyleChoiceSpec TextAlign
-textAlignSpec =
-  choiceSpec
-    "textAlign"
-    (Just "textAlign")
-    textAlignChoices
-    textAlignToken
-    (DiscreteTextAlign "textAlign")
+textAlignSpec :: StyleCategorySpec TextAlign
+textAlignSpec = categorySpec "textAlign" (Just "textAlign")
 
-textAlignField :: Maybe (StyleChoiceValue TextAlign) -> StyleField
-textAlignField = choiceField textAlignSpec
+textAlignField :: Maybe (StyleCategory TextAlign) -> StyleField
+textAlignField = categoryField textAlignSpec
 
-setTextAlign :: TextAlign -> Style -> Style
-setTextAlign = setStyleField . textAlignField . Just . FixedStyleChoice
+textAlign :: HasStyle a => a -> Maybe (StyleCategory TextAlign)
+textAlign value = lookupCategoryField "textAlign" Nothing (style value)
 
-setTextAlignChoice :: Choice TextAlign -> Style -> Style
-setTextAlignChoice = setStyleField . textAlignField . Just . SolvedStyleChoice
+setTextAlign :: StyleCategory TextAlign -> Style -> Style
+setTextAlign = setStyleField . textAlignField . Just
 
 --------------------------------------------------------------------------------
 -- Attribute: borderStyle
 --------------------------------------------------------------------------------
-borderStyleSpec :: StyleChoiceSpec BorderStyle
-borderStyleSpec =
-  choiceSpec
-    "borderStyle"
-    (Just "borderStyle")
-    borderStyleChoices
-    borderStyleToken
-    (DiscreteBorderStyle "borderStyle")
+borderStyleSpec :: StyleCategorySpec BorderStyle
+borderStyleSpec = categorySpec "borderStyle" (Just "borderStyle")
 
-borderStyleField :: Maybe (StyleChoiceValue BorderStyle) -> StyleField
-borderStyleField = choiceField borderStyleSpec
+borderStyleField :: Maybe (StyleCategory BorderStyle) -> StyleField
+borderStyleField = categoryField borderStyleSpec
 
-setBorderStyle :: BorderStyle -> Style -> Style
-setBorderStyle = setStyleField . borderStyleField . Just . FixedStyleChoice
+borderStyle :: HasStyle a => a -> Maybe (StyleCategory BorderStyle)
+borderStyle value = lookupCategoryField "borderStyle" Nothing (style value)
 
-setBorderStyleChoice :: Choice BorderStyle -> Style -> Style
-setBorderStyleChoice =
-  setStyleField . borderStyleField . Just . SolvedStyleChoice
+setBorderStyle :: StyleCategory BorderStyle -> Style -> Style
+setBorderStyle = setStyleField . borderStyleField . Just
 
 --------------------------------------------------------------------------------
 -- Attribute: whiteSpace
 --------------------------------------------------------------------------------
-whiteSpaceSpec :: StyleChoiceSpec WhiteSpace
-whiteSpaceSpec =
-  choiceSpec
-    "whiteSpace"
-    (Just "whiteSpace")
-    whiteSpaceChoices
-    whiteSpaceToken
-    (DiscreteWhiteSpace "whiteSpace")
+whiteSpaceSpec :: StyleCategorySpec WhiteSpace
+whiteSpaceSpec = categorySpec "whiteSpace" (Just "whiteSpace")
 
-whiteSpaceField :: Maybe (StyleChoiceValue WhiteSpace) -> StyleField
-whiteSpaceField = choiceField whiteSpaceSpec
+whiteSpaceField :: Maybe (StyleCategory WhiteSpace) -> StyleField
+whiteSpaceField = categoryField whiteSpaceSpec
 
-setWhiteSpace :: WhiteSpace -> Style -> Style
-setWhiteSpace = setStyleField . whiteSpaceField . Just . FixedStyleChoice
+whiteSpace :: HasStyle a => a -> Maybe (StyleCategory WhiteSpace)
+whiteSpace value = lookupCategoryField "whiteSpace" Nothing (style value)
 
-setWhiteSpaceChoice :: Choice WhiteSpace -> Style -> Style
-setWhiteSpaceChoice = setStyleField . whiteSpaceField . Just . SolvedStyleChoice
+setWhiteSpace :: StyleCategory WhiteSpace -> Style -> Style
+setWhiteSpace = setStyleField . whiteSpaceField . Just
 
 --------------------------------------------------------------------------------
 -- Defaults
@@ -831,6 +835,25 @@ lookupColorField name fallback style' = go (styleFields style')
       case fields of
         [] -> fallback
         StyleColorField spec value:rest
-          | styleTextName spec == name -> value
+          | styleAttrName spec == name -> value
+          | otherwise -> go rest
+        _:rest -> go rest
+
+lookupCategoryField ::
+     StyleCategoryType value
+  => String
+  -> Maybe (StyleCategory value)
+  -> Style
+  -> Maybe (StyleCategory value)
+lookupCategoryField name fallback style' = go (styleFields style')
+  where
+    go fields =
+      case fields of
+        [] -> fallback
+        StyleCategoryField spec value:rest
+          | styleCategoryName spec == name ->
+            case cast value of
+              Just typedValue -> typedValue
+              Nothing         -> go rest
           | otherwise -> go rest
         _:rest -> go rest

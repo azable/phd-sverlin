@@ -574,9 +574,7 @@ concreteFieldCssAttrs alphaValue field =
       case (attrName, maybeHsl) of
         (Just name, Just hsl) -> [(name, StyleColor (hslToCss alphaValue hsl))]
         _                     -> []
-    VM.ConcreteTextField _ attrName maybeText ->
-      stringCssAttr attrName (VS.styleTextString <$> maybeText)
-    VM.ConcreteChoiceField _ attrName maybeToken _ ->
+    VM.ConcreteTokenField _ attrName maybeToken ->
       stringCssAttr attrName maybeToken
 
 stringCssAttr :: Maybe String -> Maybe String -> [(String, StyleValue)]

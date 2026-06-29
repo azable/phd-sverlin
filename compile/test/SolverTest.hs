@@ -81,6 +81,35 @@ viewMaterializationTests =
         assertBool
           "expected selected fill access to compile a backgroundColor"
           (any hasBackgroundColor (compiledRenderBlocks compiled))
+    , testCase "categorical style variables lower to concrete tokens" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 13)
+            ChoreographyFixtures.categoricalStyleGraph
+        compiled <-
+          assertCompileSolved
+            solution
+            ChoreographyFixtures.categoricalStyleGraph
+        case compiledRenderBlocks compiled of
+          block:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle block)
+            Map.lookup "fontFamily" attrs
+              @?= Just (Compile.StyleText "monospace")
+          [] -> assertFailure "expected at least one compiled render block"
+    , testCase "selected categorical access adds and constrains style" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 14)
+            ChoreographyFixtures.categoricalRelationGraph
+        compiled <-
+          assertCompileSolved
+            solution
+            ChoreographyFixtures.categoricalRelationGraph
+        case compiledRenderBlocks compiled of
+          block:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle block)
+            Map.lookup "fontFamily" attrs @?= Just (Compile.StyleText "Inter")
+          [] -> assertFailure "expected at least one compiled render block"
     , testCase
         "compileSolved lowers concrete scalar text choice and color fields" $ do
         solution <-

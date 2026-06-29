@@ -22,11 +22,16 @@ module LinearTrace.Choreography.Match
     NodeSelection(..)
   , ConstraintStrength(..)
   , LayoutRelation(..)
+  , CategoryRelation(..)
   , ValueComponent
   , ValueEndpoint
+  , CategoryEndpoint
   , rawValueEndpoint
+  , rawCategoryEndpoint
   , selectionValueEndpoint
+  , selectionCategoryEndpoint
   , matchValueRelation
+  , matchCategoryRelation
   , matchValueDirectedBridge
   , matchValueSymmetricBridge
   , -- * View graph assembly
@@ -51,6 +56,7 @@ import qualified LinearTrace.Core.Events        as E
 import qualified LinearTrace.View               as V
 import qualified LinearTrace.View.Access        as VA
 import qualified LinearTrace.View.Patch         as VP
+import qualified LinearTrace.View.Style         as VS
 import           Prelude                        (Bool (..), Maybe (..),
                                                  otherwise)
 import qualified Prelude                        as P
@@ -75,9 +81,18 @@ data LayoutRelation
   | LayoutLessOrEqual
   deriving (P.Eq, P.Show)
 
+data CategoryRelation
+  = CategoryEqual
+  | CategoryDifferent
+  deriving (P.Eq, P.Show)
+
 data ValueEndpoint
   = RawValueEndpoint ValueComponent
   | SelectionValueEndpoint NodeSelection VA.ValueAccess
+
+data CategoryEndpoint value
+  = RawCategoryEndpoint (VS.StyleCategory value)
+  | SelectionCategoryEndpoint NodeSelection (VA.CategoryAccess value)
 
 data MatchSpec =
   MatchSpec [NodeRule] [LayoutRule] [VirtualRule]
@@ -97,6 +112,12 @@ data LayoutRule where
     -> [ValueEndpoint]
     -> LayoutRelation
     -> [ValueEndpoint]
+    -> LayoutRule
+  CategoryRelationLayout
+    :: VS.StyleCategoryType value=> ConstraintStrength
+    -> [CategoryEndpoint value]
+    -> CategoryRelation
+    -> [CategoryEndpoint value]
     -> LayoutRule
   ValueDirectedBridgeLayout
     :: ConstraintStrength
@@ -162,8 +183,15 @@ matchVirtualNode key query patch =
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
 
+rawCategoryEndpoint :: VS.StyleCategory value -> CategoryEndpoint value
+rawCategoryEndpoint = RawCategoryEndpoint
+
 selectionValueEndpoint :: NodeSelection -> VA.ValueAccess -> ValueEndpoint
 selectionValueEndpoint = SelectionValueEndpoint
+
+selectionCategoryEndpoint ::
+     NodeSelection -> VA.CategoryAccess value -> CategoryEndpoint value
+selectionCategoryEndpoint = SelectionCategoryEndpoint
 
 matchValueRelation ::
      ConstraintStrength
@@ -173,6 +201,16 @@ matchValueRelation ::
   -> MatchSpec
 matchValueRelation strength lhs relation rhs =
   MatchSpec [] [ValueRelationLayout strength lhs relation rhs] []
+
+matchCategoryRelation ::
+     VS.StyleCategoryType value
+  => ConstraintStrength
+  -> [CategoryEndpoint value]
+  -> CategoryRelation
+  -> [CategoryEndpoint value]
+  -> MatchSpec
+matchCategoryRelation strength lhs relation rhs =
+  MatchSpec [] [CategoryRelationLayout strength lhs relation rhs] []
 
 matchValueDirectedBridge ::
      ConstraintStrength
@@ -323,45 +361,76 @@ buildMatchedViewGraph ::
   -> [V.ViewStep]
   -> [V.ViewNode]
   -> [S.Constraint]
+  -> [S.ChoiceConstraint]
   -> [[V.RenderIntent]]
   -> V.ViewGraph
-buildMatchedViewGraph spec viewSteps' builtNodes builtConstraints renderFrames =
+buildMatchedViewGraph spec viewSteps' builtNodes builtConstraints builtChoiceConstraints renderFrames =
   let traceNodes = applyAccessRequirementsForSpec spec builtNodes
       virtualNodes =
         applyAccessRequirementsForSpec
           spec
           (virtualNodesForSpec spec traceNodes)
       nodes = traceNodes P.++ virtualNodes
-      constraints = builtConstraints P.++ matchSpecConstraints spec nodes
-   in V.finalizeViewGraph nodes viewSteps' constraints renderFrames
+      (matchConstraints, matchChoiceConstraints) =
+        matchSpecConstraints spec nodes
+      constraints = builtConstraints P.++ matchConstraints
+      choiceConstraints = builtChoiceConstraints P.++ matchChoiceConstraints
+   in V.finalizeViewGraph
+        nodes
+        viewSteps'
+        constraints
+        choiceConstraints
+        renderFrames
 
-matchSpecConstraints :: MatchSpec -> [V.ViewNode] -> [S.Constraint]
+matchSpecConstraints ::
+     MatchSpec -> [V.ViewNode] -> ([S.Constraint], [S.ChoiceConstraint])
 matchSpecConstraints spec nodes =
   case spec of
     MatchSpec _ layoutRules _ ->
-      P.concatMap (layoutRuleConstraints nodes) layoutRules
+      foldConstraintPairs (P.map (layoutRuleConstraints nodes) layoutRules)
 
-layoutRuleConstraints :: [V.ViewNode] -> LayoutRule -> [S.Constraint]
+foldConstraintPairs ::
+     [([S.Constraint], [S.ChoiceConstraint])]
+  -> ([S.Constraint], [S.ChoiceConstraint])
+foldConstraintPairs pairs =
+  case pairs of
+    [] -> ([], [])
+    (constraints, choiceConstraints):rest ->
+      case foldConstraintPairs rest of
+        (restConstraints, restChoiceConstraints) ->
+          ( constraints P.++ restConstraints
+          , choiceConstraints P.++ restChoiceConstraints)
+
+layoutRuleConstraints ::
+     [V.ViewNode] -> LayoutRule -> ([S.Constraint], [S.ChoiceConstraint])
 layoutRuleConstraints nodes layoutRule =
   case layoutRule of
     ValueRelationLayout strength lhs relation rhs ->
-      applyConstraintStrength
-        strength
-        (P.concatMap
-           (valueRelationConstraints relation)
-           (matchingValueTerms lhs rhs nodes))
+      ( applyConstraintStrength
+          strength
+          (P.concatMap
+             (valueRelationConstraints relation)
+             (matchingValueTerms lhs rhs nodes))
+      , [])
+    CategoryRelationLayout _ lhs relation rhs ->
+      ( []
+      , P.concatMap
+          (categoryRelationConstraints relation)
+          (matchingCategoryTerms lhs rhs nodes))
     ValueDirectedBridgeLayout strength lhs gap rhs ->
-      applyConstraintStrength
-        strength
-        (P.concatMap
-           valueDirectedBridgeConstraints
-           (matchingValueTermTriples lhs gap rhs nodes))
+      ( applyConstraintStrength
+          strength
+          (P.concatMap
+             valueDirectedBridgeConstraints
+             (matchingValueTermTriples lhs gap rhs nodes))
+      , [])
     ValueSymmetricBridgeLayout strength lhs delta rhs ->
-      applyConstraintStrength
-        strength
-        (P.concatMap
-           valueSymmetricBridgeConstraints
-           (matchingValueTermTriples lhs delta rhs nodes))
+      ( applyConstraintStrength
+          strength
+          (P.concatMap
+             valueSymmetricBridgeConstraints
+             (matchingValueTermTriples lhs delta rhs nodes))
+      , [])
 
 applyConstraintStrength ::
      ConstraintStrength -> [S.Constraint] -> [S.Constraint]
@@ -372,6 +441,9 @@ applyConstraintStrength strength constraints =
 
 data LayoutEndpointMatch =
   LayoutEndpointMatch ValueComponent QueryBindings
+
+data CategoryEndpointMatch value =
+  CategoryEndpointMatch (VS.StyleCategory value) QueryBindings
 
 matchingValueTerms ::
      [ValueEndpoint]
@@ -427,6 +499,57 @@ matchingEndpointNodes endpoint nodes =
     RawValueEndpoint component -> [LayoutEndpointMatch component []]
     SelectionValueEndpoint selection access ->
       [ LayoutEndpointMatch (VA.valueAccessComponent access node) bindings
+      | (node, bindings) <- matchingSelectionNodes selection nodes
+      ]
+
+matchingCategoryTerms ::
+     [CategoryEndpoint value]
+  -> [CategoryEndpoint value]
+  -> [V.ViewNode]
+  -> [([VS.StyleCategory value], [VS.StyleCategory value])]
+matchingCategoryTerms lhs rhs nodes =
+  [ (lhsCategories, rhsCategories)
+  | ([lhsCategories, rhsCategories], _) <-
+      matchingCategoryTermGroups [lhs, rhs] nodes
+  ]
+
+matchingCategoryTermGroups ::
+     [[CategoryEndpoint value]]
+  -> [V.ViewNode]
+  -> [([[VS.StyleCategory value]], QueryBindings)]
+matchingCategoryTermGroups endpointGroups nodes =
+  case endpointGroups of
+    [] -> [([], [])]
+    endpoints:rest ->
+      [ (categories : restCategories, mergedBindings)
+      | (categories, bindings) <- matchingCategoryTerm endpoints nodes
+      , (restCategories, restBindings) <- matchingCategoryTermGroups rest nodes
+      , Just mergedBindings <- [mergeQueryBindings bindings restBindings]
+      ]
+
+matchingCategoryTerm ::
+     [CategoryEndpoint value]
+  -> [V.ViewNode]
+  -> [([VS.StyleCategory value], QueryBindings)]
+matchingCategoryTerm endpoints nodes =
+  case endpoints of
+    [] -> [([], [])]
+    endpoint:rest ->
+      [ (categoryValue : restCategories, mergedBindings)
+      | CategoryEndpointMatch categoryValue bindings <-
+          matchingCategoryEndpointNodes endpoint nodes
+      , (restCategories, restBindings) <- matchingCategoryTerm rest nodes
+      , Just mergedBindings <- [mergeQueryBindings bindings restBindings]
+      ]
+
+matchingCategoryEndpointNodes ::
+     CategoryEndpoint value -> [V.ViewNode] -> [CategoryEndpointMatch value]
+matchingCategoryEndpointNodes endpoint nodes =
+  case endpoint of
+    RawCategoryEndpoint categoryValue ->
+      [CategoryEndpointMatch categoryValue []]
+    SelectionCategoryEndpoint selection access ->
+      [ CategoryEndpointMatch (VA.categoryAccessValue access node) bindings
       | (node, bindings) <- matchingSelectionNodes selection nodes
       ]
 
@@ -504,6 +627,126 @@ valueSymmetricBridgeConstraints triple =
     (lhsComponents, deltaComponents, rhsComponents) ->
       S.symmetricBridgeComponents lhsComponents deltaComponents rhsComponents
 
+categoryRelationConstraints ::
+     VS.StyleCategoryType value
+  => CategoryRelation
+  -> ([VS.StyleCategory value], [VS.StyleCategory value])
+  -> [S.ChoiceConstraint]
+categoryRelationConstraints relation pair' =
+  case pair' of
+    (lhsCategories, rhsCategories) ->
+      zipCategoryConstraints relation lhsCategories rhsCategories
+
+zipCategoryConstraints ::
+     VS.StyleCategoryType value
+  => CategoryRelation
+  -> [VS.StyleCategory value]
+  -> [VS.StyleCategory value]
+  -> [S.ChoiceConstraint]
+zipCategoryConstraints relation lhs rhs =
+  case (lhs, rhs) of
+    ([], []) -> []
+    (lhsCategory:lhsRest, rhsCategory:rhsRest) ->
+      categoryValueRelationConstraints relation lhsCategory rhsCategory
+        P.++ zipCategoryConstraints relation lhsRest rhsRest
+    _ ->
+      P.error "Cannot relate category values with different component counts."
+
+categoryValueRelationConstraints ::
+     VS.StyleCategoryType value
+  => CategoryRelation
+  -> VS.StyleCategory value
+  -> VS.StyleCategory value
+  -> [S.ChoiceConstraint]
+categoryValueRelationConstraints relation lhs rhs =
+  case relation of
+    CategoryEqual     -> categoryEqualConstraints lhs rhs
+    CategoryDifferent -> categoryDifferentConstraints lhs rhs
+
+categoryEqualConstraints ::
+     VS.StyleCategoryType value
+  => VS.StyleCategory value
+  -> VS.StyleCategory value
+  -> [S.ChoiceConstraint]
+categoryEqualConstraints lhs rhs =
+  case (lhs, rhs) of
+    (VS.FixedCategory lhsValue, VS.FixedCategory rhsValue)
+      | categoryTokensEqual lhsValue rhsValue -> []
+      | otherwise -> impossibleCategoryConstraints lhsValue
+    (VS.FixedCategory fixed, VS.VariableCategory selected) ->
+      [S.choose selected (S.category (VS.styleCategoryToken fixed))]
+    (VS.VariableCategory selected, VS.FixedCategory fixed) ->
+      [S.choose selected (S.category (VS.styleCategoryToken fixed))]
+    (VS.VariableCategory lhsChoice, VS.VariableCategory rhsChoice) ->
+      [S.sameChoice lhsChoice rhsChoice]
+
+categoryDifferentConstraints ::
+     VS.StyleCategoryType value
+  => VS.StyleCategory value
+  -> VS.StyleCategory value
+  -> [S.ChoiceConstraint]
+categoryDifferentConstraints lhs rhs =
+  case (lhs, rhs) of
+    (VS.FixedCategory lhsValue, VS.FixedCategory rhsValue)
+      | categoryTokensEqual lhsValue rhsValue ->
+        impossibleCategoryConstraints lhsValue
+      | otherwise -> []
+    (VS.FixedCategory fixed, VS.VariableCategory selected) ->
+      fixedCategoryChoiceConstraints fixed
+        P.++ [S.differentChoice (fixedCategoryChoice fixed) selected]
+    (VS.VariableCategory selected, VS.FixedCategory fixed) ->
+      fixedCategoryChoiceConstraints fixed
+        P.++ [S.differentChoice selected (fixedCategoryChoice fixed)]
+    (VS.VariableCategory lhsChoice, VS.VariableCategory rhsChoice) ->
+      [S.differentChoice lhsChoice rhsChoice]
+
+categoryTokensEqual :: VS.StyleCategoryType value => value -> value -> P.Bool
+categoryTokensEqual lhs rhs =
+  VS.styleCategoryToken lhs P.== VS.styleCategoryToken rhs
+
+fixedCategoryChoiceConstraints ::
+     VS.StyleCategoryType value => value -> [S.ChoiceConstraint]
+fixedCategoryChoiceConstraints value =
+  [ S.choose
+      (fixedCategoryChoice value)
+      (S.category (VS.styleCategoryToken value))
+  ]
+
+impossibleCategoryConstraints ::
+     VS.StyleCategoryType value => value -> [S.ChoiceConstraint]
+impossibleCategoryConstraints value =
+  [S.choose (fixedCategoryChoice value) (S.category "__impossible__")]
+
+fixedCategoryChoice :: VS.StyleCategoryType value => value -> S.Choice value
+fixedCategoryChoice value = S.choice (fixedCategoryChoiceName value)
+
+fixedCategoryChoiceName :: VS.StyleCategoryType value => value -> P.String
+fixedCategoryChoiceName value =
+  "view.fixed."
+    P.++ categoryDomainKey value
+    P.++ "."
+    P.++ VS.styleCategoryToken value
+
+categoryDomainKey ::
+     forall value. VS.StyleCategoryType value
+  => value
+  -> P.String
+categoryDomainKey _ =
+  joinCategoryTokens
+    (P.map VS.styleCategoryToken (VS.styleCategoryDomain :: [value]))
+
+joinCategoryTokens :: [P.String] -> P.String
+joinCategoryTokens tokens =
+  case tokens of
+    []         -> "empty"
+    token:rest -> token P.++ joinCategoryTokenRest rest
+
+joinCategoryTokenRest :: [P.String] -> P.String
+joinCategoryTokenRest tokens =
+  case tokens of
+    []         -> ""
+    token:rest -> "-" P.++ token P.++ joinCategoryTokenRest rest
+
 applyAccessRequirementsForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
 applyAccessRequirementsForSpec spec nodes =
   case spec of
@@ -524,10 +767,33 @@ applyAccessRequirementsForRule rule node =
   case rule of
     ValueRelationLayout _ lhs _ rhs ->
       applyAccessRequirementsForEndpoints (lhs P.++ rhs) node
+    CategoryRelationLayout _ lhs _ rhs ->
+      applyAccessRequirementsForCategoryEndpoints (lhs P.++ rhs) node
     ValueDirectedBridgeLayout _ lhs gap rhs ->
       applyAccessRequirementsForEndpoints (lhs P.++ gap P.++ rhs) node
     ValueSymmetricBridgeLayout _ lhs delta rhs ->
       applyAccessRequirementsForEndpoints (lhs P.++ delta P.++ rhs) node
+
+applyAccessRequirementsForCategoryEndpoints ::
+     [CategoryEndpoint value] -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForCategoryEndpoints endpoints node =
+  case endpoints of
+    [] -> node
+    endpoint:rest ->
+      applyAccessRequirementsForCategoryEndpoints
+        rest
+        (applyAccessRequirementsForCategoryEndpoint endpoint node)
+
+applyAccessRequirementsForCategoryEndpoint ::
+     CategoryEndpoint value -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForCategoryEndpoint endpoint node =
+  case endpoint of
+    RawCategoryEndpoint _ -> node
+    SelectionCategoryEndpoint selection access ->
+      case nodeMatchesSelection selection node of
+        False -> node
+        True ->
+          VA.applyStyleRequirements (VA.categoryAccessRequirements access) node
 
 applyAccessRequirementsForEndpoints ::
      [ValueEndpoint] -> V.ViewNode -> V.ViewNode

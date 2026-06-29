@@ -1,6 +1,8 @@
 -- | Value-access bridge from view layout/style fields to solver components.
 -- Choreography and match rules use this module to relate selected values while
 -- keeping the top-level view facade free of query-specific APIs.
+{-# LANGUAGE GADTs #-}
+
 module LinearTrace.View.Access
   ( -- * Endpoint values
     -- | Component projections over concrete selections. These feed
@@ -12,6 +14,7 @@ module LinearTrace.View.Access
   , StyleUnitAttr(..)
   , StyleFreeAttr(..)
   , StyleColorAttr(..)
+  , StyleCategoryAttr(..)
   , HslPart(..)
   , -- * Style requirements
     -- | Requirements that a value access can impose on a view node, currently
@@ -25,8 +28,12 @@ module LinearTrace.View.Access
   , styleUnitValueAccess
   , styleFreeValueAccess
   , styleColorPartValueAccess
+  , styleCategoryValueAccess
   , valueAccessComponent
   , valueAccessRequirements
+  , CategoryAccess
+  , categoryAccessValue
+  , categoryAccessRequirements
   , -- * Requirement application
     -- | Applies access-implied style fields to graph nodes before constraints
     -- are emitted.
@@ -40,7 +47,8 @@ import           LinearTrace.View.Style
 import           Prelude                     (Maybe (..))
 import qualified Prelude                     as P
 import qualified Solver                      as S
-import           Solver                      (Component, Expr, SymbolicType)
+import           Solver                      (Choice, Component, Expr,
+                                              SymbolicType)
 
 type ValueComponent = Component
 
@@ -65,18 +73,41 @@ data StyleColorAttr
   | StyleStroke
   deriving (P.Eq, P.Show)
 
+data StyleCategoryAttr value where
+  StyleFontFamily :: StyleCategoryAttr FontFamily
+  StyleFontWeight :: StyleCategoryAttr FontWeight
+  StyleFontStyle :: StyleCategoryAttr FontStyle
+  StyleTextAlign :: StyleCategoryAttr TextAlign
+  StyleBorderStyle :: StyleCategoryAttr BorderStyle
+  StyleWhiteSpace :: StyleCategoryAttr WhiteSpace
+
 data HslPart
   = HslHue
   | HslSaturation
   | HslLightness
   deriving (P.Eq, P.Show)
 
-newtype StyleRequirement =
-  RequireColor StyleColorAttr
-  deriving (P.Eq, P.Show)
+data SomeStyleCategoryAttr where
+  SomeStyleCategoryAttr :: StyleCategoryAttr value -> SomeStyleCategoryAttr
+
+data StyleRequirement
+  = RequireColor StyleColorAttr
+  | RequireCategory SomeStyleCategoryAttr
+
+instance P.Show StyleRequirement where
+  show requirement =
+    case requirement of
+      RequireColor color -> "RequireColor " P.++ P.show color
+      RequireCategory some ->
+        case some of
+          SomeStyleCategoryAttr attr ->
+            "RequireCategory " P.++ styleCategoryAccessName attr
 
 data ValueAccess =
   ValueAccess [StyleRequirement] (AnyLayoutView -> ValueComponent)
+
+data CategoryAccess value =
+  CategoryAccess [StyleRequirement] (AnyLayoutView -> StyleCategory value)
 
 layoutValueAccess :: LayoutAttr -> ValueAccess
 layoutValueAccess attr =
@@ -98,6 +129,12 @@ styleColorPartValueAccess :: StyleColorAttr -> HslPart -> ValueAccess
 styleColorPartValueAccess color part =
   ValueAccess [RequireColor color] (styleColorPartComponent color part)
 
+styleCategoryValueAccess :: StyleCategoryAttr value -> CategoryAccess value
+styleCategoryValueAccess attr =
+  CategoryAccess
+    [RequireCategory (SomeStyleCategoryAttr attr)]
+    (styleCategoryValue attr)
+
 valueAccessComponent :: ValueAccess -> AnyLayoutView -> ValueComponent
 valueAccessComponent access view =
   case access of
@@ -107,6 +144,17 @@ valueAccessRequirements :: ValueAccess -> [StyleRequirement]
 valueAccessRequirements access =
   case access of
     ValueAccess requirements _ -> requirements
+
+categoryAccessValue ::
+     CategoryAccess value -> AnyLayoutView -> StyleCategory value
+categoryAccessValue access view =
+  case access of
+    CategoryAccess _ project -> project view
+
+categoryAccessRequirements :: CategoryAccess value -> [StyleRequirement]
+categoryAccessRequirements access =
+  case access of
+    CategoryAccess requirements _ -> requirements
 
 layoutViewAttr :: LayoutAttr -> AnyLayoutView -> LayoutExpr
 layoutViewAttr attr view =
@@ -193,6 +241,58 @@ styleColorName color =
     StyleFill   -> "fill"
     StyleStroke -> "stroke"
 
+styleCategoryValue ::
+     StyleCategoryAttr value -> AnyLayoutView -> StyleCategory value
+styleCategoryValue attr view =
+  Maybe.fromMaybe (requiredStyleCategory attr view) maybeCategory
+  where
+    maybeCategory =
+      case attr of
+        StyleFontFamily  -> fontFamily (layoutViewStyle view)
+        StyleFontWeight  -> fontWeight (layoutViewStyle view)
+        StyleFontStyle   -> fontStyle (layoutViewStyle view)
+        StyleTextAlign   -> textAlign (layoutViewStyle view)
+        StyleBorderStyle -> borderStyle (layoutViewStyle view)
+        StyleWhiteSpace  -> whiteSpace (layoutViewStyle view)
+
+requiredStyleCategory ::
+     StyleCategoryAttr value -> AnyLayoutView -> StyleCategory value
+requiredStyleCategory attr view =
+  VariableCategory (styleCategoryChoice attr view)
+
+styleCategoryChoice :: StyleCategoryAttr value -> AnyLayoutView -> Choice value
+styleCategoryChoice attr view =
+  case attr of
+    StyleFontFamily  -> S.choice name
+    StyleFontWeight  -> S.choice name
+    StyleFontStyle   -> S.choice name
+    StyleTextAlign   -> S.choice name
+    StyleBorderStyle -> S.choice name
+    StyleWhiteSpace  -> S.choice name
+  where
+    name = styleCategoryChoiceName attr view
+
+styleCategoryChoiceName :: StyleCategoryAttr value -> AnyLayoutView -> P.String
+styleCategoryChoiceName attr view =
+  case view of
+    AnyLayoutBlock block ->
+      blockVarName (blockRef block) ["style"] (styleCategoryAccessName attr)
+    AnyLayoutVirtual virtual ->
+      virtualVarName
+        (virtualNodeKey virtual)
+        (virtualQueryKey virtual)
+        ("style." P.++ styleCategoryAccessName attr)
+
+styleCategoryAccessName :: StyleCategoryAttr value -> P.String
+styleCategoryAccessName attr =
+  case attr of
+    StyleFontFamily  -> "fontFamily"
+    StyleFontWeight  -> "fontWeight"
+    StyleFontStyle   -> "fontStyle"
+    StyleTextAlign   -> "textAlign"
+    StyleBorderStyle -> "borderStyle"
+    StyleWhiteSpace  -> "whiteSpace"
+
 boundsAttr :: HasBounds bounds => LayoutAttr -> bounds -> LayoutExpr
 boundsAttr attr bounds' =
   case attr of
@@ -239,6 +339,10 @@ requireStyleForView view requirement style' =
   case requirement of
     RequireColor color ->
       requireColorField color (requiredStyleColor color view) style'
+    RequireCategory some ->
+      case some of
+        SomeStyleCategoryAttr attr ->
+          requireCategoryField attr (requiredStyleCategory attr view) style'
 
 requireColorField :: StyleColorAttr -> ColorExpr -> Style -> Style
 requireColorField color value style' =
@@ -250,4 +354,33 @@ requireColorField color value style' =
     StyleStroke ->
       case stroke style' of
         Nothing -> setStroke value style'
+        Just _  -> style'
+
+requireCategoryField ::
+     StyleCategoryAttr value -> StyleCategory value -> Style -> Style
+requireCategoryField attr value style' =
+  case attr of
+    StyleFontFamily ->
+      case fontFamily style' of
+        Nothing -> setFontFamily value style'
+        Just _  -> style'
+    StyleFontWeight ->
+      case fontWeight style' of
+        Nothing -> setFontWeight value style'
+        Just _  -> style'
+    StyleFontStyle ->
+      case fontStyle style' of
+        Nothing -> setFontStyle value style'
+        Just _  -> style'
+    StyleTextAlign ->
+      case textAlign style' of
+        Nothing -> setTextAlign value style'
+        Just _  -> style'
+    StyleBorderStyle ->
+      case borderStyle style' of
+        Nothing -> setBorderStyle value style'
+        Just _  -> style'
+    StyleWhiteSpace ->
+      case whiteSpace style' of
+        Nothing -> setWhiteSpace value style'
         Just _  -> style'

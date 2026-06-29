@@ -90,6 +90,7 @@ module LinearTrace.Choreography
   , TraceQuery
   , Selected
   , Variable(..)
+  , Categorical(..)
   , Bound(..)
   , NodeBinding(..)
   , AnyPayload
@@ -113,6 +114,7 @@ module LinearTrace.Choreography
   , Style
   , BorderStyle(..)
   , Bounds(..)
+  , FontFamily(..)
   , FontWeight(..)
   , FontStyle(..)
   , Hsl(..)
@@ -155,6 +157,7 @@ module LinearTrace.Choreography
   , text
   , ensure
   , variable
+  , variableFrom
   , encourage
   , fill
   , fontFamily
@@ -213,7 +216,9 @@ import           Data.Proxy                            (Proxy (..))
 import           GHC.Exts                              (Multiplicity (Many))
 import           GHC.OverloadedLabels                  (IsLabel (..))
 import           GHC.TypeLits                          (KnownSymbol)
-import           LinearTrace.Choreography.Match        (ConstraintStrength (..),
+import           LinearTrace.Choreography.Match        (CategoryEndpoint,
+                                                        CategoryRelation (..),
+                                                        ConstraintStrength (..),
                                                         LayoutRelation (..),
                                                         MatchSpec,
                                                         NodeSelection (..),
@@ -222,6 +227,7 @@ import           LinearTrace.Choreography.Match        (ConstraintStrength (..),
                                                         buildMatchedViewGraph,
                                                         emptyMatchSpec,
                                                         matchAnyQueryNode,
+                                                        matchCategoryRelation,
                                                         matchQueryPayloadNode,
                                                         matchSpecAppend,
                                                         matchValueDirectedBridge,
@@ -229,7 +235,9 @@ import           LinearTrace.Choreography.Match        (ConstraintStrength (..),
                                                         matchValueSymmetricBridge,
                                                         matchVirtualNode,
                                                         matchedBlockOutput,
+                                                        rawCategoryEndpoint,
                                                         rawValueEndpoint,
+                                                        selectionCategoryEndpoint,
                                                         selectionValueEndpoint)
 import           LinearTrace.Choreography.Query        (MatchBinding (..),
                                                         MatchBindings,
@@ -265,19 +273,23 @@ import           LinearTrace.Core                      (Block, Fact (..),
 import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View                      (BorderStyle (..),
+                                                        FontFamily (..),
                                                         FontStyle (..),
                                                         FontWeight (..), Style,
                                                         TextAlign (..),
                                                         WhiteSpace (..))
 import qualified LinearTrace.View                      as V
-import           LinearTrace.View.Access               (HslPart (..),
+import           LinearTrace.View.Access               (CategoryAccess,
+                                                        HslPart (..),
                                                         LayoutAttr (..),
+                                                        StyleCategoryAttr (..),
                                                         StyleColorAttr (..),
                                                         StyleFreeAttr (..),
                                                         StyleLayoutAttr (..),
                                                         StyleUnitAttr (..),
                                                         ValueAccess,
                                                         layoutValueAccess,
+                                                        styleCategoryValueAccess,
                                                         styleColorPartValueAccess,
                                                         styleFreeValueAccess,
                                                         styleLayoutValueAccess,
@@ -415,6 +427,9 @@ data Selected tag where
 data Variable a where
   Variable :: a %Many -> Variable a
 
+newtype Categorical value =
+  Categorical (S.Choice value)
+
 data Bound a where
   Bound :: a %Many -> Bound a
 
@@ -424,9 +439,17 @@ data NodeBinding a where
 data SelectionValue value tag =
   SelectionValue (Selected tag) ValueAccess
 
+data SelectionCategory value tag =
+  SelectionCategory (Selected tag) (CategoryAccess value)
+
 data VisualConstraint where
   VisualValueRelation
     :: ValueTerm -> LayoutRelation -> ValueTerm -> VisualConstraint
+  VisualCategoryRelation
+    :: VS.StyleCategoryType value=> CategoryTerm value
+    -> CategoryRelation
+    -> CategoryTerm value
+    -> VisualConstraint
   VisualDirectedBridge
     :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
   VisualSymmetricBridge
@@ -434,6 +457,9 @@ data VisualConstraint where
 
 data ValueTerm =
   ValueTerm MatchSpec [ValueEndpoint]
+
+data CategoryTerm value =
+  CategoryTerm MatchSpec [CategoryEndpoint value]
 
 data ContentValue
   = ContentLiteral P.String
@@ -505,6 +531,7 @@ buildViewGraph graph =
             (builtSteps stepsOutput)
             (builtNodes stepsOutput)
             (builtConstraints stepsOutput)
+            (builtChoiceConstraints stepsOutput)
             (builtRenderFrames stepsOutput)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
@@ -521,30 +548,33 @@ data BuiltViewStep = BuiltViewStep
   { stepView                 :: V.ViewStep
   , stepNodes                :: [V.ViewNode]
   , stepConstraints          :: [S.Constraint]
+  , stepChoiceConstraints    :: [S.ChoiceConstraint]
   , stepRenderFrames         :: [[V.RenderIntent]]
   , stepPendingRenderIntents :: [V.RenderIntent]
   }
 
 data BuiltViewSteps = BuiltViewSteps
-  { builtSteps        :: [V.ViewStep]
-  , builtNodes        :: [V.ViewNode]
-  , builtConstraints  :: [S.Constraint]
-  , builtRenderFrames :: [[V.RenderIntent]]
+  { builtSteps             :: [V.ViewStep]
+  , builtNodes             :: [V.ViewNode]
+  , builtConstraints       :: [S.Constraint]
+  , builtChoiceConstraints :: [S.ChoiceConstraint]
+  , builtRenderFrames      :: [[V.RenderIntent]]
   }
 
 viewTraceSteps :: [E.TraceStepWith ViewScript] -> BuiltViewSteps
-viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] []
+viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] [] []
 
 viewTraceStepsWith ::
      ([V.RenderIntent] -> record -> BuiltViewStep)
   -> [V.ViewStep]
   -> [V.ViewNode]
   -> [S.Constraint]
+  -> [S.ChoiceConstraint]
   -> [[V.RenderIntent]]
   -> [V.RenderIntent]
   -> [record]
   -> BuiltViewSteps
-viewTraceStepsWith buildStep steps nodes constraints renderFrames pending records =
+viewTraceStepsWith buildStep steps nodes constraints choiceConstraints renderFrames pending records =
   case records of
     [] ->
       let finalOutput =
@@ -552,14 +582,18 @@ viewTraceStepsWith buildStep steps nodes constraints renderFrames pending record
               V.ViewOutput
                 { V.emittedNodes = []
                 , V.emittedConstraints = []
+                , V.emittedChoiceConstraints = []
                 , V.emittedRenderFrames = []
                 , V.pendingRenderIntents = pending
                 }
           finalFrames = renderFrames P.++ V.emittedRenderFrames finalOutput
+          finalChoiceConstraints =
+            choiceConstraints P.++ V.emittedChoiceConstraints finalOutput
        in BuiltViewSteps
             { builtSteps = steps
             , builtNodes = nodes
             , builtConstraints = constraints
+            , builtChoiceConstraints = finalChoiceConstraints
             , builtRenderFrames = V.withImplicitInitialFrame finalFrames
             }
     record:rest ->
@@ -569,6 +603,7 @@ viewTraceStepsWith buildStep steps nodes constraints renderFrames pending record
             (steps P.++ [stepView builtStep])
             (nodes P.++ stepNodes builtStep)
             (constraints P.++ stepConstraints builtStep)
+            (choiceConstraints P.++ stepChoiceConstraints builtStep)
             (renderFrames P.++ stepRenderFrames builtStep)
             (stepPendingRenderIntents builtStep)
             rest
@@ -580,11 +615,13 @@ viewTraceStep pending step =
       let output = V.mergeInitialRenderIntents pending rawOutput
           nodes = V.emittedNodes output
           constraints = V.emittedConstraints output
+          choiceConstraints = V.emittedChoiceConstraints output
           renderFrames = V.emittedRenderFrames output
        in BuiltViewStep
             { stepView = V.ViewStep label nodes constraints []
             , stepNodes = nodes
             , stepConstraints = constraints
+            , stepChoiceConstraints = choiceConstraints
             , stepRenderFrames = renderFrames
             , stepPendingRenderIntents = V.pendingRenderIntents output
             }
@@ -593,6 +630,7 @@ viewTraceStep pending step =
         { stepView = V.ViewStep ("Discarded: " P.++ reason) [] [] []
         , stepNodes = []
         , stepConstraints = []
+        , stepChoiceConstraints = []
         , stepRenderFrames = []
         , stepPendingRenderIntents = pending
         }
@@ -932,6 +970,41 @@ selectedValueTerm selected access =
   ValueTerm
     (selectedSpec selected)
     [selectionValueEndpoint (selectedNodeSelection selected) access]
+
+rawCategoryTerm ::
+     VS.StyleCategoryType value => VS.StyleCategory value -> CategoryTerm value
+rawCategoryTerm value = CategoryTerm emptyMatchSpec [rawCategoryEndpoint value]
+
+selectedCategoryTerm ::
+     Selected tag -> CategoryAccess value -> CategoryTerm value
+selectedCategoryTerm selected access =
+  CategoryTerm
+    (selectedSpec selected)
+    [selectionCategoryEndpoint (selectedNodeSelection selected) access]
+
+categoryTermSpec :: CategoryTerm value -> MatchSpec
+categoryTermSpec term =
+  case term of
+    CategoryTerm spec _ -> spec
+
+categoryTermEndpoints :: CategoryTerm value -> [CategoryEndpoint value]
+categoryTermEndpoints term =
+  case term of
+    CategoryTerm _ endpoints -> endpoints
+
+fixedCategoryTerm :: VS.StyleCategoryType value => value -> CategoryTerm value
+fixedCategoryTerm = rawCategoryTerm P.. VS.FixedCategory
+
+variableCategoryTerm ::
+     VS.StyleCategoryType value => Categorical value -> CategoryTerm value
+variableCategoryTerm value =
+  case value of
+    Categorical selected -> rawCategoryTerm (VS.VariableCategory selected)
+
+selectedCategoryValueTerm :: SelectionCategory value tag -> CategoryTerm value
+selectedCategoryValueTerm selected =
+  case selected of
+    SelectionCategory selection access -> selectedCategoryTerm selection access
 
 appendValueTerm :: ValueTerm -> ValueTerm -> ValueTerm
 appendValueTerm lhs rhs =
@@ -1302,6 +1375,56 @@ instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue rhs) =>
   relateValues relation lhs rhs =
     VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
+relateCategories ::
+     VS.StyleCategoryType value
+  => LayoutRelation
+  -> CategoryTerm value
+  -> CategoryTerm value
+  -> VisualConstraint
+relateCategories relation lhs rhs =
+  case relation of
+    LayoutEqual -> VisualCategoryRelation lhs CategoryEqual rhs
+    LayoutLessOrEqual ->
+      P.error "Categorical values do not support ordered relations."
+
+instance VS.StyleCategoryType value => RelateValues (Categorical value) value where
+  relateValues relation lhs rhs =
+    relateCategories relation (variableCategoryTerm lhs) (fixedCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         RelateValues (Categorical value) (Categorical value) where
+  relateValues relation lhs rhs =
+    relateCategories
+      relation
+      (variableCategoryTerm lhs)
+      (variableCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         RelateValues (SelectionCategory value tag) value where
+  relateValues relation lhs rhs =
+    relateCategories
+      relation
+      (selectedCategoryValueTerm lhs)
+      (fixedCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         RelateValues (SelectionCategory value tag) (Categorical value) where
+  relateValues relation lhs rhs =
+    relateCategories
+      relation
+      (selectedCategoryValueTerm lhs)
+      (variableCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         RelateValues
+           (SelectionCategory value lhsTag)
+           (SelectionCategory value rhsTag) where
+  relateValues relation lhs rhs =
+    relateCategories
+      relation
+      (selectedCategoryValueTerm lhs)
+      (selectedCategoryValueTerm rhs)
+
 data DirectedBridge =
   DirectedBridge ValueTerm ValueTerm
 
@@ -1342,6 +1465,50 @@ instance {-# OVERLAPPABLE #-} ConstraintValue rhs =>
       SymmetricBridge lhs delta ->
         VisualSymmetricBridge lhs delta (valueTerm rhs)
 
+class NotEqualOrClose lhs rhs where
+  notEqualOrClose :: lhs -> rhs -> VisualConstraint
+
+instance {-# OVERLAPPABLE #-} CloseSymmetricBridge bridge rhs =>
+         NotEqualOrClose bridge rhs where
+  notEqualOrClose = closeSymmetricBridge
+
+differentCategories ::
+     VS.StyleCategoryType value
+  => CategoryTerm value
+  -> CategoryTerm value
+  -> VisualConstraint
+differentCategories lhs = VisualCategoryRelation lhs CategoryDifferent
+
+instance VS.StyleCategoryType value => NotEqualOrClose (Categorical value) value where
+  notEqualOrClose lhs rhs =
+    differentCategories (variableCategoryTerm lhs) (fixedCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         NotEqualOrClose (Categorical value) (Categorical value) where
+  notEqualOrClose lhs rhs =
+    differentCategories (variableCategoryTerm lhs) (variableCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         NotEqualOrClose (SelectionCategory value tag) value where
+  notEqualOrClose lhs rhs =
+    differentCategories (selectedCategoryValueTerm lhs) (fixedCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         NotEqualOrClose (SelectionCategory value tag) (Categorical value) where
+  notEqualOrClose lhs rhs =
+    differentCategories
+      (selectedCategoryValueTerm lhs)
+      (variableCategoryTerm rhs)
+
+instance VS.StyleCategoryType value =>
+         NotEqualOrClose
+           (SelectionCategory value lhsTag)
+           (SelectionCategory value rhsTag) where
+  notEqualOrClose lhs rhs =
+    differentCategories
+      (selectedCategoryValueTerm lhs)
+      (selectedCategoryValueTerm rhs)
+
 infixl 4 .<=.
 infixl 4 .>=.
 infixl 4 .==.
@@ -1367,8 +1534,8 @@ lhs |= rhs = closeDirectedBridge lhs rhs
 (=/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge
 lhs =/ delta = openSymmetricBridge lhs delta
 
-(/=) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> VisualConstraint
-lhs /= rhs = closeSymmetricBridge lhs rhs
+(/=) :: NotEqualOrClose lhs rhs => lhs -> rhs -> VisualConstraint
+lhs /= rhs = notEqualOrClose lhs rhs
 
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
@@ -1716,6 +1883,14 @@ visualConstraintSpec strength constraint =
                             (valueTermEndpoints lhs)
                             relation
                             (valueTermEndpoints rhs)
+    VisualCategoryRelation lhs relation rhs ->
+      categoryTermSpec lhs
+        `matchSpecAppend` categoryTermSpec rhs
+        `matchSpecAppend` matchCategoryRelation
+                            strength
+                            (categoryTermEndpoints lhs)
+                            relation
+                            (categoryTermEndpoints rhs)
     VisualDirectedBridge lhs gap rhs ->
       valueTermSpec lhs
         `matchSpecAppend` valueTermSpec gap
@@ -1770,16 +1945,65 @@ bindContent :: VisualizationBuilder (Bound ContentValue)
 bindContent =
   freshVisualizationValue "view.bind." (Bound P.. ContentBinding P.. Binding)
 
-class VariableSource value result where
-  variable :: result
+class VariableDomain value where
+  type VariableResult value
+  namedDomainVariable :: P.String -> VariableResult value
 
-instance VariableValue value =>
-         VariableSource value (VisualizationBuilder (Variable value)) where
-  variable = freshVisualizationValue "view.var." (Variable P.. namedVariable)
+instance VariableDomain Coord where
+  type VariableResult Coord = Coord
+  namedDomainVariable = namedVariable
 
-instance (VariableValue value, arg ~ value) =>
-         VariableSource value (arg -> VisualizationBuilder (Variable value)) where
-  variable rhs = emptyVisualizationBuilder (Variable rhs)
+instance VariableDomain Span where
+  type VariableResult Span = Span
+  namedDomainVariable = namedVariable
+
+instance VariableDomain Offset where
+  type VariableResult Offset = Offset
+  namedDomainVariable = namedVariable
+
+instance VariableDomain Scalar where
+  type VariableResult Scalar = Scalar
+  namedDomainVariable = namedVariable
+
+instance S.SymbolicType ty => VariableDomain (S.Expr ty) where
+  type VariableResult (S.Expr ty) = S.Expr ty
+  namedDomainVariable = namedVariable
+
+instance VariableDomain FontFamily where
+  type VariableResult FontFamily = Categorical FontFamily
+  namedDomainVariable = Categorical P.. S.choice
+
+instance VariableDomain FontWeight where
+  type VariableResult FontWeight = Categorical FontWeight
+  namedDomainVariable = Categorical P.. S.choice
+
+instance VariableDomain FontStyle where
+  type VariableResult FontStyle = Categorical FontStyle
+  namedDomainVariable = Categorical P.. S.choice
+
+instance VariableDomain TextAlign where
+  type VariableResult TextAlign = Categorical TextAlign
+  namedDomainVariable = Categorical P.. S.choice
+
+instance VariableDomain BorderStyle where
+  type VariableResult BorderStyle = Categorical BorderStyle
+  namedDomainVariable = Categorical P.. S.choice
+
+instance VariableDomain WhiteSpace where
+  type VariableResult WhiteSpace = Categorical WhiteSpace
+  namedDomainVariable = Categorical P.. S.choice
+
+variable ::
+     forall value. VariableDomain value
+  => VisualizationBuilder (Variable (VariableResult value))
+variable =
+  freshVisualizationValue "view.var." (Variable P.. namedDomainVariable @value)
+
+variableFrom ::
+     forall value. VariableDomain value
+  => VariableResult value
+  -> VisualizationBuilder (Variable (VariableResult value))
+variableFrom rhs = emptyVisualizationBuilder (Variable rhs)
 
 class StyleTarget target result | target -> result where
   style :: target -> result
@@ -1904,23 +2128,102 @@ instance Stroke
 sat :: Hsl hue unit -> unit
 sat = saturation
 
-fontFamily :: P.String -> NodeRecipe ()
-fontFamily value = setStyleWith (VS.setFontFamily value)
+class CategoricalStyleValue value input where
+  styleCategoryValue :: input -> VS.StyleCategory value
 
-fontWeight :: FontWeight -> NodeRecipe ()
-fontWeight value = setStyleWith (VS.setFontWeight value)
+instance VS.StyleCategoryType value => CategoricalStyleValue value value where
+  styleCategoryValue = VS.FixedCategory
 
-fontStyle :: FontStyle -> NodeRecipe ()
-fontStyle value = setStyleWith (VS.setFontStyle value)
+instance VS.StyleCategoryType value =>
+         CategoricalStyleValue value (Categorical value) where
+  styleCategoryValue input =
+    case input of
+      Categorical selected -> VS.VariableCategory selected
 
-textAlign :: TextAlign -> NodeRecipe ()
-textAlign value = setStyleWith (VS.setTextAlign value)
+styleCategoryRecipe ::
+     CategoricalStyleValue value input
+  => (VS.StyleCategory value -> Style -> Style)
+  -> input
+  -> NodeRecipe ()
+styleCategoryRecipe setCategory value =
+  setStyleWith (setCategory (styleCategoryValue value))
 
-borderStyle :: BorderStyle -> NodeRecipe ()
-borderStyle value = setStyleWith (VS.setBorderStyle value)
+selectedCategory ::
+     Selected tag -> StyleCategoryAttr value -> SelectionCategory value tag
+selectedCategory selection attr =
+  SelectionCategory selection (styleCategoryValueAccess attr)
 
-whiteSpace :: WhiteSpace -> NodeRecipe ()
-whiteSpace value = setStyleWith (VS.setWhiteSpace value)
+class FontFamilyStyle input output | input -> output where
+  fontFamily :: input -> output
+
+instance FontFamilyStyle FontFamily (NodeRecipe ()) where
+  fontFamily = styleCategoryRecipe VS.setFontFamily
+
+instance FontFamilyStyle (Categorical FontFamily) (NodeRecipe ()) where
+  fontFamily = styleCategoryRecipe VS.setFontFamily
+
+instance FontFamilyStyle (Selected tag) (SelectionCategory FontFamily tag) where
+  fontFamily selection = selectedCategory selection StyleFontFamily
+
+class FontWeightStyle input output | input -> output where
+  fontWeight :: input -> output
+
+instance FontWeightStyle FontWeight (NodeRecipe ()) where
+  fontWeight = styleCategoryRecipe VS.setFontWeight
+
+instance FontWeightStyle (Categorical FontWeight) (NodeRecipe ()) where
+  fontWeight = styleCategoryRecipe VS.setFontWeight
+
+instance FontWeightStyle (Selected tag) (SelectionCategory FontWeight tag) where
+  fontWeight selection = selectedCategory selection StyleFontWeight
+
+class FontStyleStyle input output | input -> output where
+  fontStyle :: input -> output
+
+instance FontStyleStyle FontStyle (NodeRecipe ()) where
+  fontStyle = styleCategoryRecipe VS.setFontStyle
+
+instance FontStyleStyle (Categorical FontStyle) (NodeRecipe ()) where
+  fontStyle = styleCategoryRecipe VS.setFontStyle
+
+instance FontStyleStyle (Selected tag) (SelectionCategory FontStyle tag) where
+  fontStyle selection = selectedCategory selection StyleFontStyle
+
+class TextAlignStyle input output | input -> output where
+  textAlign :: input -> output
+
+instance TextAlignStyle TextAlign (NodeRecipe ()) where
+  textAlign = styleCategoryRecipe VS.setTextAlign
+
+instance TextAlignStyle (Categorical TextAlign) (NodeRecipe ()) where
+  textAlign = styleCategoryRecipe VS.setTextAlign
+
+instance TextAlignStyle (Selected tag) (SelectionCategory TextAlign tag) where
+  textAlign selection = selectedCategory selection StyleTextAlign
+
+class BorderStyleStyle input output | input -> output where
+  borderStyle :: input -> output
+
+instance BorderStyleStyle BorderStyle (NodeRecipe ()) where
+  borderStyle = styleCategoryRecipe VS.setBorderStyle
+
+instance BorderStyleStyle (Categorical BorderStyle) (NodeRecipe ()) where
+  borderStyle = styleCategoryRecipe VS.setBorderStyle
+
+instance BorderStyleStyle (Selected tag) (SelectionCategory BorderStyle tag) where
+  borderStyle selection = selectedCategory selection StyleBorderStyle
+
+class WhiteSpaceStyle input output | input -> output where
+  whiteSpace :: input -> output
+
+instance WhiteSpaceStyle WhiteSpace (NodeRecipe ()) where
+  whiteSpace = styleCategoryRecipe VS.setWhiteSpace
+
+instance WhiteSpaceStyle (Categorical WhiteSpace) (NodeRecipe ()) where
+  whiteSpace = styleCategoryRecipe VS.setWhiteSpace
+
+instance WhiteSpaceStyle (Selected tag) (SelectionCategory WhiteSpace tag) where
+  whiteSpace selection = selectedCategory selection StyleWhiteSpace
 
 bold :: NodeRecipe ()
 bold = fontWeight FontWeightBold

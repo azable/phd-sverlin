@@ -46,6 +46,7 @@ module LinearTrace.View
   , viewNodes
   , viewSteps
   , viewConstraints
+  , viewChoiceConstraints
   , viewRenderFrames
   , -- * Styles
     -- | Public symbolic style and primitive value names needed by the DSL.
@@ -55,6 +56,7 @@ module LinearTrace.View
   , Bounds(..)
   , BoundsExpr
   , Hsl(..)
+  , FontFamily(..)
   , FontWeight(..)
   , FontStyle(..)
   , TextAlign(..)

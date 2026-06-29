@@ -65,8 +65,7 @@ data ConcreteStyle = ConcreteStyle
 data ConcreteField
   = ConcreteScalarField String (Maybe String) Double StyleValueUnit
   | ConcreteColorField String (Maybe String) (Maybe ConcreteHsl)
-  | ConcreteTextField String (Maybe String) (Maybe StyleText)
-  | ConcreteChoiceField String (Maybe String) (Maybe String) DiscreteStyleValue
+  | ConcreteTokenField String (Maybe String) (Maybe String)
   deriving (Eq, Show)
 
 data ConcreteBlockView tag = ConcreteBlockView
@@ -186,58 +185,55 @@ materializeField solution field =
   case field of
     StyleScalarField _ spec expr -> materializeScalar solution spec expr
     StyleColorField spec maybeHsl ->
-      ConcreteColorField (styleTextName spec) (styleTextAttrName spec)
+      ConcreteColorField (styleAttrName spec) (styleAttrCssName spec)
         <$> traverse (materializeHsl solution) maybeHsl
-    StyleTextField spec value ->
-      Right
-        (ConcreteTextField (styleTextName spec) (styleTextAttrName spec) value)
-    StyleChoiceField spec value -> materializeChoiceField solution spec value
+    StyleCategoryField spec value ->
+      materializeCategoryField solution spec value
 
-materializeChoiceField ::
+materializeCategoryField ::
      Solution
-  -> StyleChoiceSpec value
-  -> Maybe (StyleChoiceValue value)
+  -> StyleCategorySpec value
+  -> Maybe (StyleCategory value)
   -> Either String ConcreteField
-materializeChoiceField solution spec maybeValue = do
-  concreteValue <- traverse (materializeChoiceValue solution spec) maybeValue
+materializeCategoryField solution spec maybeValue = do
+  concreteValue <- traverse (materializeCategoryValue solution spec) maybeValue
   pure
-    (ConcreteChoiceField
-       (styleChoiceName spec)
-       (styleChoiceAttrName spec)
-       (styleChoiceAttrValue spec <$> concreteValue)
-       (styleChoiceDiscreteValue spec concreteValue))
+    (ConcreteTokenField
+       (styleCategoryName spec)
+       (styleCategoryAttrName spec)
+       (styleCategoryValueToken spec <$> concreteValue))
 
-materializeChoiceValue ::
+materializeCategoryValue ::
      Solution
-  -> StyleChoiceSpec value
-  -> StyleChoiceValue value
+  -> StyleCategorySpec value
+  -> StyleCategory value
   -> Either String value
-materializeChoiceValue solution spec value =
+materializeCategoryValue solution spec value =
   case value of
-    FixedStyleChoice fixed -> Right fixed
-    SolvedStyleChoice selected -> do
+    FixedCategory fixed -> Right fixed
+    VariableCategory selected -> do
       selectedCategory <-
         maybe
-          (Left "could not materialize a style choice from the solver solution")
+          (Left
+             "could not materialize a style category from the solver solution")
           Right
           (evalChoice solution selected)
-      requireChoiceValue spec (categoryName selectedCategory)
+      requireCategoryValue spec (categoryName selectedCategory)
 
-requireChoiceValue :: StyleChoiceSpec value -> String -> Either String value
-requireChoiceValue spec name =
-  case lookupChoiceValue spec name of
+requireCategoryValue :: StyleCategorySpec value -> String -> Either String value
+requireCategoryValue spec name =
+  case lookupCategoryValue spec name of
     Just value -> Right value
-    Nothing ->
-      Left ("could not map solved style choice category to a value: " ++ name)
+    Nothing -> Left ("could not map solved style category to a value: " ++ name)
 
-lookupChoiceValue :: StyleChoiceSpec value -> String -> Maybe value
-lookupChoiceValue spec name = go (styleChoiceDomainValues spec)
+lookupCategoryValue :: StyleCategorySpec value -> String -> Maybe value
+lookupCategoryValue spec name = go (styleCategoryDomainValues spec)
   where
     go values =
       case values of
         [] -> Nothing
         value:rest
-          | styleChoiceCategoryName spec value == name -> Just value
+          | styleCategoryValueToken spec value == name -> Just value
           | otherwise -> go rest
 
 materializeScalar ::

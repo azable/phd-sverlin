@@ -9,12 +9,11 @@ module LinearTrace.View.Solve
   ) where
 
 import           LinearTrace.View.Graph
-import           LinearTrace.View.Style (styleChoiceConstraints)
 import           Prelude                (Maybe (..))
 import qualified Prelude                as P
 import qualified Solver                 as S
-import           Solver                 (ChoiceConstraint, RandomSeed, Solution,
-                                         SolveConfig, SolverProblem)
+import           Solver                 (RandomSeed, Solution, SolveConfig,
+                                         SolverProblem)
 
 solveCSP :: SolveConfig -> ViewGraph -> P.IO Solution
 solveCSP config graph = S.solveProblem config (viewSolveProblem graph)
@@ -50,14 +49,4 @@ viewSolveProblem :: ViewGraph -> SolverProblem
 viewSolveProblem graph =
   S.solverProblemWithChoices
     (viewConstraints graph)
-    (viewStyleChoiceConstraints graph)
-
-viewStyleChoiceConstraints :: ViewGraph -> [ChoiceConstraint]
-viewStyleChoiceConstraints graph =
-  P.concatMap viewNodeStyleChoiceConstraints (viewNodes graph)
-
-viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
-viewNodeStyleChoiceConstraints node =
-  case node of
-    BlockViewNode block     -> styleChoiceConstraints (blockStyle block)
-    VirtualViewNode virtual -> styleChoiceConstraints (virtualStyle virtual)
+    (viewChoiceConstraints graph)

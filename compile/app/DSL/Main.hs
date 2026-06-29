@@ -236,7 +236,7 @@ visualization =
     ensure $ gap .>=. by 8
     ensure $ gap .<=. by 16
     encourage $ gap .>=. by 12
-    Variable probeSize <- variable @Span (cell * 1.08)
+    Variable probeSize <- variableFrom @Span (cell * 1.08)
     Variable targetSize <- variable @Span
     ensure $ targetSize .>=. by 80
     ensure $ targetSize .<=. by 208
@@ -278,8 +278,8 @@ visualization =
       width probeSize
       height probeSize
     -- Result row: a compact badge records the branch decision.
-    Variable resultWidth <- variable @Span (probeSize * 2 |+| gap)
-    Variable resultHeight <- variable @Span (cell * 0.68)
+    Variable resultWidth <- variableFrom @Span (probeSize * 2 |+| gap)
+    Variable resultHeight <- variableFrom @Span (cell * 0.68)
     Selected result <- select @Match #result
     Selected resultTrue <- select @Match (#result <&> payload True)
     Selected resultFalse <- select @Match (#result <&> payload False)

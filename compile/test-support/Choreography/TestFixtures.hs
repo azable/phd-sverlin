@@ -18,7 +18,9 @@ module Choreography.TestFixtures
   , virtualGroupStats
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
-    selectedColorGraph
+    categoricalRelationGraph
+  , categoricalStyleGraph
+  , selectedColorGraph
   , styledGraph
   ) where
 
@@ -41,6 +43,12 @@ virtualGroupStats = fixtureStats virtualGroupSpec
 
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
+
+categoricalStyleGraph :: ViewGraph
+categoricalStyleGraph = buildGraph categoricalStyleSpec
+
+categoricalRelationGraph :: ViewGraph
+categoricalRelationGraph = buildGraph categoricalRelationSpec
 
 styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
@@ -88,6 +96,26 @@ selectedColorSpec =
       height (by 80)
     ensure $ fill item .==. Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit)
 
+categoricalStyleSpec :: MatchSpec
+categoricalStyleSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    Variable family <- variable @FontFamily
+    style item $ do
+      width (by 80)
+      height (by 80)
+      fontFamily family
+    ensure $ family .==. FontMono
+
+categoricalRelationSpec :: MatchSpec
+categoricalRelationSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    style item $ do
+      width (by 80)
+      height (by 80)
+    ensure $ fontFamily item .==. FontInter
+
 styledSpec :: MatchSpec
 styledSpec =
   visualize $ do
@@ -96,6 +124,6 @@ styledSpec =
       width (by 80)
       height (by 80)
       padding (by 4)
-      fontFamily "Inter"
+      fontFamily FontInter
       fontWeight FontWeightBold
       fill (Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit))
