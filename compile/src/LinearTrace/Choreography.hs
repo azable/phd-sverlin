@@ -202,12 +202,10 @@ import           LinearTrace.Choreography.Match        (ConstraintStrength (..),
                                                         LayoutRelation (..),
                                                         MatchSpec,
                                                         NodeSelection (..),
-                                                        ValueAccess,
                                                         ValueEndpoint,
                                                         blockViewOfEventBlock,
                                                         buildMatchedViewGraph,
                                                         emptyMatchSpec,
-                                                        layoutValueAccess,
                                                         matchAnyQueryNode,
                                                         matchQueryPayloadNode,
                                                         matchSpecAppend,
@@ -217,11 +215,7 @@ import           LinearTrace.Choreography.Match        (ConstraintStrength (..),
                                                         matchVirtualNode,
                                                         matchedBlockOutput,
                                                         rawValueEndpoint,
-                                                        selectionValueEndpoint,
-                                                        styleColorPartValueAccess,
-                                                        styleFreeValueAccess,
-                                                        styleLayoutValueAccess,
-                                                        styleUnitValueAccess)
+                                                        selectionValueEndpoint)
 import           LinearTrace.Choreography.Query        (MatchBinding (..),
                                                         MatchBindings,
                                                         PayloadPattern, Query,
@@ -241,10 +235,6 @@ import           LinearTrace.Choreography.Query        (MatchBinding (..),
                                                         queryIntAdd,
                                                         queryIntConst,
                                                         queryIntVar)
-import           LinearTrace.Choreography.Types        (Angle, Bounds (..),
-                                                        BoundsExpr, Color, Free,
-                                                        Hsl (..), LayoutExpr,
-                                                        Unit)
 import           LinearTrace.Core                      (Block, Fact (..),
                                                         FactValue (..),
                                                         Facts (..), LBool (..),
@@ -261,16 +251,27 @@ import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View                      (BorderStyle (..),
                                                         FontStyle (..),
-                                                        FontWeight (..),
-                                                        HslPart (..),
-                                                        LayoutAttr (..), Style,
+                                                        FontWeight (..), Style,
+                                                        TextAlign (..),
+                                                        WhiteSpace (..))
+import qualified LinearTrace.View                      as V
+import           LinearTrace.View.Access               (HslPart (..),
+                                                        LayoutAttr (..),
                                                         StyleColorAttr (..),
                                                         StyleFreeAttr (..),
                                                         StyleLayoutAttr (..),
                                                         StyleUnitAttr (..),
-                                                        TextAlign (..),
-                                                        WhiteSpace (..))
-import qualified LinearTrace.View                      as V
+                                                        ValueAccess,
+                                                        layoutValueAccess,
+                                                        styleColorPartValueAccess,
+                                                        styleFreeValueAccess,
+                                                        styleLayoutValueAccess,
+                                                        styleUnitValueAccess)
+import qualified LinearTrace.View.Patch                as VP
+import           LinearTrace.View.Primitives           (Angle, Bounds (..),
+                                                        BoundsExpr, Color, Free,
+                                                        Hsl (..), LayoutExpr,
+                                                        Unit)
 import qualified LinearTrace.View.Style                as VS
 import qualified Prelude                               as P
 import           Prelude.Linear                        hiding (fromInteger,
@@ -2057,44 +2058,44 @@ select ::
   -> VisualizationBuilder (NodeBinding (Selected payload))
 select = selectWithPayload @payload @(SelectQuery payload)
 
-nodePatch :: MatchBindings -> NodeRecipe () -> V.NodePatch
+nodePatch :: MatchBindings -> NodeRecipe () -> VP.NodePatch
 nodePatch bindings recipe =
   case recipe of
     NodeRecipe () spec ->
-      V.NodePatch
-        { V.nodePatchStyleUpdate =
+      VP.NodePatch
+        { VP.nodePatchStyleUpdate =
             substituteStyleBindings bindings P.. nodeSpecStyleUpdate spec
-        , V.nodePatchContent =
+        , VP.nodePatchContent =
             P.fmap (contentMode bindings) (nodeSpecContent spec)
-        , V.nodePatchLeft =
+        , VP.nodePatchLeft =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecLeft spec)
-        , V.nodePatchTop =
+        , VP.nodePatchTop =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecTop spec)
-        , V.nodePatchWidth =
+        , VP.nodePatchWidth =
             P.fmap
               (spanPin P.. substituteSpanBindings bindings)
               (nodeSpecWidth spec)
-        , V.nodePatchHeight =
+        , VP.nodePatchHeight =
             P.fmap
               (spanPin P.. substituteSpanBindings bindings)
               (nodeSpecHeight spec)
-        , V.nodePatchRight =
+        , VP.nodePatchRight =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecRight spec)
-        , V.nodePatchBottom =
+        , VP.nodePatchBottom =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecBottom spec)
-        , V.nodePatchX =
+        , VP.nodePatchX =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecX spec)
-        , V.nodePatchY =
+        , VP.nodePatchY =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecY spec)
@@ -2144,11 +2145,11 @@ bindingContent bindings binding =
           P.error ("Unbound view binding #" P.++ name P.++ " in content")
         Just value -> value
 
-coordPin :: Coord -> V.LayoutPin
-coordPin value = V.LayoutPin (coordExpr value) (coordConstraints value)
+coordPin :: Coord -> VP.LayoutPin
+coordPin value = VP.LayoutPin (coordExpr value) (coordConstraints value)
 
-spanPin :: Span -> V.LayoutPin
-spanPin value = V.LayoutPin (spanExpr value) (spanConstraints value)
+spanPin :: Span -> VP.LayoutPin
+spanPin value = VP.LayoutPin (spanExpr value) (spanConstraints value)
 
 instance Node
            (Selected child)
@@ -2163,7 +2164,7 @@ instance Node
                   (\counter ->
                      let key = virtualNodeKey counter
                          virtualSpec =
-                           matchVirtualNode key query V.emptyNodePatch
+                           matchVirtualNode key query VP.emptyNodePatch
                       in VisualizationResult
                            (Selected
                               (SelectedHandle

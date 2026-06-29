@@ -89,9 +89,13 @@ library
     other-modules:
         LinearTrace.Choreography.Match
         LinearTrace.Choreography.Query
-        LinearTrace.Choreography.Types
         LinearTrace.View
+        LinearTrace.View.Access
+        LinearTrace.View.Build
+        LinearTrace.View.Graph
+        LinearTrace.View.Patch
         LinearTrace.View.Primitives
+        LinearTrace.View.Solve
         LinearTrace.View.Style
         LinearTrace.View.Types
         Solver.Backend

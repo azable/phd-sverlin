@@ -112,7 +112,7 @@ import           Data.Maybe                  (mapMaybe)
 import           Data.Type.Equality          ((:~:) (..))
 import           LinearTrace.View.Primitives
 import           Prelude
-import           Solver
+import           Solver                      hiding (num)
 
 newtype CssText =
   CssText String

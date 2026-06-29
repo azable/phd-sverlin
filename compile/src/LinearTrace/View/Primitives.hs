@@ -28,10 +28,14 @@ module LinearTrace.View.Primitives
   , MaterializedHsl
   , unitRange
   , angleRange
+  , global
+  , num
+  , absExpr
   ) where
 
 import           Prelude
-import           Solver
+import qualified Solver  as S
+import           Solver  hiding (absExpr, num)
 
 data FreeDomain
 
@@ -52,6 +56,15 @@ instance SymbolicType UnitDomain where
 
 instance SymbolicType AngleDomain where
   symbolicDomain _ = boundedCyclicDomain "angle" 360 angleRange
+
+num :: SymbolicType ty => Double -> Expr ty
+num = S.num
+
+global :: SymbolicType ty => String -> Expr ty
+global name = S.var ("global." ++ name)
+
+absExpr :: Expr ty -> Expr ty
+absExpr = S.absExpr
 
 type Free = Expr FreeDomain
 

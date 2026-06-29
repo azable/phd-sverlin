@@ -28,6 +28,7 @@ import qualified Data.ByteString.Lazy       as BL
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
 import qualified LinearTrace.View           as V
+import qualified LinearTrace.View.Style     as VS
 import           Numeric                    (showFFloat)
 import           Prelude
 import qualified Solver                     as S
@@ -472,59 +473,71 @@ requireLineage block = do
       lift (Left ("no render lineage for " ++ renderBlockKeyLabel block))
 
 --------------------------------------------------------------------------------
--- Materialized block lookup
+-- Solved block lookup
 --------------------------------------------------------------------------------
 type BlockLookup = Map Int [RenderBlock]
 
 buildBlockLookup :: S.Solution -> V.ViewGraph -> Either String BlockLookup
 buildBlockLookup solution graph =
-  foldM (insertMaterializedNode solution) Map.empty (V.viewNodes graph)
+  foldM (insertSolvedNode solution) Map.empty (V.viewNodes graph)
 
-insertMaterializedNode ::
+insertSolvedNode ::
      S.Solution -> BlockLookup -> V.ViewNode -> Either String BlockLookup
-insertMaterializedNode solution blocks node =
-  case V.materializeViewNode solution node of
+insertSolvedNode solution blocks node =
+  case compileSolvedViewNode solution node of
+    Left err -> Left err
+    Right compiled ->
+      Right (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
+
+compileSolvedViewNode :: S.Solution -> V.ViewNode -> Either String RenderBlock
+compileSolvedViewNode solution node =
+  case node of
+    V.BlockViewNode block     -> compileSolvedBlock solution block
+    V.VirtualViewNode virtual -> compileSolvedVirtual solution virtual
+
+compileSolvedBlock :: S.Solution -> V.BlockView tag -> Either String RenderBlock
+compileSolvedBlock solution block = do
+  style <- requireMaterializedStyle solution (V.blockStyle block)
+  pure
+    RenderBlock
+      { renderBlockId = blockIdOfRef (V.blockRef block)
+      , renderNodeKey = V.blockNodeKey block
+      , renderPieceKey = V.blockPieceKey block
+      , renderContent = materializeContent (V.blockContent block)
+      , renderKind = payloadViewKind (V.blockLabel block)
+      , renderStyle = compileMaterializedStyle style
+      }
+
+compileSolvedVirtual ::
+     S.Solution -> V.VirtualView tag -> Either String RenderBlock
+compileSolvedVirtual solution virtual = do
+  style <- requireMaterializedStyle solution (V.virtualStyle virtual)
+  pure
+    RenderBlock
+      { renderBlockId = blockIdOfRef (V.virtualRef virtual)
+      , renderNodeKey = V.virtualNodeKey virtual
+      , renderPieceKey = V.virtualPieceKey virtual
+      , renderContent = materializeContent (V.virtualContent virtual)
+      , renderKind = payloadViewKind (V.virtualLabel virtual)
+      , renderStyle = compileMaterializedStyle style
+      }
+
+requireMaterializedStyle ::
+     S.Solution -> V.Style -> Either String V.MaterializedStyle
+requireMaterializedStyle solution style =
+  case VS.materializeStyle solution style of
+    Just materialized -> Right materialized
     Nothing ->
       Left
         "could not materialize a view node from the solver solution; \
        \a style or geometry Expr probably references a variable that was not \
        \included in any constraint"
-    Just materialized ->
-      case materialized of
-        V.MaterializedBlockViewNode block ->
-          let compiled = compileMaterializedBlock block
-           in Right
-                (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
-        V.MaterializedVirtualViewNode virtual ->
-          let compiled = compileMaterializedVirtual virtual
-           in Right
-                (Map.insertWith (++) (renderBlockId compiled) [compiled] blocks)
 
-compileMaterializedBlock :: V.MaterializedBlockView tag -> RenderBlock
-compileMaterializedBlock block =
-  let payload = V.materializedBlockLabel block
-      style = V.materializedBlockStyle block
-   in RenderBlock
-        { renderBlockId = blockIdOfRef (V.materializedBlockRef block)
-        , renderNodeKey = V.materializedBlockNodeKey block
-        , renderPieceKey = V.materializedBlockPieceKey block
-        , renderContent = V.materializedBlockContent block
-        , renderKind = payloadViewKind payload
-        , renderStyle = compileMaterializedStyle style
-        }
-
-compileMaterializedVirtual :: V.MaterializedVirtualView tag -> RenderBlock
-compileMaterializedVirtual virtual =
-  let payload = V.materializedVirtualLabel virtual
-      style = V.materializedVirtualStyle virtual
-   in RenderBlock
-        { renderBlockId = blockIdOfRef (V.materializedVirtualRef virtual)
-        , renderNodeKey = V.materializedVirtualNodeKey virtual
-        , renderPieceKey = V.materializedVirtualPieceKey virtual
-        , renderContent = V.materializedVirtualContent virtual
-        , renderKind = payloadViewKind payload
-        , renderStyle = compileMaterializedStyle style
-        }
+materializeContent :: V.ContentMode -> String
+materializeContent contentMode =
+  case contentMode of
+    V.ContentEmpty      -> ""
+    V.ContentText value -> value
 
 compileMaterializedStyle :: V.MaterializedStyle -> RenderStyle
 compileMaterializedStyle style =

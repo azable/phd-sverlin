@@ -15,14 +15,8 @@ module LinearTrace.Choreography.Match
   , LayoutRelation(..)
   , ValueComponent
   , ValueEndpoint
-  , ValueAccess
   , rawValueEndpoint
   , selectionValueEndpoint
-  , layoutValueAccess
-  , styleLayoutValueAccess
-  , styleUnitValueAccess
-  , styleFreeValueAccess
-  , styleColorPartValueAccess
   , matchValueRelation
   , matchValueDirectedBridge
   , matchValueSymmetricBridge
@@ -43,14 +37,16 @@ import qualified LinearTrace.Choreography.Query as Q
 import qualified LinearTrace.Core               as C
 import qualified LinearTrace.Core.Events        as E
 import qualified LinearTrace.View               as V
+import qualified LinearTrace.View.Access        as VA
+import qualified LinearTrace.View.Patch         as VP
 import           Prelude                        (Bool (..), Maybe (..),
                                                  otherwise)
 import qualified Prelude                        as P
 import qualified Solver                         as S
 
-type ValueComponent = V.ValueComponent
+type ValueComponent = VA.ValueComponent
 
-type ValueAccess = V.ValueAccess
+type NodePatch = VP.NodePatch
 
 data NodeSelection
   = TraceSelection Query
@@ -69,7 +65,7 @@ data LayoutRelation
 
 data ValueEndpoint
   = RawValueEndpoint ValueComponent
-  | SelectionValueEndpoint NodeSelection ValueAccess
+  | SelectionValueEndpoint NodeSelection VA.ValueAccess
 
 data MatchSpec =
   MatchSpec [NodeRule] [LayoutRule] [VirtualRule]
@@ -79,9 +75,9 @@ data NodeRule where
     :: C.Traceable tag=> Proxy tag
     -> Query
     -> PayloadPattern tag
-    -> (MatchContext tag -> V.NodePatch)
+    -> (MatchContext tag -> NodePatch)
     -> NodeRule
-  AnyQueryNodeRule :: Query -> (MatchBindings -> V.NodePatch) -> NodeRule
+  AnyQueryNodeRule :: Query -> (MatchBindings -> NodePatch) -> NodeRule
 
 data LayoutRule where
   ValueRelationLayout
@@ -104,7 +100,7 @@ data LayoutRule where
     -> LayoutRule
 
 data VirtualRule =
-  VirtualRule P.String Query V.NodePatch
+  VirtualRule P.String Query NodePatch
 
 emptyMatchSpec :: MatchSpec
 emptyMatchSpec = MatchSpec [] [] []
@@ -123,7 +119,7 @@ matchSpecAppend lhs rhs =
 matchQueryNode ::
      forall tag. C.Traceable tag
   => Query
-  -> (MatchContext tag -> V.NodePatch)
+  -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchQueryNode query makePatch =
   MatchSpec
@@ -131,7 +127,7 @@ matchQueryNode query makePatch =
     []
     []
 
-matchAnyQueryNode :: Query -> (MatchBindings -> V.NodePatch) -> MatchSpec
+matchAnyQueryNode :: Query -> (MatchBindings -> NodePatch) -> MatchSpec
 matchAnyQueryNode query makePatch =
   MatchSpec [AnyQueryNodeRule query makePatch] [] []
 
@@ -139,7 +135,7 @@ matchQueryPayloadNode ::
      forall tag. C.Traceable tag
   => Query
   -> PayloadPattern tag
-  -> (MatchContext tag -> V.NodePatch)
+  -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchQueryPayloadNode query payloadPattern makePatch =
   MatchSpec
@@ -147,30 +143,15 @@ matchQueryPayloadNode query payloadPattern makePatch =
     []
     []
 
-matchVirtualNode :: P.String -> Query -> V.NodePatch -> MatchSpec
+matchVirtualNode :: P.String -> Query -> NodePatch -> MatchSpec
 matchVirtualNode key query patch =
   MatchSpec [] [] [VirtualRule (Q.safeKey key) query patch]
 
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
 
-selectionValueEndpoint :: NodeSelection -> ValueAccess -> ValueEndpoint
+selectionValueEndpoint :: NodeSelection -> VA.ValueAccess -> ValueEndpoint
 selectionValueEndpoint = SelectionValueEndpoint
-
-layoutValueAccess :: V.LayoutAttr -> ValueAccess
-layoutValueAccess = V.layoutValueAccess
-
-styleLayoutValueAccess :: V.StyleLayoutAttr -> ValueAccess
-styleLayoutValueAccess = V.styleLayoutValueAccess
-
-styleUnitValueAccess :: V.StyleUnitAttr -> ValueAccess
-styleUnitValueAccess = V.styleUnitValueAccess
-
-styleFreeValueAccess :: V.StyleFreeAttr -> ValueAccess
-styleFreeValueAccess = V.styleFreeValueAccess
-
-styleColorPartValueAccess :: V.StyleColorAttr -> V.HslPart -> ValueAccess
-styleColorPartValueAccess = V.styleColorPartValueAccess
 
 matchValueRelation ::
      ConstraintStrength
@@ -248,7 +229,7 @@ matchedNodePatch ::
      forall tag. C.Traceable tag
   => E.EventBlock tag
   -> [NodeRule]
-  -> Maybe V.NodePatch
+  -> Maybe NodePatch
 matchedNodePatch block rules =
   foldNodePatches (matchingNodePatches 0 block rules)
 
@@ -257,7 +238,7 @@ matchingNodePatches ::
   => P.Int
   -> E.EventBlock tag
   -> [NodeRule]
-  -> [V.NodePatch]
+  -> [NodePatch]
 matchingNodePatches _ _ [] = []
 matchingNodePatches matchIndex block (rule:rest) =
   case nodeRulePatch matchIndex block rule of
@@ -269,7 +250,7 @@ nodeRulePatch ::
   => P.Int
   -> E.EventBlock sourceTag
   -> NodeRule
-  -> Maybe V.NodePatch
+  -> Maybe NodePatch
 nodeRulePatch matchIndex block rule =
   case rule of
     AnyQueryNodeRule query makePatch ->
@@ -295,8 +276,8 @@ matchedPayloadNodePatch ::
   -> MatchBindings
   -> E.EventBlock tag
   -> PayloadPattern tag
-  -> (MatchContext tag -> V.NodePatch)
-  -> Maybe V.NodePatch
+  -> (MatchContext tag -> NodePatch)
+  -> Maybe NodePatch
 matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
   case Q.payloadPatternMatches
          payloadPattern
@@ -313,17 +294,17 @@ matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
               , matchContextBindings = factBindings P.++ payloadBindings
               }))
 
-foldNodePatches :: [V.NodePatch] -> Maybe V.NodePatch
+foldNodePatches :: [NodePatch] -> Maybe NodePatch
 foldNodePatches patches =
   case patches of
     []         -> Nothing
     patch:rest -> Just (foldNodePatchesFrom patch rest)
 
-foldNodePatchesFrom :: V.NodePatch -> [V.NodePatch] -> V.NodePatch
+foldNodePatchesFrom :: NodePatch -> [NodePatch] -> NodePatch
 foldNodePatchesFrom current patches =
   case patches of
     []         -> current
-    patch:rest -> foldNodePatchesFrom (V.appendNodePatch current patch) rest
+    patch:rest -> foldNodePatchesFrom (VP.appendNodePatch current patch) rest
 
 buildMatchedViewGraph ::
      MatchSpec
@@ -431,7 +412,7 @@ matchingEndpointNodes endpoint nodes =
   case endpoint of
     RawValueEndpoint component -> [LayoutEndpointMatch component []]
     SelectionValueEndpoint selection access ->
-      [ LayoutEndpointMatch (V.valueAccessComponent access node) bindings
+      [ LayoutEndpointMatch (VA.valueAccessComponent access node) bindings
       | (node, bindings) <- matchingSelectionNodes selection nodes
       ]
 
@@ -548,9 +529,7 @@ materializeNodeForEndpoint endpoint node =
       case nodeMatchesSelection selection node of
         False -> node
         True ->
-          V.applyStyleMaterializations
-            (V.valueAccessMaterializations access)
-            node
+          VA.applyStyleRequirements (VA.valueAccessRequirements access) node
 
 nodeMatchesSelection :: NodeSelection -> V.ViewNode -> P.Bool
 nodeMatchesSelection selection node =
@@ -585,16 +564,16 @@ mergedVirtualRules rules =
 mergeVirtualRule ::
      P.String
   -> Query
-  -> V.NodePatch
+  -> NodePatch
   -> [VirtualRule]
-  -> (V.NodePatch, [VirtualRule])
+  -> (NodePatch, [VirtualRule])
 mergeVirtualRule key query patch rules =
   case rules of
     [] -> (patch, [])
     VirtualRule nextKey nextQuery nextPatch:rest ->
       case key P.== nextKey P.&& query P.== nextQuery of
         True ->
-          mergeVirtualRule key query (V.appendNodePatch patch nextPatch) rest
+          mergeVirtualRule key query (VP.appendNodePatch patch nextPatch) rest
         False ->
           case mergeVirtualRule key query patch rest of
             (mergedPatch, remaining) ->
@@ -619,19 +598,21 @@ matchingQueryBlocks query blocks =
   ]
 
 virtualViewForRule ::
-     P.String -> Query -> V.NodePatch -> [V.AnyBlockView] -> V.VirtualView tag
+     P.String -> Query -> NodePatch -> [V.AnyBlockView] -> V.VirtualView tag
 virtualViewForRule key query patch children =
   let queryKey' = Q.queryKey query
       ref = V.syntheticViewRef (V.virtualBlockId key queryKey')
       baseStyle = V.styleForVirtualKey key queryKey'
+      virtualStyle = VP.nodePatchStyleUpdate patch baseStyle
    in V.VirtualView
         { V.virtualRef = ref
         , V.virtualLabel = V.ViewLabel ("Virtual." P.++ key) ""
-        , V.virtualContent = fromMaybe V.ContentEmpty (V.nodePatchContent patch)
+        , V.virtualContent =
+            fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
         , V.virtualQueryKey = queryKey'
         , V.virtualNodeKey = key
         , V.virtualPieceKey = V.defaultPieceKey
-        , V.virtualStyle = V.nodePatchStyleUpdate patch baseStyle
-        , V.virtualPatch = patch
+        , V.virtualStyle = virtualStyle
+        , V.virtualConstraints = VP.patchGeometryConstraints patch virtualStyle
         , V.virtualChildren = children
         }
