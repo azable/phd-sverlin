@@ -1,19 +1,31 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Finite categorical choice implementation. Style choice fields depend on
+-- this layer, and 'Solver.Problem' samples satisfying assignments before
+-- numeric optimization.
 module Solver.Choice
-  ( Category
+  ( -- * Choice domains
+    -- | Typed finite categories and choices. Public users normally access
+    -- these through the 'Solver' facade.
+    Category
   , category
   , categoryName
   , Choice
   , choice
   , choiceName
   , CategoricalType(..)
-  , ChoiceConstraint
+  , -- * Choice constraints
+    -- | Relations over categorical choices. These are consumed by
+    -- 'Solver.Problem' and by the view style solver bridge.
+    ChoiceConstraint
   , freeChoice
   , choose
   , sameChoice
   , differentChoice
-  , choiceConstraintSpecs
+  , -- * Solver implementation helpers
+    -- | Internal inspection/evaluation hooks used while compiling and checking
+    -- categorical assignments.
+    choiceConstraintSpecs
   , choiceConstraintSatisfied
   ) where
 

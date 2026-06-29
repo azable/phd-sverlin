@@ -1,5 +1,12 @@
+-- | Internal facade for symbolic view construction. Choreography, printing, and
+-- compile code import this module when they need the stable view surface; more
+-- specialized internals live under @LinearTrace.View.*@ and should be imported
+-- directly only by sibling implementation modules.
 module LinearTrace.View
   ( -- * View graph
+    -- | View identity, graph, render-intent, and lookup types. These are
+    -- produced by choreography/building and consumed by solving, printing, and
+    -- materialization.
     ViewId(..)
   , viewIdInt
   , ViewRef(..)
@@ -41,6 +48,9 @@ module LinearTrace.View
   , viewConstraints
   , viewRenderFrames
   , -- * Styles
+    -- | Public symbolic style and primitive value names needed by the DSL.
+    -- Concrete style lowering is deliberately kept in
+    -- 'LinearTrace.View.Materialize'.
     Style
   , Bounds(..)
   , BoundsExpr
@@ -51,6 +61,8 @@ module LinearTrace.View
   , BorderStyle(..)
   , WhiteSpace(..)
   , -- * Expressions
+    -- | Solver-backed expression aliases used by the view DSL. The underlying
+    -- solver API remains available through the top-level 'Solver' facade.
     Free
   , Layout
   , Unit
@@ -66,6 +78,8 @@ module LinearTrace.View
   , num
   , absExpr
   , -- * Builder
+    -- | View-output accumulation and the tuned solve entrypoint used by
+    -- choreography when a symbolic view graph is ready.
     ViewOutput(..)
   , emptyViewOutput
   , appendViewOutput

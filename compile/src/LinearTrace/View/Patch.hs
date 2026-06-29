@@ -1,9 +1,21 @@
+-- | Patch representation for view nodes selected by choreography. Match rules
+-- produce these patches; the build layer applies them to symbolic nodes and
+-- emits any geometry constraints.
 module LinearTrace.View.Patch
-  ( LayoutPin(..)
-  , NodePatch(..)
+  ( -- * Geometry pins
+    -- | A pinned layout expression plus any side constraints needed to define
+    -- it. Choreography layout combinators construct these.
+    LayoutPin(..)
+  , -- * Node patches
+    -- | Content, style, and geometry updates for a selected block or virtual
+    -- node. Later patches win when specs are appended.
+    NodePatch(..)
   , emptyNodePatch
   , appendNodePatch
-  , patchGeometryConstraints
+  , -- * Constraint emission
+    -- | Lowers patch geometry pins against a node's bounds into solver
+    -- constraints for final graph construction.
+    patchGeometryConstraints
   ) where
 
 import           LinearTrace.View.Primitives (HasBounds (..), LayoutExpr)

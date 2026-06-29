@@ -1,7 +1,15 @@
+-- | Executable workflow wrapper around choreography, solving, compilation, and
+-- JSON writing. The compile server and CLI path call this module rather than
+-- reaching into lower layers directly.
 module App
-  ( RunConfig(..)
+  ( -- * Run configuration
+    -- | Runtime options for diagnostics, seed selection, and output file path.
+    RunConfig(..)
   , defaultRunConfig
-  , buildViewGraph
+  , -- * Workflow
+    -- | Build and run the current visualization graph through solve,
+    -- materialization, JSON encoding, and file output.
+    buildViewGraph
   , runVisualization
   ) where
 

@@ -6,8 +6,13 @@
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+-- | Event projection over the core audit stream. Choreography matching depends
+-- on this module to observe lifecycle events without importing the whole core
+-- implementation surface.
 module LinearTrace.Core.Events
   ( -- * Core event data
+    -- | Typed event values derived from core explain tokens. These retain
+    -- payload snapshots and facts needed by query/match logic.
     BlockId
   , BlockRef
   , EventBlock(..)
@@ -21,11 +26,15 @@ module LinearTrace.Core.Events
   , explainEventLogWith
   , discardEventLog
   , -- * Trace builder state
+    -- | Thin state aliases over 'LinearTrace.Core.Internal'. Exposed here so
+    -- choreography can run core actions and collect event logs in one pass.
     TraceBuilderState
   , emptyTraceBuilderState
   , runTraceBuilderWithState
   , traceBuilderStateGraph
   , -- * Trace graphs and steps
+    -- | Core graph and step views consumed by printers and choreography graph
+    -- construction.
     TraceGraphWith
   , TraceStep
   , TraceStepWith
@@ -33,6 +42,8 @@ module LinearTrace.Core.Events
   , traceGraphSteps
   , traceStepOutput
   , -- * Block references
+    -- | Block reference helpers used when linking core events to view tags and
+    -- synthetic grouping nodes.
     blockRefId
   , syntheticBlockRef
   ) where

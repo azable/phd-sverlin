@@ -1,19 +1,33 @@
 {-# LANGUAGE RankNTypes #-}
 
+-- | Optimizer-facing CSP backend. 'Solver.Problem' is the intended caller; this
+-- module exposes enough internals for solver tests and benchmarks while keeping
+-- the public user API at the top-level 'Solver' module.
 module Solver.Backend
-  ( InternalVar(..)
+  ( -- * Compiled variables and energy expressions
+    -- | Low-level variables and differentiable energy expressions produced by
+    -- solver problem lowering.
+    InternalVar(..)
   , EnergyExpr
   , TermKind(..)
-  , OptimizerConfig(..)
+  , -- * Optimizer configuration
+    -- | L-BFGS-B configuration passed through from 'Solver.Problem'.
+    OptimizerConfig(..)
   , defaultOptimizerConfig
-  , NativeBounds
+  , -- * CSP builder
+    -- | State builder used by problem compilation to collect variables, native
+    -- bounds, and hard/soft energy terms.
+    NativeBounds
   , CSP
   , BuildCSP
   , newInternalVar
   , addHardTerm
   , addSoftTerm
   , compileReturning
-  , solveCSP
+  , -- * Backend solve and energy helpers
+    -- | Direct backend solving and expression helpers used only after problem
+    -- compilation has assigned internal variables.
+    solveCSP
   , cspHardEnergy
   , valueOf
   , sq
@@ -25,7 +39,6 @@ module Solver.Backend
 
 import           Control.Monad.State.Strict
 import           Data.Array                 (Array, listArray, (!))
-import           Data.List                  (foldl')
 import qualified Numeric.Optimization.AD    as Opt
 import           Prelude
 

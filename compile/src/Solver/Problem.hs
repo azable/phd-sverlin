@@ -1,11 +1,20 @@
 {-# LANGUAGE RankNTypes #-}
 
+-- | High-level solver problem compilation and solving. This module connects
+-- expression/constraint/choice definitions to the optimizer backend; the public
+-- 'Solver' facade re-exports the stable problem and solution API.
 module Solver.Problem
-  ( RandomSeed(..)
+  ( -- * Seeded randomness
+    -- | Deterministic initial sampling used by tests, benchmarks, and
+    -- visualization regeneration.
+    RandomSeed(..)
   , RandomSample(..)
   , randomSamplesFromSeed
   , randomUnitsFromSeed
-  , SolveConfig(..)
+  , -- * Solve configuration
+    -- | User-facing solver knobs plus backend optimizer tolerances. View
+    -- solving supplies a tuned config through 'LinearTrace.View.Solve'.
+    SolveConfig(..)
   , defaultSolveConfig
   , withInitialSeed
   , withInitialOverrides
@@ -14,15 +23,24 @@ module Solver.Problem
   , withOptimizerTolerances
   , withMaxOptimizerIterations
   , withOptimizerMaxCorrections
-  , SolverProblem(..)
+  , -- * Problem model
+    -- | Numeric constraints, categorical choices, and optional initial
+    -- overrides before backend lowering.
+    SolverProblem(..)
   , solverProblem
   , solverProblemWithChoices
   , withChoiceConstraints
   , withProblemInitialOverrides
-  , CompiledProblem
+  , -- * Compilation and inspection
+    -- | Compiled backend problem plus diagnostics consumed by tests,
+    -- benchmarks, and solution summaries.
+    CompiledProblem
   , compiledInspection
   , ProblemInspection(..)
-  , Solution(..)
+  , -- * Solving and evaluation
+    -- | Solve entrypoints and solution evaluation used by the view layer,
+    -- compile pipeline, tests, and benchmarks.
+    Solution(..)
   , solve
   , solveProblem
   , solveCompiledProblem

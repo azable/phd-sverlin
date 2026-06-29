@@ -1,8 +1,14 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleInstances #-}
 
+-- | Solver-backed primitive domains for the view layer. Style, graph, access,
+-- and choreography DSL code depend on these aliases instead of depending on
+-- raw solver domains directly.
 module LinearTrace.View.Primitives
-  ( FreeDomain
+  ( -- * View domains
+    -- | Numeric domains used by layout/style expressions. Unit and angle
+    -- domains carry native bounds into the solver.
+    FreeDomain
   , LayoutDomain
   , UnitDomain
   , AngleDomain
@@ -16,7 +22,10 @@ module LinearTrace.View.Primitives
   , UnitExpr
   , AngleExpr
   , ColorExpr
-  , Bounds(..)
+  , -- * Geometry
+    -- | Bounds and geometry helpers used by graph nodes, patches, build
+    -- constraints, and concrete materialization.
+    Bounds(..)
   , BoundsExpr
   , ConcreteBounds
   , boundsTop
@@ -24,11 +33,17 @@ module LinearTrace.View.Primitives
   , boundsWidth
   , boundsHeight
   , HasBounds(..)
-  , Hsl(..)
+  , -- * Colour
+    -- | Symbolic and concrete HSL colour values shared by style access,
+    -- materialization, and CSS compilation.
+    Hsl(..)
   , ConcreteHsl
   , unitRange
   , angleRange
-  , global
+  , -- * Constructors
+    -- | Convenience constructors re-exported through the view and choreography
+    -- facades for DSL expressions.
+    global
   , num
   , absExpr
   ) where

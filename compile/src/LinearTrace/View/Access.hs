@@ -1,5 +1,11 @@
+-- | Value-access bridge from view layout/style fields to solver components.
+-- Choreography and match rules use this module to relate selected values while
+-- keeping the top-level view facade free of query-specific APIs.
 module LinearTrace.View.Access
-  ( ValueComponent
+  ( -- * Endpoint values
+    -- | Component projections over concrete selections. These feed
+    -- choreography match relations and ultimately lower to solver components.
+    ValueComponent
   , ValueAccess
   , LayoutAttr(..)
   , StyleLayoutAttr(..)
@@ -7,15 +13,24 @@ module LinearTrace.View.Access
   , StyleFreeAttr(..)
   , StyleColorAttr(..)
   , HslPart(..)
-  , StyleRequirement(..)
-  , layoutValueAccess
+  , -- * Style requirements
+    -- | Requirements that a value access can impose on a view node, currently
+    -- used to ensure optional colour fields exist before relating HSL parts.
+    StyleRequirement(..)
+  , -- * Access constructors
+    -- | Constructors and readers used by the DSL/match layer to turn layout or
+    -- style attributes into component endpoints.
+    layoutValueAccess
   , styleLayoutValueAccess
   , styleUnitValueAccess
   , styleFreeValueAccess
   , styleColorPartValueAccess
   , valueAccessComponent
   , valueAccessRequirements
-  , applyStyleRequirements
+  , -- * Requirement application
+    -- | Applies access-implied style fields to graph nodes before constraints
+    -- are emitted.
+    applyStyleRequirements
   ) where
 
 import qualified Data.Maybe                  as Maybe

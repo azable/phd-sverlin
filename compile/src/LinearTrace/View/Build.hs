@@ -1,12 +1,21 @@
+-- | View graph output builder. Choreography accumulates 'ViewOutput' values
+-- while processing core events; this module finalizes those outputs into a
+-- solver-ready 'ViewGraph'.
 module LinearTrace.View.Build
-  ( ViewOutput(..)
+  ( -- * Output accumulation
+    -- | Monoidal output of nodes, constraints, and render-intent frames emitted
+    -- by match rules and graph construction.
+    ViewOutput(..)
   , emptyViewOutput
   , appendViewOutput
   , flushViewOutput
   , renderIntentOutput
   , mergeInitialRenderIntents
   , withImplicitInitialFrame
-  , patchedBlockOutput
+  , -- * Graph construction
+    -- | Applies node patches and finalizes accumulated output into a view
+    -- graph with canvas/style constraints.
+    patchedBlockOutput
   , finalizeViewGraph
   ) where
 

@@ -2,15 +2,24 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
+-- | Choreography matching and view graph assembly. This module binds
+-- 'LinearTrace.Core.Events' to 'LinearTrace.View' by turning query matches,
+-- node patches, and value endpoints into symbolic view output.
 module LinearTrace.Choreography.Match
-  ( MatchSpec
+  ( -- * Match specs
+    -- | Accumulated node, layout, and virtual grouping rules produced by the
+    -- public choreography DSL.
+    MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
   , matchQueryNode
   , matchAnyQueryNode
   , matchQueryPayloadNode
   , matchVirtualNode
-  , NodeSelection(..)
+  , -- * Layout/value relations
+    -- | Selection and component relation API. The DSL uses this to connect
+    -- view lifespans and style/layout values through solver constraints.
+    NodeSelection(..)
   , ConstraintStrength(..)
   , LayoutRelation(..)
   , ValueComponent
@@ -20,7 +29,10 @@ module LinearTrace.Choreography.Match
   , matchValueRelation
   , matchValueDirectedBridge
   , matchValueSymmetricBridge
-  , blockViewOfEventBlock
+  , -- * View graph assembly
+    -- | Internal bridge from core event blocks to view nodes. Choreography is
+    -- the intended caller; this is not re-exported directly to DSL users.
+    blockViewOfEventBlock
   , matchedBlockOutput
   , buildMatchedViewGraph
   ) where

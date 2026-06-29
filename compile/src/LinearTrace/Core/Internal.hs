@@ -12,8 +12,14 @@
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
+-- | Implementation surface for the linear trace core. This module is package
+-- internal in Cabal; it is imported by the stable 'LinearTrace.Core' facade,
+-- the event projection layer, and diagnostic printing where the full graph
+-- state is required.
 module LinearTrace.Core.Internal
   ( -- * Core public API data
+    -- | Trace graph, builder, payload, fact, and traceable definitions. The
+    -- public 'LinearTrace.Core' module re-exports the stable subset of these.
     TraceGraph
   , TraceGraphWith(..)
   , TraceBuilder
@@ -33,12 +39,16 @@ module LinearTrace.Core.Internal
   , PayloadView(..)
   , Traceable(..)
   , -- * Trusted linear payloads
+    -- | Built-in linearly tracked payload wrappers shared by core,
+    -- choreography, examples, and tests.
     LUnit(..)
   , LBool(..)
   , LInt(..)
   , LDouble(..)
   , LString(..)
   , -- * Action vocabulary
+    -- | Type-level action vocabulary used to type audit steps and event
+    -- projection. The constructors are consumed by 'LinearTrace.Core.Events'.
     ActionKind(..)
   , Action
   , type Create
@@ -52,6 +62,8 @@ module LinearTrace.Core.Internal
   , type Unseal
   , type Decide
   , -- * Primitive operations
+    -- | Primitive linear operations that update core builder state and produce
+    -- explain tokens. Higher layers call these through the public core facade.
     create
   , createTagged
   , observe
@@ -67,6 +79,8 @@ module LinearTrace.Core.Internal
   , unseal
   , decide
   , -- * Auditing operations
+    -- | Explain-token structure for assembling typed audit chains before they
+    -- become graph steps or event logs.
     OneUse(..)
   , ExplainToken
   , ExplainTokens(..)
@@ -83,6 +97,8 @@ module LinearTrace.Core.Internal
   , (<$>)
   , (<*>)
   , -- * Public graph/step data
+    -- | Full graph state and step records needed by event projection and
+    -- printers. These remain internal to the package-level public API.
     BlockId
   , BlockRef(..)
   , BlockSnapshot(..)
@@ -92,10 +108,14 @@ module LinearTrace.Core.Internal
   , TraceStep
   , TraceStepWith(..)
   , -- * Public audit data
+    -- | Audited action sequence data. 'LinearTrace.Core.Events' maps this into
+    -- typed event values for choreography matching.
     AuditStep(..)
   , Audit(..)
   , explainTokenToAuditStep
   , -- * Runner
+    -- | Core runners and graph builders. The choreography layer uses related
+    -- stateful machinery to build core and view output together.
     explainAuditWith
   , explainWith
   , discardAudit

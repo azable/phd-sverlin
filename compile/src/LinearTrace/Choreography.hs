@@ -12,8 +12,15 @@
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
 
+-- | Public choreography DSL. This is the intentionally thin user-facing layer
+-- that couples core lifecycle events to symbolic view construction through
+-- queries, match specs, tags, and view patches. It depends on 'LinearTrace.Core',
+-- 'LinearTrace.Core.Events', 'LinearTrace.Choreography.Query',
+-- 'LinearTrace.Choreography.Match', and the internal 'LinearTrace.View' facade.
 module LinearTrace.Choreography
   ( -- * Program layer
+    -- | Program execution and graph-building API. The core trace graph is built
+    -- alongside a symbolic view graph, then solved through the view solver.
     Program
   , VisualTraceGraph
   , ViewGraph
@@ -38,10 +45,15 @@ module LinearTrace.Choreography
   , checkpoint
   , loop
   , -- * Handles
+    -- | Linear handles that track core payload lifecycle and allow the DSL to
+    -- attach view behavior to block/event lifetimes.
     Block
   , SlotHandle
   , PayloadHandle
   , -- * Payloads and trace tags
+    -- | Core payload/fact vocabulary plus choreography query and selection
+    -- types. These are the stable DSL names for matching trace blocks and
+    -- binding view nodes to them.
     Payload
   , FactValue(..)
   , Fact(..)
@@ -94,6 +106,9 @@ module LinearTrace.Choreography
   , queryFacts
   , (<&>)
   , -- * Component and layout layer
+    -- | Symbolic view/style DSL. These names ultimately lower to
+    -- 'LinearTrace.View' primitives, patches, style fields, and solver
+    -- constraints.
     NodeRecipe
   , Style
   , BorderStyle(..)

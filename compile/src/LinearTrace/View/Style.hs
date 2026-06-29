@@ -5,8 +5,13 @@
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Symbolic style schema for the view layer. Choreography uses the setters as
+-- the public DSL surface; build/solve/materialize use the field specs and
+-- constraints to lower styles through the solver and into concrete CSS values.
 module LinearTrace.View.Style
   ( -- * Style values
+    -- | CSS-like fixed style tokens and text values. These stay independent of
+    -- layout primitives except where style fields reference symbolic values.
     StyleText
   , styleTextString
   , FontWeight(..)
@@ -15,6 +20,9 @@ module LinearTrace.View.Style
   , BorderStyle(..)
   , WhiteSpace(..)
   , -- * Unified style representation
+    -- | Internal style field model shared by build constraints, choice solving,
+    -- and materialization. Callers should prefer the named setters/accessors
+    -- unless they are part of those lowering phases.
     Style
   , styleWithBounds
   , HasStyle(..)
@@ -33,6 +41,8 @@ module LinearTrace.View.Style
   , styleConstraints
   , styleChoiceConstraints
   , -- * Public style accessors/setters
+    -- | Named style accessors and setters used by choreography and view access.
+    -- These are the intended API for manipulating symbolic style values.
     opacity
   , zIndex
   , padding

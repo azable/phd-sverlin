@@ -7,10 +7,18 @@
 {-# LANGUAGE TypeApplications  #-}
 {-# LANGUAGE TypeFamilies      #-}
 
+-- | Stable choreography/view fixtures used by solver tests. These exercise the
+-- public choreography DSL while keeping assertions independent of the changing
+-- app example.
 module Choreography.TestFixtures
-  ( payloadMatchedStats
+  ( -- * Graph statistics
+    -- | Compact graph stats used by tests for query and virtual grouping
+    -- behavior.
+    payloadMatchedStats
   , virtualGroupStats
-  , selectedColorGraph
+  , -- * View graphs
+    -- | Concrete fixture graphs used by materialization/style tests.
+    selectedColorGraph
   , styledGraph
   ) where
 

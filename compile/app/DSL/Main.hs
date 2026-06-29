@@ -13,9 +13,18 @@
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
+-- | Current editable choreography example used by the compile executable. It
+-- depends only on the public 'LinearTrace.Choreography' DSL and returns the
+-- graph consumed by 'App'.
 module DSL.Main
-  ( example
-  , run
+  ( -- * Example program
+    -- | Linear-search example program kept as the current app-shaped
+    -- visualization fixture.
+    example
+  , -- * Runner
+    -- | Convert an example program into the visual trace graph expected by the
+    -- executable workflow.
+    run
   ) where
 
 import           Control.Functor.Linear   hiding (ask, (<$>), (<&>), (<*>))

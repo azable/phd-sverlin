@@ -2,8 +2,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
 
+-- | Compile solved view graphs into the JSON visualization model consumed by
+-- the Svelte app. This exposed module depends on the internal view facade and
+-- materialization boundary but does not expose symbolic view internals.
 module LinearTrace.Compile
-  ( RenderId(..)
+  ( -- * Render model
+    -- | Concrete JSON-facing render identifiers, style values, blocks, patches,
+    -- frames, and visualization wrapper produced after solving/materialization.
+    RenderId(..)
   , StyleValue(..)
   , RenderStyle(..)
   , RenderBlock(..)
@@ -11,10 +17,16 @@ module LinearTrace.Compile
   , RenderPatch(..)
   , RenderFrame(..)
   , Visualization(..)
-  , withSeed
+  , -- * Compilation
+    -- | Compile a solved symbolic view graph to render frames. The viewport
+    -- variant is useful for tests or future non-default canvases.
+    withSeed
   , compileSolved
   , compileSolvedWithViewport
-  , encodeCompiledPretty
+  , -- * JSON output
+    -- | Encoding and writing helpers used by the executable and top-level
+    -- facade. Diagnostics/printing are handled by 'LinearTrace.Print'.
+    encodeCompiledPretty
   , hPrintCompiledJSON
   , printCompiledJSON
   , writeCompiledJSON

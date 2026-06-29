@@ -2,8 +2,15 @@
 {-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | Solver expression implementation. The public 'Solver' facade re-exports
+-- the opaque expression API; lower layers use this module directly when they
+-- need constructors, substitution, or domain-bound internals during constraint
+-- compilation.
 module Solver.Expr
-  ( Range(..)
+  ( -- * Domains
+    -- | Numeric domains and native optimizer bounds. 'Solver.Problem' depends
+    -- on these bounds while compiling variables and range constraints.
+    Range(..)
   , Domain
   , domainName
   , domainCircularPeriod
@@ -20,7 +27,10 @@ module Solver.Expr
   , mergeDomainBounds
   , addDomainLower
   , addDomainUpper
-  , Var(..)
+  , -- * Expression representation
+    -- | Internal symbolic variable/expression representation. Public callers
+    -- should normally use the smart constructors re-exported by 'Solver'.
+    Var(..)
   , varName
   , Expr(..)
   , RawExpr(..)
@@ -40,7 +50,9 @@ module Solver.Expr
   , absExpr
   , minExpr
   , maxExpr
-  , Vec2(..)
+  , -- * Vectors
+    -- | Small vector containers used by the component and view layout layers.
+    Vec2(..)
   , Vec3(..)
   , Vec4(..)
   , vec2

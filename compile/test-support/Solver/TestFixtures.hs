@@ -1,9 +1,16 @@
+-- | Stable solver fixtures shared by tests and benchmarks. These intentionally
+-- avoid depending on the editable app example so solver performance and
+-- behavior checks remain repeatable.
 module Solver.TestFixtures
-  ( SolverFixture(..)
+  ( -- * Fixture model
+    -- | Named constraint fixture plus fixture lookup and benchmark seed set.
+    SolverFixture(..)
   , availableFixtures
   , defaultBenchmarkSeeds
   , fixtureByName
-  , solveFixture
+  , -- * Fixture execution
+    -- | Helpers for solving and validating fixture-specific invariants.
+    solveFixture
   , validateFixtureSolution
   ) where
 

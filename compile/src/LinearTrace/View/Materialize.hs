@@ -1,11 +1,20 @@
 {-# LANGUAGE GADTs #-}
 
+-- | Materialization boundary from solved symbolic view graphs to concrete
+-- render data. 'LinearTrace.Compile' is the intended caller; symbolic style and
+-- graph helpers stay internal to this module.
 module LinearTrace.View.Materialize
-  ( ConcreteHsl
+  ( -- * Concrete style data
+    -- | Solved style fields and geometry values. Compile code reads these to
+    -- map style fields to CSS/JSON.
+    ConcreteHsl
   , ConcreteStyle
   , concreteFields
   , ConcreteField(..)
-  , ConcreteBlockView
+  , -- * Concrete view nodes
+    -- | Solved block and virtual nodes. Constructors remain hidden except for
+    -- the existential node wrapper needed by compile traversal.
+    ConcreteBlockView
   , concreteBlockRef
   , concreteBlockLabel
   , concreteBlockContent
@@ -20,15 +29,23 @@ module LinearTrace.View.Materialize
   , concreteVirtualPieceKey
   , concreteVirtualStyle
   , ConcreteViewNode(..)
-  , ConcreteViewGraph
+  , -- * Concrete graph
+    -- | Whole solved graph and render frames produced from a solver solution.
+    ConcreteViewGraph
   , concreteViewNodes
   , concreteViewRenderFrames
-  , concreteTop
+  , -- * Geometry helpers
+    -- | Convenience readers over concrete bounds and scalar style fields used
+    -- by compile-time CSS mapping.
+    concreteTop
   , concreteLeft
   , concreteWidth
   , concreteHeight
   , concreteScalarValue
-  , materializeViewGraph
+  , -- * Materialization
+    -- | The only public conversion entrypoint: solved 'ViewGraph' to concrete
+    -- graph, failing if a referenced symbolic value was not solved.
+    materializeViewGraph
   ) where
 
 import           LinearTrace.View.Graph

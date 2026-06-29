@@ -1,16 +1,28 @@
+-- | Small shared view identity, tag, label, and content types. These are used
+-- across query matching, graph construction, materialization, and compile
+-- output, so this module intentionally has no dependency on solver/style code.
 module LinearTrace.View.Types
-  ( ViewId(..)
+  ( -- * Identity
+    -- | Typed view references that let choreography attach view nodes to core
+    -- event lifetimes while preserving payload tags at compile time.
+    ViewId(..)
   , viewIdInt
   , ViewRef(..)
   , viewRefId
   , viewRefInt
   , syntheticViewRef
-  , ViewLabel(..)
+  , -- * Labels and tags
+    -- | Display labels and neutral tags used by query/match logic and render
+    -- identity generation.
+    ViewLabel(..)
   , ViewTagValue(..)
   , ViewTags(..)
   , emptyViewTags
   , viewTagsToList
-  , ContentMode(..)
+  , -- * Content
+    -- | Optional text content stored on symbolic view nodes before
+    -- materialization.
+    ContentMode(..)
   ) where
 
 import           Prelude

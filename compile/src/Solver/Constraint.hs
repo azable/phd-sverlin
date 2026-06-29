@@ -1,7 +1,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 
+-- | Constraint and component implementation for symbolic expressions. The
+-- public 'Solver' facade re-exports the stable constructors and combinators;
+-- 'Solver.Problem' imports this module to flatten and canonicalize constraints
+-- before backend compilation.
 module Solver.Constraint
-  ( Constraint(..)
+  ( -- * Constraints
+    -- | Raw constraint tree and typeclass operators used by the view and
+    -- solver problem layers to express hard and soft numeric relationships.
+    Constraint(..)
   , ConstrainEq(..)
   , ConstrainOrd(..)
   , (@==@)
@@ -11,14 +18,24 @@ module Solver.Constraint
   , within
   , minimize
   , soften
-  , flattenConstraint
+  , -- * Canonicalization
+    -- | Implementation helpers used by 'Solver.Problem' for deduplication,
+    -- inspection, and energy lowering.
+    flattenConstraint
   , flattenConstraints
   , constraintView
   , constraintViews
   , constraintCount
   , equalityEpsilon
-  , ConstraintView(..)
-  , Component
+  , -- * Diagnostic views
+    -- | Read-only constraint views exposed through the public solver facade for
+    -- inspection and tests.
+    ConstraintView(..)
+  , -- * Components
+    -- | Structured relation API used by choreography matching to bridge
+    -- vectors, HSL colours, and scalar fields without exposing raw solver
+    -- internals to the DSL.
+    Component
   , ComponentRelation(..)
   , component
   , exprComponent

@@ -2,12 +2,19 @@
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+-- | Human-readable diagnostics for core traces, view graphs, and solver
+-- summaries. The executable and top-level facade use this module for terminal
+-- output; JSON output is handled separately by 'LinearTrace.Compile'.
 module LinearTrace.Print
-  ( printGraph
+  ( -- * Stdout printers
+    -- | Convenience printers for direct terminal diagnostics.
+    printGraph
   , printTrace
   , printSolutionByStep
   , printSolutionSummary
-  , hPrintGraph
+  , -- * Handle printers
+    -- | Handle-parametric printers used by the CLI/app workflow and tests.
+    hPrintGraph
   , hPrintTrace
   , hPrintSolutionByStep
   , hPrintSolutionSummary

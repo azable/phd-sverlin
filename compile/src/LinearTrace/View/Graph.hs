@@ -2,8 +2,14 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE RankNTypes        #-}
 
+-- | Symbolic view graph representation. Choreography and build code construct
+-- these nodes; solving consumes their constraints; materialization converts
+-- them to concrete render data after solving.
 module LinearTrace.View.Graph
-  ( ViewGraph(..)
+  ( -- * Graph data
+    -- | Symbolic graph, node, step, and render-intent records shared by the
+    -- view builder, solver, materializer, and diagnostics.
+    ViewGraph(..)
   , ViewNode(..)
   , ViewStep(..)
   , BlockView(..)
@@ -13,7 +19,10 @@ module LinearTrace.View.Graph
   , AnyBlockView(..)
   , AnyVirtualView(..)
   , AnyLayoutView(..)
-  , blockViewRef
+  , -- * Lookups and helpers
+    -- | Accessors and stable key helpers used by choreography matching,
+    -- printing, and compile identity tracking.
+    blockViewRef
   , blockViewLabel
   , blockViewTags
   , blockViewNodeKey
@@ -25,7 +34,10 @@ module LinearTrace.View.Graph
   , virtualBlockId
   , blockVarPath
   , virtualVar
-  , mapBlockViewStyleExprLeaves
+  , -- * Solver diagnostics
+    -- | Style expression traversal helpers used by printing to show solved
+    -- view values by step.
+    mapBlockViewStyleExprLeaves
   , solvedBlockViewExprs
   , viewNodeBlocks
   ) where

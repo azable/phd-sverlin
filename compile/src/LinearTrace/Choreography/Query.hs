@@ -5,8 +5,14 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 
+-- | Query and payload-pattern implementation for choreography. The public DSL
+-- re-exports the safe query vocabulary; 'LinearTrace.Choreography.Match' uses
+-- this module to match core event blocks and virtual view groups.
 module LinearTrace.Choreography.Query
-  ( Query(..)
+  ( -- * Query terms
+    -- | Fact/tag query representation and constructors. Choreography users see
+    -- these through the DSL facade and overloaded labels.
+    Query(..)
   , QueryTerm(..)
   , QueryValue(..)
   , QueryInt(..)
@@ -24,13 +30,19 @@ module LinearTrace.Choreography.Query
   , queryIntAdd
   , queryBindingValue
   , bindQueryInt
-  , MatchBinding(..)
+  , -- * Match bindings
+    -- | Variable bindings produced by query matching. Match rules consume
+    -- these to build node patches and selection endpoints.
+    MatchBinding(..)
   , MatchBindings
   , MatchContext(..)
   , matchBinding
   , matchBindingValue
   , queryMatchBindings
-  , PayloadPattern
+  , -- * Payload patterns
+    -- | Type-directed payload filters used by match rules to refine core event
+    -- blocks before view nodes are produced.
+    PayloadPattern
   , payloadPatternMatches
   , anyPayloadPattern
   , payloadBindingPattern
@@ -39,7 +51,9 @@ module LinearTrace.Choreography.Query
   , payloadDoublePattern
   , payloadStringPattern
   , payloadUnitPattern
-  , labelName
+  , -- * Key helpers
+    -- | Stable names and keys shared by query matching and view node identity.
+    labelName
   , safeKey
   ) where
 
