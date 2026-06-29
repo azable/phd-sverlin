@@ -6,16 +6,19 @@
 -- without making those modules part of the public surface.
 module Solver
   ( -- * Numeric domains
-    -- | Domains describe numeric variable compatibility and cyclic wrapping.
-    -- Bounds are provided with 'within'; compilation lowers direct variable
-    -- ranges to native optimizer bounds and keeps compound ranges as energy
-    -- terms.
+    -- | Domains describe numeric variable compatibility, cyclic wrapping, and
+    -- default native optimizer bounds. Extra bounds are provided with 'within';
+    -- compilation lowers direct variable ranges to native optimizer bounds and
+    -- keeps compound ranges as energy terms.
     Range(..)
   , Domain
   , domainName
   , domainCircularPeriod
+  , domainDefaultBounds
   , realDomain
+  , boundedDomain
   , cyclicDomain
+  , boundedCyclicDomain
   , NumericType
   , SymbolicType(..)
   , -- * Categorical choices

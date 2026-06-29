@@ -1,0 +1,30 @@
+module LinearTrace.Choreography.Types
+  ( FreeDomain
+  , LayoutDomain
+  , UnitDomain
+  , AngleDomain
+  , Free
+  , Layout
+  , Unit
+  , Angle
+  , Color
+  , FreeExpr
+  , LayoutExpr
+  , UnitExpr
+  , AngleExpr
+  , ColorExpr
+  , Bounds(..)
+  , BoundsExpr
+  , MaterializedBounds
+  , boundsTop
+  , boundsLeft
+  , boundsWidth
+  , boundsHeight
+  , HasBounds(..)
+  , Hsl(..)
+  , MaterializedHsl
+  , unitRange
+  , angleRange
+  ) where
+
+import           LinearTrace.View.Primitives

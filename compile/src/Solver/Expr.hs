@@ -7,16 +7,19 @@ module Solver.Expr
   , Domain
   , domainName
   , domainCircularPeriod
+  , domainDefaultBounds
   , realDomain
+  , boundedDomain
   , cyclicDomain
-  , InitialBounds(..)
+  , boundedCyclicDomain
+  , DomainBounds(..)
   , NumericType
   , SymbolicType(..)
-  , unboundedInitialBounds
-  , domainInitialBounds
-  , mergeInitialBounds
-  , addInitialLower
-  , addInitialUpper
+  , unboundedDomainBounds
+  , rangeDomainBounds
+  , mergeDomainBounds
+  , addDomainLower
+  , addDomainUpper
   , Var(..)
   , varName
   , Expr(..)
@@ -59,38 +62,68 @@ data Range = Range
 data Domain = Domain
   { domainName           :: String
   , domainCircularPeriod :: Maybe Double
+  , domainDefaultBounds  :: DomainBounds
   } deriving (Eq, Ord, Show)
 
 realDomain :: String -> Domain
-realDomain name = Domain {domainName = name, domainCircularPeriod = Nothing}
+realDomain name =
+  Domain
+    { domainName = name
+    , domainCircularPeriod = Nothing
+    , domainDefaultBounds = unboundedDomainBounds
+    }
+
+boundedDomain :: String -> Range -> Domain
+boundedDomain name range =
+  Domain
+    { domainName = name
+    , domainCircularPeriod = Nothing
+    , domainDefaultBounds = rangeDomainBounds range
+    }
 
 cyclicDomain :: String -> Double -> Domain
 cyclicDomain name period =
-  Domain {domainName = name, domainCircularPeriod = Just period}
+  Domain
+    { domainName = name
+    , domainCircularPeriod = Just period
+    , domainDefaultBounds = unboundedDomainBounds
+    }
 
--- Finite initial bounds are also passed to the optimizer as native bounds.
-data InitialBounds = InitialBounds
-  { initialLower :: Maybe Double
-  , initialUpper :: Maybe Double
-  } deriving (Eq, Show)
+boundedCyclicDomain :: String -> Double -> Range -> Domain
+boundedCyclicDomain name period range =
+  Domain
+    { domainName = name
+    , domainCircularPeriod = Just period
+    , domainDefaultBounds = rangeDomainBounds range
+    }
+
+-- Finite domain bounds are passed to the optimizer as native bounds.
+data DomainBounds = DomainBounds
+  { domainLowerBound :: Maybe Double
+  , domainUpperBound :: Maybe Double
+  } deriving (Eq, Ord, Show)
 
 class SymbolicType ty where
   symbolicDomain :: Proxy ty -> Domain
 
 type NumericType ty = SymbolicType ty
 
-unboundedInitialBounds :: InitialBounds
-unboundedInitialBounds =
-  InitialBounds {initialLower = Nothing, initialUpper = Nothing}
+unboundedDomainBounds :: DomainBounds
+unboundedDomainBounds =
+  DomainBounds {domainLowerBound = Nothing, domainUpperBound = Nothing}
 
-domainInitialBounds :: Domain -> InitialBounds
-domainInitialBounds _ = unboundedInitialBounds
+rangeDomainBounds :: Range -> DomainBounds
+rangeDomainBounds range =
+  DomainBounds
+    { domainLowerBound = Just (rangeLower range)
+    , domainUpperBound = Just (rangeUpper range)
+    }
 
-mergeInitialBounds :: InitialBounds -> InitialBounds -> InitialBounds
-mergeInitialBounds a b =
-  InitialBounds
-    { initialLower = mergeLower (initialLower a) (initialLower b)
-    , initialUpper = mergeUpper (initialUpper a) (initialUpper b)
+mergeDomainBounds :: DomainBounds -> DomainBounds -> DomainBounds
+mergeDomainBounds a b =
+  DomainBounds
+    { domainLowerBound = mergeLower (domainLowerBound a) (domainLowerBound b)
+    , domainUpperBound = mergeUpper (domainUpperBound a) (domainUpperBound b)
     }
 
 mergeLower :: Maybe Double -> Maybe Double -> Maybe Double
@@ -107,20 +140,20 @@ mergeUpper a b =
     (x, Nothing)     -> x
     (Just x, Just y) -> Just (min x y)
 
-addInitialLower :: Double -> InitialBounds -> InitialBounds
-addInitialLower lo bounds =
+addDomainLower :: Double -> DomainBounds -> DomainBounds
+addDomainLower lo bounds =
   bounds
-    { initialLower =
-        case initialLower bounds of
+    { domainLowerBound =
+        case domainLowerBound bounds of
           Nothing  -> Just lo
           Just old -> Just (max old lo)
     }
 
-addInitialUpper :: Double -> InitialBounds -> InitialBounds
-addInitialUpper hi bounds =
+addDomainUpper :: Double -> DomainBounds -> DomainBounds
+addDomainUpper hi bounds =
   bounds
-    { initialUpper =
-        case initialUpper bounds of
+    { domainUpperBound =
+        case domainUpperBound bounds of
           Nothing  -> Just hi
           Just old -> Just (min old hi)
     }

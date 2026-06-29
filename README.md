@@ -12,8 +12,8 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 - `src/routes/api/visualization/+server.ts` exposes the backend visualization stream used by the frontend.
 - `compile/app/` contains executable-only Haskell modules and the current visualization example.
 - `compile/app/DSL/Main.hs` defines the current example program and its visual styling/constraints. Query terms are intersected with `<&>`, for example `#array <&> #index @: i`.
-- `compile/src/LinearTrace/` contains the reusable trace model, choreography DSL, view compiler, and JSON output pipeline.
-- `compile/src/Solver.hs` is the public solver API. It exposes opaque numeric expressions/constraints, finite categorical choices, generic real/cyclic domains, diagnostic views, preprocessing inspection, and solve/compile entrypoints. Implementation modules live under `compile/src/Solver/` and should normally be imported through the top-level `Solver` facade.
+- `compile/src/LinearTrace/` contains the reusable trace model, public choreography DSL, internal view graph compiler, and JSON output pipeline. `Choreography` owns the runtime bridge between Core trace events and View render output; `View` owns neutral view ids, labels, style/layout primitives, render intents, graph solving, and materialization.
+- `compile/src/Solver.hs` is the public solver API. It exposes opaque numeric expressions/constraints, finite categorical choices, real/cyclic/bounded domains, diagnostic views, preprocessing inspection, and solve/compile entrypoints. Implementation modules live under `compile/src/Solver/` and should normally be imported through the top-level `Solver` facade.
 - `compile/test-support/Solver/TestFixtures.hs` contains stable synthetic solver fixtures used by tests and benchmarks.
 - `compile/test/` contains direct Haskell tests, using `tasty`, that do not run the full visualization pipeline.
 - `compile/bench/` contains direct Haskell benchmarks for fixed solver fixtures.

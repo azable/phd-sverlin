@@ -33,7 +33,7 @@ module Solver.Problem
   ) where
 
 import           Data.Foldable           (traverse_)
-import           Data.List               (foldl', isPrefixOf)
+import           Data.List               (isPrefixOf)
 import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as Map
 import           Data.Maybe              (fromMaybe)
@@ -123,9 +123,9 @@ withOptimizerMaxCorrections corrections config =
         (optimizerConfig config) {optimizerMaxCorrections = Just corrections}
     }
 
-sampleInitialWithinBounds :: InitialBounds -> Double -> Double
+sampleInitialWithinBounds :: DomainBounds -> Double -> Double
 sampleInitialWithinBounds bounds t =
-  case (initialLower bounds, initialUpper bounds) of
+  case (domainLowerBound bounds, domainUpperBound bounds) of
     (Just lo, Just hi)
       | lo < hi -> lo + interior t * (hi - lo)
       | otherwise -> lo
@@ -277,20 +277,20 @@ compileProblem config problem =
     (choiceValues, choiceBranchCount) =
       solveChoiceConstraints config (solverChoiceConstraints problem)
     varTypes = collectConstraintVarTypes flatConstraints
-    inferredBounds = inferInitialBounds flatConstraints
+    inferredBounds = inferDomainBounds flatConstraints
     finalBounds =
       Map.mapWithKey
-        (\name ty -> validateInitialBounds name (finalInitialBounds name ty))
+        (\name ty -> validateDomainBounds name (finalDomainBounds name ty))
         varTypes
     energyConstraints =
       filter (not . loweredByNativeBounds finalBounds) flatConstraints
     boundsValidation =
       foldl'
         (\checked (name, bounds) ->
-           checked `seq` validateInitialBounds name bounds `seq` ())
+           checked `seq` validateDomainBounds name bounds `seq` ())
         ()
         (Map.toAscList finalBounds)
-    nativeBoundNames = Map.keys (Map.filter finiteInitialBounds finalBounds)
+    nativeBoundNames = Map.keys (Map.filter finiteDomainBounds finalBounds)
     initialSpecs =
       zipWith
         makeInitialSpec
@@ -334,17 +334,17 @@ compileProblem config problem =
         , initialSpecName = name
         , initialSpecType = ty
         , initialSpecBounds =
-            Map.findWithDefault unboundedInitialBounds name finalBounds
+            Map.findWithDefault unboundedDomainBounds name finalBounds
         }
-    finalInitialBounds name ty =
-      domainInitialBounds ty
-        `mergeInitialBounds` Map.findWithDefault
-                               unboundedInitialBounds
-                               name
-                               inferredBounds
+    finalDomainBounds name ty =
+      domainDefaultBounds ty
+        `mergeDomainBounds` Map.findWithDefault
+                              unboundedDomainBounds
+                              name
+                              inferredBounds
 
-validateInitialBounds :: String -> InitialBounds -> InitialBounds
-validateInitialBounds name bounds =
+validateDomainBounds :: String -> DomainBounds -> DomainBounds
+validateDomainBounds name bounds =
   case nativeBoundsFor name bounds of
     (lower, upper) -> lower `seq` upper `seq` bounds
 
@@ -373,11 +373,11 @@ solveChoiceConstraints config constraints =
         (\assignment -> all (choiceConstraintSatisfied assignment) constraints)
         assignments
     selectedIndex valid =
-      min
-        (length valid - 1)
-        (floor
-           (head (randomUnitsFromSeed (initialSeed config))
-              * fromIntegral (length valid)))
+      min (length valid - 1) (floor (seedUnit * fromIntegral (length valid)))
+    seedUnit =
+      case randomUnitsFromSeed (initialSeed config) of
+        value:_ -> value
+        []      -> 0
 
 choiceDomains :: [ChoiceConstraint] -> Map String [String]
 choiceDomains = foldl' addConstraint Map.empty
@@ -414,12 +414,12 @@ data InitialSpec = InitialSpec
   { initialSpecSample :: RandomSample
   , initialSpecName   :: String
   , initialSpecType   :: Domain
-  , initialSpecBounds :: InitialBounds
+  , initialSpecBounds :: DomainBounds
   } deriving (Eq, Show)
 
-finiteInitialBounds :: InitialBounds -> Bool
-finiteInitialBounds bounds =
-  case (initialLower bounds, initialUpper bounds) of
+finiteDomainBounds :: DomainBounds -> Bool
+finiteDomainBounds bounds =
+  case (domainLowerBound bounds, domainUpperBound bounds) of
     (Nothing, Nothing) -> False
     _                  -> True
 
@@ -427,7 +427,7 @@ inspectConstraints :: SolveConfig -> [Constraint] -> ProblemInspection
 inspectConstraints config constraints =
   compiledInspection (compileProblem config (solverProblem constraints))
 
-nativeBoundsFor :: String -> InitialBounds -> NativeBounds
+nativeBoundsFor :: String -> DomainBounds -> NativeBounds
 nativeBoundsFor name bounds
   | lower <= upper = (lower, upper)
   | otherwise =
@@ -439,8 +439,8 @@ nativeBoundsFor name bounds
          ++ " is greater than upper "
          ++ show upper)
   where
-    lower = fromMaybe negativeInfinity (initialLower bounds)
-    upper = fromMaybe positiveInfinity (initialUpper bounds)
+    lower = fromMaybe negativeInfinity (domainLowerBound bounds)
+    upper = fromMaybe positiveInfinity (domainUpperBound bounds)
 
 positiveInfinity :: Double
 positiveInfinity = 1 / 0
@@ -472,11 +472,11 @@ nonZeroLinearTerms :: Map String Double -> [(String, Double)]
 nonZeroLinearTerms =
   filter (\(_, coeff) -> abs coeff > equalityEpsilon) . Map.toAscList
 
-loweredByNativeBounds :: Map String InitialBounds -> Constraint -> Bool
+loweredByNativeBounds :: Map String DomainBounds -> Constraint -> Bool
 loweredByNativeBounds bounds constraint =
   nativeBoundConstraint constraint || impliedByNativeBounds bounds constraint
 
-impliedByNativeBounds :: Map String InitialBounds -> Constraint -> Bool
+impliedByNativeBounds :: Map String DomainBounds -> Constraint -> Bool
 impliedByNativeBounds bounds constraint =
   case constraint of
     LessOrEqual lhs rhs ->
@@ -489,7 +489,7 @@ impliedByNativeBounds bounds constraint =
     _ -> False
 
 maximumLinearValue ::
-     Map String InitialBounds -> Map String Double -> Double -> Maybe Double
+     Map String DomainBounds -> Map String Double -> Double -> Maybe Double
 maximumLinearValue bounds coefficients constant =
   foldl' addTermMax (Just constant) (nonZeroLinearTerms coefficients)
   where
@@ -498,8 +498,8 @@ maximumLinearValue bounds coefficients constant =
       variableBounds <- Map.lookup name bounds
       bound <-
         if coeff > 0
-          then initialUpper variableBounds
-          else initialLower variableBounds
+          then domainUpperBound variableBounds
+          else domainLowerBound variableBounds
       pure (total + coeff * bound)
 
 seedRangeInitialValues ::
@@ -507,12 +507,12 @@ seedRangeInitialValues ::
 seedRangeInitialValues constraints specs values =
   foldl' seedRangeInitialValue values specs
   where
-    ranges = dynamicInitialBounds constraints values
+    ranges = dynamicDomainBounds constraints values
     seedRangeInitialValue seeded spec =
       case Map.lookup (initialSpecName spec) ranges of
         Nothing -> seeded
         Just rangeBounds ->
-          let bounds = initialSpecBounds spec `mergeInitialBounds` rangeBounds
+          let bounds = initialSpecBounds spec `mergeDomainBounds` rangeBounds
               nativeBounds = nativeBoundsFor (initialSpecName spec) bounds
               sampled =
                 sampleInitialWithinBounds
@@ -523,16 +523,16 @@ seedRangeInitialValues constraints specs values =
                 (clampInitialValue nativeBounds sampled)
                 seeded
 
-dynamicInitialBounds ::
-     [Constraint] -> Map String Double -> Map String InitialBounds
-dynamicInitialBounds constraints values =
+dynamicDomainBounds ::
+     [Constraint] -> Map String Double -> Map String DomainBounds
+dynamicDomainBounds constraints values =
   foldl' (addDynamicInitialBound values) Map.empty constraints
 
 addDynamicInitialBound ::
      Map String Double
-  -> Map String InitialBounds
+  -> Map String DomainBounds
   -> Constraint
-  -> Map String InitialBounds
+  -> Map String DomainBounds
 addDynamicInitialBound values bounds constraint =
   case constraint of
     LessOrEqual lhs rhs ->
@@ -545,26 +545,26 @@ addDynamicLower ::
      Map String Double
   -> RawExpr
   -> RawExpr
-  -> Map String InitialBounds
-  -> Map String InitialBounds
+  -> Map String DomainBounds
+  -> Map String DomainBounds
 addDynamicLower values lowerBoundExpr target =
-  addDynamicBound values addInitialLower target lowerBoundExpr
+  addDynamicBound values addDomainLower target lowerBoundExpr
 
 addDynamicUpper ::
      Map String Double
   -> RawExpr
   -> RawExpr
-  -> Map String InitialBounds
-  -> Map String InitialBounds
-addDynamicUpper values = addDynamicBound values addInitialUpper
+  -> Map String DomainBounds
+  -> Map String DomainBounds
+addDynamicUpper values = addDynamicBound values addDomainUpper
 
 addDynamicBound ::
      Map String Double
-  -> (Double -> InitialBounds -> InitialBounds)
+  -> (Double -> DomainBounds -> DomainBounds)
   -> RawExpr
   -> RawExpr
-  -> Map String InitialBounds
-  -> Map String InitialBounds
+  -> Map String DomainBounds
+  -> Map String DomainBounds
 addDynamicBound values addBound target expr bounds =
   case target of
     EVar _ variable
@@ -573,7 +573,7 @@ addDynamicBound values addBound target expr bounds =
           Just value
             | finiteInitialValue value ->
               Map.alter
-                (Just . addBound value . fromMaybe unboundedInitialBounds)
+                (Just . addBound value . fromMaybe unboundedDomainBounds)
                 name
                 bounds
           _ -> bounds
@@ -705,24 +705,24 @@ collectConstraintVarTypes = foldMap collectOne
         Soft inner -> collectConstraintVarTypes [inner]
         All constraints -> collectConstraintVarTypes constraints
 
-inferInitialBounds :: [Constraint] -> Map String InitialBounds
-inferInitialBounds constraints =
+inferDomainBounds :: [Constraint] -> Map String DomainBounds
+inferDomainBounds constraints =
   foldl' (addAffineConstraint directBounds) directBounds constraints
   where
     directBounds = foldl' addDirectConstraint Map.empty constraints
 
 addDirectConstraint ::
-     Map String InitialBounds -> Constraint -> Map String InitialBounds
+     Map String DomainBounds -> Constraint -> Map String DomainBounds
 addDirectConstraint bounds constraint =
   case constraint of
     LessOrEqual (ELit lo) (EVar _ v) ->
       Map.alter
-        (Just . addInitialLower lo . fromMaybe unboundedInitialBounds)
+        (Just . addDomainLower lo . fromMaybe unboundedDomainBounds)
         (varName v)
         bounds
     LessOrEqual (EVar _ v) (ELit hi) ->
       Map.alter
-        (Just . addInitialUpper hi . fromMaybe unboundedInitialBounds)
+        (Just . addDomainUpper hi . fromMaybe unboundedDomainBounds)
         (varName v)
         bounds
     Soft _ -> bounds
@@ -730,10 +730,10 @@ addDirectConstraint bounds constraint =
     _ -> bounds
 
 addAffineConstraint ::
-     Map String InitialBounds
-  -> Map String InitialBounds
+     Map String DomainBounds
+  -> Map String DomainBounds
   -> Constraint
-  -> Map String InitialBounds
+  -> Map String DomainBounds
 addAffineConstraint known bounds constraint =
   case constraint of
     LessOrEqual lhs rhs -> addLinearUpperBounds known (rawSub lhs rhs) bounds
@@ -745,10 +745,10 @@ rawSub :: RawExpr -> RawExpr -> RawExpr
 rawSub = ESub
 
 addLinearUpperBounds ::
-     Map String InitialBounds
+     Map String DomainBounds
   -> RawExpr
-  -> Map String InitialBounds
-  -> Map String InitialBounds
+  -> Map String DomainBounds
+  -> Map String DomainBounds
 addLinearUpperBounds known expr bounds =
   case linearRawExpr expr of
     Nothing -> bounds
@@ -759,12 +759,12 @@ addLinearUpperBounds known expr bounds =
         (Map.toAscList coefficients)
 
 addLinearBound ::
-     Map String InitialBounds
+     Map String DomainBounds
   -> Map String Double
   -> Double
-  -> Map String InitialBounds
+  -> Map String DomainBounds
   -> (String, Double)
-  -> Map String InitialBounds
+  -> Map String DomainBounds
 addLinearBound known coefficients constant bounds (target, coeff)
   | abs coeff <= equalityEpsilon = bounds
   | otherwise =
@@ -773,17 +773,17 @@ addLinearBound known coefficients constant bounds (target, coeff)
       Just value
         | coeff > 0 ->
           Map.alter
-            (Just . addInitialUpper value . fromMaybe unboundedInitialBounds)
+            (Just . addDomainUpper value . fromMaybe unboundedDomainBounds)
             target
             bounds
         | otherwise ->
           Map.alter
-            (Just . addInitialLower value . fromMaybe unboundedInitialBounds)
+            (Just . addDomainLower value . fromMaybe unboundedDomainBounds)
             target
             bounds
 
 boundFromOtherTerms ::
-     Map String InitialBounds
+     Map String DomainBounds
   -> String
   -> Double
   -> Map String Double
@@ -795,7 +795,7 @@ boundFromOtherTerms known target coeff coefficients constant = do
   pure bound
 
 minOtherTerms ::
-     Map String InitialBounds -> String -> Map String Double -> Maybe Double
+     Map String DomainBounds -> String -> Map String Double -> Maybe Double
 minOtherTerms known target coefficients =
   sum
     <$> traverse
@@ -808,11 +808,11 @@ minOtherTerms known target coefficients =
     termMinimum (name, coeff)
       | coeff >= 0 = do
         bounds <- Map.lookup name known
-        lower <- initialLower bounds
+        lower <- domainLowerBound bounds
         pure (coeff * lower)
       | otherwise = do
         bounds <- Map.lookup name known
-        upper <- initialUpper bounds
+        upper <- domainUpperBound bounds
         pure (coeff * upper)
 
 linearRawExpr :: RawExpr -> Maybe (Map String Double, Double)

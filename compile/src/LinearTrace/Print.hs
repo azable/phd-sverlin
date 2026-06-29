@@ -243,8 +243,8 @@ blockViewBox block =
         $ rowBox
             [ fieldBox
                 blockListRefWidth
-                (renderBlockRefPlain (V.blockViewRef block))
-            , Box.text (renderPayloadView (V.blockViewLabel block))
+                (renderViewRefPlain (V.blockViewRef block))
+            , Box.text (renderViewLabel (V.blockViewLabel block))
             ]
     , blockStyleBox block
     ]
@@ -386,7 +386,7 @@ solveViewNodeExprs solution node =
 
 solveBlockViewExprs :: S.Solution -> V.BlockView tag -> [SolvedExpr]
 solveBlockViewExprs solution block =
-  let blockName = renderBlockRefPlain (V.blockViewRef block)
+  let blockName = renderViewRefPlain (V.blockViewRef block)
    in [ SolvedExpr (blockName ++ "." ++ name) value
       | (name, value) <- V.solvedBlockViewExprs solution block
       ]
@@ -419,8 +419,8 @@ viewTraceStepBox showDetails solution ix step =
   case step of
     V.ViewStep traceStep nodes constraints _renderIntents ->
       if showDetails
-        then spacedVcat (stepBox ix traceStep : detailBoxes)
-        else stepBox ix traceStep
+        then spacedVcat (viewStepLabelBox ix traceStep : detailBoxes)
+        else viewStepLabelBox ix traceStep
       where
         detailBoxes =
           concat
@@ -441,8 +441,8 @@ indentedViewNodeBox node =
   case node of
     V.BlockViewNode block ->
       rowBox
-        [ Box.text (renderBlockRefPlain (V.blockViewRef block))
-        , Box.text (renderPayloadView (V.blockViewLabel block))
+        [ Box.text (renderViewRefPlain (V.blockViewRef block))
+        , Box.text (renderViewLabel (V.blockViewLabel block))
         ]
     V.VirtualViewNode _ -> Box.text "virtual node"
 
@@ -555,6 +555,16 @@ renderBlockRef (BlockRef blockId) = "[B" ++ show blockId ++ "]"
 
 renderBlockRefPlain :: BlockRef tag -> String
 renderBlockRefPlain (BlockRef blockId) = "B" ++ show blockId
+
+renderViewRefPlain :: V.ViewRef tag -> String
+renderViewRefPlain ref = "B" ++ show (V.viewRefInt ref)
+
+renderViewLabel :: V.ViewLabel -> String
+renderViewLabel label =
+  V.viewLabelKind label ++ ": " ++ V.viewLabelContent label
+
+viewStepLabelBox :: Int -> String -> Box.Box
+viewStepLabelBox ix label = labelledStepBox ix label EmptyAudit
 
 renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content

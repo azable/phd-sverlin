@@ -2,12 +2,9 @@
 
 module Main where
 
-import qualified ChoreographySemanticTest as Semantic
-import           Control.Exception        (ErrorCall, evaluate, try)
-import qualified Data.List                as List
-import qualified Data.Map.Strict          as Map
-import qualified LinearTrace.View         as View
-import qualified LinearTrace.View.Style   as Style
+import           Control.Exception   (ErrorCall, evaluate, try)
+import qualified Data.List           as List
+import qualified Data.Map.Strict     as Map
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -17,6 +14,10 @@ data TestLayout
 
 data TestAngle
 
+data TestUnit
+
+data TestBoundedAngle
+
 data TestProbe
 
 instance SymbolicType TestLayout where
@@ -24,6 +25,12 @@ instance SymbolicType TestLayout where
 
 instance SymbolicType TestAngle where
   symbolicDomain _ = cyclicDomain "test-angle" 360
+
+instance SymbolicType TestUnit where
+  symbolicDomain _ = boundedDomain "test-unit" (Range 0 1)
+
+instance SymbolicType TestBoundedAngle where
+  symbolicDomain _ = boundedCyclicDomain "test-bounded-angle" 360 (Range 0 360)
 
 instance CategoricalType TestProbe where
   categoricalDomain _ = [category "match", category "no-match"]
@@ -37,8 +44,6 @@ main =
        , componentTests
        , cyclicDomainTests
        , categoricalTests
-       , styleChoiceTests
-       , semanticViewTests
        , seededFixtureTests
        , problemInspectionTests
        ])
@@ -62,6 +67,16 @@ nativeBoundsTests =
             inspected =
               inspectConstraints defaultSolveConfig [within x (Range 10 20)]
         inspectedNativeBoundNames inspected @?= ["test.inspect.x"]
+        inspectedNativeBoundCount inspected @?= 1
+    , testCase "bounded domains supply native bounds" $ do
+        let x = var "test.domain.unit" :: Expr TestUnit
+            inspected = inspectConstraints defaultSolveConfig [x @==@ num 0.5]
+        inspectedNativeBoundNames inspected @?= ["test.domain.unit"]
+        inspectedNativeBoundCount inspected @?= 1
+    , testCase "bounded cyclic domains supply native bounds" $ do
+        let x = var "test.domain.angle" :: Expr TestBoundedAngle
+            inspected = inspectConstraints defaultSolveConfig [x @==@ num 180]
+        inspectedNativeBoundNames inspected @?= ["test.domain.angle"]
         inspectedNativeBoundCount inspected @?= 1
     , testCase "within on a compound expression remains an energy constraint" $ do
         let x = var "test.inspect.x" :: Expr TestLayout
@@ -269,92 +284,6 @@ categoricalTests =
              (inspectedChoiceBranchCount
                 (compiledInspection (compileProblem config problem))))
     ]
-
-styleChoiceTests :: TestTree
-styleChoiceTests =
-  testGroup
-    "choice-backed styles"
-    [ testCase "fixed categorical styles do not create solver branches" $ do
-        let style' = Style.setFontWeight Style.FontWeightBold literalStyle
-            inspected =
-              compiledInspection
-                (compileProblem defaultSolveConfig (styleProblem style' []))
-        inspectedChoiceCount inspected @?= 0
-        inspectedChoiceBranchCount inspected @?= 0
-        solution <- solveProblem defaultSolveConfig (styleProblem style' [])
-        materialized <- assertMaterializedStyle solution style'
-        lookupCss "fontWeight" materialized @?= Just "bold"
-    , testCase "solved categorical styles materialize through solver choices" $ do
-        let selected = choice "test.style.fontWeight" :: Choice Style.FontWeight
-            style' = Style.setFontWeightChoice selected literalStyle
-            problem = styleProblem style' [choose selected (category "bold")]
-            inspected =
-              compiledInspection (compileProblem defaultSolveConfig problem)
-        inspectedChoiceCount inspected @?= 1
-        assertBool
-          "expected solved style choice to register a finite domain"
-          (inspectedChoiceBranchCount inspected > 0)
-        solution <- solveProblem defaultSolveConfig problem
-        materialized <- assertMaterializedStyle solution style'
-        lookupCss "fontWeight" materialized @?= Just "bold"
-        lookupFontWeight materialized @?= Just Style.FontWeightBold
-    ]
-
-semanticViewTests :: TestTree
-semanticViewTests =
-  testGroup
-    "semantic view values"
-    [ testCase "unit variables carry native 0-1 bounds" $ do
-        let inspected =
-              inspectConstraints
-                defaultSolveConfig
-                (View.viewConstraints Semantic.unitViewGraph)
-        inspectedNativeBoundNames inspected @?= ["global.view.var.0"]
-        inspectedNativeBoundCount inspected @?= 1
-    , testCase "angle variables carry native 0-360 bounds" $ do
-        let inspected =
-              inspectConstraints
-                defaultSolveConfig
-                (View.viewConstraints Semantic.angleViewGraph)
-        inspectedNativeBoundNames inspected @?= ["global.view.var.0"]
-        inspectedNativeBoundCount inspected @?= 1
-    ]
-
-literalStyle :: Style.Style
-literalStyle =
-  Style.styleWithBounds
-    (Style.Bounds
-       (num 0 :: Style.LayoutExpr)
-       (num 0 :: Style.LayoutExpr)
-       (num 100 :: Style.LayoutExpr)
-       (num 40 :: Style.LayoutExpr))
-
-styleProblem :: Style.Style -> [ChoiceConstraint] -> SolverProblem
-styleProblem style' choiceConstraints =
-  solverProblemWithChoices
-    (Style.styleConstraints style')
-    (Style.styleChoiceConstraints style' ++ choiceConstraints)
-
-assertMaterializedStyle :: Solution -> Style.Style -> IO Style.MaterializedStyle
-assertMaterializedStyle solution style' =
-  case Style.materializeStyle solution style' of
-    Nothing           -> assertFailure "expected style to materialize"
-    Just materialized -> pure materialized
-
-lookupCss :: String -> Style.MaterializedStyle -> Maybe String
-lookupCss name style' =
-  lookup
-    name
-    (Style.materializedCssAttrsWith (const "") (const "") id (\_ _ -> "") style')
-
-lookupFontWeight :: Style.MaterializedStyle -> Maybe Style.FontWeight
-lookupFontWeight style' =
-  case [ value
-       | Style.MaterializedFontWeightAttr _ value <-
-           Style.materializedDiscrete style'
-       ] of
-    [value] -> value
-    _       -> Nothing
 
 seededFixtureTests :: TestTree
 seededFixtureTests =

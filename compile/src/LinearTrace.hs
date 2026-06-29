@@ -66,8 +66,6 @@ module LinearTrace
   , Sealed(..)
   , Unsealed(..)
   , Decided(..)
-  , (==>)
-  , explain
   , explainWith
   , discard
   , (<$>)
@@ -78,26 +76,12 @@ module LinearTrace
   , printGraph
   , printTrace
   , printSolutionByStep
-  , RandomSeed(..)
   , compileSolved
   , printCompiledJSON
   , writeCompiledJSON
-  , -- * Application pipeline
-    ViewScript
-  , VisualTraceBuilder
-  , VisualTraceGraph
   ) where
 
 import           LinearTrace.Compile
-import           LinearTrace.Core    hiding (Computed (..), Copied (..),
-                                      Created (..), Decided (..),
-                                      Destroyed (..), Observed (..),
-                                      Replaced (..), Sealed (..), Unsealed (..),
-                                      Used (..), buildGraph, compute,
-                                      computeTagged, computeTaggedWith, copy,
-                                      copyTagged, create, createTagged, decide,
-                                      destroy, discard, observe, replace, seal,
-                                      unseal, use)
+import           LinearTrace.Core
 import           LinearTrace.Print
-import           LinearTrace.View
 import           Prelude             hiding ((<$>), (<*>))

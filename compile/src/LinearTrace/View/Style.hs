@@ -19,15 +19,10 @@ module LinearTrace.View.Style
   , LayoutExpr
   , UnitExpr
   , AngleExpr
-  , Hue
-  , HueExpr
   , ColorExpr
-  , HslExpr
   , MaterializedHsl
   , unitRange
   , angleRange
-  , unitConstraints
-  , angleConstraints
   , -- * Bounds
     Bounds(..)
   , BoundsExpr
@@ -112,11 +107,10 @@ module LinearTrace.View.Style
   , materializeStyle
   ) where
 
-import           Data.Kind                 (Type)
-import           Data.Maybe                (mapMaybe)
-import           LinearTrace.View.Color    hiding (MaterializedColor)
-import           LinearTrace.View.Geometry
-import           LinearTrace.View.Numeric
+import           Data.Kind                   (Type)
+import           Data.Maybe                  (mapMaybe)
+import           Data.Type.Equality          ((:~:) (..))
+import           LinearTrace.View.Primitives
 import           Prelude
 import           Solver
 
@@ -258,6 +252,22 @@ data StyleScalarSpec = StyleScalarSpec
   , styleScalarConstraints  :: [Constraint]
   }
 
+data StyleScalarKind ty where
+  StyleFreeScalar :: StyleScalarKind FreeDomain
+  StyleLayoutScalar :: StyleScalarKind LayoutDomain
+  StyleUnitScalar :: StyleScalarKind UnitDomain
+  StyleAngleScalar :: StyleScalarKind AngleDomain
+
+sameStyleScalarKind ::
+     StyleScalarKind lhs -> StyleScalarKind rhs -> Maybe (lhs :~: rhs)
+sameStyleScalarKind lhs rhs =
+  case (lhs, rhs) of
+    (StyleFreeScalar, StyleFreeScalar)     -> Just Refl
+    (StyleLayoutScalar, StyleLayoutScalar) -> Just Refl
+    (StyleUnitScalar, StyleUnitScalar)     -> Just Refl
+    (StyleAngleScalar, StyleAngleScalar)   -> Just Refl
+    _                                      -> Nothing
+
 data StyleTextSpec = StyleTextSpec
   { styleTextName    :: String
   , styleTextCssName :: Maybe String
@@ -278,11 +288,12 @@ data StyleChoiceSpec value = StyleChoiceSpec
   }
 
 data StyleField where
-  StyleFreeField :: StyleScalarSpec -> FreeExpr -> StyleField
-  StyleLayoutField :: StyleScalarSpec -> LayoutExpr -> StyleField
-  StyleUnitField :: StyleScalarSpec -> UnitExpr -> StyleField
-  StyleAngleField :: StyleScalarSpec -> AngleExpr -> StyleField
-  StyleColorField :: StyleTextSpec -> Maybe HslExpr -> StyleField
+  StyleScalarField
+    :: SymbolicType ty=> StyleScalarKind ty
+    -> StyleScalarSpec
+    -> Expr ty
+    -> StyleField
+  StyleColorField :: StyleTextSpec -> Maybe ColorExpr -> StyleField
   StyleTextField :: StyleTextSpec -> Maybe CssText -> StyleField
   StyleChoiceField
     :: StyleChoiceSpec value -> Maybe (StyleChoiceValue value) -> StyleField
@@ -290,13 +301,10 @@ data StyleField where
 fieldName :: StyleField -> String
 fieldName field =
   case field of
-    StyleFreeField spec _   -> styleScalarName spec
-    StyleLayoutField spec _ -> styleScalarName spec
-    StyleUnitField spec _   -> styleScalarName spec
-    StyleAngleField spec _  -> styleScalarName spec
-    StyleColorField spec _  -> styleTextName spec
-    StyleTextField spec _   -> styleTextName spec
-    StyleChoiceField spec _ -> styleChoiceName spec
+    StyleScalarField _ spec _ -> styleScalarName spec
+    StyleColorField spec _    -> styleTextName spec
+    StyleTextField spec _     -> styleTextName spec
+    StyleChoiceField spec _   -> styleChoiceName spec
 
 data Style = Style
   { styleBounds :: BoundsExpr
@@ -334,10 +342,7 @@ mapStyleFieldExprs ::
      (forall (ty :: Type). Expr ty -> Expr ty) -> StyleField -> StyleField
 mapStyleFieldExprs f field =
   case field of
-    StyleFreeField spec expr -> StyleFreeField spec (f expr)
-    StyleLayoutField spec expr -> StyleLayoutField spec (f expr)
-    StyleUnitField spec expr -> StyleUnitField spec (f expr)
-    StyleAngleField spec expr -> StyleAngleField spec (f expr)
+    StyleScalarField kind spec expr -> StyleScalarField kind spec (f expr)
     StyleColorField spec maybeHsl ->
       StyleColorField spec (fmap (fmap f) maybeHsl)
     StyleTextField _ _ -> field
@@ -372,10 +377,7 @@ styleExprLeaves style' =
 fieldExprLeaves :: StyleField -> [StyleExprLeaf]
 fieldExprLeaves field =
   case field of
-    StyleFreeField spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
-    StyleLayoutField spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
-    StyleUnitField spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
-    StyleAngleField spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
+    StyleScalarField _ spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
     StyleColorField spec maybeHsl ->
       case maybeHsl of
         Nothing -> []
@@ -415,10 +417,7 @@ styleChoiceConstraints style' =
 fieldConstraints :: StyleField -> [Constraint]
 fieldConstraints field =
   case field of
-    StyleFreeField spec expr -> scalarConstraints spec expr
-    StyleLayoutField spec expr -> scalarConstraints spec expr
-    StyleUnitField spec expr -> scalarConstraints spec expr
-    StyleAngleField spec expr -> scalarConstraints spec expr
+    StyleScalarField _ spec expr -> scalarConstraints spec expr
     StyleColorField _ maybeHsl ->
       case maybeHsl of
         Nothing -> []
@@ -456,54 +455,19 @@ nonNegativeConstraints expr = [num 0 @<=@ expr]
 --------------------------------------------------------------------------------
 -- Field constructors
 --------------------------------------------------------------------------------
-freeScalarField ::
-     String
+scalarField ::
+     SymbolicType ty
+  => StyleScalarKind ty
+  -> String
   -> Maybe String
   -> StyleValueUnit
   -> Maybe Range
-  -> (FreeExpr -> [Constraint])
-  -> FreeExpr
+  -> (Expr ty -> [Constraint])
+  -> Expr ty
   -> StyleField
-freeScalarField name cssName unit range constraints expr =
-  StyleFreeField
-    StyleScalarSpec
-      { styleScalarName = name
-      , styleScalarCssName = cssName
-      , styleScalarInitialRange = range
-      , styleScalarValueUnit = unit
-      , styleScalarConstraints = constraints expr
-      }
-    expr
-
-layoutScalarField ::
-     String
-  -> Maybe String
-  -> StyleValueUnit
-  -> Maybe Range
-  -> (LayoutExpr -> [Constraint])
-  -> LayoutExpr
-  -> StyleField
-layoutScalarField name cssName unit range constraints expr =
-  StyleLayoutField
-    StyleScalarSpec
-      { styleScalarName = name
-      , styleScalarCssName = cssName
-      , styleScalarInitialRange = range
-      , styleScalarValueUnit = unit
-      , styleScalarConstraints = constraints expr
-      }
-    expr
-
-unitScalarField ::
-     String
-  -> Maybe String
-  -> StyleValueUnit
-  -> Maybe Range
-  -> (UnitExpr -> [Constraint])
-  -> UnitExpr
-  -> StyleField
-unitScalarField name cssName unit range constraints expr =
-  StyleUnitField
+scalarField kind name cssName unit range constraints expr =
+  StyleScalarField
+    kind
     StyleScalarSpec
       { styleScalarName = name
       , styleScalarCssName = cssName
@@ -546,7 +510,8 @@ opacityDefault = num 1
 
 opacityField :: UnitExpr -> StyleField
 opacityField =
-  unitScalarField
+  scalarField
+    StyleUnitScalar
     "opacity"
     (Just "opacity")
     StyleNumber
@@ -554,7 +519,8 @@ opacityField =
     noConstraints
 
 opacity :: HasStyle a => a -> UnitExpr
-opacity value = lookupUnitField "opacity" opacityDefault (style value)
+opacity value =
+  lookupScalarField StyleUnitScalar "opacity" opacityDefault (style value)
 
 setOpacity :: UnitExpr -> Style -> Style
 setOpacity = setStyleField . opacityField
@@ -567,7 +533,8 @@ zIndexDefault = num 0
 
 zIndexField :: FreeExpr -> StyleField
 zIndexField =
-  freeScalarField
+  scalarField
+    StyleFreeScalar
     "zIndex"
     (Just "zIndex")
     StyleNumber
@@ -575,7 +542,8 @@ zIndexField =
     noConstraints
 
 zIndex :: HasStyle a => a -> FreeExpr
-zIndex value = lookupFreeField "zIndex" zIndexDefault (style value)
+zIndex value =
+  lookupScalarField StyleFreeScalar "zIndex" zIndexDefault (style value)
 
 setZIndex :: FreeExpr -> Style -> Style
 setZIndex = setStyleField . zIndexField
@@ -588,7 +556,8 @@ paddingDefault = num 0
 
 paddingField :: LayoutExpr -> StyleField
 paddingField =
-  layoutScalarField
+  scalarField
+    StyleLayoutScalar
     "padding"
     (Just "padding")
     StylePixels
@@ -596,7 +565,8 @@ paddingField =
     nonNegativeConstraints
 
 padding :: HasStyle a => a -> LayoutExpr
-padding value = lookupLayoutField "padding" paddingDefault (style value)
+padding value =
+  lookupScalarField StyleLayoutScalar "padding" paddingDefault (style value)
 
 setPadding :: LayoutExpr -> Style -> Style
 setPadding = setStyleField . paddingField
@@ -609,7 +579,8 @@ fontSizeDefault = num 16
 
 fontSizeField :: LayoutExpr -> StyleField
 fontSizeField =
-  layoutScalarField
+  scalarField
+    StyleLayoutScalar
     "fontSize"
     (Just "fontSize")
     StylePixels
@@ -617,7 +588,8 @@ fontSizeField =
     nonNegativeConstraints
 
 fontSize :: HasStyle a => a -> LayoutExpr
-fontSize value = lookupLayoutField "fontSize" fontSizeDefault (style value)
+fontSize value =
+  lookupScalarField StyleLayoutScalar "fontSize" fontSizeDefault (style value)
 
 setFontSize :: LayoutExpr -> Style -> Style
 setFontSize = setStyleField . fontSizeField
@@ -630,7 +602,8 @@ radiusDefault = num 0
 
 radiusField :: LayoutExpr -> StyleField
 radiusField =
-  layoutScalarField
+  scalarField
+    StyleLayoutScalar
     "radius"
     (Just "borderRadius")
     StylePixels
@@ -638,7 +611,8 @@ radiusField =
     nonNegativeConstraints
 
 radius :: HasStyle a => a -> LayoutExpr
-radius value = lookupLayoutField "radius" radiusDefault (style value)
+radius value =
+  lookupScalarField StyleLayoutScalar "radius" radiusDefault (style value)
 
 setRadius :: LayoutExpr -> Style -> Style
 setRadius = setStyleField . radiusField
@@ -651,7 +625,8 @@ strokeWidthDefault = num 0
 
 strokeWidthField :: LayoutExpr -> StyleField
 strokeWidthField =
-  layoutScalarField
+  scalarField
+    StyleLayoutScalar
     "strokeWidth"
     (Just "borderWidth")
     StylePixels
@@ -660,7 +635,11 @@ strokeWidthField =
 
 strokeWidth :: HasStyle a => a -> LayoutExpr
 strokeWidth value =
-  lookupLayoutField "strokeWidth" strokeWidthDefault (style value)
+  lookupScalarField
+    StyleLayoutScalar
+    "strokeWidth"
+    strokeWidthDefault
+    (style value)
 
 setStrokeWidth :: LayoutExpr -> Style -> Style
 setStrokeWidth = setStyleField . strokeWidthField
@@ -673,10 +652,17 @@ alphaDefault = num 1
 
 alphaField :: UnitExpr -> StyleField
 alphaField =
-  unitScalarField "alpha" Nothing StyleHidden (Just unitRange) noConstraints
+  scalarField
+    StyleUnitScalar
+    "alpha"
+    Nothing
+    StyleHidden
+    (Just unitRange)
+    noConstraints
 
 alpha :: HasStyle a => a -> UnitExpr
-alpha value = lookupUnitField "alpha" alphaDefault (style value)
+alpha value =
+  lookupScalarField StyleUnitScalar "alpha" alphaDefault (style value)
 
 setAlpha :: UnitExpr -> Style -> Style
 setAlpha = setStyleField . alphaField
@@ -684,31 +670,31 @@ setAlpha = setStyleField . alphaField
 --------------------------------------------------------------------------------
 -- Attribute: fill
 --------------------------------------------------------------------------------
-fillDefault :: Maybe HslExpr
+fillDefault :: Maybe ColorExpr
 fillDefault = Nothing
 
-fillField :: Maybe HslExpr -> StyleField
+fillField :: Maybe ColorExpr -> StyleField
 fillField = StyleColorField (textSpec "fill" (Just "backgroundColor"))
 
-fill :: HasStyle a => a -> Maybe HslExpr
+fill :: HasStyle a => a -> Maybe ColorExpr
 fill value = lookupColorField "fill" fillDefault (style value)
 
-setFill :: HslExpr -> Style -> Style
+setFill :: ColorExpr -> Style -> Style
 setFill = setStyleField . fillField . Just
 
 --------------------------------------------------------------------------------
 -- Attribute: stroke
 --------------------------------------------------------------------------------
-strokeDefault :: Maybe HslExpr
+strokeDefault :: Maybe ColorExpr
 strokeDefault = Nothing
 
-strokeField :: Maybe HslExpr -> StyleField
+strokeField :: Maybe ColorExpr -> StyleField
 strokeField = StyleColorField (textSpec "stroke" (Just "borderColor"))
 
-stroke :: HasStyle a => a -> Maybe HslExpr
+stroke :: HasStyle a => a -> Maybe ColorExpr
 stroke value = lookupColorField "stroke" strokeDefault (style value)
 
-setStroke :: HslExpr -> Style -> Style
+setStroke :: ColorExpr -> Style -> Style
 setStroke = setStyleField . strokeField . Just
 
 --------------------------------------------------------------------------------
@@ -851,40 +837,19 @@ defaultStyleFields =
 --------------------------------------------------------------------------------
 -- Field lookup
 --------------------------------------------------------------------------------
-lookupFreeField :: String -> FreeExpr -> Style -> FreeExpr
-lookupFreeField name fallback style' = go (styleFields style')
+lookupScalarField :: StyleScalarKind ty -> String -> Expr ty -> Style -> Expr ty
+lookupScalarField expectedKind name fallback style' = go (styleFields style')
   where
     go fields =
       case fields of
         [] -> fallback
-        StyleFreeField spec expr:rest
-          | styleScalarName spec == name -> expr
+        StyleScalarField actualKind spec expr:rest
+          | styleScalarName spec == name
+          , Just Refl <- sameStyleScalarKind expectedKind actualKind -> expr
           | otherwise -> go rest
         _:rest -> go rest
 
-lookupLayoutField :: String -> LayoutExpr -> Style -> LayoutExpr
-lookupLayoutField name fallback style' = go (styleFields style')
-  where
-    go fields =
-      case fields of
-        [] -> fallback
-        StyleLayoutField spec expr:rest
-          | styleScalarName spec == name -> expr
-          | otherwise -> go rest
-        _:rest -> go rest
-
-lookupUnitField :: String -> UnitExpr -> Style -> UnitExpr
-lookupUnitField name fallback style' = go (styleFields style')
-  where
-    go fields =
-      case fields of
-        [] -> fallback
-        StyleUnitField spec expr:rest
-          | styleScalarName spec == name -> expr
-          | otherwise -> go rest
-        _:rest -> go rest
-
-lookupColorField :: String -> Maybe HslExpr -> Style -> Maybe HslExpr
+lookupColorField :: String -> Maybe ColorExpr -> Style -> Maybe ColorExpr
 lookupColorField name fallback style' = go (styleFields style')
   where
     go fields =
@@ -1059,10 +1024,7 @@ materializeBounds solution = traverse (evalExpr solution)
 materializeField :: Solution -> StyleField -> Maybe MaterializedField
 materializeField solution field =
   case field of
-    StyleFreeField spec expr -> materializeScalar solution spec expr
-    StyleLayoutField spec expr -> materializeScalar solution spec expr
-    StyleUnitField spec expr -> materializeScalar solution spec expr
-    StyleAngleField spec expr -> materializeScalar solution spec expr
+    StyleScalarField _ spec expr -> materializeScalar solution spec expr
     StyleColorField spec maybeHsl ->
       MaterializedColorField (styleTextName spec) (styleTextCssName spec)
         <$> traverse (materializeHsl solution) maybeHsl
@@ -1115,7 +1077,7 @@ materializeScalar solution spec expr =
     <$> evalExpr solution expr
     <*> pure (styleScalarValueUnit spec)
 
-materializeHsl :: Solution -> HslExpr -> Maybe MaterializedHsl
+materializeHsl :: Solution -> ColorExpr -> Maybe MaterializedHsl
 materializeHsl solution hsl =
   Hsl
     <$> evalExpr solution (hue hsl)

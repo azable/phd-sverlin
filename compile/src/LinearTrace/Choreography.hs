@@ -16,6 +16,12 @@ module LinearTrace.Choreography
   ( -- * Program layer
     Program
   , VisualTraceGraph
+  , ViewGraph
+  , visualTraceCore
+  , buildViewGraph
+  , solveViewGraphWithSeed
+  , viewGraphStats
+  , RandomSeed(..)
   , runProgram
   , runProgramWith
   , BranchDecision(..)
@@ -184,67 +190,94 @@ module LinearTrace.Choreography
   , (/=)
   ) where
 
-import           Control.Functor.Linear hiding ((<$>), (<&>), (<*>))
-import qualified Data.Functor.Linear    as DFL
-import           Data.Proxy             (Proxy (..))
-import           GHC.Exts               (Multiplicity (Many))
-import           GHC.OverloadedLabels   (IsLabel (..))
-import           GHC.TypeLits           (KnownSymbol, symbolVal)
-import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
-                                         Facts (..), LBool (..), LDouble (..),
-                                         LInt (..), LString (..), LUnit (..),
-                                         Payload, PayloadView (..),
-                                         Traceable (..), emptyFacts, factAtom,
-                                         factInt, factSymbol, factsToList,
-                                         factsUnion, (<$>), (<*>))
-import qualified LinearTrace.Core       as C
-import           LinearTrace.View       (AngleExpr, BorderStyle (..),
-                                         Bounds (..), BoundsExpr, ColorExpr,
-                                         ConstraintStrength (..),
-                                         FontStyle (..), FontWeight (..),
-                                         FreeExpr, Hsl (..), HslPart (..),
-                                         LayoutAttr (..), LayoutExpr,
-                                         LayoutRelation (..), MatchBindings,
-                                         MatchSpec, NodeSelection (..),
-                                         PayloadPattern, Query, QueryInt (..),
-                                         Style, StyleColorAttr (..),
-                                         StyleFreeAttr (..),
-                                         StyleLayoutAttr (..),
-                                         StyleUnitAttr (..), TextAlign (..),
-                                         UnitExpr, ValueAccess, ValueEndpoint,
-                                         WhiteSpace (..), anyPayloadPattern,
-                                         emptyMatchSpec, emptyQuery,
-                                         layoutValueAccess, matchAnyQueryNode,
-                                         matchBindingValue,
-                                         matchContextBindings,
-                                         matchQueryPayloadNode, matchSpecAppend,
-                                         matchValueDirectedBridge,
-                                         matchValueRelation,
-                                         matchValueSymmetricBridge,
-                                         matchVirtualNode,
-                                         payloadBindingPattern,
-                                         payloadBoolPattern,
-                                         payloadDoublePattern,
-                                         payloadIntPattern,
-                                         payloadStringPattern,
-                                         payloadUnitPattern, queryAppend,
-                                         queryAtom, queryFacts, queryInt,
-                                         queryIntAdd, queryIntConst,
-                                         queryIntVar, rawValueEndpoint,
-                                         selectionValueEndpoint,
-                                         styleColorPartValueAccess,
-                                         styleFreeValueAccess,
-                                         styleLayoutValueAccess,
-                                         styleUnitValueAccess)
-import qualified LinearTrace.View       as V
-import qualified LinearTrace.View.Style as VS
-import qualified Prelude                as P
-import           Prelude.Linear         hiding (fromInteger, fromRational, (*),
-                                         (+), (-), (/), (/=), (<>))
-import qualified Solver                 as S
-import           Solver                 (Vec2 (..), vec2)
-import qualified Solver.Expr            as SolverExpr
-import qualified Text.Read              as Read
+import           Control.Functor.Linear                hiding ((<$>), (<&>),
+                                                        (<*>))
+import qualified Control.Functor.Linear.Internal.State as LinearState
+import qualified Data.Functor.Linear                   as DFL
+import           Data.Proxy                            (Proxy (..))
+import           GHC.Exts                              (Multiplicity (Many))
+import           GHC.OverloadedLabels                  (IsLabel (..))
+import           GHC.TypeLits                          (KnownSymbol, symbolVal)
+import           LinearTrace.Choreography.Types        (Angle, Bounds (..),
+                                                        BoundsExpr, Color, Free,
+                                                        Hsl (..), LayoutExpr,
+                                                        Unit)
+import           LinearTrace.Core                      (Block, Fact (..),
+                                                        FactValue (..),
+                                                        Facts (..), LBool (..),
+                                                        LDouble (..), LInt (..),
+                                                        LString (..),
+                                                        LUnit (..), Payload,
+                                                        PayloadView (..),
+                                                        Traceable (..),
+                                                        emptyFacts, factAtom,
+                                                        factInt, factSymbol,
+                                                        factsToList, factsUnion,
+                                                        (<$>), (<*>))
+import qualified LinearTrace.Core                      as C
+import qualified LinearTrace.Core.Events               as E
+import           LinearTrace.View                      (BorderStyle (..),
+                                                        ConstraintStrength (..),
+                                                        FontStyle (..),
+                                                        FontWeight (..),
+                                                        HslPart (..),
+                                                        LayoutAttr (..),
+                                                        LayoutRelation (..),
+                                                        MatchBindings,
+                                                        MatchSpec,
+                                                        NodeSelection (..),
+                                                        PayloadPattern, Query,
+                                                        QueryInt (..), Style,
+                                                        StyleColorAttr (..),
+                                                        StyleFreeAttr (..),
+                                                        StyleLayoutAttr (..),
+                                                        StyleUnitAttr (..),
+                                                        TextAlign (..),
+                                                        ValueAccess,
+                                                        ValueEndpoint,
+                                                        WhiteSpace (..),
+                                                        anyPayloadPattern,
+                                                        emptyMatchSpec,
+                                                        emptyQuery,
+                                                        layoutValueAccess,
+                                                        matchAnyQueryNode,
+                                                        matchBindingValue,
+                                                        matchContextBindings,
+                                                        matchQueryPayloadNode,
+                                                        matchSpecAppend,
+                                                        matchValueDirectedBridge,
+                                                        matchValueRelation,
+                                                        matchValueSymmetricBridge,
+                                                        matchVirtualNode,
+                                                        payloadBindingPattern,
+                                                        payloadBoolPattern,
+                                                        payloadDoublePattern,
+                                                        payloadIntPattern,
+                                                        payloadStringPattern,
+                                                        payloadUnitPattern,
+                                                        queryAppend, queryAtom,
+                                                        queryFacts, queryInt,
+                                                        queryIntAdd,
+                                                        queryIntConst,
+                                                        queryIntVar,
+                                                        rawValueEndpoint,
+                                                        selectionValueEndpoint,
+                                                        styleColorPartValueAccess,
+                                                        styleFreeValueAccess,
+                                                        styleLayoutValueAccess,
+                                                        styleUnitValueAccess)
+import qualified LinearTrace.View                      as V
+import qualified LinearTrace.View.Style                as VS
+import qualified Prelude                               as P
+import           Prelude.Linear                        hiding (fromInteger,
+                                                        fromRational, (*), (+),
+                                                        (-), (/), (/=), (<>))
+import qualified Solver                                as S
+import           Solver                                (RandomSeed (..),
+                                                        Vec2 (..), vec2)
+import qualified Solver.Expr                           as SolverExpr
+import qualified Text.Read                             as Read
+import qualified Unsafe.Coerce                         as Unsafe
 
 infixr 6 <&>
 infixl 9 @:
@@ -293,35 +326,63 @@ data Program a where
        %1 -> (state %1 -> Program (LoopResult state output))
     -> Program output
 
-data Coord =
-  Coord LayoutExpr [S.Constraint]
+data VisualTraceState where
+  VisualTraceState
+    :: Ur MatchSpec
+       %1 -> Ur (E.TraceBuilderState V.ViewScript)
+       %1 -> Ur E.EventLog
+       %1 -> Ur V.ViewOutput
+       %1 -> VisualTraceState
+
+type VisualTraceBuilder a = State VisualTraceState a
+
+instance Consumable VisualTraceState where
+  consume (VisualTraceState spec coreState pendingEvents pendingOutput) =
+    consume spec
+      `lseq` consume coreState
+      `lseq` consume pendingEvents
+      `lseq` consume pendingOutput
+
+instance Dupable VisualTraceState where
+  dup2 (VisualTraceState spec coreState pendingEvents pendingOutput) =
+    case dup2 spec of
+      (spec1, spec2) ->
+        case dup2 coreState of
+          (coreState1, coreState2) ->
+            case dup2 pendingEvents of
+              (pendingEvents1, pendingEvents2) ->
+                case dup2 pendingOutput of
+                  (pendingOutput1, pendingOutput2) ->
+                    ( VisualTraceState
+                        spec1
+                        coreState1
+                        pendingEvents1
+                        pendingOutput1
+                    , VisualTraceState
+                        spec2
+                        coreState2
+                        pendingEvents2
+                        pendingOutput2)
+
+data CoordRole
+
+data SpanRole
+
+data OffsetRole
+
+data ScalarRole
+
+data LayoutValue tag =
+  LayoutValue LayoutExpr [S.Constraint]
   deriving (P.Eq, P.Show)
 
-data Span =
-  Span LayoutExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
+type Coord = LayoutValue CoordRole
 
-data Offset =
-  Offset LayoutExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
+type Span = LayoutValue SpanRole
 
-data Scalar =
-  Scalar LayoutExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
+type Offset = LayoutValue OffsetRole
 
-data Unit =
-  Unit UnitExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
-
-data Angle =
-  Angle AngleExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
-
-data Free =
-  Free FreeExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
-
-type Color = Hsl Angle Unit
+type Scalar = LayoutValue ScalarRole
 
 newtype Binding =
   Binding P.String
@@ -409,7 +470,37 @@ data VisualizationBuilder a where
   VisualizationBuilder
     :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
-type VisualTraceGraph = V.VisualTraceGraph
+data VisualTraceGraph =
+  VisualTraceGraph MatchSpec (C.TraceGraphWith V.ViewScript)
+
+data Retagged tag where
+  Retagged
+    :: C.Block tag
+       %1 -> C.ExplainToken (C.Copy tag)
+       %1 -> C.ExplainToken (C.Replace tag)
+       %1 -> Retagged tag
+
+type ViewGraph = V.ViewGraph
+
+visualTraceCore :: VisualTraceGraph -> C.TraceGraphWith V.ViewScript
+visualTraceCore graph =
+  case graph of
+    VisualTraceGraph _ coreGraph -> coreGraph
+
+buildViewGraph :: VisualTraceGraph -> ViewGraph
+buildViewGraph graph =
+  case graph of
+    VisualTraceGraph spec coreGraph -> V.buildCSP spec coreGraph
+
+solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
+solveViewGraphWithSeed = V.solveCSPWithSeed
+
+viewGraphStats :: ViewGraph -> (P.Int, P.Int, P.Int, P.Int)
+viewGraphStats graph =
+  ( P.length (V.viewNodes graph)
+  , P.length (V.viewSteps graph)
+  , P.length (V.viewConstraints graph)
+  , P.length (V.viewRenderFrames graph))
 
 type StyleRecipe = NodeRecipe
 
@@ -697,84 +788,39 @@ instance Applicative Selection where
 instance Monad Selection where
   (>>=) = bindSelection
 
-coordExpr :: Coord -> LayoutExpr
-coordExpr value =
+layoutValueExpr :: LayoutValue tag -> LayoutExpr
+layoutValueExpr value =
   case value of
-    Coord expr _ -> expr
+    LayoutValue expr _ -> expr
+
+layoutValueConstraints :: LayoutValue tag -> [S.Constraint]
+layoutValueConstraints value =
+  case value of
+    LayoutValue _ constraints -> constraints
+
+coordExpr :: Coord -> LayoutExpr
+coordExpr = layoutValueExpr
 
 spanExpr :: Span -> LayoutExpr
-spanExpr value =
-  case value of
-    Span expr _ -> expr
+spanExpr = layoutValueExpr
 
 offsetExpr :: Offset -> LayoutExpr
-offsetExpr value =
-  case value of
-    Offset expr _ -> expr
+offsetExpr = layoutValueExpr
 
 scalarExpr :: Scalar -> LayoutExpr
-scalarExpr value =
-  case value of
-    Scalar expr _ -> expr
-
-unitExpr :: Unit -> UnitExpr
-unitExpr value =
-  case value of
-    Unit expr _ -> expr
-
-angleExpr :: Angle -> AngleExpr
-angleExpr value =
-  case value of
-    Angle expr _ -> expr
-
-freeExpr :: Free -> FreeExpr
-freeExpr value =
-  case value of
-    Free expr _ -> expr
-
-colorExpr :: Color -> ColorExpr
-colorExpr color =
-  case color of
-    Hsl hueValue saturationValue lightnessValue ->
-      Hsl
-        (angleExpr hueValue)
-        (unitExpr saturationValue)
-        (unitExpr lightnessValue)
+scalarExpr = layoutValueExpr
 
 coordConstraints :: Coord -> [S.Constraint]
-coordConstraints value =
-  case value of
-    Coord _ constraints -> constraints
+coordConstraints = layoutValueConstraints
 
 spanConstraints :: Span -> [S.Constraint]
-spanConstraints value =
-  case value of
-    Span _ constraints -> constraints
+spanConstraints = layoutValueConstraints
 
 offsetConstraints :: Offset -> [S.Constraint]
-offsetConstraints value =
-  case value of
-    Offset _ constraints -> constraints
+offsetConstraints = layoutValueConstraints
 
 scalarConstraints :: Scalar -> [S.Constraint]
-scalarConstraints value =
-  case value of
-    Scalar _ constraints -> constraints
-
-unitValueConstraints :: Unit -> [S.Constraint]
-unitValueConstraints value =
-  case value of
-    Unit _ constraints -> constraints
-
-angleValueConstraints :: Angle -> [S.Constraint]
-angleValueConstraints value =
-  case value of
-    Angle _ constraints -> constraints
-
-freeValueConstraints :: Free -> [S.Constraint]
-freeValueConstraints value =
-  case value of
-    Free _ constraints -> constraints
+scalarConstraints = layoutValueConstraints
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -811,18 +857,6 @@ instance ConstraintValue Span where
 instance ConstraintValue Scalar where
   valueTerm value =
     rawExprValueTerm (scalarExpr value) (scalarConstraints value)
-
-instance ConstraintValue Unit where
-  valueTerm value =
-    rawExprValueTerm (unitExpr value) (unitValueConstraints value)
-
-instance ConstraintValue Angle where
-  valueTerm value =
-    rawExprValueTerm (angleExpr value) (angleValueConstraints value)
-
-instance ConstraintValue Free where
-  valueTerm value =
-    rawExprValueTerm (freeExpr value) (freeValueConstraints value)
 
 instance ConstraintValue Offset where
   valueTerm value =
@@ -866,27 +900,17 @@ nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
 
 mkCoord :: LayoutExpr -> [S.Constraint] -> Coord
-mkCoord expr constraints = Coord expr (constraints P.++ [nonNegative expr])
+mkCoord expr constraints =
+  LayoutValue expr (constraints P.++ [nonNegative expr])
 
 mkSpan :: LayoutExpr -> [S.Constraint] -> Span
-mkSpan expr constraints = Span expr (constraints P.++ [nonNegative expr])
+mkSpan expr constraints = LayoutValue expr (constraints P.++ [nonNegative expr])
 
 mkOffset :: LayoutExpr -> [S.Constraint] -> Offset
-mkOffset = Offset
+mkOffset = LayoutValue
 
 mkScalar :: LayoutExpr -> [S.Constraint] -> Scalar
-mkScalar = Scalar
-
-mkUnit :: UnitExpr -> [S.Constraint] -> Unit
-mkUnit expr constraints =
-  Unit expr (constraints P.++ [S.within expr (S.Range 0 1)])
-
-mkAngle :: AngleExpr -> [S.Constraint] -> Angle
-mkAngle expr constraints =
-  Angle expr (constraints P.++ [S.within expr (S.Range 0 360)])
-
-mkFree :: FreeExpr -> [S.Constraint] -> Free
-mkFree = Free
+mkScalar = LayoutValue
 
 class NumExpr a where
   num :: P.Double -> a
@@ -960,33 +984,6 @@ instance IntegerLiteral Scalar where
 instance RationalLiteral Scalar where
   rationalLiteral value = num (P.fromRational value)
 
-instance NumExpr Unit where
-  num value = mkUnit (S.num value :: UnitExpr) []
-
-instance IntegerLiteral Unit where
-  integerLiteral value = num (P.fromInteger value)
-
-instance RationalLiteral Unit where
-  rationalLiteral value = num (P.fromRational value)
-
-instance NumExpr Angle where
-  num value = mkAngle (S.num value :: AngleExpr) []
-
-instance IntegerLiteral Angle where
-  integerLiteral value = num (P.fromInteger value)
-
-instance RationalLiteral Angle where
-  rationalLiteral value = num (P.fromRational value)
-
-instance NumExpr Free where
-  num value = mkFree (S.num value :: FreeExpr) []
-
-instance IntegerLiteral Free where
-  integerLiteral value = num (P.fromInteger value)
-
-instance RationalLiteral Free where
-  rationalLiteral value = num (P.fromRational value)
-
 instance IntegerLiteral QueryInt where
   integerLiteral value = queryIntConst (P.fromInteger value)
 
@@ -1023,17 +1020,13 @@ queryIntExpr queryIntValue =
       queryIntExpr base S.@+@ S.num (P.fromIntegral offset)
 
 asUnit :: QueryInt -> Unit
-asUnit value = mkUnit (queryIntExpr value) []
+asUnit = queryIntExpr
 
 asCoord :: Offset -> Coord
-asCoord value =
-  case value of
-    Offset expr constraints -> mkCoord expr constraints
+asCoord value = mkCoord (offsetExpr value) (offsetConstraints value)
 
 asSpan :: Offset -> Span
-asSpan value =
-  case value of
-    Offset expr constraints -> mkSpan expr constraints
+asSpan value = mkSpan (offsetExpr value) (offsetConstraints value)
 
 class AddExpr lhs rhs result
   | lhs rhs -> result
@@ -1282,12 +1275,156 @@ lhs =/ delta = openSymmetricBridge lhs delta
 (/=) :: CloseSymmetricBridge bridge rhs => bridge -> rhs -> VisualConstraint
 lhs /= rhs = closeSymmetricBridge lhs rhs
 
+unsafeUr :: forall a. a %1 -> Ur a
+unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
+
+initialVisualTraceState :: MatchSpec -> VisualTraceState
+initialVisualTraceState spec =
+  VisualTraceState
+    (Ur spec)
+    (Ur E.emptyTraceBuilderState)
+    (Ur E.emptyEventLog)
+    (Ur V.emptyViewOutput)
+
+runVisualTraceBuilder :: MatchSpec -> VisualTraceBuilder () -> VisualTraceGraph
+runVisualTraceBuilder spec builder =
+  let (_result, finalState) = runState builder (initialVisualTraceState spec)
+      VisualTraceState _spec (Ur coreState) _pendingEvents _pendingOutput =
+        finalState
+   in VisualTraceGraph spec (E.traceBuilderStateGraph coreState)
+
+runCoreBuilder :: C.TraceBuilderWith V.ViewScript a -> VisualTraceBuilder a
+runCoreBuilder builder =
+  LinearState.state
+    (\(VisualTraceState spec (Ur coreState) pendingEvents pendingOutput) ->
+       let (result, nextCoreState) =
+             E.runTraceBuilderWithState builder coreState
+        in ( result
+           , VisualTraceState
+               spec
+               (Ur nextCoreState)
+               pendingEvents
+               pendingOutput))
+
+retagCore ::
+     C.Traceable tag
+  => C.Facts
+  -> C.Block tag
+     %1 -> C.TraceBuilderWith V.ViewScript (Retagged tag)
+retagCore facts block = do
+  C.Copied original incoming copyToken <- C.copyTagged facts block
+  C.Replaced output replaceToken <- C.replace original incoming
+  return (Retagged output copyToken replaceToken)
+
+appendPendingEvent :: E.EventToken act -> VisualTraceBuilder ()
+appendPendingEvent eventToken = do
+  VisualTraceState spec coreState (Ur pendingEvents) pendingOutput <- get
+  put
+    (VisualTraceState
+       spec
+       coreState
+       (Ur (E.appendEventToken pendingEvents eventToken))
+       pendingOutput)
+
+takePendingEvents :: VisualTraceBuilder (Ur E.EventLog)
+takePendingEvents = do
+  VisualTraceState spec coreState (Ur pendingEvents) pendingOutput <- get
+  put (VisualTraceState spec coreState (Ur E.emptyEventLog) pendingOutput)
+  return (Ur pendingEvents)
+
+appendViewOutput :: V.ViewOutput -> VisualTraceBuilder ()
+appendViewOutput newOutput = do
+  VisualTraceState spec coreState pendingEvents (Ur oldOutput) <- get
+  put
+    (VisualTraceState
+       spec
+       coreState
+       pendingEvents
+       (Ur (V.appendViewOutput oldOutput newOutput)))
+
+takePendingOutput :: VisualTraceBuilder (Ur V.ViewOutput)
+takePendingOutput = do
+  VisualTraceState spec coreState pendingEvents (Ur pendingOutput) <- get
+  put (VisualTraceState spec coreState pendingEvents (Ur V.emptyViewOutput))
+  return (Ur pendingOutput)
+
+recordExplainEvent ::
+     C.ExplainToken act %1 -> VisualTraceBuilder (E.TraceEvent act)
+recordExplainEvent explainToken =
+  case E.eventTokenFromExplainToken explainToken of
+    Ur eventToken -> do
+      appendPendingEvent eventToken
+      return (E.eventTokenEvent eventToken)
+
+appendExplainEvent :: C.ExplainToken act %1 -> VisualTraceBuilder ()
+appendExplainEvent explainToken =
+  case E.eventTokenFromExplainToken explainToken of
+    Ur eventToken -> appendPendingEvent eventToken
+
+blockViewOfEventBlock :: E.EventBlock tag -> V.BlockView tag
+blockViewOfEventBlock block =
+  let ref = coreViewRef (E.eventBlockRef block)
+   in V.BlockView
+        { V.blockRef = ref
+        , V.blockPayload = E.eventBlockPayload block
+        , V.blockPayloadView = E.eventBlockPayloadView block
+        , V.blockLabel =
+            viewLabelFromPayloadView (E.eventBlockPayloadView block)
+        , V.blockContent = V.ContentEmpty
+        , V.blockFacts = E.eventBlockFacts block
+        , V.blockTags = viewTagsFromFacts (E.eventBlockFacts block)
+        , V.blockNodeKey = V.defaultNodeKey
+        , V.blockPieceKey = V.defaultPieceKey
+        , V.blockStyle = V.styleForRef ref
+        }
+
+coreViewRef :: E.BlockRef tag -> V.ViewRef tag
+coreViewRef ref = V.syntheticViewRef (E.blockRefId ref)
+
+viewLabelFromPayloadView :: C.PayloadView -> V.ViewLabel
+viewLabelFromPayloadView payloadViewValue =
+  case payloadViewValue of
+    C.PayloadView kind contentValue -> V.ViewLabel kind contentValue
+
+viewTagsFromFacts :: C.Facts -> V.ViewTags
+viewTagsFromFacts facts =
+  V.ViewTags (P.map viewTagFromFact (C.factsToList facts))
+
+viewTagFromFact :: C.Fact -> (P.String, V.ViewTagValue)
+viewTagFromFact fact =
+  case fact of
+    C.Fact name value ->
+      case value of
+        C.FactAtom     -> (name, V.ViewTagAtom)
+        C.FactInt int  -> (name, V.ViewTagInt int)
+        C.FactSymbol _ -> (name, V.ViewTagAtom)
+
+appendMatchedBlock ::
+     C.Traceable tag => V.BlockView tag -> VisualTraceBuilder ()
+appendMatchedBlock block =
+  LinearState.state
+    (\(VisualTraceState (Ur spec) coreState pendingEvents (Ur oldOutput)) ->
+       let nextOutput =
+             V.appendViewOutput oldOutput (V.matchedBlockOutput spec block)
+        in ( ()
+           , VisualTraceState (Ur spec) coreState pendingEvents (Ur nextOutput)))
+
+appendRenderIntent :: V.RenderIntent -> VisualTraceBuilder ()
+appendRenderIntent intent = appendViewOutput (V.renderIntentOutput intent)
+
+checkpointTrace :: P.String -> VisualTraceBuilder ()
+checkpointTrace label = do
+  Ur eventLog <- takePendingEvents
+  Ur output <- takePendingOutput
+  let output' = V.flushViewOutput output
+  runCoreBuilder (E.explainEventLogWith label (V.ViewScript output') eventLog)
+
 runProgram :: Program () -> VisualTraceGraph
-runProgram program = V.buildGraph (interpretProgram program)
+runProgram = runProgramWith V.emptyMatchSpec
 
 runProgramWith :: MatchSpec -> Program () -> VisualTraceGraph
 runProgramWith spec program =
-  V.buildGraphWithSpec spec (interpretProgram program)
+  runVisualTraceBuilder spec (interpretProgram program)
 
 create ::
      forall tag. C.Traceable tag
@@ -1363,7 +1500,7 @@ loop ::
   -> Program output
 loop = LoopProgram
 
-interpretProgram :: Program a %1 -> V.VisualTraceBuilder a
+interpretProgram :: Program a %1 -> VisualTraceBuilder a
 interpretProgram program =
   case program of
     PureProgram value -> return value
@@ -1371,53 +1508,129 @@ interpretProgram program =
       value <- interpretProgram first
       interpretProgram (next value)
     CreateProgram facts createPayload -> do
-      V.Created block token <- V.createTagged facts createPayload
-      V.appendTraceView (V.freshMatched token)
-      return block
+      case unsafeUr createPayload of
+        Ur payloadValue -> do
+          C.Created block explainToken <-
+            runCoreBuilder (C.createTagged facts payloadValue)
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceCreate eventBlock -> do
+              let viewBlock = blockViewOfEventBlock eventBlock
+              appendMatchedBlock viewBlock
+              appendRenderIntent (V.RenderFresh (V.blockViewRef viewBlock))
+              return block
     UseProgram block -> do
-      V.Used usedPayload token <- V.use block
-      V.appendTraceView (V.remove token)
-      return usedPayload
+      case unsafeUr block of
+        Ur block' -> do
+          C.Used usedPayload explainToken <- runCoreBuilder (C.use block')
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceUse eventBlock -> do
+              let viewBlock = blockViewOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              return usedPayload
     CopyProgram facts block -> do
-      V.Copied original copy' token <- V.copyTagged facts block
-      V.appendTraceView (V.forkCopyMatched token)
-      return (original, copy')
+      case unsafeUr block of
+        Ur block' -> do
+          C.Copied original copy' explainToken <-
+            runCoreBuilder (C.copyTagged facts block')
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceCopy originalEvent copyEvent -> do
+              let originalBlock = blockViewOfEventBlock originalEvent
+              let copyBlock = blockViewOfEventBlock copyEvent
+              appendMatchedBlock copyBlock
+              appendRenderIntent
+                (V.RenderFork
+                   (V.blockViewRef originalBlock)
+                   (V.blockViewRef copyBlock))
+              return (original, copy')
     ComputeProgram facts selectFacts computePayload -> do
-      V.Computed block token <-
-        V.computeTaggedWith facts selectFacts computePayload
-      V.appendTraceView (V.freshMatched token)
-      return block
+      case unsafeUr computePayload of
+        Ur payloadValue -> do
+          C.Computed block explainToken <-
+            runCoreBuilder (C.computeTaggedWith facts selectFacts payloadValue)
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceCompute eventBlock -> do
+              let viewBlock = blockViewOfEventBlock eventBlock
+              appendMatchedBlock viewBlock
+              appendRenderIntent (V.RenderFresh (V.blockViewRef viewBlock))
+              return block
     ReplaceProgram oldBlock incomingBlock -> do
-      V.Replaced output token <- V.replace oldBlock incomingBlock
-      V.appendTraceView (V.replaceMatched token)
-      return output
+      case unsafeUr oldBlock of
+        Ur oldBlock' ->
+          case unsafeUr incomingBlock of
+            Ur incomingBlock' -> do
+              C.Replaced output explainToken <-
+                runCoreBuilder (C.replace oldBlock' incomingBlock')
+              event <- recordExplainEvent explainToken
+              case event of
+                E.TraceReplace oldEvent incomingEvent outputEvent -> do
+                  let oldView = blockViewOfEventBlock oldEvent
+                  let incomingView = blockViewOfEventBlock incomingEvent
+                  let outputView = blockViewOfEventBlock outputEvent
+                  appendMatchedBlock outputView
+                  appendRenderIntent
+                    (V.RenderContinue
+                       (V.blockViewRef oldView)
+                       (V.blockViewRef outputView))
+                  appendRenderIntent
+                    (V.RenderRemove (V.blockViewRef incomingView))
+                  return output
     RetagProgram facts block -> do
-      V.Copied original incoming copyToken <- V.copyTagged facts block
-      V.Replaced output token <- V.replace original incoming
-      V.appendTraceView $ do
-        V.completeCopy copyToken
-        V.replaceMatchedOutput token
-      return output
+      case unsafeUr block of
+        Ur block' -> do
+          Retagged output copyToken explainToken <-
+            runCoreBuilder (retagCore facts block')
+          appendExplainEvent copyToken
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceReplace oldEvent _incomingEvent outputEvent -> do
+              let oldView = blockViewOfEventBlock oldEvent
+              let outputView = blockViewOfEventBlock outputEvent
+              appendMatchedBlock outputView
+              appendRenderIntent
+                (V.RenderContinue
+                   (V.blockViewRef oldView)
+                   (V.blockViewRef outputView))
+              return output
     DestroyProgram block -> do
-      V.Destroyed token <- V.destroy block
-      V.appendTraceView (V.remove token)
-      return ()
+      case unsafeUr block of
+        Ur block' -> do
+          C.Destroyed explainToken <- runCoreBuilder (C.destroy block')
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceDestroy eventBlock -> do
+              let viewBlock = blockViewOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              return ()
     DecideProgram predicate block -> do
-      decision <- V.decide predicate block
+      decision <-
+        case unsafeUr block of
+          Ur block' -> runCoreBuilder (C.decide predicate block')
       case decision of
-        V.DecidedTrue token -> do
-          V.appendTraceView (V.remove token)
-          return BranchTrue
-        V.DecidedFalse token -> do
-          V.appendTraceView (V.remove token)
-          return BranchFalse
-    CheckpointProgram label -> V.checkpointTrace label
+        C.DecidedTrue explainToken -> do
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceDecide eventBlock -> do
+              let viewBlock = blockViewOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              return BranchTrue
+        C.DecidedFalse explainToken -> do
+          event <- recordExplainEvent explainToken
+          case event of
+            E.TraceDecide eventBlock -> do
+              let viewBlock = blockViewOfEventBlock eventBlock
+              appendRenderIntent (V.RenderRemove (V.blockViewRef viewBlock))
+              return BranchFalse
+    CheckpointProgram label -> checkpointTrace label
     LoopProgram loopState body -> interpretLoop loopState body
 
 interpretLoop ::
      state
      %1 -> (state %1 -> Program (LoopResult state output))
-  -> V.VisualTraceBuilder output
+  -> VisualTraceBuilder output
 interpretLoop loopState body = do
   result <- interpretProgram (body loopState)
   case result of
@@ -1490,15 +1703,6 @@ instance VariableValue Offset where
 instance VariableValue Scalar where
   namedVariable name = mkScalar (global name :: LayoutExpr) []
 
-instance VariableValue Unit where
-  namedVariable name = mkUnit (V.global name :: UnitExpr) []
-
-instance VariableValue Angle where
-  namedVariable name = mkAngle (V.global name :: AngleExpr) []
-
-instance VariableValue Free where
-  namedVariable name = mkFree (V.global name :: FreeExpr) []
-
 instance S.SymbolicType ty => VariableValue (S.Expr ty) where
   namedVariable = V.global
 
@@ -1562,14 +1766,14 @@ class Stroke input output | input -> output, output -> input where
   stroke :: input -> output
 
 instance Opacity Unit (NodeRecipe ()) where
-  opacity value = setStyleWith (VS.setOpacity (unitExpr value))
+  opacity value = setStyleWith (VS.setOpacity value)
 
 instance Opacity (Selected tag) (SelectionValue Unit tag) where
   opacity selection =
     SelectionValue selection (styleUnitValueAccess StyleOpacity)
 
 instance ZIndex Free (NodeRecipe ()) where
-  zIndex value = setStyleWith (VS.setZIndex (freeExpr value))
+  zIndex value = setStyleWith (VS.setZIndex value)
 
 instance ZIndex (Selected tag) (SelectionValue Free tag) where
   zIndex selection = SelectionValue selection (styleFreeValueAccess StyleZIndex)
@@ -1603,13 +1807,13 @@ instance StrokeWidth (Selected tag) (SelectionValue Span tag) where
     SelectionValue selection (styleLayoutValueAccess StyleStrokeWidth)
 
 instance Alpha Unit (NodeRecipe ()) where
-  alpha value = setStyleWith (VS.setAlpha (unitExpr value))
+  alpha value = setStyleWith (VS.setAlpha value)
 
 instance Alpha (Selected tag) (SelectionValue Unit tag) where
   alpha selection = SelectionValue selection (styleUnitValueAccess StyleAlpha)
 
 instance Fill Color (NodeRecipe ()) where
-  fill value = setStyleWith (VS.setFill (colorExpr value))
+  fill value = setStyleWith (VS.setFill value)
 
 instance Fill
            (Selected tag)
@@ -1625,7 +1829,7 @@ instance Fill
          (styleColorPartValueAccess StyleFill HslLightness))
 
 instance Stroke Color (NodeRecipe ()) where
-  stroke value = setStyleWith (VS.setStroke (colorExpr value))
+  stroke value = setStyleWith (VS.setStroke value)
 
 instance Stroke
            (Selected tag)
@@ -1861,20 +2065,18 @@ substituteStyleBindings bindings =
     (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
 
 substituteCoordBindings :: MatchBindings -> Coord -> Coord
-substituteCoordBindings bindings value =
-  case value of
-    Coord expr constraints ->
-      Coord
-        (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings) expr)
-        constraints
+substituteCoordBindings = substituteLayoutBindings
 
 substituteSpanBindings :: MatchBindings -> Span -> Span
-substituteSpanBindings bindings value =
-  case value of
-    Span expr constraints ->
-      Span
-        (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings) expr)
-        constraints
+substituteSpanBindings = substituteLayoutBindings
+
+substituteLayoutBindings :: MatchBindings -> LayoutValue tag -> LayoutValue tag
+substituteLayoutBindings bindings value =
+  LayoutValue
+    (SolverExpr.substituteExprVars
+       (bindingExprSubstitutions bindings)
+       (layoutValueExpr value))
+    (layoutValueConstraints value)
 
 bindingExprSubstitutions :: MatchBindings -> [(P.String, P.Double)]
 bindingExprSubstitutions bindings =
@@ -1902,14 +2104,10 @@ bindingContent bindings binding =
         Just value -> value
 
 coordPin :: Coord -> V.LayoutPin
-coordPin value =
-  case value of
-    Coord expr constraints -> V.LayoutPin expr constraints
+coordPin value = V.LayoutPin (coordExpr value) (coordConstraints value)
 
 spanPin :: Span -> V.LayoutPin
-spanPin value =
-  case value of
-    Span expr constraints -> V.LayoutPin expr constraints
+spanPin value = V.LayoutPin (spanExpr value) (spanConstraints value)
 
 instance Node
            (Selected child)

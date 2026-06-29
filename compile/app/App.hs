@@ -5,15 +5,15 @@ module App
   , runVisualization
   ) where
 
-import           Control.Exception    (evaluate)
-import           Control.Monad        (when)
-import qualified Data.ByteString.Lazy as BL
-import           GHC.Clock            (getMonotonicTimeNSec)
-import qualified LinearTrace.Compile  as Compile
-import qualified LinearTrace.Print    as Print
-import qualified LinearTrace.View     as View
-import           Numeric              (showFFloat)
-import           System.IO            (Handle, hPutStrLn, stdout)
+import           Control.Exception        (evaluate)
+import           Control.Monad            (when)
+import qualified Data.ByteString.Lazy     as BL
+import           GHC.Clock                (getMonotonicTimeNSec)
+import qualified LinearTrace.Choreography as Choreography
+import qualified LinearTrace.Compile      as Compile
+import qualified LinearTrace.Print        as Print
+import           Numeric                  (showFFloat)
+import           System.IO                (Handle, hPutStrLn, stdout)
 
 data RunConfig = RunConfig
   { runSeed        :: Int
@@ -33,23 +33,25 @@ defaultRunConfig =
     , runPrintTrace = True
     }
 
-buildViewGraph :: View.VisualTraceGraph -> View.ViewGraph
-buildViewGraph = View.buildCSP
+buildViewGraph :: Choreography.VisualTraceGraph -> Choreography.ViewGraph
+buildViewGraph = Choreography.buildViewGraph
 
 runVisualization ::
      RunConfig
-  -> View.VisualTraceGraph
+  -> Choreography.VisualTraceGraph
   -> IO (Either String Compile.Visualization)
 runVisualization config graph = do
   let diagnostics = stdout
   when
     (runDiagnostics config && runPrintTrace config)
-    (Print.hPrintTrace diagnostics (View.visualTraceCore graph))
+    (Print.hPrintTrace diagnostics (Choreography.visualTraceCore graph))
   (viewGraph, viewGraphMs) <-
     timedPhase (evaluate (forceViewGraph (buildViewGraph graph)))
   (solved, solveMs) <-
     timedPhase
-      (View.solveCSPWithSeed (View.RandomSeed (runSeed config)) viewGraph)
+      (Choreography.solveViewGraphWithSeed
+         (Choreography.RandomSeed (runSeed config))
+         viewGraph)
   when (runDiagnostics config) $ do
     Print.hPrintSolutionByStep
       diagnostics
@@ -78,13 +80,11 @@ runVisualization config graph = do
            ])
       pure (Right seededCompiled)
 
-forceViewGraph :: View.ViewGraph -> View.ViewGraph
+forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
 forceViewGraph graph =
-  length (View.viewNodes graph)
-    `seq` length (View.viewSteps graph)
-    `seq` length (View.viewConstraints graph)
-    `seq` length (View.viewRenderFrames graph)
-    `seq` graph
+  case Choreography.viewGraphStats graph of
+    (nodes, steps, constraints, renderFrames) ->
+      nodes `seq` steps `seq` constraints `seq` renderFrames `seq` graph
 
 forceCompileResult ::
      Either String Compile.Visualization -> Either String Compile.Visualization
