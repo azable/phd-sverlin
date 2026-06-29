@@ -15,7 +15,6 @@
 module LinearTrace.Choreography
   ( -- * Program layer
     Program
-  , ViewLayout
   , VisualTraceGraph
   , runProgram
   , runProgramWith
@@ -85,22 +84,13 @@ module LinearTrace.Choreography
   , VisualizationBuilder
   , QueryAppend
   , visualize
-  , layout
   , emptyQuery
   , queryAtom
   , queryInt
   , queryFacts
   , (<&>)
   , -- * Component and layout layer
-    BoxDefinition
-  , BoxVisual
-  , NodeDefinition
-  , NodeRecipe
-  , NodeVisual
-  , LiveVisual
-  , LayoutUse(..)
-  , OneExpr
-  , OneConstraint
+    NodeRecipe
   , Style
   , BorderStyle(..)
   , Bounds(..)
@@ -140,13 +130,11 @@ module LinearTrace.Choreography
   , bounds
   , by
   , borderStyle
-  , boxDefinition
   , bindContent
   , bindInt
   , centerText
   , center
   , content
-  , defineNode
   , payload
   , text
   , ensure
@@ -169,10 +157,8 @@ module LinearTrace.Choreography
   , fromRational
   , opacity
   , pos
-  , placeBox
   , position
   , radius
-  , require
   , right
   , stroke
   , strokeWidth
@@ -180,11 +166,6 @@ module LinearTrace.Choreography
   , sat
   , shift
   , size
-  , takeHeight
-  , takeLeft
-  , takeRight
-  , takeTop
-  , takeWidth
   , textAlign
   , top
   , vec2
@@ -223,29 +204,24 @@ import           LinearTrace.Core       (Block, Fact (..), FactValue (..),
                                          factsUnion, (<$>), (<*>))
 import qualified LinearTrace.Core       as C
 import           LinearTrace.View       (Angle, BorderStyle (..), Bounds (..),
-                                         BoundsExpr, BoxDefinition, BoxVisual,
-                                         ConstraintStrength (..),
+                                         BoundsExpr, ConstraintStrength (..),
                                          FontStyle (..), FontWeight (..), Free,
                                          FreeExpr, Hsl (..), HslExpr,
                                          HslPart (..), Hue, HueExpr, Layout,
                                          LayoutAttr (..), LayoutExpr,
-                                         LayoutRelation (..), LayoutUse (..),
-                                         LiveVisual, MatchBindings, MatchSpec,
-                                         NodeSelection (..), OneConstraint (..),
-                                         OneExpr (..), PayloadPattern, Query,
-                                         QueryInt (..), Style,
-                                         StyleColorAttr (..),
+                                         LayoutRelation (..), MatchBindings,
+                                         MatchSpec, NodeSelection (..),
+                                         PayloadPattern, Query, QueryInt (..),
+                                         Style, StyleColorAttr (..),
                                          StyleFreeAttr (..),
                                          StyleLayoutAttr (..),
                                          StyleUnitAttr (..), TextAlign (..),
                                          Unit, UnitExpr, ValueAccess,
                                          ValueEndpoint, WhiteSpace (..),
-                                         anyPayloadPattern, boxDefinition,
-                                         emptyMatchSpec, emptyQuery, global,
-                                         layoutValueAccess, matchAnyQueryNode,
-                                         matchBindingValue,
+                                         anyPayloadPattern, emptyMatchSpec,
+                                         emptyQuery, global, layoutValueAccess,
+                                         matchAnyQueryNode, matchBindingValue,
                                          matchContextBindings,
-                                         matchGlobalLayout,
                                          matchQueryPayloadNode, matchSpecAppend,
                                          matchValueDirectedBridge,
                                          matchValueRelation,
@@ -264,9 +240,7 @@ import           LinearTrace.View       (Angle, BorderStyle (..), Bounds (..),
                                          styleColorPartValueAccess,
                                          styleFreeValueAccess,
                                          styleLayoutValueAccess,
-                                         styleUnitValueAccess, takeHeight,
-                                         takeLeft, takeRight, takeTop,
-                                         takeWidth)
+                                         styleUnitValueAccess)
 import qualified LinearTrace.View       as V
 import qualified LinearTrace.View.Style as VS
 import qualified Prelude                as P
@@ -403,17 +377,16 @@ data ContentSpec
   | BoundContent Binding
 
 data NodeSpec = NodeSpec
-  { nodeSpecStyleUpdate  :: Style -> Style
-  , nodeSpecContent      :: Maybe ContentSpec
-  , nodeSpecLeft         :: Maybe Coord
-  , nodeSpecTop          :: Maybe Coord
-  , nodeSpecWidth        :: Maybe Span
-  , nodeSpecHeight       :: Maybe Span
-  , nodeSpecRight        :: Maybe Coord
-  , nodeSpecBottom       :: Maybe Coord
-  , nodeSpecX            :: Maybe Coord
-  , nodeSpecY            :: Maybe Coord
-  , nodeSpecRequirements :: [ViewLayout ()]
+  { nodeSpecStyleUpdate :: Style -> Style
+  , nodeSpecContent     :: Maybe ContentSpec
+  , nodeSpecLeft        :: Maybe Coord
+  , nodeSpecTop         :: Maybe Coord
+  , nodeSpecWidth       :: Maybe Span
+  , nodeSpecHeight      :: Maybe Span
+  , nodeSpecRight       :: Maybe Coord
+  , nodeSpecBottom      :: Maybe Coord
+  , nodeSpecX           :: Maybe Coord
+  , nodeSpecY           :: Maybe Coord
   }
 
 data NodeRecipe a where
@@ -426,13 +399,7 @@ data VisualizationBuilder a where
   VisualizationBuilder
     :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
-type ViewLayout a = V.ViewBuilder a
-
 type VisualTraceGraph = V.VisualTraceGraph
-
-type NodeDefinition tag = BoxDefinition tag
-
-type NodeVisual tag = BoxVisual tag
 
 type StyleRecipe = NodeRecipe
 
@@ -508,7 +475,6 @@ emptyNodeSpec =
     , nodeSpecBottom = Nothing
     , nodeSpecX = Nothing
     , nodeSpecY = Nothing
-    , nodeSpecRequirements = []
     }
 
 composeStyleUpdates :: (Style -> Style) -> (Style -> Style) -> Style -> Style
@@ -539,8 +505,6 @@ appendNodeSpec first second =
         preferLater (nodeSpecBottom first) (nodeSpecBottom second)
     , nodeSpecX = preferLater (nodeSpecX first) (nodeSpecX second)
     , nodeSpecY = preferLater (nodeSpecY first) (nodeSpecY second)
-    , nodeSpecRequirements =
-        nodeSpecRequirements first P.++ nodeSpecRequirements second
     }
 
 bindNodeRecipe :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
@@ -1394,39 +1358,16 @@ interpretLoop loopState body = do
     Continue nextState -> interpretLoop nextState body
     Finish output      -> return output
 
-class Ensure constraint where
-  ensure :: constraint -> VisualizationBuilder ()
+ensure :: VisualConstraint -> VisualizationBuilder ()
+ensure = emitConstraint EnsureConstraint
 
-instance Ensure OneConstraint where
-  ensure = emitConstraint EnsureConstraint
+encourage :: VisualConstraint -> VisualizationBuilder ()
+encourage = emitConstraint EncourageConstraint
 
-instance Ensure VisualConstraint where
-  ensure = emitConstraint EnsureConstraint
-
-class Encourage objective where
-  encourage :: objective -> VisualizationBuilder ()
-
-instance Encourage (S.Expr ty) where
-  encourage objective = layout (V.encourage objective)
-
-instance Encourage OneConstraint where
-  encourage = emitConstraint EncourageConstraint
-
-instance Encourage VisualConstraint where
-  encourage = emitConstraint EncourageConstraint
-
-class EmitConstraint constraint where
-  emitConstraint :: ConstraintStrength -> constraint -> VisualizationBuilder ()
-
-instance EmitConstraint OneConstraint where
-  emitConstraint strength constraint =
-    case strength of
-      EnsureConstraint    -> layout (V.ensure constraint)
-      EncourageConstraint -> layout (V.encourageConstraint constraint)
-
-instance EmitConstraint VisualConstraint where
-  emitConstraint strength constraint =
-    emitVisualizationBuilder () (visualConstraintSpec strength constraint)
+emitConstraint ::
+     ConstraintStrength -> VisualConstraint -> VisualizationBuilder ()
+emitConstraint strength constraint =
+  emitVisualizationBuilder () (visualConstraintSpec strength constraint)
 
 visualConstraintSpec :: ConstraintStrength -> VisualConstraint -> MatchSpec
 visualConstraintSpec strength constraint =
@@ -1518,15 +1459,6 @@ styleDefinition recipe =
 setStyleWith :: (Style -> Style) -> NodeRecipe ()
 setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
 
-setStyleWithConstraints :: [S.Constraint] -> (Style -> Style) -> NodeRecipe ()
-setStyleWithConstraints constraints update =
-  NodeRecipe
-    ()
-    emptyNodeSpec
-      { nodeSpecStyleUpdate = update
-      , nodeSpecRequirements = [constrainRaw (S.allOf constraints)]
-      }
-
 class Opacity input output | input -> output, output -> input where
   opacity :: input -> output
 
@@ -1567,39 +1499,27 @@ instance ZIndex (Selection (NodeRef tag)) (SelectedExpr Free tag) where
   zIndex selection = SelectedExpr selection (styleFreeValueAccess StyleZIndex)
 
 instance FontSize Span (NodeRecipe ()) where
-  fontSize value =
-    setStyleWithConstraints
-      (spanConstraints value)
-      (VS.setFontSize (spanExpr value))
+  fontSize value = setStyleWith (VS.setFontSize (spanExpr value))
 
 instance FontSize (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   fontSize selection =
     SelectedExpr selection (styleLayoutValueAccess StyleFontSize)
 
 instance Padding Span (NodeRecipe ()) where
-  padding value =
-    setStyleWithConstraints
-      (spanConstraints value)
-      (VS.setPadding (spanExpr value))
+  padding value = setStyleWith (VS.setPadding (spanExpr value))
 
 instance Padding (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   padding selection =
     SelectedExpr selection (styleLayoutValueAccess StylePadding)
 
 instance Radius Span (NodeRecipe ()) where
-  radius value =
-    setStyleWithConstraints
-      (spanConstraints value)
-      (VS.setRadius (spanExpr value))
+  radius value = setStyleWith (VS.setRadius (spanExpr value))
 
 instance Radius (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   radius selection = SelectedExpr selection (styleLayoutValueAccess StyleRadius)
 
 instance StrokeWidth Span (NodeRecipe ()) where
-  strokeWidth value =
-    setStyleWithConstraints
-      (spanConstraints value)
-      (VS.setStrokeWidth (spanExpr value))
+  strokeWidth value = setStyleWith (VS.setStrokeWidth (spanExpr value))
 
 instance StrokeWidth (Selection (NodeRef tag)) (SelectedExpr Layout tag) where
   strokeWidth selection =
@@ -1782,12 +1702,6 @@ bounds value =
       width (mkSpan widthExpr [])
       height (mkSpan heightExpr [])
 
-require :: ViewLayout () -> NodeRecipe ()
-require action =
-  setNodeSpecWith
-    (\spec ->
-       spec {nodeSpecRequirements = nodeSpecRequirements spec P.++ [action]})
-
 data VirtualNode
 
 class Node input result | input -> result where
@@ -1818,15 +1732,6 @@ select ::
   => SelectQuery payload
   -> VisualizationBuilder (NodeBinding (Selected payload))
 select = selectWithPayload @payload @(SelectQuery payload)
-
-defineNode :: NodeRecipe () -> NodeDefinition tag
-defineNode = nodeDefinition
-
-nodeDefinition :: NodeRecipe () -> NodeDefinition tag
-nodeDefinition recipe =
-  case recipe of
-    NodeRecipe () spec ->
-      boxDefinition (nodeSpecStyleUpdate spec) (layoutNode spec)
 
 nodePatch :: MatchBindings -> NodeRecipe () -> V.NodePatch
 nodePatch bindings recipe =
@@ -1869,7 +1774,6 @@ nodePatch bindings recipe =
             P.fmap
               (coordPin P.. substituteCoordBindings bindings)
               (nodeSpecY spec)
-        , V.nodePatchRequirements = nodeSpecRequirements spec
         }
 
 substituteStyleBindings :: MatchBindings -> Style -> Style
@@ -2017,9 +1921,6 @@ visualize builder =
       case run 0 of
         VisualizationResult () _ spec -> spec
 
-layout :: ViewLayout () -> VisualizationBuilder ()
-layout body = emitVisualizationBuilder () (matchGlobalLayout body)
-
 class PayloadSelector tag selector where
   payloadSelector :: selector -> PayloadPattern tag
 
@@ -2086,87 +1987,3 @@ instance QueryAppend (TraceQuery tag) where
 
 (<&>) :: QueryAppend query => query -> query -> query
 (<&>) = appendQuery
-
-layoutNode :: NodeSpec -> LiveVisual tag %1 -> ViewLayout (NodeVisual tag)
-layoutNode spec visual0 = do
-  LayoutUse visual1 leftVar <- takeLeft visual0
-  LayoutUse visual2 topVar <- takeTop visual1
-  LayoutUse visual3 widthVar <- takeWidth visual2
-  LayoutUse visual4 heightVar <- takeHeight visual3
-  case leftVar of
-    OneExpr (Ur leftExpr) ->
-      case topVar of
-        OneExpr (Ur topExpr) ->
-          case widthVar of
-            OneExpr (Ur widthExpr) ->
-              case heightVar of
-                OneExpr (Ur heightExpr) -> do
-                  runRequirements (nodeSpecRequirements spec)
-                  constrainGeometry spec leftExpr topExpr widthExpr heightExpr
-                  return visual4
-
-runRequirements :: [ViewLayout ()] -> ViewLayout ()
-runRequirements actions =
-  case actions of
-    [] -> return ()
-    action:rest -> do
-      action
-      runRequirements rest
-
-constrainGeometry ::
-     NodeSpec
-  -> LayoutExpr
-  -> LayoutExpr
-  -> LayoutExpr
-  -> LayoutExpr
-  -> ViewLayout ()
-constrainGeometry spec leftExpr topExpr widthExpr heightExpr = do
-  constrainMaybeCoord leftExpr (nodeSpecLeft spec)
-  constrainMaybeCoord topExpr (nodeSpecTop spec)
-  constrainMaybeSpan widthExpr (nodeSpecWidth spec)
-  constrainMaybeSpan heightExpr (nodeSpecHeight spec)
-  constrainMaybeCoord (leftExpr S.@+@ widthExpr) (nodeSpecRight spec)
-  constrainMaybeCoord (topExpr S.@+@ heightExpr) (nodeSpecBottom spec)
-  constrainMaybeCoord
-    (leftExpr S.@+@ (widthExpr S.@/@ (S.num 2 :: LayoutExpr)))
-    (nodeSpecX spec)
-  constrainMaybeCoord
-    (topExpr S.@+@ (heightExpr S.@/@ (S.num 2 :: LayoutExpr)))
-    (nodeSpecY spec)
-
-constrainMaybeCoord :: LayoutExpr -> Maybe Coord -> ViewLayout ()
-constrainMaybeCoord expr maybeTarget =
-  case maybeTarget of
-    Nothing -> return ()
-    Just target ->
-      constrainRaw
-        (S.allOf (coordConstraints target P.++ [expr S.@==@ coordExpr target]))
-
-constrainMaybeSpan :: LayoutExpr -> Maybe Span -> ViewLayout ()
-constrainMaybeSpan expr maybeTarget =
-  case maybeTarget of
-    Nothing -> return ()
-    Just target ->
-      constrainRaw
-        (S.allOf (spanConstraints target P.++ [expr S.@==@ spanExpr target]))
-
-constrainRaw :: S.Constraint -> ViewLayout ()
-constrainRaw constraint = V.ensure (OneConstraint (Ur constraint))
-
-placeBox ::
-     LayoutExpr
-  -> LayoutExpr
-  -> LayoutExpr
-  -> LayoutExpr
-  -> LiveVisual tag
-     %1 -> ViewLayout (BoxVisual tag)
-placeBox leftExpr topExpr widthExpr heightExpr visual0 = do
-  LayoutUse visual1 leftVar <- takeLeft visual0
-  LayoutUse visual2 topVar <- takeTop visual1
-  LayoutUse visual3 widthVar <- takeWidth visual2
-  LayoutUse visual4 heightVar <- takeHeight visual3
-  V.ensure (leftVar V.@==@ leftExpr)
-  V.ensure (topVar V.@==@ topExpr)
-  V.ensure (widthVar V.@==@ widthExpr)
-  V.ensure (heightVar V.@==@ heightExpr)
-  return visual4

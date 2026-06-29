@@ -83,8 +83,7 @@ module LinearTrace
   , printCompiledJSON
   , writeCompiledJSON
   , -- * Application pipeline
-    ViewDefinition(..)
-  , ViewScript
+    ViewScript
   , VisualTraceBuilder
   , VisualTraceGraph
   ) where

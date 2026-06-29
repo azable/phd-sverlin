@@ -91,54 +91,16 @@ module LinearTrace.View
   , matchAnyQueryNode
   , matchQueryPayloadNode
   , matchVirtualNode
-  , matchGlobalLayout
   , matchValueRelation
   , matchValueDirectedBridge
   , matchValueSymmetricBridge
-  , Visual
-  , Unrendered
-  , Rendered
-  , Stable
-  , Consumed
   , LayoutAttr(..)
-  , NewVisual
-  , LiveVisual
-  , ConsumedVisual
-  , CopiedVisual
-  , BoxAttrs
-  , SizeAttrs
-  , BoxVisual
-  , SizeVisual
-  , BoxDefinition
-  , SizeDefinition
-  , boxDefinition
-  , sizeDefinition
-  , ViewDefinition(..)
-  , LayoutUse(..)
-  , OneExpr(..)
-  , OneConstraint(..)
-  , (|>)
-  , fresh
   , freshMatched
-  , freshCopy
-  , forkCopy
   , forkCopyMatched
-  , continueFrom
-  , continueFromMatched
   , completeCopy
   , replaceMatched
   , replaceMatchedOutput
   , remove
-  , complete
-  , checkpoint
-  , takeLeft
-  , takeRight
-  , takeWidth
-  , takeCenterX
-  , takeTop
-  , takeBottom
-  , takeHeight
-  , takeCenterY
   , viewNodes
   , viewSteps
   , viewConstraints
@@ -176,15 +138,7 @@ module LinearTrace.View
   , MaterializedHsl
   , global
   , num
-  , (@+@)
-  , (@-@)
-  , (@*@)
-  , (@/@)
-  , (@^@)
   , absExpr
-  , (@==@)
-  , (@<=@)
-  , (@>=@)
   , -- * Builder
     ViewBuilder
   , ViewScript
@@ -227,9 +181,6 @@ module LinearTrace.View
   , solveCSP
   , solveCSPWithSeed
   , RandomSeed(..)
-  , ensure
-  , encourageConstraint
-  , encourage
   , -- * Style accessors
     opacity
   , zIndex
@@ -255,26 +206,19 @@ module LinearTrace.View
 import           Control.Functor.Linear                hiding ((<$>), (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
 import           Data.Kind                             (Type)
-import qualified Data.Kind                             as K
 import qualified Data.Maybe                            as Maybe
 import           Data.Proxy                            (Proxy (..))
 import           Data.Type.Equality                    ((:~:) (..))
 import           Data.Typeable                         (eqT)
 import           GHC.OverloadedLabels                  (IsLabel (..))
-import           GHC.TypeLits                          (ErrorMessage (..),
-                                                        KnownSymbol, Nat,
-                                                        TypeError, symbolVal,
-                                                        type (+), type CmpNat)
+import           GHC.TypeLits                          (KnownSymbol, symbolVal)
 import qualified LinearTrace.Core.Internal             as C
 import           LinearTrace.View.Style
 import qualified Prelude                               as P
 import           Prelude.Linear
 import qualified Solver                                as S
 import           Solver                                hiding (absExpr,
-                                                        component, num, (@*@),
-                                                        (@+@), (@-@), (@/@),
-                                                        (@<=@), (@==@), (@>=@),
-                                                        (@^@))
+                                                        component, num)
 import qualified Unsafe.Coerce                         as Unsafe
 
 --------------------------------------------------------------------------------
@@ -626,17 +570,16 @@ data LayoutPin =
   LayoutPin LayoutExpr [Constraint]
 
 data NodePatch = NodePatch
-  { nodePatchStyleUpdate  :: Style -> Style
-  , nodePatchContent      :: Maybe ContentMode
-  , nodePatchLeft         :: Maybe LayoutPin
-  , nodePatchTop          :: Maybe LayoutPin
-  , nodePatchWidth        :: Maybe LayoutPin
-  , nodePatchHeight       :: Maybe LayoutPin
-  , nodePatchRight        :: Maybe LayoutPin
-  , nodePatchBottom       :: Maybe LayoutPin
-  , nodePatchX            :: Maybe LayoutPin
-  , nodePatchY            :: Maybe LayoutPin
-  , nodePatchRequirements :: [ViewBuilder ()]
+  { nodePatchStyleUpdate :: Style -> Style
+  , nodePatchContent     :: Maybe ContentMode
+  , nodePatchLeft        :: Maybe LayoutPin
+  , nodePatchTop         :: Maybe LayoutPin
+  , nodePatchWidth       :: Maybe LayoutPin
+  , nodePatchHeight      :: Maybe LayoutPin
+  , nodePatchRight       :: Maybe LayoutPin
+  , nodePatchBottom      :: Maybe LayoutPin
+  , nodePatchX           :: Maybe LayoutPin
+  , nodePatchY           :: Maybe LayoutPin
   }
 
 emptyNodePatch :: NodePatch
@@ -652,7 +595,6 @@ emptyNodePatch =
     , nodePatchBottom = Nothing
     , nodePatchX = Nothing
     , nodePatchY = Nothing
-    , nodePatchRequirements = []
     }
 
 appendNodePatch :: NodePatch -> NodePatch -> NodePatch
@@ -676,8 +618,6 @@ appendNodePatch first second =
         preferLater (nodePatchBottom first) (nodePatchBottom second)
     , nodePatchX = preferLater (nodePatchX first) (nodePatchX second)
     , nodePatchY = preferLater (nodePatchY first) (nodePatchY second)
-    , nodePatchRequirements =
-        nodePatchRequirements first P.++ nodePatchRequirements second
     }
 
 composeStyleUpdates :: (Style -> Style) -> (Style -> Style) -> Style -> Style
@@ -757,7 +697,6 @@ data NodeRule where
   AnyQueryNodeRule :: Query -> (MatchBindings -> NodePatch) -> NodeRule
 
 data LayoutRule where
-  GlobalLayout :: ViewBuilder () -> LayoutRule
   ValueRelationLayout
     :: ConstraintStrength
     -> [ValueEndpoint]
@@ -824,9 +763,6 @@ matchQueryPayloadNode query payloadPattern makePatch =
 matchVirtualNode :: P.String -> Query -> NodePatch -> MatchSpec
 matchVirtualNode key query patch =
   MatchSpec [] [] [VirtualRule (safeKey key) query patch]
-
-matchGlobalLayout :: ViewBuilder () -> MatchSpec
-matchGlobalLayout body = MatchSpec [] [GlobalLayout body] []
 
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
@@ -1141,230 +1077,20 @@ data LayoutAttr
   | AttrHeight
   | AttrCenterY
 
-data Axis
-  = XAxis
-  | YAxis
+data Visual state lifecycle tag where
+  Visual :: BlockView tag -> Visual state lifecycle tag
 
-type family AttrRank (attr :: LayoutAttr) :: Nat where
-  AttrRank AttrLeft = 0
-  AttrRank AttrRight = 1
-  AttrRank AttrWidth = 2
-  AttrRank AttrCenterX = 3
-  AttrRank AttrTop = 4
-  AttrRank AttrBottom = 5
-  AttrRank AttrHeight = 6
-  AttrRank AttrCenterY = 7
+type NewVisual tag = Visual Unrendered Stable tag
 
-type family Insert (attr :: LayoutAttr) (used :: [LayoutAttr]) :: [LayoutAttr] where
-  Insert attr '[] = '[ attr]
-  Insert attr (current : rest) = InsertByRank
-    (CmpNat (AttrRank attr) (AttrRank current))
-    attr
-    current
-    rest
+type LiveVisual tag = Visual Rendered Stable tag
 
-type family InsertByRank (ordering :: Ordering) (attr :: LayoutAttr) (current :: LayoutAttr) (rest :: [LayoutAttr]) :: [LayoutAttr] where
-  InsertByRank 'LT attr current rest = attr : current : rest
-  InsertByRank 'EQ attr current rest = current : rest
-  InsertByRank 'GT attr current rest = current : Insert attr rest
-
-type family AttrEq (lhs :: LayoutAttr) (rhs :: LayoutAttr) :: Bool where
-  AttrEq AttrLeft AttrLeft = 'True
-  AttrEq AttrRight AttrRight = 'True
-  AttrEq AttrWidth AttrWidth = 'True
-  AttrEq AttrCenterX AttrCenterX = 'True
-  AttrEq AttrTop AttrTop = 'True
-  AttrEq AttrBottom AttrBottom = 'True
-  AttrEq AttrHeight AttrHeight = 'True
-  AttrEq AttrCenterY AttrCenterY = 'True
-  AttrEq _ _ = 'False
-
-type family MemberAttr (attr :: LayoutAttr) (used :: [LayoutAttr]) :: Bool where
-  MemberAttr attr '[] = 'False
-  MemberAttr attr (current : rest) = MemberAttrStep
-    (AttrEq attr current)
-    attr
-    rest
-
-type family MemberAttrStep (found :: Bool) (attr :: LayoutAttr) (rest :: [LayoutAttr]) :: Bool where
-  MemberAttrStep 'True attr rest = 'True
-  MemberAttrStep 'False attr rest = MemberAttr attr rest
-
-type family AxisOf (attr :: LayoutAttr) :: Axis where
-  AxisOf AttrLeft = XAxis
-  AxisOf AttrRight = XAxis
-  AxisOf AttrWidth = XAxis
-  AxisOf AttrCenterX = XAxis
-  AxisOf AttrTop = YAxis
-  AxisOf AttrBottom = YAxis
-  AxisOf AttrHeight = YAxis
-  AxisOf AttrCenterY = YAxis
-
-type family AxisEq (lhs :: Axis) (rhs :: Axis) :: Bool where
-  AxisEq XAxis XAxis = 'True
-  AxisEq YAxis YAxis = 'True
-  AxisEq _ _ = 'False
-
-type family AxisCount (axis :: Axis) (used :: [LayoutAttr]) :: Nat where
-  AxisCount axis '[] = 0
-  AxisCount axis (attr : rest) = AxisCountStep
-    (AxisEq axis (AxisOf attr))
-    axis
-    rest
-
-type family AxisCountStep (matches :: Bool) (axis :: Axis) (rest :: [LayoutAttr]) :: Nat where
-  AxisCountStep 'True axis rest = 1 + AxisCount axis rest
-  AxisCountStep 'False axis rest = AxisCount axis rest
-
-type family CanTakeAttr (attr :: LayoutAttr) (used :: [LayoutAttr]) :: K.Constraint where
-  CanTakeAttr attr used = CheckUnusedAttr (MemberAttr attr used) attr used
-
-type family CheckUnusedAttr (alreadyUsed :: Bool) (attr :: LayoutAttr) (used :: [LayoutAttr]) :: K.Constraint where
-  CheckUnusedAttr 'True attr used = TypeError
-    ('Text "Layout attribute " :<>: 'ShowType attr :<>: 'Text
-       " has already been used for this visual.")
-  CheckUnusedAttr 'False attr used = CheckAxisRoom
-    (CmpNat (AxisCount (AxisOf attr) used) 2)
-    attr
-
-type family CheckAxisRoom (ordering :: Ordering) (attr :: LayoutAttr) :: K.Constraint where
-  CheckAxisRoom 'LT attr = ()
-  CheckAxisRoom 'EQ attr = TypeError
-    ('Text "Cannot use layout attribute " :<>: 'ShowType attr :<>: 'Text
-       ": this visual already has two attributes on that axis.")
-  CheckAxisRoom 'GT attr = TypeError
-    ('Text "Cannot use layout attribute " :<>: 'ShowType attr :<>: 'Text
-       ": this visual already has more than two attributes on that axis.")
-
-data Visual state lifecycle (used :: [LayoutAttr]) tag where
-  Visual :: BlockView tag -> Visual state lifecycle used tag
-
-type NewVisual tag = Visual Unrendered Stable '[] tag
-
-type LiveVisual tag = Visual Rendered Stable '[] tag
-
-type ConsumedVisual tag = Visual Rendered Consumed '[] tag
+type ConsumedVisual tag = Visual Rendered Consumed tag
 
 data CopiedVisual tag where
   CopiedVisual :: LiveVisual tag %1 -> NewVisual tag %1 -> CopiedVisual tag
 
-type BoxAttrs = '[ AttrLeft, AttrWidth, AttrTop, AttrHeight]
-
-type SizeAttrs = '[ AttrWidth, AttrHeight]
-
-type BoxVisual tag = Visual Rendered Stable BoxAttrs tag
-
-type SizeVisual tag = Visual Rendered Stable SizeAttrs tag
-
-data ViewDefinition tag (used :: [LayoutAttr]) where
-  ViewDefinition
-    :: (Style -> Style)
-    -> (LiveVisual tag %1 -> ViewBuilder (Visual Rendered Stable used tag))
-    -> ViewDefinition tag used
-
-type BoxDefinition tag = ViewDefinition tag BoxAttrs
-
-type SizeDefinition tag = ViewDefinition tag SizeAttrs
-
-boxDefinition ::
-     (Style -> Style)
-  -> (LiveVisual tag %1 -> ViewBuilder (BoxVisual tag))
-  -> BoxDefinition tag
-boxDefinition = ViewDefinition
-
-sizeDefinition ::
-     (Style -> Style)
-  -> (LiveVisual tag %1 -> ViewBuilder (SizeVisual tag))
-  -> SizeDefinition tag
-sizeDefinition = ViewDefinition
-
-data LayoutUse visual where
-  LayoutUse :: visual %1 -> OneExpr Layout %1 -> LayoutUse visual
-
-data OneExpr (ty :: Type) where
-  OneExpr :: Ur (Expr ty) %1 -> OneExpr ty
-
-data OneConstraint where
-  OneConstraint :: Ur Constraint %1 -> OneConstraint
-
-infixl 1 |>
-(|>) :: a %1 -> (a %1 -> b) -> b
-value |> next = next value
-
--- Solver expressions are immutable metadata; the linear obligation is the
--- OneExpr/OneConstraint wrapper that controls use at the View boundary.
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
-
-class BinaryExpr lhs rhs result | lhs rhs -> result where
-  binaryExpr ::
-       (forall (ty :: Type). Expr ty -> Expr ty -> Expr ty)
-    -> lhs
-       %1 -> rhs
-       %1 -> result
-
-instance BinaryExpr (Expr (ty :: Type)) (Expr ty) (Expr ty) where
-  binaryExpr op lhs rhs =
-    case unsafeUr lhs of
-      Ur lhsRaw ->
-        case unsafeUr rhs of
-          Ur rhsRaw -> op lhsRaw rhsRaw
-
-instance BinaryExpr (OneExpr (ty :: Type)) (Expr ty) (OneExpr ty) where
-  binaryExpr op lhs rhs =
-    case lhs of
-      OneExpr (Ur lhsRaw) ->
-        case unsafeUr rhs of
-          Ur rhsRaw -> OneExpr (Ur (op lhsRaw rhsRaw))
-
-instance BinaryExpr (Expr (ty :: Type)) (OneExpr ty) (OneExpr ty) where
-  binaryExpr op lhs rhs =
-    case unsafeUr lhs of
-      Ur lhsRaw ->
-        case rhs of
-          OneExpr (Ur rhsRaw) -> OneExpr (Ur (op lhsRaw rhsRaw))
-
-instance BinaryExpr (OneExpr (ty :: Type)) (OneExpr ty) (OneExpr ty) where
-  binaryExpr op lhs rhs =
-    case lhs of
-      OneExpr (Ur lhsRaw) ->
-        case rhs of
-          OneExpr (Ur rhsRaw) -> OneExpr (Ur (op lhsRaw rhsRaw))
-
-class RelateExpr lhs rhs where
-  relateExpr ::
-       (forall (ty :: Type). Expr ty -> Expr ty -> Constraint)
-    -> lhs
-       %1 -> rhs
-       %1 -> OneConstraint
-
-instance RelateExpr (Expr (ty :: Type)) (Expr ty) where
-  relateExpr op lhs rhs =
-    case unsafeUr lhs of
-      Ur lhsRaw ->
-        case unsafeUr rhs of
-          Ur rhsRaw -> OneConstraint (Ur (op lhsRaw rhsRaw))
-
-instance RelateExpr (OneExpr (ty :: Type)) (Expr ty) where
-  relateExpr op lhs rhs =
-    case lhs of
-      OneExpr (Ur lhsRaw) ->
-        case unsafeUr rhs of
-          Ur rhsRaw -> OneConstraint (Ur (op lhsRaw rhsRaw))
-
-instance RelateExpr (Expr (ty :: Type)) (OneExpr ty) where
-  relateExpr op lhs rhs =
-    case unsafeUr lhs of
-      Ur lhsRaw ->
-        case rhs of
-          OneExpr (Ur rhsRaw) -> OneConstraint (Ur (op lhsRaw rhsRaw))
-
-instance RelateExpr (OneExpr (ty :: Type)) (OneExpr ty) where
-  relateExpr op lhs rhs =
-    case lhs of
-      OneExpr (Ur lhsRaw) ->
-        case rhs of
-          OneExpr (Ur rhsRaw) -> OneConstraint (Ur (op lhsRaw rhsRaw))
 
 num :: SymbolicType ty => Double -> Expr ty
 num = S.num
@@ -1372,40 +1098,8 @@ num = S.num
 global :: SymbolicType ty => String -> Expr ty
 global name = S.var ("global." ++ name)
 
-infixl 6 @+@
-infixl 6 @-@
-infixl 7 @*@
-infixl 7 @/@
-infixr 8 @^@
-infix 4 @==@
-infix 4 @<=@
-infix 4 @>=@
-(@+@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
-(@+@) = binaryExpr (S.@+@)
-
-(@-@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
-(@-@) = binaryExpr (S.@-@)
-
-(@*@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
-(@*@) = binaryExpr (S.@*@)
-
-(@/@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
-(@/@) = binaryExpr (S.@/@)
-
-(@^@) :: BinaryExpr lhs rhs result => lhs %1 -> rhs %1 -> result
-(@^@) = binaryExpr (S.@^@)
-
 absExpr :: Expr ty -> Expr ty
 absExpr = S.absExpr
-
-(@==@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
-(@==@) = relateExpr (S.@==@)
-
-(@<=@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
-(@<=@) = relateExpr (S.@<=@)
-
-(@>=@) :: RelateExpr lhs rhs => lhs %1 -> rhs %1 -> OneConstraint
-(@>=@) = relateExpr (flip (S.@<=@))
 
 --------------------------------------------------------------------------------
 -- Reader + writer builder
@@ -1655,22 +1349,8 @@ traverseView_ action values =
       action value
       traverseView_ action rest
 
-ensure :: OneConstraint %1 -> ViewBuilder ()
-ensure oneConstraint =
-  case oneConstraint of
-    OneConstraint (Ur constraint) -> ensureRaw constraint
-
 ensureRaw :: Constraint -> ViewBuilder ()
 ensureRaw constraint = tellOutput mempty {emittedConstraints = [constraint]}
-
-encourageConstraint :: OneConstraint %1 -> ViewBuilder ()
-encourageConstraint oneConstraint =
-  case oneConstraint of
-    OneConstraint (Ur constraint) -> ensureRaw (S.soften constraint)
-
-encourage :: Expr ty -> ViewBuilder ()
-encourage objective =
-  tellOutput mempty {emittedConstraints = [S.minimize objective]}
 
 emitViewNode :: ViewNode -> ViewBuilder ()
 emitViewNode node = tellOutput mempty {emittedNodes = [node]}
@@ -1714,30 +1394,9 @@ isRemovalIntent intent =
     RenderRemove _ -> True
     _              -> False
 
-checkpoint :: ViewBuilder ()
-checkpoint = do
-  ViewState env (Ur output) <- get
-  put (ViewState env (Ur (flushPendingOutput output)))
-
 --------------------------------------------------------------------------------
 -- Per-block visualisation
 --------------------------------------------------------------------------------
-defineNewBlock ::
-     forall tag used.
-     ViewDefinition tag used
-     %1 -> BlockView tag
-  -> ViewBuilder (Visual Rendered Stable used tag)
-defineNewBlock definition block0 =
-  case definition of
-    ViewDefinition styleDefinition viewDefinition -> do
-      Ur env <- askViewEnv
-      let block = block0 {blockStyle = styleDefinition (blockStyle block0)}
-      constrainStyle (blockStyle block)
-      ensureRaw (right block S.@<=@ canvasWidth env)
-      ensureRaw (bottom block S.@<=@ canvasHeight env)
-      emitViewNode (BlockViewNode block)
-      viewDefinition (Visual block)
-
 defineMatchedBlock ::
      forall tag. C.Traceable tag
   => BlockView tag
@@ -1846,17 +1505,8 @@ definePatchedBlock patch block0 = do
   ensureRaw (right block S.@<=@ canvasWidth env)
   ensureRaw (bottom block S.@<=@ canvasHeight env)
   constrainPatchGeometry patch block
-  runPatchRequirements (nodePatchRequirements patch)
   emitViewNode (BlockViewNode block)
   return ()
-
-runPatchRequirements :: [ViewBuilder ()] -> ViewBuilder ()
-runPatchRequirements actions =
-  case actions of
-    [] -> return ()
-    action:rest -> do
-      action
-      runPatchRequirements rest
 
 constrainPatchGeometry :: NodePatch -> BlockView tag -> ViewBuilder ()
 constrainPatchGeometry patch block = do
@@ -2105,19 +1755,10 @@ instance ToCopiedVisual (CopiedVisual tag) tag where
 instance ToCopiedVisual (VisualExplainToken (C.Copy tag)) tag where
   toCopiedVisual = explainVisual
 
-class ToLiveVisual visual tag | visual -> tag where
-  toLiveVisual :: visual %1 -> ViewBuilder (LiveVisual tag)
-
-instance ToLiveVisual (LiveVisual tag) tag where
-  toLiveVisual = return
-
-instance ToLiveVisual (VisualExplainToken (C.Observe tag)) tag where
-  toLiveVisual = explainVisual
-
 class Removable visual where
   remove :: visual %1 -> ViewBuilder ()
 
-instance Removable (Visual Rendered Consumed used tag) where
+instance Removable (Visual Rendered Consumed tag) where
   remove visual' =
     case visual' of
       Visual block -> emitRenderIntent (RenderRemove (blockRef block))
@@ -2137,27 +1778,6 @@ instance forall (tag :: Type). Removable (VisualExplainToken (C.Decide tag)) whe
     case token of
       VisualExplainToken (visual' :: ConsumedVisual tag) -> remove visual'
 
-fresh ::
-     forall tag used visual. ToNewVisual visual tag
-  => ViewDefinition tag used
-     %1 -> visual
-     %1 -> ViewBuilder (Visual Rendered Stable used tag)
-fresh definition visual0 = do
-  visual1 <- toNewVisual visual0
-  freshRaw definition visual1
-
-freshRaw ::
-     forall tag used.
-     ViewDefinition tag used
-     %1 -> NewVisual tag
-     %1 -> ViewBuilder (Visual Rendered Stable used tag)
-freshRaw definition visual =
-  case visual of
-    Visual block -> do
-      rendered <- defineNewBlock definition block
-      emitRenderIntent (RenderFresh (blockRef block))
-      pure rendered
-
 freshMatched ::
      forall tag visual. (C.Traceable tag, ToNewVisual visual tag)
   => visual
@@ -2175,57 +1795,6 @@ freshMatchedRaw visual =
     Visual block -> do
       defineMatchedBlock block
       emitRenderIntent (RenderFresh (blockRef block))
-
-freshCopy ::
-     forall tag used visual. ToCopiedVisual visual tag
-  => ViewDefinition tag used
-     %1 -> visual
-     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
-freshCopy definition copied0 = do
-  copied <- toCopiedVisual copied0
-  freshCopyRaw definition copied
-
-freshCopyRaw ::
-     forall tag used.
-     ViewDefinition tag used
-     %1 -> CopiedVisual tag
-     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
-freshCopyRaw definition copied =
-  case copied of
-    CopiedVisual source visual ->
-      case source of
-        Visual sourceBlock ->
-          case visual of
-            Visual block -> do
-              rendered <- defineNewBlock definition block
-              emitRenderIntent (RenderFresh (blockRef block))
-              pure (Visual sourceBlock, rendered)
-
-forkCopy ::
-     forall tag used visual. ToCopiedVisual visual tag
-  => ViewDefinition tag used
-     %1 -> visual
-     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
-forkCopy definition copied0 = do
-  copied <- toCopiedVisual copied0
-  forkCopyRaw definition copied
-
-forkCopyRaw ::
-     forall tag used.
-     ViewDefinition tag used
-     %1 -> CopiedVisual tag
-     %1 -> ViewBuilder (LiveVisual tag, Visual Rendered Stable used tag)
-forkCopyRaw definition copied =
-  case copied of
-    CopiedVisual source visual ->
-      case source of
-        Visual sourceBlock ->
-          case visual of
-            Visual block -> do
-              rendered <- defineNewBlock definition block
-              emitRenderIntent
-                (RenderFork (blockRef sourceBlock) (blockRef block))
-              pure (Visual sourceBlock, rendered)
 
 forkCopyMatched ::
      forall tag visual. (C.Traceable tag, ToCopiedVisual visual tag)
@@ -2249,59 +1818,6 @@ forkCopyMatchedRaw copied =
               defineMatchedBlock block
               emitRenderIntent
                 (RenderFork (blockRef sourceBlock) (blockRef block))
-
-continueFrom ::
-     forall tag oldTag used source visual.
-     (ToLiveVisual source oldTag, ToNewVisual visual tag)
-  => ViewDefinition tag used
-     %1 -> source
-     %1 -> visual
-     %1 -> ViewBuilder (Visual Rendered Stable used tag)
-continueFrom definition source0 visual0 = do
-  source <- toLiveVisual source0
-  visual1 <- toNewVisual visual0
-  continueFromRaw definition source visual1
-
-continueFromRaw ::
-     forall tag oldTag used.
-     ViewDefinition tag used
-     %1 -> LiveVisual oldTag
-     %1 -> NewVisual tag
-     %1 -> ViewBuilder (Visual Rendered Stable used tag)
-continueFromRaw definition source visual =
-  case source of
-    Visual sourceBlock ->
-      case visual of
-        Visual block -> do
-          rendered <- defineNewBlock definition block
-          emitRenderIntent
-            (RenderContinue (blockRef sourceBlock) (blockRef block))
-          pure rendered
-
-continueFromMatched ::
-     forall tag oldTag source visual.
-     (C.Traceable tag, ToLiveVisual source oldTag, ToNewVisual visual tag)
-  => source
-     %1 -> visual
-     %1 -> ViewBuilder ()
-continueFromMatched source0 visual0 = do
-  source <- toLiveVisual source0
-  visual1 <- toNewVisual visual0
-  continueFromMatchedRaw source visual1
-
-continueFromMatchedRaw ::
-     forall tag oldTag. C.Traceable tag
-  => LiveVisual oldTag
-     %1 -> NewVisual tag
-     %1 -> ViewBuilder ()
-continueFromMatchedRaw source visual =
-  case source of
-    Visual sourceBlock ->
-      case visual of
-        Visual block -> do
-          defineMatchedBlock block
-          emitRenderIntent
-            (RenderContinue (blockRef sourceBlock) (blockRef block))
 
 completeCopy ::
      forall (tag :: Type). VisualExplainToken (C.Copy tag) %1 -> ViewBuilder ()
@@ -2334,7 +1850,7 @@ replaceMatchedOutput token = do
 completeConsumed :: ConsumedVisual tag %1 -> ViewBuilder ()
 completeConsumed = completeAnyVisual
 
-completeAnyVisual :: Visual state lifecycle used tag %1 -> ViewBuilder ()
+completeAnyVisual :: Visual state lifecycle tag %1 -> ViewBuilder ()
 completeAnyVisual visual =
   case visual of
     Visual _ -> return ()
@@ -2352,87 +1868,6 @@ continueConsumedFromMatched source visual =
           defineMatchedBlock block
           emitRenderIntent
             (RenderContinue (blockRef sourceBlock) (blockRef block))
-
-complete :: Visual Rendered Stable used tag %1 -> ViewBuilder ()
-complete visual =
-  case visual of
-    Visual _ -> pure ()
-
-takeLeft ::
-     CanTakeAttr AttrLeft used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrLeft used) tag))
-takeLeft visual =
-  case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (left block))))
-
-takeRight ::
-     CanTakeAttr AttrRight used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrRight used) tag))
-takeRight visual =
-  case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (right block))))
-
-takeWidth ::
-     CanTakeAttr AttrWidth used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrWidth used) tag))
-takeWidth visual =
-  case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (width block))))
-
-takeCenterX ::
-     CanTakeAttr AttrCenterX used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrCenterX used) tag))
-takeCenterX visual =
-  case visual of
-    Visual block ->
-      pure (LayoutUse (Visual block) (OneExpr (Ur (centerX block))))
-
-takeTop ::
-     CanTakeAttr AttrTop used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrTop used) tag))
-takeTop visual =
-  case visual of
-    Visual block -> pure (LayoutUse (Visual block) (OneExpr (Ur (top block))))
-
-takeBottom ::
-     CanTakeAttr AttrBottom used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrBottom used) tag))
-takeBottom visual =
-  case visual of
-    Visual block ->
-      pure (LayoutUse (Visual block) (OneExpr (Ur (bottom block))))
-
-takeHeight ::
-     CanTakeAttr AttrHeight used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrHeight used) tag))
-takeHeight visual =
-  case visual of
-    Visual block ->
-      pure (LayoutUse (Visual block) (OneExpr (Ur (height block))))
-
-takeCenterY ::
-     CanTakeAttr AttrCenterY used
-  => Visual state lifecycle used tag
-     %1 -> ViewBuilder
-       (LayoutUse (Visual state lifecycle (Insert AttrCenterY used) tag))
-takeCenterY visual =
-  case visual of
-    Visual block ->
-      pure (LayoutUse (Visual block) (OneExpr (Ur (centerY block))))
 
 --------------------------------------------------------------------------------
 -- Build a view graph
@@ -2541,7 +1976,6 @@ viewNodeBlocks nodes =
 layoutRuleConstraints :: [ViewNode] -> LayoutRule -> [Constraint]
 layoutRuleConstraints nodes layoutRule =
   case layoutRule of
-    GlobalLayout body -> layoutConstraints body
     ValueRelationLayout strength lhs relation rhs ->
       applyConstraintStrength
         strength
@@ -2804,11 +2238,6 @@ boundsAttr attr bounds' =
     AttrHeight  -> height bounds'
     AttrCenterY -> centerY bounds'
 
-layoutConstraints :: ViewBuilder () -> [Constraint]
-layoutConstraints body =
-  let (_result, output) = runViewBuilderWithOutput defaultViewEnv mempty body
-   in emittedConstraints output
-
 materializeNodesForSpec :: MatchSpec -> [ViewNode] -> [ViewNode]
 materializeNodesForSpec spec nodes =
   case spec of
@@ -2824,7 +2253,6 @@ materializeNodeForRules rules node =
 materializeNodeForRule :: LayoutRule -> ViewNode -> ViewNode
 materializeNodeForRule rule node =
   case rule of
-    GlobalLayout _ -> node
     ValueRelationLayout _ lhs _ rhs ->
       materializeNodeForEndpoints (lhs P.++ rhs) node
     ValueDirectedBridgeLayout _ lhs gap rhs ->
