@@ -212,7 +212,8 @@ import           Data.Type.Equality                    ((:~:) (..))
 import           Data.Typeable                         (eqT)
 import           GHC.OverloadedLabels                  (IsLabel (..))
 import           GHC.TypeLits                          (KnownSymbol, symbolVal)
-import qualified LinearTrace.Core.Internal             as C
+import qualified LinearTrace.Core                      as C
+import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View.Style
 import qualified Prelude                               as P
 import           Prelude.Linear
@@ -821,7 +822,7 @@ matchValueSymmetricBridge strength lhs delta rhs =
 -- Block views
 --------------------------------------------------------------------------------
 data BlockView tag = BlockView
-  { blockRef      :: C.BlockRef tag
+  { blockRef      :: E.BlockRef tag
   , blockPayload  :: C.Payload tag
   , blockLabel    :: C.PayloadView
   , blockContent  :: ContentMode
@@ -841,7 +842,7 @@ instance HasStyle (BlockView tag) where
   style = blockStyle
 
 data VirtualView tag = VirtualView
-  { virtualRef      :: C.BlockRef tag
+  { virtualRef      :: E.BlockRef tag
   , virtualLabel    :: C.PayloadView
   , virtualContent  :: ContentMode
   , virtualQuery    :: Query
@@ -867,7 +868,7 @@ data ViewNode where
 
 data ViewStep where
   ViewStep
-    :: C.TraceStep -> [ViewNode] -> [Constraint] -> [[RenderIntent]] -> ViewStep
+    :: E.TraceStep -> [ViewNode] -> [Constraint] -> [[RenderIntent]] -> ViewStep
 
 data ViewGraph = ViewGraph
   { viewNodes        :: [ViewNode]
@@ -880,7 +881,7 @@ data ViewGraph = ViewGraph
 -- Materialized views
 --------------------------------------------------------------------------------
 data MaterializedBlockView tag = MaterializedBlockView
-  { materializedBlockRef      :: C.BlockRef tag
+  { materializedBlockRef      :: E.BlockRef tag
   , materializedBlockLabel    :: C.PayloadView
   , materializedBlockContent  :: P.String
   , materializedBlockNodeKey  :: P.String
@@ -889,7 +890,7 @@ data MaterializedBlockView tag = MaterializedBlockView
   }
 
 data MaterializedVirtualView tag = MaterializedVirtualView
-  { materializedVirtualRef      :: C.BlockRef tag
+  { materializedVirtualRef      :: E.BlockRef tag
   , materializedVirtualLabel    :: C.PayloadView
   , materializedVirtualContent  :: P.String
   , materializedVirtualNodeKey  :: P.String
@@ -942,7 +943,7 @@ materializeViewNode solution node =
         MaterializedVirtualViewNode
         (materializeVirtualView solution virtual)
 
-blockViewRef :: BlockView tag -> C.BlockRef tag
+blockViewRef :: BlockView tag -> E.BlockRef tag
 blockViewRef = blockRef
 
 blockViewLabel :: BlockView tag -> C.PayloadView
@@ -1054,10 +1055,10 @@ data Decided tag where
   DecidedFalse :: VisualExplainToken (C.Decide tag) %1 -> Decided tag
 
 data RenderIntent where
-  RenderFresh :: C.BlockRef tag -> RenderIntent
-  RenderContinue :: C.BlockRef old -> C.BlockRef tag -> RenderIntent
-  RenderFork :: C.BlockRef old -> C.BlockRef tag -> RenderIntent
-  RenderRemove :: C.BlockRef tag -> RenderIntent
+  RenderFresh :: E.BlockRef tag -> RenderIntent
+  RenderContinue :: E.BlockRef old -> E.BlockRef tag -> RenderIntent
+  RenderFork :: E.BlockRef old -> E.BlockRef tag -> RenderIntent
+  RenderRemove :: E.BlockRef tag -> RenderIntent
 
 data Unrendered
 
@@ -1129,32 +1130,6 @@ data ViewOutput = ViewOutput
   , pendingRenderIntents :: [RenderIntent]
   }
 
-type family Append (lhs :: [Type]) (rhs :: [Type]) :: [Type] where
-  Append '[] rhs = rhs
-  Append (act : acts) rhs = act : Append acts rhs
-
-data SomeAudit where
-  SomeAudit :: C.Audit acts -> SomeAudit
-
-emptySomeAudit :: SomeAudit
-emptySomeAudit = SomeAudit C.EmptyAudit
-
-singletonSomeAudit :: C.AuditStep act -> SomeAudit
-singletonSomeAudit step = SomeAudit (step C.:> C.EmptyAudit)
-
-appendAudit :: C.Audit lhs -> C.Audit rhs -> C.Audit (Append lhs rhs)
-appendAudit lhs rhs =
-  case lhs of
-    C.EmptyAudit   -> rhs
-    step C.:> rest -> step C.:> appendAudit rest rhs
-
-appendSomeAudit :: SomeAudit -> SomeAudit -> SomeAudit
-appendSomeAudit lhs rhs =
-  case lhs of
-    SomeAudit lhsAudit ->
-      case rhs of
-        SomeAudit rhsAudit -> SomeAudit (appendAudit lhsAudit rhsAudit)
-
 instance Semigroup ViewOutput where
   ViewOutput nodesA constraintsA framesA pendingA <> ViewOutput nodesB constraintsB framesB pendingB =
     ViewOutput
@@ -1184,17 +1159,17 @@ data ViewScript acts where
 data VisualTraceState where
   VisualTraceState
     :: Ur ViewEnv
-       %1 -> Ur (C.TraceBuilderState ViewScript)
-       %1 -> Ur SomeAudit
+       %1 -> Ur (E.TraceBuilderState ViewScript)
+       %1 -> Ur E.EventLog
        %1 -> Ur ViewOutput
        %1 -> VisualTraceState
 
 type VisualTraceBuilder a = State VisualTraceState a
 
 data VisualTraceGraph =
-  VisualTraceGraph MatchSpec (C.TraceGraphWith ViewScript)
+  VisualTraceGraph MatchSpec (E.TraceGraphWith ViewScript)
 
-visualTraceCore :: VisualTraceGraph -> C.TraceGraphWith ViewScript
+visualTraceCore :: VisualTraceGraph -> E.TraceGraphWith ViewScript
 visualTraceCore graph =
   case graph of
     VisualTraceGraph _ coreGraph -> coreGraph
@@ -1210,17 +1185,16 @@ explain label script = do
 
 discard :: P.String -> VisualTraceBuilder ()
 discard reason = do
-  audit <- takePendingAudit
+  Ur eventLog <- takePendingEvents
   Ur _output <- takePendingOutput
-  case audit of
-    SomeAudit auditSteps -> runCoreBuilder (C.discardAudit reason auditSteps)
+  runCoreBuilder (E.discardEventLog reason eventLog)
 
 initialVisualTraceStateWith :: ViewEnv -> VisualTraceState
 initialVisualTraceStateWith env =
   VisualTraceState
     (Ur env)
-    (Ur (C.TraceBuilderState (Ur 0) (Ur []) (Ur [])))
-    (Ur emptySomeAudit)
+    (Ur E.emptyTraceBuilderState)
+    (Ur E.emptyEventLog)
     (Ur mempty)
 
 buildGraph :: VisualTraceBuilder () -> VisualTraceGraph
@@ -1233,10 +1207,9 @@ buildGraphWithSpec spec =
 buildGraphWithEnv :: ViewEnv -> VisualTraceBuilder () -> VisualTraceGraph
 buildGraphWithEnv env builder =
   let (_result, finalState) = runState builder (initialVisualTraceStateWith env)
-      VisualTraceState _env (Ur coreState) _pendingAudit _pendingOutput =
+      VisualTraceState _env (Ur coreState) _pendingEvents _pendingOutput =
         finalState
-      C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) (Ur steps) = coreState
-   in VisualTraceGraph (viewMatchSpec env) (C.TraceGraph blocks steps)
+   in VisualTraceGraph (viewMatchSpec env) (E.traceBuilderStateGraph coreState)
 
 instance Consumable ViewState where
   consume (ViewState env output) = consume env `lseq` consume output
@@ -1249,79 +1222,79 @@ instance Dupable ViewState where
           (output1, output2) -> (ViewState env1 output1, ViewState env2 output2)
 
 instance Consumable VisualTraceState where
-  consume (VisualTraceState env coreState pendingAudit pendingOutput) =
+  consume (VisualTraceState env coreState pendingEvents pendingOutput) =
     consume env
       `lseq` consume coreState
-      `lseq` consume pendingAudit
+      `lseq` consume pendingEvents
       `lseq` consume pendingOutput
 
 instance Dupable VisualTraceState where
-  dup2 (VisualTraceState env coreState pendingAudit pendingOutput) =
+  dup2 (VisualTraceState env coreState pendingEvents pendingOutput) =
     case dup2 env of
       (env1, env2) ->
         case dup2 coreState of
           (coreState1, coreState2) ->
-            case dup2 pendingAudit of
-              (pendingAudit1, pendingAudit2) ->
+            case dup2 pendingEvents of
+              (pendingEvents1, pendingEvents2) ->
                 case dup2 pendingOutput of
                   (pendingOutput1, pendingOutput2) ->
                     ( VisualTraceState
                         env1
                         coreState1
-                        pendingAudit1
+                        pendingEvents1
                         pendingOutput1
                     , VisualTraceState
                         env2
                         coreState2
-                        pendingAudit2
+                        pendingEvents2
                         pendingOutput2)
 
 runCoreBuilder :: C.TraceBuilderWith ViewScript a -> VisualTraceBuilder a
 runCoreBuilder builder =
   LinearState.state
-    (\(VisualTraceState env (Ur coreState) pendingAudit pendingOutput) ->
-       let (result, nextCoreState) = runState builder coreState
+    (\(VisualTraceState env (Ur coreState) pendingEvents pendingOutput) ->
+       let (result, nextCoreState) =
+             E.runTraceBuilderWithState builder coreState
         in ( result
-           , VisualTraceState env (Ur nextCoreState) pendingAudit pendingOutput))
+           , VisualTraceState env (Ur nextCoreState) pendingEvents pendingOutput))
 
-appendPendingAudit :: C.AuditStep act -> VisualTraceBuilder ()
-appendPendingAudit step = do
-  VisualTraceState env coreState (Ur pendingAudit) pendingOutput <- get
+appendPendingEvent :: E.EventToken act -> VisualTraceBuilder ()
+appendPendingEvent eventToken = do
+  VisualTraceState env coreState (Ur pendingEvents) pendingOutput <- get
   put
     (VisualTraceState
        env
        coreState
-       (Ur (appendSomeAudit pendingAudit (singletonSomeAudit step)))
+       (Ur (E.appendEventToken pendingEvents eventToken))
        pendingOutput)
 
-takePendingAudit :: VisualTraceBuilder SomeAudit
-takePendingAudit = do
-  VisualTraceState env coreState (Ur pendingAudit) pendingOutput <- get
-  put (VisualTraceState env coreState (Ur emptySomeAudit) pendingOutput)
-  return pendingAudit
+takePendingEvents :: VisualTraceBuilder (Ur E.EventLog)
+takePendingEvents = do
+  VisualTraceState env coreState (Ur pendingEvents) pendingOutput <- get
+  put (VisualTraceState env coreState (Ur E.emptyEventLog) pendingOutput)
+  return (Ur pendingEvents)
 
 appendTraceView :: ViewBuilder () %1 -> VisualTraceBuilder ()
 appendTraceView script0 =
   case unsafeUr script0 of
     Ur script -> do
-      VisualTraceState (Ur env) coreState pendingAudit (Ur pendingOutput) <- get
+      VisualTraceState (Ur env) coreState pendingEvents (Ur pendingOutput) <-
+        get
       let (_result, output) = runViewBuilderWithOutput env pendingOutput script
-      put (VisualTraceState (Ur env) coreState pendingAudit (Ur output))
+      put (VisualTraceState (Ur env) coreState pendingEvents (Ur output))
 
 takePendingOutput :: VisualTraceBuilder (Ur ViewOutput)
 takePendingOutput = do
-  VisualTraceState env coreState pendingAudit (Ur pendingOutput) <- get
-  put (VisualTraceState env coreState pendingAudit (Ur mempty))
+  VisualTraceState env coreState pendingEvents (Ur pendingOutput) <- get
+  put (VisualTraceState env coreState pendingEvents (Ur mempty))
   return (Ur pendingOutput)
 
 checkpointTrace :: P.String -> VisualTraceBuilder ()
 checkpointTrace label = do
-  audit <- takePendingAudit
+  Ur eventLog <- takePendingEvents
   Ur output <- takePendingOutput
   let output' = flushPendingOutput output
-  case audit of
-    SomeAudit auditSteps ->
-      runCoreBuilder (C.explainAuditWith label (ViewScript output') auditSteps)
+  runCoreBuilder (E.explainEventLogWith label (ViewScript output') eventLog)
 
 runViewBuilderWithOutput ::
      ViewEnv -> ViewOutput -> ViewBuilder a -> (a, ViewOutput)
@@ -1549,10 +1522,12 @@ explainedVisual token =
 visualExplainToken ::
      C.ExplainToken act %1 -> VisualTraceBuilder (VisualExplainToken act)
 visualExplainToken explainToken =
-  case C.explainTokenToAuditStep explainToken of
-    Ur step -> do
-      appendPendingAudit step
-      return (VisualExplainToken (explainedVisual (viewToken step)))
+  case E.eventTokenFromExplainToken explainToken of
+    Ur eventToken -> do
+      appendPendingEvent eventToken
+      return
+        (VisualExplainToken
+           (explainedVisual (viewToken (E.eventTokenEvent eventToken))))
 
 create ::
      forall tag. C.Traceable tag
@@ -1873,8 +1848,9 @@ continueConsumedFromMatched source visual =
 -- Build a view graph
 --------------------------------------------------------------------------------
 buildCSP :: VisualTraceGraph -> ViewGraph
-buildCSP (VisualTraceGraph spec (C.TraceGraph _blocks steps)) =
-  let stepsOutput = viewTraceSteps steps
+buildCSP (VisualTraceGraph spec coreGraph) =
+  let steps = E.traceGraphSteps coreGraph
+      stepsOutput = viewTraceSteps steps
       traceNodes = materializeNodesForSpec spec (builtNodes stepsOutput)
       virtualNodes =
         materializeNodesForSpec spec (virtualNodesForSpec spec traceNodes)
@@ -2398,7 +2374,7 @@ matchingQueryBlocks query blocks =
 virtualViewForRule ::
      P.String -> Query -> NodePatch -> [AnyBlockView] -> VirtualView tag
 virtualViewForRule key query patch children =
-  let ref = C.BlockRef (virtualBlockId key query)
+  let ref = E.syntheticBlockRef (virtualBlockId key query)
       baseStyle = styleForVirtual key query
    in VirtualView
         { virtualRef = ref
@@ -2412,7 +2388,7 @@ virtualViewForRule key query patch children =
         , virtualChildren = children
         }
 
-virtualBlockId :: P.String -> Query -> C.BlockId
+virtualBlockId :: P.String -> Query -> E.BlockId
 virtualBlockId key query =
   negate (1 P.+ positiveHash (key P.++ ":" P.++ queryKey query))
 
@@ -2623,7 +2599,7 @@ addVirtualRenderFrames nodes frames =
         _  -> addVirtualLifecycleFrames lifecycles frames
 
 data VirtualLifecycle =
-  VirtualLifecycle AnyVirtualView [C.BlockId] [C.BlockId]
+  VirtualLifecycle AnyVirtualView [E.BlockId] [E.BlockId]
 
 virtualLifecycles :: [ViewNode] -> [VirtualLifecycle]
 virtualLifecycles nodes =
@@ -2631,7 +2607,7 @@ virtualLifecycles nodes =
   | VirtualViewNode virtual <- nodes
   ]
 
-virtualChildIds :: VirtualView tag -> [C.BlockId]
+virtualChildIds :: VirtualView tag -> [E.BlockId]
 virtualChildIds virtual =
   [blockRefId (blockRef child) | AnyBlockView child <- virtualChildren virtual]
 
@@ -2676,7 +2652,7 @@ updateVirtualLifecycle frame lifecycle =
        in (nextLifecycle, lifecycleIntents)
 
 applyVirtualRenderIntent ::
-     [C.BlockId] -> [C.BlockId] -> RenderIntent -> [C.BlockId]
+     [E.BlockId] -> [E.BlockId] -> RenderIntent -> [E.BlockId]
 applyVirtualRenderIntent childIds liveIds intent =
   case intent of
     RenderFresh ref -> addLiveChild childIds (blockRefId ref) liveIds
@@ -2688,7 +2664,7 @@ applyVirtualRenderIntent childIds liveIds intent =
         (removeLiveChild (blockRefId source) liveIds)
     RenderRemove ref -> removeLiveChild (blockRefId ref) liveIds
 
-addLiveChild :: [C.BlockId] -> C.BlockId -> [C.BlockId] -> [C.BlockId]
+addLiveChild :: [E.BlockId] -> E.BlockId -> [E.BlockId] -> [E.BlockId]
 addLiveChild childIds blockId liveIds =
   case blockId `P.elem` childIds of
     False -> liveIds
@@ -2697,7 +2673,7 @@ addLiveChild childIds blockId liveIds =
         True  -> liveIds
         False -> blockId : liveIds
 
-removeLiveChild :: C.BlockId -> [C.BlockId] -> [C.BlockId]
+removeLiveChild :: E.BlockId -> [E.BlockId] -> [E.BlockId]
 removeLiveChild blockId = P.filter (P./= blockId)
 
 virtualFreshIntent :: AnyVirtualView -> RenderIntent
@@ -2710,10 +2686,8 @@ virtualRemoveIntent anyVirtual =
   case anyVirtual of
     AnyVirtualView virtual -> RenderRemove (virtualRef virtual)
 
-blockRefId :: C.BlockRef tag -> C.BlockId
-blockRefId ref =
-  case ref of
-    C.BlockRef blockId -> blockId
+blockRefId :: E.BlockRef tag -> E.BlockId
+blockRefId = E.blockRefId
 
 data BuiltViewStep = BuiltViewStep
   { stepView                 :: ViewStep
@@ -2730,7 +2704,7 @@ data BuiltViewSteps = BuiltViewSteps
   , builtRenderFrames :: [[RenderIntent]]
   }
 
-viewTraceSteps :: [C.TraceStepWith ViewScript] -> BuiltViewSteps
+viewTraceSteps :: [E.TraceStepWith ViewScript] -> BuiltViewSteps
 viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] []
 
 viewTraceStepsWith ::
@@ -2783,12 +2757,11 @@ splitLeadingFresh intents =
         (freshes, tail') -> (RenderFresh ref : freshes, tail')
     _ -> ([], intents)
 
-viewTraceStep :: [RenderIntent] -> C.TraceStepWith ViewScript -> BuiltViewStep
+viewTraceStep :: [RenderIntent] -> E.TraceStepWith ViewScript -> BuiltViewStep
 viewTraceStep pending step =
-  case step of
-    C.ExplainedStep label (ViewScript rawOutput) audit ->
-      let plainStep = C.ExplainedStep label C.NoStepPayload audit
-          output = mergeInitialRenderIntents pending rawOutput
+  case E.traceStepOutput step of
+    E.ExplainedTraceStep _label (ViewScript rawOutput) plainStep ->
+      let output = mergeInitialRenderIntents pending rawOutput
           nodes = emittedNodes output
           constraints = emittedConstraints output
           renderFrames = emittedRenderFrames output
@@ -2799,9 +2772,9 @@ viewTraceStep pending step =
             , stepRenderFrames = renderFrames
             , stepPendingRenderIntents = pendingRenderIntents output
             }
-    C.DiscardedStep reason audit ->
+    E.DiscardedTraceStep _reason plainStep ->
       BuiltViewStep
-        { stepView = ViewStep (C.DiscardedStep reason audit) [] [] []
+        { stepView = ViewStep plainStep [] [] []
         , stepNodes = []
         , stepConstraints = []
         , stepRenderFrames = []
@@ -2820,19 +2793,19 @@ mergeInitialRenderIntents pending output =
           output {emittedRenderFrames = (pending ++ firstFrame) : restFrames}
 
 --------------------------------------------------------------------------------
--- Core block snapshots -> base block views
+-- Core event blocks -> base block views
 --------------------------------------------------------------------------------
-blockViewOfSnapshot :: C.BlockSnapshot tag -> BlockView tag
-blockViewOfSnapshot (C.BlockSnapshot ref payload payloadView facts) =
+blockViewOfEventBlock :: E.EventBlock tag -> BlockView tag
+blockViewOfEventBlock block =
   BlockView
-    { blockRef = ref
-    , blockPayload = payload
-    , blockLabel = payloadView
+    { blockRef = E.eventBlockRef block
+    , blockPayload = E.eventBlockPayload block
+    , blockLabel = E.eventBlockPayloadView block
     , blockContent = ContentEmpty
-    , blockFacts = facts
+    , blockFacts = E.eventBlockFacts block
     , blockNodeKey = defaultNodeKey
     , blockPieceKey = defaultPieceKey
-    , blockStyle = styleForRef ref
+    , blockStyle = styleForRef (E.eventBlockRef block)
     }
 
 defaultNodeKey :: P.String
@@ -2841,10 +2814,10 @@ defaultNodeKey = "block"
 defaultPieceKey :: P.String
 defaultPieceKey = "body"
 
-styleForRef :: C.BlockRef tag -> Style
+styleForRef :: E.BlockRef tag -> Style
 styleForRef ref = styleForBlockPath ref []
 
-styleForBlockPath :: C.BlockRef tag -> [P.String] -> Style
+styleForBlockPath :: E.BlockRef tag -> [P.String] -> Style
 styleForBlockPath ref path =
   styleWithBounds
     (Bounds
@@ -2854,9 +2827,9 @@ styleForBlockPath ref path =
        (blockVarPath ref path "height"))
 
 blockVarPath ::
-     SymbolicType ty => C.BlockRef tag -> [P.String] -> P.String -> Expr ty
-blockVarPath (C.BlockRef blockId) path field =
-  var (joinPath (("B" ++ P.show blockId) : (path P.++ [field])))
+     SymbolicType ty => E.BlockRef tag -> [P.String] -> P.String -> Expr ty
+blockVarPath ref path field =
+  var (joinPath (("B" ++ P.show (E.blockRefId ref)) : (path P.++ [field])))
 
 joinPath :: [P.String] -> P.String
 joinPath parts =
@@ -2865,26 +2838,26 @@ joinPath parts =
     [part]    -> part
     part:rest -> part ++ "." ++ joinPath rest
 
-viewToken :: C.AuditStep act -> ViewToken act
-viewToken step =
-  case step of
-    C.CreateStep snapshot -> CreatedToken (blockViewOfSnapshot snapshot)
-    C.ObserveStep snapshot -> ObservedToken (blockViewOfSnapshot snapshot)
-    C.UseStep snapshot -> UsedToken (blockViewOfSnapshot snapshot)
-    C.CopyStep original copy' ->
-      CopiedToken (blockViewOfSnapshot original) (blockViewOfSnapshot copy')
-    C.ReplaceStep old incoming output ->
+viewToken :: E.TraceEvent act -> ViewToken act
+viewToken event =
+  case event of
+    E.TraceCreate block -> CreatedToken (blockViewOfEventBlock block)
+    E.TraceObserve block -> ObservedToken (blockViewOfEventBlock block)
+    E.TraceUse block -> UsedToken (blockViewOfEventBlock block)
+    E.TraceCopy original copy' ->
+      CopiedToken (blockViewOfEventBlock original) (blockViewOfEventBlock copy')
+    E.TraceReplace old incoming output ->
       ReplacedToken
-        (blockViewOfSnapshot old)
-        (blockViewOfSnapshot incoming)
-        (blockViewOfSnapshot output)
-    C.ComputeStep snapshot -> ComputedToken (blockViewOfSnapshot snapshot)
-    C.DestroyStep snapshot -> DestroyedToken (blockViewOfSnapshot snapshot)
-    C.SealStep owner child ->
-      SealedToken (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
-    C.UnsealStep owner child ->
-      UnsealedToken (blockViewOfSnapshot owner) (blockViewOfSnapshot child)
-    C.DecideStep snapshot -> DecidedToken (blockViewOfSnapshot snapshot)
+        (blockViewOfEventBlock old)
+        (blockViewOfEventBlock incoming)
+        (blockViewOfEventBlock output)
+    E.TraceCompute block -> ComputedToken (blockViewOfEventBlock block)
+    E.TraceDestroy block -> DestroyedToken (blockViewOfEventBlock block)
+    E.TraceSeal owner child ->
+      SealedToken (blockViewOfEventBlock owner) (blockViewOfEventBlock child)
+    E.TraceUnseal owner child ->
+      UnsealedToken (blockViewOfEventBlock owner) (blockViewOfEventBlock child)
+    E.TraceDecide block -> DecidedToken (blockViewOfEventBlock block)
 
 constrainStyle :: Style -> ViewBuilder ()
 constrainStyle style' = traverseView_ ensureRaw (styleConstraints style')

@@ -80,6 +80,7 @@ library
         LinearTrace
         LinearTrace.Choreography
         LinearTrace.Core
+        LinearTrace.Core.Events
         LinearTrace.Core.Internal
         LinearTrace.View
         LinearTrace.View.Style

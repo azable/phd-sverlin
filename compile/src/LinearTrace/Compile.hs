@@ -27,7 +27,8 @@ import qualified Data.Aeson.Key             as Key
 import qualified Data.ByteString.Lazy       as BL
 import           Data.Map.Strict            (Map)
 import qualified Data.Map.Strict            as Map
-import qualified LinearTrace.Core.Internal  as C
+import qualified LinearTrace.Core           as C
+import qualified LinearTrace.Core.Events    as E
 import qualified LinearTrace.View           as V
 import           Numeric                    (showFFloat)
 import           Prelude
@@ -68,7 +69,7 @@ data RenderStyle = RenderStyle
   } deriving (Eq, Show)
 
 data RenderBlock = RenderBlock
-  { renderBlockId  :: C.BlockId
+  { renderBlockId  :: E.BlockId
   , renderNodeKey  :: String
   , renderPieceKey :: String
   , renderContent  :: String
@@ -119,7 +120,7 @@ emptyCompileState = CompileState {lineageByBlock = Map.empty}
 
 type CompileM = StateT CompileState (Either String)
 
-type RenderBlockKey = (C.BlockId, String, String)
+type RenderBlockKey = (E.BlockId, String, String)
 
 type RenderPieceKey = (String, String)
 
@@ -333,20 +334,20 @@ compileRenderIntent blocksById intent =
     V.RenderFork source target     -> forkRef blocksById source target
     V.RenderRemove ref             -> destroyRef blocksById ref
 
-createRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderPatch]
+createRef :: BlockLookup -> E.BlockRef tag -> CompileM [RenderPatch]
 createRef blocksById ref = do
   blocks <- requireBlocksByRef blocksById ref
   traverse createBlock blocks
 
-destroyRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderPatch]
+destroyRef :: BlockLookup -> E.BlockRef tag -> CompileM [RenderPatch]
 destroyRef blocksById ref = do
   blocks <- requireBlocksByRef blocksById ref
   traverse destroyBlock blocks
 
 continueRef ::
      BlockLookup
-  -> C.BlockRef source
-  -> C.BlockRef target
+  -> E.BlockRef source
+  -> E.BlockRef target
   -> CompileM [RenderPatch]
 continueRef blocksById sourceRef targetRef = do
   sourceBlocks <- requireBlocksByRef blocksById sourceRef
@@ -355,8 +356,8 @@ continueRef blocksById sourceRef targetRef = do
 
 forkRef ::
      BlockLookup
-  -> C.BlockRef source
-  -> C.BlockRef target
+  -> E.BlockRef source
+  -> E.BlockRef target
   -> CompileM [RenderPatch]
 forkRef blocksById sourceRef targetRef = do
   sourceBlocks <- requireBlocksByRef blocksById sourceRef
@@ -475,7 +476,7 @@ requireLineage block = do
 --------------------------------------------------------------------------------
 -- Materialized block lookup
 --------------------------------------------------------------------------------
-type BlockLookup = Map C.BlockId [RenderBlock]
+type BlockLookup = Map E.BlockId [RenderBlock]
 
 buildBlockLookup :: S.Solution -> V.ViewGraph -> Either String BlockLookup
 buildBlockLookup solution graph =
@@ -559,16 +560,14 @@ materializedHslToCss alpha hsl =
       a = formatCssNumber (clamp 0 1 alpha)
    in "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ " / " ++ a ++ ")"
 
-requireBlocksByRef :: BlockLookup -> C.BlockRef tag -> CompileM [RenderBlock]
+requireBlocksByRef :: BlockLookup -> E.BlockRef tag -> CompileM [RenderBlock]
 requireBlocksByRef blocksById ref =
   case Map.lookup (blockIdOfRef ref) blocksById of
     Just blocks -> pure blocks
     Nothing     -> pure []
 
-blockIdOfRef :: C.BlockRef tag -> C.BlockId
-blockIdOfRef ref =
-  case ref of
-    C.BlockRef blockId -> blockId
+blockIdOfRef :: E.BlockRef tag -> E.BlockId
+blockIdOfRef = E.blockRefId
 
 payloadViewKind :: C.PayloadView -> String
 payloadViewKind payloadView =
