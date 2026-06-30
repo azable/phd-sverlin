@@ -56,7 +56,6 @@ import qualified LinearTrace.Core.Events        as E
 import qualified LinearTrace.View               as V
 import qualified LinearTrace.View.Access        as VA
 import qualified LinearTrace.View.Patch         as VP
-import qualified LinearTrace.View.Style         as VS
 import           Prelude                        (Bool (..), Maybe (..),
                                                  otherwise)
 import qualified Prelude                        as P
@@ -91,7 +90,7 @@ data ValueEndpoint
   | SelectionValueEndpoint NodeSelection VA.ValueAccess
 
 data CategoryEndpoint value
-  = RawCategoryEndpoint (VS.StyleCategory value)
+  = RawCategoryEndpoint (S.ChoiceValue value)
   | SelectionCategoryEndpoint NodeSelection (VA.CategoryAccess value)
 
 data MatchSpec =
@@ -114,7 +113,7 @@ data LayoutRule where
     -> [ValueEndpoint]
     -> LayoutRule
   CategoryRelationLayout
-    :: VS.StyleCategoryType value=> ConstraintStrength
+    :: S.ChoiceDomain value=> ConstraintStrength
     -> [CategoryEndpoint value]
     -> CategoryRelation
     -> [CategoryEndpoint value]
@@ -183,7 +182,7 @@ matchGroupNode key query patch =
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
 
-rawCategoryEndpoint :: VS.StyleCategory value -> CategoryEndpoint value
+rawCategoryEndpoint :: S.ChoiceValue value -> CategoryEndpoint value
 rawCategoryEndpoint = RawCategoryEndpoint
 
 selectionValueEndpoint :: NodeSelection -> VA.ValueAccess -> ValueEndpoint
@@ -203,7 +202,7 @@ matchValueRelation strength lhs relation rhs =
   MatchSpec [] [ValueRelationLayout strength lhs relation rhs] []
 
 matchCategoryRelation ::
-     VS.StyleCategoryType value
+     S.ChoiceDomain value
   => ConstraintStrength
   -> [CategoryEndpoint value]
   -> CategoryRelation
@@ -442,7 +441,7 @@ data LayoutEndpointMatch =
   LayoutEndpointMatch ValueComponent QueryBindings
 
 data CategoryEndpointMatch value =
-  CategoryEndpointMatch (VS.StyleCategory value) QueryBindings
+  CategoryEndpointMatch (S.ChoiceValue value) QueryBindings
 
 matchingValueTerms ::
      [ValueEndpoint]
@@ -505,7 +504,7 @@ matchingCategoryTerms ::
      [CategoryEndpoint value]
   -> [CategoryEndpoint value]
   -> [V.ViewNode]
-  -> [([VS.StyleCategory value], [VS.StyleCategory value])]
+  -> [([S.ChoiceValue value], [S.ChoiceValue value])]
 matchingCategoryTerms lhs rhs nodes =
   [ (lhsCategories, rhsCategories)
   | ([lhsCategories, rhsCategories], _) <-
@@ -515,7 +514,7 @@ matchingCategoryTerms lhs rhs nodes =
 matchingCategoryTermGroups ::
      [[CategoryEndpoint value]]
   -> [V.ViewNode]
-  -> [([[VS.StyleCategory value]], QueryBindings)]
+  -> [([[S.ChoiceValue value]], QueryBindings)]
 matchingCategoryTermGroups endpointGroups nodes =
   case endpointGroups of
     [] -> [([], [])]
@@ -529,7 +528,7 @@ matchingCategoryTermGroups endpointGroups nodes =
 matchingCategoryTerm ::
      [CategoryEndpoint value]
   -> [V.ViewNode]
-  -> [([VS.StyleCategory value], QueryBindings)]
+  -> [([S.ChoiceValue value], QueryBindings)]
 matchingCategoryTerm endpoints nodes =
   case endpoints of
     [] -> [([], [])]
@@ -631,9 +630,9 @@ valueSymmetricBridgeConstraints triple =
       S.symmetricBridgeComponents lhsComponents deltaComponents rhsComponents
 
 categoryRelationConstraints ::
-     VS.StyleCategoryType value
+     S.ChoiceDomain value
   => CategoryRelation
-  -> ([VS.StyleCategory value], [VS.StyleCategory value])
+  -> ([S.ChoiceValue value], [S.ChoiceValue value])
   -> [S.ChoiceConstraint]
 categoryRelationConstraints relation pair' =
   case pair' of
@@ -641,10 +640,10 @@ categoryRelationConstraints relation pair' =
       zipCategoryConstraints relation lhsCategories rhsCategories
 
 zipCategoryConstraints ::
-     VS.StyleCategoryType value
+     S.ChoiceDomain value
   => CategoryRelation
-  -> [VS.StyleCategory value]
-  -> [VS.StyleCategory value]
+  -> [S.ChoiceValue value]
+  -> [S.ChoiceValue value]
   -> [S.ChoiceConstraint]
 zipCategoryConstraints relation lhs rhs =
   case (lhs, rhs) of
@@ -656,10 +655,10 @@ zipCategoryConstraints relation lhs rhs =
       P.error "Cannot relate category values with different component counts."
 
 categoryValueRelationConstraints ::
-     VS.StyleCategoryType value
+     S.ChoiceDomain value
   => CategoryRelation
-  -> VS.StyleCategory value
-  -> VS.StyleCategory value
+  -> S.ChoiceValue value
+  -> S.ChoiceValue value
   -> [S.ChoiceConstraint]
 categoryValueRelationConstraints relation lhs rhs =
   case relation of
@@ -667,76 +666,67 @@ categoryValueRelationConstraints relation lhs rhs =
     CategoryDifferent -> categoryDifferentConstraints lhs rhs
 
 categoryEqualConstraints ::
-     VS.StyleCategoryType value
-  => VS.StyleCategory value
-  -> VS.StyleCategory value
+     S.ChoiceDomain value
+  => S.ChoiceValue value
+  -> S.ChoiceValue value
   -> [S.ChoiceConstraint]
 categoryEqualConstraints lhs rhs =
   case (lhs, rhs) of
-    (VS.FixedCategory lhsValue, VS.FixedCategory rhsValue)
+    (S.Fixed lhsValue, S.Fixed rhsValue)
       | categoryTokensEqual lhsValue rhsValue -> []
       | otherwise -> impossibleCategoryConstraints lhsValue
-    (VS.FixedCategory fixed, VS.VariableCategory selected) ->
-      [S.choose selected (S.category (VS.styleCategoryToken fixed))]
-    (VS.VariableCategory selected, VS.FixedCategory fixed) ->
-      [S.choose selected (S.category (VS.styleCategoryToken fixed))]
-    (VS.VariableCategory lhsChoice, VS.VariableCategory rhsChoice) ->
+    (S.Fixed fixed, S.Variable selected) -> [S.choose selected fixed]
+    (S.Variable selected, S.Fixed fixed) -> [S.choose selected fixed]
+    (S.Variable lhsChoice, S.Variable rhsChoice) ->
       [S.sameChoice lhsChoice rhsChoice]
 
 categoryDifferentConstraints ::
-     VS.StyleCategoryType value
-  => VS.StyleCategory value
-  -> VS.StyleCategory value
+     S.ChoiceDomain value
+  => S.ChoiceValue value
+  -> S.ChoiceValue value
   -> [S.ChoiceConstraint]
 categoryDifferentConstraints lhs rhs =
   case (lhs, rhs) of
-    (VS.FixedCategory lhsValue, VS.FixedCategory rhsValue)
+    (S.Fixed lhsValue, S.Fixed rhsValue)
       | categoryTokensEqual lhsValue rhsValue ->
         impossibleCategoryConstraints lhsValue
       | otherwise -> []
-    (VS.FixedCategory fixed, VS.VariableCategory selected) ->
+    (S.Fixed fixed, S.Variable selected) ->
       fixedCategoryChoiceConstraints fixed
         P.++ [S.differentChoice (fixedCategoryChoice fixed) selected]
-    (VS.VariableCategory selected, VS.FixedCategory fixed) ->
+    (S.Variable selected, S.Fixed fixed) ->
       fixedCategoryChoiceConstraints fixed
         P.++ [S.differentChoice selected (fixedCategoryChoice fixed)]
-    (VS.VariableCategory lhsChoice, VS.VariableCategory rhsChoice) ->
+    (S.Variable lhsChoice, S.Variable rhsChoice) ->
       [S.differentChoice lhsChoice rhsChoice]
 
-categoryTokensEqual :: VS.StyleCategoryType value => value -> value -> P.Bool
-categoryTokensEqual lhs rhs =
-  VS.styleCategoryToken lhs P.== VS.styleCategoryToken rhs
+categoryTokensEqual :: S.ChoiceDomain value => value -> value -> P.Bool
+categoryTokensEqual lhs rhs = S.choiceToken lhs P.== S.choiceToken rhs
 
 fixedCategoryChoiceConstraints ::
-     VS.StyleCategoryType value => value -> [S.ChoiceConstraint]
+     S.ChoiceDomain value => value -> [S.ChoiceConstraint]
 fixedCategoryChoiceConstraints value =
-  [ S.choose
-      (fixedCategoryChoice value)
-      (S.category (VS.styleCategoryToken value))
-  ]
+  [S.choose (fixedCategoryChoice value) value]
 
 impossibleCategoryConstraints ::
-     VS.StyleCategoryType value => value -> [S.ChoiceConstraint]
+     S.ChoiceDomain value => value -> [S.ChoiceConstraint]
 impossibleCategoryConstraints value =
-  [S.choose (fixedCategoryChoice value) (S.category "__impossible__")]
+  let selected = fixedCategoryChoice value
+   in [S.differentChoice selected selected]
 
-fixedCategoryChoice :: VS.StyleCategoryType value => value -> S.Choice value
+fixedCategoryChoice :: S.ChoiceDomain value => value -> S.Choice value
 fixedCategoryChoice value = S.choice (fixedCategoryChoiceName value)
 
-fixedCategoryChoiceName :: VS.StyleCategoryType value => value -> P.String
+fixedCategoryChoiceName :: S.ChoiceDomain value => value -> P.String
 fixedCategoryChoiceName value =
-  "view.fixed."
-    P.++ categoryDomainKey value
-    P.++ "."
-    P.++ VS.styleCategoryToken value
+  "view.fixed." P.++ categoryDomainKey value P.++ "." P.++ S.choiceToken value
 
 categoryDomainKey ::
-     forall value. VS.StyleCategoryType value
+     forall value. S.ChoiceDomain value
   => value
   -> P.String
 categoryDomainKey _ =
-  joinCategoryTokens
-    (P.map VS.styleCategoryToken (VS.styleCategoryDomain :: [value]))
+  joinCategoryTokens (P.map S.choiceToken (S.choiceDomain :: [value]))
 
 joinCategoryTokens :: [P.String] -> P.String
 joinCategoryTokens tokens =

@@ -1,22 +1,21 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Finite categorical choice implementation. Style choice fields depend on
--- this layer, and 'Solver.Problem' samples satisfying assignments before
--- numeric optimization.
+-- | Finite categorical choice implementation. Choice domains provide typed
+-- values plus stable solver tokens; 'Solver.Problem' samples satisfying
+-- assignments before numeric optimization.
 module Solver.Choice
   ( -- * Choice domains
-    -- | Typed finite categories and choices. Public users normally access
-    -- these through the 'Solver' facade.
-    Category
-  , category
-  , categoryName
+    -- | Typed finite choices. Public users normally access these through the
+    -- 'Solver' facade.
+    ChoiceDomain(..)
+  , ChoiceValue(..)
   , Choice
   , choice
   , choiceName
-  , CategoricalType(..)
+  , choiceValueFromToken
   , -- * Choice constraints
-    -- | Relations over categorical choices. These are consumed by
-    -- 'Solver.Problem' and by the view style solver bridge.
+    -- | Relations over finite choices. These are consumed by 'Solver.Problem'
+    -- and by the view style solver bridge.
     ChoiceConstraint
   , freeChoice
   , choose
@@ -31,39 +30,41 @@ module Solver.Choice
 
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy      (Proxy (..))
 import           Prelude
 
-newtype Category ty =
-  Category String
-  deriving (Eq, Ord, Show)
+class ChoiceDomain value where
+  choiceDomain :: [value]
+  choiceToken :: value -> String
 
-category :: String -> Category ty
-category = Category
+data ChoiceValue value
+  = Fixed value
+  | Variable (Choice value)
+  deriving (Eq, Show)
 
-categoryName :: Category ty -> String
-categoryName value =
-  case value of
-    Category name -> name
-
-data Choice ty = Choice
+data Choice value = Choice
   { choiceName       :: String
   , choiceCategories :: [String]
   } deriving (Eq, Ord, Show)
 
-class CategoricalType ty where
-  categoricalDomain :: Proxy ty -> [Category ty]
-
 choice ::
-     forall ty. CategoricalType ty
+     forall value. ChoiceDomain value
   => String
-  -> Choice ty
+  -> Choice value
 choice name =
   Choice
     { choiceName = name
-    , choiceCategories =
-        map categoryName (categoricalDomain (Proxy :: Proxy ty))
+    , choiceCategories = map choiceToken (choiceDomain :: [value])
     }
+
+choiceValueFromToken :: ChoiceDomain value => String -> Maybe value
+choiceValueFromToken token = go choiceDomain
+  where
+    go values =
+      case values of
+        [] -> Nothing
+        value:rest
+          | choiceToken value == token -> Just value
+          | otherwise -> go rest
 
 data ChoiceSpec = ChoiceSpec
   { choiceSpecName       :: String
@@ -77,19 +78,19 @@ data ChoiceConstraint
   | ChoiceDifferent ChoiceSpec ChoiceSpec
   deriving (Eq, Ord, Show)
 
-freeChoice :: Choice ty -> ChoiceConstraint
+freeChoice :: Choice value -> ChoiceConstraint
 freeChoice selected = ChoiceFree (choiceSpec selected)
 
-choose :: Choice ty -> Category ty -> ChoiceConstraint
-choose selected value = ChoiceIs (choiceSpec selected) (categoryName value)
+choose :: ChoiceDomain value => Choice value -> value -> ChoiceConstraint
+choose selected value = ChoiceIs (choiceSpec selected) (choiceToken value)
 
-sameChoice :: Choice ty -> Choice ty -> ChoiceConstraint
+sameChoice :: Choice value -> Choice value -> ChoiceConstraint
 sameChoice lhs rhs = ChoiceSame (choiceSpec lhs) (choiceSpec rhs)
 
-differentChoice :: Choice ty -> Choice ty -> ChoiceConstraint
+differentChoice :: Choice value -> Choice value -> ChoiceConstraint
 differentChoice lhs rhs = ChoiceDifferent (choiceSpec lhs) (choiceSpec rhs)
 
-choiceSpec :: Choice ty -> ChoiceSpec
+choiceSpec :: Choice value -> ChoiceSpec
 choiceSpec selected =
   ChoiceSpec
     { choiceSpecName = choiceName selected

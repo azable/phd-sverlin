@@ -22,6 +22,9 @@ data TestUnit
 data TestBoundedAngle
 
 data TestProbe
+  = TestMatch
+  | TestNoMatch
+  deriving (Eq, Show)
 
 instance SymbolicType TestLayout where
   symbolicDomain _ = realDomain "test-length"
@@ -35,8 +38,12 @@ instance SymbolicType TestUnit where
 instance SymbolicType TestBoundedAngle where
   symbolicDomain _ = boundedCyclicDomain "test-bounded-angle" 360 (Range 0 360)
 
-instance CategoricalType TestProbe where
-  categoricalDomain _ = [category "match", category "no-match"]
+instance ChoiceDomain TestProbe where
+  choiceDomain = [TestMatch, TestNoMatch]
+  choiceToken value =
+    case value of
+      TestMatch   -> "match"
+      TestNoMatch -> "no-match"
 
 main :: IO ()
 main =
@@ -353,20 +360,19 @@ categoricalTests =
     "categorical choices"
     [ testCase "solves direct category choices" $ do
         let probe = choice "test.choice.probe" :: Choice TestProbe
-            problem =
-              solverProblemWithChoices [] [choose probe (category "match")]
+            problem = solverProblemWithChoices [] [choose probe TestMatch]
         solution <- solveProblem defaultSolveConfig problem
-        evalChoice solution probe @?= Just (category "match")
+        evalChoice solution probe @?= Just TestMatch
     , testCase "solves same-choice relations" $ do
         let lhs = choice "test.choice.lhs" :: Choice TestProbe
             rhs = choice "test.choice.rhs" :: Choice TestProbe
             problem =
               solverProblemWithChoices
                 []
-                [sameChoice lhs rhs, choose lhs (category "no-match")]
+                [sameChoice lhs rhs, choose lhs TestNoMatch]
         solution <- solveProblem defaultSolveConfig problem
-        evalChoice solution lhs @?= Just (category "no-match")
-        evalChoice solution rhs @?= Just (category "no-match")
+        evalChoice solution lhs @?= Just TestNoMatch
+        evalChoice solution rhs @?= Just TestNoMatch
     , testCase "solves free category choices" $ do
         let probe = choice "test.choice.free" :: Choice TestProbe
             problem = solverProblemWithChoices [] [freeChoice probe]
@@ -377,8 +383,7 @@ categoricalTests =
         solution <- solveProblem defaultSolveConfig problem
         assertBool
           "expected a sampled category from the probe domain"
-          (evalChoice solution probe
-             `elem` [Just (category "match"), Just (category "no-match")])
+          (evalChoice solution probe `elem` [Just TestMatch, Just TestNoMatch])
     , testCase "enforces categorical branch limit" $ do
         let lhs = choice "test.choice.limit.lhs" :: Choice TestProbe
             rhs = choice "test.choice.limit.rhs" :: Choice TestProbe

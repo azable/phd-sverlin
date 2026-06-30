@@ -285,7 +285,7 @@ import           LinearTrace.View.Access               (CategoryAccess,
                                                         LayoutAttr (..),
                                                         ValueAccess,
                                                         layoutValueAccess,
-                                                        styleCategoryValueAccess,
+                                                        styleChoiceValueAccess,
                                                         styleColorPartValueAccess,
                                                         styleValueAccess)
 import qualified LinearTrace.View.Patch                as VP
@@ -440,7 +440,7 @@ data VisualConstraint where
   VisualValueRelation
     :: ValueTerm -> LayoutRelation -> ValueTerm -> VisualConstraint
   VisualCategoryRelation
-    :: VS.StyleCategoryType value=> CategoryTerm value
+    :: S.ChoiceDomain value=> CategoryTerm value
     -> CategoryRelation
     -> CategoryTerm value
     -> VisualConstraint
@@ -970,7 +970,7 @@ selectedValueTerm selected access =
     [selectionValueEndpoint (selectedNodeSelection selected) access]
 
 rawCategoryTerm ::
-     VS.StyleCategoryType value => VS.StyleCategory value -> CategoryTerm value
+     S.ChoiceDomain value => S.ChoiceValue value -> CategoryTerm value
 rawCategoryTerm value = CategoryTerm emptyMatchSpec [rawCategoryEndpoint value]
 
 selectedCategoryTerm ::
@@ -990,14 +990,14 @@ categoryTermEndpoints term =
   case term of
     CategoryTerm _ endpoints -> endpoints
 
-fixedCategoryTerm :: VS.StyleCategoryType value => value -> CategoryTerm value
-fixedCategoryTerm = rawCategoryTerm P.. VS.FixedCategory
+fixedCategoryTerm :: S.ChoiceDomain value => value -> CategoryTerm value
+fixedCategoryTerm = rawCategoryTerm P.. S.Fixed
 
 variableCategoryTerm ::
-     VS.StyleCategoryType value => Categorical value -> CategoryTerm value
+     S.ChoiceDomain value => Categorical value -> CategoryTerm value
 variableCategoryTerm value =
   case value of
-    Categorical selected -> rawCategoryTerm (VS.VariableCategory selected)
+    Categorical selected -> rawCategoryTerm (S.Variable selected)
 
 selectedCategoryValueTerm :: SelectionCategory value tag -> CategoryTerm value
 selectedCategoryValueTerm selected =
@@ -1374,7 +1374,7 @@ instance {-# OVERLAPPABLE #-} (ConstraintValue lhs, ConstraintValue rhs) =>
     VisualValueRelation (valueTerm lhs) relation (valueTerm rhs)
 
 relateCategories ::
-     VS.StyleCategoryType value
+     S.ChoiceDomain value
   => LayoutRelation
   -> CategoryTerm value
   -> CategoryTerm value
@@ -1385,11 +1385,11 @@ relateCategories relation lhs rhs =
     LayoutLessOrEqual ->
       P.error "Categorical values do not support ordered relations."
 
-instance VS.StyleCategoryType value => RelateValues (Categorical value) value where
+instance S.ChoiceDomain value => RelateValues (Categorical value) value where
   relateValues relation lhs rhs =
     relateCategories relation (variableCategoryTerm lhs) (fixedCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          RelateValues (Categorical value) (Categorical value) where
   relateValues relation lhs rhs =
     relateCategories
@@ -1397,7 +1397,7 @@ instance VS.StyleCategoryType value =>
       (variableCategoryTerm lhs)
       (variableCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          RelateValues (SelectionCategory value tag) value where
   relateValues relation lhs rhs =
     relateCategories
@@ -1405,7 +1405,7 @@ instance VS.StyleCategoryType value =>
       (selectedCategoryValueTerm lhs)
       (fixedCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          RelateValues (SelectionCategory value tag) (Categorical value) where
   relateValues relation lhs rhs =
     relateCategories
@@ -1413,7 +1413,7 @@ instance VS.StyleCategoryType value =>
       (selectedCategoryValueTerm lhs)
       (variableCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          RelateValues
            (SelectionCategory value lhsTag)
            (SelectionCategory value rhsTag) where
@@ -1471,34 +1471,34 @@ instance {-# OVERLAPPABLE #-} CloseSymmetricBridge bridge rhs =>
   notEqualOrClose = closeSymmetricBridge
 
 differentCategories ::
-     VS.StyleCategoryType value
+     S.ChoiceDomain value
   => CategoryTerm value
   -> CategoryTerm value
   -> VisualConstraint
 differentCategories lhs = VisualCategoryRelation lhs CategoryDifferent
 
-instance VS.StyleCategoryType value => NotEqualOrClose (Categorical value) value where
+instance S.ChoiceDomain value => NotEqualOrClose (Categorical value) value where
   notEqualOrClose lhs rhs =
     differentCategories (variableCategoryTerm lhs) (fixedCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          NotEqualOrClose (Categorical value) (Categorical value) where
   notEqualOrClose lhs rhs =
     differentCategories (variableCategoryTerm lhs) (variableCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          NotEqualOrClose (SelectionCategory value tag) value where
   notEqualOrClose lhs rhs =
     differentCategories (selectedCategoryValueTerm lhs) (fixedCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          NotEqualOrClose (SelectionCategory value tag) (Categorical value) where
   notEqualOrClose lhs rhs =
     differentCategories
       (selectedCategoryValueTerm lhs)
       (variableCategoryTerm rhs)
 
-instance VS.StyleCategoryType value =>
+instance S.ChoiceDomain value =>
          NotEqualOrClose
            (SelectionCategory value lhsTag)
            (SelectionCategory value rhsTag) where
@@ -2116,20 +2116,19 @@ sat :: Hsl hue unit -> unit
 sat = saturation
 
 class CategoricalStyleValue value input where
-  styleCategoryValue :: input -> VS.StyleCategory value
+  styleCategoryValue :: input -> S.ChoiceValue value
 
-instance VS.StyleCategoryType value => CategoricalStyleValue value value where
-  styleCategoryValue = VS.FixedCategory
+instance S.ChoiceDomain value => CategoricalStyleValue value value where
+  styleCategoryValue = S.Fixed
 
-instance VS.StyleCategoryType value =>
-         CategoricalStyleValue value (Categorical value) where
+instance S.ChoiceDomain value => CategoricalStyleValue value (Categorical value) where
   styleCategoryValue input =
     case input of
-      Categorical selected -> VS.VariableCategory selected
+      Categorical selected -> S.Variable selected
 
 styleCategoryRecipe ::
      CategoricalStyleValue value input
-  => (VS.StyleCategory value -> NodeStyle -> NodeStyle)
+  => (S.ChoiceValue value -> NodeStyle -> NodeStyle)
   -> input
   -> NodeRecipe ()
 styleCategoryRecipe setCategory value =
@@ -2137,11 +2136,11 @@ styleCategoryRecipe setCategory value =
 
 selectedCategory ::
      forall field value tag.
-     (VS.StyleField field, VS.StyleValue field ~ VS.StyleCategory value)
+     (VS.StyleField field, VS.StyleValue field ~ S.ChoiceValue value)
   => Selected tag
   -> SelectionCategory value tag
 selectedCategory selection =
-  SelectionCategory selection (styleCategoryValueAccess @field)
+  SelectionCategory selection (styleChoiceValueAccess @field)
 
 class FontFamilyStyle input output | input -> output where
   fontFamily :: input -> output

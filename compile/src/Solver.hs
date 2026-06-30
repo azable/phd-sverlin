@@ -22,18 +22,17 @@ module Solver
   , NumericType
   , SymbolicType(..)
   , -- * Categorical choices
-    -- | Choices are finite-domain variables. They intentionally do not share
-    -- the 'Expr' arithmetic API. Use 'freeChoice' to register an unconstrained
-    -- finite choice, or relation constraints such as 'choose'/'sameChoice' to
-    -- restrict it. A compiled problem samples a satisfying categorical
-    -- assignment before numeric solving.
-    Category
-  , category
-  , categoryName
+    -- | Choices are finite-domain variables with typed values and stable
+    -- string tokens. They intentionally do not share the 'Expr' arithmetic
+    -- API. Use 'freeChoice' to register an unconstrained finite choice, or
+    -- relation constraints such as 'choose'/'sameChoice' to restrict it. A
+    -- compiled problem samples a satisfying categorical assignment before
+    -- numeric solving.
+    ChoiceDomain(..)
+  , ChoiceValue(..)
   , Choice
   , choice
   , choiceName
-  , CategoricalType(..)
   , ChoiceConstraint
   , freeChoice
   , choose

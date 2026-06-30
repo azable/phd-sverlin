@@ -949,9 +949,10 @@ evalExpr :: Solution -> Expr ty -> Maybe Double
 evalExpr solution (Expr ty expr) =
   normalizeByType ty <$> evalRawExpr solution expr
 
-evalChoice :: Solution -> Choice ty -> Maybe (Category ty)
+evalChoice :: ChoiceDomain ty => Solution -> Choice ty -> Maybe ty
 evalChoice solution selected =
-  category <$> Map.lookup (choiceName selected) (solutionChoices solution)
+  Map.lookup (choiceName selected) (solutionChoices solution)
+    >>= choiceValueFromToken
 
 normalizeByType :: Domain -> Double -> Double
 normalizeByType ty value =

@@ -27,7 +27,7 @@ module LinearTrace.View.Access
     layoutValueAccess
   , styleValueAccess
   , styleColorPartValueAccess
-  , styleCategoryValueAccess
+  , styleChoiceValueAccess
   , valueAccessComponent
   , valueAccessRequirements
   , CategoryAccess
@@ -76,7 +76,7 @@ data ValueAccess =
   ValueAccess [StyleRequirement] (AnyLayoutView -> ValueComponent)
 
 data CategoryAccess value =
-  CategoryAccess [StyleRequirement] (AnyLayoutView -> StyleCategory value)
+  CategoryAccess [StyleRequirement] (AnyLayoutView -> ChoiceValue value)
 
 layoutValueAccess :: LayoutAttr -> ValueAccess
 layoutValueAccess field =
@@ -98,11 +98,11 @@ styleColorPartValueAccess ::
 styleColorPartValueAccess part =
   ValueAccess [styleRequirement @field] (styleColorPartComponent @field part)
 
-styleCategoryValueAccess ::
+styleChoiceValueAccess ::
      forall field value.
-     (StyleField field, StyleValue field ~ StyleCategory value)
+     (StyleField field, StyleValue field ~ ChoiceValue value)
   => CategoryAccess value
-styleCategoryValueAccess =
+styleChoiceValueAccess =
   CategoryAccess [styleRequirement @field] (styleValue @field)
 
 styleRequirement ::
@@ -121,7 +121,7 @@ valueAccessRequirements access =
     ValueAccess requirements _ -> requirements
 
 categoryAccessValue ::
-     CategoryAccess value -> AnyLayoutView -> StyleCategory value
+     CategoryAccess value -> AnyLayoutView -> ChoiceValue value
 categoryAccessValue access view =
   case access of
     CategoryAccess _ project -> project view

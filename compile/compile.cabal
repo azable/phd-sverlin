@@ -98,6 +98,9 @@ library
         LinearTrace.View.Primitives
         LinearTrace.View.Solve
         LinearTrace.View.Style
+        LinearTrace.View.Style.FieldSpec
+        LinearTrace.View.Style.Lower
+        LinearTrace.View.Style.Model
         LinearTrace.View.Types
         Solver.Backend
         Solver.Choice
