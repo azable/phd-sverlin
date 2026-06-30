@@ -10,23 +10,19 @@ module LinearTrace.View.Access
     ValueComponent
   , ValueAccess
   , LayoutAttr(..)
-  , StyleLayoutAttr(..)
-  , StyleUnitAttr(..)
-  , StyleFreeAttr(..)
+  , StyleScalarAttr(..)
   , StyleColorAttr(..)
   , StyleCategoryAttr(..)
   , HslPart(..)
   , -- * Style requirements
     -- | Requirements that a value access can impose on a view node, currently
-    -- used to ensure optional colour fields exist before relating HSL parts.
+    -- used to ensure optional style fields exist before relating values.
     StyleRequirement(..)
   , -- * Access constructors
     -- | Constructors and readers used by the DSL/match layer to turn layout or
     -- style attributes into component endpoints.
     layoutValueAccess
-  , styleLayoutValueAccess
-  , styleUnitValueAccess
-  , styleFreeValueAccess
+  , styleScalarValueAccess
   , styleColorPartValueAccess
   , styleCategoryValueAccess
   , valueAccessComponent
@@ -52,21 +48,14 @@ import           Solver                      (Choice, Component, Expr,
 
 type ValueComponent = Component
 
-data StyleLayoutAttr
-  = StyleFontSize
-  | StyleRadius
-  | StylePadding
-  | StyleStrokeWidth
-  deriving (P.Eq, P.Show)
-
-data StyleUnitAttr
-  = StyleOpacity
-  | StyleAlpha
-  deriving (P.Eq, P.Show)
-
-data StyleFreeAttr =
-  StyleZIndex
-  deriving (P.Eq, P.Show)
+data StyleScalarAttr ty where
+  StyleFontSize :: StyleScalarAttr LayoutDomain
+  StyleRadius :: StyleScalarAttr LayoutDomain
+  StylePadding :: StyleScalarAttr LayoutDomain
+  StyleStrokeWidth :: StyleScalarAttr LayoutDomain
+  StyleOpacity :: StyleScalarAttr UnitDomain
+  StyleAlpha :: StyleScalarAttr UnitDomain
+  StyleZIndex :: StyleScalarAttr FreeDomain
 
 data StyleColorAttr
   = StyleFill
@@ -90,13 +79,21 @@ data HslPart
 data SomeStyleCategoryAttr where
   SomeStyleCategoryAttr :: StyleCategoryAttr value -> SomeStyleCategoryAttr
 
+data SomeStyleScalarAttr where
+  SomeStyleScalarAttr :: StyleScalarAttr ty -> SomeStyleScalarAttr
+
 data StyleRequirement
-  = RequireColor StyleColorAttr
+  = RequireScalar SomeStyleScalarAttr
+  | RequireColor StyleColorAttr
   | RequireCategory SomeStyleCategoryAttr
 
 instance P.Show StyleRequirement where
   show requirement =
     case requirement of
+      RequireScalar some ->
+        case some of
+          SomeStyleScalarAttr attr ->
+            "RequireScalar " P.++ styleScalarAccessName attr
       RequireColor color -> "RequireColor " P.++ P.show color
       RequireCategory some ->
         case some of
@@ -113,17 +110,26 @@ layoutValueAccess :: LayoutAttr -> ValueAccess
 layoutValueAccess attr =
   ValueAccess [] (\view -> S.component (layoutViewAttr attr view) [])
 
-styleLayoutValueAccess :: StyleLayoutAttr -> ValueAccess
-styleLayoutValueAccess attr =
-  ValueAccess [] (\view -> S.component (styleLayoutAttr attr view) [])
+styleScalarValueAccess :: StyleScalarAttr ty -> ValueAccess
+styleScalarValueAccess attr =
+  ValueAccess
+    [RequireScalar (SomeStyleScalarAttr attr)]
+    (styleScalarComponent attr)
 
-styleUnitValueAccess :: StyleUnitAttr -> ValueAccess
-styleUnitValueAccess attr =
-  ValueAccess [] (\view -> S.component (styleUnitAttr attr view) [])
+styleScalarComponent :: StyleScalarAttr ty -> AnyLayoutView -> ValueComponent
+styleScalarComponent attr view =
+  case attr of
+    StyleFontSize    -> componentFor attr view
+    StyleRadius      -> componentFor attr view
+    StylePadding     -> componentFor attr view
+    StyleStrokeWidth -> componentFor attr view
+    StyleOpacity     -> componentFor attr view
+    StyleAlpha       -> componentFor attr view
+    StyleZIndex      -> componentFor attr view
 
-styleFreeValueAccess :: StyleFreeAttr -> ValueAccess
-styleFreeValueAccess attr =
-  ValueAccess [] (\view -> S.component (styleFreeAttr attr view) [])
+componentFor ::
+     SymbolicType ty => StyleScalarAttr ty -> AnyLayoutView -> ValueComponent
+componentFor attr view = S.component (styleScalarAttr attr view) []
 
 styleColorPartValueAccess :: StyleColorAttr -> HslPart -> ValueAccess
 styleColorPartValueAccess color part =
@@ -166,27 +172,54 @@ layoutViewStyle view =
   case view of
     AnyLayoutView node -> nodeStyle node
 
-styleLayoutAttr :: StyleLayoutAttr -> AnyLayoutView -> LayoutExpr
-styleLayoutAttr attr view =
-  let style' = layoutViewStyle view
-   in case attr of
-        StyleFontSize    -> fontSize style'
-        StyleRadius      -> radius style'
-        StylePadding     -> padding style'
-        StyleStrokeWidth -> strokeWidth style'
+styleScalarAttr :: StyleScalarAttr ty -> AnyLayoutView -> Expr ty
+styleScalarAttr attr view =
+  Maybe.fromMaybe (requiredStyleScalar attr view) maybeValue
+  where
+    style' = layoutViewStyle view
+    maybeValue = styleScalarValue attr style'
 
-styleUnitAttr :: StyleUnitAttr -> AnyLayoutView -> UnitExpr
-styleUnitAttr attr view =
-  let style' = layoutViewStyle view
-   in case attr of
-        StyleOpacity -> opacity style'
-        StyleAlpha   -> alpha style'
+styleScalarValue :: StyleScalarAttr ty -> Style -> Maybe (Expr ty)
+styleScalarValue attr style' =
+  case attr of
+    StyleFontSize    -> fontSize style'
+    StyleRadius      -> radius style'
+    StylePadding     -> padding style'
+    StyleStrokeWidth -> strokeWidth style'
+    StyleOpacity     -> opacity style'
+    StyleAlpha       -> alpha style'
+    StyleZIndex      -> zIndex style'
 
-styleFreeAttr :: StyleFreeAttr -> AnyLayoutView -> FreeExpr
-styleFreeAttr attr view =
-  let style' = layoutViewStyle view
-   in case attr of
-        StyleZIndex -> zIndex style'
+requiredStyleScalar :: StyleScalarAttr ty -> AnyLayoutView -> Expr ty
+requiredStyleScalar = styleScalarVar
+
+styleScalarVar :: StyleScalarAttr ty -> AnyLayoutView -> Expr ty
+styleScalarVar attr view =
+  case attr of
+    StyleFontSize    -> varFor attr view
+    StyleRadius      -> varFor attr view
+    StylePadding     -> varFor attr view
+    StyleStrokeWidth -> varFor attr view
+    StyleOpacity     -> varFor attr view
+    StyleAlpha       -> varFor attr view
+    StyleZIndex      -> varFor attr view
+
+varFor :: SymbolicType ty => StyleScalarAttr ty -> AnyLayoutView -> Expr ty
+varFor attr view =
+  case view of
+    AnyLayoutView node ->
+      nodeVar (nodeRoot node) ["style"] (styleScalarAccessName attr)
+
+styleScalarAccessName :: StyleScalarAttr ty -> P.String
+styleScalarAccessName attr =
+  case attr of
+    StyleFontSize    -> "fontSize"
+    StyleRadius      -> "radius"
+    StylePadding     -> "padding"
+    StyleStrokeWidth -> "strokeWidth"
+    StyleOpacity     -> "opacity"
+    StyleAlpha       -> "alpha"
+    StyleZIndex      -> "zIndex"
 
 styleColorPartComponent ::
      StyleColorAttr -> HslPart -> AnyLayoutView -> ValueComponent
@@ -323,12 +356,27 @@ applyStyleRequirement requirement node =
 requireStyleForView :: AnyLayoutView -> StyleRequirement -> Style -> Style
 requireStyleForView view requirement style' =
   case requirement of
+    RequireScalar some ->
+      case some of
+        SomeStyleScalarAttr attr ->
+          requireScalarField attr (requiredStyleScalar attr view) style'
     RequireColor color ->
       requireColorField color (requiredStyleColor color view) style'
     RequireCategory some ->
       case some of
         SomeStyleCategoryAttr attr ->
           requireCategoryField attr (requiredStyleCategory attr view) style'
+
+requireScalarField :: StyleScalarAttr ty -> Expr ty -> Style -> Style
+requireScalarField attr value style' =
+  case attr of
+    StyleFontSize    -> requirePresent fontSize (setFontSize value) style'
+    StyleRadius      -> requirePresent radius (setRadius value) style'
+    StylePadding     -> requirePresent padding (setPadding value) style'
+    StyleStrokeWidth -> requirePresent strokeWidth (setStrokeWidth value) style'
+    StyleOpacity     -> requirePresent opacity (setOpacity value) style'
+    StyleAlpha       -> requirePresent alpha (setAlpha value) style'
+    StyleZIndex      -> requirePresent zIndex (setZIndex value) style'
 
 requireColorField :: StyleColorAttr -> ColorExpr -> Style -> Style
 requireColorField color value style' =
@@ -341,6 +389,12 @@ requireColorField color value style' =
       case stroke style' of
         Nothing -> setStroke value style'
         Just _  -> style'
+
+requirePresent :: (Style -> Maybe value) -> (Style -> Style) -> Style -> Style
+requirePresent getValue setValue style' =
+  case getValue style' of
+    Nothing -> setValue style'
+    Just _  -> style'
 
 requireCategoryField ::
      StyleCategoryAttr value -> StyleCategory value -> Style -> Style

@@ -222,7 +222,10 @@ compoundTightFitConstraints node children =
           ]
 
 compoundPadding :: Node tag -> LayoutExpr
-compoundPadding node = padding (nodeStyle node)
+compoundPadding node =
+  case padding (nodeStyle node) of
+    Nothing    -> num 0
+    Just value -> value
 
 nodeChildLeft :: NodeChild -> LayoutExpr
 nodeChildLeft child = left (nodeChildBounds child)

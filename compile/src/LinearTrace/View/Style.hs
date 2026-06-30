@@ -301,10 +301,10 @@ data StyleField where
     -> StyleScalarSpec
     -> Expr ty
     -> StyleField
-  StyleColorField :: StyleAttrSpec -> Maybe ColorExpr -> StyleField
+  StyleColorField :: StyleAttrSpec -> ColorExpr -> StyleField
   StyleCategoryField
     :: StyleCategoryType value=> StyleCategorySpec value
-    -> Maybe (StyleCategory value)
+    -> StyleCategory value
     -> StyleField
 
 fieldName :: StyleField -> String
@@ -320,8 +320,7 @@ data Style = Style
   }
 
 styleWithBounds :: BoundsExpr -> Style
-styleWithBounds bounds =
-  Style {styleBounds = bounds, styleFields = defaultStyleFields}
+styleWithBounds bounds = Style {styleBounds = bounds, styleFields = []}
 
 instance HasBounds Style where
   top = top . styleBounds
@@ -351,9 +350,8 @@ mapStyleFieldExprs ::
 mapStyleFieldExprs f field =
   case field of
     StyleScalarField kind spec expr -> StyleScalarField kind spec (f expr)
-    StyleColorField spec maybeHsl ->
-      StyleColorField spec (fmap (fmap f) maybeHsl)
-    StyleCategoryField _ _ -> field
+    StyleColorField spec hsl        -> StyleColorField spec (fmap f hsl)
+    StyleCategoryField _ _          -> field
 
 replaceByName :: (a -> String) -> a -> [a] -> [a]
 replaceByName getName newValue = go
@@ -385,14 +383,11 @@ fieldExprLeaves :: StyleField -> [StyleExprLeaf]
 fieldExprLeaves field =
   case field of
     StyleScalarField _ spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
-    StyleColorField spec maybeHsl ->
-      case maybeHsl of
-        Nothing -> []
-        Just hsl ->
-          [ StyleExprLeaf (styleAttrName spec ++ ".hue") (hue hsl)
-          , StyleExprLeaf (styleAttrName spec ++ ".saturation") (saturation hsl)
-          , StyleExprLeaf (styleAttrName spec ++ ".lightness") (lightness hsl)
-          ]
+    StyleColorField spec hsl ->
+      [ StyleExprLeaf (styleAttrName spec ++ ".hue") (hue hsl)
+      , StyleExprLeaf (styleAttrName spec ++ ".saturation") (saturation hsl)
+      , StyleExprLeaf (styleAttrName spec ++ ".lightness") (lightness hsl)
+      ]
     StyleCategoryField _ _ -> []
 
 mapStyleExprLeaves ::
@@ -424,21 +419,20 @@ fieldConstraints :: StyleField -> [Constraint]
 fieldConstraints field =
   case field of
     StyleScalarField _ spec expr -> scalarConstraints spec expr
-    StyleColorField _ maybeHsl ->
-      case maybeHsl of
-        Nothing -> []
-        Just hsl ->
-          [ within (hue hsl) angleRange
-          , within (saturation hsl) unitRange
-          , within (lightness hsl) unitRange
-          ]
+    StyleColorField _ hsl ->
+      [ within (hue hsl) angleRange
+      , within (saturation hsl) unitRange
+      , within (lightness hsl) unitRange
+      ]
     StyleCategoryField _ _ -> []
 
 fieldCategoryConstraints :: StyleField -> [ChoiceConstraint]
 fieldCategoryConstraints field =
   case field of
-    StyleCategoryField _ (Just (VariableCategory selected)) ->
-      [freeChoice selected]
+    StyleCategoryField _ value ->
+      case value of
+        FixedCategory _           -> []
+        VariableCategory selected -> [freeChoice selected]
     _ -> []
 
 scalarConstraints ::
@@ -502,16 +496,13 @@ categorySpec name attrName =
 categoryField ::
      StyleCategoryType value
   => StyleCategorySpec value
-  -> Maybe (StyleCategory value)
+  -> StyleCategory value
   -> StyleField
 categoryField = StyleCategoryField
 
 --------------------------------------------------------------------------------
 -- Attribute: opacity
 --------------------------------------------------------------------------------
-opacityDefault :: UnitExpr
-opacityDefault = num 1
-
 opacityField :: UnitExpr -> StyleField
 opacityField =
   scalarField
@@ -522,9 +513,8 @@ opacityField =
     (Just unitRange)
     noConstraints
 
-opacity :: HasStyle a => a -> UnitExpr
-opacity value =
-  lookupScalarField StyleUnitScalar "opacity" opacityDefault (style value)
+opacity :: HasStyle a => a -> Maybe UnitExpr
+opacity value = lookupScalarField StyleUnitScalar "opacity" (style value)
 
 setOpacity :: UnitExpr -> Style -> Style
 setOpacity = setStyleField . opacityField
@@ -532,9 +522,6 @@ setOpacity = setStyleField . opacityField
 --------------------------------------------------------------------------------
 -- Attribute: zIndex
 --------------------------------------------------------------------------------
-zIndexDefault :: FreeExpr
-zIndexDefault = num 0
-
 zIndexField :: FreeExpr -> StyleField
 zIndexField =
   scalarField
@@ -545,9 +532,8 @@ zIndexField =
     (Just (Range (-10) 10))
     noConstraints
 
-zIndex :: HasStyle a => a -> FreeExpr
-zIndex value =
-  lookupScalarField StyleFreeScalar "zIndex" zIndexDefault (style value)
+zIndex :: HasStyle a => a -> Maybe FreeExpr
+zIndex value = lookupScalarField StyleFreeScalar "zIndex" (style value)
 
 setZIndex :: FreeExpr -> Style -> Style
 setZIndex = setStyleField . zIndexField
@@ -555,9 +541,6 @@ setZIndex = setStyleField . zIndexField
 --------------------------------------------------------------------------------
 -- Attribute: padding
 --------------------------------------------------------------------------------
-paddingDefault :: LayoutExpr
-paddingDefault = num 0
-
 paddingField :: LayoutExpr -> StyleField
 paddingField =
   scalarField
@@ -568,9 +551,8 @@ paddingField =
     (Just (Range 0 24))
     nonNegativeConstraints
 
-padding :: HasStyle a => a -> LayoutExpr
-padding value =
-  lookupScalarField StyleLayoutScalar "padding" paddingDefault (style value)
+padding :: HasStyle a => a -> Maybe LayoutExpr
+padding value = lookupScalarField StyleLayoutScalar "padding" (style value)
 
 setPadding :: LayoutExpr -> Style -> Style
 setPadding = setStyleField . paddingField
@@ -578,9 +560,6 @@ setPadding = setStyleField . paddingField
 --------------------------------------------------------------------------------
 -- Attribute: fontSize
 --------------------------------------------------------------------------------
-fontSizeDefault :: LayoutExpr
-fontSizeDefault = num 16
-
 fontSizeField :: LayoutExpr -> StyleField
 fontSizeField =
   scalarField
@@ -591,9 +570,8 @@ fontSizeField =
     (Just (Range 8 48))
     nonNegativeConstraints
 
-fontSize :: HasStyle a => a -> LayoutExpr
-fontSize value =
-  lookupScalarField StyleLayoutScalar "fontSize" fontSizeDefault (style value)
+fontSize :: HasStyle a => a -> Maybe LayoutExpr
+fontSize value = lookupScalarField StyleLayoutScalar "fontSize" (style value)
 
 setFontSize :: LayoutExpr -> Style -> Style
 setFontSize = setStyleField . fontSizeField
@@ -601,9 +579,6 @@ setFontSize = setStyleField . fontSizeField
 --------------------------------------------------------------------------------
 -- Attribute: radius
 --------------------------------------------------------------------------------
-radiusDefault :: LayoutExpr
-radiusDefault = num 0
-
 radiusField :: LayoutExpr -> StyleField
 radiusField =
   scalarField
@@ -614,9 +589,8 @@ radiusField =
     (Just (Range 0 32))
     nonNegativeConstraints
 
-radius :: HasStyle a => a -> LayoutExpr
-radius value =
-  lookupScalarField StyleLayoutScalar "radius" radiusDefault (style value)
+radius :: HasStyle a => a -> Maybe LayoutExpr
+radius value = lookupScalarField StyleLayoutScalar "radius" (style value)
 
 setRadius :: LayoutExpr -> Style -> Style
 setRadius = setStyleField . radiusField
@@ -624,9 +598,6 @@ setRadius = setStyleField . radiusField
 --------------------------------------------------------------------------------
 -- Attribute: strokeWidth
 --------------------------------------------------------------------------------
-strokeWidthDefault :: LayoutExpr
-strokeWidthDefault = num 0
-
 strokeWidthField :: LayoutExpr -> StyleField
 strokeWidthField =
   scalarField
@@ -637,13 +608,9 @@ strokeWidthField =
     (Just (Range 0 8))
     nonNegativeConstraints
 
-strokeWidth :: HasStyle a => a -> LayoutExpr
+strokeWidth :: HasStyle a => a -> Maybe LayoutExpr
 strokeWidth value =
-  lookupScalarField
-    StyleLayoutScalar
-    "strokeWidth"
-    strokeWidthDefault
-    (style value)
+  lookupScalarField StyleLayoutScalar "strokeWidth" (style value)
 
 setStrokeWidth :: LayoutExpr -> Style -> Style
 setStrokeWidth = setStyleField . strokeWidthField
@@ -651,9 +618,6 @@ setStrokeWidth = setStyleField . strokeWidthField
 --------------------------------------------------------------------------------
 -- Attribute: alpha
 --------------------------------------------------------------------------------
-alphaDefault :: UnitExpr
-alphaDefault = num 1
-
 alphaField :: UnitExpr -> StyleField
 alphaField =
   scalarField
@@ -664,9 +628,8 @@ alphaField =
     (Just unitRange)
     noConstraints
 
-alpha :: HasStyle a => a -> UnitExpr
-alpha value =
-  lookupScalarField StyleUnitScalar "alpha" alphaDefault (style value)
+alpha :: HasStyle a => a -> Maybe UnitExpr
+alpha value = lookupScalarField StyleUnitScalar "alpha" (style value)
 
 setAlpha :: UnitExpr -> Style -> Style
 setAlpha = setStyleField . alphaField
@@ -674,32 +637,26 @@ setAlpha = setStyleField . alphaField
 --------------------------------------------------------------------------------
 -- Attribute: fill
 --------------------------------------------------------------------------------
-fillDefault :: Maybe ColorExpr
-fillDefault = Nothing
-
-fillField :: Maybe ColorExpr -> StyleField
+fillField :: ColorExpr -> StyleField
 fillField = StyleColorField (attrSpec "fill" (Just "backgroundColor"))
 
 fill :: HasStyle a => a -> Maybe ColorExpr
-fill value = lookupColorField "fill" fillDefault (style value)
+fill value = lookupColorField "fill" (style value)
 
 setFill :: ColorExpr -> Style -> Style
-setFill = setStyleField . fillField . Just
+setFill = setStyleField . fillField
 
 --------------------------------------------------------------------------------
 -- Attribute: stroke
 --------------------------------------------------------------------------------
-strokeDefault :: Maybe ColorExpr
-strokeDefault = Nothing
-
-strokeField :: Maybe ColorExpr -> StyleField
+strokeField :: ColorExpr -> StyleField
 strokeField = StyleColorField (attrSpec "stroke" (Just "borderColor"))
 
 stroke :: HasStyle a => a -> Maybe ColorExpr
-stroke value = lookupColorField "stroke" strokeDefault (style value)
+stroke value = lookupColorField "stroke" (style value)
 
 setStroke :: ColorExpr -> Style -> Style
-setStroke = setStyleField . strokeField . Just
+setStroke = setStyleField . strokeField
 
 --------------------------------------------------------------------------------
 -- Attribute: fontFamily
@@ -707,14 +664,14 @@ setStroke = setStyleField . strokeField . Just
 fontFamilySpec :: StyleCategorySpec FontFamily
 fontFamilySpec = categorySpec "fontFamily" (Just "fontFamily")
 
-fontFamilyField :: Maybe (StyleCategory FontFamily) -> StyleField
+fontFamilyField :: StyleCategory FontFamily -> StyleField
 fontFamilyField = categoryField fontFamilySpec
 
 fontFamily :: HasStyle a => a -> Maybe (StyleCategory FontFamily)
-fontFamily value = lookupCategoryField "fontFamily" Nothing (style value)
+fontFamily value = lookupCategoryField "fontFamily" (style value)
 
 setFontFamily :: StyleCategory FontFamily -> Style -> Style
-setFontFamily = setStyleField . fontFamilyField . Just
+setFontFamily = setStyleField . fontFamilyField
 
 --------------------------------------------------------------------------------
 -- Attribute: fontWeight
@@ -722,14 +679,14 @@ setFontFamily = setStyleField . fontFamilyField . Just
 fontWeightSpec :: StyleCategorySpec FontWeight
 fontWeightSpec = categorySpec "fontWeight" (Just "fontWeight")
 
-fontWeightField :: Maybe (StyleCategory FontWeight) -> StyleField
+fontWeightField :: StyleCategory FontWeight -> StyleField
 fontWeightField = categoryField fontWeightSpec
 
 fontWeight :: HasStyle a => a -> Maybe (StyleCategory FontWeight)
-fontWeight value = lookupCategoryField "fontWeight" Nothing (style value)
+fontWeight value = lookupCategoryField "fontWeight" (style value)
 
 setFontWeight :: StyleCategory FontWeight -> Style -> Style
-setFontWeight = setStyleField . fontWeightField . Just
+setFontWeight = setStyleField . fontWeightField
 
 --------------------------------------------------------------------------------
 -- Attribute: fontStyle
@@ -737,14 +694,14 @@ setFontWeight = setStyleField . fontWeightField . Just
 fontStyleSpec :: StyleCategorySpec FontStyle
 fontStyleSpec = categorySpec "fontStyle" (Just "fontStyle")
 
-fontStyleField :: Maybe (StyleCategory FontStyle) -> StyleField
+fontStyleField :: StyleCategory FontStyle -> StyleField
 fontStyleField = categoryField fontStyleSpec
 
 fontStyle :: HasStyle a => a -> Maybe (StyleCategory FontStyle)
-fontStyle value = lookupCategoryField "fontStyle" Nothing (style value)
+fontStyle value = lookupCategoryField "fontStyle" (style value)
 
 setFontStyle :: StyleCategory FontStyle -> Style -> Style
-setFontStyle = setStyleField . fontStyleField . Just
+setFontStyle = setStyleField . fontStyleField
 
 --------------------------------------------------------------------------------
 -- Attribute: textAlign
@@ -752,14 +709,14 @@ setFontStyle = setStyleField . fontStyleField . Just
 textAlignSpec :: StyleCategorySpec TextAlign
 textAlignSpec = categorySpec "textAlign" (Just "textAlign")
 
-textAlignField :: Maybe (StyleCategory TextAlign) -> StyleField
+textAlignField :: StyleCategory TextAlign -> StyleField
 textAlignField = categoryField textAlignSpec
 
 textAlign :: HasStyle a => a -> Maybe (StyleCategory TextAlign)
-textAlign value = lookupCategoryField "textAlign" Nothing (style value)
+textAlign value = lookupCategoryField "textAlign" (style value)
 
 setTextAlign :: StyleCategory TextAlign -> Style -> Style
-setTextAlign = setStyleField . textAlignField . Just
+setTextAlign = setStyleField . textAlignField
 
 --------------------------------------------------------------------------------
 -- Attribute: borderStyle
@@ -767,14 +724,14 @@ setTextAlign = setStyleField . textAlignField . Just
 borderStyleSpec :: StyleCategorySpec BorderStyle
 borderStyleSpec = categorySpec "borderStyle" (Just "borderStyle")
 
-borderStyleField :: Maybe (StyleCategory BorderStyle) -> StyleField
+borderStyleField :: StyleCategory BorderStyle -> StyleField
 borderStyleField = categoryField borderStyleSpec
 
 borderStyle :: HasStyle a => a -> Maybe (StyleCategory BorderStyle)
-borderStyle value = lookupCategoryField "borderStyle" Nothing (style value)
+borderStyle value = lookupCategoryField "borderStyle" (style value)
 
 setBorderStyle :: StyleCategory BorderStyle -> Style -> Style
-setBorderStyle = setStyleField . borderStyleField . Just
+setBorderStyle = setStyleField . borderStyleField
 
 --------------------------------------------------------------------------------
 -- Attribute: whiteSpace
@@ -782,74 +739,50 @@ setBorderStyle = setStyleField . borderStyleField . Just
 whiteSpaceSpec :: StyleCategorySpec WhiteSpace
 whiteSpaceSpec = categorySpec "whiteSpace" (Just "whiteSpace")
 
-whiteSpaceField :: Maybe (StyleCategory WhiteSpace) -> StyleField
+whiteSpaceField :: StyleCategory WhiteSpace -> StyleField
 whiteSpaceField = categoryField whiteSpaceSpec
 
 whiteSpace :: HasStyle a => a -> Maybe (StyleCategory WhiteSpace)
-whiteSpace value = lookupCategoryField "whiteSpace" Nothing (style value)
+whiteSpace value = lookupCategoryField "whiteSpace" (style value)
 
 setWhiteSpace :: StyleCategory WhiteSpace -> Style -> Style
-setWhiteSpace = setStyleField . whiteSpaceField . Just
-
---------------------------------------------------------------------------------
--- Defaults
---------------------------------------------------------------------------------
-defaultStyleFields :: [StyleField]
-defaultStyleFields =
-  [ opacityField opacityDefault
-  , zIndexField zIndexDefault
-  , paddingField paddingDefault
-  , fontSizeField fontSizeDefault
-  , radiusField radiusDefault
-  , strokeWidthField strokeWidthDefault
-  , alphaField alphaDefault
-  , fillField fillDefault
-  , strokeField strokeDefault
-  , fontFamilyField Nothing
-  , fontWeightField Nothing
-  , fontStyleField Nothing
-  , textAlignField Nothing
-  , borderStyleField Nothing
-  , whiteSpaceField Nothing
-  ]
+setWhiteSpace = setStyleField . whiteSpaceField
 
 --------------------------------------------------------------------------------
 -- Field lookup
 --------------------------------------------------------------------------------
-lookupScalarField :: StyleScalarKind ty -> String -> Expr ty -> Style -> Expr ty
-lookupScalarField expectedKind name fallback style' = go (styleFields style')
+lookupScalarField :: StyleScalarKind ty -> String -> Style -> Maybe (Expr ty)
+lookupScalarField expectedKind name style' = go (styleFields style')
   where
     go fields =
       case fields of
-        [] -> fallback
+        [] -> Nothing
         StyleScalarField actualKind spec expr:rest
-          | styleScalarName spec == name
-          , Just Refl <- sameStyleScalarKind expectedKind actualKind -> expr
+          | styleScalarName spec == name ->
+            case sameStyleScalarKind expectedKind actualKind of
+              Just Refl -> Just expr
+              Nothing   -> go rest
           | otherwise -> go rest
         _:rest -> go rest
 
-lookupColorField :: String -> Maybe ColorExpr -> Style -> Maybe ColorExpr
-lookupColorField name fallback style' = go (styleFields style')
+lookupColorField :: String -> Style -> Maybe ColorExpr
+lookupColorField name style' = go (styleFields style')
   where
     go fields =
       case fields of
-        [] -> fallback
+        [] -> Nothing
         StyleColorField spec value:rest
-          | styleAttrName spec == name -> value
+          | styleAttrName spec == name -> Just value
           | otherwise -> go rest
         _:rest -> go rest
 
 lookupCategoryField ::
-     StyleCategoryType value
-  => String
-  -> Maybe (StyleCategory value)
-  -> Style
-  -> Maybe (StyleCategory value)
-lookupCategoryField name fallback style' = go (styleFields style')
+     StyleCategoryType value => String -> Style -> Maybe (StyleCategory value)
+lookupCategoryField name style' = go (styleFields style')
   where
     go fields =
       case fields of
-        [] -> fallback
+        [] -> Nothing
         StyleCategoryField spec value:rest
           | styleCategoryName spec == name ->
             case cast value of

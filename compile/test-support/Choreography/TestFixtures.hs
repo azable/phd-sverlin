@@ -21,6 +21,7 @@ module Choreography.TestFixtures
     categoricalRelationGraph
   , categoricalStyleGraph
   , selectedColorGraph
+  , selectedScalarGraph
   , styledGraph
   ) where
 
@@ -43,6 +44,9 @@ groupStats = fixtureStats groupSpec
 
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
+
+selectedScalarGraph :: ViewGraph
+selectedScalarGraph = buildGraph selectedScalarSpec
 
 categoricalStyleGraph :: ViewGraph
 categoricalStyleGraph = buildGraph categoricalStyleSpec
@@ -95,6 +99,15 @@ selectedColorSpec =
       width (by 80)
       height (by 80)
     ensure $ fill item .==. Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit)
+
+selectedScalarSpec :: MatchSpec
+selectedScalarSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    style item $ do
+      width (by 80)
+      height (by 80)
+    ensure $ padding item .==. by 6
 
 categoricalStyleSpec :: MatchSpec
 categoricalStyleSpec =

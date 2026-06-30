@@ -55,8 +55,8 @@ data ConcreteStyle = ConcreteStyle
 
 data ConcreteField
   = ConcreteScalarField String (Maybe String) Double StyleValueUnit
-  | ConcreteColorField String (Maybe String) (Maybe ConcreteHsl)
-  | ConcreteTokenField String (Maybe String) (Maybe String)
+  | ConcreteColorField String (Maybe String) ConcreteHsl
+  | ConcreteTokenField String (Maybe String) String
   deriving (Eq, Show)
 
 data ConcreteNode = ConcreteNode
@@ -142,24 +142,24 @@ materializeField :: Solution -> StyleField -> Either String ConcreteField
 materializeField solution field =
   case field of
     StyleScalarField _ spec expr -> materializeScalar solution spec expr
-    StyleColorField spec maybeHsl ->
+    StyleColorField spec hsl ->
       ConcreteColorField (styleAttrName spec) (styleAttrCssName spec)
-        <$> traverse (materializeHsl solution) maybeHsl
+        <$> materializeHsl solution hsl
     StyleCategoryField spec value ->
       materializeCategoryField solution spec value
 
 materializeCategoryField ::
      Solution
   -> StyleCategorySpec value
-  -> Maybe (StyleCategory value)
+  -> StyleCategory value
   -> Either String ConcreteField
-materializeCategoryField solution spec maybeValue = do
-  concreteValue <- traverse (materializeCategoryValue solution spec) maybeValue
+materializeCategoryField solution spec value = do
+  concreteValue <- materializeCategoryValue solution spec value
   pure
     (ConcreteTokenField
        (styleCategoryName spec)
        (styleCategoryAttrName spec)
-       (styleCategoryValueToken spec <$> concreteValue))
+       (styleCategoryValueToken spec concreteValue))
 
 materializeCategoryValue ::
      Solution

@@ -542,18 +542,17 @@ concreteFieldCssAttrs alphaValue field =
         (Just name, VS.StyleNumber) -> [(name, StyleNumber (roundLayout value))]
         (Just name, VS.StylePixels) -> [(name, StylePixels (roundLayout value))]
         _                           -> []
-    VM.ConcreteColorField _ attrName maybeHsl ->
-      case (attrName, maybeHsl) of
-        (Just name, Just hsl) -> [(name, StyleColor (hslToCss alphaValue hsl))]
-        _                     -> []
-    VM.ConcreteTokenField _ attrName maybeToken ->
-      stringCssAttr attrName maybeToken
+    VM.ConcreteColorField _ attrName hsl ->
+      case attrName of
+        Just name -> [(name, StyleColor (hslToCss alphaValue hsl))]
+        Nothing   -> []
+    VM.ConcreteTokenField _ attrName token -> stringCssAttr attrName token
 
-stringCssAttr :: Maybe String -> Maybe String -> [(String, StyleValue)]
-stringCssAttr maybeName maybeValue =
-  case (maybeName, maybeValue) of
-    (Just name, Just value) -> [(name, StyleText value)]
-    _                       -> []
+stringCssAttr :: Maybe String -> String -> [(String, StyleValue)]
+stringCssAttr maybeName value =
+  case maybeName of
+    Just name -> [(name, StyleText value)]
+    Nothing   -> []
 
 hslToCss :: Double -> VM.ConcreteHsl -> String
 hslToCss alpha hsl =

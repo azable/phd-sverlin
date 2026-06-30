@@ -78,9 +78,35 @@ viewMaterializationTests =
             ChoreographyFixtures.selectedColorGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.selectedColorGraph
-        assertBool
-          "expected selected fill access to compile a backgroundColor"
-          (any elementHasBackgroundColor (compiledRenderElements compiled))
+        case compiledRenderElements compiled of
+          element:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle element)
+            assertBool
+              "expected selected fill access to compile a backgroundColor"
+              (elementHasBackgroundColor element)
+            assertAttrsAbsent
+              [ "opacity"
+              , "zIndex"
+              , "padding"
+              , "fontSize"
+              , "borderRadius"
+              , "borderWidth"
+              ]
+              attrs
+          [] -> assertFailure "expected at least one compiled render element"
+    , testCase "selected scalar access adds and constrains style" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 15)
+            ChoreographyFixtures.selectedScalarGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.selectedScalarGraph
+        case compiledRenderElements compiled of
+          element:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle element)
+            Map.lookup "padding" attrs @?= Just (Compile.StylePixels 6)
+            assertAttrsAbsent ["fontSize", "opacity"] attrs
+          [] -> assertFailure "expected at least one compiled render element"
     , testCase "categorical style variables lower to concrete tokens" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -486,6 +512,11 @@ elementHasBackgroundColor element =
     _                           -> False
   where
     attrs = Compile.renderAttrs (Compile.renderStyle element)
+
+assertAttrsAbsent :: [String] -> Map.Map String Compile.StyleValue -> Assertion
+assertAttrsAbsent names attrs = mapM_ assertAbsent names
+  where
+    assertAbsent name = Map.lookup name attrs @?= Nothing
 
 assertStyleColor :: String -> Map.Map String Compile.StyleValue -> Assertion
 assertStyleColor name attrs =

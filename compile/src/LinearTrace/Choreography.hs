@@ -284,16 +284,12 @@ import           LinearTrace.View.Access               (CategoryAccess,
                                                         LayoutAttr (..),
                                                         StyleCategoryAttr (..),
                                                         StyleColorAttr (..),
-                                                        StyleFreeAttr (..),
-                                                        StyleLayoutAttr (..),
-                                                        StyleUnitAttr (..),
+                                                        StyleScalarAttr (..),
                                                         ValueAccess,
                                                         layoutValueAccess,
                                                         styleCategoryValueAccess,
                                                         styleColorPartValueAccess,
-                                                        styleFreeValueAccess,
-                                                        styleLayoutValueAccess,
-                                                        styleUnitValueAccess)
+                                                        styleScalarValueAccess)
 import qualified LinearTrace.View.Patch                as VP
 import           LinearTrace.View.Primitives           (Angle, Bounds (..),
                                                         BoundsExpr, Color, Free,
@@ -2044,47 +2040,48 @@ instance Opacity Unit (NodeRecipe ()) where
 
 instance Opacity (Selected tag) (SelectionValue Unit tag) where
   opacity selection =
-    SelectionValue selection (styleUnitValueAccess StyleOpacity)
+    SelectionValue selection (styleScalarValueAccess StyleOpacity)
 
 instance ZIndex Free (NodeRecipe ()) where
   zIndex value = setStyleWith (VS.setZIndex value)
 
 instance ZIndex (Selected tag) (SelectionValue Free tag) where
-  zIndex selection = SelectionValue selection (styleFreeValueAccess StyleZIndex)
+  zIndex selection =
+    SelectionValue selection (styleScalarValueAccess StyleZIndex)
 
 instance FontSize Span (NodeRecipe ()) where
   fontSize value = setStyleWith (VS.setFontSize (spanExpr value))
 
 instance FontSize (Selected tag) (SelectionValue Span tag) where
   fontSize selection =
-    SelectionValue selection (styleLayoutValueAccess StyleFontSize)
+    SelectionValue selection (styleScalarValueAccess StyleFontSize)
 
 instance Padding Span (NodeRecipe ()) where
   padding value = setStyleWith (VS.setPadding (spanExpr value))
 
 instance Padding (Selected tag) (SelectionValue Span tag) where
   padding selection =
-    SelectionValue selection (styleLayoutValueAccess StylePadding)
+    SelectionValue selection (styleScalarValueAccess StylePadding)
 
 instance Radius Span (NodeRecipe ()) where
   radius value = setStyleWith (VS.setRadius (spanExpr value))
 
 instance Radius (Selected tag) (SelectionValue Span tag) where
   radius selection =
-    SelectionValue selection (styleLayoutValueAccess StyleRadius)
+    SelectionValue selection (styleScalarValueAccess StyleRadius)
 
 instance StrokeWidth Span (NodeRecipe ()) where
   strokeWidth value = setStyleWith (VS.setStrokeWidth (spanExpr value))
 
 instance StrokeWidth (Selected tag) (SelectionValue Span tag) where
   strokeWidth selection =
-    SelectionValue selection (styleLayoutValueAccess StyleStrokeWidth)
+    SelectionValue selection (styleScalarValueAccess StyleStrokeWidth)
 
 instance Alpha Unit (NodeRecipe ()) where
   alpha value = setStyleWith (VS.setAlpha value)
 
 instance Alpha (Selected tag) (SelectionValue Unit tag) where
-  alpha selection = SelectionValue selection (styleUnitValueAccess StyleAlpha)
+  alpha selection = SelectionValue selection (styleScalarValueAccess StyleAlpha)
 
 instance Fill Color (NodeRecipe ()) where
   fill value = setStyleWith (VS.setFill value)
