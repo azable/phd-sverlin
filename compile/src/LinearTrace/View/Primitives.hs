@@ -156,8 +156,6 @@ class HasBounds a where
   centerY x = top x @+@ (height x @/@ num 2)
   center :: a -> Vec2 Layout
   center x = Vec2 (centerX x) (centerY x)
-  position :: a -> Vec2 Layout
-  position x = Vec2 (left x) (top x)
   size :: a -> Vec2 Layout
   size x = Vec2 (width x) (height x)
 

@@ -114,6 +114,30 @@ viewMaterializationTests =
             Map.lookup "padding" attrs @?= Just (Compile.StylePixels 6)
             assertAttrsAbsent ["fontSize", "opacity"] attrs
           [] -> assertFailure "expected at least one compiled render element"
+    , testCase "center helper reads and writes node centers" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 16)
+            ChoreographyFixtures.centerGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.centerGraph
+        let assertCentered element = do
+              let style' = Compile.renderStyle element
+              assertNear "left" 80 (Compile.renderLeft style')
+              assertNear "top" 50 (Compile.renderTop style')
+              assertNear "width" 80 (Compile.renderWidth style')
+              assertNear "height" 80 (Compile.renderHeight style')
+            assertNear label expected actual =
+              assertBool
+                (label
+                   ++ " expected "
+                   ++ show expected
+                   ++ ", got "
+                   ++ show actual)
+                (abs (actual - expected) <= 0.01)
+        case compiledRenderElements compiled of
+          []       -> assertFailure "expected centered render elements"
+          elements -> mapM_ assertCentered elements
     , testCase "categorical style variables lower to concrete tokens" $ do
         solution <-
           Choreography.solveViewGraphWithSeed

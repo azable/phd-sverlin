@@ -146,6 +146,7 @@ module LinearTrace.Choreography
   , Height
   , X
   , Y
+  , Center(..)
   , ContentValue
   , asUnit
   , asCoord
@@ -156,7 +157,6 @@ module LinearTrace.Choreography
   , by
   , bindContent
   , bindInt
-  , center
   , content
   , payload
   , text
@@ -173,8 +173,6 @@ module LinearTrace.Choreography
   , num
   , fromInteger
   , fromRational
-  , pos
-  , position
   , render
   , right
   , style
@@ -630,7 +628,7 @@ instance ConstraintValue (SelectionValue value tag) where
     case selected of
       SelectionValue selection access -> selectedValueTerm selection access
 
-instance (ConstraintValue x, ConstraintValue y) => ConstraintValue (Vec2 x) where
+instance ConstraintValue x => ConstraintValue (Vec2 x) where
   valueTerm value =
     case value of
       Vec2 valueX valueY -> valueTerm valueX `appendValueTerm` valueTerm valueY
@@ -1571,6 +1569,10 @@ class X input output | input -> output, output -> input where
 class Y input output | input -> output, output -> input where
   y :: input -> output
 
+class Center input where
+  type CenterOutput input
+  center :: input -> CenterOutput input
+
 instance Left Coord (NodeRecipe ()) where
   left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
 
@@ -1619,21 +1621,20 @@ instance X (Selected tag) (SelectionValue Coord tag) where
 instance Y (Selected tag) (SelectionValue Coord tag) where
   y selection = SelectionValue selection (layoutValueAccess AttrCenterY)
 
-pos :: (Left input value, Top input value) => input -> Vec2 value
-pos selection = vec2 (left selection) (top selection)
+instance Center (Selected tag) where
+  type CenterOutput (Selected tag) = Vec2 (SelectionValue Coord tag)
+  center selection = vec2 (x selection) (y selection)
 
-center :: (X input value, Y input value) => input -> Vec2 value
-center selection = vec2 (x selection) (y selection)
+instance Center (Vec2 Coord) where
+  type CenterOutput (Vec2 Coord) = NodeRecipe ()
+  center value =
+    case value of
+      Vec2 valueX valueY -> do
+        x valueX
+        y valueY
 
 size :: (Width input value, Height input value) => input -> Vec2 value
 size selection = vec2 (width selection) (height selection)
-
-position :: Vec2 Coord -> NodeRecipe ()
-position value =
-  case value of
-    Vec2 valueX valueY -> do
-      x valueX
-      y valueY
 
 bounds :: BoundsExpr -> NodeRecipe ()
 bounds value =

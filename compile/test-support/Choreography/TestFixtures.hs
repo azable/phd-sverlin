@@ -20,6 +20,7 @@ module Choreography.TestFixtures
     -- | Concrete fixture graphs used by materialization/style tests.
     categoricalRelationGraph
   , categoricalStyleGraph
+  , centerGraph
   , selectedColorGraph
   , selectedScalarGraph
   , styledGraph
@@ -53,6 +54,9 @@ categoricalStyleGraph = buildGraph categoricalStyleSpec
 
 categoricalRelationGraph :: ViewGraph
 categoricalRelationGraph = buildGraph categoricalRelationSpec
+
+centerGraph :: ViewGraph
+centerGraph = buildGraph centerSpec
 
 styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
@@ -129,6 +133,20 @@ categoricalRelationSpec =
       width (by 80)
       height (by 80)
     ensure $ styleOf @FontFamily item .==. FontInter
+
+centerSpec :: MatchSpec
+centerSpec =
+  visualize $ do
+    Selected first <- select @TestValue (#item <&> payload (7 :: Int))
+    Selected second <- select @TestValue (#item <&> payload (8 :: Int))
+    render first $ do
+      width (by 80)
+      height (by 80)
+      center (vec2 (at 120) (at 90))
+    render second $ do
+      width (by 80)
+      height (by 80)
+    ensure $ center second .==. center first
 
 styledSpec :: MatchSpec
 styledSpec =

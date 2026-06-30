@@ -141,4 +141,4 @@ pnpm run format:haskell
 
 ## DSL Notes
 
-- Choreography style assignment uses `render selected $ do ...` for node patches and `style @Field ...` for individual style fields. Selected style constraints use `styleOf @Field selected`, keeping assignment distinct from `ensure`/`encourage` relations. Numeric variables use `variable @Span`/`variable @Angle`; categorical variables use `choice @FontFamily`.
+- Choreography style assignment uses `render selected $ do ...` for node patches and `style @Field ...` for individual style fields. Selected style constraints use `styleOf @Field selected`, keeping assignment distinct from `ensure`/`encourage` relations. Center positioning uses `center selected` in constraints and `center (vec2 x y)` inside `render`. Numeric variables use `variable @Span`/`variable @Angle`; categorical variables use `choice @FontFamily`.
