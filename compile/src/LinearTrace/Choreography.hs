@@ -111,7 +111,7 @@ module LinearTrace.Choreography
     -- 'LinearTrace.View' primitives, patches, style fields, and solver
     -- constraints.
     NodeRecipe
-  , Style
+  , NodeStyle
   , BorderStyle(..)
   , Bounds(..)
   , FontFamily(..)
@@ -275,21 +275,19 @@ import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View                      (BorderStyle (..),
                                                         FontFamily (..),
                                                         FontStyle (..),
-                                                        FontWeight (..), Style,
+                                                        FontWeight (..),
+                                                        NodeStyle,
                                                         TextAlign (..),
                                                         WhiteSpace (..))
 import qualified LinearTrace.View                      as V
 import           LinearTrace.View.Access               (CategoryAccess,
                                                         HslPart (..),
                                                         LayoutAttr (..),
-                                                        StyleCategoryAttr (..),
-                                                        StyleColorAttr (..),
-                                                        StyleScalarAttr (..),
                                                         ValueAccess,
                                                         layoutValueAccess,
                                                         styleCategoryValueAccess,
                                                         styleColorPartValueAccess,
-                                                        styleScalarValueAccess)
+                                                        styleValueAccess)
 import qualified LinearTrace.View.Patch                as VP
 import           LinearTrace.View.Primitives           (Angle, Bounds (..),
                                                         BoundsExpr, Color, Free,
@@ -478,7 +476,7 @@ data ContentSpec
   | BoundContent Binding
 
 data NodeSpec = NodeSpec
-  { nodeSpecStyleUpdate :: Style -> Style
+  { nodeSpecStyleUpdate :: NodeStyle -> NodeStyle
   , nodeSpecContent     :: Maybe ContentSpec
   , nodeSpecLeft        :: Maybe Coord
   , nodeSpecTop         :: Maybe Coord
@@ -707,7 +705,11 @@ emptyNodeSpec =
     , nodeSpecY = Nothing
     }
 
-composeStyleUpdates :: (Style -> Style) -> (Style -> Style) -> Style -> Style
+composeStyleUpdates ::
+     (NodeStyle -> NodeStyle)
+  -> (NodeStyle -> NodeStyle)
+  -> NodeStyle
+  -> NodeStyle
 composeStyleUpdates first second style0 = second (first style0)
 
 preferLater :: Maybe a -> Maybe a -> Maybe a
@@ -1997,15 +1999,15 @@ variableFrom rhs = emptyVisualizationBuilder (Variable rhs)
 class StyleTarget target result | target -> result where
   style :: target -> result
 
-instance StyleTarget (StyleRecipe ()) (Style -> Style) where
+instance StyleTarget (StyleRecipe ()) (NodeStyle -> NodeStyle) where
   style = styleDefinition
 
-styleDefinition :: StyleRecipe () -> Style -> Style
+styleDefinition :: StyleRecipe () -> NodeStyle -> NodeStyle
 styleDefinition recipe =
   case recipe of
     NodeRecipe () spec -> nodeSpecStyleUpdate spec
 
-setStyleWith :: (Style -> Style) -> NodeRecipe ()
+setStyleWith :: (NodeStyle -> NodeStyle) -> NodeRecipe ()
 setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
 
 class Opacity input output | input -> output, output -> input where
@@ -2039,49 +2041,44 @@ instance Opacity Unit (NodeRecipe ()) where
   opacity value = setStyleWith (VS.setOpacity value)
 
 instance Opacity (Selected tag) (SelectionValue Unit tag) where
-  opacity selection =
-    SelectionValue selection (styleScalarValueAccess StyleOpacity)
+  opacity selection = SelectionValue selection (styleValueAccess @VS.Opacity)
 
 instance ZIndex Free (NodeRecipe ()) where
   zIndex value = setStyleWith (VS.setZIndex value)
 
 instance ZIndex (Selected tag) (SelectionValue Free tag) where
-  zIndex selection =
-    SelectionValue selection (styleScalarValueAccess StyleZIndex)
+  zIndex selection = SelectionValue selection (styleValueAccess @VS.ZIndex)
 
 instance FontSize Span (NodeRecipe ()) where
   fontSize value = setStyleWith (VS.setFontSize (spanExpr value))
 
 instance FontSize (Selected tag) (SelectionValue Span tag) where
-  fontSize selection =
-    SelectionValue selection (styleScalarValueAccess StyleFontSize)
+  fontSize selection = SelectionValue selection (styleValueAccess @VS.FontSize)
 
 instance Padding Span (NodeRecipe ()) where
   padding value = setStyleWith (VS.setPadding (spanExpr value))
 
 instance Padding (Selected tag) (SelectionValue Span tag) where
-  padding selection =
-    SelectionValue selection (styleScalarValueAccess StylePadding)
+  padding selection = SelectionValue selection (styleValueAccess @VS.Padding)
 
 instance Radius Span (NodeRecipe ()) where
   radius value = setStyleWith (VS.setRadius (spanExpr value))
 
 instance Radius (Selected tag) (SelectionValue Span tag) where
-  radius selection =
-    SelectionValue selection (styleScalarValueAccess StyleRadius)
+  radius selection = SelectionValue selection (styleValueAccess @VS.Radius)
 
 instance StrokeWidth Span (NodeRecipe ()) where
   strokeWidth value = setStyleWith (VS.setStrokeWidth (spanExpr value))
 
 instance StrokeWidth (Selected tag) (SelectionValue Span tag) where
   strokeWidth selection =
-    SelectionValue selection (styleScalarValueAccess StyleStrokeWidth)
+    SelectionValue selection (styleValueAccess @VS.StrokeWidth)
 
 instance Alpha Unit (NodeRecipe ()) where
   alpha value = setStyleWith (VS.setAlpha value)
 
 instance Alpha (Selected tag) (SelectionValue Unit tag) where
-  alpha selection = SelectionValue selection (styleScalarValueAccess StyleAlpha)
+  alpha selection = SelectionValue selection (styleValueAccess @VS.Alpha)
 
 instance Fill Color (NodeRecipe ()) where
   fill value = setStyleWith (VS.setFill value)
@@ -2091,13 +2088,13 @@ instance Fill
            (Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)) where
   fill selection =
     Hsl
-      (SelectionValue selection (styleColorPartValueAccess StyleFill HslHue))
+      (SelectionValue selection (styleColorPartValueAccess @VS.Fill HslHue))
       (SelectionValue
          selection
-         (styleColorPartValueAccess StyleFill HslSaturation))
+         (styleColorPartValueAccess @VS.Fill HslSaturation))
       (SelectionValue
          selection
-         (styleColorPartValueAccess StyleFill HslLightness))
+         (styleColorPartValueAccess @VS.Fill HslLightness))
 
 instance Stroke Color (NodeRecipe ()) where
   stroke value = setStyleWith (VS.setStroke value)
@@ -2107,13 +2104,13 @@ instance Stroke
            (Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)) where
   stroke selection =
     Hsl
-      (SelectionValue selection (styleColorPartValueAccess StyleStroke HslHue))
+      (SelectionValue selection (styleColorPartValueAccess @VS.Stroke HslHue))
       (SelectionValue
          selection
-         (styleColorPartValueAccess StyleStroke HslSaturation))
+         (styleColorPartValueAccess @VS.Stroke HslSaturation))
       (SelectionValue
          selection
-         (styleColorPartValueAccess StyleStroke HslLightness))
+         (styleColorPartValueAccess @VS.Stroke HslLightness))
 
 sat :: Hsl hue unit -> unit
 sat = saturation
@@ -2132,16 +2129,19 @@ instance VS.StyleCategoryType value =>
 
 styleCategoryRecipe ::
      CategoricalStyleValue value input
-  => (VS.StyleCategory value -> Style -> Style)
+  => (VS.StyleCategory value -> NodeStyle -> NodeStyle)
   -> input
   -> NodeRecipe ()
 styleCategoryRecipe setCategory value =
   setStyleWith (setCategory (styleCategoryValue value))
 
 selectedCategory ::
-     Selected tag -> StyleCategoryAttr value -> SelectionCategory value tag
-selectedCategory selection attr =
-  SelectionCategory selection (styleCategoryValueAccess attr)
+     forall field value tag.
+     (VS.StyleField field, VS.StyleValue field ~ VS.StyleCategory value)
+  => Selected tag
+  -> SelectionCategory value tag
+selectedCategory selection =
+  SelectionCategory selection (styleCategoryValueAccess @field)
 
 class FontFamilyStyle input output | input -> output where
   fontFamily :: input -> output
@@ -2153,7 +2153,7 @@ instance FontFamilyStyle (Categorical FontFamily) (NodeRecipe ()) where
   fontFamily = styleCategoryRecipe VS.setFontFamily
 
 instance FontFamilyStyle (Selected tag) (SelectionCategory FontFamily tag) where
-  fontFamily selection = selectedCategory selection StyleFontFamily
+  fontFamily = selectedCategory @FontFamily
 
 class FontWeightStyle input output | input -> output where
   fontWeight :: input -> output
@@ -2165,7 +2165,7 @@ instance FontWeightStyle (Categorical FontWeight) (NodeRecipe ()) where
   fontWeight = styleCategoryRecipe VS.setFontWeight
 
 instance FontWeightStyle (Selected tag) (SelectionCategory FontWeight tag) where
-  fontWeight selection = selectedCategory selection StyleFontWeight
+  fontWeight = selectedCategory @FontWeight
 
 class FontStyleStyle input output | input -> output where
   fontStyle :: input -> output
@@ -2177,7 +2177,7 @@ instance FontStyleStyle (Categorical FontStyle) (NodeRecipe ()) where
   fontStyle = styleCategoryRecipe VS.setFontStyle
 
 instance FontStyleStyle (Selected tag) (SelectionCategory FontStyle tag) where
-  fontStyle selection = selectedCategory selection StyleFontStyle
+  fontStyle = selectedCategory @FontStyle
 
 class TextAlignStyle input output | input -> output where
   textAlign :: input -> output
@@ -2189,7 +2189,7 @@ instance TextAlignStyle (Categorical TextAlign) (NodeRecipe ()) where
   textAlign = styleCategoryRecipe VS.setTextAlign
 
 instance TextAlignStyle (Selected tag) (SelectionCategory TextAlign tag) where
-  textAlign selection = selectedCategory selection StyleTextAlign
+  textAlign = selectedCategory @TextAlign
 
 class BorderStyleStyle input output | input -> output where
   borderStyle :: input -> output
@@ -2201,7 +2201,7 @@ instance BorderStyleStyle (Categorical BorderStyle) (NodeRecipe ()) where
   borderStyle = styleCategoryRecipe VS.setBorderStyle
 
 instance BorderStyleStyle (Selected tag) (SelectionCategory BorderStyle tag) where
-  borderStyle selection = selectedCategory selection StyleBorderStyle
+  borderStyle = selectedCategory @BorderStyle
 
 class WhiteSpaceStyle input output | input -> output where
   whiteSpace :: input -> output
@@ -2213,7 +2213,7 @@ instance WhiteSpaceStyle (Categorical WhiteSpace) (NodeRecipe ()) where
   whiteSpace = styleCategoryRecipe VS.setWhiteSpace
 
 instance WhiteSpaceStyle (Selected tag) (SelectionCategory WhiteSpace tag) where
-  whiteSpace selection = selectedCategory selection StyleWhiteSpace
+  whiteSpace = selectedCategory @WhiteSpace
 
 bold :: NodeRecipe ()
 bold = fontWeight FontWeightBold
@@ -2409,9 +2409,9 @@ nodePatch bindings recipe =
               (nodeSpecY spec)
         }
 
-substituteStyleBindings :: MatchBindings -> Style -> Style
+substituteStyleBindings :: MatchBindings -> NodeStyle -> NodeStyle
 substituteStyleBindings bindings =
-  VS.mapStyleExprs
+  VS.mapNodeStyleExprs
     (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
 
 substituteCoordBindings :: MatchBindings -> Coord -> Coord

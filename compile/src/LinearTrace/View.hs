@@ -55,10 +55,10 @@ module LinearTrace.View
   , viewChoiceConstraints
   , viewRenderFrames
   , -- * Styles
-    -- | Public symbolic style and primitive value names needed by the DSL.
+    -- | Public symbolic node style and primitive value names needed by the DSL.
     -- Concrete style lowering is deliberately kept in
     -- 'LinearTrace.View.Materialize'.
-    Style
+    NodeStyle
   , Bounds(..)
   , BoundsExpr
   , Hsl(..)
@@ -103,6 +103,6 @@ import           LinearTrace.View.Build
 import           LinearTrace.View.Graph
 import           LinearTrace.View.Primitives
 import           LinearTrace.View.Solve
-import           LinearTrace.View.Style
+import           LinearTrace.View.Style      hiding (mapNodeStyleExprLeaves)
 import           LinearTrace.View.Types
 import           Solver                      (Constraint, Expr, RandomSeed (..))

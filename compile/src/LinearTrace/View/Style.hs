@@ -1,13 +1,16 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 
--- | Symbolic style schema for the view layer. Choreography uses the setters as
--- the public DSL surface; build/solve/materialize use the field specs and
--- constraints to lower styles through the solver and into concrete CSS values.
+-- | Symbolic node style schema for the view layer. A 'NodeStyle' contains
+-- required bounds plus optional style fields. This module is the field
+-- catalogue: each supported field defines its symbolic value, constraints, and
+-- materialization behavior through the 'StyleField' class.
 module LinearTrace.View.Style
   ( -- * Style values
     -- | CSS-like fixed style tokens and text values. These stay independent of
@@ -20,25 +23,40 @@ module LinearTrace.View.Style
   , WhiteSpace(..)
   , StyleCategoryType(..)
   , StyleCategory(..)
-  , -- * Unified style representation
-    -- | Internal style field model shared by build constraints, choice solving,
-    -- and materialization. Callers should prefer the named setters/accessors
-    -- unless they are part of those lowering phases.
-    Style
-  , styleWithBounds
-  , HasStyle(..)
-  , StyleValueUnit(..)
-  , StyleScalarSpec(..)
-  , StyleAttrSpec(..)
-  , StyleCategorySpec(..)
+  , -- * Field markers
+    -- | Type-level names for supported optional node-style fields.
+    Opacity
+  , ZIndex
+  , Padding
+  , FontSize
+  , Radius
+  , StrokeWidth
+  , Alpha
+  , Fill
+  , Stroke
+  , -- * Node style representation
+    -- | Internal style model shared by graph construction, access lowering,
+    -- solving, and materialization. Callers should prefer named setters and
+    -- accessors unless they are implementing those lowering phases.
+    NodeStyle
+  , nodeStyleWithBounds
+  , nodeStyleBounds
+  , nodeStyleFields
+  , AnyStyleField(..)
   , StyleField(..)
-  , styleBounds
-  , styleFields
-  , mapStyleExprs
-  , mapStyleExprLeaves
-  , solvedStyleExprs
-  , styleConstraints
-  , styleCategoryConstraints
+  , StyleValueVars(..)
+  , StyleValueUnit(..)
+  , ConcreteStyleField(..)
+  , ConcreteStyleValue(..)
+  , getStyleField
+  , setStyleField
+  , requireStyleField
+  , mapNodeStyleExprs
+  , mapNodeStyleExprLeaves
+  , solvedNodeStyleExprs
+  , nodeStyleConstraints
+  , nodeStyleChoiceConstraints
+  , materializeAnyStyleField
   , -- * Public style accessors/setters
     -- | Named style accessors and setters used by choreography and view access.
     -- These are the intended API for manipulating symbolic style values.
@@ -76,8 +94,9 @@ module LinearTrace.View.Style
 
 import           Data.Kind                   (Type)
 import           Data.Maybe                  (mapMaybe)
+import           Data.Proxy                  (Proxy (..))
 import           Data.Type.Equality          ((:~:) (..))
-import           Data.Typeable               (Typeable, cast)
+import           Data.Typeable               (Typeable, eqT)
 import           LinearTrace.View.Primitives
 import           Prelude
 import           Solver                      hiding (num)
@@ -246,7 +265,7 @@ instance StyleCategoryType WhiteSpace where
   styleCategoryToken = whiteSpaceToken
 
 --------------------------------------------------------------------------------
--- Unified style representation
+-- Node style representation
 --------------------------------------------------------------------------------
 data StyleValueUnit
   = StyleNumber
@@ -254,104 +273,130 @@ data StyleValueUnit
   | StyleHidden
   deriving (Eq, Show)
 
-data StyleScalarSpec = StyleScalarSpec
-  { styleScalarName         :: String
-  , styleScalarAttrName     :: Maybe String
-  , styleScalarInitialRange :: Maybe Range
-  , styleScalarValueUnit    :: StyleValueUnit
-  , styleScalarConstraints  :: [Constraint]
-  }
-
-data StyleScalarKind ty where
-  StyleFreeScalar :: StyleScalarKind FreeDomain
-  StyleLayoutScalar :: StyleScalarKind LayoutDomain
-  StyleUnitScalar :: StyleScalarKind UnitDomain
-  StyleAngleScalar :: StyleScalarKind AngleDomain
-
-sameStyleScalarKind ::
-     StyleScalarKind lhs -> StyleScalarKind rhs -> Maybe (lhs :~: rhs)
-sameStyleScalarKind lhs rhs =
-  case (lhs, rhs) of
-    (StyleFreeScalar, StyleFreeScalar)     -> Just Refl
-    (StyleLayoutScalar, StyleLayoutScalar) -> Just Refl
-    (StyleUnitScalar, StyleUnitScalar)     -> Just Refl
-    (StyleAngleScalar, StyleAngleScalar)   -> Just Refl
-    _                                      -> Nothing
-
-data StyleAttrSpec = StyleAttrSpec
-  { styleAttrName    :: String
-  , styleAttrCssName :: Maybe String
-  }
-
 data StyleCategory value
   = FixedCategory value
   | VariableCategory (Choice value)
   deriving (Eq, Show)
 
-data StyleCategorySpec value = StyleCategorySpec
-  { styleCategoryName         :: String
-  , styleCategoryAttrName     :: Maybe String
-  , styleCategoryDomainValues :: [value]
-  , styleCategoryValueToken   :: value -> String
+data StyleValueVars = StyleValueVars
+  { styleExprVar :: forall (ty :: Type). SymbolicType ty =>
+                                           [String] -> String -> Expr ty
+  , styleChoiceVar :: forall value. StyleCategoryType value =>
+                                      String -> Choice value
   }
 
-data StyleField where
-  StyleScalarField
-    :: SymbolicType ty=> StyleScalarKind ty
-    -> StyleScalarSpec
-    -> Expr ty
-    -> StyleField
-  StyleColorField :: StyleAttrSpec -> ColorExpr -> StyleField
-  StyleCategoryField
-    :: StyleCategoryType value=> StyleCategorySpec value
-    -> StyleCategory value
-    -> StyleField
+data ConcreteStyleValue
+  = ConcreteScalar Double StyleValueUnit
+  | ConcreteColor ConcreteHsl
+  | ConcreteToken String
+  deriving (Eq, Show)
 
-fieldName :: StyleField -> String
-fieldName field =
+data ConcreteStyleField = ConcreteStyleField
+  { concreteStyleFieldName    :: String
+  , concreteStyleFieldCssName :: Maybe String
+  , concreteStyleFieldValue   :: ConcreteStyleValue
+  } deriving (Eq, Show)
+
+class Typeable field =>
+      StyleField (field :: Type)
+  where
+  type StyleValue field
+  styleFieldName :: Proxy field -> String
+  styleFieldCssName :: Proxy field -> Maybe String
+  styleFieldCssName proxy = Just (styleFieldName proxy)
+  generatedStyleValue :: Proxy field -> StyleValueVars -> StyleValue field
+  mapStyleValueExprs ::
+       (forall (ty :: Type). Expr ty -> Expr ty)
+    -> StyleValue field
+    -> StyleValue field
+  styleValueExprLeaves :: Proxy field -> StyleValue field -> [StyleExprLeaf]
+  styleValueConstraints :: Proxy field -> StyleValue field -> [Constraint]
+  styleValueConstraints _ _ = []
+  styleValueChoices :: Proxy field -> StyleValue field -> [ChoiceConstraint]
+  styleValueChoices _ _ = []
+  materializeStyleValue ::
+       Proxy field
+    -> Solution
+    -> StyleValue field
+    -> Either String ConcreteStyleValue
+
+data AnyStyleField where
+  AnyStyleField
+    :: StyleField field => Proxy field -> StyleValue field -> AnyStyleField
+
+anyStyleFieldName :: AnyStyleField -> String
+anyStyleFieldName field =
   case field of
-    StyleScalarField _ spec _ -> styleScalarName spec
-    StyleColorField spec _    -> styleAttrName spec
-    StyleCategoryField spec _ -> styleCategoryName spec
+    AnyStyleField proxy _ -> styleFieldName proxy
 
-data Style = Style
-  { styleBounds :: BoundsExpr
-  , styleFields :: [StyleField]
+data NodeStyle = NodeStyle
+  { nodeStyleBounds :: BoundsExpr
+  , nodeStyleFields :: [AnyStyleField]
   }
 
-styleWithBounds :: BoundsExpr -> Style
-styleWithBounds bounds = Style {styleBounds = bounds, styleFields = []}
+nodeStyleWithBounds :: BoundsExpr -> NodeStyle
+nodeStyleWithBounds bounds =
+  NodeStyle {nodeStyleBounds = bounds, nodeStyleFields = []}
 
-instance HasBounds Style where
-  top = top . styleBounds
-  left = left . styleBounds
-  width = width . styleBounds
-  height = height . styleBounds
+instance HasBounds NodeStyle where
+  top = top . nodeStyleBounds
+  left = left . nodeStyleBounds
+  width = width . nodeStyleBounds
+  height = height . nodeStyleBounds
 
-class HasStyle a where
-  style :: a -> Style
+getStyleField ::
+     forall field. StyleField field
+  => NodeStyle
+  -> Maybe (StyleValue field)
+getStyleField style' = go (nodeStyleFields style')
+  where
+    go fields =
+      case fields of
+        [] -> Nothing
+        AnyStyleField (_ :: Proxy other) value:rest ->
+          case eqT @field @other of
+            Just Refl -> Just value
+            Nothing   -> go rest
 
-instance HasStyle Style where
-  style = id
-
-setStyleField :: StyleField -> Style -> Style
-setStyleField newField style' =
-  style' {styleFields = replaceByName fieldName newField (styleFields style')}
-
-mapStyleExprs :: (forall (ty :: Type). Expr ty -> Expr ty) -> Style -> Style
-mapStyleExprs f style' =
-  Style
-    { styleBounds = fmap f (styleBounds style')
-    , styleFields = map (mapStyleFieldExprs f) (styleFields style')
+setStyleField ::
+     forall field. StyleField field
+  => StyleValue field
+  -> NodeStyle
+  -> NodeStyle
+setStyleField value style' =
+  style'
+    { nodeStyleFields =
+        replaceByName
+          anyStyleFieldName
+          (AnyStyleField (Proxy :: Proxy field) value)
+          (nodeStyleFields style')
     }
 
-mapStyleFieldExprs ::
-     (forall (ty :: Type). Expr ty -> Expr ty) -> StyleField -> StyleField
-mapStyleFieldExprs f field =
+requireStyleField ::
+     forall field. StyleField field
+  => StyleValueVars
+  -> NodeStyle
+  -> NodeStyle
+requireStyleField vars style' =
+  case getStyleField @field style' of
+    Just _ -> style'
+    Nothing ->
+      setStyleField @field (generatedStyleValue (Proxy @field) vars) style'
+
+mapNodeStyleExprs ::
+     (forall (ty :: Type). Expr ty -> Expr ty) -> NodeStyle -> NodeStyle
+mapNodeStyleExprs f style' =
+  NodeStyle
+    { nodeStyleBounds = fmap f (nodeStyleBounds style')
+    , nodeStyleFields = map (mapAnyStyleFieldExprs f) (nodeStyleFields style')
+    }
+
+mapAnyStyleFieldExprs ::
+     (forall (ty :: Type). Expr ty -> Expr ty) -> AnyStyleField -> AnyStyleField
+mapAnyStyleFieldExprs f field =
   case field of
-    StyleScalarField kind spec expr -> StyleScalarField kind spec (f expr)
-    StyleColorField spec hsl        -> StyleColorField spec (fmap f hsl)
-    StyleCategoryField _ _          -> field
+    AnyStyleField (proxy :: Proxy field) value ->
+      AnyStyleField proxy (mapStyleValueExprs @field f value)
 
 replaceByName :: (a -> String) -> a -> [a] -> [a]
 replaceByName getName newValue = go
@@ -365,41 +410,35 @@ replaceByName getName newValue = go
           | otherwise -> x : go rest
 
 --------------------------------------------------------------------------------
--- Style inspection
+-- Style inspection and lowering
 --------------------------------------------------------------------------------
 data StyleExprLeaf where
   StyleExprLeaf :: String -> Expr (ty :: Type) -> StyleExprLeaf
 
-styleExprLeaves :: Style -> [StyleExprLeaf]
-styleExprLeaves style' =
+nodeStyleExprLeaves :: NodeStyle -> [StyleExprLeaf]
+nodeStyleExprLeaves style' =
   [ StyleExprLeaf "top" (top style')
   , StyleExprLeaf "left" (left style')
   , StyleExprLeaf "width" (width style')
   , StyleExprLeaf "height" (height style')
   ]
-    ++ concatMap fieldExprLeaves (styleFields style')
+    ++ concatMap anyStyleFieldExprLeaves (nodeStyleFields style')
 
-fieldExprLeaves :: StyleField -> [StyleExprLeaf]
-fieldExprLeaves field =
+anyStyleFieldExprLeaves :: AnyStyleField -> [StyleExprLeaf]
+anyStyleFieldExprLeaves field =
   case field of
-    StyleScalarField _ spec expr -> [StyleExprLeaf (styleScalarName spec) expr]
-    StyleColorField spec hsl ->
-      [ StyleExprLeaf (styleAttrName spec ++ ".hue") (hue hsl)
-      , StyleExprLeaf (styleAttrName spec ++ ".saturation") (saturation hsl)
-      , StyleExprLeaf (styleAttrName spec ++ ".lightness") (lightness hsl)
-      ]
-    StyleCategoryField _ _ -> []
+    AnyStyleField proxy value -> styleValueExprLeaves proxy value
 
-mapStyleExprLeaves ::
-     (forall (ty :: Type). String -> Expr ty -> a) -> Style -> [a]
-mapStyleExprLeaves f style' = map go (styleExprLeaves style')
+mapNodeStyleExprLeaves ::
+     (forall (ty :: Type). String -> Expr ty -> a) -> NodeStyle -> [a]
+mapNodeStyleExprLeaves f style' = map go (nodeStyleExprLeaves style')
   where
     go leaf =
       case leaf of
         StyleExprLeaf name expr -> f name expr
 
-solvedStyleExprs :: Solution -> Style -> [(String, Double)]
-solvedStyleExprs solution = mapMaybe solveLeaf . styleExprLeaves
+solvedNodeStyleExprs :: Solution -> NodeStyle -> [(String, Double)]
+solvedNodeStyleExprs solution = mapMaybe solveLeaf . nodeStyleExprLeaves
   where
     solveLeaf leaf =
       case leaf of
@@ -408,385 +447,435 @@ solvedStyleExprs solution = mapMaybe solveLeaf . styleExprLeaves
             Nothing    -> Nothing
             Just value -> Just (name, value)
 
-styleConstraints :: Style -> [Constraint]
-styleConstraints style' = concatMap fieldConstraints (styleFields style')
+nodeStyleConstraints :: NodeStyle -> [Constraint]
+nodeStyleConstraints style' =
+  concatMap anyStyleFieldConstraints (nodeStyleFields style')
 
-styleCategoryConstraints :: Style -> [ChoiceConstraint]
-styleCategoryConstraints style' =
-  concatMap fieldCategoryConstraints (styleFields style')
-
-fieldConstraints :: StyleField -> [Constraint]
-fieldConstraints field =
+anyStyleFieldConstraints :: AnyStyleField -> [Constraint]
+anyStyleFieldConstraints field =
   case field of
-    StyleScalarField _ spec expr -> scalarConstraints spec expr
-    StyleColorField _ hsl ->
-      [ within (hue hsl) angleRange
-      , within (saturation hsl) unitRange
-      , within (lightness hsl) unitRange
-      ]
-    StyleCategoryField _ _ -> []
+    AnyStyleField proxy value -> styleValueConstraints proxy value
 
-fieldCategoryConstraints :: StyleField -> [ChoiceConstraint]
-fieldCategoryConstraints field =
+nodeStyleChoiceConstraints :: NodeStyle -> [ChoiceConstraint]
+nodeStyleChoiceConstraints style' =
+  concatMap anyStyleFieldChoices (nodeStyleFields style')
+
+anyStyleFieldChoices :: AnyStyleField -> [ChoiceConstraint]
+anyStyleFieldChoices field =
   case field of
-    StyleCategoryField _ value ->
-      case value of
-        FixedCategory _           -> []
-        VariableCategory selected -> [freeChoice selected]
-    _ -> []
+    AnyStyleField proxy value -> styleValueChoices proxy value
+
+materializeAnyStyleField ::
+     Solution -> AnyStyleField -> Either String ConcreteStyleField
+materializeAnyStyleField solution field =
+  case field of
+    AnyStyleField proxy value ->
+      ConcreteStyleField (styleFieldName proxy) (styleFieldCssName proxy)
+        <$> materializeStyleValue proxy solution value
+
+--------------------------------------------------------------------------------
+-- Field helpers
+--------------------------------------------------------------------------------
+scalarExpr ::
+     forall field (ty :: Type). (StyleField field, SymbolicType ty)
+  => Proxy field
+  -> StyleValueVars
+  -> Expr ty
+scalarExpr proxy vars = styleExprVar vars [] (styleFieldName proxy)
+
+scalarLeaves ::
+     forall field (ty :: Type). StyleField field
+  => Proxy field
+  -> Expr ty
+  -> [StyleExprLeaf]
+scalarLeaves proxy expr = [StyleExprLeaf (styleFieldName proxy) expr]
 
 scalarConstraints ::
-     SymbolicType ty => StyleScalarSpec -> Expr ty -> [Constraint]
-scalarConstraints spec expr =
-  case styleScalarInitialRange spec of
-    Just range -> within expr range : styleScalarConstraints spec
-    Nothing    -> styleScalarConstraints spec
-
---------------------------------------------------------------------------------
--- Constraint helpers used by attributes
---------------------------------------------------------------------------------
-noConstraints :: Expr ty -> [Constraint]
-noConstraints _ = []
-
-nonNegativeConstraints :: SymbolicType ty => Expr ty -> [Constraint]
-nonNegativeConstraints expr = [num 0 @<=@ expr]
-
---------------------------------------------------------------------------------
--- Field constructors
---------------------------------------------------------------------------------
-scalarField ::
-     SymbolicType ty
-  => StyleScalarKind ty
-  -> String
-  -> Maybe String
-  -> StyleValueUnit
-  -> Maybe Range
+     forall (ty :: Type). SymbolicType ty
+  => Maybe Range
   -> (Expr ty -> [Constraint])
   -> Expr ty
-  -> StyleField
-scalarField kind name cssName unit range constraints expr =
-  StyleScalarField
-    kind
-    StyleScalarSpec
-      { styleScalarName = name
-      , styleScalarAttrName = cssName
-      , styleScalarInitialRange = range
-      , styleScalarValueUnit = unit
-      , styleScalarConstraints = constraints expr
-      }
-    expr
+  -> [Constraint]
+scalarConstraints range extra expr =
+  case range of
+    Just range' -> within expr range' : extra expr
+    Nothing     -> extra expr
 
-attrSpec :: String -> Maybe String -> StyleAttrSpec
-attrSpec name cssName =
-  StyleAttrSpec {styleAttrName = name, styleAttrCssName = cssName}
+materializeScalar ::
+     forall field (ty :: Type). StyleField field
+  => Proxy field
+  -> StyleValueUnit
+  -> Solution
+  -> Expr ty
+  -> Either String ConcreteStyleValue
+materializeScalar proxy unit solution expr =
+  ConcreteScalar
+    <$> requireSolvedExpr solution (styleFieldName proxy) expr
+    <*> pure unit
 
-categorySpec ::
-     StyleCategoryType value
-  => String
-  -> Maybe String
-  -> StyleCategorySpec value
-categorySpec name attrName =
-  StyleCategorySpec
-    { styleCategoryName = name
-    , styleCategoryAttrName = attrName
-    , styleCategoryDomainValues = styleCategoryDomain
-    , styleCategoryValueToken = styleCategoryToken
-    }
+noConstraints :: forall (ty :: Type). Expr ty -> [Constraint]
+noConstraints _ = []
 
-categoryField ::
-     StyleCategoryType value
-  => StyleCategorySpec value
+nonNegativeConstraints ::
+     forall (ty :: Type). SymbolicType ty
+  => Expr ty
+  -> [Constraint]
+nonNegativeConstraints expr = [num 0 @<=@ expr]
+
+colorValue :: StyleField field => Proxy field -> StyleValueVars -> ColorExpr
+colorValue proxy vars =
+  Hsl
+    (styleExprVar vars [styleFieldName proxy] "hue")
+    (styleExprVar vars [styleFieldName proxy] "saturation")
+    (styleExprVar vars [styleFieldName proxy] "lightness")
+
+colorLeaves :: StyleField field => Proxy field -> ColorExpr -> [StyleExprLeaf]
+colorLeaves proxy hsl =
+  [ StyleExprLeaf (styleFieldName proxy ++ ".hue") (hue hsl)
+  , StyleExprLeaf (styleFieldName proxy ++ ".saturation") (saturation hsl)
+  , StyleExprLeaf (styleFieldName proxy ++ ".lightness") (lightness hsl)
+  ]
+
+mapColorExprs ::
+     (forall (ty :: Type). Expr ty -> Expr ty) -> ColorExpr -> ColorExpr
+mapColorExprs f hsl = Hsl (f (hue hsl)) (f (saturation hsl)) (f (lightness hsl))
+
+colorConstraints :: ColorExpr -> [Constraint]
+colorConstraints hsl =
+  [ within (hue hsl) angleRange
+  , within (saturation hsl) unitRange
+  , within (lightness hsl) unitRange
+  ]
+
+materializeColor :: Solution -> ColorExpr -> Either String ConcreteStyleValue
+materializeColor solution hsl =
+  ConcreteColor
+    <$> (Hsl
+           <$> requireSolvedExpr solution "hue" (hue hsl)
+           <*> requireSolvedExpr solution "saturation" (saturation hsl)
+           <*> requireSolvedExpr solution "lightness" (lightness hsl))
+
+categoryValue ::
+     forall value field. (StyleField field, StyleCategoryType value)
+  => Proxy field
+  -> StyleValueVars
   -> StyleCategory value
-  -> StyleField
-categoryField = StyleCategoryField
+categoryValue proxy vars =
+  VariableCategory (styleChoiceVar vars (styleFieldName proxy))
 
---------------------------------------------------------------------------------
--- Attribute: opacity
---------------------------------------------------------------------------------
-opacityField :: UnitExpr -> StyleField
-opacityField =
-  scalarField
-    StyleUnitScalar
-    "opacity"
-    (Just "opacity")
-    StyleNumber
-    (Just unitRange)
-    noConstraints
+categoryChoices :: StyleCategory value -> [ChoiceConstraint]
+categoryChoices value =
+  case value of
+    FixedCategory _           -> []
+    VariableCategory selected -> [freeChoice selected]
 
-opacity :: HasStyle a => a -> Maybe UnitExpr
-opacity value = lookupScalarField StyleUnitScalar "opacity" (style value)
+materializeCategory ::
+     StyleCategoryType value
+  => Proxy field
+  -> Solution
+  -> StyleCategory value
+  -> Either String ConcreteStyleValue
+materializeCategory _ solution value =
+  ConcreteToken . styleCategoryToken
+    <$> case value of
+          FixedCategory fixed -> Right fixed
+          VariableCategory selected -> do
+            selectedCategory <-
+              maybe
+                (Left
+                   "could not materialize a style category from the solver solution")
+                Right
+                (evalChoice solution selected)
+            requireCategoryValue (categoryName selectedCategory)
 
-setOpacity :: UnitExpr -> Style -> Style
-setOpacity = setStyleField . opacityField
-
---------------------------------------------------------------------------------
--- Attribute: zIndex
---------------------------------------------------------------------------------
-zIndexField :: FreeExpr -> StyleField
-zIndexField =
-  scalarField
-    StyleFreeScalar
-    "zIndex"
-    (Just "zIndex")
-    StyleNumber
-    (Just (Range (-10) 10))
-    noConstraints
-
-zIndex :: HasStyle a => a -> Maybe FreeExpr
-zIndex value = lookupScalarField StyleFreeScalar "zIndex" (style value)
-
-setZIndex :: FreeExpr -> Style -> Style
-setZIndex = setStyleField . zIndexField
-
---------------------------------------------------------------------------------
--- Attribute: padding
---------------------------------------------------------------------------------
-paddingField :: LayoutExpr -> StyleField
-paddingField =
-  scalarField
-    StyleLayoutScalar
-    "padding"
-    (Just "padding")
-    StylePixels
-    (Just (Range 0 24))
-    nonNegativeConstraints
-
-padding :: HasStyle a => a -> Maybe LayoutExpr
-padding value = lookupScalarField StyleLayoutScalar "padding" (style value)
-
-setPadding :: LayoutExpr -> Style -> Style
-setPadding = setStyleField . paddingField
-
---------------------------------------------------------------------------------
--- Attribute: fontSize
---------------------------------------------------------------------------------
-fontSizeField :: LayoutExpr -> StyleField
-fontSizeField =
-  scalarField
-    StyleLayoutScalar
-    "fontSize"
-    (Just "fontSize")
-    StylePixels
-    (Just (Range 8 48))
-    nonNegativeConstraints
-
-fontSize :: HasStyle a => a -> Maybe LayoutExpr
-fontSize value = lookupScalarField StyleLayoutScalar "fontSize" (style value)
-
-setFontSize :: LayoutExpr -> Style -> Style
-setFontSize = setStyleField . fontSizeField
-
---------------------------------------------------------------------------------
--- Attribute: radius
---------------------------------------------------------------------------------
-radiusField :: LayoutExpr -> StyleField
-radiusField =
-  scalarField
-    StyleLayoutScalar
-    "radius"
-    (Just "borderRadius")
-    StylePixels
-    (Just (Range 0 32))
-    nonNegativeConstraints
-
-radius :: HasStyle a => a -> Maybe LayoutExpr
-radius value = lookupScalarField StyleLayoutScalar "radius" (style value)
-
-setRadius :: LayoutExpr -> Style -> Style
-setRadius = setStyleField . radiusField
-
---------------------------------------------------------------------------------
--- Attribute: strokeWidth
---------------------------------------------------------------------------------
-strokeWidthField :: LayoutExpr -> StyleField
-strokeWidthField =
-  scalarField
-    StyleLayoutScalar
-    "strokeWidth"
-    (Just "borderWidth")
-    StylePixels
-    (Just (Range 0 8))
-    nonNegativeConstraints
-
-strokeWidth :: HasStyle a => a -> Maybe LayoutExpr
-strokeWidth value =
-  lookupScalarField StyleLayoutScalar "strokeWidth" (style value)
-
-setStrokeWidth :: LayoutExpr -> Style -> Style
-setStrokeWidth = setStyleField . strokeWidthField
-
---------------------------------------------------------------------------------
--- Attribute: alpha
---------------------------------------------------------------------------------
-alphaField :: UnitExpr -> StyleField
-alphaField =
-  scalarField
-    StyleUnitScalar
-    "alpha"
-    Nothing
-    StyleHidden
-    (Just unitRange)
-    noConstraints
-
-alpha :: HasStyle a => a -> Maybe UnitExpr
-alpha value = lookupScalarField StyleUnitScalar "alpha" (style value)
-
-setAlpha :: UnitExpr -> Style -> Style
-setAlpha = setStyleField . alphaField
-
---------------------------------------------------------------------------------
--- Attribute: fill
---------------------------------------------------------------------------------
-fillField :: ColorExpr -> StyleField
-fillField = StyleColorField (attrSpec "fill" (Just "backgroundColor"))
-
-fill :: HasStyle a => a -> Maybe ColorExpr
-fill value = lookupColorField "fill" (style value)
-
-setFill :: ColorExpr -> Style -> Style
-setFill = setStyleField . fillField
-
---------------------------------------------------------------------------------
--- Attribute: stroke
---------------------------------------------------------------------------------
-strokeField :: ColorExpr -> StyleField
-strokeField = StyleColorField (attrSpec "stroke" (Just "borderColor"))
-
-stroke :: HasStyle a => a -> Maybe ColorExpr
-stroke value = lookupColorField "stroke" (style value)
-
-setStroke :: ColorExpr -> Style -> Style
-setStroke = setStyleField . strokeField
-
---------------------------------------------------------------------------------
--- Attribute: fontFamily
---------------------------------------------------------------------------------
-fontFamilySpec :: StyleCategorySpec FontFamily
-fontFamilySpec = categorySpec "fontFamily" (Just "fontFamily")
-
-fontFamilyField :: StyleCategory FontFamily -> StyleField
-fontFamilyField = categoryField fontFamilySpec
-
-fontFamily :: HasStyle a => a -> Maybe (StyleCategory FontFamily)
-fontFamily value = lookupCategoryField "fontFamily" (style value)
-
-setFontFamily :: StyleCategory FontFamily -> Style -> Style
-setFontFamily = setStyleField . fontFamilyField
-
---------------------------------------------------------------------------------
--- Attribute: fontWeight
---------------------------------------------------------------------------------
-fontWeightSpec :: StyleCategorySpec FontWeight
-fontWeightSpec = categorySpec "fontWeight" (Just "fontWeight")
-
-fontWeightField :: StyleCategory FontWeight -> StyleField
-fontWeightField = categoryField fontWeightSpec
-
-fontWeight :: HasStyle a => a -> Maybe (StyleCategory FontWeight)
-fontWeight value = lookupCategoryField "fontWeight" (style value)
-
-setFontWeight :: StyleCategory FontWeight -> Style -> Style
-setFontWeight = setStyleField . fontWeightField
-
---------------------------------------------------------------------------------
--- Attribute: fontStyle
---------------------------------------------------------------------------------
-fontStyleSpec :: StyleCategorySpec FontStyle
-fontStyleSpec = categorySpec "fontStyle" (Just "fontStyle")
-
-fontStyleField :: StyleCategory FontStyle -> StyleField
-fontStyleField = categoryField fontStyleSpec
-
-fontStyle :: HasStyle a => a -> Maybe (StyleCategory FontStyle)
-fontStyle value = lookupCategoryField "fontStyle" (style value)
-
-setFontStyle :: StyleCategory FontStyle -> Style -> Style
-setFontStyle = setStyleField . fontStyleField
-
---------------------------------------------------------------------------------
--- Attribute: textAlign
---------------------------------------------------------------------------------
-textAlignSpec :: StyleCategorySpec TextAlign
-textAlignSpec = categorySpec "textAlign" (Just "textAlign")
-
-textAlignField :: StyleCategory TextAlign -> StyleField
-textAlignField = categoryField textAlignSpec
-
-textAlign :: HasStyle a => a -> Maybe (StyleCategory TextAlign)
-textAlign value = lookupCategoryField "textAlign" (style value)
-
-setTextAlign :: StyleCategory TextAlign -> Style -> Style
-setTextAlign = setStyleField . textAlignField
-
---------------------------------------------------------------------------------
--- Attribute: borderStyle
---------------------------------------------------------------------------------
-borderStyleSpec :: StyleCategorySpec BorderStyle
-borderStyleSpec = categorySpec "borderStyle" (Just "borderStyle")
-
-borderStyleField :: StyleCategory BorderStyle -> StyleField
-borderStyleField = categoryField borderStyleSpec
-
-borderStyle :: HasStyle a => a -> Maybe (StyleCategory BorderStyle)
-borderStyle value = lookupCategoryField "borderStyle" (style value)
-
-setBorderStyle :: StyleCategory BorderStyle -> Style -> Style
-setBorderStyle = setStyleField . borderStyleField
-
---------------------------------------------------------------------------------
--- Attribute: whiteSpace
---------------------------------------------------------------------------------
-whiteSpaceSpec :: StyleCategorySpec WhiteSpace
-whiteSpaceSpec = categorySpec "whiteSpace" (Just "whiteSpace")
-
-whiteSpaceField :: StyleCategory WhiteSpace -> StyleField
-whiteSpaceField = categoryField whiteSpaceSpec
-
-whiteSpace :: HasStyle a => a -> Maybe (StyleCategory WhiteSpace)
-whiteSpace value = lookupCategoryField "whiteSpace" (style value)
-
-setWhiteSpace :: StyleCategory WhiteSpace -> Style -> Style
-setWhiteSpace = setStyleField . whiteSpaceField
-
---------------------------------------------------------------------------------
--- Field lookup
---------------------------------------------------------------------------------
-lookupScalarField :: StyleScalarKind ty -> String -> Style -> Maybe (Expr ty)
-lookupScalarField expectedKind name style' = go (styleFields style')
+requireCategoryValue :: StyleCategoryType value => String -> Either String value
+requireCategoryValue name =
+  case go styleCategoryDomain of
+    Just value -> Right value
+    Nothing -> Left ("could not map solved style category to a value: " ++ name)
   where
-    go fields =
-      case fields of
+    go values =
+      case values of
         [] -> Nothing
-        StyleScalarField actualKind spec expr:rest
-          | styleScalarName spec == name ->
-            case sameStyleScalarKind expectedKind actualKind of
-              Just Refl -> Just expr
-              Nothing   -> go rest
+        value:rest
+          | styleCategoryToken value == name -> Just value
           | otherwise -> go rest
-        _:rest -> go rest
 
-lookupColorField :: String -> Style -> Maybe ColorExpr
-lookupColorField name style' = go (styleFields style')
-  where
-    go fields =
-      case fields of
-        [] -> Nothing
-        StyleColorField spec value:rest
-          | styleAttrName spec == name -> Just value
-          | otherwise -> go rest
-        _:rest -> go rest
+mapFixed :: StyleCategory value -> StyleCategory value
+mapFixed = id
 
-lookupCategoryField ::
-     StyleCategoryType value => String -> Style -> Maybe (StyleCategory value)
-lookupCategoryField name style' = go (styleFields style')
-  where
-    go fields =
-      case fields of
-        [] -> Nothing
-        StyleCategoryField spec value:rest
-          | styleCategoryName spec == name ->
-            case cast value of
-              Just typedValue -> typedValue
-              Nothing         -> go rest
-          | otherwise -> go rest
-        _:rest -> go rest
+requireSolvedExpr :: Solution -> String -> Expr ty -> Either String Double
+requireSolvedExpr solution label expr =
+  case evalExpr solution expr of
+    Just value -> Right value
+    Nothing ->
+      Left
+        ("could not materialize "
+           ++ label
+           ++ " from the solver solution; the expression probably references a \
+             \variable that was not included in any constraint")
+
+--------------------------------------------------------------------------------
+-- Scalar style fields
+--------------------------------------------------------------------------------
+data Opacity
+
+data ZIndex
+
+data Padding
+
+data FontSize
+
+data Radius
+
+data StrokeWidth
+
+data Alpha
+
+instance StyleField Opacity where
+  type StyleValue Opacity = UnitExpr
+  styleFieldName _ = "opacity"
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ = scalarConstraints (Just unitRange) noConstraints
+  materializeStyleValue proxy = materializeScalar proxy StyleNumber
+
+instance StyleField ZIndex where
+  type StyleValue ZIndex = FreeExpr
+  styleFieldName _ = "zIndex"
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ =
+    scalarConstraints (Just (Range (-10) 10)) noConstraints
+  materializeStyleValue proxy = materializeScalar proxy StyleNumber
+
+instance StyleField Padding where
+  type StyleValue Padding = LayoutExpr
+  styleFieldName _ = "padding"
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ =
+    scalarConstraints (Just (Range 0 24)) nonNegativeConstraints
+  materializeStyleValue proxy = materializeScalar proxy StylePixels
+
+instance StyleField FontSize where
+  type StyleValue FontSize = LayoutExpr
+  styleFieldName _ = "fontSize"
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ =
+    scalarConstraints (Just (Range 8 48)) nonNegativeConstraints
+  materializeStyleValue proxy = materializeScalar proxy StylePixels
+
+instance StyleField Radius where
+  type StyleValue Radius = LayoutExpr
+  styleFieldName _ = "radius"
+  styleFieldCssName _ = Just "borderRadius"
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ =
+    scalarConstraints (Just (Range 0 32)) nonNegativeConstraints
+  materializeStyleValue proxy = materializeScalar proxy StylePixels
+
+instance StyleField StrokeWidth where
+  type StyleValue StrokeWidth = LayoutExpr
+  styleFieldName _ = "strokeWidth"
+  styleFieldCssName _ = Just "borderWidth"
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ =
+    scalarConstraints (Just (Range 0 8)) nonNegativeConstraints
+  materializeStyleValue proxy = materializeScalar proxy StylePixels
+
+instance StyleField Alpha where
+  type StyleValue Alpha = UnitExpr
+  styleFieldName _ = "alpha"
+  styleFieldCssName _ = Nothing
+  generatedStyleValue = scalarExpr
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ = scalarConstraints (Just unitRange) noConstraints
+  materializeStyleValue proxy = materializeScalar proxy StyleHidden
+
+--------------------------------------------------------------------------------
+-- Compound scalar style fields
+--------------------------------------------------------------------------------
+data Fill
+
+data Stroke
+
+instance StyleField Fill where
+  type StyleValue Fill = ColorExpr
+  styleFieldName _ = "fill"
+  styleFieldCssName _ = Just "backgroundColor"
+  generatedStyleValue = colorValue
+  mapStyleValueExprs = mapColorExprs
+  styleValueExprLeaves = colorLeaves
+  styleValueConstraints _ = colorConstraints
+  materializeStyleValue _ = materializeColor
+
+instance StyleField Stroke where
+  type StyleValue Stroke = ColorExpr
+  styleFieldName _ = "stroke"
+  styleFieldCssName _ = Just "borderColor"
+  generatedStyleValue = colorValue
+  mapStyleValueExprs = mapColorExprs
+  styleValueExprLeaves = colorLeaves
+  styleValueConstraints _ = colorConstraints
+  materializeStyleValue _ = materializeColor
+
+--------------------------------------------------------------------------------
+-- Categorical style fields
+--------------------------------------------------------------------------------
+instance StyleField FontFamily where
+  type StyleValue FontFamily = StyleCategory FontFamily
+  styleFieldName _ = "fontFamily"
+  generatedStyleValue = categoryValue
+  mapStyleValueExprs _ = mapFixed
+  styleValueExprLeaves _ _ = []
+  styleValueChoices _ = categoryChoices
+  materializeStyleValue = materializeCategory
+
+instance StyleField FontWeight where
+  type StyleValue FontWeight = StyleCategory FontWeight
+  styleFieldName _ = "fontWeight"
+  generatedStyleValue = categoryValue
+  mapStyleValueExprs _ = mapFixed
+  styleValueExprLeaves _ _ = []
+  styleValueChoices _ = categoryChoices
+  materializeStyleValue = materializeCategory
+
+instance StyleField FontStyle where
+  type StyleValue FontStyle = StyleCategory FontStyle
+  styleFieldName _ = "fontStyle"
+  generatedStyleValue = categoryValue
+  mapStyleValueExprs _ = mapFixed
+  styleValueExprLeaves _ _ = []
+  styleValueChoices _ = categoryChoices
+  materializeStyleValue = materializeCategory
+
+instance StyleField TextAlign where
+  type StyleValue TextAlign = StyleCategory TextAlign
+  styleFieldName _ = "textAlign"
+  generatedStyleValue = categoryValue
+  mapStyleValueExprs _ = mapFixed
+  styleValueExprLeaves _ _ = []
+  styleValueChoices _ = categoryChoices
+  materializeStyleValue = materializeCategory
+
+instance StyleField BorderStyle where
+  type StyleValue BorderStyle = StyleCategory BorderStyle
+  styleFieldName _ = "borderStyle"
+  generatedStyleValue = categoryValue
+  mapStyleValueExprs _ = mapFixed
+  styleValueExprLeaves _ _ = []
+  styleValueChoices _ = categoryChoices
+  materializeStyleValue = materializeCategory
+
+instance StyleField WhiteSpace where
+  type StyleValue WhiteSpace = StyleCategory WhiteSpace
+  styleFieldName _ = "whiteSpace"
+  generatedStyleValue = categoryValue
+  mapStyleValueExprs _ = mapFixed
+  styleValueExprLeaves _ _ = []
+  styleValueChoices _ = categoryChoices
+  materializeStyleValue = materializeCategory
+
+--------------------------------------------------------------------------------
+-- Public field accessors and setters
+--------------------------------------------------------------------------------
+opacity :: NodeStyle -> Maybe UnitExpr
+opacity = getStyleField @Opacity
+
+setOpacity :: UnitExpr -> NodeStyle -> NodeStyle
+setOpacity = setStyleField @Opacity
+
+zIndex :: NodeStyle -> Maybe FreeExpr
+zIndex = getStyleField @ZIndex
+
+setZIndex :: FreeExpr -> NodeStyle -> NodeStyle
+setZIndex = setStyleField @ZIndex
+
+padding :: NodeStyle -> Maybe LayoutExpr
+padding = getStyleField @Padding
+
+setPadding :: LayoutExpr -> NodeStyle -> NodeStyle
+setPadding = setStyleField @Padding
+
+fontSize :: NodeStyle -> Maybe LayoutExpr
+fontSize = getStyleField @FontSize
+
+setFontSize :: LayoutExpr -> NodeStyle -> NodeStyle
+setFontSize = setStyleField @FontSize
+
+radius :: NodeStyle -> Maybe LayoutExpr
+radius = getStyleField @Radius
+
+setRadius :: LayoutExpr -> NodeStyle -> NodeStyle
+setRadius = setStyleField @Radius
+
+strokeWidth :: NodeStyle -> Maybe LayoutExpr
+strokeWidth = getStyleField @StrokeWidth
+
+setStrokeWidth :: LayoutExpr -> NodeStyle -> NodeStyle
+setStrokeWidth = setStyleField @StrokeWidth
+
+alpha :: NodeStyle -> Maybe UnitExpr
+alpha = getStyleField @Alpha
+
+setAlpha :: UnitExpr -> NodeStyle -> NodeStyle
+setAlpha = setStyleField @Alpha
+
+fill :: NodeStyle -> Maybe ColorExpr
+fill = getStyleField @Fill
+
+setFill :: ColorExpr -> NodeStyle -> NodeStyle
+setFill = setStyleField @Fill
+
+stroke :: NodeStyle -> Maybe ColorExpr
+stroke = getStyleField @Stroke
+
+setStroke :: ColorExpr -> NodeStyle -> NodeStyle
+setStroke = setStyleField @Stroke
+
+fontFamily :: NodeStyle -> Maybe (StyleCategory FontFamily)
+fontFamily = getStyleField @FontFamily
+
+setFontFamily :: StyleCategory FontFamily -> NodeStyle -> NodeStyle
+setFontFamily = setStyleField @FontFamily
+
+fontWeight :: NodeStyle -> Maybe (StyleCategory FontWeight)
+fontWeight = getStyleField @FontWeight
+
+setFontWeight :: StyleCategory FontWeight -> NodeStyle -> NodeStyle
+setFontWeight = setStyleField @FontWeight
+
+fontStyle :: NodeStyle -> Maybe (StyleCategory FontStyle)
+fontStyle = getStyleField @FontStyle
+
+setFontStyle :: StyleCategory FontStyle -> NodeStyle -> NodeStyle
+setFontStyle = setStyleField @FontStyle
+
+textAlign :: NodeStyle -> Maybe (StyleCategory TextAlign)
+textAlign = getStyleField @TextAlign
+
+setTextAlign :: StyleCategory TextAlign -> NodeStyle -> NodeStyle
+setTextAlign = setStyleField @TextAlign
+
+borderStyle :: NodeStyle -> Maybe (StyleCategory BorderStyle)
+borderStyle = getStyleField @BorderStyle
+
+setBorderStyle :: StyleCategory BorderStyle -> NodeStyle -> NodeStyle
+setBorderStyle = setStyleField @BorderStyle
+
+whiteSpace :: NodeStyle -> Maybe (StyleCategory WhiteSpace)
+whiteSpace = getStyleField @WhiteSpace
+
+setWhiteSpace :: StyleCategory WhiteSpace -> NodeStyle -> NodeStyle
+setWhiteSpace = setStyleField @WhiteSpace

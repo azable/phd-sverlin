@@ -534,19 +534,21 @@ cssStyleAttrs style =
   where
     alphaValue = VM.concreteScalarValue "alpha" 1 style
 
-concreteFieldCssAttrs :: Double -> VM.ConcreteField -> [(String, StyleValue)]
+concreteFieldCssAttrs ::
+     Double -> VM.ConcreteStyleField -> [(String, StyleValue)]
 concreteFieldCssAttrs alphaValue field =
   case field of
-    VM.ConcreteScalarField _ attrName value unit ->
+    VM.ConcreteStyleField _ attrName (VM.ConcreteScalar value unit) ->
       case (attrName, unit) of
         (Just name, VS.StyleNumber) -> [(name, StyleNumber (roundLayout value))]
         (Just name, VS.StylePixels) -> [(name, StylePixels (roundLayout value))]
         _                           -> []
-    VM.ConcreteColorField _ attrName hsl ->
+    VM.ConcreteStyleField _ attrName (VM.ConcreteColor hsl) ->
       case attrName of
         Just name -> [(name, StyleColor (hslToCss alphaValue hsl))]
         Nothing   -> []
-    VM.ConcreteTokenField _ attrName token -> stringCssAttr attrName token
+    VM.ConcreteStyleField _ attrName (VM.ConcreteToken token) ->
+      stringCssAttr attrName token
 
 stringCssAttr :: Maybe String -> String -> [(String, StyleValue)]
 stringCssAttr maybeName value =

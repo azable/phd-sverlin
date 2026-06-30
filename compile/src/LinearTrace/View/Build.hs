@@ -22,9 +22,9 @@ module LinearTrace.View.Build
 import           LinearTrace.View.Graph
 import qualified LinearTrace.View.Patch      as Patch
 import           LinearTrace.View.Primitives
-import           LinearTrace.View.Style      (padding, styleBounds,
-                                              styleCategoryConstraints,
-                                              styleConstraints)
+import           LinearTrace.View.Style      (nodeStyleBounds,
+                                              nodeStyleChoiceConstraints,
+                                              nodeStyleConstraints, padding)
 import           LinearTrace.View.Types      (ViewId, viewRefId)
 import           Prelude                     (Maybe (..), Monoid (..),
                                               Semigroup (..))
@@ -136,7 +136,7 @@ patchedNodeOutput patch node0 =
                 Just content -> content
           }
       constraints =
-        styleConstraints (nodeStyle node)
+        nodeStyleConstraints (nodeStyle node)
           P.++ [ right node S.@<=@ canvasWidth defaultViewEnv
                , bottom node S.@<=@ canvasHeight defaultViewEnv
                ]
@@ -156,17 +156,18 @@ finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderF
       -- Node styles are first registered while building trace steps. Layout
       -- rules can later require optional style fields, so collect style
       -- constraints again after requirements are applied.
-      nodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
-      nodeStyleChoiceConstraints =
+      allNodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
+      allNodeStyleChoiceConstraints =
         P.concatMap viewNodeStyleChoiceConstraints nodes
       nodeRangeConstraints =
         P.concatMap (viewNodeRangeConstraints defaultViewEnv) nodes
       constraints =
         baseConstraints
-          P.++ nodeStyleConstraints
+          P.++ allNodeStyleConstraints
           P.++ nodeRangeConstraints
           P.++ compoundConstraints
-      choiceConstraints = baseChoiceConstraints P.++ nodeStyleChoiceConstraints
+      choiceConstraints =
+        baseChoiceConstraints P.++ allNodeStyleChoiceConstraints
       frames = addCompoundRenderFrames nodes renderFrames
    in ViewGraph
         { viewNodes = nodes
@@ -265,12 +266,12 @@ foldChildEdge combine edge current children =
 viewNodeStyleConstraints :: ViewNode -> [Constraint]
 viewNodeStyleConstraints node =
   case node of
-    ViewNode viewNode -> styleConstraints (nodeStyle viewNode)
+    ViewNode viewNode -> nodeStyleConstraints (nodeStyle viewNode)
 
 viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
 viewNodeStyleChoiceConstraints node =
   case node of
-    ViewNode viewNode -> styleCategoryConstraints (nodeStyle viewNode)
+    ViewNode viewNode -> nodeStyleChoiceConstraints (nodeStyle viewNode)
 
 viewNodeRangeConstraints :: ViewEnv -> ViewNode -> [Constraint]
 viewNodeRangeConstraints env node =
@@ -278,9 +279,11 @@ viewNodeRangeConstraints env node =
     ViewNode viewNode ->
       case nodeStructure viewNode of
         LeafNode ->
-          leafBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
+          leafBoundsRangeConstraints env (nodeStyleBounds (nodeStyle viewNode))
         CompoundNode _ _ ->
-          compoundBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
+          compoundBoundsRangeConstraints
+            env
+            (nodeStyleBounds (nodeStyle viewNode))
 
 boundsRangeConstraints ::
      ViewEnv

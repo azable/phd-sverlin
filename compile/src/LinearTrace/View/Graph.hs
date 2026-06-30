@@ -48,10 +48,10 @@ module LinearTrace.View.Graph
 import           Data.Kind                   (Type)
 import           LinearTrace.View.Primitives (Bounds (..), BoundsExpr,
                                               HasBounds (..))
-import           LinearTrace.View.Style      (HasStyle (..), Style,
-                                              mapStyleExprLeaves,
-                                              solvedStyleExprs, styleBounds,
-                                              styleWithBounds)
+import           LinearTrace.View.Style      (NodeStyle, nodeStyleBounds,
+                                              nodeStyleWithBounds,
+                                              solvedNodeStyleExprs)
+import qualified LinearTrace.View.Style      as Style
 import           LinearTrace.View.Types      (ContentMode, ViewId, ViewLabel,
                                               ViewRef, ViewTags, viewRefId,
                                               viewRefInt)
@@ -65,7 +65,7 @@ data Node tag = Node
   , nodeLabel       :: ViewLabel
   , nodeContent     :: ContentMode
   , nodeKey         :: P.String
-  , nodeStyle       :: Style
+  , nodeStyle       :: NodeStyle
   , nodeOrigin      :: NodeOrigin
   , nodeStructure   :: NodeStructure
   , nodeConstraints :: [Constraint]
@@ -100,9 +100,6 @@ instance HasBounds (Node tag) where
   left node = left (nodeStyle node)
   width node = width (nodeStyle node)
   height node = height (nodeStyle node)
-
-instance HasStyle (Node tag) where
-  style = nodeStyle
 
 data ViewNode where
   ViewNode :: Node tag -> ViewNode
@@ -159,15 +156,15 @@ nodeChildFromTraceNode anyNode =
     AnyTraceNode node ->
       NodeChild
         { nodeChildId = viewRefId (nodeRef node)
-        , nodeChildBounds = styleBounds (nodeStyle node)
+        , nodeChildBounds = nodeStyleBounds (nodeStyle node)
         }
 
 mapNodeStyleExprLeaves ::
      (forall (ty :: Type). P.String -> Expr ty -> a) -> Node tag -> [a]
-mapNodeStyleExprLeaves f node = mapStyleExprLeaves f (nodeStyle node)
+mapNodeStyleExprLeaves f node = Style.mapNodeStyleExprLeaves f (nodeStyle node)
 
 solvedNodeExprs :: Solution -> Node tag -> [(P.String, P.Double)]
-solvedNodeExprs solution node = solvedStyleExprs solution (nodeStyle node)
+solvedNodeExprs solution node = solvedNodeStyleExprs solution (nodeStyle node)
 
 viewTraceNodes :: [ViewNode] -> [AnyTraceNode]
 viewTraceNodes nodes =
@@ -183,12 +180,12 @@ viewTraceNodes nodes =
 defaultNodeKey :: P.String
 defaultNodeKey = "node"
 
-styleForRef :: ViewRef tag -> Style
+styleForRef :: ViewRef tag -> NodeStyle
 styleForRef ref = styleForNodeRoot (traceNodeRoot ref)
 
-styleForNodeRoot :: NodeVarRoot -> Style
+styleForNodeRoot :: NodeVarRoot -> NodeStyle
 styleForNodeRoot root =
-  styleWithBounds
+  nodeStyleWithBounds
     (Bounds
        (nodeVar root [] "top")
        (nodeVar root [] "left")

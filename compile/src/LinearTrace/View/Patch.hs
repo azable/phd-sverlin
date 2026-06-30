@@ -19,7 +19,7 @@ module LinearTrace.View.Patch
   ) where
 
 import           LinearTrace.View.Primitives (HasBounds (..), LayoutExpr)
-import           LinearTrace.View.Style      (Style)
+import           LinearTrace.View.Style      (NodeStyle)
 import           LinearTrace.View.Types      (ContentMode)
 import           Prelude                     (Maybe (..))
 import qualified Prelude                     as P
@@ -30,7 +30,7 @@ data LayoutPin =
   LayoutPin LayoutExpr [Constraint]
 
 data NodePatch = NodePatch
-  { nodePatchStyleUpdate :: Style -> Style
+  { nodePatchStyleUpdate :: NodeStyle -> NodeStyle
   , nodePatchContent     :: Maybe ContentMode
   , nodePatchLeft        :: Maybe LayoutPin
   , nodePatchTop         :: Maybe LayoutPin
@@ -100,7 +100,11 @@ pinConstraints expr maybePin =
       case pin of
         LayoutPin target constraints -> constraints P.++ [expr S.@==@ target]
 
-composeStyleUpdates :: (Style -> Style) -> (Style -> Style) -> Style -> Style
+composeStyleUpdates ::
+     (NodeStyle -> NodeStyle)
+  -> (NodeStyle -> NodeStyle)
+  -> NodeStyle
+  -> NodeStyle
 composeStyleUpdates first second style0 = second (first style0)
 
 preferLater :: Maybe a -> Maybe a -> Maybe a

@@ -1,5 +1,3 @@
-{-# LANGUAGE GADTs #-}
-
 -- | Materialization boundary from solved symbolic view graphs to concrete
 -- render data. 'LinearTrace.Compile' is the intended caller; symbolic style and
 -- graph helpers stay internal to this module.
@@ -10,7 +8,8 @@ module LinearTrace.View.Materialize
     ConcreteHsl
   , ConcreteStyle
   , concreteFields
-  , ConcreteField(..)
+  , ConcreteStyleField(..)
+  , ConcreteStyleValue(..)
   , -- * Concrete view nodes
     -- | Solved view nodes. Compile code reads these to build JSON render
     -- elements after symbolic tags have been erased.
@@ -45,19 +44,12 @@ import           LinearTrace.View.Style
 import           LinearTrace.View.Types      (ContentMode (..), ViewId,
                                               ViewLabel, viewRefId)
 import           Prelude
-import           Solver                      (Expr, Solution, categoryName,
-                                              evalChoice, evalExpr)
+import           Solver                      (Expr, Solution, evalExpr)
 
 data ConcreteStyle = ConcreteStyle
   { concreteBounds :: ConcreteBounds
-  , concreteFields :: [ConcreteField]
+  , concreteFields :: [ConcreteStyleField]
   } deriving (Eq, Show)
-
-data ConcreteField
-  = ConcreteScalarField String (Maybe String) Double StyleValueUnit
-  | ConcreteColorField String (Maybe String) ConcreteHsl
-  | ConcreteTokenField String (Maybe String) String
-  deriving (Eq, Show)
 
 data ConcreteNode = ConcreteNode
   { concreteNodeId      :: ViewId
@@ -90,7 +82,7 @@ concreteScalarValue name fallback style' = go (concreteFields style')
     go fields =
       case fields of
         [] -> fallback
-        ConcreteScalarField name' _ value _:rest
+        ConcreteStyleField name' _ (ConcreteScalar value _):rest
           | name == name' -> value
           | otherwise -> go rest
         _:rest -> go rest
@@ -127,86 +119,16 @@ materializeContent contentMode =
     ContentEmpty      -> ""
     ContentText value -> value
 
-materializeStyle :: Solution -> Style -> Either String ConcreteStyle
+materializeStyle :: Solution -> NodeStyle -> Either String ConcreteStyle
 materializeStyle solution style' =
   ConcreteStyle
-    <$> materializeBounds solution (styleBounds style')
-    <*> traverse (materializeField solution) (styleFields style')
+    <$> materializeBounds solution (nodeStyleBounds style')
+    <*> traverse (materializeAnyStyleField solution) (nodeStyleFields style')
 
 materializeBounds :: Solution -> BoundsExpr -> Either String ConcreteBounds
 materializeBounds solution = traverse (requireExprValue "view bounds")
   where
     requireExprValue = requireSolvedExpr solution
-
-materializeField :: Solution -> StyleField -> Either String ConcreteField
-materializeField solution field =
-  case field of
-    StyleScalarField _ spec expr -> materializeScalar solution spec expr
-    StyleColorField spec hsl ->
-      ConcreteColorField (styleAttrName spec) (styleAttrCssName spec)
-        <$> materializeHsl solution hsl
-    StyleCategoryField spec value ->
-      materializeCategoryField solution spec value
-
-materializeCategoryField ::
-     Solution
-  -> StyleCategorySpec value
-  -> StyleCategory value
-  -> Either String ConcreteField
-materializeCategoryField solution spec value = do
-  concreteValue <- materializeCategoryValue solution spec value
-  pure
-    (ConcreteTokenField
-       (styleCategoryName spec)
-       (styleCategoryAttrName spec)
-       (styleCategoryValueToken spec concreteValue))
-
-materializeCategoryValue ::
-     Solution
-  -> StyleCategorySpec value
-  -> StyleCategory value
-  -> Either String value
-materializeCategoryValue solution spec value =
-  case value of
-    FixedCategory fixed -> Right fixed
-    VariableCategory selected -> do
-      selectedCategory <-
-        maybe
-          (Left
-             "could not materialize a style category from the solver solution")
-          Right
-          (evalChoice solution selected)
-      requireCategoryValue spec (categoryName selectedCategory)
-
-requireCategoryValue :: StyleCategorySpec value -> String -> Either String value
-requireCategoryValue spec name =
-  case lookupCategoryValue spec name of
-    Just value -> Right value
-    Nothing -> Left ("could not map solved style category to a value: " ++ name)
-
-lookupCategoryValue :: StyleCategorySpec value -> String -> Maybe value
-lookupCategoryValue spec name = go (styleCategoryDomainValues spec)
-  where
-    go values =
-      case values of
-        [] -> Nothing
-        value:rest
-          | styleCategoryValueToken spec value == name -> Just value
-          | otherwise -> go rest
-
-materializeScalar ::
-     Solution -> StyleScalarSpec -> Expr ty -> Either String ConcreteField
-materializeScalar solution spec expr =
-  ConcreteScalarField (styleScalarName spec) (styleScalarAttrName spec)
-    <$> requireSolvedExpr solution (styleScalarName spec) expr
-    <*> pure (styleScalarValueUnit spec)
-
-materializeHsl :: Solution -> ColorExpr -> Either String ConcreteHsl
-materializeHsl solution hsl =
-  Hsl
-    <$> requireSolvedExpr solution "hue" (hue hsl)
-    <*> requireSolvedExpr solution "saturation" (saturation hsl)
-    <*> requireSolvedExpr solution "lightness" (lightness hsl)
 
 requireSolvedExpr :: Solution -> String -> Expr ty -> Either String Double
 requireSolvedExpr solution label expr =
