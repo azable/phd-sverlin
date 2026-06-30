@@ -5,7 +5,7 @@
 -- implementations live under @LinearTrace.View.Style.*@; this module defines
 -- the supported style values and fields.
 module LinearTrace.View.Style
-  ( -- * Choice values
+  ( -- * Defined here: choice values
     -- | CSS-like fixed style tokens. Each value type has a solver
     -- 'ChoiceDomain' instance, so solver choices and CSS materialization share
     -- one domain/token definition.
@@ -15,8 +15,7 @@ module LinearTrace.View.Style
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
-  , ChoiceValue(..)
-  , -- * Field markers
+  , -- * Defined here: field markers
     -- | Type-level names for supported optional node-style fields.
     Opacity
   , ZIndex
@@ -27,7 +26,7 @@ module LinearTrace.View.Style
   , Alpha
   , Fill
   , Stroke
-  , -- * Node style representation
+  , -- * Re-exported from LinearTrace.View.Style.Model
     -- | Internal style model shared by graph construction, access lowering,
     -- solving, and materialization. Callers should prefer named setters and
     -- accessors unless they are implementing those lowering phases.
@@ -44,12 +43,19 @@ module LinearTrace.View.Style
   , getStyleField
   , setStyleField
   , requireStyleField
-  , mapNodeStyleExprs
+  , -- * Re-exported from LinearTrace.View.Style.Lower
+    -- | Generic expression traversal, constraint collection, and solved style
+    -- materialization helpers for node styles.
+    mapNodeStyleExprs
   , mapNodeStyleExprLeaves
   , solvedNodeStyleExprs
   , nodeStyleConstraints
   , nodeStyleChoiceConstraints
   , materializeAnyStyleField
+  , -- * Re-exported from Solver
+    -- | Categorical field values use the solver's fixed-or-variable choice
+    -- wrapper directly.
+    ChoiceValue(..)
   ) where
 
 import           LinearTrace.View.Primitives

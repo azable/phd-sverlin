@@ -18,9 +18,9 @@
 -- 'LinearTrace.Core.Events', 'LinearTrace.Choreography.Query',
 -- 'LinearTrace.Choreography.Match', and the internal 'LinearTrace.View' facade.
 module LinearTrace.Choreography
-  ( -- * Program layer
-    -- | Program execution and graph-building API. The core trace graph is built
-    -- alongside a symbolic view graph, then solved through the view solver.
+  ( -- * Defined here: program and view graph facade
+    -- | Program execution API. The core trace graph is built alongside a
+    -- symbolic view graph, then solved through the view solver.
     Program
   , VisualTraceGraph
   , ViewGraph
@@ -28,7 +28,6 @@ module LinearTrace.Choreography
   , buildViewGraph
   , solveViewGraphWithSeed
   , viewGraphStats
-  , RandomSeed(..)
   , runProgram
   , runProgramWith
   , BranchDecision(..)
@@ -44,17 +43,14 @@ module LinearTrace.Choreography
   , decide
   , checkpoint
   , loop
-  , -- * Handles
-    -- | Linear handles that track core payload lifecycle and allow the DSL to
-    -- attach view behavior to block/event lifetimes.
+  , -- * Re-exported or aliased from LinearTrace.Core
+    -- | Core linear handles, payload/fact vocabulary, event-token aliases,
+    -- traceable payload classes, and linear functor operators used directly by
+    -- the DSL.
     Block
   , SlotHandle
   , PayloadHandle
-  , -- * Payloads and trace tags
-    -- | Core payload/fact vocabulary plus choreography query and selection
-    -- types. These are the stable DSL names for matching trace blocks and
-    -- binding view nodes to them.
-    Payload
+  , Payload
   , FactValue(..)
   , Fact(..)
   , Facts(..)
@@ -83,34 +79,59 @@ module LinearTrace.Choreography
   , type Decide
   , (<$>)
   , (<*>)
-  , Query
-  , MatchSpec
+  , -- * Re-exported from LinearTrace.Choreography.Query
+    -- | Query syntax and query-derived facts used to match trace blocks and
+    -- generated nodes.
+    Query
   , QueryInt
-  , queryIndex
-  , TraceQuery
+  , emptyQuery
+  , queryAtom
+  , queryInt
+  , queryFacts
+  , -- * Re-exported from LinearTrace.Choreography.Match
+    -- | Compiled query/patch/constraint rules consumed by the view graph
+    -- builder.
+    MatchSpec
+  , -- * Re-exported from LinearTrace.Choreography.Types
+    -- | Shared choreography handles, selections, recipes, variables, and DSL
+    -- values.
+    TraceQuery
   , Selected
   , Variable(..)
   , Categorical(..)
   , Bound(..)
   , NodeBinding(..)
   , AnyPayload
-  , Node
+  , VisualizationBuilder
+  , Coord
+  , Span
+  , Offset
+  , Scalar
+  , NodeRecipe
+  , ContentValue
+  , text
+  , -- * Re-exported from LinearTrace.Choreography.Node
+    -- | Selection, content, grouping, rendering, and query composition helpers.
+    Node
   , Select
   , select
-  , VisualizationBuilder
   , QueryAppend
   , visualize
-  , emptyQuery
-  , queryAtom
-  , queryInt
-  , queryFacts
+  , content
+  , payload
+  , node
+  , render
   , (<&>)
-  , -- * Component and layout layer
-    -- | Symbolic view/style DSL. These names ultimately lower to
-    -- 'LinearTrace.View' primitives, patches, style fields, and solver
-    -- constraints.
-    NodeRecipe
-  , NodeStyle
+  , -- * Re-exported from LinearTrace.Choreography.Style
+    -- | Type-applied style assignment and selected-style access.
+    StyleChoice(..)
+  , style
+  , styleOf
+  , sat
+  , -- * Re-exported from LinearTrace.View.Style
+    -- | Style field marker types and concrete style choice domains from the
+    -- view layer.
+    NodeStyle
   , Opacity
   , ZIndex
   , Padding
@@ -120,25 +141,32 @@ module LinearTrace.Choreography
   , Alpha
   , Fill
   , Stroke
-  , StyleChoice(..)
   , BorderStyle(..)
-  , Bounds(..)
   , FontFamily(..)
   , FontWeight(..)
   , FontStyle(..)
+  , TextAlign(..)
+  , WhiteSpace(..)
+  , -- * Re-exported from LinearTrace.View.Primitives
+    -- | Solver-backed view primitive domains and compound values.
+    Bounds(..)
   , Hsl(..)
   , Free
   , Unit
   , Angle
   , Color
-  , Coord
-  , Span
-  , Offset
-  , Scalar
+  , -- * Re-exported from Solver
+    -- | Solver-facing random seed and vector constructor used by the public DSL.
+    RandomSeed(..)
   , Vec2(..)
-  , TextAlign(..)
-  , WhiteSpace(..)
-  , Left
+  , vec2
+  , -- * Re-exported from GHC.OverloadedLabels
+    -- | Overloaded label entrypoint used by the query/tag DSL.
+    fromLabel
+  , -- * Defined here: layout, variables, and constraints
+    -- | Choreography-level constructors, overloaded layout accessors, and
+    -- visual relation operators.
+    Left
   , Top
   , Right
   , Bottom
@@ -147,41 +175,31 @@ module LinearTrace.Choreography
   , X
   , Y
   , Center(..)
-  , ContentValue
   , asUnit
   , asCoord
   , asSpan
   , at
+  , queryIndex
   , bottom
   , bounds
   , by
   , bindContent
   , bindInt
-  , content
-  , payload
-  , text
   , ensure
   , variable
   , variableFrom
   , choice
   , encourage
-  , fromLabel
   , global
   , height
   , left
-  , node
   , num
   , fromInteger
   , fromRational
-  , render
   , right
-  , style
-  , styleOf
-  , sat
   , shift
   , size
   , top
-  , vec2
   , width
   , x
   , y

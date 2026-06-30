@@ -3,10 +3,8 @@
 -- specialized internals live under @LinearTrace.View.*@ and should be imported
 -- directly only by sibling implementation modules.
 module LinearTrace.View
-  ( -- * View graph
-    -- | View identity, graph, render-intent, and lookup types. These are
-    -- produced by choreography/building and consumed by solving, printing, and
-    -- materialization.
+  ( -- * Re-exported from LinearTrace.View.Types
+    -- | View identity, labels, tags, and content payloads.
     ViewId(..)
   , viewIdInt
   , ViewRef(..)
@@ -18,7 +16,11 @@ module LinearTrace.View
   , ViewTags(..)
   , emptyViewTags
   , viewTagsToList
-  , ViewGraph
+  , ContentMode(..)
+  , -- * Re-exported from LinearTrace.View.Graph
+    -- | Symbolic view graph, nodes, render intents, layout accessors, and
+    -- stable solver variable naming helpers.
+    ViewGraph
   , ViewNode(..)
   , Node(..)
   , NodeOrigin(..)
@@ -28,21 +30,18 @@ module LinearTrace.View
   , NodeChild(..)
   , NodeVarRoot(..)
   , ViewStep(..)
+  , RenderIntent(..)
+  , LayoutAttr(..)
+  , AnyTraceNode(..)
+  , AnyLayoutView(..)
   , defaultNodeKey
   , styleForRef
   , mapNodeStyleExprLeaves
   , solvedNodeExprs
-  , RenderIntent(..)
-  , ContentMode(..)
-  , LayoutAttr(..)
-  , AnyTraceNode(..)
-  , AnyLayoutView(..)
   , traceNodeTags
   , generatedNodeMeta
   , nodeChildFromTraceNode
   , viewTraceNodes
-  , patchedNodeOutput
-  , finalizeViewGraph
   , traceNodeRoot
   , generatedNodeRoot
   , generatedNodeId
@@ -54,29 +53,38 @@ module LinearTrace.View
   , viewConstraints
   , viewChoiceConstraints
   , viewRenderFrames
-  , -- * Styles
-    -- | Public symbolic node style and primitive value names needed by the DSL.
+  , -- * Re-exported from LinearTrace.View.Build
+    -- | View-output accumulation and final graph construction helpers.
+    ViewOutput(..)
+  , emptyViewOutput
+  , appendViewOutput
+  , flushViewOutput
+  , renderIntentOutput
+  , mergeInitialRenderIntents
+  , withImplicitInitialFrame
+  , patchedNodeOutput
+  , finalizeViewGraph
+  , -- * Re-exported from LinearTrace.View.Style
+    -- | Public symbolic node style and style choice domains needed by the DSL.
     -- Concrete style lowering is deliberately kept in
     -- 'LinearTrace.View.Materialize'.
     NodeStyle
-  , Bounds(..)
-  , BoundsExpr
-  , Hsl(..)
   , FontFamily(..)
   , FontWeight(..)
   , FontStyle(..)
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
-  , -- * Expressions
-    -- | Solver-backed expression aliases used by the view DSL. The underlying
-    -- solver API remains available through the top-level 'Solver' facade.
-    Free
+  , -- * Re-exported from LinearTrace.View.Primitives
+    -- | Solver-backed expression aliases and geometry/colour primitives used by
+    -- the view DSL.
+    Bounds(..)
+  , BoundsExpr
+  , Hsl(..)
+  , Free
   , Layout
   , Unit
   , Angle
-  , Expr
-  , Constraint
   , FreeExpr
   , LayoutExpr
   , UnitExpr
@@ -85,17 +93,14 @@ module LinearTrace.View
   , global
   , num
   , absExpr
-  , -- * Builder
-    -- | View-output accumulation and the tuned solve entrypoint used by
-    -- choreography when a symbolic view graph is ready.
-    ViewOutput(..)
-  , emptyViewOutput
-  , appendViewOutput
-  , flushViewOutput
-  , renderIntentOutput
-  , mergeInitialRenderIntents
-  , withImplicitInitialFrame
-  , solveCSPWithSeed
+  , -- * Re-exported from LinearTrace.View.Solve
+    -- | Tuned solve entrypoint used by choreography.
+    solveCSPWithSeed
+  , -- * Re-exported from Solver
+    -- | Solver expression, constraint, and seed types surfaced by the view
+    -- facade.
+    Expr
+  , Constraint
   , RandomSeed(..)
   ) where
 
