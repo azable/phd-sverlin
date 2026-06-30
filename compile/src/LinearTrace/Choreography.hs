@@ -95,7 +95,6 @@ module LinearTrace.Choreography
   , NodeBinding(..)
   , AnyPayload
   , Node
-  , StyleTarget
   , Select
   , select
   , VisualizationBuilder
@@ -112,6 +111,16 @@ module LinearTrace.Choreography
     -- constraints.
     NodeRecipe
   , NodeStyle
+  , Opacity
+  , ZIndex
+  , Padding
+  , FontSize
+  , Radius
+  , StrokeWidth
+  , Alpha
+  , Fill
+  , Stroke
+  , StyleChoice(..)
   , BorderStyle(..)
   , Bounds(..)
   , FontFamily(..)
@@ -138,19 +147,15 @@ module LinearTrace.Choreography
   , X
   , Y
   , ContentValue
-  , alpha
   , asUnit
   , asCoord
   , asSpan
   , at
-  , bold
   , bottom
   , bounds
   , by
-  , borderStyle
   , bindContent
   , bindInt
-  , centerText
   , center
   , content
   , payload
@@ -158,41 +163,30 @@ module LinearTrace.Choreography
   , ensure
   , variable
   , variableFrom
+  , choice
   , encourage
-  , fill
-  , fontFamily
-  , fontSize
-  , padding
-  , fontStyle
-  , fontWeight
   , fromLabel
   , global
   , height
   , left
-  , noWrap
   , node
   , num
   , fromInteger
   , fromRational
-  , opacity
   , pos
   , position
-  , radius
+  , render
   , right
-  , stroke
-  , strokeWidth
   , style
+  , styleOf
   , sat
   , shift
   , size
-  , textAlign
   , top
   , vec2
-  , whiteSpace
   , width
   , x
   , y
-  , zIndex
   , (+)
   , (-)
   , (*)
@@ -212,10 +206,7 @@ import           Control.Functor.Linear                hiding ((<$>), (<&>),
                                                         (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
 import qualified Data.Functor.Linear                   as DFL
-import           Data.Proxy                            (Proxy (..))
-import           GHC.Exts                              (Multiplicity (Many))
 import           GHC.OverloadedLabels                  (IsLabel (..))
-import           GHC.TypeLits                          (KnownSymbol)
 import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         CategoryRelation (..),
                                                         ConstraintStrength (..),
@@ -225,10 +216,7 @@ import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         ValueEndpoint,
                                                         buildMatchedViewGraph,
                                                         emptyMatchSpec,
-                                                        matchAnyQueryNode,
                                                         matchCategoryRelation,
-                                                        matchGroupNode,
-                                                        matchQueryPayloadNode,
                                                         matchSpecAppend,
                                                         matchValueDirectedBridge,
                                                         matchValueRelation,
@@ -239,25 +227,21 @@ import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         selectionCategoryEndpoint,
                                                         selectionValueEndpoint,
                                                         traceNodeOfEventBlock)
-import           LinearTrace.Choreography.Query        (MatchBinding (..),
-                                                        MatchBindings,
-                                                        PayloadPattern, Query,
-                                                        QueryInt (..),
-                                                        anyPayloadPattern,
-                                                        emptyQuery, labelName,
-                                                        matchBindingValue,
-                                                        matchContextBindings,
-                                                        payloadBindingPattern,
-                                                        payloadBoolPattern,
-                                                        payloadDoublePattern,
-                                                        payloadIntPattern,
-                                                        payloadStringPattern,
-                                                        payloadUnitPattern,
-                                                        queryAppend, queryAtom,
+import           LinearTrace.Choreography.Node         (Node, QueryAppend,
+                                                        Select, content, node,
+                                                        nodeSelection, payload,
+                                                        render, select,
+                                                        setNodeSpecWith,
+                                                        visualize, (<&>))
+import           LinearTrace.Choreography.Query        (Query, QueryInt (..),
+                                                        emptyQuery, queryAtom,
                                                         queryFacts, queryInt,
                                                         queryIntAdd,
                                                         queryIntConst,
                                                         queryIntVar)
+import           LinearTrace.Choreography.Style        (StyleChoice (..), sat,
+                                                        style, styleOf)
+import           LinearTrace.Choreography.Types
 import           LinearTrace.Core                      (Block, Fact (..),
                                                         FactValue (..),
                                                         Facts (..), LBool (..),
@@ -281,19 +265,17 @@ import           LinearTrace.View                      (BorderStyle (..),
                                                         WhiteSpace (..))
 import qualified LinearTrace.View                      as V
 import           LinearTrace.View.Access               (CategoryAccess,
-                                                        HslPart (..),
                                                         LayoutAttr (..),
                                                         ValueAccess,
-                                                        layoutValueAccess,
-                                                        styleChoiceValueAccess,
-                                                        styleColorPartValueAccess,
-                                                        styleValueAccess)
-import qualified LinearTrace.View.Patch                as VP
+                                                        layoutValueAccess)
 import           LinearTrace.View.Primitives           (Angle, Bounds (..),
                                                         BoundsExpr, Color, Free,
                                                         Hsl (..), LayoutExpr,
                                                         Unit)
-import qualified LinearTrace.View.Style                as VS
+import           LinearTrace.View.Style                (Alpha, Fill, FontSize,
+                                                        Opacity, Padding,
+                                                        Radius, Stroke,
+                                                        StrokeWidth, ZIndex)
 import qualified Prelude                               as P
 import           Prelude.Linear                        hiding (fromInteger,
                                                         fromRational, (*), (+),
@@ -301,11 +283,8 @@ import           Prelude.Linear                        hiding (fromInteger,
 import qualified Solver                                as S
 import           Solver                                (RandomSeed (..),
                                                         Vec2 (..), vec2)
-import qualified Solver.Expr                           as SolverExpr
-import qualified Text.Read                             as Read
 import qualified Unsafe.Coerce                         as Unsafe
 
-infixr 6 <&>
 infixl 9 @:
 data Program a where
   PureProgram :: a %1 -> Program a
@@ -377,126 +356,6 @@ instance Dupable VisualTraceState where
                         coreState2
                         pendingEvents2
                         pendingOutput2)
-
-data CoordRole
-
-data SpanRole
-
-data OffsetRole
-
-data ScalarRole
-
-data LayoutValue tag =
-  LayoutValue LayoutExpr [S.Constraint]
-  deriving (P.Eq, P.Show)
-
-type Coord = LayoutValue CoordRole
-
-type Span = LayoutValue SpanRole
-
-type Offset = LayoutValue OffsetRole
-
-type Scalar = LayoutValue ScalarRole
-
-newtype Binding =
-  Binding P.String
-  deriving (P.Eq, P.Show)
-
-data TraceQuery tag =
-  TraceQuery Query (Maybe (PayloadPattern tag))
-
-data Selection a where
-  Selection :: a %1 -> MatchSpec -> Selection a
-
-data AnyPayload
-
-data NodeRef tag where
-  TraceNodeRef :: C.Traceable tag => TraceQuery tag -> NodeRef tag
-  AnyNodeRef :: Query -> NodeRef AnyPayload
-  GroupNodeRef :: P.String -> Query -> NodeRef tag
-
-data Selected tag where
-  SelectedHandle :: Selection (NodeRef tag) -> Selected tag
-
-data Variable a where
-  Variable :: a %Many -> Variable a
-
-newtype Categorical value =
-  Categorical (S.Choice value)
-
-data Bound a where
-  Bound :: a %Many -> Bound a
-
-data NodeBinding a where
-  Selected :: a %Many -> NodeBinding a
-
-data SelectionValue value tag =
-  SelectionValue (Selected tag) ValueAccess
-
-data SelectionCategory value tag =
-  SelectionCategory (Selected tag) (CategoryAccess value)
-
-data VisualConstraint where
-  VisualValueRelation
-    :: ValueTerm -> LayoutRelation -> ValueTerm -> VisualConstraint
-  VisualCategoryRelation
-    :: S.ChoiceDomain value=> CategoryTerm value
-    -> CategoryRelation
-    -> CategoryTerm value
-    -> VisualConstraint
-  VisualDirectedBridge
-    :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
-  VisualSymmetricBridge
-    :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
-
-data ValueTerm =
-  ValueTerm MatchSpec [ValueEndpoint]
-
-data CategoryTerm value =
-  CategoryTerm MatchSpec [CategoryEndpoint value]
-
-data ContentValue
-  = ContentLiteral P.String
-  | ContentBinding Binding
-
-text :: P.String -> ContentValue
-text = ContentLiteral
-
-payload ::
-     forall tag selector. PayloadSelector tag selector
-  => selector
-  -> TraceQuery tag
-payload selector = TraceQuery emptyQuery (Just (payloadSelector @tag selector))
-
-instance IsString ContentValue where
-  fromString = ContentLiteral
-
-data ContentSpec
-  = LiteralContent P.String
-  | BoundContent Binding
-
-data NodeSpec = NodeSpec
-  { nodeSpecStyleUpdate :: NodeStyle -> NodeStyle
-  , nodeSpecContent     :: Maybe ContentSpec
-  , nodeSpecLeft        :: Maybe Coord
-  , nodeSpecTop         :: Maybe Coord
-  , nodeSpecWidth       :: Maybe Span
-  , nodeSpecHeight      :: Maybe Span
-  , nodeSpecRight       :: Maybe Coord
-  , nodeSpecBottom      :: Maybe Coord
-  , nodeSpecX           :: Maybe Coord
-  , nodeSpecY           :: Maybe Coord
-  }
-
-data NodeRecipe a where
-  NodeRecipe :: a %1 -> NodeSpec -> NodeRecipe a
-
-data VisualizationResult a where
-  VisualizationResult :: a %1 -> P.Int -> MatchSpec -> VisualizationResult a
-
-data VisualizationBuilder a where
-  VisualizationBuilder
-    :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
 data VisualTraceGraph =
   VisualTraceGraph MatchSpec (C.TraceGraphWith ViewScript)
@@ -629,8 +488,6 @@ viewTraceStep pending step =
         , stepPendingRenderIntents = pending
         }
 
-type StyleRecipe = NodeRecipe
-
 type SlotHandle = C.Slot
 
 type PayloadHandle tag = C.OneUse (C.Payload tag)
@@ -689,269 +546,6 @@ instance Applicative Program where
 
 instance Monad Program where
   (>>=) = BindProgram
-
-emptyNodeSpec :: NodeSpec
-emptyNodeSpec =
-  NodeSpec
-    { nodeSpecStyleUpdate = P.id
-    , nodeSpecContent = Nothing
-    , nodeSpecLeft = Nothing
-    , nodeSpecTop = Nothing
-    , nodeSpecWidth = Nothing
-    , nodeSpecHeight = Nothing
-    , nodeSpecRight = Nothing
-    , nodeSpecBottom = Nothing
-    , nodeSpecX = Nothing
-    , nodeSpecY = Nothing
-    }
-
-composeStyleUpdates ::
-     (NodeStyle -> NodeStyle)
-  -> (NodeStyle -> NodeStyle)
-  -> NodeStyle
-  -> NodeStyle
-composeStyleUpdates first second style0 = second (first style0)
-
-preferLater :: Maybe a -> Maybe a -> Maybe a
-preferLater earlier later =
-  case later of
-    Nothing -> earlier
-    Just _  -> later
-
-appendNodeSpec :: NodeSpec -> NodeSpec -> NodeSpec
-appendNodeSpec first second =
-  NodeSpec
-    { nodeSpecStyleUpdate =
-        composeStyleUpdates
-          (nodeSpecStyleUpdate first)
-          (nodeSpecStyleUpdate second)
-    , nodeSpecContent =
-        preferLater (nodeSpecContent first) (nodeSpecContent second)
-    , nodeSpecLeft = preferLater (nodeSpecLeft first) (nodeSpecLeft second)
-    , nodeSpecTop = preferLater (nodeSpecTop first) (nodeSpecTop second)
-    , nodeSpecWidth = preferLater (nodeSpecWidth first) (nodeSpecWidth second)
-    , nodeSpecHeight =
-        preferLater (nodeSpecHeight first) (nodeSpecHeight second)
-    , nodeSpecRight = preferLater (nodeSpecRight first) (nodeSpecRight second)
-    , nodeSpecBottom =
-        preferLater (nodeSpecBottom first) (nodeSpecBottom second)
-    , nodeSpecX = preferLater (nodeSpecX first) (nodeSpecX second)
-    , nodeSpecY = preferLater (nodeSpecY first) (nodeSpecY second)
-    }
-
-bindNodeRecipe :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
-bindNodeRecipe recipe next =
-  case recipe of
-    NodeRecipe value first ->
-      case next value of
-        NodeRecipe output second ->
-          NodeRecipe output (appendNodeSpec first second)
-
-instance DFL.Functor NodeRecipe where
-  fmap f recipe =
-    case recipe of
-      NodeRecipe value spec -> NodeRecipe (f value) spec
-
-instance Functor NodeRecipe where
-  fmap f recipe =
-    case recipe of
-      NodeRecipe value spec -> NodeRecipe (f value) spec
-
-instance DFL.Applicative NodeRecipe where
-  pure value = NodeRecipe value emptyNodeSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      NodeRecipe leftValue first ->
-        case rhs of
-          NodeRecipe rightValue second ->
-            NodeRecipe (f leftValue rightValue) (appendNodeSpec first second)
-
-instance Applicative NodeRecipe where
-  pure value = NodeRecipe value emptyNodeSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      NodeRecipe leftValue first ->
-        case rhs of
-          NodeRecipe rightValue second ->
-            NodeRecipe (f leftValue rightValue) (appendNodeSpec first second)
-
-instance Monad NodeRecipe where
-  (>>=) = bindNodeRecipe
-
-bindVisualizationBuilder ::
-     VisualizationBuilder a
-     %1 -> (a %1 -> VisualizationBuilder b)
-     %1 -> VisualizationBuilder b
-bindVisualizationBuilder builder next =
-  case builder of
-    VisualizationBuilder runFirst ->
-      VisualizationBuilder
-        (\counter0 ->
-           case runFirst counter0 of
-             VisualizationResult value counter1 first ->
-               case next value of
-                 VisualizationBuilder runSecond ->
-                   case runSecond counter1 of
-                     VisualizationResult output counter2 second ->
-                       VisualizationResult
-                         output
-                         counter2
-                         (matchSpecAppend first second))
-
-emptyVisualizationBuilder :: a -> VisualizationBuilder a
-emptyVisualizationBuilder value =
-  VisualizationBuilder
-    (\counter -> VisualizationResult value counter emptyMatchSpec)
-
-emptyVisualizationBuilderLinear :: a %1 -> VisualizationBuilder a
-emptyVisualizationBuilderLinear value =
-  VisualizationBuilder
-    (\counter -> VisualizationResult value counter emptyMatchSpec)
-
-emitVisualizationBuilder :: a -> MatchSpec -> VisualizationBuilder a
-emitVisualizationBuilder value spec =
-  VisualizationBuilder (\counter -> VisualizationResult value counter spec)
-
-freshVisualizationValue :: P.String -> (P.String -> a) -> VisualizationBuilder a
-freshVisualizationValue prefix build =
-  VisualizationBuilder
-    (\counter ->
-       VisualizationResult
-         (build (prefix P.++ P.show counter))
-         (counter P.+ 1)
-         emptyMatchSpec)
-
-instance DFL.Functor VisualizationBuilder where
-  fmap f builder =
-    case builder of
-      VisualizationBuilder run ->
-        VisualizationBuilder
-          (\counter0 ->
-             case run counter0 of
-               VisualizationResult value counter1 spec ->
-                 VisualizationResult (f value) counter1 spec)
-
-instance Functor VisualizationBuilder where
-  fmap f builder =
-    case builder of
-      VisualizationBuilder run ->
-        VisualizationBuilder
-          (\counter0 ->
-             case run counter0 of
-               VisualizationResult value counter1 spec ->
-                 VisualizationResult (f value) counter1 spec)
-
-instance DFL.Applicative VisualizationBuilder where
-  pure = emptyVisualizationBuilder
-  liftA2 f lhs rhs =
-    case lhs of
-      VisualizationBuilder runLeft ->
-        case rhs of
-          VisualizationBuilder runRight ->
-            VisualizationBuilder
-              (\counter0 ->
-                 case runLeft counter0 of
-                   VisualizationResult leftValue counter1 first ->
-                     case runRight counter1 of
-                       VisualizationResult rightValue counter2 second ->
-                         VisualizationResult
-                           (f leftValue rightValue)
-                           counter2
-                           (matchSpecAppend first second))
-
-instance Applicative VisualizationBuilder where
-  pure = emptyVisualizationBuilderLinear
-  liftA2 f lhs rhs =
-    case lhs of
-      VisualizationBuilder runLeft ->
-        case rhs of
-          VisualizationBuilder runRight ->
-            VisualizationBuilder
-              (\counter0 ->
-                 case runLeft counter0 of
-                   VisualizationResult leftValue counter1 first ->
-                     case runRight counter1 of
-                       VisualizationResult rightValue counter2 second ->
-                         VisualizationResult
-                           (f leftValue rightValue)
-                           counter2
-                           (matchSpecAppend first second))
-
-instance Monad VisualizationBuilder where
-  (>>=) = bindVisualizationBuilder
-
-bindSelection :: Selection a %1 -> (a %1 -> Selection b) %1 -> Selection b
-bindSelection selection next =
-  case selection of
-    Selection value first ->
-      case next value of
-        Selection output second ->
-          Selection output (matchSpecAppend first second)
-
-instance DFL.Functor Selection where
-  fmap f selection =
-    case selection of
-      Selection value spec -> Selection (f value) spec
-
-instance Functor Selection where
-  fmap f selection =
-    case selection of
-      Selection value spec -> Selection (f value) spec
-
-instance DFL.Applicative Selection where
-  pure value = Selection value emptyMatchSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      Selection leftValue first ->
-        case rhs of
-          Selection rightValue second ->
-            Selection (f leftValue rightValue) (matchSpecAppend first second)
-
-instance Applicative Selection where
-  pure value = Selection value emptyMatchSpec
-  liftA2 f lhs rhs =
-    case lhs of
-      Selection leftValue first ->
-        case rhs of
-          Selection rightValue second ->
-            Selection (f leftValue rightValue) (matchSpecAppend first second)
-
-instance Monad Selection where
-  (>>=) = bindSelection
-
-layoutValueExpr :: LayoutValue tag -> LayoutExpr
-layoutValueExpr value =
-  case value of
-    LayoutValue expr _ -> expr
-
-layoutValueConstraints :: LayoutValue tag -> [S.Constraint]
-layoutValueConstraints value =
-  case value of
-    LayoutValue _ constraints -> constraints
-
-coordExpr :: Coord -> LayoutExpr
-coordExpr = layoutValueExpr
-
-spanExpr :: Span -> LayoutExpr
-spanExpr = layoutValueExpr
-
-offsetExpr :: Offset -> LayoutExpr
-offsetExpr = layoutValueExpr
-
-scalarExpr :: Scalar -> LayoutExpr
-scalarExpr = layoutValueExpr
-
-coordConstraints :: Coord -> [S.Constraint]
-coordConstraints = layoutValueConstraints
-
-spanConstraints :: Span -> [S.Constraint]
-spanConstraints = layoutValueConstraints
-
-offsetConstraints :: Offset -> [S.Constraint]
-offsetConstraints = layoutValueConstraints
-
-scalarConstraints :: Scalar -> [S.Constraint]
-scalarConstraints = layoutValueConstraints
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -1929,6 +1523,9 @@ instance VariableValue Scalar where
 instance S.SymbolicType ty => VariableValue (S.Expr ty) where
   namedVariable = V.global
 
+instance S.ChoiceDomain value => VariableValue (Categorical value) where
+  namedVariable = Categorical P.. S.choice
+
 bindInt :: VisualizationBuilder (Bound QueryInt)
 bindInt = freshVisualizationValue "view.bind." (Bound P.. queryIntVar)
 
@@ -1936,307 +1533,19 @@ bindContent :: VisualizationBuilder (Bound ContentValue)
 bindContent =
   freshVisualizationValue "view.bind." (Bound P.. ContentBinding P.. Binding)
 
-class VariableDomain value where
-  type VariableResult value
-  namedDomainVariable :: P.String -> VariableResult value
-
-instance VariableDomain Coord where
-  type VariableResult Coord = Coord
-  namedDomainVariable = namedVariable
-
-instance VariableDomain Span where
-  type VariableResult Span = Span
-  namedDomainVariable = namedVariable
-
-instance VariableDomain Offset where
-  type VariableResult Offset = Offset
-  namedDomainVariable = namedVariable
-
-instance VariableDomain Scalar where
-  type VariableResult Scalar = Scalar
-  namedDomainVariable = namedVariable
-
-instance S.SymbolicType ty => VariableDomain (S.Expr ty) where
-  type VariableResult (S.Expr ty) = S.Expr ty
-  namedDomainVariable = namedVariable
-
-instance VariableDomain FontFamily where
-  type VariableResult FontFamily = Categorical FontFamily
-  namedDomainVariable = Categorical P.. S.choice
-
-instance VariableDomain FontWeight where
-  type VariableResult FontWeight = Categorical FontWeight
-  namedDomainVariable = Categorical P.. S.choice
-
-instance VariableDomain FontStyle where
-  type VariableResult FontStyle = Categorical FontStyle
-  namedDomainVariable = Categorical P.. S.choice
-
-instance VariableDomain TextAlign where
-  type VariableResult TextAlign = Categorical TextAlign
-  namedDomainVariable = Categorical P.. S.choice
-
-instance VariableDomain BorderStyle where
-  type VariableResult BorderStyle = Categorical BorderStyle
-  namedDomainVariable = Categorical P.. S.choice
-
-instance VariableDomain WhiteSpace where
-  type VariableResult WhiteSpace = Categorical WhiteSpace
-  namedDomainVariable = Categorical P.. S.choice
-
 variable ::
-     forall value. VariableDomain value
-  => VisualizationBuilder (Variable (VariableResult value))
+     forall value. VariableValue value
+  => VisualizationBuilder (Variable value)
 variable =
-  freshVisualizationValue "view.var." (Variable P.. namedDomainVariable @value)
+  freshVisualizationValue "view.var." (Variable P.. namedVariable @value)
 
-variableFrom ::
-     forall value. VariableDomain value
-  => VariableResult value
-  -> VisualizationBuilder (Variable (VariableResult value))
+variableFrom :: forall value. value -> VisualizationBuilder (Variable value)
 variableFrom rhs = emptyVisualizationBuilder (Variable rhs)
 
-class StyleTarget target result | target -> result where
-  style :: target -> result
-
-instance StyleTarget (StyleRecipe ()) (NodeStyle -> NodeStyle) where
-  style = styleDefinition
-
-styleDefinition :: StyleRecipe () -> NodeStyle -> NodeStyle
-styleDefinition recipe =
-  case recipe of
-    NodeRecipe () spec -> nodeSpecStyleUpdate spec
-
-setStyleWith :: (NodeStyle -> NodeStyle) -> NodeRecipe ()
-setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
-
-class Opacity input output | input -> output, output -> input where
-  opacity :: input -> output
-
-class ZIndex input output | input -> output, output -> input where
-  zIndex :: input -> output
-
-class FontSize input output | input -> output, output -> input where
-  fontSize :: input -> output
-
-class Padding input output | input -> output, output -> input where
-  padding :: input -> output
-
-class Radius input output | input -> output, output -> input where
-  radius :: input -> output
-
-class StrokeWidth input output | input -> output, output -> input where
-  strokeWidth :: input -> output
-
-class Alpha input output | input -> output, output -> input where
-  alpha :: input -> output
-
-class Fill input output | input -> output, output -> input where
-  fill :: input -> output
-
-class Stroke input output | input -> output, output -> input where
-  stroke :: input -> output
-
-instance Opacity Unit (NodeRecipe ()) where
-  opacity value = setStyleWith (VS.setStyleField @VS.Opacity value)
-
-instance Opacity (Selected tag) (SelectionValue Unit tag) where
-  opacity selection = SelectionValue selection (styleValueAccess @VS.Opacity)
-
-instance ZIndex Free (NodeRecipe ()) where
-  zIndex value = setStyleWith (VS.setStyleField @VS.ZIndex value)
-
-instance ZIndex (Selected tag) (SelectionValue Free tag) where
-  zIndex selection = SelectionValue selection (styleValueAccess @VS.ZIndex)
-
-instance FontSize Span (NodeRecipe ()) where
-  fontSize value = setStyleWith (VS.setStyleField @VS.FontSize (spanExpr value))
-
-instance FontSize (Selected tag) (SelectionValue Span tag) where
-  fontSize selection = SelectionValue selection (styleValueAccess @VS.FontSize)
-
-instance Padding Span (NodeRecipe ()) where
-  padding value = setStyleWith (VS.setStyleField @VS.Padding (spanExpr value))
-
-instance Padding (Selected tag) (SelectionValue Span tag) where
-  padding selection = SelectionValue selection (styleValueAccess @VS.Padding)
-
-instance Radius Span (NodeRecipe ()) where
-  radius value = setStyleWith (VS.setStyleField @VS.Radius (spanExpr value))
-
-instance Radius (Selected tag) (SelectionValue Span tag) where
-  radius selection = SelectionValue selection (styleValueAccess @VS.Radius)
-
-instance StrokeWidth Span (NodeRecipe ()) where
-  strokeWidth value =
-    setStyleWith (VS.setStyleField @VS.StrokeWidth (spanExpr value))
-
-instance StrokeWidth (Selected tag) (SelectionValue Span tag) where
-  strokeWidth selection =
-    SelectionValue selection (styleValueAccess @VS.StrokeWidth)
-
-instance Alpha Unit (NodeRecipe ()) where
-  alpha value = setStyleWith (VS.setStyleField @VS.Alpha value)
-
-instance Alpha (Selected tag) (SelectionValue Unit tag) where
-  alpha selection = SelectionValue selection (styleValueAccess @VS.Alpha)
-
-instance Fill Color (NodeRecipe ()) where
-  fill value = setStyleWith (VS.setStyleField @VS.Fill value)
-
-instance Fill
-           (Selected tag)
-           (Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)) where
-  fill selection =
-    Hsl
-      (SelectionValue selection (styleColorPartValueAccess @VS.Fill HslHue))
-      (SelectionValue
-         selection
-         (styleColorPartValueAccess @VS.Fill HslSaturation))
-      (SelectionValue
-         selection
-         (styleColorPartValueAccess @VS.Fill HslLightness))
-
-instance Stroke Color (NodeRecipe ()) where
-  stroke value = setStyleWith (VS.setStyleField @VS.Stroke value)
-
-instance Stroke
-           (Selected tag)
-           (Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)) where
-  stroke selection =
-    Hsl
-      (SelectionValue selection (styleColorPartValueAccess @VS.Stroke HslHue))
-      (SelectionValue
-         selection
-         (styleColorPartValueAccess @VS.Stroke HslSaturation))
-      (SelectionValue
-         selection
-         (styleColorPartValueAccess @VS.Stroke HslLightness))
-
-sat :: Hsl hue unit -> unit
-sat = saturation
-
-class CategoricalStyleValue value input where
-  styleCategoryValue :: input -> S.ChoiceValue value
-
-instance S.ChoiceDomain value => CategoricalStyleValue value value where
-  styleCategoryValue = S.Fixed
-
-instance S.ChoiceDomain value => CategoricalStyleValue value (Categorical value) where
-  styleCategoryValue input =
-    case input of
-      Categorical selected -> S.Variable selected
-
-styleCategoryRecipe ::
-     CategoricalStyleValue value input
-  => (S.ChoiceValue value -> NodeStyle -> NodeStyle)
-  -> input
-  -> NodeRecipe ()
-styleCategoryRecipe setCategory value =
-  setStyleWith (setCategory (styleCategoryValue value))
-
-selectedCategory ::
-     forall field value tag.
-     (VS.StyleField field, VS.StyleValue field ~ S.ChoiceValue value)
-  => Selected tag
-  -> SelectionCategory value tag
-selectedCategory selection =
-  SelectionCategory selection (styleChoiceValueAccess @field)
-
-class FontFamilyStyle input output | input -> output where
-  fontFamily :: input -> output
-
-instance FontFamilyStyle FontFamily (NodeRecipe ()) where
-  fontFamily = styleCategoryRecipe (VS.setStyleField @FontFamily)
-
-instance FontFamilyStyle (Categorical FontFamily) (NodeRecipe ()) where
-  fontFamily = styleCategoryRecipe (VS.setStyleField @FontFamily)
-
-instance FontFamilyStyle (Selected tag) (SelectionCategory FontFamily tag) where
-  fontFamily = selectedCategory @FontFamily
-
-class FontWeightStyle input output | input -> output where
-  fontWeight :: input -> output
-
-instance FontWeightStyle FontWeight (NodeRecipe ()) where
-  fontWeight = styleCategoryRecipe (VS.setStyleField @FontWeight)
-
-instance FontWeightStyle (Categorical FontWeight) (NodeRecipe ()) where
-  fontWeight = styleCategoryRecipe (VS.setStyleField @FontWeight)
-
-instance FontWeightStyle (Selected tag) (SelectionCategory FontWeight tag) where
-  fontWeight = selectedCategory @FontWeight
-
-class FontStyleStyle input output | input -> output where
-  fontStyle :: input -> output
-
-instance FontStyleStyle FontStyle (NodeRecipe ()) where
-  fontStyle = styleCategoryRecipe (VS.setStyleField @FontStyle)
-
-instance FontStyleStyle (Categorical FontStyle) (NodeRecipe ()) where
-  fontStyle = styleCategoryRecipe (VS.setStyleField @FontStyle)
-
-instance FontStyleStyle (Selected tag) (SelectionCategory FontStyle tag) where
-  fontStyle = selectedCategory @FontStyle
-
-class TextAlignStyle input output | input -> output where
-  textAlign :: input -> output
-
-instance TextAlignStyle TextAlign (NodeRecipe ()) where
-  textAlign = styleCategoryRecipe (VS.setStyleField @TextAlign)
-
-instance TextAlignStyle (Categorical TextAlign) (NodeRecipe ()) where
-  textAlign = styleCategoryRecipe (VS.setStyleField @TextAlign)
-
-instance TextAlignStyle (Selected tag) (SelectionCategory TextAlign tag) where
-  textAlign = selectedCategory @TextAlign
-
-class BorderStyleStyle input output | input -> output where
-  borderStyle :: input -> output
-
-instance BorderStyleStyle BorderStyle (NodeRecipe ()) where
-  borderStyle = styleCategoryRecipe (VS.setStyleField @BorderStyle)
-
-instance BorderStyleStyle (Categorical BorderStyle) (NodeRecipe ()) where
-  borderStyle = styleCategoryRecipe (VS.setStyleField @BorderStyle)
-
-instance BorderStyleStyle (Selected tag) (SelectionCategory BorderStyle tag) where
-  borderStyle = selectedCategory @BorderStyle
-
-class WhiteSpaceStyle input output | input -> output where
-  whiteSpace :: input -> output
-
-instance WhiteSpaceStyle WhiteSpace (NodeRecipe ()) where
-  whiteSpace = styleCategoryRecipe (VS.setStyleField @WhiteSpace)
-
-instance WhiteSpaceStyle (Categorical WhiteSpace) (NodeRecipe ()) where
-  whiteSpace = styleCategoryRecipe (VS.setStyleField @WhiteSpace)
-
-instance WhiteSpaceStyle (Selected tag) (SelectionCategory WhiteSpace tag) where
-  whiteSpace = selectedCategory @WhiteSpace
-
-bold :: NodeRecipe ()
-bold = fontWeight FontWeightBold
-
-centerText :: NodeRecipe ()
-centerText = textAlign TextAlignCenter
-
-content :: ContentValue -> NodeRecipe ()
-content value =
-  setNodeSpecWith
-    (\spec -> spec {nodeSpecContent = Just (contentValueSpec value)})
-
-contentValueSpec :: ContentValue -> ContentSpec
-contentValueSpec value =
-  case value of
-    ContentLiteral textValue -> LiteralContent textValue
-    ContentBinding binding   -> BoundContent binding
-
-noWrap :: NodeRecipe ()
-noWrap = whiteSpace WhiteSpaceNoWrap
-
-setNodeSpecWith :: (NodeSpec -> NodeSpec) -> NodeRecipe ()
-setNodeSpecWith update = NodeRecipe () (update emptyNodeSpec)
+choice ::
+     forall value. S.ChoiceDomain value
+  => VisualizationBuilder (Variable (Categorical value))
+choice = variable @(Categorical value)
 
 class Left input output | input -> output, output -> input where
   left :: input -> output
@@ -2334,290 +1643,3 @@ bounds value =
       left (mkCoord leftExpr [])
       width (mkSpan widthExpr [])
       height (mkSpan heightExpr [])
-
-data GroupNode
-
-class Node input result | input -> result where
-  node :: input -> result
-
-type family SelectQuery payload where
-  SelectQuery AnyPayload = Query
-  SelectQuery payload = TraceQuery payload
-
-class Select payload query where
-  selectWithPayload ::
-       query -> VisualizationBuilder (NodeBinding (Selected payload))
-
-instance Select AnyPayload Query where
-  selectWithPayload query =
-    emitVisualizationBuilder
-      (Selected (SelectedHandle (Selection (AnyNodeRef query) emptyMatchSpec)))
-      emptyMatchSpec
-
-instance C.Traceable tag => Select tag (TraceQuery tag) where
-  selectWithPayload query =
-    emitVisualizationBuilder
-      (Selected (SelectedHandle (Selection (TraceNodeRef query) emptyMatchSpec)))
-      emptyMatchSpec
-
-select ::
-     forall payload. Select payload (SelectQuery payload)
-  => SelectQuery payload
-  -> VisualizationBuilder (NodeBinding (Selected payload))
-select = selectWithPayload @payload @(SelectQuery payload)
-
-nodePatch :: MatchBindings -> NodeRecipe () -> VP.NodePatch
-nodePatch bindings recipe =
-  case recipe of
-    NodeRecipe () spec ->
-      VP.NodePatch
-        { VP.nodePatchStyleUpdate =
-            substituteStyleBindings bindings P.. nodeSpecStyleUpdate spec
-        , VP.nodePatchContent =
-            P.fmap (contentMode bindings) (nodeSpecContent spec)
-        , VP.nodePatchLeft =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecLeft spec)
-        , VP.nodePatchTop =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecTop spec)
-        , VP.nodePatchWidth =
-            P.fmap
-              (spanPin P.. substituteSpanBindings bindings)
-              (nodeSpecWidth spec)
-        , VP.nodePatchHeight =
-            P.fmap
-              (spanPin P.. substituteSpanBindings bindings)
-              (nodeSpecHeight spec)
-        , VP.nodePatchRight =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecRight spec)
-        , VP.nodePatchBottom =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecBottom spec)
-        , VP.nodePatchX =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecX spec)
-        , VP.nodePatchY =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecY spec)
-        }
-
-substituteStyleBindings :: MatchBindings -> NodeStyle -> NodeStyle
-substituteStyleBindings bindings =
-  VS.mapNodeStyleExprs
-    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
-
-substituteCoordBindings :: MatchBindings -> Coord -> Coord
-substituteCoordBindings = substituteLayoutBindings
-
-substituteSpanBindings :: MatchBindings -> Span -> Span
-substituteSpanBindings = substituteLayoutBindings
-
-substituteLayoutBindings :: MatchBindings -> LayoutValue tag -> LayoutValue tag
-substituteLayoutBindings bindings value =
-  LayoutValue
-    (SolverExpr.substituteExprVars
-       (bindingExprSubstitutions bindings)
-       (layoutValueExpr value))
-    (layoutValueConstraints value)
-
-bindingExprSubstitutions :: MatchBindings -> [(P.String, P.Double)]
-bindingExprSubstitutions bindings =
-  case bindings of
-    [] -> []
-    MatchBinding name value:rest ->
-      case Read.readMaybe value of
-        Nothing -> bindingExprSubstitutions rest
-        Just numericValue ->
-          ("global." P.++ name, numericValue) : bindingExprSubstitutions rest
-
-contentMode :: MatchBindings -> ContentSpec -> V.ContentMode
-contentMode bindings spec =
-  case spec of
-    LiteralContent value -> V.ContentText value
-    BoundContent binding -> V.ContentText (bindingContent bindings binding)
-
-bindingContent :: MatchBindings -> Binding -> P.String
-bindingContent bindings binding =
-  case binding of
-    Binding name ->
-      case matchBindingValue name bindings of
-        Nothing ->
-          P.error ("Unbound view binding #" P.++ name P.++ " in content")
-        Just value -> value
-
-coordPin :: Coord -> VP.LayoutPin
-coordPin value = VP.LayoutPin (coordExpr value) (coordConstraints value)
-
-spanPin :: Span -> VP.LayoutPin
-spanPin value = VP.LayoutPin (spanExpr value) (spanConstraints value)
-
-instance Node
-           (Selected child)
-           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node children =
-    case children of
-      SelectedHandle selection ->
-        case selection of
-          Selection child childSpec ->
-            let query = nodeRefQuery child
-             in VisualizationBuilder
-                  (\counter ->
-                     let key = groupNodeKey counter
-                         groupSpec = matchGroupNode key query VP.emptyNodePatch
-                      in VisualizationResult
-                           (Selected
-                              (SelectedHandle
-                                 (Selection
-                                    (GroupNodeRef key query)
-                                    emptyMatchSpec)))
-                           (counter P.+ 1)
-                           (matchSpecAppend childSpec groupSpec))
-
-instance Node
-           (NodeBinding (Selected child))
-           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node binding =
-    case binding of
-      Selected children -> node children
-
-instance Node
-           (VisualizationBuilder (NodeBinding (Selected child)))
-           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node childrenBuilder =
-    case childrenBuilder of
-      VisualizationBuilder runFirst ->
-        VisualizationBuilder
-          (\counter0 ->
-             case runFirst counter0 of
-               VisualizationResult binding counter1 first ->
-                 case node binding of
-                   VisualizationBuilder runSecond ->
-                     case runSecond counter1 of
-                       VisualizationResult selected counter2 second ->
-                         VisualizationResult
-                           selected
-                           counter2
-                           (matchSpecAppend first second))
-
-instance StyleTarget (Selected tag) (NodeRecipe () -> VisualizationBuilder ()) where
-  style selection recipe =
-    case selection of
-      SelectedHandle selected ->
-        case selected of
-          Selection handle spec ->
-            VisualizationBuilder
-              (\counter ->
-                 VisualizationResult
-                   ()
-                   counter
-                   (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
-
-nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
-nodeRefStyleSpec handle recipe =
-  case handle of
-    AnyNodeRef query -> matchAnyQueryNode query (`nodePatch` recipe)
-    TraceNodeRef selector ->
-      matchQueryPayloadNode
-        (traceQueryQuery selector)
-        (traceQueryPayloadPattern selector)
-        (\context -> nodePatch (matchContextBindings context) recipe)
-    GroupNodeRef key query -> matchGroupNode key query (nodePatch [] recipe)
-
-nodeRefQuery :: NodeRef tag -> Query
-nodeRefQuery handle =
-  case handle of
-    AnyNodeRef query      -> query
-    TraceNodeRef selector -> traceQueryQuery selector
-    GroupNodeRef _ query  -> query
-
-nodeSelection :: NodeRef tag -> NodeSelection
-nodeSelection handle =
-  case handle of
-    AnyNodeRef query       -> TraceSelection query
-    TraceNodeRef selector  -> TraceSelection (traceQueryQuery selector)
-    GroupNodeRef key query -> GroupSelection key query
-
-groupNodeKey :: P.Int -> P.String
-groupNodeKey counter = "group-node-" P.++ P.show counter
-
-visualize :: VisualizationBuilder () -> MatchSpec
-visualize builder =
-  case builder of
-    VisualizationBuilder run ->
-      case run 0 of
-        VisualizationResult () _ spec -> spec
-
-class PayloadSelector tag selector where
-  payloadSelector :: selector -> PayloadPattern tag
-
-instance PayloadSelector tag ContentValue where
-  payloadSelector selector =
-    case selector of
-      ContentBinding binding ->
-        case binding of
-          Binding name -> payloadBindingPattern name
-      ContentLiteral _ ->
-        P.error "Literal content cannot be used as a payload binding selector"
-
-instance (Payload tag ~ LBool tag) => PayloadSelector tag P.Bool where
-  payloadSelector = payloadBoolPattern
-
-instance (Payload tag ~ LInt tag) => PayloadSelector tag P.Int where
-  payloadSelector = payloadIntPattern
-
-instance (Payload tag ~ LDouble tag) => PayloadSelector tag P.Double where
-  payloadSelector = payloadDoublePattern
-
-instance (Payload tag ~ LString tag) => PayloadSelector tag P.String where
-  payloadSelector = payloadStringPattern
-
-instance (Payload tag ~ LUnit tag) => PayloadSelector tag () where
-  payloadSelector = payloadUnitPattern
-
-traceQueryQuery :: TraceQuery tag -> Query
-traceQueryQuery query =
-  case query of
-    TraceQuery query' _ -> query'
-
-traceQueryPayloadPattern :: TraceQuery tag -> PayloadPattern tag
-traceQueryPayloadPattern query =
-  case query of
-    TraceQuery _ Nothing               -> anyPayloadPattern
-    TraceQuery _ (Just payloadPattern) -> payloadPattern
-
-traceQueryAppend :: TraceQuery tag -> TraceQuery tag -> TraceQuery tag
-traceQueryAppend lhs rhs =
-  case lhs of
-    TraceQuery leftQuery leftPayload ->
-      case rhs of
-        TraceQuery rightQuery rightPayload ->
-          TraceQuery
-            (queryAppend leftQuery rightQuery)
-            (preferLater leftPayload rightPayload)
-
-instance KnownSymbol name => IsLabel name (TraceQuery tag) where
-  fromLabel = TraceQuery (queryAtom (labelName (Proxy @name))) Nothing
-
-instance KnownSymbol name => IsLabel name (QueryInt -> TraceQuery tag) where
-  fromLabel value =
-    TraceQuery (queryInt (labelName (Proxy @name)) value) Nothing
-
-class QueryAppend query where
-  appendQuery :: query -> query -> query
-
-instance QueryAppend Query where
-  appendQuery = queryAppend
-
-instance QueryAppend (TraceQuery tag) where
-  appendQuery = traceQueryAppend
-
-(<&>) :: QueryAppend query => query -> query -> query
-(<&>) = appendQuery

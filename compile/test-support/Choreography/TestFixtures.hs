@@ -76,7 +76,7 @@ payloadMatchedSpec :: MatchSpec
 payloadMatchedSpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    style item $ do
+    render item $ do
       width (by 80)
       height (by 80)
 
@@ -84,59 +84,60 @@ groupSpec :: MatchSpec
 groupSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    style item $ do
+    render item $ do
       width (by 80)
       height (by 80)
     Selected group <- node item
-    style group $ do
-      padding (by 8)
+    render group $ do
+      style @Padding (by 8)
 
 selectedColorSpec :: MatchSpec
 selectedColorSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    style item $ do
+    render item $ do
       width (by 80)
       height (by 80)
-    ensure $ fill item .==. Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit)
+    ensure
+      $ styleOf @Fill item .==. Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit)
 
 selectedScalarSpec :: MatchSpec
 selectedScalarSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    style item $ do
+    render item $ do
       width (by 80)
       height (by 80)
-    ensure $ padding item .==. by 6
+    ensure $ styleOf @Padding item .==. by 6
 
 categoricalStyleSpec :: MatchSpec
 categoricalStyleSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    Variable family <- variable @FontFamily
-    style item $ do
+    Variable family <- choice @FontFamily
+    render item $ do
       width (by 80)
       height (by 80)
-      fontFamily family
+      style @FontFamily (VariableStyle family)
     ensure $ family .==. FontMono
 
 categoricalRelationSpec :: MatchSpec
 categoricalRelationSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    style item $ do
+    render item $ do
       width (by 80)
       height (by 80)
-    ensure $ fontFamily item .==. FontInter
+    ensure $ styleOf @FontFamily item .==. FontInter
 
 styledSpec :: MatchSpec
 styledSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    style item $ do
+    render item $ do
       width (by 80)
       height (by 80)
-      padding (by 4)
-      fontFamily FontInter
-      fontWeight FontWeightBold
-      fill (Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit))
+      style @Padding (by 4)
+      style @FontFamily (FixedStyle FontInter)
+      style @FontWeight (FixedStyle FontWeightBold)
+      style @Fill (Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit))

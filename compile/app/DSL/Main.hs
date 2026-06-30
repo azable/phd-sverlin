@@ -247,34 +247,36 @@ visualization =
     Bound i <- bindInt
     -- Every value has the same visual representation. Probe copies only scale
     -- this base shape up slightly while they are being compared.
+    Variable ff <- choice @FontFamily
     Selected valueContent <- select @Value (payload v)
     let valueRadius = cell * 0.12
-    style valueContent $ do
+    render valueContent $ do
       content v
-      centerText
-      fill (Hsl valueHue 0.24 0.9)
-      stroke (Hsl valueHue 0.46 0.34)
-      strokeWidth (by 3)
-      padding (cell * 0.08)
-      radius valueRadius
-      fontSize (cell * 0.44)
-      zIndex 2
+      style @TextAlign (FixedStyle TextAlignCenter)
+      style @FontFamily (VariableStyle ff)
+      style @Fill (Hsl valueHue 0.24 0.9)
+      style @Stroke (Hsl valueHue 0.46 0.34)
+      style @StrokeWidth (by 3)
+      style @Padding (cell * 0.08)
+      style @Radius valueRadius
+      style @FontSize (cell * 0.44)
+      style @ZIndex 2
       width cell
       height cell
     -- Target row: a source value that anchors the rest of the layout.
     Selected targetSource <- select @Value (#target <&> #source)
-    style targetSource $ do
+    render targetSource $ do
       width targetSize
       height targetSize
-      fontSize (targetSize * 0.44)
-      strokeWidth (by 6)
+      style @FontSize (targetSize * 0.44)
+      style @StrokeWidth (by 6)
     -- Probe row: the copied target and current array element sit side by side.
     Selected targetProbe <- select @Value (#target <&> #probe)
     Selected probe <- select @Value #probe
     Selected probes <- node probe
     Selected probeItem <- select @Value (#probe <&> #index @: i)
-    style probe $ do
-      zIndex 3
+    render probe $ do
+      style @ZIndex 3
       width probeSize
       height probeSize
     -- Result row: a compact badge records the branch decision.
@@ -283,43 +285,43 @@ visualization =
     Selected result <- select @Match #result
     Selected resultTrue <- select @Match (#result <&> payload True)
     Selected resultFalse <- select @Match (#result <&> payload False)
-    style result $ do
-      centerText
-      fill (Hsl 214 0.06 0.94)
-      stroke (Hsl 214 0.12 0.52)
-      strokeWidth (cell * 0.035)
-      padding (cell * 0.05)
-      zIndex 4
-      radius (cell * 0.14)
-      fontSize (cell * 0.26)
+    render result $ do
+      style @TextAlign (FixedStyle TextAlignCenter)
+      style @Fill (Hsl 214 0.06 0.94)
+      style @Stroke (Hsl 214 0.12 0.52)
+      style @StrokeWidth (cell * 0.035)
+      style @Padding (cell * 0.05)
+      style @ZIndex 4
+      style @Radius (cell * 0.14)
+      style @FontSize (cell * 0.26)
       width resultWidth
       height resultHeight
-    style resultTrue $ do
+    render resultTrue $ do
       content "MATCH"
-      fill (Hsl 142 0.52 0.84)
-      stroke (Hsl 142 0.72 0.32)
-    style resultFalse $ do
+      style @Fill (Hsl 142 0.52 0.84)
+      style @Stroke (Hsl 142 0.72 0.32)
+    render resultFalse $ do
       content "NO MATCH"
-      fill (Hsl 8 0.44 0.9)
-      stroke (Hsl 8 0.62 0.38)
+      style @Fill (Hsl 8 0.44 0.9)
+      style @Stroke (Hsl 8 0.62 0.38)
     -- Array row: unprocessed values stay prominent; consumed values recede.
     Selected arrayItems <- select @Value #array
     Selected array <- node arrayItems
     Selected arrayItem <- select @Value (#array <&> #index @: i)
     Selected nextArrayItem <- select @Value (#array <&> #index @: (i + 1))
     let arrayBackground = Hsl valueHue 0.14 0.95
-    style array $ do
-      zIndex 0
-      padding gap
-      radius (valueRadius * 1.3)
-      fill arrayBackground
-      stroke arrayBackground
+    render array $ do
+      style @ZIndex 0
+      style @Padding gap
+      style @Radius (valueRadius * 1.3)
+      style @Fill arrayBackground
+      style @Stroke arrayBackground
     Selected processedItem <- select @AnyPayload #processed
     let processedColor :: Color
         processedColor = Hsl valueHue 0.16 0.78
-    style processedItem $ do
-      fill processedColor
-      stroke processedColor
+    render processedItem $ do
+      style @Fill processedColor
+      style @Stroke processedColor
     -- Hard constraints define structure. Rows are linked by gap and centered
     -- together as a group so seed variation can move the whole cluster.
     -- Rows are ordered by minimum gaps, leaving vertical slack free.

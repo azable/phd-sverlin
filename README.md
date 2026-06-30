@@ -139,6 +139,6 @@ pnpm run format:haskell
 
 `stylish-haskell -i` should be the final source-modifying formatter pass.
 
-## TODO
+## DSL Notes
 
-- Consider a clearer unified presentation API for visualization styles: keep assignment/override semantics distinct from relational constraints, e.g. an explicit `set`-style API for properties while reserving `ensure`/`encourage` for relationships.
+- Choreography style assignment uses `render selected $ do ...` for node patches and `style @Field ...` for individual style fields. Selected style constraints use `styleOf @Field selected`, keeping assignment distinct from `ensure`/`encourage` relations. Numeric variables use `variable @Span`/`variable @Angle`; categorical variables use `choice @FontFamily`.

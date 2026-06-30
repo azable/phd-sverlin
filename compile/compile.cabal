@@ -87,7 +87,10 @@ library
 
     other-modules:
         LinearTrace.Choreography.Match
+        LinearTrace.Choreography.Node
         LinearTrace.Choreography.Query
+        LinearTrace.Choreography.Style
+        LinearTrace.Choreography.Types
         LinearTrace.Core.Internal
         LinearTrace.View
         LinearTrace.View.Access
