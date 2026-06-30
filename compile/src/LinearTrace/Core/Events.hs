@@ -42,10 +42,8 @@ module LinearTrace.Core.Events
   , traceGraphSteps
   , traceStepOutput
   , -- * Block references
-    -- | Block reference helpers used when linking core events to view tags and
-    -- synthetic grouping nodes.
+    -- | Block reference helpers used when linking core events to view tags.
     blockRefId
-  , syntheticBlockRef
   ) where
 
 import           Control.Functor.Linear    (runState)
@@ -170,9 +168,6 @@ blockRefId :: BlockRef tag -> BlockId
 blockRefId ref =
   case ref of
     C.BlockRef blockId -> blockId
-
-syntheticBlockRef :: BlockId -> BlockRef tag
-syntheticBlockRef = C.BlockRef
 
 traceEventFromAuditStep :: C.AuditStep act -> TraceEvent act
 traceEventFromAuditStep step =

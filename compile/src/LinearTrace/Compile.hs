@@ -7,12 +7,12 @@
 -- materialization boundary but does not expose symbolic view internals.
 module LinearTrace.Compile
   ( -- * Render model
-    -- | Concrete JSON-facing render identifiers, style values, blocks, patches,
-    -- frames, and visualization wrapper produced after solving/materialization.
+    -- | Concrete JSON-facing render identifiers, style values, elements,
+    -- patches, frames, and visualization wrapper produced after solving.
     RenderId(..)
   , StyleValue(..)
   , RenderStyle(..)
-  , RenderBlock(..)
+  , RenderElement(..)
   , RenderOrigin(..)
   , RenderPatch(..)
   , RenderFrame(..)
@@ -52,10 +52,10 @@ newtype RenderId =
   RenderId String
   deriving (Eq, Ord, Show)
 
-freshRenderIdForBlock :: RenderBlock -> RenderId
-freshRenderIdForBlock block =
+freshRenderIdForElement :: RenderElement -> RenderId
+freshRenderIdForElement element =
   RenderId
-    ("lineage." ++ show (renderBlockId block) ++ "." ++ renderNodeKey block)
+    ("lineage." ++ show (renderNodeId element) ++ "." ++ renderNodeKey element)
 
 --------------------------------------------------------------------------------
 -- Compiled CSS style
@@ -87,8 +87,8 @@ data RenderStyle = RenderStyle
   , renderAttrs  :: Map String StyleValue
   } deriving (Eq, Show)
 
-data RenderBlock = RenderBlock
-  { renderBlockId :: Int
+data RenderElement = RenderElement
+  { renderNodeId  :: Int
   , renderNodeKey :: String
   , renderContent :: String
   , renderKind    :: String
@@ -97,13 +97,13 @@ data RenderBlock = RenderBlock
 
 data RenderOrigin = RenderOrigin
   { renderOriginId      :: RenderId
-  , renderOriginElement :: RenderBlock
+  , renderOriginElement :: RenderElement
   } deriving (Eq, Show)
 
 data RenderPatch
-  = RenderCreate RenderId (Maybe RenderOrigin) RenderBlock
-  | RenderUpdate RenderId RenderBlock RenderBlock
-  | RenderDestroy RenderId RenderBlock
+  = RenderCreate RenderId (Maybe RenderOrigin) RenderElement
+  | RenderUpdate RenderId RenderElement RenderElement
+  | RenderDestroy RenderId RenderElement
   deriving (Eq, Show)
 
 newtype RenderFrame = RenderFrame
@@ -130,15 +130,15 @@ defaultCompiledHeight = 600
 -- Compiler state
 --------------------------------------------------------------------------------
 newtype CompileState = CompileState
-  { lineageByBlock :: Map RenderBlockKey RenderId
+  { lineageByElement :: Map RenderElementKey RenderId
   } deriving (Eq, Show)
 
 emptyCompileState :: CompileState
-emptyCompileState = CompileState {lineageByBlock = Map.empty}
+emptyCompileState = CompileState {lineageByElement = Map.empty}
 
 type CompileM = StateT CompileState (Either String)
 
-type RenderBlockKey = (Int, String)
+type RenderElementKey = (Int, String)
 
 --------------------------------------------------------------------------------
 -- Public compiler
@@ -157,10 +157,12 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
   case VM.materializeViewGraph solution graph of
     Left err -> Left err
     Right concreteGraph -> do
-      let blocksById = buildBlockLookup concreteGraph
+      let elementsById = buildElementLookup concreteGraph
       frames' <-
         evalStateT
-          (compileFrames blocksById (VM.concreteViewRenderFrames concreteGraph))
+          (compileFrames
+             elementsById
+             (VM.concreteViewRenderFrames concreteGraph))
           emptyCompileState
       pure
         Compiled
@@ -173,30 +175,30 @@ compileSolvedWithViewport viewportWidth viewportHeight solution graph =
 --------------------------------------------------------------------------------
 -- Frame compilation
 --------------------------------------------------------------------------------
-compileFrames :: BlockLookup -> [[V.RenderIntent]] -> CompileM [RenderFrame]
-compileFrames blocksById renderFrames = do
-  frames' <- traverse (compileRenderFrame blocksById) renderFrames
+compileFrames :: ElementLookup -> [[V.RenderIntent]] -> CompileM [RenderFrame]
+compileFrames elementsById renderFrames = do
+  frames' <- traverse (compileRenderFrame elementsById) renderFrames
   pure (filter (not . null . framePatches) frames')
 
-compileRenderFrame :: BlockLookup -> [V.RenderIntent] -> CompileM RenderFrame
-compileRenderFrame blocksById renderIntents = do
-  patches <- compileRenderIntents blocksById renderIntents
+compileRenderFrame :: ElementLookup -> [V.RenderIntent] -> CompileM RenderFrame
+compileRenderFrame elementsById renderIntents = do
+  patches <- compileRenderIntents elementsById renderIntents
   coalesced <- lift (coalesceFramePatches patches)
   pure RenderFrame {framePatches = coalesced}
 
 compileRenderIntents ::
-     BlockLookup -> [V.RenderIntent] -> CompileM [RenderPatch]
-compileRenderIntents blocksById intents = do
-  patches <- traverse (compileRenderIntent blocksById) intents
+     ElementLookup -> [V.RenderIntent] -> CompileM [RenderPatch]
+compileRenderIntents elementsById intents = do
+  patches <- traverse (compileRenderIntent elementsById) intents
   pure (concat patches)
 
 --------------------------------------------------------------------------------
 -- Frame coalescing
 --------------------------------------------------------------------------------
 data CoalescedPatch
-  = CoalescedCreate (Maybe RenderOrigin) RenderBlock
-  | CoalescedUpdate RenderBlock RenderBlock
-  | CoalescedDestroy RenderBlock
+  = CoalescedCreate (Maybe RenderOrigin) RenderElement
+  | CoalescedUpdate RenderElement RenderElement
+  | CoalescedDestroy RenderElement
   deriving (Eq, Show)
 
 data CoalesceState = CoalesceState
@@ -219,18 +221,18 @@ coalesceFramePatches patches = do
 coalescePatch :: CoalesceState -> RenderPatch -> Either String CoalesceState
 coalescePatch coalesceState patch =
   case patch of
-    RenderCreate renderId origin block ->
+    RenderCreate renderId origin element ->
       updateCoalesced
         renderId
-        (coalesceCreate renderId origin block)
+        (coalesceCreate renderId origin element)
         coalesceState
-    RenderUpdate renderId fromBlock toBlock ->
+    RenderUpdate renderId fromElement toElement ->
       updateCoalesced
         renderId
-        (coalesceUpdate renderId fromBlock toBlock)
+        (coalesceUpdate renderId fromElement toElement)
         coalesceState
-    RenderDestroy renderId block ->
-      updateCoalesced renderId (coalesceDestroy renderId block) coalesceState
+    RenderDestroy renderId element ->
+      updateCoalesced renderId (coalesceDestroy renderId element) coalesceState
 
 updateCoalesced ::
      RenderId
@@ -256,53 +258,53 @@ rememberRenderId renderId order =
 coalesceCreate ::
      RenderId
   -> Maybe RenderOrigin
-  -> RenderBlock
+  -> RenderElement
   -> Maybe CoalescedPatch
   -> Either String (Maybe CoalescedPatch)
-coalesceCreate renderId origin block existing =
+coalesceCreate renderId origin element existing =
   case existing of
-    Nothing -> Right (Just (CoalescedCreate origin block))
+    Nothing -> Right (Just (CoalescedCreate origin element))
     Just _  -> Left (duplicateLifecycleError "create" renderId)
 
 coalesceUpdate ::
      RenderId
-  -> RenderBlock
-  -> RenderBlock
+  -> RenderElement
+  -> RenderElement
   -> Maybe CoalescedPatch
   -> Either String (Maybe CoalescedPatch)
-coalesceUpdate renderId fromBlock toBlock existing =
+coalesceUpdate renderId fromElement toElement existing =
   case existing of
-    Nothing -> Right (Just (CoalescedUpdate fromBlock toBlock))
+    Nothing -> Right (Just (CoalescedUpdate fromElement toElement))
     Just existingPatch ->
       case existingPatch of
-        CoalescedCreate origin currentBlock ->
-          if currentBlock == fromBlock
-            then Right (Just (CoalescedCreate origin toBlock))
+        CoalescedCreate origin currentElement ->
+          if currentElement == fromElement
+            then Right (Just (CoalescedCreate origin toElement))
             else Left (inconsistentLifecycleError "update" renderId)
-        CoalescedUpdate firstBlock currentBlock ->
-          if currentBlock == fromBlock
-            then Right (Just (CoalescedUpdate firstBlock toBlock))
+        CoalescedUpdate firstElement currentElement ->
+          if currentElement == fromElement
+            then Right (Just (CoalescedUpdate firstElement toElement))
             else Left (inconsistentLifecycleError "update" renderId)
         CoalescedDestroy _ ->
           Left (invalidLifecycleError "update after destroy" renderId)
 
 coalesceDestroy ::
      RenderId
-  -> RenderBlock
+  -> RenderElement
   -> Maybe CoalescedPatch
   -> Either String (Maybe CoalescedPatch)
-coalesceDestroy renderId block existing =
+coalesceDestroy renderId element existing =
   case existing of
-    Nothing -> Right (Just (CoalescedDestroy block))
+    Nothing -> Right (Just (CoalescedDestroy element))
     Just existingPatch ->
       case existingPatch of
-        CoalescedCreate _ currentBlock ->
-          if currentBlock == block
+        CoalescedCreate _ currentElement ->
+          if currentElement == element
             then Right Nothing
             else Left (inconsistentLifecycleError "destroy" renderId)
-        CoalescedUpdate firstBlock currentBlock ->
-          if currentBlock == block
-            then Right (Just (CoalescedDestroy firstBlock))
+        CoalescedUpdate firstElement currentElement ->
+          if currentElement == element
+            then Right (Just (CoalescedDestroy firstElement))
             else Left (inconsistentLifecycleError "destroy" renderId)
         CoalescedDestroy _ -> Left (duplicateLifecycleError "destroy" renderId)
 
@@ -321,9 +323,10 @@ renderCoalescedPatches order patches =
 renderCoalescedPatch :: RenderId -> CoalescedPatch -> RenderPatch
 renderCoalescedPatch renderId patch =
   case patch of
-    CoalescedCreate origin block      -> RenderCreate renderId origin block
-    CoalescedUpdate fromBlock toBlock -> RenderUpdate renderId fromBlock toBlock
-    CoalescedDestroy block            -> RenderDestroy renderId block
+    CoalescedCreate origin element -> RenderCreate renderId origin element
+    CoalescedUpdate fromElement toElement ->
+      RenderUpdate renderId fromElement toElement
+    CoalescedDestroy element -> RenderDestroy renderId element
 
 duplicateLifecycleError :: String -> RenderId -> String
 duplicateLifecycleError operation renderId =
@@ -343,166 +346,167 @@ inconsistentLifecycleError operation renderId =
 --------------------------------------------------------------------------------
 -- Visual lifecycle semantics
 --------------------------------------------------------------------------------
-compileRenderIntent :: BlockLookup -> V.RenderIntent -> CompileM [RenderPatch]
-compileRenderIntent blocksById intent =
+compileRenderIntent :: ElementLookup -> V.RenderIntent -> CompileM [RenderPatch]
+compileRenderIntent elementsById intent =
   case intent of
-    V.RenderFresh ref              -> createRef blocksById ref
-    V.RenderContinue source target -> continueRef blocksById source target
-    V.RenderFork source target     -> forkRef blocksById source target
-    V.RenderRemove ref             -> destroyRef blocksById ref
+    V.RenderFresh ref              -> createRef elementsById ref
+    V.RenderContinue source target -> continueRef elementsById source target
+    V.RenderFork source target     -> forkRef elementsById source target
+    V.RenderRemove ref             -> destroyRef elementsById ref
 
-createRef :: BlockLookup -> V.ViewRef tag -> CompileM [RenderPatch]
-createRef blocksById ref = do
-  blocks <- requireBlocksByRef blocksById ref
-  traverse createBlock blocks
+createRef :: ElementLookup -> V.ViewRef tag -> CompileM [RenderPatch]
+createRef elementsById ref = do
+  elements <- requireElementsByRef elementsById ref
+  traverse createElement elements
 
-destroyRef :: BlockLookup -> V.ViewRef tag -> CompileM [RenderPatch]
-destroyRef blocksById ref = do
-  blocks <- requireBlocksByRef blocksById ref
-  traverse destroyBlock blocks
+destroyRef :: ElementLookup -> V.ViewRef tag -> CompileM [RenderPatch]
+destroyRef elementsById ref = do
+  elements <- requireElementsByRef elementsById ref
+  traverse destroyElement elements
 
 continueRef ::
-     BlockLookup
+     ElementLookup
   -> V.ViewRef source
   -> V.ViewRef target
   -> CompileM [RenderPatch]
-continueRef blocksById sourceRef targetRef = do
-  sourceBlocks <- requireBlocksByRef blocksById sourceRef
-  targetBlocks <- requireBlocksByRef blocksById targetRef
-  continueBlocks sourceBlocks targetBlocks
+continueRef elementsById sourceRef targetRef = do
+  sourceElements <- requireElementsByRef elementsById sourceRef
+  targetElements <- requireElementsByRef elementsById targetRef
+  continueElements sourceElements targetElements
 
 forkRef ::
-     BlockLookup
+     ElementLookup
   -> V.ViewRef source
   -> V.ViewRef target
   -> CompileM [RenderPatch]
-forkRef blocksById sourceRef targetRef = do
-  sourceBlocks <- requireBlocksByRef blocksById sourceRef
-  targetBlocks <- requireBlocksByRef blocksById targetRef
-  traverse (forkBlock sourceBlocks) targetBlocks
+forkRef elementsById sourceRef targetRef = do
+  sourceElements <- requireElementsByRef elementsById sourceRef
+  targetElements <- requireElementsByRef elementsById targetRef
+  traverse (forkElement sourceElements) targetElements
 
-createBlock :: RenderBlock -> CompileM RenderPatch
-createBlock block = do
-  let renderId = freshRenderIdForBlock block
+createElement :: RenderElement -> CompileM RenderPatch
+createElement element = do
+  let renderId = freshRenderIdForElement element
   modify
     (\st ->
        st
-         { lineageByBlock =
-             Map.insert (renderBlockKey block) renderId (lineageByBlock st)
+         { lineageByElement =
+             Map.insert
+               (renderElementKey element)
+               renderId
+               (lineageByElement st)
          })
-  pure (RenderCreate renderId Nothing block)
+  pure (RenderCreate renderId Nothing element)
 
-destroyBlock :: RenderBlock -> CompileM RenderPatch
-destroyBlock block = do
-  renderId <- requireLineage block
+destroyElement :: RenderElement -> CompileM RenderPatch
+destroyElement element = do
+  renderId <- requireLineage element
   modify
     (\st ->
        st
-         { lineageByBlock =
-             Map.delete (renderBlockKey block) (lineageByBlock st)
+         { lineageByElement =
+             Map.delete (renderElementKey element) (lineageByElement st)
          })
-  pure (RenderDestroy renderId block)
+  pure (RenderDestroy renderId element)
 
-continueBlocks :: [RenderBlock] -> [RenderBlock] -> CompileM [RenderPatch]
-continueBlocks sourceBlocks targetBlocks = do
-  updates <- traverse (continueTarget sourceBlocks) targetBlocks
-  destroys <- traverse destroyBlock (sourceOnlyBlocks sourceBlocks targetBlocks)
+continueElements :: [RenderElement] -> [RenderElement] -> CompileM [RenderPatch]
+continueElements sourceElements targetElements = do
+  updates <- traverse (continueTarget sourceElements) targetElements
+  destroys <-
+    traverse destroyElement (sourceOnlyElements sourceElements targetElements)
   pure (updates ++ destroys)
 
-continueTarget :: [RenderBlock] -> RenderBlock -> CompileM RenderPatch
-continueTarget sourceBlocks targetBlock =
-  case findMatchingBlock targetBlock sourceBlocks of
-    Just sourceBlock -> do
-      renderId <- requireLineage sourceBlock
+continueTarget :: [RenderElement] -> RenderElement -> CompileM RenderPatch
+continueTarget sourceElements targetElement =
+  case findMatchingElement targetElement sourceElements of
+    Just sourceElement -> do
+      renderId <- requireLineage sourceElement
       modify
         (\st ->
            st
-             { lineageByBlock =
+             { lineageByElement =
                  Map.insert
-                   (renderBlockKey targetBlock)
+                   (renderElementKey targetElement)
                    renderId
-                   (Map.delete (renderBlockKey sourceBlock) (lineageByBlock st))
+                   (Map.delete
+                      (renderElementKey sourceElement)
+                      (lineageByElement st))
              })
-      pure (RenderUpdate renderId sourceBlock targetBlock)
-    Nothing -> createBlock targetBlock
+      pure (RenderUpdate renderId sourceElement targetElement)
+    Nothing -> createElement targetElement
 
-forkBlock :: [RenderBlock] -> RenderBlock -> CompileM RenderPatch
-forkBlock sourceBlocks targetBlock = do
-  let targetRenderId = freshRenderIdForBlock targetBlock
+forkElement :: [RenderElement] -> RenderElement -> CompileM RenderPatch
+forkElement sourceElements targetElement = do
+  let targetRenderId = freshRenderIdForElement targetElement
   origin <-
-    case findMatchingBlock targetBlock sourceBlocks of
+    case findMatchingElement targetElement sourceElements of
       Nothing -> pure Nothing
-      Just sourceBlock -> do
-        sourceRenderId <- requireLineage sourceBlock
-        pure (Just (RenderOrigin sourceRenderId sourceBlock))
+      Just sourceElement -> do
+        sourceRenderId <- requireLineage sourceElement
+        pure (Just (RenderOrigin sourceRenderId sourceElement))
   modify
     (\st ->
        st
-         { lineageByBlock =
+         { lineageByElement =
              Map.insert
-               (renderBlockKey targetBlock)
+               (renderElementKey targetElement)
                targetRenderId
-               (lineageByBlock st)
+               (lineageByElement st)
          })
-  pure (RenderCreate targetRenderId origin targetBlock)
+  pure (RenderCreate targetRenderId origin targetElement)
 
 --------------------------------------------------------------------------------
 -- Lineage lookup
 --------------------------------------------------------------------------------
-renderBlockKey :: RenderBlock -> RenderBlockKey
-renderBlockKey block = (renderBlockId block, renderNodeKey block)
+renderElementKey :: RenderElement -> RenderElementKey
+renderElementKey element = (renderNodeId element, renderNodeKey element)
 
-renderBlockKeyLabel :: RenderBlock -> String
-renderBlockKeyLabel block =
-  "B" ++ show (renderBlockId block) ++ "." ++ renderNodeKey block
+renderElementKeyLabel :: RenderElement -> String
+renderElementKeyLabel element =
+  "N" ++ show (renderNodeId element) ++ "." ++ renderNodeKey element
 
-findMatchingBlock :: RenderBlock -> [RenderBlock] -> Maybe RenderBlock
-findMatchingBlock targetBlock sourceBlocks =
-  case sourceBlocks of
+findMatchingElement :: RenderElement -> [RenderElement] -> Maybe RenderElement
+findMatchingElement targetElement sourceElements =
+  case sourceElements of
     [] -> Nothing
-    sourceBlock:rest ->
-      if renderNodeKey sourceBlock == renderNodeKey targetBlock
-        then Just sourceBlock
-        else findMatchingBlock targetBlock rest
+    sourceElement:rest ->
+      if renderNodeKey sourceElement == renderNodeKey targetElement
+        then Just sourceElement
+        else findMatchingElement targetElement rest
 
-sourceOnlyBlocks :: [RenderBlock] -> [RenderBlock] -> [RenderBlock]
-sourceOnlyBlocks sourceBlocks targetBlocks =
+sourceOnlyElements :: [RenderElement] -> [RenderElement] -> [RenderElement]
+sourceOnlyElements sourceElements targetElements =
   filter
-    (\sourceBlock ->
-       renderNodeKey sourceBlock `notElem` map renderNodeKey targetBlocks)
-    sourceBlocks
+    (\sourceElement ->
+       renderNodeKey sourceElement `notElem` map renderNodeKey targetElements)
+    sourceElements
 
-requireLineage :: RenderBlock -> CompileM RenderId
-requireLineage block = do
+requireLineage :: RenderElement -> CompileM RenderId
+requireLineage element = do
   st <- get
-  case Map.lookup (renderBlockKey block) (lineageByBlock st) of
+  case Map.lookup (renderElementKey element) (lineageByElement st) of
     Just renderId -> pure renderId
     Nothing ->
-      lift (Left ("no render lineage for " ++ renderBlockKeyLabel block))
+      lift (Left ("no render lineage for " ++ renderElementKeyLabel element))
 
 --------------------------------------------------------------------------------
--- Concrete block lookup
+-- Concrete element lookup
 --------------------------------------------------------------------------------
-type BlockLookup = Map Int [RenderBlock]
+type ElementLookup = Map Int [RenderElement]
 
-buildBlockLookup :: VM.ConcreteViewGraph -> BlockLookup
-buildBlockLookup graph =
+buildElementLookup :: VM.ConcreteViewGraph -> ElementLookup
+buildElementLookup graph =
   foldl insertConcreteNode Map.empty (VM.concreteViewNodes graph)
 
-insertConcreteNode :: BlockLookup -> VM.ConcreteViewNode -> BlockLookup
-insertConcreteNode blocks node =
-  let compiled = compileConcreteViewNode node
-   in Map.insertWith (++) (renderBlockId compiled) [compiled] blocks
+insertConcreteNode :: ElementLookup -> VM.ConcreteNode -> ElementLookup
+insertConcreteNode elements node =
+  let compiled = compileConcreteNode node
+   in Map.insertWith (++) (renderNodeId compiled) [compiled] elements
 
-compileConcreteViewNode :: VM.ConcreteViewNode -> RenderBlock
-compileConcreteViewNode node =
-  case node of
-    VM.ConcreteViewNode concrete -> compileConcreteNode concrete
-
-compileConcreteNode :: VM.ConcreteNode tag -> RenderBlock
+compileConcreteNode :: VM.ConcreteNode -> RenderElement
 compileConcreteNode node =
-  RenderBlock
-    { renderBlockId = blockIdOfRef (VM.concreteNodeRef node)
+  RenderElement
+    { renderNodeId = nodeIdOfViewId (VM.concreteNodeId node)
     , renderNodeKey = VM.concreteNodeKey node
     , renderContent = VM.concreteNodeContent node
     , renderKind = payloadViewKind (VM.concreteNodeLabel node)
@@ -559,14 +563,18 @@ hslToCss alpha hsl =
       a = formatCssNumber (clamp 0 1 alpha)
    in "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ " / " ++ a ++ ")"
 
-requireBlocksByRef :: BlockLookup -> V.ViewRef tag -> CompileM [RenderBlock]
-requireBlocksByRef blocksById ref =
-  case Map.lookup (blockIdOfRef ref) blocksById of
-    Just blocks -> pure blocks
-    Nothing     -> pure []
+requireElementsByRef ::
+     ElementLookup -> V.ViewRef tag -> CompileM [RenderElement]
+requireElementsByRef elementsById ref =
+  case Map.lookup (nodeIdOfRef ref) elementsById of
+    Just elements -> pure elements
+    Nothing       -> pure []
 
-blockIdOfRef :: V.ViewRef tag -> Int
-blockIdOfRef = V.viewRefInt
+nodeIdOfRef :: V.ViewRef tag -> Int
+nodeIdOfRef = V.viewRefInt
+
+nodeIdOfViewId :: V.ViewId -> Int
+nodeIdOfViewId = V.viewIdInt
 
 payloadViewKind :: V.ViewLabel -> String
 payloadViewKind = V.viewLabelKind
@@ -640,14 +648,14 @@ instance ToJSON RenderStyle where
 styleAttrPair :: (KeyValue e kv, ToJSON v) => (String, v) -> kv
 styleAttrPair (name, value) = Key.fromString name .= value
 
-instance ToJSON RenderBlock where
-  toJSON block =
+instance ToJSON RenderElement where
+  toJSON element =
     object
-      [ "blockId" .= renderBlockId block
-      , "nodeKey" .= renderNodeKey block
-      , "kind" .= renderKind block
-      , "content" .= renderContent block
-      , "style" .= renderStyle block
+      [ "nodeId" .= renderNodeId element
+      , "nodeKey" .= renderNodeKey element
+      , "kind" .= renderKind element
+      , "content" .= renderContent element
+      , "style" .= renderStyle element
       ]
 
 instance ToJSON RenderOrigin where
@@ -658,20 +666,20 @@ instance ToJSON RenderOrigin where
 instance ToJSON RenderPatch where
   toJSON patch =
     case patch of
-      RenderCreate renderId origin block ->
+      RenderCreate renderId origin element ->
         object
-          (["kind" .= String "create", "id" .= renderId, "element" .= block]
+          (["kind" .= String "create", "id" .= renderId, "element" .= element]
              ++ maybe [] (\origin' -> ["origin" .= origin']) origin)
-      RenderUpdate renderId fromBlock toBlock ->
+      RenderUpdate renderId fromElement toElement ->
         object
           [ "kind" .= String "update"
           , "id" .= renderId
-          , "from" .= fromBlock
-          , "to" .= toBlock
+          , "from" .= fromElement
+          , "to" .= toElement
           ]
-      RenderDestroy renderId block ->
+      RenderDestroy renderId element ->
         object
-          ["kind" .= String "destroy", "id" .= renderId, "element" .= block]
+          ["kind" .= String "destroy", "id" .= renderId, "element" .= element]
 
 instance ToJSON RenderFrame where
   toJSON (RenderFrame patches) = toJSON patches

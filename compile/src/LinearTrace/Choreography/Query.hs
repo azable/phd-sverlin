@@ -7,7 +7,7 @@
 
 -- | Query and payload-pattern implementation for choreography. The public DSL
 -- re-exports the safe query vocabulary; 'LinearTrace.Choreography.Match' uses
--- this module to match core event blocks and virtual view groups.
+-- this module to match core event blocks and generated view groups.
 module LinearTrace.Choreography.Query
   ( -- * Query terms
     -- | Fact/tag query representation and constructors. Choreography users see

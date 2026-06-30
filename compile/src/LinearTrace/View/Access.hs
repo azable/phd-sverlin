@@ -226,14 +226,7 @@ styleColorVar ::
 styleColorVar color view part =
   case view of
     AnyLayoutView node ->
-      case nodeOrigin node of
-        TraceOrigin _ ->
-          blockVarPath (nodeRef node) ["style", styleColorName color] part
-        SyntheticOrigin meta ->
-          syntheticVar
-            (syntheticKey meta)
-            (syntheticQueryKey meta)
-            ("style." P.++ styleColorName color P.++ "." P.++ part)
+      nodeVar (nodeRoot node) ["style", styleColorName color] part
 
 styleColorName :: StyleColorAttr -> P.String
 styleColorName color =
@@ -276,14 +269,14 @@ styleCategoryChoiceName :: StyleCategoryAttr value -> AnyLayoutView -> P.String
 styleCategoryChoiceName attr view =
   case view of
     AnyLayoutView node ->
-      case nodeOrigin node of
-        TraceOrigin _ ->
-          blockVarName (nodeRef node) ["style"] (styleCategoryAccessName attr)
-        SyntheticOrigin meta ->
-          syntheticVarName
-            (syntheticKey meta)
-            (syntheticQueryKey meta)
-            ("style." P.++ styleCategoryAccessName attr)
+      nodeVarName (nodeRoot node) ["style"] (styleCategoryAccessName attr)
+
+nodeRoot :: Node tag -> NodeVarRoot
+nodeRoot node =
+  case nodeOrigin node of
+    TraceOrigin _ -> traceNodeRoot (nodeRef node)
+    GeneratedOrigin meta ->
+      generatedNodeRoot (generatedKey meta) (generatedQueryKey meta)
 
 styleCategoryAccessName :: StyleCategoryAttr value -> P.String
 styleCategoryAccessName attr =

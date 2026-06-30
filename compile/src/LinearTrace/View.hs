@@ -12,7 +12,7 @@ module LinearTrace.View
   , ViewRef(..)
   , viewRefId
   , viewRefInt
-  , syntheticViewRef
+  , viewRefFromId
   , ViewLabel(..)
   , ViewTagValue(..)
   , ViewTags(..)
@@ -22,10 +22,11 @@ module LinearTrace.View
   , ViewNode(..)
   , Node(..)
   , NodeOrigin(..)
-  , SyntheticMeta(..)
+  , GeneratedMeta(..)
   , NodeStructure(..)
   , CompoundFit(..)
   , NodeChild(..)
+  , NodeVarRoot(..)
   , ViewStep(..)
   , defaultNodeKey
   , styleForRef
@@ -37,13 +38,17 @@ module LinearTrace.View
   , AnyTraceNode(..)
   , AnyLayoutView(..)
   , traceNodeTags
-  , syntheticNodeMeta
+  , generatedNodeMeta
   , nodeChildFromTraceNode
   , viewTraceNodes
   , patchedNodeOutput
   , finalizeViewGraph
-  , styleForSyntheticKey
-  , syntheticNodeId
+  , traceNodeRoot
+  , generatedNodeRoot
+  , generatedNodeId
+  , styleForNodeRoot
+  , nodeVarName
+  , nodeVar
   , viewNodes
   , viewSteps
   , viewConstraints

@@ -10,7 +10,7 @@ module LinearTrace.View.Types
   , ViewRef(..)
   , viewRefId
   , viewRefInt
-  , syntheticViewRef
+  , viewRefFromId
   , -- * Labels and tags
     -- | Display labels and neutral tags used by query/match logic and render
     -- identity generation.
@@ -48,8 +48,8 @@ viewRefId viewRef =
 viewRefInt :: ViewRef tag -> Int
 viewRefInt = viewIdInt . viewRefId
 
-syntheticViewRef :: Int -> ViewRef tag
-syntheticViewRef = ViewRef . ViewId
+viewRefFromId :: Int -> ViewRef tag
+viewRefFromId = ViewRef . ViewId
 
 data ViewLabel = ViewLabel
   { viewLabelKind    :: String

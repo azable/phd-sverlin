@@ -39,7 +39,7 @@
     <div
       class={classNameFor(element)}
       data-render-id={element.id}
-      data-block-id={element.blockId}
+      data-node-id={element.nodeId}
       data-kind={element.kind}
       style={styleToString(element)}
     >

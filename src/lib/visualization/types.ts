@@ -3,7 +3,7 @@ export type CssValue = string | number | boolean;
 export type RenderStyle = Record<string, CssValue>;
 
 export type RenderElement = {
-  blockId: number;
+  nodeId: number;
   nodeKey: string;
   kind: string;
   content: string;

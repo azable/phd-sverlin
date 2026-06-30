@@ -227,13 +227,13 @@ import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         emptyMatchSpec,
                                                         matchAnyQueryNode,
                                                         matchCategoryRelation,
+                                                        matchGroupNode,
                                                         matchQueryPayloadNode,
                                                         matchSpecAppend,
                                                         matchValueDirectedBridge,
                                                         matchValueRelation,
                                                         matchValueSymmetricBridge,
-                                                        matchVirtualNode,
-                                                        matchedBlockOutput,
+                                                        matchedNodeOutput,
                                                         rawCategoryEndpoint,
                                                         rawValueEndpoint,
                                                         selectionCategoryEndpoint,
@@ -419,7 +419,7 @@ data AnyPayload
 data NodeRef tag where
   TraceNodeRef :: C.Traceable tag => TraceQuery tag -> NodeRef tag
   AnyNodeRef :: Query -> NodeRef AnyPayload
-  VirtualNodeRef :: P.String -> Query -> NodeRef tag
+  GroupNodeRef :: P.String -> Query -> NodeRef tag
 
 data Selected tag where
   SelectedHandle :: Selection (NodeRef tag) -> Selected tag
@@ -1629,7 +1629,7 @@ appendMatchedBlock block =
   LinearState.state
     (\(VisualTraceState (Ur spec) coreState pendingEvents (Ur oldOutput)) ->
        let nextOutput =
-             V.appendViewOutput oldOutput (matchedBlockOutput spec block)
+             V.appendViewOutput oldOutput (matchedNodeOutput spec block)
         in ( ()
            , VisualTraceState (Ur spec) coreState pendingEvents (Ur nextOutput)))
 
@@ -2338,7 +2338,7 @@ bounds value =
       width (mkSpan widthExpr [])
       height (mkSpan heightExpr [])
 
-data VirtualNode
+data GroupNode
 
 class Node input result | input -> result where
   node :: input -> result
@@ -2464,7 +2464,7 @@ spanPin value = VP.LayoutPin (spanExpr value) (spanConstraints value)
 
 instance Node
            (Selected child)
-           (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
+           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
   node children =
     case children of
       SelectedHandle selection ->
@@ -2473,28 +2473,27 @@ instance Node
             let query = nodeRefQuery child
              in VisualizationBuilder
                   (\counter ->
-                     let key = virtualNodeKey counter
-                         virtualSpec =
-                           matchVirtualNode key query VP.emptyNodePatch
+                     let key = groupNodeKey counter
+                         groupSpec = matchGroupNode key query VP.emptyNodePatch
                       in VisualizationResult
                            (Selected
                               (SelectedHandle
                                  (Selection
-                                    (VirtualNodeRef key query)
+                                    (GroupNodeRef key query)
                                     emptyMatchSpec)))
                            (counter P.+ 1)
-                           (matchSpecAppend childSpec virtualSpec))
+                           (matchSpecAppend childSpec groupSpec))
 
 instance Node
            (NodeBinding (Selected child))
-           (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
+           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
   node binding =
     case binding of
       Selected children -> node children
 
 instance Node
            (VisualizationBuilder (NodeBinding (Selected child)))
-           (VisualizationBuilder (NodeBinding (Selected VirtualNode))) where
+           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
   node childrenBuilder =
     case childrenBuilder of
       VisualizationBuilder runFirst ->
@@ -2533,24 +2532,24 @@ nodeRefStyleSpec handle recipe =
         (traceQueryQuery selector)
         (traceQueryPayloadPattern selector)
         (\context -> nodePatch (matchContextBindings context) recipe)
-    VirtualNodeRef key query -> matchVirtualNode key query (nodePatch [] recipe)
+    GroupNodeRef key query -> matchGroupNode key query (nodePatch [] recipe)
 
 nodeRefQuery :: NodeRef tag -> Query
 nodeRefQuery handle =
   case handle of
-    AnyNodeRef query       -> query
-    TraceNodeRef selector  -> traceQueryQuery selector
-    VirtualNodeRef _ query -> query
+    AnyNodeRef query      -> query
+    TraceNodeRef selector -> traceQueryQuery selector
+    GroupNodeRef _ query  -> query
 
 nodeSelection :: NodeRef tag -> NodeSelection
 nodeSelection handle =
   case handle of
-    AnyNodeRef query         -> TraceSelection query
-    TraceNodeRef selector    -> TraceSelection (traceQueryQuery selector)
-    VirtualNodeRef key query -> VirtualSelection key query
+    AnyNodeRef query       -> TraceSelection query
+    TraceNodeRef selector  -> TraceSelection (traceQueryQuery selector)
+    GroupNodeRef key query -> GroupSelection key query
 
-virtualNodeKey :: P.Int -> P.String
-virtualNodeKey counter = "virtual-node-" P.++ P.show counter
+groupNodeKey :: P.Int -> P.String
+groupNodeKey counter = "group-node-" P.++ P.show counter
 
 visualize :: VisualizationBuilder () -> MatchSpec
 visualize builder =

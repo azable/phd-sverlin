@@ -140,8 +140,8 @@ describe('TracePlayer', () => {
 
 function element(content: string): RenderElement {
   return {
-    blockId: 1,
-    nodeKey: 'block',
+    nodeId: 1,
+    nodeKey: 'node',
     kind: 'Value',
     content,
     style: {

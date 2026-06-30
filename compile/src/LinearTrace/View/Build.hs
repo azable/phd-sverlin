@@ -153,7 +153,7 @@ finalizeViewGraph ::
   -> ViewGraph
 finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderFrames =
   let compoundConstraints = P.concatMap compoundNodeConstraints nodes
-      -- Block styles are first registered while building trace steps. Layout
+      -- Node styles are first registered while building trace steps. Layout
       -- rules can later require optional style fields, so collect style
       -- constraints again after requirements are applied.
       nodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
@@ -198,17 +198,8 @@ compoundCanvasConstraints node =
 compoundFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
 compoundFitConstraints node children =
   case children of
-    []      -> []
-    [child] -> compoundExactFitConstraints node child
-    _       -> compoundTightFitConstraints node children
-
-compoundExactFitConstraints :: Node tag -> NodeChild -> [Constraint]
-compoundExactFitConstraints node child =
-  [ left node S.@==@ (nodeChildLeft child S.@-@ compoundPadding node)
-  , top node S.@==@ (nodeChildTop child S.@-@ compoundPadding node)
-  , right node S.@==@ (nodeChildRight child S.@+@ compoundPadding node)
-  , bottom node S.@==@ (nodeChildBottom child S.@+@ compoundPadding node)
-  ]
+    [] -> []
+    _  -> compoundTightFitConstraints node children
 
 compoundTightFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
 compoundTightFitConstraints node children =
@@ -284,7 +275,7 @@ viewNodeRangeConstraints env node =
     ViewNode viewNode ->
       case nodeStructure viewNode of
         LeafNode ->
-          blockBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
+          leafBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
         CompoundNode _ _ ->
           compoundBoundsRangeConstraints env (styleBounds (nodeStyle viewNode))
 
@@ -312,8 +303,8 @@ boundsRangeConstraints env minWidth minHeight maxWidth maxHeight bounds' =
 minimumLayoutExtent :: P.Double
 minimumLayoutExtent = 20
 
-blockBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
-blockBoundsRangeConstraints env =
+leafBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
+leafBoundsRangeConstraints env =
   boundsRangeConstraints
     env
     minimumLayoutExtent
@@ -407,16 +398,16 @@ applyCompoundRenderIntent childIds liveIds intent =
     RenderRemove ref -> removeLiveChild (viewRefId ref) liveIds
 
 addLiveChild :: [ViewId] -> ViewId -> [ViewId] -> [ViewId]
-addLiveChild childIds blockId liveIds =
-  case blockId `P.elem` childIds of
+addLiveChild childIds childId liveIds =
+  case childId `P.elem` childIds of
     P.False -> liveIds
     P.True ->
-      case blockId `P.elem` liveIds of
+      case childId `P.elem` liveIds of
         P.True  -> liveIds
-        P.False -> blockId : liveIds
+        P.False -> childId : liveIds
 
 removeLiveChild :: ViewId -> [ViewId] -> [ViewId]
-removeLiveChild blockId = P.filter (P./= blockId)
+removeLiveChild childId = P.filter (P./= childId)
 
 compoundFreshIntent :: ViewNode -> RenderIntent
 compoundFreshIntent wrapped =

@@ -7,7 +7,7 @@
 -- node patches, and value endpoints into symbolic view output.
 module LinearTrace.Choreography.Match
   ( -- * Match specs
-    -- | Accumulated node, layout, and virtual grouping rules produced by the
+    -- | Accumulated node, layout, and grouping rules produced by the
     -- public choreography DSL.
     MatchSpec
   , emptyMatchSpec
@@ -15,7 +15,7 @@ module LinearTrace.Choreography.Match
   , matchQueryNode
   , matchAnyQueryNode
   , matchQueryPayloadNode
-  , matchVirtualNode
+  , matchGroupNode
   , -- * Layout/value relations
     -- | Selection and component relation API. The DSL uses this to connect
     -- view lifespans and style/layout values through solver constraints.
@@ -38,7 +38,7 @@ module LinearTrace.Choreography.Match
     -- | Internal bridge from core event blocks to view nodes. Choreography is
     -- the intended caller; this is not re-exported directly to DSL users.
     traceNodeOfEventBlock
-  , matchedBlockOutput
+  , matchedNodeOutput
   , buildMatchedViewGraph
   ) where
 
@@ -68,7 +68,7 @@ type NodePatch = VP.NodePatch
 
 data NodeSelection
   = TraceSelection Query
-  | VirtualSelection P.String Query
+  | GroupSelection P.String Query
   deriving (P.Eq, P.Show)
 
 data ConstraintStrength
@@ -95,7 +95,7 @@ data CategoryEndpoint value
   | SelectionCategoryEndpoint NodeSelection (VA.CategoryAccess value)
 
 data MatchSpec =
-  MatchSpec [NodeRule] [LayoutRule] [VirtualRule]
+  MatchSpec [NodeRule] [LayoutRule] [GroupRule]
 
 data NodeRule where
   QueryNodeRule
@@ -132,8 +132,8 @@ data LayoutRule where
     -> [ValueEndpoint]
     -> LayoutRule
 
-data VirtualRule =
-  VirtualRule P.String Query NodePatch
+data GroupRule =
+  GroupRule P.String Query NodePatch
 
 emptyMatchSpec :: MatchSpec
 emptyMatchSpec = MatchSpec [] [] []
@@ -141,13 +141,13 @@ emptyMatchSpec = MatchSpec [] [] []
 matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
 matchSpecAppend lhs rhs =
   case lhs of
-    MatchSpec leftNodes leftLayouts leftVirtuals ->
+    MatchSpec leftNodes leftLayouts leftGroups ->
       case rhs of
-        MatchSpec rightNodes rightLayouts rightVirtuals ->
+        MatchSpec rightNodes rightLayouts rightGroups ->
           MatchSpec
             (leftNodes P.++ rightNodes)
             (leftLayouts P.++ rightLayouts)
-            (leftVirtuals P.++ rightVirtuals)
+            (leftGroups P.++ rightGroups)
 
 matchQueryNode ::
      forall tag. C.Traceable tag
@@ -176,9 +176,9 @@ matchQueryPayloadNode query payloadPattern makePatch =
     []
     []
 
-matchVirtualNode :: P.String -> Query -> NodePatch -> MatchSpec
-matchVirtualNode key query patch =
-  MatchSpec [] [] [VirtualRule (Q.safeKey key) query patch]
+matchGroupNode :: P.String -> Query -> NodePatch -> MatchSpec
+matchGroupNode key query patch =
+  MatchSpec [] [] [GroupRule (Q.safeKey key) query patch]
 
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
@@ -245,9 +245,9 @@ traceNodeOfEventBlock block =
         , V.nodeConstraints = []
         }
 
-matchedBlockOutput ::
+matchedNodeOutput ::
      C.Traceable tag => MatchSpec -> E.EventBlock tag -> V.ViewOutput
-matchedBlockOutput spec eventBlock =
+matchedNodeOutput spec eventBlock =
   case spec of
     MatchSpec nodeRules _ _ ->
       let node = traceNodeOfEventBlock eventBlock
@@ -256,7 +256,7 @@ matchedBlockOutput spec eventBlock =
             Just patch -> V.patchedNodeOutput patch node
 
 coreViewRef :: E.BlockRef tag -> V.ViewRef tag
-coreViewRef ref = V.syntheticViewRef (E.blockRefId ref)
+coreViewRef ref = V.viewRefFromId (E.blockRefId ref)
 
 viewLabelFromPayloadView :: C.PayloadView -> V.ViewLabel
 viewLabelFromPayloadView payloadViewValue =
@@ -367,11 +367,9 @@ buildMatchedViewGraph ::
   -> V.ViewGraph
 buildMatchedViewGraph spec viewSteps' builtNodes builtConstraints builtChoiceConstraints renderFrames =
   let traceNodes = applyAccessRequirementsForSpec spec builtNodes
-      virtualNodes =
-        applyAccessRequirementsForSpec
-          spec
-          (virtualNodesForSpec spec traceNodes)
-      nodes = traceNodes P.++ virtualNodes
+      groupNodes =
+        applyAccessRequirementsForSpec spec (groupNodesForSpec spec traceNodes)
+      nodes = traceNodes P.++ groupNodes
       (matchConstraints, matchChoiceConstraints) =
         matchSpecConstraints spec nodes
       constraints = builtConstraints P.++ matchConstraints
@@ -576,11 +574,11 @@ selectionNodeMatches selection wrapped =
               case Q.queryMatchesTags query tags of
                 Nothing       -> []
                 Just bindings -> [(V.AnyLayoutView node, bindings)]
-        VirtualSelection key query ->
-          case V.syntheticNodeMeta node of
+        GroupSelection key query ->
+          case V.generatedNodeMeta node of
             Just meta
-              | key P.== V.syntheticKey meta
-                  P.&& Q.queryKey query P.== V.syntheticQueryKey meta ->
+              | key P.== V.generatedKey meta
+                  P.&& Q.queryKey query P.== V.generatedQueryKey meta ->
                 [(V.AnyLayoutView node, [])]
             _ -> []
 
@@ -826,58 +824,53 @@ nodeMatchesSelection selection node =
     [] -> False
     _  -> True
 
-virtualNodesForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
-virtualNodesForSpec spec nodes =
+groupNodesForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
+groupNodesForSpec spec nodes =
   case spec of
-    MatchSpec _ _ virtualRules ->
-      maybeVirtualNodes (mergedVirtualRules virtualRules)
+    MatchSpec _ _ groupRules -> maybeGroupNodes (mergedGroupRules groupRules)
   where
     traceNodes = V.viewTraceNodes nodes
-    maybeVirtualNodes rules =
+    maybeGroupNodes rules =
       case rules of
         [] -> []
         rule:rest ->
-          case virtualNodeForRule traceNodes rule of
-            Nothing   -> maybeVirtualNodes rest
-            Just node -> node : maybeVirtualNodes rest
+          case groupNodeForRule traceNodes rule of
+            Nothing   -> maybeGroupNodes rest
+            Just node -> node : maybeGroupNodes rest
 
-mergedVirtualRules :: [VirtualRule] -> [VirtualRule]
-mergedVirtualRules rules =
+mergedGroupRules :: [GroupRule] -> [GroupRule]
+mergedGroupRules rules =
   case rules of
     [] -> []
-    VirtualRule key query patch:rest ->
-      case mergeVirtualRule key query patch rest of
+    GroupRule key query patch:rest ->
+      case mergeGroupRule key query patch rest of
         (mergedPatch, remaining) ->
-          VirtualRule key query mergedPatch : mergedVirtualRules remaining
+          GroupRule key query mergedPatch : mergedGroupRules remaining
 
-mergeVirtualRule ::
-     P.String
-  -> Query
-  -> NodePatch
-  -> [VirtualRule]
-  -> (NodePatch, [VirtualRule])
-mergeVirtualRule key query patch rules =
+mergeGroupRule ::
+     P.String -> Query -> NodePatch -> [GroupRule] -> (NodePatch, [GroupRule])
+mergeGroupRule key query patch rules =
   case rules of
     [] -> (patch, [])
-    VirtualRule nextKey nextQuery nextPatch:rest ->
+    GroupRule nextKey nextQuery nextPatch:rest ->
       case key P.== nextKey P.&& query P.== nextQuery of
         True ->
-          mergeVirtualRule key query (VP.appendNodePatch patch nextPatch) rest
+          mergeGroupRule key query (VP.appendNodePatch patch nextPatch) rest
         False ->
-          case mergeVirtualRule key query patch rest of
+          case mergeGroupRule key query patch rest of
             (mergedPatch, remaining) ->
-              (mergedPatch, VirtualRule nextKey nextQuery nextPatch : remaining)
+              (mergedPatch, GroupRule nextKey nextQuery nextPatch : remaining)
 
-virtualNodeForRule :: [V.AnyTraceNode] -> VirtualRule -> Maybe V.ViewNode
-virtualNodeForRule traceNodes rule =
+groupNodeForRule :: [V.AnyTraceNode] -> GroupRule -> Maybe V.ViewNode
+groupNodeForRule traceNodes rule =
   case rule of
-    VirtualRule key query patch ->
+    GroupRule key query patch ->
       case matchingQueryTraceNodes query traceNodes of
         [] -> Nothing
         children ->
           Just
             (V.ViewNode
-               (syntheticCompoundNodeForRule key query patch children :: V.Node
+               (generatedCompoundNodeForRule key query patch children :: V.Node
                   ()))
 
 matchingQueryTraceNodes :: Query -> [V.AnyTraceNode] -> [V.AnyTraceNode]
@@ -887,23 +880,23 @@ matchingQueryTraceNodes query nodes =
   , (_matchedNode, _bindings) <- traceNodeQueryMatches query anyNode
   ]
 
-syntheticCompoundNodeForRule ::
+generatedCompoundNodeForRule ::
      P.String -> Query -> NodePatch -> [V.AnyTraceNode] -> V.Node tag
-syntheticCompoundNodeForRule key query patch children =
+generatedCompoundNodeForRule key query patch children =
   let queryKey' = Q.queryKey query
-      ref = V.syntheticViewRef (V.syntheticNodeId key queryKey')
-      baseStyle = V.styleForSyntheticKey key queryKey'
+      ref = V.viewRefFromId (V.generatedNodeId key queryKey')
+      baseStyle = V.styleForNodeRoot (V.generatedNodeRoot key queryKey')
       style' = VP.nodePatchStyleUpdate patch baseStyle
    in V.Node
         { V.nodeRef = ref
-        , V.nodeLabel = V.ViewLabel ("Virtual." P.++ key) ""
+        , V.nodeLabel = V.ViewLabel ("Group." P.++ key) ""
         , V.nodeContent = fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
         , V.nodeKey = key
         , V.nodeStyle = style'
         , V.nodeOrigin =
-            V.SyntheticOrigin
-              V.SyntheticMeta
-                {V.syntheticKey = key, V.syntheticQueryKey = queryKey'}
+            V.GeneratedOrigin
+              V.GeneratedMeta
+                {V.generatedKey = key, V.generatedQueryKey = queryKey'}
         , V.nodeStructure =
             V.CompoundNode
               V.ShrinkWrapChildren

@@ -13,10 +13,11 @@ module LinearTrace.View.Graph
   , ViewNode(..)
   , Node(..)
   , NodeOrigin(..)
-  , SyntheticMeta(..)
+  , GeneratedMeta(..)
   , NodeStructure(..)
   , CompoundFit(..)
   , NodeChild(..)
+  , NodeVarRoot(..)
   , ViewStep(..)
   , RenderIntent(..)
   , LayoutAttr(..)
@@ -26,15 +27,15 @@ module LinearTrace.View.Graph
     -- | Accessors and stable key helpers used by choreography matching,
     -- printing, and compile identity tracking.
     traceNodeTags
-  , syntheticNodeMeta
+  , generatedNodeMeta
   , defaultNodeKey
   , styleForRef
-  , styleForSyntheticKey
-  , syntheticNodeId
-  , blockVarName
-  , blockVarPath
-  , syntheticVarName
-  , syntheticVar
+  , traceNodeRoot
+  , generatedNodeRoot
+  , generatedNodeId
+  , styleForNodeRoot
+  , nodeVarName
+  , nodeVar
   , nodeChildFromTraceNode
   , -- * Solver diagnostics
     -- | Style expression traversal helpers used by printing to show solved
@@ -72,11 +73,11 @@ data Node tag = Node
 
 data NodeOrigin
   = TraceOrigin ViewTags
-  | SyntheticOrigin SyntheticMeta
+  | GeneratedOrigin GeneratedMeta
 
-data SyntheticMeta = SyntheticMeta
-  { syntheticKey      :: P.String
-  , syntheticQueryKey :: P.String
+data GeneratedMeta = GeneratedMeta
+  { generatedKey      :: P.String
+  , generatedQueryKey :: P.String
   }
 
 data NodeStructure
@@ -90,6 +91,9 @@ data NodeChild = NodeChild
   { nodeChildId     :: ViewId
   , nodeChildBounds :: BoundsExpr
   }
+
+newtype NodeVarRoot =
+  NodeVarRoot [P.String]
 
 instance HasBounds (Node tag) where
   top node = top (nodeStyle node)
@@ -141,13 +145,13 @@ traceNodeTags :: Node tag -> P.Maybe ViewTags
 traceNodeTags node =
   case nodeOrigin node of
     TraceOrigin tags  -> P.Just tags
-    SyntheticOrigin _ -> P.Nothing
+    GeneratedOrigin _ -> P.Nothing
 
-syntheticNodeMeta :: Node tag -> P.Maybe SyntheticMeta
-syntheticNodeMeta node =
+generatedNodeMeta :: Node tag -> P.Maybe GeneratedMeta
+generatedNodeMeta node =
   case nodeOrigin node of
     TraceOrigin _        -> P.Nothing
-    SyntheticOrigin meta -> P.Just meta
+    GeneratedOrigin meta -> P.Just meta
 
 nodeChildFromTraceNode :: AnyTraceNode -> NodeChild
 nodeChildFromTraceNode anyNode =
@@ -174,50 +178,40 @@ viewTraceNodes nodes =
         ViewNode viewNode ->
           case nodeOrigin viewNode of
             TraceOrigin _     -> AnyTraceNode viewNode : viewTraceNodes rest
-            SyntheticOrigin _ -> viewTraceNodes rest
+            GeneratedOrigin _ -> viewTraceNodes rest
 
 defaultNodeKey :: P.String
-defaultNodeKey = "block"
+defaultNodeKey = "node"
 
 styleForRef :: ViewRef tag -> Style
-styleForRef ref = styleForBlockPath ref []
+styleForRef ref = styleForNodeRoot (traceNodeRoot ref)
 
-styleForBlockPath :: ViewRef tag -> [P.String] -> Style
-styleForBlockPath ref path =
+styleForNodeRoot :: NodeVarRoot -> Style
+styleForNodeRoot root =
   styleWithBounds
     (Bounds
-       (blockVarPath ref path "top")
-       (blockVarPath ref path "left")
-       (blockVarPath ref path "width")
-       (blockVarPath ref path "height"))
+       (nodeVar root [] "top")
+       (nodeVar root [] "left")
+       (nodeVar root [] "width")
+       (nodeVar root [] "height"))
 
-blockVarName :: ViewRef tag -> [P.String] -> P.String -> P.String
-blockVarName ref path field =
-  joinPath (("B" P.++ P.show (viewRefInt ref)) : (path P.++ [field]))
+traceNodeRoot :: ViewRef tag -> NodeVarRoot
+traceNodeRoot ref = NodeVarRoot ["B" P.++ P.show (viewRefInt ref)]
 
-blockVarPath ::
-     SymbolicType ty => ViewRef tag -> [P.String] -> P.String -> Expr ty
-blockVarPath ref path field = S.var (blockVarName ref path field)
+generatedNodeRoot :: P.String -> P.String -> NodeVarRoot
+generatedNodeRoot key queryKey' = NodeVarRoot ["V", key, safeKey queryKey']
 
-syntheticNodeId :: P.String -> P.String -> P.Int
-syntheticNodeId key queryKey' =
+generatedNodeId :: P.String -> P.String -> P.Int
+generatedNodeId key queryKey' =
   P.negate (1 P.+ positiveHash (key P.++ ":" P.++ queryKey'))
 
-styleForSyntheticKey :: P.String -> P.String -> Style
-styleForSyntheticKey key queryKey' =
-  styleWithBounds
-    (Bounds
-       (syntheticVar key queryKey' "top")
-       (syntheticVar key queryKey' "left")
-       (syntheticVar key queryKey' "width")
-       (syntheticVar key queryKey' "height"))
+nodeVarName :: NodeVarRoot -> [P.String] -> P.String -> P.String
+nodeVarName root path field =
+  case root of
+    NodeVarRoot rootPath -> joinPath (rootPath P.++ path P.++ [field])
 
-syntheticVarName :: P.String -> P.String -> P.String -> P.String
-syntheticVarName key queryKey' field =
-  joinPath ["V", key, safeKey queryKey', field]
-
-syntheticVar :: SymbolicType ty => P.String -> P.String -> P.String -> Expr ty
-syntheticVar key queryKey' field = S.var (syntheticVarName key queryKey' field)
+nodeVar :: SymbolicType ty => NodeVarRoot -> [P.String] -> P.String -> Expr ty
+nodeVar root path field = S.var (nodeVarName root path field)
 
 positiveHash :: P.String -> P.Int
 positiveHash = positiveHashFrom 5381

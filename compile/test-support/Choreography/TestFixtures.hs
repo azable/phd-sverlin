@@ -12,10 +12,10 @@
 -- app example.
 module Choreography.TestFixtures
   ( -- * Graph statistics
-    -- | Compact graph stats used by tests for query and virtual grouping
+    -- | Compact graph stats used by tests for query and grouping
     -- behavior.
     payloadMatchedStats
-  , virtualGroupStats
+  , groupStats
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
     categoricalRelationGraph
@@ -38,8 +38,8 @@ instance Traceable TestValue
 payloadMatchedStats :: (Int, Int, Int, Int)
 payloadMatchedStats = fixtureStats payloadMatchedSpec
 
-virtualGroupStats :: (Int, Int, Int, Int)
-virtualGroupStats = fixtureStats virtualGroupSpec
+groupStats :: (Int, Int, Int, Int)
+groupStats = fixtureStats groupSpec
 
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
@@ -76,8 +76,8 @@ payloadMatchedSpec =
       width (by 80)
       height (by 80)
 
-virtualGroupSpec :: MatchSpec
-virtualGroupSpec =
+groupSpec :: MatchSpec
+groupSpec =
   visualize $ do
     Selected item <- select @TestValue #item
     style item $ do

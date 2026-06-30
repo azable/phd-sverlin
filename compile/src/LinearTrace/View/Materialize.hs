@@ -12,15 +12,14 @@ module LinearTrace.View.Materialize
   , concreteFields
   , ConcreteField(..)
   , -- * Concrete view nodes
-    -- | Solved view nodes. Constructors remain hidden except for the
-    -- existential node wrapper needed by compile traversal.
+    -- | Solved view nodes. Compile code reads these to build JSON render
+    -- elements after symbolic tags have been erased.
     ConcreteNode
-  , concreteNodeRef
+  , concreteNodeId
   , concreteNodeLabel
   , concreteNodeContent
   , concreteNodeKey
   , concreteNodeStyle
-  , ConcreteViewNode(..)
   , -- * Concrete graph
     -- | Whole solved graph and render frames produced from a solver solution.
     ConcreteViewGraph
@@ -43,8 +42,8 @@ module LinearTrace.View.Materialize
 import           LinearTrace.View.Graph
 import           LinearTrace.View.Primitives
 import           LinearTrace.View.Style
-import           LinearTrace.View.Types      (ContentMode (..), ViewLabel,
-                                              ViewRef)
+import           LinearTrace.View.Types      (ContentMode (..), ViewId,
+                                              ViewLabel, viewRefId)
 import           Prelude
 import           Solver                      (Expr, Solution, categoryName,
                                               evalChoice, evalExpr)
@@ -60,19 +59,16 @@ data ConcreteField
   | ConcreteTokenField String (Maybe String) (Maybe String)
   deriving (Eq, Show)
 
-data ConcreteNode tag = ConcreteNode
-  { concreteNodeRef     :: ViewRef tag
+data ConcreteNode = ConcreteNode
+  { concreteNodeId      :: ViewId
   , concreteNodeLabel   :: ViewLabel
   , concreteNodeContent :: String
   , concreteNodeKey     :: String
   , concreteNodeStyle   :: ConcreteStyle
   }
 
-data ConcreteViewNode where
-  ConcreteViewNode :: ConcreteNode tag -> ConcreteViewNode
-
 data ConcreteViewGraph = ConcreteViewGraph
-  { concreteViewNodes        :: [ConcreteViewNode]
+  { concreteViewNodes        :: [ConcreteNode]
   , concreteViewRenderFrames :: [[RenderIntent]]
   }
 
@@ -108,17 +104,17 @@ materializeViewGraph solution graph = do
       , concreteViewRenderFrames = viewRenderFrames graph
       }
 
-materializeViewNode :: Solution -> ViewNode -> Either String ConcreteViewNode
+materializeViewNode :: Solution -> ViewNode -> Either String ConcreteNode
 materializeViewNode solution node =
   case node of
-    ViewNode viewNode -> ConcreteViewNode <$> materializeNode solution viewNode
+    ViewNode viewNode -> materializeNode solution viewNode
 
-materializeNode :: Solution -> Node tag -> Either String (ConcreteNode tag)
+materializeNode :: Solution -> Node tag -> Either String ConcreteNode
 materializeNode solution node = do
   concreteStyle <- materializeStyle solution (nodeStyle node)
   pure
     ConcreteNode
-      { concreteNodeRef = nodeRef node
+      { concreteNodeId = viewRefId (nodeRef node)
       , concreteNodeLabel = nodeLabel node
       , concreteNodeContent = materializeContent (nodeContent node)
       , concreteNodeKey = nodeKey node

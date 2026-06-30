@@ -61,9 +61,9 @@ choreographyBridgeTests =
         $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
                 ChoreographyFixtures.payloadMatchedStats
            in nodeCount @?= 1
-    , testCase "virtual grouping matches neutral view tags"
+    , testCase "grouping matches neutral view tags"
         $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
-                ChoreographyFixtures.virtualGroupStats
+                ChoreographyFixtures.groupStats
            in nodeCount @?= 3
     ]
 
@@ -80,7 +80,7 @@ viewMaterializationTests =
           assertCompileSolved solution ChoreographyFixtures.selectedColorGraph
         assertBool
           "expected selected fill access to compile a backgroundColor"
-          (any hasBackgroundColor (compiledRenderBlocks compiled))
+          (any elementHasBackgroundColor (compiledRenderElements compiled))
     , testCase "categorical style variables lower to concrete tokens" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -90,12 +90,12 @@ viewMaterializationTests =
           assertCompileSolved
             solution
             ChoreographyFixtures.categoricalStyleGraph
-        case compiledRenderBlocks compiled of
-          block:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle block)
+        case compiledRenderElements compiled of
+          element:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle element)
             Map.lookup "fontFamily" attrs
               @?= Just (Compile.StyleText "monospace")
-          [] -> assertFailure "expected at least one compiled render block"
+          [] -> assertFailure "expected at least one compiled render element"
     , testCase "selected categorical access adds and constrains style" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -105,11 +105,11 @@ viewMaterializationTests =
           assertCompileSolved
             solution
             ChoreographyFixtures.categoricalRelationGraph
-        case compiledRenderBlocks compiled of
-          block:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle block)
+        case compiledRenderElements compiled of
+          element:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle element)
             Map.lookup "fontFamily" attrs @?= Just (Compile.StyleText "Inter")
-          [] -> assertFailure "expected at least one compiled render block"
+          [] -> assertFailure "expected at least one compiled render element"
     , testCase
         "compileSolved lowers concrete scalar text choice and color fields" $ do
         solution <-
@@ -118,15 +118,15 @@ viewMaterializationTests =
             ChoreographyFixtures.styledGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.styledGraph
-        case compiledRenderBlocks compiled of
-          block:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle block)
+        case compiledRenderElements compiled of
+          element:_ -> do
+            let attrs = Compile.renderAttrs (Compile.renderStyle element)
             Map.lookup "position" attrs @?= Just (Compile.StyleText "absolute")
             Map.lookup "padding" attrs @?= Just (Compile.StylePixels 4)
             Map.lookup "fontFamily" attrs @?= Just (Compile.StyleText "Inter")
             Map.lookup "fontWeight" attrs @?= Just (Compile.StyleText "bold")
             assertStyleColor "backgroundColor" attrs
-          [] -> assertFailure "expected at least one compiled render block"
+          [] -> assertFailure "expected at least one compiled render element"
     ]
 
 nativeBoundsTests :: TestTree
@@ -466,25 +466,26 @@ assertCompileSolved solution graph =
     Left err       -> assertFailure err >> pure (error err)
     Right compiled -> pure compiled
 
-compiledRenderBlocks :: Compile.Visualization -> [Compile.RenderBlock]
-compiledRenderBlocks compiled = concatMap frameBlocks (Compile.frames compiled)
+compiledRenderElements :: Compile.Visualization -> [Compile.RenderElement]
+compiledRenderElements compiled =
+  concatMap frameElements (Compile.frames compiled)
   where
-    frameBlocks frame =
+    frameElements frame =
       case frame of
-        Compile.RenderFrame patches -> concatMap patchBlocks patches
-    patchBlocks patch =
+        Compile.RenderFrame patches -> concatMap patchElements patches
+    patchElements patch =
       case patch of
-        Compile.RenderCreate _ _ block -> [block]
-        Compile.RenderUpdate _ _ block -> [block]
-        Compile.RenderDestroy _ block  -> [block]
+        Compile.RenderCreate _ _ element -> [element]
+        Compile.RenderUpdate _ _ element -> [element]
+        Compile.RenderDestroy _ element  -> [element]
 
-hasBackgroundColor :: Compile.RenderBlock -> Bool
-hasBackgroundColor block =
+elementHasBackgroundColor :: Compile.RenderElement -> Bool
+elementHasBackgroundColor element =
   case Map.lookup "backgroundColor" attrs of
     Just (Compile.StyleColor _) -> True
     _                           -> False
   where
-    attrs = Compile.renderAttrs (Compile.renderStyle block)
+    attrs = Compile.renderAttrs (Compile.renderStyle element)
 
 assertStyleColor :: String -> Map.Map String Compile.StyleValue -> Assertion
 assertStyleColor name attrs =
