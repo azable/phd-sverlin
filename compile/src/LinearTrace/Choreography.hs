@@ -2038,50 +2038,51 @@ class Stroke input output | input -> output, output -> input where
   stroke :: input -> output
 
 instance Opacity Unit (NodeRecipe ()) where
-  opacity value = setStyleWith (VS.setOpacity value)
+  opacity value = setStyleWith (VS.setStyleField @VS.Opacity value)
 
 instance Opacity (Selected tag) (SelectionValue Unit tag) where
   opacity selection = SelectionValue selection (styleValueAccess @VS.Opacity)
 
 instance ZIndex Free (NodeRecipe ()) where
-  zIndex value = setStyleWith (VS.setZIndex value)
+  zIndex value = setStyleWith (VS.setStyleField @VS.ZIndex value)
 
 instance ZIndex (Selected tag) (SelectionValue Free tag) where
   zIndex selection = SelectionValue selection (styleValueAccess @VS.ZIndex)
 
 instance FontSize Span (NodeRecipe ()) where
-  fontSize value = setStyleWith (VS.setFontSize (spanExpr value))
+  fontSize value = setStyleWith (VS.setStyleField @VS.FontSize (spanExpr value))
 
 instance FontSize (Selected tag) (SelectionValue Span tag) where
   fontSize selection = SelectionValue selection (styleValueAccess @VS.FontSize)
 
 instance Padding Span (NodeRecipe ()) where
-  padding value = setStyleWith (VS.setPadding (spanExpr value))
+  padding value = setStyleWith (VS.setStyleField @VS.Padding (spanExpr value))
 
 instance Padding (Selected tag) (SelectionValue Span tag) where
   padding selection = SelectionValue selection (styleValueAccess @VS.Padding)
 
 instance Radius Span (NodeRecipe ()) where
-  radius value = setStyleWith (VS.setRadius (spanExpr value))
+  radius value = setStyleWith (VS.setStyleField @VS.Radius (spanExpr value))
 
 instance Radius (Selected tag) (SelectionValue Span tag) where
   radius selection = SelectionValue selection (styleValueAccess @VS.Radius)
 
 instance StrokeWidth Span (NodeRecipe ()) where
-  strokeWidth value = setStyleWith (VS.setStrokeWidth (spanExpr value))
+  strokeWidth value =
+    setStyleWith (VS.setStyleField @VS.StrokeWidth (spanExpr value))
 
 instance StrokeWidth (Selected tag) (SelectionValue Span tag) where
   strokeWidth selection =
     SelectionValue selection (styleValueAccess @VS.StrokeWidth)
 
 instance Alpha Unit (NodeRecipe ()) where
-  alpha value = setStyleWith (VS.setAlpha value)
+  alpha value = setStyleWith (VS.setStyleField @VS.Alpha value)
 
 instance Alpha (Selected tag) (SelectionValue Unit tag) where
   alpha selection = SelectionValue selection (styleValueAccess @VS.Alpha)
 
 instance Fill Color (NodeRecipe ()) where
-  fill value = setStyleWith (VS.setFill value)
+  fill value = setStyleWith (VS.setStyleField @VS.Fill value)
 
 instance Fill
            (Selected tag)
@@ -2097,7 +2098,7 @@ instance Fill
          (styleColorPartValueAccess @VS.Fill HslLightness))
 
 instance Stroke Color (NodeRecipe ()) where
-  stroke value = setStyleWith (VS.setStroke value)
+  stroke value = setStyleWith (VS.setStyleField @VS.Stroke value)
 
 instance Stroke
            (Selected tag)
@@ -2146,10 +2147,10 @@ class FontFamilyStyle input output | input -> output where
   fontFamily :: input -> output
 
 instance FontFamilyStyle FontFamily (NodeRecipe ()) where
-  fontFamily = styleCategoryRecipe VS.setFontFamily
+  fontFamily = styleCategoryRecipe (VS.setStyleField @FontFamily)
 
 instance FontFamilyStyle (Categorical FontFamily) (NodeRecipe ()) where
-  fontFamily = styleCategoryRecipe VS.setFontFamily
+  fontFamily = styleCategoryRecipe (VS.setStyleField @FontFamily)
 
 instance FontFamilyStyle (Selected tag) (SelectionCategory FontFamily tag) where
   fontFamily = selectedCategory @FontFamily
@@ -2158,10 +2159,10 @@ class FontWeightStyle input output | input -> output where
   fontWeight :: input -> output
 
 instance FontWeightStyle FontWeight (NodeRecipe ()) where
-  fontWeight = styleCategoryRecipe VS.setFontWeight
+  fontWeight = styleCategoryRecipe (VS.setStyleField @FontWeight)
 
 instance FontWeightStyle (Categorical FontWeight) (NodeRecipe ()) where
-  fontWeight = styleCategoryRecipe VS.setFontWeight
+  fontWeight = styleCategoryRecipe (VS.setStyleField @FontWeight)
 
 instance FontWeightStyle (Selected tag) (SelectionCategory FontWeight tag) where
   fontWeight = selectedCategory @FontWeight
@@ -2170,10 +2171,10 @@ class FontStyleStyle input output | input -> output where
   fontStyle :: input -> output
 
 instance FontStyleStyle FontStyle (NodeRecipe ()) where
-  fontStyle = styleCategoryRecipe VS.setFontStyle
+  fontStyle = styleCategoryRecipe (VS.setStyleField @FontStyle)
 
 instance FontStyleStyle (Categorical FontStyle) (NodeRecipe ()) where
-  fontStyle = styleCategoryRecipe VS.setFontStyle
+  fontStyle = styleCategoryRecipe (VS.setStyleField @FontStyle)
 
 instance FontStyleStyle (Selected tag) (SelectionCategory FontStyle tag) where
   fontStyle = selectedCategory @FontStyle
@@ -2182,10 +2183,10 @@ class TextAlignStyle input output | input -> output where
   textAlign :: input -> output
 
 instance TextAlignStyle TextAlign (NodeRecipe ()) where
-  textAlign = styleCategoryRecipe VS.setTextAlign
+  textAlign = styleCategoryRecipe (VS.setStyleField @TextAlign)
 
 instance TextAlignStyle (Categorical TextAlign) (NodeRecipe ()) where
-  textAlign = styleCategoryRecipe VS.setTextAlign
+  textAlign = styleCategoryRecipe (VS.setStyleField @TextAlign)
 
 instance TextAlignStyle (Selected tag) (SelectionCategory TextAlign tag) where
   textAlign = selectedCategory @TextAlign
@@ -2194,10 +2195,10 @@ class BorderStyleStyle input output | input -> output where
   borderStyle :: input -> output
 
 instance BorderStyleStyle BorderStyle (NodeRecipe ()) where
-  borderStyle = styleCategoryRecipe VS.setBorderStyle
+  borderStyle = styleCategoryRecipe (VS.setStyleField @BorderStyle)
 
 instance BorderStyleStyle (Categorical BorderStyle) (NodeRecipe ()) where
-  borderStyle = styleCategoryRecipe VS.setBorderStyle
+  borderStyle = styleCategoryRecipe (VS.setStyleField @BorderStyle)
 
 instance BorderStyleStyle (Selected tag) (SelectionCategory BorderStyle tag) where
   borderStyle = selectedCategory @BorderStyle
@@ -2206,10 +2207,10 @@ class WhiteSpaceStyle input output | input -> output where
   whiteSpace :: input -> output
 
 instance WhiteSpaceStyle WhiteSpace (NodeRecipe ()) where
-  whiteSpace = styleCategoryRecipe VS.setWhiteSpace
+  whiteSpace = styleCategoryRecipe (VS.setStyleField @WhiteSpace)
 
 instance WhiteSpaceStyle (Categorical WhiteSpace) (NodeRecipe ()) where
-  whiteSpace = styleCategoryRecipe VS.setWhiteSpace
+  whiteSpace = styleCategoryRecipe (VS.setStyleField @WhiteSpace)
 
 instance WhiteSpaceStyle (Selected tag) (SelectionCategory WhiteSpace tag) where
   whiteSpace = selectedCategory @WhiteSpace

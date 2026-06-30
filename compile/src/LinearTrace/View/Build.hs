@@ -24,7 +24,8 @@ import qualified LinearTrace.View.Patch      as Patch
 import           LinearTrace.View.Primitives
 import           LinearTrace.View.Style      (nodeStyleBounds,
                                               nodeStyleChoiceConstraints,
-                                              nodeStyleConstraints, padding)
+                                              nodeStyleConstraints)
+import qualified LinearTrace.View.Style      as Style
 import           LinearTrace.View.Types      (ViewId, viewRefId)
 import           Prelude                     (Maybe (..), Monoid (..),
                                               Semigroup (..))
@@ -224,7 +225,7 @@ compoundTightFitConstraints node children =
 
 compoundPadding :: Node tag -> LayoutExpr
 compoundPadding node =
-  case padding (nodeStyle node) of
+  case Style.getStyleField @Style.Padding (nodeStyle node) of
     Nothing    -> num 0
     Just value -> value
 
