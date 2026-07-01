@@ -216,6 +216,7 @@ module LinearTrace.Choreography
   , (-)
   , (*)
   , (/)
+  , (==)
   , (@:)
   , (.<=.)
   , (.>=.)
@@ -315,7 +316,8 @@ import           LinearTrace.View.Style                (Alpha, Fill, FontSize,
 import qualified Prelude                               as P
 import           Prelude.Linear                        hiding (fromInteger,
                                                         fromRational, (*), (+),
-                                                        (-), (/), (/=), (<>))
+                                                        (-), (/), (/=), (<>),
+                                                        (==))
 import qualified Solver                                as S
 import           Solver                                (RandomSeed (..),
                                                         Vec2 (..), vec2)
@@ -1053,6 +1055,7 @@ instance S.ChoiceDomain value =>
 infixl 4 .<=.
 infixl 4 .>=.
 infixl 4 .==.
+infix 4 ==
 infixl 4 =|
 infixl 4 |=
 infixl 4 =/
@@ -1077,6 +1080,13 @@ lhs =/ delta = openSymmetricBridge lhs delta
 
 (/=) :: NotEqualOrClose lhs rhs => lhs -> rhs -> VisualConstraint
 lhs /= rhs = notEqualOrClose lhs rhs
+
+(==) :: OneUse (LInt lhs) %1 -> OneUse (LInt rhs) %1 -> OneUse (LBool result)
+OneUse (LInt lhs) == OneUse (LInt rhs) =
+  case move lhs of
+    Ur lhsValue ->
+      case move rhs of
+        Ur rhsValue -> OneUse (LBool (lhsValue P.== rhsValue))
 
 initialVisualTraceState :: MatchSpec -> VisualTraceState
 initialVisualTraceState spec =

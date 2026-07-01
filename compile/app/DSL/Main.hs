@@ -30,7 +30,7 @@ module DSL.Main
 import           Control.Functor.Linear   hiding (ask, (<$>), (<&>), (<*>))
 import           LinearTrace.Choreography
 import           Prelude.Linear           hiding (fromInteger, fromRational,
-                                           (*), (+), (-), (/), (/=), (<>))
+                                           (*), (+), (-), (/), (/=), (<>), (==))
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -42,13 +42,6 @@ type instance Payload Value = LInt Value
 data Match
 
 type instance Payload Match = LBool Match
-
-sameValue :: Payload Value %1 -> Payload Value %1 -> Payload Match
-sameValue lhsPayload rhsPayload =
-  case lhsPayload of
-    LInt lhs ->
-      case rhsPayload of
-        LInt rhs -> LBool (lhs == rhs)
 
 --------------------------------------------------------------------------------
 -- Editable input boundary
@@ -261,7 +254,7 @@ compareValues targetProbe elementProbe = do
   Used targetPayload targetUse <- use targetProbe
   Used elementPayload elementUse <- use elementProbe
   Computed matchBlock matchComputed <-
-    compute #result (sameValue <$> targetPayload <*> elementPayload)
+    compute #result (targetPayload == elementPayload)
   return (ComparedValues matchBlock targetUse elementUse matchComputed)
 
 --------------------------------------------------------------------------------

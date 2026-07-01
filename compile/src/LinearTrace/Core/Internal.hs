@@ -130,7 +130,6 @@ import           Data.Proxy             (Proxy (..))
 import           Data.Typeable          (Typeable, typeRep)
 import qualified Prelude                as P
 import           Prelude.Linear
-import qualified Unsafe.Coerce          as Unsafe
 
 infixl 4 <$>
 infixl 4 <*>
@@ -194,50 +193,65 @@ dedupeFacts facts =
 -- Deliberately not exported.
 --
 -- Downstream DSLs can use LinearTrace-approved payload wrappers, but cannot
--- define new approved payload classes of their own.
-class LinearPayload payload where
-  payloadDebugContent :: payload -> P.String
+-- define new approved payload classes of their own. Core payloads are trusted
+-- value payloads that may be persisted into blocks and audit snapshots.
+class CorePayload payload where
+  corePayloadText :: payload -> P.String
+  persistCorePayload :: payload %1 -> Ur payload
 
-data LUnit tag =
-  LUnit
+data LUnit tag where
+  LUnit :: LUnit tag
 
-newtype LInt tag =
-  LInt Int
+data LInt tag where
+  LInt :: Int %1 -> LInt tag
 
-newtype LBool tag =
-  LBool Bool
+data LBool tag where
+  LBool :: Bool %1 -> LBool tag
 
-newtype LDouble tag =
-  LDouble Double
+data LDouble tag where
+  LDouble :: Double %1 -> LDouble tag
 
-newtype LString tag =
-  LString P.String
+data LString tag where
+  LString :: P.String %1 -> LString tag
 
-instance LinearPayload (LUnit tag) where
-  payloadDebugContent LUnit = "()"
+instance CorePayload (LUnit tag) where
+  corePayloadText LUnit = "()"
+  persistCorePayload LUnit = Ur LUnit
 
-instance LinearPayload (LBool tag) where
-  payloadDebugContent (LBool value) = P.show value
+instance CorePayload (LBool tag) where
+  corePayloadText (LBool value) = P.show value
+  persistCorePayload (LBool value) =
+    case move value of
+      Ur moved -> Ur (LBool moved)
 
-instance LinearPayload (LInt tag) where
-  payloadDebugContent (LInt value) = P.show value
+instance CorePayload (LInt tag) where
+  corePayloadText (LInt value) = P.show value
+  persistCorePayload (LInt value) =
+    case move value of
+      Ur moved -> Ur (LInt moved)
 
-instance LinearPayload (LDouble tag) where
-  payloadDebugContent (LDouble value) = P.show value
+instance CorePayload (LDouble tag) where
+  corePayloadText (LDouble value) = P.show value
+  persistCorePayload (LDouble value) =
+    case move value of
+      Ur moved -> Ur (LDouble moved)
 
-instance LinearPayload (LString tag) where
-  payloadDebugContent (LString value) = value
+instance CorePayload (LString tag) where
+  corePayloadText (LString value) = value
+  persistCorePayload (LString value) =
+    case move value of
+      Ur moved -> Ur (LString moved)
 
-class (LinearPayload (Payload tag), Typeable tag) =>
+class (CorePayload (Payload tag), Typeable tag) =>
       Traceable tag
 
-instance (LinearPayload (Payload tag), Typeable tag) => Traceable tag
+instance (CorePayload (Payload tag), Typeable tag) => Traceable tag
 
 payloadView :: Traceable tag => Proxy tag -> PayloadView
 payloadView tagProxy = PayloadView {payloadKind = P.show (typeRep tagProxy)}
 
 payloadText :: Traceable tag => Payload tag -> P.String
-payloadText = payloadDebugContent
+payloadText = corePayloadText
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
@@ -532,9 +546,6 @@ explainTokensToAudit (explainToken :~ rest) =
       case explainTokensToAudit rest of
         Ur audit -> Ur (step :> audit)
 
-unsafeUr :: forall a. a %1 -> Ur a
-unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
-
 allocateBlock ::
      forall payload tag. Traceable tag
   => Proxy tag
@@ -542,7 +553,7 @@ allocateBlock ::
   -> Payload tag
      %1 -> TraceBuilderWith payload (Ur BlockId, Ur (Payload tag))
 allocateBlock tagProxy facts payload0 =
-  case unsafeUr payload0 of
+  case persistCorePayload payload0 of
     Ur payload -> do
       TraceBuilderState (Ur oldNextBlockId) (Ur oldBlocks) oldSteps <- get
       let blockId = oldNextBlockId
@@ -725,7 +736,7 @@ computeTaggedWith ::
   -> OneUse (Payload tag)
      %1 -> TraceBuilderWith payload (Computed tag)
 computeTaggedWith baseFacts selectFacts (OneUse payload0) =
-  case unsafeUr payload0 of
+  case persistCorePayload payload0 of
     Ur payload0' -> do
       let facts = factsUnion baseFacts (selectFacts payload0')
       (Ur blockId, Ur payload) <-
