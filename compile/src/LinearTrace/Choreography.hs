@@ -33,11 +33,12 @@ module LinearTrace.Choreography
   , create
   , copy
   , use
-  , compute
-  , computeWithTags
+  , apply1
+  , apply1WithTags
+  , apply2
+  , apply2WithTags
   , replace
   , destroy
-  , decide
   , checkpoint
   , -- * Re-exported or aliased from LinearTrace.Core
     -- | Core linear handles, payload/fact vocabulary, event-token aliases,
@@ -45,7 +46,6 @@ module LinearTrace.Choreography
     -- the DSL.
     Block
   , SlotHandle
-  , PayloadHandle
   , Payload
   , FactValue(..)
   , Fact(..)
@@ -63,16 +63,25 @@ module LinearTrace.Choreography
   , LInt(..)
   , LDouble(..)
   , LString(..)
+  , LOperator(..)
+  , CoreOperator(..)
+  , LinearPayload(..)
+  , applyLinear1
+  , applyLinear1Into
+  , applyLinear2
+  , applyLinear2Into
+  , Applicable1(..)
+  , Applicable2(..)
   , type Create
   , type Observe
   , type Use
   , type Copy
   , type Replace
-  , type Compute
+  , type Apply1
+  , type Apply2
   , type Destroy
   , type Seal
   , type Unseal
-  , type Decide
   , OneUse(..)
   , ExplainToken
   , ExplainTokens(..)
@@ -81,11 +90,11 @@ module LinearTrace.Choreography
   , Used(..)
   , Copied(..)
   , Replaced(..)
-  , Computed(..)
+  , Applied1(..)
+  , Applied2(..)
   , Destroyed(..)
   , Sealed(..)
   , Unsealed(..)
-  , Decided(..)
   , (<$>)
   , (<*>)
   , -- * Re-exported from LinearTrace.Choreography.Query
@@ -216,7 +225,6 @@ module LinearTrace.Choreography
   , (-)
   , (*)
   , (/)
-  , (==)
   , (@:)
   , (.<=.)
   , (.>=.)
@@ -267,10 +275,13 @@ import           LinearTrace.Choreography.Query        (Query, QueryInt (..),
 import           LinearTrace.Choreography.Style        (StyleChoice (..), sat,
                                                         style, styleOf)
 import           LinearTrace.Choreography.Types
-import           LinearTrace.Core                      (Block, Computed (..),
+import           LinearTrace.Core                      (Applicable1 (..),
+                                                        Applicable2 (..),
+                                                        Applied1 (..),
+                                                        Applied2 (..), Block,
                                                         Copied (..),
+                                                        CoreOperator (..),
                                                         Created (..),
-                                                        Decided (..),
                                                         Destroyed (..),
                                                         ExplainToken,
                                                         ExplainTokens (..),
@@ -278,19 +289,24 @@ import           LinearTrace.Core                      (Block, Computed (..),
                                                         FactValue (..),
                                                         Facts (..), LBool (..),
                                                         LDouble (..), LInt (..),
+                                                        LOperator (..),
                                                         LString (..),
                                                         LUnit (..),
+                                                        LinearPayload (..),
                                                         Observed (..),
                                                         OneUse (..), Payload,
                                                         PayloadView (..),
                                                         Replaced (..),
                                                         Sealed (..), Traceable,
                                                         Unsealed (..),
-                                                        Used (..), emptyFacts,
-                                                        factAtom, factInt,
-                                                        factSymbol, factsToList,
-                                                        factsUnion, (<$>),
-                                                        (<*>))
+                                                        Used (..), applyLinear1,
+                                                        applyLinear1Into,
+                                                        applyLinear2,
+                                                        applyLinear2Into,
+                                                        emptyFacts, factAtom,
+                                                        factInt, factSymbol,
+                                                        factsToList, factsUnion,
+                                                        (<$>), (<*>))
 import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View                      (BorderStyle (..),
@@ -476,8 +492,6 @@ viewTraceStep pending step =
 
 type SlotHandle = C.Slot
 
-type PayloadHandle tag = C.OneUse (C.Payload tag)
-
 type Create tag = C.Create tag
 
 type Observe tag = C.Observe tag
@@ -488,15 +502,15 @@ type Copy tag = C.Copy tag
 
 type Replace tag = C.Replace tag
 
-type Compute tag = C.Compute tag
+type Apply1 op arg out = C.Apply1 op arg out
+
+type Apply2 op lhs rhs out = C.Apply2 op lhs rhs out
 
 type Destroy tag = C.Destroy tag
 
 type Seal owner tag = C.Seal owner tag
 
 type Unseal owner tag = C.Unseal owner tag
-
-type Decide tag = C.Decide tag
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -1055,7 +1069,6 @@ instance S.ChoiceDomain value =>
 infixl 4 .<=.
 infixl 4 .>=.
 infixl 4 .==.
-infix 4 ==
 infixl 4 =|
 infixl 4 |=
 infixl 4 =/
@@ -1080,13 +1093,6 @@ lhs =/ delta = openSymmetricBridge lhs delta
 
 (/=) :: NotEqualOrClose lhs rhs => lhs -> rhs -> VisualConstraint
 lhs /= rhs = notEqualOrClose lhs rhs
-
-(==) :: OneUse (LInt lhs) %1 -> OneUse (LInt rhs) %1 -> OneUse (LBool result)
-OneUse (LInt lhs) == OneUse (LInt rhs) =
-  case move lhs of
-    Ur lhsValue ->
-      case move rhs of
-        Ur rhsValue -> OneUse (LBool (lhsValue P.== rhsValue))
 
 initialVisualTraceState :: MatchSpec -> VisualTraceState
 initialVisualTraceState spec =
@@ -1128,6 +1134,22 @@ runCoreLinear2 build leftInput rightInput =
       case unsafeUr rightInput of
         Ur unrestrictedRight ->
           runCoreBuilder (build unrestrictedLeft unrestrictedRight)
+
+runCoreLinear3 ::
+     (first %1 -> second %1 -> third %1 -> C.TraceBuilderWith ViewScript output)
+  -> first
+     %1 -> second
+     %1 -> third
+     %1 -> Choreography output
+runCoreLinear3 build firstInput secondInput thirdInput =
+  case unsafeUr firstInput of
+    Ur unrestrictedFirst ->
+      case unsafeUr secondInput of
+        Ur unrestrictedSecond ->
+          case unsafeUr thirdInput of
+            Ur unrestrictedThird ->
+              runCoreBuilder
+                (build unrestrictedFirst unrestrictedSecond unrestrictedThird)
 
 data BuiltEvidence where
   BuiltEvidence :: E.EventLog -> V.ViewOutput -> BuiltEvidence
@@ -1175,14 +1197,27 @@ viewOutputForEvent spec event =
         (V.appendViewOutput
            (renderEventBlocks V.RenderContinue oldBlock outputBlock)
            (renderEventBlock V.RenderRemove incomingBlock))
-    E.TraceCompute block ->
+    E.TraceApply1 opBlock argBlock outputBlock ->
       V.appendViewOutput
-        (matchedNodeOutput spec block)
-        (renderEventBlock V.RenderFresh block)
+        (matchedNodeOutput spec outputBlock)
+        (V.appendViewOutput
+           (renderEventBlock V.RenderFresh outputBlock)
+           (V.appendViewOutput
+              (renderEventBlock V.RenderRemove opBlock)
+              (renderEventBlock V.RenderRemove argBlock)))
+    E.TraceApply2 opBlock lhsBlock rhsBlock outputBlock ->
+      V.appendViewOutput
+        (matchedNodeOutput spec outputBlock)
+        (V.appendViewOutput
+           (renderEventBlock V.RenderFresh outputBlock)
+           (V.appendViewOutput
+              (renderEventBlock V.RenderRemove opBlock)
+              (V.appendViewOutput
+                 (renderEventBlock V.RenderRemove lhsBlock)
+                 (renderEventBlock V.RenderRemove rhsBlock))))
     E.TraceDestroy block -> renderEventBlock V.RenderRemove block
     E.TraceSeal _ownerBlock _childBlock -> V.emptyViewOutput
     E.TraceUnseal _ownerBlock _childBlock -> V.emptyViewOutput
-    E.TraceDecide block -> renderEventBlock V.RenderRemove block
 
 renderEventBlock ::
      (V.ViewRef tag -> V.RenderIntent) -> E.EventBlock tag -> V.ViewOutput
@@ -1227,21 +1262,67 @@ copy ::
      %1 -> Choreography (C.Copied tag)
 copy query = runCoreLinear1 (C.copyTagged (queryFacts query))
 
-compute ::
-     forall tag. C.Traceable tag
+apply1 ::
+     forall op arg.
+     ( C.Applicable1 op arg
+     , C.Traceable op
+     , C.Traceable arg
+     , C.Traceable (C.Apply1Result op arg)
+     )
   => Query
-  -> PayloadHandle tag
-     %1 -> Choreography (C.Computed tag)
-compute query = computeWithTags query (P.const emptyQuery)
+  -> Block op
+     %1 -> Block arg
+     %1 -> Choreography (C.Applied1 op arg)
+apply1 query = apply1WithTags query (P.const emptyQuery)
 
-computeWithTags ::
-     forall tag. C.Traceable tag
+apply1WithTags ::
+     forall op arg.
+     ( C.Applicable1 op arg
+     , C.Traceable op
+     , C.Traceable arg
+     , C.Traceable (C.Apply1Result op arg)
+     )
   => Query
-  -> (Payload tag -> Query)
-  -> PayloadHandle tag
-     %1 -> Choreography (C.Computed tag)
-computeWithTags query selectQuery =
-  runCoreLinear1 (C.computeTaggedWith (queryFacts query) selectFacts)
+  -> (Payload (C.Apply1Result op arg) -> Query)
+  -> Block op
+     %1 -> Block arg
+     %1 -> Choreography (C.Applied1 op arg)
+apply1WithTags query selectQuery =
+  runCoreLinear2 (C.apply1TaggedWith (queryFacts query) selectFacts)
+  where
+    selectFacts outputPayload = queryFacts (selectQuery outputPayload)
+
+apply2 ::
+     forall op lhs rhs.
+     ( C.Applicable2 op lhs rhs
+     , C.Traceable op
+     , C.Traceable lhs
+     , C.Traceable rhs
+     , C.Traceable (C.Apply2Result op lhs rhs)
+     )
+  => Query
+  -> Block op
+     %1 -> Block lhs
+     %1 -> Block rhs
+     %1 -> Choreography (C.Applied2 op lhs rhs)
+apply2 query = apply2WithTags query (P.const emptyQuery)
+
+apply2WithTags ::
+     forall op lhs rhs.
+     ( C.Applicable2 op lhs rhs
+     , C.Traceable op
+     , C.Traceable lhs
+     , C.Traceable rhs
+     , C.Traceable (C.Apply2Result op lhs rhs)
+     )
+  => Query
+  -> (Payload (C.Apply2Result op lhs rhs) -> Query)
+  -> Block op
+     %1 -> Block lhs
+     %1 -> Block rhs
+     %1 -> Choreography (C.Applied2 op lhs rhs)
+apply2WithTags query selectQuery =
+  runCoreLinear3 (C.apply2TaggedWith (queryFacts query) selectFacts)
   where
     selectFacts outputPayload = queryFacts (selectQuery outputPayload)
 
@@ -1257,13 +1338,6 @@ destroy ::
   => Block tag
      %1 -> Choreography (C.Destroyed tag)
 destroy = runCoreLinear1 C.destroy
-
-decide ::
-     forall tag. C.Traceable tag
-  => (C.Payload tag %1 -> Bool)
-  -> Block tag
-     %1 -> Choreography (C.Decided tag)
-decide predicate = runCoreLinear1 (C.decide predicate)
 
 checkpoint :: P.String -> C.ExplainTokens acts %1 -> Choreography ()
 checkpoint label tokens =

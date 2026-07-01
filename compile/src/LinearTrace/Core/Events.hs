@@ -82,13 +82,22 @@ data TraceEvent act where
     -> EventBlock tag
     -> EventBlock tag
     -> TraceEvent (C.Replace tag)
-  TraceCompute :: EventBlock tag -> TraceEvent (C.Compute tag)
+  TraceApply1
+    :: EventBlock op
+    -> EventBlock arg
+    -> EventBlock out
+    -> TraceEvent (C.Apply1 op arg out)
+  TraceApply2
+    :: EventBlock op
+    -> EventBlock lhs
+    -> EventBlock rhs
+    -> EventBlock out
+    -> TraceEvent (C.Apply2 op lhs rhs out)
   TraceDestroy :: EventBlock tag -> TraceEvent (C.Destroy tag)
   TraceSeal
     :: EventBlock owner -> EventBlock tag -> TraceEvent (C.Seal owner tag)
   TraceUnseal
     :: EventBlock owner -> EventBlock tag -> TraceEvent (C.Unseal owner tag)
-  TraceDecide :: EventBlock tag -> TraceEvent (C.Decide tag)
 
 data EventToken act where
   EventToken :: C.AuditStep act -> TraceEvent act -> EventToken act
@@ -183,13 +192,22 @@ traceEventFromAuditStep step =
         (eventBlockFromSnapshot old)
         (eventBlockFromSnapshot incoming)
         (eventBlockFromSnapshot output)
-    C.ComputeStep snapshot -> TraceCompute (eventBlockFromSnapshot snapshot)
+    C.Apply1Step op arg output ->
+      TraceApply1
+        (eventBlockFromSnapshot op)
+        (eventBlockFromSnapshot arg)
+        (eventBlockFromSnapshot output)
+    C.Apply2Step op lhs rhs output ->
+      TraceApply2
+        (eventBlockFromSnapshot op)
+        (eventBlockFromSnapshot lhs)
+        (eventBlockFromSnapshot rhs)
+        (eventBlockFromSnapshot output)
     C.DestroyStep snapshot -> TraceDestroy (eventBlockFromSnapshot snapshot)
     C.SealStep owner child ->
       TraceSeal (eventBlockFromSnapshot owner) (eventBlockFromSnapshot child)
     C.UnsealStep owner child ->
       TraceUnseal (eventBlockFromSnapshot owner) (eventBlockFromSnapshot child)
-    C.DecideStep snapshot -> TraceDecide (eventBlockFromSnapshot snapshot)
 
 eventBlockFromSnapshot :: C.BlockSnapshot tag -> EventBlock tag
 eventBlockFromSnapshot snapshot =

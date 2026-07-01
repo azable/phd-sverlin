@@ -2,9 +2,9 @@
 {-# LANGUAGE DataKinds               #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE FunctionalDependencies  #-}
 {-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LinearTypes             #-}
-{-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
@@ -47,6 +47,15 @@ module LinearTrace.Core.Internal
   , LInt(..)
   , LDouble(..)
   , LString(..)
+  , LOperator(..)
+  , CoreOperator(..)
+  , LinearPayload(..)
+  , applyLinear1
+  , applyLinear1Into
+  , applyLinear2
+  , applyLinear2Into
+  , Applicable1(..)
+  , Applicable2(..)
   , -- * Action vocabulary
     -- | Type-level action vocabulary used to type audit steps and event
     -- projection. The constructors are consumed by 'LinearTrace.Core.Events'.
@@ -57,11 +66,11 @@ module LinearTrace.Core.Internal
   , type Use
   , type Copy
   , type Replace
-  , type Compute
+  , type Apply1
+  , type Apply2
   , type Destroy
   , type Seal
   , type Unseal
-  , type Decide
   , -- * Primitive operations
     -- | Primitive linear operations that update core builder state and produce
     -- explain tokens. Higher layers call these through the public core facade.
@@ -72,13 +81,15 @@ module LinearTrace.Core.Internal
   , copy
   , copyTagged
   , replace
-  , compute
-  , computeTagged
-  , computeTaggedWith
+  , apply1
+  , apply1Tagged
+  , apply1TaggedWith
+  , apply2
+  , apply2Tagged
+  , apply2TaggedWith
   , destroy
   , seal
   , unseal
-  , decide
   , -- * Auditing operations
     -- | Explain-token structure for assembling typed audit chains before they
     -- become graph steps or event logs.
@@ -90,11 +101,11 @@ module LinearTrace.Core.Internal
   , Used(..)
   , Copied(..)
   , Replaced(..)
-  , Computed(..)
+  , Applied1(..)
+  , Applied2(..)
   , Destroyed(..)
   , Sealed(..)
   , Unsealed(..)
-  , Decided(..)
   , (<$>)
   , (<*>)
   , -- * Public graph/step data
@@ -214,6 +225,70 @@ data LDouble tag where
 data LString tag where
   LString :: P.String %1 -> LString tag
 
+data LOperator operator tag where
+  LOperator :: operator %1 -> LOperator operator tag
+
+class CoreOperator operator where
+  operatorPayloadText :: operator -> P.String
+  persistOperatorPayload :: operator %1 -> Ur operator
+
+class LinearPayload payload value | payload -> value where
+  withPayload :: payload %1 -> (value %1 -> result) %1 -> result
+  buildPayload :: value %1 -> payload
+
+applyLinear1 ::
+     LinearPayload payload value => (value %1 -> output) -> payload %1 -> output
+applyLinear1 f payload = withPayload payload f
+
+applyLinear1Into ::
+     (LinearPayload input inputValue, LinearPayload output outputValue)
+  => (inputValue %1 -> outputValue)
+  -> input
+     %1 -> output
+applyLinear1Into f = applyLinear1 (linearBuild1 f)
+
+linearBuild1 ::
+     LinearPayload output outputValue
+  => (inputValue %1 -> outputValue)
+  -> inputValue
+     %1 -> output
+linearBuild1 f value = buildPayload (f value)
+
+applyLinear2 ::
+     (LinearPayload lhs lhsValue, LinearPayload rhs rhsValue)
+  => (lhsValue %1 -> rhsValue %1 -> output)
+  -> lhs
+     %1 -> rhs
+     %1 -> output
+applyLinear2 f lhs rhs = withPayload lhs (applyLinear2Right f rhs)
+
+applyLinear2Right ::
+     LinearPayload rhs rhsValue
+  => (lhsValue %1 -> rhsValue %1 -> output)
+  -> rhs
+     %1 -> lhsValue
+     %1 -> output
+applyLinear2Right f rhs lhsValue = withPayload rhs (f lhsValue)
+
+applyLinear2Into ::
+     ( LinearPayload lhs lhsValue
+     , LinearPayload rhs rhsValue
+     , LinearPayload output outputValue
+     )
+  => (lhsValue %1 -> rhsValue %1 -> outputValue)
+  -> lhs
+     %1 -> rhs
+     %1 -> output
+applyLinear2Into f = applyLinear2 (linearBuild2 f)
+
+linearBuild2 ::
+     LinearPayload output outputValue
+  => (lhsValue %1 -> rhsValue %1 -> outputValue)
+  -> lhsValue
+     %1 -> rhsValue
+     %1 -> output
+linearBuild2 f lhsValue rhsValue = buildPayload (f lhsValue rhsValue)
+
 instance CorePayload (LUnit tag) where
   corePayloadText LUnit = "()"
   persistCorePayload LUnit = Ur LUnit
@@ -242,6 +317,36 @@ instance CorePayload (LString tag) where
     case move value of
       Ur moved -> Ur (LString moved)
 
+instance CoreOperator operator => CorePayload (LOperator operator tag) where
+  corePayloadText (LOperator operator) = operatorPayloadText operator
+  persistCorePayload (LOperator operator) =
+    case persistOperatorPayload operator of
+      Ur moved -> Ur (LOperator moved)
+
+instance LinearPayload (LUnit tag) () where
+  withPayload LUnit k = k ()
+  buildPayload () = LUnit
+
+instance LinearPayload (LBool tag) Bool where
+  withPayload (LBool value) k = k value
+  buildPayload = LBool
+
+instance LinearPayload (LInt tag) Int where
+  withPayload (LInt value) k = k value
+  buildPayload = LInt
+
+instance LinearPayload (LDouble tag) Double where
+  withPayload (LDouble value) k = k value
+  buildPayload = LDouble
+
+instance LinearPayload (LString tag) P.String where
+  withPayload (LString value) k = k value
+  buildPayload = LString
+
+instance LinearPayload (LOperator operator tag) operator where
+  withPayload (LOperator operator) k = k operator
+  buildPayload = LOperator
+
 class (CorePayload (Payload tag), Typeable tag) =>
       Traceable tag
 
@@ -252,6 +357,19 @@ payloadView tagProxy = PayloadView {payloadKind = P.show (typeRep tagProxy)}
 
 payloadText :: Traceable tag => Payload tag -> P.String
 payloadText = corePayloadText
+
+class Applicable1 op arg where
+  type Apply1Result op arg :: Type
+  applyPayload1 ::
+       Payload op %1 -> Payload arg %1 -> Payload (Apply1Result op arg)
+
+class Applicable2 op lhs rhs where
+  type Apply2Result op lhs rhs :: Type
+  applyPayload2 ::
+       Payload op
+       %1 -> Payload lhs
+       %1 -> Payload rhs
+       %1 -> Payload (Apply2Result op lhs rhs)
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
@@ -295,13 +413,17 @@ data ActionKind
   | ActionUse
   | ActionCopy
   | ActionReplace
-  | ActionCompute
+  | ActionApply1
+  | ActionApply2
   | ActionDestroy
   | ActionSeal
   | ActionUnseal
-  | ActionDecide
 
 data Action (kind :: ActionKind) tag
+
+data Apply1Tag op arg out
+
+data Apply2Tag op lhs rhs out
 
 data SealTag owner tag
 
@@ -317,15 +439,15 @@ type Copy tag = Action 'ActionCopy tag
 
 type Replace tag = Action 'ActionReplace tag
 
-type Compute tag = Action 'ActionCompute tag
+type Apply1 op arg out = Action 'ActionApply1 (Apply1Tag op arg out)
+
+type Apply2 op lhs rhs out = Action 'ActionApply2 (Apply2Tag op lhs rhs out)
 
 type Destroy tag = Action 'ActionDestroy tag
 
 type Seal owner tag = Action 'ActionSeal (SealTag owner tag)
 
 type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
-
-type Decide tag = Action 'ActionDecide tag
 
 --------------------------------------------------------------------------------
 -- Primitive operation result types
@@ -346,8 +468,17 @@ data Copied tag where
 data Replaced tag where
   Replaced :: Block tag %1 -> ExplainToken (Replace tag) %1 -> Replaced tag
 
-data Computed tag where
-  Computed :: Block tag %1 -> ExplainToken (Compute tag) %1 -> Computed tag
+data Applied1 op arg where
+  Applied1
+    :: Block (Apply1Result op arg)
+       %1 -> ExplainToken (Apply1 op arg (Apply1Result op arg))
+       %1 -> Applied1 op arg
+
+data Applied2 op lhs rhs where
+  Applied2
+    :: Block (Apply2Result op lhs rhs)
+       %1 -> ExplainToken (Apply2 op lhs rhs (Apply2Result op lhs rhs))
+       %1 -> Applied2 op lhs rhs
 
 data Destroyed tag where
   Destroyed :: ExplainToken (Destroy tag) %1 -> Destroyed tag
@@ -366,10 +497,6 @@ data Unsealed owner tag where
        %1 -> ExplainToken (Unseal owner tag)
        %1 -> Unsealed owner tag
 
-data Decided tag where
-  DecidedTrue :: ExplainToken (Decide tag) %1 -> Decided tag
-  DecidedFalse :: ExplainToken (Decide tag) %1 -> Decided tag
-
 --------------------------------------------------------------------------------
 -- Audit data
 --------------------------------------------------------------------------------
@@ -383,13 +510,22 @@ data AuditStep act where
     -> BlockSnapshot tag
     -> BlockSnapshot tag
     -> AuditStep (Replace tag)
-  ComputeStep :: BlockSnapshot tag -> AuditStep (Compute tag)
+  Apply1Step
+    :: BlockSnapshot op
+    -> BlockSnapshot arg
+    -> BlockSnapshot out
+    -> AuditStep (Apply1 op arg out)
+  Apply2Step
+    :: BlockSnapshot op
+    -> BlockSnapshot lhs
+    -> BlockSnapshot rhs
+    -> BlockSnapshot out
+    -> AuditStep (Apply2 op lhs rhs out)
   DestroyStep :: BlockSnapshot tag -> AuditStep (Destroy tag)
   SealStep
     :: BlockSnapshot owner -> BlockSnapshot tag -> AuditStep (Seal owner tag)
   UnsealStep
     :: BlockSnapshot owner -> BlockSnapshot tag -> AuditStep (Unseal owner tag)
-  DecideStep :: BlockSnapshot tag -> AuditStep (Decide tag)
 
 data Audit acts where
   EmptyAudit :: Audit '[]
@@ -534,6 +670,62 @@ makeAuditStep2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy rig
        (ctor
           (makeSnapshot leftProxy leftRef leftPayload leftFacts)
           (makeSnapshot rightProxy rightRef rightPayload rightFacts)))
+
+makeAuditStep3Hetero ::
+     (Traceable first, Traceable second, Traceable third)
+  => (BlockSnapshot first -> BlockSnapshot second -> BlockSnapshot third -> AuditStep
+                                                                              act)
+  -> Proxy first
+  -> BlockRef first
+  -> Payload first
+  -> Facts
+  -> Proxy second
+  -> BlockRef second
+  -> Payload second
+  -> Facts
+  -> Proxy third
+  -> BlockRef third
+  -> Payload third
+  -> Facts
+  -> ExplainToken act
+makeAuditStep3Hetero ctor firstProxy firstRef firstPayload firstFacts secondProxy secondRef secondPayload secondFacts thirdProxy thirdRef thirdPayload thirdFacts =
+  ExplainToken
+    (Ur
+       (ctor
+          (makeSnapshot firstProxy firstRef firstPayload firstFacts)
+          (makeSnapshot secondProxy secondRef secondPayload secondFacts)
+          (makeSnapshot thirdProxy thirdRef thirdPayload thirdFacts)))
+
+makeAuditStep4Hetero ::
+     (Traceable first, Traceable second, Traceable third, Traceable fourth)
+  => (BlockSnapshot first -> BlockSnapshot second -> BlockSnapshot third -> BlockSnapshot
+                                                                              fourth -> AuditStep
+                                                                                          act)
+  -> Proxy first
+  -> BlockRef first
+  -> Payload first
+  -> Facts
+  -> Proxy second
+  -> BlockRef second
+  -> Payload second
+  -> Facts
+  -> Proxy third
+  -> BlockRef third
+  -> Payload third
+  -> Facts
+  -> Proxy fourth
+  -> BlockRef fourth
+  -> Payload fourth
+  -> Facts
+  -> ExplainToken act
+makeAuditStep4Hetero ctor firstProxy firstRef firstPayload firstFacts secondProxy secondRef secondPayload secondFacts thirdProxy thirdRef thirdPayload thirdFacts fourthProxy fourthRef fourthPayload fourthFacts =
+  ExplainToken
+    (Ur
+       (ctor
+          (makeSnapshot firstProxy firstRef firstPayload firstFacts)
+          (makeSnapshot secondProxy secondRef secondPayload secondFacts)
+          (makeSnapshot thirdProxy thirdRef thirdPayload thirdFacts)
+          (makeSnapshot fourthProxy fourthRef fourthPayload fourthFacts)))
 
 explainTokenToAuditStep :: ExplainToken act %1 -> Ur (AuditStep act)
 explainTokenToAuditStep (ExplainToken step) = step
@@ -716,36 +908,165 @@ replace oldBlock incomingBlock =
                   outputPayload
                   incomingFacts))
 
-compute ::
-     forall payload tag. Traceable tag
-  => OneUse (Payload tag)
-     %1 -> TraceBuilderWith payload (Computed tag)
-compute = computeTagged emptyFacts
+apply1 ::
+     forall payload op arg.
+     ( Applicable1 op arg
+     , Traceable op
+     , Traceable arg
+     , Traceable (Apply1Result op arg)
+     )
+  => Block op
+     %1 -> Block arg
+     %1 -> TraceBuilderWith payload (Applied1 op arg)
+apply1 = apply1Tagged emptyFacts
 
-computeTagged ::
-     forall payload tag. Traceable tag
+apply1Tagged ::
+     forall payload op arg.
+     ( Applicable1 op arg
+     , Traceable op
+     , Traceable arg
+     , Traceable (Apply1Result op arg)
+     )
   => Facts
-  -> OneUse (Payload tag)
-     %1 -> TraceBuilderWith payload (Computed tag)
-computeTagged facts = computeTaggedWith facts (P.const emptyFacts)
+  -> Block op
+     %1 -> Block arg
+     %1 -> TraceBuilderWith payload (Applied1 op arg)
+apply1Tagged facts = apply1TaggedWith facts (P.const emptyFacts)
 
-computeTaggedWith ::
-     forall payload tag. Traceable tag
+apply1TaggedWith ::
+     forall payload op arg.
+     ( Applicable1 op arg
+     , Traceable op
+     , Traceable arg
+     , Traceable (Apply1Result op arg)
+     )
   => Facts
-  -> (Payload tag -> Facts)
-  -> OneUse (Payload tag)
-     %1 -> TraceBuilderWith payload (Computed tag)
-computeTaggedWith baseFacts selectFacts (OneUse payload0) =
-  case persistCorePayload payload0 of
-    Ur payload0' -> do
-      let facts = factsUnion baseFacts (selectFacts payload0')
-      (Ur blockId, Ur payload) <-
-        allocateBlock (Proxy :: Proxy tag) facts payload0'
-      let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-      return
-        (Computed
-           (Block (Ur blockId) (Ur payload) (Ur facts))
-           (makeAuditStep1 ComputeStep (Proxy :: Proxy tag) ref' payload facts))
+  -> (Payload (Apply1Result op arg) -> Facts)
+  -> Block op
+     %1 -> Block arg
+     %1 -> TraceBuilderWith payload (Applied1 op arg)
+apply1TaggedWith baseFacts selectFacts opBlock argBlock =
+  case opBlock of
+    Block (Ur opId) (Ur opPayload) (Ur opFacts) ->
+      case argBlock of
+        Block (Ur argId) (Ur argPayload) (Ur argFacts) ->
+          case persistCorePayload (applyPayload1 opPayload argPayload) of
+            Ur outputPayload0 -> do
+              let facts = factsUnion baseFacts (selectFacts outputPayload0)
+              (Ur outputId, Ur outputPayload) <-
+                allocateBlock
+                  (Proxy :: Proxy (Apply1Result op arg))
+                  facts
+                  outputPayload0
+              let opRef = makeBlockRef (Proxy :: Proxy op) opId
+              let argRef = makeBlockRef (Proxy :: Proxy arg) argId
+              let outputRef =
+                    makeBlockRef (Proxy :: Proxy (Apply1Result op arg)) outputId
+              return
+                (Applied1
+                   (Block (Ur outputId) (Ur outputPayload) (Ur facts))
+                   (makeAuditStep3Hetero
+                      Apply1Step
+                      (Proxy :: Proxy op)
+                      opRef
+                      opPayload
+                      opFacts
+                      (Proxy :: Proxy arg)
+                      argRef
+                      argPayload
+                      argFacts
+                      (Proxy :: Proxy (Apply1Result op arg))
+                      outputRef
+                      outputPayload
+                      facts))
+
+apply2 ::
+     forall payload op lhs rhs.
+     ( Applicable2 op lhs rhs
+     , Traceable op
+     , Traceable lhs
+     , Traceable rhs
+     , Traceable (Apply2Result op lhs rhs)
+     )
+  => Block op
+     %1 -> Block lhs
+     %1 -> Block rhs
+     %1 -> TraceBuilderWith payload (Applied2 op lhs rhs)
+apply2 = apply2Tagged emptyFacts
+
+apply2Tagged ::
+     forall payload op lhs rhs.
+     ( Applicable2 op lhs rhs
+     , Traceable op
+     , Traceable lhs
+     , Traceable rhs
+     , Traceable (Apply2Result op lhs rhs)
+     )
+  => Facts
+  -> Block op
+     %1 -> Block lhs
+     %1 -> Block rhs
+     %1 -> TraceBuilderWith payload (Applied2 op lhs rhs)
+apply2Tagged facts = apply2TaggedWith facts (P.const emptyFacts)
+
+apply2TaggedWith ::
+     forall payload op lhs rhs.
+     ( Applicable2 op lhs rhs
+     , Traceable op
+     , Traceable lhs
+     , Traceable rhs
+     , Traceable (Apply2Result op lhs rhs)
+     )
+  => Facts
+  -> (Payload (Apply2Result op lhs rhs) -> Facts)
+  -> Block op
+     %1 -> Block lhs
+     %1 -> Block rhs
+     %1 -> TraceBuilderWith payload (Applied2 op lhs rhs)
+apply2TaggedWith baseFacts selectFacts opBlock lhsBlock rhsBlock =
+  case opBlock of
+    Block (Ur opId) (Ur opPayload) (Ur opFacts) ->
+      case lhsBlock of
+        Block (Ur lhsId) (Ur lhsPayload) (Ur lhsFacts) ->
+          case rhsBlock of
+            Block (Ur rhsId) (Ur rhsPayload) (Ur rhsFacts) ->
+              case persistCorePayload
+                     (applyPayload2 opPayload lhsPayload rhsPayload) of
+                Ur outputPayload0 -> do
+                  let facts = factsUnion baseFacts (selectFacts outputPayload0)
+                  (Ur outputId, Ur outputPayload) <-
+                    allocateBlock
+                      (Proxy :: Proxy (Apply2Result op lhs rhs))
+                      facts
+                      outputPayload0
+                  let opRef = makeBlockRef (Proxy :: Proxy op) opId
+                  let lhsRef = makeBlockRef (Proxy :: Proxy lhs) lhsId
+                  let rhsRef = makeBlockRef (Proxy :: Proxy rhs) rhsId
+                  let outputRef =
+                        makeBlockRef
+                          (Proxy :: Proxy (Apply2Result op lhs rhs))
+                          outputId
+                  return
+                    (Applied2
+                       (Block (Ur outputId) (Ur outputPayload) (Ur facts))
+                       (makeAuditStep4Hetero
+                          Apply2Step
+                          (Proxy :: Proxy op)
+                          opRef
+                          opPayload
+                          opFacts
+                          (Proxy :: Proxy lhs)
+                          lhsRef
+                          lhsPayload
+                          lhsFacts
+                          (Proxy :: Proxy rhs)
+                          rhsRef
+                          rhsPayload
+                          rhsFacts
+                          (Proxy :: Proxy (Apply2Result op lhs rhs))
+                          outputRef
+                          outputPayload
+                          facts))
 
 destroy ::
      forall payload tag. Traceable tag
@@ -812,20 +1133,6 @@ unseal ownerBlock slot =
                       childRef
                       childPayload
                       childFacts))
-
-decide ::
-     forall payload tag. Traceable tag
-  => (Payload tag %1 -> Bool)
-  -> Block tag
-     %1 -> TraceBuilderWith payload (Decided tag)
-decide predicate (Block (Ur blockId) (Ur payload) (Ur facts)) = do
-  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  let explainToken =
-        makeAuditStep1 DecideStep (Proxy :: Proxy tag) ref' payload facts
-  {- HLINT ignore "Use if" -}
-  case predicate payload of
-    True  -> return (DecidedTrue explainToken)
-    False -> return (DecidedFalse explainToken)
 
 --------------------------------------------------------------------------------
 -- Runner

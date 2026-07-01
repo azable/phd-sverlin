@@ -31,6 +31,7 @@ import           Control.Functor.Linear   hiding (ask, (<$>), (<&>), (<*>))
 import           LinearTrace.Choreography
 import           Prelude.Linear           hiding (fromInteger, fromRational,
                                            (*), (+), (-), (/), (/=), (<>), (==))
+import qualified Prelude.Linear           as Linear
 
 --------------------------------------------------------------------------------
 -- Payload tags
@@ -42,6 +43,19 @@ type instance Payload Value = LInt Value
 data Match
 
 type instance Payload Match = LBool Match
+
+data EqualValue =
+  EqualValue
+
+type instance Payload EqualValue = LOperator EqualValue EqualValue
+
+instance CoreOperator EqualValue where
+  operatorPayloadText EqualValue = "=="
+  persistOperatorPayload EqualValue = Ur EqualValue
+
+instance Applicable2 EqualValue Value Value where
+  type Apply2Result EqualValue Value Value = Match
+  applyPayload2 (LOperator EqualValue) = applyLinear2Into (Linear.==)
 
 --------------------------------------------------------------------------------
 -- Editable input boundary
@@ -116,11 +130,15 @@ data PreparedComparison where
        %1 -> PreparedComparison
 
 data ComparedValues where
-  ComparedValues
-    :: Block Match
-       %1 -> ExplainToken (Use Value)
-       %1 -> ExplainToken (Use Value)
-       %1 -> ExplainToken (Compute Match)
+  ValuesMatched
+    :: ExplainToken (Create EqualValue)
+       %1 -> ExplainToken (Apply2 EqualValue Value Value Match)
+       %1 -> ExplainToken (Use Match)
+       %1 -> ComparedValues
+  ValuesDifferent
+    :: ExplainToken (Create EqualValue)
+       %1 -> ExplainToken (Apply2 EqualValue Value Value Match)
+       %1 -> ExplainToken (Use Match)
        %1 -> ComparedValues
 
 data MarkedProcessed where
@@ -164,28 +182,21 @@ searchIteration searchState =
           PreparedComparison targetAfter elementAfter targetProbe elementProbe targetCopy elementCopy <-
             prepareComparison target index element
           checkpoint "Prepare comparison" (targetCopy :~ elementCopy :~ Done)
-          ComparedValues matchBlock targetUse elementUse matchComputed <-
-            compareValues targetProbe elementProbe
-          decision <- decide (\(LBool answer) -> answer) matchBlock
-          case decision of
-            DecidedTrue decisionToken -> do
+          comparison <- compareValues targetProbe elementProbe
+          case comparison of
+            ValuesMatched equalCreated matchApplied matchUse -> do
               checkpoint
                 "Found target"
-                (targetUse
-                   :~ elementUse
-                   :~ matchComputed
-                   :~ decisionToken
-                   :~ Done)
+                (equalCreated :~ matchApplied :~ matchUse :~ Done)
               finishSearch targetAfter elementAfter processed rest
-            DecidedFalse decisionToken -> do
+            ValuesDifferent equalCreated matchApplied matchUse -> do
               MarkedProcessed processedElement processedCopy processedReplace <-
                 markProcessed index elementAfter
               checkpoint
                 "Not this element"
-                (targetUse
-                   :~ elementUse
-                   :~ matchComputed
-                   :~ decisionToken
+                (equalCreated
+                   :~ matchApplied
+                   :~ matchUse
                    :~ processedCopy
                    :~ processedReplace
                    :~ Done)
@@ -251,11 +262,16 @@ prepareComparison target index element = do
 
 compareValues :: Block Value %1 -> Block Value %1 -> Choreography ComparedValues
 compareValues targetProbe elementProbe = do
-  Used targetPayload targetUse <- use targetProbe
-  Used elementPayload elementUse <- use elementProbe
-  Computed matchBlock matchComputed <-
-    compute #result (targetPayload == elementPayload)
-  return (ComparedValues matchBlock targetUse elementUse matchComputed)
+  Created equalOp equalCreated <-
+    create @EqualValue #operator (LOperator EqualValue)
+  Applied2 matchBlock matchApplied <-
+    apply2 #result equalOp targetProbe elementProbe
+  Used matchPayload matchUse <- use matchBlock
+  case matchPayload of
+    OneUse (LBool answer) ->
+      case answer of
+        True  -> return (ValuesMatched equalCreated matchApplied matchUse)
+        False -> return (ValuesDifferent equalCreated matchApplied matchUse)
 
 --------------------------------------------------------------------------------
 -- Visualisation

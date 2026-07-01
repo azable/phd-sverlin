@@ -34,6 +34,15 @@ module LinearTrace.Core
   , LInt(..)
   , LDouble(..)
   , LString(..)
+  , LOperator(..)
+  , CoreOperator(..)
+  , LinearPayload(..)
+  , applyLinear1
+  , applyLinear1Into
+  , applyLinear2
+  , applyLinear2Into
+  , Applicable1(..)
+  , Applicable2(..)
   , -- * Action vocabulary
     -- | Type-level action tags recorded by the core builder. Event projection
     -- and printing consume these constructors through 'LinearTrace.Core.Events'
@@ -45,11 +54,11 @@ module LinearTrace.Core
   , type Use
   , type Copy
   , type Replace
-  , type Compute
+  , type Apply1
+  , type Apply2
   , type Destroy
   , type Seal
   , type Unseal
-  , type Decide
   , -- * Primitive operations
     -- | Linear lifecycle operations. These produce explain tokens and build
     -- the core graph; choreography wraps them with higher-level view coupling.
@@ -60,13 +69,15 @@ module LinearTrace.Core
   , copy
   , copyTagged
   , replace
-  , compute
-  , computeTagged
-  , computeTaggedWith
+  , apply1
+  , apply1Tagged
+  , apply1TaggedWith
+  , apply2
+  , apply2Tagged
+  , apply2TaggedWith
   , destroy
   , seal
   , unseal
-  , decide
   , -- * ExplainToken operations
     -- | Audit-token combinators used to assemble graph steps. Direct callers
     -- may use them; most view code consumes the event projection instead.
@@ -78,11 +89,11 @@ module LinearTrace.Core
   , Used(..)
   , Copied(..)
   , Replaced(..)
-  , Computed(..)
+  , Applied1(..)
+  , Applied2(..)
   , Destroyed(..)
   , Sealed(..)
   , Unsealed(..)
-  , Decided(..)
   , (<$>)
   , (<*>)
   , -- * Graph building

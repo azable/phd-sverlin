@@ -72,8 +72,11 @@ copyStyle = StepStyle "copy" 75
 replaceStyle :: StepStyle
 replaceStyle = StepStyle "replace" 171
 
-computeStyle :: StepStyle
-computeStyle = StepStyle "compute" 118
+apply1Style :: StepStyle
+apply1Style = StepStyle "apply1" 118
+
+apply2Style :: StepStyle
+apply2Style = StepStyle "apply2" 119
 
 destroyStyle :: StepStyle
 destroyStyle = StepStyle "destroy" 196
@@ -84,9 +87,6 @@ sealStyle = StepStyle "seal" 37
 unsealStyle :: StepStyle
 unsealStyle = StepStyle "unseal" 208
 
-decideStyle :: StepStyle
-decideStyle = StepStyle "decide" 201
-
 allStepStyles :: [StepStyle]
 allStepStyles =
   [ createStyle
@@ -94,11 +94,11 @@ allStepStyles =
   , useStyle
   , copyStyle
   , replaceStyle
-  , computeStyle
+  , apply1Style
+  , apply2Style
   , destroyStyle
   , sealStyle
   , unsealStyle
-  , decideStyle
   ]
 
 data StepStyle = StepStyle
@@ -497,11 +497,12 @@ auditStepBox step =
     CopyStep original copy' -> snapshotStep2Box copyStyle original copy'
     ReplaceStep old incoming output ->
       snapshotStep3Box replaceStyle old incoming output
-    ComputeStep snapshot -> snapshotStep1Box computeStyle snapshot
+    Apply1Step op arg output -> snapshotStep3Box apply1Style op arg output
+    Apply2Step op lhs rhs output ->
+      snapshotStep4Box apply2Style op lhs rhs output
     DestroyStep snapshot -> snapshotStep1Box destroyStyle snapshot
     SealStep owner child -> snapshotStep2Box sealStyle owner child
     UnsealStep owner child -> snapshotStep2Box unsealStyle owner child
-    DecideStep snapshot -> snapshotStep1Box decideStyle snapshot
 
 snapshotStep1Box :: StepStyle -> BlockSnapshot tag -> Box.Box
 snapshotStep1Box style snapshot =
@@ -526,6 +527,21 @@ snapshotStep3Box style first second third =
     [ rowBox [renderStepNameBox style, snapshotBox first]
     , rowBox [renderEmptyStepNameBox, snapshotBox second]
     , rowBox [renderEmptyStepNameBox, snapshotBox third]
+    ]
+
+snapshotStep4Box ::
+     StepStyle
+  -> BlockSnapshot first
+  -> BlockSnapshot second
+  -> BlockSnapshot third
+  -> BlockSnapshot fourth
+  -> Box.Box
+snapshotStep4Box style first second third fourth =
+  tightVcat
+    [ rowBox [renderStepNameBox style, snapshotBox first]
+    , rowBox [renderEmptyStepNameBox, snapshotBox second]
+    , rowBox [renderEmptyStepNameBox, snapshotBox third]
+    , rowBox [renderEmptyStepNameBox, snapshotBox fourth]
     ]
 
 renderStepNameBox :: StepStyle -> Box.Box

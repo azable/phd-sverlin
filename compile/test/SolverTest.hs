@@ -1,4 +1,6 @@
+{-# LANGUAGE LinearTypes         #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Main where
 
@@ -6,8 +8,14 @@ import qualified Choreography.TestFixtures as ChoreographyFixtures
 import           Control.Exception         (ErrorCall, evaluate, try)
 import qualified Data.List                 as List
 import qualified Data.Map.Strict           as Map
+import           LinearTrace.Choreography  (Applicable2 (..), CoreOperator (..),
+                                            LBool (..), LInt (..),
+                                            LOperator (..), OneUse (..),
+                                            Payload, applyLinear2Into)
 import qualified LinearTrace.Choreography  as Choreography
 import qualified LinearTrace.Compile       as Compile
+import           Prelude.Linear            (Ur (..))
+import qualified Prelude.Linear            as Linear
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -25,6 +33,27 @@ data TestProbe
   = TestMatch
   | TestNoMatch
   deriving (Eq, Show)
+
+data ApplyValue
+
+type instance Payload ApplyValue = LInt ApplyValue
+
+data ApplyMatch
+
+type instance Payload ApplyMatch = LBool ApplyMatch
+
+data ApplyEqual =
+  ApplyEqual
+
+type instance Payload ApplyEqual = LOperator ApplyEqual ApplyEqual
+
+instance CoreOperator ApplyEqual where
+  operatorPayloadText ApplyEqual = "=="
+  persistOperatorPayload ApplyEqual = Ur ApplyEqual
+
+instance Applicable2 ApplyEqual ApplyValue ApplyValue where
+  type Apply2Result ApplyEqual ApplyValue ApplyValue = ApplyMatch
+  applyPayload2 (LOperator ApplyEqual) = applyLinear2Into (Linear.==)
 
 instance SymbolicType TestLayout where
   symbolicDomain _ = realDomain "test-length"
@@ -72,7 +101,18 @@ choreographyBridgeTests =
         $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
                 ChoreographyFixtures.groupStats
            in nodeCount @?= 3
+    , testCase "apply2 payload operators consume built-in wrappers linearly" $ do
+        oneUseBool
+          (OneUse
+             (applyPayload2
+                (LOperator ApplyEqual :: LOperator ApplyEqual ApplyEqual)
+                (LInt 2 :: LInt ApplyValue)
+                (LInt 2 :: LInt ApplyValue)))
+          @?= True
     ]
+
+oneUseBool :: OneUse (LBool tag) %1 -> Bool
+oneUseBool (OneUse (LBool value)) = value
 
 viewMaterializationTests :: TestTree
 viewMaterializationTests =
