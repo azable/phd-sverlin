@@ -37,7 +37,8 @@ module LinearTrace.Core.Internal
   , factsUnion
   , factsToList
   , PayloadView(..)
-  , Traceable(..)
+  , payloadText
+  , Traceable
   , -- * Trusted linear payloads
     -- | Built-in linearly tracked payload wrappers shared by core,
     -- choreography, examples, and tests.
@@ -139,9 +140,8 @@ type BlockId = Int
 
 type family Payload tag = payload | payload -> tag
 
-data PayloadView = PayloadView
-  { payloadKind    :: P.String
-  , payloadContent :: P.String
+newtype PayloadView = PayloadView
+  { payloadKind :: P.String
   }
 
 data FactValue
@@ -230,13 +230,14 @@ instance LinearPayload (LString tag) where
 
 class (LinearPayload (Payload tag), Typeable tag) =>
       Traceable tag
-  where
-  payloadView :: Proxy tag -> Payload tag -> PayloadView
-  payloadView tagProxy payload =
-    PayloadView
-      { payloadKind = P.show (typeRep tagProxy)
-      , payloadContent = payloadDebugContent payload
-      }
+
+instance (LinearPayload (Payload tag), Typeable tag) => Traceable tag
+
+payloadView :: Traceable tag => Proxy tag -> PayloadView
+payloadView tagProxy = PayloadView {payloadKind = P.show (typeRep tagProxy)}
+
+payloadText :: Traceable tag => Payload tag -> P.String
+payloadText = payloadDebugContent
 
 data OneUse a where
   OneUse :: a %1 -> OneUse a
@@ -262,7 +263,11 @@ data Slot owner tag where
 
 data BlockSnapshot tag where
   BlockSnapshot
-    :: BlockRef tag -> Payload tag -> PayloadView -> Facts -> BlockSnapshot tag
+    :: Traceable tag=> BlockRef tag
+    -> Payload tag
+    -> PayloadView
+    -> Facts
+    -> BlockSnapshot tag
 
 data BlockRecord where
   BlockRecord :: BlockSnapshot tag -> BlockRecord
@@ -443,7 +448,7 @@ makeSnapshot ::
   -> Facts
   -> BlockSnapshot tag
 makeSnapshot tagProxy ref payload =
-  BlockSnapshot ref payload (payloadView tagProxy payload)
+  BlockSnapshot ref payload (payloadView tagProxy)
 
 makeAuditStep1 ::
      Traceable tag

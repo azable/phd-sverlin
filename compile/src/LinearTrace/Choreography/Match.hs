@@ -244,15 +244,16 @@ traceNodeOfEventBlock block =
         , V.nodeConstraints = []
         }
 
-matchedNodeOutput ::
-     C.Traceable tag => MatchSpec -> E.EventBlock tag -> V.ViewOutput
+matchedNodeOutput :: MatchSpec -> E.EventBlock tag -> V.ViewOutput
 matchedNodeOutput spec eventBlock =
-  case spec of
-    MatchSpec nodeRules _ _ ->
-      let node = traceNodeOfEventBlock eventBlock
-       in case matchedNodePatch eventBlock nodeRules of
-            Nothing    -> V.emptyViewOutput
-            Just patch -> V.patchedNodeOutput patch node
+  case eventBlock of
+    E.EventBlock {} ->
+      case spec of
+        MatchSpec nodeRules _ _ ->
+          let node = traceNodeOfEventBlock eventBlock
+           in case matchedNodePatch eventBlock nodeRules of
+                Nothing    -> V.emptyViewOutput
+                Just patch -> V.patchedNodeOutput patch node
 
 coreViewRef :: E.BlockRef tag -> V.ViewRef tag
 coreViewRef ref = V.viewRefFromId (E.blockRefId ref)
@@ -260,7 +261,7 @@ coreViewRef ref = V.viewRefFromId (E.blockRefId ref)
 viewLabelFromPayloadView :: C.PayloadView -> V.ViewLabel
 viewLabelFromPayloadView payloadViewValue =
   case payloadViewValue of
-    C.PayloadView kind contentValue -> V.ViewLabel kind contentValue
+    C.PayloadView kind -> V.ViewLabel kind
 
 viewTagsFromFacts :: C.Facts -> V.ViewTags
 viewTagsFromFacts facts =
@@ -329,10 +330,7 @@ matchedPayloadNodePatch ::
   -> (MatchContext tag -> NodePatch)
   -> Maybe NodePatch
 matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
-  case Q.payloadPatternMatches
-         payloadPattern
-         (E.eventBlockPayload block)
-         (E.eventBlockPayloadView block) of
+  case Q.payloadPatternMatches payloadPattern (E.eventBlockPayload block) of
     Nothing -> Nothing
     Just payloadBindings ->
       Just
@@ -879,7 +877,7 @@ generatedCompoundNodeForRule key query patch children =
       style' = VP.nodePatchStyleUpdate patch baseStyle
    in V.Node
         { V.nodeRef = ref
-        , V.nodeLabel = V.ViewLabel ("Group." P.++ key) ""
+        , V.nodeLabel = V.ViewLabel ("Group." P.++ key)
         , V.nodeContent = fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
         , V.nodeKey = key
         , V.nodeStyle = style'

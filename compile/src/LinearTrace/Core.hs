@@ -24,7 +24,8 @@ module LinearTrace.Core
   , factsUnion
   , factsToList
   , PayloadView(..)
-  , Traceable(..)
+  , payloadText
+  , Traceable
   , -- * Trusted linear payloads
     -- | Built-in payload wrappers used by examples/tests and by the
     -- choreography DSL's public payload vocabulary.

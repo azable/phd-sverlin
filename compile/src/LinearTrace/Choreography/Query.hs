@@ -210,68 +210,56 @@ queryMatchBindings bindings =
       MatchBinding name (P.show value) : queryMatchBindings rest
 
 newtype PayloadPattern tag =
-  PayloadPattern (C.Payload tag -> C.PayloadView -> Maybe MatchBindings)
+  PayloadPattern (C.Payload tag -> Maybe MatchBindings)
 
 payloadPatternMatches ::
-     PayloadPattern tag -> C.Payload tag -> C.PayloadView -> Maybe MatchBindings
-payloadPatternMatches payloadPattern payload payloadView =
+     PayloadPattern tag -> C.Payload tag -> Maybe MatchBindings
+payloadPatternMatches payloadPattern payload =
   case payloadPattern of
-    PayloadPattern matchPayload -> matchPayload payload payloadView
+    PayloadPattern matchPayload -> matchPayload payload
 
 anyPayloadPattern :: PayloadPattern tag
-anyPayloadPattern = PayloadPattern (\_payload _payloadView -> Just [])
+anyPayloadPattern = PayloadPattern (\_payload -> Just [])
 
-payloadBindingPattern :: P.String -> PayloadPattern tag
+payloadBindingPattern :: C.Traceable tag => P.String -> PayloadPattern tag
 payloadBindingPattern name =
-  PayloadPattern
-    (\_payload payloadView ->
-       Just [MatchBinding name (C.payloadContent payloadView)])
+  PayloadPattern (\payload -> Just [MatchBinding name (C.payloadText payload)])
 
 payloadBoolPattern ::
      (C.Payload tag ~ C.LBool tag) => P.Bool -> PayloadPattern tag
-payloadBoolPattern expected =
-  PayloadPattern
-    (\payload _payloadView ->
-       case payload of
-         C.LBool actual
-           | actual P.== expected -> Just []
-           | otherwise -> Nothing)
+payloadBoolPattern expected = PayloadPattern matchPayload
+  where
+    matchPayload (C.LBool actual)
+      | actual P.== expected = Just []
+      | otherwise = Nothing
 
 payloadIntPattern :: (C.Payload tag ~ C.LInt tag) => P.Int -> PayloadPattern tag
-payloadIntPattern expected =
-  PayloadPattern
-    (\payload _payloadView ->
-       case payload of
-         C.LInt actual
-           | actual P.== expected -> Just []
-           | otherwise -> Nothing)
+payloadIntPattern expected = PayloadPattern matchPayload
+  where
+    matchPayload (C.LInt actual)
+      | actual P.== expected = Just []
+      | otherwise = Nothing
 
 payloadDoublePattern ::
      (C.Payload tag ~ C.LDouble tag) => P.Double -> PayloadPattern tag
-payloadDoublePattern expected =
-  PayloadPattern
-    (\payload _payloadView ->
-       case payload of
-         C.LDouble actual
-           | actual P.== expected -> Just []
-           | otherwise -> Nothing)
+payloadDoublePattern expected = PayloadPattern matchPayload
+  where
+    matchPayload (C.LDouble actual)
+      | actual P.== expected = Just []
+      | otherwise = Nothing
 
 payloadStringPattern ::
      (C.Payload tag ~ C.LString tag) => P.String -> PayloadPattern tag
-payloadStringPattern expected =
-  PayloadPattern
-    (\payload _payloadView ->
-       case payload of
-         C.LString actual
-           | actual P.== expected -> Just []
-           | otherwise -> Nothing)
+payloadStringPattern expected = PayloadPattern matchPayload
+  where
+    matchPayload (C.LString actual)
+      | actual P.== expected = Just []
+      | otherwise = Nothing
 
 payloadUnitPattern :: (C.Payload tag ~ C.LUnit tag) => () -> PayloadPattern tag
-payloadUnitPattern () =
-  PayloadPattern
-    (\payload _payloadView ->
-       case payload of
-         C.LUnit -> Just [])
+payloadUnitPattern () = PayloadPattern matchPayload
+  where
+    matchPayload C.LUnit = Just []
 
 matchQueryTerms ::
      [QueryTerm] -> C.Facts -> QueryBindings -> Maybe QueryBindings

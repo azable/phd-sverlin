@@ -64,12 +64,13 @@ type TraceStep = C.TraceStep
 
 type TraceStepWith payload = C.TraceStepWith payload
 
-data EventBlock tag = EventBlock
-  { eventBlockRef         :: BlockRef tag
-  , eventBlockPayload     :: C.Payload tag
-  , eventBlockPayloadView :: C.PayloadView
-  , eventBlockFacts       :: C.Facts
-  }
+data EventBlock tag where
+  EventBlock
+    :: C.Traceable tag=> { eventBlockRef :: BlockRef tag
+                         , eventBlockPayload :: C.Payload tag
+                         , eventBlockPayloadView :: C.PayloadView
+                         , eventBlockFacts :: C.Facts}
+    -> EventBlock tag
 
 data TraceEvent act where
   TraceCreate :: EventBlock tag -> TraceEvent (C.Create tag)

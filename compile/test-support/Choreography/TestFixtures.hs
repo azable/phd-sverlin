@@ -35,8 +35,6 @@ data TestValue
 
 type instance Payload TestValue = LInt TestValue
 
-instance Traceable TestValue
-
 payloadMatchedStats :: (Int, Int, Int, Int)
 payloadMatchedStats = fixtureStats payloadMatchedSpec
 
@@ -65,16 +63,16 @@ fixtureStats :: MatchSpec -> (Int, Int, Int, Int)
 fixtureStats spec = viewGraphStats (buildGraph spec)
 
 buildGraph :: MatchSpec -> ViewGraph
-buildGraph spec = buildViewGraph (runProgramWith spec fixture)
+buildGraph spec = buildViewGraph (runChoreographyWith spec fixture)
 
-fixture :: Program ()
+fixture :: Choreography ()
 fixture = do
-  first <- create @TestValue #item (LInt 7)
-  second <- create @TestValue #item (LInt 8)
-  checkpoint "created"
-  destroy first
-  destroy second
-  checkpoint "destroyed"
+  Created first firstCreated <- create @TestValue #item (LInt 7)
+  Created second secondCreated <- create @TestValue #item (LInt 8)
+  checkpoint "created" (firstCreated :~ secondCreated :~ Done)
+  Destroyed firstDestroyed <- destroy first
+  Destroyed secondDestroyed <- destroy second
+  checkpoint "destroyed" (firstDestroyed :~ secondDestroyed :~ Done)
 
 payloadMatchedSpec :: MatchSpec
 payloadMatchedSpec =

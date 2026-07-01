@@ -51,9 +51,8 @@ viewRefInt = viewIdInt . viewRefId
 viewRefFromId :: Int -> ViewRef tag
 viewRefFromId = ViewRef . ViewId
 
-data ViewLabel = ViewLabel
-  { viewLabelKind    :: String
-  , viewLabelContent :: String
+newtype ViewLabel = ViewLabel
+  { viewLabelKind :: String
   } deriving (Eq, Show)
 
 data ViewTagValue

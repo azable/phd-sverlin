@@ -18,31 +18,27 @@
 -- 'LinearTrace.Core.Events', 'LinearTrace.Choreography.Query',
 -- 'LinearTrace.Choreography.Match', and the internal 'LinearTrace.View' facade.
 module LinearTrace.Choreography
-  ( -- * Defined here: program and view graph facade
-    -- | Program execution API. The core trace graph is built alongside a
-    -- symbolic view graph, then solved through the view solver.
-    Program
+  ( -- * Defined here: choreography and view graph facade
+    -- | Direct choreography builder API. Core lifecycle helpers return typed
+    -- evidence tokens; checkpoints attach those events to view output.
+    Choreography
   , VisualTraceGraph
   , ViewGraph
   , visualTraceCore
   , buildViewGraph
   , solveViewGraphWithSeed
   , viewGraphStats
-  , runProgram
-  , runProgramWith
-  , BranchDecision(..)
-  , LoopResult(..)
+  , runChoreography
+  , runChoreographyWith
   , create
   , copy
   , use
   , compute
   , computeWithTags
   , replace
-  , retag
   , destroy
   , decide
   , checkpoint
-  , loop
   , -- * Re-exported or aliased from LinearTrace.Core
     -- | Core linear handles, payload/fact vocabulary, event-token aliases,
     -- traceable payload classes, and linear functor operators used directly by
@@ -61,7 +57,7 @@ module LinearTrace.Choreography
   , factsUnion
   , factsToList
   , PayloadView(..)
-  , Traceable(..)
+  , Traceable
   , LUnit(..)
   , LBool(..)
   , LInt(..)
@@ -77,6 +73,19 @@ module LinearTrace.Choreography
   , type Seal
   , type Unseal
   , type Decide
+  , OneUse(..)
+  , ExplainToken
+  , ExplainTokens(..)
+  , Created(..)
+  , Observed(..)
+  , Used(..)
+  , Copied(..)
+  , Replaced(..)
+  , Computed(..)
+  , Destroyed(..)
+  , Sealed(..)
+  , Unsealed(..)
+  , Decided(..)
   , (<$>)
   , (<*>)
   , -- * Re-exported from LinearTrace.Choreography.Query
@@ -221,7 +230,6 @@ module LinearTrace.Choreography
 import           Control.Functor.Linear                hiding ((<$>), (<&>),
                                                         (<*>))
 import qualified Control.Functor.Linear.Internal.State as LinearState
-import qualified Data.Functor.Linear                   as DFL
 import           GHC.OverloadedLabels                  (IsLabel (..))
 import           LinearTrace.Choreography.Match        (CategoryEndpoint,
                                                         CategoryRelation (..),
@@ -258,18 +266,30 @@ import           LinearTrace.Choreography.Query        (Query, QueryInt (..),
 import           LinearTrace.Choreography.Style        (StyleChoice (..), sat,
                                                         style, styleOf)
 import           LinearTrace.Choreography.Types
-import           LinearTrace.Core                      (Block, Fact (..),
+import           LinearTrace.Core                      (Block, Computed (..),
+                                                        Copied (..),
+                                                        Created (..),
+                                                        Decided (..),
+                                                        Destroyed (..),
+                                                        ExplainToken,
+                                                        ExplainTokens (..),
+                                                        Fact (..),
                                                         FactValue (..),
                                                         Facts (..), LBool (..),
                                                         LDouble (..), LInt (..),
                                                         LString (..),
-                                                        LUnit (..), Payload,
+                                                        LUnit (..),
+                                                        Observed (..),
+                                                        OneUse (..), Payload,
                                                         PayloadView (..),
-                                                        Traceable (..),
-                                                        emptyFacts, factAtom,
-                                                        factInt, factSymbol,
-                                                        factsToList, factsUnion,
-                                                        (<$>), (<*>))
+                                                        Replaced (..),
+                                                        Sealed (..), Traceable,
+                                                        Unsealed (..),
+                                                        Used (..), emptyFacts,
+                                                        factAtom, factInt,
+                                                        factSymbol, factsToList,
+                                                        factsUnion, (<$>),
+                                                        (<*>))
 import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
 import           LinearTrace.View                      (BorderStyle (..),
@@ -302,36 +322,6 @@ import           Solver                                (RandomSeed (..),
 import qualified Unsafe.Coerce                         as Unsafe
 
 infixl 9 @:
-data Program a where
-  PureProgram :: a %1 -> Program a
-  BindProgram :: Program a %1 -> (a %1 -> Program b) %1 -> Program b
-  CreateProgram
-    :: C.Traceable tag => C.Facts -> C.Payload tag %1 -> Program (Block tag)
-  UseProgram :: C.Traceable tag => Block tag %1 -> Program (PayloadHandle tag)
-  CopyProgram
-    :: C.Traceable tag=> C.Facts
-    -> Block tag
-       %1 -> Program (Block tag, Block tag)
-  ComputeProgram
-    :: C.Traceable tag=> C.Facts
-    -> (C.Payload tag -> C.Facts)
-    -> PayloadHandle tag
-       %1 -> Program (Block tag)
-  ReplaceProgram
-    :: C.Traceable tag => Block tag %1 -> Block tag %1 -> Program (Block tag)
-  RetagProgram
-    :: C.Traceable tag => C.Facts -> Block tag %1 -> Program (Block tag)
-  DestroyProgram :: C.Traceable tag => Block tag %1 -> Program ()
-  DecideProgram
-    :: C.Traceable tag=> (C.Payload tag %1 -> Bool)
-    -> Block tag
-       %1 -> Program BranchDecision
-  CheckpointProgram :: P.String -> Program ()
-  LoopProgram
-    :: state
-       %1 -> (state %1 -> Program (LoopResult state output))
-    -> Program output
-
 data ViewScript acts where
   ViewScript :: V.ViewOutput -> ViewScript acts
 
@@ -339,49 +329,27 @@ data VisualTraceState where
   VisualTraceState
     :: Ur MatchSpec
        %1 -> Ur (E.TraceBuilderState ViewScript)
-       %1 -> Ur E.EventLog
-       %1 -> Ur V.ViewOutput
        %1 -> VisualTraceState
 
 type VisualTraceBuilder a = State VisualTraceState a
 
+type Choreography a = VisualTraceBuilder a
+
 instance Consumable VisualTraceState where
-  consume (VisualTraceState spec coreState pendingEvents pendingOutput) =
-    consume spec
-      `lseq` consume coreState
-      `lseq` consume pendingEvents
-      `lseq` consume pendingOutput
+  consume (VisualTraceState spec coreState) =
+    consume spec `lseq` consume coreState
 
 instance Dupable VisualTraceState where
-  dup2 (VisualTraceState spec coreState pendingEvents pendingOutput) =
+  dup2 (VisualTraceState spec coreState) =
     case dup2 spec of
       (spec1, spec2) ->
         case dup2 coreState of
           (coreState1, coreState2) ->
-            case dup2 pendingEvents of
-              (pendingEvents1, pendingEvents2) ->
-                case dup2 pendingOutput of
-                  (pendingOutput1, pendingOutput2) ->
-                    ( VisualTraceState
-                        spec1
-                        coreState1
-                        pendingEvents1
-                        pendingOutput1
-                    , VisualTraceState
-                        spec2
-                        coreState2
-                        pendingEvents2
-                        pendingOutput2)
+            ( VisualTraceState spec1 coreState1
+            , VisualTraceState spec2 coreState2)
 
 data VisualTraceGraph =
   VisualTraceGraph MatchSpec (C.TraceGraphWith ViewScript)
-
-data Retagged tag where
-  Retagged
-    :: C.Block tag
-       %1 -> C.ExplainToken (C.Copy tag)
-       %1 -> C.ExplainToken (C.Replace tag)
-       %1 -> Retagged tag
 
 type ViewGraph = V.ViewGraph
 
@@ -527,41 +495,6 @@ type Seal owner tag = C.Seal owner tag
 type Unseal owner tag = C.Unseal owner tag
 
 type Decide tag = C.Decide tag
-
-data BranchDecision
-  = BranchTrue
-  | BranchFalse
-
-data LoopResult state output where
-  Continue :: state %1 -> LoopResult state output
-  Finish :: output %1 -> LoopResult state output
-
-mapProgramWith :: (a %1 -> b) %1 -> a %1 -> Program b
-mapProgramWith f value = PureProgram (f value)
-
-liftProgramWith :: (a %1 -> b %1 -> c) %1 -> Program b %1 -> a %1 -> Program c
-liftProgramWith f rhs leftValue =
-  BindProgram rhs (finishProgramLift f leftValue)
-
-finishProgramLift :: (a %1 -> b %1 -> c) %1 -> a %1 -> b %1 -> Program c
-finishProgramLift f leftValue rightValue = PureProgram (f leftValue rightValue)
-
-instance DFL.Functor Program where
-  fmap f program = BindProgram program (mapProgramWith f)
-
-instance Functor Program where
-  fmap f program = BindProgram program (mapProgramWith f)
-
-instance DFL.Applicative Program where
-  pure = PureProgram
-  liftA2 f lhs rhs = BindProgram lhs (liftProgramWith f rhs)
-
-instance Applicative Program where
-  pure = PureProgram
-  liftA2 f lhs rhs = BindProgram lhs (liftProgramWith f rhs)
-
-instance Monad Program where
-  (>>=) = BindProgram
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -1145,144 +1078,150 @@ lhs =/ delta = openSymmetricBridge lhs delta
 (/=) :: NotEqualOrClose lhs rhs => lhs -> rhs -> VisualConstraint
 lhs /= rhs = notEqualOrClose lhs rhs
 
+initialVisualTraceState :: MatchSpec -> VisualTraceState
+initialVisualTraceState spec =
+  VisualTraceState (Ur spec) (Ur E.emptyTraceBuilderState)
+
+runVisualTraceBuilder :: MatchSpec -> Choreography () -> VisualTraceGraph
+runVisualTraceBuilder spec builder =
+  let (_result, finalState) = runState builder (initialVisualTraceState spec)
+      VisualTraceState _spec (Ur coreState) = finalState
+   in VisualTraceGraph spec (E.traceBuilderStateGraph coreState)
+
 unsafeUr :: forall a. a %1 -> Ur a
 unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
 
-initialVisualTraceState :: MatchSpec -> VisualTraceState
-initialVisualTraceState spec =
-  VisualTraceState
-    (Ur spec)
-    (Ur E.emptyTraceBuilderState)
-    (Ur E.emptyEventLog)
-    (Ur V.emptyViewOutput)
-
-runVisualTraceBuilder :: MatchSpec -> VisualTraceBuilder () -> VisualTraceGraph
-runVisualTraceBuilder spec builder =
-  let (_result, finalState) = runState builder (initialVisualTraceState spec)
-      VisualTraceState _spec (Ur coreState) _pendingEvents _pendingOutput =
-        finalState
-   in VisualTraceGraph spec (E.traceBuilderStateGraph coreState)
-
-runCoreBuilder :: C.TraceBuilderWith ViewScript a -> VisualTraceBuilder a
+runCoreBuilder :: C.TraceBuilderWith ViewScript a -> Choreography a
 runCoreBuilder builder =
   LinearState.state
-    (\(VisualTraceState spec (Ur coreState) pendingEvents pendingOutput) ->
+    (\(VisualTraceState spec (Ur coreState)) ->
        let (result, nextCoreState) =
              E.runTraceBuilderWithState builder coreState
-        in ( result
-           , VisualTraceState
-               spec
-               (Ur nextCoreState)
-               pendingEvents
-               pendingOutput))
+        in (result, VisualTraceState spec (Ur nextCoreState)))
 
-retagCore ::
-     C.Traceable tag
-  => C.Facts
-  -> C.Block tag
-     %1 -> C.TraceBuilderWith ViewScript (Retagged tag)
-retagCore facts block = do
-  C.Copied original incoming copyToken <- C.copyTagged facts block
-  C.Replaced output replaceToken <- C.replace original incoming
-  return (Retagged output copyToken replaceToken)
+runCoreLinear1 ::
+     (input %1 -> C.TraceBuilderWith ViewScript output)
+  -> input
+     %1 -> Choreography output
+runCoreLinear1 build input =
+  case unsafeUr input of
+    Ur unrestrictedInput -> runCoreBuilder (build unrestrictedInput)
 
-appendPendingEvent :: E.EventToken act -> VisualTraceBuilder ()
-appendPendingEvent eventToken = do
-  VisualTraceState spec coreState (Ur pendingEvents) pendingOutput <- get
-  put
-    (VisualTraceState
-       spec
-       coreState
-       (Ur (E.appendEventToken pendingEvents eventToken))
-       pendingOutput)
+runCoreLinear2 ::
+     (left %1 -> right %1 -> C.TraceBuilderWith ViewScript output)
+  -> left
+     %1 -> right
+     %1 -> Choreography output
+runCoreLinear2 build leftInput rightInput =
+  case unsafeUr leftInput of
+    Ur unrestrictedLeft ->
+      case unsafeUr rightInput of
+        Ur unrestrictedRight ->
+          runCoreBuilder (build unrestrictedLeft unrestrictedRight)
 
-takePendingEvents :: VisualTraceBuilder (Ur E.EventLog)
-takePendingEvents = do
-  VisualTraceState spec coreState (Ur pendingEvents) pendingOutput <- get
-  put (VisualTraceState spec coreState (Ur E.emptyEventLog) pendingOutput)
-  return (Ur pendingEvents)
+data BuiltEvidence where
+  BuiltEvidence :: E.EventLog -> V.ViewOutput -> BuiltEvidence
 
-appendViewOutput :: V.ViewOutput -> VisualTraceBuilder ()
-appendViewOutput newOutput = do
-  VisualTraceState spec coreState pendingEvents (Ur oldOutput) <- get
-  put
-    (VisualTraceState
-       spec
-       coreState
-       pendingEvents
-       (Ur (V.appendViewOutput oldOutput newOutput)))
+buildEvidenceOutput :: MatchSpec -> C.ExplainTokens acts %1 -> BuiltEvidence
+buildEvidenceOutput spec =
+  buildEvidenceOutputWith spec E.emptyEventLog V.emptyViewOutput
 
-takePendingOutput :: VisualTraceBuilder (Ur V.ViewOutput)
-takePendingOutput = do
-  VisualTraceState spec coreState pendingEvents (Ur pendingOutput) <- get
-  put (VisualTraceState spec coreState pendingEvents (Ur V.emptyViewOutput))
-  return (Ur pendingOutput)
+buildEvidenceOutputWith ::
+     MatchSpec
+  -> E.EventLog
+  -> V.ViewOutput
+  -> C.ExplainTokens acts
+     %1 -> BuiltEvidence
+buildEvidenceOutputWith spec eventLog output tokens =
+  case tokens of
+    C.Done -> BuiltEvidence eventLog output
+    explainToken C.:~ rest ->
+      case E.eventTokenFromExplainToken explainToken of
+        Ur eventToken ->
+          buildEvidenceOutputWith
+            spec
+            (E.appendEventToken eventLog eventToken)
+            (V.appendViewOutput
+               output
+               (viewOutputForEvent spec (E.eventTokenEvent eventToken)))
+            rest
 
-recordExplainEvent ::
-     C.ExplainToken act %1 -> VisualTraceBuilder (E.TraceEvent act)
-recordExplainEvent explainToken =
-  case E.eventTokenFromExplainToken explainToken of
-    Ur eventToken -> do
-      appendPendingEvent eventToken
-      return (E.eventTokenEvent eventToken)
+viewOutputForEvent :: MatchSpec -> E.TraceEvent act -> V.ViewOutput
+viewOutputForEvent spec event =
+  case event of
+    E.TraceCreate block ->
+      V.appendViewOutput
+        (matchedNodeOutput spec block)
+        (renderEventBlock V.RenderFresh block)
+    E.TraceObserve _block -> V.emptyViewOutput
+    E.TraceUse block -> renderEventBlock V.RenderRemove block
+    E.TraceCopy originalBlock copyBlock ->
+      V.appendViewOutput
+        (matchedNodeOutput spec copyBlock)
+        (renderEventBlocks V.RenderFork originalBlock copyBlock)
+    E.TraceReplace oldBlock incomingBlock outputBlock ->
+      V.appendViewOutput
+        (matchedNodeOutput spec outputBlock)
+        (V.appendViewOutput
+           (renderEventBlocks V.RenderContinue oldBlock outputBlock)
+           (renderEventBlock V.RenderRemove incomingBlock))
+    E.TraceCompute block ->
+      V.appendViewOutput
+        (matchedNodeOutput spec block)
+        (renderEventBlock V.RenderFresh block)
+    E.TraceDestroy block -> renderEventBlock V.RenderRemove block
+    E.TraceSeal _ownerBlock _childBlock -> V.emptyViewOutput
+    E.TraceUnseal _ownerBlock _childBlock -> V.emptyViewOutput
+    E.TraceDecide block -> renderEventBlock V.RenderRemove block
 
-appendExplainEvent :: C.ExplainToken act %1 -> VisualTraceBuilder ()
-appendExplainEvent explainToken =
-  case E.eventTokenFromExplainToken explainToken of
-    Ur eventToken -> appendPendingEvent eventToken
+renderEventBlock ::
+     (V.ViewRef tag -> V.RenderIntent) -> E.EventBlock tag -> V.ViewOutput
+renderEventBlock makeIntent block =
+  V.renderIntentOutput (makeIntent (eventBlockViewRef block))
 
-appendMatchedBlock ::
-     C.Traceable tag => E.EventBlock tag -> VisualTraceBuilder ()
-appendMatchedBlock block =
-  LinearState.state
-    (\(VisualTraceState (Ur spec) coreState pendingEvents (Ur oldOutput)) ->
-       let nextOutput =
-             V.appendViewOutput oldOutput (matchedNodeOutput spec block)
-        in ( ()
-           , VisualTraceState (Ur spec) coreState pendingEvents (Ur nextOutput)))
+renderEventBlocks ::
+     (V.ViewRef source -> V.ViewRef target -> V.RenderIntent)
+  -> E.EventBlock source
+  -> E.EventBlock target
+  -> V.ViewOutput
+renderEventBlocks makeIntent sourceBlock targetBlock =
+  V.renderIntentOutput
+    (makeIntent (eventBlockViewRef sourceBlock) (eventBlockViewRef targetBlock))
 
-appendRenderIntent :: V.RenderIntent -> VisualTraceBuilder ()
-appendRenderIntent intent = appendViewOutput (V.renderIntentOutput intent)
+eventBlockViewRef :: E.EventBlock tag -> V.ViewRef tag
+eventBlockViewRef block = V.nodeRef (traceNodeOfEventBlock block)
 
-checkpointTrace :: P.String -> VisualTraceBuilder ()
-checkpointTrace label = do
-  Ur eventLog <- takePendingEvents
-  Ur output <- takePendingOutput
-  let output' = V.flushViewOutput output
-  runCoreBuilder (E.explainEventLogWith label (ViewScript output') eventLog)
+runChoreography :: Choreography () -> VisualTraceGraph
+runChoreography = runChoreographyWith emptyMatchSpec
 
-runProgram :: Program () -> VisualTraceGraph
-runProgram = runProgramWith emptyMatchSpec
-
-runProgramWith :: MatchSpec -> Program () -> VisualTraceGraph
-runProgramWith spec program =
-  runVisualTraceBuilder spec (interpretProgram program)
+runChoreographyWith :: MatchSpec -> Choreography () -> VisualTraceGraph
+runChoreographyWith = runVisualTraceBuilder
 
 create ::
      forall tag. C.Traceable tag
   => Query
   -> C.Payload tag
-     %1 -> Program (Block tag)
-create query = CreateProgram (queryFacts query)
+     %1 -> Choreography (C.Created tag)
+create query = runCoreLinear1 (C.createTagged (queryFacts query))
 
 use ::
      forall tag. C.Traceable tag
   => Block tag
-     %1 -> Program (PayloadHandle tag)
-use = UseProgram
+     %1 -> Choreography (C.Used tag)
+use = runCoreLinear1 C.use
 
 copy ::
      forall tag. C.Traceable tag
   => Query
   -> Block tag
-     %1 -> Program (Block tag, Block tag)
-copy query = CopyProgram (queryFacts query)
+     %1 -> Choreography (C.Copied tag)
+copy query = runCoreLinear1 (C.copyTagged (queryFacts query))
 
 compute ::
      forall tag. C.Traceable tag
   => Query
   -> PayloadHandle tag
-     %1 -> Program (Block tag)
+     %1 -> Choreography (C.Computed tag)
 compute query = computeWithTags query (P.const emptyQuery)
 
 computeWithTags ::
@@ -1290,9 +1229,9 @@ computeWithTags ::
   => Query
   -> (Payload tag -> Query)
   -> PayloadHandle tag
-     %1 -> Program (Block tag)
+     %1 -> Choreography (C.Computed tag)
 computeWithTags query selectQuery =
-  ComputeProgram (queryFacts query) selectFacts
+  runCoreLinear1 (C.computeTaggedWith (queryFacts query) selectFacts)
   where
     selectFacts outputPayload = queryFacts (selectQuery outputPayload)
 
@@ -1300,167 +1239,41 @@ replace ::
      forall tag. C.Traceable tag
   => Block tag
      %1 -> Block tag
-     %1 -> Program (Block tag)
-replace = ReplaceProgram
-
-retag ::
-     forall tag. C.Traceable tag
-  => Query
-  -> Block tag
-     %1 -> Program (Block tag)
-retag query = RetagProgram (queryFacts query)
+     %1 -> Choreography (C.Replaced tag)
+replace = runCoreLinear2 C.replace
 
 destroy ::
      forall tag. C.Traceable tag
   => Block tag
-     %1 -> Program ()
-destroy = DestroyProgram
+     %1 -> Choreography (C.Destroyed tag)
+destroy = runCoreLinear1 C.destroy
 
 decide ::
      forall tag. C.Traceable tag
   => (C.Payload tag %1 -> Bool)
   -> Block tag
-     %1 -> Program BranchDecision
-decide = DecideProgram
+     %1 -> Choreography (C.Decided tag)
+decide predicate = runCoreLinear1 (C.decide predicate)
 
-checkpoint :: P.String -> Program ()
-checkpoint = CheckpointProgram
+checkpoint :: P.String -> C.ExplainTokens acts %1 -> Choreography ()
+checkpoint label tokens =
+  case unsafeUr tokens of
+    Ur tokensValue -> checkpointTokens label tokensValue
 
-loop ::
-     state
-     %1 -> (state %1 -> Program (LoopResult state output))
-  -> Program output
-loop = LoopProgram
-
-interpretProgram :: Program a %1 -> VisualTraceBuilder a
-interpretProgram program =
-  case program of
-    PureProgram value -> return value
-    BindProgram first next -> do
-      value <- interpretProgram first
-      interpretProgram (next value)
-    CreateProgram facts createPayload -> do
-      case unsafeUr createPayload of
-        Ur payloadValue -> do
-          C.Created block explainToken <-
-            runCoreBuilder (C.createTagged facts payloadValue)
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceCreate eventBlock -> do
-              let viewNode = traceNodeOfEventBlock eventBlock
-              appendMatchedBlock eventBlock
-              appendRenderIntent (V.RenderFresh (V.nodeRef viewNode))
-              return block
-    UseProgram block -> do
-      case unsafeUr block of
-        Ur block' -> do
-          C.Used usedPayload explainToken <- runCoreBuilder (C.use block')
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceUse eventBlock -> do
-              let viewNode = traceNodeOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
-              return usedPayload
-    CopyProgram facts block -> do
-      case unsafeUr block of
-        Ur block' -> do
-          C.Copied original copy' explainToken <-
-            runCoreBuilder (C.copyTagged facts block')
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceCopy originalEvent copyEvent -> do
-              let originalNode = traceNodeOfEventBlock originalEvent
-              let copyNode = traceNodeOfEventBlock copyEvent
-              appendMatchedBlock copyEvent
-              appendRenderIntent
-                (V.RenderFork (V.nodeRef originalNode) (V.nodeRef copyNode))
-              return (original, copy')
-    ComputeProgram facts selectFacts computePayload -> do
-      case unsafeUr computePayload of
-        Ur payloadValue -> do
-          C.Computed block explainToken <-
-            runCoreBuilder (C.computeTaggedWith facts selectFacts payloadValue)
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceCompute eventBlock -> do
-              let viewNode = traceNodeOfEventBlock eventBlock
-              appendMatchedBlock eventBlock
-              appendRenderIntent (V.RenderFresh (V.nodeRef viewNode))
-              return block
-    ReplaceProgram oldBlock incomingBlock -> do
-      case unsafeUr oldBlock of
-        Ur oldBlock' ->
-          case unsafeUr incomingBlock of
-            Ur incomingBlock' -> do
-              C.Replaced output explainToken <-
-                runCoreBuilder (C.replace oldBlock' incomingBlock')
-              event <- recordExplainEvent explainToken
-              case event of
-                E.TraceReplace oldEvent incomingEvent outputEvent -> do
-                  let oldView = traceNodeOfEventBlock oldEvent
-                  let incomingView = traceNodeOfEventBlock incomingEvent
-                  let outputView = traceNodeOfEventBlock outputEvent
-                  appendMatchedBlock outputEvent
-                  appendRenderIntent
-                    (V.RenderContinue (V.nodeRef oldView) (V.nodeRef outputView))
-                  appendRenderIntent (V.RenderRemove (V.nodeRef incomingView))
-                  return output
-    RetagProgram facts block -> do
-      case unsafeUr block of
-        Ur block' -> do
-          Retagged output copyToken explainToken <-
-            runCoreBuilder (retagCore facts block')
-          appendExplainEvent copyToken
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceReplace oldEvent _incomingEvent outputEvent -> do
-              let oldView = traceNodeOfEventBlock oldEvent
-              let outputView = traceNodeOfEventBlock outputEvent
-              appendMatchedBlock outputEvent
-              appendRenderIntent
-                (V.RenderContinue (V.nodeRef oldView) (V.nodeRef outputView))
-              return output
-    DestroyProgram block -> do
-      case unsafeUr block of
-        Ur block' -> do
-          C.Destroyed explainToken <- runCoreBuilder (C.destroy block')
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceDestroy eventBlock -> do
-              let viewNode = traceNodeOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
-              return ()
-    DecideProgram predicate block -> do
-      decision <-
-        case unsafeUr block of
-          Ur block' -> runCoreBuilder (C.decide predicate block')
-      case decision of
-        C.DecidedTrue explainToken -> do
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceDecide eventBlock -> do
-              let viewNode = traceNodeOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
-              return BranchTrue
-        C.DecidedFalse explainToken -> do
-          event <- recordExplainEvent explainToken
-          case event of
-            E.TraceDecide eventBlock -> do
-              let viewNode = traceNodeOfEventBlock eventBlock
-              appendRenderIntent (V.RenderRemove (V.nodeRef viewNode))
-              return BranchFalse
-    CheckpointProgram label -> checkpointTrace label
-    LoopProgram loopState body -> interpretLoop loopState body
-
-interpretLoop ::
-     state
-     %1 -> (state %1 -> Program (LoopResult state output))
-  -> VisualTraceBuilder output
-interpretLoop loopState body = do
-  result <- interpretProgram (body loopState)
-  case result of
-    Continue nextState -> interpretLoop nextState body
-    Finish output      -> return output
+checkpointTokens :: P.String -> C.ExplainTokens acts -> Choreography ()
+checkpointTokens label tokens =
+  LinearState.state
+    (\(VisualTraceState (Ur spec) (Ur coreState)) ->
+       case buildEvidenceOutput spec tokens of
+         BuiltEvidence eventLog output ->
+           let ((), nextCoreState) =
+                 E.runTraceBuilderWithState
+                   (E.explainEventLogWith
+                      label
+                      (ViewScript (V.flushViewOutput output))
+                      eventLog)
+                   coreState
+            in ((), VisualTraceState (Ur spec) (Ur nextCoreState)))
 
 ensure :: VisualConstraint -> VisualizationBuilder ()
 ensure = emitConstraint EnsureConstraint

@@ -13,7 +13,7 @@ module LinearTrace
   , TraceGraphWith
   , TraceBuilder
   , TraceBuilderWith
-  , Traceable(..)
+  , Traceable
   , Block
   , Slot
   , Payload

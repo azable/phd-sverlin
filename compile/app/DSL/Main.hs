@@ -39,13 +39,9 @@ data Value
 
 type instance Payload Value = LInt Value
 
-instance Traceable Value
-
 data Match
 
 type instance Payload Match = LBool Match
-
-instance Traceable Match
 
 sameValue :: Payload Value %1 -> Payload Value %1 -> Payload Match
 sameValue lhsPayload rhsPayload =
@@ -83,11 +79,11 @@ exampleSpec =
              2
              (MoreExampleValue 7 (MoreExampleValue 1 NoExampleValues)))))
 
-example :: Program ()
+example :: Choreography ()
 example = linearSearch (searchInput exampleSpec)
 
-run :: Program () -> VisualTraceGraph
-run = runProgramWith visualization
+run :: Choreography () -> VisualTraceGraph
+run = runChoreographyWith visualization
 
 searchInput :: ExampleSpec -> SearchInput
 searchInput spec =
@@ -122,101 +118,151 @@ data PreparedComparison where
        %1 -> Block Value
        %1 -> Block Value
        %1 -> Block Value
+       %1 -> ExplainToken (Copy Value)
+       %1 -> ExplainToken (Copy Value)
        %1 -> PreparedComparison
 
-linearSearch :: SearchInput %1 -> Program ()
-linearSearch (SearchInput targetPayload valuePayloads) = do
-  target <- create (#target <&> #source) targetPayload
-  elements <- createElements valuePayloads
-  loop (SearchState target NoProcessedElements elements) searchIteration
+data ComparedValues where
+  ComparedValues
+    :: Block Match
+       %1 -> ExplainToken (Use Value)
+       %1 -> ExplainToken (Use Value)
+       %1 -> ExplainToken (Compute Match)
+       %1 -> ComparedValues
 
-createElements :: InputValues %1 -> Program Elements
+data MarkedProcessed where
+  MarkedProcessed
+    :: Block Value
+       %1 -> ExplainToken (Copy Value)
+       %1 -> ExplainToken (Replace Value)
+       %1 -> MarkedProcessed
+
+linearSearch :: SearchInput %1 -> Choreography ()
+linearSearch (SearchInput targetPayload valuePayloads) = do
+  Created target targetCreated <- create (#target <&> #source) targetPayload
+  checkpoint "Create target" (targetCreated :~ Done)
+  elements <- createElements valuePayloads
+  searchIteration (SearchState target NoProcessedElements elements)
+
+createElements :: InputValues %1 -> Choreography Elements
 createElements = createElementsFrom 0
 
-createElementsFrom :: Int -> InputValues %1 -> Program Elements
+createElementsFrom :: Int -> InputValues %1 -> Choreography Elements
 createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue valuePayload rest -> do
-      element <- create (#array <&> #index index) valuePayload
+      Created element elementCreated <-
+        create (#array <&> #index index) valuePayload
+      checkpoint "Create element" (elementCreated :~ Done)
       elements <- createElementsFrom (index + 1) rest
       return (MoreElement index element elements)
 
-searchIteration :: SearchState %1 -> Program (LoopResult SearchState ())
+searchIteration :: SearchState %1 -> Choreography ()
 searchIteration searchState =
   case searchState of
     SearchState target processed elements ->
       case elements of
         NoElements -> do
-          destroy target
-          destroyProcessed processed
-          checkpoint "Search exhausted"
-          return (Finish ())
+          Destroyed targetDestroyed <- destroy target
+          checkpoint "Search exhausted" (targetDestroyed :~ Done)
+          destroyProcessed "Search exhausted" processed
         MoreElement index element rest -> do
-          PreparedComparison targetAfter elementAfter targetProbe elementProbe <-
+          PreparedComparison targetAfter elementAfter targetProbe elementProbe targetCopy elementCopy <-
             prepareComparison target index element
-          checkpoint "Prepare comparison"
-          matchBlock <- compareValues targetProbe elementProbe
-          branch <- decide (\(LBool answer) -> answer) matchBlock
-          case branch of
-            BranchTrue -> do
-              checkpoint "Found target"
+          checkpoint "Prepare comparison" (targetCopy :~ elementCopy :~ Done)
+          ComparedValues matchBlock targetUse elementUse matchComputed <-
+            compareValues targetProbe elementProbe
+          decision <- decide (\(LBool answer) -> answer) matchBlock
+          case decision of
+            DecidedTrue decisionToken -> do
+              checkpoint
+                "Found target"
+                (targetUse
+                   :~ elementUse
+                   :~ matchComputed
+                   :~ decisionToken
+                   :~ Done)
               finishSearch targetAfter elementAfter processed rest
-              checkpoint "Search complete"
-              return (Finish ())
-            BranchFalse -> do
-              processedElement <- markProcessed index elementAfter
-              checkpoint "Not this element"
-              return
-                (Continue
-                   (SearchState
-                      targetAfter
-                      (MoreProcessedElement processedElement processed)
-                      rest))
+            DecidedFalse decisionToken -> do
+              MarkedProcessed processedElement processedCopy processedReplace <-
+                markProcessed index elementAfter
+              checkpoint
+                "Not this element"
+                (targetUse
+                   :~ elementUse
+                   :~ matchComputed
+                   :~ decisionToken
+                   :~ processedCopy
+                   :~ processedReplace
+                   :~ Done)
+              searchIteration
+                (SearchState
+                   targetAfter
+                   (MoreProcessedElement processedElement processed)
+                   rest)
 
-destroyProcessed :: ProcessedElements %1 -> Program ()
-destroyProcessed processed =
+destroyProcessed :: String -> ProcessedElements %1 -> Choreography ()
+destroyProcessed label processed =
   case processed of
     NoProcessedElements -> return ()
     MoreProcessedElement element rest -> do
-      destroy element
-      destroyProcessed rest
+      Destroyed elementDestroyed <- destroy element
+      checkpoint label (elementDestroyed :~ Done)
+      destroyProcessed label rest
 
-destroyRemaining :: Elements %1 -> Program ()
-destroyRemaining elements =
+destroyRemaining :: String -> Elements %1 -> Choreography ()
+destroyRemaining label elements =
   case elements of
     NoElements -> return ()
     MoreElement _ element rest -> do
-      destroy element
-      destroyRemaining rest
+      Destroyed elementDestroyed <- destroy element
+      checkpoint label (elementDestroyed :~ Done)
+      destroyRemaining label rest
 
 finishSearch ::
      Block Value
      %1 -> Block Value
      %1 -> ProcessedElements
      %1 -> Elements
-     %1 -> Program ()
+     %1 -> Choreography ()
 finishSearch target foundElement processed remaining = do
-  destroy target
-  destroy foundElement
-  destroyProcessed processed
-  destroyRemaining remaining
+  Destroyed targetDestroyed <- destroy target
+  checkpoint "Search complete" (targetDestroyed :~ Done)
+  Destroyed foundDestroyed <- destroy foundElement
+  checkpoint "Search complete" (foundDestroyed :~ Done)
+  destroyProcessed "Search complete" processed
+  destroyRemaining "Search complete" remaining
 
-markProcessed :: Int -> Block Value %1 -> Program (Block Value)
-markProcessed index = retag (#array <&> #processed <&> #index index)
+markProcessed :: Int -> Block Value %1 -> Choreography MarkedProcessed
+markProcessed index element = do
+  Copied original processedCopy copyToken <-
+    copy (#array <&> #processed <&> #index index) element
+  Replaced processedElement replaceToken <- replace original processedCopy
+  return (MarkedProcessed processedElement copyToken replaceToken)
 
 prepareComparison ::
-     Block Value %1 -> Int -> Block Value %1 -> Program PreparedComparison
+     Block Value %1 -> Int -> Block Value %1 -> Choreography PreparedComparison
 prepareComparison target index element = do
-  (targetAfter, targetProbe) <- copy (#target <&> #probe) target
-  (elementAfter, elementProbe) <- copy (#index index <&> #probe) element
-  return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
+  Copied targetAfter targetProbe targetCopy <- copy (#target <&> #probe) target
+  Copied elementAfter elementProbe elementCopy <-
+    copy (#index index <&> #probe) element
+  return
+    (PreparedComparison
+       targetAfter
+       elementAfter
+       targetProbe
+       elementProbe
+       targetCopy
+       elementCopy)
 
-compareValues :: Block Value %1 -> Block Value %1 -> Program (Block Match)
+compareValues :: Block Value %1 -> Block Value %1 -> Choreography ComparedValues
 compareValues targetProbe elementProbe = do
-  targetPayload <- use targetProbe
-  elementPayload <- use elementProbe
-  compute #result (sameValue <$> targetPayload <*> elementPayload)
+  Used targetPayload targetUse <- use targetProbe
+  Used elementPayload elementUse <- use elementProbe
+  Computed matchBlock matchComputed <-
+    compute #result (sameValue <$> targetPayload <*> elementPayload)
+  return (ComparedValues matchBlock targetUse elementUse matchComputed)
 
 --------------------------------------------------------------------------------
 -- Visualisation

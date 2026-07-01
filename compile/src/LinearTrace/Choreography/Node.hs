@@ -306,7 +306,7 @@ visualize builder =
 class PayloadSelector tag selector where
   payloadSelector :: selector -> PayloadPattern tag
 
-instance PayloadSelector tag ContentValue where
+instance C.Traceable tag => PayloadSelector tag ContentValue where
   payloadSelector selector =
     case selector of
       ContentBinding binding ->

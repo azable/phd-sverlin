@@ -547,7 +547,8 @@ snapshotBox snapshot =
     ]
 
 renderSnapshotPayload :: BlockSnapshot tag -> String
-renderSnapshotPayload (BlockSnapshot _ _ view _) = renderPayloadView view
+renderSnapshotPayload (BlockSnapshot _ payload view _) =
+  renderPayloadView view ++ ": " ++ payloadText payload
 
 snapshotRef :: BlockSnapshot tag -> BlockRef tag
 snapshotRef (BlockSnapshot ref _ _ _) = ref
@@ -562,14 +563,13 @@ renderViewRefPlain :: V.ViewRef tag -> String
 renderViewRefPlain ref = "B" ++ show (V.viewRefInt ref)
 
 renderViewLabel :: V.ViewLabel -> String
-renderViewLabel label =
-  V.viewLabelKind label ++ ": " ++ V.viewLabelContent label
+renderViewLabel = V.viewLabelKind
 
 viewStepLabelBox :: Int -> String -> Box.Box
 viewStepLabelBox ix label = labelledStepBox ix label EmptyAudit
 
 renderPayloadView :: PayloadView -> String
-renderPayloadView (PayloadView kind content) = kind ++ ": " ++ content
+renderPayloadView (PayloadView kind) = kind
 
 --------------------------------------------------------------------------------
 -- Expression rendering
