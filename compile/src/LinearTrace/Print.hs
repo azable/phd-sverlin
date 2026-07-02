@@ -485,18 +485,17 @@ auditBox audit =
     EmptyAudit -> Box.nullBox
     step :> rest ->
       case rest of
-        EmptyAudit -> auditStepBox step
-        _          -> tightVcat [auditStepBox step, auditBox rest]
+        EmptyAudit -> traceEventStepBox step
+        _          -> tightVcat [traceEventStepBox step, auditBox rest]
 
-auditStepBox :: AuditStep act -> Box.Box
-auditStepBox step =
+traceEventStepBox :: TraceEventStep act -> Box.Box
+traceEventStepBox step =
   case step of
     CreateStep snapshot -> snapshotStep1Box createStyle snapshot
     ObserveStep snapshot -> snapshotStep1Box observeStyle snapshot
     UseStep snapshot -> snapshotStep1Box useStyle snapshot
     CopyStep original copy' -> snapshotStep2Box copyStyle original copy'
-    ReplaceStep old incoming output ->
-      snapshotStep3Box replaceStyle old incoming output
+    ReplaceStep old output -> snapshotStep2Box replaceStyle old output
     Apply1Step op arg output -> snapshotStep3Box apply1Style op arg output
     Apply2Step op lhs rhs output ->
       snapshotStep4Box apply2Style op lhs rhs output

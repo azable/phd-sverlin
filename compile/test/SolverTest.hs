@@ -109,6 +109,11 @@ choreographyBridgeTests =
                 (LInt 2 :: LInt ApplyValue)
                 (LInt 2 :: LInt ApplyValue)))
           @?= True
+    , testCase "core materialization buffers events until checkpoint"
+        $ ChoreographyFixtures.pendingMaterializedStepCount @?= 1
+    , testCase "unmaterialized copy collapses through replace"
+        $ ChoreographyFixtures.pendingReplaceEventNames
+            @?= ["replace", "destroy"]
     ]
 
 oneUseBool :: OneUse (LBool tag) %1 -> Bool

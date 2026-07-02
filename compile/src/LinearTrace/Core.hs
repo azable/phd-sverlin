@@ -60,9 +60,14 @@ module LinearTrace.Core
   , type Seal
   , type Unseal
   , -- * Primitive operations
-    -- | Linear lifecycle operations. These produce explain tokens and build
-    -- the core graph; choreography wraps them with higher-level view coupling.
-    create
+    -- | Linear lifecycle operations. Block-producing operations produce
+    -- pending obligations that must be materialized before use.
+    Pending
+  , Materialization
+  , commitMaterialization
+  , taggedMaterialization
+  , selectedMaterialization
+  , create
   , createTagged
   , observe
   , use
@@ -75,15 +80,17 @@ module LinearTrace.Core
   , apply2
   , apply2Tagged
   , apply2TaggedWith
+  , materialize
+  , materializeTagged
+  , materializeTaggedWith
+  , materializeWith
+  , commit
   , destroy
   , seal
   , unseal
-  , -- * Explain operations
-    -- | Audit-token combinators used to assemble graph steps. Direct callers
-    -- may use them; most view code consumes the event projection instead.
+  , -- * Operation results
+    -- | Public wrappers around linear operation results.
     OneUse(..)
-  , Explain
-  , ExplainTokens(..)
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -99,8 +106,9 @@ module LinearTrace.Core
   , -- * Graph building
     -- | Final core graph builders. 'LinearTrace.Choreography' uses the same
     -- core state but attaches view output alongside it.
-    explainWith
-  , discard
+    checkpoint
+  , checkpointWith
+  , discardPending
   , buildGraph
   ) where
 

@@ -11,18 +11,21 @@
 -- implementation surface.
 module LinearTrace.Core.Events
   ( -- * Core event data
-    -- | Typed event values derived from core explain tokens. These retain
+    -- | Typed event values derived from core audit steps. These retain
     -- payload snapshots and facts needed by query/match logic.
     BlockId
   , BlockRef
   , EventBlock(..)
   , TraceEvent(..)
   , EventToken
-  , eventTokenFromExplain
+  , eventTokenFromTraceEventStep
   , eventTokenEvent
   , EventLog
   , emptyEventLog
   , appendEventToken
+  , foldEventLog
+  , traceBuilderPendingEventLog
+  , checkpointEventLogWith
   , explainEventLogWith
   , discardEventLog
   , -- * Trace builder state
@@ -41,6 +44,7 @@ module LinearTrace.Core.Events
   , TraceStepOutput(..)
   , traceGraphSteps
   , traceStepOutput
+  , traceStepEventLog
   , -- * Block references
     -- | Block reference helpers used when linking core events to view tags.
     blockRefId
@@ -77,11 +81,7 @@ data TraceEvent act where
   TraceObserve :: EventBlock tag -> TraceEvent (C.Observe tag)
   TraceUse :: EventBlock tag -> TraceEvent (C.Use tag)
   TraceCopy :: EventBlock tag -> EventBlock tag -> TraceEvent (C.Copy tag)
-  TraceReplace
-    :: EventBlock tag
-    -> EventBlock tag
-    -> EventBlock tag
-    -> TraceEvent (C.Replace tag)
+  TraceReplace :: EventBlock tag -> EventBlock tag -> TraceEvent (C.Replace tag)
   TraceApply1
     :: EventBlock op
     -> EventBlock arg
@@ -100,12 +100,11 @@ data TraceEvent act where
     :: EventBlock owner -> EventBlock tag -> TraceEvent (C.Unseal owner tag)
 
 data EventToken act where
-  EventToken :: C.AuditStep act -> TraceEvent act -> EventToken act
+  EventToken :: C.TraceEventStep act -> TraceEvent act -> EventToken act
 
-eventTokenFromExplain :: C.Explain act %1 -> Ur (EventToken act)
-eventTokenFromExplain explain =
-  case C.explainToAuditStep explain of
-    Ur step -> Ur (EventToken step (traceEventFromAuditStep step))
+eventTokenFromTraceEventStep :: C.TraceEventStep act -> EventToken act
+eventTokenFromTraceEventStep step =
+  EventToken step (traceEventFromTraceEventStep step)
 
 eventTokenEvent :: EventToken act -> TraceEvent act
 eventTokenEvent token =
@@ -124,6 +123,44 @@ appendEventToken eventLog token =
     EventToken step _event ->
       appendEventLog eventLog (EventLog (step C.:> C.EmptyAudit))
 
+foldEventLog ::
+     (forall act. accumulator -> TraceEvent act -> accumulator)
+  -> accumulator
+  -> EventLog
+  -> accumulator
+foldEventLog foldEvent initial eventLog =
+  case eventLog of
+    EventLog audit -> foldAuditEvents foldEvent initial audit
+
+foldAuditEvents ::
+     (forall act. accumulator -> TraceEvent act -> accumulator)
+  -> accumulator
+  -> C.Audit acts
+  -> accumulator
+foldAuditEvents foldEvent accumulator audit =
+  case audit of
+    C.EmptyAudit -> accumulator
+    step C.:> rest ->
+      foldAuditEvents
+        foldEvent
+        (foldEvent accumulator (traceEventFromTraceEventStep step))
+        rest
+
+traceBuilderPendingEventLog :: TraceBuilderState payload -> EventLog
+traceBuilderPendingEventLog state =
+  case state of
+    C.TraceBuilderState _next _blocks (Ur pending) _steps ->
+      eventLogFromPendingAudit pending
+
+eventLogFromPendingAudit :: C.PendingAudit -> EventLog
+eventLogFromPendingAudit pending =
+  case pending of
+    C.PendingAudit audit -> EventLog audit
+
+checkpointEventLogWith ::
+     P.String -> (forall acts. payload acts) -> C.TraceBuilderWith payload ()
+checkpointEventLogWith = C.checkpointWith
+
 explainEventLogWith ::
      P.String
   -> (forall acts. payload acts)
@@ -139,7 +176,8 @@ discardEventLog reason eventLog =
     EventLog audit -> C.discardAudit reason audit
 
 emptyTraceBuilderState :: TraceBuilderState payload
-emptyTraceBuilderState = C.TraceBuilderState (Ur 0) (Ur []) (Ur [])
+emptyTraceBuilderState =
+  C.TraceBuilderState (Ur 0) (Ur []) (Ur C.emptyPendingAudit) (Ur [])
 
 runTraceBuilderWithState ::
      C.TraceBuilderWith payload a
@@ -150,7 +188,7 @@ runTraceBuilderWithState = runState
 traceBuilderStateGraph :: TraceBuilderState payload -> TraceGraphWith payload
 traceBuilderStateGraph state =
   case state of
-    C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) (Ur steps) ->
+    C.TraceBuilderState (Ur _nextBlockId) (Ur blocks) _pending (Ur steps) ->
       C.TraceGraph blocks steps
 
 traceGraphSteps :: TraceGraphWith payload -> [TraceStepWith payload]
@@ -174,24 +212,27 @@ traceStepOutput step =
     C.DiscardedStep reason audit ->
       DiscardedTraceStep reason (C.DiscardedStep reason audit)
 
+traceStepEventLog :: TraceStepWith payload -> EventLog
+traceStepEventLog step =
+  case step of
+    C.ExplainedStep _label _payload audit -> EventLog audit
+    C.DiscardedStep _reason audit         -> EventLog audit
+
 blockRefId :: BlockRef tag -> BlockId
 blockRefId ref =
   case ref of
     C.BlockRef blockId -> blockId
 
-traceEventFromAuditStep :: C.AuditStep act -> TraceEvent act
-traceEventFromAuditStep step =
+traceEventFromTraceEventStep :: C.TraceEventStep act -> TraceEvent act
+traceEventFromTraceEventStep step =
   case step of
     C.CreateStep snapshot -> TraceCreate (eventBlockFromSnapshot snapshot)
     C.ObserveStep snapshot -> TraceObserve (eventBlockFromSnapshot snapshot)
     C.UseStep snapshot -> TraceUse (eventBlockFromSnapshot snapshot)
     C.CopyStep original copy' ->
       TraceCopy (eventBlockFromSnapshot original) (eventBlockFromSnapshot copy')
-    C.ReplaceStep old incoming output ->
-      TraceReplace
-        (eventBlockFromSnapshot old)
-        (eventBlockFromSnapshot incoming)
-        (eventBlockFromSnapshot output)
+    C.ReplaceStep old output ->
+      TraceReplace (eventBlockFromSnapshot old) (eventBlockFromSnapshot output)
     C.Apply1Step op arg output ->
       TraceApply1
         (eventBlockFromSnapshot op)

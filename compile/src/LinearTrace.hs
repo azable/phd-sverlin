@@ -60,7 +60,12 @@ module LinearTrace
   , type Seal
   , type Unseal
   , -- * Primitive operations
-    create
+    Pending
+  , Materialization
+  , commitMaterialization
+  , taggedMaterialization
+  , selectedMaterialization
+  , create
   , createTagged
   , observe
   , use
@@ -73,16 +78,17 @@ module LinearTrace
   , apply2
   , apply2Tagged
   , apply2TaggedWith
+  , materialize
+  , materializeTagged
+  , materializeTaggedWith
+  , materializeWith
+  , commit
   , destroy
   , seal
   , unseal
-  , -- * Explain operations
-    -- | Audit-token utilities from 'LinearTrace.Core'. These are mostly useful
-    -- to direct core callers; choreography users normally stay at the
-    -- 'LinearTrace.Choreography' layer.
+  , -- * Operation results
+    -- | Public wrappers around linear operation results.
     OneUse
-  , Explain
-  , ExplainTokens(Done, (:~))
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -93,8 +99,9 @@ module LinearTrace
   , Destroyed(..)
   , Sealed(..)
   , Unsealed(..)
-  , explainWith
-  , discard
+  , checkpoint
+  , checkpointWith
+  , discardPending
   , (<$>)
   , (<*>)
   , -- * Graph building, rendering and compilation

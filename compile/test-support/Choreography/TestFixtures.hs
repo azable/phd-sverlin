@@ -16,6 +16,8 @@ module Choreography.TestFixtures
     -- behavior.
     payloadMatchedStats
   , groupStats
+  , pendingMaterializedStepCount
+  , pendingReplaceEventNames
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
     categoricalRelationGraph
@@ -28,6 +30,9 @@ module Choreography.TestFixtures
 
 import           Control.Functor.Linear   hiding ((<$>), (<&>), (<*>))
 import           LinearTrace.Choreography
+import qualified LinearTrace.Core         as Core
+import qualified LinearTrace.Core.Events  as CoreEvents
+import qualified Prelude                  as P
 import           Prelude.Linear           hiding (fromInteger, fromRational,
                                            (*), (+), (-), (/), (/=), (<>))
 
@@ -40,6 +45,16 @@ payloadMatchedStats = fixtureStats payloadMatchedSpec
 
 groupStats :: (Int, Int, Int, Int)
 groupStats = fixtureStats groupSpec
+
+pendingMaterializedStepCount :: Int
+pendingMaterializedStepCount =
+  P.length (CoreEvents.traceGraphSteps pendingMaterializedGraph)
+
+pendingReplaceEventNames :: [P.String]
+pendingReplaceEventNames =
+  case CoreEvents.traceGraphSteps pendingReplaceGraph of
+    _created:replaced:_ -> eventNames (CoreEvents.traceStepEventLog replaced)
+    _                   -> []
 
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
@@ -67,12 +82,52 @@ buildGraph spec = buildViewGraph (runChoreographyWith spec fixture)
 
 fixture :: Choreography ()
 fixture = do
-  Created first firstCreated <- create @TestValue #item (LInt 7)
-  Created second secondCreated <- create @TestValue #item (LInt 8)
-  checkpoint "created" (firstCreated :~ secondCreated :~ Done)
-  Destroyed firstDestroyed <- destroy first
-  Destroyed secondDestroyed <- destroy second
-  checkpoint "destroyed" (firstDestroyed :~ secondDestroyed :~ Done)
+  Created firstPending <- create @TestValue (LInt 7)
+  first <- materialize #item firstPending
+  Created secondPending <- create @TestValue (LInt 8)
+  second <- materialize #item secondPending
+  checkpoint "created"
+  Destroyed <- destroy first
+  Destroyed <- destroy second
+  checkpoint "destroyed"
+
+pendingMaterializedGraph :: Core.TraceGraph
+pendingMaterializedGraph =
+  Core.buildGraph $ do
+    Core.Created pending <- Core.create (LInt 1 :: LInt TestValue)
+    block <- Core.materialize pending
+    Core.Destroyed <- Core.destroy block
+    Core.checkpoint "done"
+
+pendingReplaceGraph :: Core.TraceGraph
+pendingReplaceGraph =
+  Core.buildGraph $ do
+    Core.Created pending <- Core.create (LInt 1 :: LInt TestValue)
+    block <- Core.materialize pending
+    Core.checkpoint "created"
+    Core.Copied original copied <- Core.copy block
+    Core.Replaced replaced <- Core.replace original copied
+    next <- Core.materialize replaced
+    Core.Destroyed <- Core.destroy next
+    Core.checkpoint "replaced"
+
+eventNames :: CoreEvents.EventLog -> [P.String]
+eventNames =
+  CoreEvents.foldEventLog (\names event -> names P.++ [traceEventName event]) []
+
+traceEventName :: CoreEvents.TraceEvent act -> P.String
+traceEventName event =
+  case event of
+    CoreEvents.TraceCreate _    -> "create"
+    CoreEvents.TraceObserve _   -> "observe"
+    CoreEvents.TraceUse _       -> "use"
+    CoreEvents.TraceCopy _ _    -> "copy"
+    CoreEvents.TraceReplace _ _ -> "replace"
+    CoreEvents.TraceApply1 {}   -> "apply1"
+    CoreEvents.TraceApply2 {}   -> "apply2"
+    CoreEvents.TraceDestroy _   -> "destroy"
+    CoreEvents.TraceSeal _ _    -> "seal"
+    CoreEvents.TraceUnseal _ _  -> "unseal"
 
 payloadMatchedSpec :: MatchSpec
 payloadMatchedSpec =

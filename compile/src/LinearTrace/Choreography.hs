@@ -19,8 +19,9 @@
 -- 'LinearTrace.Choreography.Match', and the internal 'LinearTrace.View' facade.
 module LinearTrace.Choreography
   ( -- * Defined here: choreography and view graph facade
-    -- | Direct choreography builder API. Core lifecycle helpers return typed
-    -- evidence tokens; checkpoints attach those events to view output.
+    -- | Direct choreography builder API. Core lifecycle helpers return pending
+    -- block obligations; materialization attaches visual facts and checkpoints
+    -- attach materialized events to view output.
     Choreography
   , VisualTraceGraph
   , ViewGraph
@@ -38,6 +39,9 @@ module LinearTrace.Choreography
   , apply2
   , apply2WithTags
   , replace
+  , materialize
+  , materializeWithTags
+  , commit
   , destroy
   , checkpoint
   , -- * Re-exported or aliased from LinearTrace.Core
@@ -72,6 +76,11 @@ module LinearTrace.Choreography
   , applyLinear2Into
   , Applicable1(..)
   , Applicable2(..)
+  , Pending
+  , Materialization
+  , commitMaterialization
+  , taggedMaterialization
+  , selectedMaterialization
   , type Create
   , type Observe
   , type Use
@@ -83,8 +92,6 @@ module LinearTrace.Choreography
   , type Seal
   , type Unseal
   , OneUse(..)
-  , Explain
-  , ExplainTokens(..)
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -282,8 +289,7 @@ import           LinearTrace.Core                      (Applicable1 (..),
                                                         Copied (..),
                                                         CoreOperator (..),
                                                         Created (..),
-                                                        Destroyed (..), Explain,
-                                                        ExplainTokens (..),
+                                                        Destroyed (..),
                                                         Fact (..),
                                                         FactValue (..),
                                                         Facts (..), LBool (..),
@@ -292,19 +298,23 @@ import           LinearTrace.Core                      (Applicable1 (..),
                                                         LString (..),
                                                         LUnit (..),
                                                         LinearPayload (..),
+                                                        Materialization,
                                                         Observed (..),
                                                         OneUse (..), Payload,
                                                         PayloadView (..),
-                                                        Replaced (..),
+                                                        Pending, Replaced (..),
                                                         Sealed (..), Traceable,
                                                         Unsealed (..),
                                                         Used (..), applyLinear1,
                                                         applyLinear1Into,
                                                         applyLinear2,
                                                         applyLinear2Into,
+                                                        commitMaterialization,
                                                         emptyFacts, factAtom,
                                                         factInt, factSymbol,
                                                         factsToList, factsUnion,
+                                                        selectedMaterialization,
+                                                        taggedMaterialization,
                                                         (<$>), (<*>))
 import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
@@ -1150,32 +1160,11 @@ runCoreLinear3 build firstInput secondInput thirdInput =
               runCoreBuilder
                 (build unrestrictedFirst unrestrictedSecond unrestrictedThird)
 
-data BuiltEvidence where
-  BuiltEvidence :: E.EventLog -> V.ViewOutput -> BuiltEvidence
-
-buildEvidenceOutput :: MatchSpec -> C.ExplainTokens acts %1 -> BuiltEvidence
-buildEvidenceOutput spec =
-  buildEvidenceOutputWith spec E.emptyEventLog V.emptyViewOutput
-
-buildEvidenceOutputWith ::
-     MatchSpec
-  -> E.EventLog
-  -> V.ViewOutput
-  -> C.ExplainTokens acts
-     %1 -> BuiltEvidence
-buildEvidenceOutputWith spec eventLog output tokens =
-  case tokens of
-    C.Done -> BuiltEvidence eventLog output
-    explain C.:~ rest ->
-      case E.eventTokenFromExplain explain of
-        Ur eventToken ->
-          buildEvidenceOutputWith
-            spec
-            (E.appendEventToken eventLog eventToken)
-            (V.appendViewOutput
-               output
-               (viewOutputForEvent spec (E.eventTokenEvent eventToken)))
-            rest
+buildEventLogOutput :: MatchSpec -> E.EventLog -> V.ViewOutput
+buildEventLogOutput spec =
+  E.foldEventLog
+    (\output event -> V.appendViewOutput output (viewOutputForEvent spec event))
+    V.emptyViewOutput
 
 viewOutputForEvent :: MatchSpec -> E.TraceEvent act -> V.ViewOutput
 viewOutputForEvent spec event =
@@ -1190,12 +1179,10 @@ viewOutputForEvent spec event =
       V.appendViewOutput
         (matchedNodeOutput spec copyBlock)
         (renderEventBlocks V.RenderFork originalBlock copyBlock)
-    E.TraceReplace oldBlock incomingBlock outputBlock ->
+    E.TraceReplace oldBlock outputBlock ->
       V.appendViewOutput
         (matchedNodeOutput spec outputBlock)
-        (V.appendViewOutput
-           (renderEventBlocks V.RenderContinue oldBlock outputBlock)
-           (renderEventBlock V.RenderRemove incomingBlock))
+        (renderEventBlocks V.RenderContinue oldBlock outputBlock)
     E.TraceApply1 opBlock argBlock outputBlock ->
       V.appendViewOutput
         (matchedNodeOutput spec outputBlock)
@@ -1243,10 +1230,9 @@ runChoreographyWith = runVisualTraceBuilder
 
 create ::
      forall tag. C.Traceable tag
-  => Query
-  -> C.Payload tag
+  => C.Payload tag
      %1 -> Choreography (C.Created tag)
-create query = runCoreLinear1 (C.createTagged (queryFacts query))
+create = runCoreLinear1 C.create
 
 use ::
      forall tag. C.Traceable tag
@@ -1256,10 +1242,9 @@ use = runCoreLinear1 C.use
 
 copy ::
      forall tag. C.Traceable tag
-  => Query
-  -> Block tag
+  => Block tag
      %1 -> Choreography (C.Copied tag)
-copy query = runCoreLinear1 (C.copyTagged (queryFacts query))
+copy = runCoreLinear1 C.copy
 
 apply1 ::
      forall op arg.
@@ -1268,11 +1253,10 @@ apply1 ::
      , C.Traceable arg
      , C.Traceable (C.Apply1Result op arg)
      )
-  => Query
-  -> Block op
+  => Block op
      %1 -> Block arg
      %1 -> Choreography (C.Applied1 op arg)
-apply1 query = apply1WithTags query (P.const emptyQuery)
+apply1 = runCoreLinear2 C.apply1
 
 apply1WithTags ::
      forall op arg.
@@ -1299,12 +1283,11 @@ apply2 ::
      , C.Traceable rhs
      , C.Traceable (C.Apply2Result op lhs rhs)
      )
-  => Query
-  -> Block op
+  => Block op
      %1 -> Block lhs
      %1 -> Block rhs
      %1 -> Choreography (C.Applied2 op lhs rhs)
-apply2 query = apply2WithTags query (P.const emptyQuery)
+apply2 = runCoreLinear3 C.apply2
 
 apply2WithTags ::
      forall op lhs rhs.
@@ -1328,9 +1311,33 @@ apply2WithTags query selectQuery =
 replace ::
      forall tag. C.Traceable tag
   => Block tag
-     %1 -> Block tag
+     %1 -> C.Pending tag
      %1 -> Choreography (C.Replaced tag)
 replace = runCoreLinear2 C.replace
+
+materialize ::
+     forall tag. C.Traceable tag
+  => Query
+  -> C.Pending tag
+     %1 -> Choreography (Block tag)
+materialize query = runCoreLinear1 (C.materializeTagged (queryFacts query))
+
+materializeWithTags ::
+     forall tag. C.Traceable tag
+  => Query
+  -> (Payload tag -> Query)
+  -> C.Pending tag
+     %1 -> Choreography (Block tag)
+materializeWithTags query selectQuery =
+  runCoreLinear1 (C.materializeTaggedWith (queryFacts query) selectFacts)
+  where
+    selectFacts outputPayload = queryFacts (selectQuery outputPayload)
+
+commit ::
+     forall tag. C.Traceable tag
+  => C.Pending tag
+     %1 -> Choreography (Block tag)
+commit = runCoreLinear1 C.commit
 
 destroy ::
      forall tag. C.Traceable tag
@@ -1338,25 +1345,19 @@ destroy ::
      %1 -> Choreography (C.Destroyed tag)
 destroy = runCoreLinear1 C.destroy
 
-checkpoint :: P.String -> C.ExplainTokens acts %1 -> Choreography ()
-checkpoint label tokens =
-  case unsafeUr tokens of
-    Ur tokensValue -> checkpointTokens label tokensValue
-
-checkpointTokens :: P.String -> C.ExplainTokens acts -> Choreography ()
-checkpointTokens label tokens =
+checkpoint :: P.String -> Choreography ()
+checkpoint label =
   LinearState.state
     (\(VisualTraceState (Ur spec) (Ur coreState)) ->
-       case buildEvidenceOutput spec tokens of
-         BuiltEvidence eventLog output ->
-           let ((), nextCoreState) =
-                 E.runTraceBuilderWithState
-                   (E.explainEventLogWith
-                      label
-                      (ViewScript (V.flushViewOutput output))
-                      eventLog)
-                   coreState
-            in ((), VisualTraceState (Ur spec) (Ur nextCoreState)))
+       let eventLog = E.traceBuilderPendingEventLog coreState
+           output = buildEventLogOutput spec eventLog
+           ((), nextCoreState) =
+             E.runTraceBuilderWithState
+               (E.checkpointEventLogWith
+                  label
+                  (ViewScript (V.flushViewOutput output)))
+               coreState
+        in ((), VisualTraceState (Ur spec) (Ur nextCoreState)))
 
 ensure :: VisualConstraint -> VisualizationBuilder ()
 ensure = emitConstraint EnsureConstraint

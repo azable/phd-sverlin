@@ -5,6 +5,7 @@
 {-# LANGUAGE FunctionalDependencies  #-}
 {-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LinearTypes             #-}
+{-# LANGUAGE RankNTypes              #-}
 {-# LANGUAGE RebindableSyntax        #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
 {-# LANGUAGE TypeFamilyDependencies  #-}
@@ -73,8 +74,14 @@ module LinearTrace.Core.Internal
   , type Unseal
   , -- * Primitive operations
     -- | Primitive linear operations that update core builder state and produce
-    -- explain tokens. Higher layers call these through the public core facade.
-    create
+    -- pending block obligations. Higher layers call these through the public
+    -- core facade.
+    Pending
+  , Materialization
+  , commitMaterialization
+  , taggedMaterialization
+  , selectedMaterialization
+  , create
   , createTagged
   , observe
   , use
@@ -87,15 +94,17 @@ module LinearTrace.Core.Internal
   , apply2
   , apply2Tagged
   , apply2TaggedWith
+  , materialize
+  , materializeTagged
+  , materializeTaggedWith
+  , materializeWith
+  , commit
   , destroy
   , seal
   , unseal
   , -- * Auditing operations
-    -- | Explain structure for assembling typed audit chains before they become
-    -- graph steps or event logs.
+    -- | Result wrappers and linear one-use payload helpers.
     OneUse(..)
-  , Explain
-  , ExplainTokens(..)
   , Created(..)
   , Observed(..)
   , Used(..)
@@ -119,19 +128,21 @@ module LinearTrace.Core.Internal
   , NoStepPayload(..)
   , TraceStep
   , TraceStepWith(..)
-  , -- * Public audit data
-    -- | Audited action sequence data. 'LinearTrace.Core.Events' maps this into
-    -- typed event values for choreography matching.
-    AuditStep(..)
+  , PendingAudit(..)
+  , emptyPendingAudit
+  , -- * Public trace event data
+    -- | Trace event step data. 'LinearTrace.Core.Events' maps this into typed
+    -- event values for choreography matching.
+    TraceEventStep(..)
   , Audit(..)
-  , explainToAuditStep
   , -- * Runner
     -- | Core runners and graph builders. The choreography layer uses related
     -- stateful machinery to build core and view output together.
-    explainAuditWith
-  , explainWith
+    checkpoint
+  , checkpointWith
+  , explainAuditWith
   , discardAudit
-  , discard
+  , discardPending
   , buildGraph
   ) where
 
@@ -144,7 +155,6 @@ import           Prelude.Linear
 
 infixl 4 <$>
 infixl 4 <*>
-infixr 5 :~
 infixr 5 :>
 type BlockId = Int
 
@@ -452,90 +462,107 @@ type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
 --------------------------------------------------------------------------------
 -- Primitive operation result types
 --------------------------------------------------------------------------------
+data Pending tag where
+  PendingCreate :: PendingFacts tag %1 -> Payload tag %1 -> Pending tag
+  PendingCopy
+    :: BlockSnapshot tag -> PendingFacts tag %1 -> Payload tag %1 -> Pending tag
+  PendingReplace
+    :: BlockSnapshot tag -> PendingFacts tag %1 -> Payload tag %1 -> Pending tag
+  PendingApply1
+    :: BlockSnapshot op
+    -> BlockSnapshot arg
+    -> PendingFacts out
+       %1 -> Payload out
+       %1 -> Pending out
+  PendingApply2
+    :: BlockSnapshot op
+    -> BlockSnapshot lhs
+    -> BlockSnapshot rhs
+    -> PendingFacts out
+       %1 -> Payload out
+       %1 -> Pending out
+
+data PendingFacts tag where
+  PendingFacts :: Facts -> (Payload tag -> Facts) -> PendingFacts tag
+
+data Materialization tag where
+  Materialization :: Facts -> (Payload tag -> Facts) -> Materialization tag
+
+commitMaterialization :: Materialization tag
+commitMaterialization = Materialization emptyFacts (P.const emptyFacts)
+
+taggedMaterialization :: Facts -> Materialization tag
+taggedMaterialization facts = Materialization facts (P.const emptyFacts)
+
+selectedMaterialization ::
+     Facts -> (Payload tag -> Facts) -> Materialization tag
+selectedMaterialization = Materialization
+
 data Created tag where
-  Created :: Block tag %1 -> Explain (Create tag) %1 -> Created tag
+  Created :: Pending tag %1 -> Created tag
 
 data Observed tag where
-  Observed :: Block tag %1 -> Explain (Observe tag) %1 -> Observed tag
+  Observed :: Block tag %1 -> Observed tag
 
 data Used tag where
-  Used :: OneUse (Payload tag) %1 -> Explain (Use tag) %1 -> Used tag
+  Used :: OneUse (Payload tag) %1 -> Used tag
 
 data Copied tag where
-  Copied :: Block tag %1 -> Block tag %1 -> Explain (Copy tag) %1 -> Copied tag
+  Copied :: Block tag %1 -> Pending tag %1 -> Copied tag
 
 data Replaced tag where
-  Replaced :: Block tag %1 -> Explain (Replace tag) %1 -> Replaced tag
+  Replaced :: Pending tag %1 -> Replaced tag
 
 data Applied1 op arg where
-  Applied1
-    :: Block (Apply1Result op arg)
-       %1 -> Explain (Apply1 op arg (Apply1Result op arg))
-       %1 -> Applied1 op arg
+  Applied1 :: Pending (Apply1Result op arg) %1 -> Applied1 op arg
 
 data Applied2 op lhs rhs where
-  Applied2
-    :: Block (Apply2Result op lhs rhs)
-       %1 -> Explain (Apply2 op lhs rhs (Apply2Result op lhs rhs))
-       %1 -> Applied2 op lhs rhs
+  Applied2 :: Pending (Apply2Result op lhs rhs) %1 -> Applied2 op lhs rhs
 
 data Destroyed tag where
-  Destroyed :: Explain (Destroy tag) %1 -> Destroyed tag
+  Destroyed :: Destroyed tag
 
 data Sealed owner tag where
-  Sealed
-    :: Block owner
-       %1 -> Slot owner tag
-       %1 -> Explain (Seal owner tag)
-       %1 -> Sealed owner tag
+  Sealed :: Block owner %1 -> Slot owner tag %1 -> Sealed owner tag
 
 data Unsealed owner tag where
-  Unsealed
-    :: Block owner
-       %1 -> Block tag
-       %1 -> Explain (Unseal owner tag)
-       %1 -> Unsealed owner tag
+  Unsealed :: Block owner %1 -> Block tag %1 -> Unsealed owner tag
 
 --------------------------------------------------------------------------------
--- Audit data
+-- Trace event data
 --------------------------------------------------------------------------------
-data AuditStep act where
-  CreateStep :: BlockSnapshot tag -> AuditStep (Create tag)
-  ObserveStep :: BlockSnapshot tag -> AuditStep (Observe tag)
-  UseStep :: BlockSnapshot tag -> AuditStep (Use tag)
-  CopyStep :: BlockSnapshot tag -> BlockSnapshot tag -> AuditStep (Copy tag)
+data TraceEventStep act where
+  CreateStep :: BlockSnapshot tag -> TraceEventStep (Create tag)
+  ObserveStep :: BlockSnapshot tag -> TraceEventStep (Observe tag)
+  UseStep :: BlockSnapshot tag -> TraceEventStep (Use tag)
+  CopyStep
+    :: BlockSnapshot tag -> BlockSnapshot tag -> TraceEventStep (Copy tag)
   ReplaceStep
-    :: BlockSnapshot tag
-    -> BlockSnapshot tag
-    -> BlockSnapshot tag
-    -> AuditStep (Replace tag)
+    :: BlockSnapshot tag -> BlockSnapshot tag -> TraceEventStep (Replace tag)
   Apply1Step
     :: BlockSnapshot op
     -> BlockSnapshot arg
     -> BlockSnapshot out
-    -> AuditStep (Apply1 op arg out)
+    -> TraceEventStep (Apply1 op arg out)
   Apply2Step
     :: BlockSnapshot op
     -> BlockSnapshot lhs
     -> BlockSnapshot rhs
     -> BlockSnapshot out
-    -> AuditStep (Apply2 op lhs rhs out)
-  DestroyStep :: BlockSnapshot tag -> AuditStep (Destroy tag)
+    -> TraceEventStep (Apply2 op lhs rhs out)
+  DestroyStep :: BlockSnapshot tag -> TraceEventStep (Destroy tag)
   SealStep
-    :: BlockSnapshot owner -> BlockSnapshot tag -> AuditStep (Seal owner tag)
+    :: BlockSnapshot owner
+    -> BlockSnapshot tag
+    -> TraceEventStep (Seal owner tag)
   UnsealStep
-    :: BlockSnapshot owner -> BlockSnapshot tag -> AuditStep (Unseal owner tag)
+    :: BlockSnapshot owner
+    -> BlockSnapshot tag
+    -> TraceEventStep (Unseal owner tag)
 
 data Audit acts where
   EmptyAudit :: Audit '[]
-  (:>) :: AuditStep act -> Audit acts -> Audit (act : acts)
-
-data Explain act where
-  Explain :: Ur (AuditStep act) %1 -> Explain act
-
-data ExplainTokens acts where
-  Done :: ExplainTokens '[]
-  (:~) :: Explain act %1 -> ExplainTokens acts %1 -> ExplainTokens (act : acts)
+  (:>) :: TraceEventStep act -> Audit acts -> Audit (act : acts)
 
 --------------------------------------------------------------------------------
 -- Trace step layer
@@ -555,9 +582,16 @@ data TraceGraphWith (payload :: [Type] -> Type) =
 
 type TraceGraph = TraceGraphWith NoStepPayload
 
+data PendingAudit where
+  PendingAudit :: Audit acts -> PendingAudit
+
+emptyPendingAudit :: PendingAudit
+emptyPendingAudit = PendingAudit EmptyAudit
+
 data TraceBuilderState payload = TraceBuilderState
   { _nextBlockId :: Ur BlockId
   , _blocks      :: Ur [BlockRecord]
+  , _pending     :: Ur PendingAudit
   , _steps       :: Ur [TraceStepWith payload]
   }
 
@@ -566,19 +600,24 @@ type TraceBuilderWith payload a = State (TraceBuilderState payload) a
 type TraceBuilder a = TraceBuilderWith NoStepPayload a
 
 instance Consumable (TraceBuilderState payload) where
-  consume (TraceBuilderState next blocks steps) =
-    consume next `lseq` consume blocks `lseq` consume steps
+  consume (TraceBuilderState next blocks pending steps) =
+    consume next
+      `lseq` consume blocks
+      `lseq` consume pending
+      `lseq` consume steps
 
 instance Dupable (TraceBuilderState payload) where
-  dup2 (TraceBuilderState next blocks steps) =
+  dup2 (TraceBuilderState next blocks pending steps) =
     case dup2 next of
       (next1, next2) ->
         case dup2 blocks of
           (blocks1, blocks2) ->
-            case dup2 steps of
-              (steps1, steps2) ->
-                ( TraceBuilderState next1 blocks1 steps1
-                , TraceBuilderState next2 blocks2 steps2)
+            case dup2 pending of
+              (pending1, pending2) ->
+                case dup2 steps of
+                  (steps1, steps2) ->
+                    ( TraceBuilderState next1 blocks1 pending1 steps1
+                    , TraceBuilderState next2 blocks2 pending2 steps2)
 
 --------------------------------------------------------------------------------
 -- Internal helpers
@@ -596,61 +635,20 @@ makeSnapshot ::
 makeSnapshot tagProxy ref payload =
   BlockSnapshot ref payload (payloadView tagProxy)
 
-makeAuditStep1 ::
+makeTraceEventStep1 ::
      Traceable tag
-  => (BlockSnapshot tag -> AuditStep act)
+  => (BlockSnapshot tag -> TraceEventStep act)
   -> Proxy tag
   -> BlockRef tag
   -> Payload tag
   -> Facts
-  -> Explain act
-makeAuditStep1 ctor tagProxy ref payload facts =
-  Explain (Ur (ctor (makeSnapshot tagProxy ref payload facts)))
+  -> TraceEventStep act
+makeTraceEventStep1 ctor tagProxy ref payload facts =
+  ctor (makeSnapshot tagProxy ref payload facts)
 
-makeAuditStep2 ::
-     Traceable tag
-  => (BlockSnapshot tag -> BlockSnapshot tag -> AuditStep act)
-  -> Proxy tag
-  -> BlockRef tag
-  -> Payload tag
-  -> Facts
-  -> BlockRef tag
-  -> Payload tag
-  -> Facts
-  -> Explain act
-makeAuditStep2 ctor tagProxy ref1 payload1 facts1 ref2 payload2 facts2 =
-  Explain
-    (Ur
-       (ctor
-          (makeSnapshot tagProxy ref1 payload1 facts1)
-          (makeSnapshot tagProxy ref2 payload2 facts2)))
-
-makeAuditStep3 ::
-     Traceable tag
-  => (BlockSnapshot tag -> BlockSnapshot tag -> BlockSnapshot tag -> AuditStep
-                                                                       act)
-  -> Proxy tag
-  -> BlockRef tag
-  -> Payload tag
-  -> Facts
-  -> BlockRef tag
-  -> Payload tag
-  -> Facts
-  -> BlockRef tag
-  -> Payload tag
-  -> Facts
-  -> Explain act
-makeAuditStep3 ctor tagProxy ref1 payload1 facts1 ref2 payload2 facts2 ref3 payload3 facts3 =
-  Explain
-    (Ur
-       (ctor
-          (makeSnapshot tagProxy ref1 payload1 facts1)
-          (makeSnapshot tagProxy ref2 payload2 facts2)
-          (makeSnapshot tagProxy ref3 payload3 facts3)))
-
-makeAuditStep2Hetero ::
+makeTraceEventStep2Hetero ::
      (Traceable left, Traceable right)
-  => (BlockSnapshot left -> BlockSnapshot right -> AuditStep act)
+  => (BlockSnapshot left -> BlockSnapshot right -> TraceEventStep act)
   -> Proxy left
   -> BlockRef left
   -> Payload left
@@ -659,115 +657,86 @@ makeAuditStep2Hetero ::
   -> BlockRef right
   -> Payload right
   -> Facts
-  -> Explain act
-makeAuditStep2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy rightRef rightPayload rightFacts =
-  Explain
-    (Ur
-       (ctor
-          (makeSnapshot leftProxy leftRef leftPayload leftFacts)
-          (makeSnapshot rightProxy rightRef rightPayload rightFacts)))
+  -> TraceEventStep act
+makeTraceEventStep2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy rightRef rightPayload rightFacts =
+  ctor
+    (makeSnapshot leftProxy leftRef leftPayload leftFacts)
+    (makeSnapshot rightProxy rightRef rightPayload rightFacts)
 
-makeAuditStep3Hetero ::
-     (Traceable first, Traceable second, Traceable third)
-  => (BlockSnapshot first -> BlockSnapshot second -> BlockSnapshot third -> AuditStep
-                                                                              act)
-  -> Proxy first
-  -> BlockRef first
-  -> Payload first
-  -> Facts
-  -> Proxy second
-  -> BlockRef second
-  -> Payload second
-  -> Facts
-  -> Proxy third
-  -> BlockRef third
-  -> Payload third
-  -> Facts
-  -> Explain act
-makeAuditStep3Hetero ctor firstProxy firstRef firstPayload firstFacts secondProxy secondRef secondPayload secondFacts thirdProxy thirdRef thirdPayload thirdFacts =
-  Explain
-    (Ur
-       (ctor
-          (makeSnapshot firstProxy firstRef firstPayload firstFacts)
-          (makeSnapshot secondProxy secondRef secondPayload secondFacts)
-          (makeSnapshot thirdProxy thirdRef thirdPayload thirdFacts)))
-
-makeAuditStep4Hetero ::
-     (Traceable first, Traceable second, Traceable third, Traceable fourth)
-  => (BlockSnapshot first -> BlockSnapshot second -> BlockSnapshot third -> BlockSnapshot
-                                                                              fourth -> AuditStep
-                                                                                          act)
-  -> Proxy first
-  -> BlockRef first
-  -> Payload first
-  -> Facts
-  -> Proxy second
-  -> BlockRef second
-  -> Payload second
-  -> Facts
-  -> Proxy third
-  -> BlockRef third
-  -> Payload third
-  -> Facts
-  -> Proxy fourth
-  -> BlockRef fourth
-  -> Payload fourth
-  -> Facts
-  -> Explain act
-makeAuditStep4Hetero ctor firstProxy firstRef firstPayload firstFacts secondProxy secondRef secondPayload secondFacts thirdProxy thirdRef thirdPayload thirdFacts fourthProxy fourthRef fourthPayload fourthFacts =
-  Explain
-    (Ur
-       (ctor
-          (makeSnapshot firstProxy firstRef firstPayload firstFacts)
-          (makeSnapshot secondProxy secondRef secondPayload secondFacts)
-          (makeSnapshot thirdProxy thirdRef thirdPayload thirdFacts)
-          (makeSnapshot fourthProxy fourthRef fourthPayload fourthFacts)))
-
-explainToAuditStep :: Explain act %1 -> Ur (AuditStep act)
-explainToAuditStep (Explain step) = step
-
-explainTokensToAudit :: ExplainTokens acts %1 -> Ur (Audit acts)
-explainTokensToAudit Done = Ur EmptyAudit
-explainTokensToAudit (explain :~ rest) =
-  case explainToAuditStep explain of
-    Ur step ->
-      case explainTokensToAudit rest of
-        Ur audit -> Ur (step :> audit)
-
-allocateBlock ::
+allocatePersistedBlock ::
      forall payload tag. Traceable tag
   => Proxy tag
   -> Facts
   -> Payload tag
-     %1 -> TraceBuilderWith payload (Ur BlockId, Ur (Payload tag))
-allocateBlock tagProxy facts payload0 =
-  case persistCorePayload payload0 of
-    Ur payload -> do
-      TraceBuilderState (Ur oldNextBlockId) (Ur oldBlocks) oldSteps <- get
-      let blockId = oldNextBlockId
-      let ref' = makeBlockRef tagProxy blockId
-      let snapshot = makeSnapshot tagProxy ref' payload facts
-      let blockRecord = BlockRecord snapshot
-      put
-        (TraceBuilderState
-           (Ur (blockId + 1))
-           (Ur (oldBlocks P.++ [blockRecord]))
-           oldSteps)
-      return (Ur blockId, Ur payload)
+  -> TraceBuilderWith payload (Ur BlockId, Ur (Payload tag))
+allocatePersistedBlock tagProxy facts payload = do
+  TraceBuilderState (Ur oldNextBlockId) (Ur oldBlocks) oldPending oldSteps <-
+    get
+  let blockId = oldNextBlockId
+  let ref' = makeBlockRef tagProxy blockId
+  let snapshot = makeSnapshot tagProxy ref' payload facts
+  let blockRecord = BlockRecord snapshot
+  put
+    (TraceBuilderState
+       (Ur (blockId + 1))
+       (Ur (oldBlocks P.++ [blockRecord]))
+       oldPending
+       oldSteps)
+  return (Ur blockId, Ur payload)
 
 emitStep :: TraceStepWith payload -> TraceBuilderWith payload ()
 emitStep step = do
-  TraceBuilderState oldNext oldBlocks (Ur oldSteps) <- get
-  put (TraceBuilderState oldNext oldBlocks (Ur (oldSteps P.++ [step])))
+  TraceBuilderState oldNext oldBlocks oldPending (Ur oldSteps) <- get
+  put
+    (TraceBuilderState oldNext oldBlocks oldPending (Ur (oldSteps P.++ [step])))
 
-explainWith ::
-     P.String
-  -> payload acts
-  -> ExplainTokens acts
-     %1 -> TraceBuilderWith payload ()
-explainWith label payload explainTokens =
-  case explainTokensToAudit explainTokens of
-    Ur audit -> explainAuditWith label payload audit
+appendPendingTraceEventStep :: TraceEventStep act -> TraceBuilderWith payload ()
+appendPendingTraceEventStep step = do
+  TraceBuilderState oldNext oldBlocks (Ur oldPending) oldSteps <- get
+  put
+    (TraceBuilderState
+       oldNext
+       oldBlocks
+       (Ur (appendPendingAudit oldPending step))
+       oldSteps)
+
+appendPendingAudit :: PendingAudit -> TraceEventStep act -> PendingAudit
+appendPendingAudit pending step =
+  case pending of
+    PendingAudit audit -> PendingAudit (appendAudit audit (step :> EmptyAudit))
+
+type family Append (lhs :: [Type]) (rhs :: [Type]) :: [Type] where
+  Append '[] rhs = rhs
+  Append (act : acts) rhs = act : Append acts rhs
+
+appendAudit :: Audit lhs -> Audit rhs -> Audit (Append lhs rhs)
+appendAudit lhs rhs =
+  case lhs of
+    EmptyAudit   -> rhs
+    step :> rest -> step :> appendAudit rest rhs
+
+checkpoint :: P.String -> TraceBuilder ()
+checkpoint label = checkpointWith label NoStepPayload
+
+checkpointWith ::
+     P.String -> (forall acts. payload acts) -> TraceBuilderWith payload ()
+checkpointWith label payload = do
+  TraceBuilderState oldNext oldBlocks (Ur pending) (Ur oldSteps) <- get
+  case pending of
+    PendingAudit EmptyAudit ->
+      put
+        (TraceBuilderState
+           oldNext
+           oldBlocks
+           (Ur emptyPendingAudit)
+           (Ur oldSteps))
+    PendingAudit audit ->
+      put
+        (TraceBuilderState
+           oldNext
+           oldBlocks
+           (Ur emptyPendingAudit)
+           (Ur (oldSteps P.++ [ExplainedStep label payload audit])))
 
 explainAuditWith ::
      P.String -> payload acts -> Audit acts -> TraceBuilderWith payload ()
@@ -777,14 +746,159 @@ explainAuditWith label payload audit =
 discardAudit :: P.String -> Audit acts -> TraceBuilderWith payload ()
 discardAudit reason audit = emitStep (DiscardedStep reason audit)
 
-discard :: P.String -> ExplainTokens acts %1 -> TraceBuilderWith payload ()
-discard reason explainTokens =
-  case explainTokensToAudit explainTokens of
-    Ur audit -> discardAudit reason audit
+discardPending :: P.String -> TraceBuilderWith payload ()
+discardPending reason = do
+  TraceBuilderState oldNext oldBlocks (Ur pending) (Ur oldSteps) <- get
+  case pending of
+    PendingAudit EmptyAudit ->
+      put
+        (TraceBuilderState
+           oldNext
+           oldBlocks
+           (Ur emptyPendingAudit)
+           (Ur oldSteps))
+    PendingAudit audit ->
+      put
+        (TraceBuilderState
+           oldNext
+           oldBlocks
+           (Ur emptyPendingAudit)
+           (Ur (oldSteps P.++ [DiscardedStep reason audit])))
 
 --------------------------------------------------------------------------------
 -- Primitive operations
 --------------------------------------------------------------------------------
+data SnapshottedBlock tag where
+  SnapshottedBlock :: Block tag %1 -> BlockSnapshot tag -> SnapshottedBlock tag
+
+snapshotBlock ::
+     forall tag. Traceable tag
+  => Block tag
+     %1 -> SnapshottedBlock tag
+snapshotBlock (Block (Ur blockId) (Ur payload) (Ur facts)) =
+  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
+      snapshot = makeSnapshot (Proxy :: Proxy tag) ref' payload facts
+   in SnapshottedBlock (Block (Ur blockId) (Ur payload) (Ur facts)) snapshot
+
+data PendingPayload tag where
+  PendingPayload :: PendingFacts tag %1 -> Payload tag %1 -> PendingPayload tag
+
+pendingPayload :: Pending tag %1 -> PendingPayload tag
+pendingPayload pending =
+  case pending of
+    PendingCreate pendingFacts payload -> PendingPayload pendingFacts payload
+    PendingCopy _source pendingFacts payload ->
+      PendingPayload pendingFacts payload
+    PendingReplace _old pendingFacts payload ->
+      PendingPayload pendingFacts payload
+    PendingApply1 _op _arg pendingFacts payload ->
+      PendingPayload pendingFacts payload
+    PendingApply2 _op _lhs _rhs pendingFacts payload ->
+      PendingPayload pendingFacts payload
+
+pendingFactsOnly :: Facts -> PendingFacts tag
+pendingFactsOnly facts = PendingFacts facts (P.const emptyFacts)
+
+combinedMaterializationFactsFrom ::
+     Facts
+  -> (Payload tag -> Facts)
+  -> Facts
+  -> (Payload tag -> Facts)
+  -> Payload tag
+  -> Facts
+combinedMaterializationFactsFrom materialFacts materialSelect pendingBase pendingSelect payload =
+  factsUnion
+    pendingBase
+    (factsUnion
+       (pendingSelect payload)
+       (factsUnion materialFacts (materialSelect payload)))
+
+materializeOutput ::
+     forall payload tag act. Traceable tag
+  => Materialization tag
+  -> PendingFacts tag
+     %1 -> Payload tag
+     %1 -> (BlockSnapshot tag -> TraceEventStep act)
+  -> TraceBuilderWith payload (Block tag)
+materializeOutput materialization pendingFacts payload0 makeStep =
+  case materialization of
+    Materialization materialFacts materialSelect ->
+      case pendingFacts of
+        PendingFacts pendingBase pendingSelect ->
+          case persistCorePayload payload0 of
+            Ur outputPayload -> do
+              let outputFacts =
+                    combinedMaterializationFactsFrom
+                      materialFacts
+                      materialSelect
+                      pendingBase
+                      pendingSelect
+                      outputPayload
+              (Ur outputId, Ur persistedOutput) <-
+                allocatePersistedBlock
+                  (Proxy :: Proxy tag)
+                  outputFacts
+                  outputPayload
+              let outputRef = makeBlockRef (Proxy :: Proxy tag) outputId
+              let outputSnapshot =
+                    makeSnapshot
+                      (Proxy :: Proxy tag)
+                      outputRef
+                      persistedOutput
+                      outputFacts
+              appendPendingTraceEventStep (makeStep outputSnapshot)
+              return (Block (Ur outputId) (Ur persistedOutput) (Ur outputFacts))
+
+materializeWith ::
+     forall payload tag. Traceable tag
+  => Materialization tag
+  -> Pending tag
+     %1 -> TraceBuilderWith payload (Block tag)
+materializeWith materialization pending =
+  case pending of
+    PendingCreate pendingFacts payload ->
+      materializeOutput materialization pendingFacts payload CreateStep
+    PendingCopy source pendingFacts payload ->
+      materializeOutput materialization pendingFacts payload (CopyStep source)
+    PendingReplace old pendingFacts payload ->
+      materializeOutput materialization pendingFacts payload (ReplaceStep old)
+    PendingApply1 op arg pendingFacts payload ->
+      materializeOutput materialization pendingFacts payload (Apply1Step op arg)
+    PendingApply2 op lhs rhs pendingFacts payload ->
+      materializeOutput
+        materialization
+        pendingFacts
+        payload
+        (Apply2Step op lhs rhs)
+
+materialize ::
+     forall payload tag. Traceable tag
+  => Pending tag
+     %1 -> TraceBuilderWith payload (Block tag)
+materialize = materializeWith commitMaterialization
+
+commit ::
+     forall payload tag. Traceable tag
+  => Pending tag
+     %1 -> TraceBuilderWith payload (Block tag)
+commit = materialize
+
+materializeTagged ::
+     forall payload tag. Traceable tag
+  => Facts
+  -> Pending tag
+     %1 -> TraceBuilderWith payload (Block tag)
+materializeTagged facts = materializeWith (taggedMaterialization facts)
+
+materializeTaggedWith ::
+     forall payload tag. Traceable tag
+  => Facts
+  -> (Payload tag -> Facts)
+  -> Pending tag
+     %1 -> TraceBuilderWith payload (Block tag)
+materializeTaggedWith baseFacts selectFacts =
+  materializeWith (selectedMaterialization baseFacts selectFacts)
+
 create ::
      forall payload tag. Traceable tag
   => Payload tag
@@ -796,24 +910,18 @@ createTagged ::
   => Facts
   -> Payload tag
      %1 -> TraceBuilderWith payload (Created tag)
-createTagged facts payload0 = do
-  (Ur blockId, Ur payload) <- allocateBlock (Proxy :: Proxy tag) facts payload0
-  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  return
-    (Created
-       (Block (Ur blockId) (Ur payload) (Ur facts))
-       (makeAuditStep1 CreateStep (Proxy :: Proxy tag) ref' payload facts))
+createTagged facts payload0 =
+  return (Created (PendingCreate (pendingFactsOnly facts) payload0))
 
 observe ::
      forall payload tag. Traceable tag
   => Block tag
      %1 -> TraceBuilderWith payload (Observed tag)
-observe (Block (Ur blockId) (Ur payload) (Ur facts)) = do
-  let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  return
-    (Observed
-       (Block (Ur blockId) (Ur payload) (Ur facts))
-       (makeAuditStep1 ObserveStep (Proxy :: Proxy tag) ref' payload facts))
+observe block =
+  case snapshotBlock block of
+    SnapshottedBlock nextBlock snapshot -> do
+      appendPendingTraceEventStep (ObserveStep snapshot)
+      return (Observed nextBlock)
 
 use ::
      forall payload tag. Traceable tag
@@ -821,88 +929,42 @@ use ::
      %1 -> TraceBuilderWith payload (Used tag)
 use (Block (Ur blockId) (Ur payload) (Ur facts)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  return
-    (Used
-       (OneUse payload)
-       (makeAuditStep1 UseStep (Proxy :: Proxy tag) ref' payload facts))
+  appendPendingTraceEventStep
+    (makeTraceEventStep1 UseStep (Proxy :: Proxy tag) ref' payload facts)
+  return (Used (OneUse payload))
 
 copy ::
      forall payload tag. Traceable tag
   => Block tag
      %1 -> TraceBuilderWith payload (Copied tag)
-copy (Block (Ur originalId) (Ur payload) (Ur facts)) = do
-  (Ur copyId, Ur copiedPayload) <-
-    allocateBlock (Proxy :: Proxy tag) facts payload
-  let originalRef = makeBlockRef (Proxy :: Proxy tag) originalId
-  let copyRef = makeBlockRef (Proxy :: Proxy tag) copyId
-  return
-    (Copied
-       (Block (Ur originalId) (Ur payload) (Ur facts))
-       (Block (Ur copyId) (Ur copiedPayload) (Ur facts))
-       (makeAuditStep2
-          CopyStep
-          (Proxy :: Proxy tag)
-          originalRef
-          payload
-          facts
-          copyRef
-          copiedPayload
-          facts))
+copy = copyTagged emptyFacts
 
 copyTagged ::
      forall payload tag. Traceable tag
   => Facts
   -> Block tag
      %1 -> TraceBuilderWith payload (Copied tag)
-copyTagged copyFacts (Block (Ur originalId) (Ur payload) (Ur sourceFacts)) = do
-  (Ur copyId, Ur copiedPayload) <-
-    allocateBlock (Proxy :: Proxy tag) copyFacts payload
-  let originalRef = makeBlockRef (Proxy :: Proxy tag) originalId
-  let copyRef = makeBlockRef (Proxy :: Proxy tag) copyId
-  return
-    (Copied
-       (Block (Ur originalId) (Ur payload) (Ur sourceFacts))
-       (Block (Ur copyId) (Ur copiedPayload) (Ur copyFacts))
-       (makeAuditStep2
-          CopyStep
-          (Proxy :: Proxy tag)
-          originalRef
-          payload
-          sourceFacts
-          copyRef
-          copiedPayload
-          copyFacts))
+copyTagged copyFacts block =
+  case snapshotBlock block of
+    SnapshottedBlock original snapshot ->
+      case original of
+        Block (Ur originalId) (Ur payload) (Ur sourceFacts) ->
+          return
+            (Copied
+               (Block (Ur originalId) (Ur payload) (Ur sourceFacts))
+               (PendingCopy snapshot (pendingFactsOnly copyFacts) payload))
 
 replace ::
      forall payload tag. Traceable tag
   => Block tag
-     %1 -> Block tag
+     %1 -> Pending tag
      %1 -> TraceBuilderWith payload (Replaced tag)
-replace oldBlock incomingBlock =
-  case oldBlock of
-    Block (Ur oldId) (Ur oldPayload) (Ur oldFacts) ->
-      case incomingBlock of
-        Block (Ur incomingId) (Ur incomingPayload) (Ur incomingFacts) -> do
-          (Ur outputId, Ur outputPayload) <-
-            allocateBlock (Proxy :: Proxy tag) incomingFacts incomingPayload
-          let oldRef = makeBlockRef (Proxy :: Proxy tag) oldId
-          let incomingRef = makeBlockRef (Proxy :: Proxy tag) incomingId
-          let outputRef = makeBlockRef (Proxy :: Proxy tag) outputId
-          return
-            (Replaced
-               (Block (Ur outputId) (Ur outputPayload) (Ur incomingFacts))
-               (makeAuditStep3
-                  ReplaceStep
-                  (Proxy :: Proxy tag)
-                  oldRef
-                  oldPayload
-                  oldFacts
-                  incomingRef
-                  incomingPayload
-                  incomingFacts
-                  outputRef
-                  outputPayload
-                  incomingFacts))
+replace (Block (Ur oldId) (Ur oldPayload) (Ur oldFacts)) incomingPending =
+  let oldRef = makeBlockRef (Proxy :: Proxy tag) oldId
+      oldSnapshot = makeSnapshot (Proxy :: Proxy tag) oldRef oldPayload oldFacts
+   in case pendingPayload incomingPending of
+        PendingPayload pendingFacts payload ->
+          return (Replaced (PendingReplace oldSnapshot pendingFacts payload))
 
 apply1 ::
      forall payload op arg.
@@ -946,35 +1008,20 @@ apply1TaggedWith baseFacts selectFacts opBlock argBlock =
     Block (Ur opId) (Ur opPayload) (Ur opFacts) ->
       case argBlock of
         Block (Ur argId) (Ur argPayload) (Ur argFacts) ->
-          case persistCorePayload (applyPayload1 opPayload argPayload) of
-            Ur outputPayload0 -> do
-              let facts = factsUnion baseFacts (selectFacts outputPayload0)
-              (Ur outputId, Ur outputPayload) <-
-                allocateBlock
-                  (Proxy :: Proxy (Apply1Result op arg))
-                  facts
-                  outputPayload0
-              let opRef = makeBlockRef (Proxy :: Proxy op) opId
-              let argRef = makeBlockRef (Proxy :: Proxy arg) argId
-              let outputRef =
-                    makeBlockRef (Proxy :: Proxy (Apply1Result op arg)) outputId
-              return
+          let opRef = makeBlockRef (Proxy :: Proxy op) opId
+              argRef = makeBlockRef (Proxy :: Proxy arg) argId
+              opSnapshot =
+                makeSnapshot (Proxy :: Proxy op) opRef opPayload opFacts
+              argSnapshot =
+                makeSnapshot (Proxy :: Proxy arg) argRef argPayload argFacts
+              outputPayload = applyPayload1 opPayload argPayload
+           in return
                 (Applied1
-                   (Block (Ur outputId) (Ur outputPayload) (Ur facts))
-                   (makeAuditStep3Hetero
-                      Apply1Step
-                      (Proxy :: Proxy op)
-                      opRef
-                      opPayload
-                      opFacts
-                      (Proxy :: Proxy arg)
-                      argRef
-                      argPayload
-                      argFacts
-                      (Proxy :: Proxy (Apply1Result op arg))
-                      outputRef
-                      outputPayload
-                      facts))
+                   (PendingApply1
+                      opSnapshot
+                      argSnapshot
+                      (PendingFacts baseFacts selectFacts)
+                      outputPayload))
 
 apply2 ::
      forall payload op lhs rhs.
@@ -1026,43 +1073,24 @@ apply2TaggedWith baseFacts selectFacts opBlock lhsBlock rhsBlock =
         Block (Ur lhsId) (Ur lhsPayload) (Ur lhsFacts) ->
           case rhsBlock of
             Block (Ur rhsId) (Ur rhsPayload) (Ur rhsFacts) ->
-              case persistCorePayload
-                     (applyPayload2 opPayload lhsPayload rhsPayload) of
-                Ur outputPayload0 -> do
-                  let facts = factsUnion baseFacts (selectFacts outputPayload0)
-                  (Ur outputId, Ur outputPayload) <-
-                    allocateBlock
-                      (Proxy :: Proxy (Apply2Result op lhs rhs))
-                      facts
-                      outputPayload0
-                  let opRef = makeBlockRef (Proxy :: Proxy op) opId
-                  let lhsRef = makeBlockRef (Proxy :: Proxy lhs) lhsId
-                  let rhsRef = makeBlockRef (Proxy :: Proxy rhs) rhsId
-                  let outputRef =
-                        makeBlockRef
-                          (Proxy :: Proxy (Apply2Result op lhs rhs))
-                          outputId
-                  return
+              let opRef = makeBlockRef (Proxy :: Proxy op) opId
+                  lhsRef = makeBlockRef (Proxy :: Proxy lhs) lhsId
+                  rhsRef = makeBlockRef (Proxy :: Proxy rhs) rhsId
+                  opSnapshot =
+                    makeSnapshot (Proxy :: Proxy op) opRef opPayload opFacts
+                  lhsSnapshot =
+                    makeSnapshot (Proxy :: Proxy lhs) lhsRef lhsPayload lhsFacts
+                  rhsSnapshot =
+                    makeSnapshot (Proxy :: Proxy rhs) rhsRef rhsPayload rhsFacts
+                  outputPayload = applyPayload2 opPayload lhsPayload rhsPayload
+               in return
                     (Applied2
-                       (Block (Ur outputId) (Ur outputPayload) (Ur facts))
-                       (makeAuditStep4Hetero
-                          Apply2Step
-                          (Proxy :: Proxy op)
-                          opRef
-                          opPayload
-                          opFacts
-                          (Proxy :: Proxy lhs)
-                          lhsRef
-                          lhsPayload
-                          lhsFacts
-                          (Proxy :: Proxy rhs)
-                          rhsRef
-                          rhsPayload
-                          rhsFacts
-                          (Proxy :: Proxy (Apply2Result op lhs rhs))
-                          outputRef
-                          outputPayload
-                          facts))
+                       (PendingApply2
+                          opSnapshot
+                          lhsSnapshot
+                          rhsSnapshot
+                          (PendingFacts baseFacts selectFacts)
+                          outputPayload))
 
 destroy ::
      forall payload tag. Traceable tag
@@ -1070,9 +1098,9 @@ destroy ::
      %1 -> TraceBuilderWith payload (Destroyed tag)
 destroy (Block (Ur blockId) (Ur payload) (Ur facts)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  return
-    (Destroyed
-       (makeAuditStep1 DestroyStep (Proxy :: Proxy tag) ref' payload facts))
+  appendPendingTraceEventStep
+    (makeTraceEventStep1 DestroyStep (Proxy :: Proxy tag) ref' payload facts)
+  return Destroyed
 
 seal ::
      forall payload owner tag. (Traceable owner, Traceable tag)
@@ -1086,20 +1114,21 @@ seal ownerBlock childBlock =
         Block (Ur childId) (Ur childPayload) (Ur childFacts) -> do
           let ownerRef = makeBlockRef (Proxy :: Proxy owner) ownerId
           let childRef = makeBlockRef (Proxy :: Proxy tag) childId
+          appendPendingTraceEventStep
+            (makeTraceEventStep2Hetero
+               SealStep
+               (Proxy :: Proxy owner)
+               ownerRef
+               ownerPayload
+               ownerFacts
+               (Proxy :: Proxy tag)
+               childRef
+               childPayload
+               childFacts)
           return
             (Sealed
                (Block (Ur ownerId) (Ur ownerPayload) (Ur ownerFacts))
-               (Slot (Block (Ur childId) (Ur childPayload) (Ur childFacts)))
-               (makeAuditStep2Hetero
-                  SealStep
-                  (Proxy :: Proxy owner)
-                  ownerRef
-                  ownerPayload
-                  ownerFacts
-                  (Proxy :: Proxy tag)
-                  childRef
-                  childPayload
-                  childFacts))
+               (Slot (Block (Ur childId) (Ur childPayload) (Ur childFacts))))
 
 unseal ::
      forall payload owner tag. (Traceable owner, Traceable tag)
@@ -1115,20 +1144,21 @@ unseal ownerBlock slot =
             Block (Ur childId) (Ur childPayload) (Ur childFacts) -> do
               let ownerRef = makeBlockRef (Proxy :: Proxy owner) ownerId
               let childRef = makeBlockRef (Proxy :: Proxy tag) childId
+              appendPendingTraceEventStep
+                (makeTraceEventStep2Hetero
+                   UnsealStep
+                   (Proxy :: Proxy owner)
+                   ownerRef
+                   ownerPayload
+                   ownerFacts
+                   (Proxy :: Proxy tag)
+                   childRef
+                   childPayload
+                   childFacts)
               return
                 (Unsealed
                    (Block (Ur ownerId) (Ur ownerPayload) (Ur ownerFacts))
-                   (Block (Ur childId) (Ur childPayload) (Ur childFacts))
-                   (makeAuditStep2Hetero
-                      UnsealStep
-                      (Proxy :: Proxy owner)
-                      ownerRef
-                      ownerPayload
-                      ownerFacts
-                      (Proxy :: Proxy tag)
-                      childRef
-                      childPayload
-                      childFacts))
+                   (Block (Ur childId) (Ur childPayload) (Ur childFacts)))
 
 --------------------------------------------------------------------------------
 -- Runner
@@ -1136,6 +1166,9 @@ unseal ownerBlock slot =
 buildGraph :: TraceBuilderWith payload () -> TraceGraphWith payload
 buildGraph builder =
   let (_, finalState) =
-        runState builder (TraceBuilderState (Ur 0) (Ur []) (Ur []))
-      TraceBuilderState (Ur _) (Ur finalBlocks) (Ur finalSteps) = finalState
+        runState
+          builder
+          (TraceBuilderState (Ur 0) (Ur []) (Ur emptyPendingAudit) (Ur []))
+      TraceBuilderState (Ur _) (Ur finalBlocks) _pending (Ur finalSteps) =
+        finalState
    in TraceGraph finalBlocks finalSteps
