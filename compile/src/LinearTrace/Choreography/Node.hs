@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
+{-# LANGUAGE LinearTypes            #-}
 {-# LANGUAGE NoImplicitPrelude      #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE TypeApplications       #-}
@@ -14,8 +15,13 @@
 module LinearTrace.Choreography.Node
   ( ContentValue
   , content
+  , coordPin
+  , spanPin
   , payload
-  , setNodeSpecWith
+  , setNodePatch
+  , substituteCoordBindings
+  , substituteSpanBindings
+  , substituteStyleBindings
   , GroupNode
   , Node
   , node
@@ -65,14 +71,10 @@ import qualified Text.Read                      as Read
 infixr 6 <&>
 content :: ContentValue -> NodeRecipe ()
 content value =
-  setNodeSpecWith
-    (\spec -> spec {nodeSpecContent = Just (contentValueSpec value)})
-
-contentValueSpec :: ContentValue -> ContentSpec
-contentValueSpec value =
-  case value of
-    ContentLiteral textValue -> LiteralContent textValue
-    ContentBinding binding   -> BoundContent binding
+  setNodePatch
+    (\bindings ->
+       VP.emptyNodePatch
+         {VP.nodePatchContent = P.pure (contentMode bindings value)})
 
 payload ::
      forall tag selector. PayloadSelector tag selector
@@ -80,8 +82,8 @@ payload ::
   -> TraceQuery tag
 payload selector = TraceQuery emptyQuery (Just (payloadSelector @tag selector))
 
-setNodeSpecWith :: (NodeSpec -> NodeSpec) -> NodeRecipe ()
-setNodeSpecWith update = NodeRecipe () (update emptyNodeSpec)
+setNodePatch :: (MatchBindings -> VP.NodePatch) -> NodeRecipe ()
+setNodePatch = NodeRecipe ()
 
 data GroupNode
 
@@ -118,44 +120,14 @@ nodePatch :: MatchBindings -> NodeRecipe () -> VP.NodePatch
 nodePatch bindings recipe =
   case recipe of
     NodeRecipe () spec ->
-      VP.NodePatch
-        { VP.nodePatchStyleUpdate =
-            substituteStyleBindings bindings P.. nodeSpecStyleUpdate spec
-        , VP.nodePatchContent =
-            P.fmap (contentMode bindings) (nodeSpecContent spec)
-        , VP.nodePatchLeft =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecLeft spec)
-        , VP.nodePatchTop =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecTop spec)
-        , VP.nodePatchWidth =
-            P.fmap
-              (spanPin P.. substituteSpanBindings bindings)
-              (nodeSpecWidth spec)
-        , VP.nodePatchHeight =
-            P.fmap
-              (spanPin P.. substituteSpanBindings bindings)
-              (nodeSpecHeight spec)
-        , VP.nodePatchRight =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecRight spec)
-        , VP.nodePatchBottom =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecBottom spec)
-        , VP.nodePatchX =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecX spec)
-        , VP.nodePatchY =
-            P.fmap
-              (coordPin P.. substituteCoordBindings bindings)
-              (nodeSpecY spec)
-        }
+      let patch = spec bindings
+       in patch
+            { VP.nodePatchStyleUpdate =
+                \style ->
+                  substituteStyleBindings
+                    bindings
+                    (VP.nodePatchStyleUpdate patch style)
+            }
 
 substituteStyleBindings :: MatchBindings -> VS.NodeStyle -> VS.NodeStyle
 substituteStyleBindings bindings =
@@ -186,11 +158,11 @@ bindingExprSubstitutions bindings =
         Just numericValue ->
           ("global." P.++ name, numericValue) : bindingExprSubstitutions rest
 
-contentMode :: MatchBindings -> ContentSpec -> V.ContentMode
+contentMode :: MatchBindings -> ContentValue -> V.ContentMode
 contentMode bindings spec =
   case spec of
-    LiteralContent value -> V.ContentText value
-    BoundContent binding -> V.ContentText (bindingContent bindings binding)
+    ContentLiteral value   -> V.ContentText value
+    ContentBinding binding -> V.ContentText (bindingContent bindings binding)
 
 bindingContent :: MatchBindings -> Binding -> P.String
 bindingContent bindings binding =

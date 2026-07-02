@@ -43,13 +43,9 @@ module LinearTrace.Choreography.Types
   , CategoryTerm(..)
   , ContentValue(..)
   , text
-  , ContentSpec(..)
-  , NodeSpec(..)
   , NodeRecipe(..)
   , VisualizationResult(..)
   , VisualizationBuilder(..)
-  , emptyNodeSpec
-  , appendNodeSpec
   , preferLater
   , emptyVisualizationBuilder
   , emptyVisualizationBuilderLinear
@@ -68,12 +64,12 @@ import           LinearTrace.Choreography.Match (CategoryEndpoint,
                                                  LayoutRelation, MatchSpec,
                                                  ValueEndpoint, emptyMatchSpec,
                                                  matchSpecAppend)
-import           LinearTrace.Core               (PayloadPattern, Query,
-                                                 QueryInt, labelName, queryAtom,
-                                                 queryInt)
+import           LinearTrace.Core               (MatchBindings, PayloadPattern,
+                                                 Query, QueryInt, labelName,
+                                                 queryAtom, queryInt)
 import qualified LinearTrace.Core               as C
-import           LinearTrace.View               (NodeStyle)
 import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
+import qualified LinearTrace.View.Patch         as VP
 import           LinearTrace.View.Primitives    (LayoutExpr)
 import qualified Prelude                        as P
 import           Prelude.Linear
@@ -204,25 +200,8 @@ text = ContentLiteral
 instance IsString ContentValue where
   fromString = ContentLiteral
 
-data ContentSpec
-  = LiteralContent P.String
-  | BoundContent Binding
-
-data NodeSpec = NodeSpec
-  { nodeSpecStyleUpdate :: NodeStyle -> NodeStyle
-  , nodeSpecContent     :: Maybe ContentSpec
-  , nodeSpecLeft        :: Maybe Coord
-  , nodeSpecTop         :: Maybe Coord
-  , nodeSpecWidth       :: Maybe Span
-  , nodeSpecHeight      :: Maybe Span
-  , nodeSpecRight       :: Maybe Coord
-  , nodeSpecBottom      :: Maybe Coord
-  , nodeSpecX           :: Maybe Coord
-  , nodeSpecY           :: Maybe Coord
-  }
-
 data NodeRecipe a where
-  NodeRecipe :: a %1 -> NodeSpec -> NodeRecipe a
+  NodeRecipe :: a %1 -> (MatchBindings -> VP.NodePatch) -> NodeRecipe a
 
 data VisualizationResult a where
   VisualizationResult :: a %1 -> P.Int -> MatchSpec -> VisualizationResult a
@@ -231,54 +210,18 @@ data VisualizationBuilder a where
   VisualizationBuilder
     :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
-emptyNodeSpec :: NodeSpec
-emptyNodeSpec =
-  NodeSpec
-    { nodeSpecStyleUpdate = P.id
-    , nodeSpecContent = Nothing
-    , nodeSpecLeft = Nothing
-    , nodeSpecTop = Nothing
-    , nodeSpecWidth = Nothing
-    , nodeSpecHeight = Nothing
-    , nodeSpecRight = Nothing
-    , nodeSpecBottom = Nothing
-    , nodeSpecX = Nothing
-    , nodeSpecY = Nothing
-    }
-
-composeStyleUpdates ::
-     (NodeStyle -> NodeStyle)
-  -> (NodeStyle -> NodeStyle)
-  -> NodeStyle
-  -> NodeStyle
-composeStyleUpdates first second style0 = second (first style0)
-
 preferLater :: Maybe a -> Maybe a -> Maybe a
 preferLater earlier later =
   case later of
     Nothing -> earlier
     Just _  -> later
 
-appendNodeSpec :: NodeSpec -> NodeSpec -> NodeSpec
-appendNodeSpec first second =
-  NodeSpec
-    { nodeSpecStyleUpdate =
-        composeStyleUpdates
-          (nodeSpecStyleUpdate first)
-          (nodeSpecStyleUpdate second)
-    , nodeSpecContent =
-        preferLater (nodeSpecContent first) (nodeSpecContent second)
-    , nodeSpecLeft = preferLater (nodeSpecLeft first) (nodeSpecLeft second)
-    , nodeSpecTop = preferLater (nodeSpecTop first) (nodeSpecTop second)
-    , nodeSpecWidth = preferLater (nodeSpecWidth first) (nodeSpecWidth second)
-    , nodeSpecHeight =
-        preferLater (nodeSpecHeight first) (nodeSpecHeight second)
-    , nodeSpecRight = preferLater (nodeSpecRight first) (nodeSpecRight second)
-    , nodeSpecBottom =
-        preferLater (nodeSpecBottom first) (nodeSpecBottom second)
-    , nodeSpecX = preferLater (nodeSpecX first) (nodeSpecX second)
-    , nodeSpecY = preferLater (nodeSpecY first) (nodeSpecY second)
-    }
+appendNodePatch ::
+     (MatchBindings -> VP.NodePatch)
+  -> (MatchBindings -> VP.NodePatch)
+  -> (MatchBindings -> VP.NodePatch)
+appendNodePatch first second bindings =
+  VP.appendNodePatch (first bindings) (second bindings)
 
 bindNodeRecipe :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
 bindNodeRecipe recipe next =
@@ -286,35 +229,35 @@ bindNodeRecipe recipe next =
     NodeRecipe value first ->
       case next value of
         NodeRecipe output second ->
-          NodeRecipe output (appendNodeSpec first second)
+          NodeRecipe output (appendNodePatch first second)
 
 instance DFL.Functor NodeRecipe where
   fmap f recipe =
     case recipe of
-      NodeRecipe value spec -> NodeRecipe (f value) spec
+      NodeRecipe value patch -> NodeRecipe (f value) patch
 
 instance Functor NodeRecipe where
   fmap f recipe =
     case recipe of
-      NodeRecipe value spec -> NodeRecipe (f value) spec
+      NodeRecipe value patch -> NodeRecipe (f value) patch
 
 instance DFL.Applicative NodeRecipe where
-  pure value = NodeRecipe value emptyNodeSpec
+  pure value = NodeRecipe value (P.const VP.emptyNodePatch)
   liftA2 f lhs rhs =
     case lhs of
       NodeRecipe leftValue first ->
         case rhs of
           NodeRecipe rightValue second ->
-            NodeRecipe (f leftValue rightValue) (appendNodeSpec first second)
+            NodeRecipe (f leftValue rightValue) (appendNodePatch first second)
 
 instance Applicative NodeRecipe where
-  pure value = NodeRecipe value emptyNodeSpec
+  pure value = NodeRecipe value (P.const VP.emptyNodePatch)
   liftA2 f lhs rhs =
     case lhs of
       NodeRecipe leftValue first ->
         case rhs of
           NodeRecipe rightValue second ->
-            NodeRecipe (f leftValue rightValue) (appendNodeSpec first second)
+            NodeRecipe (f leftValue rightValue) (appendNodePatch first second)
 
 instance Monad NodeRecipe where
   (>>=) = bindNodeRecipe

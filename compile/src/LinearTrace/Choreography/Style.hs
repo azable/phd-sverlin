@@ -17,6 +17,7 @@ module LinearTrace.Choreography.Style
   ) where
 
 import           Data.Kind                      (Type)
+import           LinearTrace.Choreography.Node  (setNodePatch)
 import           LinearTrace.Choreography.Types
 import           LinearTrace.View               (Angle, BorderStyle, FontFamily,
                                                  FontStyle, FontWeight, Free,
@@ -26,6 +27,7 @@ import           LinearTrace.View.Access        (HslPart (..),
                                                  styleChoiceValueAccess,
                                                  styleColorPartValueAccess,
                                                  styleValueAccess)
+import qualified LinearTrace.View.Patch         as VP
 import           LinearTrace.View.Primitives    (Color)
 import           LinearTrace.View.Style         (Alpha, Fill, FontSize, Opacity,
                                                  Padding, Radius, Stroke,
@@ -40,7 +42,8 @@ data StyleChoice value
   | VariableStyle (S.Choice value)
 
 setStyleWith :: (VS.NodeStyle -> VS.NodeStyle) -> NodeRecipe ()
-setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
+setStyleWith update =
+  setNodePatch (P.const VP.emptyNodePatch {VP.nodePatchStyleUpdate = update})
 
 style ::
      forall field. (VS.StyleField field, StyleFieldInput field)
@@ -93,9 +96,8 @@ styleChoiceInput ::
      S.ChoiceDomain value => StyleChoice value -> S.ChoiceValue value
 styleChoiceInput input =
   case input of
-    FixedStyle value -> S.Fixed value
-    VariableStyle selected ->
-      S.Variable selected
+    FixedStyle value       -> S.Fixed value
+    VariableStyle selected -> S.Variable selected
 
 instance StyleFieldInput FontFamily where
   type StyleInputValue FontFamily = StyleChoice FontFamily

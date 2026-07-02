@@ -48,13 +48,17 @@ module LinearTrace.Choreography.Layout
   ) where
 
 import           Control.Functor.Linear         hiding ((<$>), (<&>), (<*>))
-import           LinearTrace.Choreography.Node  (setNodeSpecWith)
+import           LinearTrace.Choreography.Node  (coordPin, setNodePatch,
+                                                 spanPin,
+                                                 substituteCoordBindings,
+                                                 substituteSpanBindings)
 import           LinearTrace.Choreography.Types
-import           LinearTrace.Core               (QueryInt (..), queryIntAdd,
-                                                 queryIntConst)
+import           LinearTrace.Core               (MatchBindings, QueryInt (..),
+                                                 queryIntAdd, queryIntConst)
 import qualified LinearTrace.View               as V
 import           LinearTrace.View.Access        (LayoutAttr (..),
                                                  layoutValueAccess)
+import qualified LinearTrace.View.Patch         as VP
 import           LinearTrace.View.Primitives    (Bounds (..), BoundsExpr,
                                                  LayoutExpr, Unit)
 import qualified Prelude                        as P
@@ -387,22 +391,30 @@ class Center input where
   center :: input -> CenterOutput input
 
 instance Left Coord (NodeRecipe ()) where
-  left value = setNodeSpecWith (\spec -> spec {nodeSpecLeft = Just value})
+  left =
+    setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchLeft = maybePin})
 
 instance Top Coord (NodeRecipe ()) where
-  top value = setNodeSpecWith (\spec -> spec {nodeSpecTop = Just value})
+  top =
+    setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchTop = maybePin})
 
 instance Width Span (NodeRecipe ()) where
-  width value = setNodeSpecWith (\spec -> spec {nodeSpecWidth = Just value})
+  width =
+    setPin spanValuePin (\spec maybePin -> spec {VP.nodePatchWidth = maybePin})
 
 instance Height Span (NodeRecipe ()) where
-  height value = setNodeSpecWith (\spec -> spec {nodeSpecHeight = Just value})
+  height =
+    setPin spanValuePin (\spec maybePin -> spec {VP.nodePatchHeight = maybePin})
 
 instance Right Coord (NodeRecipe ()) where
-  right value = setNodeSpecWith (\spec -> spec {nodeSpecRight = Just value})
+  right =
+    setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchRight = maybePin})
 
 instance Bottom Coord (NodeRecipe ()) where
-  bottom value = setNodeSpecWith (\spec -> spec {nodeSpecBottom = Just value})
+  bottom =
+    setPin
+      coordValuePin
+      (\spec maybePin -> spec {VP.nodePatchBottom = maybePin})
 
 instance Left (Selected tag) (SelectionValue Coord tag) where
   left selection = SelectionValue selection (layoutValueAccess AttrLeft)
@@ -423,10 +435,10 @@ instance Bottom (Selected tag) (SelectionValue Coord tag) where
   bottom selection = SelectionValue selection (layoutValueAccess AttrBottom)
 
 instance X Coord (NodeRecipe ()) where
-  x value = setNodeSpecWith (\spec -> spec {nodeSpecX = Just value})
+  x = setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchX = maybePin})
 
 instance Y Coord (NodeRecipe ()) where
-  y value = setNodeSpecWith (\spec -> spec {nodeSpecY = Just value})
+  y = setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchY = maybePin})
 
 instance X (Selected tag) (SelectionValue Coord tag) where
   x selection = SelectionValue selection (layoutValueAccess AttrCenterX)
@@ -457,3 +469,18 @@ bounds value =
       left (mkCoord leftExpr [])
       width (mkSpan widthExpr [])
       height (mkSpan heightExpr [])
+
+coordValuePin :: MatchBindings -> Coord -> VP.LayoutPin
+coordValuePin bindings = coordPin P.. substituteCoordBindings bindings
+
+spanValuePin :: MatchBindings -> Span -> VP.LayoutPin
+spanValuePin bindings = spanPin P.. substituteSpanBindings bindings
+
+setPin ::
+     (MatchBindings -> value -> VP.LayoutPin)
+  -> (VP.NodePatch -> Maybe VP.LayoutPin -> VP.NodePatch)
+  -> value
+  -> NodeRecipe ()
+setPin toPin setField value =
+  setNodePatch
+    (\bindings -> setField VP.emptyNodePatch (P.pure (toPin bindings value)))
