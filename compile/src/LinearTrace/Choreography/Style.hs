@@ -1,11 +1,11 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Type-applied choreography style API. This module translates public DSL
 -- style fields into view style updates and selected-field accessors.
@@ -16,26 +16,51 @@ module LinearTrace.Choreography.Style
   , sat
   ) where
 
-import           Data.Kind                      (Type)
-import           LinearTrace.Choreography.Node  (setNodePatch)
-import           LinearTrace.Choreography.Types
-import           LinearTrace.View               (Angle, BorderStyle, FontFamily,
-                                                 FontStyle, FontWeight, Free,
-                                                 Hsl (..), TextAlign, Unit,
-                                                 WhiteSpace)
-import           LinearTrace.View.Access        (HslPart (..),
-                                                 styleChoiceValueAccess,
-                                                 styleColorPartValueAccess,
-                                                 styleValueAccess)
-import qualified LinearTrace.View.Patch         as VP
-import           LinearTrace.View.Primitives    (Color)
-import           LinearTrace.View.Style         (Alpha, Fill, FontSize, Opacity,
-                                                 Padding, Radius, Stroke,
-                                                 StrokeWidth, ZIndex)
-import qualified LinearTrace.View.Style         as VS
-import qualified Prelude                        as P
-import           Prelude.Linear
-import qualified Solver                         as S
+import Data.Kind (Type)
+import LinearTrace.Choreography.Node
+  ( NodeRecipe
+  , Selected(..)
+  , SelectionCategory(..)
+  , SelectionValue(..)
+  , Span
+  , setNodePatch
+  , spanExpr
+  )
+import LinearTrace.View
+  ( Angle
+  , BorderStyle
+  , FontFamily
+  , FontStyle
+  , FontWeight
+  , Free
+  , Hsl(..)
+  , TextAlign
+  , Unit
+  , WhiteSpace
+  )
+import LinearTrace.View.Access
+  ( HslPart(..)
+  , styleChoiceValueAccess
+  , styleColorPartValueAccess
+  , styleValueAccess
+  )
+import qualified LinearTrace.View.Patch as VP
+import LinearTrace.View.Primitives (Color)
+import LinearTrace.View.Style
+  ( Alpha
+  , Fill
+  , FontSize
+  , Opacity
+  , Padding
+  , Radius
+  , Stroke
+  , StrokeWidth
+  , ZIndex
+  )
+import qualified LinearTrace.View.Style as VS
+import qualified Prelude as P
+import Prelude.Linear
+import qualified Solver as S
 
 data StyleChoice value
   = FixedStyle value
@@ -96,7 +121,7 @@ styleChoiceInput ::
      S.ChoiceDomain value => StyleChoice value -> S.ChoiceValue value
 styleChoiceInput input =
   case input of
-    FixedStyle value       -> S.Fixed value
+    FixedStyle value -> S.Fixed value
     VariableStyle selected -> S.Variable selected
 
 instance StyleFieldInput FontFamily where

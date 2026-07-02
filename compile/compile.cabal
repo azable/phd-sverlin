@@ -92,7 +92,6 @@ library
         LinearTrace.Choreography.Node
         LinearTrace.Choreography.Style
         LinearTrace.Choreography.Trace
-        LinearTrace.Choreography.Types
         LinearTrace.Choreography.Variable
         LinearTrace.Core.Internal
         LinearTrace.Core.Query

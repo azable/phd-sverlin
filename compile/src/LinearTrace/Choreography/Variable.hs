@@ -1,7 +1,7 @@
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Symbolic variables and reusable visualization bindings.
 module LinearTrace.Choreography.Variable
@@ -13,14 +13,25 @@ module LinearTrace.Choreography.Variable
   , choice
   ) where
 
-import           LinearTrace.Choreography.Layout (mkCoord, mkOffset, mkScalar,
-                                                  mkSpan)
-import           LinearTrace.Choreography.Types
-import           LinearTrace.Core                (QueryInt, queryIntVar)
-import qualified LinearTrace.View                as V
-import           LinearTrace.View.Primitives     (LayoutExpr)
-import qualified Prelude                         as P
-import qualified Solver                          as S
+import LinearTrace.Choreography.Layout (mkCoord, mkOffset, mkScalar, mkSpan)
+import LinearTrace.Choreography.Node
+  ( Binding(..)
+  , Bound(..)
+  , ContentValue(..)
+  , Coord
+  , Offset
+  , Scalar
+  , Span
+  , Variable(..)
+  , VisualizationBuilder
+  , emptyVisualizationBuilder
+  , freshVisualizationValue
+  )
+import LinearTrace.Core (QueryInt, queryIntVar)
+import qualified LinearTrace.View as V
+import LinearTrace.View.Primitives (LayoutExpr)
+import qualified Prelude as P
+import qualified Solver as S
 
 class VariableValue value where
   namedVariable :: P.String -> value

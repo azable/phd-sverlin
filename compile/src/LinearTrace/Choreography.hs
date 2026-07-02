@@ -85,7 +85,7 @@ module LinearTrace.Choreography
     -- | Compiled query/patch/constraint rules consumed by the view graph
     -- builder.
     MatchSpec
-  , -- * Re-exported from LinearTrace.Choreography.Types
+  , -- * Re-exported from LinearTrace.Choreography.Node
     -- | Shared choreography handles, selections, recipes, variables, and DSL
     -- values.
     TraceQuery
@@ -218,7 +218,6 @@ import           LinearTrace.Choreography.Match      (MatchSpec)
 import           LinearTrace.Choreography.Node
 import           LinearTrace.Choreography.Style
 import           LinearTrace.Choreography.Trace
-import           LinearTrace.Choreography.Types
 import           LinearTrace.Choreography.Variable
 import           LinearTrace.Core                    hiding (apply1, apply2,
                                                       checkpoint, commit, copy,

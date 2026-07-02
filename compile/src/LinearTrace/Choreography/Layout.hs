@@ -1,10 +1,10 @@
-{-# LANGUAGE FlexibleContexts       #-}
-{-# LANGUAGE FlexibleInstances      #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE NoImplicitPrelude      #-}
-{-# LANGUAGE RebindableSyntax       #-}
-{-# LANGUAGE TypeFamilies           #-}
-{-# LANGUAGE UndecidableInstances   #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RebindableSyntax #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Layout values, arithmetic, and geometry accessors for choreography.
 module LinearTrace.Choreography.Layout
@@ -47,26 +47,52 @@ module LinearTrace.Choreography.Layout
   , mkScalar
   ) where
 
-import           Control.Functor.Linear         hiding ((<$>), (<&>), (<*>))
-import           LinearTrace.Choreography.Node  (coordPin, setNodePatch,
-                                                 spanPin,
-                                                 substituteCoordBindings,
-                                                 substituteSpanBindings)
-import           LinearTrace.Choreography.Types
-import           LinearTrace.Core               (MatchBindings, QueryInt (..),
-                                                 queryIntAdd, queryIntConst)
-import qualified LinearTrace.View               as V
-import           LinearTrace.View.Access        (LayoutAttr (..),
-                                                 layoutValueAccess)
-import qualified LinearTrace.View.Patch         as VP
-import           LinearTrace.View.Primitives    (Bounds (..), BoundsExpr,
-                                                 LayoutExpr, Unit)
-import qualified Prelude                        as P
-import           Prelude.Linear                 hiding (fromInteger,
-                                                 fromRational, (*), (+), (-),
-                                                 (/), (<>))
-import qualified Solver                         as S
-import           Solver                         (Vec2 (..), vec2)
+import Control.Functor.Linear hiding ((<$>), (<&>), (<*>))
+import LinearTrace.Choreography.Node
+  ( Coord
+  , LayoutValue(..)
+  , NodeRecipe
+  , Offset
+  , Scalar
+  , Selected(..)
+  , SelectionValue(..)
+  , Span
+  , coordConstraints
+  , coordExpr
+  , coordPin
+  , offsetConstraints
+  , offsetExpr
+  , scalarConstraints
+  , scalarExpr
+  , setNodePatch
+  , spanConstraints
+  , spanExpr
+  , spanPin
+  , substituteCoordBindings
+  , substituteSpanBindings
+  )
+import LinearTrace.Core
+  ( MatchBindings
+  , QueryInt(..)
+  , queryIntAdd
+  , queryIntConst
+  )
+import qualified LinearTrace.View as V
+import LinearTrace.View.Access (LayoutAttr(..), layoutValueAccess)
+import qualified LinearTrace.View.Patch as VP
+import LinearTrace.View.Primitives (Bounds(..), BoundsExpr, LayoutExpr, Unit)
+import qualified Prelude as P
+import Prelude.Linear hiding
+  ( (*)
+  , (+)
+  , (-)
+  , (/)
+  , (<>)
+  , fromInteger
+  , fromRational
+  )
+import qualified Solver as S
+import Solver (Vec2(..), vec2)
 
 nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr

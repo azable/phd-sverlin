@@ -1,13 +1,16 @@
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE NoImplicitPrelude    #-}
-{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Visual constraint and relation operators for choreography.
 module LinearTrace.Choreography.Constraint
   ( ensure
+  , CategoryTerm(..)
   , encourage
+  , ValueTerm(..)
+  , VisualConstraint(..)
   , (.<=.)
   , (.>=.)
   , (.==.)
@@ -17,28 +20,70 @@ module LinearTrace.Choreography.Constraint
   , (/=)
   ) where
 
-import           LinearTrace.Choreography.Match (CategoryEndpoint,
-                                                 CategoryRelation (..),
-                                                 ConstraintStrength (..),
-                                                 LayoutRelation (..), MatchSpec,
-                                                 NodeSelection, ValueEndpoint,
-                                                 emptyMatchSpec,
-                                                 matchCategoryRelation,
-                                                 matchSpecAppend,
-                                                 matchValueDirectedBridge,
-                                                 matchValueRelation,
-                                                 matchValueSymmetricBridge,
-                                                 rawCategoryEndpoint,
-                                                 rawValueEndpoint,
-                                                 selectionCategoryEndpoint,
-                                                 selectionValueEndpoint)
-import           LinearTrace.Choreography.Node  (nodeSelection)
-import           LinearTrace.Choreography.Types
-import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
-import           LinearTrace.View.Primitives    (Hsl (..))
-import qualified Prelude                        as P
-import qualified Solver                         as S
-import           Solver                         (Vec2 (..))
+import LinearTrace.Choreography.Match
+  ( CategoryEndpoint
+  , CategoryRelation(..)
+  , ConstraintStrength(..)
+  , LayoutRelation(..)
+  , MatchSpec
+  , NodeSelection
+  , ValueEndpoint
+  , emptyMatchSpec
+  , matchCategoryRelation
+  , matchSpecAppend
+  , matchValueDirectedBridge
+  , matchValueRelation
+  , matchValueSymmetricBridge
+  , rawCategoryEndpoint
+  , rawValueEndpoint
+  , selectionCategoryEndpoint
+  , selectionValueEndpoint
+  )
+import LinearTrace.Choreography.Node
+  ( Coord
+  , Offset
+  , Scalar
+  , Selected(..)
+  , Selection(..)
+  , SelectionCategory(..)
+  , SelectionValue(..)
+  , Span
+  , VisualizationBuilder
+  , coordConstraints
+  , coordExpr
+  , emitVisualizationBuilder
+  , nodeSelection
+  , offsetConstraints
+  , offsetExpr
+  , scalarConstraints
+  , scalarExpr
+  , spanConstraints
+  , spanExpr
+  )
+import LinearTrace.View.Access (CategoryAccess, ValueAccess)
+import LinearTrace.View.Primitives (Hsl(..))
+import qualified Prelude as P
+import qualified Solver as S
+import Solver (Vec2(..))
+
+data VisualConstraint where
+  VisualValueRelation
+    :: ValueTerm -> LayoutRelation -> ValueTerm -> VisualConstraint
+  VisualCategoryRelation
+    :: S.ChoiceDomain value=> CategoryTerm value
+    -> CategoryRelation
+    -> CategoryTerm value
+    -> VisualConstraint
+  VisualDirectedBridge
+    :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
+  VisualSymmetricBridge
+    :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
+
+data ValueTerm =
+  ValueTerm MatchSpec [ValueEndpoint]
+
+data CategoryTerm value =
+  CategoryTerm MatchSpec [CategoryEndpoint value]
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -82,8 +127,7 @@ fixedCategoryTerm = rawCategoryTerm P.. S.Fixed
 
 variableCategoryTerm ::
      S.ChoiceDomain value => S.Choice value -> CategoryTerm value
-variableCategoryTerm value =
-  rawCategoryTerm (S.Variable value)
+variableCategoryTerm value = rawCategoryTerm (S.Variable value)
 
 selectedCategoryValueTerm :: SelectionCategory value tag -> CategoryTerm value
 selectedCategoryValueTerm selected =
@@ -172,8 +216,7 @@ instance S.ChoiceDomain value => RelateValues (S.Choice value) value where
   relateValues relation lhs rhs =
     relateCategories relation (variableCategoryTerm lhs) (fixedCategoryTerm rhs)
 
-instance S.ChoiceDomain value =>
-         RelateValues (S.Choice value) (S.Choice value) where
+instance S.ChoiceDomain value => RelateValues (S.Choice value) (S.Choice value) where
   relateValues relation lhs rhs =
     relateCategories
       relation

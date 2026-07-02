@@ -89,9 +89,6 @@ exampleSpec =
 example :: Choreography ()
 example = linearSearch (searchInput exampleSpec)
 
-run :: Choreography () -> VisualTraceGraph
-run = runChoreographyWith visualization
-
 searchInput :: ExampleSpec -> SearchInput
 searchInput spec =
   case spec of
@@ -218,9 +215,10 @@ compareValues targetProbe elementProbe = do
 --------------------------------------------------------------------------------
 -- Visualisation
 --------------------------------------------------------------------------------
-visualization :: MatchSpec
-visualization =
-  visualize $ do
+run :: Choreography () -> VisualTraceGraph
+run =
+  runChoreographyWith
+    $ visualize $ do
     -- Geometry uses relative relationships only; the view layer already keeps
     -- every node on-canvas, so the solver can vary placement between runs.
     Variable cell <- variable @Span
