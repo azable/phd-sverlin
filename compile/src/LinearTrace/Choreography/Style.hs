@@ -37,7 +37,7 @@ import qualified Solver                         as S
 
 data StyleChoice value
   = FixedStyle value
-  | VariableStyle (Categorical value)
+  | VariableStyle (S.Choice value)
 
 setStyleWith :: (VS.NodeStyle -> VS.NodeStyle) -> NodeRecipe ()
 setStyleWith update = NodeRecipe () emptyNodeSpec {nodeSpecStyleUpdate = update}
@@ -95,8 +95,7 @@ styleChoiceInput input =
   case input of
     FixedStyle value -> S.Fixed value
     VariableStyle selected ->
-      case selected of
-        Categorical choice -> S.Variable choice
+      S.Variable selected
 
 instance StyleFieldInput FontFamily where
   type StyleInputValue FontFamily = StyleChoice FontFamily

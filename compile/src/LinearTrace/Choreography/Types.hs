@@ -34,7 +34,6 @@ module LinearTrace.Choreography.Types
   , NodeRef(..)
   , Selected(..)
   , Variable(..)
-  , Categorical(..)
   , Bound(..)
   , NodeBinding(..)
   , SelectionValue(..)
@@ -163,9 +162,6 @@ data Selected tag where
 
 data Variable a where
   Variable :: a %Many -> Variable a
-
-newtype Categorical value =
-  Categorical (S.Choice value)
 
 data Bound a where
   Bound :: a %Many -> Bound a

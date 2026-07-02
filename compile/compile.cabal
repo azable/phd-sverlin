@@ -85,10 +85,15 @@ library
         LinearTrace.Compile
 
     other-modules:
+        LinearTrace.Choreography.Constraint
+        LinearTrace.Choreography.Graph
+        LinearTrace.Choreography.Layout
         LinearTrace.Choreography.Match
         LinearTrace.Choreography.Node
         LinearTrace.Choreography.Style
+        LinearTrace.Choreography.Trace
         LinearTrace.Choreography.Types
+        LinearTrace.Choreography.Variable
         LinearTrace.Core.Internal
         LinearTrace.Core.Query
         LinearTrace.View
