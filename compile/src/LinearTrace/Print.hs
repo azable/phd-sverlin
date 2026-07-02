@@ -150,20 +150,24 @@ renderReport supportsAnsi box =
 -- Graph rendering
 --------------------------------------------------------------------------------
 graphBox :: TraceGraphWith payload -> Box.Box
-graphBox (TraceGraph blocks steps) =
+graphBox (TraceGraph blocks steps pending) =
   sections
-    [ sectionBox "Graph" (summaryBox blocks steps)
+    [ sectionBox "Graph" (summaryBox blocks steps pending)
     , blocksBox blocks
-    , stepsBox steps
+    , stepsBox steps pending
     ]
 
 traceBox :: TraceGraphWith payload -> Box.Box
-traceBox (TraceGraph _ steps) = stepsBox steps
+traceBox (TraceGraph _ steps pending) = stepsBox steps pending
 
-summaryBox :: [BlockRecord] -> [TraceStepWith payload] -> Box.Box
-summaryBox blocks steps =
+summaryBox ::
+     [BlockRecord] -> [TraceStepWith payload] -> PendingEvents -> Box.Box
+summaryBox blocks steps pending =
   linesBox
-    ["Blocks: " ++ show (length blocks), "Steps: " ++ show (length steps)]
+    [ "Blocks: " ++ show (length blocks)
+    , "Steps: " ++ show (length steps)
+    , "Pending events: " ++ show (pendingEventCount pending)
+    ]
 
 --------------------------------------------------------------------------------
 -- Solution rendering
@@ -451,22 +455,38 @@ indentedViewNodeBox node =
 --------------------------------------------------------------------------------
 -- Steps
 --------------------------------------------------------------------------------
-stepsBox :: [TraceStepWith payload] -> Box.Box
-stepsBox steps =
-  sectionBox "Steps" $ spacedVcat $ zipWith stepBox [0 :: Int ..] steps
+stepsBox :: [TraceStepWith payload] -> PendingEvents -> Box.Box
+stepsBox steps pending =
+  sectionBox "Steps"
+    $ spacedVcat
+    $ zipWith stepBox [0 :: Int ..] steps
+        ++ pendingStepBoxes (length steps) pending
 
 stepBox :: Int -> TraceStepWith payload -> Box.Box
 stepBox ix step =
   case step of
-    ExplainedStep label _payload audit -> labelledStepBox ix label audit
-    DiscardedStep reason audit ->
-      labelledStepBox ix ("Discarded: " ++ reason) audit
+    CheckpointStep label _payload events -> labelledStepBox ix label events
+    DiscardedStep reason events ->
+      labelledStepBox ix ("Discarded: " ++ reason) events
 
-labelledStepBox :: Int -> String -> Audit acts -> Box.Box
-labelledStepBox ix label audit =
-  case audit of
-    EmptyAudit -> stepHeaderBox ix label
-    _          -> tightVcat [stepHeaderBox ix label, auditBox audit]
+pendingStepBoxes :: Int -> PendingEvents -> [Box.Box]
+pendingStepBoxes ix pending =
+  case pending of
+    PendingEvents events ->
+      case events of
+        TraceEventSteps [] -> []
+        _ -> [labelledStepBox ix "Pending after last checkpoint" events]
+
+pendingEventCount :: PendingEvents -> Int
+pendingEventCount pending =
+  case pending of
+    PendingEvents (TraceEventSteps events) -> length events
+
+labelledStepBox :: Int -> String -> TraceEventSteps -> Box.Box
+labelledStepBox ix label events =
+  case events of
+    TraceEventSteps [] -> stepHeaderBox ix label
+    _ -> tightVcat [stepHeaderBox ix label, traceEventStepsBox events]
 
 stepHeaderBox :: Int -> String -> Box.Box
 stepHeaderBox ix label =
@@ -477,18 +497,14 @@ stepHeaderBox ix label =
     ]
 
 --------------------------------------------------------------------------------
--- Audit rendering
+-- Event rendering
 --------------------------------------------------------------------------------
-auditBox :: Audit acts -> Box.Box
-auditBox audit =
-  case audit of
-    EmptyAudit -> Box.nullBox
-    step :> rest ->
-      case rest of
-        EmptyAudit -> traceEventStepBox step
-        _          -> tightVcat [traceEventStepBox step, auditBox rest]
+traceEventStepsBox :: TraceEventSteps -> Box.Box
+traceEventStepsBox eventSteps =
+  case eventSteps of
+    TraceEventSteps steps -> tightVcat (map traceEventStepBox steps)
 
-traceEventStepBox :: TraceEventStep act -> Box.Box
+traceEventStepBox :: TraceEventStep -> Box.Box
 traceEventStepBox step =
   case step of
     CreateStep snapshot -> snapshotStep1Box createStyle snapshot
@@ -581,7 +597,7 @@ renderViewLabel :: V.ViewLabel -> String
 renderViewLabel = V.viewLabelKind
 
 viewStepLabelBox :: Int -> String -> Box.Box
-viewStepLabelBox ix label = labelledStepBox ix label EmptyAudit
+viewStepLabelBox ix label = labelledStepBox ix label emptyTraceEventSteps
 
 renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView kind) = kind

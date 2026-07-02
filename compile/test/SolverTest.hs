@@ -114,6 +114,8 @@ choreographyBridgeTests =
     , testCase "unmaterialized copy collapses through replace"
         $ ChoreographyFixtures.pendingReplaceEventNames
             @?= ["replace", "destroy"]
+    , testCase "tail events remain available for graph diagnostics"
+        $ ChoreographyFixtures.pendingTailEventNames @?= ["destroy"]
     ]
 
 oneUseBool :: OneUse (LBool tag) %1 -> Bool

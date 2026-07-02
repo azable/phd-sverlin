@@ -18,6 +18,7 @@ module Choreography.TestFixtures
   , groupStats
   , pendingMaterializedStepCount
   , pendingReplaceEventNames
+  , pendingTailEventNames
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
     categoricalRelationGraph
@@ -56,6 +57,10 @@ pendingReplaceEventNames =
     _created:replaced:_ -> eventNames (CoreEvents.traceStepEventLog replaced)
     _                   -> []
 
+pendingTailEventNames :: [P.String]
+pendingTailEventNames =
+  eventNames (CoreEvents.traceGraphPendingEventLog pendingTailGraph)
+
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
 
@@ -82,40 +87,49 @@ buildGraph spec = buildViewGraph (runChoreographyWith spec fixture)
 
 fixture :: Choreography ()
 fixture = do
-  Created firstPending <- create @TestValue (LInt 7)
+  Create firstPending <- create @TestValue (LInt 7)
   first <- materialize #item firstPending
-  Created secondPending <- create @TestValue (LInt 8)
+  Create secondPending <- create @TestValue (LInt 8)
   second <- materialize #item secondPending
   checkpoint "created"
-  Destroyed <- destroy first
-  Destroyed <- destroy second
+  Destroy <- destroy first
+  Destroy <- destroy second
   checkpoint "destroyed"
 
 pendingMaterializedGraph :: Core.TraceGraph
 pendingMaterializedGraph =
   Core.buildGraph $ do
-    Core.Created pending <- Core.create (LInt 1 :: LInt TestValue)
+    Core.Create pending <- Core.create (LInt 1 :: LInt TestValue)
     block <- Core.materialize pending
-    Core.Destroyed <- Core.destroy block
+    Core.Destroy <- Core.destroy block
     Core.checkpoint "done"
 
 pendingReplaceGraph :: Core.TraceGraph
 pendingReplaceGraph =
   Core.buildGraph $ do
-    Core.Created pending <- Core.create (LInt 1 :: LInt TestValue)
+    Core.Create pending <- Core.create (LInt 1 :: LInt TestValue)
     block <- Core.materialize pending
     Core.checkpoint "created"
-    Core.Copied original copied <- Core.copy block
-    Core.Replaced replaced <- Core.replace original copied
+    Core.Copy original copied <- Core.copy block
+    Core.Replace replaced <- Core.replace original copied
     next <- Core.materialize replaced
-    Core.Destroyed <- Core.destroy next
+    Core.Destroy <- Core.destroy next
     Core.checkpoint "replaced"
+
+pendingTailGraph :: Core.TraceGraph
+pendingTailGraph =
+  Core.buildGraph $ do
+    Core.Create pending <- Core.create (LInt 1 :: LInt TestValue)
+    block <- Core.materialize pending
+    Core.checkpoint "created"
+    Core.Destroy <- Core.destroy block
+    return ()
 
 eventNames :: CoreEvents.EventLog -> [P.String]
 eventNames =
   CoreEvents.foldEventLog (\names event -> names P.++ [traceEventName event]) []
 
-traceEventName :: CoreEvents.TraceEvent act -> P.String
+traceEventName :: CoreEvents.TraceEvent -> P.String
 traceEventName event =
   case event of
     CoreEvents.TraceCreate _    -> "create"

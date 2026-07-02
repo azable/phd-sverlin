@@ -127,7 +127,7 @@ data ComparedValues where
 
 linearSearch :: SearchInput %1 -> Choreography ()
 linearSearch (SearchInput targetPayload valuePayloads) = do
-  Created targetPending <- create targetPayload
+  Create targetPending <- create targetPayload
   target <- materialize (#target <&> #source) targetPending
   checkpoint "Create target"
   elements <- createElements valuePayloads
@@ -142,7 +142,7 @@ createElementsFrom index inputs =
   case inputs of
     NoInputValues -> return NoElements
     MoreInputValue valuePayload rest -> do
-      Created elementPending <- create valuePayload
+      Create elementPending <- create valuePayload
       element <- materialize (#array <&> #index index) elementPending
       checkpoint "Create element"
       elements <- createElementsFrom (index + 1) rest
@@ -175,7 +175,7 @@ searchIteration target elements =
 
 destroySearchResult :: Block Value %1 -> Elements %1 -> Choreography ()
 destroySearchResult target elements = do
-  Destroyed <- destroy target
+  Destroy <- destroy target
   destroyElements elements
   checkpoint "Search complete"
 
@@ -184,31 +184,31 @@ destroyElements elements =
   case elements of
     NoElements -> return ()
     MoreElement _ element rest -> do
-      Destroyed <- destroy element
+      Destroy <- destroy element
       destroyElements rest
 
 markProcessed :: Int -> Block Value %1 -> Choreography (Block Value)
 markProcessed index element = do
-  Copied original processedPending <- copy element
-  Replaced processedPending' <- replace original processedPending
+  Copy original processedPending <- copy element
+  Replace processedPending' <- replace original processedPending
   materialize (#array <&> #processed <&> #index index) processedPending'
 
 prepareComparison ::
      Block Value %1 -> Int -> Block Value %1 -> Choreography PreparedComparison
 prepareComparison target index element = do
-  Copied targetAfter targetProbePending <- copy target
+  Copy targetAfter targetProbePending <- copy target
   targetProbe <- materialize (#target <&> #probe) targetProbePending
-  Copied elementAfter elementProbePending <- copy element
+  Copy elementAfter elementProbePending <- copy element
   elementProbe <- materialize (#index index <&> #probe) elementProbePending
   return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
 
 compareValues :: Block Value %1 -> Block Value %1 -> Choreography ComparedValues
 compareValues targetProbe elementProbe = do
-  Created equalPending <- create @EqualValue (LOperator EqualValue)
+  Create equalPending <- create @EqualValue (LOperator EqualValue)
   equalOp <- materialize #operator equalPending
-  Applied2 matchPending <- apply2 equalOp targetProbe elementProbe
+  Apply2 matchPending <- apply2 equalOp targetProbe elementProbe
   matchBlock <- materialize #result matchPending
-  Used matchPayload <- use matchBlock
+  Use matchPayload <- use matchBlock
   case matchPayload of
     OneUse (LBool answer) ->
       case answer of

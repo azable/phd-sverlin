@@ -35,9 +35,7 @@ module LinearTrace.Choreography
   , copy
   , use
   , apply1
-  , apply1WithTags
   , apply2
-  , apply2WithTags
   , replace
   , materialize
   , materializeWithTags
@@ -77,31 +75,17 @@ module LinearTrace.Choreography
   , Applicable1(..)
   , Applicable2(..)
   , Pending
-  , Materialization
-  , commitMaterialization
-  , taggedMaterialization
-  , selectedMaterialization
-  , type Create
-  , type Observe
-  , type Use
-  , type Copy
-  , type Replace
-  , type Apply1
-  , type Apply2
-  , type Destroy
-  , type Seal
-  , type Unseal
   , OneUse(..)
-  , Created(..)
-  , Observed(..)
-  , Used(..)
-  , Copied(..)
-  , Replaced(..)
-  , Applied1(..)
-  , Applied2(..)
-  , Destroyed(..)
-  , Sealed(..)
-  , Unsealed(..)
+  , Create(..)
+  , Observe(..)
+  , Use(..)
+  , Copy(..)
+  , Replace(..)
+  , Apply1(..)
+  , Apply2(..)
+  , Destroy(..)
+  , Seal(..)
+  , Unseal(..)
   , (<$>)
   , (<*>)
   , -- * Re-exported from LinearTrace.Choreography.Query
@@ -284,13 +268,12 @@ import           LinearTrace.Choreography.Style        (StyleChoice (..), sat,
 import           LinearTrace.Choreography.Types
 import           LinearTrace.Core                      (Applicable1 (..),
                                                         Applicable2 (..),
-                                                        Applied1 (..),
-                                                        Applied2 (..), Block,
-                                                        Copied (..),
+                                                        Apply1 (..),
+                                                        Apply2 (..), Block,
+                                                        Copy (..),
                                                         CoreOperator (..),
-                                                        Created (..),
-                                                        Destroyed (..),
-                                                        Fact (..),
+                                                        Create (..),
+                                                        Destroy (..), Fact (..),
                                                         FactValue (..),
                                                         Facts (..), LBool (..),
                                                         LDouble (..), LInt (..),
@@ -298,23 +281,19 @@ import           LinearTrace.Core                      (Applicable1 (..),
                                                         LString (..),
                                                         LUnit (..),
                                                         LinearPayload (..),
-                                                        Materialization,
-                                                        Observed (..),
+                                                        Observe (..),
                                                         OneUse (..), Payload,
                                                         PayloadView (..),
-                                                        Pending, Replaced (..),
-                                                        Sealed (..), Traceable,
-                                                        Unsealed (..),
-                                                        Used (..), applyLinear1,
+                                                        Pending, Replace (..),
+                                                        Seal (..), Traceable,
+                                                        Unseal (..), Use (..),
+                                                        applyLinear1,
                                                         applyLinear1Into,
                                                         applyLinear2,
                                                         applyLinear2Into,
-                                                        commitMaterialization,
                                                         emptyFacts, factAtom,
                                                         factInt, factSymbol,
                                                         factsToList, factsUnion,
-                                                        selectedMaterialization,
-                                                        taggedMaterialization,
                                                         (<$>), (<*>))
 import qualified LinearTrace.Core                      as C
 import qualified LinearTrace.Core.Events               as E
@@ -349,8 +328,8 @@ import           Solver                                (RandomSeed (..),
 import qualified Unsafe.Coerce                         as Unsafe
 
 infixl 9 @:
-data ViewScript acts where
-  ViewScript :: V.ViewOutput -> ViewScript acts
+newtype ViewScript =
+  ViewScript V.ViewOutput
 
 data VisualTraceState where
   VisualTraceState
@@ -500,26 +479,6 @@ viewTraceStep pending step =
         }
 
 type SlotHandle = C.Slot
-
-type Create tag = C.Create tag
-
-type Observe tag = C.Observe tag
-
-type Use tag = C.Use tag
-
-type Copy tag = C.Copy tag
-
-type Replace tag = C.Replace tag
-
-type Apply1 op arg out = C.Apply1 op arg out
-
-type Apply2 op lhs rhs out = C.Apply2 op lhs rhs out
-
-type Destroy tag = C.Destroy tag
-
-type Seal owner tag = C.Seal owner tag
-
-type Unseal owner tag = C.Unseal owner tag
 
 class ConstraintValue value where
   valueTerm :: value -> ValueTerm
@@ -1166,7 +1125,7 @@ buildEventLogOutput spec =
     (\output event -> V.appendViewOutput output (viewOutputForEvent spec event))
     V.emptyViewOutput
 
-viewOutputForEvent :: MatchSpec -> E.TraceEvent act -> V.ViewOutput
+viewOutputForEvent :: MatchSpec -> E.TraceEvent -> V.ViewOutput
 viewOutputForEvent spec event =
   case event of
     E.TraceCreate block ->
@@ -1231,19 +1190,19 @@ runChoreographyWith = runVisualTraceBuilder
 create ::
      forall tag. C.Traceable tag
   => C.Payload tag
-     %1 -> Choreography (C.Created tag)
+     %1 -> Choreography (C.Create tag)
 create = runCoreLinear1 C.create
 
 use ::
      forall tag. C.Traceable tag
   => Block tag
-     %1 -> Choreography (C.Used tag)
+     %1 -> Choreography (C.Use tag)
 use = runCoreLinear1 C.use
 
 copy ::
      forall tag. C.Traceable tag
   => Block tag
-     %1 -> Choreography (C.Copied tag)
+     %1 -> Choreography (C.Copy tag)
 copy = runCoreLinear1 C.copy
 
 apply1 ::
@@ -1255,25 +1214,8 @@ apply1 ::
      )
   => Block op
      %1 -> Block arg
-     %1 -> Choreography (C.Applied1 op arg)
+     %1 -> Choreography (C.Apply1 op arg)
 apply1 = runCoreLinear2 C.apply1
-
-apply1WithTags ::
-     forall op arg.
-     ( C.Applicable1 op arg
-     , C.Traceable op
-     , C.Traceable arg
-     , C.Traceable (C.Apply1Result op arg)
-     )
-  => Query
-  -> (Payload (C.Apply1Result op arg) -> Query)
-  -> Block op
-     %1 -> Block arg
-     %1 -> Choreography (C.Applied1 op arg)
-apply1WithTags query selectQuery =
-  runCoreLinear2 (C.apply1TaggedWith (queryFacts query) selectFacts)
-  where
-    selectFacts outputPayload = queryFacts (selectQuery outputPayload)
 
 apply2 ::
      forall op lhs rhs.
@@ -1286,33 +1228,14 @@ apply2 ::
   => Block op
      %1 -> Block lhs
      %1 -> Block rhs
-     %1 -> Choreography (C.Applied2 op lhs rhs)
+     %1 -> Choreography (C.Apply2 op lhs rhs)
 apply2 = runCoreLinear3 C.apply2
-
-apply2WithTags ::
-     forall op lhs rhs.
-     ( C.Applicable2 op lhs rhs
-     , C.Traceable op
-     , C.Traceable lhs
-     , C.Traceable rhs
-     , C.Traceable (C.Apply2Result op lhs rhs)
-     )
-  => Query
-  -> (Payload (C.Apply2Result op lhs rhs) -> Query)
-  -> Block op
-     %1 -> Block lhs
-     %1 -> Block rhs
-     %1 -> Choreography (C.Applied2 op lhs rhs)
-apply2WithTags query selectQuery =
-  runCoreLinear3 (C.apply2TaggedWith (queryFacts query) selectFacts)
-  where
-    selectFacts outputPayload = queryFacts (selectQuery outputPayload)
 
 replace ::
      forall tag. C.Traceable tag
   => Block tag
      %1 -> C.Pending tag
-     %1 -> Choreography (C.Replaced tag)
+     %1 -> Choreography (C.Replace tag)
 replace = runCoreLinear2 C.replace
 
 materialize ::
@@ -1342,7 +1265,7 @@ commit = runCoreLinear1 C.commit
 destroy ::
      forall tag. C.Traceable tag
   => Block tag
-     %1 -> Choreography (C.Destroyed tag)
+     %1 -> Choreography (C.Destroy tag)
 destroy = runCoreLinear1 C.destroy
 
 checkpoint :: P.String -> Choreography ()

@@ -44,44 +44,18 @@ module LinearTrace
   , applyLinear2Into
   , Applicable1(..)
   , Applicable2(..)
-  , -- * Action vocabulary
-    -- | Linear action tags and operations from the core trace builder. These
-    -- are the only constructors the direct core API needs to record lifecycle
-    -- events.
-    Action
-  , type Create
-  , type Observe
-  , type Use
-  , type Copy
-  , type Replace
-  , type Apply1
-  , type Apply2
-  , type Destroy
-  , type Seal
-  , type Unseal
   , -- * Primitive operations
     Pending
-  , Materialization
-  , commitMaterialization
-  , taggedMaterialization
-  , selectedMaterialization
   , create
-  , createTagged
   , observe
   , use
   , copy
-  , copyTagged
   , replace
   , apply1
-  , apply1Tagged
-  , apply1TaggedWith
   , apply2
-  , apply2Tagged
-  , apply2TaggedWith
   , materialize
   , materializeTagged
   , materializeTaggedWith
-  , materializeWith
   , commit
   , destroy
   , seal
@@ -89,16 +63,16 @@ module LinearTrace
   , -- * Operation results
     -- | Public wrappers around linear operation results.
     OneUse
-  , Created(..)
-  , Observed(..)
-  , Used(..)
-  , Copied(..)
-  , Replaced(..)
-  , Applied1(..)
-  , Applied2(..)
-  , Destroyed(..)
-  , Sealed(..)
-  , Unsealed(..)
+  , Create(..)
+  , Observe(..)
+  , Use(..)
+  , Copy(..)
+  , Replace(..)
+  , Apply1(..)
+  , Apply2(..)
+  , Destroy(..)
+  , Seal(..)
+  , Unseal(..)
   , checkpoint
   , checkpointWith
   , discardPending

@@ -43,47 +43,20 @@ module LinearTrace.Core
   , applyLinear2Into
   , Applicable1(..)
   , Applicable2(..)
-  , -- * Action vocabulary
-    -- | Type-level action tags recorded by the core builder. Event projection
-    -- and printing consume these constructors through 'LinearTrace.Core.Events'
-    -- and 'LinearTrace.Print'.
-    ActionKind(..)
-  , Action
-  , type Create
-  , type Observe
-  , type Use
-  , type Copy
-  , type Replace
-  , type Apply1
-  , type Apply2
-  , type Destroy
-  , type Seal
-  , type Unseal
   , -- * Primitive operations
     -- | Linear lifecycle operations. Block-producing operations produce
     -- pending obligations that must be materialized before use.
     Pending
-  , Materialization
-  , commitMaterialization
-  , taggedMaterialization
-  , selectedMaterialization
   , create
-  , createTagged
   , observe
   , use
   , copy
-  , copyTagged
   , replace
   , apply1
-  , apply1Tagged
-  , apply1TaggedWith
   , apply2
-  , apply2Tagged
-  , apply2TaggedWith
   , materialize
   , materializeTagged
   , materializeTaggedWith
-  , materializeWith
   , commit
   , destroy
   , seal
@@ -91,16 +64,16 @@ module LinearTrace.Core
   , -- * Operation results
     -- | Public wrappers around linear operation results.
     OneUse(..)
-  , Created(..)
-  , Observed(..)
-  , Used(..)
-  , Copied(..)
-  , Replaced(..)
-  , Applied1(..)
-  , Applied2(..)
-  , Destroyed(..)
-  , Sealed(..)
-  , Unsealed(..)
+  , Create(..)
+  , Observe(..)
+  , Use(..)
+  , Copy(..)
+  , Replace(..)
+  , Apply1(..)
+  , Apply2(..)
+  , Destroy(..)
+  , Seal(..)
+  , Unseal(..)
   , (<$>)
   , (<*>)
   , -- * Graph building
