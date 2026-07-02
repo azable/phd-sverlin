@@ -83,7 +83,7 @@ module LinearTrace.Choreography
   , type Seal
   , type Unseal
   , OneUse(..)
-  , ExplainToken
+  , Explain
   , ExplainTokens(..)
   , Created(..)
   , Observed(..)
@@ -282,8 +282,7 @@ import           LinearTrace.Core                      (Applicable1 (..),
                                                         Copied (..),
                                                         CoreOperator (..),
                                                         Created (..),
-                                                        Destroyed (..),
-                                                        ExplainToken,
+                                                        Destroyed (..), Explain,
                                                         ExplainTokens (..),
                                                         Fact (..),
                                                         FactValue (..),
@@ -1167,8 +1166,8 @@ buildEvidenceOutputWith ::
 buildEvidenceOutputWith spec eventLog output tokens =
   case tokens of
     C.Done -> BuiltEvidence eventLog output
-    explainToken C.:~ rest ->
-      case E.eventTokenFromExplainToken explainToken of
+    explain C.:~ rest ->
+      case E.eventTokenFromExplain explain of
         Ur eventToken ->
           buildEvidenceOutputWith
             spec

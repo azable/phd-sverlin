@@ -18,7 +18,7 @@ module LinearTrace.Core.Events
   , EventBlock(..)
   , TraceEvent(..)
   , EventToken
-  , eventTokenFromExplainToken
+  , eventTokenFromExplain
   , eventTokenEvent
   , EventLog
   , emptyEventLog
@@ -102,9 +102,9 @@ data TraceEvent act where
 data EventToken act where
   EventToken :: C.AuditStep act -> TraceEvent act -> EventToken act
 
-eventTokenFromExplainToken :: C.ExplainToken act %1 -> Ur (EventToken act)
-eventTokenFromExplainToken explainToken =
-  case C.explainTokenToAuditStep explainToken of
+eventTokenFromExplain :: C.Explain act %1 -> Ur (EventToken act)
+eventTokenFromExplain explain =
+  case C.explainToAuditStep explain of
     Ur step -> Ur (EventToken step (traceEventFromAuditStep step))
 
 eventTokenEvent :: EventToken act -> TraceEvent act

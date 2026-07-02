@@ -125,27 +125,27 @@ data PreparedComparison where
        %1 -> Block Value
        %1 -> Block Value
        %1 -> Block Value
-       %1 -> ExplainToken (Copy Value)
-       %1 -> ExplainToken (Copy Value)
+       %1 -> Explain (Copy Value)
+       %1 -> Explain (Copy Value)
        %1 -> PreparedComparison
 
 data ComparedValues where
   ValuesMatched
-    :: ExplainToken (Create EqualValue)
-       %1 -> ExplainToken (Apply2 EqualValue Value Value Match)
-       %1 -> ExplainToken (Use Match)
+    :: Explain (Create EqualValue)
+       %1 -> Explain (Apply2 EqualValue Value Value Match)
+       %1 -> Explain (Use Match)
        %1 -> ComparedValues
   ValuesDifferent
-    :: ExplainToken (Create EqualValue)
-       %1 -> ExplainToken (Apply2 EqualValue Value Value Match)
-       %1 -> ExplainToken (Use Match)
+    :: Explain (Create EqualValue)
+       %1 -> Explain (Apply2 EqualValue Value Value Match)
+       %1 -> Explain (Use Match)
        %1 -> ComparedValues
 
 data MarkedProcessed where
   MarkedProcessed
     :: Block Value
-       %1 -> ExplainToken (Copy Value)
-       %1 -> ExplainToken (Replace Value)
+       %1 -> Explain (Copy Value)
+       %1 -> Explain (Replace Value)
        %1 -> MarkedProcessed
 
 linearSearch :: SearchInput %1 -> Choreography ()

@@ -78,11 +78,11 @@ module LinearTrace.Core
   , destroy
   , seal
   , unseal
-  , -- * ExplainToken operations
+  , -- * Explain operations
     -- | Audit-token combinators used to assemble graph steps. Direct callers
     -- may use them; most view code consumes the event projection instead.
     OneUse(..)
-  , ExplainToken
+  , Explain
   , ExplainTokens(..)
   , Created(..)
   , Observed(..)

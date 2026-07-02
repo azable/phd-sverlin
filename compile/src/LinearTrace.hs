@@ -76,12 +76,12 @@ module LinearTrace
   , destroy
   , seal
   , unseal
-  , -- * ExplainToken operations
+  , -- * Explain operations
     -- | Audit-token utilities from 'LinearTrace.Core'. These are mostly useful
     -- to direct core callers; choreography users normally stay at the
     -- 'LinearTrace.Choreography' layer.
     OneUse
-  , ExplainToken
+  , Explain
   , ExplainTokens(Done, (:~))
   , Created(..)
   , Observed(..)

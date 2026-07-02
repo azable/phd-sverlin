@@ -91,10 +91,10 @@ module LinearTrace.Core.Internal
   , seal
   , unseal
   , -- * Auditing operations
-    -- | Explain-token structure for assembling typed audit chains before they
-    -- become graph steps or event logs.
+    -- | Explain structure for assembling typed audit chains before they become
+    -- graph steps or event logs.
     OneUse(..)
-  , ExplainToken
+  , Explain
   , ExplainTokens(..)
   , Created(..)
   , Observed(..)
@@ -124,7 +124,7 @@ module LinearTrace.Core.Internal
     -- typed event values for choreography matching.
     AuditStep(..)
   , Audit(..)
-  , explainTokenToAuditStep
+  , explainToAuditStep
   , -- * Runner
     -- | Core runners and graph builders. The choreography layer uses related
     -- stateful machinery to build core and view output together.
@@ -453,48 +453,47 @@ type Unseal owner tag = Action 'ActionUnseal (UnsealTag owner tag)
 -- Primitive operation result types
 --------------------------------------------------------------------------------
 data Created tag where
-  Created :: Block tag %1 -> ExplainToken (Create tag) %1 -> Created tag
+  Created :: Block tag %1 -> Explain (Create tag) %1 -> Created tag
 
 data Observed tag where
-  Observed :: Block tag %1 -> ExplainToken (Observe tag) %1 -> Observed tag
+  Observed :: Block tag %1 -> Explain (Observe tag) %1 -> Observed tag
 
 data Used tag where
-  Used :: OneUse (Payload tag) %1 -> ExplainToken (Use tag) %1 -> Used tag
+  Used :: OneUse (Payload tag) %1 -> Explain (Use tag) %1 -> Used tag
 
 data Copied tag where
-  Copied
-    :: Block tag %1 -> Block tag %1 -> ExplainToken (Copy tag) %1 -> Copied tag
+  Copied :: Block tag %1 -> Block tag %1 -> Explain (Copy tag) %1 -> Copied tag
 
 data Replaced tag where
-  Replaced :: Block tag %1 -> ExplainToken (Replace tag) %1 -> Replaced tag
+  Replaced :: Block tag %1 -> Explain (Replace tag) %1 -> Replaced tag
 
 data Applied1 op arg where
   Applied1
     :: Block (Apply1Result op arg)
-       %1 -> ExplainToken (Apply1 op arg (Apply1Result op arg))
+       %1 -> Explain (Apply1 op arg (Apply1Result op arg))
        %1 -> Applied1 op arg
 
 data Applied2 op lhs rhs where
   Applied2
     :: Block (Apply2Result op lhs rhs)
-       %1 -> ExplainToken (Apply2 op lhs rhs (Apply2Result op lhs rhs))
+       %1 -> Explain (Apply2 op lhs rhs (Apply2Result op lhs rhs))
        %1 -> Applied2 op lhs rhs
 
 data Destroyed tag where
-  Destroyed :: ExplainToken (Destroy tag) %1 -> Destroyed tag
+  Destroyed :: Explain (Destroy tag) %1 -> Destroyed tag
 
 data Sealed owner tag where
   Sealed
     :: Block owner
        %1 -> Slot owner tag
-       %1 -> ExplainToken (Seal owner tag)
+       %1 -> Explain (Seal owner tag)
        %1 -> Sealed owner tag
 
 data Unsealed owner tag where
   Unsealed
     :: Block owner
        %1 -> Block tag
-       %1 -> ExplainToken (Unseal owner tag)
+       %1 -> Explain (Unseal owner tag)
        %1 -> Unsealed owner tag
 
 --------------------------------------------------------------------------------
@@ -531,15 +530,12 @@ data Audit acts where
   EmptyAudit :: Audit '[]
   (:>) :: AuditStep act -> Audit acts -> Audit (act : acts)
 
-data ExplainToken act where
-  ExplainToken :: Ur (AuditStep act) %1 -> ExplainToken act
+data Explain act where
+  Explain :: Ur (AuditStep act) %1 -> Explain act
 
 data ExplainTokens acts where
   Done :: ExplainTokens '[]
-  (:~)
-    :: ExplainToken act
-       %1 -> ExplainTokens acts
-       %1 -> ExplainTokens (act : acts)
+  (:~) :: Explain act %1 -> ExplainTokens acts %1 -> ExplainTokens (act : acts)
 
 --------------------------------------------------------------------------------
 -- Trace step layer
@@ -607,9 +603,9 @@ makeAuditStep1 ::
   -> BlockRef tag
   -> Payload tag
   -> Facts
-  -> ExplainToken act
+  -> Explain act
 makeAuditStep1 ctor tagProxy ref payload facts =
-  ExplainToken (Ur (ctor (makeSnapshot tagProxy ref payload facts)))
+  Explain (Ur (ctor (makeSnapshot tagProxy ref payload facts)))
 
 makeAuditStep2 ::
      Traceable tag
@@ -621,9 +617,9 @@ makeAuditStep2 ::
   -> BlockRef tag
   -> Payload tag
   -> Facts
-  -> ExplainToken act
+  -> Explain act
 makeAuditStep2 ctor tagProxy ref1 payload1 facts1 ref2 payload2 facts2 =
-  ExplainToken
+  Explain
     (Ur
        (ctor
           (makeSnapshot tagProxy ref1 payload1 facts1)
@@ -643,9 +639,9 @@ makeAuditStep3 ::
   -> BlockRef tag
   -> Payload tag
   -> Facts
-  -> ExplainToken act
+  -> Explain act
 makeAuditStep3 ctor tagProxy ref1 payload1 facts1 ref2 payload2 facts2 ref3 payload3 facts3 =
-  ExplainToken
+  Explain
     (Ur
        (ctor
           (makeSnapshot tagProxy ref1 payload1 facts1)
@@ -663,9 +659,9 @@ makeAuditStep2Hetero ::
   -> BlockRef right
   -> Payload right
   -> Facts
-  -> ExplainToken act
+  -> Explain act
 makeAuditStep2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy rightRef rightPayload rightFacts =
-  ExplainToken
+  Explain
     (Ur
        (ctor
           (makeSnapshot leftProxy leftRef leftPayload leftFacts)
@@ -687,9 +683,9 @@ makeAuditStep3Hetero ::
   -> BlockRef third
   -> Payload third
   -> Facts
-  -> ExplainToken act
+  -> Explain act
 makeAuditStep3Hetero ctor firstProxy firstRef firstPayload firstFacts secondProxy secondRef secondPayload secondFacts thirdProxy thirdRef thirdPayload thirdFacts =
-  ExplainToken
+  Explain
     (Ur
        (ctor
           (makeSnapshot firstProxy firstRef firstPayload firstFacts)
@@ -717,9 +713,9 @@ makeAuditStep4Hetero ::
   -> BlockRef fourth
   -> Payload fourth
   -> Facts
-  -> ExplainToken act
+  -> Explain act
 makeAuditStep4Hetero ctor firstProxy firstRef firstPayload firstFacts secondProxy secondRef secondPayload secondFacts thirdProxy thirdRef thirdPayload thirdFacts fourthProxy fourthRef fourthPayload fourthFacts =
-  ExplainToken
+  Explain
     (Ur
        (ctor
           (makeSnapshot firstProxy firstRef firstPayload firstFacts)
@@ -727,13 +723,13 @@ makeAuditStep4Hetero ctor firstProxy firstRef firstPayload firstFacts secondProx
           (makeSnapshot thirdProxy thirdRef thirdPayload thirdFacts)
           (makeSnapshot fourthProxy fourthRef fourthPayload fourthFacts)))
 
-explainTokenToAuditStep :: ExplainToken act %1 -> Ur (AuditStep act)
-explainTokenToAuditStep (ExplainToken step) = step
+explainToAuditStep :: Explain act %1 -> Ur (AuditStep act)
+explainToAuditStep (Explain step) = step
 
 explainTokensToAudit :: ExplainTokens acts %1 -> Ur (Audit acts)
 explainTokensToAudit Done = Ur EmptyAudit
-explainTokensToAudit (explainToken :~ rest) =
-  case explainTokenToAuditStep explainToken of
+explainTokensToAudit (explain :~ rest) =
+  case explainToAuditStep explain of
     Ur step ->
       case explainTokensToAudit rest of
         Ur audit -> Ur (step :> audit)
