@@ -1,5 +1,5 @@
-{-# LANGUAGE GADTs       #-}
 {-# LANGUAGE LinearTypes #-}
+{-# LANGUAGE RankNTypes  #-}
 
 -- | Event projection over the core trace stream. Choreography matching depends
 -- on this module to observe lifecycle events without importing the whole core
@@ -10,7 +10,12 @@ module LinearTrace.Core.Events
     -- snapshots and facts needed by query/match logic.
     BlockId
   , BlockRef
-  , EventBlock(..)
+  , EventBlock
+  , eventBlockRef
+  , eventBlockPayload
+  , eventBlockPayloadView
+  , eventBlockFacts
+  , withEventBlock
   , TraceEvent(..)
   , EventLog
   , emptyEventLog
@@ -41,6 +46,7 @@ module LinearTrace.Core.Events
   ) where
 
 import           Control.Functor.Linear    (runState)
+import           LinearTrace.Core.Internal (TraceEvent (..))
 import qualified LinearTrace.Core.Internal as C
 import qualified Prelude                   as P
 import           Prelude.Linear
@@ -57,30 +63,32 @@ type TraceStep = C.TraceStep
 
 type TraceStepWith payload = C.TraceStepWith payload
 
-data EventBlock tag where
-  EventBlock
-    :: C.Traceable tag=> { eventBlockRef :: BlockRef tag
-                         , eventBlockPayload :: C.Payload tag
-                         , eventBlockPayloadView :: C.PayloadView
-                         , eventBlockFacts :: C.Facts}
-    -> EventBlock tag
+type EventBlock tag = C.BlockSnapshot tag
 
-data TraceEvent where
-  TraceCreate :: EventBlock tag -> TraceEvent
-  TraceObserve :: EventBlock tag -> TraceEvent
-  TraceUse :: EventBlock tag -> TraceEvent
-  TraceCopy :: EventBlock tag -> EventBlock tag -> TraceEvent
-  TraceReplace :: EventBlock tag -> EventBlock tag -> TraceEvent
-  TraceApply1 :: EventBlock op -> EventBlock arg -> EventBlock out -> TraceEvent
-  TraceApply2
-    :: EventBlock op
-    -> EventBlock lhs
-    -> EventBlock rhs
-    -> EventBlock out
-    -> TraceEvent
-  TraceDestroy :: EventBlock tag -> TraceEvent
-  TraceSeal :: EventBlock owner -> EventBlock tag -> TraceEvent
-  TraceUnseal :: EventBlock owner -> EventBlock tag -> TraceEvent
+eventBlockRef :: EventBlock tag -> BlockRef tag
+eventBlockRef block =
+  case block of
+    C.BlockSnapshot ref _payload _payloadView _facts -> ref
+
+eventBlockPayload :: EventBlock tag -> C.Payload tag
+eventBlockPayload block =
+  case block of
+    C.BlockSnapshot _ref payload _payloadView _facts -> payload
+
+eventBlockPayloadView :: EventBlock tag -> C.PayloadView
+eventBlockPayloadView block =
+  case block of
+    C.BlockSnapshot _ref _payload payloadView _facts -> payloadView
+
+eventBlockFacts :: EventBlock tag -> C.Facts
+eventBlockFacts block =
+  case block of
+    C.BlockSnapshot _ref _payload _payloadView facts -> facts
+
+withEventBlock :: EventBlock tag -> (C.Traceable tag => result) -> result
+withEventBlock block result =
+  case block of
+    C.BlockSnapshot {} -> result
 
 newtype EventLog =
   EventLog [TraceEvent]
@@ -111,13 +119,12 @@ traceGraphPendingEventLog graph =
 eventLogFromPendingEvents :: C.PendingEvents -> EventLog
 eventLogFromPendingEvents pending =
   case pending of
-    C.PendingEvents events -> eventLogFromTraceEventSteps events
+    C.PendingEvents events -> eventLogFromTraceEvents events
 
-eventLogFromTraceEventSteps :: C.TraceEventSteps -> EventLog
-eventLogFromTraceEventSteps eventSteps =
-  case eventSteps of
-    C.TraceEventSteps steps ->
-      EventLog (P.map traceEventFromTraceEventStep steps)
+eventLogFromTraceEvents :: C.TraceEvents -> EventLog
+eventLogFromTraceEvents traceEvents =
+  case traceEvents of
+    C.TraceEvents events -> EventLog events
 
 checkpointEventLogWith :: P.String -> payload -> C.TraceBuilderWith payload ()
 checkpointEventLogWith = C.checkpointWith
@@ -162,44 +169,10 @@ traceStepOutput step =
 traceStepEventLog :: TraceStepWith payload -> EventLog
 traceStepEventLog step =
   case step of
-    C.CheckpointStep _label _payload events ->
-      eventLogFromTraceEventSteps events
-    C.DiscardedStep _reason events -> eventLogFromTraceEventSteps events
+    C.CheckpointStep _label _payload events -> eventLogFromTraceEvents events
+    C.DiscardedStep _reason events          -> eventLogFromTraceEvents events
 
 blockRefId :: BlockRef tag -> BlockId
 blockRefId ref =
   case ref of
     C.BlockRef blockId -> blockId
-
-traceEventFromTraceEventStep :: C.TraceEventStep -> TraceEvent
-traceEventFromTraceEventStep step =
-  case step of
-    C.CreateStep snapshot -> TraceCreate (eventBlockFromSnapshot snapshot)
-    C.ObserveStep snapshot -> TraceObserve (eventBlockFromSnapshot snapshot)
-    C.UseStep snapshot -> TraceUse (eventBlockFromSnapshot snapshot)
-    C.CopyStep original copy' ->
-      TraceCopy (eventBlockFromSnapshot original) (eventBlockFromSnapshot copy')
-    C.ReplaceStep old output ->
-      TraceReplace (eventBlockFromSnapshot old) (eventBlockFromSnapshot output)
-    C.Apply1Step op arg output ->
-      TraceApply1
-        (eventBlockFromSnapshot op)
-        (eventBlockFromSnapshot arg)
-        (eventBlockFromSnapshot output)
-    C.Apply2Step op lhs rhs output ->
-      TraceApply2
-        (eventBlockFromSnapshot op)
-        (eventBlockFromSnapshot lhs)
-        (eventBlockFromSnapshot rhs)
-        (eventBlockFromSnapshot output)
-    C.DestroyStep snapshot -> TraceDestroy (eventBlockFromSnapshot snapshot)
-    C.SealStep owner child ->
-      TraceSeal (eventBlockFromSnapshot owner) (eventBlockFromSnapshot child)
-    C.UnsealStep owner child ->
-      TraceUnseal (eventBlockFromSnapshot owner) (eventBlockFromSnapshot child)
-
-eventBlockFromSnapshot :: C.BlockSnapshot tag -> EventBlock tag
-eventBlockFromSnapshot snapshot =
-  case snapshot of
-    C.BlockSnapshot ref payload payloadView facts ->
-      EventBlock ref payload payloadView facts

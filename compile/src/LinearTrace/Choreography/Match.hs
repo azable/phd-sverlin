@@ -246,14 +246,14 @@ traceNodeOfEventBlock block =
 
 matchedNodeOutput :: MatchSpec -> E.EventBlock tag -> V.ViewOutput
 matchedNodeOutput spec eventBlock =
-  case eventBlock of
-    E.EventBlock {} ->
-      case spec of
-        MatchSpec nodeRules _ _ ->
-          let node = traceNodeOfEventBlock eventBlock
-           in case matchedNodePatch eventBlock nodeRules of
-                Nothing    -> V.emptyViewOutput
-                Just patch -> V.patchedNodeOutput patch node
+  E.withEventBlock
+    eventBlock
+    (case spec of
+       MatchSpec nodeRules _ _ ->
+         let node = traceNodeOfEventBlock eventBlock
+          in case matchedNodePatch eventBlock nodeRules of
+               Nothing    -> V.emptyViewOutput
+               Just patch -> V.patchedNodeOutput patch node)
 
 coreViewRef :: E.BlockRef tag -> V.ViewRef tag
 coreViewRef ref = V.viewRefFromId (E.blockRefId ref)

@@ -474,19 +474,19 @@ pendingStepBoxes ix pending =
   case pending of
     PendingEvents events ->
       case events of
-        TraceEventSteps [] -> []
+        TraceEvents [] -> []
         _ -> [labelledStepBox ix "Pending after last checkpoint" events]
 
 pendingEventCount :: PendingEvents -> Int
 pendingEventCount pending =
   case pending of
-    PendingEvents (TraceEventSteps events) -> length events
+    PendingEvents (TraceEvents events) -> length events
 
-labelledStepBox :: Int -> String -> TraceEventSteps -> Box.Box
+labelledStepBox :: Int -> String -> TraceEvents -> Box.Box
 labelledStepBox ix label events =
   case events of
-    TraceEventSteps [] -> stepHeaderBox ix label
-    _ -> tightVcat [stepHeaderBox ix label, traceEventStepsBox events]
+    TraceEvents [] -> stepHeaderBox ix label
+    _              -> tightVcat [stepHeaderBox ix label, traceEventsBox events]
 
 stepHeaderBox :: Int -> String -> Box.Box
 stepHeaderBox ix label =
@@ -499,25 +499,25 @@ stepHeaderBox ix label =
 --------------------------------------------------------------------------------
 -- Event rendering
 --------------------------------------------------------------------------------
-traceEventStepsBox :: TraceEventSteps -> Box.Box
-traceEventStepsBox eventSteps =
-  case eventSteps of
-    TraceEventSteps steps -> tightVcat (map traceEventStepBox steps)
+traceEventsBox :: TraceEvents -> Box.Box
+traceEventsBox traceEvents =
+  case traceEvents of
+    TraceEvents events -> tightVcat (map traceEventBox events)
 
-traceEventStepBox :: TraceEventStep -> Box.Box
-traceEventStepBox step =
-  case step of
-    CreateStep snapshot -> snapshotStep1Box createStyle snapshot
-    ObserveStep snapshot -> snapshotStep1Box observeStyle snapshot
-    UseStep snapshot -> snapshotStep1Box useStyle snapshot
-    CopyStep original copy' -> snapshotStep2Box copyStyle original copy'
-    ReplaceStep old output -> snapshotStep2Box replaceStyle old output
-    Apply1Step op arg output -> snapshotStep3Box apply1Style op arg output
-    Apply2Step op lhs rhs output ->
+traceEventBox :: TraceEvent -> Box.Box
+traceEventBox event =
+  case event of
+    TraceCreate snapshot -> snapshotStep1Box createStyle snapshot
+    TraceObserve snapshot -> snapshotStep1Box observeStyle snapshot
+    TraceUse snapshot -> snapshotStep1Box useStyle snapshot
+    TraceCopy original copy' -> snapshotStep2Box copyStyle original copy'
+    TraceReplace old output -> snapshotStep2Box replaceStyle old output
+    TraceApply1 op arg output -> snapshotStep3Box apply1Style op arg output
+    TraceApply2 op lhs rhs output ->
       snapshotStep4Box apply2Style op lhs rhs output
-    DestroyStep snapshot -> snapshotStep1Box destroyStyle snapshot
-    SealStep owner child -> snapshotStep2Box sealStyle owner child
-    UnsealStep owner child -> snapshotStep2Box unsealStyle owner child
+    TraceDestroy snapshot -> snapshotStep1Box destroyStyle snapshot
+    TraceSeal owner child -> snapshotStep2Box sealStyle owner child
+    TraceUnseal owner child -> snapshotStep2Box unsealStyle owner child
 
 snapshotStep1Box :: StepStyle -> BlockSnapshot tag -> Box.Box
 snapshotStep1Box style snapshot =
@@ -597,7 +597,7 @@ renderViewLabel :: V.ViewLabel -> String
 renderViewLabel = V.viewLabelKind
 
 viewStepLabelBox :: Int -> String -> Box.Box
-viewStepLabelBox ix label = labelledStepBox ix label emptyTraceEventSteps
+viewStepLabelBox ix label = labelledStepBox ix label emptyTraceEvents
 
 renderPayloadView :: PayloadView -> String
 renderPayloadView (PayloadView kind) = kind

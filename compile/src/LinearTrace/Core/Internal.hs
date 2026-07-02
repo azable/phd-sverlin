@@ -99,14 +99,14 @@ module LinearTrace.Core.Internal
   , NoStepPayload(..)
   , TraceStep
   , TraceStepWith(..)
-  , TraceEventSteps(..)
-  , emptyTraceEventSteps
+  , TraceEvents(..)
+  , emptyTraceEvents
   , PendingEvents(..)
   , emptyPendingEvents
   , -- * Public trace event data
-    -- | Trace event step data. 'LinearTrace.Core.Events' maps this into event
-    -- values for choreography matching.
-    TraceEventStep(..)
+    -- | Trace event data consumed by event projection, choreography, and
+    -- printers.
+    TraceEvent(..)
   , -- * Runner
     -- | Core runners and graph builders. The choreography layer uses related
     -- stateful machinery to build core and view output together.
@@ -432,26 +432,23 @@ data Unseal owner tag where
 --------------------------------------------------------------------------------
 -- Trace event data
 --------------------------------------------------------------------------------
-data TraceEventStep where
-  CreateStep :: BlockSnapshot tag -> TraceEventStep
-  ObserveStep :: BlockSnapshot tag -> TraceEventStep
-  UseStep :: BlockSnapshot tag -> TraceEventStep
-  CopyStep :: BlockSnapshot tag -> BlockSnapshot tag -> TraceEventStep
-  ReplaceStep :: BlockSnapshot tag -> BlockSnapshot tag -> TraceEventStep
-  Apply1Step
-    :: BlockSnapshot op
-    -> BlockSnapshot arg
-    -> BlockSnapshot out
-    -> TraceEventStep
-  Apply2Step
+data TraceEvent where
+  TraceCreate :: BlockSnapshot tag -> TraceEvent
+  TraceObserve :: BlockSnapshot tag -> TraceEvent
+  TraceUse :: BlockSnapshot tag -> TraceEvent
+  TraceCopy :: BlockSnapshot tag -> BlockSnapshot tag -> TraceEvent
+  TraceReplace :: BlockSnapshot tag -> BlockSnapshot tag -> TraceEvent
+  TraceApply1
+    :: BlockSnapshot op -> BlockSnapshot arg -> BlockSnapshot out -> TraceEvent
+  TraceApply2
     :: BlockSnapshot op
     -> BlockSnapshot lhs
     -> BlockSnapshot rhs
     -> BlockSnapshot out
-    -> TraceEventStep
-  DestroyStep :: BlockSnapshot tag -> TraceEventStep
-  SealStep :: BlockSnapshot owner -> BlockSnapshot tag -> TraceEventStep
-  UnsealStep :: BlockSnapshot owner -> BlockSnapshot tag -> TraceEventStep
+    -> TraceEvent
+  TraceDestroy :: BlockSnapshot tag -> TraceEvent
+  TraceSeal :: BlockSnapshot owner -> BlockSnapshot tag -> TraceEvent
+  TraceUnseal :: BlockSnapshot owner -> BlockSnapshot tag -> TraceEvent
 
 --------------------------------------------------------------------------------
 -- Trace step layer
@@ -459,16 +456,15 @@ data TraceEventStep where
 data NoStepPayload =
   NoStepPayload
 
-newtype TraceEventSteps =
-  TraceEventSteps [TraceEventStep]
+newtype TraceEvents =
+  TraceEvents [TraceEvent]
 
-emptyTraceEventSteps :: TraceEventSteps
-emptyTraceEventSteps = TraceEventSteps []
+emptyTraceEvents :: TraceEvents
+emptyTraceEvents = TraceEvents []
 
 data TraceStepWith payload where
-  CheckpointStep
-    :: P.String -> payload -> TraceEventSteps -> TraceStepWith payload
-  DiscardedStep :: P.String -> TraceEventSteps -> TraceStepWith payload
+  CheckpointStep :: P.String -> payload -> TraceEvents -> TraceStepWith payload
+  DiscardedStep :: P.String -> TraceEvents -> TraceStepWith payload
 
 type TraceStep = TraceStepWith NoStepPayload
 
@@ -478,10 +474,10 @@ data TraceGraphWith payload =
 type TraceGraph = TraceGraphWith NoStepPayload
 
 newtype PendingEvents =
-  PendingEvents TraceEventSteps
+  PendingEvents TraceEvents
 
 emptyPendingEvents :: PendingEvents
-emptyPendingEvents = PendingEvents emptyTraceEventSteps
+emptyPendingEvents = PendingEvents emptyTraceEvents
 
 data TraceBuilderState payload = TraceBuilderState
   { _nextBlockId :: Ur BlockId
@@ -530,20 +526,20 @@ makeSnapshot ::
 makeSnapshot tagProxy ref payload =
   BlockSnapshot ref payload (payloadView tagProxy)
 
-makeTraceEventStep1 ::
+makeTraceEvent1 ::
      Traceable tag
-  => (BlockSnapshot tag -> TraceEventStep)
+  => (BlockSnapshot tag -> TraceEvent)
   -> Proxy tag
   -> BlockRef tag
   -> Payload tag
   -> Facts
-  -> TraceEventStep
-makeTraceEventStep1 ctor tagProxy ref payload facts =
+  -> TraceEvent
+makeTraceEvent1 ctor tagProxy ref payload facts =
   ctor (makeSnapshot tagProxy ref payload facts)
 
-makeTraceEventStep2Hetero ::
+makeTraceEvent2Hetero ::
      (Traceable left, Traceable right)
-  => (BlockSnapshot left -> BlockSnapshot right -> TraceEventStep)
+  => (BlockSnapshot left -> BlockSnapshot right -> TraceEvent)
   -> Proxy left
   -> BlockRef left
   -> Payload left
@@ -552,8 +548,8 @@ makeTraceEventStep2Hetero ::
   -> BlockRef right
   -> Payload right
   -> Facts
-  -> TraceEventStep
-makeTraceEventStep2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy rightRef rightPayload rightFacts =
+  -> TraceEvent
+makeTraceEvent2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy rightRef rightPayload rightFacts =
   ctor
     (makeSnapshot leftProxy leftRef leftPayload leftFacts)
     (makeSnapshot rightProxy rightRef rightPayload rightFacts)
@@ -579,21 +575,21 @@ allocatePersistedBlock tagProxy facts payload = do
        oldSteps)
   return (Ur blockId, Ur payload)
 
-appendPendingTraceEventStep :: TraceEventStep -> TraceBuilderWith payload ()
-appendPendingTraceEventStep step = do
+appendPendingTraceEvent :: TraceEvent -> TraceBuilderWith payload ()
+appendPendingTraceEvent event = do
   TraceBuilderState oldNext oldBlocks (Ur oldPending) oldSteps <- get
   put
     (TraceBuilderState
        oldNext
        oldBlocks
-       (Ur (appendPendingEvents oldPending step))
+       (Ur (appendPendingEvents oldPending event))
        oldSteps)
 
-appendPendingEvents :: PendingEvents -> TraceEventStep -> PendingEvents
-appendPendingEvents pending step =
+appendPendingEvents :: PendingEvents -> TraceEvent -> PendingEvents
+appendPendingEvents pending event =
   case pending of
-    PendingEvents (TraceEventSteps steps) ->
-      PendingEvents (TraceEventSteps (steps P.++ [step]))
+    PendingEvents (TraceEvents events) ->
+      PendingEvents (TraceEvents (events P.++ [event]))
 
 checkpoint :: P.String -> TraceBuilder ()
 checkpoint label = checkpointWith label NoStepPayload
@@ -602,7 +598,7 @@ checkpointWith :: P.String -> payload -> TraceBuilderWith payload ()
 checkpointWith label payload = do
   TraceBuilderState oldNext oldBlocks (Ur pending) (Ur oldSteps) <- get
   case pending of
-    PendingEvents (TraceEventSteps []) ->
+    PendingEvents (TraceEvents []) ->
       put
         (TraceBuilderState
            oldNext
@@ -621,7 +617,7 @@ discardPending :: P.String -> TraceBuilderWith payload ()
 discardPending reason = do
   TraceBuilderState oldNext oldBlocks (Ur pending) (Ur oldSteps) <- get
   case pending of
-    PendingEvents (TraceEventSteps []) ->
+    PendingEvents (TraceEvents []) ->
       put
         (TraceBuilderState
            oldNext
@@ -673,9 +669,9 @@ materializeOutput ::
   => Facts
   -> (Payload tag -> Facts)
   -> Payload tag
-     %1 -> (BlockSnapshot tag -> TraceEventStep)
+     %1 -> (BlockSnapshot tag -> TraceEvent)
   -> TraceBuilderWith payload (Block tag)
-materializeOutput baseFacts selectFacts payload0 makeStep =
+materializeOutput baseFacts selectFacts payload0 makeEvent =
   case persistCorePayload payload0 of
     Ur outputPayload -> do
       let outputFacts =
@@ -689,7 +685,7 @@ materializeOutput baseFacts selectFacts payload0 makeStep =
               outputRef
               persistedOutput
               outputFacts
-      appendPendingTraceEventStep (makeStep outputSnapshot)
+      appendPendingTraceEvent (makeEvent outputSnapshot)
       return (Block (Ur outputId) (Ur persistedOutput) (Ur outputFacts))
 
 materializeTaggedWith ::
@@ -701,15 +697,15 @@ materializeTaggedWith ::
 materializeTaggedWith baseFacts selectFacts pending =
   case pending of
     PendingCreate payload ->
-      materializeOutput baseFacts selectFacts payload CreateStep
+      materializeOutput baseFacts selectFacts payload TraceCreate
     PendingCopy source payload ->
-      materializeOutput baseFacts selectFacts payload (CopyStep source)
+      materializeOutput baseFacts selectFacts payload (TraceCopy source)
     PendingReplace old payload ->
-      materializeOutput baseFacts selectFacts payload (ReplaceStep old)
+      materializeOutput baseFacts selectFacts payload (TraceReplace old)
     PendingApply1 op arg payload ->
-      materializeOutput baseFacts selectFacts payload (Apply1Step op arg)
+      materializeOutput baseFacts selectFacts payload (TraceApply1 op arg)
     PendingApply2 op lhs rhs payload ->
-      materializeOutput baseFacts selectFacts payload (Apply2Step op lhs rhs)
+      materializeOutput baseFacts selectFacts payload (TraceApply2 op lhs rhs)
 
 materialize ::
      forall payload tag. Traceable tag
@@ -743,7 +739,7 @@ observe ::
 observe block =
   case snapshotBlock block of
     SnapshottedBlock nextBlock snapshot -> do
-      appendPendingTraceEventStep (ObserveStep snapshot)
+      appendPendingTraceEvent (TraceObserve snapshot)
       return (Observe nextBlock)
 
 use ::
@@ -752,8 +748,8 @@ use ::
      %1 -> TraceBuilderWith payload (Use tag)
 use (Block (Ur blockId) (Ur payload) (Ur facts)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  appendPendingTraceEventStep
-    (makeTraceEventStep1 UseStep (Proxy :: Proxy tag) ref' payload facts)
+  appendPendingTraceEvent
+    (makeTraceEvent1 TraceUse (Proxy :: Proxy tag) ref' payload facts)
   return (Use (OneUse payload))
 
 copy ::
@@ -850,8 +846,8 @@ destroy ::
      %1 -> TraceBuilderWith payload (Destroy tag)
 destroy (Block (Ur blockId) (Ur payload) (Ur facts)) = do
   let ref' = makeBlockRef (Proxy :: Proxy tag) blockId
-  appendPendingTraceEventStep
-    (makeTraceEventStep1 DestroyStep (Proxy :: Proxy tag) ref' payload facts)
+  appendPendingTraceEvent
+    (makeTraceEvent1 TraceDestroy (Proxy :: Proxy tag) ref' payload facts)
   return Destroy
 
 seal ::
@@ -866,9 +862,9 @@ seal ownerBlock childBlock =
         Block (Ur childId) (Ur childPayload) (Ur childFacts) -> do
           let ownerRef = makeBlockRef (Proxy :: Proxy owner) ownerId
           let childRef = makeBlockRef (Proxy :: Proxy tag) childId
-          appendPendingTraceEventStep
-            (makeTraceEventStep2Hetero
-               SealStep
+          appendPendingTraceEvent
+            (makeTraceEvent2Hetero
+               TraceSeal
                (Proxy :: Proxy owner)
                ownerRef
                ownerPayload
@@ -896,9 +892,9 @@ unseal ownerBlock slot =
             Block (Ur childId) (Ur childPayload) (Ur childFacts) -> do
               let ownerRef = makeBlockRef (Proxy :: Proxy owner) ownerId
               let childRef = makeBlockRef (Proxy :: Proxy tag) childId
-              appendPendingTraceEventStep
-                (makeTraceEventStep2Hetero
-                   UnsealStep
+              appendPendingTraceEvent
+                (makeTraceEvent2Hetero
+                   TraceUnseal
                    (Proxy :: Proxy owner)
                    ownerRef
                    ownerPayload
