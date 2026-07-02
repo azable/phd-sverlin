@@ -13,6 +13,15 @@ module LinearTrace.Core
   , TraceBuilderWith
   , Block
   , Slot
+  , BlockId
+  , BlockRef
+  , blockRefId
+  , BlockSnapshot
+  , blockSnapshotRef
+  , blockSnapshotPayload
+  , blockSnapshotPayloadView
+  , blockSnapshotFacts
+  , withBlockSnapshot
   , Payload
   , FactValue(..)
   , Fact(..)
@@ -76,6 +85,20 @@ module LinearTrace.Core
   , Unseal(..)
   , (<$>)
   , (<*>)
+  , -- * Trace events and steps
+    -- | Event and checkpoint views over built graphs. These are the direct
+    -- core interface used by visualization layers and diagnostics.
+    TraceEvent(..)
+  , TraceEvents
+  , emptyTraceEvents
+  , foldTraceEvents
+  , NoStepPayload
+  , TraceStep
+  , TraceStepWith
+  , traceGraphPendingEvents
+  , traceGraphSteps
+  , traceStepEvents
+  , foldTraceStep
   , -- * Graph building
     -- | Final core graph builders. 'LinearTrace.Choreography' uses the same
     -- core state but attaches view output alongside it.

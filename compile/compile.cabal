@@ -80,7 +80,6 @@ library
         LinearTrace
         LinearTrace.Choreography
         LinearTrace.Core
-        LinearTrace.Core.Events
         LinearTrace.Print
         Solver
         LinearTrace.Compile

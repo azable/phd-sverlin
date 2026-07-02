@@ -32,7 +32,6 @@ module Choreography.TestFixtures
 import           Control.Functor.Linear   hiding ((<$>), (<&>), (<*>))
 import           LinearTrace.Choreography
 import qualified LinearTrace.Core         as Core
-import qualified LinearTrace.Core.Events  as CoreEvents
 import qualified Prelude                  as P
 import           Prelude.Linear           hiding (fromInteger, fromRational,
                                            (*), (+), (-), (/), (/=), (<>))
@@ -49,17 +48,17 @@ groupStats = fixtureStats groupSpec
 
 pendingMaterializedStepCount :: Int
 pendingMaterializedStepCount =
-  P.length (CoreEvents.traceGraphSteps pendingMaterializedGraph)
+  P.length (Core.traceGraphSteps pendingMaterializedGraph)
 
 pendingReplaceEventNames :: [P.String]
 pendingReplaceEventNames =
-  case CoreEvents.traceGraphSteps pendingReplaceGraph of
-    _created:replaced:_ -> eventNames (CoreEvents.traceStepEventLog replaced)
+  case Core.traceGraphSteps pendingReplaceGraph of
+    _created:replaced:_ -> eventNames (Core.traceStepEvents replaced)
     _                   -> []
 
 pendingTailEventNames :: [P.String]
 pendingTailEventNames =
-  eventNames (CoreEvents.traceGraphPendingEventLog pendingTailGraph)
+  eventNames (Core.traceGraphPendingEvents pendingTailGraph)
 
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
@@ -125,23 +124,23 @@ pendingTailGraph =
     Core.Destroy <- Core.destroy block
     return ()
 
-eventNames :: CoreEvents.EventLog -> [P.String]
+eventNames :: Core.TraceEvents -> [P.String]
 eventNames =
-  CoreEvents.foldEventLog (\names event -> names P.++ [traceEventName event]) []
+  Core.foldTraceEvents (\names event -> names P.++ [traceEventName event]) []
 
-traceEventName :: CoreEvents.TraceEvent -> P.String
+traceEventName :: Core.TraceEvent -> P.String
 traceEventName event =
   case event of
-    CoreEvents.TraceCreate _    -> "create"
-    CoreEvents.TraceObserve _   -> "observe"
-    CoreEvents.TraceUse _       -> "use"
-    CoreEvents.TraceCopy _ _    -> "copy"
-    CoreEvents.TraceReplace _ _ -> "replace"
-    CoreEvents.TraceApply1 {}   -> "apply1"
-    CoreEvents.TraceApply2 {}   -> "apply2"
-    CoreEvents.TraceDestroy _   -> "destroy"
-    CoreEvents.TraceSeal _ _    -> "seal"
-    CoreEvents.TraceUnseal _ _  -> "unseal"
+    Core.TraceCreate _    -> "create"
+    Core.TraceObserve _   -> "observe"
+    Core.TraceUse _       -> "use"
+    Core.TraceCopy _ _    -> "copy"
+    Core.TraceReplace _ _ -> "replace"
+    Core.TraceApply1 {}   -> "apply1"
+    Core.TraceApply2 {}   -> "apply2"
+    Core.TraceDestroy _   -> "destroy"
+    Core.TraceSeal _ _    -> "seal"
+    Core.TraceUnseal _ _  -> "unseal"
 
 payloadMatchedSpec :: MatchSpec
 payloadMatchedSpec =

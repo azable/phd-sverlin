@@ -3,8 +3,8 @@
 {-# LANGUAGE TypeApplications    #-}
 
 -- | Choreography matching and view graph assembly. This module binds
--- 'LinearTrace.Core.Events' to 'LinearTrace.View' by turning query matches,
--- node patches, and value endpoints into symbolic view output.
+-- core trace events to 'LinearTrace.View' by turning query matches, node
+-- patches, and value endpoints into symbolic view output.
 module LinearTrace.Choreography.Match
   ( -- * Match specs
     -- | Accumulated node, layout, and grouping rules produced by the
@@ -52,7 +52,6 @@ import           LinearTrace.Choreography.Query (MatchBindings,
                                                  QueryBindings)
 import qualified LinearTrace.Choreography.Query as Q
 import qualified LinearTrace.Core               as C
-import qualified LinearTrace.Core.Events        as E
 import qualified LinearTrace.View               as V
 import qualified LinearTrace.View.Access        as VA
 import qualified LinearTrace.View.Patch         as VP
@@ -229,24 +228,25 @@ matchValueSymmetricBridge ::
 matchValueSymmetricBridge strength lhs delta rhs =
   MatchSpec [] [ValueSymmetricBridgeLayout strength lhs delta rhs] []
 
-traceNodeOfEventBlock :: E.EventBlock tag -> V.Node tag
+traceNodeOfEventBlock :: C.BlockSnapshot tag -> V.Node tag
 traceNodeOfEventBlock block =
-  let ref = coreViewRef (E.eventBlockRef block)
+  let ref = coreViewRef (C.blockSnapshotRef block)
    in V.Node
         { V.nodeRef = ref
-        , V.nodeLabel = viewLabelFromPayloadView (E.eventBlockPayloadView block)
+        , V.nodeLabel =
+            viewLabelFromPayloadView (C.blockSnapshotPayloadView block)
         , V.nodeContent = V.ContentEmpty
         , V.nodeKey = V.defaultNodeKey
         , V.nodeStyle = V.styleForRef ref
         , V.nodeOrigin =
-            V.TraceOrigin (viewTagsFromFacts (E.eventBlockFacts block))
+            V.TraceOrigin (viewTagsFromFacts (C.blockSnapshotFacts block))
         , V.nodeStructure = V.LeafNode
         , V.nodeConstraints = []
         }
 
-matchedNodeOutput :: MatchSpec -> E.EventBlock tag -> V.ViewOutput
+matchedNodeOutput :: MatchSpec -> C.BlockSnapshot tag -> V.ViewOutput
 matchedNodeOutput spec eventBlock =
-  E.withEventBlock
+  C.withBlockSnapshot
     eventBlock
     (case spec of
        MatchSpec nodeRules _ _ ->
@@ -255,8 +255,8 @@ matchedNodeOutput spec eventBlock =
                Nothing    -> V.emptyViewOutput
                Just patch -> V.patchedNodeOutput patch node)
 
-coreViewRef :: E.BlockRef tag -> V.ViewRef tag
-coreViewRef ref = V.viewRefFromId (E.blockRefId ref)
+coreViewRef :: C.BlockRef tag -> V.ViewRef tag
+coreViewRef ref = V.viewRefFromId (C.blockRefId ref)
 
 viewLabelFromPayloadView :: C.PayloadView -> V.ViewLabel
 viewLabelFromPayloadView payloadViewValue =
@@ -278,7 +278,7 @@ viewTagFromFact fact =
 
 matchedNodePatch ::
      forall tag. C.Traceable tag
-  => E.EventBlock tag
+  => C.BlockSnapshot tag
   -> [NodeRule]
   -> Maybe NodePatch
 matchedNodePatch block rules =
@@ -287,7 +287,7 @@ matchedNodePatch block rules =
 matchingNodePatches ::
      forall tag. C.Traceable tag
   => P.Int
-  -> E.EventBlock tag
+  -> C.BlockSnapshot tag
   -> [NodeRule]
   -> [NodePatch]
 matchingNodePatches _ _ [] = []
@@ -299,20 +299,20 @@ matchingNodePatches matchIndex block (rule:rest) =
 nodeRulePatch ::
      forall sourceTag. C.Traceable sourceTag
   => P.Int
-  -> E.EventBlock sourceTag
+  -> C.BlockSnapshot sourceTag
   -> NodeRule
   -> Maybe NodePatch
 nodeRulePatch matchIndex block rule =
   case rule of
     AnyQueryNodeRule query makePatch ->
-      case Q.queryMatches query (E.eventBlockFacts block) of
+      case Q.queryMatches query (C.blockSnapshotFacts block) of
         Nothing       -> Nothing
         Just bindings -> Just (makePatch (Q.queryMatchBindings bindings))
     QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
         Just Refl ->
-          case Q.queryMatches query (E.eventBlockFacts block) of
+          case Q.queryMatches query (C.blockSnapshotFacts block) of
             Nothing -> Nothing
             Just bindings ->
               matchedPayloadNodePatch
@@ -325,20 +325,20 @@ nodeRulePatch matchIndex block rule =
 matchedPayloadNodePatch ::
      P.Int
   -> MatchBindings
-  -> E.EventBlock tag
+  -> C.BlockSnapshot tag
   -> PayloadPattern tag
   -> (MatchContext tag -> NodePatch)
   -> Maybe NodePatch
 matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
-  case Q.payloadPatternMatches payloadPattern (E.eventBlockPayload block) of
+  case Q.payloadPatternMatches payloadPattern (C.blockSnapshotPayload block) of
     Nothing -> Nothing
     Just payloadBindings ->
       Just
         (makePatch
            (MatchContext
               { matchContextIndex = matchIndex
-              , matchContextPayload = E.eventBlockPayload block
-              , matchContextLabel = E.eventBlockPayloadView block
+              , matchContextPayload = C.blockSnapshotPayload block
+              , matchContextLabel = C.blockSnapshotPayloadView block
               , matchContextBindings = factBindings P.++ payloadBindings
               }))
 

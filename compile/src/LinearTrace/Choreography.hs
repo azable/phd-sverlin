@@ -14,8 +14,8 @@
 
 -- | Public choreography DSL. This is the intentionally thin user-facing layer
 -- that couples core lifecycle events to symbolic view construction through
--- queries, match specs, tags, and view patches. It depends on 'LinearTrace.Core',
--- 'LinearTrace.Core.Events', 'LinearTrace.Choreography.Query',
+-- queries, match specs, tags, and view patches. It depends on
+-- 'LinearTrace.Core', 'LinearTrace.Choreography.Query',
 -- 'LinearTrace.Choreography.Match', and the internal 'LinearTrace.View' facade.
 module LinearTrace.Choreography
   ( -- * Defined here: choreography and view graph facade
@@ -227,139 +227,94 @@ module LinearTrace.Choreography
   , (/=)
   ) where
 
-import           Control.Functor.Linear                hiding ((<$>), (<&>),
-                                                        (<*>))
-import qualified Control.Functor.Linear.Internal.State as LinearState
-import           GHC.OverloadedLabels                  (IsLabel (..))
-import           LinearTrace.Choreography.Match        (CategoryEndpoint,
-                                                        CategoryRelation (..),
-                                                        ConstraintStrength (..),
-                                                        LayoutRelation (..),
-                                                        MatchSpec,
-                                                        NodeSelection (..),
-                                                        ValueEndpoint,
-                                                        buildMatchedViewGraph,
-                                                        emptyMatchSpec,
-                                                        matchCategoryRelation,
-                                                        matchSpecAppend,
-                                                        matchValueDirectedBridge,
-                                                        matchValueRelation,
-                                                        matchValueSymmetricBridge,
-                                                        matchedNodeOutput,
-                                                        rawCategoryEndpoint,
-                                                        rawValueEndpoint,
-                                                        selectionCategoryEndpoint,
-                                                        selectionValueEndpoint,
-                                                        traceNodeOfEventBlock)
-import           LinearTrace.Choreography.Node         (Node, QueryAppend,
-                                                        Select, content, node,
-                                                        nodeSelection, payload,
-                                                        render, select,
-                                                        setNodeSpecWith,
-                                                        visualize, (<&>))
-import           LinearTrace.Choreography.Query        (Query, QueryInt (..),
-                                                        emptyQuery, queryAtom,
-                                                        queryFacts, queryInt,
-                                                        queryIntAdd,
-                                                        queryIntConst,
-                                                        queryIntVar)
-import           LinearTrace.Choreography.Style        (StyleChoice (..), sat,
-                                                        style, styleOf)
+import           Control.Functor.Linear         hiding ((<$>), (<&>), (<*>))
+import           GHC.OverloadedLabels           (IsLabel (..))
+import           LinearTrace.Choreography.Match (CategoryEndpoint,
+                                                 CategoryRelation (..),
+                                                 ConstraintStrength (..),
+                                                 LayoutRelation (..), MatchSpec,
+                                                 NodeSelection (..),
+                                                 ValueEndpoint,
+                                                 buildMatchedViewGraph,
+                                                 emptyMatchSpec,
+                                                 matchCategoryRelation,
+                                                 matchSpecAppend,
+                                                 matchValueDirectedBridge,
+                                                 matchValueRelation,
+                                                 matchValueSymmetricBridge,
+                                                 matchedNodeOutput,
+                                                 rawCategoryEndpoint,
+                                                 rawValueEndpoint,
+                                                 selectionCategoryEndpoint,
+                                                 selectionValueEndpoint,
+                                                 traceNodeOfEventBlock)
+import           LinearTrace.Choreography.Node  (Node, QueryAppend, Select,
+                                                 content, node, nodeSelection,
+                                                 payload, render, select,
+                                                 setNodeSpecWith, visualize,
+                                                 (<&>))
+import           LinearTrace.Choreography.Query (Query, QueryInt (..),
+                                                 emptyQuery, queryAtom,
+                                                 queryFacts, queryInt,
+                                                 queryIntAdd, queryIntConst,
+                                                 queryIntVar)
+import           LinearTrace.Choreography.Style (StyleChoice (..), sat, style,
+                                                 styleOf)
 import           LinearTrace.Choreography.Types
-import           LinearTrace.Core                      (Applicable1 (..),
-                                                        Applicable2 (..),
-                                                        Apply1 (..),
-                                                        Apply2 (..), Block,
-                                                        Copy (..),
-                                                        CoreOperator (..),
-                                                        Create (..),
-                                                        Destroy (..), Fact (..),
-                                                        FactValue (..),
-                                                        Facts (..), LBool (..),
-                                                        LDouble (..), LInt (..),
-                                                        LOperator (..),
-                                                        LString (..),
-                                                        LUnit (..),
-                                                        LinearPayload (..),
-                                                        Observe (..),
-                                                        OneUse (..), Payload,
-                                                        PayloadView (..),
-                                                        Pending, Replace (..),
-                                                        Seal (..), Traceable,
-                                                        Unseal (..), Use (..),
-                                                        applyLinear1,
-                                                        applyLinear1Into,
-                                                        applyLinear2,
-                                                        applyLinear2Into,
-                                                        emptyFacts, factAtom,
-                                                        factInt, factSymbol,
-                                                        factsToList, factsUnion,
-                                                        (<$>), (<*>))
-import qualified LinearTrace.Core                      as C
-import qualified LinearTrace.Core.Events               as E
-import           LinearTrace.View                      (BorderStyle (..),
-                                                        FontFamily (..),
-                                                        FontStyle (..),
-                                                        FontWeight (..),
-                                                        NodeStyle,
-                                                        TextAlign (..),
-                                                        WhiteSpace (..))
-import qualified LinearTrace.View                      as V
-import           LinearTrace.View.Access               (CategoryAccess,
-                                                        LayoutAttr (..),
-                                                        ValueAccess,
-                                                        layoutValueAccess)
-import           LinearTrace.View.Primitives           (Angle, Bounds (..),
-                                                        BoundsExpr, Color, Free,
-                                                        Hsl (..), LayoutExpr,
-                                                        Unit)
-import           LinearTrace.View.Style                (Alpha, Fill, FontSize,
-                                                        Opacity, Padding,
-                                                        Radius, Stroke,
-                                                        StrokeWidth, ZIndex)
-import qualified Prelude                               as P
-import           Prelude.Linear                        hiding (fromInteger,
-                                                        fromRational, (*), (+),
-                                                        (-), (/), (/=), (<>),
-                                                        (==))
-import qualified Solver                                as S
-import           Solver                                (RandomSeed (..),
-                                                        Vec2 (..), vec2)
-import qualified Unsafe.Coerce                         as Unsafe
+import           LinearTrace.Core               (Applicable1 (..),
+                                                 Applicable2 (..), Apply1 (..),
+                                                 Apply2 (..), Block, Copy (..),
+                                                 CoreOperator (..), Create (..),
+                                                 Destroy (..), Fact (..),
+                                                 FactValue (..), Facts (..),
+                                                 LBool (..), LDouble (..),
+                                                 LInt (..), LOperator (..),
+                                                 LString (..), LUnit (..),
+                                                 LinearPayload (..),
+                                                 Observe (..), OneUse (..),
+                                                 Payload, PayloadView (..),
+                                                 Pending, Replace (..),
+                                                 Seal (..), Traceable,
+                                                 Unseal (..), Use (..),
+                                                 applyLinear1, applyLinear1Into,
+                                                 applyLinear2, applyLinear2Into,
+                                                 emptyFacts, factAtom, factInt,
+                                                 factSymbol, factsToList,
+                                                 factsUnion, (<$>), (<*>))
+import qualified LinearTrace.Core               as C
+import           LinearTrace.View               (BorderStyle (..),
+                                                 FontFamily (..),
+                                                 FontStyle (..),
+                                                 FontWeight (..), NodeStyle,
+                                                 TextAlign (..),
+                                                 WhiteSpace (..))
+import qualified LinearTrace.View               as V
+import           LinearTrace.View.Access        (CategoryAccess,
+                                                 LayoutAttr (..), ValueAccess,
+                                                 layoutValueAccess)
+import           LinearTrace.View.Primitives    (Angle, Bounds (..), BoundsExpr,
+                                                 Color, Free, Hsl (..),
+                                                 LayoutExpr, Unit)
+import           LinearTrace.View.Style         (Alpha, Fill, FontSize, Opacity,
+                                                 Padding, Radius, Stroke,
+                                                 StrokeWidth, ZIndex)
+import qualified Prelude                        as P
+import           Prelude.Linear                 hiding (fromInteger,
+                                                 fromRational, (*), (+), (-),
+                                                 (/), (/=), (<>), (==))
+import qualified Solver                         as S
+import           Solver                         (RandomSeed (..), Vec2 (..),
+                                                 vec2)
 
 infixl 9 @:
-newtype ViewScript =
-  ViewScript V.ViewOutput
-
-data VisualTraceState where
-  VisualTraceState
-    :: Ur MatchSpec
-       %1 -> Ur (E.TraceBuilderState ViewScript)
-       %1 -> VisualTraceState
-
-type VisualTraceBuilder a = State VisualTraceState a
-
-type Choreography a = VisualTraceBuilder a
-
-instance Consumable VisualTraceState where
-  consume (VisualTraceState spec coreState) =
-    consume spec `lseq` consume coreState
-
-instance Dupable VisualTraceState where
-  dup2 (VisualTraceState spec coreState) =
-    case dup2 spec of
-      (spec1, spec2) ->
-        case dup2 coreState of
-          (coreState1, coreState2) ->
-            ( VisualTraceState spec1 coreState1
-            , VisualTraceState spec2 coreState2)
+type Choreography a = C.TraceBuilder a
 
 data VisualTraceGraph =
-  VisualTraceGraph MatchSpec (C.TraceGraphWith ViewScript)
+  VisualTraceGraph MatchSpec C.TraceGraph
 
 type ViewGraph = V.ViewGraph
 
-visualTraceCore :: VisualTraceGraph -> C.TraceGraphWith ViewScript
+visualTraceCore :: VisualTraceGraph -> C.TraceGraph
 visualTraceCore graph =
   case graph of
     VisualTraceGraph _ coreGraph -> coreGraph
@@ -368,7 +323,7 @@ buildViewGraph :: VisualTraceGraph -> ViewGraph
 buildViewGraph graph =
   case graph of
     VisualTraceGraph spec coreGraph ->
-      let stepsOutput = viewTraceSteps (E.traceGraphSteps coreGraph)
+      let stepsOutput = viewTraceSteps spec (C.traceGraphSteps coreGraph)
        in buildMatchedViewGraph
             spec
             (builtSteps stepsOutput)
@@ -404,8 +359,8 @@ data BuiltViewSteps = BuiltViewSteps
   , builtRenderFrames      :: [[V.RenderIntent]]
   }
 
-viewTraceSteps :: [E.TraceStepWith ViewScript] -> BuiltViewSteps
-viewTraceSteps = viewTraceStepsWith viewTraceStep [] [] [] [] [] []
+viewTraceSteps :: MatchSpec -> [C.TraceStep] -> BuiltViewSteps
+viewTraceSteps spec = viewTraceStepsWith (viewTraceStep spec) [] [] [] [] [] []
 
 viewTraceStepsWith ::
      ([V.RenderIntent] -> record -> BuiltViewStep)
@@ -451,11 +406,12 @@ viewTraceStepsWith buildStep steps nodes constraints choiceConstraints renderFra
             (stepPendingRenderIntents builtStep)
             rest
 
-viewTraceStep :: [V.RenderIntent] -> E.TraceStepWith ViewScript -> BuiltViewStep
-viewTraceStep pending step =
-  case E.traceStepOutput step of
-    E.ExplainedTraceStep label (ViewScript rawOutput) _plainStep ->
-      let output = V.mergeInitialRenderIntents pending rawOutput
+viewTraceStep :: MatchSpec -> [V.RenderIntent] -> C.TraceStep -> BuiltViewStep
+viewTraceStep spec pending = C.foldTraceStep onCheckpoint onDiscarded
+  where
+    onCheckpoint label _payload events =
+      let rawOutput = V.flushViewOutput (buildTraceEventsOutput spec events)
+          output = V.mergeInitialRenderIntents pending rawOutput
           nodes = V.emittedNodes output
           constraints = V.emittedConstraints output
           choiceConstraints = V.emittedChoiceConstraints output
@@ -468,7 +424,7 @@ viewTraceStep pending step =
             , stepRenderFrames = renderFrames
             , stepPendingRenderIntents = V.pendingRenderIntents output
             }
-    E.DiscardedTraceStep reason _plainStep ->
+    onDiscarded reason _events =
       BuiltViewStep
         { stepView = V.ViewStep ("Discarded: " P.++ reason) [] [] []
         , stepNodes = []
@@ -1062,87 +1018,30 @@ lhs =/ delta = openSymmetricBridge lhs delta
 (/=) :: NotEqualOrClose lhs rhs => lhs -> rhs -> VisualConstraint
 lhs /= rhs = notEqualOrClose lhs rhs
 
-initialVisualTraceState :: MatchSpec -> VisualTraceState
-initialVisualTraceState spec =
-  VisualTraceState (Ur spec) (Ur E.emptyTraceBuilderState)
-
-runVisualTraceBuilder :: MatchSpec -> Choreography () -> VisualTraceGraph
-runVisualTraceBuilder spec builder =
-  let (_result, finalState) = runState builder (initialVisualTraceState spec)
-      VisualTraceState _spec (Ur coreState) = finalState
-   in VisualTraceGraph spec (E.traceBuilderStateGraph coreState)
-
-unsafeUr :: forall a. a %1 -> Ur a
-unsafeUr = Unsafe.unsafeCoerce (Ur :: a -> Ur a)
-
-runCoreBuilder :: C.TraceBuilderWith ViewScript a -> Choreography a
-runCoreBuilder builder =
-  LinearState.state
-    (\(VisualTraceState spec (Ur coreState)) ->
-       let (result, nextCoreState) =
-             E.runTraceBuilderWithState builder coreState
-        in (result, VisualTraceState spec (Ur nextCoreState)))
-
-runCoreLinear1 ::
-     (input %1 -> C.TraceBuilderWith ViewScript output)
-  -> input
-     %1 -> Choreography output
-runCoreLinear1 build input =
-  case unsafeUr input of
-    Ur unrestrictedInput -> runCoreBuilder (build unrestrictedInput)
-
-runCoreLinear2 ::
-     (left %1 -> right %1 -> C.TraceBuilderWith ViewScript output)
-  -> left
-     %1 -> right
-     %1 -> Choreography output
-runCoreLinear2 build leftInput rightInput =
-  case unsafeUr leftInput of
-    Ur unrestrictedLeft ->
-      case unsafeUr rightInput of
-        Ur unrestrictedRight ->
-          runCoreBuilder (build unrestrictedLeft unrestrictedRight)
-
-runCoreLinear3 ::
-     (first %1 -> second %1 -> third %1 -> C.TraceBuilderWith ViewScript output)
-  -> first
-     %1 -> second
-     %1 -> third
-     %1 -> Choreography output
-runCoreLinear3 build firstInput secondInput thirdInput =
-  case unsafeUr firstInput of
-    Ur unrestrictedFirst ->
-      case unsafeUr secondInput of
-        Ur unrestrictedSecond ->
-          case unsafeUr thirdInput of
-            Ur unrestrictedThird ->
-              runCoreBuilder
-                (build unrestrictedFirst unrestrictedSecond unrestrictedThird)
-
-buildEventLogOutput :: MatchSpec -> E.EventLog -> V.ViewOutput
-buildEventLogOutput spec =
-  E.foldEventLog
+buildTraceEventsOutput :: MatchSpec -> C.TraceEvents -> V.ViewOutput
+buildTraceEventsOutput spec =
+  C.foldTraceEvents
     (\output event -> V.appendViewOutput output (viewOutputForEvent spec event))
     V.emptyViewOutput
 
-viewOutputForEvent :: MatchSpec -> E.TraceEvent -> V.ViewOutput
+viewOutputForEvent :: MatchSpec -> C.TraceEvent -> V.ViewOutput
 viewOutputForEvent spec event =
   case event of
-    E.TraceCreate block ->
+    C.TraceCreate block ->
       V.appendViewOutput
         (matchedNodeOutput spec block)
         (renderEventBlock V.RenderFresh block)
-    E.TraceObserve _block -> V.emptyViewOutput
-    E.TraceUse block -> renderEventBlock V.RenderRemove block
-    E.TraceCopy originalBlock copyBlock ->
+    C.TraceObserve _block -> V.emptyViewOutput
+    C.TraceUse block -> renderEventBlock V.RenderRemove block
+    C.TraceCopy originalBlock copyBlock ->
       V.appendViewOutput
         (matchedNodeOutput spec copyBlock)
         (renderEventBlocks V.RenderFork originalBlock copyBlock)
-    E.TraceReplace oldBlock outputBlock ->
+    C.TraceReplace oldBlock outputBlock ->
       V.appendViewOutput
         (matchedNodeOutput spec outputBlock)
         (renderEventBlocks V.RenderContinue oldBlock outputBlock)
-    E.TraceApply1 opBlock argBlock outputBlock ->
+    C.TraceApply1 opBlock argBlock outputBlock ->
       V.appendViewOutput
         (matchedNodeOutput spec outputBlock)
         (V.appendViewOutput
@@ -1150,7 +1049,7 @@ viewOutputForEvent spec event =
            (V.appendViewOutput
               (renderEventBlock V.RenderRemove opBlock)
               (renderEventBlock V.RenderRemove argBlock)))
-    E.TraceApply2 opBlock lhsBlock rhsBlock outputBlock ->
+    C.TraceApply2 opBlock lhsBlock rhsBlock outputBlock ->
       V.appendViewOutput
         (matchedNodeOutput spec outputBlock)
         (V.appendViewOutput
@@ -1160,50 +1059,50 @@ viewOutputForEvent spec event =
               (V.appendViewOutput
                  (renderEventBlock V.RenderRemove lhsBlock)
                  (renderEventBlock V.RenderRemove rhsBlock))))
-    E.TraceDestroy block -> renderEventBlock V.RenderRemove block
-    E.TraceSeal _ownerBlock _childBlock -> V.emptyViewOutput
-    E.TraceUnseal _ownerBlock _childBlock -> V.emptyViewOutput
+    C.TraceDestroy block -> renderEventBlock V.RenderRemove block
+    C.TraceSeal _ownerBlock _childBlock -> V.emptyViewOutput
+    C.TraceUnseal _ownerBlock _childBlock -> V.emptyViewOutput
 
 renderEventBlock ::
-     (V.ViewRef tag -> V.RenderIntent) -> E.EventBlock tag -> V.ViewOutput
+     (V.ViewRef tag -> V.RenderIntent) -> C.BlockSnapshot tag -> V.ViewOutput
 renderEventBlock makeIntent block =
   V.renderIntentOutput (makeIntent (eventBlockViewRef block))
 
 renderEventBlocks ::
      (V.ViewRef source -> V.ViewRef target -> V.RenderIntent)
-  -> E.EventBlock source
-  -> E.EventBlock target
+  -> C.BlockSnapshot source
+  -> C.BlockSnapshot target
   -> V.ViewOutput
 renderEventBlocks makeIntent sourceBlock targetBlock =
   V.renderIntentOutput
     (makeIntent (eventBlockViewRef sourceBlock) (eventBlockViewRef targetBlock))
 
-eventBlockViewRef :: E.EventBlock tag -> V.ViewRef tag
+eventBlockViewRef :: C.BlockSnapshot tag -> V.ViewRef tag
 eventBlockViewRef block = V.nodeRef (traceNodeOfEventBlock block)
 
 runChoreography :: Choreography () -> VisualTraceGraph
 runChoreography = runChoreographyWith emptyMatchSpec
 
 runChoreographyWith :: MatchSpec -> Choreography () -> VisualTraceGraph
-runChoreographyWith = runVisualTraceBuilder
+runChoreographyWith spec builder = VisualTraceGraph spec (C.buildGraph builder)
 
 create ::
      forall tag. C.Traceable tag
   => C.Payload tag
      %1 -> Choreography (C.Create tag)
-create = runCoreLinear1 C.create
+create = C.create
 
 use ::
      forall tag. C.Traceable tag
   => Block tag
      %1 -> Choreography (C.Use tag)
-use = runCoreLinear1 C.use
+use = C.use
 
 copy ::
      forall tag. C.Traceable tag
   => Block tag
      %1 -> Choreography (C.Copy tag)
-copy = runCoreLinear1 C.copy
+copy = C.copy
 
 apply1 ::
      forall op arg.
@@ -1215,7 +1114,7 @@ apply1 ::
   => Block op
      %1 -> Block arg
      %1 -> Choreography (C.Apply1 op arg)
-apply1 = runCoreLinear2 C.apply1
+apply1 = C.apply1
 
 apply2 ::
      forall op lhs rhs.
@@ -1229,21 +1128,21 @@ apply2 ::
      %1 -> Block lhs
      %1 -> Block rhs
      %1 -> Choreography (C.Apply2 op lhs rhs)
-apply2 = runCoreLinear3 C.apply2
+apply2 = C.apply2
 
 replace ::
      forall tag. C.Traceable tag
   => Block tag
      %1 -> C.Pending tag
      %1 -> Choreography (C.Replace tag)
-replace = runCoreLinear2 C.replace
+replace = C.replace
 
 materialize ::
      forall tag. C.Traceable tag
   => Query
   -> C.Pending tag
      %1 -> Choreography (Block tag)
-materialize query = runCoreLinear1 (C.materializeTagged (queryFacts query))
+materialize query = C.materializeTagged (queryFacts query)
 
 materializeWithTags ::
      forall tag. C.Traceable tag
@@ -1252,7 +1151,7 @@ materializeWithTags ::
   -> C.Pending tag
      %1 -> Choreography (Block tag)
 materializeWithTags query selectQuery =
-  runCoreLinear1 (C.materializeTaggedWith (queryFacts query) selectFacts)
+  C.materializeTaggedWith (queryFacts query) selectFacts
   where
     selectFacts outputPayload = queryFacts (selectQuery outputPayload)
 
@@ -1260,27 +1159,16 @@ commit ::
      forall tag. C.Traceable tag
   => C.Pending tag
      %1 -> Choreography (Block tag)
-commit = runCoreLinear1 C.commit
+commit = C.commit
 
 destroy ::
      forall tag. C.Traceable tag
   => Block tag
      %1 -> Choreography (C.Destroy tag)
-destroy = runCoreLinear1 C.destroy
+destroy = C.destroy
 
 checkpoint :: P.String -> Choreography ()
-checkpoint label =
-  LinearState.state
-    (\(VisualTraceState (Ur spec) (Ur coreState)) ->
-       let eventLog = E.traceBuilderPendingEventLog coreState
-           output = buildEventLogOutput spec eventLog
-           ((), nextCoreState) =
-             E.runTraceBuilderWithState
-               (E.checkpointEventLogWith
-                  label
-                  (ViewScript (V.flushViewOutput output)))
-               coreState
-        in ((), VisualTraceState (Ur spec) (Ur nextCoreState)))
+checkpoint = C.checkpoint
 
 ensure :: VisualConstraint -> VisualizationBuilder ()
 ensure = emitConstraint EnsureConstraint

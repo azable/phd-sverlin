@@ -93,7 +93,13 @@ module LinearTrace.Core.Internal
     -- printers. These remain internal to the package-level public API.
     BlockId
   , BlockRef(..)
+  , blockRefId
   , BlockSnapshot(..)
+  , blockSnapshotRef
+  , blockSnapshotPayload
+  , blockSnapshotPayloadView
+  , blockSnapshotFacts
+  , withBlockSnapshot
   , BlockRecord(..)
   , TraceBuilderState(..)
   , NoStepPayload(..)
@@ -101,8 +107,14 @@ module LinearTrace.Core.Internal
   , TraceStepWith(..)
   , TraceEvents(..)
   , emptyTraceEvents
+  , foldTraceEvents
   , PendingEvents(..)
   , emptyPendingEvents
+  , traceBuilderPendingEvents
+  , traceGraphPendingEvents
+  , traceGraphSteps
+  , traceStepEvents
+  , foldTraceStep
   , -- * Public trace event data
     -- | Trace event data consumed by event projection, choreography, and
     -- printers.
@@ -387,17 +399,8 @@ data BlockRecord where
 -- Primitive operation result types
 --------------------------------------------------------------------------------
 data Pending tag where
-  PendingCreate :: Payload tag %1 -> Pending tag
-  PendingCopy :: BlockSnapshot tag -> Payload tag %1 -> Pending tag
-  PendingReplace :: BlockSnapshot tag -> Payload tag %1 -> Pending tag
-  PendingApply1
-    :: BlockSnapshot op -> BlockSnapshot arg -> Payload out %1 -> Pending out
-  PendingApply2
-    :: BlockSnapshot op
-    -> BlockSnapshot lhs
-    -> BlockSnapshot rhs
-    -> Payload out
-       %1 -> Pending out
+  Pending
+    :: Payload tag %1 -> Ur (BlockSnapshot tag -> TraceEvent) %1 -> Pending tag
 
 data Create tag where
   Create :: Pending tag %1 -> Create tag
@@ -479,6 +482,50 @@ newtype PendingEvents =
 emptyPendingEvents :: PendingEvents
 emptyPendingEvents = PendingEvents emptyTraceEvents
 
+foldTraceEvents ::
+     (accumulator -> TraceEvent -> accumulator)
+  -> accumulator
+  -> TraceEvents
+  -> accumulator
+foldTraceEvents foldEvent initial events =
+  case events of
+    TraceEvents traceEvents -> P.foldl foldEvent initial traceEvents
+
+traceEventsFromPendingEvents :: PendingEvents -> TraceEvents
+traceEventsFromPendingEvents pending =
+  case pending of
+    PendingEvents events -> events
+
+traceBuilderPendingEvents :: TraceBuilderState payload -> TraceEvents
+traceBuilderPendingEvents builderState =
+  case builderState of
+    TraceBuilderState _next _blocks (Ur pending) _steps ->
+      traceEventsFromPendingEvents pending
+
+traceGraphPendingEvents :: TraceGraphWith payload -> TraceEvents
+traceGraphPendingEvents graph =
+  case graph of
+    TraceGraph _blocks _steps pending -> traceEventsFromPendingEvents pending
+
+traceGraphSteps :: TraceGraphWith payload -> [TraceStepWith payload]
+traceGraphSteps graph =
+  case graph of
+    TraceGraph _blocks steps _pending -> steps
+
+traceStepEvents :: TraceStepWith payload -> TraceEvents
+traceStepEvents =
+  foldTraceStep (\_label _payload events -> events) (\_reason events -> events)
+
+foldTraceStep ::
+     (P.String -> payload -> TraceEvents -> result)
+  -> (P.String -> TraceEvents -> result)
+  -> TraceStepWith payload
+  -> result
+foldTraceStep onCheckpoint onDiscarded step =
+  case step of
+    CheckpointStep label payload events -> onCheckpoint label payload events
+    DiscardedStep reason events         -> onDiscarded reason events
+
 data TraceBuilderState payload = TraceBuilderState
   { _nextBlockId :: Ur BlockId
   , _blocks      :: Ur [BlockRecord]
@@ -553,6 +600,37 @@ makeTraceEvent2Hetero ctor leftProxy leftRef leftPayload leftFacts rightProxy ri
   ctor
     (makeSnapshot leftProxy leftRef leftPayload leftFacts)
     (makeSnapshot rightProxy rightRef rightPayload rightFacts)
+
+blockRefId :: BlockRef tag -> BlockId
+blockRefId ref =
+  case ref of
+    BlockRef blockId -> blockId
+
+blockSnapshotRef :: BlockSnapshot tag -> BlockRef tag
+blockSnapshotRef snapshot =
+  case snapshot of
+    BlockSnapshot ref _payload _payloadView _facts -> ref
+
+blockSnapshotPayload :: BlockSnapshot tag -> Payload tag
+blockSnapshotPayload snapshot =
+  case snapshot of
+    BlockSnapshot _ref payload _payloadView _facts -> payload
+
+blockSnapshotPayloadView :: BlockSnapshot tag -> PayloadView
+blockSnapshotPayloadView snapshot =
+  case snapshot of
+    BlockSnapshot _ref _payload snapshotPayloadView _facts ->
+      snapshotPayloadView
+
+blockSnapshotFacts :: BlockSnapshot tag -> Facts
+blockSnapshotFacts snapshot =
+  case snapshot of
+    BlockSnapshot _ref _payload _payloadView facts -> facts
+
+withBlockSnapshot :: BlockSnapshot tag -> (Traceable tag => result) -> result
+withBlockSnapshot snapshot result =
+  case snapshot of
+    BlockSnapshot {} -> result
 
 allocatePersistedBlock ::
      forall payload tag. Traceable tag
@@ -647,18 +725,6 @@ snapshotBlock (Block (Ur blockId) (Ur payload) (Ur facts)) =
       snapshot = makeSnapshot (Proxy :: Proxy tag) ref' payload facts
    in SnapshottedBlock (Block (Ur blockId) (Ur payload) (Ur facts)) snapshot
 
-data PendingPayload tag where
-  PendingPayload :: Payload tag %1 -> PendingPayload tag
-
-pendingPayload :: Pending tag %1 -> PendingPayload tag
-pendingPayload pending =
-  case pending of
-    PendingCreate payload               -> PendingPayload payload
-    PendingCopy _source payload         -> PendingPayload payload
-    PendingReplace _old payload         -> PendingPayload payload
-    PendingApply1 _op _arg payload      -> PendingPayload payload
-    PendingApply2 _op _lhs _rhs payload -> PendingPayload payload
-
 materializationFactsFrom ::
      Facts -> (Payload tag -> Facts) -> Payload tag -> Facts
 materializationFactsFrom baseFacts selectFacts payload =
@@ -696,16 +762,10 @@ materializeTaggedWith ::
      %1 -> TraceBuilderWith payload (Block tag)
 materializeTaggedWith baseFacts selectFacts pending =
   case pending of
-    PendingCreate payload ->
-      materializeOutput baseFacts selectFacts payload TraceCreate
-    PendingCopy source payload ->
-      materializeOutput baseFacts selectFacts payload (TraceCopy source)
-    PendingReplace old payload ->
-      materializeOutput baseFacts selectFacts payload (TraceReplace old)
-    PendingApply1 op arg payload ->
-      materializeOutput baseFacts selectFacts payload (TraceApply1 op arg)
-    PendingApply2 op lhs rhs payload ->
-      materializeOutput baseFacts selectFacts payload (TraceApply2 op lhs rhs)
+    Pending payload makeEvent ->
+      case makeEvent of
+        Ur buildEvent ->
+          materializeOutput baseFacts selectFacts payload buildEvent
 
 materialize ::
      forall payload tag. Traceable tag
@@ -730,7 +790,7 @@ create ::
      forall payload tag. Traceable tag
   => Payload tag
      %1 -> TraceBuilderWith payload (Create tag)
-create payload0 = return (Create (PendingCreate payload0))
+create payload0 = return (Create (Pending payload0 (Ur TraceCreate)))
 
 observe ::
      forall payload tag. Traceable tag
@@ -764,7 +824,7 @@ copy block =
           return
             (Copy
                (Block (Ur originalId) (Ur payload) (Ur sourceFacts))
-               (PendingCopy snapshot payload))
+               (Pending payload (Ur (TraceCopy snapshot))))
 
 replace ::
      forall payload tag. Traceable tag
@@ -774,9 +834,11 @@ replace ::
 replace (Block (Ur oldId) (Ur oldPayload) (Ur oldFacts)) incomingPending =
   let oldRef = makeBlockRef (Proxy :: Proxy tag) oldId
       oldSnapshot = makeSnapshot (Proxy :: Proxy tag) oldRef oldPayload oldFacts
-   in case pendingPayload incomingPending of
-        PendingPayload payload ->
-          return (Replace (PendingReplace oldSnapshot payload))
+   in case incomingPending of
+        Pending payload previousEvent ->
+          case previousEvent of
+            Ur _ ->
+              return (Replace (Pending payload (Ur (TraceReplace oldSnapshot))))
 
 apply1 ::
      forall payload op arg.
@@ -801,7 +863,10 @@ apply1 opBlock argBlock =
                 makeSnapshot (Proxy :: Proxy arg) argRef argPayload argFacts
               outputPayload = applyPayload1 opPayload argPayload
            in return
-                (Apply1 (PendingApply1 opSnapshot argSnapshot outputPayload))
+                (Apply1
+                   (Pending
+                      outputPayload
+                      (Ur (TraceApply1 opSnapshot argSnapshot))))
 
 apply2 ::
      forall payload op lhs rhs.
@@ -834,11 +899,9 @@ apply2 opBlock lhsBlock rhsBlock =
                   outputPayload = applyPayload2 opPayload lhsPayload rhsPayload
                in return
                     (Apply2
-                       (PendingApply2
-                          opSnapshot
-                          lhsSnapshot
-                          rhsSnapshot
-                          outputPayload))
+                       (Pending
+                          outputPayload
+                          (Ur (TraceApply2 opSnapshot lhsSnapshot rhsSnapshot))))
 
 destroy ::
      forall payload tag. Traceable tag

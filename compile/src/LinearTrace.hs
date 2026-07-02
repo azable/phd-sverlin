@@ -16,6 +16,15 @@ module LinearTrace
   , Traceable
   , Block
   , Slot
+  , BlockId
+  , BlockRef
+  , blockRefId
+  , BlockSnapshot
+  , blockSnapshotRef
+  , blockSnapshotPayload
+  , blockSnapshotPayloadView
+  , blockSnapshotFacts
+  , withBlockSnapshot
   , Payload
   , FactValue(..)
   , Fact(..)
@@ -78,6 +87,18 @@ module LinearTrace
   , discardPending
   , (<$>)
   , (<*>)
+  , -- * Trace events and steps
+    TraceEvent(..)
+  , TraceEvents
+  , emptyTraceEvents
+  , foldTraceEvents
+  , NoStepPayload
+  , TraceStep
+  , TraceStepWith
+  , traceGraphPendingEvents
+  , traceGraphSteps
+  , traceStepEvents
+  , foldTraceStep
   , -- * Graph building, rendering and compilation
     -- | Output-facing helpers from 'LinearTrace.Print' and
     -- 'LinearTrace.Compile'. The visualization compiler depends on a solved
