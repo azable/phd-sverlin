@@ -35,6 +35,41 @@ module LinearTrace.Core
   , PayloadView(..)
   , payloadText
   , Traceable
+  , -- * Query and tag matching
+    -- | Neutral query language over core facts and payload snapshots.
+    Query(..)
+  , QueryTerm(..)
+  , QueryValue(..)
+  , QueryInt(..)
+  , QueryBindings
+  , emptyQuery
+  , queryAtom
+  , queryInt
+  , queryAppend
+  , queryKey
+  , queryFacts
+  , queryMatches
+  , queryIntConst
+  , queryIntVar
+  , queryIntAdd
+  , queryBindingValue
+  , bindQueryInt
+  , MatchBinding(..)
+  , MatchBindings
+  , matchBinding
+  , matchBindingValue
+  , queryMatchBindings
+  , PayloadPattern
+  , payloadPatternMatches
+  , anyPayloadPattern
+  , payloadBindingPattern
+  , payloadBoolPattern
+  , payloadIntPattern
+  , payloadDoublePattern
+  , payloadStringPattern
+  , payloadUnitPattern
+  , labelName
+  , safeKey
   , -- * Trusted linear payloads
     -- | Built-in payload wrappers used by examples/tests and by the
     -- choreography DSL's public payload vocabulary.
@@ -109,4 +144,5 @@ module LinearTrace.Core
   ) where
 
 import           LinearTrace.Core.Internal
+import           LinearTrace.Core.Query
 import           Prelude                   ()

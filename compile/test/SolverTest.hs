@@ -14,6 +14,7 @@ import           LinearTrace.Choreography  (Applicable2 (..), CoreOperator (..),
                                             Payload, applyLinear2Into)
 import qualified LinearTrace.Choreography  as Choreography
 import qualified LinearTrace.Compile       as Compile
+import qualified LinearTrace.Core          as Core
 import           Prelude.Linear            (Ur (..))
 import qualified Prelude.Linear            as Linear
 import           Solver
@@ -85,9 +86,41 @@ main =
        , categoricalTests
        , seededFixtureTests
        , problemInspectionTests
+       , coreQueryTests
        , choreographyBridgeTests
        , viewMaterializationTests
        ])
+
+coreQueryTests :: TestTree
+coreQueryTests =
+  testGroup
+    "core query"
+    [ testCase "query facts preserve concrete atom and int tags" $ do
+        let query =
+              Core.queryAppend
+                (Core.queryAtom "item")
+                (Core.queryInt "index" (Core.queryIntConst 3))
+        Core.queryFacts query
+          @?= Core.Facts [Core.factInt "index" 3, Core.factAtom "item"]
+    , testCase "query matching binds integer variables"
+        $ Core.queryMatches
+            (Core.queryInt "index" (Core.queryIntVar "i"))
+            (Core.Facts [Core.factInt "index" 3])
+            @?= Just [("i", 3)]
+    , testCase "query matching rejects conflicting repeated variables"
+        $ Core.queryMatches
+            (Core.queryAppend
+               (Core.queryInt "index" (Core.queryIntVar "i"))
+               (Core.queryInt "row" (Core.queryIntVar "i")))
+            (Core.Facts [Core.factInt "index" 3, Core.factInt "row" 4])
+            @?= Nothing
+    , testCase "payload binding pattern captures payload text"
+        $ Core.payloadPatternMatches
+            (Core.payloadBindingPattern "value" :: Core.PayloadPattern
+               ApplyValue)
+            (LInt 12 :: LInt ApplyValue)
+            @?= Just [Core.MatchBinding "value" "12"]
+    ]
 
 choreographyBridgeTests :: TestTree
 choreographyBridgeTests =

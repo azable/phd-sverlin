@@ -5,13 +5,11 @@
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 
--- | Query and payload-pattern implementation for choreography. The public DSL
--- re-exports the safe query vocabulary; 'LinearTrace.Choreography.Match' uses
--- this module to match core event blocks and generated view groups.
-module LinearTrace.Choreography.Query
+-- | Neutral tag/query and payload-pattern support for core trace facts.
+-- Visualization layers can use this module to match core block snapshots
+-- without owning the query semantics themselves.
+module LinearTrace.Core.Query
   ( -- * Query terms
-    -- | Fact/tag query representation and constructors. Choreography users see
-    -- these through the DSL facade and overloaded labels.
     Query(..)
   , QueryTerm(..)
   , QueryValue(..)
@@ -24,24 +22,18 @@ module LinearTrace.Choreography.Query
   , queryKey
   , queryFacts
   , queryMatches
-  , queryMatchesTags
   , queryIntConst
   , queryIntVar
   , queryIntAdd
   , queryBindingValue
   , bindQueryInt
   , -- * Match bindings
-    -- | Variable bindings produced by query matching. Match rules consume
-    -- these to build node patches and selection endpoints.
     MatchBinding(..)
   , MatchBindings
-  , MatchContext(..)
   , matchBinding
   , matchBindingValue
   , queryMatchBindings
   , -- * Payload patterns
-    -- | Type-directed payload filters used by match rules to refine core event
-    -- blocks before view nodes are produced.
     PayloadPattern
   , payloadPatternMatches
   , anyPayloadPattern
@@ -52,19 +44,17 @@ module LinearTrace.Choreography.Query
   , payloadStringPattern
   , payloadUnitPattern
   , -- * Key helpers
-    -- | Stable names and keys shared by query matching and view node identity.
     labelName
   , safeKey
   ) where
 
-import           Data.Proxy             (Proxy (..))
-import           Data.Type.Equality     (type (~))
-import           GHC.OverloadedLabels   (IsLabel (..))
-import           GHC.TypeLits           (KnownSymbol, symbolVal)
-import qualified LinearTrace.Core       as C
-import qualified LinearTrace.View.Types as V
-import           Prelude                (Bool (..), Maybe (..), otherwise)
-import qualified Prelude                as P
+import           Data.Proxy                (Proxy (..))
+import           Data.Type.Equality        (type (~))
+import           GHC.OverloadedLabels      (IsLabel (..))
+import           GHC.TypeLits              (KnownSymbol, symbolVal)
+import qualified LinearTrace.Core.Internal as C
+import           Prelude                   (Bool (..), Maybe (..), otherwise)
+import qualified Prelude                   as P
 
 data QueryInt
   = QueryIntConst P.Int
@@ -166,9 +156,6 @@ queryMatches query facts =
   case query of
     Query terms -> matchQueryTerms (canonicalTerms terms) facts []
 
-queryMatchesTags :: Query -> V.ViewTags -> Maybe QueryBindings
-queryMatchesTags query tags = queryMatches query (viewTagsFacts tags)
-
 queryBindingValue :: QueryBindings -> P.Int -> P.Int
 queryBindingValue bindings fallback =
   case bindings of
@@ -180,13 +167,6 @@ data MatchBinding =
   deriving (P.Eq, P.Show)
 
 type MatchBindings = [MatchBinding]
-
-data MatchContext tag = MatchContext
-  { matchContextIndex    :: P.Int
-  , matchContextPayload  :: C.Payload tag
-  , matchContextLabel    :: C.PayloadView
-  , matchContextBindings :: MatchBindings
-  }
 
 matchBinding :: P.String -> P.String -> MatchBinding
 matchBinding = MatchBinding
@@ -351,17 +331,6 @@ queryIntConcrete value =
       case queryIntConcrete base of
         Nothing          -> Nothing
         Just actualValue -> Just (actualValue P.+ offset)
-
-viewTagsFacts :: V.ViewTags -> C.Facts
-viewTagsFacts tags = C.Facts (P.map viewTagFact (V.viewTagsToList tags))
-
-viewTagFact :: (P.String, V.ViewTagValue) -> C.Fact
-viewTagFact tag =
-  case tag of
-    (name, value) ->
-      case value of
-        V.ViewTagAtom    -> C.factAtom name
-        V.ViewTagInt int -> C.factInt name int
 
 canonicalTerms :: [QueryTerm] -> [QueryTerm]
 canonicalTerms terms = dedupeTerms (sortTerms terms)

@@ -15,8 +15,8 @@
 -- | Public choreography DSL. This is the intentionally thin user-facing layer
 -- that couples core lifecycle events to symbolic view construction through
 -- queries, match specs, tags, and view patches. It depends on
--- 'LinearTrace.Core', 'LinearTrace.Choreography.Query',
--- 'LinearTrace.Choreography.Match', and the internal 'LinearTrace.View' facade.
+-- 'LinearTrace.Core', 'LinearTrace.Choreography.Match', and the internal
+-- 'LinearTrace.View' facade.
 module LinearTrace.Choreography
   ( -- * Defined here: choreography and view graph facade
     -- | Direct choreography builder API. Core lifecycle helpers return pending
@@ -88,7 +88,7 @@ module LinearTrace.Choreography
   , Unseal(..)
   , (<$>)
   , (<*>)
-  , -- * Re-exported from LinearTrace.Choreography.Query
+  , -- * Re-exported from LinearTrace.Core
     -- | Query syntax and query-derived facts used to match trace blocks and
     -- generated nodes.
     Query
@@ -253,11 +253,6 @@ import           LinearTrace.Choreography.Node  (Node, QueryAppend, Select,
                                                  payload, render, select,
                                                  setNodeSpecWith, visualize,
                                                  (<&>))
-import           LinearTrace.Choreography.Query (Query, QueryInt (..),
-                                                 emptyQuery, queryAtom,
-                                                 queryFacts, queryInt,
-                                                 queryIntAdd, queryIntConst,
-                                                 queryIntVar)
 import           LinearTrace.Choreography.Style (StyleChoice (..), sat, style,
                                                  styleOf)
 import           LinearTrace.Choreography.Types
@@ -273,14 +268,18 @@ import           LinearTrace.Core               (Applicable1 (..),
                                                  LinearPayload (..),
                                                  Observe (..), OneUse (..),
                                                  Payload, PayloadView (..),
-                                                 Pending, Replace (..),
-                                                 Seal (..), Traceable,
-                                                 Unseal (..), Use (..),
-                                                 applyLinear1, applyLinear1Into,
-                                                 applyLinear2, applyLinear2Into,
-                                                 emptyFacts, factAtom, factInt,
+                                                 Pending, Query, QueryInt (..),
+                                                 Replace (..), Seal (..),
+                                                 Traceable, Unseal (..),
+                                                 Use (..), applyLinear1,
+                                                 applyLinear1Into, applyLinear2,
+                                                 applyLinear2Into, emptyFacts,
+                                                 emptyQuery, factAtom, factInt,
                                                  factSymbol, factsToList,
-                                                 factsUnion, (<$>), (<*>))
+                                                 factsUnion, queryAtom,
+                                                 queryFacts, queryInt,
+                                                 queryIntAdd, queryIntConst,
+                                                 queryIntVar, (<$>), (<*>))
 import qualified LinearTrace.Core               as C
 import           LinearTrace.View               (BorderStyle (..),
                                                  FontFamily (..),

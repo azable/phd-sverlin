@@ -35,6 +35,40 @@ module LinearTrace
   , factInt
   , factsUnion
   , factsToList
+  , -- * Query and tag matching
+    Query(..)
+  , QueryTerm(..)
+  , QueryValue(..)
+  , QueryInt(..)
+  , QueryBindings
+  , emptyQuery
+  , queryAtom
+  , queryInt
+  , queryAppend
+  , queryKey
+  , queryFacts
+  , queryMatches
+  , queryIntConst
+  , queryIntVar
+  , queryIntAdd
+  , queryBindingValue
+  , bindQueryInt
+  , MatchBinding(..)
+  , MatchBindings
+  , matchBinding
+  , matchBindingValue
+  , queryMatchBindings
+  , PayloadPattern
+  , payloadPatternMatches
+  , anyPayloadPattern
+  , payloadBindingPattern
+  , payloadBoolPattern
+  , payloadIntPattern
+  , payloadDoublePattern
+  , payloadStringPattern
+  , payloadUnitPattern
+  , labelName
+  , safeKey
   , -- * Trusted linear payloads
     -- | Small trusted payload wrappers supplied by the core layer for example
     -- and test programs. User payload types can also provide their own

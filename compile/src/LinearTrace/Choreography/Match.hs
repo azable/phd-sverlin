@@ -16,6 +16,7 @@ module LinearTrace.Choreography.Match
   , matchAnyQueryNode
   , matchQueryPayloadNode
   , matchGroupNode
+  , MatchContext(..)
   , -- * Layout/value relations
     -- | Selection and component relation API. The DSL uses this to connect
     -- view lifespans and style/layout values through solver constraints.
@@ -42,31 +43,25 @@ module LinearTrace.Choreography.Match
   , buildMatchedViewGraph
   ) where
 
-import           Data.Maybe                     (fromMaybe)
-import           Data.Proxy                     (Proxy (..))
-import           Data.Type.Equality             ((:~:) (..))
-import           Data.Typeable                  (eqT)
-import           LinearTrace.Choreography.Query (MatchBindings,
-                                                 MatchContext (..),
-                                                 PayloadPattern, Query,
-                                                 QueryBindings)
-import qualified LinearTrace.Choreography.Query as Q
-import qualified LinearTrace.Core               as C
-import qualified LinearTrace.View               as V
-import qualified LinearTrace.View.Access        as VA
-import qualified LinearTrace.View.Patch         as VP
-import           Prelude                        (Bool (..), Maybe (..),
-                                                 otherwise)
-import qualified Prelude                        as P
-import qualified Solver                         as S
+import           Data.Maybe              (fromMaybe)
+import           Data.Proxy              (Proxy (..))
+import           Data.Type.Equality      ((:~:) (..))
+import           Data.Typeable           (eqT)
+import qualified LinearTrace.Core        as C
+import qualified LinearTrace.View        as V
+import qualified LinearTrace.View.Access as VA
+import qualified LinearTrace.View.Patch  as VP
+import           Prelude                 (Bool (..), Maybe (..), otherwise)
+import qualified Prelude                 as P
+import qualified Solver                  as S
 
 type ValueComponent = VA.ValueComponent
 
 type NodePatch = VP.NodePatch
 
 data NodeSelection
-  = TraceSelection Query
-  | GroupSelection P.String Query
+  = TraceSelection C.Query
+  | GroupSelection P.String C.Query
   deriving (P.Eq, P.Show)
 
 data ConstraintStrength
@@ -98,11 +93,18 @@ data MatchSpec =
 data NodeRule where
   QueryNodeRule
     :: C.Traceable tag=> Proxy tag
-    -> Query
-    -> PayloadPattern tag
+    -> C.Query
+    -> C.PayloadPattern tag
     -> (MatchContext tag -> NodePatch)
     -> NodeRule
-  AnyQueryNodeRule :: Query -> (MatchBindings -> NodePatch) -> NodeRule
+  AnyQueryNodeRule :: C.Query -> (C.MatchBindings -> NodePatch) -> NodeRule
+
+data MatchContext tag = MatchContext
+  { matchContextIndex    :: P.Int
+  , matchContextPayload  :: C.Payload tag
+  , matchContextLabel    :: C.PayloadView
+  , matchContextBindings :: C.MatchBindings
+  }
 
 data LayoutRule where
   ValueRelationLayout
@@ -131,7 +133,7 @@ data LayoutRule where
     -> LayoutRule
 
 data GroupRule =
-  GroupRule P.String Query NodePatch
+  GroupRule P.String C.Query NodePatch
 
 emptyMatchSpec :: MatchSpec
 emptyMatchSpec = MatchSpec [] [] []
@@ -149,23 +151,23 @@ matchSpecAppend lhs rhs =
 
 matchQueryNode ::
      forall tag. C.Traceable tag
-  => Query
+  => C.Query
   -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchQueryNode query makePatch =
   MatchSpec
-    [QueryNodeRule (Proxy :: Proxy tag) query Q.anyPayloadPattern makePatch]
+    [QueryNodeRule (Proxy :: Proxy tag) query C.anyPayloadPattern makePatch]
     []
     []
 
-matchAnyQueryNode :: Query -> (MatchBindings -> NodePatch) -> MatchSpec
+matchAnyQueryNode :: C.Query -> (C.MatchBindings -> NodePatch) -> MatchSpec
 matchAnyQueryNode query makePatch =
   MatchSpec [AnyQueryNodeRule query makePatch] [] []
 
 matchQueryPayloadNode ::
      forall tag. C.Traceable tag
-  => Query
-  -> PayloadPattern tag
+  => C.Query
+  -> C.PayloadPattern tag
   -> (MatchContext tag -> NodePatch)
   -> MatchSpec
 matchQueryPayloadNode query payloadPattern makePatch =
@@ -174,9 +176,9 @@ matchQueryPayloadNode query payloadPattern makePatch =
     []
     []
 
-matchGroupNode :: P.String -> Query -> NodePatch -> MatchSpec
+matchGroupNode :: P.String -> C.Query -> NodePatch -> MatchSpec
 matchGroupNode key query patch =
-  MatchSpec [] [] [GroupRule (Q.safeKey key) query patch]
+  MatchSpec [] [] [GroupRule (C.safeKey key) query patch]
 
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
@@ -305,32 +307,32 @@ nodeRulePatch ::
 nodeRulePatch matchIndex block rule =
   case rule of
     AnyQueryNodeRule query makePatch ->
-      case Q.queryMatches query (C.blockSnapshotFacts block) of
+      case C.queryMatches query (C.blockSnapshotFacts block) of
         Nothing       -> Nothing
-        Just bindings -> Just (makePatch (Q.queryMatchBindings bindings))
+        Just bindings -> Just (makePatch (C.queryMatchBindings bindings))
     QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
         Just Refl ->
-          case Q.queryMatches query (C.blockSnapshotFacts block) of
+          case C.queryMatches query (C.blockSnapshotFacts block) of
             Nothing -> Nothing
             Just bindings ->
               matchedPayloadNodePatch
                 matchIndex
-                (Q.queryMatchBindings bindings)
+                (C.queryMatchBindings bindings)
                 block
                 payloadPattern
                 makePatch
 
 matchedPayloadNodePatch ::
      P.Int
-  -> MatchBindings
+  -> C.MatchBindings
   -> C.BlockSnapshot tag
-  -> PayloadPattern tag
+  -> C.PayloadPattern tag
   -> (MatchContext tag -> NodePatch)
   -> Maybe NodePatch
 matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
-  case Q.payloadPatternMatches payloadPattern (C.blockSnapshotPayload block) of
+  case C.payloadPatternMatches payloadPattern (C.blockSnapshotPayload block) of
     Nothing -> Nothing
     Just payloadBindings ->
       Just
@@ -436,10 +438,10 @@ applyConstraintStrength strength constraints =
     EncourageConstraint -> P.map S.soften constraints
 
 data LayoutEndpointMatch =
-  LayoutEndpointMatch ValueComponent QueryBindings
+  LayoutEndpointMatch ValueComponent C.QueryBindings
 
 data CategoryEndpointMatch value =
-  CategoryEndpointMatch (S.ChoiceValue value) QueryBindings
+  CategoryEndpointMatch (S.ChoiceValue value) C.QueryBindings
 
 matchingValueTerms ::
      [ValueEndpoint]
@@ -465,7 +467,9 @@ matchingValueTermTriples first second third nodes =
   ]
 
 matchingValueTermGroups ::
-     [[ValueEndpoint]] -> [V.ViewNode] -> [([[ValueComponent]], QueryBindings)]
+     [[ValueEndpoint]]
+  -> [V.ViewNode]
+  -> [([[ValueComponent]], C.QueryBindings)]
 matchingValueTermGroups endpointGroups nodes =
   case endpointGroups of
     [] -> [([], [])]
@@ -477,7 +481,7 @@ matchingValueTermGroups endpointGroups nodes =
       ]
 
 matchingValueTerm ::
-     [ValueEndpoint] -> [V.ViewNode] -> [([ValueComponent], QueryBindings)]
+     [ValueEndpoint] -> [V.ViewNode] -> [([ValueComponent], C.QueryBindings)]
 matchingValueTerm endpoints nodes =
   case endpoints of
     [] -> [([], [])]
@@ -512,7 +516,7 @@ matchingCategoryTerms lhs rhs nodes =
 matchingCategoryTermGroups ::
      [[CategoryEndpoint value]]
   -> [V.ViewNode]
-  -> [([[S.ChoiceValue value]], QueryBindings)]
+  -> [([[S.ChoiceValue value]], C.QueryBindings)]
 matchingCategoryTermGroups endpointGroups nodes =
   case endpointGroups of
     [] -> [([], [])]
@@ -526,7 +530,7 @@ matchingCategoryTermGroups endpointGroups nodes =
 matchingCategoryTerm ::
      [CategoryEndpoint value]
   -> [V.ViewNode]
-  -> [([S.ChoiceValue value], QueryBindings)]
+  -> [([S.ChoiceValue value], C.QueryBindings)]
 matchingCategoryTerm endpoints nodes =
   case endpoints of
     [] -> [([], [])]
@@ -550,7 +554,7 @@ matchingCategoryEndpointNodes endpoint nodes =
       ]
 
 matchingSelectionNodes ::
-     NodeSelection -> [V.ViewNode] -> [(V.AnyLayoutView, QueryBindings)]
+     NodeSelection -> [V.ViewNode] -> [(V.AnyLayoutView, C.QueryBindings)]
 matchingSelectionNodes selection nodes =
   case nodes of
     [] -> []
@@ -559,7 +563,7 @@ matchingSelectionNodes selection nodes =
         P.++ matchingSelectionNodes selection rest
 
 selectionNodeMatches ::
-     NodeSelection -> V.ViewNode -> [(V.AnyLayoutView, QueryBindings)]
+     NodeSelection -> V.ViewNode -> [(V.AnyLayoutView, C.QueryBindings)]
 selectionNodeMatches selection wrapped =
   case wrapped of
     V.ViewNode node ->
@@ -568,35 +572,50 @@ selectionNodeMatches selection wrapped =
           case V.traceNodeTags node of
             Nothing -> []
             Just tags ->
-              case Q.queryMatchesTags query tags of
+              case queryMatchesViewTags query tags of
                 Nothing       -> []
                 Just bindings -> [(V.AnyLayoutView node, bindings)]
         GroupSelection key query ->
           case V.generatedNodeMeta node of
             Just meta
               | key P.== V.generatedKey meta
-                  P.&& Q.queryKey query P.== V.generatedQueryKey meta ->
+                  P.&& C.queryKey query P.== V.generatedQueryKey meta ->
                 [(V.AnyLayoutView node, [])]
             _ -> []
 
 traceNodeQueryMatches ::
-     Query -> V.AnyTraceNode -> [(V.AnyTraceNode, QueryBindings)]
+     C.Query -> V.AnyTraceNode -> [(V.AnyTraceNode, C.QueryBindings)]
 traceNodeQueryMatches query anyNode =
   case anyNode of
     V.AnyTraceNode node ->
       case V.traceNodeTags node of
         Nothing -> []
         Just tags ->
-          case Q.queryMatchesTags query tags of
+          case queryMatchesViewTags query tags of
             Nothing       -> []
             Just bindings -> [(anyNode, bindings)]
 
-mergeQueryBindings :: QueryBindings -> QueryBindings -> Maybe QueryBindings
+queryMatchesViewTags :: C.Query -> V.ViewTags -> Maybe C.QueryBindings
+queryMatchesViewTags query tags = C.queryMatches query (viewTagsFacts tags)
+
+viewTagsFacts :: V.ViewTags -> C.Facts
+viewTagsFacts tags = C.Facts (P.map viewTagFact (V.viewTagsToList tags))
+
+viewTagFact :: (P.String, V.ViewTagValue) -> C.Fact
+viewTagFact tag =
+  case tag of
+    (name, value) ->
+      case value of
+        V.ViewTagAtom    -> C.factAtom name
+        V.ViewTagInt int -> C.factInt name int
+
+mergeQueryBindings ::
+     C.QueryBindings -> C.QueryBindings -> Maybe C.QueryBindings
 mergeQueryBindings lhs rhs =
   case rhs of
     [] -> Just lhs
     (name, value):rest ->
-      case Q.bindQueryInt name value lhs of
+      case C.bindQueryInt name value lhs of
         Nothing     -> Nothing
         Just merged -> mergeQueryBindings merged rest
 
@@ -836,7 +855,7 @@ mergedGroupRules rules =
           GroupRule key query mergedPatch : mergedGroupRules remaining
 
 mergeGroupRule ::
-     P.String -> Query -> NodePatch -> [GroupRule] -> (NodePatch, [GroupRule])
+     P.String -> C.Query -> NodePatch -> [GroupRule] -> (NodePatch, [GroupRule])
 mergeGroupRule key query patch rules =
   case rules of
     [] -> (patch, [])
@@ -861,7 +880,7 @@ groupNodeForRule traceNodes rule =
                (generatedCompoundNodeForRule key query patch children :: V.Node
                   ()))
 
-matchingQueryTraceNodes :: Query -> [V.AnyTraceNode] -> [V.AnyTraceNode]
+matchingQueryTraceNodes :: C.Query -> [V.AnyTraceNode] -> [V.AnyTraceNode]
 matchingQueryTraceNodes query nodes =
   [ anyNode
   | anyNode <- nodes
@@ -869,9 +888,9 @@ matchingQueryTraceNodes query nodes =
   ]
 
 generatedCompoundNodeForRule ::
-     P.String -> Query -> NodePatch -> [V.AnyTraceNode] -> V.Node tag
+     P.String -> C.Query -> NodePatch -> [V.AnyTraceNode] -> V.Node tag
 generatedCompoundNodeForRule key query patch children =
-  let queryKey' = Q.queryKey query
+  let queryKey' = C.queryKey query
       ref = V.viewRefFromId (V.generatedNodeId key queryKey')
       baseStyle = V.styleForNodeRoot (V.generatedNodeRoot key queryKey')
       style' = VP.nodePatchStyleUpdate patch baseStyle

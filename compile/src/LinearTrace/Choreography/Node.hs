@@ -35,14 +35,17 @@ module LinearTrace.Choreography.Node
 import           LinearTrace.Choreography.Match (MatchSpec, NodeSelection (..),
                                                  emptyMatchSpec,
                                                  matchAnyQueryNode,
+                                                 matchContextBindings,
                                                  matchGroupNode,
                                                  matchQueryPayloadNode,
                                                  matchSpecAppend)
-import           LinearTrace.Choreography.Query (MatchBinding (..),
-                                                 MatchBindings, PayloadPattern,
-                                                 Query, anyPayloadPattern,
-                                                 emptyQuery, matchBindingValue,
-                                                 matchContextBindings,
+import           LinearTrace.Choreography.Types
+import           LinearTrace.Core               (LBool, LDouble, LInt, LString,
+                                                 LUnit, MatchBinding (..),
+                                                 MatchBindings, Payload,
+                                                 PayloadPattern, Query,
+                                                 anyPayloadPattern, emptyQuery,
+                                                 matchBindingValue,
                                                  payloadBindingPattern,
                                                  payloadBoolPattern,
                                                  payloadDoublePattern,
@@ -50,9 +53,6 @@ import           LinearTrace.Choreography.Query (MatchBinding (..),
                                                  payloadStringPattern,
                                                  payloadUnitPattern,
                                                  queryAppend)
-import           LinearTrace.Choreography.Types
-import           LinearTrace.Core               (LBool, LDouble, LInt, LString,
-                                                 LUnit, Payload)
 import qualified LinearTrace.Core               as C
 import qualified LinearTrace.View               as V
 import qualified LinearTrace.View.Patch         as VP

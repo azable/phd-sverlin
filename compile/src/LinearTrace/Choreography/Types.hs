@@ -69,7 +69,7 @@ import           LinearTrace.Choreography.Match (CategoryEndpoint,
                                                  LayoutRelation, MatchSpec,
                                                  ValueEndpoint, emptyMatchSpec,
                                                  matchSpecAppend)
-import           LinearTrace.Choreography.Query (PayloadPattern, Query,
+import           LinearTrace.Core               (PayloadPattern, Query,
                                                  QueryInt, labelName, queryAtom,
                                                  queryInt)
 import qualified LinearTrace.Core               as C
