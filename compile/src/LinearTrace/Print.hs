@@ -242,9 +242,7 @@ viewNodesBox :: [V.ViewNode] -> Box.Box
 viewNodesBox nodes = spacedVcat (map viewNodeBox nodes)
 
 viewNodeBox :: V.ViewNode -> Box.Box
-viewNodeBox node =
-  case node of
-    V.ViewNode viewNode -> nodeBox viewNode
+viewNodeBox (V.ViewNode viewNode) = nodeBox viewNode
 
 nodeBox :: V.Node tag -> Box.Box
 nodeBox node =
@@ -387,9 +385,8 @@ stepSolutionBoxes solution nodes _constraints =
     solved -> [stepSectionBox "solution" (solvedExprsBox solved)]
 
 solveViewNodeExprs :: S.Solution -> V.ViewNode -> [SolvedExpr]
-solveViewNodeExprs solution node =
-  case node of
-    V.ViewNode viewNode -> solveNodeExprs solution viewNode
+solveViewNodeExprs solution (V.ViewNode viewNode) =
+  solveNodeExprs solution viewNode
 
 solveNodeExprs :: S.Solution -> V.Node tag -> [SolvedExpr]
 solveNodeExprs solution node =
@@ -422,19 +419,17 @@ viewTraceBox showDetails solution steps =
     $ zipWith (viewTraceStepBox showDetails solution) [0 :: Int ..] steps
 
 viewTraceStepBox :: Bool -> S.Solution -> Int -> V.ViewStep -> Box.Box
-viewTraceStepBox showDetails solution ix step =
-  case step of
-    V.ViewStep traceStep nodes constraints _renderIntents ->
-      if showDetails
-        then spacedVcat (viewStepLabelBox ix traceStep : detailBoxes)
-        else viewStepLabelBox ix traceStep
-      where
-        detailBoxes =
-          concat
-            [ stepViewNodeBoxes nodes
-            , stepConstraintsBoxes constraints
-            , stepSolutionBoxes solution nodes constraints
-            ]
+viewTraceStepBox showDetails solution ix (V.ViewStep traceStep nodes constraints _renderIntents) =
+  if showDetails
+    then spacedVcat (viewStepLabelBox ix traceStep : detailBoxes)
+    else viewStepLabelBox ix traceStep
+  where
+    detailBoxes =
+      concat
+        [ stepViewNodeBoxes nodes
+        , stepConstraintsBoxes constraints
+        , stepSolutionBoxes solution nodes constraints
+        ]
 
 stepViewNodeBoxes :: [V.ViewNode] -> [Box.Box]
 stepViewNodeBoxes nodes =
@@ -444,13 +439,11 @@ stepViewNodeBoxes nodes =
       [stepSectionBox "view nodes" (tightVcat (map indentedViewNodeBox nodes))]
 
 indentedViewNodeBox :: V.ViewNode -> Box.Box
-indentedViewNodeBox node =
-  case node of
-    V.ViewNode viewNode ->
-      rowBox
-        [ Box.text (renderViewRefPlain (V.nodeRef viewNode))
-        , Box.text (renderViewLabel (V.nodeLabel viewNode))
-        ]
+indentedViewNodeBox (V.ViewNode viewNode) =
+  rowBox
+    [ Box.text (renderViewRefPlain (V.nodeRef viewNode))
+    , Box.text (renderViewLabel (V.nodeLabel viewNode))
+    ]
 
 --------------------------------------------------------------------------------
 -- Steps
@@ -463,24 +456,16 @@ stepsBox steps pending =
         ++ pendingStepBoxes (length steps) pending
 
 stepBox :: Int -> TraceStepWith payload -> Box.Box
-stepBox ix step =
-  case step of
-    CheckpointStep label _payload events -> labelledStepBox ix label events
-    DiscardedStep reason events ->
-      labelledStepBox ix ("Discarded: " ++ reason) events
+stepBox ix (CheckpointStep label _payload events) =
+  labelledStepBox ix label events
 
 pendingStepBoxes :: Int -> PendingEvents -> [Box.Box]
-pendingStepBoxes ix pending =
-  case pending of
-    PendingEvents events ->
-      case events of
-        TraceEvents [] -> []
-        _ -> [labelledStepBox ix "Pending after last checkpoint" events]
+pendingStepBoxes _ix (PendingEvents (TraceEvents [])) = []
+pendingStepBoxes ix (PendingEvents events) =
+  [labelledStepBox ix "Pending after last checkpoint" events]
 
 pendingEventCount :: PendingEvents -> Int
-pendingEventCount pending =
-  case pending of
-    PendingEvents (TraceEvents events) -> length events
+pendingEventCount (PendingEvents (TraceEvents events)) = length events
 
 labelledStepBox :: Int -> String -> TraceEvents -> Box.Box
 labelledStepBox ix label events =

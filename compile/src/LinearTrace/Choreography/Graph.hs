@@ -30,22 +30,18 @@ data VisualTraceGraph =
 type ViewGraph = V.ViewGraph
 
 visualTraceCore :: VisualTraceGraph -> C.TraceGraph
-visualTraceCore graph =
-  case graph of
-    VisualTraceGraph _ coreGraph -> coreGraph
+visualTraceCore (VisualTraceGraph _ coreGraph) = coreGraph
 
 buildViewGraph :: VisualTraceGraph -> ViewGraph
-buildViewGraph graph =
-  case graph of
-    VisualTraceGraph spec coreGraph ->
-      let stepsOutput = viewTraceSteps spec (C.traceGraphSteps coreGraph)
-       in buildMatchedViewGraph
-            spec
-            (builtSteps stepsOutput)
-            (builtNodes stepsOutput)
-            (builtConstraints stepsOutput)
-            (builtChoiceConstraints stepsOutput)
-            (builtRenderFrames stepsOutput)
+buildViewGraph (VisualTraceGraph spec coreGraph) =
+  let stepsOutput = viewTraceSteps spec (C.traceGraphSteps coreGraph)
+   in buildMatchedViewGraph
+        spec
+        (builtSteps stepsOutput)
+        (builtNodes stepsOutput)
+        (builtConstraints stepsOutput)
+        (builtChoiceConstraints stepsOutput)
+        (builtRenderFrames stepsOutput)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
@@ -74,55 +70,79 @@ data BuiltViewSteps = BuiltViewSteps
   , builtRenderFrames      :: [[V.RenderIntent]]
   }
 
-viewTraceSteps :: MatchSpec -> [C.TraceStep] -> BuiltViewSteps
-viewTraceSteps spec = viewTraceStepsWith (viewTraceStep spec) [] [] [] [] [] []
+data ViewTraceAccumulator = ViewTraceAccumulator
+  { viewSteps                :: [V.ViewStep]
+  , viewNodes                :: [V.ViewNode]
+  , viewConstraints          :: [S.Constraint]
+  , viewChoiceConstraints    :: [S.ChoiceConstraint]
+  , viewRenderFrames         :: [[V.RenderIntent]]
+  , viewPendingRenderIntents :: [V.RenderIntent]
+  }
 
-viewTraceStepsWith ::
-     ([V.RenderIntent] -> record -> BuiltViewStep)
-  -> [V.ViewStep]
-  -> [V.ViewNode]
-  -> [S.Constraint]
-  -> [S.ChoiceConstraint]
-  -> [[V.RenderIntent]]
-  -> [V.RenderIntent]
-  -> [record]
-  -> BuiltViewSteps
-viewTraceStepsWith buildStep steps nodes constraints choiceConstraints renderFrames pending records =
-  case records of
-    [] ->
-      let finalOutput =
-            V.flushViewOutput
-              V.ViewOutput
-                { V.emittedNodes = []
-                , V.emittedConstraints = []
-                , V.emittedChoiceConstraints = []
-                , V.emittedRenderFrames = []
-                , V.pendingRenderIntents = pending
-                }
-          finalFrames = renderFrames P.++ V.emittedRenderFrames finalOutput
-          finalChoiceConstraints =
-            choiceConstraints P.++ V.emittedChoiceConstraints finalOutput
-       in BuiltViewSteps
-            { builtSteps = steps
-            , builtNodes = nodes
-            , builtConstraints = constraints
-            , builtChoiceConstraints = finalChoiceConstraints
-            , builtRenderFrames = V.withImplicitInitialFrame finalFrames
+emptyViewTraceAccumulator :: ViewTraceAccumulator
+emptyViewTraceAccumulator =
+  ViewTraceAccumulator
+    { viewSteps = []
+    , viewNodes = []
+    , viewConstraints = []
+    , viewChoiceConstraints = []
+    , viewRenderFrames = []
+    , viewPendingRenderIntents = []
+    }
+
+viewTraceSteps :: MatchSpec -> [C.TraceStep] -> BuiltViewSteps
+viewTraceSteps spec records =
+  let buildStep = viewTraceStep spec
+      ViewTraceAccumulator { viewSteps = steps
+                           , viewNodes = nodes
+                           , viewConstraints = constraints
+                           , viewChoiceConstraints = choiceConstraints
+                           , viewRenderFrames = renderFrames
+                           , viewPendingRenderIntents = pending
+                           } =
+        P.foldl (advanceViewTrace buildStep) emptyViewTraceAccumulator records
+      finalOutput =
+        V.flushViewOutput
+          V.ViewOutput
+            { V.emittedNodes = []
+            , V.emittedConstraints = []
+            , V.emittedChoiceConstraints = []
+            , V.emittedRenderFrames = []
+            , V.pendingRenderIntents = pending
             }
-    record:rest ->
-      let builtStep = buildStep pending record
-       in viewTraceStepsWith
-            buildStep
-            (steps P.++ [stepView builtStep])
-            (nodes P.++ stepNodes builtStep)
-            (constraints P.++ stepConstraints builtStep)
-            (choiceConstraints P.++ stepChoiceConstraints builtStep)
-            (renderFrames P.++ stepRenderFrames builtStep)
-            (stepPendingRenderIntents builtStep)
-            rest
+      finalFrames = renderFrames P.++ V.emittedRenderFrames finalOutput
+      finalChoiceConstraints =
+        choiceConstraints P.++ V.emittedChoiceConstraints finalOutput
+   in BuiltViewSteps
+        { builtSteps = steps
+        , builtNodes = nodes
+        , builtConstraints = constraints
+        , builtChoiceConstraints = finalChoiceConstraints
+        , builtRenderFrames = V.withImplicitInitialFrame finalFrames
+        }
+
+advanceViewTrace ::
+     ([V.RenderIntent] -> C.TraceStep -> BuiltViewStep)
+  -> ViewTraceAccumulator
+  -> C.TraceStep
+  -> ViewTraceAccumulator
+advanceViewTrace buildStep accumulator record =
+  let builtStep = buildStep (viewPendingRenderIntents accumulator) record
+   in ViewTraceAccumulator
+        { viewSteps = viewSteps accumulator P.++ [stepView builtStep]
+        , viewNodes = viewNodes accumulator P.++ stepNodes builtStep
+        , viewConstraints =
+            viewConstraints accumulator P.++ stepConstraints builtStep
+        , viewChoiceConstraints =
+            viewChoiceConstraints accumulator
+              P.++ stepChoiceConstraints builtStep
+        , viewRenderFrames =
+            viewRenderFrames accumulator P.++ stepRenderFrames builtStep
+        , viewPendingRenderIntents = stepPendingRenderIntents builtStep
+        }
 
 viewTraceStep :: MatchSpec -> [V.RenderIntent] -> C.TraceStep -> BuiltViewStep
-viewTraceStep spec pending = C.foldTraceStep onCheckpoint onDiscarded
+viewTraceStep spec pending = C.foldTraceStep onCheckpoint
   where
     onCheckpoint label _payload events =
       let rawOutput = V.flushViewOutput (buildTraceEventsOutput spec events)
@@ -139,15 +159,6 @@ viewTraceStep spec pending = C.foldTraceStep onCheckpoint onDiscarded
             , stepRenderFrames = renderFrames
             , stepPendingRenderIntents = V.pendingRenderIntents output
             }
-    onDiscarded reason _events =
-      BuiltViewStep
-        { stepView = V.ViewStep ("Discarded: " P.++ reason) [] [] []
-        , stepNodes = []
-        , stepConstraints = []
-        , stepChoiceConstraints = []
-        , stepRenderFrames = []
-        , stepPendingRenderIntents = pending
-        }
 
 buildTraceEventsOutput :: MatchSpec -> C.TraceEvents -> V.ViewOutput
 buildTraceEventsOutput spec =

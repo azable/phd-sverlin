@@ -1,7 +1,7 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE NoImplicitPrelude    #-}
+{-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Visual constraint and relation operators for choreography.
@@ -20,51 +20,37 @@ module LinearTrace.Choreography.Constraint
   , (/=)
   ) where
 
-import LinearTrace.Choreography.Match
-  ( CategoryEndpoint
-  , CategoryRelation(..)
-  , ConstraintStrength(..)
-  , LayoutRelation(..)
-  , MatchSpec
-  , NodeSelection
-  , ValueEndpoint
-  , emptyMatchSpec
-  , matchCategoryRelation
-  , matchSpecAppend
-  , matchValueDirectedBridge
-  , matchValueRelation
-  , matchValueSymmetricBridge
-  , rawCategoryEndpoint
-  , rawValueEndpoint
-  , selectionCategoryEndpoint
-  , selectionValueEndpoint
-  )
-import LinearTrace.Choreography.Node
-  ( Coord
-  , Offset
-  , Scalar
-  , Selected(..)
-  , Selection(..)
-  , SelectionCategory(..)
-  , SelectionValue(..)
-  , Span
-  , VisualizationBuilder
-  , coordConstraints
-  , coordExpr
-  , emitVisualizationBuilder
-  , nodeSelection
-  , offsetConstraints
-  , offsetExpr
-  , scalarConstraints
-  , scalarExpr
-  , spanConstraints
-  , spanExpr
-  )
-import LinearTrace.View.Access (CategoryAccess, ValueAccess)
-import LinearTrace.View.Primitives (Hsl(..))
-import qualified Prelude as P
-import qualified Solver as S
-import Solver (Vec2(..))
+import           LinearTrace.Choreography.Match (CategoryEndpoint,
+                                                 CategoryRelation (..),
+                                                 ConstraintStrength (..),
+                                                 LayoutRelation (..), MatchSpec,
+                                                 NodeSelection, ValueEndpoint,
+                                                 emptyMatchSpec,
+                                                 matchCategoryRelation,
+                                                 matchSpecAppend,
+                                                 matchValueDirectedBridge,
+                                                 matchValueRelation,
+                                                 matchValueSymmetricBridge,
+                                                 rawCategoryEndpoint,
+                                                 rawValueEndpoint,
+                                                 selectionCategoryEndpoint,
+                                                 selectionValueEndpoint)
+import           LinearTrace.Choreography.Node  (Coord, Offset, Scalar,
+                                                 Selected (..), Selection (..),
+                                                 SelectionCategory (..),
+                                                 SelectionValue (..), Span,
+                                                 VisualizationBuilder,
+                                                 coordConstraints, coordExpr,
+                                                 emitVisualizationBuilder,
+                                                 nodeSelection,
+                                                 offsetConstraints, offsetExpr,
+                                                 scalarConstraints, scalarExpr,
+                                                 spanConstraints, spanExpr)
+import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
+import           LinearTrace.View.Primitives    (Hsl (..))
+import qualified Prelude                        as P
+import qualified Solver                         as S
+import           Solver                         (Vec2 (..))
 
 data VisualConstraint where
   VisualValueRelation

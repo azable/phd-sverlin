@@ -139,7 +139,6 @@ module LinearTrace.Core
     -- core state but attaches view output alongside it.
     checkpoint
   , checkpointWith
-  , discardPending
   , buildGraph
   ) where
 

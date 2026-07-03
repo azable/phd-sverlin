@@ -118,7 +118,6 @@ module LinearTrace
   , Unseal(..)
   , checkpoint
   , checkpointWith
-  , discardPending
   , (<$>)
   , (<*>)
   , -- * Trace events and steps

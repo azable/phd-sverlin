@@ -1,10 +1,10 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE RebindableSyntax #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NoImplicitPrelude      #-}
+{-# LANGUAGE RebindableSyntax       #-}
+{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE UndecidableInstances   #-}
 
 -- | Layout values, arithmetic, and geometry accessors for choreography.
 module LinearTrace.Choreography.Layout
@@ -47,52 +47,33 @@ module LinearTrace.Choreography.Layout
   , mkScalar
   ) where
 
-import Control.Functor.Linear hiding ((<$>), (<&>), (<*>))
-import LinearTrace.Choreography.Node
-  ( Coord
-  , LayoutValue(..)
-  , NodeRecipe
-  , Offset
-  , Scalar
-  , Selected(..)
-  , SelectionValue(..)
-  , Span
-  , coordConstraints
-  , coordExpr
-  , coordPin
-  , offsetConstraints
-  , offsetExpr
-  , scalarConstraints
-  , scalarExpr
-  , setNodePatch
-  , spanConstraints
-  , spanExpr
-  , spanPin
-  , substituteCoordBindings
-  , substituteSpanBindings
-  )
-import LinearTrace.Core
-  ( MatchBindings
-  , QueryInt(..)
-  , queryIntAdd
-  , queryIntConst
-  )
-import qualified LinearTrace.View as V
-import LinearTrace.View.Access (LayoutAttr(..), layoutValueAccess)
-import qualified LinearTrace.View.Patch as VP
-import LinearTrace.View.Primitives (Bounds(..), BoundsExpr, LayoutExpr, Unit)
-import qualified Prelude as P
-import Prelude.Linear hiding
-  ( (*)
-  , (+)
-  , (-)
-  , (/)
-  , (<>)
-  , fromInteger
-  , fromRational
-  )
-import qualified Solver as S
-import Solver (Vec2(..), vec2)
+import           Control.Functor.Linear        hiding ((<$>), (<&>), (<*>))
+import           LinearTrace.Choreography.Node (Coord, LayoutValue (..),
+                                                NodeRecipe, Offset, Scalar,
+                                                Selected (..),
+                                                SelectionValue (..), Span,
+                                                coordConstraints, coordExpr,
+                                                coordPin, offsetConstraints,
+                                                offsetExpr, scalarConstraints,
+                                                scalarExpr, setNodePatch,
+                                                spanConstraints, spanExpr,
+                                                spanPin,
+                                                substituteCoordBindings,
+                                                substituteSpanBindings)
+import           LinearTrace.Core              (MatchBindings, QueryInt (..),
+                                                queryIntAdd, queryIntConst)
+import qualified LinearTrace.View              as V
+import           LinearTrace.View.Access       (LayoutAttr (..),
+                                                layoutValueAccess)
+import qualified LinearTrace.View.Patch        as VP
+import           LinearTrace.View.Primitives   (Bounds (..), BoundsExpr,
+                                                LayoutExpr, Unit)
+import qualified Prelude                       as P
+import           Prelude.Linear                hiding (fromInteger,
+                                                fromRational, (*), (+), (-),
+                                                (/), (<>))
+import qualified Solver                        as S
+import           Solver                        (Vec2 (..), vec2)
 
 nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
@@ -476,25 +457,28 @@ instance Center (Selected tag) where
   type CenterOutput (Selected tag) = Vec2 (SelectionValue Coord tag)
   center selection = vec2 (x selection) (y selection)
 
+sequenceNodeRecipes :: [NodeRecipe ()] -> NodeRecipe ()
+sequenceNodeRecipes recipes =
+  case recipes of
+    [] -> pure ()
+    headRecipe:tailRecipes ->
+      liftA2 (\() () -> ()) headRecipe (sequenceNodeRecipes tailRecipes)
+
 instance Center (Vec2 Coord) where
   type CenterOutput (Vec2 Coord) = NodeRecipe ()
-  center value =
-    case value of
-      Vec2 valueX valueY -> do
-        x valueX
-        y valueY
+  center (Vec2 valueX valueY) = sequenceNodeRecipes [x valueX, y valueY]
 
 size :: (Width input value, Height input value) => input -> Vec2 value
 size selection = vec2 (width selection) (height selection)
 
 bounds :: BoundsExpr -> NodeRecipe ()
-bounds value =
-  case value of
-    Bounds topExpr leftExpr widthExpr heightExpr -> do
-      top (mkCoord topExpr [])
-      left (mkCoord leftExpr [])
-      width (mkSpan widthExpr [])
-      height (mkSpan heightExpr [])
+bounds (Bounds topExpr leftExpr widthExpr heightExpr) =
+  sequenceNodeRecipes
+    [ top (mkCoord topExpr [])
+    , left (mkCoord leftExpr [])
+    , width (mkSpan widthExpr [])
+    , height (mkSpan heightExpr [])
+    ]
 
 coordValuePin :: MatchBindings -> Coord -> VP.LayoutPin
 coordValuePin bindings = coordPin P.. substituteCoordBindings bindings

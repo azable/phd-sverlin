@@ -54,7 +54,6 @@ module LinearTrace.Choreography.Node
   , preferLater
   , text
   , emptyVisualizationBuilder
-  , emptyVisualizationBuilderLinear
   , emitVisualizationBuilder
   , freshVisualizationValue
   , setNodePatch
@@ -77,7 +76,7 @@ module LinearTrace.Choreography.Node
   , traceQueryQuery
   ) where
 
-import           Control.Functor.Linear         hiding ((<$>), (<&>), (<*>))
+import qualified Control.Functor.Linear         as CF
 import qualified Data.Functor.Linear            as DFL
 import           Data.Proxy                     (Proxy (..))
 import           GHC.Exts                       (Multiplicity (Many))
@@ -140,14 +139,10 @@ type Offset = LayoutValue OffsetRole
 type Scalar = LayoutValue ScalarRole
 
 layoutValueExpr :: LayoutValue tag -> LayoutExpr
-layoutValueExpr value =
-  case value of
-    LayoutValue expr _ -> expr
+layoutValueExpr (LayoutValue expr _) = expr
 
 layoutValueConstraints :: LayoutValue tag -> [S.Constraint]
-layoutValueConstraints value =
-  case value of
-    LayoutValue _ constraints -> constraints
+layoutValueConstraints (LayoutValue _ constraints) = constraints
 
 coordExpr :: Coord -> LayoutExpr
 coordExpr = layoutValueExpr
@@ -206,6 +201,10 @@ data Bound a where
 data NodeBinding a where
   Selected :: a %Many -> NodeBinding a
 
+selectedNodeBinding :: NodeRef tag -> NodeBinding (Selected tag)
+selectedNodeBinding nodeRef =
+  Selected (SelectedHandle (Selection nodeRef emptyMatchSpec))
+
 data Selection a where
   Selection :: a %1 -> MatchSpec -> Selection a
 
@@ -235,44 +234,44 @@ appendNodePatch ::
 appendNodePatch first second bindings =
   VP.appendNodePatch (first bindings) (second bindings)
 
-bindNodeRecipe :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
-bindNodeRecipe recipe next =
-  case recipe of
-    NodeRecipe value first ->
-      case next value of
-        NodeRecipe output second ->
-          NodeRecipe output (appendNodePatch first second)
+nodeRecipePure :: a %1 -> NodeRecipe a
+nodeRecipePure value = NodeRecipe value (P.const VP.emptyNodePatch)
+
+nodeRecipeMapData :: (a %1 -> b) -> NodeRecipe a %1 -> NodeRecipe b
+nodeRecipeMapData f (NodeRecipe value patch) = NodeRecipe (f value) patch
+
+nodeRecipeMapControl :: (a %1 -> b) %1 -> NodeRecipe a %1 -> NodeRecipe b
+nodeRecipeMapControl f (NodeRecipe value patch) = NodeRecipe (f value) patch
+
+nodeRecipeAp ::
+     (a %1 -> c %1 -> b)
+     %1 -> NodeRecipe a
+     %1 -> NodeRecipe c
+     %1 -> NodeRecipe b
+nodeRecipeAp f (NodeRecipe leftValue first) (NodeRecipe rightValue second) =
+  NodeRecipe (f leftValue rightValue) (appendNodePatch first second)
+
+nodeRecipeBind :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
+nodeRecipeBind (NodeRecipe value patch) next =
+  case next value of
+    NodeRecipe output second -> NodeRecipe output (appendNodePatch patch second)
 
 instance DFL.Functor NodeRecipe where
-  fmap f recipe =
-    case recipe of
-      NodeRecipe value patch -> NodeRecipe (f value) patch
+  fmap = nodeRecipeMapData
 
-instance Functor NodeRecipe where
-  fmap f recipe =
-    case recipe of
-      NodeRecipe value patch -> NodeRecipe (f value) patch
+instance CF.Functor NodeRecipe where
+  fmap = nodeRecipeMapControl
 
 instance DFL.Applicative NodeRecipe where
-  pure value = NodeRecipe value (P.const VP.emptyNodePatch)
-  liftA2 f lhs rhs =
-    case lhs of
-      NodeRecipe leftValue first ->
-        case rhs of
-          NodeRecipe rightValue second ->
-            NodeRecipe (f leftValue rightValue) (appendNodePatch first second)
+  pure value = nodeRecipePure value
+  liftA2 f lhs rhs = nodeRecipeAp f lhs rhs
 
-instance Applicative NodeRecipe where
-  pure value = NodeRecipe value (P.const VP.emptyNodePatch)
-  liftA2 f lhs rhs =
-    case lhs of
-      NodeRecipe leftValue first ->
-        case rhs of
-          NodeRecipe rightValue second ->
-            NodeRecipe (f leftValue rightValue) (appendNodePatch first second)
+instance CF.Applicative NodeRecipe where
+  pure = nodeRecipePure
+  liftA2 = nodeRecipeAp
 
-instance Monad NodeRecipe where
-  (>>=) = bindNodeRecipe
+instance CF.Monad NodeRecipe where
+  (>>=) = nodeRecipeBind
 
 data VisualizationResult a where
   VisualizationResult :: a %1 -> P.Int -> MatchSpec -> VisualizationResult a
@@ -281,33 +280,8 @@ data VisualizationBuilder a where
   VisualizationBuilder
     :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
 
-bindVisualizationBuilder ::
-     VisualizationBuilder a
-     %1 -> (a %1 -> VisualizationBuilder b)
-     %1 -> VisualizationBuilder b
-bindVisualizationBuilder builder next =
-  case builder of
-    VisualizationBuilder runFirst ->
-      VisualizationBuilder
-        (\counter0 ->
-           case runFirst counter0 of
-             VisualizationResult value counter1 first ->
-               case next value of
-                 VisualizationBuilder runSecond ->
-                   case runSecond counter1 of
-                     VisualizationResult output counter2 second ->
-                       VisualizationResult
-                         output
-                         counter2
-                         (matchSpecAppend first second))
-
-emptyVisualizationBuilder :: a -> VisualizationBuilder a
+emptyVisualizationBuilder :: a %1 -> VisualizationBuilder a
 emptyVisualizationBuilder value =
-  VisualizationBuilder
-    (\counter -> VisualizationResult value counter emptyMatchSpec)
-
-emptyVisualizationBuilderLinear :: a %1 -> VisualizationBuilder a
-emptyVisualizationBuilderLinear value =
   VisualizationBuilder
     (\counter -> VisualizationResult value counter emptyMatchSpec)
 
@@ -325,69 +299,78 @@ freshVisualizationValue prefix build =
          emptyMatchSpec)
 
 instance DFL.Functor VisualizationBuilder where
-  fmap f builder =
-    case builder of
-      VisualizationBuilder run ->
-        VisualizationBuilder
-          (\counter0 ->
-             case run counter0 of
-               VisualizationResult value counter1 spec ->
-                 VisualizationResult (f value) counter1 spec)
+  fmap = visualizationBuilderMapData
 
-instance Functor VisualizationBuilder where
-  fmap f builder =
-    case builder of
-      VisualizationBuilder run ->
-        VisualizationBuilder
-          (\counter0 ->
-             case run counter0 of
-               VisualizationResult value counter1 spec ->
-                 VisualizationResult (f value) counter1 spec)
+instance CF.Functor VisualizationBuilder where
+  fmap = visualizationBuilderMapControl
 
 instance DFL.Applicative VisualizationBuilder where
+  pure value = emptyVisualizationBuilder value
+  liftA2 f lhs rhs = visualizationBuilderAp f lhs rhs
+
+instance CF.Applicative VisualizationBuilder where
   pure = emptyVisualizationBuilder
-  liftA2 f lhs rhs =
-    case lhs of
-      VisualizationBuilder runLeft ->
-        case rhs of
-          VisualizationBuilder runRight ->
-            VisualizationBuilder
-              (\counter0 ->
-                 case runLeft counter0 of
-                   VisualizationResult leftValue counter1 first ->
-                     case runRight counter1 of
-                       VisualizationResult rightValue counter2 second ->
-                         VisualizationResult
-                           (f leftValue rightValue)
-                           counter2
-                           (matchSpecAppend first second))
+  liftA2 = visualizationBuilderAp
 
-instance Applicative VisualizationBuilder where
-  pure = emptyVisualizationBuilderLinear
-  liftA2 f lhs rhs =
-    case lhs of
-      VisualizationBuilder runLeft ->
-        case rhs of
-          VisualizationBuilder runRight ->
-            VisualizationBuilder
-              (\counter0 ->
-                 case runLeft counter0 of
-                   VisualizationResult leftValue counter1 first ->
-                     case runRight counter1 of
-                       VisualizationResult rightValue counter2 second ->
-                         VisualizationResult
-                           (f leftValue rightValue)
-                           counter2
-                           (matchSpecAppend first second))
+instance CF.Monad VisualizationBuilder where
+  (>>=) = visualizationBuilderBind
 
-instance Monad VisualizationBuilder where
-  (>>=) = bindVisualizationBuilder
+visualizationBuilderMapData ::
+     (a %1 -> b) -> VisualizationBuilder a %1 -> VisualizationBuilder b
+visualizationBuilderMapData f (VisualizationBuilder run) =
+  VisualizationBuilder
+    (\counter0 ->
+       case run counter0 of
+         VisualizationResult value counter1 spec ->
+           VisualizationResult (f value) counter1 spec)
+
+visualizationBuilderMapControl ::
+     (a %1 -> b) %1 -> VisualizationBuilder a %1 -> VisualizationBuilder b
+visualizationBuilderMapControl f (VisualizationBuilder run) =
+  VisualizationBuilder
+    (\counter0 ->
+       case run counter0 of
+         VisualizationResult value counter1 spec ->
+           VisualizationResult (f value) counter1 spec)
+
+visualizationBuilderAp ::
+     (a %1 -> b %1 -> c)
+     %1 -> VisualizationBuilder a
+     %1 -> VisualizationBuilder b
+     %1 -> VisualizationBuilder c
+visualizationBuilderAp f (VisualizationBuilder runLeft) (VisualizationBuilder runRight) =
+  VisualizationBuilder
+    (\counter0 ->
+       case runLeft counter0 of
+         VisualizationResult leftValue counter1 first ->
+           case runRight counter1 of
+             VisualizationResult rightValue counter2 second ->
+               VisualizationResult
+                 (f leftValue rightValue)
+                 counter2
+                 (matchSpecAppend first second))
+
+visualizationBuilderBind ::
+     VisualizationBuilder a
+     %1 -> (a %1 -> VisualizationBuilder b)
+     %1 -> VisualizationBuilder b
+visualizationBuilderBind (VisualizationBuilder runFirst) next =
+  VisualizationBuilder
+    (\counter0 ->
+       case runFirst counter0 of
+         VisualizationResult value counter1 first ->
+           case next value of
+             VisualizationBuilder runSecond ->
+               case runSecond counter1 of
+                 VisualizationResult output counter2 second ->
+                   VisualizationResult
+                     output
+                     counter2
+                     (matchSpecAppend first second))
 
 preferLater :: Maybe a -> Maybe a -> Maybe a
-preferLater earlier later =
-  case later of
-    Nothing -> earlier
-    Just _  -> later
+preferLater earlier Nothing = earlier
+preferLater _ later         = later
 
 infixr 6 <&>
 content :: ContentValue -> NodeRecipe ()
@@ -422,13 +405,13 @@ class Select payload query where
 instance Select AnyPayload Query where
   selectWithPayload query =
     emitVisualizationBuilder
-      (Selected (SelectedHandle (Selection (AnyNodeRef query) emptyMatchSpec)))
+      (selectedNodeBinding (AnyNodeRef query))
       emptyMatchSpec
 
 instance C.Traceable tag => Select tag (TraceQuery tag) where
   selectWithPayload query =
     emitVisualizationBuilder
-      (Selected (SelectedHandle (Selection (TraceNodeRef query) emptyMatchSpec)))
+      (selectedNodeBinding (TraceNodeRef query))
       emptyMatchSpec
 
 select ::
@@ -438,17 +421,12 @@ select ::
 select = selectWithPayload @payload @(SelectQuery payload)
 
 nodePatch :: MatchBindings -> NodeRecipe () -> VP.NodePatch
-nodePatch bindings recipe =
-  case recipe of
-    NodeRecipe () spec ->
-      let patch = spec bindings
-       in patch
-            { VP.nodePatchStyleUpdate =
-                \style ->
-                  substituteStyleBindings
-                    bindings
-                    (VP.nodePatchStyleUpdate patch style)
-            }
+nodePatch bindings (NodeRecipe () spec) =
+  let patch = spec bindings
+   in patch
+        { VP.nodePatchStyleUpdate =
+            substituteStyleBindings bindings P.. VP.nodePatchStyleUpdate patch
+        }
 
 substituteStyleBindings :: MatchBindings -> VS.NodeStyle -> VS.NodeStyle
 substituteStyleBindings bindings =
@@ -462,37 +440,29 @@ substituteSpanBindings :: MatchBindings -> Span -> Span
 substituteSpanBindings = substituteLayoutBindings
 
 substituteLayoutBindings :: MatchBindings -> LayoutValue tag -> LayoutValue tag
-substituteLayoutBindings bindings value =
+substituteLayoutBindings bindings (LayoutValue expr constraints) =
   LayoutValue
-    (SolverExpr.substituteExprVars
-       (bindingExprSubstitutions bindings)
-       (layoutValueExpr value))
-    (layoutValueConstraints value)
+    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings) expr)
+    constraints
 
 bindingExprSubstitutions :: MatchBindings -> [(P.String, P.Double)]
-bindingExprSubstitutions bindings =
-  case bindings of
-    [] -> []
-    MatchBinding name value:rest ->
-      case Read.readMaybe value of
-        Nothing -> bindingExprSubstitutions rest
-        Just numericValue ->
-          ("global." P.++ name, numericValue) : bindingExprSubstitutions rest
+bindingExprSubstitutions [] = []
+bindingExprSubstitutions (MatchBinding name value:rest) =
+  case Read.readMaybe value of
+    Nothing -> bindingExprSubstitutions rest
+    Just numericValue ->
+      ("global." P.++ name, numericValue) : bindingExprSubstitutions rest
 
 contentMode :: MatchBindings -> ContentValue -> V.ContentMode
-contentMode bindings spec =
-  case spec of
-    ContentLiteral value   -> V.ContentText value
-    ContentBinding binding -> V.ContentText (bindingContent bindings binding)
+contentMode _bindings (ContentLiteral value) = V.ContentText value
+contentMode bindings (ContentBinding binding) =
+  V.ContentText (bindingContent bindings binding)
 
 bindingContent :: MatchBindings -> Binding -> P.String
-bindingContent bindings binding =
-  case binding of
-    Binding name ->
-      case matchBindingValue name bindings of
-        Nothing ->
-          P.error ("Unbound view binding #" P.++ name P.++ " in content")
-        Just value -> value
+bindingContent bindings (Binding name) =
+  case matchBindingValue name bindings of
+    Nothing -> P.error ("Unbound view binding #" P.++ name P.++ " in content")
+    Just value -> value
 
 coordPin :: Coord -> VP.LayoutPin
 coordPin value = VP.LayoutPin (coordExpr value) (coordConstraints value)
@@ -503,63 +473,49 @@ spanPin value = VP.LayoutPin (spanExpr value) (spanConstraints value)
 instance Node
            (Selected child)
            (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node children =
-    case children of
-      SelectedHandle selection ->
-        case selection of
-          Selection child childSpec ->
-            let query = nodeRefQuery child
-             in VisualizationBuilder
-                  (\counter ->
-                     let key = groupNodeKey counter
-                         groupSpec = matchGroupNode key query VP.emptyNodePatch
-                      in VisualizationResult
-                           (Selected
-                              (SelectedHandle
-                                 (Selection
-                                    (GroupNodeRef key query)
-                                    emptyMatchSpec)))
-                           (counter P.+ 1)
-                           (matchSpecAppend childSpec groupSpec))
+  node (SelectedHandle (Selection child childSpec)) =
+    let query = nodeRefQuery child
+     in VisualizationBuilder
+          (\counter ->
+             let key = groupNodeKey counter
+                 groupSpec = matchGroupNode key query VP.emptyNodePatch
+              in VisualizationResult
+                   (Selected
+                      (SelectedHandle
+                         (Selection (GroupNodeRef key query) emptyMatchSpec)))
+                   (counter P.+ 1)
+                   (matchSpecAppend childSpec groupSpec))
 
 instance Node
            (NodeBinding (Selected child))
            (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node binding =
-    case binding of
-      Selected children -> node children
+  node (Selected children) = node children
 
 instance Node
            (VisualizationBuilder (NodeBinding (Selected child)))
            (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node childrenBuilder =
-    case childrenBuilder of
-      VisualizationBuilder runFirst ->
-        VisualizationBuilder
-          (\counter0 ->
-             case runFirst counter0 of
-               VisualizationResult binding counter1 first ->
-                 case node binding of
-                   VisualizationBuilder runSecond ->
-                     case runSecond counter1 of
-                       VisualizationResult selected counter2 second ->
-                         VisualizationResult
-                           selected
-                           counter2
-                           (matchSpecAppend first second))
+  node (VisualizationBuilder runFirst) =
+    VisualizationBuilder
+      (\counter0 ->
+         case runFirst counter0 of
+           VisualizationResult binding counter1 first ->
+             case node binding of
+               VisualizationBuilder runSecond ->
+                 case runSecond counter1 of
+                   VisualizationResult selected counter2 second ->
+                     VisualizationResult
+                       selected
+                       counter2
+                       (matchSpecAppend first second))
 
 render :: Selected tag -> NodeRecipe () -> VisualizationBuilder ()
-render selection recipe =
-  case selection of
-    SelectedHandle selected ->
-      case selected of
-        Selection handle spec ->
-          VisualizationBuilder
-            (\counter ->
-               VisualizationResult
-                 ()
-                 counter
-                 (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
+render (SelectedHandle (Selection handle spec)) recipe =
+  VisualizationBuilder
+    (\counter ->
+       VisualizationResult
+         ()
+         counter
+         (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
 
 nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
 nodeRefStyleSpec handle recipe =
@@ -590,23 +546,17 @@ groupNodeKey :: P.Int -> P.String
 groupNodeKey counter = "group-node-" P.++ P.show counter
 
 visualize :: VisualizationBuilder () -> MatchSpec
-visualize builder =
-  case builder of
-    VisualizationBuilder run ->
-      case run 0 of
-        VisualizationResult () _ spec -> spec
+visualize (VisualizationBuilder run) =
+  case run 0 of
+    VisualizationResult () _ spec -> spec
 
 class PayloadSelector tag selector where
   payloadSelector :: selector -> PayloadPattern tag
 
 instance C.Traceable tag => PayloadSelector tag ContentValue where
-  payloadSelector selector =
-    case selector of
-      ContentBinding binding ->
-        case binding of
-          Binding name -> payloadBindingPattern name
-      ContentLiteral _ ->
-        P.error "Literal content cannot be used as a payload binding selector"
+  payloadSelector (ContentBinding (Binding name)) = payloadBindingPattern name
+  payloadSelector (ContentLiteral _) =
+    P.error "Literal content cannot be used as a payload binding selector"
 
 instance (Payload tag ~ LBool tag) => PayloadSelector tag P.Bool where
   payloadSelector = payloadBoolPattern
@@ -624,25 +574,17 @@ instance (Payload tag ~ LUnit tag) => PayloadSelector tag () where
   payloadSelector = payloadUnitPattern
 
 traceQueryQuery :: TraceQuery tag -> Query
-traceQueryQuery query =
-  case query of
-    TraceQuery query' _ -> query'
+traceQueryQuery (TraceQuery query _) = query
 
 traceQueryPayloadPattern :: TraceQuery tag -> PayloadPattern tag
-traceQueryPayloadPattern query =
-  case query of
-    TraceQuery _ Nothing               -> anyPayloadPattern
-    TraceQuery _ (Just payloadPattern) -> payloadPattern
+traceQueryPayloadPattern (TraceQuery _ Nothing) = anyPayloadPattern
+traceQueryPayloadPattern (TraceQuery _ (Just payloadPattern)) = payloadPattern
 
 traceQueryAppend :: TraceQuery tag -> TraceQuery tag -> TraceQuery tag
-traceQueryAppend lhs rhs =
-  case lhs of
-    TraceQuery leftQuery leftPayload ->
-      case rhs of
-        TraceQuery rightQuery rightPayload ->
-          TraceQuery
-            (queryAppend leftQuery rightQuery)
-            (preferLater leftPayload rightPayload)
+traceQueryAppend (TraceQuery leftQuery leftPayload) (TraceQuery rightQuery rightPayload) =
+  TraceQuery
+    (queryAppend leftQuery rightQuery)
+    (preferLater leftPayload rightPayload)
 
 class QueryAppend query where
   appendQuery :: query -> query -> query
