@@ -1,10 +1,22 @@
 import { json } from '@sveltejs/kit';
 
+import {
+  clearChatMessages,
+  getChatMessages,
+  saveChatMessages,
+  type ChatMessage
+} from '$lib/server/chat-sessions';
+import { generateChatReply, OpenAIConfigurationError } from '$lib/server/openai-chat';
+
 import type { RequestHandler } from './$types';
 
 export const prerender = false;
 
-type ChatResponse = { reply: string } | { error: string };
+type ChatResponse = { messages: ChatMessage[] } | { error: string };
+
+export const GET: RequestHandler = async () => {
+  return json({ messages: getChatMessages() } satisfies ChatResponse);
+};
 
 export const POST: RequestHandler = async ({ request }) => {
   let body: unknown;
@@ -25,7 +37,31 @@ export const POST: RequestHandler = async ({ request }) => {
     });
   }
 
-  return json({ reply: `Echo: ${message}` } satisfies ChatResponse);
+  const nextMessages: ChatMessage[] = [...getChatMessages(), { role: 'user', content: message }];
+
+  try {
+    const reply = await generateChatReply(nextMessages);
+    const messages: ChatMessage[] = [...nextMessages, { role: 'assistant', content: reply }];
+
+    saveChatMessages(messages);
+
+    return json({ messages } satisfies ChatResponse);
+  } catch (error) {
+    if (error instanceof OpenAIConfigurationError) {
+      return json({ error: error.message } satisfies ChatResponse, { status: 503 });
+    }
+
+    console.error('OpenAI chat request failed.', error);
+    return json({ error: 'The chat service is unavailable.' } satisfies ChatResponse, {
+      status: 502
+    });
+  }
+};
+
+export const DELETE: RequestHandler = async () => {
+  clearChatMessages();
+
+  return json({ messages: getChatMessages() } satisfies ChatResponse);
 };
 
 function readMessage(body: unknown): string | null {

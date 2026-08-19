@@ -1,65 +1,37 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
 
   import BotIcon from '@lucide/svelte/icons/bot';
+  import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
   import SendIcon from '@lucide/svelte/icons/send';
 
   import * as Alert from '$lib/components/ui/alert';
+  import { Button } from '$lib/components/ui/button';
   import * as InputGroup from '$lib/components/ui/input-group';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Spinner } from '$lib/components/ui/spinner';
+  import { ChatState } from './chat-state.svelte';
 
-  type Message = {
-    id: number;
-    role: 'user' | 'assistant';
-    content: string;
-  };
-
-  let messages = $state<Message[]>([
-    {
-      id: 1,
-      role: 'assistant',
-      content: 'Hi! I’m a placeholder chatbot. Send a message and I’ll echo it back.'
-    }
-  ]);
-  let draft = $state('');
-  let sending = $state(false);
-  let error = $state<string | null>(null);
-  let nextMessageId = 2;
+  const chat = new ChatState();
   let transcriptElement = $state<HTMLElement | null>(null);
 
-  async function submitMessage() {
-    const message = draft.trim();
+  onMount(() => {
+    void loadChat();
+  });
 
-    if (!message || sending) return;
-
-    const submittedDraft = draft;
-    draft = '';
-    error = null;
-    sending = true;
-    messages = [...messages, { id: nextMessageId++, role: 'user', content: message }];
+  async function loadChat() {
+    await chat.load();
     await scrollToLatest();
+  }
 
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message })
-      });
-      const payload = (await response.json()) as { reply?: string; error?: string };
+  async function submitMessage() {
+    await chat.submit();
+    await scrollToLatest();
+  }
 
-      if (!response.ok || typeof payload.reply !== 'string') {
-        throw new Error(payload.error ?? 'Chat request failed.');
-      }
-
-      messages = [...messages, { id: nextMessageId++, role: 'assistant', content: payload.reply }];
-      await scrollToLatest();
-    } catch (err) {
-      draft = submittedDraft;
-      error = err instanceof Error ? err.message : 'Chat request failed.';
-    } finally {
-      sending = false;
-    }
+  async function resetChat() {
+    await chat.reset();
+    await scrollToLatest();
   }
 
   function handleComposerKeydown(event: KeyboardEvent) {
@@ -75,10 +47,10 @@
   }
 </script>
 
-<section class="flex min-h-0 flex-1 flex-col" aria-label="Chat with chatbot">
+<section class="flex min-h-0 flex-1 flex-col" aria-label="Chat with AI assistant">
   <ScrollArea bind:viewportRef={transcriptElement} class="min-h-0 flex-1 px-4 py-5">
     <div class="flex flex-col gap-4 pr-3" aria-live="polite" aria-label="Chat transcript">
-      {#each messages as message (message.id)}
+      {#each chat.messages as message (message.id)}
         <article class:flex-row-reverse={message.role === 'user'} class="flex items-start gap-3">
           <div
             class="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
@@ -100,7 +72,7 @@
         </article>
       {/each}
 
-      {#if sending}
+      {#if chat.sending}
         <div class="flex items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
           <Spinner />
           Thinking…
@@ -110,10 +82,10 @@
   </ScrollArea>
 
   <div class="flex flex-col gap-3 border-t bg-background p-4">
-    {#if error}
+    {#if chat.error}
       <Alert.Root variant="destructive">
         <Alert.Title>Unable to send message</Alert.Title>
-        <Alert.Description>{error}</Alert.Description>
+        <Alert.Description>{chat.error}</Alert.Description>
       </Alert.Root>
     {/if}
 
@@ -123,21 +95,33 @@
         void submitMessage();
       }}
     >
+      <div class="mb-2 flex justify-end">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={chat.sending}
+          onclick={() => void resetChat()}
+        >
+          <RotateCcwIcon data-icon="inline-start" />
+          Reset chat
+        </Button>
+      </div>
       <InputGroup.Root class="h-auto min-h-20">
         <InputGroup.Textarea
-          bind:value={draft}
-          aria-label="Message chatbot"
-          disabled={sending}
+          bind:value={chat.draft}
+          aria-label="Message AI assistant"
+          disabled={chat.sending}
           onkeydown={handleComposerKeydown}
-          placeholder="Ask the chatbot…"
+          placeholder="Ask the AI assistant…"
           rows={2}
         />
         <InputGroup.Addon align="block-end" class="justify-end border-t">
           <span class="mr-auto text-xs text-muted-foreground"
             >Enter to send · Shift+Enter for a new line</span
           >
-          <InputGroup.Button type="submit" size="sm" disabled={!draft.trim() || sending}>
-            {#if sending}
+          <InputGroup.Button type="submit" size="sm" disabled={!chat.draft.trim() || chat.sending}>
+            {#if chat.sending}
               <Spinner data-icon="inline-start" />
               Sending
             {:else}
