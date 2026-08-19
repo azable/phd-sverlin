@@ -29,3 +29,5 @@ dist-newstyle*
 
 *.tmp
 compiled.json
+
+temp.txt

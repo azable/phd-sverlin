@@ -7,6 +7,7 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 ## Project Structure
 
 - `src/` contains the SvelteKit application.
+- `src/lib/chat/` contains the client-side chat panel used by the workspace; its current placeholder backend is exposed at `/api/chat`.
 - `src/lib/visualization/` contains the trace player, canvas, toolbar, debug panel, and shared visualization types.
 - `src/lib/server/compile-visualization.ts` runs the Haskell compiler and streams diagnostics for the UI.
 - `src/routes/api/visualization/+server.ts` exposes the backend visualization stream used by the frontend.
@@ -109,7 +110,7 @@ pnpm install
 pnpm run dev
 ```
 
-Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. If another supported compile command is already running, the page shows a busy compile state and retries instead of launching a conflicting backend build; it also subscribes to a compile-lock status stream so manual and benchmark compiles are visible while the page is open. The seed can be supplied through the UI and is sent to `/api/visualization` as a positive integer query parameter.
+Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. The workspace has a resizable chat panel alongside the visualization panel; chat messages are sent to `/api/chat` and currently receive an echo placeholder. If another supported compile command is already running, the page shows a busy compile state and retries instead of launching a conflicting backend build; it also subscribes to a compile-lock status stream so manual and benchmark compiles are visible while the page is open. The seed can be supplied through the UI and is sent to `/api/visualization` as a positive integer query parameter.
 
 The devcontainer post-create step runs `cabal build -v0 compile-app --builddir=compile/dist-newstyle` to warm Cabal's build artifacts before the first browser-triggered regeneration; it does not need to produce visualization JSON. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 

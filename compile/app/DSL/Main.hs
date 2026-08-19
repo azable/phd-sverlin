@@ -244,6 +244,7 @@ run =
     -- this base shape up slightly while they are being compared.
     Variable ff <- choice @FontFamily
     Selected valueContent <- select @Value (payload v)
+    -- var betwwen 0.5 and 1.5
     let valueRadius = cell * 0.12
     render valueContent $ do
       content v

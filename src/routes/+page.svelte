@@ -3,8 +3,11 @@
 
   import * as Alert from '$lib/components/ui/alert';
   import * as Card from '$lib/components/ui/card';
+  import * as Resizable from '$lib/components/ui/resizable';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Skeleton } from '$lib/components/ui/skeleton';
+  import * as Tabs from '$lib/components/ui/tabs';
+  import ChatPanel from '$lib/chat/ChatPanel.svelte';
   import TraceCanvas from '$lib/visualization/TraceCanvas.svelte';
   import TraceDebugPanel from '$lib/visualization/TraceDebugPanel.svelte';
   import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
@@ -351,94 +354,133 @@
   }
 </script>
 
-<div class="dark flex h-screen flex-col overflow-hidden bg-background text-foreground">
-  <TraceToolbar
-    bind:debugEnabled
-    bind:seedText
-    canNext={player.canNext}
-    canPrevious={player.canPrevious}
-    currentStep={player.currentStep}
-    externalCompiling={toolbarExternalCompiling}
-    hasTrace={player.hasTrace}
-    {loadingTrace}
-    onNext={() => player.next()}
-    onPrevious={() => player.previous()}
-    onRegenerate={regenerateTrace}
-    onReset={() => player.reset()}
-    {regenerating}
-    stepCount={player.stepCount}
-  />
+<div class="dark h-screen overflow-hidden bg-background text-foreground">
+  <main class="h-full min-w-0 overflow-x-auto">
+    <Resizable.PaneGroup direction="horizontal" class="min-h-full min-w-[72rem]">
+      <Resizable.Pane defaultSize={35} minSize={25} class="min-w-0">
+        <Tabs.Root value="chat" class="h-full min-w-0 gap-0 rounded-none border-r">
+          <Tabs.List
+            variant="line"
+            class="w-full shrink-0 justify-start rounded-none border-b px-4"
+          >
+            <Tabs.Trigger value="chat">Chat</Tabs.Trigger>
+          </Tabs.List>
+          <Tabs.Content value="chat" class="flex min-h-0 flex-1 flex-col">
+            <ChatPanel />
+          </Tabs.Content>
+        </Tabs.Root>
+      </Resizable.Pane>
 
-  <main
-    class="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col items-center gap-4 overflow-hidden p-4"
-  >
-    {#if loadingTrace || player.hasTrace}
-      <Card.Root class="flex min-h-0 w-full max-w-5xl flex-none">
-        <Card.Header>
-          <Card.Title>{player.hasTrace ? 'Trace visualization' : 'Compiling trace'}</Card.Title>
-          <Card.Description>
-            {#if player.hasTrace}
-              {#if externalCompileActive && externalCompileLock !== null}
-                External {externalCompileLock.owner} compile running
-              {:else}
-                Seed {seedText || 'random'}
-              {/if}
-            {:else}
-              {compileSrc}
-            {/if}
-          </Card.Description>
-        </Card.Header>
+      <Resizable.Handle withHandle />
 
-        <Card.Content class="flex min-h-0 flex-col gap-3">
-          {#if player.hasTrace}
-            <ScrollArea
-              orientation="both"
-              class="min-h-0 rounded-lg border"
-              style={`height: ${player.canvasHeight + 24}px`}
-              aria-label="Visualization canvas"
+      <Resizable.Pane defaultSize={65} minSize={45} class="min-w-0">
+        <Tabs.Root value="visualization" class="h-full min-w-0 gap-0 rounded-none">
+          <Tabs.List
+            variant="line"
+            class="w-full shrink-0 justify-start rounded-none border-b px-4"
+          >
+            <Tabs.Trigger value="visualization">Visualization</Tabs.Trigger>
+          </Tabs.List>
+          <Tabs.Content value="visualization" class="min-h-0 overflow-y-auto">
+            <TraceToolbar
+              bind:debugEnabled
+              bind:seedText
+              canNext={player.canNext}
+              canPrevious={player.canPrevious}
+              currentStep={player.currentStep}
+              externalCompiling={toolbarExternalCompiling}
+              hasTrace={player.hasTrace}
+              {loadingTrace}
+              onNext={() => player.next()}
+              onPrevious={() => player.previous()}
+              onRegenerate={regenerateTrace}
+              onReset={() => player.reset()}
+              {regenerating}
+              stepCount={player.stepCount}
+            />
+
+            <div
+              class="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-col items-center gap-4 p-4"
             >
-              <div class="flex h-max min-h-full w-max min-w-full items-start justify-center py-3">
-                <div class="shrink-0">
-                  <TraceCanvas
-                    elements={player.elements}
-                    height={player.canvasHeight}
-                    width={player.canvasWidth}
-                  />
-                </div>
-              </div>
-            </ScrollArea>
-          {:else}
-            <Skeleton class="h-8 w-48" />
-            <ScrollArea class="h-96 rounded-lg border bg-muted/40">
-              {#if initialCompileOutput}
-                <pre
-                  class="p-3 font-mono text-xs break-words whitespace-pre-wrap">{initialCompileOutput}</pre>
-              {:else}
-                <div class="flex h-full flex-col gap-3 p-3">
-                  <Skeleton class="h-4 w-2/3" />
-                  <Skeleton class="h-4 w-5/6" />
-                  <Skeleton class="h-4 w-1/2" />
-                </div>
+              {#if loadingTrace || player.hasTrace}
+                <Card.Root class="flex min-h-0 w-full flex-none">
+                  <Card.Header>
+                    <Card.Title
+                      >{player.hasTrace ? 'Trace visualization' : 'Compiling trace'}</Card.Title
+                    >
+                    <Card.Description>
+                      {#if player.hasTrace}
+                        {#if externalCompileActive && externalCompileLock !== null}
+                          External {externalCompileLock.owner} compile running
+                        {:else}
+                          Seed {seedText || 'random'}
+                        {/if}
+                      {:else}
+                        {compileSrc}
+                      {/if}
+                    </Card.Description>
+                  </Card.Header>
+
+                  <Card.Content class="flex min-h-0 flex-col gap-3">
+                    {#if player.hasTrace}
+                      <ScrollArea
+                        orientation="both"
+                        class="min-h-0 rounded-lg border"
+                        style={`height: ${player.canvasHeight + 24}px`}
+                        aria-label="Visualization canvas"
+                      >
+                        <div
+                          class="flex h-max min-h-full w-max min-w-full items-start justify-center py-3"
+                        >
+                          <div class="shrink-0">
+                            <TraceCanvas
+                              elements={player.elements}
+                              height={player.canvasHeight}
+                              width={player.canvasWidth}
+                            />
+                          </div>
+                        </div>
+                      </ScrollArea>
+                    {:else}
+                      <Skeleton class="h-8 w-48" />
+                      <ScrollArea class="h-96 rounded-lg border bg-muted/40">
+                        {#if initialCompileOutput}
+                          <pre
+                            class="p-3 font-mono text-xs break-words whitespace-pre-wrap">{initialCompileOutput}</pre>
+                        {:else}
+                          <div class="flex h-full flex-col gap-3 p-3">
+                            <Skeleton class="h-4 w-2/3" />
+                            <Skeleton class="h-4 w-5/6" />
+                            <Skeleton class="h-4 w-1/2" />
+                          </div>
+                        {/if}
+                      </ScrollArea>
+                    {/if}
+                  </Card.Content>
+                </Card.Root>
               {/if}
-            </ScrollArea>
-          {/if}
-        </Card.Content>
-      </Card.Root>
-    {/if}
 
-    {#if pageError}
-      <Alert.Root variant="destructive" class="w-full max-w-5xl">
-        <Alert.Title>Visualization error</Alert.Title>
-        <Alert.Description>{pageError}</Alert.Description>
-      </Alert.Root>
-    {/if}
+              {#if pageError}
+                <Alert.Root variant="destructive" class="w-full">
+                  <Alert.Title>Visualization error</Alert.Title>
+                  <Alert.Description>{pageError}</Alert.Description>
+                </Alert.Root>
+              {/if}
 
-    <TraceDebugPanel
-      debug={displayedDebug}
-      error={compileError}
-      open={(debugEnabled || compiling || externalCompileActive || compileError !== null) &&
-        (!loadingTrace || player.hasTrace)}
-      regenerating={compiling || externalCompileActive}
-    />
+              <TraceDebugPanel
+                debug={displayedDebug}
+                error={compileError}
+                open={(debugEnabled ||
+                  compiling ||
+                  externalCompileActive ||
+                  compileError !== null) &&
+                  (!loadingTrace || player.hasTrace)}
+                regenerating={compiling || externalCompileActive}
+              />
+            </div>
+          </Tabs.Content>
+        </Tabs.Root>
+      </Resizable.Pane>
+    </Resizable.PaneGroup>
   </main>
 </div>
