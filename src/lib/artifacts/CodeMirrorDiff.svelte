@@ -34,7 +34,7 @@
           ...artifactEditorExtensions({ language }),
           EditorView.editable.of(false),
           EditorState.readOnly.of(true),
-          unifiedMergeView({ original: nextOriginal })
+          unifiedMergeView({ original: nextOriginal, mergeControls: false })
         ]
       })
     });
