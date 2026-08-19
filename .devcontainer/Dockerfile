@@ -1,145 +1,73 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-bookworm-slim
+FROM haskell:9.10.3-bookworm
 
+ARG TARGETARCH
 ARG GHC_VERSION=9.10.3
-ARG CABAL_VERSION=3.16.1.0
 ARG HLS_VERSION=2.14.0.0
-ARG STACK_VERSION=3.11.1
-ARG PNPM_VERSION=10.12.1
 
-# Space-separated Cabal executables installed into /home/node/.cabal/bin.
-# Override with an empty string to skip optional tool installation.
-ARG EXTRA_CABAL_TOOLS="hlint hindent stylish-haskell"
+ENV DEBIAN_FRONTEND=noninteractive
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Native dependencies for numeric-optimization / hmatrix / L-BFGS-B,
+# plus bubblewrap for sandboxing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bubblewrap \
+        ca-certificates \
+        curl \
+        gfortran \
+        git \
+        liblapack-dev \
+        liblbfgsb-dev \
+        libopenblas-dev \
+        pkg-config \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8 \
-    LC_CTYPE=C.UTF-8 \
-    GHCUP_INSTALL_BASE_PREFIX=/home/node \
-    BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
-    BOOTSTRAP_HASKELL_MINIMAL=1 \
-    BOOTSTRAP_HASKELL_ADJUST_BASHRC=0 \
-    PATH=/home/node/.ghcup/bin:/home/node/.cabal/bin:/home/node/.local/bin:$PATH
-
-USER root
-
+# Install HLS matching GHC 9.10.3.
 RUN set -eux; \
-  apt-get update; \
-  apt-get install -y --no-install-recommends \
-    bash \
-    bubblewrap \
-    build-essential \
-    ca-certificates \
+    case "${TARGETARCH}" in \
+        amd64) \
+            hls_platform="x86_64-linux-deb12"; \
+            hls_sha256="b12e11da456637293db56e32fce8b6265b5a2c4bfa643a2bdc50c7c49260d5e2"; \
+            ;; \
+        arm64) \
+            hls_platform="aarch64-linux-ubuntu2204"; \
+            hls_sha256="7d2e9356487a802a2ccf903f570872c028fb91b1d34906629c3a0054a1f33daa"; \
+            ;; \
+        *) \
+            echo "Unsupported architecture: ${TARGETARCH}"; \
+            exit 1; \
+            ;; \
+    esac; \
+    hls_archive="haskell-language-server-${HLS_VERSION}-${hls_platform}.tar.xz"; \
+    hls_url="https://github.com/haskell/haskell-language-server/releases/download/${HLS_VERSION}/${hls_archive}"; \
     curl \
-    gfortran \
-    git \
-    gnupg \
-    less \
-    libffi-dev \
-    libgmp-dev \
-    liblapack-dev \
-    liblbfgsb-dev \
-    libncurses-dev \
-    libnuma-dev \
-    libopenblas-dev \
-    libsqlite3-dev \
-    libtinfo-dev \
-    pkg-config \
-    procps \
-    python3 \
-    python3-pip \
-    sudo \
-    tar \
-    unzip \
-    xz-utils \
-    zlib1g-dev; \
-  rm -rf /var/lib/apt/lists/*
+        --fail \
+        --location \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        "${hls_url}" \
+        -o /tmp/hls.tar.xz; \
+    echo "${hls_sha256}  /tmp/hls.tar.xz" | sha256sum -c -; \
+    mkdir -p /tmp/hls; \
+    tar -xJf /tmp/hls.tar.xz -C /tmp/hls; \
+    wrapper="$(find /tmp/hls -type f -name 'haskell-language-server-wrapper' -print -quit)"; \
+    server="$(find /tmp/hls -type f -name "haskell-language-server-${GHC_VERSION}" -print -quit)"; \
+    test -n "${wrapper}"; \
+    test -n "${server}"; \
+    install -m 0755 "${wrapper}" \
+        /usr/local/bin/haskell-language-server-wrapper; \
+    install -m 0755 "${server}" \
+        "/usr/local/bin/haskell-language-server-${GHC_VERSION}"; \
+    ln -sf \
+        "haskell-language-server-${GHC_VERSION}" \
+        /usr/local/bin/haskell-language-server; \
+    rm -rf /tmp/hls /tmp/hls.tar.xz
 
-RUN set -eux; \
-  echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node; \
-  chmod 0440 /etc/sudoers.d/node; \
-  mkdir -p /workspaces/phd-sverlin; \
-  chown -R node:node /workspaces
-
-RUN set -eux; \
-  mkdir -p \
-    /home/node/.ghcup/cache \
-    /home/node/.ghcup/tmp \
-    /home/node/.cabal/bin \
-    /home/node/.cache/cabal/packages \
-    /home/node/.cache/cabal/logs \
-    /home/node/.local/state/cabal/store; \
-  chown -R node:node \
-    /home/node/.ghcup \
-    /home/node/.cabal \
-    /home/node/.cache \
-    /home/node/.local
-
-RUN set -eux; \
-  npm install -g "pnpm@${PNPM_VERSION}"
-
-USER node
-
-WORKDIR /workspaces/phd-sverlin
-
-RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
-  set -eux; \
-  curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh; \
-  ghcup --version
-
-RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
-  set -eux; \
-  ghcup install ghc "${GHC_VERSION}"; \
-  ghcup set ghc "${GHC_VERSION}"; \
-  ghc --version; \
-  rm -rf /home/node/.ghcup/tmp
-
-RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
-  --mount=type=cache,target=/home/node/.cache/cabal/packages,uid=1000,gid=1000 \
-  --mount=type=cache,target=/home/node/.cache/cabal/logs,uid=1000,gid=1000 \
-  set -eux; \
-  ghcup install cabal "${CABAL_VERSION}"; \
-  ghcup set cabal "${CABAL_VERSION}"; \
-  cabal --version; \
-  cabal update; \
-  rm -rf /home/node/.ghcup/tmp
-
-RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
-  set -eux; \
-  ghcup install hls "${HLS_VERSION}"; \
-  ghcup set hls "${HLS_VERSION}"; \
-  haskell-language-server-wrapper --version; \
-  rm -rf /home/node/.ghcup/tmp
-
-RUN --mount=type=cache,target=/home/node/.ghcup/cache,uid=1000,gid=1000 \
-  set -eux; \
-  ghcup install stack "${STACK_VERSION}"; \
-  ghcup set stack "${STACK_VERSION}"; \
-  stack --version; \
-  rm -rf /home/node/.ghcup/tmp
-
-RUN --mount=type=cache,target=/home/node/.cache/cabal/packages,uid=1000,gid=1000 \
-  --mount=type=cache,target=/home/node/.cache/cabal/logs,uid=1000,gid=1000 \
-  --mount=type=cache,target=/home/node/.local/state/cabal/store,uid=1000,gid=1000 \
-  set -eux; \
-  if [[ -n "${EXTRA_CABAL_TOOLS}" ]]; then \
-    cabal install ${EXTRA_CABAL_TOOLS} \
-      --installdir=/home/node/.cabal/bin \
-      --overwrite-policy=always; \
-  fi; \
-  for tool in ${EXTRA_CABAL_TOOLS}; do \
-    command -v "${tool}"; \
-  done
-
-RUN set -eux; \
-  cabal update
-
-RUN set -eux; \
-  ghc --version; \
-  cabal --version; \
-  stack --version; \
-  haskell-language-server-wrapper --version; \
-  pnpm --version
+# Verify Haskell environment during image construction.
+RUN ghc --version \
+    && cabal --version \
+    && haskell-language-server-wrapper --version
+    
