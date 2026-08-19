@@ -39,6 +39,8 @@ export type ArtifactSyncState = {
   events: ArtifactChangeEvent[];
 };
 
+export type ArtifactEditMode = 'readonly' | 'editing' | 'conflict';
+
 /**
  * The complete artifact context supplied to a chatbot provider.
  *

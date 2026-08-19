@@ -1,4 +1,5 @@
 import type { ChatPageState } from './types';
+import type { ArtifactSyncState } from '$lib/artifacts/types';
 
 export type ChatMessageView = ChatPageState['messages'][number] & { id: number };
 
@@ -51,6 +52,11 @@ export class ChatState {
     this.streamVersion = nextState.artifact.streamVersion;
     this.sending = false;
     this.error = null;
+  }
+
+  applyArtifactState(nextArtifact: ArtifactSyncState) {
+    this.artifact = nextArtifact;
+    this.streamVersion = nextArtifact.streamVersion;
   }
 
   applyActionError(message: string) {

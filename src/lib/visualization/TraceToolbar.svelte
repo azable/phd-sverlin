@@ -10,7 +10,6 @@
   import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
   import { Spinner } from '$lib/components/ui/spinner';
-  import { Switch } from '$lib/components/ui/switch';
 
   type Props = {
     loadingTrace: boolean;
@@ -22,7 +21,7 @@
     currentStep: number;
     stepCount: number;
     seedText?: string;
-    debugEnabled?: boolean;
+    locked?: boolean;
     onReset: () => void;
     onPrevious: () => void;
     onNext: () => void;
@@ -39,14 +38,14 @@
     currentStep,
     stepCount,
     seedText = $bindable(''),
-    debugEnabled = $bindable(false),
+    locked = false,
     onReset,
     onPrevious,
     onNext,
     onRegenerate
   }: Props = $props();
 
-  const busy = $derived(loadingTrace || regenerating || externalCompiling);
+  const busy = $derived(loadingTrace || regenerating || externalCompiling || locked);
   const minSeed = 1;
   const maxSeedExclusive = 2147483647;
 
@@ -135,14 +134,6 @@
         <ShuffleIcon data-icon="inline-start" />
         Random
       </Button>
-    </Field.Field>
-
-    <Field.Field
-      orientation="horizontal"
-      class="w-auto flex-none items-center gap-2 [&>[data-slot=field-label]]:flex-none"
-    >
-      <Switch id="debug-enabled" bind:checked={debugEnabled} />
-      <Field.Label for="debug-enabled" class="shrink-0 font-normal">Debug</Field.Label>
     </Field.Field>
 
     <Button type="submit" disabled={busy}>

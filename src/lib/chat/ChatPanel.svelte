@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { tick, untrack } from 'svelte';
+  import { tick } from 'svelte';
 
   import BotIcon from '@lucide/svelte/icons/bot';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
@@ -15,11 +15,11 @@
   import { ChatState } from './chat-state.svelte';
   import type { ChatPageState } from './types';
 
-  let { initialState }: { initialState: ChatPageState } = $props();
-  const chat = new ChatState($state.snapshot(untrack(() => initialState)));
+  let { chat, disabled = false }: { chat: ChatState; disabled?: boolean } = $props();
   let transcriptElement = $state<HTMLElement | null>(null);
 
   const sendEnhance: SubmitFunction = () => {
+    if (disabled) return;
     if (!chat.beginSubmit()) return;
 
     return async ({ result }) => {
@@ -35,6 +35,7 @@
   };
 
   const resetEnhance: SubmitFunction = () => {
+    if (disabled) return;
     if (!chat.beginReset()) return;
 
     return async ({ result }) => {
@@ -114,7 +115,7 @@
     {/if}
 
     <form method="POST" action="?/reset" use:enhance={resetEnhance} class="flex justify-end">
-      <Button type="submit" variant="ghost" size="sm" disabled={chat.sending}
+      <Button type="submit" variant="ghost" size="sm" disabled={disabled || chat.sending}
         ><RotateCcwIcon data-icon="inline-start" />Reset chat</Button
       >
     </form>
@@ -125,7 +126,7 @@
           bind:value={chat.draft}
           name="message"
           aria-label="Message AI assistant"
-          disabled={chat.sending}
+          disabled={disabled || chat.sending}
           onkeydown={handleComposerKeydown}
           placeholder="Ask the AI assistant…"
           rows={2}
@@ -134,7 +135,11 @@
           <span class="mr-auto text-xs text-muted-foreground"
             >Enter to send · Shift+Enter for a new line</span
           >
-          <InputGroup.Button type="submit" size="sm" disabled={!chat.draft.trim() || chat.sending}>
+          <InputGroup.Button
+            type="submit"
+            size="sm"
+            disabled={!chat.draft.trim() || disabled || chat.sending}
+          >
             {#if chat.sending}<Spinner data-icon="inline-start" />Sending{:else}<SendIcon
                 data-icon="inline-start"
               />Send{/if}

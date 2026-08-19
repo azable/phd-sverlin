@@ -53,7 +53,12 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/legacy-modes": "^6.5.3",
+    "@codemirror/merge": "^6.12.2",
+    "@codemirror/state": "^6.7.1",
     "clsx": "^2.1.1",
+    "codemirror": "^6.0.2",
     "openai": "^7.5.0",
     "tailwind-merge": "^3.6.0"
   }

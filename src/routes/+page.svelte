@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PageProps } from './$types';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
   import * as Alert from '$lib/components/ui/alert';
   import * as Card from '$lib/components/ui/card';
@@ -8,17 +8,17 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import * as Tabs from '$lib/components/ui/tabs';
+  import ArtifactPanel from '$lib/artifacts/ArtifactPanel.svelte';
+  import type { ArtifactEditMode } from '$lib/artifacts/types';
+  import { ChatState } from '$lib/chat/chat-state.svelte';
   import ChatPanel from '$lib/chat/ChatPanel.svelte';
   import TraceCanvas from '$lib/visualization/TraceCanvas.svelte';
-  import TraceDebugPanel from '$lib/visualization/TraceDebugPanel.svelte';
   import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
   import { TracePlayer } from '$lib/visualization/trace-player.svelte';
   import type {
-    CompileDebug,
     CompileLockHolder,
     CompileStatus,
     CompileStreamFailure,
-    CompileStreamOutput,
     CompileStreamStatus,
     CompileStreamSuccess
   } from '$lib/visualization/types';
@@ -31,13 +31,15 @@
   const compileStatusStreamSrc = '/api/visualization/status/stream';
 
   const player = new TracePlayer();
+  const chat = new ChatState(untrack(() => data));
 
   let loadingTrace = $state(true);
   let regenerating = $state(false);
   let compileError = $state<string | null>(null);
-  let latestDebug = $state<CompileDebug | null>(null);
   let seedText = $state('');
-  let debugEnabled = $state(true);
+  let editMode = $state<ArtifactEditMode>('readonly');
+  let compileMounted = $state(false);
+  let lastArtifactStreamVersion = untrack(() => data.artifact.streamVersion);
   let activeCompileSource: EventSource | null = null;
   let activeCompileStatusSource: EventSource | null = null;
   let compileRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,19 +50,20 @@
   const compiling = $derived(loadingTrace || regenerating);
   const externalCompileActive = $derived(externalCompileLock !== null && !compiling);
   const toolbarExternalCompiling = $derived(externalCompileLock !== null && !loadingTrace);
-  const displayedDebug = $derived(
-    externalCompileActive && externalCompileLock !== null
-      ? lockStatusDebug(externalCompileLock)
-      : latestDebug
-  );
+  const interactionLocked = $derived(editMode !== 'readonly');
   const pageError = $derived(compileError);
-  const initialCompileOutput = $derived(
-    latestDebug?.stdout || latestDebug?.stderr
-      ? [latestDebug.stdout, latestDebug.stderr].filter(Boolean).join('\n')
-      : ''
-  );
+
+  $effect(() => {
+    if (!compileMounted) return;
+    if (interactionLocked) return;
+    const streamVersion = chat.artifact?.streamVersion;
+    if (streamVersion === undefined || streamVersion === lastArtifactStreamVersion) return;
+    lastArtifactStreamVersion = streamVersion;
+    startCompile({ phase: 'regenerate' });
+  });
 
   onMount(() => {
+    compileMounted = true;
     startCompile({ phase: 'initial' });
     startCompileStatusStream();
 
@@ -85,7 +88,6 @@
       seed = parseOptionalSeed(nextSeedText);
     } catch (err) {
       compileError = err instanceof Error ? err.message : String(err);
-      debugEnabled = true;
       return;
     }
 
@@ -102,7 +104,6 @@
 
     externalCompileLock = null;
     compileError = null;
-    latestDebug = null;
 
     const source = new EventSource(compileUrl(seed));
     activeCompileSource = source;
@@ -124,8 +125,6 @@
       if (!isCurrentRun()) return;
 
       if (payload?.status === 409) {
-        latestDebug = payload.debug ?? busyDebug(error, payload);
-
         if (typeof payload?.seed === 'number') {
           seedText = String(payload.seed);
         }
@@ -140,16 +139,11 @@
         return;
       }
 
-      if (payload?.debug) {
-        latestDebug = payload.debug;
-      }
-
       if (typeof payload?.seed === 'number') {
         seedText = String(payload.seed);
       }
 
       compileError = error;
-      debugEnabled = true;
       finish();
     }
 
@@ -159,32 +153,6 @@
       try {
         const payload = readStreamEvent<CompileStreamStatus>(event);
         seedText = String(payload.seed);
-
-        if (payload.debug) {
-          latestDebug = payload.debug;
-        }
-      } catch (err) {
-        fail(err instanceof Error ? err.message : String(err));
-      }
-    });
-
-    source.addEventListener('stdout', (event) => {
-      if (!isCurrentRun()) return;
-
-      try {
-        const payload = readStreamEvent<CompileStreamOutput>(event);
-        appendDebugOutput('stdout', payload.chunk);
-      } catch (err) {
-        fail(err instanceof Error ? err.message : String(err));
-      }
-    });
-
-    source.addEventListener('stderr', (event) => {
-      if (!isCurrentRun()) return;
-
-      try {
-        const payload = readStreamEvent<CompileStreamOutput>(event);
-        appendDebugOutput('stderr', payload.chunk);
       } catch (err) {
         fail(err instanceof Error ? err.message : String(err));
       }
@@ -195,7 +163,6 @@
 
       try {
         const payload = readStreamEvent<CompileStreamSuccess>(event);
-        latestDebug = payload.debug;
         seedText = String(payload.seed);
         player.setTrace(payload.trace, {
           initialStep: phase === 'initial' ? 0 : player.currentStep
@@ -273,8 +240,6 @@
       url.searchParams.set('seed', String(seed));
     }
 
-    url.searchParams.set('details', String(debugEnabled));
-
     return url;
   }
 
@@ -284,62 +249,6 @@
     }
 
     return JSON.parse(event.data) as T;
-  }
-
-  function appendDebugOutput(field: 'stdout' | 'stderr', chunk: string) {
-    const debug = latestDebug ?? emptyDebug();
-
-    latestDebug = {
-      ...debug,
-      [field]: debug[field] + chunk
-    };
-  }
-
-  function emptyDebug(): CompileDebug {
-    return {
-      command: '',
-      args: [],
-      cwd: '',
-      durationMs: 0,
-      exitCode: null,
-      stdout: '',
-      stderr: ''
-    };
-  }
-
-  function busyDebug(error: string, payload?: CompileStreamFailure): CompileDebug {
-    const lock = payload?.lock;
-    const owner = lock ? `${lock.owner} pid ${lock.pid}` : 'another compile process';
-
-    return {
-      command: lock?.command ?? '',
-      args: lock?.args ?? [],
-      cwd: lock?.cwd ?? '',
-      outputPath: lock?.outputPath,
-      durationMs: 0,
-      exitCode: null,
-      stdout: '',
-      stderr: `${error}\nWaiting for ${owner} to finish before retrying.`
-    };
-  }
-
-  function lockStatusDebug(lock: CompileLockHolder): CompileDebug {
-    return {
-      command: lock.command,
-      args: lock.args,
-      cwd: lock.cwd,
-      outputPath: lock.outputPath,
-      durationMs: Date.now() - Date.parse(lock.startedAt),
-      exitCode: null,
-      stdout: '',
-      stderr: [
-        `External ${lock.owner} compile is running under pid ${lock.pid}.`,
-        typeof lock.seed === 'number' ? `Seed: ${lock.seed}.` : null,
-        `Started at ${lock.startedAt}.`
-      ]
-        .filter(Boolean)
-        .join('\n')
-    };
   }
 
   function parseOptionalSeed(value: string): number | null {
@@ -369,7 +278,7 @@
             <Tabs.Trigger value="chat">Chat</Tabs.Trigger>
           </Tabs.List>
           <Tabs.Content value="chat" class="flex min-h-0 flex-1 flex-col">
-            <ChatPanel initialState={data} />
+            <ChatPanel {chat} disabled={interactionLocked} />
           </Tabs.Content>
         </Tabs.Root>
       </Resizable.Pane>
@@ -377,22 +286,16 @@
       <Resizable.Handle withHandle />
 
       <Resizable.Pane defaultSize={65} minSize={45} class="min-w-0">
-        <Tabs.Root value="visualization" class="h-full min-w-0 gap-0 rounded-none">
-          <Tabs.List
-            variant="line"
-            class="w-full shrink-0 justify-start rounded-none border-b px-4"
-          >
-            <Tabs.Trigger value="visualization">Visualization</Tabs.Trigger>
-          </Tabs.List>
-          <Tabs.Content value="visualization" class="min-h-0 overflow-y-auto">
+        <Resizable.PaneGroup direction="vertical" class="h-full min-h-0">
+          <Resizable.Pane defaultSize={65} minSize={40} class="min-h-0 overflow-y-auto">
             <TraceToolbar
-              bind:debugEnabled
               bind:seedText
               canNext={player.canNext}
               canPrevious={player.canPrevious}
               currentStep={player.currentStep}
               externalCompiling={toolbarExternalCompiling}
               hasTrace={player.hasTrace}
+              locked={interactionLocked}
               {loadingTrace}
               onNext={() => player.next()}
               onPrevious={() => player.previous()}
@@ -447,16 +350,11 @@
                     {:else}
                       <Skeleton class="h-8 w-48" />
                       <ScrollArea class="h-96 rounded-lg border bg-muted/40">
-                        {#if initialCompileOutput}
-                          <pre
-                            class="p-3 font-mono text-xs break-words whitespace-pre-wrap">{initialCompileOutput}</pre>
-                        {:else}
-                          <div class="flex h-full flex-col gap-3 p-3">
-                            <Skeleton class="h-4 w-2/3" />
-                            <Skeleton class="h-4 w-5/6" />
-                            <Skeleton class="h-4 w-1/2" />
-                          </div>
-                        {/if}
+                        <div class="flex h-full flex-col gap-3 p-3">
+                          <Skeleton class="h-4 w-2/3" />
+                          <Skeleton class="h-4 w-5/6" />
+                          <Skeleton class="h-4 w-1/2" />
+                        </div>
                       </ScrollArea>
                     {/if}
                   </Card.Content>
@@ -469,20 +367,13 @@
                   <Alert.Description>{pageError}</Alert.Description>
                 </Alert.Root>
               {/if}
-
-              <TraceDebugPanel
-                debug={displayedDebug}
-                error={compileError}
-                open={(debugEnabled ||
-                  compiling ||
-                  externalCompileActive ||
-                  compileError !== null) &&
-                  (!loadingTrace || player.hasTrace)}
-                regenerating={compiling || externalCompileActive}
-              />
             </div>
-          </Tabs.Content>
-        </Tabs.Root>
+          </Resizable.Pane>
+          <Resizable.Handle withHandle />
+          <Resizable.Pane defaultSize={35} minSize={25} class="min-h-0">
+            <ArtifactPanel {chat} bind:editMode />
+          </Resizable.Pane>
+        </Resizable.PaneGroup>
       </Resizable.Pane>
     </Resizable.PaneGroup>
   </main>
