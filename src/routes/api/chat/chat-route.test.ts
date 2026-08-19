@@ -9,7 +9,16 @@ const { generateOpenAIReply, OpenAIConfigurationError } = vi.hoisted(() => ({
   }
 }));
 
-vi.mock('$lib/server/openai-chat', () => ({ generateOpenAIReply, OpenAIConfigurationError }));
+vi.mock('$lib/server/chat-adapters/openai', () => ({
+  generateOpenAIReply,
+  OpenAIConfigurationError,
+  openAIAdapter: {
+    id: 'openai-responses',
+    generateReply: generateOpenAIReply
+  }
+}));
+
+vi.mock('$lib/server/openai-chat', () => ({ OpenAIConfigurationError }));
 
 import { DELETE, GET, POST } from './+server';
 
@@ -57,7 +66,15 @@ describe('chat API', () => {
         messages: [
           { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
           { role: 'user', content: 'hello there' }
-        ]
+        ],
+        initialPrompt: expect.stringContaining('complete updated compile/app/DSL/Main.hs'),
+        context: expect.objectContaining({ artifact: expect.any(Object) }),
+        parameters: {
+          model: 'gpt-5.6',
+          reasoningEffort: 'medium',
+          maxOutputTokens: 4096
+        },
+        responseFormat: expect.objectContaining({ name: 'chat_result', strict: true })
       })
     );
 
@@ -171,8 +188,8 @@ describe('chat API', () => {
     await post({ message: 'summarize the history' });
 
     const historyRequest = generateOpenAIReply.mock.calls.at(-1)?.[0];
-    expect(historyRequest.artifact.history).toHaveLength(existingEvents + 6);
-    expect(historyRequest.artifact.history.at(-1).after.content).toContain('-- revision 6');
+    expect(historyRequest.context.artifact.history).toHaveLength(existingEvents + 6);
+    expect(historyRequest.context.artifact.history.at(-1).after.content).toContain('-- revision 6');
 
     const reset = await DELETE({} as Parameters<typeof DELETE>[0]);
     await expect(reset.json()).resolves.toMatchObject({

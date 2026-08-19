@@ -1,7 +1,7 @@
 import { getArtifactContext } from '$lib/server/artifacts/store';
 import { updateArtifactFromChat } from '$lib/server/artifacts/service';
 import { getChatState, saveChatMessages } from '$lib/server/chat-sessions';
-import { getChatbot } from '$lib/server/chatbot/registry';
+import { getChatbot } from '$lib/server/chat-bots/registry';
 
 import type { ChatPageState } from '$lib/chat/types';
 
