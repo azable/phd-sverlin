@@ -9,6 +9,7 @@
   import XIcon from '@lucide/svelte/icons/x';
 
   import * as Alert from '$lib/components/ui/alert';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -329,18 +330,20 @@
     </div>
   {/if}
 
-  {#if discardRequested}
-    <Alert.Root>
-      <Alert.Title>Discard unsaved changes?</Alert.Title>
-      <Alert.Description>
-        <span>Your draft will be replaced by the server revision.</span>
-        <span class="mt-2 flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" onclick={() => (discardRequested = false)}
-            >Keep editing</Button
-          >
-          <Button size="sm" variant="destructive" onclick={discardDraft}>Discard draft</Button>
-        </span>
-      </Alert.Description>
-    </Alert.Root>
-  {/if}
+  <AlertDialog.Root bind:open={discardRequested}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>Discard unsaved changes?</AlertDialog.Title>
+        <AlertDialog.Description>
+          Your draft will be replaced by the server revision.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>Keep editing</AlertDialog.Cancel>
+        <AlertDialog.Action variant="destructive" onclick={discardDraft}
+          >Discard draft</AlertDialog.Action
+        >
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
 </section>

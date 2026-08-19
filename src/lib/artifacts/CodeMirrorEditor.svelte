@@ -40,7 +40,9 @@
           editableCompartment.of(editableExtensions(editable)),
           EditorView.updateListener.of((update) => {
             if (suppressChange || !update.docChanged) return;
-            onChange?.(update.state.doc.toString());
+            const nextValue = update.state.doc.toString();
+            value = nextValue;
+            onChange?.(nextValue);
           })
         ]
       })
