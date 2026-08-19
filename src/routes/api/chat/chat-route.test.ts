@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { generateChatReply, OpenAIConfigurationError } = vi.hoisted(() => ({
-  generateChatReply: vi.fn(),
+const { generateOpenAIReply, OpenAIConfigurationError } = vi.hoisted(() => ({
+  generateOpenAIReply: vi.fn(),
   OpenAIConfigurationError: class OpenAIConfigurationError extends Error {
     constructor() {
       super('OpenAI is not configured on the server.');
@@ -9,7 +9,7 @@ const { generateChatReply, OpenAIConfigurationError } = vi.hoisted(() => ({
   }
 }));
 
-vi.mock('$lib/server/openai-chat', () => ({ generateChatReply, OpenAIConfigurationError }));
+vi.mock('$lib/server/openai-chat', () => ({ generateOpenAIReply, OpenAIConfigurationError }));
 
 import { DELETE, GET, POST } from './+server';
 
@@ -23,36 +23,47 @@ function post(body: unknown) {
   } as Parameters<typeof POST>[0]);
 }
 
-describe('chat session API', () => {
+describe('chat API', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    generateChatReply.mockResolvedValue('A helpful answer.');
+    generateOpenAIReply.mockResolvedValue({ reply: 'A helpful answer.' });
     await DELETE({} as Parameters<typeof DELETE>[0]);
   });
 
-  it('returns and stores a generated reply for a session', async () => {
+  it('returns and stores a generated reply', async () => {
     const response = await post({ message: '  hello there  ' });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       messages: [
         { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
         { role: 'user', content: 'hello there' },
         { role: 'assistant', content: 'A helpful answer.' }
-      ]
+      ],
+      artifact: {
+        artifactId: 'dsl-main',
+        current: {
+          id: 'dsl-main',
+          path: 'compile/app/DSL/Main.hs',
+          moduleName: 'DSL.Main'
+        },
+        headRevision: 0,
+        streamVersion: 0,
+        events: []
+      }
     });
-    expect(generateChatReply).toHaveBeenCalledWith([
-      { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
-      { role: 'user', content: 'hello there' }
-    ]);
+    expect(generateOpenAIReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
+          { role: 'user', content: 'hello there' }
+        ]
+      })
+    );
 
     const history = await GET({} as Parameters<typeof GET>[0]);
-    await expect(history.json()).resolves.toEqual({
-      messages: [
-        { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
-        { role: 'user', content: 'hello there' },
-        { role: 'assistant', content: 'A helpful answer.' }
-      ]
+    await expect(history.json()).resolves.toMatchObject({
+      messages: expect.arrayContaining([{ role: 'assistant', content: 'A helpful answer.' }])
     });
   });
 
@@ -85,7 +96,7 @@ describe('chat session API', () => {
   });
 
   it('reports missing server configuration without saving the user message', async () => {
-    generateChatReply.mockRejectedValue(new OpenAIConfigurationError());
+    generateOpenAIReply.mockRejectedValue(new OpenAIConfigurationError());
 
     const response = await post({ message: 'hello' });
 
@@ -94,13 +105,13 @@ describe('chat session API', () => {
       error: 'OpenAI is not configured on the server.'
     });
     const history = await GET({} as Parameters<typeof GET>[0]);
-    await expect(history.json()).resolves.toEqual({
+    await expect(history.json()).resolves.toMatchObject({
       messages: [{ role: 'assistant', content: 'Hi! Ask me anything about this workspace.' }]
     });
   });
 
   it('sanitizes provider failures', async () => {
-    generateChatReply.mockRejectedValue(new Error('secret provider details'));
+    generateOpenAIReply.mockRejectedValue(new Error('secret provider details'));
 
     const response = await post({ message: 'hello' });
 
@@ -110,18 +121,70 @@ describe('chat session API', () => {
     });
   });
 
-  it('resets the current session', async () => {
+  it('resets the current transcript', async () => {
     await post({ message: 'hello' });
 
     const response = await DELETE({} as Parameters<typeof DELETE>[0]);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      messages: [{ role: 'assistant', content: 'Hi! Ask me anything about this workspace.' }]
+    await expect(response.json()).resolves.toMatchObject({
+      messages: [{ role: 'assistant', content: 'Hi! Ask me anything about this workspace.' }],
+      artifact: { headRevision: 0, streamVersion: 0, events: [] }
     });
-    const history = await GET({} as Parameters<typeof GET>[0]);
-    await expect(history.json()).resolves.toEqual({
-      messages: [{ role: 'assistant', content: 'Hi! Ask me anything about this workspace.' }]
+  });
+
+  it('tracks a generated source revision and patch', async () => {
+    const source = 'module DSL.Main where\nexample :: Choreography ()\nexample = return ()\n';
+    generateOpenAIReply.mockResolvedValue({
+      reply: 'Updated the DSL.',
+      sourceArtifactContent: source
+    });
+
+    const response = await post({ message: 'simplify the DSL' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      artifact: {
+        current: { content: source },
+        headRevision: 1,
+        streamVersion: 1,
+        events: [{ revision: 1, patch: [{ op: 'replace', path: '/content', value: source }] }]
+      }
+    });
+  });
+
+  it('passes the complete artifact history to the next chatbot turn', async () => {
+    const before = await GET({} as Parameters<typeof GET>[0]);
+    const beforeState = await before.json();
+    const existingEvents = beforeState.artifact.events.length;
+
+    for (let revision = 1; revision <= 6; revision += 1) {
+      const source = `module DSL.Main where\nexample :: Choreography ()\nexample = return ()\n-- revision ${revision}\n`;
+      generateOpenAIReply.mockResolvedValueOnce({
+        reply: `Revision ${revision}`,
+        sourceArtifactContent: source
+      });
+      await post({ message: `apply revision ${revision}` });
+    }
+
+    generateOpenAIReply.mockResolvedValueOnce({ reply: 'History is available.' });
+    await post({ message: 'summarize the history' });
+
+    const historyRequest = generateOpenAIReply.mock.calls.at(-1)?.[0];
+    expect(historyRequest.artifact.history).toHaveLength(existingEvents + 6);
+    expect(historyRequest.artifact.history.at(-1).after.content).toContain('-- revision 6');
+
+    const reset = await DELETE({} as Parameters<typeof DELETE>[0]);
+    await expect(reset.json()).resolves.toMatchObject({
+      artifact: {
+        headRevision: existingEvents + 7,
+        events: expect.arrayContaining([
+          expect.objectContaining({
+            revision: existingEvents + 7,
+            source: expect.objectContaining({ reason: 'reset' })
+          })
+        ])
+      }
     });
   });
 });

@@ -110,7 +110,7 @@ pnpm install
 pnpm run dev
 ```
 
-Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. The workspace has a resizable chat panel alongside the visualization panel; chat messages are sent to `/api/chat` and currently receive an echo placeholder. If another supported compile command is already running, the page shows a busy compile state and retries instead of launching a conflicting backend build; it also subscribes to a compile-lock status stream so manual and benchmark compiles are visible while the page is open. The seed can be supplied through the UI and is sent to `/api/visualization` as a positive integer query parameter.
+Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. The workspace has a resizable chat panel alongside the visualization panel; chat actions are server-backed and can track revisions of the DSL source artifact at `compile/app/DSL/Main.hs`. If another supported compile command is already running, the page shows a busy compile state and retries instead of launching a conflicting backend build; it also subscribes to a compile-lock status stream so manual and benchmark compiles are visible while the page is open. The seed can be supplied through the UI and is sent to `/api/visualization` as a positive integer query parameter.
 
 The devcontainer post-create step runs `cabal build -v0 compile-app --builddir=compile/dist-newstyle` to warm Cabal's build artifacts before the first browser-triggered regeneration; it does not need to produce visualization JSON. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 
@@ -122,7 +122,7 @@ The chat endpoint calls OpenAI from the SvelteKit backend using the official Jav
 OPENAI_API_KEY=your_api_key_here
 ```
 
-`OPENAI_MODEL` is optional and defaults to `gpt-5.6`. The key is never sent to the browser. Chat history is held server-side as one in-memory transcript for this single-user tool; restarting the server clears it. Use the chat panel’s Reset chat button to clear the transcript.
+`OPENAI_MODEL` is optional and defaults to `gpt-5.6`; `CHATBOT_CONFIG` defaults to `openai-default`. The key is never sent to the browser. Chat messages and artifact revisions are held in separate server-side in-memory stores for this single-user tool; restarting the server clears them. Each source update records an ordered event with a stable event ID, stream cursor, complete before/after snapshots, provenance, and a JSON Patch from the previous revision. The chatbot receives the current artifact plus the complete ordered artifact audit history, never an arbitrary “last N” window. `CHATBOT_MAX_CONTEXT_CHARS` (default `500000`) is only a guard against exceeding the provider context; it fails explicitly rather than dropping history. Use `GET /api/artifacts/dsl-main?after=<streamVersion>` for incremental synchronization or `PATCH /api/artifacts/dsl-main` for a validated manual source update with `baseRevision`. Chat does not overwrite or compile the tracked Haskell file; use the existing compile workflow separately. Use the chat panel’s Reset chat button to clear the transcript and append an auditable reset event when the source has changed; the audit history is retained.
 
 ## Frontend Checks
 

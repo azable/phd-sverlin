@@ -1,22 +1,14 @@
 import { json } from '@sveltejs/kit';
 
-import {
-  clearChatMessages,
-  getChatMessages,
-  saveChatMessages,
-  type ChatMessage
-} from '$lib/server/chat-sessions';
-import { generateChatReply, OpenAIConfigurationError } from '$lib/server/openai-chat';
+import { clearChatState, getChatState } from '$lib/server/chat-sessions';
+import { InvalidSourceArtifactError, sendChatMessage } from '$lib/server/chat-service';
+import { OpenAIConfigurationError } from '$lib/server/openai-chat';
 
 import type { RequestHandler } from './$types';
 
 export const prerender = false;
 
-type ChatResponse = { messages: ChatMessage[] } | { error: string };
-
-export const GET: RequestHandler = async () => {
-  return json({ messages: getChatMessages() } satisfies ChatResponse);
-};
+export const GET: RequestHandler = async () => json(getChatState());
 
 export const POST: RequestHandler = async ({ request }) => {
   let body: unknown;
@@ -24,45 +16,43 @@ export const POST: RequestHandler = async ({ request }) => {
   try {
     body = await request.json();
   } catch {
-    return json({ error: 'Request body must be valid JSON.' } satisfies ChatResponse, {
-      status: 400
-    });
+    return json({ error: 'Request body must be valid JSON.' }, { status: 400 });
   }
 
   const message = readMessage(body);
 
   if (message === null) {
-    return json({ error: '`message` must be a non-empty string.' } satisfies ChatResponse, {
-      status: 400
-    });
+    return json({ error: '`message` must be a non-empty string.' }, { status: 400 });
   }
 
-  const nextMessages: ChatMessage[] = [...getChatMessages(), { role: 'user', content: message }];
-
   try {
-    const reply = await generateChatReply(nextMessages);
-    const messages: ChatMessage[] = [...nextMessages, { role: 'assistant', content: reply }];
-
-    saveChatMessages(messages);
-
-    return json({ messages } satisfies ChatResponse);
+    return json(await sendChatMessage(message));
   } catch (error) {
-    if (error instanceof OpenAIConfigurationError) {
-      return json({ error: error.message } satisfies ChatResponse, { status: 503 });
-    }
-
-    console.error('OpenAI chat request failed.', error);
-    return json({ error: 'The chat service is unavailable.' } satisfies ChatResponse, {
-      status: 502
-    });
+    return providerError(error);
   }
 };
 
 export const DELETE: RequestHandler = async () => {
-  clearChatMessages();
-
-  return json({ messages: getChatMessages() } satisfies ChatResponse);
+  clearChatState();
+  return json(getChatState());
 };
+
+function providerError(error: unknown) {
+  if (error instanceof OpenAIConfigurationError) {
+    return json({ error: error.message }, { status: 503 });
+  }
+
+  if (error instanceof InvalidSourceArtifactError) {
+    return json({ error: error.message }, { status: 502 });
+  }
+
+  if (error instanceof Error && error.name === 'ChatContextOverflowError') {
+    return json({ error: error.message }, { status: 413 });
+  }
+
+  console.error('Chat request failed.', error);
+  return json({ error: 'The chat service is unavailable.' }, { status: 502 });
+}
 
 function readMessage(body: unknown): string | null {
   if (typeof body !== 'object' || body === null || !('message' in body)) return null;

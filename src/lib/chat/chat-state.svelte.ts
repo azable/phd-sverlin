@@ -1,36 +1,28 @@
-export type ChatMessage = {
-  id: number;
-  role: 'user' | 'assistant';
-  content: string;
-};
+import type { ChatPageState } from './types';
 
-type ChatMessagePayload = Omit<ChatMessage, 'id'>;
+export type ChatMessageView = ChatPageState['messages'][number] & { id: number };
 
 export class ChatState {
-  messages = $state<ChatMessage[]>([]);
+  messages = $state<ChatMessageView[]>([]);
+  artifact = $state<ChatPageState['artifact'] | null>(null);
+  streamVersion = $state(0);
   draft = $state('');
   sending = $state(false);
   error = $state<string | null>(null);
 
   #nextMessageId = 1;
+  #submittedDraft = '';
 
-  async load() {
-    try {
-      const response = await fetch('/api/chat');
-      const payload = await this.readPayload(response, 'Unable to load chat history.');
-
-      this.applyMessages(payload.messages);
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : 'Unable to load chat history.';
-    }
+  constructor(initialState: ChatPageState) {
+    this.applyServerState(initialState);
   }
 
-  async submit() {
+  beginSubmit() {
     const message = this.draft.trim();
 
-    if (!message || this.sending) return;
+    if (!message || this.sending) return false;
 
-    const submittedDraft = this.draft;
+    this.#submittedDraft = this.draft;
     this.draft = '';
     this.error = null;
     this.sending = true;
@@ -38,54 +30,32 @@ export class ChatState {
       ...this.messages,
       { id: this.#nextMessageId++, role: 'user', content: message }
     ];
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message })
-      });
-      const payload = await this.readPayload(response, 'Chat request failed.');
-
-      this.applyMessages(payload.messages);
-    } catch (error) {
-      this.draft = submittedDraft;
-      this.error = error instanceof Error ? error.message : 'Chat request failed.';
-    } finally {
-      this.sending = false;
-    }
+    return true;
   }
 
-  async reset() {
-    if (this.sending) return;
+  beginReset() {
+    if (this.sending) return false;
 
     this.draft = '';
     this.error = null;
-
-    try {
-      const response = await fetch('/api/chat', { method: 'DELETE' });
-      const payload = await this.readPayload(response, 'Unable to reset chat.');
-
-      this.applyMessages(payload.messages);
-    } catch (error) {
-      this.error = error instanceof Error ? error.message : 'Unable to reset chat.';
-    }
+    this.sending = true;
+    return true;
   }
 
-  private async readPayload(response: Response, fallback: string) {
-    const payload = (await response.json()) as {
-      messages?: ChatMessagePayload[];
-      error?: string;
-    };
-
-    if (!response.ok || !Array.isArray(payload.messages)) {
-      throw new Error(payload.error ?? fallback);
-    }
-
-    return { messages: payload.messages };
+  applyServerState(nextState: ChatPageState) {
+    this.messages = nextState.messages.map((message) => ({
+      ...message,
+      id: this.#nextMessageId++
+    }));
+    this.artifact = nextState.artifact;
+    this.streamVersion = nextState.artifact.streamVersion;
+    this.sending = false;
+    this.error = null;
   }
 
-  private applyMessages(nextMessages: ChatMessagePayload[]) {
-    this.messages = nextMessages.map((message) => ({ ...message, id: this.#nextMessageId++ }));
+  applyActionError(message: string) {
+    this.draft = this.#submittedDraft;
+    this.error = message;
+    this.sending = false;
   }
 }

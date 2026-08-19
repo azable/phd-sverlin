@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { PageProps } from './$types';
   import { onMount } from 'svelte';
 
   import * as Alert from '$lib/components/ui/alert';
@@ -21,6 +22,8 @@
     CompileStreamStatus,
     CompileStreamSuccess
   } from '$lib/visualization/types';
+
+  let { data }: PageProps = $props();
 
   type CompilePhase = 'initial' | 'regenerate';
 
@@ -366,7 +369,7 @@
             <Tabs.Trigger value="chat">Chat</Tabs.Trigger>
           </Tabs.List>
           <Tabs.Content value="chat" class="flex min-h-0 flex-1 flex-col">
-            <ChatPanel />
+            <ChatPanel initialState={data} />
           </Tabs.Content>
         </Tabs.Root>
       </Resizable.Pane>

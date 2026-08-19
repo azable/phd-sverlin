@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { enhance } from '$app/forms';
+  import type { SubmitFunction } from '@sveltejs/kit';
+  import { tick, untrack } from 'svelte';
 
   import BotIcon from '@lucide/svelte/icons/bot';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
@@ -11,34 +13,59 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Spinner } from '$lib/components/ui/spinner';
   import { ChatState } from './chat-state.svelte';
+  import type { ChatPageState } from './types';
 
-  const chat = new ChatState();
+  let { initialState }: { initialState: ChatPageState } = $props();
+  const chat = new ChatState($state.snapshot(untrack(() => initialState)));
   let transcriptElement = $state<HTMLElement | null>(null);
 
-  onMount(() => {
-    void loadChat();
-  });
+  const sendEnhance: SubmitFunction = () => {
+    if (!chat.beginSubmit()) return;
 
-  async function loadChat() {
-    await chat.load();
-    await scrollToLatest();
-  }
+    return async ({ result }) => {
+      if (result.type === 'success') {
+        chat.applyServerState(result.data as ChatPageState);
+      } else if (result.type === 'failure') {
+        chat.applyActionError(actionError(result.data));
+      } else {
+        chat.applyActionError('Chat request was interrupted.');
+      }
+      await scrollToLatest();
+    };
+  };
 
-  async function submitMessage() {
-    await chat.submit();
-    await scrollToLatest();
-  }
+  const resetEnhance: SubmitFunction = () => {
+    if (!chat.beginReset()) return;
 
-  async function resetChat() {
-    await chat.reset();
-    await scrollToLatest();
+    return async ({ result }) => {
+      if (result.type === 'success') {
+        chat.applyServerState(result.data as ChatPageState);
+      } else if (result.type === 'failure') {
+        chat.applyActionError(actionError(result.data));
+      } else {
+        chat.applyActionError('Chat request was interrupted.');
+      }
+      await scrollToLatest();
+    };
+  };
+
+  function actionError(data: unknown) {
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'error' in data &&
+      typeof data.error === 'string'
+    ) {
+      return data.error;
+    }
+    return 'Chat request failed.';
   }
 
   function handleComposerKeydown(event: KeyboardEvent) {
     if (event.key !== 'Enter' || event.shiftKey) return;
 
     event.preventDefault();
-    void submitMessage();
+    (event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
   }
 
   async function scrollToLatest() {
@@ -56,11 +83,9 @@
             class="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
             aria-hidden="true"
           >
-            {#if message.role === 'assistant'}
-              <BotIcon />
-            {:else}
-              <span class="text-xs font-semibold">You</span>
-            {/if}
+            {#if message.role === 'assistant'}<BotIcon />{:else}<span class="text-xs font-semibold"
+                >You</span
+              >{/if}
           </div>
           <div
             class:bg-primary={message.role === 'user'}
@@ -71,11 +96,9 @@
           </div>
         </article>
       {/each}
-
       {#if chat.sending}
         <div class="flex items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
-          <Spinner />
-          Thinking…
+          <Spinner />Thinking…
         </div>
       {/if}
     </div>
@@ -83,33 +106,24 @@
 
   <div class="flex flex-col gap-3 border-t bg-background p-4">
     {#if chat.error}
-      <Alert.Root variant="destructive">
-        <Alert.Title>Unable to send message</Alert.Title>
-        <Alert.Description>{chat.error}</Alert.Description>
-      </Alert.Root>
+      <Alert.Root variant="destructive"
+        ><Alert.Title>Unable to send message</Alert.Title><Alert.Description
+          >{chat.error}</Alert.Description
+        ></Alert.Root
+      >
     {/if}
 
-    <form
-      onsubmit={(event) => {
-        event.preventDefault();
-        void submitMessage();
-      }}
-    >
-      <div class="mb-2 flex justify-end">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={chat.sending}
-          onclick={() => void resetChat()}
-        >
-          <RotateCcwIcon data-icon="inline-start" />
-          Reset chat
-        </Button>
-      </div>
+    <form method="POST" action="?/reset" use:enhance={resetEnhance} class="flex justify-end">
+      <Button type="submit" variant="ghost" size="sm" disabled={chat.sending}
+        ><RotateCcwIcon data-icon="inline-start" />Reset chat</Button
+      >
+    </form>
+
+    <form method="POST" action="?/send" use:enhance={sendEnhance}>
       <InputGroup.Root class="h-auto min-h-20">
         <InputGroup.Textarea
           bind:value={chat.draft}
+          name="message"
           aria-label="Message AI assistant"
           disabled={chat.sending}
           onkeydown={handleComposerKeydown}
@@ -121,13 +135,9 @@
             >Enter to send · Shift+Enter for a new line</span
           >
           <InputGroup.Button type="submit" size="sm" disabled={!chat.draft.trim() || chat.sending}>
-            {#if chat.sending}
-              <Spinner data-icon="inline-start" />
-              Sending
-            {:else}
-              <SendIcon data-icon="inline-start" />
-              Send
-            {/if}
+            {#if chat.sending}<Spinner data-icon="inline-start" />Sending{:else}<SendIcon
+                data-icon="inline-start"
+              />Send{/if}
           </InputGroup.Button>
         </InputGroup.Addon>
       </InputGroup.Root>
