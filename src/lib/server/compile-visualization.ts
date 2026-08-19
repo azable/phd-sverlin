@@ -1,7 +1,11 @@
 import { spawn } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 
-import type { CompileDebug, CompileLockHolder, CompiledTrace } from '$lib/visualization/types';
+import type {
+  CompileDebug,
+  CompileLockHolder,
+  CompiledVisualization
+} from '$lib/visualization/types';
 
 import { acquireCompileLock } from './compile-lock.js';
 import { createCompileOutput } from './workspace-output.js';
@@ -16,7 +20,7 @@ export type CompileVisualizationOptions = {
 export type CompileVisualizationResult =
   | {
       ok: true;
-      trace: CompiledTrace;
+      trace: CompiledVisualization;
       debug: CompileDebug;
     }
   | {
@@ -128,7 +132,7 @@ export async function compileVisualization({
       compiledJson = '';
     }
 
-    debug = { ...debug, outputPath, compiledJson };
+    debug = { ...debug, outputPath };
     onEvent?.({ type: 'finished', debug });
 
     if (debug.error) {
@@ -161,7 +165,7 @@ export async function compileVisualization({
     try {
       return {
         ok: true,
-        trace: JSON.parse(compiledJson) as CompiledTrace,
+        trace: JSON.parse(compiledJson) as CompiledVisualization,
         debug
       };
     } catch (err) {
@@ -323,7 +327,8 @@ function compileCommand(seed: number, details: boolean, outputPath: string) {
     '--',
     '--output',
     outputPath,
-    '--json',
+    '--target',
+    'ir-json',
     '--seed',
     String(seed)
   ];

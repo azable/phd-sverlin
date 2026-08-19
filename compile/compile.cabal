@@ -83,6 +83,9 @@ library
         LinearTrace.Print
         Solver
         LinearTrace.Compile
+        LinearTrace.Visualization.IR
+        LinearTrace.Visualization.Options
+        LinearTrace.Visualization.Target
 
     other-modules:
         LinearTrace.Choreography.Constraint
@@ -99,7 +102,6 @@ library
         LinearTrace.View.Access
         LinearTrace.View.Build
         LinearTrace.View.Graph
-        LinearTrace.View.Materialize
         LinearTrace.View.Patch
         LinearTrace.View.Primitives
         LinearTrace.View.Solve
@@ -134,6 +136,22 @@ executable compile-app
 
     -- Base language which the package is written in.
     default-language: GHC2024
+
+executable visualization-types
+    import:             warnings
+    import:             app-dependencies
+
+    main-is:            GenerateVisualizationTypes.hs
+
+    other-modules:
+        GenerateVisualizationTypes.TypeScript
+
+    build-depends:      compile,
+                        template-haskell
+
+    hs-source-dirs:     app
+
+    default-language:   GHC2024
 
 executable solver-bench
     import:           warnings

@@ -8,7 +8,7 @@ module App
   , defaultRunConfig
   , -- * Workflow
     -- | Build and run the current visualization graph through solve,
-    -- materialization, JSON encoding, and file output.
+    -- canonical IR compilation, target encoding, and file output.
     buildViewGraph
   , runVisualization
   ) where
@@ -20,6 +20,7 @@ import           GHC.Clock                (getMonotonicTimeNSec)
 import qualified LinearTrace.Choreography as Choreography
 import qualified LinearTrace.Compile      as Compile
 import qualified LinearTrace.Print        as Print
+import qualified LinearTrace.Visualization.Target as Target
 import           Numeric                  (showFFloat)
 import           System.IO                (Handle, hPutStrLn, stdout)
 
@@ -29,6 +30,7 @@ data RunConfig = RunConfig
   , runOutputPath  :: FilePath
   , runDiagnostics :: Bool
   , runPrintTrace  :: Bool
+  , runOutputTarget :: Target.OutputTarget
   }
 
 defaultRunConfig :: RunConfig
@@ -39,6 +41,7 @@ defaultRunConfig =
     , runOutputPath = "static/compiled.json"
     , runDiagnostics = True
     , runPrintTrace = True
+    , runOutputTarget = Target.IrJson
     }
 
 buildViewGraph :: Choreography.VisualTraceGraph -> Choreography.ViewGraph
@@ -73,8 +76,10 @@ runVisualization config graph = do
   case compiledResult of
     Left err -> pure (Left err)
     Right compiled -> do
-      let seededCompiled = Compile.withSeed (runSeed config) compiled
-      (encoded, encodeMs) <- timedPhase (evaluate (forceEncoded seededCompiled))
+      (encoded, encodeMs) <-
+        timedPhase
+          (evaluate
+             (forceEncoded (runOutputTarget config) compiled))
       ((), writeMs) <- timedPhase (writeCompiled (runOutputPath config) encoded)
       when
         (runDiagnostics config)
@@ -82,11 +87,11 @@ runVisualization config graph = do
            diagnostics
            [ ("View graph", viewGraphMs)
            , ("Solve", solveMs)
-           , ("Materialize", compileMs)
+           , ("IR compile", compileMs)
            , ("JSON encode", encodeMs)
            , ("JSON write", writeMs)
            ])
-      pure (Right seededCompiled)
+      pure (Right compiled)
 
 forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
 forceViewGraph graph =
@@ -101,9 +106,9 @@ forceCompileResult result =
     Left err       -> length err `seq` result
     Right compiled -> compiled `seq` result
 
-forceEncoded :: Compile.Visualization -> BL.ByteString
-forceEncoded compiled =
-  let encoded = Compile.encodeCompiledPretty compiled
+forceEncoded :: Target.OutputTarget -> Compile.Visualization -> BL.ByteString
+forceEncoded target compiled =
+  let encoded = Target.compileTarget target compiled
    in BL.length encoded `seq` encoded
 
 timedPhase :: IO a -> IO (a, Double)

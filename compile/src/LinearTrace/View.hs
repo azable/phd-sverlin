@@ -66,8 +66,7 @@ module LinearTrace.View
   , finalizeViewGraph
   , -- * Re-exported from LinearTrace.View.Style
     -- | Public symbolic node style and style choice domains needed by the DSL.
-    -- Concrete style lowering is deliberately kept in
-    -- 'LinearTrace.View.Materialize'.
+    -- Concrete style lowering is deliberately kept at the compile boundary.
     NodeStyle
   , FontFamily(..)
   , FontWeight(..)

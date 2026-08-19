@@ -3,8 +3,8 @@
 {-# LANGUAGE RankNTypes        #-}
 
 -- | Symbolic view graph representation. Choreography and build code construct
--- these nodes; solving consumes their constraints; materialization converts
--- them to concrete render data after solving.
+-- these nodes; solving consumes their constraints; 'LinearTrace.Compile'
+-- converts them directly to concrete IR data after solving.
 module LinearTrace.View.Graph
   ( -- * Graph data
     -- | Symbolic graph, node, step, and render-intent records shared by the

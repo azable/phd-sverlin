@@ -21,6 +21,7 @@ module LinearTrace.View.Style.FieldSpec
   , -- * Choice fields
     choiceValue
   , choiceChoices
+  , choiceNames
   , materializeChoice
   , mapChoiceValue
   ) where
@@ -123,6 +124,12 @@ choiceChoices value =
   case value of
     Fixed _           -> []
     Variable selected -> [freeChoice selected]
+
+choiceNames :: ChoiceValue value -> [String]
+choiceNames value =
+  case value of
+    Fixed _           -> []
+    Variable selected -> [choiceName selected]
 
 materializeChoice ::
      ChoiceDomain value

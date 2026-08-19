@@ -1,53 +1,35 @@
-export type CssValue = string | number | boolean;
+export type {
+  CanvasSpec,
+  CspValue,
+  CspVariable,
+  CspVariableId,
+  HslColor,
+  InstanceOrigin,
+  RenderInstanceId,
+  SourceMetadata,
+  StyleVariableTrace,
+  VisualElement,
+  VisualElementKind,
+  VisualId,
+  VisualInstance,
+  VisualStyle,
+  VisualizationFrame,
+  VisualizationPackage
+} from './generated/visualization-ir';
 
-export type RenderStyle = Record<string, CssValue>;
+import type {
+  InstanceOrigin,
+  VisualElement,
+  VisualizationPackage
+} from './generated/visualization-ir';
 
-export type RenderElement = {
-  nodeId: number;
-  nodeKey: string;
-  kind: string;
-  content: string;
-  style: RenderStyle;
-};
+/** The canonical Haskell-owned wire payload returned by the compile API. */
+export type CompiledVisualization = VisualizationPackage;
 
-export type RenderId = string;
-
-export type RenderOrigin = {
-  id: RenderId;
-  element: RenderElement;
-};
-
-export type RenderPatch =
-  | {
-      kind: 'create';
-      id: RenderId;
-      element: RenderElement;
-      origin?: RenderOrigin;
-    }
-  | {
-      kind: 'update';
-      id: RenderId;
-      from: RenderElement;
-      to: RenderElement;
-    }
-  | {
-      kind: 'destroy';
-      id: RenderId;
-      element: RenderElement;
-    };
-
-export type CompiledTrace = {
-  seed?: number;
-  canvas: {
-    width: number;
-    height: number;
-  };
-  frames: RenderPatch[][];
-};
-
-export type LiveElement = RenderElement & {
-  id: RenderId;
-  exiting?: boolean;
+/** A registry element paired with its identity in the current scene snapshot. */
+export type LiveElement = VisualElement & {
+  instanceId: string;
+  origin?: InstanceOrigin;
 };
 
 export type CompileDebug = {
@@ -61,7 +43,6 @@ export type CompileDebug = {
   exitCode: number | null;
   stdout: string;
   stderr: string;
-  compiledJson?: string;
   error?: string;
 };
 
@@ -78,18 +59,13 @@ export type CompileLockHolder = {
   lockPath: string;
 };
 
-export type CompileStatus =
-  | {
-      running: false;
-    }
-  | ({ running: true } & CompileLockHolder);
+export type CompileStatus = { running: false } | ({ running: true } & CompileLockHolder);
 
 export type VisualizationSuccess = {
   ok: true;
-  trace: CompiledTrace;
+  trace: CompiledVisualization;
   seed: number;
   details: boolean;
-  debug: CompileDebug;
 };
 
 export type VisualizationFailure = {
@@ -109,13 +85,6 @@ export type CompileStreamStatus = {
   debug?: CompileDebug;
 };
 
-export type CompileStreamOutput = {
-  ok: true;
-  chunk: string;
-};
-
+export type CompileStreamOutput = { ok: true; chunk: string };
 export type CompileStreamSuccess = VisualizationSuccess;
-
-export type CompileStreamFailure = VisualizationFailure & {
-  status: number;
-};
+export type CompileStreamFailure = VisualizationFailure & { status: number };

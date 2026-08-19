@@ -133,17 +133,14 @@ module LinearTrace
   , traceStepEvents
   , foldTraceStep
   , -- * Graph building, rendering and compilation
-    -- | Output-facing helpers from 'LinearTrace.Print' and
-    -- 'LinearTrace.Compile'. The visualization compiler depends on a solved
-    -- view graph supplied by the choreography/view pipeline.
+    -- | Output-facing helpers from 'LinearTrace.Print' and the IR compiler.
+    -- Target encoding is owned by 'LinearTrace.Visualization.Target'.
     PayloadView(..)
   , buildGraph
   , printGraph
   , printTrace
   , printSolutionByStep
   , compileSolved
-  , printCompiledJSON
-  , writeCompiledJSON
   ) where
 
 import           LinearTrace.Compile

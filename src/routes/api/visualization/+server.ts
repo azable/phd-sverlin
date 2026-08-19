@@ -120,8 +120,7 @@ export const GET: RequestHandler = ({ request, url }) => {
               ok: true,
               trace: result.trace,
               seed,
-              details,
-              debug: result.debug
+              details
             } satisfies CompileStreamSuccess);
           } else {
             send('error', {

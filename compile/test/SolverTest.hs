@@ -14,6 +14,7 @@ import           LinearTrace.Choreography  (Applicable2 (..), CoreOperator (..),
                                             Payload, applyLinear2Into)
 import qualified LinearTrace.Choreography  as Choreography
 import qualified LinearTrace.Compile       as Compile
+import qualified LinearTrace.Visualization.IR as IR
 import qualified LinearTrace.Core          as Core
 import           Prelude.Linear            (Ur (..))
 import qualified Prelude.Linear            as Linear
@@ -167,19 +168,19 @@ viewMaterializationTests =
           assertCompileSolved solution ChoreographyFixtures.selectedColorGraph
         case compiledRenderElements compiled of
           element:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle element)
             assertBool
-              "expected selected fill access to compile a backgroundColor"
-              (elementHasBackgroundColor element)
-            assertAttrsAbsent
-              [ "opacity"
-              , "zIndex"
-              , "padding"
-              , "fontSize"
-              , "borderRadius"
-              , "borderWidth"
-              ]
-              attrs
+              "expected selected fill access to compile a concrete fill"
+              (IR.visualFill (IR.elementStyle element) /= Nothing)
+            assertTraceVariablesExist
+              compiled
+              (IR.traceFill (IR.elementVariables element))
+            let style' = IR.elementStyle element
+            IR.visualOpacity style' @?= Nothing
+            IR.visualZIndex style' @?= Nothing
+            IR.visualPadding style' @?= Nothing
+            IR.visualFontSize style' @?= Nothing
+            IR.visualRadius style' @?= Nothing
+            IR.visualStrokeWidth style' @?= Nothing
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "selected scalar access adds and constrains style" $ do
         solution <-
@@ -190,9 +191,13 @@ viewMaterializationTests =
           assertCompileSolved solution ChoreographyFixtures.selectedScalarGraph
         case compiledRenderElements compiled of
           element:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle element)
-            Map.lookup "padding" attrs @?= Just (Compile.StylePixels 6)
-            assertAttrsAbsent ["fontSize", "opacity"] attrs
+            let style' = IR.elementStyle element
+            IR.visualPadding style' @?= Just 6
+            assertTraceVariablesExist
+              compiled
+              (IR.tracePadding (IR.elementVariables element))
+            IR.visualFontSize style' @?= Nothing
+            IR.visualOpacity style' @?= Nothing
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "center helper reads and writes node centers" $ do
         solution <-
@@ -202,11 +207,11 @@ viewMaterializationTests =
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.centerGraph
         let assertCentered element = do
-              let style' = Compile.renderStyle element
-              assertNear "left" 80 (Compile.renderLeft style')
-              assertNear "top" 50 (Compile.renderTop style')
-              assertNear "width" 80 (Compile.renderWidth style')
-              assertNear "height" 80 (Compile.renderHeight style')
+              let style' = IR.elementStyle element
+              assertNear "left" 80 (IR.visualLeft style')
+              assertNear "top" 50 (IR.visualTop style')
+              assertNear "width" 80 (IR.visualWidth style')
+              assertNear "height" 80 (IR.visualHeight style')
             assertNear label expected actual =
               assertBool
                 (label
@@ -228,10 +233,12 @@ viewMaterializationTests =
             solution
             ChoreographyFixtures.categoricalStyleGraph
         case compiledRenderElements compiled of
-          element:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle element)
-            Map.lookup "fontFamily" attrs
-              @?= Just (Compile.StyleText "monospace")
+          element:_ ->
+            do
+              IR.visualFontFamily (IR.elementStyle element) @?= Just "monospace"
+              assertTraceVariablesExist
+                compiled
+                (IR.traceFontFamily (IR.elementVariables element))
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "selected categorical access adds and constrains style" $ do
         solution <-
@@ -243,9 +250,8 @@ viewMaterializationTests =
             solution
             ChoreographyFixtures.categoricalRelationGraph
         case compiledRenderElements compiled of
-          element:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle element)
-            Map.lookup "fontFamily" attrs @?= Just (Compile.StyleText "Inter")
+          element:_ ->
+            IR.visualFontFamily (IR.elementStyle element) @?= Just "Inter"
           [] -> assertFailure "expected at least one compiled render element"
     , testCase
         "compileSolved lowers concrete scalar text choice and color fields" $ do
@@ -257,12 +263,11 @@ viewMaterializationTests =
           assertCompileSolved solution ChoreographyFixtures.styledGraph
         case compiledRenderElements compiled of
           element:_ -> do
-            let attrs = Compile.renderAttrs (Compile.renderStyle element)
-            Map.lookup "position" attrs @?= Just (Compile.StyleText "absolute")
-            Map.lookup "padding" attrs @?= Just (Compile.StylePixels 4)
-            Map.lookup "fontFamily" attrs @?= Just (Compile.StyleText "Inter")
-            Map.lookup "fontWeight" attrs @?= Just (Compile.StyleText "bold")
-            assertStyleColor "backgroundColor" attrs
+            let style' = IR.elementStyle element
+            IR.visualPadding style' @?= Just 4
+            IR.visualFontFamily style' @?= Just "Inter"
+            IR.visualFontWeight style' @?= Just "bold"
+            assertBool "expected concrete fill" (IR.visualFill style' /= Nothing)
           [] -> assertFailure "expected at least one compiled render element"
     ]
 
@@ -601,40 +606,15 @@ assertCompileSolved solution graph =
     Left err       -> assertFailure err >> pure (error err)
     Right compiled -> pure compiled
 
-compiledRenderElements :: Compile.Visualization -> [Compile.RenderElement]
-compiledRenderElements compiled =
-  concatMap frameElements (Compile.frames compiled)
-  where
-    frameElements frame =
-      case frame of
-        Compile.RenderFrame patches -> concatMap patchElements patches
-    patchElements patch =
-      case patch of
-        Compile.RenderCreate _ _ element -> [element]
-        Compile.RenderUpdate _ _ element -> [element]
-        Compile.RenderDestroy _ element  -> [element]
+compiledRenderElements :: Compile.Visualization -> [IR.VisualElement]
+compiledRenderElements = IR.packageElements
 
-elementHasBackgroundColor :: Compile.RenderElement -> Bool
-elementHasBackgroundColor element =
-  case Map.lookup "backgroundColor" attrs of
-    Just (Compile.StyleColor _) -> True
-    _                           -> False
-  where
-    attrs = Compile.renderAttrs (Compile.renderStyle element)
-
-assertAttrsAbsent :: [String] -> Map.Map String Compile.StyleValue -> Assertion
-assertAttrsAbsent names attrs = mapM_ assertAbsent names
-  where
-    assertAbsent name = Map.lookup name attrs @?= Nothing
-
-assertStyleColor :: String -> Map.Map String Compile.StyleValue -> Assertion
-assertStyleColor name attrs =
-  case Map.lookup name attrs of
-    Just (Compile.StyleColor value) ->
-      assertBool
-        (name ++ " should be an hsl color, got " ++ value)
-        ("hsl(" `List.isPrefixOf` value)
-    other -> assertFailure (name ++ " was not a color: " ++ show other)
+assertTraceVariablesExist ::
+     Compile.Visualization -> [IR.CspVariableId] -> Assertion
+assertTraceVariablesExist compiled referenced = do
+  assertBool "expected style field to reference at least one CSP variable" (not (null referenced))
+  let available = map IR.cspVariableId (IR.packageVariables compiled)
+  mapM_ (\variableId -> assertBool ("missing CSP variable " ++ show variableId) (variableId `elem` available)) referenced
 
 epsilon :: Double
 epsilon = 1e-6

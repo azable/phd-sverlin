@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
+    "generate:visualization-types": "bash -o pipefail -c 'cabal run -v0 visualization-types --builddir=compile/dist-newstyle | pnpm exec prettier --parser typescript > src/lib/visualization/generated/visualization-ir.ts.tmp && mv src/lib/visualization/generated/visualization-ir.ts.tmp src/lib/visualization/generated/visualization-ir.ts'",
+    "check:visualization-types": "pnpm run generate:visualization-types && git diff --exit-code -- src/lib/visualization/generated/visualization-ir.ts",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "compile": "node scripts/run-compile.mjs",

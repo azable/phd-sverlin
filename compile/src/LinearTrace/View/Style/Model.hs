@@ -75,6 +75,8 @@ class Typeable field =>
     -> StyleValue field
     -> StyleValue field
   styleValueExprLeaves :: Proxy field -> StyleValue field -> [StyleExprLeaf]
+  styleValueChoiceNames :: Proxy field -> StyleValue field -> [String]
+  styleValueChoiceNames _ _ = []
   styleValueConstraints :: Proxy field -> StyleValue field -> [Constraint]
   styleValueConstraints _ _ = []
   styleValueChoices :: Proxy field -> StyleValue field -> [ChoiceConstraint]

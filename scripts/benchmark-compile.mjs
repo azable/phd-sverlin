@@ -171,7 +171,8 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
     '--',
     '--output',
     outputPath,
-    '--json',
+    '--target',
+    'ir-json',
     '--seed',
     String(seed)
   ];

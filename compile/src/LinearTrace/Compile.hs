@@ -1,124 +1,25 @@
 {-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeFamilies      #-}
 
--- | Compile solved view graphs into the JSON visualization model consumed by
--- the Svelte app. This exposed module depends on the internal view facade and
--- materialization boundary but does not expose symbolic view internals.
+-- | Compile a solved view graph into the canonical visualization IR.
 module LinearTrace.Compile
-  ( -- * Render model
-    -- | Concrete JSON-facing render identifiers, style values, elements,
-    -- patches, frames, and visualization wrapper produced after solving.
-    RenderId(..)
-  , StyleValue(..)
-  , RenderStyle(..)
-  , RenderElement(..)
-  , RenderOrigin(..)
-  , RenderPatch(..)
-  , RenderFrame(..)
-  , Visualization(..)
-  , -- * Compilation
-    -- | Compile a solved symbolic view graph to render frames. The viewport
-    -- variant is useful for tests or future non-default canvases.
-    withSeed
+  ( Visualization
   , compileSolved
   , compileSolvedWithViewport
-  , -- * JSON output
-    -- | Encoding and writing helpers used by the executable and top-level
-    -- facade. Diagnostics/printing are handled by 'LinearTrace.Print'.
-    encodeCompiledPretty
-  , hPrintCompiledJSON
-  , printCompiledJSON
-  , writeCompiledJSON
   ) where
 
-import           Control.Monad
 import           Control.Monad.State.Strict
-import           Data.Aeson
-import           Data.Aeson.Encode.Pretty     (encodePretty)
-import qualified Data.Aeson.Key               as Key
-import qualified Data.ByteString.Lazy         as BL
-import           Data.Map.Strict              (Map)
-import qualified Data.Map.Strict              as Map
-import qualified LinearTrace.View             as V
-import qualified LinearTrace.View.Materialize as VM
-import qualified LinearTrace.View.Style       as VS
-import           Numeric                      (showFFloat)
+import           Data.List                         (find, nub, sortOn)
+import           Data.Map.Strict                   (Map)
+import qualified Data.Map.Strict                   as Map
+import           Data.Maybe                        (fromMaybe)
+import qualified LinearTrace.View                  as V
+import qualified LinearTrace.View.Style            as VS
+import qualified LinearTrace.Visualization.IR      as IR
 import           Prelude
-import qualified Solver                       as S
-import           System.IO                    (Handle, hFlush, stdout)
+import qualified Solver                            as S
 
-newtype RenderId =
-  RenderId String
-  deriving (Eq, Ord, Show)
-
-freshRenderIdForElement :: RenderElement -> RenderId
-freshRenderIdForElement element =
-  RenderId
-    ("lineage." ++ show (renderNodeId element) ++ "." ++ renderNodeKey element)
-
---------------------------------------------------------------------------------
--- Compiled CSS style
---------------------------------------------------------------------------------
-data StyleValue
-  = StyleNumber Double
-  | StylePixels Double
-  | StyleText String
-  | StyleColor String
-  deriving (Eq, Show)
-
-data CssTarget =
-  CssTarget
-
-class StyleCompileTarget target where
-  type TargetStyleValue target
-  targetStyleAttrs ::
-       target -> VM.ConcreteStyle -> Map String (TargetStyleValue target)
-
-instance StyleCompileTarget CssTarget where
-  type TargetStyleValue CssTarget = StyleValue
-  targetStyleAttrs _ = cssStyleAttrs
-
-data RenderStyle = RenderStyle
-  { renderTop    :: Double
-  , renderLeft   :: Double
-  , renderWidth  :: Double
-  , renderHeight :: Double
-  , renderAttrs  :: Map String StyleValue
-  } deriving (Eq, Show)
-
-data RenderElement = RenderElement
-  { renderNodeId  :: Int
-  , renderNodeKey :: String
-  , renderContent :: String
-  , renderKind    :: String
-  , renderStyle   :: RenderStyle
-  } deriving (Eq, Show)
-
-data RenderOrigin = RenderOrigin
-  { renderOriginId      :: RenderId
-  , renderOriginElement :: RenderElement
-  } deriving (Eq, Show)
-
-data RenderPatch
-  = RenderCreate RenderId (Maybe RenderOrigin) RenderElement
-  | RenderUpdate RenderId RenderElement RenderElement
-  | RenderDestroy RenderId RenderElement
-  deriving (Eq, Show)
-
-newtype RenderFrame = RenderFrame
-  { framePatches :: [RenderPatch]
-  } deriving (Eq, Show)
-
-data Visualization = Compiled
-  { compiledSeed   :: Maybe Int
-  , compiledWidth  :: Double
-  , compiledHeight :: Double
-  , frames         :: [RenderFrame]
-  } deriving (Eq, Show)
-
-withSeed :: Int -> Visualization -> Visualization
-withSeed seed compiled = compiled {compiledSeed = Just seed}
+type Visualization = IR.VisualizationPackage
 
 defaultCompiledWidth :: Double
 defaultCompiledWidth = 800
@@ -126,26 +27,8 @@ defaultCompiledWidth = 800
 defaultCompiledHeight :: Double
 defaultCompiledHeight = 600
 
---------------------------------------------------------------------------------
--- Compiler state
---------------------------------------------------------------------------------
-newtype CompileState = CompileState
-  { lineageByElement :: Map RenderElementKey RenderId
-  } deriving (Eq, Show)
-
-emptyCompileState :: CompileState
-emptyCompileState = CompileState {lineageByElement = Map.empty}
-
-type CompileM = StateT CompileState (Either String)
-
-type RenderElementKey = (Int, String)
-
---------------------------------------------------------------------------------
--- Public compiler
---------------------------------------------------------------------------------
 compileSolved :: S.Solution -> V.ViewGraph -> Either String Visualization
-compileSolved =
-  compileSolvedWithViewport defaultCompiledWidth defaultCompiledHeight
+compileSolved = compileSolvedWithViewport defaultCompiledWidth defaultCompiledHeight
 
 compileSolvedWithViewport ::
      Double
@@ -153,561 +36,404 @@ compileSolvedWithViewport ::
   -> S.Solution
   -> V.ViewGraph
   -> Either String Visualization
-compileSolvedWithViewport viewportWidth viewportHeight solution graph =
-  case VM.materializeViewGraph solution graph of
-    Left err -> Left err
-    Right concreteGraph -> do
-      let elementsById = buildElementLookup concreteGraph
-      frames' <-
-        evalStateT
-          (compileFrames
-             elementsById
-             (VM.concreteViewRenderFrames concreteGraph))
-          emptyCompileState
+compileSolvedWithViewport viewportWidth viewportHeight solution graph = do
+  elements <- compileElements solution graph
+  frames <-
+    evalStateT
+      (compileFrames (elementLookup elements) (V.viewRenderFrames graph))
+      emptySceneState
+  pure
+    IR.VisualizationPackage
+      { IR.packageSchemaVersion = 1
+      , IR.packageSeed = solutionSeedInt solution
+      , IR.packageSource =
+          IR.SourceMetadata
+            { IR.sourcePath = "compile/app/DSL/Main.hs"
+            , IR.sourceCompilerVersion = "0.1.0.0"
+            }
+      , IR.packageCanvas =
+          IR.CanvasSpec
+            { IR.canvasWidth = roundLayout viewportWidth
+            , IR.canvasHeight = roundLayout viewportHeight
+            , IR.canvasBackground = Nothing
+            }
+      , IR.packageVariables = compileVariables solution
+      , IR.packageElements = elements
+      , IR.packageFrames = frames
+      }
+
+solutionSeedInt :: S.Solution -> Int
+solutionSeedInt solution =
+  case S.solutionSeed solution of
+    S.RandomSeed seed -> seed
+
+compileVariables :: S.Solution -> [IR.CspVariable]
+compileVariables solution =
+  map numericVariable (Map.toAscList (S.solutionValues solution))
+    ++ map categoryVariable (Map.toAscList (S.solutionChoices solution))
+  where
+    numericVariable (name, value) =
+      IR.CspVariable
+        { IR.cspVariableId = IR.CspVariableId name
+        , IR.cspVariableValue = IR.CspNumber (roundLayout value)
+        }
+    categoryVariable (name, value) =
+      IR.CspVariable
+        { IR.cspVariableId = IR.CspVariableId name
+        , IR.cspVariableValue = IR.CspCategory value
+        }
+
+--------------------------------------------------------------------------------
+-- Element registry
+--------------------------------------------------------------------------------
+
+compileElements :: S.Solution -> V.ViewGraph -> Either String [IR.VisualElement]
+compileElements solution graph =
+  traverse (compileElement solution nodeKeys) (V.viewNodes graph)
+  where
+    nodeKeys =
+      Map.fromList
+        [ (V.viewRefInt (V.nodeRef node), V.nodeKey node)
+        | V.ViewNode node <- V.viewNodes graph
+        ]
+
+compileElement ::
+     S.Solution
+  -> Map Int String
+  -> V.ViewNode
+  -> Either String IR.VisualElement
+compileElement solution nodeKeys symbolic =
+  case symbolic of
+    V.ViewNode node -> do
+      style <- compileStyle solution (V.nodeStyle node)
       pure
-        Compiled
-          { compiledSeed = Nothing
-          , compiledWidth = roundLayout viewportWidth
-          , compiledHeight = roundLayout viewportHeight
-          , frames = frames'
+        IR.VisualElement
+          { IR.elementId = visualIdFor (nodeId node) (V.nodeKey node)
+          , IR.elementNodeId = nodeId node
+          , IR.elementNodeKey = V.nodeKey node
+          , IR.elementRole = V.viewLabelKind (V.nodeLabel node)
+          , IR.elementKind = compileElementKind nodeKeys (V.nodeStructure node)
+          , IR.elementContent = compileContent (V.nodeContent node)
+          , IR.elementStyle = style
+          , IR.elementVariables = compileStyleTrace (V.nodeStyle node)
           }
 
---------------------------------------------------------------------------------
--- Frame compilation
---------------------------------------------------------------------------------
-compileFrames :: ElementLookup -> [[V.RenderIntent]] -> CompileM [RenderFrame]
-compileFrames elementsById renderFrames = do
-  frames' <- traverse (compileRenderFrame elementsById) renderFrames
-  pure (filter (not . null . framePatches) frames')
+compileElementKind :: Map Int String -> V.NodeStructure -> IR.VisualElementKind
+compileElementKind nodeKeys structure =
+  case structure of
+    V.LeafNode -> IR.ElementTrace
+    V.CompoundNode _ children ->
+      IR.ElementGroup
+        [ visualIdFor childId (fromMaybe V.defaultNodeKey (Map.lookup childId nodeKeys))
+        | child <- children
+        , let childId = V.viewIdInt (V.nodeChildId child)
+        ]
 
-compileRenderFrame :: ElementLookup -> [V.RenderIntent] -> CompileM RenderFrame
-compileRenderFrame elementsById renderIntents = do
-  patches <- compileRenderIntents elementsById renderIntents
-  coalesced <- lift (coalesceFramePatches patches)
-  pure RenderFrame {framePatches = coalesced}
+visualIdFor :: Int -> String -> IR.VisualId
+visualIdFor nodeId' key = IR.VisualId ("node." ++ show nodeId' ++ "." ++ key)
 
-compileRenderIntents ::
-     ElementLookup -> [V.RenderIntent] -> CompileM [RenderPatch]
-compileRenderIntents elementsById intents = do
-  patches <- traverse (compileRenderIntent elementsById) intents
-  pure (concat patches)
+nodeId :: V.Node tag -> Int
+nodeId = V.viewRefInt . V.nodeRef
 
---------------------------------------------------------------------------------
--- Frame coalescing
---------------------------------------------------------------------------------
-data CoalescedPatch
-  = CoalescedCreate (Maybe RenderOrigin) RenderElement
-  | CoalescedUpdate RenderElement RenderElement
-  | CoalescedDestroy RenderElement
-  deriving (Eq, Show)
+compileContent :: V.ContentMode -> Maybe String
+compileContent content =
+  case content of
+    V.ContentEmpty      -> Nothing
+    V.ContentText value -> Just value
 
-data CoalesceState = CoalesceState
-  { coalesceOrder   :: [RenderId]
-  , coalescePatches :: Map RenderId CoalescedPatch
-  } deriving (Eq, Show)
-
-emptyCoalesceState :: CoalesceState
-emptyCoalesceState =
-  CoalesceState {coalesceOrder = [], coalescePatches = Map.empty}
-
-coalesceFramePatches :: [RenderPatch] -> Either String [RenderPatch]
-coalesceFramePatches patches = do
-  finalState <- foldM coalescePatch emptyCoalesceState patches
-  pure
-    (renderCoalescedPatches
-       (coalesceOrder finalState)
-       (coalescePatches finalState))
-
-coalescePatch :: CoalesceState -> RenderPatch -> Either String CoalesceState
-coalescePatch coalesceState patch =
-  case patch of
-    RenderCreate renderId origin element ->
-      updateCoalesced
-        renderId
-        (coalesceCreate renderId origin element)
-        coalesceState
-    RenderUpdate renderId fromElement toElement ->
-      updateCoalesced
-        renderId
-        (coalesceUpdate renderId fromElement toElement)
-        coalesceState
-    RenderDestroy renderId element ->
-      updateCoalesced renderId (coalesceDestroy renderId element) coalesceState
-
-updateCoalesced ::
-     RenderId
-  -> (Maybe CoalescedPatch -> Either String (Maybe CoalescedPatch))
-  -> CoalesceState
-  -> Either String CoalesceState
-updateCoalesced renderId reducer coalesceState = do
-  reduced <- reducer (Map.lookup renderId (coalescePatches coalesceState))
-  let order' = rememberRenderId renderId (coalesceOrder coalesceState)
-  let patches' =
-        case reduced of
-          Nothing -> Map.delete renderId (coalescePatches coalesceState)
-          Just patch ->
-            Map.insert renderId patch (coalescePatches coalesceState)
-  pure coalesceState {coalesceOrder = order', coalescePatches = patches'}
-
-rememberRenderId :: RenderId -> [RenderId] -> [RenderId]
-rememberRenderId renderId order =
-  if renderId `elem` order
-    then order
-    else order ++ [renderId]
-
-coalesceCreate ::
-     RenderId
-  -> Maybe RenderOrigin
-  -> RenderElement
-  -> Maybe CoalescedPatch
-  -> Either String (Maybe CoalescedPatch)
-coalesceCreate renderId origin element existing =
-  case existing of
-    Nothing -> Right (Just (CoalescedCreate origin element))
-    Just _  -> Left (duplicateLifecycleError "create" renderId)
-
-coalesceUpdate ::
-     RenderId
-  -> RenderElement
-  -> RenderElement
-  -> Maybe CoalescedPatch
-  -> Either String (Maybe CoalescedPatch)
-coalesceUpdate renderId fromElement toElement existing =
-  case existing of
-    Nothing -> Right (Just (CoalescedUpdate fromElement toElement))
-    Just existingPatch ->
-      case existingPatch of
-        CoalescedCreate origin currentElement ->
-          if currentElement == fromElement
-            then Right (Just (CoalescedCreate origin toElement))
-            else Left (inconsistentLifecycleError "update" renderId)
-        CoalescedUpdate firstElement currentElement ->
-          if currentElement == fromElement
-            then Right (Just (CoalescedUpdate firstElement toElement))
-            else Left (inconsistentLifecycleError "update" renderId)
-        CoalescedDestroy _ ->
-          Left (invalidLifecycleError "update after destroy" renderId)
-
-coalesceDestroy ::
-     RenderId
-  -> RenderElement
-  -> Maybe CoalescedPatch
-  -> Either String (Maybe CoalescedPatch)
-coalesceDestroy renderId element existing =
-  case existing of
-    Nothing -> Right (Just (CoalescedDestroy element))
-    Just existingPatch ->
-      case existingPatch of
-        CoalescedCreate _ currentElement ->
-          if currentElement == element
-            then Right Nothing
-            else Left (inconsistentLifecycleError "destroy" renderId)
-        CoalescedUpdate firstElement currentElement ->
-          if currentElement == element
-            then Right (Just (CoalescedDestroy firstElement))
-            else Left (inconsistentLifecycleError "destroy" renderId)
-        CoalescedDestroy _ -> Left (duplicateLifecycleError "destroy" renderId)
-
-renderCoalescedPatches ::
-     [RenderId] -> Map RenderId CoalescedPatch -> [RenderPatch]
-renderCoalescedPatches order patches =
-  case order of
-    [] -> []
-    renderId:rest ->
-      case Map.lookup renderId patches of
-        Nothing -> renderCoalescedPatches rest patches
-        Just patch ->
-          renderCoalescedPatch renderId patch
-            : renderCoalescedPatches rest patches
-
-renderCoalescedPatch :: RenderId -> CoalescedPatch -> RenderPatch
-renderCoalescedPatch renderId patch =
-  case patch of
-    CoalescedCreate origin element -> RenderCreate renderId origin element
-    CoalescedUpdate fromElement toElement ->
-      RenderUpdate renderId fromElement toElement
-    CoalescedDestroy element -> RenderDestroy renderId element
-
-duplicateLifecycleError :: String -> RenderId -> String
-duplicateLifecycleError operation renderId =
-  "duplicate render " ++ operation ++ " in one frame for " ++ show renderId
-
-invalidLifecycleError :: String -> RenderId -> String
-invalidLifecycleError operation renderId =
-  "invalid render lifecycle: " ++ operation ++ " for " ++ show renderId
-
-inconsistentLifecycleError :: String -> RenderId -> String
-inconsistentLifecycleError operation renderId =
-  "inconsistent render "
-    ++ operation
-    ++ " chain in one frame for "
-    ++ show renderId
-
---------------------------------------------------------------------------------
--- Visual lifecycle semantics
---------------------------------------------------------------------------------
-compileRenderIntent :: ElementLookup -> V.RenderIntent -> CompileM [RenderPatch]
-compileRenderIntent elementsById intent =
-  case intent of
-    V.RenderFresh ref              -> createRef elementsById ref
-    V.RenderContinue source target -> continueRef elementsById source target
-    V.RenderFork source target     -> forkRef elementsById source target
-    V.RenderRemove ref             -> destroyRef elementsById ref
-
-createRef :: ElementLookup -> V.ViewRef tag -> CompileM [RenderPatch]
-createRef elementsById ref = do
-  elements <- requireElementsByRef elementsById ref
-  traverse createElement elements
-
-destroyRef :: ElementLookup -> V.ViewRef tag -> CompileM [RenderPatch]
-destroyRef elementsById ref = do
-  elements <- requireElementsByRef elementsById ref
-  traverse destroyElement elements
-
-continueRef ::
-     ElementLookup
-  -> V.ViewRef source
-  -> V.ViewRef target
-  -> CompileM [RenderPatch]
-continueRef elementsById sourceRef targetRef = do
-  sourceElements <- requireElementsByRef elementsById sourceRef
-  targetElements <- requireElementsByRef elementsById targetRef
-  continueElements sourceElements targetElements
-
-forkRef ::
-     ElementLookup
-  -> V.ViewRef source
-  -> V.ViewRef target
-  -> CompileM [RenderPatch]
-forkRef elementsById sourceRef targetRef = do
-  sourceElements <- requireElementsByRef elementsById sourceRef
-  targetElements <- requireElementsByRef elementsById targetRef
-  traverse (forkElement sourceElements) targetElements
-
-createElement :: RenderElement -> CompileM RenderPatch
-createElement element = do
-  let renderId = freshRenderIdForElement element
-  modify
-    (\st ->
-       st
-         { lineageByElement =
-             Map.insert
-               (renderElementKey element)
-               renderId
-               (lineageByElement st)
-         })
-  pure (RenderCreate renderId Nothing element)
-
-destroyElement :: RenderElement -> CompileM RenderPatch
-destroyElement element = do
-  renderId <- requireLineage element
-  modify
-    (\st ->
-       st
-         { lineageByElement =
-             Map.delete (renderElementKey element) (lineageByElement st)
-         })
-  pure (RenderDestroy renderId element)
-
-continueElements :: [RenderElement] -> [RenderElement] -> CompileM [RenderPatch]
-continueElements sourceElements targetElements = do
-  updates <- traverse (continueTarget sourceElements) targetElements
-  destroys <-
-    traverse destroyElement (sourceOnlyElements sourceElements targetElements)
-  pure (updates ++ destroys)
-
-continueTarget :: [RenderElement] -> RenderElement -> CompileM RenderPatch
-continueTarget sourceElements targetElement =
-  case findMatchingElement targetElement sourceElements of
-    Just sourceElement -> do
-      renderId <- requireLineage sourceElement
-      modify
-        (\st ->
-           st
-             { lineageByElement =
-                 Map.insert
-                   (renderElementKey targetElement)
-                   renderId
-                   (Map.delete
-                      (renderElementKey sourceElement)
-                      (lineageByElement st))
-             })
-      pure (RenderUpdate renderId sourceElement targetElement)
-    Nothing -> createElement targetElement
-
-forkElement :: [RenderElement] -> RenderElement -> CompileM RenderPatch
-forkElement sourceElements targetElement = do
-  let targetRenderId = freshRenderIdForElement targetElement
-  origin <-
-    case findMatchingElement targetElement sourceElements of
-      Nothing -> pure Nothing
-      Just sourceElement -> do
-        sourceRenderId <- requireLineage sourceElement
-        pure (Just (RenderOrigin sourceRenderId sourceElement))
-  modify
-    (\st ->
-       st
-         { lineageByElement =
-             Map.insert
-               (renderElementKey targetElement)
-               targetRenderId
-               (lineageByElement st)
-         })
-  pure (RenderCreate targetRenderId origin targetElement)
-
---------------------------------------------------------------------------------
--- Lineage lookup
---------------------------------------------------------------------------------
-renderElementKey :: RenderElement -> RenderElementKey
-renderElementKey element = (renderNodeId element, renderNodeKey element)
-
-renderElementKeyLabel :: RenderElement -> String
-renderElementKeyLabel element =
-  "N" ++ show (renderNodeId element) ++ "." ++ renderNodeKey element
-
-findMatchingElement :: RenderElement -> [RenderElement] -> Maybe RenderElement
-findMatchingElement targetElement sourceElements =
-  case sourceElements of
-    [] -> Nothing
-    sourceElement:rest ->
-      if renderNodeKey sourceElement == renderNodeKey targetElement
-        then Just sourceElement
-        else findMatchingElement targetElement rest
-
-sourceOnlyElements :: [RenderElement] -> [RenderElement] -> [RenderElement]
-sourceOnlyElements sourceElements targetElements =
-  filter
-    (\sourceElement ->
-       renderNodeKey sourceElement `notElem` map renderNodeKey targetElements)
-    sourceElements
-
-requireLineage :: RenderElement -> CompileM RenderId
-requireLineage element = do
-  st <- get
-  case Map.lookup (renderElementKey element) (lineageByElement st) of
-    Just renderId -> pure renderId
-    Nothing ->
-      lift (Left ("no render lineage for " ++ renderElementKeyLabel element))
-
---------------------------------------------------------------------------------
--- Concrete element lookup
---------------------------------------------------------------------------------
-type ElementLookup = Map Int [RenderElement]
-
-buildElementLookup :: VM.ConcreteViewGraph -> ElementLookup
-buildElementLookup graph =
-  foldl insertConcreteNode Map.empty (VM.concreteViewNodes graph)
-
-insertConcreteNode :: ElementLookup -> VM.ConcreteNode -> ElementLookup
-insertConcreteNode elements node =
-  let compiled = compileConcreteNode node
-   in Map.insertWith (++) (renderNodeId compiled) [compiled] elements
-
-compileConcreteNode :: VM.ConcreteNode -> RenderElement
-compileConcreteNode node =
-  RenderElement
-    { renderNodeId = nodeIdOfViewId (VM.concreteNodeId node)
-    , renderNodeKey = VM.concreteNodeKey node
-    , renderContent = VM.concreteNodeContent node
-    , renderKind = payloadViewKind (VM.concreteNodeLabel node)
-    , renderStyle = compileConcreteStyle CssTarget (VM.concreteNodeStyle node)
-    }
-
-compileConcreteStyle :: CssTarget -> VM.ConcreteStyle -> RenderStyle
-compileConcreteStyle target style =
-  RenderStyle
-    { renderTop = roundLayout (VM.concreteTop style)
-    , renderLeft = roundLayout (VM.concreteLeft style)
-    , renderWidth = roundLayout (VM.concreteWidth style)
-    , renderHeight = roundLayout (VM.concreteHeight style)
-    , renderAttrs = targetStyleAttrs target style
-    }
-
---------------------------------------------------------------------------------
--- CSS mapping
---------------------------------------------------------------------------------
-cssStyleAttrs :: VM.ConcreteStyle -> Map String StyleValue
-cssStyleAttrs style =
-  Map.fromList
-    (("position", StyleText "absolute")
-       : concatMap (concreteFieldCssAttrs alphaValue) (VM.concreteFields style))
+compileStyle :: S.Solution -> VS.NodeStyle -> Either String IR.VisualStyle
+compileStyle solution style = do
+  let V.Bounds top left width height = VS.nodeStyleBounds style
+  concreteFields <- traverse (VS.materializeAnyStyleField solution) (VS.nodeStyleFields style)
+  IR.VisualStyle
+    <$> solved "top" top
+    <*> solved "left" left
+    <*> solved "width" width
+    <*> solved "height" height
+    <*> pure (scalarField "opacity" concreteFields)
+    <*> pure (scalarField "zIndex" concreteFields)
+    <*> pure (scalarField "padding" concreteFields)
+    <*> pure (scalarField "fontSize" concreteFields)
+    <*> pure (scalarField "radius" concreteFields)
+    <*> pure (scalarField "strokeWidth" concreteFields)
+    <*> pure (scalarField "alpha" concreteFields)
+    <*> pure (colorField "fill" concreteFields)
+    <*> pure (colorField "stroke" concreteFields)
+    <*> pure (tokenField "fontFamily" concreteFields)
+    <*> pure (tokenField "fontWeight" concreteFields)
+    <*> pure (tokenField "fontStyle" concreteFields)
+    <*> pure (tokenField "textAlign" concreteFields)
+    <*> pure (tokenField "borderStyle" concreteFields)
+    <*> pure (tokenField "whiteSpace" concreteFields)
   where
-    alphaValue = VM.concreteScalarValue "alpha" 1 style
+    solved label expression =
+      case S.evalExpr solution expression of
+        Just value -> Right (roundLayout value)
+        Nothing ->
+          Left
+            ("could not materialize "
+               ++ label
+               ++ "; the expression references an unsolved variable")
 
-concreteFieldCssAttrs ::
-     Double -> VM.ConcreteStyleField -> [(String, StyleValue)]
-concreteFieldCssAttrs alphaValue field =
+scalarField :: String -> [VS.ConcreteStyleField] -> Maybe Double
+scalarField name fields =
+  case concreteField name fields of
+    Just (VS.ConcreteScalar value _) -> Just (roundLayout value)
+    _                                -> Nothing
+
+colorField :: String -> [VS.ConcreteStyleField] -> Maybe IR.HslColor
+colorField name fields =
+  case concreteField name fields of
+    Just (VS.ConcreteColor color) ->
+      Just
+        IR.HslColor
+          { IR.hslHue = roundLayout (V.hue color)
+          , IR.hslSaturation = roundLayout (V.saturation color)
+          , IR.hslLightness = roundLayout (V.lightness color)
+          }
+    _ -> Nothing
+
+tokenField :: String -> [VS.ConcreteStyleField] -> Maybe String
+tokenField name fields =
+  case concreteField name fields of
+    Just (VS.ConcreteToken value) -> Just value
+    _                             -> Nothing
+
+concreteField :: String -> [VS.ConcreteStyleField] -> Maybe VS.ConcreteStyleValue
+concreteField name fields =
+  VS.concreteStyleFieldValue
+    <$> find ((== name) . VS.concreteStyleFieldName) fields
+
+compileStyleTrace :: VS.NodeStyle -> IR.StyleVariableTrace
+compileStyleTrace style =
+  IR.StyleVariableTrace
+    { IR.traceTop = fieldVariables "top"
+    , IR.traceLeft = fieldVariables "left"
+    , IR.traceWidth = fieldVariables "width"
+    , IR.traceHeight = fieldVariables "height"
+    , IR.traceOpacity = fieldVariables "opacity"
+    , IR.traceZIndex = fieldVariables "zIndex"
+    , IR.tracePadding = fieldVariables "padding"
+    , IR.traceFontSize = fieldVariables "fontSize"
+    , IR.traceRadius = fieldVariables "radius"
+    , IR.traceStrokeWidth = fieldVariables "strokeWidth"
+    , IR.traceAlpha = fieldVariables "alpha"
+    , IR.traceFill = fieldVariables "fill"
+    , IR.traceStroke = fieldVariables "stroke"
+    , IR.traceFontFamily = fieldVariables "fontFamily"
+    , IR.traceFontWeight = fieldVariables "fontWeight"
+    , IR.traceFontStyle = fieldVariables "fontStyle"
+    , IR.traceTextAlign = fieldVariables "textAlign"
+    , IR.traceBorderStyle = fieldVariables "borderStyle"
+    , IR.traceWhiteSpace = fieldVariables "whiteSpace"
+    }
+  where
+    numericEntries =
+      VS.mapNodeStyleExprLeaves
+        (\name expr -> (rootField name, expressionVariableIds expr))
+        style
+    choiceEntries = concatMap choiceFieldEntry (VS.nodeStyleFields style)
+    entries = numericEntries ++ choiceEntries
+    fieldVariables name = nub (concat [ids | (field, ids) <- entries, field == name])
+
+choiceFieldEntry :: VS.AnyStyleField -> [(String, [IR.CspVariableId])]
+choiceFieldEntry field =
   case field of
-    VM.ConcreteStyleField _ attrName (VM.ConcreteScalar value unit) ->
-      case (attrName, unit) of
-        (Just name, VS.StyleNumber) -> [(name, StyleNumber (roundLayout value))]
-        (Just name, VS.StylePixels) -> [(name, StylePixels (roundLayout value))]
-        _                           -> []
-    VM.ConcreteStyleField _ attrName (VM.ConcreteColor hsl) ->
-      case attrName of
-        Just name -> [(name, StyleColor (hslToCss alphaValue hsl))]
-        Nothing   -> []
-    VM.ConcreteStyleField _ attrName (VM.ConcreteToken token) ->
-      stringCssAttr attrName token
-
-stringCssAttr :: Maybe String -> String -> [(String, StyleValue)]
-stringCssAttr maybeName value =
-  case maybeName of
-    Just name -> [(name, StyleText value)]
-    Nothing   -> []
-
-hslToCss :: Double -> VM.ConcreteHsl -> String
-hslToCss alpha hsl =
-  let h = formatCssNumber (V.hue hsl)
-      s = formatCssPercent01 (V.saturation hsl)
-      l = formatCssPercent01 (V.lightness hsl)
-      a = formatCssNumber (clamp 0 1 alpha)
-   in "hsl(" ++ h ++ " " ++ s ++ " " ++ l ++ " / " ++ a ++ ")"
-
-requireElementsByRef ::
-     ElementLookup -> V.ViewRef tag -> CompileM [RenderElement]
-requireElementsByRef elementsById ref =
-  case Map.lookup (nodeIdOfRef ref) elementsById of
-    Just elements -> pure elements
-    Nothing       -> pure []
-
-nodeIdOfRef :: V.ViewRef tag -> Int
-nodeIdOfRef = V.viewRefInt
-
-nodeIdOfViewId :: V.ViewId -> Int
-nodeIdOfViewId = V.viewIdInt
-
-payloadViewKind :: V.ViewLabel -> String
-payloadViewKind = V.viewLabelKind
-
---------------------------------------------------------------------------------
--- Number formatting and rounding
---------------------------------------------------------------------------------
-roundLayout :: Double -> Double
-roundLayout = roundTo 3
-
-roundTo :: Int -> Double -> Double
-roundTo places x =
-  cleanNegativeZero (fromIntegral (round (x * scale) :: Integer) / scale)
-  where
-    scale = 10 ^ places
-
-cleanNegativeZero :: Double -> Double
-cleanNegativeZero x =
-  if abs x < 0.0005
-    then 0
-    else x
-
-clamp :: Double -> Double -> Double -> Double
-clamp lo hi x = max lo (min hi x)
-
-formatCssPixels :: Double -> String
-formatCssPixels x = formatCssNumber x ++ "px"
-
-formatCssPercent01 :: Double -> String
-formatCssPercent01 x = formatCssNumber (100 * clamp 0 1 x) ++ "%"
-
-formatCssNumber :: Double -> String
-formatCssNumber value =
-  trimTrailingZeros (showFFloat (Just 3) (roundLayout value) "")
-
-trimTrailingZeros :: String -> String
-trimTrailingZeros text =
-  case break (== '.') text of
-    (_whole, "") -> text
-    (whole, dotAndFraction) ->
-      let fraction = drop 1 dotAndFraction
-          trimmedFraction = reverse (dropWhile (== '0') (reverse fraction))
-       in case trimmedFraction of
-            "" -> whole
-            _  -> whole ++ "." ++ trimmedFraction
-
---------------------------------------------------------------------------------
--- JSON helpers
---------------------------------------------------------------------------------
-instance ToJSON RenderId where
-  toJSON (RenderId text) = toJSON text
-
-instance ToJSON StyleValue where
-  toJSON value =
-    case value of
-      StyleNumber x   -> toJSON (roundLayout x)
-      StylePixels x   -> toJSON (formatCssPixels x)
-      StyleText text  -> toJSON text
-      StyleColor text -> toJSON text
-
-instance ToJSON RenderStyle where
-  toJSON style =
-    object
-      ([ "top" .= StylePixels (renderTop style)
-       , "left" .= StylePixels (renderLeft style)
-       , "width" .= StylePixels (renderWidth style)
-       , "height" .= StylePixels (renderHeight style)
-       ]
-         ++ map styleAttrPair (Map.toAscList (renderAttrs style)))
-
-styleAttrPair :: (KeyValue e kv, ToJSON v) => (String, v) -> kv
-styleAttrPair (name, value) = Key.fromString name .= value
-
-instance ToJSON RenderElement where
-  toJSON element =
-    object
-      [ "nodeId" .= renderNodeId element
-      , "nodeKey" .= renderNodeKey element
-      , "kind" .= renderKind element
-      , "content" .= renderContent element
-      , "style" .= renderStyle element
+    VS.AnyStyleField proxy value ->
+      [ ( VS.styleFieldName proxy
+        , map IR.CspVariableId (VS.styleValueChoiceNames proxy value))
       ]
 
-instance ToJSON RenderOrigin where
-  toJSON origin =
-    object
-      ["id" .= renderOriginId origin, "element" .= renderOriginElement origin]
+rootField :: String -> String
+rootField = takeWhile (/= '.')
 
-instance ToJSON RenderPatch where
-  toJSON patch =
-    case patch of
-      RenderCreate renderId origin element ->
-        object
-          (["kind" .= String "create", "id" .= renderId, "element" .= element]
-             ++ maybe [] (\origin' -> ["origin" .= origin']) origin)
-      RenderUpdate renderId fromElement toElement ->
-        object
-          [ "kind" .= String "update"
-          , "id" .= renderId
-          , "from" .= fromElement
-          , "to" .= toElement
-          ]
-      RenderDestroy renderId element ->
-        object
-          ["kind" .= String "destroy", "id" .= renderId, "element" .= element]
+expressionVariableIds :: S.Expr ty -> [IR.CspVariableId]
+expressionVariableIds = map IR.CspVariableId . nub . expressionVariableNames . S.exprView
 
-instance ToJSON RenderFrame where
-  toJSON (RenderFrame patches) = toJSON patches
+expressionVariableNames :: S.ExprView -> [String]
+expressionVariableNames expression =
+  case expression of
+    S.ExprVar _ name   -> [name]
+    S.ExprLit _        -> []
+    S.ExprAdd lhs rhs  -> both lhs rhs
+    S.ExprSub lhs rhs  -> both lhs rhs
+    S.ExprMul lhs rhs  -> both lhs rhs
+    S.ExprDiv lhs rhs  -> both lhs rhs
+    S.ExprNeg inner    -> expressionVariableNames inner
+    S.ExprAbs inner    -> expressionVariableNames inner
+    S.ExprSignum inner -> expressionVariableNames inner
+    S.ExprPow lhs rhs  -> both lhs rhs
+    S.ExprMin lhs rhs  -> both lhs rhs
+    S.ExprMax lhs rhs  -> both lhs rhs
+  where
+    both lhs rhs = expressionVariableNames lhs ++ expressionVariableNames rhs
 
-instance ToJSON Visualization where
-  toJSON compiled =
-    object
-      $ maybe [] (\seed -> ["seed" .= seed]) (compiledSeed compiled)
-          ++ [ "canvas"
-                 .= object
-                      [ "width" .= roundLayout (compiledWidth compiled)
-                      , "height" .= roundLayout (compiledHeight compiled)
-                      ]
-             , "frames" .= frames compiled
-             ]
+--------------------------------------------------------------------------------
+-- Complete scene snapshots
+--------------------------------------------------------------------------------
 
-encodeCompiledPretty :: Visualization -> BL.ByteString
-encodeCompiledPretty = encodePretty
+type ElementLookup = Map Int [IR.VisualElement]
+type ElementKey = (Int, String)
 
-writeCompiledJSON :: FilePath -> Visualization -> IO ()
-writeCompiledJSON path compiled =
-  BL.writeFile path (encodeCompiledPretty compiled)
+elementLookup :: [IR.VisualElement] -> ElementLookup
+elementLookup =
+  foldl
+    (\lookup' element ->
+       Map.insertWith (++) (IR.elementNodeId element) [element] lookup')
+    Map.empty
 
-printCompiledJSON :: Visualization -> IO ()
-printCompiledJSON = hPrintCompiledJSON stdout
+data SceneState = SceneState
+  { sceneLineage  :: Map ElementKey IR.RenderInstanceId
+  , sceneInstances :: Map IR.RenderInstanceId IR.VisualInstance
+  }
 
-hPrintCompiledJSON :: Handle -> Visualization -> IO ()
-hPrintCompiledJSON handle compiled = do
-  BL.hPut handle (encodeCompiledPretty compiled)
-  hFlush handle
+emptySceneState :: SceneState
+emptySceneState = SceneState Map.empty Map.empty
+
+type CompileM = StateT SceneState (Either String)
+
+compileFrames :: ElementLookup -> [[V.RenderIntent]] -> CompileM [IR.VisualizationFrame]
+compileFrames lookup' = traverse (compileFrame lookup')
+
+compileFrame :: ElementLookup -> [V.RenderIntent] -> CompileM IR.VisualizationFrame
+compileFrame lookup' intents = do
+  modify clearOrigins
+  mapM_ (applyIntent lookup') intents
+  instances <- gets (sortInstances lookup' . Map.elems . sceneInstances)
+  pure IR.VisualizationFrame {IR.frameDurationMs = 300, IR.frameInstances = instances}
+
+clearOrigins :: SceneState -> SceneState
+clearOrigins scene =
+  scene
+    { sceneInstances =
+        Map.map (\instance' -> instance' {IR.instanceOrigin = Nothing}) (sceneInstances scene)
+    }
+
+applyIntent :: ElementLookup -> V.RenderIntent -> CompileM ()
+applyIntent lookup' intent =
+  case intent of
+    V.RenderFresh ref              -> requireElements lookup' ref >>= mapM_ createElement
+    V.RenderRemove ref             -> requireElements lookup' ref >>= mapM_ destroyElement
+    V.RenderContinue source target -> continueRef lookup' source target
+    V.RenderFork source target     -> forkRef lookup' source target
+
+continueRef :: ElementLookup -> V.ViewRef source -> V.ViewRef target -> CompileM ()
+continueRef lookup' sourceRef targetRef = do
+  source <- requireElements lookup' sourceRef
+  target <- requireElements lookup' targetRef
+  mapM_ (continueTarget source) target
+  mapM_ destroyElement (sourceOnly source target)
+
+continueTarget :: [IR.VisualElement] -> IR.VisualElement -> CompileM ()
+continueTarget source target =
+  case matchingElement target source of
+    Nothing -> createElement target
+    Just previous -> do
+      instanceId <- requireLineage previous
+      modify
+        (\scene ->
+           scene
+             { sceneLineage =
+                 Map.insert
+                   (elementKey target)
+                   instanceId
+                   (Map.delete (elementKey previous) (sceneLineage scene))
+             , sceneInstances =
+                 Map.insert
+                   instanceId
+                   (IR.VisualInstance instanceId (IR.elementId target) Nothing)
+                   (sceneInstances scene)
+             })
+
+forkRef :: ElementLookup -> V.ViewRef source -> V.ViewRef target -> CompileM ()
+forkRef lookup' sourceRef targetRef = do
+  source <- requireElements lookup' sourceRef
+  target <- requireElements lookup' targetRef
+  mapM_ (forkElement source) target
+
+forkElement :: [IR.VisualElement] -> IR.VisualElement -> CompileM ()
+forkElement source target = do
+  origin <-
+    case matchingElement target source of
+      Nothing -> pure Nothing
+      Just previous -> do
+        instanceId <- requireLineage previous
+        pure (Just (IR.InstanceOrigin instanceId (IR.elementId previous)))
+  createElementWithOrigin origin target
+
+createElement :: IR.VisualElement -> CompileM ()
+createElement = createElementWithOrigin Nothing
+
+createElementWithOrigin :: Maybe IR.InstanceOrigin -> IR.VisualElement -> CompileM ()
+createElementWithOrigin origin element = do
+  let instanceId = instanceIdFor element
+  modify
+    (\scene ->
+       scene
+         { sceneLineage = Map.insert (elementKey element) instanceId (sceneLineage scene)
+         , sceneInstances =
+             Map.insert
+               instanceId
+               (IR.VisualInstance instanceId (IR.elementId element) origin)
+               (sceneInstances scene)
+         })
+
+destroyElement :: IR.VisualElement -> CompileM ()
+destroyElement element = do
+  instanceId <- requireLineage element
+  modify
+    (\scene ->
+       scene
+         { sceneLineage = Map.delete (elementKey element) (sceneLineage scene)
+         , sceneInstances = Map.delete instanceId (sceneInstances scene)
+         })
+
+requireLineage :: IR.VisualElement -> CompileM IR.RenderInstanceId
+requireLineage element = do
+  lineage <- gets sceneLineage
+  case Map.lookup (elementKey element) lineage of
+    Just instanceId -> pure instanceId
+    Nothing -> lift (Left ("no render lineage for " ++ show (IR.elementId element)))
+
+requireElements :: ElementLookup -> V.ViewRef tag -> CompileM [IR.VisualElement]
+requireElements lookup' ref = pure (Map.findWithDefault [] (V.viewRefInt ref) lookup')
+
+matchingElement :: IR.VisualElement -> [IR.VisualElement] -> Maybe IR.VisualElement
+matchingElement target = find ((== IR.elementNodeKey target) . IR.elementNodeKey)
+
+sourceOnly :: [IR.VisualElement] -> [IR.VisualElement] -> [IR.VisualElement]
+sourceOnly source target =
+  filter
+    (\sourceElement ->
+       IR.elementNodeKey sourceElement `notElem` map IR.elementNodeKey target)
+    source
+
+elementKey :: IR.VisualElement -> ElementKey
+elementKey element = (IR.elementNodeId element, IR.elementNodeKey element)
+
+instanceIdFor :: IR.VisualElement -> IR.RenderInstanceId
+instanceIdFor element =
+  IR.RenderInstanceId
+    ("lineage." ++ show (IR.elementNodeId element) ++ "." ++ IR.elementNodeKey element)
+
+sortInstances :: ElementLookup -> [IR.VisualInstance] -> [IR.VisualInstance]
+sortInstances lookup' = sortOn sortKey
+  where
+    elementsById =
+      Map.fromList
+        [ (IR.elementId element, element)
+        | elements <- Map.elems lookup'
+        , element <- elements
+        ]
+    sortKey instance' =
+      case Map.lookup (IR.instanceElementId instance') elementsById of
+        Nothing -> (0, 0)
+        Just element ->
+          ( fromMaybe 0 (IR.visualZIndex (IR.elementStyle element))
+          , IR.elementNodeId element
+          )
+
+roundLayout :: Double -> Double
+roundLayout value =
+  let rounded = fromIntegral (round (value * 1000) :: Integer) / 1000
+   in if abs rounded < 0.0005 then 0 else rounded

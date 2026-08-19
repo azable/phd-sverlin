@@ -206,6 +206,7 @@ instance StyleField FontFamily where
   generatedStyleValue = choiceValue
   mapStyleValueExprs _ = mapChoiceValue
   styleValueExprLeaves _ _ = []
+  styleValueChoiceNames _ = choiceNames
   styleValueChoices _ = choiceChoices
   materializeStyleValue = materializeChoice
 
@@ -235,6 +236,7 @@ instance StyleField FontWeight where
   generatedStyleValue = choiceValue
   mapStyleValueExprs _ = mapChoiceValue
   styleValueExprLeaves _ _ = []
+  styleValueChoiceNames _ = choiceNames
   styleValueChoices _ = choiceChoices
   materializeStyleValue = materializeChoice
 
@@ -258,6 +260,7 @@ instance StyleField FontStyle where
   generatedStyleValue = choiceValue
   mapStyleValueExprs _ = mapChoiceValue
   styleValueExprLeaves _ _ = []
+  styleValueChoiceNames _ = choiceNames
   styleValueChoices _ = choiceChoices
   materializeStyleValue = materializeChoice
 
@@ -284,6 +287,7 @@ instance StyleField TextAlign where
   generatedStyleValue = choiceValue
   mapStyleValueExprs _ = mapChoiceValue
   styleValueExprLeaves _ _ = []
+  styleValueChoiceNames _ = choiceNames
   styleValueChoices _ = choiceChoices
   materializeStyleValue = materializeChoice
 
@@ -312,6 +316,7 @@ instance StyleField BorderStyle where
   generatedStyleValue = choiceValue
   mapStyleValueExprs _ = mapChoiceValue
   styleValueExprLeaves _ _ = []
+  styleValueChoiceNames _ = choiceNames
   styleValueChoices _ = choiceChoices
   materializeStyleValue = materializeChoice
 
@@ -338,5 +343,6 @@ instance StyleField WhiteSpace where
   generatedStyleValue = choiceValue
   mapStyleValueExprs _ = mapChoiceValue
   styleValueExprLeaves _ _ = []
+  styleValueChoiceNames _ = choiceNames
   styleValueChoices _ = choiceChoices
   materializeStyleValue = materializeChoice
