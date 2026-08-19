@@ -27,6 +27,46 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - The visualization path intentionally uses a tuned solver config rather than raw `defaultSolveConfig`; preserve this separation so direct solver tests stay conservative while regeneration avoids long L-BFGS-B tails.
 - Keep solver tests focused on the top-level `Solver` facade unless the behavior under test is deliberately internal. Add or update stable fixtures in `compile/test-support/Solver/TestFixtures.hs` when solver preprocessing, categorical choices, or backend optimization behavior needs repeatable coverage.
 
+## DSL LLM Authoring Context
+
+- `src/lib/server/chat-bots/ai-assistant/index.ts` contains the canonical
+  `dslInterfaceContext` for the primary `ai-assistant` bot. It is a human-readable
+  authoring reference specifically designed to guide an OpenAI code-generating
+  model (currently configured as `gpt-5.6`) when it edits
+  `compile/app/DSL/Main.hs`.
+- Keep this context synchronized in the same change whenever the public DSL
+  changes. At minimum, review it when editing
+  `compile/src/LinearTrace/Choreography.hs`, its re-exported public modules,
+  query/materialization semantics, trace lifecycle operations, visual selection
+  and rendering, style fields, layout variables, or constraint operators.
+- Also review it whenever the `DSL.Main` source contract changes, including
+  required exports, imports, language extensions, payload conventions, or the
+  shape of the visual runner. Remove stale API names and add new public API
+  before merging the corresponding implementation change.
+- Derive API statements from the public choreography facade and the current
+  `compile/app/DSL/Main.hs` example. Do not document private implementation
+  details as if they were stable DSL affordances, and do not invent helpers that
+  are not exported by the facade.
+- Keep the context human-readable and organized as compact dot-point sections.
+  Explain the linear ownership invariants, the semantic-fact/materialization
+  bridge from trace values to visual nodes, and the separation between program
+  logic and visual rules. Prefer concrete signatures and small examples when
+  they prevent an otherwise likely code-generation error.
+- Apply OpenAI code-generation prompting best practices: put the role and public
+  contract first; state each invariant once; make scope, success criteria,
+  validation expectations, and complete-source output requirements explicit; and
+  keep examples only where they clarify a measured or likely failure mode. Do
+  not bury critical constraints in prose or repeat the same instruction in
+  multiple sections.
+- Keep the prompt context independent from transient artefact history. The
+  context defines the stable DSL contract; the artefact supplied by the server
+  defines the current source of truth. If an API change requires a new editing
+  rule, update the context rather than relying on an example hidden in history.
+- When changing only the prompt context, run the Svelte checks, lint the bot
+  module, and run the chat route tests. When changing the DSL or its public API,
+  also follow the Haskell compile, solver-test, lint, and formatter requirements
+  below.
+
 ## Verification
 
 Before finishing:
