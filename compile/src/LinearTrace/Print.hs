@@ -4,7 +4,7 @@
 
 -- | Human-readable diagnostics for core traces, view graphs, and solver
 -- summaries. The executable and top-level facade use this module for terminal
--- output; JSON output is handled separately by 'LinearTrace.Compile'.
+-- output; JSON output is handled by 'LinearTrace.Visualization.Compile'.
 module LinearTrace.Print
   ( -- * Stdout printers
     -- | Convenience printers for direct terminal diagnostics.
@@ -419,11 +419,12 @@ viewTraceBox showDetails solution steps =
     $ zipWith (viewTraceStepBox showDetails solution) [0 :: Int ..] steps
 
 viewTraceStepBox :: Bool -> S.Solution -> Int -> V.ViewStep -> Box.Box
-viewTraceStepBox showDetails solution ix (V.ViewStep traceStep nodes constraints _renderIntents) =
+viewTraceStepBox showDetails solution ix (V.ViewStep traceStep nodes) =
   if showDetails
     then spacedVcat (viewStepLabelBox ix traceStep : detailBoxes)
     else viewStepLabelBox ix traceStep
   where
+    constraints = concatMap V.viewNodeConstraints nodes
     detailBoxes =
       concat
         [ stepViewNodeBoxes nodes

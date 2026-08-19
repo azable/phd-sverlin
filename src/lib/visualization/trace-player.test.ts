@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { tick } from 'svelte';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TracePlayer } from './trace-player.svelte';
 import type { VisualizationPackage } from './types';
+
+afterEach(() => vi.useRealTimers());
 
 describe('TracePlayer', () => {
   it('joins the first scene snapshot to the element registry', () => {
@@ -12,10 +15,10 @@ describe('TracePlayer', () => {
     expect(player.stepCount).toBe(1);
     expect(player.elements).toHaveLength(1);
     expect(player.elements[0].content).toBe('one');
-    expect(player.elements[0].instanceId).toBe('instance.one');
+    expect(player.elements[0].instanceId).toBe(1);
   });
 
-  it('seeks forward and backward without replaying prior frames', () => {
+  it('seeks forward and backward with stable render lineage', () => {
     const player = new TracePlayer();
     player.setTrace(trace(['one', 'two']));
     player.next();
@@ -48,63 +51,82 @@ describe('TracePlayer', () => {
     expect(player.elements[0].content).toBe('one');
   });
 
-  it('represents an empty snapshot directly', () => {
+  it('starts a fork at its origin and settles at its solved style', async () => {
+    const visualization = trace(['source', 'fork']);
+    visualization.frames[1] = [
+      { id: 1, elementId: 0 },
+      { id: 2, elementId: 1, originElementId: 0 }
+    ];
+    visualization.elements[0].style.left = 10;
+    visualization.elements[1].style.left = 80;
+
     const player = new TracePlayer();
-    const visualization = trace(['one']);
-    visualization.frames.push({ durationMs: 300, instances: [] });
     player.setTrace(visualization);
     player.next();
+
+    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.style.left).toBe(10);
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.style.left).toBe(80);
+  });
+
+  it('keeps fresh instances in their entry state until after a paint boundary', async () => {
+    const visualization = trace(['old', 'new']);
+    visualization.frames[1] = [{ id: 2, elementId: 1 }];
+
+    const player = new TracePlayer();
+    player.setTrace(visualization);
+    player.next();
+
+    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.entering).toBe(true);
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.entering).toBe(false);
+    player.dispose();
+  });
+
+  it('keeps removed elements for the exit transition', () => {
+    vi.useFakeTimers();
+    const visualization = trace(['one']);
+    visualization.frames.push([]);
+
+    const player = new TracePlayer();
+    player.setTrace(visualization);
+    player.next();
+
+    expect(player.elements[0].exiting).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(player.elements).toEqual([]);
+  });
+
+  it('represents an empty snapshot directly when seeking', () => {
+    const player = new TracePlayer();
+    const visualization = trace(['one']);
+    visualization.frames.push([]);
+    player.setTrace(visualization);
+    player.seek(1);
 
     expect(player.elements).toEqual([]);
   });
 });
 
 function trace(contents: string[]): VisualizationPackage {
-  const elements = contents.map((content, index) => ({
-    id: `element.${index}`,
-    nodeId: index,
-    nodeKey: 'node',
+  const elements = contents.map((content, id) => ({
+    id,
     role: 'Value',
     kind: { kind: 'trace' as const },
     content,
-    style: { top: 0, left: 0, width: 10, height: 10 },
-    variables: emptyVariableTrace()
+    style: { top: 0, left: id * 10, width: 10, height: 10 },
+    styleVariables: []
   }));
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     seed: 1,
-    source: { path: 'compile/app/DSL/Main.hs', compilerVersion: 'test' },
+    sourcePath: 'compile/app/DSL/Main.hs',
     canvas: { width: 100, height: 80 },
     variables: [],
     elements,
-    frames: elements.map((element, index) => ({
-      durationMs: 300,
-      instances: [{ id: `instance.${contents[index]}`, elementId: element.id }]
-    }))
-  };
-}
-
-function emptyVariableTrace() {
-  return {
-    top: [],
-    left: [],
-    width: [],
-    height: [],
-    opacity: [],
-    zIndex: [],
-    padding: [],
-    fontSize: [],
-    radius: [],
-    strokeWidth: [],
-    alpha: [],
-    fill: [],
-    stroke: [],
-    fontFamily: [],
-    fontWeight: [],
-    fontStyle: [],
-    textAlign: [],
-    borderStyle: [],
-    whiteSpace: []
+    frames: elements.map((element) => [{ id: 1, elementId: element.id }])
   };
 }

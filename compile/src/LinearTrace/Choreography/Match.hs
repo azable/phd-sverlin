@@ -238,7 +238,6 @@ traceNodeOfEventBlock block =
         , V.nodeLabel =
             viewLabelFromPayloadView (C.blockSnapshotPayloadView block)
         , V.nodeContent = V.ContentEmpty
-        , V.nodeKey = V.defaultNodeKey
         , V.nodeStyle = V.styleForRef ref
         , V.nodeOrigin =
             V.TraceOrigin (viewTagsFromFacts (C.blockSnapshotFacts block))
@@ -254,7 +253,7 @@ matchedNodeOutput spec eventBlock =
        MatchSpec nodeRules _ _ ->
          let node = traceNodeOfEventBlock eventBlock
           in case matchedNodePatch eventBlock nodeRules of
-               Nothing    -> V.emptyViewOutput
+               Nothing    -> P.mempty
                Just patch -> V.patchedNodeOutput patch node)
 
 coreViewRef :: C.BlockRef tag -> V.ViewRef tag
@@ -360,24 +359,20 @@ buildMatchedViewGraph ::
      MatchSpec
   -> [V.ViewStep]
   -> [V.ViewNode]
-  -> [S.Constraint]
-  -> [S.ChoiceConstraint]
   -> [[V.RenderIntent]]
   -> V.ViewGraph
-buildMatchedViewGraph spec viewSteps' builtNodes builtConstraints builtChoiceConstraints renderFrames =
+buildMatchedViewGraph spec viewSteps' builtNodes renderFrames =
   let traceNodes = applyAccessRequirementsForSpec spec builtNodes
       groupNodes =
         applyAccessRequirementsForSpec spec (groupNodesForSpec spec traceNodes)
       nodes = traceNodes P.++ groupNodes
       (matchConstraints, matchChoiceConstraints) =
         matchSpecConstraints spec nodes
-      constraints = builtConstraints P.++ matchConstraints
-      choiceConstraints = builtChoiceConstraints P.++ matchChoiceConstraints
    in V.finalizeViewGraph
         nodes
         viewSteps'
-        constraints
-        choiceConstraints
+        matchConstraints
+        matchChoiceConstraints
         renderFrames
 
 matchSpecConstraints ::
@@ -898,7 +893,6 @@ generatedCompoundNodeForRule key query patch children =
         { V.nodeRef = ref
         , V.nodeLabel = V.ViewLabel ("Group." P.++ key)
         , V.nodeContent = fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
-        , V.nodeKey = key
         , V.nodeStyle = style'
         , V.nodeOrigin =
             V.GeneratedOrigin

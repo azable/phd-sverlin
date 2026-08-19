@@ -3,22 +3,20 @@
 
   import { Button } from '$lib/components/ui/button';
 
-  import type { HslColor, LiveElement } from './types';
+  import type { HslColor, LiveElement, VisualId } from './types';
 
   let {
     width,
     height,
-    background,
     elements,
-    selectedIds = $bindable<string[]>([]),
-    onSelectionChange = (_ids: string[]) => {}
+    selectedIds = $bindable<VisualId[]>([]),
+    onSelectionChange = (_ids: VisualId[]) => {}
   }: {
     width: number;
     height: number;
-    background?: HslColor;
     elements: LiveElement[];
-    selectedIds?: string[];
-    onSelectionChange?: (ids: string[]) => void;
+    selectedIds?: VisualId[];
+    onSelectionChange?: (ids: VisualId[]) => void;
   } = $props();
 
   let svg = $state<SVGSVGElement | null>(null);
@@ -39,7 +37,7 @@
       (left, right) =>
         (left.style.zIndex ?? 0) - (right.style.zIndex ?? 0) ||
         Number(left.kind.kind === 'trace') - Number(right.kind.kind === 'trace') ||
-        left.nodeId - right.nodeId
+        left.id - right.id
     )
   );
   let selectionBox = $derived(
@@ -75,9 +73,10 @@
     const target = (event.target as Element | null)?.closest<SVGGraphicsElement>(
       '[data-visual-id]'
     );
-    const visualId = target?.dataset.visualId;
+    const visualIdText = target?.dataset.visualId;
+    const visualId = visualIdText === undefined ? undefined : Number(visualIdText);
 
-    if (visualId) {
+    if (visualId !== undefined) {
       setSelection(
         event.shiftKey
           ? selectedIds.includes(visualId)
@@ -123,7 +122,7 @@
     dragMode = null;
   }
 
-  function setSelection(ids: string[]) {
+  function setSelection(ids: VisualId[]) {
     selectedIds = unique(ids);
     onSelectionChange(selectedIds);
   }
@@ -158,7 +157,7 @@
     return Math.min(upper, Math.max(lower, value));
   }
 
-  function unique(ids: string[]) {
+  function unique(ids: VisualId[]) {
     return [...new Set(ids)];
   }
 </script>
@@ -187,7 +186,7 @@
     onpointerup={onPointerUp}
     onpointercancel={onPointerUp}
   >
-    <rect {width} {height} fill={color(background, 1, 'white')} />
+    <rect {width} {height} fill="white" />
     <rect
       class="scene-boundary"
       {width}
@@ -198,59 +197,46 @@
       vector-effect="non-scaling-stroke"
     />
     <g {transform}>
-      {#each orderedElements as element (element.instanceId)}
-        {@const style = element.style}
-        <g
-          data-visual-id={element.id}
-          data-instance-id={element.instanceId}
-          data-node-id={element.nodeId}
-          class:selected={selectedIds.includes(element.id)}
-          class="visual-element"
-          role="button"
-          aria-label={`${element.role} ${element.nodeKey}`}
-        >
-          <rect
-            x={style.left}
-            y={style.top}
-            width={style.width}
-            height={style.height}
-            rx={style.radius ?? 0}
-            fill={color(style.fill, style.alpha)}
-            stroke={color(style.stroke, style.alpha)}
-            stroke-width={style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}
-            stroke-dasharray={style.borderStyle === 'dashed'
-              ? '6 4'
-              : style.borderStyle === 'dotted'
-                ? '2 3'
-                : undefined}
-            opacity={style.opacity ?? 1}
-          />
-          {#if element.content}
-            <foreignObject
-              x={style.left}
-              y={style.top}
-              width={style.width}
-              height={style.height}
-              opacity={style.opacity ?? 1}
-              class="pointer-events-none overflow-visible"
+      <foreignObject x="0" y="0" {width} {height}>
+        <div class="visual-canvas" xmlns="http://www.w3.org/1999/xhtml">
+          {#each orderedElements as element (element.instanceId)}
+            {@const style = element.style}
+            <div
+              data-visual-id={element.id}
+              data-instance-id={element.instanceId}
+              class:selected={selectedIds.includes(element.id)}
+              class:entering={element.entering}
+              class:exiting={element.exiting}
+              class="visual-element"
+              aria-label={`${element.role} ${element.id}`}
+              style:top={`${style.top}px`}
+              style:left={`${style.left}px`}
+              style:width={`${style.width}px`}
+              style:height={`${style.height}px`}
+              style:z-index={style.zIndex}
+              style:opacity={style.opacity ?? 1}
+              style:padding={`${style.padding ?? 0}px`}
+              style:border-radius={`${style.radius ?? 0}px`}
+              style:border-width={`${style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}px`}
+              style:border-style={style.borderStyle ?? 'solid'}
+              style:border-color={color(style.stroke, style.alpha)}
+              style:background-color={color(style.fill, style.alpha)}
+              style:font-family={style.fontFamily}
+              style:font-size={`${style.fontSize ?? 14}px`}
+              style:font-weight={style.fontWeight}
+              style:font-style={style.fontStyle}
+              style:text-align={style.textAlign ?? 'center'}
+              style:white-space={style.whiteSpace ?? 'normal'}
             >
-              <div
-                class="grid h-full w-full items-center overflow-hidden text-slate-900"
-                style:box-sizing="border-box"
-                style:padding={`${style.padding ?? 0}px`}
-                style:font-family={style.fontFamily}
-                style:font-size={`${style.fontSize ?? 14}px`}
-                style:font-weight={style.fontWeight}
-                style:font-style={style.fontStyle}
-                style:text-align={style.textAlign ?? 'center'}
-                style:white-space={style.whiteSpace ?? 'normal'}
-              >
-                {element.content}
-              </div>
-            </foreignObject>
-          {/if}
-        </g>
-      {/each}
+              {#if element.content}
+                <div class="visual-content">
+                  {element.content}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </foreignObject>
 
       {#if selectionBox}
         <rect class="selection-box" {...selectionBox} />
@@ -287,18 +273,56 @@
     pointer-events: none;
   }
 
+  .visual-canvas {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    color: #0f172a;
+  }
+
   .visual-element {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
     cursor: pointer;
-    transition: opacity 300ms ease;
+    transform: scale(1);
+    transform-origin: center;
+    user-select: none;
+    transition:
+      top 300ms ease,
+      left 300ms ease,
+      width 300ms ease,
+      height 300ms ease,
+      opacity 300ms ease,
+      transform 300ms ease,
+      padding 300ms ease,
+      border-color 300ms ease,
+      border-radius 300ms ease,
+      border-width 300ms ease,
+      background-color 300ms ease,
+      font-size 300ms ease;
+  }
+
+  .visual-element.entering,
+  .visual-element.exiting {
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.9);
+  }
+
+  .visual-content {
+    width: 100%;
+    overflow: hidden;
   }
 
   .visual-element.selected {
-    filter: drop-shadow(0 0 3px rgb(37 99 235 / 0.9));
-  }
-
-  .visual-element.selected > rect {
-    stroke: #2563eb;
-    stroke-dasharray: 4 3;
+    box-shadow:
+      0 0 0 2px #2563eb,
+      0 0 5px rgb(37 99 235 / 0.9);
   }
 
   .selection-box {

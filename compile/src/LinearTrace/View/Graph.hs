@@ -3,10 +3,22 @@
 {-# LANGUAGE RankNTypes        #-}
 
 -- | Symbolic view graph representation. Choreography and build code construct
--- these nodes; solving consumes their constraints; 'LinearTrace.Compile'
+-- these nodes; solving consumes their constraints; visualization compilation
 -- converts them directly to concrete IR data after solving.
 module LinearTrace.View.Graph
-  ( -- * Graph data
+  ( -- * Identity and content
+    ViewId(..)
+  , viewIdInt
+  , ViewRef(..)
+  , viewRefId
+  , viewRefInt
+  , viewRefFromId
+  , ViewLabel(..)
+  , ViewTagValue(..)
+  , ViewTags(..)
+  , viewTagsToList
+  , ContentMode(..)
+  , -- * Graph data
     -- | Symbolic graph, node, step, and render-intent records shared by the
     -- view builder, solver, materializer, and diagnostics.
     ViewGraph(..)
@@ -28,7 +40,6 @@ module LinearTrace.View.Graph
     -- printing, and compile identity tracking.
     traceNodeTags
   , generatedNodeMeta
-  , defaultNodeKey
   , styleForRef
   , traceNodeRoot
   , generatedNodeRoot
@@ -52,19 +63,62 @@ import           LinearTrace.View.Style      (NodeStyle, nodeStyleBounds,
                                               nodeStyleWithBounds,
                                               solvedNodeStyleExprs)
 import qualified LinearTrace.View.Style      as Style
-import           LinearTrace.View.Types      (ContentMode, ViewId, ViewLabel,
-                                              ViewRef, ViewTags, viewRefId,
-                                              viewRefInt)
 import qualified Prelude                     as P
 import qualified Solver                      as S
 import           Solver                      (ChoiceConstraint, Constraint,
                                               Expr, Solution, SymbolicType)
 
+newtype ViewId =
+  ViewId P.Int
+  deriving (P.Eq, P.Ord, P.Show)
+
+viewIdInt :: ViewId -> P.Int
+viewIdInt viewId =
+  case viewId of
+    ViewId value -> value
+
+newtype ViewRef tag =
+  ViewRef ViewId
+  deriving (P.Eq, P.Ord, P.Show)
+
+viewRefId :: ViewRef tag -> ViewId
+viewRefId viewRef =
+  case viewRef of
+    ViewRef viewId -> viewId
+
+viewRefInt :: ViewRef tag -> P.Int
+viewRefInt = viewIdInt P.. viewRefId
+
+viewRefFromId :: P.Int -> ViewRef tag
+viewRefFromId = ViewRef P.. ViewId
+
+newtype ViewLabel = ViewLabel
+  { viewLabelKind :: P.String
+  } deriving (P.Eq, P.Show)
+
+data ViewTagValue
+  = ViewTagAtom
+  | ViewTagInt P.Int
+  deriving (P.Eq, P.Ord, P.Show)
+
+newtype ViewTags =
+  ViewTags [(P.String, ViewTagValue)]
+  deriving (P.Eq, P.Show)
+
+viewTagsToList :: ViewTags -> [(P.String, ViewTagValue)]
+viewTagsToList tags =
+  case tags of
+    ViewTags values -> values
+
+data ContentMode
+  = ContentEmpty
+  | ContentText P.String
+  deriving (P.Eq, P.Show)
+
 data Node tag = Node
   { nodeRef         :: ViewRef tag
   , nodeLabel       :: ViewLabel
   , nodeContent     :: ContentMode
-  , nodeKey         :: P.String
   , nodeStyle       :: NodeStyle
   , nodeOrigin      :: NodeOrigin
   , nodeStructure   :: NodeStructure
@@ -105,11 +159,12 @@ data ViewNode where
   ViewNode :: Node tag -> ViewNode
 
 data ViewStep where
-  ViewStep
-    :: P.String -> [ViewNode] -> [Constraint] -> [[RenderIntent]] -> ViewStep
+  ViewStep :: P.String -> [ViewNode] -> ViewStep
 
 data ViewGraph = ViewGraph
-  { viewNodes             :: [ViewNode]
+  { viewCanvasWidth       :: P.Double
+  , viewCanvasHeight      :: P.Double
+  , viewNodes             :: [ViewNode]
   , viewSteps             :: [ViewStep]
   , viewConstraints       :: [Constraint]
   , viewChoiceConstraints :: [ChoiceConstraint]
@@ -176,9 +231,6 @@ viewTraceNodes nodes =
           case nodeOrigin viewNode of
             TraceOrigin _     -> AnyTraceNode viewNode : viewTraceNodes rest
             GeneratedOrigin _ -> viewTraceNodes rest
-
-defaultNodeKey :: P.String
-defaultNodeKey = "node"
 
 styleForRef :: ViewRef tag -> NodeStyle
 styleForRef ref = styleForNodeRoot (traceNodeRoot ref)

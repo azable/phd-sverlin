@@ -3,7 +3,6 @@
 export interface CanvasSpec {
   width: number;
   height: number;
-  background?: HslColor;
 }
 
 export type CspValue = { kind: 'number'; value: number } | { kind: 'category'; value: string };
@@ -21,59 +20,30 @@ export interface HslColor {
   lightness: number;
 }
 
-export interface InstanceOrigin {
-  instanceId: RenderInstanceId;
-  elementId: VisualId;
-}
+export type RenderInstanceId = number;
 
-export type RenderInstanceId = string;
-
-export interface SourceMetadata {
-  path: string;
-  compilerVersion: string;
-}
-
-export interface StyleVariableTrace {
-  top: CspVariableId[];
-  left: CspVariableId[];
-  width: CspVariableId[];
-  height: CspVariableId[];
-  opacity: CspVariableId[];
-  zIndex: CspVariableId[];
-  padding: CspVariableId[];
-  fontSize: CspVariableId[];
-  radius: CspVariableId[];
-  strokeWidth: CspVariableId[];
-  alpha: CspVariableId[];
-  fill: CspVariableId[];
-  stroke: CspVariableId[];
-  fontFamily: CspVariableId[];
-  fontWeight: CspVariableId[];
-  fontStyle: CspVariableId[];
-  textAlign: CspVariableId[];
-  borderStyle: CspVariableId[];
-  whiteSpace: CspVariableId[];
+export interface StyleVariableBinding {
+  field: string;
+  variables: CspVariableId[];
 }
 
 export interface VisualElement {
   id: VisualId;
-  nodeId: number;
-  nodeKey: string;
   role: string;
   kind: VisualElementKind;
   content?: string;
   style: VisualStyle;
-  variables: StyleVariableTrace;
+  styleVariables: StyleVariableBinding[];
 }
 
 export type VisualElementKind = { kind: 'trace' } | { kind: 'group'; children: VisualId[] };
 
-export type VisualId = string;
+export type VisualId = number;
 
 export interface VisualInstance {
   id: RenderInstanceId;
   elementId: VisualId;
-  origin?: InstanceOrigin;
+  originElementId?: VisualId;
 }
 
 export interface VisualStyle {
@@ -98,17 +68,12 @@ export interface VisualStyle {
   whiteSpace?: string;
 }
 
-export interface VisualizationFrame {
-  durationMs: number;
-  instances: VisualInstance[];
-}
-
 export interface VisualizationPackage {
   schemaVersion: number;
   seed: number;
-  source: SourceMetadata;
+  sourcePath: string;
   canvas: CanvasSpec;
   variables: CspVariable[];
   elements: VisualElement[];
-  frames: VisualizationFrame[];
+  frames: VisualInstance[][];
 }

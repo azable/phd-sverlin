@@ -82,7 +82,7 @@ library
         LinearTrace.Core
         LinearTrace.Print
         Solver
-        LinearTrace.Compile
+        LinearTrace.Visualization.Compile
         LinearTrace.Visualization.IR
         LinearTrace.Visualization.Options
         LinearTrace.Visualization.Target
@@ -106,10 +106,6 @@ library
         LinearTrace.View.Primitives
         LinearTrace.View.Solve
         LinearTrace.View.Style
-        LinearTrace.View.Style.FieldSpec
-        LinearTrace.View.Style.Lower
-        LinearTrace.View.Style.Model
-        LinearTrace.View.Types
         Solver.Backend
         Solver.Choice
         Solver.Constraint
@@ -127,7 +123,6 @@ executable compile-app
     main-is:          Main.hs
 
     other-modules:
-        App
         DSL.Main
 
     build-depends:    compile

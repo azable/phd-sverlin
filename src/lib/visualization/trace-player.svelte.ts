@@ -1,19 +1,30 @@
-import { SvelteMap } from 'svelte/reactivity';
+import { tick } from 'svelte';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
-import type { CompiledVisualization, LiveElement, VisualElement } from './types';
+import type {
+  CompiledVisualization,
+  LiveElement,
+  RenderInstanceId,
+  VisualElement,
+  VisualId,
+  VisualInstance
+} from './types';
 
 type SetTraceOptions = { initialStep?: number };
 
+const transitionMs = 300;
+
 /**
- * A seekable player over complete IR scene snapshots.
- *
- * Temporal reconstruction belongs to the compiler. The frontend only joins a
- * frame's lightweight instances to the package element registry.
+ * A seekable player over compiler-produced scene snapshots. Stable instance
+ * identities animate updates; snapshot differences drive enter/exit effects.
  */
 export class TracePlayer {
   trace = $state<CompiledVisualization | null>(null);
   elements = $state<LiveElement[]>([]);
   currentStep = $state(-1);
+
+  #destroyTimers = new SvelteMap<RenderInstanceId, ReturnType<typeof setTimeout>>();
+  #transitionVersion = 0;
 
   get hasTrace() {
     return this.trace !== null;
@@ -53,39 +64,122 @@ export class TracePlayer {
   }
 
   next() {
-    if (this.canNext) this.seek(this.currentStep + 1);
+    if (this.canNext) this.transitionTo(this.currentStep + 1);
   }
 
   previous() {
-    if (this.canPrevious) this.seek(this.currentStep - 1);
+    if (this.canPrevious) this.transitionTo(this.currentStep - 1);
   }
 
   seek(requestedStep: number) {
+    this.clearDestroyTimers();
+    this.#transitionVersion += 1;
+
     if (!this.trace || this.trace.frames.length === 0) {
       this.currentStep = -1;
       this.elements = [];
       return;
     }
 
-    const step = Math.min(Math.max(0, requestedStep), this.lastStep);
-    const elements = new SvelteMap<string, VisualElement>(
-      this.trace.elements.map((element) => [element.id, element])
-    );
+    this.currentStep = this.clampStep(requestedStep);
+    this.elements = this.elementsForFrame(this.trace.frames[this.currentStep]);
+  }
+
+  dispose() {
+    this.clearDestroyTimers();
+    this.#transitionVersion += 1;
+  }
+
+  private transitionTo(step: number) {
+    if (!this.trace) return;
+
+    this.clearDestroyTimers();
+    this.#transitionVersion += 1;
+
+    const current = new SvelteMap(this.elements.map((element) => [element.instanceId, element]));
+    const targetFrame = this.trace.frames[step];
+    const target = this.elementsForFrame(targetFrame);
+    const targetIds = new SvelteSet(target.map((element) => element.instanceId));
+    const instances = new SvelteMap(targetFrame.map((instance) => [instance.id, instance]));
+    const registry = this.elementRegistry();
+
+    const next = target.map((element) => {
+      const existing = current.get(element.instanceId);
+      if (existing) return element;
+
+      const instance = instances.get(element.instanceId);
+      const origin =
+        instance?.originElementId !== undefined
+          ? registry.get(instance.originElementId)
+          : undefined;
+
+      this.scheduleSettle(element);
+      return origin ? { ...element, style: origin.style } : { ...element, entering: true };
+    });
+
+    for (const element of current.values()) {
+      if (targetIds.has(element.instanceId)) continue;
+      next.push({ ...element, entering: false, exiting: true });
+      this.scheduleDestroy(element.instanceId);
+    }
 
     this.currentStep = step;
-    this.elements = this.trace.frames[step].instances.flatMap((instance) => {
-      const element = elements.get(instance.elementId);
-      if (!element) return [];
+    this.elements = next;
+  }
 
-      return [
-        {
-          ...element,
-          instanceId: instance.id,
-          ...(instance.origin ? { origin: instance.origin } : {})
-        }
-      ];
+  private elementsForFrame(frame: VisualInstance[]) {
+    const registry = this.elementRegistry();
+
+    return frame.flatMap<LiveElement>((instance) => {
+      const element = registry.get(instance.elementId);
+      return element ? [{ ...element, instanceId: instance.id }] : [];
     });
   }
 
-  dispose() {}
+  private elementRegistry() {
+    return new SvelteMap<VisualId, VisualElement>(
+      this.trace?.elements.map((element) => [element.id, element]) ?? []
+    );
+  }
+
+  private clampStep(step: number) {
+    return Math.min(Math.max(0, step), this.lastStep);
+  }
+
+  private scheduleSettle(element: LiveElement) {
+    const version = this.#transitionVersion;
+
+    void tick().then(() => afterPaint(() => this.settleElement(version, element)));
+  }
+
+  private settleElement(version: number, element: LiveElement) {
+    if (version !== this.#transitionVersion) return;
+    this.elements = this.elements.map((current) =>
+      current.instanceId === element.instanceId
+        ? { ...element, entering: false, exiting: false }
+        : current
+    );
+  }
+
+  private scheduleDestroy(instanceId: RenderInstanceId) {
+    const timer = setTimeout(() => {
+      this.elements = this.elements.filter((element) => element.instanceId !== instanceId);
+      this.#destroyTimers.delete(instanceId);
+    }, transitionMs);
+
+    this.#destroyTimers.set(instanceId, timer);
+  }
+
+  private clearDestroyTimers() {
+    for (const timer of this.#destroyTimers.values()) clearTimeout(timer);
+    this.#destroyTimers.clear();
+  }
+}
+
+function afterPaint(callback: () => void) {
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(callback));
+  } else {
+    setTimeout(callback, 0);
+  }
 }

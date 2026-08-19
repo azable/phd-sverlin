@@ -19,7 +19,8 @@
     CompileStatus,
     CompileStreamFailure,
     CompileStreamStatus,
-    CompileStreamSuccess
+    CompileStreamSuccess,
+    VisualId
   } from '$lib/visualization/types';
 
   let { data }: PageProps = $props();
@@ -43,7 +44,7 @@
   let activeCompileStatusSource: EventSource | null = null;
   let compileRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let externalCompileLock = $state<CompileLockHolder | null>(null);
-  let selectedVisualIds = $state<string[]>([]);
+  let selectedVisualIds = $state<VisualId[]>([]);
   let verticalPaneGroupElement = $state<HTMLElement | null>(null);
   let verticalPaneGroup = $state<PaneGroupAPI | undefined>(undefined);
   let traceToolbarElement = $state<HTMLElement | null>(null);
@@ -358,7 +359,6 @@
               {#if player.hasTrace}
                 <TraceViewport
                   bind:selectedIds={selectedVisualIds}
-                  background={player.trace?.canvas.background}
                   elements={player.elements}
                   height={player.canvasHeight}
                   width={player.canvasWidth}

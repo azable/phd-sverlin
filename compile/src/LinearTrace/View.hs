@@ -3,7 +3,7 @@
 -- specialized internals live under @LinearTrace.View.*@ and should be imported
 -- directly only by sibling implementation modules.
 module LinearTrace.View
-  ( -- * Re-exported from LinearTrace.View.Types
+  ( -- * Re-exported from LinearTrace.View.Graph
     -- | View identity, labels, tags, and content payloads.
     ViewId(..)
   , viewIdInt
@@ -14,11 +14,9 @@ module LinearTrace.View
   , ViewLabel(..)
   , ViewTagValue(..)
   , ViewTags(..)
-  , emptyViewTags
   , viewTagsToList
   , ContentMode(..)
-  , -- * Re-exported from LinearTrace.View.Graph
-    -- | Symbolic view graph, nodes, render intents, layout accessors, and
+  , -- | Symbolic view graph, nodes, render intents, layout accessors, and
     -- stable solver variable naming helpers.
     ViewGraph
   , ViewNode(..)
@@ -34,7 +32,6 @@ module LinearTrace.View
   , LayoutAttr(..)
   , AnyTraceNode(..)
   , AnyLayoutView(..)
-  , defaultNodeKey
   , styleForRef
   , mapNodeStyleExprLeaves
   , solvedNodeExprs
@@ -50,19 +47,20 @@ module LinearTrace.View
   , nodeVar
   , viewNodes
   , viewSteps
+  , viewCanvasWidth
+  , viewCanvasHeight
   , viewConstraints
   , viewChoiceConstraints
   , viewRenderFrames
   , -- * Re-exported from LinearTrace.View.Build
     -- | View-output accumulation and final graph construction helpers.
     ViewOutput(..)
-  , emptyViewOutput
-  , appendViewOutput
   , flushViewOutput
   , renderIntentOutput
   , mergeInitialRenderIntents
   , withImplicitInitialFrame
   , patchedNodeOutput
+  , viewNodeConstraints
   , finalizeViewGraph
   , -- * Re-exported from LinearTrace.View.Style
     -- | Public symbolic node style and style choice domains needed by the DSL.
@@ -108,5 +106,4 @@ import           LinearTrace.View.Graph
 import           LinearTrace.View.Primitives
 import           LinearTrace.View.Solve
 import           LinearTrace.View.Style      hiding (mapNodeStyleExprLeaves)
-import           LinearTrace.View.Types
 import           Solver                      (Constraint, Expr, RandomSeed (..))

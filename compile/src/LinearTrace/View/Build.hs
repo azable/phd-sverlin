@@ -3,11 +3,10 @@
 -- solver-ready 'ViewGraph'.
 module LinearTrace.View.Build
   ( -- * Output accumulation
-    -- | Monoidal output of nodes, constraints, and render-intent frames emitted
-    -- by match rules and graph construction.
+    -- | Monoidal output of nodes and render-intent frames emitted by match
+    -- rules and graph construction. Constraints remain attached to nodes until
+    -- graph finalization.
     ViewOutput(..)
-  , emptyViewOutput
-  , appendViewOutput
   , flushViewOutput
   , renderIntentOutput
   , mergeInitialRenderIntents
@@ -16,6 +15,7 @@ module LinearTrace.View.Build
     -- | Applies node patches and finalizes accumulated output into a view
     -- graph with canvas/style constraints.
     patchedNodeOutput
+  , viewNodeConstraints
   , finalizeViewGraph
   ) where
 
@@ -26,7 +26,6 @@ import           LinearTrace.View.Style      (nodeStyleBounds,
                                               nodeStyleChoiceConstraints,
                                               nodeStyleConstraints)
 import qualified LinearTrace.View.Style      as Style
-import           LinearTrace.View.Types      (ViewId, viewRefId)
 import           Prelude                     (Maybe (..), Monoid (..),
                                               Semigroup (..))
 import qualified Prelude                     as P
@@ -52,18 +51,14 @@ defaultViewEnv =
 
 data ViewOutput = ViewOutput
   { emittedNodes             :: [ViewNode]
-  , emittedConstraints       :: [Constraint]
-  , emittedChoiceConstraints :: [ChoiceConstraint]
   , emittedRenderFrames      :: [[RenderIntent]]
   , pendingRenderIntents     :: [RenderIntent]
   }
 
 instance Semigroup ViewOutput where
-  ViewOutput nodesA constraintsA choicesA framesA pendingA <> ViewOutput nodesB constraintsB choicesB framesB pendingB =
+  ViewOutput nodesA framesA pendingA <> ViewOutput nodesB framesB pendingB =
     ViewOutput
       { emittedNodes = nodesA P.++ nodesB
-      , emittedConstraints = constraintsA P.++ constraintsB
-      , emittedChoiceConstraints = choicesA P.++ choicesB
       , emittedRenderFrames = framesA P.++ framesB
       , pendingRenderIntents = pendingA P.++ pendingB
       }
@@ -72,17 +67,9 @@ instance Monoid ViewOutput where
   mempty =
     ViewOutput
       { emittedNodes = []
-      , emittedConstraints = []
-      , emittedChoiceConstraints = []
       , emittedRenderFrames = []
       , pendingRenderIntents = []
       }
-
-emptyViewOutput :: ViewOutput
-emptyViewOutput = P.mempty
-
-appendViewOutput :: ViewOutput -> ViewOutput -> ViewOutput
-appendViewOutput = (<>)
 
 flushViewOutput :: ViewOutput -> ViewOutput
 flushViewOutput = flushPendingOutput
@@ -128,7 +115,7 @@ isRemovalIntent intent =
 
 patchedNodeOutput :: Patch.NodePatch -> Node tag -> ViewOutput
 patchedNodeOutput patch node0 =
-  let node =
+  let styledNode =
         node0
           { nodeStyle = Patch.nodePatchStyleUpdate patch (nodeStyle node0)
           , nodeContent =
@@ -136,14 +123,13 @@ patchedNodeOutput patch node0 =
                 Nothing      -> nodeContent node0
                 Just content -> content
           }
-      constraints =
-        nodeStyleConstraints (nodeStyle node)
-          P.++ [ right node S.@<=@ canvasWidth defaultViewEnv
-               , bottom node S.@<=@ canvasHeight defaultViewEnv
-               ]
-          P.++ Patch.patchGeometryConstraints patch node
-   in P.mempty
-        {emittedNodes = [ViewNode node], emittedConstraints = constraints}
+      node =
+        styledNode
+          { nodeConstraints =
+              nodeConstraints styledNode
+                P.++ Patch.patchGeometryConstraints patch styledNode
+          }
+   in P.mempty {emittedNodes = [ViewNode node]}
 
 finalizeViewGraph ::
      [ViewNode]
@@ -153,49 +139,41 @@ finalizeViewGraph ::
   -> [[RenderIntent]]
   -> ViewGraph
 finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderFrames =
-  let compoundConstraints = P.concatMap compoundNodeConstraints nodes
-      -- Node styles are first registered while building trace steps. Layout
-      -- rules can later require optional style fields, so collect style
-      -- constraints again after requirements are applied.
-      allNodeStyleConstraints = P.concatMap viewNodeStyleConstraints nodes
+  let allNodeConstraints = P.concatMap viewNodeConstraints nodes
       allNodeStyleChoiceConstraints =
         P.concatMap viewNodeStyleChoiceConstraints nodes
-      nodeRangeConstraints =
-        P.concatMap (viewNodeRangeConstraints defaultViewEnv) nodes
-      constraints =
-        baseConstraints
-          P.++ allNodeStyleConstraints
-          P.++ nodeRangeConstraints
-          P.++ compoundConstraints
+      constraints = baseConstraints P.++ allNodeConstraints
       choiceConstraints =
         baseChoiceConstraints P.++ allNodeStyleChoiceConstraints
       frames = addCompoundRenderFrames nodes renderFrames
    in ViewGraph
-        { viewNodes = nodes
+        { viewCanvasWidth = canvasWidthValue defaultViewEnv
+        , viewCanvasHeight = canvasHeightValue defaultViewEnv
+        , viewNodes = nodes
         , viewSteps = viewSteps'
         , viewConstraints = constraints
         , viewChoiceConstraints = choiceConstraints
         , viewRenderFrames = frames
         }
 
-compoundNodeConstraints :: ViewNode -> [Constraint]
-compoundNodeConstraints wrapped =
+viewNodeConstraints :: ViewNode -> [Constraint]
+viewNodeConstraints wrapped =
   case wrapped of
     ViewNode node ->
-      nodeConstraints node P.++ structureConstraints node (nodeStructure node)
+      nodeStyleConstraints (nodeStyle node)
+        P.++ viewNodeRangeConstraints defaultViewEnv wrapped
+        P.++ [ right node S.@<=@ canvasWidth defaultViewEnv
+             , bottom node S.@<=@ canvasHeight defaultViewEnv
+             ]
+        P.++ nodeConstraints node
+        P.++ structureConstraints node (nodeStructure node)
 
 structureConstraints :: Node tag -> NodeStructure -> [Constraint]
 structureConstraints node structure =
   case structure of
     LeafNode -> []
     CompoundNode ShrinkWrapChildren children ->
-      compoundCanvasConstraints node P.++ compoundFitConstraints node children
-
-compoundCanvasConstraints :: Node tag -> [Constraint]
-compoundCanvasConstraints node =
-  [ right node S.@<=@ canvasWidth defaultViewEnv
-  , bottom node S.@<=@ canvasHeight defaultViewEnv
-  ]
+      compoundFitConstraints node children
 
 compoundFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
 compoundFitConstraints node children =
@@ -263,11 +241,6 @@ foldChildEdge combine edge current children =
   case children of
     []         -> current
     child:rest -> foldChildEdge combine edge (combine current (edge child)) rest
-
-viewNodeStyleConstraints :: ViewNode -> [Constraint]
-viewNodeStyleConstraints node =
-  case node of
-    ViewNode viewNode -> nodeStyleConstraints (nodeStyle viewNode)
 
 viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
 viewNodeStyleChoiceConstraints node =

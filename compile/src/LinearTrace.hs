@@ -3,7 +3,7 @@
 -- | Public convenience facade for users that want the core trace DSL plus
 -- printing and JSON compilation from one import. This module only re-exports
 -- stable APIs from 'LinearTrace.Core', 'LinearTrace.Print', and
--- 'LinearTrace.Compile'; lower-level view/choreography internals stay behind
+-- 'LinearTrace.Visualization.Compile'; lower-level view/choreography internals stay behind
 -- their own modules.
 module LinearTrace
   ( -- * Core public API data
@@ -143,7 +143,7 @@ module LinearTrace
   , compileSolved
   ) where
 
-import           LinearTrace.Compile
+import           LinearTrace.Visualization.Compile
 import           LinearTrace.Core
 import           LinearTrace.Print
 import           Prelude             hiding ((<$>), (<*>))

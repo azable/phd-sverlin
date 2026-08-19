@@ -4,21 +4,18 @@ export type {
   CspVariable,
   CspVariableId,
   HslColor,
-  InstanceOrigin,
   RenderInstanceId,
-  SourceMetadata,
-  StyleVariableTrace,
+  StyleVariableBinding,
   VisualElement,
   VisualElementKind,
   VisualId,
   VisualInstance,
   VisualStyle,
-  VisualizationFrame,
   VisualizationPackage
 } from './generated/visualization-ir';
 
 import type {
-  InstanceOrigin,
+  RenderInstanceId,
   VisualElement,
   VisualizationPackage
 } from './generated/visualization-ir';
@@ -28,8 +25,9 @@ export type CompiledVisualization = VisualizationPackage;
 
 /** A registry element paired with its identity in the current scene snapshot. */
 export type LiveElement = VisualElement & {
-  instanceId: string;
-  origin?: InstanceOrigin;
+  instanceId: RenderInstanceId;
+  entering?: boolean;
+  exiting?: boolean;
 };
 
 export type CompileDebug = {

@@ -13,7 +13,7 @@ import           LinearTrace.Choreography  (Applicable2 (..), CoreOperator (..),
                                             LOperator (..), OneUse (..),
                                             Payload, applyLinear2Into)
 import qualified LinearTrace.Choreography  as Choreography
-import qualified LinearTrace.Compile       as Compile
+import qualified LinearTrace.Visualization.Compile as Compile
 import qualified LinearTrace.Visualization.IR as IR
 import qualified LinearTrace.Core          as Core
 import           Prelude.Linear            (Ur (..))
@@ -173,7 +173,7 @@ viewMaterializationTests =
               (IR.visualFill (IR.elementStyle element) /= Nothing)
             assertTraceVariablesExist
               compiled
-              (IR.traceFill (IR.elementVariables element))
+              (styleBindingVariables "fill" element)
             let style' = IR.elementStyle element
             IR.visualOpacity style' @?= Nothing
             IR.visualZIndex style' @?= Nothing
@@ -195,7 +195,7 @@ viewMaterializationTests =
             IR.visualPadding style' @?= Just 6
             assertTraceVariablesExist
               compiled
-              (IR.tracePadding (IR.elementVariables element))
+              (styleBindingVariables "padding" element)
             IR.visualFontSize style' @?= Nothing
             IR.visualOpacity style' @?= Nothing
           [] -> assertFailure "expected at least one compiled render element"
@@ -238,7 +238,7 @@ viewMaterializationTests =
               IR.visualFontFamily (IR.elementStyle element) @?= Just "monospace"
               assertTraceVariablesExist
                 compiled
-                (IR.traceFontFamily (IR.elementVariables element))
+                (styleBindingVariables "fontFamily" element)
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "selected categorical access adds and constrains style" $ do
         solution <-
@@ -600,17 +600,25 @@ assertErrorContains label expected action = do
     Right _ -> assertFailure (label ++ " did not throw an error")
 
 assertCompileSolved ::
-     Solution -> Choreography.ViewGraph -> IO Compile.Visualization
+     Solution -> Choreography.ViewGraph -> IO IR.VisualizationPackage
 assertCompileSolved solution graph =
-  case Compile.compileSolved solution graph of
+  case Compile.compileSolved "compile/test/SolverTest.hs" solution graph of
     Left err       -> assertFailure err >> pure (error err)
     Right compiled -> pure compiled
 
-compiledRenderElements :: Compile.Visualization -> [IR.VisualElement]
+compiledRenderElements :: IR.VisualizationPackage -> [IR.VisualElement]
 compiledRenderElements = IR.packageElements
 
+styleBindingVariables :: String -> IR.VisualElement -> [IR.CspVariableId]
+styleBindingVariables field element =
+  concat
+    [ IR.bindingVariables binding
+    | binding <- IR.elementStyleVariables element
+    , IR.bindingField binding == field
+    ]
+
 assertTraceVariablesExist ::
-     Compile.Visualization -> [IR.CspVariableId] -> Assertion
+     IR.VisualizationPackage -> [IR.CspVariableId] -> Assertion
 assertTraceVariablesExist compiled referenced = do
   assertBool "expected style field to reference at least one CSP variable" (not (null referenced))
   let available = map IR.cspVariableId (IR.packageVariables compiled)
