@@ -1,19 +1,18 @@
 <script lang="ts">
   import type { PageProps } from './$types';
   import { onMount, untrack } from 'svelte';
+  import type { PaneGroupAPI } from 'paneforge';
 
   import * as Alert from '$lib/components/ui/alert';
-  import * as Card from '$lib/components/ui/card';
   import * as Resizable from '$lib/components/ui/resizable';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import * as Tabs from '$lib/components/ui/tabs';
   import ArtifactPanel from '$lib/artifacts/ArtifactPanel.svelte';
   import type { ArtifactEditMode } from '$lib/artifacts/types';
   import { ChatState } from '$lib/chat/chat-state.svelte';
   import ChatPanel from '$lib/chat/ChatPanel.svelte';
-  import TraceCanvas from '$lib/visualization/TraceCanvas.svelte';
   import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
+  import TraceViewport from '$lib/visualization/TraceViewport.svelte';
   import { TracePlayer } from '$lib/visualization/trace-player.svelte';
   import type {
     CompileLockHolder,
@@ -44,11 +43,16 @@
   let activeCompileStatusSource: EventSource | null = null;
   let compileRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let externalCompileLock = $state<CompileLockHolder | null>(null);
+  let verticalPaneGroupElement = $state<HTMLElement | null>(null);
+  let verticalPaneGroup = $state<PaneGroupAPI | undefined>(undefined);
+  let traceToolbarElement = $state<HTMLElement | null>(null);
+  let autoSizedVisualizationPane = $state(false);
   let compileRunId = 0;
   const compileBusyRetryMs = 1_000;
+  const visualizationPaneMinSize = 40;
+  const artifactPaneMinSize = 25;
 
   const compiling = $derived(loadingTrace || regenerating);
-  const externalCompileActive = $derived(externalCompileLock !== null && !compiling);
   const toolbarExternalCompiling = $derived(externalCompileLock !== null && !loadingTrace);
   const interactionLocked = $derived(editMode !== 'readonly');
   const pageError = $derived(compileError);
@@ -60,6 +64,36 @@
     if (streamVersion === undefined || streamVersion === lastArtifactStreamVersion) return;
     lastArtifactStreamVersion = streamVersion;
     startCompile({ phase: 'regenerate' });
+  });
+
+  $effect(() => {
+    if (!compileMounted || autoSizedVisualizationPane || !player.hasTrace) return;
+
+    const paneGroup = verticalPaneGroup;
+    const paneGroupElement = verticalPaneGroupElement;
+    const toolbarElement = traceToolbarElement;
+    const canvasWidth = player.canvasWidth;
+    const canvasHeight = player.canvasHeight;
+
+    if (!paneGroup || !paneGroupElement || !toolbarElement) return;
+    if (canvasWidth <= 0 || canvasHeight <= 0) return;
+
+    const groupWidth = paneGroupElement.clientWidth;
+    const groupHeight = paneGroupElement.clientHeight;
+    const toolbarHeight = toolbarElement.getBoundingClientRect().height;
+
+    if (groupWidth <= 0 || groupHeight <= 0 || toolbarHeight <= 0) return;
+
+    const desiredCanvasHeight = groupWidth * (canvasHeight / canvasWidth);
+    const desiredPaneSize = ((toolbarHeight + desiredCanvasHeight) / groupHeight) * 100;
+    const maxVisualizationPaneSize = 100 - artifactPaneMinSize;
+    const visualizationPaneSize = Math.min(
+      maxVisualizationPaneSize,
+      Math.max(visualizationPaneMinSize, desiredPaneSize)
+    );
+
+    autoSizedVisualizationPane = true;
+    paneGroup.setLayout([visualizationPaneSize, 100 - visualizationPaneSize]);
   });
 
   onMount(() => {
@@ -286,91 +320,69 @@
       <Resizable.Handle withHandle />
 
       <Resizable.Pane defaultSize={65} minSize={45} class="min-w-0">
-        <Resizable.PaneGroup direction="vertical" class="h-full min-h-0">
-          <Resizable.Pane defaultSize={65} minSize={40} class="min-h-0 overflow-y-auto">
-            <TraceToolbar
-              bind:seedText
-              canNext={player.canNext}
-              canPrevious={player.canPrevious}
-              currentStep={player.currentStep}
-              externalCompiling={toolbarExternalCompiling}
-              hasTrace={player.hasTrace}
-              locked={interactionLocked}
-              {loadingTrace}
-              onNext={() => player.next()}
-              onPrevious={() => player.previous()}
-              onRegenerate={regenerateTrace}
-              onReset={() => player.reset()}
-              {regenerating}
-              stepCount={player.stepCount}
-            />
+        <Resizable.PaneGroup
+          bind:ref={verticalPaneGroupElement}
+          direction="vertical"
+          this={verticalPaneGroup}
+          class="h-full min-h-0"
+        >
+          <Resizable.Pane
+            defaultSize={65}
+            minSize={visualizationPaneMinSize}
+            class="flex min-h-0 flex-col overflow-hidden"
+          >
+            <div bind:this={traceToolbarElement} class="shrink-0">
+              <TraceToolbar
+                bind:seedText
+                canNext={player.canNext}
+                canPrevious={player.canPrevious}
+                currentStep={player.currentStep}
+                externalCompiling={toolbarExternalCompiling}
+                hasTrace={player.hasTrace}
+                locked={interactionLocked}
+                {loadingTrace}
+                onNext={() => player.next()}
+                onPrevious={() => player.previous()}
+                onRegenerate={regenerateTrace}
+                onReset={() => player.reset()}
+                {regenerating}
+                stepCount={player.stepCount}
+              />
+            </div>
 
             <div
-              class="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-col items-center gap-4 p-4"
+              class="relative min-h-0 flex-1 overflow-hidden bg-white"
+              aria-label="Visualization canvas"
             >
-              {#if loadingTrace || player.hasTrace}
-                <Card.Root class="flex min-h-0 w-full flex-none">
-                  <Card.Header>
-                    <Card.Title
-                      >{player.hasTrace ? 'Trace visualization' : 'Compiling trace'}</Card.Title
-                    >
-                    <Card.Description>
-                      {#if player.hasTrace}
-                        {#if externalCompileActive && externalCompileLock !== null}
-                          External {externalCompileLock.owner} compile running
-                        {:else}
-                          Seed {seedText || 'random'}
-                        {/if}
-                      {:else}
-                        {compileSrc}
-                      {/if}
-                    </Card.Description>
-                  </Card.Header>
-
-                  <Card.Content class="flex min-h-0 flex-col gap-3">
-                    {#if player.hasTrace}
-                      <ScrollArea
-                        orientation="both"
-                        class="min-h-0 rounded-lg border"
-                        style={`height: ${player.canvasHeight + 24}px`}
-                        aria-label="Visualization canvas"
-                      >
-                        <div
-                          class="flex h-max min-h-full w-max min-w-full items-start justify-center py-3"
-                        >
-                          <div class="shrink-0">
-                            <TraceCanvas
-                              elements={player.elements}
-                              height={player.canvasHeight}
-                              width={player.canvasWidth}
-                            />
-                          </div>
-                        </div>
-                      </ScrollArea>
-                    {:else}
-                      <Skeleton class="h-8 w-48" />
-                      <ScrollArea class="h-96 rounded-lg border bg-muted/40">
-                        <div class="flex h-full flex-col gap-3 p-3">
-                          <Skeleton class="h-4 w-2/3" />
-                          <Skeleton class="h-4 w-5/6" />
-                          <Skeleton class="h-4 w-1/2" />
-                        </div>
-                      </ScrollArea>
-                    {/if}
-                  </Card.Content>
-                </Card.Root>
+              {#if player.hasTrace}
+                <TraceViewport
+                  elements={player.elements}
+                  height={player.canvasHeight}
+                  width={player.canvasWidth}
+                />
+              {:else if loadingTrace}
+                <div class="flex min-h-full min-w-full items-center justify-center p-6">
+                  <div class="flex w-full max-w-md flex-col gap-3">
+                    <Skeleton class="h-8 w-48" />
+                    <Skeleton class="h-4 w-2/3" />
+                    <Skeleton class="h-4 w-5/6" />
+                    <Skeleton class="h-4 w-1/2" />
+                  </div>
+                </div>
               {/if}
 
               {#if pageError}
-                <Alert.Root variant="destructive" class="w-full">
-                  <Alert.Title>Visualization error</Alert.Title>
-                  <Alert.Description>{pageError}</Alert.Description>
-                </Alert.Root>
+                <div class="absolute inset-x-6 bottom-6 z-10 mx-auto w-auto max-w-screen-2xl">
+                  <Alert.Root variant="destructive">
+                    <Alert.Title>Visualization error</Alert.Title>
+                    <Alert.Description>{pageError}</Alert.Description>
+                  </Alert.Root>
+                </div>
               {/if}
             </div>
           </Resizable.Pane>
           <Resizable.Handle withHandle />
-          <Resizable.Pane defaultSize={35} minSize={25} class="min-h-0">
+          <Resizable.Pane defaultSize={35} minSize={artifactPaneMinSize} class="min-h-0">
             <ArtifactPanel {chat} bind:editMode />
           </Resizable.Pane>
         </Resizable.PaneGroup>

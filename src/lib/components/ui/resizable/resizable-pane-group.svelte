@@ -8,7 +8,7 @@
     class: className,
     ...restProps
   }: ResizablePrimitive.PaneGroupProps & {
-    this?: ResizablePrimitive.PaneGroup;
+    this?: ResizablePrimitive.PaneGroupAPI;
   } = $props();
 </script>
 
