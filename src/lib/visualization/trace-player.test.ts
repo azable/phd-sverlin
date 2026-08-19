@@ -1,10 +1,8 @@
 import { tick } from 'svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { TracePlayer } from './trace-player.svelte';
 import type { VisualizationPackage } from './types';
-
-afterEach(() => vi.useRealTimers());
 
 describe('TracePlayer', () => {
   it('joins the first scene snapshot to the element registry', () => {
@@ -70,23 +68,7 @@ describe('TracePlayer', () => {
     expect(player.elements.find(({ instanceId }) => instanceId === 2)?.style.left).toBe(80);
   });
 
-  it('keeps fresh instances in their entry state until after a paint boundary', async () => {
-    const visualization = trace(['old', 'new']);
-    visualization.frames[1] = [{ id: 2, elementId: 1 }];
-
-    const player = new TracePlayer();
-    player.setTrace(visualization);
-    player.next();
-
-    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.entering).toBe(true);
-    await tick();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.entering).toBe(false);
-    player.dispose();
-  });
-
-  it('keeps removed elements for the exit transition', () => {
-    vi.useFakeTimers();
+  it('removes absent instances immediately so Svelte can own their outro', () => {
     const visualization = trace(['one']);
     visualization.frames.push([]);
 
@@ -94,8 +76,6 @@ describe('TracePlayer', () => {
     player.setTrace(visualization);
     player.next();
 
-    expect(player.elements[0].exiting).toBe(true);
-    vi.advanceTimersByTime(300);
     expect(player.elements).toEqual([]);
   });
 

@@ -1,10 +1,9 @@
 import { tick } from 'svelte';
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 
 import type {
   CompiledVisualization,
   LiveElement,
-  RenderInstanceId,
   VisualElement,
   VisualId,
   VisualInstance
@@ -12,18 +11,15 @@ import type {
 
 type SetTraceOptions = { initialStep?: number };
 
-const transitionMs = 300;
-
 /**
  * A seekable player over compiler-produced scene snapshots. Stable instance
- * identities animate updates; snapshot differences drive enter/exit effects.
+ * identities animate updates; keyed Svelte transitions own entry and exit.
  */
 export class TracePlayer {
   trace = $state<CompiledVisualization | null>(null);
   elements = $state<LiveElement[]>([]);
   currentStep = $state(-1);
 
-  #destroyTimers = new SvelteMap<RenderInstanceId, ReturnType<typeof setTimeout>>();
   #transitionVersion = 0;
 
   get hasTrace() {
@@ -72,7 +68,6 @@ export class TracePlayer {
   }
 
   seek(requestedStep: number) {
-    this.clearDestroyTimers();
     this.#transitionVersion += 1;
 
     if (!this.trace || this.trace.frames.length === 0) {
@@ -86,20 +81,17 @@ export class TracePlayer {
   }
 
   dispose() {
-    this.clearDestroyTimers();
     this.#transitionVersion += 1;
   }
 
   private transitionTo(step: number) {
     if (!this.trace) return;
 
-    this.clearDestroyTimers();
     this.#transitionVersion += 1;
 
     const current = new SvelteMap(this.elements.map((element) => [element.instanceId, element]));
     const targetFrame = this.trace.frames[step];
     const target = this.elementsForFrame(targetFrame);
-    const targetIds = new SvelteSet(target.map((element) => element.instanceId));
     const instances = new SvelteMap(targetFrame.map((instance) => [instance.id, instance]));
     const registry = this.elementRegistry();
 
@@ -113,15 +105,11 @@ export class TracePlayer {
           ? registry.get(instance.originElementId)
           : undefined;
 
-      this.scheduleSettle(element);
-      return origin ? { ...element, style: origin.style } : { ...element, entering: true };
-    });
+      if (!origin) return element;
 
-    for (const element of current.values()) {
-      if (targetIds.has(element.instanceId)) continue;
-      next.push({ ...element, entering: false, exiting: true });
-      this.scheduleDestroy(element.instanceId);
-    }
+      this.scheduleSettle(element);
+      return { ...element, style: origin.style };
+    });
 
     this.currentStep = step;
     this.elements = next;
@@ -155,24 +143,8 @@ export class TracePlayer {
   private settleElement(version: number, element: LiveElement) {
     if (version !== this.#transitionVersion) return;
     this.elements = this.elements.map((current) =>
-      current.instanceId === element.instanceId
-        ? { ...element, entering: false, exiting: false }
-        : current
+      current.instanceId === element.instanceId ? element : current
     );
-  }
-
-  private scheduleDestroy(instanceId: RenderInstanceId) {
-    const timer = setTimeout(() => {
-      this.elements = this.elements.filter((element) => element.instanceId !== instanceId);
-      this.#destroyTimers.delete(instanceId);
-    }, transitionMs);
-
-    this.#destroyTimers.set(instanceId, timer);
-  }
-
-  private clearDestroyTimers() {
-    for (const timer of this.#destroyTimers.values()) clearTimeout(timer);
-    this.#destroyTimers.clear();
   }
 }
 

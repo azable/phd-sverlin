@@ -1,5 +1,6 @@
 <script lang="ts">
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
+  import { scale } from 'svelte/transition';
 
   import { Button } from '$lib/components/ui/button';
 
@@ -204,35 +205,38 @@
             <div
               data-visual-id={element.id}
               data-instance-id={element.instanceId}
-              class:selected={selectedIds.includes(element.id)}
-              class:entering={element.entering}
-              class:exiting={element.exiting}
-              class="visual-element"
+              class="visual-presence"
               aria-label={`${element.role} ${element.id}`}
               style:top={`${style.top}px`}
               style:left={`${style.left}px`}
               style:width={`${style.width}px`}
               style:height={`${style.height}px`}
               style:z-index={style.zIndex}
-              style:opacity={style.opacity ?? 1}
-              style:padding={`${style.padding ?? 0}px`}
-              style:border-radius={`${style.radius ?? 0}px`}
-              style:border-width={`${style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}px`}
-              style:border-style={style.borderStyle ?? 'solid'}
-              style:border-color={color(style.stroke, style.alpha)}
-              style:background-color={color(style.fill, style.alpha)}
-              style:font-family={style.fontFamily}
-              style:font-size={`${style.fontSize ?? 14}px`}
-              style:font-weight={style.fontWeight}
-              style:font-style={style.fontStyle}
-              style:text-align={style.textAlign ?? 'center'}
-              style:white-space={style.whiteSpace ?? 'normal'}
+              transition:scale={{ duration: 300, start: 0.9 }}
             >
-              {#if element.content}
-                <div class="visual-content">
-                  {element.content}
-                </div>
-              {/if}
+              <div
+                class:selected={selectedIds.includes(element.id)}
+                class="visual-element"
+                style:opacity={style.opacity ?? 1}
+                style:padding={`${style.padding ?? 0}px`}
+                style:border-radius={`${style.radius ?? 0}px`}
+                style:border-width={`${style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}px`}
+                style:border-style={style.borderStyle ?? 'solid'}
+                style:border-color={color(style.stroke, style.alpha)}
+                style:background-color={color(style.fill, style.alpha)}
+                style:font-family={style.fontFamily}
+                style:font-size={`${style.fontSize ?? 14}px`}
+                style:font-weight={style.fontWeight}
+                style:font-style={style.fontStyle}
+                style:text-align={style.textAlign ?? 'center'}
+                style:white-space={style.whiteSpace ?? 'normal'}
+              >
+                {#if element.content}
+                  <div class="visual-content">
+                    {element.content}
+                  </div>
+                {/if}
+              </div>
             </div>
           {/each}
         </div>
@@ -281,37 +285,34 @@
     color: #0f172a;
   }
 
-  .visual-element {
+  .visual-presence {
     position: absolute;
     box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    cursor: pointer;
-    transform: scale(1);
-    transform-origin: center;
-    user-select: none;
     transition:
       top 300ms ease,
       left 300ms ease,
       width 300ms ease,
-      height 300ms ease,
+      height 300ms ease;
+  }
+
+  .visual-element {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: pointer;
+    user-select: none;
+    transition:
       opacity 300ms ease,
-      transform 300ms ease,
       padding 300ms ease,
       border-color 300ms ease,
       border-radius 300ms ease,
       border-width 300ms ease,
       background-color 300ms ease,
       font-size 300ms ease;
-  }
-
-  .visual-element.entering,
-  .visual-element.exiting {
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(0.9);
   }
 
   .visual-content {

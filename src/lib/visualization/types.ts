@@ -26,8 +26,6 @@ export type CompiledVisualization = VisualizationPackage;
 /** A registry element paired with its identity in the current scene snapshot. */
 export type LiveElement = VisualElement & {
   instanceId: RenderInstanceId;
-  entering?: boolean;
-  exiting?: boolean;
 };
 
 export type CompileDebug = {
