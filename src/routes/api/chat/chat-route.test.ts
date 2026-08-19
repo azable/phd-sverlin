@@ -8,6 +8,7 @@ const { generateOpenAIReply, OpenAIConfigurationError } = vi.hoisted(() => ({
     }
   }
 }));
+const persistSourceArtifact = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/server/chat-adapters/openai', () => ({
   generateOpenAIReply,
@@ -19,6 +20,10 @@ vi.mock('$lib/server/chat-adapters/openai', () => ({
 }));
 
 vi.mock('$lib/server/openai-chat', () => ({ OpenAIConfigurationError }));
+vi.mock('$lib/server/artifacts/source-file', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/artifacts/source-file')>()),
+  persistSourceArtifact
+}));
 
 import { DELETE, GET, POST } from './+server';
 
@@ -35,6 +40,7 @@ function post(body: unknown) {
 describe('chat API', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    persistSourceArtifact.mockResolvedValue(undefined);
     generateOpenAIReply.mockResolvedValue({ reply: 'A helpful answer.' });
     await DELETE({} as Parameters<typeof DELETE>[0]);
   });
@@ -168,6 +174,7 @@ describe('chat API', () => {
         events: [{ revision: 1, patch: [{ op: 'replace', path: '/content', value: source }] }]
       }
     });
+    expect(persistSourceArtifact).toHaveBeenCalledWith(source);
   });
 
   it('passes the complete artifact history to the next chatbot turn', async () => {

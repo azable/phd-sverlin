@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto';
 
+import { getArtifactSyncState } from '$lib/server/artifacts/store';
 import { compileVisualization } from '$lib/server/compile-visualization';
 import type {
   CompileStreamFailure,
@@ -17,6 +18,7 @@ type CompileQuery =
       ok: true;
       seed: number;
       details: boolean;
+      revision: number;
     }
   | {
       ok: false;
@@ -63,7 +65,7 @@ export const GET: RequestHandler = ({ request, url }) => {
         return;
       }
 
-      const { seed, details } = parsedQuery;
+      const { seed, details, revision } = parsedQuery;
       const abortCompile = () => abortController.abort();
       request.signal.addEventListener('abort', abortCompile, { once: true });
 
@@ -71,7 +73,8 @@ export const GET: RequestHandler = ({ request, url }) => {
         ok: true,
         status: 'starting',
         seed,
-        details
+        details,
+        revision
       } satisfies CompileStreamStatus);
 
       void (async () => {
@@ -79,6 +82,7 @@ export const GET: RequestHandler = ({ request, url }) => {
           const result = await compileVisualization({
             seed,
             details,
+            revision,
             signal: abortController.signal,
             onEvent(event) {
               if (event.type === 'started') {
@@ -87,6 +91,7 @@ export const GET: RequestHandler = ({ request, url }) => {
                   status: 'running',
                   seed,
                   details,
+                  revision,
                   debug: event.debug
                 } satisfies CompileStreamStatus);
               } else if (event.type === 'stdout') {
@@ -105,6 +110,7 @@ export const GET: RequestHandler = ({ request, url }) => {
                   status: 'complete',
                   seed,
                   details,
+                  revision,
                   debug: event.debug
                 } satisfies CompileStreamStatus);
               }
@@ -120,7 +126,8 @@ export const GET: RequestHandler = ({ request, url }) => {
               ok: true,
               trace: result.trace,
               seed,
-              details
+              details,
+              revision
             } satisfies CompileStreamSuccess);
           } else {
             send('error', {
@@ -129,6 +136,7 @@ export const GET: RequestHandler = ({ request, url }) => {
               error: result.error,
               seed,
               details,
+              revision,
               debug: result.debug,
               ...(result.lock ? { lock: result.lock } : {})
             } satisfies CompileStreamFailure);
@@ -140,7 +148,8 @@ export const GET: RequestHandler = ({ request, url }) => {
               status: 500,
               error: err instanceof Error ? err.message : String(err),
               seed,
-              details
+              details,
+              revision
             } satisfies CompileStreamFailure);
           }
         } finally {
@@ -175,13 +184,26 @@ export function _readCompileQuery(url: URL): CompileQuery {
     };
   }
 
+  const revisionValue = url.searchParams.get('revision');
+  const revision =
+    revisionValue === null ? getArtifactSyncState().headRevision : Number(revisionValue);
+
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: '`revision` must be a non-negative safe integer when provided.'
+    };
+  }
+
   const seedValue = url.searchParams.get('seed');
 
   if (seedValue === null || seedValue === '') {
     return {
       ok: true,
       seed: randomInt(minSeed, maxSeedExclusive),
-      details
+      details,
+      revision
     };
   }
 
@@ -198,7 +220,8 @@ export function _readCompileQuery(url: URL): CompileQuery {
   return {
     ok: true,
     seed,
-    details
+    details,
+    revision
   };
 }
 

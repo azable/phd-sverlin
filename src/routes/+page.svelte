@@ -119,6 +119,7 @@
     nextSeedText?: string;
   } = {}) {
     let seed: number | null;
+    const revision = chat.artifact?.headRevision ?? 0;
 
     try {
       seed = parseOptionalSeed(nextSeedText);
@@ -141,7 +142,7 @@
     externalCompileLock = null;
     compileError = null;
 
-    const source = new EventSource(compileUrl(seed));
+    const source = new EventSource(compileUrl(seed, revision));
     activeCompileSource = source;
 
     function isCurrentRun() {
@@ -199,6 +200,11 @@
 
       try {
         const payload = readStreamEvent<CompileStreamSuccess>(event);
+        if (payload.revision !== (chat.artifact?.headRevision ?? 0)) {
+          finish();
+          startCompile({ phase: 'regenerate', nextSeedText: String(payload.seed) });
+          return;
+        }
         seedText = String(payload.seed);
         player.setTrace(payload.trace, {
           initialStep: phase === 'initial' ? 0 : player.currentStep
@@ -269,8 +275,10 @@
     compileRetryTimer = null;
   }
 
-  function compileUrl(seed: number | null) {
+  function compileUrl(seed: number | null, revision: number) {
     const url = new URL(compileSrc, window.location.origin);
+
+    url.searchParams.set('revision', String(revision));
 
     if (seed !== null) {
       url.searchParams.set('seed', String(seed));

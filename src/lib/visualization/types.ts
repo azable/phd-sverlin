@@ -62,6 +62,7 @@ export type VisualizationSuccess = {
   trace: CompiledVisualization;
   seed: number;
   details: boolean;
+  revision: number;
 };
 
 export type VisualizationFailure = {
@@ -69,6 +70,7 @@ export type VisualizationFailure = {
   error: string;
   seed?: number;
   details?: boolean;
+  revision?: number;
   debug?: CompileDebug;
   lock?: CompileLockHolder;
 };
@@ -78,6 +80,7 @@ export type CompileStreamStatus = {
   status: 'starting' | 'running' | 'complete';
   seed: number;
   details: boolean;
+  revision: number;
   debug?: CompileDebug;
 };
 

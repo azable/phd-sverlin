@@ -5,7 +5,7 @@ import { getChatbot } from '$lib/server/chat-bots/registry';
 
 import type { ChatPageState } from '$lib/chat/types';
 
-export { InvalidSourceArtifactError } from '$lib/server/artifacts/service';
+export { InvalidSourceArtifactError, SourceArtifactBusyError } from '$lib/server/artifacts/service';
 
 export async function sendChatMessage(message: string): Promise<ChatPageState> {
   const current = getChatState();
@@ -21,7 +21,11 @@ export async function sendChatMessage(message: string): Promise<ChatPageState> {
     { role: 'assistant' as const, content: result.reply }
   ];
   if (result.sourceArtifactContent !== undefined) {
-    updateArtifactFromChat(result.sourceArtifactContent, current.artifact.headRevision, chatTurnId);
+    await updateArtifactFromChat(
+      result.sourceArtifactContent,
+      current.artifact.headRevision,
+      chatTurnId
+    );
   }
 
   saveChatMessages(nextMessages);

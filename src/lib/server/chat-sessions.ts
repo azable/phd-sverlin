@@ -16,7 +16,7 @@ export function saveChatMessages(nextMessages: ChatMessage[]) {
   messages = structuredClone(nextMessages);
 }
 
-export function clearChatState() {
+export async function clearChatState() {
+  await resetArtifactToInitial();
   messages = [initialMessage];
-  resetArtifactToInitial();
 }

@@ -1,4 +1,6 @@
-import { appendArtifactChange, getArtifactSyncState } from './store';
+import { appendArtifactChange } from './store';
+
+export { SourceArtifactBusyError } from './source-file';
 
 export class InvalidSourceArtifactError extends Error {
   constructor() {
@@ -18,13 +20,12 @@ export function updateArtifactFromManualEdit(
   reason?: string
 ) {
   validateSourceArtifact(content);
-  appendArtifactChange(
+  return appendArtifactChange(
     content,
     baseRevision,
     { kind: 'manual', actor: 'user', reason },
     crypto.randomUUID()
   );
-  return getArtifactSyncState();
 }
 
 function validateSourceArtifact(content: string) {

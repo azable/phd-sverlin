@@ -7,12 +7,14 @@ import type {
   CompiledVisualization
 } from '$lib/visualization/types';
 
+import { getArtifactSyncState } from './artifacts/store';
 import { acquireCompileLock } from './compile-lock.js';
 import { createCompileOutput } from './workspace-output.js';
 
 export type CompileVisualizationOptions = {
   seed: number;
   details: boolean;
+  revision: number;
   signal?: AbortSignal;
   onEvent?: (event: CompileVisualizationEvent) => void;
 };
@@ -68,6 +70,7 @@ const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
 export async function compileVisualization({
   seed,
   details,
+  revision,
   signal,
   onEvent
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
@@ -110,6 +113,18 @@ export async function compileVisualization({
   }
 
   try {
+    const currentRevision = getArtifactSyncState().headRevision;
+    if (revision !== currentRevision) {
+      const error = `DSL source revision changed from ${revision} to ${currentRevision} before compilation started.`;
+      await rm(outputDir, { recursive: true, force: true });
+      return {
+        ok: false,
+        error,
+        debug: { ...startedDebug, stderr: error },
+        status: 409
+      };
+    }
+
     onEvent?.({
       type: 'started',
       debug: startedDebug

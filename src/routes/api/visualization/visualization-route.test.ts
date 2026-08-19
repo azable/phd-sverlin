@@ -5,11 +5,14 @@ import { _readCompileQuery } from './+server';
 describe('_readCompileQuery', () => {
   it('accepts seed and details query parameters', () => {
     expect(
-      _readCompileQuery(new URL('http://localhost/api/visualization?seed=42&details=true'))
+      _readCompileQuery(
+        new URL('http://localhost/api/visualization?seed=42&details=true&revision=7')
+      )
     ).toEqual({
       ok: true,
       seed: 42,
-      details: true
+      details: true,
+      revision: 7
     });
   });
 
@@ -22,6 +25,7 @@ describe('_readCompileQuery', () => {
       expect(Number.isInteger(result.seed)).toBe(true);
       expect(result.seed).toBeGreaterThan(0);
       expect(result.details).toBe(false);
+      expect(result.revision).toBe(0);
     }
   });
 
@@ -45,6 +49,11 @@ describe('_readCompileQuery', () => {
       ok: false,
       status: 400,
       error: '`details` must be `true` or `false` when provided.'
+    });
+    expect(_readCompileQuery(new URL('http://localhost/api/visualization?revision=-1'))).toEqual({
+      ok: false,
+      status: 400,
+      error: '`revision` must be a non-negative safe integer when provided.'
     });
   });
 });

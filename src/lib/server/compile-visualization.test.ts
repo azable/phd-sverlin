@@ -64,6 +64,39 @@ describe('runCompile', () => {
 });
 
 describe('compileVisualization', () => {
+  it('rejects a stale artifact revision before spawning Cabal', async () => {
+    const previousLockPath = process.env.SVERLIN_COMPILE_LOCK_PATH;
+    const previousOutputDir = process.env.SVERLIN_OUTPUT_DIR;
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'sverlin-compile-revision-test-'));
+    process.env.SVERLIN_COMPILE_LOCK_PATH = path.join(tempDir, 'compile.lock');
+    process.env.SVERLIN_OUTPUT_DIR = path.join(tempDir, 'outputs');
+
+    try {
+      const result = await compileVisualization({ seed: 1, details: false, revision: 1 });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(409);
+        expect(result.error).toContain('revision changed from 1 to 0');
+        expect(result.debug.exitCode).toBe(null);
+      }
+    } finally {
+      if (previousLockPath === undefined) {
+        delete process.env.SVERLIN_COMPILE_LOCK_PATH;
+      } else {
+        process.env.SVERLIN_COMPILE_LOCK_PATH = previousLockPath;
+      }
+
+      if (previousOutputDir === undefined) {
+        delete process.env.SVERLIN_OUTPUT_DIR;
+      } else {
+        process.env.SVERLIN_OUTPUT_DIR = previousOutputDir;
+      }
+
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('returns 409 without spawning when the shared compile lock is held', async () => {
     const compileLockPathEnvVar = 'SVERLIN_COMPILE_LOCK_PATH';
     const workspaceOutputDirEnvVar = 'SVERLIN_OUTPUT_DIR';
@@ -85,7 +118,7 @@ describe('compileVisualization', () => {
     if (!lockResult.acquired) throw new Error(lockResult.message);
 
     try {
-      const result = await compileVisualization({ seed: 1, details: false });
+      const result = await compileVisualization({ seed: 1, details: false, revision: 0 });
 
       expect(result.ok).toBe(false);
       if (!result.ok) {

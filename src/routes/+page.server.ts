@@ -1,7 +1,11 @@
 import { fail } from '@sveltejs/kit';
 
 import { clearChatState, getChatState } from '$lib/server/chat-sessions';
-import { InvalidSourceArtifactError, sendChatMessage } from '$lib/server/chat-service';
+import {
+  InvalidSourceArtifactError,
+  SourceArtifactBusyError,
+  sendChatMessage
+} from '$lib/server/chat-service';
 import { OpenAIConfigurationError } from '$lib/server/openai-chat';
 
 import type { Actions, PageServerLoad } from './$types';
@@ -10,7 +14,7 @@ export const load: PageServerLoad = () => getChatState();
 
 export const actions: Actions = {
   reset: async () => {
-    clearChatState();
+    await clearChatState();
     return getChatState();
   },
   send: async ({ request }) => {
@@ -30,6 +34,10 @@ export const actions: Actions = {
 
       if (error instanceof InvalidSourceArtifactError) {
         return fail(502, { error: error.message });
+      }
+
+      if (error instanceof SourceArtifactBusyError) {
+        return fail(423, { error: error.message });
       }
 
       if (error instanceof Error && error.name === 'ChatContextOverflowError') {

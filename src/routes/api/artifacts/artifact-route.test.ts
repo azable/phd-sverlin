@@ -1,5 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const persistSourceArtifact = vi.hoisted(() => vi.fn());
+
+vi.mock('$lib/server/artifacts/source-file', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/artifacts/source-file')>()),
+  persistSourceArtifact
+}));
+
+import { SourceArtifactBusyError } from '$lib/server/artifacts/source-file';
 import { resetArtifactToInitial, getArtifactSyncState } from '$lib/server/artifacts/store';
 import { GET, PATCH } from './[artifactId]/+server';
 
@@ -11,8 +19,10 @@ function patchEvent(request: Request) {
 }
 
 describe('artifact API', () => {
-  beforeEach(() => {
-    resetArtifactToInitial();
+  beforeEach(async () => {
+    persistSourceArtifact.mockReset();
+    persistSourceArtifact.mockResolvedValue(undefined);
+    await resetArtifactToInitial();
   });
 
   it('returns the complete audit state and records a manual revision', async () => {
@@ -37,6 +47,7 @@ describe('artifact API', () => {
       actor: 'user',
       reason: 'test edit'
     });
+    expect(persistSourceArtifact).toHaveBeenLastCalledWith(content);
 
     const fullResponse = await GET({
       params: { artifactId: 'dsl-main' },
@@ -83,5 +94,31 @@ describe('artifact API', () => {
     );
 
     expect(response.status).toBe(422);
+  });
+
+  it('keeps the current revision when the source file is locked', async () => {
+    const initial = getArtifactSyncState();
+    persistSourceArtifact.mockRejectedValueOnce(
+      new SourceArtifactBusyError('Compile backend is already running.')
+    );
+
+    const response = await PATCH(
+      patchEvent(
+        new Request('http://localhost/api/artifacts/dsl-main', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            content: `${initial.current.content}\n\n-- blocked`,
+            baseRevision: initial.headRevision
+          })
+        })
+      )
+    );
+
+    expect(response.status).toBe(423);
+    expect(getArtifactSyncState()).toMatchObject({
+      headRevision: initial.headRevision,
+      current: { content: initial.current.content }
+    });
   });
 });
