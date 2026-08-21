@@ -30,11 +30,15 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## DSL LLM Authoring Context
 
-- `src/lib/server/chat-bots/ai-assistant/index.ts` contains the canonical
-  `dslInterfaceContext` for the primary `ai-assistant` bot. It is a human-readable
+- `src/lib/server/chat-bots/ai-assistant/dsl-interface.md` contains the canonical
+  DSL interface context for the primary `ai-assistant` bot. It is a human-readable
   authoring reference specifically designed to guide an OpenAI code-generating
   model (currently configured as `gpt-5.6`) when it edits the in-memory Sverlin
   artifact presented by the frontend.
+- The guide is read from disk for every model request during local development,
+  so saved edits are picked up without restarting the SvelteKit server. The
+  sibling `index.ts` keeps the short role prompt, model configuration, structured
+  response contract, and a bundled fallback for packaged deployments.
 - Keep this context synchronized in the same change whenever the public DSL
   changes. At minimum, review it when editing
   `compile/src/LinearTrace/Choreography.hs`, its re-exported public modules,

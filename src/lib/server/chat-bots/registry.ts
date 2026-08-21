@@ -11,16 +11,18 @@ export function createChatbot(config: ChatBotConfig, adapter: ChatAdapter): Chat
     id: config.id,
     config,
     generateReply: async (request: ChatbotRequest): Promise<ChatbotResult> => {
-      const result = await adapter.generateReply({
+      const prompt = {
         messages: request.messages,
         initialPrompt: config.initialPrompt,
-        context: config.buildContext(request),
+        context: await config.buildContext(request),
         parameters: config.parameters,
         responseFormat: config.responseFormat
-      });
+      };
+      const result = await adapter.generateReply(prompt);
 
       return {
         ...result,
+        prompt,
         generation: {
           botId: config.id,
           adapterId: adapter.id,

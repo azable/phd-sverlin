@@ -100,8 +100,15 @@ describe('chat API', () => {
           { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
           { role: 'user', content: 'hello there' }
         ],
-        initialPrompt: expect.stringContaining('body-only Sverlin source'),
-        context: expect.objectContaining({ artifact: expect.any(Object) }),
+        initialPrompt: expect.stringMatching(
+          /visualization designer[\s\S]*Infer reasonable example data/
+        ),
+        context: expect.objectContaining({
+          artifact: expect.any(Object),
+          dslInterface: expect.stringMatching(
+            /small representative input[\s\S]*blank artefact[\s\S]*visual grammar[\s\S]*Create pending <- create @Item \(LInt 3\)[\s\S]*Selected item <- select @Item[\s\S]*FixedStyle TextAlignCenter/
+          )
+        }),
         parameters: {
           model: 'gpt-5.6',
           reasoningEffort: 'medium',

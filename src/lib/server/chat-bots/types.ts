@@ -35,7 +35,15 @@ export type ChatResponseFormat = {
 export type ChatBotConfig = {
   id: string;
   initialPrompt: string;
-  buildContext: (input: ChatContextInput) => ChatContext;
+  buildContext: (input: ChatContextInput) => ChatContext | Promise<ChatContext>;
+  parameters: ChatBotParameters;
+  responseFormat: ChatResponseFormat;
+};
+
+export type ChatbotPrompt = {
+  initialPrompt: string;
+  messages: ChatMessage[];
+  context: ChatContext;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;
 };
@@ -49,6 +57,7 @@ export type ChatbotRequest = {
 export type ChatbotResult = {
   reply: string;
   sourceArtifactContent?: string;
+  prompt: ChatbotPrompt;
   generation: {
     botId: string;
     adapterId: string;

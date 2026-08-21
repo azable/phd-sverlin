@@ -1,7 +1,7 @@
 import { updateArtifactFromChat, validateSourceArtifact } from '$lib/server/artifacts/service';
 import { getArtifactContext } from '$lib/server/artifacts/store';
 import { getChatbot } from '$lib/server/chat-bots/registry';
-import type { Chatbot, ChatbotRequest, ChatbotResult } from '$lib/server/chat-bots/types';
+import type { ChatbotRequest, ChatbotResult } from '$lib/server/chat-bots/types';
 import { getChatState, saveChatMessages } from '$lib/server/chat-sessions';
 import type { CompileVisualizationResult } from '$lib/server/compile-visualization';
 import { compileSource } from '$lib/server/compile-visualization';
@@ -70,7 +70,7 @@ export async function sendChatMessage(message: string, seed: number): Promise<Ch
       baseContent: artifact.current.content,
       baseSha256: sourceSha256(artifact.current.content)
     },
-    prompt: promptSnapshot(chatbot, firstRequest),
+    prompt: promptSnapshot(firstResult),
     attempts: [
       failureAttempt(1, firstResult, firstResult.sourceArtifactContent, seed, firstCompile)
     ],
@@ -93,11 +93,6 @@ export async function sendChatMessage(message: string, seed: number): Promise<Ch
       diagnostics: firstCompile.diagnostics
     }
   };
-  failureRecord = updateCompilationFailureRecord(failureRecord, {
-    repairPrompt: promptSnapshot(chatbot, retryRequest),
-    resolution: 'retrying'
-  });
-  await safelyPersistCompilationFailureRecord(failureRecord);
   let retryResult: ChatbotResult;
   try {
     retryResult = await chatbot.generateReply(retryRequest);
@@ -108,6 +103,11 @@ export async function sendChatMessage(message: string, seed: number): Promise<Ch
     await safelyPersistCompilationFailureRecord(failureRecord);
     throw error;
   }
+  failureRecord = updateCompilationFailureRecord(failureRecord, {
+    repairPrompt: promptSnapshot(retryResult),
+    resolution: 'retrying'
+  });
+  await safelyPersistCompilationFailureRecord(failureRecord);
 
   if (retryResult.sourceArtifactContent === undefined) {
     failureRecord = updateCompilationFailureRecord(failureRecord, { resolution: 'rejected' });
@@ -239,15 +239,10 @@ function failureAttempt(
   });
 }
 
-function promptSnapshot(chatbot: Chatbot, request: ChatbotRequest) {
-  const context = chatbot.config.buildContext(request);
+function promptSnapshot(result: ChatbotResult) {
   const prompt = {
-    botId: chatbot.id,
-    initialPrompt: chatbot.config.initialPrompt,
-    messages: request.messages,
-    context,
-    parameters: chatbot.config.parameters,
-    responseFormat: chatbot.config.responseFormat
+    botId: result.generation.botId,
+    ...result.prompt
   };
 
   return { ...prompt, sha256: promptSha256(prompt) };
