@@ -25,6 +25,7 @@ const buildResult = await runCompile(
 );
 
 if (buildResult.exitCode !== 0) {
+  console.error('[sverlin:build-failed]');
   process.exitCode = buildResult.exitCode ?? signalExitCode(buildResult.signal);
   process.exit();
 }

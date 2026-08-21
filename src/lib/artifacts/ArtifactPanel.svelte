@@ -21,8 +21,9 @@
 
   let {
     chat,
+    disabled = false,
     editMode = $bindable<ArtifactEditMode>('readonly')
-  }: { chat: ChatState; editMode?: ArtifactEditMode } = $props();
+  }: { chat: ChatState; disabled?: boolean; editMode?: ArtifactEditMode } = $props();
 
   let draftContent = $state('');
   let baseRevision = $state(0);
@@ -206,25 +207,30 @@
           <Badge variant="outline">Revision {artifact.headRevision}</Badge>
         </div>
         {#if editMode === 'readonly'}
-          <Button size="sm" variant="outline" onclick={startEditing}>
+          <Button size="sm" variant="outline" onclick={startEditing} {disabled}>
             <Edit3Icon data-icon="inline-start" />Edit
           </Button>
         {:else if editMode === 'editing'}
           <Badge variant="secondary">Editing · controls locked</Badge>
-          <Button size="sm" variant="ghost" onclick={requestCancel} disabled={saving}>
+          <Button size="sm" variant="ghost" onclick={requestCancel} disabled={saving || disabled}>
             <XIcon data-icon="inline-start" />Cancel
           </Button>
-          <Button size="sm" onclick={saveDraft} disabled={!dirty || saving}>
+          <Button size="sm" onclick={saveDraft} disabled={!dirty || saving || disabled}>
             {#if saving}<Spinner data-icon="inline-start" />Saving{:else}<SaveIcon
                 data-icon="inline-start"
               />Save{/if}
           </Button>
         {:else}
           <Badge variant="destructive">Conflict</Badge>
-          <Button size="sm" variant="ghost" onclick={reloadServerVersion} disabled={saving}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onclick={reloadServerVersion}
+            disabled={saving || disabled}
+          >
             <RefreshCwIcon data-icon="inline-start" />Reload server
           </Button>
-          <Button size="sm" onclick={retryDraft} disabled={saving}>
+          <Button size="sm" onclick={retryDraft} disabled={saving || disabled}>
             {#if saving}<Spinner data-icon="inline-start" />Retrying{:else}<SaveIcon
                 data-icon="inline-start"
               />Keep draft & retry{/if}
@@ -266,7 +272,7 @@
         <CodeMirrorEditor
           bind:this={editor}
           bind:value={draftContent}
-          editable={editMode === 'editing'}
+          editable={editMode === 'editing' && !disabled}
           ariaLabel="DSL source editor"
         />
       </div>
@@ -294,7 +300,7 @@
                   class="flex flex-col gap-1 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
                   class:bg-muted={selectedEvent?.eventId === event.eventId}
                   onclick={() => (selectedEventId = event.eventId)}
-                  disabled={locked}
+                  disabled={locked || disabled}
                 >
                   <span class="flex items-center gap-2 font-medium">
                     <Badge variant="outline">r{event.revision}</Badge>

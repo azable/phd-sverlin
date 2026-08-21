@@ -90,7 +90,13 @@ export async function generateOpenAIReply(request: ChatAdapterRequest): Promise<
     }
   });
 
-  return parseResult(response.output_text);
+  return {
+    ...parseResult(response.output_text),
+    generation: {
+      model: response.model,
+      responseId: response.id
+    }
+  };
 }
 
 export const openAIAdapter: ChatAdapter = {

@@ -10,14 +10,24 @@ export function createChatbot(config: ChatBotConfig, adapter: ChatAdapter): Chat
   return {
     id: config.id,
     config,
-    generateReply: (request: ChatbotRequest): Promise<ChatbotResult> =>
-      adapter.generateReply({
+    generateReply: async (request: ChatbotRequest): Promise<ChatbotResult> => {
+      const result = await adapter.generateReply({
         messages: request.messages,
         initialPrompt: config.initialPrompt,
         context: config.buildContext(request),
         parameters: config.parameters,
         responseFormat: config.responseFormat
-      })
+      });
+
+      return {
+        ...result,
+        generation: {
+          botId: config.id,
+          adapterId: adapter.id,
+          ...result.generation
+        }
+      };
+    }
   };
 }
 

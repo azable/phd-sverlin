@@ -26,7 +26,7 @@ export function updateArtifactFromManualEdit(
   );
 }
 
-function validateSourceArtifact(content: string) {
+export function validateSourceArtifact(content: string) {
   // Syntax and the required declarations are checked by the Haskell
   // elaboration/interpretation boundary so its diagnostics remain canonical.
   if (content.includes('\0') || content.length > 1_000_000) {

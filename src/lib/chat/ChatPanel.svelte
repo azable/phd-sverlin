@@ -13,9 +13,19 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Spinner } from '$lib/components/ui/spinner';
   import { ChatState } from './chat-state.svelte';
-  import type { ChatPageState } from './types';
+  import type { ChatActionState } from './types';
 
-  let { chat, disabled = false }: { chat: ChatState; disabled?: boolean } = $props();
+  let {
+    chat,
+    disabled = false,
+    seedText = '',
+    onState = (state) => chat.applyServerState(state)
+  }: {
+    chat: ChatState;
+    disabled?: boolean;
+    seedText?: string;
+    onState?: (state: ChatActionState) => void | Promise<void>;
+  } = $props();
   let transcriptElement = $state<HTMLElement | null>(null);
 
   const sendEnhance: SubmitFunction = () => {
@@ -24,7 +34,7 @@
 
     return async ({ result }) => {
       if (result.type === 'success') {
-        chat.applyServerState(result.data as ChatPageState);
+        await onState(result.data as ChatActionState);
       } else if (result.type === 'failure') {
         chat.applyActionError(actionError(result.data));
       } else {
@@ -40,7 +50,7 @@
 
     return async ({ result }) => {
       if (result.type === 'success') {
-        chat.applyServerState(result.data as ChatPageState);
+        await onState(result.data as ChatActionState);
       } else if (result.type === 'failure') {
         chat.applyActionError(actionError(result.data));
       } else {
@@ -121,6 +131,7 @@
     </form>
 
     <form method="POST" action="?/send" use:enhance={sendEnhance}>
+      <input type="hidden" name="seed" value={seedText} />
       <InputGroup.Root class="h-auto min-h-20">
         <InputGroup.Textarea
           bind:value={chat.draft}

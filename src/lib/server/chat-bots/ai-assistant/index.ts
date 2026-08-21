@@ -195,10 +195,11 @@ const dslInterfaceContext = [
 export default {
   id: 'ai-assistant',
   initialPrompt:
-    'Answer the user. If they request a DSL change, return the complete updated body-only Sverlin source in sourceArtifactContent; otherwise return null for that field. Treat the artifact context as authoritative and do not invent omitted revisions.',
-  buildContext: ({ artifact }) => ({
+    'Answer the user. If they request a DSL change, return the complete updated body-only Sverlin source in sourceArtifactContent; otherwise return null for that field. Treat the artifact context as authoritative and do not invent omitted revisions. When compilationFeedback is present, correct the failed candidate using those compiler diagnostics and return a complete replacement source; do not claim the change was applied unless the corrected source is supplied.',
+  buildContext: ({ artifact, compilationFeedback }) => ({
     dslInterface: dslInterfaceContext,
-    artifact
+    artifact,
+    ...(compilationFeedback ? { compilationFeedback } : {})
   }),
   parameters: {
     model: 'gpt-5.6',

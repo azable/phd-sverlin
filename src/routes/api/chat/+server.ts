@@ -1,7 +1,12 @@
 import { json } from '@sveltejs/kit';
 
 import { clearChatState, getChatState } from '$lib/server/chat-sessions';
-import { InvalidSourceArtifactError, sendChatMessage } from '$lib/server/chat-service';
+import {
+  CandidateCompilationInfrastructureError,
+  InvalidSourceArtifactError,
+  sendChatMessage
+} from '$lib/server/chat-service';
+import { chooseCompileSeed, InvalidCompileSeedError } from '$lib/server/compile-seed';
 import { OpenAIConfigurationError } from '$lib/server/openai-chat';
 
 import type { RequestHandler } from './$types';
@@ -26,7 +31,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   try {
-    return json(await sendChatMessage(message));
+    return json(await sendChatMessage(message, chooseCompileSeed(readSeed(body))));
   } catch (error) {
     return providerError(error);
   }
@@ -38,6 +43,10 @@ export const DELETE: RequestHandler = async () => {
 };
 
 function providerError(error: unknown) {
+  if (error instanceof InvalidCompileSeedError) {
+    return json({ error: error.message }, { status: 400 });
+  }
+
   if (error instanceof OpenAIConfigurationError) {
     return json({ error: error.message }, { status: 503 });
   }
@@ -46,12 +55,25 @@ function providerError(error: unknown) {
     return json({ error: error.message }, { status: 502 });
   }
 
+  if (error instanceof CandidateCompilationInfrastructureError) {
+    return json({ error: error.message }, { status: 502 });
+  }
+
+  if (error instanceof Error && error.name === 'ArtifactConflictError') {
+    return json({ error: error.message }, { status: 409 });
+  }
+
   if (error instanceof Error && error.name === 'ChatContextOverflowError') {
     return json({ error: error.message }, { status: 413 });
   }
 
   console.error('Chat request failed.', error);
   return json({ error: 'The chat service is unavailable.' }, { status: 502 });
+}
+
+function readSeed(body: unknown) {
+  if (typeof body !== 'object' || body === null || !('seed' in body)) return undefined;
+  return body.seed;
 }
 
 function readMessage(body: unknown): string | null {

@@ -1,9 +1,19 @@
 import type { ArtifactContext } from '$lib/artifacts/types';
 import type { ChatMessage } from '$lib/chat/types';
+import type { CompilerDiagnostic } from '$lib/visualization/types';
+
+export type CompilationFeedback = {
+  attempt: number;
+  failureRecordId: string;
+  failedSource: string;
+  assistantReply: string;
+  diagnostics: CompilerDiagnostic[];
+};
 
 export type ChatContextInput = {
   messages: ChatMessage[];
   artifact: ArtifactContext;
+  compilationFeedback?: CompilationFeedback;
 };
 
 /** Provider-neutral context assembled by a chat bot definition. */
@@ -33,11 +43,18 @@ export type ChatBotConfig = {
 export type ChatbotRequest = {
   messages: ChatMessage[];
   artifact: ArtifactContext;
+  compilationFeedback?: CompilationFeedback;
 };
 
 export type ChatbotResult = {
   reply: string;
   sourceArtifactContent?: string;
+  generation: {
+    botId: string;
+    adapterId: string;
+    model?: string;
+    responseId?: string;
+  };
 };
 
 export type { ChatAdapter, ChatAdapterResult } from '$lib/server/chat-adapters/types';

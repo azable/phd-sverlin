@@ -43,6 +43,24 @@ export type CompileDebug = {
   error?: string;
 };
 
+export type CompilerDiagnostic = {
+  severity: 'error' | 'warning' | 'unknown';
+  code?: string;
+  sourcePath?: string;
+  line?: number;
+  column?: number;
+  message: string;
+  raw: string;
+};
+
+export type CompileFailureKind =
+  | 'source'
+  | 'pipeline'
+  | 'infrastructure'
+  | 'timeout'
+  | 'invalid-output'
+  | 'cancelled';
+
 export type VisualizationSuccess = {
   ok: true;
   trace: CompiledVisualization;
@@ -56,6 +74,9 @@ export type VisualizationFailure = {
   seed?: number;
   revision?: number;
   debug?: CompileDebug;
+  diagnostics?: CompilerDiagnostic[];
+  failureKind?: CompileFailureKind;
+  failureRecordId?: string;
 };
 
 export type CompileStreamStatus = {

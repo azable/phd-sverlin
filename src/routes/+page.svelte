@@ -9,6 +9,7 @@
   import * as Tabs from '$lib/components/ui/tabs';
   import ArtifactPanel from '$lib/artifacts/ArtifactPanel.svelte';
   import type { ArtifactEditMode } from '$lib/artifacts/types';
+  import type { ChatActionState } from '$lib/chat/types';
   import { ChatState } from '$lib/chat/chat-state.svelte';
   import ChatPanel from '$lib/chat/ChatPanel.svelte';
   import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
@@ -18,6 +19,7 @@
     CompileStreamFailure,
     CompileStreamStatus,
     CompileStreamSuccess,
+    CompilerDiagnostic,
     VisualId
   } from '$lib/visualization/types';
 
@@ -33,6 +35,8 @@
   let loadingTrace = $state(true);
   let regenerating = $state(false);
   let compileError = $state<string | null>(null);
+  let compileDiagnostics = $state<CompilerDiagnostic[]>([]);
+  let failureRecordId = $state<string | null>(null);
   let seedText = $state('');
   let editMode = $state<ArtifactEditMode>('readonly');
   let compileMounted = $state(false);
@@ -49,12 +53,14 @@
   const visualizationPaneMinSize = 40;
   const artifactPaneMinSize = 25;
 
-  const interactionLocked = $derived(editMode !== 'readonly');
+  const sourceEditing = $derived(editMode !== 'readonly');
+  const appBusy = $derived(chat.sending || loadingTrace || regenerating);
+  const interactionLocked = $derived(sourceEditing || chat.sending);
   const pageError = $derived(compileError);
 
   $effect(() => {
     if (!compileMounted) return;
-    if (interactionLocked) return;
+    if (sourceEditing) return;
     const streamVersion = chat.artifact?.streamVersion;
     if (streamVersion === undefined || streamVersion === lastArtifactStreamVersion) return;
     lastArtifactStreamVersion = streamVersion;
@@ -131,6 +137,8 @@
     }
 
     compileError = null;
+    compileDiagnostics = [];
+    failureRecordId = null;
 
     const source = new EventSource(compileUrl(seed, revision));
     activeCompileSource = source;
@@ -171,6 +179,8 @@
       }
 
       compileError = error;
+      compileDiagnostics = payload?.diagnostics ?? [];
+      failureRecordId = payload?.failureRecordId ?? null;
       finish();
     }
 
@@ -223,6 +233,40 @@
 
   function regenerateTrace(nextSeedText = seedText) {
     startCompile({ phase: 'regenerate', nextSeedText });
+  }
+
+  function applyChatState(nextState: ChatActionState) {
+    const compiled = nextState.compiledVisualization;
+    if (compiled) {
+      activeCompileSource?.close();
+      activeCompileSource = null;
+      clearCompileRetry();
+      lastArtifactStreamVersion = nextState.artifact.streamVersion;
+      seedText = String(compiled.seed);
+      compileError = null;
+      compileDiagnostics = [];
+      failureRecordId = null;
+      player.setTrace(compiled.trace, { initialStep: player.currentStep });
+      loadingTrace = false;
+      regenerating = false;
+    }
+
+    chat.applyServerState(nextState);
+  }
+
+  function diagnosticText() {
+    if (compileDiagnostics.length === 0) return compileError ?? '';
+
+    return compileDiagnostics
+      .map((diagnostic) => {
+        const location =
+          diagnostic.sourcePath && diagnostic.line && diagnostic.column
+            ? `${diagnostic.sourcePath}:${diagnostic.line}:${diagnostic.column}`
+            : diagnostic.sourcePath;
+        const code = diagnostic.code ? ` [${diagnostic.code}]` : '';
+        return `${location ? `${location}: ` : ''}${diagnostic.severity}${code}\n${diagnostic.message}`;
+      })
+      .join('\n\n');
   }
 
   function clearCompileRetry() {
@@ -279,7 +323,12 @@
             <Tabs.Trigger value="chat">Chat</Tabs.Trigger>
           </Tabs.List>
           <Tabs.Content value="chat" class="flex min-h-0 flex-1 flex-col">
-            <ChatPanel {chat} disabled={interactionLocked} />
+            <ChatPanel
+              {chat}
+              disabled={sourceEditing || loadingTrace || regenerating}
+              {seedText}
+              onState={applyChatState}
+            />
           </Tabs.Content>
         </Tabs.Root>
       </Resizable.Pane>
@@ -343,7 +392,13 @@
                 <div class="absolute inset-x-6 bottom-6 z-10 mx-auto w-auto max-w-screen-2xl">
                   <Alert.Root variant="destructive">
                     <Alert.Title>Visualization error</Alert.Title>
-                    <Alert.Description>{pageError}</Alert.Description>
+                    <Alert.Description>
+                      <pre
+                        class="max-h-48 overflow-auto text-xs whitespace-pre-wrap">{diagnosticText()}</pre>
+                      {#if failureRecordId}
+                        <p class="mt-2 font-mono text-xs">Failure record: {failureRecordId}</p>
+                      {/if}
+                    </Alert.Description>
                   </Alert.Root>
                 </div>
               {/if}
@@ -351,7 +406,7 @@
           </Resizable.Pane>
           <Resizable.Handle withHandle />
           <Resizable.Pane defaultSize={35} minSize={artifactPaneMinSize} class="min-h-0">
-            <ArtifactPanel {chat} bind:editMode />
+            <ArtifactPanel {chat} disabled={appBusy} bind:editMode />
           </Resizable.Pane>
         </Resizable.PaneGroup>
       </Resizable.Pane>

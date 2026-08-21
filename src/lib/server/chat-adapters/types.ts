@@ -17,6 +17,10 @@ export type ChatAdapterRequest = {
 export type ChatAdapterResult = {
   reply: string;
   sourceArtifactContent?: string;
+  generation?: {
+    model?: string;
+    responseId?: string;
+  };
 };
 
 export interface ChatAdapter {

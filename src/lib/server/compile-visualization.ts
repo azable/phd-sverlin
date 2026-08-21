@@ -2,9 +2,21 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { CompileDebug, CompiledVisualization } from '$lib/visualization/types';
+import type {
+  CompileDebug,
+  CompiledVisualization,
+  CompileFailureKind,
+  CompilerDiagnostic
+} from '$lib/visualization/types';
 
 import { getArtifactSyncState } from './artifacts/store';
+import {
+  compilationFailureAttempt,
+  createCompilationFailureRecord,
+  safelyPersistCompilationFailureRecord,
+  sourceSha256
+} from './compilation-failures';
+import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
 import { createCompileOutput } from './workspace-output.js';
 
 export type CompileVisualizationOptions = {
@@ -25,7 +37,19 @@ export type CompileVisualizationResult =
       error: string;
       debug: CompileDebug;
       status: number;
+      diagnostics: CompilerDiagnostic[];
+      failureKind?: CompileFailureKind;
+      failureRecordId?: string;
     };
+
+export type CompileSourceOptions = {
+  sourceContent: string;
+  sourceLabel: string;
+  seed: number;
+  owner: string;
+  signal?: AbortSignal;
+  onEvent?: (event: CompileVisualizationEvent) => void;
+};
 
 export type CompileVisualizationEvent =
   | {
@@ -75,16 +99,87 @@ export async function compileVisualization({
       ok: false,
       error,
       debug: emptyCompileDebug(cwd, error),
-      status: 409
+      status: 409,
+      diagnostics: []
     };
   }
 
-  const { outputDir, outputPath } = await createCompileOutput({ owner: 'web', seed });
-  const sourcePath = path.join(outputDir, 'source', 'Main.sverlin');
-  await mkdir(path.dirname(sourcePath), { recursive: true });
-  await writeFile(sourcePath, artifact.current.content, 'utf8');
+  const result = await compileSource({
+    sourceContent: artifact.current.content,
+    sourceLabel: artifact.current.path,
+    seed,
+    owner: 'web',
+    signal,
+    onEvent
+  });
 
-  const { command, args } = compileCommand(seed, outputPath, sourcePath, artifact.current.path);
+  if (result.ok || result.failureKind === 'cancelled') return result;
+
+  const artifactEvent = artifact.events.find((event) => event.revision === revision);
+  const record = await createCompilationFailureRecord({
+    origin: {
+      kind: 'web-compilation',
+      ...(artifactEvent ? { artifactSource: artifactEvent.source } : {})
+    },
+    artifact: {
+      id: artifact.current.id,
+      path: artifact.current.path,
+      baseRevision: revision,
+      baseContent: artifact.current.content,
+      baseSha256: sourceSha256(artifact.current.content)
+    },
+    attempts: [
+      compilationFailureAttempt({
+        attempt: 1,
+        candidateContent: artifact.current.content,
+        seed,
+        debug: result.debug,
+        failureKind: result.failureKind ?? 'pipeline',
+        diagnostics: result.diagnostics
+      })
+    ],
+    resolution:
+      result.failureKind === 'infrastructure' || result.failureKind === 'timeout'
+        ? 'infrastructure-failure'
+        : 'unresolved'
+  });
+  await safelyPersistCompilationFailureRecord(record);
+
+  return { ...result, failureRecordId: record.recordId };
+}
+
+export async function compileSource({
+  sourceContent,
+  sourceLabel,
+  seed,
+  owner,
+  signal,
+  onEvent
+}: CompileSourceOptions): Promise<CompileVisualizationResult> {
+  const cwd = process.cwd();
+  let outputPath: string;
+  let sourcePath: string;
+
+  try {
+    const output = await createCompileOutput({ owner, seed });
+    outputPath = output.outputPath;
+    sourcePath = path.join(output.outputDir, 'source', 'Main.sverlin');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, sourceContent, 'utf8');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const debug = emptyCompileDebug(cwd, message);
+    return {
+      ok: false,
+      error: message,
+      debug,
+      status: 500,
+      diagnostics: diagnosticsForFailure(debug, message),
+      failureKind: 'infrastructure'
+    };
+  }
+
+  const { command, args } = compileCommand(seed, outputPath, sourcePath, sourceLabel);
 
   const timeoutMs = readCompileTimeoutMs();
   const startedDebug: CompileDebug = {
@@ -125,29 +220,38 @@ export async function compileVisualization({
   onEvent?.({ type: 'finished', debug });
 
   if (debug.error) {
+    const diagnostics = diagnosticsForFailure(debug, debug.error);
     return {
       ok: false,
       error: debug.error,
       debug,
-      status: 500
+      status: 500,
+      diagnostics,
+      failureKind: classifyCompileFailure(debug)
     };
   }
 
   if (debug.timedOut) {
+    const error = `Compile backend timed out after ${formatDuration(timeoutMs)}.`;
     return {
       ok: false,
-      error: `Compile backend timed out after ${formatDuration(timeoutMs)}.`,
+      error,
       debug,
-      status: 504
+      status: 504,
+      diagnostics: diagnosticsForFailure(debug, error),
+      failureKind: 'timeout'
     };
   }
 
   if (debug.exitCode !== 0) {
+    const error = `Compile backend exited with code ${debug.exitCode}.`;
     return {
       ok: false,
-      error: `Compile backend exited with code ${debug.exitCode}.`,
+      error,
       debug,
-      status: 500
+      status: 500,
+      diagnostics: diagnosticsForFailure(debug, error),
+      failureKind: classifyCompileFailure(debug)
     };
   }
 
@@ -158,15 +262,25 @@ export async function compileVisualization({
       debug
     };
   } catch (err) {
+    const error = `Compile backend wrote invalid JSON: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
     return {
       ok: false,
-      error: `Compile backend wrote invalid JSON: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      error,
       debug,
-      status: 502
+      status: 502,
+      diagnostics: diagnosticsForFailure(debug, error),
+      failureKind: 'invalid-output'
     };
   }
+}
+
+function diagnosticsForFailure(debug: CompileDebug, fallback: string) {
+  const parsed = parseCompilerDiagnostics(debug.stderr);
+  return parsed.length > 0
+    ? parsed
+    : [{ severity: 'unknown' as const, message: fallback, raw: fallback }];
 }
 
 export function runCompile(

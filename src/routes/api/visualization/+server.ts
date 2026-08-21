@@ -130,7 +130,10 @@ export const GET: RequestHandler = ({ request, url }) => {
               error: result.error,
               seed,
               revision,
-              debug: result.debug
+              debug: result.debug,
+              diagnostics: result.diagnostics,
+              failureKind: result.failureKind,
+              failureRecordId: result.failureRecordId
             } satisfies CompileStreamFailure);
           }
         } catch (err) {

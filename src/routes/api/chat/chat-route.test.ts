@@ -8,6 +8,10 @@ const { generateOpenAIReply, OpenAIConfigurationError } = vi.hoisted(() => ({
     }
   }
 }));
+const { compileSource, persistedFailureRecords } = vi.hoisted(() => ({
+  compileSource: vi.fn(),
+  persistedFailureRecords: [] as unknown[]
+}));
 
 vi.mock('$lib/server/chat-adapters/openai', () => ({
   generateOpenAIReply,
@@ -19,7 +23,35 @@ vi.mock('$lib/server/chat-adapters/openai', () => ({
 }));
 
 vi.mock('$lib/server/openai-chat', () => ({ OpenAIConfigurationError }));
+vi.mock('$lib/server/compile-visualization', () => ({ compileSource }));
+vi.mock('$lib/server/compilation-failures', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/compilation-failures')>()),
+  safelyPersistCompilationFailureRecord: vi.fn(async (record: unknown) => {
+    persistedFailureRecords.push(structuredClone(record));
+  })
+}));
 import { DELETE, GET, POST } from './+server';
+import { updateArtifactFromManualEdit } from '$lib/server/artifacts/service';
+import { getArtifactSyncState } from '$lib/server/artifacts/store';
+
+const compiledTrace = {
+  canvas: { width: 800, height: 600 },
+  elements: [],
+  seed: 42,
+  sourcePath: 'Main.sverlin',
+  steps: [],
+  variables: []
+};
+
+const compileDebug = {
+  command: 'compile-app',
+  args: [],
+  cwd: process.cwd(),
+  durationMs: 10,
+  exitCode: 0,
+  stdout: '',
+  stderr: ''
+};
 
 function post(body: unknown) {
   return POST({
@@ -34,7 +66,9 @@ function post(body: unknown) {
 describe('chat API', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    persistedFailureRecords.length = 0;
     generateOpenAIReply.mockResolvedValue({ reply: 'A helpful answer.' });
+    compileSource.mockResolvedValue({ ok: true, trace: compiledTrace, debug: compileDebug });
     await DELETE({} as Parameters<typeof DELETE>[0]);
   });
 
@@ -76,6 +110,7 @@ describe('chat API', () => {
         responseFormat: expect.objectContaining({ name: 'chat_result', strict: true })
       })
     );
+    expect(compileSource).not.toHaveBeenCalled();
 
     const history = await GET({} as Parameters<typeof GET>[0]);
     await expect(history.json()).resolves.toMatchObject({
@@ -94,6 +129,16 @@ describe('chat API', () => {
     await expect(response.json()).resolves.toEqual({
       error: '`message` must be a non-empty string.'
     });
+  });
+
+  it('rejects an invalid visualization seed before calling the provider', async () => {
+    const response = await post({ message: 'hello', seed: 0 });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Seed must be a positive integer that JavaScript can represent safely.'
+    });
+    expect(generateOpenAIReply).not.toHaveBeenCalled();
   });
 
   it('rejects malformed JSON', async () => {
@@ -157,7 +202,7 @@ describe('chat API', () => {
       sourceArtifactContent: source
     });
 
-    const response = await post({ message: 'simplify the DSL' });
+    const response = await post({ message: 'simplify the DSL', seed: 42 });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
@@ -166,8 +211,156 @@ describe('chat API', () => {
         headRevision: 1,
         streamVersion: 1,
         events: [{ revision: 1, patch: [{ op: 'replace', path: '/content', value: source }] }]
-      }
+      },
+      compiledVisualization: { seed: 42, revision: 1, trace: compiledTrace }
     });
+    expect(compileSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceContent: source,
+        sourceLabel: 'Main.sverlin',
+        seed: 42,
+        owner: 'ai-candidate'
+      })
+    );
+  });
+
+  it('repairs one failed candidate internally before committing', async () => {
+    const invalidSource = 'program = missing\n';
+    const repairedSource =
+      'program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n';
+    generateOpenAIReply
+      .mockResolvedValueOnce({ reply: 'First attempt.', sourceArtifactContent: invalidSource })
+      .mockResolvedValueOnce({ reply: 'Corrected.', sourceArtifactContent: repairedSource });
+    compileSource
+      .mockResolvedValueOnce({
+        ok: false,
+        error: 'Compile backend exited with code 1.',
+        status: 500,
+        failureKind: 'source',
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'GHC-88464',
+            sourcePath: 'Main.sverlin',
+            line: 1,
+            column: 11,
+            message: 'Variable not in scope: missing',
+            raw: 'Main.sverlin:1:11: error: [GHC-88464]'
+          }
+        ],
+        debug: { ...compileDebug, exitCode: 1, stderr: 'compile error' }
+      })
+      .mockResolvedValueOnce({ ok: true, trace: compiledTrace, debug: compileDebug });
+
+    const response = await post({ message: 'change it', seed: 42 });
+    const state = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(state.artifact.current.content).toBe(repairedSource);
+    expect(state.artifact.events.at(-1).after.content).toBe(repairedSource);
+    expect(state.compiledVisualization).toMatchObject({ seed: 42, trace: compiledTrace });
+    expect(generateOpenAIReply).toHaveBeenCalledTimes(2);
+    expect(generateOpenAIReply.mock.calls[1]?.[0].context.compilationFeedback).toMatchObject({
+      failedSource: invalidSource,
+      diagnostics: [expect.objectContaining({ code: 'GHC-88464' })]
+    });
+    expect(persistedFailureRecords.at(-1)).toMatchObject({
+      schemaVersion: 1,
+      resolution: 'recovered',
+      prompt: {
+        botId: 'ai-assistant',
+        messages: expect.arrayContaining([{ role: 'user', content: 'change it' }]),
+        parameters: expect.objectContaining({ model: 'gpt-5.6' })
+      },
+      repairPrompt: {
+        context: {
+          compilationFeedback: expect.objectContaining({ failedSource: invalidSource })
+        }
+      },
+      attempts: [expect.objectContaining({ attempt: 1 })]
+    });
+  });
+
+  it('keeps the current artifact when both candidates fail', async () => {
+    const before = await GET({} as Parameters<typeof GET>[0]);
+    const beforeState = await before.json();
+    generateOpenAIReply
+      .mockResolvedValueOnce({ reply: 'First attempt.', sourceArtifactContent: 'first failure' })
+      .mockResolvedValueOnce({ reply: 'Second attempt.', sourceArtifactContent: 'second failure' });
+    compileSource.mockResolvedValue({
+      ok: false,
+      error: 'Compile backend exited with code 1.',
+      status: 500,
+      failureKind: 'source',
+      diagnostics: [
+        {
+          severity: 'error',
+          sourcePath: 'Main.sverlin',
+          line: 1,
+          column: 1,
+          message: 'parse error',
+          raw: 'Main.sverlin:1:1: error: parse error'
+        }
+      ],
+      debug: { ...compileDebug, exitCode: 1, stderr: 'parse error' }
+    });
+
+    const response = await post({ message: 'break it', seed: 42 });
+    const state = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(state.artifact.headRevision).toBe(beforeState.artifact.headRevision);
+    expect(state.artifact.current.content).toBe(beforeState.artifact.current.content);
+    expect(state.messages.at(-1).content).toContain(
+      'previous source and visualization are unchanged'
+    );
+    expect(state.compiledVisualization).toBeUndefined();
+    expect(persistedFailureRecords.at(-1)).toMatchObject({
+      resolution: 'rejected',
+      attempts: [expect.objectContaining({ attempt: 1 }), expect.objectContaining({ attempt: 2 })]
+    });
+  });
+
+  it('does not ask the assistant to repair an infrastructure failure', async () => {
+    const source = 'program = return ()\nvisualization = return ()\n';
+    generateOpenAIReply.mockResolvedValue({ reply: 'Updated.', sourceArtifactContent: source });
+    compileSource.mockResolvedValue({
+      ok: false,
+      error: 'Cabal could not start.',
+      status: 500,
+      failureKind: 'infrastructure',
+      diagnostics: [{ severity: 'unknown', message: 'Cabal could not start.', raw: 'failed' }],
+      debug: { ...compileDebug, exitCode: 1, stderr: '[sverlin:build-failed]' }
+    });
+
+    const response = await post({ message: 'change it', seed: 42 });
+
+    expect(response.status).toBe(502);
+    expect(generateOpenAIReply).toHaveBeenCalledTimes(1);
+    expect(persistedFailureRecords.at(-1)).toMatchObject({
+      resolution: 'infrastructure-failure',
+      attempts: [expect.objectContaining({ attempt: 1 })]
+    });
+  });
+
+  it('does not commit a compiled candidate over a newer artifact revision', async () => {
+    const candidate = 'program = return ()\nvisualization = return ()\n';
+    generateOpenAIReply.mockResolvedValue({ reply: 'Updated.', sourceArtifactContent: candidate });
+    compileSource.mockImplementationOnce(async () => {
+      const artifact = getArtifactSyncState();
+      await updateArtifactFromManualEdit(
+        `${artifact.current.content}\n-- concurrent edit`,
+        artifact.headRevision,
+        'concurrent test edit'
+      );
+      return { ok: true, trace: compiledTrace, debug: compileDebug };
+    });
+
+    const response = await post({ message: 'change it', seed: 42 });
+
+    expect(response.status).toBe(409);
+    expect(getArtifactSyncState().current.content).toContain('-- concurrent edit');
+    expect(getArtifactSyncState().current.content).not.toBe(candidate);
   });
 
   it('passes the complete artifact history to the next chatbot turn', async () => {
@@ -181,7 +374,7 @@ describe('chat API', () => {
         reply: `Revision ${revision}`,
         sourceArtifactContent: source
       });
-      await post({ message: `apply revision ${revision}` });
+      await post({ message: `apply revision ${revision}`, seed: 42 });
     }
 
     generateOpenAIReply.mockResolvedValueOnce({ reply: 'History is available.' });
