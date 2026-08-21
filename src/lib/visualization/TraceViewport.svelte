@@ -130,10 +130,18 @@
 
   function scenePoint(clientX: number, clientY: number) {
     if (!svg) return { x: 0, y: 0 };
-    const bounds = svg.getBoundingClientRect();
-    const x = ((clientX - bounds.left) / bounds.width) * width;
-    const y = ((clientY - bounds.top) / bounds.height) * height;
-    return { x: (x - panX) / zoom, y: (y - panY) / zoom };
+    const screenTransform = svg.getScreenCTM();
+    if (!screenTransform) return { x: 0, y: 0 };
+
+    const pointer = svg.createSVGPoint();
+    pointer.x = clientX;
+    pointer.y = clientY;
+    const viewportPoint = pointer.matrixTransform(screenTransform.inverse());
+
+    return {
+      x: (viewportPoint.x - panX) / zoom,
+      y: (viewportPoint.y - panY) / zoom
+    };
   }
 
   function intersects(
@@ -187,17 +195,17 @@
     onpointerup={onPointerUp}
     onpointercancel={onPointerUp}
   >
-    <rect {width} {height} fill="white" />
-    <rect
-      class="scene-boundary"
-      {width}
-      {height}
-      fill="none"
-      stroke="currentColor"
-      stroke-dasharray="6 4"
-      vector-effect="non-scaling-stroke"
-    />
     <g {transform}>
+      <rect {width} {height} fill="white" />
+      <rect
+        class="scene-boundary"
+        {width}
+        {height}
+        fill="none"
+        stroke="currentColor"
+        stroke-dasharray="6 4"
+        vector-effect="non-scaling-stroke"
+      />
       <foreignObject x="0" y="0" {width} {height}>
         <div class="visual-canvas" xmlns="http://www.w3.org/1999/xhtml">
           {#each orderedElements as element (element.instanceId)}
