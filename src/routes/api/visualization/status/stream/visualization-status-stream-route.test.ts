@@ -37,7 +37,6 @@ describe('_readCompileStatus stream helper', () => {
       command: 'cabal',
       args: ['run', '-v0', 'compile-app'],
       seed: 1988735004,
-      details: true,
       outputPath: '/tmp/bench-stream.json'
     });
 

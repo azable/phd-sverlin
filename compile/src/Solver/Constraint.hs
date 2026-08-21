@@ -23,14 +23,8 @@ module Solver.Constraint
     -- inspection, and energy lowering.
     flattenConstraint
   , flattenConstraints
-  , constraintView
-  , constraintViews
   , constraintCount
   , equalityEpsilon
-  , -- * Diagnostic views
-    -- | Read-only constraint views exposed through the public solver facade for
-    -- inspection and tests.
-    ConstraintView(..)
   , -- * Components
     -- | Structured relation API used by choreography matching to bridge
     -- vectors, HSL colours, and scalar fields without exposing raw solver
@@ -58,14 +52,6 @@ data Constraint
   | Soft Constraint
   | All [Constraint]
   deriving (Eq, Ord, Show)
-
-data ConstraintView
-  = ConstraintEqual Domain ExprView ExprView
-  | ConstraintLessOrEqual ExprView ExprView
-  | ConstraintMinimize ExprView
-  | ConstraintSoft ConstraintView
-  | ConstraintAll [ConstraintView]
-  deriving (Eq, Show)
 
 instance Semigroup Constraint where
   lhs <> rhs = All (flattenConstraint lhs ++ flattenConstraint rhs)
@@ -140,20 +126,6 @@ canonicalConstraint constraint =
 
 allOf :: [Constraint] -> Constraint
 allOf = All
-
-constraintView :: Constraint -> ConstraintView
-constraintView constraint =
-  case constraint of
-    Equals domain lhs rhs ->
-      ConstraintEqual domain (rawExprView lhs) (rawExprView rhs)
-    LessOrEqual lhs rhs ->
-      ConstraintLessOrEqual (rawExprView lhs) (rawExprView rhs)
-    Minimize objective -> ConstraintMinimize (rawExprView objective)
-    Soft inner -> ConstraintSoft (constraintView inner)
-    All constraints -> ConstraintAll (map constraintView constraints)
-
-constraintViews :: [Constraint] -> [ConstraintView]
-constraintViews = map constraintView . flattenConstraints
 
 constraintCount :: [Constraint] -> Int
 constraintCount = length . flattenConstraints

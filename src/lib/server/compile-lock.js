@@ -16,7 +16,6 @@ import { readWorkspaceOutputDir } from './workspace-output.js';
  * @property {string} command
  * @property {string[]} args
  * @property {number=} seed
- * @property {boolean=} details
  * @property {string=} outputPath
  */
 
@@ -29,7 +28,6 @@ import { readWorkspaceOutputDir } from './workspace-output.js';
  * @property {string} command
  * @property {string[]} args
  * @property {number=} seed
- * @property {boolean=} details
  * @property {string=} outputPath
  * @property {string} lockPath
  */
@@ -48,7 +46,6 @@ import { readWorkspaceOutputDir } from './workspace-output.js';
  * @property {string} command
  * @property {string[]} args
  * @property {number=} seed
- * @property {boolean=} details
  * @property {string=} outputPath
  */
 
@@ -189,7 +186,6 @@ export function publicCompileLockInfo(info, lockPath = readCompileLockPath()) {
     command: info.command,
     args: info.args,
     ...(typeof info.seed === 'number' ? { seed: info.seed } : {}),
-    ...(typeof info.details === 'boolean' ? { details: info.details } : {}),
     ...(info.outputPath ? { outputPath: info.outputPath } : {}),
     lockPath
   };
@@ -222,7 +218,6 @@ function buildCompileLockInfo(options) {
     command: options.command,
     args: options.args,
     ...(typeof options.seed === 'number' ? { seed: options.seed } : {}),
-    ...(typeof options.details === 'boolean' ? { details: options.details } : {}),
     ...(options.outputPath ? { outputPath: options.outputPath } : {})
   };
 }
@@ -265,7 +260,6 @@ function parseCompileLockInfo(value) {
     ...(typeof record.seed === 'number' && Number.isSafeInteger(record.seed)
       ? { seed: record.seed }
       : {}),
-    ...(typeof record.details === 'boolean' ? { details: record.details } : {}),
     ...(typeof record.outputPath === 'string' ? { outputPath: record.outputPath } : {})
   };
 }

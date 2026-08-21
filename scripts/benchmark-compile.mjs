@@ -27,7 +27,6 @@ for (let i = 0; i < options.warmup; i += 1) {
     command,
     cwd: repoRoot,
     seed,
-    details: options.details,
     timeoutMs: options.timeoutMs
   });
 }
@@ -39,7 +38,6 @@ for (let iteration = 1; iteration <= options.iterations; iteration += 1) {
       command,
       cwd: repoRoot,
       seed,
-      details: options.details,
       timeoutMs: options.timeoutMs
     });
     runs.push({ iteration, ...run });
@@ -54,13 +52,12 @@ const result = {
   startedAt,
   finishedAt: new Date().toISOString(),
   command: 'cabal run -v0 compile-app --',
-  mode: options.details ? 'json+details' : 'json',
+  mode: 'json',
   options: {
     seeds: options.seeds,
     iterations: options.iterations,
     warmup: options.warmup,
-    timeoutMs: options.timeoutMs,
-    details: options.details
+    timeoutMs: options.timeoutMs
   },
   summary,
   runs
@@ -78,7 +75,6 @@ if (summary.failureCount > 0) {
 
 function parseArgs(args) {
   const parsed = {
-    details: false,
     help: false,
     iterations: 1,
     output: null,
@@ -91,9 +87,6 @@ function parseArgs(args) {
     const arg = args[i];
     switch (arg) {
       case '--':
-        break;
-      case '--details':
-        parsed.details = true;
         break;
       case '--help':
       case '-h':
@@ -161,7 +154,7 @@ function parseSeeds(value) {
   return seeds;
 }
 
-async function runCompile({ command, cwd, seed, details, timeoutMs }) {
+async function runCompile({ command, cwd, seed, timeoutMs }) {
   const { outputDir, outputPath } = await createCompileOutput({ owner: 'bench', seed });
   const args = [
     'run',
@@ -176,10 +169,6 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
     '--seed',
     String(seed)
   ];
-  if (details) {
-    args.push('--details');
-  }
-
   const lockStarted = performance.now();
   const lockResult = await acquireCompileLock({
     owner: 'bench',
@@ -187,7 +176,6 @@ async function runCompile({ command, cwd, seed, details, timeoutMs }) {
     command,
     args,
     seed,
-    details,
     outputPath
   });
 
@@ -460,7 +448,6 @@ Options:
   --timeout-ms N    Per-run timeout. Default: 20000
   --seed A,B,C      Override default positive seed list
   --output PATH     Write full JSON results
-  --details         Include compile backend --details diagnostics
   --help            Show this message
 `);
 }

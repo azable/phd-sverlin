@@ -17,7 +17,6 @@ type CompileQuery =
   | {
       ok: true;
       seed: number;
-      details: boolean;
       revision: number;
     }
   | {
@@ -65,7 +64,7 @@ export const GET: RequestHandler = ({ request, url }) => {
         return;
       }
 
-      const { seed, details, revision } = parsedQuery;
+      const { seed, revision } = parsedQuery;
       const abortCompile = () => abortController.abort();
       request.signal.addEventListener('abort', abortCompile, { once: true });
 
@@ -73,7 +72,6 @@ export const GET: RequestHandler = ({ request, url }) => {
         ok: true,
         status: 'starting',
         seed,
-        details,
         revision
       } satisfies CompileStreamStatus);
 
@@ -81,7 +79,6 @@ export const GET: RequestHandler = ({ request, url }) => {
         try {
           const result = await compileVisualization({
             seed,
-            details,
             revision,
             signal: abortController.signal,
             onEvent(event) {
@@ -90,7 +87,6 @@ export const GET: RequestHandler = ({ request, url }) => {
                   ok: true,
                   status: 'running',
                   seed,
-                  details,
                   revision,
                   debug: event.debug
                 } satisfies CompileStreamStatus);
@@ -109,7 +105,6 @@ export const GET: RequestHandler = ({ request, url }) => {
                   ok: true,
                   status: 'complete',
                   seed,
-                  details,
                   revision,
                   debug: event.debug
                 } satisfies CompileStreamStatus);
@@ -126,7 +121,6 @@ export const GET: RequestHandler = ({ request, url }) => {
               ok: true,
               trace: result.trace,
               seed,
-              details,
               revision
             } satisfies CompileStreamSuccess);
           } else {
@@ -135,7 +129,6 @@ export const GET: RequestHandler = ({ request, url }) => {
               status: result.status,
               error: result.error,
               seed,
-              details,
               revision,
               debug: result.debug,
               ...(result.lock ? { lock: result.lock } : {})
@@ -148,7 +141,6 @@ export const GET: RequestHandler = ({ request, url }) => {
               status: 500,
               error: err instanceof Error ? err.message : String(err),
               seed,
-              details,
               revision
             } satisfies CompileStreamFailure);
           }
@@ -174,16 +166,6 @@ export const GET: RequestHandler = ({ request, url }) => {
 };
 
 export function _readCompileQuery(url: URL): CompileQuery {
-  const details = readBoolean(url.searchParams.get('details'));
-
-  if (details === null) {
-    return {
-      ok: false,
-      status: 400,
-      error: '`details` must be `true` or `false` when provided.'
-    };
-  }
-
   const revisionValue = url.searchParams.get('revision');
   const revision =
     revisionValue === null ? getArtifactSyncState().headRevision : Number(revisionValue);
@@ -202,7 +184,6 @@ export function _readCompileQuery(url: URL): CompileQuery {
     return {
       ok: true,
       seed: randomInt(minSeed, maxSeedExclusive),
-      details,
       revision
     };
   }
@@ -220,15 +201,6 @@ export function _readCompileQuery(url: URL): CompileQuery {
   return {
     ok: true,
     seed,
-    details,
     revision
   };
-}
-
-function readBoolean(value: string | null): boolean | null {
-  if (value === null) return false;
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-
-  return null;
 }

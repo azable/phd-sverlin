@@ -40,10 +40,10 @@ data TestValue
 
 type instance Payload TestValue = LInt TestValue
 
-payloadMatchedStats :: (Int, Int, Int, Int)
+payloadMatchedStats :: (Int, Int, Int)
 payloadMatchedStats = fixtureStats payloadMatchedSpec
 
-groupStats :: (Int, Int, Int, Int)
+groupStats :: (Int, Int, Int)
 groupStats = fixtureStats groupSpec
 
 pendingMaterializedStepCount :: Int
@@ -78,7 +78,7 @@ centerGraph = buildGraph centerSpec
 styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
 
-fixtureStats :: MatchSpec -> (Int, Int, Int, Int)
+fixtureStats :: MatchSpec -> (Int, Int, Int)
 fixtureStats spec = viewGraphStats (buildGraph spec)
 
 buildGraph :: MatchSpec -> ViewGraph

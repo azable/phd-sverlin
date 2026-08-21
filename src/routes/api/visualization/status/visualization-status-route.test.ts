@@ -41,7 +41,6 @@ describe('_readCompileStatus', () => {
       command: 'cabal',
       args: ['run', '-v0', 'compile-app'],
       seed: 320994595,
-      details: true,
       outputPath: '/tmp/bench-compile.json'
     });
 
@@ -56,7 +55,6 @@ describe('_readCompileStatus', () => {
         expect(status.owner).toBe('bench');
         expect(status.command).toBe('cabal');
         expect(status.seed).toBe(320994595);
-        expect(status.details).toBe(true);
         expect(status.outputPath).toBe('/tmp/bench-compile.json');
       }
     } finally {

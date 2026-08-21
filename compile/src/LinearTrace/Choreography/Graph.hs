@@ -4,7 +4,6 @@
 module LinearTrace.Choreography.Graph
   ( VisualTraceGraph
   , ViewGraph
-  , visualTraceCore
   , buildViewGraph
   , solveViewGraphWithSeed
   , viewGraphStats
@@ -29,31 +28,25 @@ data VisualTraceGraph =
 
 type ViewGraph = V.ViewGraph
 
-visualTraceCore :: VisualTraceGraph -> C.TraceGraph
-visualTraceCore (VisualTraceGraph _ coreGraph) = coreGraph
-
 buildViewGraph :: VisualTraceGraph -> ViewGraph
 buildViewGraph (VisualTraceGraph spec coreGraph) =
   let output = viewTraceSteps spec (C.traceGraphSteps coreGraph)
    in buildMatchedViewGraph
         spec
-        (viewSteps output)
         (viewNodes output)
         (viewRenderFrames output)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
 
-viewGraphStats :: ViewGraph -> (P.Int, P.Int, P.Int, P.Int)
+viewGraphStats :: ViewGraph -> (P.Int, P.Int, P.Int)
 viewGraphStats graph =
   ( P.length (V.viewNodes graph)
-  , P.length (V.viewSteps graph)
   , P.length (V.viewConstraints graph)
   , P.length (V.viewRenderFrames graph))
 
 data ViewTraceAccumulator = ViewTraceAccumulator
-  { viewSteps                :: [V.ViewStep]
-  , viewNodes                :: [V.ViewNode]
+  { viewNodes                :: [V.ViewNode]
   , viewRenderFrames         :: [[V.RenderIntent]]
   , viewPendingRenderIntents :: [V.RenderIntent]
   }
@@ -61,8 +54,7 @@ data ViewTraceAccumulator = ViewTraceAccumulator
 emptyViewTraceAccumulator :: ViewTraceAccumulator
 emptyViewTraceAccumulator =
   ViewTraceAccumulator
-    { viewSteps = []
-    , viewNodes = []
+    { viewNodes = []
     , viewRenderFrames = []
     , viewPendingRenderIntents = []
     }
@@ -93,12 +85,11 @@ advanceViewTrace ::
   -> C.TraceStep
   -> ViewTraceAccumulator
 advanceViewTrace spec accumulator record =
-  let (step, output) =
+  let output =
         viewTraceStep spec (viewPendingRenderIntents accumulator) record
       nodes = V.emittedNodes output
    in ViewTraceAccumulator
-        { viewSteps = viewSteps accumulator P.++ [step]
-        , viewNodes = viewNodes accumulator P.++ nodes
+        { viewNodes = viewNodes accumulator P.++ nodes
         , viewRenderFrames =
             viewRenderFrames accumulator P.++ V.emittedRenderFrames output
         , viewPendingRenderIntents = V.pendingRenderIntents output
@@ -108,14 +99,12 @@ viewTraceStep ::
      MatchSpec
   -> [V.RenderIntent]
   -> C.TraceStep
-  -> (V.ViewStep, V.ViewOutput)
+  -> V.ViewOutput
 viewTraceStep spec pending = C.foldTraceStep onCheckpoint
   where
-    onCheckpoint label _payload events =
+    onCheckpoint _label events =
       let rawOutput = V.flushViewOutput (buildTraceEventsOutput spec events)
-          output = V.mergeInitialRenderIntents pending rawOutput
-          nodes = V.emittedNodes output
-       in (V.ViewStep label nodes, output)
+       in V.mergeInitialRenderIntents pending rawOutput
 
 buildTraceEventsOutput :: MatchSpec -> C.TraceEvents -> V.ViewOutput
 buildTraceEventsOutput spec =

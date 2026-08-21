@@ -133,12 +133,11 @@ patchedNodeOutput patch node0 =
 
 finalizeViewGraph ::
      [ViewNode]
-  -> [ViewStep]
   -> [Constraint]
   -> [ChoiceConstraint]
   -> [[RenderIntent]]
   -> ViewGraph
-finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderFrames =
+finalizeViewGraph nodes baseConstraints baseChoiceConstraints renderFrames =
   let allNodeConstraints = P.concatMap viewNodeConstraints nodes
       allNodeStyleChoiceConstraints =
         P.concatMap viewNodeStyleChoiceConstraints nodes
@@ -150,7 +149,6 @@ finalizeViewGraph nodes viewSteps' baseConstraints baseChoiceConstraints renderF
         { viewCanvasWidth = canvasWidthValue defaultViewEnv
         , viewCanvasHeight = canvasHeightValue defaultViewEnv
         , viewNodes = nodes
-        , viewSteps = viewSteps'
         , viewConstraints = constraints
         , viewChoiceConstraints = choiceConstraints
         , viewRenderFrames = frames

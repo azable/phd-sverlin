@@ -60,7 +60,6 @@ module Solver
     -- | Hard constraints are emitted directly; wrap a constraint in 'soften'
     -- or use 'minimize' to contribute soft objective terms.
     Constraint
-  , ConstraintView(..)
   , ConstrainEq(..)
   , ConstrainOrd(..)
   , (@==@)
@@ -70,7 +69,6 @@ module Solver
   , within
   , minimize
   , soften
-  , constraintViews
   , constraintCount
   , -- * Multi-component relations
     -- | Components let higher layers relate structured values such as vectors

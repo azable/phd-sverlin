@@ -72,7 +72,7 @@ describe('compileVisualization', () => {
     process.env.SVERLIN_OUTPUT_DIR = path.join(tempDir, 'outputs');
 
     try {
-      const result = await compileVisualization({ seed: 1, details: false, revision: 1 });
+      const result = await compileVisualization({ seed: 1, revision: 1 });
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -118,7 +118,7 @@ describe('compileVisualization', () => {
     if (!lockResult.acquired) throw new Error(lockResult.message);
 
     try {
-      const result = await compileVisualization({ seed: 1, details: false, revision: 0 });
+      const result = await compileVisualization({ seed: 1, revision: 0 });
 
       expect(result.ok).toBe(false);
       if (!result.ok) {

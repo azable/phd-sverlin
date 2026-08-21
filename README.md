@@ -47,11 +47,10 @@ Useful compiler options:
 
 ```sh
 pnpm run compile -- --output outputs/sverlin-seed-1988735004.json --seed 1988735004
-pnpm run compile -- --output outputs/sverlin-compiled.json --details
 pnpm run compile -- --output outputs/sverlin-compiled.json --target ir-json
 ```
 
-`--seed` makes the solver deterministic for a specific run. `--target ir-json` is currently the only output target and is the default; the target boundary is in place for future compiler-owned artifact formats. The web app no longer reads or writes `static/compiled.json`.
+`--seed` makes the solver deterministic for a specific run. `--target ir-json` is currently the only output target and is the default; the target boundary is in place for future compiler-owned artifact formats, including a possible human-readable rendering of the solved `VisualizationPackage`. Targets consume only the solved IR and do not expose trace-builder events, symbolic constraints, or additional seeded choices. The web app no longer reads or writes `static/compiled.json`.
 
 Supported compile entrypoints and frontend source writes share a filesystem lock at `outputs/sverlin-compile.lock` by default. This prevents the web app, `pnpm run compile`, `pnpm run bench:compile`, and an atomic `DSL/Main.hs` replacement from overlapping. Generated web, benchmark, and seeded manual compile outputs are kept under the ignored workspace `outputs/` directory for inspection, grouped by seed with paths like `outputs/seed-1/web-abc123/compiled-seed-1.json` or `outputs/seed-1/bench-def456/compiled-seed-1.json`. Set `SVERLIN_OUTPUT_DIR` to override that workspace output root. A manual compile fails fast if another supported operation is active, while the web UI reports active external compiles, syncs their seed when known, and retries instead of starting a conflicting backend build. Raw ad hoc `cabal run ... compile-app` commands bypass this coordination and should be avoided during frontend development.
 
@@ -73,7 +72,7 @@ pnpm run bench:solver --json
 
 The solver preprocessing step flattens conjunctions, removes redundant or duplicate canonical constraints, merges direct and single-variable affine `within` ranges into native L-BFGS-B bounds, removes linear inequalities already implied by native bounds, and reports raw/canonical/eliminated counts through `ProblemInspection`. Finite categorical choices use `Choice`/`Category` plus `freeChoice`, `choose`, `sameChoice`, and `differentChoice`; they are sampled from satisfying finite assignments before numeric solving, with `withMaxCategoricalBranches` guarding accidental branch explosions.
 
-The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. This keeps direct solver tests conservative while avoiding very long regeneration tails. `pnpm run compile -- --output outputs/sverlin-seed-1.json --seed 1 --details` prints variables, native bounds, energy terms, eliminated constraints, optimizer iterations, function/gradient evaluations, and phase timings for view graph construction, solve, IR compilation, target encoding, and writing; use those numbers when investigating slow seeds.
+The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. This keeps direct solver tests conservative while avoiding very long regeneration tails. Compile commands print phase timings for view graph construction, solving, IR compilation, target encoding, and writing. Use `pnpm run bench:solver` for detailed solver problem sizes, preprocessing counts, and optimizer evaluation metrics.
 
 Use the full compile benchmark when changing the Haskell-to-JSON path, frontend compile stream, or anything where end-to-end behavior matters:
 
@@ -99,10 +98,7 @@ Useful options:
 ```sh
 pnpm run bench:compile -- --iterations 3
 pnpm run bench:compile -- --seed 1,320994595
-pnpm run bench:compile -- --details
 ```
-
-Benchmark `--details` separately because it intentionally includes diagnostic rendering and extra stdout/stderr output.
 
 ## Run The Frontend
 

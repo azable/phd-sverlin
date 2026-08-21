@@ -5,7 +5,6 @@ import           Data.ByteString.Lazy                     qualified as BL
 import           DSL.Main
 import           GHC.Clock                                (getMonotonicTimeNSec)
 import           LinearTrace.Choreography                 qualified as Choreography
-import           LinearTrace.Print                        qualified as Print
 import           LinearTrace.Visualization.Compile        qualified as Compile
 import           LinearTrace.Visualization.IR             qualified as IR
 import           LinearTrace.Visualization.Target         qualified as Target
@@ -17,8 +16,7 @@ import           System.IO                                (Handle, hPutStrLn,
 import           System.Random                            (randomRIO)
 
 data Options = Options
-  { optionShowSolverDetails :: Bool
-  , optionSeed              :: Maybe Int
+  { optionSeed              :: Maybe Int
   , optionOutputPath        :: FilePath
   , optionTarget            :: Target.OutputTarget
   }
@@ -40,7 +38,6 @@ runVisualization ::
   -> Choreography.VisualTraceGraph
   -> IO (Either String IR.VisualizationPackage)
 runVisualization options seed graph = do
-  Print.hPrintTrace stdout (Choreography.visualTraceCore graph)
   (viewGraph, viewGraphMs) <-
     timedPhase
       (evaluate (forceViewGraph (Choreography.buildViewGraph graph)))
@@ -49,12 +46,6 @@ runVisualization options seed graph = do
       (Choreography.solveViewGraphWithSeed
          (Choreography.RandomSeed seed)
          viewGraph)
-  Print.hPrintSolutionByStep
-    stdout
-    (optionShowSolverDetails options)
-    solved
-    viewGraph
-  Print.hPrintSolutionSummary stdout solved
   (compiledResult, compileMs) <-
     timedPhase
       (evaluate
@@ -84,8 +75,8 @@ dslSourcePath = "compile/app/DSL/Main.hs"
 forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
 forceViewGraph graph =
   case Choreography.viewGraphStats graph of
-    (nodes, steps, constraints, renderFrames) ->
-      nodes `seq` steps `seq` constraints `seq` renderFrames `seq` graph
+    (nodes, constraints, renderFrames) ->
+      nodes `seq` constraints `seq` renderFrames `seq` graph
 
 forceCompileResult ::
      Either String IR.VisualizationPackage
@@ -143,12 +134,7 @@ optionsParserInfo =
 optionsParser :: Parser Options
 optionsParser =
   Options
-    <$> switch
-          (long "details"
-             <> short 'd'
-             <> help
-                  "Print detailed visualization nodes, constraints, initial variables, and solved values")
-    <*> optional
+    <$> optional
           (option
              auto
              (long "seed"

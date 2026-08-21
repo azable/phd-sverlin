@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs             #-}
-{-# LANGUAGE RankNTypes        #-}
 
 -- | Symbolic view graph representation. Choreography and build code construct
 -- these nodes; solving consumes their constraints; visualization compilation
@@ -19,8 +18,8 @@ module LinearTrace.View.Graph
   , viewTagsToList
   , ContentMode(..)
   , -- * Graph data
-    -- | Symbolic graph, node, step, and render-intent records shared by the
-    -- view builder, solver, materializer, and diagnostics.
+    -- | Symbolic graph, node, and render-intent records shared by the view
+    -- builder, solver, and materializer.
     ViewGraph(..)
   , ViewNode(..)
   , Node(..)
@@ -30,14 +29,13 @@ module LinearTrace.View.Graph
   , CompoundFit(..)
   , NodeChild(..)
   , NodeVarRoot(..)
-  , ViewStep(..)
   , RenderIntent(..)
   , LayoutAttr(..)
   , AnyTraceNode(..)
   , AnyLayoutView(..)
   , -- * Lookups and helpers
-    -- | Accessors and stable key helpers used by choreography matching,
-    -- printing, and compile identity tracking.
+    -- | Accessors and stable key helpers used by choreography matching and
+    -- compile identity tracking.
     traceNodeTags
   , generatedNodeMeta
   , styleForRef
@@ -48,25 +46,17 @@ module LinearTrace.View.Graph
   , nodeVarName
   , nodeVar
   , nodeChildFromTraceNode
-  , -- * Solver diagnostics
-    -- | Style expression traversal helpers used by printing to show solved
-    -- view values by step.
-    mapNodeStyleExprLeaves
-  , solvedNodeExprs
   , viewTraceNodes
   ) where
 
-import           Data.Kind                   (Type)
 import           LinearTrace.View.Primitives (Bounds (..), BoundsExpr,
                                               HasBounds (..))
 import           LinearTrace.View.Style      (NodeStyle, nodeStyleBounds,
-                                              nodeStyleWithBounds,
-                                              solvedNodeStyleExprs)
-import qualified LinearTrace.View.Style      as Style
+                                              nodeStyleWithBounds)
 import qualified Prelude                     as P
 import qualified Solver                      as S
 import           Solver                      (ChoiceConstraint, Constraint,
-                                              Expr, Solution, SymbolicType)
+                                              Expr, SymbolicType)
 
 newtype ViewId =
   ViewId P.Int
@@ -158,14 +148,10 @@ instance HasBounds (Node tag) where
 data ViewNode where
   ViewNode :: Node tag -> ViewNode
 
-data ViewStep where
-  ViewStep :: P.String -> [ViewNode] -> ViewStep
-
 data ViewGraph = ViewGraph
   { viewCanvasWidth       :: P.Double
   , viewCanvasHeight      :: P.Double
   , viewNodes             :: [ViewNode]
-  , viewSteps             :: [ViewStep]
   , viewConstraints       :: [Constraint]
   , viewChoiceConstraints :: [ChoiceConstraint]
   , viewRenderFrames      :: [[RenderIntent]]
@@ -213,13 +199,6 @@ nodeChildFromTraceNode anyNode =
         { nodeChildId = viewRefId (nodeRef node)
         , nodeChildBounds = nodeStyleBounds (nodeStyle node)
         }
-
-mapNodeStyleExprLeaves ::
-     (forall (ty :: Type). P.String -> Expr ty -> a) -> Node tag -> [a]
-mapNodeStyleExprLeaves f node = Style.mapNodeStyleExprLeaves f (nodeStyle node)
-
-solvedNodeExprs :: Solution -> Node tag -> [(P.String, P.Double)]
-solvedNodeExprs solution node = solvedNodeStyleExprs solution (nodeStyle node)
 
 viewTraceNodes :: [ViewNode] -> [AnyTraceNode]
 viewTraceNodes nodes =

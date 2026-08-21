@@ -1,18 +1,15 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- | Public convenience facade for users that want the core trace DSL plus
--- printing and JSON compilation from one import. This module only re-exports
--- stable APIs from 'LinearTrace.Core', 'LinearTrace.Print', and
--- 'LinearTrace.Visualization.Compile'; lower-level view/choreography internals stay behind
--- their own modules.
+-- | Public convenience facade for users that want the core trace DSL plus JSON
+-- compilation from one import. This module only re-exports stable APIs from
+-- 'LinearTrace.Core' and 'LinearTrace.Visualization.Compile'; lower-level
+-- view/choreography internals stay behind their own modules.
 module LinearTrace
   ( -- * Core public API data
     -- | Core graph, payload, fact, and typeclass vocabulary re-exported from
     -- 'LinearTrace.Core'. Use these when building a trace directly.
     TraceGraph
-  , TraceGraphWith
   , TraceBuilder
-  , TraceBuilderWith
   , Traceable
   , Block
   , Slot
@@ -117,7 +114,6 @@ module LinearTrace
   , Seal(..)
   , Unseal(..)
   , checkpoint
-  , checkpointWith
   , (<$>)
   , (<*>)
   , -- * Trace events and steps
@@ -125,25 +121,19 @@ module LinearTrace
   , TraceEvents
   , emptyTraceEvents
   , foldTraceEvents
-  , NoStepPayload
   , TraceStep
-  , TraceStepWith
   , traceGraphPendingEvents
   , traceGraphSteps
   , traceStepEvents
   , foldTraceStep
-  , -- * Graph building, rendering and compilation
-    -- | Output-facing helpers from 'LinearTrace.Print' and the IR compiler.
-    -- Target encoding is owned by 'LinearTrace.Visualization.Target'.
+  , -- * Graph building and compilation
+    -- | Graph construction and the renderer-independent IR compiler. Target
+    -- encoding is owned by 'LinearTrace.Visualization.Target'.
     PayloadView(..)
   , buildGraph
-  , printGraph
-  , printTrace
-  , printSolutionByStep
   , compileSolved
   ) where
 
 import           LinearTrace.Visualization.Compile
 import           LinearTrace.Core
-import           LinearTrace.Print
 import           Prelude             hiding ((<$>), (<*>))

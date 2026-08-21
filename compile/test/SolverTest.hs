@@ -128,11 +128,11 @@ choreographyBridgeTests =
   testGroup
     "choreography bridge"
     [ testCase "payload selector controls matched blocks"
-        $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
+        $ let (nodeCount, _constraintCount, _frameCount) =
                 ChoreographyFixtures.payloadMatchedStats
            in nodeCount @?= 1
     , testCase "grouping matches neutral view tags"
-        $ let (nodeCount, _stepCount, _constraintCount, _frameCount) =
+        $ let (nodeCount, _constraintCount, _frameCount) =
                 ChoreographyFixtures.groupStats
            in nodeCount @?= 3
     , testCase "apply2 payload operators consume built-in wrappers linearly" $ do

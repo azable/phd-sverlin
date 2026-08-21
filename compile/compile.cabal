@@ -65,9 +65,7 @@ common app-dependencies
                       aeson,
                       aeson-pretty,
                       bytestring,
-                      optparse-applicative,
-                      boxes,
-                      ansi-terminal
+                      optparse-applicative
 
     default-language: GHC2024
 
@@ -80,7 +78,6 @@ library
         LinearTrace
         LinearTrace.Choreography
         LinearTrace.Core
-        LinearTrace.Print
         Solver
         LinearTrace.Visualization.Compile
         LinearTrace.Visualization.IR

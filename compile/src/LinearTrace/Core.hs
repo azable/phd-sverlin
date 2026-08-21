@@ -2,15 +2,13 @@
 
 -- | Stable facade for the linear trace core. It re-exports the direct trace
 -- builder API from 'LinearTrace.Core.Internal' while hiding internal graph state
--- constructors that only event projection and diagnostics should need.
+-- constructors that only event projection should need.
 module LinearTrace.Core
   ( -- * Core public API data
     -- | Direct trace graph and payload vocabulary. Choreography depends on
     -- this layer for typed payload handles and trace lifecycle operations.
     TraceGraph
-  , TraceGraphWith
   , TraceBuilder
-  , TraceBuilderWith
   , Block
   , Slot
   , BlockId
@@ -122,14 +120,12 @@ module LinearTrace.Core
   , (<*>)
   , -- * Trace events and steps
     -- | Event and checkpoint views over built graphs. These are the direct
-    -- core interface used by visualization layers and diagnostics.
+    -- core interface used by visualization layers.
     TraceEvent(..)
   , TraceEvents
   , emptyTraceEvents
   , foldTraceEvents
-  , NoStepPayload
   , TraceStep
-  , TraceStepWith
   , traceGraphPendingEvents
   , traceGraphSteps
   , traceStepEvents
@@ -138,7 +134,6 @@ module LinearTrace.Core
     -- | Final core graph builders. 'LinearTrace.Choreography' uses the same
     -- core state but attaches view output alongside it.
     checkpoint
-  , checkpointWith
   , buildGraph
   ) where
 

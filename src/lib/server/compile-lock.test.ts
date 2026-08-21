@@ -103,6 +103,30 @@ describe('compile lock', () => {
     }
   });
 
+  it('accepts legacy lock files while discarding details metadata', async () => {
+    const lockPath = process.env[compileLockPathEnvVar];
+    if (!lockPath) throw new Error('test lock path was not configured');
+
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        token: 'legacy-token',
+        owner: 'manual',
+        pid: process.pid,
+        startedAt: new Date(0).toISOString(),
+        cwd: process.cwd(),
+        command: 'cabal',
+        args: ['run'],
+        details: true
+      })}\n`,
+      'utf8'
+    );
+
+    const lock = await readCompileLock();
+    expect(lock?.token).toBe('legacy-token');
+    expect(lock).not.toHaveProperty('details');
+  });
+
   it('reports active locks and removes stale locks when reading active status', async () => {
     const lockPath = process.env[compileLockPathEnvVar];
     if (!lockPath) throw new Error('test lock path was not configured');
@@ -166,8 +190,7 @@ function lockOptions(owner: string) {
     cwd: process.cwd(),
     command: 'cabal',
     args: ['run', '-v0', 'compile-app'],
-    seed: 42,
-    details: false
+    seed: 42
   };
 }
 

@@ -50,7 +50,6 @@ export type CompileLockHolder = {
   command: string;
   args: string[];
   seed?: number;
-  details?: boolean;
   outputPath?: string;
   lockPath: string;
 };
@@ -61,7 +60,6 @@ export type VisualizationSuccess = {
   ok: true;
   trace: CompiledVisualization;
   seed: number;
-  details: boolean;
   revision: number;
 };
 
@@ -69,7 +67,6 @@ export type VisualizationFailure = {
   ok: false;
   error: string;
   seed?: number;
-  details?: boolean;
   revision?: number;
   debug?: CompileDebug;
   lock?: CompileLockHolder;
@@ -79,7 +76,6 @@ export type CompileStreamStatus = {
   ok: true;
   status: 'starting' | 'running' | 'complete';
   seed: number;
-  details: boolean;
   revision: number;
   debug?: CompileDebug;
 };

@@ -13,7 +13,6 @@ import { createCompileOutput } from './workspace-output.js';
 
 export type CompileVisualizationOptions = {
   seed: number;
-  details: boolean;
   revision: number;
   signal?: AbortSignal;
   onEvent?: (event: CompileVisualizationEvent) => void;
@@ -69,14 +68,13 @@ const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
 
 export async function compileVisualization({
   seed,
-  details,
   revision,
   signal,
   onEvent
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
   const { outputDir, outputPath } = await createCompileOutput({ owner: 'web', seed });
-  const { command, args } = compileCommand(seed, details, outputPath);
+  const { command, args } = compileCommand(seed, outputPath);
 
   const timeoutMs = readCompileTimeoutMs();
   const startedDebug: CompileDebug = {
@@ -96,7 +94,6 @@ export async function compileVisualization({
     command,
     args,
     seed,
-    details,
     outputPath
   });
 
@@ -333,7 +330,7 @@ export function runCompile(
   });
 }
 
-function compileCommand(seed: number, details: boolean, outputPath: string) {
+function compileCommand(seed: number, outputPath: string) {
   const args = [
     'run',
     '-v0',
@@ -347,10 +344,6 @@ function compileCommand(seed: number, details: boolean, outputPath: string) {
     '--seed',
     String(seed)
   ];
-
-  if (details) {
-    args.push('--details');
-  }
 
   return { command: 'cabal', args };
 }

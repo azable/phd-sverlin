@@ -42,7 +42,6 @@ module LinearTrace.View.Style
   , -- * Traversal and lowering
     mapNodeStyleExprs
   , mapNodeStyleExprLeaves
-  , solvedNodeStyleExprs
   , nodeStyleConstraints
   , nodeStyleChoiceConstraints
   , styleVariableBindings
@@ -513,16 +512,6 @@ mapNodeStyleExprLeaves f style' = map go (nodeStyleExprLeaves style')
     go leaf =
       case leaf of
         StyleExprLeaf name expr -> f name expr
-
-solvedNodeStyleExprs :: Solution -> NodeStyle -> [(String, Double)]
-solvedNodeStyleExprs solution = mapMaybe solveLeaf . nodeStyleExprLeaves
-  where
-    solveLeaf leaf =
-      case leaf of
-        StyleExprLeaf name expr ->
-          case evalExpr solution expr of
-            Nothing    -> Nothing
-            Just value -> Just (name, value)
 
 nodeStyleConstraints :: NodeStyle -> [Constraint]
 nodeStyleConstraints style' =

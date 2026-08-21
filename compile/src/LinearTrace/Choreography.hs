@@ -9,7 +9,6 @@ module LinearTrace.Choreography
     Choreography
   , VisualTraceGraph
   , ViewGraph
-  , visualTraceCore
   , buildViewGraph
   , solveViewGraphWithSeed
   , viewGraphStats

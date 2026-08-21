@@ -1,5 +1,5 @@
--- | Internal facade for symbolic view construction. Choreography, printing, and
--- compile code import this module when they need the stable view surface; more
+-- | Internal facade for symbolic view construction. Choreography and compile
+-- code import this module when they need the stable view surface; more
 -- specialized internals live under @LinearTrace.View.*@ and should be imported
 -- directly only by sibling implementation modules.
 module LinearTrace.View
@@ -27,14 +27,11 @@ module LinearTrace.View
   , CompoundFit(..)
   , NodeChild(..)
   , NodeVarRoot(..)
-  , ViewStep(..)
   , RenderIntent(..)
   , LayoutAttr(..)
   , AnyTraceNode(..)
   , AnyLayoutView(..)
   , styleForRef
-  , mapNodeStyleExprLeaves
-  , solvedNodeExprs
   , traceNodeTags
   , generatedNodeMeta
   , nodeChildFromTraceNode
@@ -46,7 +43,6 @@ module LinearTrace.View
   , nodeVarName
   , nodeVar
   , viewNodes
-  , viewSteps
   , viewCanvasWidth
   , viewCanvasHeight
   , viewConstraints

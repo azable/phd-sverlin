@@ -28,7 +28,6 @@ const lockResult = await acquireCompileLock({
   command,
   args,
   seed,
-  details: userArgs.includes('--details'),
   outputPath: readFlagValue(userArgs, '--output') ?? undefined
 });
 
