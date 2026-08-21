@@ -9,7 +9,8 @@ ARG HLS_VERSION=2.14.0.0
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Native dependencies for numeric-optimization / hmatrix / L-BFGS-B,
-# plus bubblewrap for sandboxing.
+# bubblewrap for sandboxing, and OpenSSH client support for forwarded
+# host SSH agents (including YubiKey-backed Git authentication).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bubblewrap \
@@ -20,6 +21,7 @@ RUN apt-get update \
         liblapack-dev \
         liblbfgsb-dev \
         libopenblas-dev \
+        openssh-client \
         pkg-config \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*

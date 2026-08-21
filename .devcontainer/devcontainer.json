@@ -14,17 +14,13 @@
     }
   },
 
-  "runArgs": [
-    "--security-opt=seccomp=unconfined"
-  ],
+  "runArgs": ["--security-opt=seccomp=unconfined"],
 
   "remoteEnv": {
     "SVERLIN_COMPILE_TIMEOUT_MS": "300000"
   },
 
-  "forwardPorts": [
-    5173
-  ],
+  "forwardPorts": [5173],
 
   "customizations": {
     "vscode": {
@@ -72,5 +68,10 @@
     }
   },
 
-  "postCreateCommand": "npm install -g @openai/codex && pnpm install --frozen-lockfile && mkdir -p outputs && cabal update && cabal build -v0 compile-app --builddir=compile/dist-newstyle"
+  "mounts": [
+    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly",
+    "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind,readonly"
+  ],
+
+  "postCreateCommand": "npm install -g @openai/codex@latest && pnpm install --frozen-lockfile && mkdir -p outputs && cabal update && cabal build -v0 compile-app --builddir=compile/dist-newstyle"
 }
