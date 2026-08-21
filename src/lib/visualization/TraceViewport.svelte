@@ -76,8 +76,9 @@
     );
     const visualIdText = target?.dataset.visualId;
     const visualId = visualIdText === undefined ? undefined : Number(visualIdText);
+    const wantsPan = event.button === 1 || event.altKey || event.ctrlKey;
 
-    if (visualId !== undefined) {
+    if (visualId !== undefined && !wantsPan) {
       setSelection(
         event.shiftKey
           ? selectedIds.includes(visualId)
@@ -89,9 +90,12 @@
     }
 
     pointerId = event.pointerId;
-    dragStart = scenePoint(event.clientX, event.clientY);
+    dragMode = wantsPan ? 'pan' : 'select';
+    dragStart =
+      dragMode === 'pan'
+        ? viewportPoint(event.clientX, event.clientY)
+        : scenePoint(event.clientX, event.clientY);
     dragCurrent = dragStart;
-    dragMode = event.button === 1 || event.altKey || event.ctrlKey ? 'pan' : 'select';
     svg.setPointerCapture(event.pointerId);
     event.preventDefault();
   }
@@ -99,7 +103,10 @@
   function onPointerMove(event: PointerEvent) {
     if (pointerId !== event.pointerId || !dragMode) return;
 
-    const point = scenePoint(event.clientX, event.clientY);
+    const point =
+      dragMode === 'pan'
+        ? viewportPoint(event.clientX, event.clientY)
+        : scenePoint(event.clientX, event.clientY);
     if (dragMode === 'pan') {
       panX += point.x - dragCurrent.x;
       panY += point.y - dragCurrent.y;
@@ -128,7 +135,7 @@
     onSelectionChange(selectedIds);
   }
 
-  function scenePoint(clientX: number, clientY: number) {
+  function viewportPoint(clientX: number, clientY: number) {
     if (!svg) return { x: 0, y: 0 };
     const screenTransform = svg.getScreenCTM();
     if (!screenTransform) return { x: 0, y: 0 };
@@ -136,11 +143,15 @@
     const pointer = svg.createSVGPoint();
     pointer.x = clientX;
     pointer.y = clientY;
-    const viewportPoint = pointer.matrixTransform(screenTransform.inverse());
+    return pointer.matrixTransform(screenTransform.inverse());
+  }
+
+  function scenePoint(clientX: number, clientY: number) {
+    const point = viewportPoint(clientX, clientY);
 
     return {
-      x: (viewportPoint.x - panX) / zoom,
-      y: (viewportPoint.y - panY) / zoom
+      x: (point.x - panX) / zoom,
+      y: (point.y - panY) / zoom
     };
   }
 
