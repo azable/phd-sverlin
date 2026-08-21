@@ -598,10 +598,8 @@ appendPendingEvents (PendingEvents (TraceEvents events)) event =
 checkpoint :: P.String -> TraceBuilder ()
 checkpoint label = do
   TraceBuilderState oldNext (Ur pending) (Ur oldSteps) <- get
-  let updatedSteps =
-        case pending of
-          PendingEvents (TraceEvents []) -> oldSteps
-          PendingEvents events -> oldSteps P.++ [CheckpointStep label events]
+  let PendingEvents events = pending
+      updatedSteps = oldSteps P.++ [CheckpointStep label events]
   put
     (TraceBuilderState
        oldNext

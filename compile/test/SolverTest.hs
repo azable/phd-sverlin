@@ -128,11 +128,11 @@ choreographyBridgeTests =
   testGroup
     "choreography bridge"
     [ testCase "payload selector controls matched blocks"
-        $ let (nodeCount, _constraintCount, _frameCount) =
+        $ let (nodeCount, _constraintCount, _stepCount) =
                 ChoreographyFixtures.payloadMatchedStats
            in nodeCount @?= 1
     , testCase "grouping matches neutral view tags"
-        $ let (nodeCount, _constraintCount, _frameCount) =
+        $ let (nodeCount, _constraintCount, _stepCount) =
                 ChoreographyFixtures.groupStats
            in nodeCount @?= 3
     , testCase "apply2 payload operators consume built-in wrappers linearly" $ do
@@ -150,6 +150,13 @@ choreographyBridgeTests =
             @?= ["replace", "destroy"]
     , testCase "tail events remain available for graph diagnostics"
         $ ChoreographyFixtures.pendingTailEventNames @?= ["destroy"]
+    , testCase "core retains checkpoints without pending events"
+        $ let graph = Core.buildGraph (Core.checkpoint "idle")
+              labels =
+                map
+                  (Core.foldTraceStep (\label _events -> label))
+                  (Core.traceGraphSteps graph)
+           in labels @?= ["idle"]
     ]
 
 oneUseBool :: OneUse (LBool tag) %1 -> Bool
@@ -269,6 +276,28 @@ viewMaterializationTests =
             IR.visualFontWeight style' @?= Just "bold"
             assertBool "expected concrete fill" (IR.visualFill style' /= Nothing)
           [] -> assertFailure "expected at least one compiled render element"
+    , testCase "checkpoints lower one-to-one to named timeline steps" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 21)
+            ChoreographyFixtures.styledGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.styledGraph
+        map IR.stepLabel (IR.packageSteps compiled)
+          @?= ["created", "unchanged", "destroyed"]
+        map (length . IR.stepInstances) (IR.packageSteps compiled)
+          @?= [2, 2, 2]
+    , testCase "a checkpoint exposes introductions before silent removals" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 22)
+            ChoreographyFixtures.transientGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.transientGraph
+        map IR.stepLabel (IR.packageSteps compiled)
+          @?= ["transient", "after transient"]
+        map (length . IR.stepInstances) (IR.packageSteps compiled)
+          @?= [2, 0]
     ]
 
 nativeBoundsTests :: TestTree
@@ -528,6 +557,10 @@ seededFixtureTests =
     , testCase "fixed fixture satisfies hard constraints" $ do
         solution <- solveFixture defaultFixture (RandomSeed (-1988735004))
         validateFixtureSolution defaultFixture solution @?= []
+    , testCase "nested extrema fixture satisfies hard constraints" $ do
+        let fixture = namedFixture "nested-extrema"
+        solution <- solveFixture fixture (RandomSeed 1)
+        validateFixtureSolution fixture solution @?= []
     ]
 
 problemInspectionTests :: TestTree
@@ -563,9 +596,13 @@ problemInspectionTests =
 
 defaultFixture :: SolverFixture
 defaultFixture =
-  case fixtureByName "bounded-row" of
+  namedFixture "bounded-row"
+
+namedFixture :: String -> SolverFixture
+namedFixture name =
+  case fixtureByName name of
     Just fixture -> fixture
-    Nothing      -> error "missing bounded-row fixture"
+    Nothing      -> error ("missing solver fixture: " ++ name)
 
 assertEvalRange ::
      String -> Double -> Double -> Solution -> Expr ty -> Assertion

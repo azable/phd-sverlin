@@ -35,7 +35,7 @@ buildViewGraph (VisualTraceGraph spec coreGraph) =
    in buildMatchedViewGraph
         spec
         (viewNodes output)
-        (viewRenderFrames output)
+        (viewSteps output)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
@@ -44,41 +44,23 @@ viewGraphStats :: ViewGraph -> (P.Int, P.Int, P.Int)
 viewGraphStats graph =
   ( P.length (V.viewNodes graph)
   , P.length (V.viewConstraints graph)
-  , P.length (V.viewRenderFrames graph))
+  , P.length (V.viewSteps graph))
 
 data ViewTraceAccumulator = ViewTraceAccumulator
-  { viewNodes                :: [V.ViewNode]
-  , viewRenderFrames         :: [[V.RenderIntent]]
-  , viewPendingRenderIntents :: [V.RenderIntent]
+  { viewNodes :: [V.ViewNode]
+  , viewSteps :: [V.ViewStep]
   }
 
 emptyViewTraceAccumulator :: ViewTraceAccumulator
 emptyViewTraceAccumulator =
   ViewTraceAccumulator
     { viewNodes = []
-    , viewRenderFrames = []
-    , viewPendingRenderIntents = []
+    , viewSteps = []
     }
 
 viewTraceSteps :: MatchSpec -> [C.TraceStep] -> ViewTraceAccumulator
-viewTraceSteps spec records =
-  let accumulated =
-        P.foldl
-          (advanceViewTrace spec)
-          emptyViewTraceAccumulator
-          records
-      finalOutput =
-        V.flushViewOutput
-          (P.mconcat
-             (P.map
-                V.renderIntentOutput
-                (viewPendingRenderIntents accumulated)))
-      finalFrames =
-        viewRenderFrames accumulated P.++ V.emittedRenderFrames finalOutput
-   in accumulated
-        { viewRenderFrames = V.withImplicitInitialFrame finalFrames
-        , viewPendingRenderIntents = []
-        }
+viewTraceSteps spec =
+  P.foldl (advanceViewTrace spec) emptyViewTraceAccumulator
 
 advanceViewTrace ::
      MatchSpec
@@ -86,26 +68,22 @@ advanceViewTrace ::
   -> C.TraceStep
   -> ViewTraceAccumulator
 advanceViewTrace spec accumulator record =
-  let output =
-        viewTraceStep spec (viewPendingRenderIntents accumulator) record
+  let (label, output) = viewTraceStep spec record
       nodes = V.emittedNodes output
    in ViewTraceAccumulator
         { viewNodes = viewNodes accumulator P.++ nodes
-        , viewRenderFrames =
-            viewRenderFrames accumulator P.++ V.emittedRenderFrames output
-        , viewPendingRenderIntents = V.pendingRenderIntents output
+        , viewSteps =
+            viewSteps accumulator
+              P.++ [V.ViewStep label (V.emittedRenderIntents output)]
         }
 
 viewTraceStep ::
      MatchSpec
-  -> [V.RenderIntent]
   -> C.TraceStep
-  -> V.ViewOutput
-viewTraceStep spec pending = C.foldTraceStep onCheckpoint
+  -> (P.String, V.ViewOutput)
+viewTraceStep spec = C.foldTraceStep onCheckpoint
   where
-    onCheckpoint _label events =
-      let rawOutput = V.flushViewOutput (buildTraceEventsOutput spec events)
-       in V.mergeInitialRenderIntents pending rawOutput
+    onCheckpoint label events = (label, buildTraceEventsOutput spec events)
 
 buildTraceEventsOutput :: MatchSpec -> C.TraceEvents -> V.ViewOutput
 buildTraceEventsOutput spec =

@@ -27,14 +27,13 @@ compileSolved ::
   -> Either String IR.VisualizationPackage
 compileSolved sourcePath solution graph = do
   elements <- traverse (compileElement solution) (V.viewNodes graph)
-  frames <-
+  steps <-
     evalStateT
-      (compileFrames (elementLookup elements) (V.viewRenderFrames graph))
+      (compileSteps (elementLookup elements) (V.viewSteps graph))
       emptySceneState
   pure
     IR.VisualizationPackage
-      { IR.packageSchemaVersion = 2
-      , IR.packageSeed = solutionSeedInt solution
+      { IR.packageSeed = solutionSeedInt solution
       , IR.packageSourcePath = sourcePath
       , IR.packageCanvas =
           IR.CanvasSpec
@@ -43,7 +42,7 @@ compileSolved sourcePath solution graph = do
             }
       , IR.packageVariables = compileVariables solution
       , IR.packageElements = elements
-      , IR.packageFrames = frames
+      , IR.packageSteps = steps
       }
 
 solutionSeedInt :: S.Solution -> Int
@@ -184,17 +183,25 @@ emptySceneState = SceneState Map.empty Map.empty
 
 type CompileM = StateT SceneState (Either String)
 
-compileFrames ::
+compileSteps ::
      ElementLookup
-  -> [[V.RenderIntent]]
-  -> CompileM [[IR.VisualInstance]]
-compileFrames lookup' = traverse (compileFrame lookup')
+  -> [V.ViewStep]
+  -> CompileM [IR.TimelineStep]
+compileSteps lookup' = traverse (compileStep lookup')
 
-compileFrame :: ElementLookup -> [V.RenderIntent] -> CompileM [IR.VisualInstance]
-compileFrame lookup' intents = do
+compileStep :: ElementLookup -> V.ViewStep -> CompileM IR.TimelineStep
+compileStep lookup' step = do
   modify clearOrigins
-  mapM_ (applyIntent lookup') intents
-  gets (Map.elems . sceneInstances)
+  let (introductions, removals) =
+        V.splitRenderIntents (V.viewStepIntents step)
+  mapM_ (applyIntent lookup') introductions
+  instances <- gets (Map.elems . sceneInstances)
+  mapM_ (applyIntent lookup') removals
+  pure
+    IR.TimelineStep
+      { IR.stepLabel = V.viewStepLabel step
+      , IR.stepInstances = instances
+      }
 
 clearOrigins :: SceneState -> SceneState
 clearOrigins scene =

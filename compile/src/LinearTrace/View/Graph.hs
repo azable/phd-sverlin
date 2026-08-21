@@ -29,7 +29,9 @@ module LinearTrace.View.Graph
   , CompoundFit(..)
   , NodeChild(..)
   , NodeVarRoot(..)
+  , ViewStep(..)
   , RenderIntent(..)
+  , splitRenderIntents
   , LayoutAttr(..)
   , AnyTraceNode(..)
   , AnyLayoutView(..)
@@ -154,7 +156,12 @@ data ViewGraph = ViewGraph
   , viewNodes             :: [ViewNode]
   , viewConstraints       :: [Constraint]
   , viewChoiceConstraints :: [ChoiceConstraint]
-  , viewRenderFrames      :: [[RenderIntent]]
+  , viewSteps             :: [ViewStep]
+  }
+
+data ViewStep = ViewStep
+  { viewStepLabel   :: P.String
+  , viewStepIntents :: [RenderIntent]
   }
 
 data RenderIntent where
@@ -162,6 +169,17 @@ data RenderIntent where
   RenderContinue :: ViewRef old -> ViewRef tag -> RenderIntent
   RenderFork :: ViewRef old -> ViewRef tag -> RenderIntent
   RenderRemove :: ViewRef tag -> RenderIntent
+
+splitRenderIntents :: [RenderIntent] -> ([RenderIntent], [RenderIntent])
+splitRenderIntents intents =
+  case intents of
+    [] -> ([], [])
+    intent:rest ->
+      case splitRenderIntents rest of
+        (introductions, removals) ->
+          case intent of
+            RenderRemove _ -> (introductions, intent : removals)
+            _              -> (intent : introductions, removals)
 
 data LayoutAttr
   = AttrLeft

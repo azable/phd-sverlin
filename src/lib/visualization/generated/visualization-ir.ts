@@ -27,6 +27,11 @@ export interface StyleVariableBinding {
   variables: CspVariableId[];
 }
 
+export interface TimelineStep {
+  label: string;
+  instances: VisualInstance[];
+}
+
 export interface VisualElement {
   id: VisualId;
   role: string;
@@ -69,11 +74,10 @@ export interface VisualStyle {
 }
 
 export interface VisualizationPackage {
-  schemaVersion: number;
   seed: number;
   sourcePath: string;
   canvas: CanvasSpec;
   variables: CspVariable[];
   elements: VisualElement[];
-  frames: VisualInstance[][];
+  steps: TimelineStep[];
 }

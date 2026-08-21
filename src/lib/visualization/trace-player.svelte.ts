@@ -12,7 +12,7 @@ import type {
 type SetTraceOptions = { initialStep?: number };
 
 /**
- * A seekable player over compiler-produced scene snapshots. Stable instance
+ * A seekable player over compiler-produced checkpoint steps. Stable instance
  * identities animate updates; keyed Svelte transitions own entry and exit.
  */
 export class TracePlayer {
@@ -27,7 +27,7 @@ export class TracePlayer {
   }
 
   get stepCount() {
-    return this.trace?.frames.length ?? 0;
+    return this.trace?.steps.length ?? 0;
   }
 
   get lastStep() {
@@ -40,6 +40,10 @@ export class TracePlayer {
 
   get canNext() {
     return this.currentStep >= 0 && this.currentStep < this.lastStep;
+  }
+
+  get currentStepLabel() {
+    return this.currentStep >= 0 ? (this.trace?.steps[this.currentStep]?.label ?? '') : '';
   }
 
   get canvasWidth() {
@@ -70,14 +74,14 @@ export class TracePlayer {
   seek(requestedStep: number) {
     this.#transitionVersion += 1;
 
-    if (!this.trace || this.trace.frames.length === 0) {
+    if (!this.trace || this.trace.steps.length === 0) {
       this.currentStep = -1;
       this.elements = [];
       return;
     }
 
     this.currentStep = this.clampStep(requestedStep);
-    this.elements = this.elementsForFrame(this.trace.frames[this.currentStep]);
+    this.elements = this.elementsForStep(this.trace.steps[this.currentStep].instances);
   }
 
   dispose() {
@@ -90,9 +94,11 @@ export class TracePlayer {
     this.#transitionVersion += 1;
 
     const current = new SvelteMap(this.elements.map((element) => [element.instanceId, element]));
-    const targetFrame = this.trace.frames[step];
-    const target = this.elementsForFrame(targetFrame);
-    const instances = new SvelteMap(targetFrame.map((instance) => [instance.id, instance]));
+    const targetStep = this.trace.steps[step];
+    const target = this.elementsForStep(targetStep.instances);
+    const instances = new SvelteMap(
+      targetStep.instances.map((instance) => [instance.id, instance])
+    );
     const registry = this.elementRegistry();
 
     const next = target.map((element) => {
@@ -115,10 +121,10 @@ export class TracePlayer {
     this.elements = next;
   }
 
-  private elementsForFrame(frame: VisualInstance[]) {
+  private elementsForStep(instances: VisualInstance[]) {
     const registry = this.elementRegistry();
 
-    return frame.flatMap<LiveElement>((instance) => {
+    return instances.flatMap<LiveElement>((instance) => {
       const element = registry.get(instance.elementId);
       return element ? [{ ...element, instanceId: instance.id }] : [];
     });

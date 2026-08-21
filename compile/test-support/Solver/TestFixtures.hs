@@ -39,7 +39,8 @@ data SolverFixture = SolverFixture
   }
 
 availableFixtures :: [SolverFixture]
-availableFixtures = [boundedRowFixture, cyclicHueFixture, appShapedFixture]
+availableFixtures =
+  [boundedRowFixture, cyclicHueFixture, appShapedFixture, nestedExtremaFixture]
 
 defaultBenchmarkSeeds :: [RandomSeed]
 defaultBenchmarkSeeds =
@@ -61,6 +62,7 @@ validateFixtureSolution fixture solution =
     "bounded-row" -> validateBoundedRow solution
     "cyclic-hue"  -> validateCyclicHue solution
     "app-shaped"  -> validateAppShaped solution
+    "nested-extrema" -> validateNestedExtrema solution
     _             -> []
 
 boundedRowFixture :: SolverFixture
@@ -407,3 +409,68 @@ validateAppShaped solution =
           | otherwise ->
             [label ++ " mismatch: " ++ show lhsValue ++ " vs " ++ show rhsValue]
         _ -> ["missing " ++ label]
+
+nestedExtremaFixture :: SolverFixture
+nestedExtremaFixture =
+  SolverFixture
+    { fixtureName = "nested-extrema"
+    , fixtureDescription =
+        "Deeply nested minimum and maximum expressions that guard against duplicated backend evaluation."
+    , fixtureConstraints =
+        [within value (Range 0 (fromIntegral nestedExtremaCount + 1))
+        | value <- nestedExtremaValues]
+          ++ [ nestedMinimum @==@ num 1
+             , nestedMaximum @==@ num (fromIntegral nestedExtremaCount)
+             ]
+    }
+
+nestedExtremaCount :: Int
+nestedExtremaCount = 18
+
+nestedExtremaValues :: [Expr FixtureLayout]
+nestedExtremaValues =
+  [var ("fixture.extrema." ++ show index) | index <- [1 .. nestedExtremaCount]]
+
+nestedMinimum :: Expr FixtureLayout
+nestedMinimum = foldNestedExtrema minExpr
+
+nestedMaximum :: Expr FixtureLayout
+nestedMaximum = foldNestedExtrema maxExpr
+
+foldNestedExtrema ::
+     (Expr FixtureLayout -> Expr FixtureLayout -> Expr FixtureLayout)
+  -> Expr FixtureLayout
+foldNestedExtrema combine =
+  case nestedExtremaValues of
+    []         -> error "nested extrema fixture requires at least one value"
+    value:rest -> foldl combine value rest
+
+validateNestedExtrema :: Solution -> [String]
+validateNestedExtrema solution =
+  catMaybes
+    [ if solutionEnergy solution < 1e-4
+        then Nothing
+        else Just
+               ("expected nested extrema hard energy < 1e-4, got "
+                  ++ show (solutionEnergy solution))
+    , expectNear "minimum" 1 nestedMinimum
+    , expectNear
+        "maximum"
+        (fromIntegral nestedExtremaCount)
+        nestedMaximum
+    ]
+  where
+    expectNear label expected expr =
+      case evalExpr solution expr of
+        Nothing -> Just ("missing nested extrema " ++ label)
+        Just value
+          | abs (value - expected) <= 1e-3 -> Nothing
+          | otherwise ->
+            Just
+              ( "nested extrema "
+                ++ label
+                ++ " expected "
+                ++ show expected
+                ++ ", got "
+                ++ show value
+              )

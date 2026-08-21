@@ -30,7 +30,7 @@ module Solver.Backend
     solveCSP
   , cspHardEnergy
   , valueOf
-  , sq
+  , squareE
   , maxE
   , minE
   , clipNegative
@@ -63,14 +63,25 @@ valueAt i env =
   case env of
     EnergyEnv values -> values ! i
 
-sq :: Num a => a -> a
-sq x = x * x
+squareE :: Num a => EnergyExpr a -> EnergyExpr a
+squareE (EnergyExpr f) =
+  EnergyExpr $ \env ->
+    let value = f env
+     in value * value
 
 maxE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
-maxE x y = (x + y + abs (x - y)) / 2
+maxE (EnergyExpr f) (EnergyExpr g) =
+  EnergyExpr $ \env ->
+    let lhs = f env
+        rhs = g env
+     in (lhs + rhs + abs (lhs - rhs)) / 2
 
 minE :: Floating a => EnergyExpr a -> EnergyExpr a -> EnergyExpr a
-minE x y = (x + y - abs (x - y)) / 2
+minE (EnergyExpr f) (EnergyExpr g) =
+  EnergyExpr $ \env ->
+    let lhs = f env
+        rhs = g env
+     in (lhs + rhs - abs (lhs - rhs)) / 2
 
 clipNegative :: Floating a => EnergyExpr a -> EnergyExpr a
 clipNegative = maxE 0

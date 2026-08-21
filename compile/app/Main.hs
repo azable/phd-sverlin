@@ -75,8 +75,8 @@ dslSourcePath = "compile/app/DSL/Main.hs"
 forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
 forceViewGraph graph =
   case Choreography.viewGraphStats graph of
-    (nodes, constraints, renderFrames) ->
-      nodes `seq` constraints `seq` renderFrames `seq` graph
+    (nodes, constraints, steps) ->
+      nodes `seq` constraints `seq` steps `seq` graph
 
 forceCompileResult ::
      Either String IR.VisualizationPackage

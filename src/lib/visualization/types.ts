@@ -6,6 +6,7 @@ export type {
   HslColor,
   RenderInstanceId,
   StyleVariableBinding,
+  TimelineStep,
   VisualElement,
   VisualElementKind,
   VisualId,

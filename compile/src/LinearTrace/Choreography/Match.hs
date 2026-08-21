@@ -359,9 +359,9 @@ foldNodePatchesFrom current patches =
 buildMatchedViewGraph ::
      MatchSpec
   -> [V.ViewNode]
-  -> [[V.RenderIntent]]
+  -> [V.ViewStep]
   -> V.ViewGraph
-buildMatchedViewGraph spec builtNodes renderFrames =
+buildMatchedViewGraph spec builtNodes steps =
   let traceNodes = applyAccessRequirementsForSpec spec builtNodes
       groupNodes =
         applyAccessRequirementsForSpec spec (groupNodesForSpec spec traceNodes)
@@ -372,7 +372,7 @@ buildMatchedViewGraph spec builtNodes renderFrames =
         nodes
         matchConstraints
         matchChoiceConstraints
-        renderFrames
+        steps
 
 matchSpecConstraints ::
      MatchSpec -> [V.ViewNode] -> ([S.Constraint], [S.ChoiceConstraint])

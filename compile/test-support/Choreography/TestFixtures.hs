@@ -27,6 +27,7 @@ module Choreography.TestFixtures
   , selectedColorGraph
   , selectedScalarGraph
   , styledGraph
+  , transientGraph
   ) where
 
 import           Control.Functor.Linear   hiding ((<$>), (<&>), (<*>))
@@ -78,11 +79,18 @@ centerGraph = buildGraph centerSpec
 styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
 
+transientGraph :: ViewGraph
+transientGraph = buildGraphFor transientFixture groupSpec
+
 fixtureStats :: MatchSpec -> (Int, Int, Int)
 fixtureStats spec = viewGraphStats (buildGraph spec)
 
 buildGraph :: MatchSpec -> ViewGraph
-buildGraph spec = buildViewGraph (runChoreographyWith spec fixture)
+buildGraph = buildGraphFor fixture
+
+buildGraphFor :: Choreography () -> MatchSpec -> ViewGraph
+buildGraphFor choreography spec =
+  buildViewGraph (runChoreographyWith spec choreography)
 
 fixture :: Choreography ()
 fixture = do
@@ -91,9 +99,18 @@ fixture = do
   Create secondPending <- create @TestValue (LInt 8)
   second <- materialize #item secondPending
   checkpoint "created"
+  checkpoint "unchanged"
   Destroy <- destroy first
   Destroy <- destroy second
   checkpoint "destroyed"
+
+transientFixture :: Choreography ()
+transientFixture = do
+  Create pending <- create @TestValue (LInt 7)
+  block <- materialize #item pending
+  Destroy <- destroy block
+  checkpoint "transient"
+  checkpoint "after transient"
 
 pendingMaterializedGraph :: Core.TraceGraph
 pendingMaterializedGraph =

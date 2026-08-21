@@ -901,12 +901,12 @@ lowerConstraintWith kind config vars constraint =
           addWeightedTerm
             kind
             config
-            (sq (lowerExpr vars lhs - lowerExpr vars rhs))
+            (squareE (lowerExpr vars lhs - lowerExpr vars rhs))
     LessOrEqual lhs rhs ->
       addWeightedTerm
         kind
         config
-        (sq (clipNegative (lowerExpr vars lhs - lowerExpr vars rhs)))
+        (squareE (clipNegative (lowerExpr vars lhs - lowerExpr vars rhs)))
     Minimize objective ->
       addSoftTerm (encourageWeight config) (lowerExpr vars objective)
     Soft inner -> lowerConstraintWith SoftTerm config vars inner

@@ -3,14 +3,11 @@
 -- solver-ready 'ViewGraph'.
 module LinearTrace.View.Build
   ( -- * Output accumulation
-    -- | Monoidal output of nodes and render-intent frames emitted by match
+    -- | Monoidal output of nodes and render intents emitted by match
     -- rules and graph construction. Constraints remain attached to nodes until
     -- graph finalization.
     ViewOutput(..)
-  , flushViewOutput
   , renderIntentOutput
-  , mergeInitialRenderIntents
-  , withImplicitInitialFrame
   , -- * Graph construction
     -- | Applies node patches and finalizes accumulated output into a view
     -- graph with canvas/style constraints.
@@ -50,68 +47,26 @@ defaultViewEnv =
     }
 
 data ViewOutput = ViewOutput
-  { emittedNodes             :: [ViewNode]
-  , emittedRenderFrames      :: [[RenderIntent]]
-  , pendingRenderIntents     :: [RenderIntent]
+  { emittedNodes         :: [ViewNode]
+  , emittedRenderIntents :: [RenderIntent]
   }
 
 instance Semigroup ViewOutput where
-  ViewOutput nodesA framesA pendingA <> ViewOutput nodesB framesB pendingB =
+  ViewOutput nodesA intentsA <> ViewOutput nodesB intentsB =
     ViewOutput
       { emittedNodes = nodesA P.++ nodesB
-      , emittedRenderFrames = framesA P.++ framesB
-      , pendingRenderIntents = pendingA P.++ pendingB
+      , emittedRenderIntents = intentsA P.++ intentsB
       }
 
 instance Monoid ViewOutput where
   mempty =
     ViewOutput
       { emittedNodes = []
-      , emittedRenderFrames = []
-      , pendingRenderIntents = []
+      , emittedRenderIntents = []
       }
 
-flushViewOutput :: ViewOutput -> ViewOutput
-flushViewOutput = flushPendingOutput
-
 renderIntentOutput :: RenderIntent -> ViewOutput
-renderIntentOutput intent = P.mempty {pendingRenderIntents = [intent]}
-
-flushPendingOutput :: ViewOutput -> ViewOutput
-flushPendingOutput output =
-  case pendingRenderIntents output of
-    [] -> output
-    intents ->
-      output
-        { emittedRenderFrames =
-            emittedRenderFrames output P.++ renderIntentFrames intents
-        , pendingRenderIntents = []
-        }
-
-renderIntentFrames :: [RenderIntent] -> [[RenderIntent]]
-renderIntentFrames intents =
-  case splitRenderIntents intents of
-    ([], [])                  -> []
-    (introductions, [])       -> [introductions]
-    ([], removals)            -> [removals]
-    (introductions, removals) -> [introductions, removals]
-
-splitRenderIntents :: [RenderIntent] -> ([RenderIntent], [RenderIntent])
-splitRenderIntents intents =
-  case intents of
-    [] -> ([], [])
-    intent:rest ->
-      case splitRenderIntents rest of
-        (introductions, removals) ->
-          case isRemovalIntent intent of
-            P.True  -> (introductions, intent : removals)
-            P.False -> (intent : introductions, removals)
-
-isRemovalIntent :: RenderIntent -> P.Bool
-isRemovalIntent intent =
-  case intent of
-    RenderRemove _ -> P.True
-    _              -> P.False
+renderIntentOutput intent = P.mempty {emittedRenderIntents = [intent]}
 
 patchedNodeOutput :: Patch.NodePatch -> Node tag -> ViewOutput
 patchedNodeOutput patch node0 =
@@ -135,23 +90,23 @@ finalizeViewGraph ::
      [ViewNode]
   -> [Constraint]
   -> [ChoiceConstraint]
-  -> [[RenderIntent]]
+  -> [ViewStep]
   -> ViewGraph
-finalizeViewGraph nodes baseConstraints baseChoiceConstraints renderFrames =
+finalizeViewGraph nodes baseConstraints baseChoiceConstraints steps =
   let allNodeConstraints = P.concatMap viewNodeConstraints nodes
       allNodeStyleChoiceConstraints =
         P.concatMap viewNodeStyleChoiceConstraints nodes
       constraints = baseConstraints P.++ allNodeConstraints
       choiceConstraints =
         baseChoiceConstraints P.++ allNodeStyleChoiceConstraints
-      frames = addCompoundRenderFrames nodes renderFrames
+      finalizedSteps = addCompoundRenderSteps nodes steps
    in ViewGraph
         { viewCanvasWidth = canvasWidthValue defaultViewEnv
         , viewCanvasHeight = canvasHeightValue defaultViewEnv
         , viewNodes = nodes
         , viewConstraints = constraints
         , viewChoiceConstraints = choiceConstraints
-        , viewRenderFrames = frames
+        , viewSteps = finalizedSteps
         }
 
 viewNodeConstraints :: ViewNode -> [Constraint]
@@ -299,12 +254,12 @@ compoundBoundsRangeConstraints env =
     (canvasWidthValue env)
     (canvasHeightValue env)
 
-addCompoundRenderFrames :: [ViewNode] -> [[RenderIntent]] -> [[RenderIntent]]
-addCompoundRenderFrames nodes frames =
+addCompoundRenderSteps :: [ViewNode] -> [ViewStep] -> [ViewStep]
+addCompoundRenderSteps nodes steps =
   let lifecycles = compoundLifecycles nodes
    in case lifecycles of
-        [] -> frames
-        _  -> addCompoundLifecycleFrames lifecycles frames
+        [] -> steps
+        _  -> addCompoundLifecycleSteps lifecycles steps
 
 data CompoundLifecycle =
   CompoundLifecycle ViewNode [ViewId] [ViewId]
@@ -323,16 +278,19 @@ compoundLifecycles nodes =
 compoundChildIds :: [NodeChild] -> [ViewId]
 compoundChildIds = P.map nodeChildId
 
-addCompoundLifecycleFrames ::
-     [CompoundLifecycle] -> [[RenderIntent]] -> [[RenderIntent]]
-addCompoundLifecycleFrames lifecycles frames =
-  case frames of
+addCompoundLifecycleSteps ::
+     [CompoundLifecycle] -> [ViewStep] -> [ViewStep]
+addCompoundLifecycleSteps lifecycles steps =
+  case steps of
     [] -> []
-    frame:rest ->
+    step:rest ->
       let (nextLifecycles, compoundIntents) =
-            updateCompoundLifecycles frame lifecycles
-       in (frame P.++ compoundIntents)
-            : addCompoundLifecycleFrames nextLifecycles rest
+            updateCompoundLifecycles (viewStepIntents step) lifecycles
+          nextStep =
+            step
+              { viewStepIntents = viewStepIntents step P.++ compoundIntents
+              }
+       in nextStep : addCompoundLifecycleSteps nextLifecycles rest
 
 updateCompoundLifecycles ::
      [RenderIntent]
@@ -352,15 +310,26 @@ updateCompoundLifecycle frame lifecycle =
   case lifecycle of
     CompoundLifecycle node childIds liveIds ->
       let wasLive = P.not (P.null liveIds)
+          (introductions, removals) = splitRenderIntents frame
+          visibleLiveIds =
+            P.foldl (applyCompoundRenderIntent childIds) liveIds introductions
           nextLiveIds =
-            P.foldl (applyCompoundRenderIntent childIds) liveIds frame
+            P.foldl
+              (applyCompoundRenderIntent childIds)
+              visibleLiveIds
+              removals
+          visibleIsLive = P.not (P.null visibleLiveIds)
           isLive = P.not (P.null nextLiveIds)
           nextLifecycle = CompoundLifecycle node childIds nextLiveIds
-          lifecycleIntents =
-            case (wasLive, isLive) of
+          introductionIntents =
+            case (wasLive, visibleIsLive) of
               (P.False, P.True) -> [compoundFreshIntent node]
+              _                 -> []
+          removalIntents =
+            case (wasLive P.|| visibleIsLive, isLive) of
               (P.True, P.False) -> [compoundRemoveIntent node]
               _                 -> []
+          lifecycleIntents = introductionIntents P.++ removalIntents
        in (nextLifecycle, lifecycleIntents)
 
 applyCompoundRenderIntent :: [ViewId] -> [ViewId] -> RenderIntent -> [ViewId]
@@ -396,33 +365,3 @@ compoundRemoveIntent :: ViewNode -> RenderIntent
 compoundRemoveIntent wrapped =
   case wrapped of
     ViewNode node -> RenderRemove (nodeRef node)
-
-withImplicitInitialFrame :: [[RenderIntent]] -> [[RenderIntent]]
-withImplicitInitialFrame frames =
-  case frames of
-    [] -> []
-    first:rest ->
-      case splitLeadingFresh first of
-        ([], _)          -> first : rest
-        (freshes, [])    -> freshes : rest
-        (freshes, tail') -> freshes : tail' : rest
-
-splitLeadingFresh :: [RenderIntent] -> ([RenderIntent], [RenderIntent])
-splitLeadingFresh intents =
-  case intents of
-    RenderFresh ref:rest ->
-      case splitLeadingFresh rest of
-        (freshes, tail') -> (RenderFresh ref : freshes, tail')
-    _ -> ([], intents)
-
-mergeInitialRenderIntents :: [RenderIntent] -> ViewOutput -> ViewOutput
-mergeInitialRenderIntents pending output =
-  case pending of
-    [] -> output
-    _ ->
-      case emittedRenderFrames output of
-        [] ->
-          output
-            {pendingRenderIntents = pending P.++ pendingRenderIntents output}
-        firstFrame:restFrames ->
-          output {emittedRenderFrames = (pending P.++ firstFrame) : restFrames}

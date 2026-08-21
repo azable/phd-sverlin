@@ -347,6 +347,7 @@
                 canNext={player.canNext}
                 canPrevious={player.canPrevious}
                 currentStep={player.currentStep}
+                currentStepLabel={player.currentStepLabel}
                 externalCompiling={toolbarExternalCompiling}
                 hasTrace={player.hasTrace}
                 locked={interactionLocked}
