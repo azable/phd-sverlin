@@ -7,7 +7,6 @@ vi.mock('$lib/server/artifacts/source-file', async (importOriginal) => ({
   persistSourceArtifact
 }));
 
-import { SourceArtifactBusyError } from '$lib/server/artifacts/source-file';
 import { resetArtifactToInitial, getArtifactSyncState } from '$lib/server/artifacts/store';
 import { GET, PATCH } from './[artifactId]/+server';
 
@@ -81,7 +80,7 @@ describe('artifact API', () => {
     expect(payload.state.events).toHaveLength(initial.events.length + 1);
   });
 
-  it('rejects source that does not satisfy the DSL boundary', async () => {
+  it('persists syntax errors so the compiler can return canonical diagnostics', async () => {
     const initial = getArtifactSyncState();
     const response = await PATCH(
       patchEvent(
@@ -93,14 +92,12 @@ describe('artifact API', () => {
       )
     );
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(200);
   });
 
-  it('keeps the current revision when the source file is locked', async () => {
+  it('keeps the current revision when persistence fails', async () => {
     const initial = getArtifactSyncState();
-    persistSourceArtifact.mockRejectedValueOnce(
-      new SourceArtifactBusyError('Compile backend is already running.')
-    );
+    persistSourceArtifact.mockRejectedValueOnce(new Error('Disk write failed.'));
 
     const response = await PATCH(
       patchEvent(
@@ -108,14 +105,14 @@ describe('artifact API', () => {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            content: `${initial.current.content}\n\n-- blocked`,
+            content: `${initial.current.content}\n\n-- failed`,
             baseRevision: initial.headRevision
           })
         })
       )
     );
 
-    expect(response.status).toBe(423);
+    expect(response.status).toBe(422);
     expect(getArtifactSyncState()).toMatchObject({
       headRevision: initial.headRevision,
       current: { content: initial.current.content }

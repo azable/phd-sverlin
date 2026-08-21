@@ -141,7 +141,8 @@ interfaceDeclaration typeName fields =
 constructorType :: Con -> String
 constructorType constructor =
   case constructor of
-    NormalC name [] -> "{ kind: '" ++ jsonConstructorName (nameBase name) ++ "' }"
+    NormalC name [] ->
+      "{ kind: '" ++ jsonConstructorName (nameBase name) ++ "' }"
     RecC name fields -> objectType (jsonConstructorName (nameBase name)) fields
     NormalC name fields ->
       objectType

@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-import { acquireCompileLock } from '../src/lib/server/compile-lock.js';
 import { createCompileOutput } from '../src/lib/server/workspace-output.js';
 
 const defaultSeeds = [1, 320994595, 1988735004, 1731275846, 1999326623];
@@ -18,7 +17,7 @@ if (options.help) {
 }
 
 const repoRoot = process.cwd();
-const command = 'cabal';
+const command = 'node';
 const startedAt = new Date().toISOString();
 
 for (let i = 0; i < options.warmup; i += 1) {
@@ -51,7 +50,7 @@ printSummary(summary);
 const result = {
   startedAt,
   finishedAt: new Date().toISOString(),
-  command: 'cabal run -v0 compile-app --',
+  command: 'node scripts/run-compile.mjs --',
   mode: 'json',
   options: {
     seeds: options.seeds,
@@ -155,112 +154,42 @@ function parseSeeds(value) {
 }
 
 async function runCompile({ command, cwd, seed, timeoutMs }) {
-  const { outputDir, outputPath } = await createCompileOutput({ owner: 'bench', seed });
+  const { outputPath } = await createCompileOutput({ owner: 'bench', seed });
   const args = [
-    'run',
-    '-v0',
-    'compile-app',
-    '--builddir=compile/dist-newstyle',
+    'scripts/run-compile.mjs',
     '--',
     '--output',
     outputPath,
     '--target',
     'ir-json',
+    '--details',
     '--seed',
     String(seed)
   ];
-  const lockStarted = performance.now();
-  const lockResult = await acquireCompileLock({
-    owner: 'bench',
-    cwd,
-    command,
-    args,
-    seed,
-    outputPath
-  });
+  return await new Promise((resolve) => {
+    const started = performance.now();
+    const child = spawn(command, args, {
+      cwd,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
 
-  if (!lockResult.acquired) {
-    await rm(outputDir, { recursive: true, force: true });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    let killTimer;
+    let settleTimer;
 
-    return {
-      seed,
-      args,
-      durationMs: performance.now() - lockStarted,
-      exitCode: null,
-      timedOut: false,
-      ok: false,
-      jsonOk: false,
-      stdoutBytes: 0,
-      stderrBytes: 0,
-      compiledBytes: 0,
-      error: lockResult.message,
-      parseError: null
-    };
-  }
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminateCompile(child.pid, 'SIGTERM');
 
-  try {
-    return await new Promise((resolve) => {
-      const started = performance.now();
-      const child = spawn(command, args, {
-        cwd,
-        detached: process.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+      killTimer = setTimeout(() => {
+        terminateCompile(child.pid, 'SIGKILL');
+      }, 1_000);
 
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      let timedOut = false;
-      let killTimer;
-      let settleTimer;
-
-      const timer = setTimeout(() => {
-        timedOut = true;
-        terminateCompile(child.pid, 'SIGTERM');
-
-        killTimer = setTimeout(() => {
-          terminateCompile(child.pid, 'SIGKILL');
-        }, 1_000);
-
-        settleTimer = setTimeout(() => {
-          settle({
-            seed,
-            args,
-            started,
-            stdout,
-            stderr,
-            timedOut,
-            exitCode: null,
-            outputPath
-          });
-        }, 2_000);
-      }, timeoutMs);
-
-      function clearTimers() {
-        clearTimeout(timer);
-        if (killTimer) clearTimeout(killTimer);
-        if (settleTimer) clearTimeout(settleTimer);
-      }
-
-      function settle(result) {
-        if (settled) return;
-        settled = true;
-        clearTimers();
-        resolve(finishRun(result));
-      }
-
-      child.stdout.setEncoding('utf8');
-      child.stderr.setEncoding('utf8');
-
-      child.stdout.on('data', (chunk) => {
-        stdout += chunk;
-      });
-
-      child.stderr.on('data', (chunk) => {
-        stderr += chunk;
-      });
-
-      child.on('error', (error) => {
+      settleTimer = setTimeout(() => {
         settle({
           seed,
           args,
@@ -269,27 +198,62 @@ async function runCompile({ command, cwd, seed, timeoutMs }) {
           stderr,
           timedOut,
           exitCode: null,
-          error,
           outputPath
         });
-      });
+      }, 2_000);
+    }, timeoutMs);
 
-      child.on('close', (exitCode) => {
-        settle({
-          seed,
-          args,
-          started,
-          stdout,
-          stderr,
-          timedOut,
-          exitCode,
-          outputPath
-        });
+    function clearTimers() {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (settleTimer) clearTimeout(settleTimer);
+    }
+
+    function settle(result) {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      resolve(finishRun(result));
+    }
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on('error', (error) => {
+      settle({
+        seed,
+        args,
+        started,
+        stdout,
+        stderr,
+        timedOut,
+        exitCode: null,
+        error,
+        outputPath
       });
     });
-  } finally {
-    await lockResult.lock.release();
-  }
+
+    child.on('close', (exitCode) => {
+      settle({
+        seed,
+        args,
+        started,
+        stdout,
+        stderr,
+        timedOut,
+        exitCode,
+        outputPath
+      });
+    });
+  });
 }
 
 function terminateCompile(pid, signal) {

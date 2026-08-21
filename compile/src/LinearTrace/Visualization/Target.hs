@@ -14,7 +14,8 @@ import qualified Data.ByteString.Lazy         as BL
 import qualified LinearTrace.Visualization.IR as IR
 import           Prelude
 
-data OutputTarget = IrJson
+data OutputTarget =
+  IrJson
   deriving (Eq, Show)
 
 outputTargetName :: OutputTarget -> String

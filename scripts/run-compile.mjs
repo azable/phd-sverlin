@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { rm } from 'node:fs/promises';
 
-import { acquireCompileLock } from '../src/lib/server/compile-lock.js';
 import { createCompileOutput } from '../src/lib/server/workspace-output.js';
 
 const repoRoot = process.cwd();
@@ -20,41 +18,21 @@ if (generatedOutput) {
   userArgs = [...userArgs, '--output', generatedOutput.outputPath];
 }
 
-const args = ['run', '-v0', 'compile-app', '--builddir=compile/dist-newstyle', '--', ...userArgs];
-
-const lockResult = await acquireCompileLock({
-  owner: 'manual',
-  cwd: repoRoot,
+const buildResult = await runCompile(
   command,
-  args,
-  seed,
-  outputPath: readFlagValue(userArgs, '--output') ?? undefined
-});
+  ['build', '-v0', 'compile-app', '--builddir=compile/dist-newstyle'],
+  repoRoot
+);
 
-if (!lockResult.acquired) {
-  if (generatedOutput) {
-    await rm(generatedOutput.outputDir, { recursive: true, force: true });
-  }
-
-  await writeStderr(`${lockResult.message}\n`);
-  process.exitCode = 75;
-} else {
-  try {
-    const result = await runCompile(command, args, repoRoot);
-    process.exitCode = result.exitCode ?? signalExitCode(result.signal);
-  } finally {
-    await lockResult.lock.release();
-  }
+if (buildResult.exitCode !== 0) {
+  process.exitCode = buildResult.exitCode ?? signalExitCode(buildResult.signal);
+  process.exit();
 }
 
-/**
- * @param {string} message
- */
-function writeStderr(message) {
-  return new Promise((resolve) => {
-    process.stderr.write(message, resolve);
-  });
-}
+const args = ['exec', '--builddir=compile/dist-newstyle', '--', 'compile-app', ...userArgs];
+
+const result = await runCompile(command, args, repoRoot);
+process.exitCode = result.exitCode ?? signalExitCode(result.signal);
 
 /**
  * @param {string[]} args

@@ -32,10 +32,7 @@ type ViewGraph = V.ViewGraph
 buildViewGraph :: VisualTraceGraph -> ViewGraph
 buildViewGraph (VisualTraceGraph spec coreGraph) =
   let output = viewTraceSteps spec (C.traceGraphSteps coreGraph)
-   in buildMatchedViewGraph
-        spec
-        (viewNodes output)
-        (viewSteps output)
+   in buildMatchedViewGraph spec (viewNodes output) (viewSteps output)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
@@ -53,20 +50,13 @@ data ViewTraceAccumulator = ViewTraceAccumulator
 
 emptyViewTraceAccumulator :: ViewTraceAccumulator
 emptyViewTraceAccumulator =
-  ViewTraceAccumulator
-    { viewNodes = []
-    , viewSteps = []
-    }
+  ViewTraceAccumulator {viewNodes = [], viewSteps = []}
 
 viewTraceSteps :: MatchSpec -> [C.TraceStep] -> ViewTraceAccumulator
-viewTraceSteps spec =
-  P.foldl (advanceViewTrace spec) emptyViewTraceAccumulator
+viewTraceSteps spec = P.foldl (advanceViewTrace spec) emptyViewTraceAccumulator
 
 advanceViewTrace ::
-     MatchSpec
-  -> ViewTraceAccumulator
-  -> C.TraceStep
-  -> ViewTraceAccumulator
+     MatchSpec -> ViewTraceAccumulator -> C.TraceStep -> ViewTraceAccumulator
 advanceViewTrace spec accumulator record =
   let (label, output) = viewTraceStep spec record
       nodes = V.emittedNodes output
@@ -77,10 +67,7 @@ advanceViewTrace spec accumulator record =
               P.++ [V.ViewStep label (V.emittedRenderIntents output)]
         }
 
-viewTraceStep ::
-     MatchSpec
-  -> C.TraceStep
-  -> (P.String, V.ViewOutput)
+viewTraceStep :: MatchSpec -> C.TraceStep -> (P.String, V.ViewOutput)
 viewTraceStep spec = C.foldTraceStep onCheckpoint
   where
     onCheckpoint label events = (label, buildTraceEventsOutput spec events)

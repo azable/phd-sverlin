@@ -356,7 +356,6 @@ instance StyleField WhiteSpace where
 --------------------------------------------------------------------------------
 -- Symbolic style model
 --------------------------------------------------------------------------------
-
 data StyleValueVars = StyleValueVars
   { styleExprVar :: forall (ty :: Type). SymbolicType ty =>
                                            [String] -> String -> Expr ty
@@ -366,7 +365,9 @@ data StyleValueVars = StyleValueVars
 data StyleExprLeaf where
   StyleExprLeaf :: String -> Expr (ty :: Type) -> StyleExprLeaf
 
-class Typeable field => StyleField (field :: Type) where
+class Typeable field =>
+      StyleField (field :: Type)
+  where
   type StyleValue field
   type ResolvedStyleValue field
   styleFieldName :: Proxy field -> String
@@ -475,7 +476,6 @@ replaceByName getName newValue = go
 --------------------------------------------------------------------------------
 -- Traversal, constraints, and provenance
 --------------------------------------------------------------------------------
-
 mapNodeStyleExprs ::
      (forall (ty :: Type). Expr ty -> Expr ty) -> NodeStyle -> NodeStyle
 mapNodeStyleExprs f style' =
@@ -539,7 +539,8 @@ styleVariableBindings style' =
   ]
   where
     grouped =
-      Map.fromListWith (++)
+      Map.fromListWith
+        (++)
         (mapNodeStyleExprLeaves numericBinding style'
            ++ mapMaybe choiceBinding (nodeStyleFields style'))
     numericBinding name expr =
@@ -576,7 +577,6 @@ expressionVariableNames expression =
 --------------------------------------------------------------------------------
 -- Reusable field implementations
 --------------------------------------------------------------------------------
-
 scalarValue ::
      forall field (ty :: Type). (StyleField field, SymbolicType ty)
   => Proxy field

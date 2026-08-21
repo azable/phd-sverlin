@@ -130,8 +130,7 @@ export const GET: RequestHandler = ({ request, url }) => {
               error: result.error,
               seed,
               revision,
-              debug: result.debug,
-              ...(result.lock ? { lock: result.lock } : {})
+              debug: result.debug
             } satisfies CompileStreamFailure);
           }
         } catch (err) {

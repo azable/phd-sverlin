@@ -1,9 +1,6 @@
 import { json } from '@sveltejs/kit';
 
-import {
-  SourceArtifactBusyError,
-  updateArtifactFromManualEdit
-} from '$lib/server/artifacts/service';
+import { updateArtifactFromManualEdit } from '$lib/server/artifacts/service';
 import { getArtifactSyncState } from '$lib/server/artifacts/store';
 
 import type { RequestHandler } from './$types';
@@ -50,9 +47,6 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
       )
     );
   } catch (error) {
-    if (error instanceof SourceArtifactBusyError) {
-      return json({ error: error.message }, { status: 423 });
-    }
     if (error instanceof Error && error.name === 'ArtifactConflictError') {
       return json({ error: error.message, state: getArtifactSyncState() }, { status: 409 });
     }

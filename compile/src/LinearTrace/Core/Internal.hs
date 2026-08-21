@@ -474,10 +474,7 @@ traceGraphSteps (TraceGraph steps _pending) = steps
 traceStepEvents :: TraceStep -> TraceEvents
 traceStepEvents = foldTraceStep (\_label events -> events)
 
-foldTraceStep ::
-     (P.String -> TraceEvents -> result)
-  -> TraceStep
-  -> result
+foldTraceStep :: (P.String -> TraceEvents -> result) -> TraceStep -> result
 foldTraceStep onCheckpoint (CheckpointStep label events) =
   onCheckpoint label events
 
@@ -491,9 +488,7 @@ type TraceBuilder a = State TraceBuilderState a
 
 instance Consumable TraceBuilderState where
   consume (TraceBuilderState next pending steps) =
-    consume next
-      `lseq` consume pending
-      `lseq` consume steps
+    consume next `lseq` consume pending `lseq` consume steps
 
 instance Dupable TraceBuilderState where
   dup2 (TraceBuilderState next pending steps) =
@@ -570,16 +565,11 @@ withBlockSnapshot :: BlockSnapshot tag -> (Traceable tag => result) -> result
 withBlockSnapshot BlockSnapshot {} result = result
 
 allocatePersistedBlock ::
-     Payload tag
-  -> TraceBuilder (Ur BlockId, Ur (Payload tag))
+     Payload tag -> TraceBuilder (Ur BlockId, Ur (Payload tag))
 allocatePersistedBlock payload = do
   TraceBuilderState (Ur oldNextBlockId) oldPending oldSteps <- get
   let blockId = oldNextBlockId
-  put
-    (TraceBuilderState
-       (Ur (blockId + 1))
-       oldPending
-       oldSteps)
+  put (TraceBuilderState (Ur (blockId + 1)) oldPending oldSteps)
   return (Ur blockId, Ur payload)
 
 appendPendingTraceEvent :: TraceEvent -> TraceBuilder ()
@@ -600,11 +590,7 @@ checkpoint label = do
   TraceBuilderState oldNext (Ur pending) (Ur oldSteps) <- get
   let PendingEvents events = pending
       updatedSteps = oldSteps P.++ [CheckpointStep label events]
-  put
-    (TraceBuilderState
-       oldNext
-       (Ur emptyPendingEvents)
-       (Ur updatedSteps))
+  put (TraceBuilderState oldNext (Ur emptyPendingEvents) (Ur updatedSteps))
 
 --------------------------------------------------------------------------------
 -- Primitive operations
@@ -638,8 +624,7 @@ materializeOutput baseFacts selectFacts payload0 makeEvent =
     Ur outputPayload -> do
       let outputFacts =
             materializationFactsFrom baseFacts selectFacts outputPayload
-      (Ur outputId, Ur persistedOutput) <-
-        allocatePersistedBlock outputPayload
+      (Ur outputId, Ur persistedOutput) <- allocatePersistedBlock outputPayload
       let outputRef = makeBlockRef (Proxy :: Proxy tag) outputId
       let outputSnapshot =
             makeSnapshot
@@ -839,6 +824,5 @@ buildGraph builder =
         runState
           builder
           (TraceBuilderState (Ur 0) (Ur emptyPendingEvents) (Ur []))
-      TraceBuilderState (Ur _) (Ur finalPending) (Ur finalSteps) =
-        finalState
+      TraceBuilderState (Ur _) (Ur finalPending) (Ur finalSteps) = finalState
    in TraceGraph finalSteps finalPending

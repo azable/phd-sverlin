@@ -43,20 +43,6 @@ export type CompileDebug = {
   error?: string;
 };
 
-export type CompileLockHolder = {
-  owner: string;
-  pid: number;
-  startedAt: string;
-  cwd: string;
-  command: string;
-  args: string[];
-  seed?: number;
-  outputPath?: string;
-  lockPath: string;
-};
-
-export type CompileStatus = { running: false } | ({ running: true } & CompileLockHolder);
-
 export type VisualizationSuccess = {
   ok: true;
   trace: CompiledVisualization;
@@ -70,7 +56,6 @@ export type VisualizationFailure = {
   seed?: number;
   revision?: number;
   debug?: CompileDebug;
-  lock?: CompileLockHolder;
 };
 
 export type CompileStreamStatus = {

@@ -59,11 +59,7 @@ instance Semigroup ViewOutput where
       }
 
 instance Monoid ViewOutput where
-  mempty =
-    ViewOutput
-      { emittedNodes = []
-      , emittedRenderIntents = []
-      }
+  mempty = ViewOutput {emittedNodes = [], emittedRenderIntents = []}
 
 renderIntentOutput :: RenderIntent -> ViewOutput
 renderIntentOutput intent = P.mempty {emittedRenderIntents = [intent]}
@@ -87,11 +83,7 @@ patchedNodeOutput patch node0 =
    in P.mempty {emittedNodes = [ViewNode node]}
 
 finalizeViewGraph ::
-     [ViewNode]
-  -> [Constraint]
-  -> [ChoiceConstraint]
-  -> [ViewStep]
-  -> ViewGraph
+     [ViewNode] -> [Constraint] -> [ChoiceConstraint] -> [ViewStep] -> ViewGraph
 finalizeViewGraph nodes baseConstraints baseChoiceConstraints steps =
   let allNodeConstraints = P.concatMap viewNodeConstraints nodes
       allNodeStyleChoiceConstraints =
@@ -278,8 +270,7 @@ compoundLifecycles nodes =
 compoundChildIds :: [NodeChild] -> [ViewId]
 compoundChildIds = P.map nodeChildId
 
-addCompoundLifecycleSteps ::
-     [CompoundLifecycle] -> [ViewStep] -> [ViewStep]
+addCompoundLifecycleSteps :: [CompoundLifecycle] -> [ViewStep] -> [ViewStep]
 addCompoundLifecycleSteps lifecycles steps =
   case steps of
     [] -> []
@@ -287,9 +278,7 @@ addCompoundLifecycleSteps lifecycles steps =
       let (nextLifecycles, compoundIntents) =
             updateCompoundLifecycles (viewStepIntents step) lifecycles
           nextStep =
-            step
-              { viewStepIntents = viewStepIntents step P.++ compoundIntents
-              }
+            step {viewStepIntents = viewStepIntents step P.++ compoundIntents}
        in nextStep : addCompoundLifecycleSteps nextLifecycles rest
 
 updateCompoundLifecycles ::
@@ -314,10 +303,7 @@ updateCompoundLifecycle frame lifecycle =
           visibleLiveIds =
             P.foldl (applyCompoundRenderIntent childIds) liveIds introductions
           nextLiveIds =
-            P.foldl
-              (applyCompoundRenderIntent childIds)
-              visibleLiveIds
-              removals
+            P.foldl (applyCompoundRenderIntent childIds) visibleLiveIds removals
           visibleIsLive = P.not (P.null visibleLiveIds)
           isLive = P.not (P.null nextLiveIds)
           nextLifecycle = CompoundLifecycle node childIds nextLiveIds

@@ -33,6 +33,7 @@
 
       "settings": {
         "files.associations": {
+          "*.sverlin": "haskell",
           "*.hs": "haskell",
           "*.lhs": "haskell",
           "*.hs-boot": "haskell",

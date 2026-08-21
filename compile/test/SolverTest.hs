@@ -4,20 +4,21 @@
 
 module Main where
 
-import qualified Choreography.TestFixtures as ChoreographyFixtures
-import           Control.Exception         (ErrorCall, evaluate, try)
-import qualified Data.List                 as List
-import qualified Data.Map.Strict           as Map
-import           LinearTrace.Choreography  (Applicable2 (..), CoreOperator (..),
-                                            LBool (..), LInt (..),
-                                            LOperator (..), OneUse (..),
-                                            Payload, applyLinear2Into)
-import qualified LinearTrace.Choreography  as Choreography
+import qualified Choreography.TestFixtures         as ChoreographyFixtures
+import           Control.Exception                 (ErrorCall, evaluate, try)
+import qualified Data.List                         as List
+import qualified Data.Map.Strict                   as Map
+import           LinearTrace.Choreography          (Applicable2 (..),
+                                                    CoreOperator (..),
+                                                    LBool (..), LInt (..),
+                                                    LOperator (..), OneUse (..),
+                                                    Payload, applyLinear2Into)
+import qualified LinearTrace.Choreography          as Choreography
+import qualified LinearTrace.Core                  as Core
 import qualified LinearTrace.Visualization.Compile as Compile
-import qualified LinearTrace.Visualization.IR as IR
-import qualified LinearTrace.Core          as Core
-import           Prelude.Linear            (Ur (..))
-import qualified Prelude.Linear            as Linear
+import qualified LinearTrace.Visualization.IR      as IR
+import           Prelude.Linear                    (Ur (..))
+import qualified Prelude.Linear                    as Linear
 import           Solver
 import           Solver.TestFixtures
 import           Test.Tasty
@@ -240,12 +241,11 @@ viewMaterializationTests =
             solution
             ChoreographyFixtures.categoricalStyleGraph
         case compiledRenderElements compiled of
-          element:_ ->
-            do
-              IR.visualFontFamily (IR.elementStyle element) @?= Just "monospace"
-              assertTraceVariablesExist
-                compiled
-                (styleBindingVariables "fontFamily" element)
+          element:_ -> do
+            IR.visualFontFamily (IR.elementStyle element) @?= Just "monospace"
+            assertTraceVariablesExist
+              compiled
+              (styleBindingVariables "fontFamily" element)
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "selected categorical access adds and constrains style" $ do
         solution <-
@@ -274,7 +274,9 @@ viewMaterializationTests =
             IR.visualPadding style' @?= Just 4
             IR.visualFontFamily style' @?= Just "Inter"
             IR.visualFontWeight style' @?= Just "bold"
-            assertBool "expected concrete fill" (IR.visualFill style' /= Nothing)
+            assertBool
+              "expected concrete fill"
+              (IR.visualFill style' /= Nothing)
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "checkpoints lower one-to-one to named timeline steps" $ do
         solution <-
@@ -285,8 +287,7 @@ viewMaterializationTests =
           assertCompileSolved solution ChoreographyFixtures.styledGraph
         map IR.stepLabel (IR.packageSteps compiled)
           @?= ["created", "unchanged", "destroyed"]
-        map (length . IR.stepInstances) (IR.packageSteps compiled)
-          @?= [2, 2, 2]
+        map (length . IR.stepInstances) (IR.packageSteps compiled) @?= [2, 2, 2]
     , testCase "a checkpoint exposes introductions before silent removals" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -296,8 +297,7 @@ viewMaterializationTests =
           assertCompileSolved solution ChoreographyFixtures.transientGraph
         map IR.stepLabel (IR.packageSteps compiled)
           @?= ["transient", "after transient"]
-        map (length . IR.stepInstances) (IR.packageSteps compiled)
-          @?= [2, 0]
+        map (length . IR.stepInstances) (IR.packageSteps compiled) @?= [2, 0]
     ]
 
 nativeBoundsTests :: TestTree
@@ -595,8 +595,7 @@ problemInspectionTests =
     ]
 
 defaultFixture :: SolverFixture
-defaultFixture =
-  namedFixture "bounded-row"
+defaultFixture = namedFixture "bounded-row"
 
 namedFixture :: String -> SolverFixture
 namedFixture name =
@@ -657,9 +656,16 @@ styleBindingVariables field element =
 assertTraceVariablesExist ::
      IR.VisualizationPackage -> [IR.CspVariableId] -> Assertion
 assertTraceVariablesExist compiled referenced = do
-  assertBool "expected style field to reference at least one CSP variable" (not (null referenced))
+  assertBool
+    "expected style field to reference at least one CSP variable"
+    (not (null referenced))
   let available = map IR.cspVariableId (IR.packageVariables compiled)
-  mapM_ (\variableId -> assertBool ("missing CSP variable " ++ show variableId) (variableId `elem` available)) referenced
+  mapM_
+    (\variableId ->
+       assertBool
+         ("missing CSP variable " ++ show variableId)
+         (variableId `elem` available))
+    referenced
 
 epsilon :: Double
 epsilon = 1e-6

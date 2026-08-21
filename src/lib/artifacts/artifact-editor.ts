@@ -3,13 +3,13 @@ import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle } from '@code
 import { haskell } from '@codemirror/legacy-modes/mode/haskell';
 import type { Extension } from '@codemirror/state';
 
-export type ArtifactLanguage = 'haskell';
+export type ArtifactLanguage = 'sverlin';
 
 const haskellLanguage = StreamLanguage.define(haskell);
 
 export function artifactLanguageSupport(language: ArtifactLanguage): Extension {
   switch (language) {
-    case 'haskell':
+    case 'sverlin':
       return haskellLanguage;
   }
 }

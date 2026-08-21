@@ -16,8 +16,7 @@ const initialSource = readFileSync(resolve(process.cwd(), sourcePath), 'utf8');
 const initialArtifact: SourceArtifact = {
   id: 'dsl-main',
   path: sourcePath,
-  language: 'haskell',
-  moduleName: 'DSL.Main',
+  language: 'sverlin',
   content: initialSource
 };
 

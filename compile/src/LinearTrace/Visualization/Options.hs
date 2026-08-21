@@ -45,8 +45,8 @@ jsonFieldName name =
 
 jsonConstructorName :: String -> String
 jsonConstructorName name =
-  lowerFirst . maybe name id . listToMaybe . mapMaybe (`stripPrefix` name) $
-    ["Variable", "Csp", "Element"]
+  lowerFirst . maybe name id . listToMaybe . mapMaybe (`stripPrefix` name)
+    $ ["Variable", "Csp", "Element"]
 
 lowerFirst :: String -> String
 lowerFirst text =

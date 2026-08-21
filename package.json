@@ -16,6 +16,7 @@
     "lint": "prettier --check . && eslint .",
     "lint:haskell": "hlint compile/src compile/app compile/test compile/bench compile/test-support",
     "test:unit": "vitest",
+    "test:sverlin-source": "cabal test -v0 sverlin-source-test --builddir=compile/dist-newstyle --test-show-details=direct",
     "test:solver": "cabal test -v0 solver-test --builddir=compile/dist-newstyle --test-show-details=direct",
     "test": "npm run test:unit -- --run",
     "bench:solver": "cabal run -v0 solver-bench --builddir=compile/dist-newstyle --",

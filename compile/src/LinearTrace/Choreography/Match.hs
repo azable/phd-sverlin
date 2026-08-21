@@ -357,10 +357,7 @@ foldNodePatchesFrom current patches =
     patch:rest -> foldNodePatchesFrom (VP.appendNodePatch current patch) rest
 
 buildMatchedViewGraph ::
-     MatchSpec
-  -> [V.ViewNode]
-  -> [V.ViewStep]
-  -> V.ViewGraph
+     MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> V.ViewGraph
 buildMatchedViewGraph spec builtNodes steps =
   let traceNodes = applyAccessRequirementsForSpec spec builtNodes
       groupNodes =
@@ -368,11 +365,7 @@ buildMatchedViewGraph spec builtNodes steps =
       nodes = traceNodes P.++ groupNodes
       (matchConstraints, matchChoiceConstraints) =
         matchSpecConstraints spec nodes
-   in V.finalizeViewGraph
-        nodes
-        matchConstraints
-        matchChoiceConstraints
-        steps
+   in V.finalizeViewGraph nodes matchConstraints matchChoiceConstraints steps
 
 matchSpecConstraints ::
      MatchSpec -> [V.ViewNode] -> ([S.Constraint], [S.ChoiceConstraint])

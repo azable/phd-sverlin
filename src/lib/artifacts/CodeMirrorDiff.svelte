@@ -8,7 +8,7 @@
   let {
     value,
     original,
-    language = 'haskell',
+    language = 'sverlin',
     ariaLabel = 'Source revision diff'
   }: {
     value: string;

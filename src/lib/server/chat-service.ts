@@ -5,7 +5,7 @@ import { getChatbot } from '$lib/server/chat-bots/registry';
 
 import type { ChatPageState } from '$lib/chat/types';
 
-export { InvalidSourceArtifactError, SourceArtifactBusyError } from '$lib/server/artifacts/service';
+export { InvalidSourceArtifactError } from '$lib/server/artifacts/service';
 
 export async function sendChatMessage(message: string): Promise<ChatPageState> {
   const current = getChatState();

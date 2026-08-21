@@ -15,8 +15,6 @@
   import TraceViewport from '$lib/visualization/TraceViewport.svelte';
   import { TracePlayer } from '$lib/visualization/trace-player.svelte';
   import type {
-    CompileLockHolder,
-    CompileStatus,
     CompileStreamFailure,
     CompileStreamStatus,
     CompileStreamSuccess,
@@ -28,7 +26,6 @@
   type CompilePhase = 'initial' | 'regenerate';
 
   const compileSrc = '/api/visualization';
-  const compileStatusStreamSrc = '/api/visualization/status/stream';
 
   const player = new TracePlayer();
   const chat = new ChatState(untrack(() => data));
@@ -41,21 +38,17 @@
   let compileMounted = $state(false);
   let lastArtifactStreamVersion = untrack(() => data.artifact.streamVersion);
   let activeCompileSource: EventSource | null = null;
-  let activeCompileStatusSource: EventSource | null = null;
   let compileRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  let externalCompileLock = $state<CompileLockHolder | null>(null);
   let selectedVisualIds = $state<VisualId[]>([]);
   let verticalPaneGroupElement = $state<HTMLElement | null>(null);
   let verticalPaneGroup = $state<PaneGroupAPI | undefined>(undefined);
   let traceToolbarElement = $state<HTMLElement | null>(null);
   let autoSizedVisualizationPane = $state(false);
   let compileRunId = 0;
-  const compileBusyRetryMs = 1_000;
+  const compileRetryMs = 1_000;
   const visualizationPaneMinSize = 40;
   const artifactPaneMinSize = 25;
 
-  const compiling = $derived(loadingTrace || regenerating);
-  const toolbarExternalCompiling = $derived(externalCompileLock !== null && !loadingTrace);
   const interactionLocked = $derived(editMode !== 'readonly');
   const pageError = $derived(compileError);
 
@@ -101,11 +94,9 @@
   onMount(() => {
     compileMounted = true;
     startCompile({ phase: 'initial' });
-    startCompileStatusStream();
 
     return () => {
       clearCompileRetry();
-      stopCompileStatusStream();
       activeCompileSource?.close();
       player.dispose();
     };
@@ -139,7 +130,6 @@
       regenerating = true;
     }
 
-    externalCompileLock = null;
     compileError = null;
 
     const source = new EventSource(compileUrl(seed, revision));
@@ -172,7 +162,7 @@
           if (compileRunId === runId) {
             startCompile({ phase, nextSeedText });
           }
-        }, compileBusyRetryMs);
+        }, compileRetryMs);
         return;
       }
 
@@ -233,39 +223,6 @@
 
   function regenerateTrace(nextSeedText = seedText) {
     startCompile({ phase: 'regenerate', nextSeedText });
-  }
-
-  function startCompileStatusStream() {
-    const source = new EventSource(compileStatusStreamSrc);
-    activeCompileStatusSource = source;
-
-    source.addEventListener('status', (event) => {
-      if (activeCompileStatusSource !== source) return;
-
-      try {
-        applyCompileStatus(readStreamEvent<CompileStatus>(event));
-      } catch {
-        externalCompileLock = null;
-      }
-    });
-  }
-
-  function stopCompileStatusStream() {
-    activeCompileStatusSource?.close();
-    activeCompileStatusSource = null;
-  }
-
-  function applyCompileStatus(status: CompileStatus) {
-    if (compiling) {
-      externalCompileLock = null;
-      return;
-    }
-
-    externalCompileLock = status.running ? status : null;
-
-    if (status.running && typeof status.seed === 'number') {
-      seedText = String(status.seed);
-    }
   }
 
   function clearCompileRetry() {
@@ -348,7 +305,6 @@
                 canPrevious={player.canPrevious}
                 currentStep={player.currentStep}
                 currentStepLabel={player.currentStepLabel}
-                externalCompiling={toolbarExternalCompiling}
                 hasTrace={player.hasTrace}
                 locked={interactionLocked}
                 {loadingTrace}

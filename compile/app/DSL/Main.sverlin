@@ -1,38 +1,3 @@
-{-# LANGUAGE ConstraintKinds         #-}
-{-# LANGUAGE DataKinds               #-}
-{-# LANGUAGE FlexibleContexts        #-}
-{-# LANGUAGE FlexibleInstances       #-}
-{-# LANGUAGE GADTs                   #-}
-{-# LANGUAGE LinearTypes             #-}
-{-# LANGUAGE NoImplicitPrelude       #-}
-{-# LANGUAGE OverloadedLabels        #-}
-{-# LANGUAGE OverloadedStrings       #-}
-{-# LANGUAGE RebindableSyntax        #-}
-{-# LANGUAGE TypeApplications        #-}
-{-# LANGUAGE TypeFamilies            #-}
-{-# LANGUAGE UndecidableInstances    #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
-
--- | Current editable choreography example used by the compile executable. It
--- depends only on the public 'LinearTrace.Choreography' DSL and returns the
--- graph consumed by 'App'.
-module DSL.Main
-  ( -- * Example program
-    -- | Linear-search example program kept as the current app-shaped
-    -- visualization fixture.
-    example
-  , -- * Runner
-    -- | Convert an example program into the visual trace graph expected by the
-    -- executable workflow.
-    run
-  ) where
-
-import           Control.Functor.Linear   hiding (ask, (<$>), (<&>), (<*>))
-import           LinearTrace.Choreography
-import           Prelude.Linear           hiding (fromInteger, fromRational,
-                                           (*), (+), (-), (/), (/=), (<>), (==))
-import qualified Prelude.Linear           as Linear
-
 --------------------------------------------------------------------------------
 -- Payload tags
 --------------------------------------------------------------------------------
@@ -90,8 +55,8 @@ exampleSpec =
                    1
                    (MoreExampleValue 6 NoExampleValues))))))
 
-example :: Choreography ()
-example = linearSearch (searchInput exampleSpec)
+program :: Choreography ()
+program = linearSearch (searchInput exampleSpec)
 
 searchInput :: ExampleSpec -> SearchInput
 searchInput spec =
@@ -223,10 +188,8 @@ compareValues targetProbe elementProbe = do
 --------------------------------------------------------------------------------
 -- Visualisation
 --------------------------------------------------------------------------------
-run :: Choreography () -> VisualTraceGraph
-run =
-  runChoreographyWith
-    $ visualize $ do
+visualization :: VisualizationBuilder ()
+visualization = do
     -- Geometry uses relative relationships only; the view layer already keeps
     -- every node on-canvas, so the solver can vary placement between runs.
     Variable cell <- variable @Span

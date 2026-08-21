@@ -1,11 +1,7 @@
 import { json } from '@sveltejs/kit';
 
 import { clearChatState, getChatState } from '$lib/server/chat-sessions';
-import {
-  InvalidSourceArtifactError,
-  SourceArtifactBusyError,
-  sendChatMessage
-} from '$lib/server/chat-service';
+import { InvalidSourceArtifactError, sendChatMessage } from '$lib/server/chat-service';
 import { OpenAIConfigurationError } from '$lib/server/openai-chat';
 
 import type { RequestHandler } from './$types';
@@ -48,10 +44,6 @@ function providerError(error: unknown) {
 
   if (error instanceof InvalidSourceArtifactError) {
     return json({ error: error.message }, { status: 502 });
-  }
-
-  if (error instanceof SourceArtifactBusyError) {
-    return json({ error: error.message }, { status: 423 });
   }
 
   if (error instanceof Error && error.name === 'ChatContextOverflowError') {

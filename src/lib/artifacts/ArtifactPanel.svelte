@@ -201,7 +201,7 @@
           <Edit3Icon class="size-4 shrink-0 text-muted-foreground" />
           <div class="min-w-0">
             <p class="truncate font-mono text-xs">{artifact.current.path}</p>
-            <p class="text-xs text-muted-foreground">DSL.Main · Haskell</p>
+            <p class="text-xs text-muted-foreground">Sverlin · Haskell profile</p>
           </div>
           <Badge variant="outline">Revision {artifact.headRevision}</Badge>
         </div>

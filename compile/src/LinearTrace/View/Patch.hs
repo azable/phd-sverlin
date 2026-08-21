@@ -18,9 +18,9 @@ module LinearTrace.View.Patch
     patchGeometryConstraints
   ) where
 
+import           LinearTrace.View.Graph      (ContentMode)
 import           LinearTrace.View.Primitives (HasBounds (..), LayoutExpr)
 import           LinearTrace.View.Style      (NodeStyle)
-import           LinearTrace.View.Graph      (ContentMode)
 import           Prelude                     (Maybe (..))
 import qualified Prelude                     as P
 import qualified Solver                      as S

@@ -8,7 +8,7 @@
   let {
     value = $bindable(''),
     editable = false,
-    language = 'haskell',
+    language = 'sverlin',
     ariaLabel = 'Source code editor',
     onChange
   }: {

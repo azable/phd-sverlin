@@ -6,9 +6,8 @@ export type JsonPatchOperation = {
 
 export type SourceArtifact = {
   id: 'dsl-main';
-  path: 'compile/app/DSL/Main.hs';
-  language: 'haskell';
-  moduleName: 'DSL.Main';
+  path: 'compile/app/DSL/Main.sverlin';
+  language: 'sverlin';
   content: string;
 };
 

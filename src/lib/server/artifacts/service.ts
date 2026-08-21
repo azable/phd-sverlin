@@ -1,7 +1,5 @@
 import { appendArtifactChange } from './store';
 
-export { SourceArtifactBusyError } from './source-file';
-
 export class InvalidSourceArtifactError extends Error {
   constructor() {
     super('The chatbot returned an invalid DSL source artifact.');
@@ -29,11 +27,9 @@ export function updateArtifactFromManualEdit(
 }
 
 function validateSourceArtifact(content: string) {
-  if (
-    !content.includes('module DSL.Main') ||
-    !content.includes('example :: Choreography ()') ||
-    content.length > 1_000_000
-  ) {
+  // Syntax and the required declarations are checked by the Haskell
+  // elaboration/interpretation boundary so its diagnostics remain canonical.
+  if (content.includes('\0') || content.length > 1_000_000) {
     throw new InvalidSourceArtifactError();
   }
 }

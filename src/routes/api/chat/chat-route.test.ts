@@ -59,8 +59,8 @@ describe('chat API', () => {
         artifactId: 'dsl-main',
         current: {
           id: 'dsl-main',
-          path: 'compile/app/DSL/Main.hs',
-          moduleName: 'DSL.Main'
+          path: 'compile/app/DSL/Main.sverlin',
+          language: 'sverlin'
         },
         headRevision: 0,
         streamVersion: 0,
@@ -73,7 +73,7 @@ describe('chat API', () => {
           { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
           { role: 'user', content: 'hello there' }
         ],
-        initialPrompt: expect.stringContaining('complete updated compile/app/DSL/Main.hs'),
+        initialPrompt: expect.stringContaining('compile/app/DSL/Main.sverlin'),
         context: expect.objectContaining({ artifact: expect.any(Object) }),
         parameters: {
           model: 'gpt-5.6',

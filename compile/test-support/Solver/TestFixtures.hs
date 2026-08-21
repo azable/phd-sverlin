@@ -59,11 +59,11 @@ solveFixture fixture seed =
 validateFixtureSolution :: SolverFixture -> Solution -> [String]
 validateFixtureSolution fixture solution =
   case fixtureName fixture of
-    "bounded-row" -> validateBoundedRow solution
-    "cyclic-hue"  -> validateCyclicHue solution
-    "app-shaped"  -> validateAppShaped solution
+    "bounded-row"    -> validateBoundedRow solution
+    "cyclic-hue"     -> validateCyclicHue solution
+    "app-shaped"     -> validateAppShaped solution
     "nested-extrema" -> validateNestedExtrema solution
-    _             -> []
+    _                -> []
 
 boundedRowFixture :: SolverFixture
 boundedRowFixture =
@@ -417,8 +417,9 @@ nestedExtremaFixture =
     , fixtureDescription =
         "Deeply nested minimum and maximum expressions that guard against duplicated backend evaluation."
     , fixtureConstraints =
-        [within value (Range 0 (fromIntegral nestedExtremaCount + 1))
-        | value <- nestedExtremaValues]
+        [ within value (Range 0 (fromIntegral nestedExtremaCount + 1))
+        | value <- nestedExtremaValues
+        ]
           ++ [ nestedMinimum @==@ num 1
              , nestedMaximum @==@ num (fromIntegral nestedExtremaCount)
              ]
@@ -454,10 +455,7 @@ validateNestedExtrema solution =
                ("expected nested extrema hard energy < 1e-4, got "
                   ++ show (solutionEnergy solution))
     , expectNear "minimum" 1 nestedMinimum
-    , expectNear
-        "maximum"
-        (fromIntegral nestedExtremaCount)
-        nestedMaximum
+    , expectNear "maximum" (fromIntegral nestedExtremaCount) nestedMaximum
     ]
   where
     expectNear label expected expr =
@@ -467,10 +465,9 @@ validateNestedExtrema solution =
           | abs (value - expected) <= 1e-3 -> Nothing
           | otherwise ->
             Just
-              ( "nested extrema "
-                ++ label
-                ++ " expected "
-                ++ show expected
-                ++ ", got "
-                ++ show value
-              )
+              ("nested extrema "
+                 ++ label
+                 ++ " expected "
+                 ++ show expected
+                 ++ ", got "
+                 ++ show value)

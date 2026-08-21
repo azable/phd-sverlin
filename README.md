@@ -12,7 +12,8 @@ The Haskell application under `compile/` builds a linear-search trace, solves a 
 - `src/lib/server/compile-visualization.ts` runs the Haskell compiler and streams diagnostics for the UI.
 - `src/routes/api/visualization/+server.ts` exposes the backend visualization stream used by the frontend.
 - `compile/app/` contains executable-only Haskell modules and the current visualization example.
-- `compile/app/DSL/Main.hs` defines the current example program and its visual styling/constraints. Query terms are intersected with `<&>`, for example `#array <&> #index @: i`.
+- `compile/app/DSL/Main.sverlin` defines the current example program and its visual styling/constraints. It is a body-only Haskell authoring profile with two required declarations: `program :: Choreography ()` and `visualization :: VisualizationBuilder ()`. The compiler supplies the module, imports, extensions, and visual runner. Query terms are intersected with `<&>`, for example `#array <&> #index @: i`.
+- `compile/app/Sverlin/` owns the small source boundary: it elaborates a `.sverlin` body into a generated Haskell module and loads the resulting typed `VisualTraceGraph` through Hint/GHC.
 - `compile/src/LinearTrace/` contains the reusable trace model, public choreography DSL, focused internal view modules, and target pipeline. `LinearTrace.Choreography` exposes the lifecycle DSL directly over `LinearTrace.Core` and adapts query facts during materialization; the modules under `LinearTrace.View/` separately own graph data, output building, style/layout primitives, and solving. `LinearTrace.Visualization.Compile` lowers the solved graph directly into the canonical IR.
 - `compile/src/LinearTrace/View/Style.hs` is the authoritative universal style catalogue. Each field defines its symbolic DSL value, constraints, solved value, traversal, and materialization in one place; the concrete `VisualStyle` in `compile/src/LinearTrace/Visualization/IR.hs` mirrors those fields one-for-one.
 - `compile/src/LinearTrace/Visualization/IR.hs` is the canonical renderer-neutral visualization intermediate representation. It contains concrete solved style values, sparse field-to-CSP-variable traceback, an immutable element registry, and named timeline steps. Each checkpoint introduces exactly one step containing its visible instances. Future artifact renderers compile this solved IR through `LinearTrace.Visualization.Target` and must not make additional seeded choices.
@@ -41,28 +42,34 @@ pnpm run compile -- --seed 1988735004
 
 This writes to a path like `outputs/seed-1988735004/manual-abc123/compiled-seed-1988735004.json`.
 Pass `--output` when you want a specific file path or when you omit `--seed`.
-Direct `compile-app` invocations still require `--output FILE`.
+The wrapper refreshes `compile-app` and launches it through `cabal exec`, which
+supplies the package environment required by Hint. For a direct invocation of an
+already-built executable, use
+`cabal exec --builddir=compile/dist-newstyle -- compile-app ...`; direct
+invocations still require `--output FILE`.
 
 Useful compiler options:
 
 ```sh
 pnpm run compile -- --output outputs/sverlin-seed-1988735004.json --seed 1988735004
 pnpm run compile -- --output outputs/sverlin-compiled.json --target ir-json
+pnpm run compile -- --source examples/Search.sverlin --output outputs/search.json
+pnpm run compile -- --source examples/Search.sverlin --source-label examples/Search.sverlin --emit-haskell outputs/Search.generated.hs --output outputs/search.json
 ```
 
-`--seed` makes the solver deterministic for a specific run. `--target ir-json` is currently the only output target and is the default; the target boundary is in place for future compiler-owned artifact formats, including a possible human-readable rendering of the solved `VisualizationPackage`. Targets consume only the solved IR and do not expose trace-builder events, symbolic constraints, or additional seeded choices. The web app no longer reads or writes `static/compiled.json`.
+`--source FILE` accepts a dynamic `.sverlin` file and defaults to the canonical example. `--source-label PATH` controls the path shown in GHC diagnostics and compiled metadata, while `--emit-haskell FILE` writes the generated module for debugging. `--seed` makes the solver deterministic for a specific run. `--target ir-json` is currently the only output target and is the default; the target boundary is in place for future compiler-owned artifact formats, including a possible human-readable rendering of the solved `VisualizationPackage`. Targets consume only the solved IR and do not expose trace-builder events, symbolic constraints, or additional seeded choices. The source profile is trusted authoring input, not a security sandbox. The web app no longer reads or writes `static/compiled.json`.
 
-Supported compile entrypoints and frontend source writes share a filesystem lock at `outputs/sverlin-compile.lock` by default. This prevents the web app, `pnpm run compile`, `pnpm run bench:compile`, and an atomic `DSL/Main.hs` replacement from overlapping. Generated web, benchmark, and seeded manual compile outputs are kept under the ignored workspace `outputs/` directory for inspection, grouped by seed with paths like `outputs/seed-1/web-abc123/compiled-seed-1.json` or `outputs/seed-1/bench-def456/compiled-seed-1.json`. Set `SVERLIN_OUTPUT_DIR` to override that workspace output root. A manual compile fails fast if another supported operation is active, while the web UI reports active external compiles, syncs their seed when known, and retries instead of starting a conflicting backend build. Raw ad hoc `cabal run ... compile-app` commands bypass this coordination and should be avoided during frontend development.
+Generated web, benchmark, and seeded manual compile outputs are kept under the ignored workspace `outputs/` directory for inspection, grouped by seed with paths like `outputs/seed-1/web-abc123/compiled-seed-1.json` or `outputs/seed-1/bench-def456/compiled-seed-1.json`. Set `SVERLIN_OUTPUT_DIR` to override that workspace output root. Every web request snapshots its exact artifact revision into its unique output directory and passes that physical file to the compiler while retaining the canonical source label. There is no application-level compile lock: different source snapshots can compile concurrently, and canonical source writes remain atomic.
 
 ## Compile Performance Benchmark
 
-Use the direct solver benchmark when changing the solver, constraint lowering, or seeded initialization and you want a stable workload that is independent of `DSL/Main.hs`:
+Use the direct solver benchmark when changing the solver, constraint lowering, or seeded initialization and you want a stable workload that is independent of `DSL/Main.sverlin`:
 
 ```sh
 pnpm run bench:solver
 ```
 
-This runs fixed synthetic solver fixtures from `Solver.TestFixtures` and reports compile/lowering time, backend solve time, total in-process duration, problem size, native-bound count, energy-term count, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluations. The default fixture set includes an app-shaped workload with layout and style variables so solver changes can be measured without depending on the current `DSL/Main.hs`. Useful options:
+This runs fixed synthetic solver fixtures from `Solver.TestFixtures` and reports compile/lowering time, backend solve time, total in-process duration, problem size, native-bound count, energy-term count, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluations. The default fixture set includes an app-shaped workload with layout and style variables so solver changes can be measured without depending on the current `DSL/Main.sverlin`. Useful options:
 
 ```sh
 pnpm run bench:solver --iterations 3
@@ -72,7 +79,7 @@ pnpm run bench:solver --json
 
 The solver preprocessing step flattens conjunctions, removes redundant or duplicate canonical constraints, merges direct and single-variable affine `within` ranges into native L-BFGS-B bounds, removes linear inequalities already implied by native bounds, and reports raw/canonical/eliminated counts through `ProblemInspection`. Finite categorical choices use `Choice`/`Category` plus `freeChoice`, `choose`, `sameChoice`, and `differentChoice`; they are sampled from satisfying finite assignments before numeric solving, with `withMaxCategoricalBranches` guarding accidental branch explosions.
 
-The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. The solver backend shares each nested minimum, maximum, and squared energy operand within an evaluation, keeping shrink-wrapped group constraints linear in their child count. Compile commands print phase timings for view graph construction, solving, IR compilation, target encoding, and writing. Use `pnpm run bench:solver` for detailed solver problem sizes, preprocessing counts, and optimizer evaluation metrics; the `nested-extrema` fixture specifically guards expression-evaluation cost.
+The visualization regeneration path uses a view-specific solver configuration with looser L-BFGS-B tolerances and a lower hard-constraint penalty than `defaultSolveConfig`, with a stricter retry if the first solve fails the success/energy check. The solver backend shares each nested minimum, maximum, and squared energy operand within an evaluation, keeping shrink-wrapped group constraints linear in their child count. Compile commands print phase timings for dynamic source loading, view graph construction, solving, IR compilation, target encoding, and writing. Use `pnpm run bench:solver` for detailed solver problem sizes, preprocessing counts, and optimizer evaluation metrics; the `nested-extrema` fixture specifically guards expression-evaluation cost.
 
 Use the full compile benchmark when changing the Haskell-to-JSON path, frontend compile stream, or anything where end-to-end behavior matters:
 
@@ -80,10 +87,10 @@ Use the full compile benchmark when changing the Haskell-to-JSON path, frontend 
 pnpm run bench:compile
 ```
 
-The default benchmark runs the same Haskell command used by the SvelteKit compile stream and participates in the shared compile lock:
+The default benchmark runs the same build-and-execute wrapper used by the SvelteKit compile stream:
 
 ```sh
-cabal run -v0 compile-app --builddir=compile/dist-newstyle -- --output <generated-seed-output-file> --target ir-json --seed <seed>
+node scripts/run-compile.mjs -- --output <generated-seed-output-file> --target ir-json --seed <seed>
 ```
 
 It writes compile artifacts under paths like `outputs/seed-1/bench-abc123/compiled-seed-1.json`, validates the generated JSON file, and reports min/mean/median/p95/max durations. To compare changes over time, write benchmark artifacts under the ignored workspace `outputs/` directory:
@@ -109,7 +116,7 @@ pnpm install
 pnpm run dev
 ```
 
-Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. Trace playback presents one labelled step per DSL checkpoint and animates solved geometry/style updates, entries, exits, and compiler-provided fork origins; this is a preview capability and does not constrain future artifact targets. Introductions appear in the checkpoint that records them, while removals update the starting state for the following checkpoint, so a final cleanup checkpoint still displays the completed result. The workspace has a resizable chat panel alongside a vertical authoring panel: the visualization is shown above the DSL source and its complete in-process revision history. Choose Edit to focus the source editor; chat, trace playback, regeneration, and history selection are locked until the draft is saved or cancelled. Accepted editor and chatbot revisions atomically replace `compile/app/DSL/Main.hs`, then trigger Cabal regeneration for that exact revision. Saves use the artifact revision as an optimistic concurrency check. If another change wins the race, the panel presents a diff and requires choosing either Reload server or Keep draft & retry. If another supported compile command is already running, source saving reports that the workspace is locked, while visualization regeneration retries instead of launching a conflicting backend build. The page also subscribes to the compile-lock status stream so manual and benchmark compiles are visible while it is open. The seed can be supplied through the UI; both it and the current artifact revision are sent to `/api/visualization`.
+Open the printed local URL. The page starts a backend compile stream on load, shows diagnostics while the backend runs, and renders the visualization after compilation succeeds. Trace playback presents one labelled step per DSL checkpoint and animates solved geometry/style updates, entries, exits, and compiler-provided fork origins; this is a preview capability and does not constrain future artifact targets. Introductions appear in the checkpoint that records them, while removals update the starting state for the following checkpoint, so a final cleanup checkpoint still displays the completed result. The workspace has a resizable chat panel alongside a vertical authoring panel: the visualization is shown above the DSL source and its complete in-process revision history. Choose Edit to focus the source editor; chat, trace playback, regeneration, and history selection are locked until the draft is saved or cancelled. Accepted editor and chatbot revisions atomically replace `compile/app/DSL/Main.sverlin`, then trigger regeneration from an isolated snapshot of that exact revision. Saves use the artifact revision as an optimistic concurrency check. If another change wins the race, the panel presents a diff and requires choosing either Reload server or Keep draft & retry. The seed can be supplied through the UI; both it and the current artifact revision are sent to `/api/visualization`.
 
 The devcontainer post-create step updates Cabal's package index and runs `cabal build -v0 compile-app --builddir=compile/dist-newstyle` to warm the build artifacts before the first browser-triggered regeneration; it does not need to produce visualization JSON. Cabal's package index, build store, and build-summary log are mounted as writable named volumes at `/home/node/.cabal/packages`, `/home/node/.cabal/store`, and `/home/node/.cabal/logs` because the base image filesystem may be read-only at runtime. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 
@@ -121,7 +128,7 @@ The chat endpoint calls OpenAI from the SvelteKit backend using the official Jav
 OPENAI_API_KEY=your_api_key_here
 ```
 
-`OPENAI_MODEL` is optional and defaults to `gpt-5.6`; `CHATBOT_CONFIG` defaults to the provider-neutral `ai-assistant` bot. The key is never sent to the browser. Chat messages and the artifact audit trail are held in separate server-side in-memory stores for this single-user tool; restarting the server clears that history and bootstraps revision zero from the persisted `compile/app/DSL/Main.hs`. Chat bot definitions live under `src/lib/server/chat-bots/`: each defines its initial prompt, context builder, model parameters, and structured response contract. Provider adapters live separately under `src/lib/server/chat-adapters/`, so testing another model or service does not require changing chat orchestration. Each accepted source update is persisted before recording an ordered event with a stable event ID, stream cursor, complete before/after snapshots, provenance, and a JSON Patch from the previous revision. The chatbot receives the current artifact plus the complete ordered artifact audit history, never an arbitrary “last N” window. `CHATBOT_MAX_CONTEXT_CHARS` (default `500000`) is only a guard against exceeding the provider context; it fails explicitly rather than dropping history. Use `GET /api/artifacts/dsl-main?after=<streamVersion>` for incremental synchronization or `PATCH /api/artifacts/dsl-main` for a validated manual source update with `baseRevision`. The source editor uses a small Svelte 5 runes adapter over modular CodeMirror 6, while the history view uses CodeMirror’s merge extension for read-only revision diffs. Use the chat panel’s Reset chat button to clear the transcript and append an auditable reset event when the source has changed; the audit history is retained until the server restarts.
+`OPENAI_MODEL` is optional and defaults to `gpt-5.6`; `CHATBOT_CONFIG` defaults to the provider-neutral `ai-assistant` bot. The key is never sent to the browser. Chat messages and the artifact audit trail are held in separate server-side in-memory stores for this single-user tool; restarting the server clears that history and bootstraps revision zero from the persisted `compile/app/DSL/Main.sverlin`. Chat bot definitions live under `src/lib/server/chat-bots/`: each defines its initial prompt, context builder, model parameters, and structured response contract. Provider adapters live separately under `src/lib/server/chat-adapters/`, so testing another model or service does not require changing chat orchestration. Each accepted source update is persisted before recording an ordered event with a stable event ID, stream cursor, complete before/after snapshots, provenance, and a JSON Patch from the previous revision. The chatbot receives the current artifact plus the complete ordered artifact audit history, never an arbitrary “last N” window. `CHATBOT_MAX_CONTEXT_CHARS` (default `500000`) is only a guard against exceeding the provider context; it fails explicitly rather than dropping history. Use `GET /api/artifacts/dsl-main?after=<streamVersion>` for incremental synchronization or `PATCH /api/artifacts/dsl-main` for a validated manual source update with `baseRevision`. The source editor uses a small Svelte 5 runes adapter over modular CodeMirror 6, while the history view uses CodeMirror’s merge extension for read-only revision diffs. Use the chat panel’s Reset chat button to clear the transcript and append an auditable reset event when the source has changed; the audit history is retained until the server restarts.
 
 ## Frontend Checks
 
@@ -137,6 +144,7 @@ After changing Haskell source:
 
 ```sh
 pnpm run compile -- --seed 1
+pnpm run test:sverlin-source
 pnpm run test:solver
 pnpm run lint:haskell
 ```

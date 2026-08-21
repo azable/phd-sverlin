@@ -1,9 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications  #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 -- | Lower a solved symbolic view graph into the renderer-independent IR.
 module LinearTrace.Visualization.Compile
@@ -11,14 +11,14 @@ module LinearTrace.Visualization.Compile
   ) where
 
 import           Control.Monad.State.Strict
-import           Data.Map.Strict                  (Map)
-import qualified Data.Map.Strict                  as Map
-import qualified LinearTrace.View.Graph           as V
-import qualified LinearTrace.View.Primitives      as VP
-import qualified LinearTrace.View.Style           as VS
-import qualified LinearTrace.Visualization.IR     as IR
+import           Data.Map.Strict              (Map)
+import qualified Data.Map.Strict              as Map
+import qualified LinearTrace.View.Graph       as V
+import qualified LinearTrace.View.Primitives  as VP
+import qualified LinearTrace.View.Style       as VS
+import qualified LinearTrace.Visualization.IR as IR
 import           Prelude
-import qualified Solver                           as S
+import qualified Solver                       as S
 
 compileSolved ::
      FilePath
@@ -66,8 +66,7 @@ compileVariables solution =
         , IR.cspVariableValue = IR.CspCategory value
         }
 
-compileElement ::
-     S.Solution -> V.ViewNode -> Either String IR.VisualElement
+compileElement :: S.Solution -> V.ViewNode -> Either String IR.VisualElement
 compileElement solution wrapped =
   case wrapped of
     V.ViewNode node ->
@@ -84,8 +83,7 @@ compileElementKind structure =
   case structure of
     V.LeafNode -> IR.ElementTrace
     V.CompoundNode _ children ->
-      IR.ElementGroup
-        (map (IR.VisualId . V.viewIdInt . V.nodeChildId) children)
+      IR.ElementGroup (map (IR.VisualId . V.viewIdInt . V.nodeChildId) children)
 
 visualId :: V.ViewRef tag -> IR.VisualId
 visualId = IR.VisualId . V.viewRefInt
@@ -128,23 +126,20 @@ compileStyle solution style = do
             ("could not materialize "
                ++ label
                ++ "; the expression references an unsolved variable")
-    resolved :: forall field.
-         VS.StyleField field
+    resolved ::
+         forall field. VS.StyleField field
       => Either String (Maybe (VS.ResolvedStyleValue field))
     resolved = VS.materializeStyleField @field solution style
-    resolvedScalar :: forall field.
-         ( VS.StyleField field
-         , VS.ResolvedStyleValue field ~ Double
-         )
+    resolvedScalar ::
+         forall field.
+         (VS.StyleField field, VS.ResolvedStyleValue field ~ Double)
       => Either String (Maybe Double)
     resolvedScalar = fmap (fmap roundLayout) (resolved @field)
-    resolvedColor :: forall field.
-         ( VS.StyleField field
-         , VS.ResolvedStyleValue field ~ VP.ConcreteHsl
-         )
+    resolvedColor ::
+         forall field.
+         (VS.StyleField field, VS.ResolvedStyleValue field ~ VP.ConcreteHsl)
       => Either String (Maybe IR.HslColor)
-    resolvedColor =
-      fmap (fmap compileColor) (resolved @field)
+    resolvedColor = fmap (fmap compileColor) (resolved @field)
 
 compileColor :: VP.ConcreteHsl -> IR.HslColor
 compileColor color =
@@ -168,13 +163,10 @@ type ElementLookup = Map IR.VisualId IR.VisualElement
 
 elementLookup :: [IR.VisualElement] -> ElementLookup
 elementLookup elements =
-  Map.fromList
-    [ (IR.elementId element, element)
-    | element <- elements
-    ]
+  Map.fromList [(IR.elementId element, element) | element <- elements]
 
 data SceneState = SceneState
-  { sceneLineage  :: Map IR.VisualId IR.RenderInstanceId
+  { sceneLineage   :: Map IR.VisualId IR.RenderInstanceId
   , sceneInstances :: Map IR.RenderInstanceId IR.VisualInstance
   }
 
@@ -183,25 +175,19 @@ emptySceneState = SceneState Map.empty Map.empty
 
 type CompileM = StateT SceneState (Either String)
 
-compileSteps ::
-     ElementLookup
-  -> [V.ViewStep]
-  -> CompileM [IR.TimelineStep]
+compileSteps :: ElementLookup -> [V.ViewStep] -> CompileM [IR.TimelineStep]
 compileSteps lookup' = traverse (compileStep lookup')
 
 compileStep :: ElementLookup -> V.ViewStep -> CompileM IR.TimelineStep
 compileStep lookup' step = do
   modify clearOrigins
-  let (introductions, removals) =
-        V.splitRenderIntents (V.viewStepIntents step)
+  let (introductions, removals) = V.splitRenderIntents (V.viewStepIntents step)
   mapM_ (applyIntent lookup') introductions
   instances <- gets (Map.elems . sceneInstances)
   mapM_ (applyIntent lookup') removals
   pure
     IR.TimelineStep
-      { IR.stepLabel = V.viewStepLabel step
-      , IR.stepInstances = instances
-      }
+      {IR.stepLabel = V.viewStepLabel step, IR.stepInstances = instances}
 
 clearOrigins :: SceneState -> SceneState
 clearOrigins scene =
@@ -224,9 +210,9 @@ continueRef ::
      ElementLookup -> V.ViewRef source -> V.ViewRef target -> CompileM ()
 continueRef lookup' sourceRef targetRef =
   case (lookupElement lookup' sourceRef, lookupElement lookup' targetRef) of
-    (Nothing, Nothing) -> pure ()
-    (Nothing, Just target) -> createElement target
-    (Just source, Nothing) -> destroyElement source
+    (Nothing, Nothing)         -> pure ()
+    (Nothing, Just target)     -> createElement target
+    (Just source, Nothing)     -> destroyElement source
     (Just source, Just target) -> continueElement source target
 
 continueElement :: IR.VisualElement -> IR.VisualElement -> CompileM ()
@@ -285,8 +271,7 @@ destroyElement element = do
   modify
     (\scene ->
        scene
-         { sceneLineage =
-             Map.delete (IR.elementId element) (sceneLineage scene)
+         { sceneLineage = Map.delete (IR.elementId element) (sceneLineage scene)
          , sceneInstances = Map.delete instanceId (sceneInstances scene)
          })
 
@@ -296,11 +281,9 @@ requireLineage element = do
   case Map.lookup (IR.elementId element) lineage of
     Just instanceId -> pure instanceId
     Nothing ->
-      lift
-        (Left ("no render lineage for " ++ show (IR.elementId element)))
+      lift (Left ("no render lineage for " ++ show (IR.elementId element)))
 
-lookupElement ::
-     ElementLookup -> V.ViewRef tag -> Maybe IR.VisualElement
+lookupElement :: ElementLookup -> V.ViewRef tag -> Maybe IR.VisualElement
 lookupElement lookup' ref = Map.lookup (visualId ref) lookup'
 
 instanceIdFor :: IR.VisualId -> IR.RenderInstanceId
@@ -311,4 +294,6 @@ instanceIdFor elementId' =
 roundLayout :: Double -> Double
 roundLayout value =
   let rounded = fromIntegral (round (value * 1000) :: Integer) / 1000
-   in if abs rounded < 0.0005 then 0 else rounded
+   in if abs rounded < 0.0005
+        then 0
+        else rounded

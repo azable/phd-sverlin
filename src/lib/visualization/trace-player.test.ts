@@ -105,7 +105,7 @@ function trace(contents: string[]): VisualizationPackage {
 
   return {
     seed: 1,
-    sourcePath: 'compile/app/DSL/Main.hs',
+    sourcePath: 'compile/app/DSL/Main.sverlin',
     canvas: { width: 100, height: 80 },
     variables: [],
     elements,

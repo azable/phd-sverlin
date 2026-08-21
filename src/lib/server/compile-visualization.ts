@@ -1,14 +1,10 @@
 import { spawn } from 'node:child_process';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
-import type {
-  CompileDebug,
-  CompileLockHolder,
-  CompiledVisualization
-} from '$lib/visualization/types';
+import type { CompileDebug, CompiledVisualization } from '$lib/visualization/types';
 
 import { getArtifactSyncState } from './artifacts/store';
-import { acquireCompileLock } from './compile-lock.js';
 import { createCompileOutput } from './workspace-output.js';
 
 export type CompileVisualizationOptions = {
@@ -29,7 +25,6 @@ export type CompileVisualizationResult =
       error: string;
       debug: CompileDebug;
       status: number;
-      lock?: CompileLockHolder;
     };
 
 export type CompileVisualizationEvent =
@@ -73,8 +68,23 @@ export async function compileVisualization({
   onEvent
 }: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
+  const artifact = getArtifactSyncState();
+  if (revision !== artifact.headRevision) {
+    const error = `DSL source revision changed from ${revision} to ${artifact.headRevision} before compilation started.`;
+    return {
+      ok: false,
+      error,
+      debug: emptyCompileDebug(cwd, error),
+      status: 409
+    };
+  }
+
   const { outputDir, outputPath } = await createCompileOutput({ owner: 'web', seed });
-  const { command, args } = compileCommand(seed, outputPath);
+  const sourcePath = path.join(outputDir, 'source', 'Main.sverlin');
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  await writeFile(sourcePath, artifact.current.content, 'utf8');
+
+  const { command, args } = compileCommand(seed, outputPath, sourcePath, artifact.current.path);
 
   const timeoutMs = readCompileTimeoutMs();
   const startedDebug: CompileDebug = {
@@ -88,110 +98,74 @@ export async function compileVisualization({
     stdout: '',
     stderr: ''
   };
-  const lockResult = await acquireCompileLock({
-    owner: 'web',
-    cwd,
-    command,
-    args,
-    seed,
-    outputPath
+
+  onEvent?.({
+    type: 'started',
+    debug: startedDebug
   });
 
-  if (!lockResult.acquired) {
-    await rm(outputDir, { recursive: true, force: true });
+  let debug = await runCompile(command, args, cwd, timeoutMs, {
+    signal,
+    onStdout: (chunk, stdout) => {
+      onEvent?.({ type: 'stdout', chunk, stdout });
+    },
+    onStderr: (chunk, stderr) => {
+      onEvent?.({ type: 'stderr', chunk, stderr });
+    }
+  });
+  let compiledJson = '';
 
+  try {
+    compiledJson = await readFile(outputPath, 'utf8');
+  } catch {
+    compiledJson = '';
+  }
+
+  debug = { ...debug, outputPath };
+  onEvent?.({ type: 'finished', debug });
+
+  if (debug.error) {
     return {
       ok: false,
-      error: lockResult.message,
-      debug: { ...startedDebug, stderr: lockResult.message },
-      status: 409,
-      ...(lockResult.holder ? { lock: lockResult.holder } : {})
+      error: debug.error,
+      debug,
+      status: 500
+    };
+  }
+
+  if (debug.timedOut) {
+    return {
+      ok: false,
+      error: `Compile backend timed out after ${formatDuration(timeoutMs)}.`,
+      debug,
+      status: 504
+    };
+  }
+
+  if (debug.exitCode !== 0) {
+    return {
+      ok: false,
+      error: `Compile backend exited with code ${debug.exitCode}.`,
+      debug,
+      status: 500
     };
   }
 
   try {
-    const currentRevision = getArtifactSyncState().headRevision;
-    if (revision !== currentRevision) {
-      const error = `DSL source revision changed from ${revision} to ${currentRevision} before compilation started.`;
-      await rm(outputDir, { recursive: true, force: true });
-      return {
-        ok: false,
-        error,
-        debug: { ...startedDebug, stderr: error },
-        status: 409
-      };
-    }
-
-    onEvent?.({
-      type: 'started',
-      debug: startedDebug
-    });
-
-    let debug = await runCompile(command, args, cwd, timeoutMs, {
-      signal,
-      onStdout: (chunk, stdout) => {
-        onEvent?.({ type: 'stdout', chunk, stdout });
-      },
-      onStderr: (chunk, stderr) => {
-        onEvent?.({ type: 'stderr', chunk, stderr });
-      }
-    });
-    let compiledJson = '';
-
-    try {
-      compiledJson = await readFile(outputPath, 'utf8');
-    } catch {
-      compiledJson = '';
-    }
-
-    debug = { ...debug, outputPath };
-    onEvent?.({ type: 'finished', debug });
-
-    if (debug.error) {
-      return {
-        ok: false,
-        error: debug.error,
-        debug,
-        status: 500
-      };
-    }
-
-    if (debug.timedOut) {
-      return {
-        ok: false,
-        error: `Compile backend timed out after ${formatDuration(timeoutMs)}.`,
-        debug,
-        status: 504
-      };
-    }
-
-    if (debug.exitCode !== 0) {
-      return {
-        ok: false,
-        error: `Compile backend exited with code ${debug.exitCode}.`,
-        debug,
-        status: 500
-      };
-    }
-
-    try {
-      return {
-        ok: true,
-        trace: JSON.parse(compiledJson) as CompiledVisualization,
-        debug
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        error: `Compile backend wrote invalid JSON: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        debug,
-        status: 502
-      };
-    }
-  } finally {
-    await lockResult.lock.release();
+    return {
+      ok: true,
+      trace: JSON.parse(compiledJson) as CompiledVisualization,
+      debug
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Compile backend wrote invalid JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      debug,
+      status: 502
+    };
   }
 }
 
@@ -330,22 +304,41 @@ export function runCompile(
   });
 }
 
-function compileCommand(seed: number, outputPath: string) {
+export function compileCommand(
+  seed: number,
+  outputPath: string,
+  sourcePath: string,
+  sourceLabel: string
+) {
   const args = [
-    'run',
-    '-v0',
-    'compile-app',
-    '--builddir=compile/dist-newstyle',
+    'scripts/run-compile.mjs',
     '--',
+    '--source',
+    sourcePath,
+    '--source-label',
+    sourceLabel,
     '--output',
     outputPath,
     '--target',
     'ir-json',
+    '--details',
     '--seed',
     String(seed)
   ];
 
-  return { command: 'cabal', args };
+  return { command: 'node', args };
+}
+
+function emptyCompileDebug(cwd: string, error: string): CompileDebug {
+  return {
+    command: 'node',
+    args: [],
+    cwd,
+    durationMs: 0,
+    exitCode: null,
+    stdout: '',
+    stderr: error
+  };
 }
 
 function terminateCompile(pid: number | undefined, signal: NodeJS.Signals) {

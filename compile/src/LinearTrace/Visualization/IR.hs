@@ -31,13 +31,16 @@ import           GHC.Generics                      (Generic)
 import           LinearTrace.Visualization.Options (irJsonOptions)
 import           Prelude
 
-newtype VisualId = VisualId Int
+newtype VisualId =
+  VisualId Int
   deriving (Eq, Ord, Show, Generic)
 
-newtype RenderInstanceId = RenderInstanceId Int
+newtype RenderInstanceId =
+  RenderInstanceId Int
   deriving (Eq, Ord, Show, Generic)
 
-newtype CspVariableId = CspVariableId String
+newtype CspVariableId =
+  CspVariableId String
   deriving (Eq, Ord, Show, Generic)
 
 data CspValue
@@ -50,8 +53,8 @@ data CspValue
   deriving (Eq, Show, Generic)
 
 data CspVariable = CspVariable
-  { cspVariableId     :: CspVariableId
-  , cspVariableValue  :: CspValue
+  { cspVariableId    :: CspVariableId
+  , cspVariableValue :: CspValue
   } deriving (Eq, Show, Generic)
 
 data CanvasSpec = CanvasSpec
@@ -68,25 +71,25 @@ data HslColor = HslColor
 -- | Concrete counterpart of 'NodeStyle'. Optionality mirrors the DSL: bounds
 -- always exist, while every other field is present only when authored.
 data VisualStyle = VisualStyle
-  { visualTop          :: Double
-  , visualLeft         :: Double
-  , visualWidth        :: Double
-  , visualHeight       :: Double
-  , visualOpacity      :: Maybe Double
-  , visualZIndex       :: Maybe Double
-  , visualPadding      :: Maybe Double
-  , visualFontSize     :: Maybe Double
-  , visualRadius       :: Maybe Double
-  , visualStrokeWidth  :: Maybe Double
-  , visualAlpha        :: Maybe Double
-  , visualFill         :: Maybe HslColor
-  , visualStroke       :: Maybe HslColor
-  , visualFontFamily   :: Maybe String
-  , visualFontWeight   :: Maybe String
-  , visualFontStyle    :: Maybe String
-  , visualTextAlign    :: Maybe String
-  , visualBorderStyle  :: Maybe String
-  , visualWhiteSpace   :: Maybe String
+  { visualTop         :: Double
+  , visualLeft        :: Double
+  , visualWidth       :: Double
+  , visualHeight      :: Double
+  , visualOpacity     :: Maybe Double
+  , visualZIndex      :: Maybe Double
+  , visualPadding     :: Maybe Double
+  , visualFontSize    :: Maybe Double
+  , visualRadius      :: Maybe Double
+  , visualStrokeWidth :: Maybe Double
+  , visualAlpha       :: Maybe Double
+  , visualFill        :: Maybe HslColor
+  , visualStroke      :: Maybe HslColor
+  , visualFontFamily  :: Maybe String
+  , visualFontWeight  :: Maybe String
+  , visualFontStyle   :: Maybe String
+  , visualTextAlign   :: Maybe String
+  , visualBorderStyle :: Maybe String
+  , visualWhiteSpace  :: Maybe String
   } deriving (Eq, Show, Generic)
 
 -- | Sparse traceback from a concrete style field to the CSP variables that
@@ -124,25 +127,38 @@ data TimelineStep = TimelineStep
   } deriving (Eq, Show, Generic)
 
 data VisualizationPackage = VisualizationPackage
-  { packageSeed          :: Int
-  , packageSourcePath    :: FilePath
-  , packageCanvas        :: CanvasSpec
-  , packageVariables     :: [CspVariable]
-  , packageElements      :: [VisualElement]
-  , packageSteps         :: [TimelineStep]
+  { packageSeed       :: Int
+  , packageSourcePath :: FilePath
+  , packageCanvas     :: CanvasSpec
+  , packageVariables  :: [CspVariable]
+  , packageElements   :: [VisualElement]
+  , packageSteps      :: [TimelineStep]
   } deriving (Eq, Show, Generic)
 
 $(deriveJSON irJsonOptions ''VisualId)
+
 $(deriveJSON irJsonOptions ''RenderInstanceId)
+
 $(deriveJSON irJsonOptions ''CspVariableId)
+
 $(deriveJSON irJsonOptions ''CspValue)
+
 $(deriveJSON irJsonOptions ''CspVariable)
+
 $(deriveJSON irJsonOptions ''HslColor)
+
 $(deriveJSON irJsonOptions ''CanvasSpec)
+
 $(deriveJSON irJsonOptions ''VisualStyle)
+
 $(deriveJSON irJsonOptions ''StyleVariableBinding)
+
 $(deriveJSON irJsonOptions ''VisualElementKind)
+
 $(deriveJSON irJsonOptions ''VisualElement)
+
 $(deriveJSON irJsonOptions ''VisualInstance)
+
 $(deriveJSON irJsonOptions ''TimelineStep)
+
 $(deriveJSON irJsonOptions ''VisualizationPackage)
