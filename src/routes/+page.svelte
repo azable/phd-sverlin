@@ -353,7 +353,6 @@
                 canNext={player.canNext}
                 canPrevious={player.canPrevious}
                 currentStep={player.currentStep}
-                currentStepLabel={player.currentStepLabel}
                 hasTrace={player.hasTrace}
                 locked={interactionLocked}
                 {loadingTrace}

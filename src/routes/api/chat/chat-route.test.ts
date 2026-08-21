@@ -110,7 +110,7 @@ describe('chat API', () => {
           )
         }),
         parameters: {
-          model: 'gpt-5.6',
+          model: 'gpt-5.6-luna',
           reasoningEffort: 'medium',
           maxOutputTokens: 4096
         },
@@ -277,7 +277,7 @@ describe('chat API', () => {
       prompt: {
         botId: 'ai-assistant',
         messages: expect.arrayContaining([{ role: 'user', content: 'change it' }]),
-        parameters: expect.objectContaining({ model: 'gpt-5.6' })
+        parameters: expect.objectContaining({ model: 'gpt-5.6-luna' })
       },
       repairPrompt: {
         context: {

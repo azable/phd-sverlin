@@ -33,7 +33,7 @@ export default {
     ...(compilationFeedback ? { compilationFeedback } : {})
   }),
   parameters: {
-    model: 'gpt-5.6',
+    model: 'gpt-5.6-luna',
     reasoningEffort: 'medium',
     maxOutputTokens: 4096
   },

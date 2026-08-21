@@ -33,7 +33,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - `src/lib/server/chat-bots/ai-assistant/dsl-interface.md` contains the canonical
   DSL interface context for the primary `ai-assistant` bot. It is a human-readable
   authoring reference specifically designed to guide an OpenAI code-generating
-  model (currently configured as `gpt-5.6`) when it edits the in-memory Sverlin
+  model (currently configured as `gpt-5.6-luna`) when it edits the in-memory Sverlin
   artifact presented by the frontend.
 - The guide is read from disk for every model request during local development,
   so saved edits are picked up without restarting the SvelteKit server. The

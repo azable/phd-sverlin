@@ -18,7 +18,6 @@
     canPrevious: boolean;
     canNext: boolean;
     currentStep: number;
-    currentStepLabel: string;
     stepCount: number;
     seedText?: string;
     locked?: boolean;
@@ -35,7 +34,6 @@
     canPrevious,
     canNext,
     currentStep,
-    currentStepLabel,
     stepCount,
     seedText = $bindable(''),
     locked = false,
@@ -101,7 +99,6 @@
 
     {#if hasTrace}
       <div class="flex flex-wrap items-center gap-2" aria-label="Trace status">
-        <Badge variant="outline">{currentStepLabel}</Badge>
         <Badge variant="secondary">Step {currentStep + 1} of {stepCount}</Badge>
       </div>
     {/if}
