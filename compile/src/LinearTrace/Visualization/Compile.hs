@@ -13,7 +13,7 @@ module LinearTrace.Visualization.Compile
 import           Control.Monad.State.Strict
 import           Data.Map.Strict                  (Map)
 import qualified Data.Map.Strict                  as Map
-import qualified LinearTrace.View                 as V
+import qualified LinearTrace.View.Graph           as V
 import qualified LinearTrace.View.Primitives      as VP
 import qualified LinearTrace.View.Style           as VS
 import qualified LinearTrace.Visualization.IR     as IR
@@ -99,7 +99,7 @@ compileContent content =
 
 compileStyle :: S.Solution -> VS.NodeStyle -> Either String IR.VisualStyle
 compileStyle solution style = do
-  let V.Bounds top left width height = VS.nodeStyleBounds style
+  let VP.Bounds top left width height = VS.nodeStyleBounds style
   IR.VisualStyle
     <$> solved "top" top
     <*> solved "left" left
@@ -150,9 +150,9 @@ compileStyle solution style = do
 compileColor :: VP.ConcreteHsl -> IR.HslColor
 compileColor color =
   IR.HslColor
-    { IR.hslHue = roundLayout (V.hue color)
-    , IR.hslSaturation = roundLayout (V.saturation color)
-    , IR.hslLightness = roundLayout (V.lightness color)
+    { IR.hslHue = roundLayout (VP.hue color)
+    , IR.hslSaturation = roundLayout (VP.saturation color)
+    , IR.hslLightness = roundLayout (VP.lightness color)
     }
 
 compileStyleBindings :: VS.NodeStyle -> [IR.StyleVariableBinding]

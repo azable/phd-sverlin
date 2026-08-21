@@ -16,9 +16,10 @@ import           LinearTrace.Choreography.Match (MatchSpec,
                                                  emptyMatchSpec,
                                                  matchedNodeOutput,
                                                  traceNodeOfEventBlock)
-import           LinearTrace.Choreography.Trace (Choreography)
 import qualified LinearTrace.Core               as C
-import qualified LinearTrace.View               as V
+import qualified LinearTrace.View.Build         as V
+import qualified LinearTrace.View.Graph         as V
+import qualified LinearTrace.View.Solve         as V
 import qualified Prelude                        as P
 import qualified Solver                         as S
 import           Solver                         (RandomSeed)
@@ -161,8 +162,8 @@ renderEventBlocks makeIntent sourceBlock targetBlock =
 eventBlockViewRef :: C.BlockSnapshot tag -> V.ViewRef tag
 eventBlockViewRef block = V.nodeRef (traceNodeOfEventBlock block)
 
-runChoreography :: Choreography () -> VisualTraceGraph
+runChoreography :: C.TraceBuilder () -> VisualTraceGraph
 runChoreography = runChoreographyWith emptyMatchSpec
 
-runChoreographyWith :: MatchSpec -> Choreography () -> VisualTraceGraph
+runChoreographyWith :: MatchSpec -> C.TraceBuilder () -> VisualTraceGraph
 runChoreographyWith spec builder = VisualTraceGraph spec (C.buildGraph builder)

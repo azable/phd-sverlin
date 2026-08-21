@@ -75,7 +75,6 @@ library
     import:           app-dependencies
 
     exposed-modules:
-        LinearTrace
         LinearTrace.Choreography
         LinearTrace.Core
         Solver
@@ -91,11 +90,9 @@ library
         LinearTrace.Choreography.Match
         LinearTrace.Choreography.Node
         LinearTrace.Choreography.Style
-        LinearTrace.Choreography.Trace
         LinearTrace.Choreography.Variable
         LinearTrace.Core.Internal
         LinearTrace.Core.Query
-        LinearTrace.View
         LinearTrace.View.Access
         LinearTrace.View.Build
         LinearTrace.View.Graph

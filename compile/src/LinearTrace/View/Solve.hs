@@ -1,6 +1,5 @@
--- | Tuned solver bridge for view graphs. Choreography imports this through the
--- internal 'LinearTrace.View' facade so visualization solving can use settings
--- distinct from the conservative public solver defaults.
+-- | Tuned solver bridge for view graphs. Choreography uses settings distinct
+-- from the conservative public solver defaults.
 module LinearTrace.View.Solve
   ( -- * View solving
     -- | Solve a symbolic view graph with deterministic seeded initialization

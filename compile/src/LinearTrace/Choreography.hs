@@ -1,4 +1,6 @@
-{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE LinearTypes         #-}
+{-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Public choreography DSL facade.
 module LinearTrace.Choreography
@@ -216,23 +218,41 @@ import           LinearTrace.Choreography.Layout
 import           LinearTrace.Choreography.Match      (MatchSpec)
 import           LinearTrace.Choreography.Node
 import           LinearTrace.Choreography.Style
-import           LinearTrace.Choreography.Trace
 import           LinearTrace.Choreography.Variable
-import           LinearTrace.Core                    hiding (apply1, apply2,
-                                                      checkpoint, commit, copy,
-                                                      create, destroy,
-                                                      materialize, replace, use)
-import           LinearTrace.View                    (BorderStyle (..),
-                                                      FontFamily (..),
-                                                      FontStyle (..),
-                                                      FontWeight (..),
-                                                      NodeStyle, TextAlign (..),
-                                                      WhiteSpace (..))
+import           LinearTrace.Core                    hiding (materialize)
+import qualified LinearTrace.Core                    as C
 import           LinearTrace.View.Primitives         (Angle, Bounds (..), Color,
                                                       Free, Hsl (..), Unit)
-import           LinearTrace.View.Style              (Alpha, Fill, FontSize,
+import           LinearTrace.View.Style              (Alpha, BorderStyle (..),
+                                                      Fill, FontFamily (..),
+                                                      FontSize, FontStyle (..),
+                                                      FontWeight (..),
+                                                      NodeStyle,
                                                       Opacity, Padding, Radius,
                                                       Stroke, StrokeWidth,
-                                                      ZIndex)
+                                                      TextAlign (..),
+                                                      WhiteSpace (..), ZIndex)
 import           Solver                              (RandomSeed (..),
                                                       Vec2 (..), vec2)
+
+type Choreography a = TraceBuilder a
+
+type SlotHandle = Slot
+
+materialize ::
+     forall tag. Traceable tag
+  => Query
+  -> Pending tag
+     %1 -> Choreography (Block tag)
+materialize query = C.materializeTagged (queryFacts query)
+
+materializeWithTags ::
+     forall tag. Traceable tag
+  => Query
+  -> (Payload tag -> Query)
+  -> Pending tag
+     %1 -> Choreography (Block tag)
+materializeWithTags query selectQuery =
+  C.materializeTaggedWith (queryFacts query) selectFacts
+  where
+    selectFacts outputPayload = queryFacts (selectQuery outputPayload)

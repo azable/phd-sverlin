@@ -62,12 +62,12 @@ import           LinearTrace.Choreography.Node (Coord, LayoutValue (..),
                                                 substituteSpanBindings)
 import           LinearTrace.Core              (MatchBindings, QueryInt (..),
                                                 queryIntAdd, queryIntConst)
-import qualified LinearTrace.View              as V
 import           LinearTrace.View.Access       (LayoutAttr (..),
                                                 layoutValueAccess)
 import qualified LinearTrace.View.Patch        as VP
 import           LinearTrace.View.Primitives   (Bounds (..), BoundsExpr,
                                                 LayoutExpr, Unit)
+import qualified LinearTrace.View.Primitives   as V
 import qualified Prelude                       as P
 import           Prelude.Linear                hiding (fromInteger,
                                                 fromRational, (*), (+), (-),

@@ -23,8 +23,8 @@ import           LinearTrace.Choreography.Node   (Binding (..), Bound (..),
                                                   emptyVisualizationBuilder,
                                                   freshVisualizationValue)
 import           LinearTrace.Core                (QueryInt, queryIntVar)
-import qualified LinearTrace.View                as V
 import           LinearTrace.View.Primitives     (LayoutExpr)
+import qualified LinearTrace.View.Primitives     as V
 import qualified Prelude                         as P
 import qualified Solver                          as S
 

@@ -105,8 +105,8 @@ import           LinearTrace.Core               (LBool, LDouble, LInt, LString,
                                                  queryAppend, queryAtom,
                                                  queryInt)
 import qualified LinearTrace.Core               as C
-import qualified LinearTrace.View               as V
 import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
+import qualified LinearTrace.View.Graph         as V
 import qualified LinearTrace.View.Patch         as VP
 import qualified LinearTrace.View.Primitives    as Primitives
 import qualified LinearTrace.View.Style         as VS

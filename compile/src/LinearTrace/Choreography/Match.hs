@@ -2,9 +2,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
--- | Choreography matching and view graph assembly. This module binds
--- core trace events to 'LinearTrace.View' by turning query matches, node
--- patches, and value endpoints into symbolic view output.
+-- | Choreography matching and view graph assembly. This module turns core
+-- trace events, query matches, node patches, and value endpoints into symbolic
+-- view output.
 module LinearTrace.Choreography.Match
   ( -- * Match specs
     -- | Accumulated node, layout, and grouping rules produced by the
@@ -48,8 +48,9 @@ import           Data.Proxy              (Proxy (..))
 import           Data.Type.Equality      ((:~:) (..))
 import           Data.Typeable           (eqT)
 import qualified LinearTrace.Core        as C
-import qualified LinearTrace.View        as V
 import qualified LinearTrace.View.Access as VA
+import qualified LinearTrace.View.Build  as V
+import qualified LinearTrace.View.Graph  as V
 import qualified LinearTrace.View.Patch  as VP
 import           Prelude                 (Bool (..), Maybe (..), otherwise)
 import qualified Prelude                 as P

@@ -21,19 +21,18 @@ import           LinearTrace.Choreography.Node (NodeRecipe, Selected (..),
                                                 SelectionCategory (..),
                                                 SelectionValue (..), Span,
                                                 setNodePatch, spanExpr)
-import           LinearTrace.View              (Angle, BorderStyle, FontFamily,
-                                                FontStyle, FontWeight, Free,
-                                                Hsl (..), TextAlign, Unit,
-                                                WhiteSpace)
 import           LinearTrace.View.Access       (HslPart (..),
                                                 styleChoiceValueAccess,
                                                 styleColorPartValueAccess,
                                                 styleValueAccess)
 import qualified LinearTrace.View.Patch        as VP
-import           LinearTrace.View.Primitives   (Color)
-import           LinearTrace.View.Style        (Alpha, Fill, FontSize, Opacity,
-                                                Padding, Radius, Stroke,
-                                                StrokeWidth, ZIndex)
+import           LinearTrace.View.Primitives   (Angle, Color, Free, Hsl (..),
+                                                Unit)
+import           LinearTrace.View.Style        (Alpha, BorderStyle, Fill,
+                                                FontFamily, FontSize, FontStyle,
+                                                FontWeight, Opacity, Padding,
+                                                Radius, Stroke, StrokeWidth,
+                                                TextAlign, WhiteSpace, ZIndex)
 import qualified LinearTrace.View.Style        as VS
 import qualified Prelude                       as P
 import           Prelude.Linear
