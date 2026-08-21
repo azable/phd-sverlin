@@ -1,27 +1,5 @@
-data Message
-
-type instance Payload Message = LString Message
-
 program :: Choreography ()
-program = do
-  Create pending <- create @Message (LString "Hello, Sverlin!")
-  message <- materialize #message pending
-  checkpoint "Create message"
-  Destroy <- destroy message
-  checkpoint "Finish"
+program = return ()
 
 visualization :: VisualizationBuilder ()
-visualization = do
-  Bound label <- bindContent
-  Selected message <- select @Message (#message <&> payload label)
-  render message $ do
-    content label
-    style @Fill (Hsl 214 0.24 0.9)
-    style @Stroke (Hsl 214 0.46 0.34)
-    style @StrokeWidth (by 3)
-    style @Padding (by 16)
-    style @Radius (by 12)
-    style @FontSize (by 28)
-    width (by 240)
-    height (by 80)
-    center (vec2 (at 240) (at 160))
+visualization = return ()

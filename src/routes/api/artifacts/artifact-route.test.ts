@@ -23,9 +23,10 @@ describe('artifact API', () => {
       path: 'Main.sverlin',
       language: 'sverlin'
     });
-    expect(initial.current.content).toContain('data Message');
     expect(initial.current.content).toContain('program :: Choreography ()');
+    expect(initial.current.content).toContain('program = return ()');
     expect(initial.current.content).toContain('visualization :: VisualizationBuilder ()');
+    expect(initial.current.content).toContain('visualization = return ()');
   });
 
   it('returns the complete audit state and records a manual revision', async () => {

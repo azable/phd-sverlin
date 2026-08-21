@@ -196,7 +196,7 @@ describe('chat API', () => {
 
   it('tracks a generated source revision and patch', async () => {
     const source =
-      'program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n';
+      'program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n\n-- generated update\n';
     generateOpenAIReply.mockResolvedValue({
       reply: 'Updated the DSL.',
       sourceArtifactContent: source
@@ -227,7 +227,7 @@ describe('chat API', () => {
   it('repairs one failed candidate internally before committing', async () => {
     const invalidSource = 'program = missing\n';
     const repairedSource =
-      'program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n';
+      'program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n\n-- repaired update\n';
     generateOpenAIReply
       .mockResolvedValueOnce({ reply: 'First attempt.', sourceArtifactContent: invalidSource })
       .mockResolvedValueOnce({ reply: 'Corrected.', sourceArtifactContent: repairedSource });
