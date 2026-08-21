@@ -106,7 +106,7 @@ describe('chat API', () => {
         context: expect.objectContaining({
           artifact: expect.any(Object),
           dslInterface: expect.stringMatching(
-            /small representative input[\s\S]*blank artefact[\s\S]*visual grammar[\s\S]*Create pending <- create @Item \(LInt 3\)[\s\S]*Selected item <- select @Item[\s\S]*FixedStyle TextAlignCenter/
+            /small representative input[\s\S]*blank artefact[\s\S]*seed as a compositional input[\s\S]*meaningful shared alignment[\s\S]*Every relation expression[\s\S]*ensure \$ right first =\| gap \|= left second[\s\S]*Create pending <- create @Item \(LInt 3\)[\s\S]*Selected item <- select @Item[\s\S]*FixedStyle TextAlignCenter[\s\S]*same type and semantic state should share a visual identity[\s\S]*shared family tokens[\s\S]*Selected active <- select @Item[\s\S]*Plain text is a first-class treatment[\s\S]*fixed dark foreground text colour[\s\S]*Different seeds produce visible variation[\s\S]*spatial variation budget[\s\S]*They need not break meaningful internal alignment[\s\S]*Variable border <- choice @BorderStyle/
           )
         }),
         parameters: {
