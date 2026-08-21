@@ -49,9 +49,7 @@ extra-doc-files:    CHANGELOG.md
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
 extra-source-files:
-    app/DSL/Main.sverlin
     test/fixtures/Invalid.sverlin
-    test/fixtures/Minimal.sverlin
 
 common warnings
     ghc-options: -Wall

@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import type {
   ArtifactChangeEvent,
   ArtifactChangeSource,
@@ -9,22 +6,19 @@ import type {
   JsonPatchOperation,
   SourceArtifact
 } from '$lib/artifacts/types';
-import { dslSourcePath, persistSourceArtifact } from './source-file';
+import { initialSourceArtifactContent } from './initial-source';
 
-const sourcePath = dslSourcePath;
-const initialSource = readFileSync(resolve(process.cwd(), sourcePath), 'utf8');
 const initialArtifact: SourceArtifact = {
   id: 'dsl-main',
-  path: sourcePath,
+  path: 'Main.sverlin',
   language: 'sverlin',
-  content: initialSource
+  content: initialSourceArtifactContent
 };
 
 let streamVersion = 0;
 let headRevision = 0;
 let current = initialArtifact;
 let events: ArtifactChangeEvent[] = [];
-let pendingMutation = Promise.resolve();
 
 export function getArtifactSyncState(after?: number): ArtifactSyncState {
   const cursor = after === undefined ? undefined : Math.max(0, after);
@@ -55,12 +49,10 @@ export function appendArtifactChange(
   source: ArtifactChangeSource,
   correlationId: string
 ) {
-  return enqueueMutation(() =>
-    appendArtifactChangeNow(content, baseRevision, source, correlationId)
-  );
+  return appendArtifactChangeNow(content, baseRevision, source, correlationId);
 }
 
-async function appendArtifactChangeNow(
+function appendArtifactChangeNow(
   content: string,
   baseRevision: number,
   source: ArtifactChangeSource,
@@ -91,8 +83,6 @@ async function appendArtifactChangeNow(
     createdAt: new Date().toISOString()
   };
 
-  await persistSourceArtifact(content);
-
   streamVersion = event.streamVersion;
   headRevision = event.revision;
   current = after;
@@ -103,25 +93,14 @@ async function appendArtifactChangeNow(
 
 /** Reset the current source to its bootstrap content without deleting history. */
 export function resetArtifactToInitial(correlationId = crypto.randomUUID()) {
-  return enqueueMutation(async () => {
-    if (current.content !== initialSource) {
-      await appendArtifactChangeNow(
-        initialSource,
-        headRevision,
-        { kind: 'manual', actor: 'user', reason: 'reset' },
-        correlationId
-      );
-    }
+  if (current.content !== initialSourceArtifactContent) {
+    appendArtifactChangeNow(
+      initialSourceArtifactContent,
+      headRevision,
+      { kind: 'manual', actor: 'user', reason: 'reset' },
+      correlationId
+    );
+  }
 
-    return getArtifactSyncState();
-  });
-}
-
-function enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
-  const result = pendingMutation.then(mutation, mutation);
-  pendingMutation = result.then(
-    () => undefined,
-    () => undefined
-  );
-  return result;
+  return getArtifactSyncState();
 }

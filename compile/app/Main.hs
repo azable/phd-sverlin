@@ -177,8 +177,6 @@ optionsParser =
     <$> strOption
           (long "source"
              <> metavar "FILE"
-             <> value "compile/app/DSL/Main.sverlin"
-             <> showDefault
              <> help "Read the Sverlin definition from FILE")
     <*> optional
           (strOption

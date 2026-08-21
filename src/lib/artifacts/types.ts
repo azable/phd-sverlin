@@ -6,7 +6,7 @@ export type JsonPatchOperation = {
 
 export type SourceArtifact = {
   id: 'dsl-main';
-  path: 'compile/app/DSL/Main.sverlin';
+  path: 'Main.sverlin';
   language: 'sverlin';
   content: string;
 };

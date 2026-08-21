@@ -1,7 +1,7 @@
 import type { ChatBotConfig } from '../types';
 
 const dslInterfaceContext = [
-  'DSL/Main.sverlin authoring guide',
+  'Sverlin source authoring guide',
   '',
   'Code-generation behavior',
   '',
@@ -68,7 +68,7 @@ const dslInterfaceContext = [
   '- `use block` consumes a block and returns `Use (OneUse payload)`. Pattern-match',
   '  `OneUse` exactly once to inspect a value or branch; the consumed block cannot',
   '  be referenced again.',
-  '- `destroy block` consumes a block and closes its lifetime. Recursively destroy',
+  '- `Destroy <- destroy block` consumes a block and closes its lifetime. Recursively destroy',
   '  every remaining block in lists/records and destroy resources in both branches as',
   '  appropriate; never leave a live block hidden in a returned structure.',
   '- `checkpoint "label"` introduces exactly one named timeline step from all',
@@ -195,7 +195,7 @@ const dslInterfaceContext = [
 export default {
   id: 'ai-assistant',
   initialPrompt:
-    'Answer the user. If they request a DSL change, return the complete updated body-only compile/app/DSL/Main.sverlin source in sourceArtifactContent; otherwise return null for that field. Treat the artifact context as authoritative and do not invent omitted revisions.',
+    'Answer the user. If they request a DSL change, return the complete updated body-only Sverlin source in sourceArtifactContent; otherwise return null for that field. Treat the artifact context as authoritative and do not invent omitted revisions.',
   buildContext: ({ artifact }) => ({
     dslInterface: dslInterfaceContext,
     artifact

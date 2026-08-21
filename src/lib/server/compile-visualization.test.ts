@@ -75,7 +75,7 @@ describe('compileVisualization', () => {
       42,
       '/tmp/request-a/compiled.json',
       '/tmp/request-a/source/Main.sverlin',
-      'compile/app/DSL/Main.sverlin'
+      'Main.sverlin'
     );
 
     expect(command.command).toBe('node');
@@ -85,7 +85,7 @@ describe('compileVisualization', () => {
         '--source',
         '/tmp/request-a/source/Main.sverlin',
         '--source-label',
-        'compile/app/DSL/Main.sverlin'
+        'Main.sverlin'
       ])
     );
   });

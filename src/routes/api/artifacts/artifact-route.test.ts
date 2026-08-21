@@ -1,11 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const persistSourceArtifact = vi.hoisted(() => vi.fn());
-
-vi.mock('$lib/server/artifacts/source-file', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/server/artifacts/source-file')>()),
-  persistSourceArtifact
-}));
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetArtifactToInitial, getArtifactSyncState } from '$lib/server/artifacts/store';
 import { GET, PATCH } from './[artifactId]/+server';
@@ -19,9 +12,20 @@ function patchEvent(request: Request) {
 
 describe('artifact API', () => {
   beforeEach(async () => {
-    persistSourceArtifact.mockReset();
-    persistSourceArtifact.mockResolvedValue(undefined);
     await resetArtifactToInitial();
+  });
+
+  it('starts from the minimal in-memory Sverlin example', () => {
+    const initial = getArtifactSyncState();
+
+    expect(initial.current).toMatchObject({
+      id: 'dsl-main',
+      path: 'Main.sverlin',
+      language: 'sverlin'
+    });
+    expect(initial.current.content).toContain('data Message');
+    expect(initial.current.content).toContain('program :: Choreography ()');
+    expect(initial.current.content).toContain('visualization :: VisualizationBuilder ()');
   });
 
   it('returns the complete audit state and records a manual revision', async () => {
@@ -46,8 +50,6 @@ describe('artifact API', () => {
       actor: 'user',
       reason: 'test edit'
     });
-    expect(persistSourceArtifact).toHaveBeenLastCalledWith(content);
-
     const fullResponse = await GET({
       params: { artifactId: 'dsl-main' },
       url: new URL('http://localhost/api/artifacts/dsl-main')
@@ -80,7 +82,7 @@ describe('artifact API', () => {
     expect(payload.state.events).toHaveLength(initial.events.length + 1);
   });
 
-  it('persists syntax errors so the compiler can return canonical diagnostics', async () => {
+  it('accepts syntax errors so the compiler can return canonical diagnostics', async () => {
     const initial = getArtifactSyncState();
     const response = await PATCH(
       patchEvent(
@@ -95,9 +97,8 @@ describe('artifact API', () => {
     expect(response.status).toBe(200);
   });
 
-  it('keeps the current revision when persistence fails', async () => {
+  it('keeps the current revision when source validation fails', async () => {
     const initial = getArtifactSyncState();
-    persistSourceArtifact.mockRejectedValueOnce(new Error('Disk write failed.'));
 
     const response = await PATCH(
       patchEvent(
@@ -105,7 +106,7 @@ describe('artifact API', () => {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            content: `${initial.current.content}\n\n-- failed`,
+            content: `${initial.current.content}\0`,
             baseRevision: initial.headRevision
           })
         })

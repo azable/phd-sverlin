@@ -1,5 +1,0 @@
-program :: Choreography ()
-program = return ()
-
-visualization :: VisualizationBuilder ()
-visualization = return ()

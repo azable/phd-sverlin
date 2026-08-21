@@ -158,6 +158,8 @@ async function runCompile({ command, cwd, seed, timeoutMs }) {
   const args = [
     'scripts/run-compile.mjs',
     '--',
+    '--source',
+    'examples/Minimal.sverlin',
     '--output',
     outputPath,
     '--target',

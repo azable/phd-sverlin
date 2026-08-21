@@ -8,7 +8,6 @@ const { generateOpenAIReply, OpenAIConfigurationError } = vi.hoisted(() => ({
     }
   }
 }));
-const persistSourceArtifact = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/server/chat-adapters/openai', () => ({
   generateOpenAIReply,
@@ -20,11 +19,6 @@ vi.mock('$lib/server/chat-adapters/openai', () => ({
 }));
 
 vi.mock('$lib/server/openai-chat', () => ({ OpenAIConfigurationError }));
-vi.mock('$lib/server/artifacts/source-file', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/server/artifacts/source-file')>()),
-  persistSourceArtifact
-}));
-
 import { DELETE, GET, POST } from './+server';
 
 function post(body: unknown) {
@@ -40,7 +34,6 @@ function post(body: unknown) {
 describe('chat API', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    persistSourceArtifact.mockResolvedValue(undefined);
     generateOpenAIReply.mockResolvedValue({ reply: 'A helpful answer.' });
     await DELETE({} as Parameters<typeof DELETE>[0]);
   });
@@ -59,7 +52,7 @@ describe('chat API', () => {
         artifactId: 'dsl-main',
         current: {
           id: 'dsl-main',
-          path: 'compile/app/DSL/Main.sverlin',
+          path: 'Main.sverlin',
           language: 'sverlin'
         },
         headRevision: 0,
@@ -73,7 +66,7 @@ describe('chat API', () => {
           { role: 'assistant', content: 'Hi! Ask me anything about this workspace.' },
           { role: 'user', content: 'hello there' }
         ],
-        initialPrompt: expect.stringContaining('compile/app/DSL/Main.sverlin'),
+        initialPrompt: expect.stringContaining('body-only Sverlin source'),
         context: expect.objectContaining({ artifact: expect.any(Object) }),
         parameters: {
           model: 'gpt-5.6',
@@ -157,7 +150,8 @@ describe('chat API', () => {
   });
 
   it('tracks a generated source revision and patch', async () => {
-    const source = 'module DSL.Main where\nexample :: Choreography ()\nexample = return ()\n';
+    const source =
+      'program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n';
     generateOpenAIReply.mockResolvedValue({
       reply: 'Updated the DSL.',
       sourceArtifactContent: source
@@ -174,7 +168,6 @@ describe('chat API', () => {
         events: [{ revision: 1, patch: [{ op: 'replace', path: '/content', value: source }] }]
       }
     });
-    expect(persistSourceArtifact).toHaveBeenCalledWith(source);
   });
 
   it('passes the complete artifact history to the next chatbot turn', async () => {
@@ -183,7 +176,7 @@ describe('chat API', () => {
     const existingEvents = beforeState.artifact.events.length;
 
     for (let revision = 1; revision <= 6; revision += 1) {
-      const source = `module DSL.Main where\nexample :: Choreography ()\nexample = return ()\n-- revision ${revision}\n`;
+      const source = `program :: Choreography ()\nprogram = return ()\n\nvisualization :: VisualizationBuilder ()\nvisualization = return ()\n-- revision ${revision}\n`;
       generateOpenAIReply.mockResolvedValueOnce({
         reply: `Revision ${revision}`,
         sourceArtifactContent: source
