@@ -121,7 +121,7 @@
         </p>
       {/if}
 
-      <div class="min-h-0 flex-1 overflow-hidden p-3">
+      <div class="min-h-0 flex-1 overflow-hidden">
         <CodeMirrorEditor
           bind:this={editor}
           value={displayedSource}
