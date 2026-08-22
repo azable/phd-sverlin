@@ -5,6 +5,7 @@ module LinearTrace.View.Solve
     -- | Solve a symbolic view graph with deterministic seeded initialization
     -- and a retry configuration for low-energy visualization output.
     solveCSPWithSeed
+  , solveCSPWithSeeds
   ) where
 
 import           LinearTrace.View.Graph
@@ -14,19 +15,58 @@ import qualified Solver                 as S
 import           Solver                 (RandomSeed, Solution, SolveConfig,
                                          SolverProblem)
 
-solveCSP :: SolveConfig -> ViewGraph -> P.IO Solution
-solveCSP config graph = S.solveProblem config (viewSolveProblem graph)
+solveCSP :: RandomSeed -> SolveConfig -> ViewGraph -> P.IO Solution
+solveCSP seed config graph =
+  case S.compileDesignSpace config (viewSolveProblem graph) of
+    P.Right designSpace ->
+      S.sampleDesignSpace S.BalancedDesignChoices seed designSpace
+        P.>>= P.either designSpaceFailure P.pure
+    P.Left err
+      | S.hasConstraintDecisions (viewConstraints graph) ->
+        designSpaceFailure err
+      | P.otherwise -> S.solveProblem config (viewSolveProblem graph)
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
 solveCSPWithSeed seed graph =
-  solveCSP (viewSolveConfig seed) graph P.>>= \solution ->
-    case viewSolutionAcceptable solution of
-      P.True -> P.pure solution
-      P.False ->
-        case S.solutionBackend solution of
-          S.PenaltyOptimizer ->
-            solveCSP (viewRetrySolveConfig seed) graph P.>>= requireAcceptable
-          S.AffineSampler -> rejectSolution solution
+  solveCSP seed (viewSolveConfig seed) graph P.>>= acceptOrRetry seed graph
+
+acceptOrRetry :: RandomSeed -> ViewGraph -> Solution -> P.IO Solution
+acceptOrRetry seed graph solution =
+  case viewSolutionAcceptable solution of
+    P.True -> P.pure solution
+    P.False ->
+      case S.solutionBackend solution of
+        S.PenaltyOptimizer ->
+          S.solveProblem (viewRetrySolveConfig seed) (viewSolveProblem graph)
+            P.>>= requireAcceptable
+        S.AffineSampler -> rejectSolution solution
+
+-- | Compile a view's affine branches once and sample every requested seed.
+-- Non-affine legacy views retain the established per-seed optimizer path.
+solveCSPWithSeeds :: [RandomSeed] -> ViewGraph -> P.IO [Solution]
+solveCSPWithSeeds seeds graph =
+  case seeds of
+    [] -> P.pure []
+    firstSeed:_ ->
+      let config = viewSolveConfig firstSeed
+       in case S.compileDesignSpace config (viewSolveProblem graph) of
+            P.Right designSpace ->
+              S.sampleDesignSpaceBatch S.BalancedDesignChoices seeds designSpace
+                P.>>= P.either designSpaceFailure P.pure
+            P.Left err
+              | S.hasConstraintDecisions (viewConstraints graph) ->
+                designSpaceFailure err
+              | P.otherwise -> P.mapM (`solveLegacyWithSeed` graph) seeds
+
+solveLegacyWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
+solveLegacyWithSeed seed graph =
+  S.solveProblem (viewSolveConfig seed) (viewSolveProblem graph)
+    P.>>= acceptOrRetry seed graph
+
+designSpaceFailure :: S.DesignSpaceError -> P.IO value
+designSpaceFailure err =
+  P.ioError
+    (P.userError ("visualization design space failed: " P.++ P.show err))
 
 viewSolveConfig :: RandomSeed -> SolveConfig
 viewSolveConfig seed =

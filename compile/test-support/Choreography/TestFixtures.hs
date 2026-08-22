@@ -24,6 +24,7 @@ module Choreography.TestFixtures
     categoricalRelationGraph
   , categoricalStyleGraph
   , centerGraph
+  , disjunctiveGraph
   , selectedColorGraph
   , selectedScalarGraph
   , styledGraph
@@ -76,6 +77,9 @@ categoricalRelationGraph = buildGraph categoricalRelationSpec
 
 centerGraph :: ViewGraph
 centerGraph = buildGraph centerSpec
+
+disjunctiveGraph :: ViewGraph
+disjunctiveGraph = buildGraph disjunctiveSpec
 
 styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
@@ -234,6 +238,18 @@ centerSpec =
       width (by 80)
       height (by 80)
     ensure $ center second .==. center first
+
+disjunctiveSpec :: MatchSpec
+disjunctiveSpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      width (by 80)
+      height (by 80)
+    oneOf
+      "test.visual.position"
+      (alternative "left" [left item .==. at 40])
+      [alternative "right" [left item .==. at 680]]
 
 styledSpec :: MatchSpec
 styledSpec =

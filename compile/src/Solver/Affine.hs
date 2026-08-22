@@ -100,6 +100,7 @@ hardConstraint constraint =
   case constraint of
     Soft _     -> False
     Minimize _ -> False
+    Cases _    -> True
     _          -> True
 
 classifyHard :: Constraint -> Either String HardRow
@@ -121,6 +122,7 @@ classifyHard constraint =
     Soft _ -> Right HardSatisfied
     Minimize _ -> Right HardSatisfied
     All _ -> Left "unflattened conjunction reached affine classification"
+    Cases _ -> Left "finite disjunction requires the design-space sampler"
 
 equalityRow :: (Map String Double, Double) -> HardRow
 equalityRow (coefficients, constant) =
@@ -195,6 +197,10 @@ collectConstraintVarTypes = foldMap collectOne
         Minimize objective -> collectRawExprVarTypes objective
         Soft inner -> collectConstraintVarTypes [inner]
         All nested -> collectConstraintVarTypes nested
+        Cases spec ->
+          foldMap
+            (collectConstraintVarTypes . snd)
+            (decisionSpecAlternatives spec)
 
 collectRawExprVarTypes :: RawExpr -> Map String Domain
 collectRawExprVarTypes expr =
@@ -251,6 +257,7 @@ addDirectConstraint bounds constraint =
         (varName variable)
         bounds
     All nested -> foldl addDirectConstraint bounds nested
+    Cases _ -> bounds
     _ -> bounds
 
 addAffineConstraint ::
@@ -262,6 +269,7 @@ addAffineConstraint known bounds constraint =
   case constraint of
     LessOrEqual lhs rhs -> addLinearUpperBounds known (ESub lhs rhs) bounds
     All nested          -> foldl (addAffineConstraint known) bounds nested
+    Cases _             -> bounds
     _                   -> bounds
 
 addLinearUpperBounds ::

@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Constraint and component implementation for symbolic expressions. The
 -- public 'Solver' facade re-exports the stable constructors and combinators;
@@ -9,6 +10,10 @@ module Solver.Constraint
     -- | Raw constraint tree and typeclass operators used by the view and
     -- solver problem layers to express hard and soft numeric relationships.
     Constraint(..)
+  , Alternative
+  , alternative
+  , oneOf
+  , caseOf
   , ConstrainEq(..)
   , ConstrainOrd(..)
   , (@==@)
@@ -25,6 +30,10 @@ module Solver.Constraint
   , flattenConstraints
   , constraintCount
   , equalityEpsilon
+  , DecisionSpec(..)
+  , constraintDecisionSpecs
+  , hasConstraintDecisions
+  , resolveConstraintDecisions
   , -- * Components
     -- | Structured relation API used by choreography matching to bridge
     -- vectors, HSL colours, and scalar fields without exposing raw solver
@@ -39,8 +48,9 @@ module Solver.Constraint
   , symmetricBridgeComponents
   ) where
 
-import qualified Data.Set    as Set
+import qualified Data.Set      as Set
 import           Prelude
+import           Solver.Choice
 import           Solver.Expr
 
 -- Constraints
@@ -51,7 +61,57 @@ data Constraint
   | Minimize RawExpr
   | Soft Constraint
   | All [Constraint]
+  | Cases DecisionSpec
   deriving (Eq, Ord, Show)
+
+-- | One labelled branch of a finite disjunction.
+data Alternative =
+  Alternative String [Constraint]
+  deriving (Eq, Ord, Show)
+
+-- | A stable finite decision and the constraints guarded by each token.
+data DecisionSpec = DecisionSpec
+  { decisionSpecName         :: String
+  , decisionSpecAlternatives :: [(String, [Constraint])]
+  } deriving (Eq, Ord, Show)
+
+-- | Label a conjunction of constraints for use with 'oneOf'.
+alternative :: String -> [Constraint] -> Alternative
+alternative name constraints
+  | null name = error "solver alternative names must not be empty"
+  | otherwise = Alternative name constraints
+
+-- | Require exactly one labelled alternative. Supplying the first branch as
+-- a separate argument makes an empty disjunction unrepresentable.
+oneOf :: String -> Alternative -> [Alternative] -> Constraint
+oneOf name first rest
+  | null name = error "solver decision names must not be empty"
+  | hasDuplicates tokens =
+    error ("solver decision has duplicate alternative names: " ++ show name)
+  | otherwise = Cases (DecisionSpec name alternatives)
+  where
+    alternatives = map unwrapAlternative (first : rest)
+    tokens = map fst alternatives
+    unwrapAlternative (Alternative token constraints) = (token, constraints)
+
+-- | Guard constraints by every value of an existing typed finite choice.
+caseOf ::
+     forall value. ChoiceDomain value
+  => Choice value
+  -> (value -> [Constraint])
+  -> Constraint
+caseOf selected constraintsFor =
+  Cases
+    DecisionSpec
+      { decisionSpecName = choiceName selected
+      , decisionSpecAlternatives =
+          [ (choiceToken value, constraintsFor value)
+          | value <- choiceDomain :: [value]
+          ]
+      }
+
+hasDuplicates :: Ord a => [a] -> Bool
+hasDuplicates values = Set.size (Set.fromList values) /= length values
 
 instance Semigroup Constraint where
   lhs <> rhs = All (flattenConstraint lhs ++ flattenConstraint rhs)
@@ -105,6 +165,7 @@ flattenConstraint constraint =
   case constraint of
     All constraints -> concatMap flattenConstraint constraints
     Soft inner      -> fmap Soft (flattenConstraint inner)
+    Cases spec      -> [Cases (mapDecisionConstraints flattenConstraints spec)]
     _               -> [constraint]
 
 flattenConstraints :: [Constraint] -> [Constraint]
@@ -122,6 +183,7 @@ canonicalConstraint constraint =
       | otherwise -> constraint
     Soft inner -> Soft (canonicalConstraint inner)
     All constraints -> All (map canonicalConstraint constraints)
+    Cases spec -> Cases (mapDecisionConstraints (map canonicalConstraint) spec)
     _ -> constraint
 
 allOf :: [Constraint] -> Constraint
@@ -161,6 +223,7 @@ satisfiedConstantConstraint constraint =
     Minimize _ -> False
     Soft inner -> satisfiedConstantConstraint inner
     All _ -> False
+    Cases _ -> False
 
 constantEquals :: Domain -> Double -> Double -> Bool
 constantEquals ty lhs rhs =
@@ -207,6 +270,64 @@ soften constraint =
   case constraint of
     Soft _ -> constraint
     _      -> Soft constraint
+
+-- | Collect every finite decision nested in a constraint tree.
+constraintDecisionSpecs :: [Constraint] -> [DecisionSpec]
+constraintDecisionSpecs = concatMap collect
+  where
+    collect constraint =
+      case constraint of
+        Equals {} -> []
+        LessOrEqual _ _ -> []
+        Minimize _ -> []
+        Soft inner -> collect inner
+        All constraints -> concatMap collect constraints
+        Cases spec ->
+          spec
+            : concatMap
+                (concatMap collect . snd)
+                (decisionSpecAlternatives spec)
+
+hasConstraintDecisions :: [Constraint] -> Bool
+hasConstraintDecisions = not . null . constraintDecisionSpecs
+
+-- | Select all guarded branches for one complete decision assignment.
+resolveConstraintDecisions ::
+     [(String, String)] -> [Constraint] -> Either String [Constraint]
+resolveConstraintDecisions assignment = fmap concat . traverse resolve
+  where
+    resolve constraint =
+      case constraint of
+        Equals {} -> Right [constraint]
+        LessOrEqual _ _ -> Right [constraint]
+        Minimize _ -> Right [constraint]
+        Soft inner -> fmap (map Soft) (resolve inner)
+        All constraints -> fmap concat (traverse resolve constraints)
+        Cases spec ->
+          case lookup (decisionSpecName spec) assignment of
+            Nothing ->
+              Left
+                ("missing solver decision assignment for "
+                   ++ show (decisionSpecName spec))
+            Just selected ->
+              case lookup selected (decisionSpecAlternatives spec) of
+                Nothing ->
+                  Left
+                    ("unknown solver decision alternative "
+                       ++ show selected
+                       ++ " for "
+                       ++ show (decisionSpecName spec))
+                Just constraints -> fmap concat (traverse resolve constraints)
+
+mapDecisionConstraints ::
+     ([Constraint] -> [Constraint]) -> DecisionSpec -> DecisionSpec
+mapDecisionConstraints f spec =
+  spec
+    { decisionSpecAlternatives =
+        [ (token, f constraints)
+        | (token, constraints) <- decisionSpecAlternatives spec
+        ]
+    }
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------

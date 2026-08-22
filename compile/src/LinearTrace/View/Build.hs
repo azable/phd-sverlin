@@ -130,21 +130,47 @@ compoundTightFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
 compoundTightFitConstraints node children =
   case children of
     [] -> []
-    child:rest ->
-      let allChildren = child : rest
-       in [ left node
-              S.@==@ (minChildEdge nodeChildLeft allChildren
-                        S.@-@ compoundPadding node)
-          , top node
-              S.@==@ (minChildEdge nodeChildTop allChildren
-                        S.@-@ compoundPadding node)
-          , right node
-              S.@==@ (maxChildEdge nodeChildRight allChildren
-                        S.@+@ compoundPadding node)
-          , bottom node
-              S.@==@ (maxChildEdge nodeChildBottom allChildren
-                        S.@+@ compoundPadding node)
-          ]
+    _ ->
+      minimumFitConstraints "left" left nodeChildLeft
+        P.++ minimumFitConstraints "top" top nodeChildTop
+        P.++ maximumFitConstraints "right" right nodeChildRight
+        P.++ maximumFitConstraints "bottom" bottom nodeChildBottom
+  where
+    padding = compoundPadding node
+    minimumFitConstraints edgeName containerEdge childEdge =
+      [ containerEdge node S.@+@ padding S.@<=@ childEdge child
+      | child <- children
+      ]
+        P.++ [ tightEdgeDecision
+                 edgeName
+                 (\child ->
+                    containerEdge node S.@==@ childEdge child S.@-@ padding)
+             ]
+    maximumFitConstraints edgeName containerEdge childEdge =
+      [ childEdge child S.@+@ padding S.@<=@ containerEdge node
+      | child <- children
+      ]
+        P.++ [ tightEdgeDecision
+                 edgeName
+                 (\child ->
+                    containerEdge node S.@==@ childEdge child S.@+@ padding)
+             ]
+    tightEdgeDecision edgeName equalityFor =
+      case P.map
+             (\child ->
+                S.alternative
+                  ("child." P.++ P.show (viewIdInt (nodeChildId child)))
+                  [equalityFor child])
+             children of
+        [] -> P.error "Cannot shrinkwrap an empty compound node."
+        first:rest ->
+          S.oneOf
+            ("view.compound."
+               P.++ P.show (viewRefInt (nodeRef node))
+               P.++ ".fit."
+               P.++ edgeName)
+            first
+            rest
 
 compoundPadding :: Node tag -> LayoutExpr
 compoundPadding node =
@@ -163,29 +189,6 @@ nodeChildRight child = right (nodeChildBounds child)
 
 nodeChildBottom :: NodeChild -> LayoutExpr
 nodeChildBottom child = bottom (nodeChildBounds child)
-
-minChildEdge :: (NodeChild -> LayoutExpr) -> [NodeChild] -> LayoutExpr
-minChildEdge edge children =
-  case children of
-    []         -> P.error "Cannot shrinkwrap an empty compound node."
-    child:rest -> foldChildEdge S.minExpr edge (edge child) rest
-
-maxChildEdge :: (NodeChild -> LayoutExpr) -> [NodeChild] -> LayoutExpr
-maxChildEdge edge children =
-  case children of
-    []         -> P.error "Cannot shrinkwrap an empty compound node."
-    child:rest -> foldChildEdge S.maxExpr edge (edge child) rest
-
-foldChildEdge ::
-     (LayoutExpr -> LayoutExpr -> LayoutExpr)
-  -> (NodeChild -> LayoutExpr)
-  -> LayoutExpr
-  -> [NodeChild]
-  -> LayoutExpr
-foldChildEdge combine edge current children =
-  case children of
-    []         -> current
-    child:rest -> foldChildEdge combine edge (combine current (edge child)) rest
 
 viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
 viewNodeStyleChoiceConstraints node =

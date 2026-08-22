@@ -13,6 +13,7 @@ module LinearTrace.Choreography
   , ViewGraph
   , buildViewGraph
   , solveViewGraphWithSeed
+  , solveViewGraphWithSeeds
   , viewGraphStats
   , runChoreography
   , runChoreographyWith
@@ -179,6 +180,10 @@ module LinearTrace.Choreography
   , bindContent
   , bindInt
   , ensure
+  , VisualAlternative
+  , alternative
+  , oneOf
+  , caseOf
   , variable
   , variableFrom
   , choice

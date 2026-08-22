@@ -70,6 +70,11 @@ module Solver
   , minimize
   , soften
   , constraintCount
+  , Alternative
+  , alternative
+  , oneOf
+  , caseOf
+  , hasConstraintDecisions
   , -- * Multi-component relations
     -- | Components let higher layers relate structured values such as vectors
     -- and HSL colours without constructing raw solver constraints themselves.
@@ -125,6 +130,12 @@ module Solver
   , BackendStatistics(..)
   , OptimizationStatistics(..)
   , SamplingStatistics(..)
+  , VolumeBudget(..)
+  , defaultVolumeBudget
+  , VolumeEstimate(..)
+  , SamplingStrategy(..)
+  , DecisionCoverage(..)
+  , SamplingProvenance(..)
   , solutionSuccess
   , solutionSeed
   , solutionEnergy
@@ -133,11 +144,17 @@ module Solver
   , solutionInspection
   , solutionBackend
   , solutionBackendStatistics
+  , solutionSampling
   , solve
   , solveProblem
   , solveCompiledProblem
   , compileProblem
   , inspectConstraints
+  , DesignSpaceError(..)
+  , CompiledDesignSpace
+  , compileDesignSpace
+  , sampleDesignSpace
+  , sampleDesignSpaceBatch
   , -- * Seeded randomness
     -- | Seeds make initial sampling deterministic for tests and repeatable
     -- visualization output.
@@ -150,5 +167,6 @@ module Solver
 
 import           Solver.Choice
 import           Solver.Constraint
+import           Solver.DesignSpace
 import           Solver.Expr
 import           Solver.Problem

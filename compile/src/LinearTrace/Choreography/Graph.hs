@@ -6,6 +6,7 @@ module LinearTrace.Choreography.Graph
   , ViewGraph
   , buildViewGraph
   , solveViewGraphWithSeed
+  , solveViewGraphWithSeeds
   , viewGraphStats
   , runChoreography
   , runChoreographyWith
@@ -36,6 +37,9 @@ buildViewGraph (VisualTraceGraph spec coreGraph) =
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
+
+solveViewGraphWithSeeds :: [RandomSeed] -> ViewGraph -> P.IO [S.Solution]
+solveViewGraphWithSeeds = V.solveCSPWithSeeds
 
 viewGraphStats :: ViewGraph -> (P.Int, P.Int, P.Int)
 viewGraphStats graph =

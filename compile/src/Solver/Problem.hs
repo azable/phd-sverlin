@@ -43,6 +43,12 @@ module Solver.Problem
   , BackendStatistics(..)
   , OptimizationStatistics(..)
   , SamplingStatistics(..)
+  , VolumeBudget(..)
+  , defaultVolumeBudget
+  , VolumeEstimate(..)
+  , SamplingStrategy(..)
+  , DecisionCoverage(..)
+  , SamplingProvenance(..)
   , solve
   , solveProblem
   , solveCompiledProblem
@@ -244,6 +250,7 @@ data Solution = Solution
   , solutionInspection        :: ProblemInspection
   , solutionBackend           :: NumericBackend
   , solutionBackendStatistics :: BackendStatistics
+  , solutionSampling          :: SamplingProvenance
   , solutionVector            :: [Double]
   } deriving (Eq, Show)
 
@@ -293,6 +300,7 @@ solveAffineCompiled compiled affine choiceValues = do
       , solutionInspection = compiledInspection compiled
       , solutionBackend = AffineSampler
       , solutionBackendStatistics = AffineSamplingStatistics statistics
+      , solutionSampling = SampledWith BalancedDesignChoices EnumeratedDecisions
       , solutionVector = vector
       }
 
@@ -328,6 +336,7 @@ solveOptimizerCompiled compiled variables csp optimizer choiceValues = do
       , solutionInspection = compiledInspection compiled
       , solutionBackend = PenaltyOptimizer
       , solutionBackendStatistics = PenaltyOptimizationStatistics statistics
+      , solutionSampling = LegacySampling
       , solutionVector = vector
       }
 
@@ -768,6 +777,8 @@ lowerConstraintWith kind config vars constraint =
     Soft inner -> lowerConstraintWith SoftTerm config vars inner
     All constraints ->
       traverse_ (lowerConstraintWith kind config vars) constraints
+    Cases _ ->
+      error "unresolved finite disjunction reached the legacy optimizer"
 
 addWeightedTerm ::
      TermKind
@@ -819,6 +830,8 @@ hardConstraintEnergy values = sum . map energy
         Minimize _ -> 0
         Soft _ -> 0
         All constraints -> hardConstraintEnergy values constraints
+        Cases _ ->
+          error "unresolved finite disjunction reached solution validation"
 
 evalRawValues :: Map String Double -> RawExpr -> Double
 evalRawValues values expr =

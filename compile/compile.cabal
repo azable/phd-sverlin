@@ -75,7 +75,12 @@ library
     import:           warnings
     import:           app-dependencies
 
-    build-depends:    hmatrix >=0.20.2 && <0.21
+    build-depends:    hmatrix >=0.20.2 && <0.21,
+                      MIP >=0.2.0.1 && <0.3,
+                      data-default-class,
+                      scientific,
+                      temporary,
+                      text
 
     exposed-modules:
         LinearTrace.Choreography
@@ -107,7 +112,9 @@ library
         Solver.Choice
         Solver.Categorical
         Solver.Constraint
+        Solver.DesignSpace
         Solver.Expr
+        Solver.Highs
         Solver.Optimize
         Solver.Problem
         Solver.Random

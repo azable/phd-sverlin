@@ -3,6 +3,8 @@
 module Solver.Categorical
   ( ChoiceStatistics(..)
   , solveChoiceConstraints
+  , choiceDomains
+  , enumerateChoiceAssignments
   ) where
 
 import           Data.List       (intercalate)

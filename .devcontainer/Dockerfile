@@ -5,6 +5,7 @@ FROM haskell:9.10.3-bookworm
 ARG TARGETARCH
 ARG GHC_VERSION=9.10.3
 ARG HLS_VERSION=2.14.0.0
+ARG HIGHS_VERSION=1.15.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -15,6 +16,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bubblewrap \
         ca-certificates \
+        cmake \
         curl \
         gfortran \
         git \
@@ -25,6 +27,29 @@ RUN apt-get update \
         pkg-config \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# The MIP package uses the HiGHS command-line executable as its backend. Build
+# one pinned, architecture-independent release rather than relying on a distro
+# package whose availability differs between amd64 and arm64.
+RUN curl \
+        --fail \
+        --location \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        "https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERSION}.tar.gz" \
+        -o /tmp/highs.tar.gz \
+    && echo "a840d269dff2fafb371dd247df13ad5e026d7ce3b35ad3dc1eedd59bf0c2fb16  /tmp/highs.tar.gz" \
+        | sha256sum -c - \
+    && tar -xzf /tmp/highs.tar.gz -C /tmp \
+    && cmake \
+        -S "/tmp/HiGHS-${HIGHS_VERSION}" \
+        -B /tmp/highs-build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+    && cmake --build /tmp/highs-build --parallel 2 --target highs-bin \
+    && install -m 0755 /tmp/highs-build/bin/highs /usr/local/bin/highs \
+    && rm -rf /tmp/highs.tar.gz /tmp/highs-build "/tmp/HiGHS-${HIGHS_VERSION}"
 
 # Install HLS matching GHC 9.10.3.
 RUN set -eux; \
@@ -71,5 +96,5 @@ RUN set -eux; \
 # Verify Haskell environment during image construction.
 RUN ghc --version \
     && cabal --version \
+    && highs --version \
     && haskell-language-server-wrapper --version
-    

@@ -12,11 +12,14 @@ module Solver.Choice
   , Choice
   , choice
   , choiceName
+  , choiceCategories
   , choiceValueFromToken
   , -- * Choice constraints
     -- | Relations over finite choices. These are consumed by 'Solver.Problem'
     -- and by the view style solver bridge.
-    ChoiceConstraint
+    ChoiceSpec(..)
+  , ChoiceConstraint(..)
+  , choiceSpec
   , freeChoice
   , choose
   , sameChoice

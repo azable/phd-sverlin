@@ -34,6 +34,7 @@ data Options = Options
   , optionOutputPath  :: FilePath
   , optionTarget      :: Target.OutputTarget
   , optionDetails     :: Bool
+  , optionCount       :: Int
   }
 
 main :: IO ()
@@ -51,6 +52,7 @@ main = do
                 {sourceDisplayPath = sourceLabel, sourceBody = sourceBody'}
       emitGeneratedSource (optionEmitHaskell options) generated
       seed <- chooseSeed (optionSeed options)
+      let seeds = take (optionCount options) [seed ..]
       sourceStarted <- getMonotonicTimeNSec
       interpreted <-
         withVisualization generated $ \graph -> do
@@ -59,7 +61,7 @@ main = do
             options
             sourceLabel
             (elapsedMs sourceStarted sourceFinished)
-            seed
+            seeds
             graph
       case interpreted of
         Left err -> failWith (formatInterpreterError err)
@@ -76,30 +78,37 @@ runVisualization ::
      Options
   -> FilePath
   -> Double
-  -> Int
+  -> [Int]
   -> Choreography.VisualTraceGraph
-  -> IO (Either String IR.Visualization)
-runVisualization options sourcePath sourceLoadMs seed graph = do
+  -> IO (Either String [IR.Visualization])
+runVisualization options sourcePath sourceLoadMs seeds graph = do
   (viewGraph, viewGraphMs) <-
     timedPhase (evaluate (forceViewGraph (Choreography.buildViewGraph graph)))
-  (solved, solveMs) <-
+  (solutions, solveMs) <-
     timedPhase
-      (Choreography.solveViewGraphWithSeed
-         (Choreography.RandomSeed seed)
+      (Choreography.solveViewGraphWithSeeds
+         (map Choreography.RandomSeed seeds)
          viewGraph)
   (compiledResult, compileMs) <-
     timedPhase
       (evaluate
-         (forceCompileResult (Compile.compileSolved sourcePath solved viewGraph)))
+         (forceCompileResults
+            (traverse
+               (\solution -> Compile.compileSolved sourcePath solution viewGraph)
+               solutions)))
   case compiledResult of
     Left err -> pure (Left err)
     Right compiled -> do
       (encoded, encodeMs) <-
-        timedPhase (evaluate (forceEncoded (optionTarget options) compiled))
+        timedPhase
+          (evaluate
+             (forceEncoded (optionTarget options) (optionCount options) compiled))
       ((), writeMs) <-
         timedPhase (writeCompiled (optionOutputPath options) encoded)
       when (optionDetails options) $ do
-        hPrintSolverDetails stdout solved
+        case solutions of
+          solution:_ -> hPrintSolverDetails stdout solution
+          []         -> pure ()
         hPrintPhaseTimings
           stdout
           [ ("Source load", sourceLoadMs)
@@ -117,16 +126,20 @@ forceViewGraph graph =
     (nodes, constraints, steps) ->
       nodes `seq` constraints `seq` steps `seq` graph
 
-forceCompileResult ::
-     Either String IR.Visualization -> Either String IR.Visualization
-forceCompileResult result =
+forceCompileResults ::
+     Either String [IR.Visualization] -> Either String [IR.Visualization]
+forceCompileResults result =
   case result of
     Left err       -> length err `seq` result
-    Right compiled -> compiled `seq` result
+    Right compiled -> length compiled `seq` result
 
-forceEncoded :: Target.OutputTarget -> IR.Visualization -> BL.ByteString
-forceEncoded target compiled =
-  let encoded = Target.compileTarget target compiled
+forceEncoded ::
+     Target.OutputTarget -> Int -> [IR.Visualization] -> BL.ByteString
+forceEncoded target count compiled =
+  let encoded =
+        case (count, compiled) of
+          (1, visualization:_) -> Target.compileTarget target visualization
+          _                    -> Target.compileTargets target compiled
    in BL.length encoded `seq` encoded
 
 timedPhase :: IO a -> IO (a, Double)
@@ -237,6 +250,21 @@ optionsParser =
              <> showDefaultWith Target.outputTargetName
              <> help "Compile to TARGET (currently: ir-json)")
     <*> switch (long "details" <> help "Print phase timings")
+    <*> option
+          (eitherReader positiveInt)
+          (long "count"
+             <> metavar "INT"
+             <> value 1
+             <> showDefault
+             <> help
+                  "Generate INT seeded samples; counts above one write a JSON array")
+
+positiveInt :: String -> Either String Int
+positiveInt input =
+  case reads input of
+    [(parsed, "")]
+      | parsed > 0 -> Right parsed
+    _ -> Left "expected a positive integer"
 
 emitGeneratedSource :: Maybe FilePath -> GeneratedSource -> IO ()
 emitGeneratedSource output generated =

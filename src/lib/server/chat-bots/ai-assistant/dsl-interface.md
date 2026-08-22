@@ -29,6 +29,7 @@
 - `Hsl` uses degrees for hue and values from 0 to 1 for saturation and lightness, for example `Hsl 215 0.76 0.93`, not CSS percentages.
 - Categorical styles require `FixedStyle` or `VariableStyle`, not strings or bare numbers. Examples include `FixedStyle FontWeightBold`, `FixedStyle (FontWeightNumber 700)`, and `FixedStyle TextAlignCenter`.
 - Every relation expression produces a `VisualConstraint`, not a `VisualizationBuilder ()`. Emit it with `ensure` or `encourage`, including bridge expressions: write `ensure $ right first =| gap |= left second` and `encourage $ x item .==. x guide`. Never place `.==.`, `.<=.`, `.>=.`, `=| ... |=`, or `=/ ... /=` directly as a statement in `visualization`.
+- `oneOf` is the deliberate exception: each `alternative` takes a list of raw `VisualConstraint` values, without `ensure`. Write `oneOf "composition" (alternative "row" [y first .==. y second]) [alternative "column" [x first .==. x second]]`. Alternative constraints are always hard.
 - A `do` block cannot end with a pattern bind such as `Destroy <- destroy item`; follow the final destroy with `return ()` or a meaningful final checkpoint.
 
 ## Value-first computation
@@ -211,6 +212,25 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - Read selection geometry with `x`, `y`, `left`, `right`, `top`, `bottom`, `width`, and `height`, then relate selections instead of fixing every coordinate.
 - `ensure` emits a hard constraint with `.<=.`, `.>=.`, or `.==.`. `encourage` emits a soft preference.
 - Directed and symmetric gap relations use `=|`/`|=` and `=/`/`/=` respectively.
+- Use `oneOf name firstAlternative remainingAlternatives` when two or more substantially different compositions are all semantically valid. Names and alternative labels must be stable and descriptive. Put minimum semantic, containment, ordering, and readability constraints outside the alternatives; put only the relationships that distinguish each composition inside them. The solver balances feasible named alternatives before sampling continuous geometry:
+
+  ```haskell
+  Variable gap <- variable @Span
+  ensure $ gap .>=. by 20
+  ensure $ gap .<=. by 72
+  oneOf
+    "comparison.composition"
+    (alternative
+       "row"
+       [right source =| gap |= left result, y source .==. y result])
+    [ alternative
+        "column"
+        [bottom source =| gap |= top result, x source .==. x result]
+    ]
+  ```
+
+- `caseOf choice $ \value -> ...` is the exhaustive typed form when an existing finite choice also determines numeric layout constraints. Pattern-match every constructor and return a list of `VisualConstraint` values. Define categorical equality/difference constraints globally; conditional alternatives currently accept numeric visual relations only.
+- Do not imitate a discrete composition with a continuous selector, magic numeric thresholds, or mutually contradictory soft constraints. Use `oneOf` so infeasible alternatives can be rejected explicitly and the chosen branch is retained in visualization provenance.
 - The runner supplies the random seed; it is not a random value available to `program`. The same seed is reproducible. Bounded affine hard constraints are sampled across their feasible region instead of optimized toward one preferred point, and categorical choices are sampled uniformly from satisfying alternatives. Different seeds therefore explore freedom that the hard constraints genuinely leave open.
 - Keep a generative numeric problem on that sampling path when practical: use variables, constants, addition/subtraction, and multiplication or division by constants in hard constraints, and give every independent value finite lower and upper bounds. Variable-by-variable multiplication/division, `absExpr`, `minExpr`, `maxExpr`, cyclic equality, or an unbounded value selects the nonlinear penalty fallback and can make seeds converge on similar results.
 - On the bounded affine path, `encourage` and `minimize` are deliberately ignored: they describe attraction toward an optimum, which conflicts with broad exploration. Express the user's minimum requirements, semantic relationships, containment, contrast, and legibility with `ensure`, then leave all other values free inside broad hard ranges. Exact hard equalities remain valid but reduce the dimension available for variation.

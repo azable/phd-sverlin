@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE NoImplicitPrelude    #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -9,6 +10,10 @@ module LinearTrace.Choreography.Constraint
   ( ensure
   , CategoryTerm(..)
   , encourage
+  , VisualAlternative
+  , alternative
+  , oneOf
+  , caseOf
   , ValueTerm(..)
   , VisualConstraint(..)
   , (.<=.)
@@ -27,6 +32,7 @@ import           LinearTrace.Choreography.Match (CategoryEndpoint,
                                                  NodeSelection, ValueEndpoint,
                                                  emptyMatchSpec,
                                                  matchCategoryRelation,
+                                                 matchFiniteDecision,
                                                  matchSpecAppend,
                                                  matchValueDirectedBridge,
                                                  matchValueRelation,
@@ -64,6 +70,9 @@ data VisualConstraint where
     :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
   VisualSymmetricBridge
     :: ValueTerm -> ValueTerm -> ValueTerm -> VisualConstraint
+
+data VisualAlternative =
+  VisualAlternative P.String [VisualConstraint]
 
 data ValueTerm =
   ValueTerm MatchSpec [ValueEndpoint]
@@ -352,6 +361,44 @@ ensure = emitConstraint EnsureConstraint
 
 encourage :: VisualConstraint -> VisualizationBuilder ()
 encourage = emitConstraint EncourageConstraint
+
+-- | Label one branch of a finite visual decision. Branch constraints remain
+-- hard; use ordinary global constraints for the minimum semantic contract.
+alternative :: P.String -> [VisualConstraint] -> VisualAlternative
+alternative = VisualAlternative
+
+-- | Require exactly one labelled visual alternative. The first alternative is
+-- separate so an empty decision cannot be represented.
+oneOf ::
+     P.String
+  -> VisualAlternative
+  -> [VisualAlternative]
+  -> VisualizationBuilder ()
+oneOf name first rest =
+  emitVisualizationBuilder
+    ()
+    (matchFiniteDecision name (P.map compileAlternative (first : rest)))
+  where
+    compileAlternative (VisualAlternative token constraints) =
+      ( token
+      , P.foldl
+          matchSpecAppend
+          emptyMatchSpec
+          (P.map (visualConstraintSpec EnsureConstraint) constraints))
+
+-- | Define an exhaustive visual case for an existing typed finite choice.
+caseOf ::
+     forall value. S.ChoiceDomain value
+  => S.Choice value
+  -> (value -> [VisualConstraint])
+  -> VisualizationBuilder ()
+caseOf selected constraintsFor =
+  case P.map makeAlternative (S.choiceDomain :: [value]) of
+    [] -> P.error "A visual choice domain must contain at least one value."
+    first:rest -> oneOf (S.choiceName selected) first rest
+  where
+    makeAlternative value =
+      alternative (S.choiceToken value) (constraintsFor value)
 
 emitConstraint ::
      ConstraintStrength -> VisualConstraint -> VisualizationBuilder ()

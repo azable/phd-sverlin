@@ -32,6 +32,7 @@ compileSolved sourcePath solution graph = do
     IR.Visualization
       { IR.visualizationSeed = solutionSeedInt solution
       , IR.visualizationSourcePath = sourcePath
+      , IR.visualizationSampling = Just (compileSampling solution)
       , IR.visualizationCanvas =
           IR.CanvasSpec
             { IR.canvasWidth = roundLayout (V.viewCanvasWidth graph)
@@ -41,6 +42,20 @@ compileSolved sourcePath solution graph = do
       , IR.visualizationElements = elements
       , IR.visualizationSteps = steps
       }
+
+compileSampling :: S.Solution -> IR.SamplingProvenance
+compileSampling solution =
+  case S.solutionSampling solution of
+    S.LegacySampling ->
+      IR.SamplingProvenance IR.LegacyOptimizer IR.LegacyCoverage
+    S.SampledWith strategy coverage ->
+      IR.SamplingProvenance
+        (case strategy of
+           S.BalancedDesignChoices -> IR.BalancedChoices
+           S.GeometricVolume _     -> IR.GeometricMeasure)
+        (case coverage of
+           S.EnumeratedDecisions     -> IR.ExactEnumeration
+           S.MipConditionedDecisions -> IR.MipConditioning)
 
 solutionSeedInt :: S.Solution -> Int
 solutionSeedInt solution =

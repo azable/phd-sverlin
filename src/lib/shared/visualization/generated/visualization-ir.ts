@@ -14,6 +14,8 @@ export interface CspVariable {
 
 export type CspVariableId = string;
 
+export type DecisionCoverage = 'exactEnumeration' | 'mipConditioning' | 'legacyCoverage';
+
 export interface HslColor {
   hue: number;
   saturation: number;
@@ -21,6 +23,13 @@ export interface HslColor {
 }
 
 export type RenderInstanceId = number;
+
+export type SamplingMode = 'balancedChoices' | 'geometricMeasure' | 'legacyOptimizer';
+
+export interface SamplingProvenance {
+  mode: SamplingMode;
+  coverage: DecisionCoverage;
+}
 
 export interface StyleVariableBinding {
   field: string;
@@ -76,6 +85,7 @@ export interface VisualStyle {
 export interface Visualization {
   seed: number;
   sourcePath: string;
+  sampling?: SamplingProvenance;
   canvas: CanvasSpec;
   variables: CspVariable[];
   elements: VisualElement[];

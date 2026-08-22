@@ -22,6 +22,9 @@ module LinearTrace.Visualization.IR
   , VisualElement(..)
   , VisualInstance(..)
   , TimelineStep(..)
+  , SamplingMode(..)
+  , DecisionCoverage(..)
+  , SamplingProvenance(..)
   , Visualization(..)
   , irJsonOptions
   ) where
@@ -126,9 +129,31 @@ data TimelineStep = TimelineStep
   , stepInstances :: [VisualInstance]
   } deriving (Eq, Show, Generic)
 
+-- | Measure from which the solver proposed this visualization.
+data SamplingMode
+  = BalancedChoices
+  | GeometricMeasure
+  | LegacyOptimizer
+  deriving (Eq, Show, Generic)
+
+-- | How completely the finite decision space was represented.
+data DecisionCoverage
+  = ExactEnumeration
+  | MipConditioning
+  | LegacyCoverage
+  deriving (Eq, Show, Generic)
+
+-- | Solver provenance needed to interpret comparisons between generated
+-- visualizations without retaining solver implementation state.
+data SamplingProvenance = SamplingProvenance
+  { samplingMode     :: SamplingMode
+  , samplingCoverage :: DecisionCoverage
+  } deriving (Eq, Show, Generic)
+
 data Visualization = Visualization
   { visualizationSeed       :: Int
   , visualizationSourcePath :: FilePath
+  , visualizationSampling   :: Maybe SamplingProvenance
   , visualizationCanvas     :: CanvasSpec
   , visualizationVariables  :: [CspVariable]
   , visualizationElements   :: [VisualElement]
@@ -160,5 +185,11 @@ $(deriveJSON irJsonOptions ''VisualElement)
 $(deriveJSON irJsonOptions ''VisualInstance)
 
 $(deriveJSON irJsonOptions ''TimelineStep)
+
+$(deriveJSON irJsonOptions ''SamplingMode)
+
+$(deriveJSON irJsonOptions ''DecisionCoverage)
+
+$(deriveJSON irJsonOptions ''SamplingProvenance)
 
 $(deriveJSON irJsonOptions ''Visualization)

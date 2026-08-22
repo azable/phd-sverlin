@@ -35,6 +35,7 @@ module LinearTrace.Choreography.Match
   , matchCategoryRelation
   , matchValueDirectedBridge
   , matchValueSymmetricBridge
+  , matchFiniteDecision
   , -- * View graph assembly
     -- | Internal bridge from core event blocks to view nodes. Choreography is
     -- the intended caller; this is not re-exported directly to DSL users.
@@ -132,6 +133,7 @@ data LayoutRule where
     -> [ValueEndpoint]
     -> [ValueEndpoint]
     -> LayoutRule
+  FiniteDecisionLayout :: P.String -> [(P.String, [LayoutRule])] -> LayoutRule
 
 data GroupRule =
   GroupRule P.String C.Query NodePatch
@@ -230,6 +232,17 @@ matchValueSymmetricBridge ::
   -> MatchSpec
 matchValueSymmetricBridge strength lhs delta rhs =
   MatchSpec [] [ValueSymmetricBridgeLayout strength lhs delta rhs] []
+
+matchFiniteDecision :: P.String -> [(P.String, MatchSpec)] -> MatchSpec
+matchFiniteDecision name alternatives =
+  MatchSpec
+    (P.concatMap alternativeNodeRules alternatives)
+    [FiniteDecisionLayout name (P.map alternativeLayouts alternatives)]
+    (P.concatMap alternativeGroupRules alternatives)
+  where
+    alternativeNodeRules (_, MatchSpec rules _ _) = rules
+    alternativeLayouts (token, MatchSpec _ rules _) = (token, rules)
+    alternativeGroupRules (_, MatchSpec _ _ rules) = rules
 
 traceNodeOfEventBlock :: C.BlockSnapshot tag -> V.Node tag
 traceNodeOfEventBlock block =
@@ -416,6 +429,19 @@ layoutRuleConstraints nodes layoutRule =
              valueSymmetricBridgeConstraints
              (matchingValueTermTriples lhs delta rhs nodes))
       , [])
+    FiniteDecisionLayout name alternatives ->
+      ([finiteDecisionConstraint name alternatives], [])
+      where
+        finiteDecisionConstraint decisionName branches =
+          case P.map compileAlternative branches of
+            [] -> P.error "A finite visual decision requires an alternative."
+            first:rest -> S.oneOf decisionName first rest
+        compileAlternative (token, rules) =
+          case foldConstraintPairs (P.map (layoutRuleConstraints nodes) rules) of
+            (constraints, []) -> S.alternative token constraints
+            (_, _:_) ->
+              P.error
+                "Categorical visual relations cannot be conditional; define category relations globally."
 
 applyConstraintStrength ::
      ConstraintStrength -> [S.Constraint] -> [S.Constraint]
@@ -770,6 +796,8 @@ applyAccessRequirementsForRule rule node =
       applyAccessRequirementsForEndpoints (lhs P.++ gap P.++ rhs) node
     ValueSymmetricBridgeLayout _ lhs delta rhs ->
       applyAccessRequirementsForEndpoints (lhs P.++ delta P.++ rhs) node
+    FiniteDecisionLayout _ alternatives ->
+      applyAccessRequirementsForRules (P.concatMap P.snd alternatives) node
 
 applyAccessRequirementsForCategoryEndpoints ::
      [CategoryEndpoint value] -> V.ViewNode -> V.ViewNode

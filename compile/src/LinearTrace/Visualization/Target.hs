@@ -7,6 +7,7 @@ module LinearTrace.Visualization.Target
   , outputTargetName
   , parseOutputTarget
   , compileTarget
+  , compileTargets
   ) where
 
 import           Data.Aeson.Encode.Pretty     (encodePretty)
@@ -33,3 +34,8 @@ compileTarget :: OutputTarget -> IR.Visualization -> BL.ByteString
 compileTarget target visualization =
   case target of
     IrJson -> encodePretty visualization
+
+compileTargets :: OutputTarget -> [IR.Visualization] -> BL.ByteString
+compileTargets target visualizations =
+  case target of
+    IrJson -> encodePretty visualizations

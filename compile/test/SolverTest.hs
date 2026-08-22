@@ -23,6 +23,7 @@ import           Prelude.Linear                    (Ur (..))
 import qualified Prelude.Linear                    as Linear
 import           Solver
 import           Solver.TestFixtures
+import           System.Timeout                      (timeout)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -31,6 +32,8 @@ data TestLayout
 data TestAngle
 
 data TestUnit
+
+data TestSignedUnit
 
 data TestBoundedAngle
 
@@ -69,6 +72,9 @@ instance SymbolicType TestAngle where
 instance SymbolicType TestUnit where
   symbolicDomain _ = boundedDomain "test-unit" (Range 0 1)
 
+instance SymbolicType TestSignedUnit where
+  symbolicDomain _ = boundedDomain "test-signed-unit" (Range (-1) 1)
+
 instance SymbolicType TestBoundedAngle where
   symbolicDomain _ = boundedCyclicDomain "test-bounded-angle" 360 (Range 0 360)
 
@@ -89,6 +95,7 @@ main =
        , componentTests
        , cyclicDomainTests
        , categoricalTests
+       , designSpaceTests
        , seededFixtureTests
        , problemInspectionTests
        , coreQueryTests
@@ -315,6 +322,21 @@ viewMaterializationTests =
                    "expected the requested 620px width"
                    (abs (IR.visualWidth (IR.elementStyle element) - 620) <= 0.01))
               elements
+    , testCase "visual alternatives compile once and vary across seeds" $ do
+        solutions <-
+          Choreography.solveViewGraphWithSeeds
+            (map RandomSeed [1 .. 24])
+            ChoreographyFixtures.disjunctiveGraph
+        let positions =
+              map
+                (Map.lookup "test.visual.position" . solutionChoices)
+                solutions
+        assertBool
+          "expected the left visual alternative"
+          (Just "left" `elem` positions)
+        assertBool
+          "expected the right visual alternative"
+          (Just "right" `elem` positions)
     ]
 
 nativeBoundsTests :: TestTree
@@ -651,6 +673,218 @@ categoricalTests =
           "expected every independent choice to be sampled"
           (all ((/= Nothing) . evalChoice solution) probes)
     ]
+
+designSpaceTests :: TestTree
+designSpaceTests =
+  testGroup
+    "finite affine design spaces"
+    [ testCase "balances feasible named alternatives" $ do
+        let x = var "test.design.balanced" :: Expr TestUnit
+            problem =
+              solverProblem
+                [ oneOf
+                    "test.design.region"
+                    (alternative "low" [x @<=@ num 0.2])
+                    [alternative "high" [x @>=@ num 0.8]]
+                ]
+            compiled = compileDesignSpace defaultSolveConfig problem
+        design <- assertDesignCompiled compiled
+        sampled <-
+          sampleDesignSpaceBatch
+            BalancedDesignChoices
+            (map RandomSeed [1 .. 40])
+            design
+        solutions <- assertDesignSampled sampled
+        let selected =
+              map (Map.lookup "test.design.region" . solutionChoices) solutions
+        assertBool "expected low alternatives" (Just "low" `elem` selected)
+        assertBool "expected high alternatives" (Just "high" `elem` selected)
+        mapM_
+          (\solution ->
+             case ( Map.lookup "test.design.region" (solutionChoices solution)
+                  , evalExpr solution x) of
+               (Just "low", Just value) ->
+                 assertBool
+                   "low branch escaped its region"
+                   (value <= 0.2 + epsilon)
+               (Just "high", Just value) ->
+                 assertBool
+                   "high branch escaped its region"
+                   (value >= 0.8 - epsilon)
+               other -> assertFailure ("invalid design sample: " ++ show other))
+          solutions
+    , testCase "typed choice cases resolve exhaustively" $ do
+        let x = var "test.design.typed" :: Expr TestUnit
+            probe = choice "test.design.probe" :: Choice TestProbe
+            constraints = [caseOf probe constraintsFor]
+            constraintsFor TestMatch   = [x @<=@ num 0.25]
+            constraintsFor TestNoMatch = [x @>=@ num 0.75]
+        design <-
+          assertDesignCompiled
+            (compileDesignSpace defaultSolveConfig (solverProblem constraints))
+        sampled <- sampleDesignSpace BalancedDesignChoices (RandomSeed 9) design
+        solution <- assertSingleDesignSample sampled
+        case (evalChoice solution probe, evalExpr solution x) of
+          (Just TestMatch, Just value) ->
+            assertBool "match case escaped its region" (value <= 0.25 + epsilon)
+          (Just TestNoMatch, Just value) ->
+            assertBool
+              "no-match case escaped its region"
+              (value >= 0.75 - epsilon)
+          other -> assertFailure ("invalid typed case sample: " ++ show other)
+    , testCase "removes infeasible alternatives before balanced sampling" $ do
+        let x = var "test.design.feasible" :: Expr TestUnit
+            problem =
+              solverProblem
+                [ oneOf
+                    "test.design.feasibility"
+                    (alternative "impossible" [x @<=@ num (-1)])
+                    [alternative "possible" [x @>=@ num 0.5]]
+                ]
+        design <-
+          assertDesignCompiled (compileDesignSpace defaultSolveConfig problem)
+        sampled <-
+          sampleDesignSpaceBatch
+            BalancedDesignChoices
+            (map RandomSeed [1 .. 8])
+            design
+        solutions <- assertDesignSampled sampled
+        mapM_
+          (\solution ->
+             Map.lookup "test.design.feasibility" (solutionChoices solution)
+               @?= Just "possible")
+          solutions
+    , testCase "geometric sampling favors larger feasible regions" $ do
+        let x = var "test.design.volume" :: Expr TestUnit
+            problem =
+              solverProblem
+                [ oneOf
+                    "test.design.volume-region"
+                    (alternative "narrow" [x @<=@ num 0.2])
+                    [alternative "wide" [x @>=@ num 0.2]]
+                ]
+            budget =
+              defaultVolumeBudget
+                { volumeSamplesPerPhase = 512
+                , volumeTargetRelativeError = 0.25
+                , volumeMaximumWalkSteps = 200000
+                }
+        design <-
+          assertDesignCompiled (compileDesignSpace defaultSolveConfig problem)
+        sampled <-
+          sampleDesignSpaceBatch
+            (GeometricVolume budget)
+            (map (RandomSeed . (* 104729)) [1 .. 80])
+            design
+        solutions <- assertDesignSampled sampled
+        let selected =
+              map
+                (Map.lookup "test.design.volume-region" . solutionChoices)
+                solutions
+            wideCount = length (filter (== Just "wide") selected)
+        assertBool
+          ("expected geometric weighting to favor the wide branch, selected "
+             ++ show wideCount
+             ++ " of 80")
+          (wideCount >= 48)
+    , testCase "conditions oversized decision spaces with HiGHS" $ do
+        let x = var "test.design.mip" :: Expr TestSignedUnit
+            decisionName = "test.design.mip-region"
+            problem =
+              solverProblem
+                [ oneOf
+                    decisionName
+                    (alternative "low" [x @<=@ num (-0.6)])
+                    [alternative "high" [x @>=@ num 0.6]]
+                ]
+            config = withMaxCategoricalBranches 1 defaultSolveConfig
+            seed = RandomSeed 7
+        design <- assertDesignCompiled (compileDesignSpace config problem)
+        first <-
+          assertSingleDesignSample
+            =<< sampleDesignSpace BalancedDesignChoices seed design
+        second <-
+          assertSingleDesignSample
+            =<< sampleDesignSpace BalancedDesignChoices seed design
+        solutionChoices first @?= solutionChoices second
+        evalExpr first x @?= evalExpr second x
+        solutionSampling first
+          @?= SampledWith BalancedDesignChoices MipConditionedDecisions
+        sampled <-
+          sampleDesignSpaceBatch
+            BalancedDesignChoices
+            (map RandomSeed [1 .. 16])
+            design
+        solutions <- assertDesignSampled sampled
+        let selected =
+              map (Map.lookup decisionName . solutionChoices) solutions
+        assertBool "expected low MIP assignments" (Just "low" `elem` selected)
+        assertBool "expected high MIP assignments" (Just "high" `elem` selected)
+        mapM_
+          (\solution -> do
+             solutionSampling solution
+               @?= SampledWith
+                     BalancedDesignChoices
+                     MipConditionedDecisions
+             case (Map.lookup decisionName (solutionChoices solution), evalExpr solution x) of
+               (Just "low", Just value) ->
+                 assertBool
+                   "low MIP branch escaped its region"
+                   (value <= -0.6 + epsilon)
+               (Just "high", Just value) ->
+                 assertBool
+                   "high MIP branch escaped its region"
+                   (value >= 0.6 - epsilon)
+               other ->
+                 assertFailure ("invalid MIP design sample: " ++ show other))
+          solutions
+    , testCase "reports impossible guarded MIP branches without retrying" $ do
+        let x = var "test.design.mip-infeasible" :: Expr TestUnit
+            problem =
+              solverProblem
+                [ oneOf
+                    "test.design.mip-infeasible-region"
+                    (alternative "below" [x @<=@ num (-1)])
+                    [alternative "above" [x @>=@ num 2]]
+                ]
+            config = withMaxCategoricalBranches 1 defaultSolveConfig
+        design <- assertDesignCompiled (compileDesignSpace config problem)
+        completed <-
+          timeout
+            (5 * 1000 * 1000)
+            (sampleDesignSpace
+               BalancedDesignChoices
+               (RandomSeed 1)
+               design)
+        case completed of
+          Nothing -> assertFailure "HiGHS infeasibility sampling did not terminate"
+          Just (Left (SamplingFailed message)) ->
+            assertBool
+              ("unexpected HiGHS failure: " ++ message)
+              ("feasible design" `List.isInfixOf` message)
+          Just other ->
+            assertFailure
+              ("expected a typed MIP sampling failure, received " ++ show other)
+    ]
+
+assertDesignCompiled ::
+     Either DesignSpaceError CompiledDesignSpace -> IO CompiledDesignSpace
+assertDesignCompiled result =
+  case result of
+    Left err       -> assertFailure (show err) >> pure (error (show err))
+    Right compiled -> pure compiled
+
+assertDesignSampled :: Either DesignSpaceError [Solution] -> IO [Solution]
+assertDesignSampled result =
+  case result of
+    Left err        -> assertFailure (show err) >> pure []
+    Right solutions -> pure solutions
+
+assertSingleDesignSample :: Either DesignSpaceError Solution -> IO Solution
+assertSingleDesignSample result =
+  case result of
+    Left err       -> assertFailure (show err) >> pure (error (show err))
+    Right solution -> pure solution
 
 seededFixtureTests :: TestTree
 seededFixtureTests =
