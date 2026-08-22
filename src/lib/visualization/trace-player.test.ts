@@ -2,7 +2,7 @@ import { tick } from 'svelte';
 import { describe, expect, it } from 'vitest';
 
 import { TracePlayer } from './trace-player.svelte';
-import type { VisualizationPackage } from './types';
+import type { CompiledVisualization } from './types';
 
 describe('TracePlayer', () => {
   it('clears a stale render when the project state has no active visualization', () => {
@@ -115,7 +115,7 @@ describe('TracePlayer', () => {
   });
 });
 
-function trace(contents: string[]): VisualizationPackage {
+function trace(contents: string[]): CompiledVisualization {
   const elements = contents.map((content, id) => ({
     id,
     role: 'Value',

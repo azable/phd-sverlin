@@ -5,6 +5,15 @@ export interface CanvasSpec {
   height: number;
 }
 
+export interface CompiledVisualization {
+  seed: number;
+  sourcePath: string;
+  canvas: CanvasSpec;
+  variables: CspVariable[];
+  elements: VisualElement[];
+  steps: TimelineStep[];
+}
+
 export type CspValue = { kind: 'number'; value: number } | { kind: 'category'; value: string };
 
 export interface CspVariable {
@@ -71,13 +80,4 @@ export interface VisualStyle {
   textAlign?: string;
   borderStyle?: string;
   whiteSpace?: string;
-}
-
-export interface VisualizationPackage {
-  seed: number;
-  sourcePath: string;
-  canvas: CanvasSpec;
-  variables: CspVariable[];
-  elements: VisualElement[];
-  steps: TimelineStep[];
 }

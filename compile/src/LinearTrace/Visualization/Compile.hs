@@ -24,7 +24,7 @@ compileSolved ::
      FilePath
   -> S.Solution
   -> V.ViewGraph
-  -> Either String IR.VisualizationPackage
+  -> Either String IR.CompiledVisualization
 compileSolved sourcePath solution graph = do
   elements <- traverse (compileElement solution) (V.viewNodes graph)
   steps <-
@@ -32,17 +32,17 @@ compileSolved sourcePath solution graph = do
       (compileSteps (elementLookup elements) (V.viewSteps graph))
       emptySceneState
   pure
-    IR.VisualizationPackage
-      { IR.packageSeed = solutionSeedInt solution
-      , IR.packageSourcePath = sourcePath
-      , IR.packageCanvas =
+    IR.CompiledVisualization
+      { IR.compiledSeed = solutionSeedInt solution
+      , IR.compiledSourcePath = sourcePath
+      , IR.compiledCanvas =
           IR.CanvasSpec
             { IR.canvasWidth = roundLayout (V.viewCanvasWidth graph)
             , IR.canvasHeight = roundLayout (V.viewCanvasHeight graph)
             }
-      , IR.packageVariables = compileVariables solution
-      , IR.packageElements = elements
-      , IR.packageSteps = steps
+      , IR.compiledVariables = compileVariables solution
+      , IR.compiledElements = elements
+      , IR.compiledSteps = steps
       }
 
 solutionSeedInt :: S.Solution -> Int

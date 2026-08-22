@@ -6,7 +6,7 @@ import type {
   VisualElement,
   VisualId,
   VisualInstance,
-  VisualizationPackage
+  CompiledVisualization
 } from './types';
 
 type SetTraceOptions = { initialStep?: number };
@@ -16,7 +16,7 @@ type SetTraceOptions = { initialStep?: number };
  * identities animate updates; keyed Svelte transitions own entry and exit.
  */
 export class TracePlayer {
-  trace = $state<VisualizationPackage | null>(null);
+  trace = $state<CompiledVisualization | null>(null);
   elements = $state<LiveElement[]>([]);
   currentStep = $state(-1);
 
@@ -54,7 +54,7 @@ export class TracePlayer {
     return this.trace?.canvas.height ?? 0;
   }
 
-  setTrace(trace: VisualizationPackage, options: SetTraceOptions = {}) {
+  setTrace(trace: CompiledVisualization, options: SetTraceOptions = {}) {
     this.trace = trace;
     this.seek(options.initialStep ?? 0);
   }

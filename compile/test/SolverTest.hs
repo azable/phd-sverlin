@@ -285,9 +285,10 @@ viewMaterializationTests =
             ChoreographyFixtures.styledGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.styledGraph
-        map IR.stepLabel (IR.packageSteps compiled)
+        map IR.stepLabel (IR.compiledSteps compiled)
           @?= ["created", "unchanged", "destroyed"]
-        map (length . IR.stepInstances) (IR.packageSteps compiled) @?= [2, 2, 2]
+        map (length . IR.stepInstances) (IR.compiledSteps compiled)
+          @?= [2, 2, 2]
     , testCase "a checkpoint exposes introductions before silent removals" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -295,9 +296,9 @@ viewMaterializationTests =
             ChoreographyFixtures.transientGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.transientGraph
-        map IR.stepLabel (IR.packageSteps compiled)
+        map IR.stepLabel (IR.compiledSteps compiled)
           @?= ["transient", "after transient"]
-        map (length . IR.stepInstances) (IR.packageSteps compiled) @?= [2, 0]
+        map (length . IR.stepInstances) (IR.compiledSteps compiled) @?= [2, 0]
     ]
 
 nativeBoundsTests :: TestTree
@@ -636,14 +637,14 @@ assertErrorContains label expected action = do
     Right _ -> assertFailure (label ++ " did not throw an error")
 
 assertCompileSolved ::
-     Solution -> Choreography.ViewGraph -> IO IR.VisualizationPackage
+     Solution -> Choreography.ViewGraph -> IO IR.CompiledVisualization
 assertCompileSolved solution graph =
   case Compile.compileSolved "compile/test/SolverTest.hs" solution graph of
     Left err       -> assertFailure err >> pure (error err)
     Right compiled -> pure compiled
 
-compiledRenderElements :: IR.VisualizationPackage -> [IR.VisualElement]
-compiledRenderElements = IR.packageElements
+compiledRenderElements :: IR.CompiledVisualization -> [IR.VisualElement]
+compiledRenderElements = IR.compiledElements
 
 styleBindingVariables :: String -> IR.VisualElement -> [IR.CspVariableId]
 styleBindingVariables field element =
@@ -654,12 +655,12 @@ styleBindingVariables field element =
     ]
 
 assertTraceVariablesExist ::
-     IR.VisualizationPackage -> [IR.CspVariableId] -> Assertion
+     IR.CompiledVisualization -> [IR.CspVariableId] -> Assertion
 assertTraceVariablesExist compiled referenced = do
   assertBool
     "expected style field to reference at least one CSP variable"
     (not (null referenced))
-  let available = map IR.cspVariableId (IR.packageVariables compiled)
+  let available = map IR.cspVariableId (IR.compiledVariables compiled)
   mapM_
     (\variableId ->
        assertBool

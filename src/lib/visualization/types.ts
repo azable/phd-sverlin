@@ -3,7 +3,7 @@ export type * from './generated/visualization-ir';
 import type {
   RenderInstanceId,
   VisualElement,
-  VisualizationPackage
+  CompiledVisualization
 } from './generated/visualization-ir';
 
 /** A registry element paired with its identity in the current scene snapshot. */
@@ -44,6 +44,6 @@ export type CompileFailureKind =
   | 'cancelled';
 
 /** Decode the trusted, Haskell-generated visualization wire format at its boundary. */
-export function decodeVisualization(json: string): VisualizationPackage {
-  return JSON.parse(json) as VisualizationPackage;
+export function decodeVisualization(json: string): CompiledVisualization {
+  return JSON.parse(json) as CompiledVisualization;
 }

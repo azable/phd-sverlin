@@ -7,7 +7,7 @@ import {
   type CompileDebug,
   type CompileFailureKind,
   type CompilerDiagnostic,
-  type VisualizationPackage
+  type CompiledVisualization
 } from '$lib/visualization/types';
 
 import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
@@ -16,7 +16,7 @@ import { createCompileOutput } from './workspace-output.js';
 export type CompileVisualizationResult =
   | {
       ok: true;
-      trace: VisualizationPackage;
+      trace: CompiledVisualization;
       debug: CompileDebug;
     }
   | {

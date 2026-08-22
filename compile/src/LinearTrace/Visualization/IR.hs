@@ -22,7 +22,7 @@ module LinearTrace.Visualization.IR
   , VisualElement(..)
   , VisualInstance(..)
   , TimelineStep(..)
-  , VisualizationPackage(..)
+  , CompiledVisualization(..)
   , irJsonOptions
   ) where
 
@@ -126,13 +126,13 @@ data TimelineStep = TimelineStep
   , stepInstances :: [VisualInstance]
   } deriving (Eq, Show, Generic)
 
-data VisualizationPackage = VisualizationPackage
-  { packageSeed       :: Int
-  , packageSourcePath :: FilePath
-  , packageCanvas     :: CanvasSpec
-  , packageVariables  :: [CspVariable]
-  , packageElements   :: [VisualElement]
-  , packageSteps      :: [TimelineStep]
+data CompiledVisualization = CompiledVisualization
+  { compiledSeed       :: Int
+  , compiledSourcePath :: FilePath
+  , compiledCanvas     :: CanvasSpec
+  , compiledVariables  :: [CspVariable]
+  , compiledElements   :: [VisualElement]
+  , compiledSteps      :: [TimelineStep]
   } deriving (Eq, Show, Generic)
 
 $(deriveJSON irJsonOptions ''VisualId)
@@ -161,4 +161,4 @@ $(deriveJSON irJsonOptions ''VisualInstance)
 
 $(deriveJSON irJsonOptions ''TimelineStep)
 
-$(deriveJSON irJsonOptions ''VisualizationPackage)
+$(deriveJSON irJsonOptions ''CompiledVisualization)
