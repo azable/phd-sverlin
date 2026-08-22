@@ -41,7 +41,7 @@ describe('project model and projection', () => {
         expectedHead: 4,
         text: 'Prefer these',
         focus: [2],
-        selection: { render: 3, step: 0, instances: [1], judgement: 'preferred' },
+        selection: { render: 3, step: 0, instances: [1] },
         seed: 9
       })
     ).toMatchObject({ type: 'feedback', focus: [2] });

@@ -58,8 +58,7 @@
     return {
       render: render.id,
       step: player.currentStep,
-      instances: selectedInstanceIds,
-      judgement: 'neutral'
+      instances: selectedInstanceIds
     };
   });
   const operationMessage = $derived.by(() => {

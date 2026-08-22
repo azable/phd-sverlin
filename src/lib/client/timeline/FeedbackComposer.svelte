@@ -19,7 +19,6 @@
   let { session, seed, selection }: Props = $props();
 
   let text = $state('');
-  let judgement = $state<VisualSelection['judgement']>('neutral');
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -30,14 +29,19 @@
       type: 'feedback',
       text: message || undefined,
       focus: session.focusedEvents,
-      selection: selection ? { ...selection, judgement } : undefined,
+      selection,
       seed
     });
     if (succeeded) {
       text = '';
       session.focusedEvents = [];
-      judgement = 'neutral';
     }
+  }
+
+  function submitOnEnter(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    (event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();
   }
 </script>
 
@@ -60,19 +64,6 @@
           {/each}
           {#if selection}
             <Badge variant="outline">{selection.instances.length} selected element(s)</Badge>
-            <label class="flex items-center gap-2 text-xs text-muted-foreground">
-              Mark as
-              <select
-                bind:value={judgement}
-                class="h-7 rounded-md border bg-background px-2 text-foreground"
-                disabled={!session.atHead || !!session.pending}
-                aria-label="Selected element judgement"
-              >
-                <option value="neutral">Reference</option>
-                <option value="preferred">Preferred</option>
-                <option value="undesired">Undesired</option>
-              </select>
-            </label>
           {/if}
         </div>
       {/if}
@@ -83,11 +74,12 @@
           placeholder="Comment on the project or selected elements…"
           disabled={!session.atHead || !!session.pending}
           rows={2}
+          onkeydown={submitOnEnter}
         />
         <InputGroup.Addon align="block-end" class="justify-end border-t">
           <span class="mr-auto text-xs text-muted-foreground">
             {session.atHead
-              ? 'Feedback becomes an immutable event'
+              ? 'Enter submits · Shift+Enter adds a line'
               : 'Return to present to respond'}
           </span>
           <InputGroup.Button

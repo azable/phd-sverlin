@@ -238,7 +238,7 @@ function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
   if (event.payload.selection) {
     const selection = event.payload.selection;
     details.push(
-      `${selection.judgement} visual selection in render ${selection.render}, step ${selection.step}: instances ${selection.instances.join(', ')}`
+      `Visual selection in render ${selection.render}, step ${selection.step}: instances ${selection.instances.join(', ')}`
     );
   }
   return details.filter(Boolean).join('\n\n');

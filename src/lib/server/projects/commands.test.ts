@@ -248,8 +248,7 @@ describe('submitProjectFeedback', () => {
         selection: {
           render: render.id,
           step: 99,
-          instances: [1],
-          judgement: 'undesired'
+          instances: [1]
         },
         seed: 7,
         operationId: '12345678-1234-4123-8123-123456789abc'
