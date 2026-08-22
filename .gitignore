@@ -3,6 +3,7 @@ node_modules
 
 # Output
 /outputs/
+/data/projects/
 /tmp/
 .output
 .vercel

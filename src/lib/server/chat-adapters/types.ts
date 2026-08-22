@@ -2,12 +2,12 @@ import type {
   ChatBotConfig,
   ChatContext,
   ChatBotParameters,
+  ConversationMessage,
   ChatResponseFormat
 } from '$lib/server/chat-bots/types';
-import type { ChatMessage } from '$lib/chat/types';
 
 export type ChatAdapterRequest = {
-  messages: ChatMessage[];
+  messages: ConversationMessage[];
   initialPrompt: ChatBotConfig['initialPrompt'];
   context: ChatContext;
   parameters: ChatBotParameters;
@@ -17,9 +17,11 @@ export type ChatAdapterRequest = {
 export type ChatAdapterResult = {
   reply: string;
   sourceArtifactContent?: string;
+  providerResponse?: unknown;
   generation?: {
     model?: string;
     responseId?: string;
+    usage?: Record<string, number>;
   };
 };
 

@@ -3,34 +3,35 @@ import { env } from '$env/dynamic/private';
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
-import type { ChatBotConfig, Chatbot, ChatbotRequest, ChatbotResult } from './types';
+import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
 import aiAssistantBot from './ai-assistant';
 
 export function createChatbot(config: ChatBotConfig, adapter: ChatAdapter): Chatbot {
+  const preparePrompt = async (request: ChatbotRequest) => ({
+    messages: request.messages,
+    initialPrompt: config.initialPrompt,
+    context: await config.buildContext(request),
+    parameters: config.parameters,
+    responseFormat: config.responseFormat
+  });
+  const generatePrepared = async (prompt: Awaited<ReturnType<typeof preparePrompt>>) => {
+    const result = await adapter.generateReply(prompt);
+    return {
+      ...result,
+      prompt,
+      generation: {
+        botId: config.id,
+        adapterId: adapter.id,
+        ...result.generation
+      }
+    };
+  };
   return {
     id: config.id,
     config,
-    generateReply: async (request: ChatbotRequest): Promise<ChatbotResult> => {
-      const prompt = {
-        messages: request.messages,
-        initialPrompt: config.initialPrompt,
-        context: await config.buildContext(request),
-        parameters: config.parameters,
-        responseFormat: config.responseFormat
-      };
-      const result = await adapter.generateReply(prompt);
-
-      return {
-        ...result,
-        prompt,
-        generation: {
-          botId: config.id,
-          adapterId: adapter.id,
-          ...result.generation
-        }
-      };
-    }
-  };
+    preparePrompt,
+    generatePrepared
+  } satisfies Chatbot;
 }
 
 const configuredChatbots: Record<string, Chatbot> = {

@@ -1,18 +1,21 @@
-import type { ArtifactContext } from '$lib/artifacts/types';
-import type { ChatMessage } from '$lib/chat/types';
 import type { CompilerDiagnostic } from '$lib/visualization/types';
+
+export type ConversationMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
 
 export type CompilationFeedback = {
   attempt: number;
-  failureRecordId: string;
+  compilationEventId: string;
   failedSource: string;
   assistantReply: string;
   diagnostics: CompilerDiagnostic[];
 };
 
 export type ChatContextInput = {
-  messages: ChatMessage[];
-  artifact: ArtifactContext;
+  messages: ConversationMessage[];
+  project: Record<string, unknown>;
   compilationFeedback?: CompilationFeedback;
 };
 
@@ -42,27 +45,29 @@ export type ChatBotConfig = {
 
 export type ChatbotPrompt = {
   initialPrompt: string;
-  messages: ChatMessage[];
+  messages: ConversationMessage[];
   context: ChatContext;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;
 };
 
 export type ChatbotRequest = {
-  messages: ChatMessage[];
-  artifact: ArtifactContext;
+  messages: ConversationMessage[];
+  project: Record<string, unknown>;
   compilationFeedback?: CompilationFeedback;
 };
 
 export type ChatbotResult = {
   reply: string;
   sourceArtifactContent?: string;
+  providerResponse?: unknown;
   prompt: ChatbotPrompt;
   generation: {
     botId: string;
     adapterId: string;
     model?: string;
     responseId?: string;
+    usage?: Record<string, number>;
   };
 };
 
@@ -71,5 +76,6 @@ export type { ChatAdapter, ChatAdapterResult } from '$lib/server/chat-adapters/t
 export interface Chatbot {
   readonly id: string;
   readonly config: ChatBotConfig;
-  generateReply(request: ChatbotRequest): Promise<ChatbotResult>;
+  preparePrompt(request: ChatbotRequest): Promise<ChatbotPrompt>;
+  generatePrepared(prompt: ChatbotPrompt): Promise<ChatbotResult>;
 }

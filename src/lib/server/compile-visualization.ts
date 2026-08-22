@@ -9,22 +9,8 @@ import type {
   CompilerDiagnostic
 } from '$lib/visualization/types';
 
-import { getArtifactSyncState } from './artifacts/store';
-import {
-  compilationFailureAttempt,
-  createCompilationFailureRecord,
-  safelyPersistCompilationFailureRecord,
-  sourceSha256
-} from './compilation-failures';
 import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
 import { createCompileOutput } from './workspace-output.js';
-
-export type CompileVisualizationOptions = {
-  seed: number;
-  revision: number;
-  signal?: AbortSignal;
-  onEvent?: (event: CompileVisualizationEvent) => void;
-};
 
 export type CompileVisualizationResult =
   | {
@@ -39,7 +25,6 @@ export type CompileVisualizationResult =
       status: number;
       diagnostics: CompilerDiagnostic[];
       failureKind?: CompileFailureKind;
-      failureRecordId?: string;
     };
 
 export type CompileSourceOptions = {
@@ -48,28 +33,7 @@ export type CompileSourceOptions = {
   seed: number;
   owner: string;
   signal?: AbortSignal;
-  onEvent?: (event: CompileVisualizationEvent) => void;
 };
-
-export type CompileVisualizationEvent =
-  | {
-      type: 'started';
-      debug: CompileDebug;
-    }
-  | {
-      type: 'stdout';
-      chunk: string;
-      stdout: string;
-    }
-  | {
-      type: 'stderr';
-      chunk: string;
-      stderr: string;
-    }
-  | {
-      type: 'finished';
-      debug: CompileDebug;
-    };
 
 type CompileRun = CompileDebug & {
   timedOut: boolean;
@@ -85,76 +49,12 @@ const defaultCompileTimeoutMs = 300_000;
 const timeoutKillGraceMs = 1_000;
 const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
 
-export async function compileVisualization({
-  seed,
-  revision,
-  signal,
-  onEvent
-}: CompileVisualizationOptions): Promise<CompileVisualizationResult> {
-  const cwd = process.cwd();
-  const artifact = getArtifactSyncState();
-  if (revision !== artifact.headRevision) {
-    const error = `DSL source revision changed from ${revision} to ${artifact.headRevision} before compilation started.`;
-    return {
-      ok: false,
-      error,
-      debug: emptyCompileDebug(cwd, error),
-      status: 409,
-      diagnostics: []
-    };
-  }
-
-  const result = await compileSource({
-    sourceContent: artifact.current.content,
-    sourceLabel: artifact.current.path,
-    seed,
-    owner: 'web',
-    signal,
-    onEvent
-  });
-
-  if (result.ok || result.failureKind === 'cancelled') return result;
-
-  const artifactEvent = artifact.events.find((event) => event.revision === revision);
-  const record = await createCompilationFailureRecord({
-    origin: {
-      kind: 'web-compilation',
-      ...(artifactEvent ? { artifactSource: artifactEvent.source } : {})
-    },
-    artifact: {
-      id: artifact.current.id,
-      path: artifact.current.path,
-      baseRevision: revision,
-      baseContent: artifact.current.content,
-      baseSha256: sourceSha256(artifact.current.content)
-    },
-    attempts: [
-      compilationFailureAttempt({
-        attempt: 1,
-        candidateContent: artifact.current.content,
-        seed,
-        debug: result.debug,
-        failureKind: result.failureKind ?? 'pipeline',
-        diagnostics: result.diagnostics
-      })
-    ],
-    resolution:
-      result.failureKind === 'infrastructure' || result.failureKind === 'timeout'
-        ? 'infrastructure-failure'
-        : 'unresolved'
-  });
-  await safelyPersistCompilationFailureRecord(record);
-
-  return { ...result, failureRecordId: record.recordId };
-}
-
 export async function compileSource({
   sourceContent,
   sourceLabel,
   seed,
   owner,
-  signal,
-  onEvent
+  signal
 }: CompileSourceOptions): Promise<CompileVisualizationResult> {
   const cwd = process.cwd();
   let outputPath: string;
@@ -182,31 +82,8 @@ export async function compileSource({
   const { command, args } = compileCommand(seed, outputPath, sourcePath, sourceLabel);
 
   const timeoutMs = readCompileTimeoutMs();
-  const startedDebug: CompileDebug = {
-    command,
-    args,
-    cwd,
-    outputPath,
-    timeoutMs,
-    durationMs: 0,
-    exitCode: null,
-    stdout: '',
-    stderr: ''
-  };
-
-  onEvent?.({
-    type: 'started',
-    debug: startedDebug
-  });
-
   let debug = await runCompile(command, args, cwd, timeoutMs, {
-    signal,
-    onStdout: (chunk, stdout) => {
-      onEvent?.({ type: 'stdout', chunk, stdout });
-    },
-    onStderr: (chunk, stderr) => {
-      onEvent?.({ type: 'stderr', chunk, stderr });
-    }
+    signal
   });
   let compiledJson = '';
 
@@ -217,8 +94,6 @@ export async function compileSource({
   }
 
   debug = { ...debug, outputPath };
-  onEvent?.({ type: 'finished', debug });
-
   if (debug.error) {
     const diagnostics = diagnosticsForFailure(debug, debug.error);
     return {

@@ -59,6 +59,13 @@ export class TracePlayer {
     this.seek(options.initialStep ?? 0);
   }
 
+  clear() {
+    this.#transitionVersion += 1;
+    this.trace = null;
+    this.elements = [];
+    this.currentStep = -1;
+  }
+
   reset() {
     this.seek(0);
   }
@@ -85,7 +92,7 @@ export class TracePlayer {
   }
 
   dispose() {
-    this.#transitionVersion += 1;
+    this.clear();
   }
 
   private transitionTo(step: number) {

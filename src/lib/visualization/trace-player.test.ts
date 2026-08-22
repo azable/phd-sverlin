@@ -5,6 +5,17 @@ import { TracePlayer } from './trace-player.svelte';
 import type { VisualizationPackage } from './types';
 
 describe('TracePlayer', () => {
+  it('clears a stale render when the project state has no active visualization', () => {
+    const player = new TracePlayer();
+    player.setTrace(trace(['one']));
+
+    player.clear();
+
+    expect(player.hasTrace).toBe(false);
+    expect(player.currentStep).toBe(-1);
+    expect(player.elements).toEqual([]);
+  });
+
   it('joins the first checkpoint step to the element registry', () => {
     const player = new TracePlayer();
     player.setTrace(trace(['one']));

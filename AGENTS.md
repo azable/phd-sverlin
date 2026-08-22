@@ -2,7 +2,7 @@
 
 ## Project Context
 
-This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app streams backend compilation through `/api/visualization`, which runs the Haskell executable, streams diagnostics, and returns a compiled visualization only after valid JSON has been produced. The Haskell application is responsible for generating the data that the SvelteKit application uses to display information to the user.
+This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines under `data/projects/`; project commands run the Haskell executable and return only after compilation has produced valid JSON or recorded a failure event. The Haskell application is responsible for generating the data that the SvelteKit application uses to display information to the user.
 
 ## How To Navigate
 
@@ -24,7 +24,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
 - When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Use `pnpm run bench:compile` as an additional end-to-end check when the compile server path or generated JSON pipeline can be affected. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
 - `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.
-- AI-generated source is compiled through the complete visualization pipeline for the submitted UI seed before it can become the active artifact. One failed candidate may be repaired internally; rejected candidates stay out of artifact history. App-managed failures are recorded under the ignored `outputs/compilation-errors/` directory with full local source and prompt metadata.
+- AI-generated source is compiled through the complete visualization pipeline for the submitted UI seed before it can become the active artifact. One failed candidate may be repaired by one explicit second generation; provider retries and open-ended orchestration loops are disabled. Candidates, prompts, responses, compiler output, failures, accepted artifacts, and successful renders are recorded through the project's event log and content-addressed blobs.
 - The visualization path intentionally uses a tuned solver config rather than raw `defaultSolveConfig`; preserve this separation so direct solver tests stay conservative while regeneration avoids long L-BFGS-B tails.
 - Keep solver tests focused on the top-level `Solver` facade unless the behavior under test is deliberately internal. Add or update stable fixtures in `compile/test-support/Solver/TestFixtures.hs` when solver preprocessing, categorical choices, or backend optimization behavior needs repeatable coverage.
 
@@ -33,8 +33,8 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - `src/lib/server/chat-bots/ai-assistant/dsl-interface.md` contains the canonical
   DSL interface context for the primary `ai-assistant` bot. It is a human-readable
   authoring reference specifically designed to guide an OpenAI code-generating
-  model (currently configured as `gpt-5.6-luna`) when it edits the in-memory Sverlin
-  artifact presented by the frontend.
+  model (currently configured as `gpt-5.6-luna`) when it edits the current Sverlin
+  project artifact presented by the frontend.
 - The guide is read from disk for every model request during local development,
   so saved edits are picked up without restarting the SvelteKit server. The
   sibling `index.ts` keeps the short role prompt, model configuration, structured
@@ -68,7 +68,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   defines the current source of truth. If an API change requires a new editing
   rule, update the context rather than relying on an example hidden in history.
 - When changing only the prompt context, run the Svelte checks, lint the bot
-  module, and run the chat route tests. When changing the DSL or its public API,
+  module, and run the project command tests. When changing the DSL or its public API,
   also follow the Haskell compile, solver-test, lint, and formatter requirements
   below.
 

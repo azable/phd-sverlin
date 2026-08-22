@@ -60,33 +60,3 @@ export type CompileFailureKind =
   | 'timeout'
   | 'invalid-output'
   | 'cancelled';
-
-export type VisualizationSuccess = {
-  ok: true;
-  trace: CompiledVisualization;
-  seed: number;
-  revision: number;
-};
-
-export type VisualizationFailure = {
-  ok: false;
-  error: string;
-  seed?: number;
-  revision?: number;
-  debug?: CompileDebug;
-  diagnostics?: CompilerDiagnostic[];
-  failureKind?: CompileFailureKind;
-  failureRecordId?: string;
-};
-
-export type CompileStreamStatus = {
-  ok: true;
-  status: 'starting' | 'running' | 'complete';
-  seed: number;
-  revision: number;
-  debug?: CompileDebug;
-};
-
-export type CompileStreamOutput = { ok: true; chunk: string };
-export type CompileStreamSuccess = VisualizationSuccess;
-export type CompileStreamFailure = VisualizationFailure & { status: number };

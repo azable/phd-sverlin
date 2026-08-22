@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compileCommand, compileVisualization, runCompile } from './compile-visualization';
+import { compileCommand, runCompile } from './compile-visualization';
 
 describe('runCompile', () => {
   it('streams stdout and stderr chunks while the command runs', async () => {
@@ -58,18 +58,7 @@ describe('runCompile', () => {
   });
 });
 
-describe('compileVisualization', () => {
-  it('rejects a stale artifact revision before spawning Cabal', async () => {
-    const result = await compileVisualization({ seed: 1, revision: 1 });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe(409);
-      expect(result.error).toContain('revision changed from 1 to 0');
-      expect(result.debug.exitCode).toBe(null);
-    }
-  });
-
+describe('compileSource', () => {
   it('passes an isolated source snapshot and its canonical label to the compiler', () => {
     const command = compileCommand(
       42,
