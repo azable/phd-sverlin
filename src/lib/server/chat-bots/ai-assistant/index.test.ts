@@ -22,5 +22,8 @@ describe('AI assistant DSL interface', () => {
     const guide = await loadDslInterfaceContext();
     expect(guide).toContain('`create` is the ingress boundary');
     expect(guide).toContain('Apply2 pendingResult <- apply2 addition leftInput rightInput');
+    expect(guide).toContain(
+      'Treat an explicitly requested border as one composite visual property'
+    );
   });
 });

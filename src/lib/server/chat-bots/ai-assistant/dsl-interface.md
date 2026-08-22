@@ -139,6 +139,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - `render selected recipe` attaches content, typed style, and geometry to a selection.
 - Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
 - Style fields are `Opacity`, `ZIndex`, `Padding`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`.
+- Treat an explicitly requested border as one composite visual property. Set a positive `StrokeWidth`, a `Stroke` colour that contrasts with the `Fill`, and a deterministic non-empty `BorderStyle`, normally `FixedStyle BorderSolid`. Do not claim a border was added after changing only its width. An omitted stroke falls back to the foreground colour and an omitted border style falls back to solid, but explicit user requests should not rely on those defaults; `BorderNone` always suppresses the border.
 - Geometry setters are `width`, `height`, `top`, `left`, `right`, `bottom`, `x`, `y`, `bounds`, and `center`; `size` reads a selected node’s dimensions.
 - Use separate fact/payload selections for semantic sub-states such as neutral, active, success, and failure.
 - `FixedStyle` supplies deterministic categorical values. `VariableStyle` with `choice` allows solver-selected categories. `styleOf` reads a selected style field for relations.
@@ -254,6 +255,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - Audit every `create` whose payload is a domain value: it must be an external/source input or literal constant, never a result obtainable from live values. Rewrite any violation as `apply1`, `apply2`, or the corresponding lifecycle operation. An algorithmic visualization with derived values but no matching operation events is not complete.
 - Preserve the complete linear lifecycle of every value.
 - Ensure every selected object is rendered with visible content or styling and sufficient dimensions/layout constraints.
+- For an explicitly requested visual property, audit its complete rendering dependencies before returning source. In particular, requested borders must have a positive width, a contrasting stroke colour, and a non-empty border style on every intended semantic selection.
 - Ensure each checkpoint communicates a distinct stage and that the final state resolves the story.
 - Audit equivalent peers before returning source: objects with the same type and state should share shape and base style, and every within-family difference should be justified by an explicit semantic fact or payload.
 - Unless the user requests a rigid composition, mentally compare several seeds before returning source: group placement, at least one other major spatial relationship, and at least two shared family design tokens such as palette, dimensions, radius, padding, typography, or border treatment should change visibly while within-output semantic consistency, alignment, containment, contrast, and legibility remain valid.

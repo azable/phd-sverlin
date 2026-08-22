@@ -246,7 +246,7 @@
                 style:border-radius={`${style.radius ?? 0}px`}
                 style:border-width={`${style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}px`}
                 style:border-style={style.borderStyle ?? 'solid'}
-                style:border-color={color(style.stroke, style.alpha)}
+                style:border-color={color(style.stroke, style.alpha, 'currentColor')}
                 style:background-color={color(style.fill, style.alpha)}
                 style:font-family={style.fontFamily}
                 style:font-size={`${style.fontSize ?? 14}px`}
