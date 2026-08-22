@@ -7,7 +7,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 ## How To Navigate
 
 - The SvelteKit application is located in the root directory, and its source code can be found in the `src/` directory.
-- Environment-neutral project contracts, event schemas, projections, and generated visualization IR types live under `src/lib/shared/`; browser sessions and UI live under `src/lib/client/`; persistence, AI providers, project commands, and compilation live under `src/lib/server/`. Preserve this one-way boundary and its ESLint rules.
+- Environment-neutral project contracts, event schemas, projections, and generated visualization IR types live under `src/lib/shared/`; browser sessions, bundled presentation assets, and UI live under `src/lib/client/`; persistence, AI providers, project commands, and compilation live under `src/lib/server/`. Files requiring stable public URLs live under `static/`. Preserve this one-way boundary and its ESLint rules.
 - The Haskell application is located in the `compile/` directory. Reusable Haskell library modules live in `compile/src/`; executable-only modules live in `compile/app/`.
 - Stable direct solver fixtures live in `compile/test-support/Solver/TestFixtures.hs`; use these for solver tests and benchmarks instead of depending on the editable frontend artifact.
 - Use the top-level `Solver` module as the solver API. It intentionally exposes opaque numeric expressions/constraints, finite categorical choices, preprocessing diagnostics, and solve/compile entrypoints; modules under `compile/src/Solver/` are implementation modules unless a task explicitly requires changing solver internals.
