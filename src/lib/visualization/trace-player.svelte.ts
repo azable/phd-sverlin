@@ -2,11 +2,11 @@
 import { tick } from 'svelte';
 
 import type {
-  CompiledVisualization,
   LiveElement,
   VisualElement,
   VisualId,
-  VisualInstance
+  VisualInstance,
+  VisualizationPackage
 } from './types';
 
 type SetTraceOptions = { initialStep?: number };
@@ -16,7 +16,7 @@ type SetTraceOptions = { initialStep?: number };
  * identities animate updates; keyed Svelte transitions own entry and exit.
  */
 export class TracePlayer {
-  trace = $state<CompiledVisualization | null>(null);
+  trace = $state<VisualizationPackage | null>(null);
   elements = $state<LiveElement[]>([]);
   currentStep = $state(-1);
 
@@ -54,7 +54,7 @@ export class TracePlayer {
     return this.trace?.canvas.height ?? 0;
   }
 
-  setTrace(trace: CompiledVisualization, options: SetTraceOptions = {}) {
+  setTrace(trace: VisualizationPackage, options: SetTraceOptions = {}) {
     this.trace = trace;
     this.seek(options.initialStep ?? 0);
   }

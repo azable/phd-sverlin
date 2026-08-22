@@ -1,28 +1,10 @@
-export type {
-  CanvasSpec,
-  CspValue,
-  CspVariable,
-  CspVariableId,
-  HslColor,
-  RenderInstanceId,
-  StyleVariableBinding,
-  TimelineStep,
-  VisualElement,
-  VisualElementKind,
-  VisualId,
-  VisualInstance,
-  VisualStyle,
-  VisualizationPackage
-} from './generated/visualization-ir';
+export type * from './generated/visualization-ir';
 
 import type {
   RenderInstanceId,
   VisualElement,
   VisualizationPackage
 } from './generated/visualization-ir';
-
-/** The canonical Haskell-owned wire payload returned by the compile API. */
-export type CompiledVisualization = VisualizationPackage;
 
 /** A registry element paired with its identity in the current scene snapshot. */
 export type LiveElement = VisualElement & {
@@ -62,6 +44,6 @@ export type CompileFailureKind =
   | 'cancelled';
 
 /** Decode the trusted, Haskell-generated visualization wire format at its boundary. */
-export function decodeVisualization(json: string): CompiledVisualization {
-  return JSON.parse(json) as CompiledVisualization;
+export function decodeVisualization(json: string): VisualizationPackage {
+  return JSON.parse(json) as VisualizationPackage;
 }

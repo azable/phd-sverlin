@@ -5,9 +5,9 @@ import path from 'node:path';
 import {
   decodeVisualization,
   type CompileDebug,
-  type CompiledVisualization,
   type CompileFailureKind,
-  type CompilerDiagnostic
+  type CompilerDiagnostic,
+  type VisualizationPackage
 } from '$lib/visualization/types';
 
 import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
@@ -16,7 +16,7 @@ import { createCompileOutput } from './workspace-output.js';
 export type CompileVisualizationResult =
   | {
       ok: true;
-      trace: CompiledVisualization;
+      trace: VisualizationPackage;
       debug: CompileDebug;
     }
   | {
