@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 
-import type { ProjectEvent } from '$lib/projects/types';
+import type { ProjectEvent } from '$lib/projects/events';
 import { projectRepository, ProjectNotFoundError } from '$lib/server/projects/repository';
 
 import type { RequestHandler } from './$types';
@@ -8,6 +8,7 @@ import type { RequestHandler } from './$types';
 const encoder = new TextEncoder();
 const heartbeatIntervalMs = 15_000;
 
+/** Stream durably appended project events, replaying from the requested event position. */
 export const GET: RequestHandler = async ({ params, request, url }) => {
   const after = readAfter(request, url);
   const queued: ProjectEvent[] = [];

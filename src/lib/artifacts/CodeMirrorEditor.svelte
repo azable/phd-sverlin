@@ -5,26 +5,30 @@
 
   import { artifactEditorExtensions, type ArtifactLanguage } from './artifact-editor';
 
+  /** Public properties accepted by the CodeMirror artifact editor. */
+  type Props = {
+    value: string;
+    editable?: boolean;
+    language?: ArtifactLanguage;
+    ariaLabel?: string;
+    onChange?: (value: string) => void;
+  };
+
   let {
     value = $bindable(''),
     editable = false,
     language = 'sverlin',
     ariaLabel = 'Source code editor',
     onChange
-  }: {
-    value: string;
-    editable?: boolean;
-    language?: ArtifactLanguage;
-    ariaLabel?: string;
-    onChange?: (value: string) => void;
-  } = $props();
+  }: Props = $props();
 
   let host = $state<HTMLElement | null>(null);
-  let view: EditorView | null = null;
+  let view = $state.raw<EditorView | null>(null);
   let suppressChange = false;
   const editableCompartment = new Compartment();
 
-  export function focus() {
+  /** Focus the underlying CodeMirror editor. */
+  export function focus(): void {
     view?.focus();
   }
 

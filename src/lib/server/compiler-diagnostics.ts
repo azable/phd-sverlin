@@ -1,3 +1,9 @@
+/**
+ * Parsing, classification, and display of Haskell compiler failures.
+ *
+ * @packageDocumentation
+ */
+
 import type {
   CompileDebug,
   CompileFailureKind,
@@ -7,6 +13,7 @@ import type {
 const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 const diagnosticHeader = /^(.+?):(\d+):(\d+):\s+(error|warning):(?:\s+\[([^\]]+)\])?\s*$/;
 
+/** Parse GHC-style stderr into structured compiler diagnostics. */
 export function parseCompilerDiagnostics(stderr: string): CompilerDiagnostic[] {
   const normalized = stderr.replace(ansiEscape, '').trim();
   if (!normalized) return [];
@@ -53,6 +60,7 @@ export function parseCompilerDiagnostics(stderr: string): CompilerDiagnostic[] {
     : [{ severity: 'unknown', message: normalized, raw: normalized }];
 }
 
+/** Classify a failed compiler run for repair and user-facing behavior. */
 export function classifyCompileFailure(debug: CompileDebug): CompileFailureKind {
   if (debug.error === 'Compile backend was cancelled.') return 'cancelled';
   if (debug.timedOut) return 'timeout';
@@ -64,6 +72,7 @@ export function classifyCompileFailure(debug: CompileDebug): CompileFailureKind 
   return 'pipeline';
 }
 
+/** Format structured diagnostics as a compact human-readable summary. */
 export function formatDiagnosticSummary(diagnostics: CompilerDiagnostic[]): string {
   if (diagnostics.length === 0) return 'The compiler did not provide a diagnostic.';
 

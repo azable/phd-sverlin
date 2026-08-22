@@ -11,6 +11,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Spinner } from '$lib/components/ui/spinner';
 
+  /** Public properties for visualization playback and regeneration controls. */
   type Props = {
     loadingVisualization: boolean;
     regenerating: boolean;

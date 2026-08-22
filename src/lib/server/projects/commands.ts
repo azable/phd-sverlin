@@ -1,18 +1,19 @@
-import { projectAt, projectHead } from '$lib/projects/project';
-import type {
-  ArtifactChange,
-  EventId,
-  NewProjectEvent,
-  ProjectCommandResult,
-  ProjectDocument,
-  VisualSelection
-} from '$lib/projects/types';
+/**
+ * AI-assisted feedback command orchestration for projects.
+ *
+ * @packageDocumentation
+ */
+
+import type { EventId, NewProjectEvent } from '$lib/projects/events';
+import type { ArtifactChange, VisualSelection } from '$lib/projects/events/values';
+import type { ProjectCommandResult, ProjectDocument } from '$lib/projects/model';
+import { projectHead, projectSnapshotAt } from '$lib/projects/projection';
 import { getChatbot } from '$lib/server/chat-bots/registry';
 import type { CompilationFeedback } from '$lib/server/chat-bots/types';
 import { formatDiagnosticSummary } from '$lib/server/compiler-diagnostics';
 import { decodeVisualization } from '$lib/visualization/types';
 
-import { buildProjectPrompt } from './context';
+import { buildProjectPrompt } from './prompt-context';
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, sourceSha256 } from './fingerprints';
 import { projectRepository } from './repository';
@@ -20,9 +21,11 @@ import {
   activateCompiledRender,
   appendProjectEvents,
   compileProjectSource,
-  draftEvent
+  draftEvent,
+  type RecordedCompilation
 } from './service';
 
+/** Record user feedback, run AI generation, and accept at most one compiled candidate. */
 export function submitProjectFeedback(options: {
   projectId: string;
   expectedHead: EventId;
@@ -290,13 +293,13 @@ async function compileCandidate(options: {
 
 async function acceptCandidate(options: {
   document: ProjectDocument;
-  recorded: Awaited<ReturnType<typeof compileProjectSource>>;
+  recorded: RecordedCompilation;
   generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
   reply: string;
   candidate: string;
   operationId: string;
 }) {
-  const snapshot = projectAt(options.document);
+  const snapshot = projectSnapshotAt(options.document);
   const current = snapshot.artifacts[snapshot.entryArtifactId];
   if (!current) throw new Error('The project has no entry artifact.');
   const content = await projectRepository.putBlob(

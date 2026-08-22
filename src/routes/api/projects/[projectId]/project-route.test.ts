@@ -18,10 +18,15 @@ const operationId = '12345678-1234-4123-8123-123456789abc';
 
 beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset().mockResolvedValue(undefined));
+  mocks.loadProjectView.mockResolvedValue({
+    document: { schemaVersion: 1, projectId: 'project-test', events: [] },
+    snapshot: { at: 4, title: 'Renamed', entryArtifactId: 'dsl-main', artifacts: {} },
+    projects: []
+  });
 });
 
 describe('project JSON API', () => {
-  it('dispatches a validated command and returns no duplicate result body', async () => {
+  it('dispatches a validated command and returns the authoritative project view', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
@@ -32,13 +37,17 @@ describe('project JSON API', () => {
       })
     );
 
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      snapshot: { at: 4, title: 'Renamed' }
+    });
     expect(mocks.renameProject).toHaveBeenCalledWith({
       projectId: 'project-test',
       operationId,
       expectedHead: 4,
       title: 'Renamed'
     });
+    expect(mocks.loadProjectView).toHaveBeenCalledWith('project-test');
   });
 
   it('returns structured client and conflict errors', async () => {

@@ -1,78 +1,102 @@
+/**
+ * Reactive playback state for compiler-produced visualizations.
+ *
+ * @packageDocumentation
+ */
+
 /* eslint-disable svelte/prefer-svelte-reactivity -- These Maps are ephemeral lookup tables, not reactive state. */
 import { tick } from 'svelte';
 
 import type { LiveElement, VisualElement, VisualId, VisualInstance, Visualization } from './types';
 
-type SetVisualizationOptions = { initialStep?: number };
+/** Options controlling the initial checkpoint when loading a visualization. */
+export type SetVisualizationOptions = { initialStep?: number };
 
 /**
  * A seekable player over compiler-produced checkpoint steps. Stable instance
  * identities animate updates; keyed Svelte transitions own entry and exit.
  */
 export class VisualizationPlayer {
-  visualization = $state<Visualization | null>(null);
-  elements = $state<LiveElement[]>([]);
+  /** The visualization currently loaded for playback. */
+  visualization = $state.raw<Visualization | null>(null);
+  /** Elements visible at the current checkpoint. */
+  elements = $state.raw<LiveElement[]>([]);
+  /** Zero-based checkpoint index, or `-1` when no step is active. */
   currentStep = $state(-1);
 
   #transitionVersion = 0;
 
-  get hasVisualization() {
+  /** Whether a visualization is currently loaded. */
+  get hasVisualization(): boolean {
     return this.visualization !== null;
   }
 
-  get stepCount() {
+  /** Number of checkpoint steps in the loaded visualization. */
+  get stepCount(): number {
     return this.visualization?.steps.length ?? 0;
   }
 
-  get lastStep() {
+  /** Zero-based index of the final checkpoint. */
+  get lastStep(): number {
     return this.stepCount - 1;
   }
 
-  get canPrevious() {
+  /** Whether playback can move to an earlier checkpoint. */
+  get canPrevious(): boolean {
     return this.currentStep > 0;
   }
 
-  get canNext() {
+  /** Whether playback can move to a later checkpoint. */
+  get canNext(): boolean {
     return this.currentStep >= 0 && this.currentStep < this.lastStep;
   }
 
-  get currentStepLabel() {
+  /** Label of the active checkpoint, or an empty string when none is active. */
+  get currentStepLabel(): string {
     return this.currentStep >= 0 ? (this.visualization?.steps[this.currentStep]?.label ?? '') : '';
   }
 
-  get canvasWidth() {
+  /** Solved canvas width for the loaded visualization. */
+  get canvasWidth(): number {
     return this.visualization?.canvas.width ?? 0;
   }
 
-  get canvasHeight() {
+  /** Solved canvas height for the loaded visualization. */
+  get canvasHeight(): number {
     return this.visualization?.canvas.height ?? 0;
   }
 
-  setVisualization(visualization: Visualization, options: SetVisualizationOptions = {}) {
+  /** Load a visualization and seek to its requested initial checkpoint. */
+  setVisualization(visualization: Visualization, options: SetVisualizationOptions = {}): void {
     this.visualization = visualization;
     this.seek(options.initialStep ?? 0);
   }
 
-  clear() {
+  /** Remove the loaded visualization and reset playback state. */
+  clear(): void {
     this.#transitionVersion += 1;
     this.visualization = null;
     this.elements = [];
     this.currentStep = -1;
   }
 
-  reset() {
+  /** Return playback to the first checkpoint. */
+  reset(): void {
     this.seek(0);
   }
 
-  next() {
+  /** Advance one checkpoint when possible. */
+  next(): void {
     if (this.canNext) this.transitionTo(this.currentStep + 1);
   }
 
-  previous() {
+  /** Move back one checkpoint when possible. */
+  previous(): void {
     if (this.canPrevious) this.transitionTo(this.currentStep - 1);
   }
 
-  seek(requestedStep: number) {
+  /** Seek to a checkpoint, clamping the requested index to the available range. */
+  seek(requestedStep: number): void {
     this.#transitionVersion += 1;
 
     if (!this.visualization || this.visualization.steps.length === 0) {
@@ -85,11 +109,12 @@ export class VisualizationPlayer {
     this.elements = this.elementsForStep(this.visualization.steps[this.currentStep].instances);
   }
 
-  dispose() {
+  /** Release pending playback work and clear state. */
+  dispose(): void {
     this.clear();
   }
 
-  private transitionTo(step: number) {
+  private transitionTo(step: number): void {
     if (!this.visualization) return;
 
     this.#transitionVersion += 1;
@@ -120,7 +145,7 @@ export class VisualizationPlayer {
     this.elements = next;
   }
 
-  private elementsForStep(instances: VisualInstance[]) {
+  private elementsForStep(instances: VisualInstance[]): LiveElement[] {
     const registry = this.elementRegistry();
 
     return instances.flatMap<LiveElement>((instance) => {
@@ -129,23 +154,23 @@ export class VisualizationPlayer {
     });
   }
 
-  private elementRegistry() {
+  private elementRegistry(): Map<VisualId, VisualElement> {
     return new Map<VisualId, VisualElement>(
       this.visualization?.elements.map((element) => [element.id, element]) ?? []
     );
   }
 
-  private clampStep(step: number) {
+  private clampStep(step: number): number {
     return Math.min(Math.max(0, step), this.lastStep);
   }
 
-  private scheduleSettle(element: LiveElement) {
+  private scheduleSettle(element: LiveElement): void {
     const version = this.#transitionVersion;
 
     void tick().then(() => afterPaint(() => this.settleElement(version, element)));
   }
 
-  private settleElement(version: number, element: LiveElement) {
+  private settleElement(version: number, element: LiveElement): void {
     if (version !== this.#transitionVersion) return;
     this.elements = this.elements.map((current) =>
       current.instanceId === element.instanceId ? element : current
@@ -153,7 +178,7 @@ export class VisualizationPlayer {
   }
 }
 
-function afterPaint(callback: () => void) {
+function afterPaint(callback: () => void): void {
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => requestAnimationFrame(callback));
   } else {

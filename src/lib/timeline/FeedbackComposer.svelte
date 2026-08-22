@@ -7,17 +7,16 @@
   import * as InputGroup from '$lib/components/ui/input-group';
   import { Spinner } from '$lib/components/ui/spinner';
   import type { ProjectSession } from '$lib/projects/project-session.svelte';
-  import type { VisualSelection } from '$lib/projects/types';
+  import type { VisualSelection } from '$lib/projects/events/values';
 
-  let {
-    session,
-    seed,
-    selection
-  }: {
+  /** Public properties for composing project feedback. */
+  type Props = {
     session: ProjectSession;
     seed: number;
     selection?: VisualSelection;
-  } = $props();
+  };
+
+  let { session, seed, selection }: Props = $props();
 
   let text = $state('');
   let judgement = $state<VisualSelection['judgement']>('neutral');

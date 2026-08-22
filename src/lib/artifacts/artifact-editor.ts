@@ -1,12 +1,20 @@
+/**
+ * CodeMirror configuration for editable project artifacts.
+ *
+ * @packageDocumentation
+ */
+
 import { basicSetup, EditorView } from 'codemirror';
 import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { haskell } from '@codemirror/legacy-modes/mode/haskell';
 import type { Extension } from '@codemirror/state';
 
+/** Source languages supported by the project artifact editor. */
 export type ArtifactLanguage = 'sverlin';
 
 const haskellLanguage = StreamLanguage.define(haskell);
 
+/** Return CodeMirror language support for a project artifact language. */
 export function artifactLanguageSupport(language: ArtifactLanguage): Extension {
   switch (language) {
     case 'sverlin':
@@ -14,6 +22,7 @@ export function artifactLanguageSupport(language: ArtifactLanguage): Extension {
   }
 }
 
+/** Build the application-aware CodeMirror color and layout theme. */
 export function artifactTheme(): Extension {
   return EditorView.theme({
     '&': {
@@ -43,6 +52,7 @@ export function artifactTheme(): Extension {
   });
 }
 
+/** Build the complete CodeMirror extension set for an artifact editor. */
 export function artifactEditorExtensions({
   language
 }: {

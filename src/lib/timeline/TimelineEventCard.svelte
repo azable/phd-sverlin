@@ -13,12 +13,14 @@
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import type { ProjectSession } from '$lib/projects/project-session.svelte';
-  import type { ProjectEvent } from '$lib/projects/types';
+  import type { ProjectEvent } from '$lib/projects/events';
 
   import { presentProjectEvent } from './event-presentation';
 
-  let { event, seed, session }: { event: ProjectEvent; seed: number; session: ProjectSession } =
-    $props();
+  /** Public properties for one project Timeline event card. */
+  type Props = { event: ProjectEvent; seed: number; session: ProjectSession };
+
+  let { event, seed, session }: Props = $props();
 
   const presentation = $derived(presentProjectEvent(event));
 
@@ -36,7 +38,7 @@
 
   function historyHref() {
     return `${resolve('/projects/[projectId]', {
-      projectId: session.document.projectId
+      projectId: session.projectId
     })}?at=${event.id}`;
   }
 </script>

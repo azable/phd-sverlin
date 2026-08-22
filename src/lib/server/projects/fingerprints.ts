@@ -1,20 +1,28 @@
+/**
+ * Reproducible fingerprints for source text and the active Haskell DSL implementation.
+ *
+ * @packageDocumentation
+ */
+
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { DslRevision } from '$lib/projects/types';
+import type { DslRevision } from '$lib/projects/events/values';
 
 const execFileAsync = promisify(execFile);
 const choreographyDirectory = 'compile/src/LinearTrace/Choreography';
 const dslSourcePaths = ['compile/src/LinearTrace/Choreography.hs', 'compile/app/Sverlin/Source.hs'];
 const dslGitPaths = [...dslSourcePaths, choreographyDirectory];
 
-export function sourceSha256(content: string) {
+/** Calculate the lowercase SHA-256 digest for source text. */
+export function sourceSha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
+/** Read the current DSL content fingerprint and best-effort Git provenance. */
 export async function readDslRevision(): Promise<DslRevision | undefined> {
   try {
     const sourcePaths = await listDslSourcePaths();

@@ -1,11 +1,11 @@
 import { json } from '@sveltejs/kit';
 
+import { InvalidProjectDocumentError, type EventId } from '$lib/projects/events';
 import {
-  InvalidProjectDocumentError,
   parseProjectCommand,
-  type EventId,
-  type ProjectCommand
-} from '$lib/projects/types';
+  type ProjectCommand,
+  type ProjectCommandResult
+} from '$lib/projects/model';
 import { submitProjectFeedback } from '$lib/server/projects/commands';
 import { ProjectConflictError, ProjectNotFoundError } from '$lib/server/projects/repository';
 import {
@@ -18,6 +18,7 @@ import {
 
 import type { RequestHandler } from './$types';
 
+/** Load the current or historical hydrated view of a project. */
 export const GET: RequestHandler = async ({ params, url }) => {
   try {
     return json(await loadProjectView(params.projectId, readCursor(url.searchParams.get('at'))));
@@ -26,17 +27,18 @@ export const GET: RequestHandler = async ({ params, url }) => {
   }
 };
 
+/** Validate and execute one optimistic-concurrency project command. */
 export const POST: RequestHandler = async ({ params, request }) => {
   try {
     const command = parseProjectCommand(await request.json());
     await runCommand(params.projectId, command);
-    return new Response(null, { status: 204 });
+    return json(await loadProjectView(params.projectId));
   } catch (cause) {
     return projectError(cause);
   }
 };
 
-function runCommand(projectId: string, command: ProjectCommand) {
+function runCommand(projectId: string, command: ProjectCommand): Promise<ProjectCommandResult> {
   const common = {
     projectId,
     expectedHead: command.expectedHead,

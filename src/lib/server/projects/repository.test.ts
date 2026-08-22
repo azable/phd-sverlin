@@ -4,7 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { NewProjectEvent, ProjectDocument } from '$lib/projects/types';
+import type { NewProjectEvent } from '$lib/projects/events';
+import type { ProjectDocument } from '$lib/projects/model';
 
 import { FileProjectRepository, ProjectConflictError } from './repository';
 

@@ -1,3 +1,9 @@
+/**
+ * Provider-neutral interfaces implemented by chat API adapters.
+ *
+ * @packageDocumentation
+ */
+
 import type {
   ChatBotConfig,
   ChatContext,
@@ -6,6 +12,7 @@ import type {
   ChatResponseFormat
 } from '$lib/server/chat-bots/types';
 
+/** Fully prepared request accepted by a provider adapter. */
 export type ChatAdapterRequest = {
   messages: ConversationMessage[];
   initialPrompt: ChatBotConfig['initialPrompt'];
@@ -14,6 +21,7 @@ export type ChatAdapterRequest = {
   responseFormat: ChatResponseFormat;
 };
 
+/** Provider-neutral result returned after structured response parsing. */
 export type ChatAdapterResult = {
   reply: string;
   sourceArtifactContent?: string;
@@ -25,7 +33,10 @@ export type ChatAdapterResult = {
   };
 };
 
+/** Adapter capable of generating one structured chatbot response. */
 export interface ChatAdapter {
+  /** Stable adapter identifier recorded in project history. */
   readonly id: string;
+  /** Submit a prepared request and normalize the provider response. */
   generateReply(request: ChatAdapterRequest): Promise<ChatAdapterResult>;
 }

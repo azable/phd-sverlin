@@ -1,9 +1,16 @@
+/** Shared output-path allocation used by server compilation and Node scripts. */
+
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import path from 'node:path';
 
 const workspaceOutputDirEnvVar = 'SVERLIN_OUTPUT_DIR';
 const defaultWorkspaceOutputDir = 'outputs';
 
+/**
+ * Return the absolute workspace directory for generated compiler outputs.
+ *
+ * @returns {string}
+ */
 export function readWorkspaceOutputDir() {
   const configuredDir = process.env[workspaceOutputDirEnvVar]?.trim();
   return configuredDir
@@ -11,6 +18,11 @@ export function readWorkspaceOutputDir() {
     : path.join(process.cwd(), defaultWorkspaceOutputDir);
 }
 
+/**
+ * Create and return the configured compiler output directory.
+ *
+ * @returns {Promise<string>}
+ */
 export async function ensureWorkspaceOutputDir() {
   const outputDir = readWorkspaceOutputDir();
   await mkdir(outputDir, { recursive: true });
@@ -18,7 +30,10 @@ export async function ensureWorkspaceOutputDir() {
 }
 
 /**
+ * Allocate an isolated output directory for one compiler invocation.
+ *
  * @param {{ owner: string, seed: number }} options
+ * @returns {Promise<{ outputDir: string, outputPath: string }>}
  */
 export async function createCompileOutput(options) {
   assertPositiveSeed(options.seed);
@@ -37,7 +52,10 @@ export async function createCompileOutput(options) {
 }
 
 /**
+ * Return the deterministic visualization filename for a seed.
+ *
  * @param {number} seed
+ * @returns {string}
  */
 export function compiledVisualizationFileName(seed) {
   assertPositiveSeed(seed);
@@ -46,7 +64,10 @@ export function compiledVisualizationFileName(seed) {
 }
 
 /**
+ * Return the workspace subdirectory name shared by outputs for a seed.
+ *
  * @param {number} seed
+ * @returns {string}
  */
 export function seedWorkspaceOutputDirName(seed) {
   assertPositiveSeed(seed);

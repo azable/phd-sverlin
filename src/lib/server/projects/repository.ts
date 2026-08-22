@@ -1,18 +1,30 @@
+/**
+ * Durable filesystem storage for immutable project documents and content-addressed blobs.
+ *
+ * @packageDocumentation
+ */
+
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { summarizeProject } from '$lib/projects/project';
-import type {
-  BlobRef,
-  NewProjectEvent,
-  ProjectDocument,
-  ProjectEvent,
-  ProjectId,
-  ProjectSummary
-} from '$lib/projects/types';
-import { normalizeProjectV1 } from '$lib/projects/types';
+import { summarizeProject } from '$lib/projects/projection';
+import type { NewProjectEvent, ProjectEvent } from '$lib/projects/events';
+import type { BlobRef } from '$lib/projects/events/values';
+import {
+  normalizeProjectV1,
+  type ProjectDocument,
+  type ProjectId,
+  type ProjectSummary
+} from '$lib/projects/model';
 
+/** Validated document and stable events produced by one atomic append. */
+export type ProjectAppendResult = {
+  document: ProjectDocument;
+  events: ProjectEvent[];
+};
+
+/** Raised when a requested project directory does not exist. */
 export class ProjectNotFoundError extends Error {
   constructor(projectId: string) {
     super(`Unknown project ${projectId}.`);
@@ -20,6 +32,7 @@ export class ProjectNotFoundError extends Error {
   }
 }
 
+/** Raised when an append targets a project head that has already advanced. */
 export class ProjectConflictError extends Error {
   constructor() {
     super('The project changed before this operation completed.');
@@ -27,15 +40,19 @@ export class ProjectConflictError extends Error {
   }
 }
 
+/** Filesystem-backed project repository with atomic appends and live subscribers. */
 export class FileProjectRepository {
+  /** Absolute storage root containing project directories. */
   readonly root: string;
   readonly #writeTails = new Map<ProjectId, Promise<void>>();
   readonly #subscribers = new Map<ProjectId, Set<(events: ProjectEvent[]) => void>>();
 
+  /** Create a repository rooted at the configured project directory. */
   constructor(root = projectStorageRoot()) {
     this.root = root;
   }
 
+  /** List project summaries ordered from most recently updated. */
   async list(): Promise<ProjectSummary[]> {
     await mkdir(this.root, { recursive: true });
     const entries = await readdir(this.root, { withFileTypes: true });
@@ -47,7 +64,8 @@ export class FileProjectRepository {
     return summaries.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  async create(document: ProjectDocument) {
+  /** Persist a new validated project document and initialize its blob store. */
+  async create(document: ProjectDocument): Promise<ProjectDocument> {
     assertProjectId(document.projectId);
     normalizeProjectV1(document);
     const directory = this.projectDirectory(document.projectId);
@@ -58,7 +76,8 @@ export class FileProjectRepository {
     return structuredClone(document);
   }
 
-  async load(projectId: ProjectId) {
+  /** Load and validate a project document from disk. */
+  async load(projectId: ProjectId): Promise<ProjectDocument> {
     assertProjectId(projectId);
     try {
       const source = await readFile(this.documentPath(projectId), 'utf8');
@@ -69,7 +88,12 @@ export class FileProjectRepository {
     }
   }
 
-  async append(projectId: ProjectId, expectedHead: number, pendingEvents: NewProjectEvent[]) {
+  /** Atomically append events if the supplied project head is still current. */
+  async append(
+    projectId: ProjectId,
+    expectedHead: number,
+    pendingEvents: NewProjectEvent[]
+  ): Promise<ProjectAppendResult> {
     return this.withWriteLock(projectId, async () => {
       const document = await this.load(projectId);
       const head = document.events.at(-1)!;
@@ -86,7 +110,8 @@ export class FileProjectRepository {
     });
   }
 
-  subscribe(projectId: ProjectId, listener: (events: ProjectEvent[]) => void) {
+  /** Subscribe to events after they have been durably appended. */
+  subscribe(projectId: ProjectId, listener: (events: ProjectEvent[]) => void): () => void {
     assertProjectId(projectId);
     const subscribers = this.#subscribers.get(projectId) ?? new Set();
     subscribers.add(listener);
@@ -98,6 +123,7 @@ export class FileProjectRepository {
     };
   }
 
+  /** Store content by SHA-256 and return its immutable reference. */
   async putBlob(
     projectId: ProjectId,
     value: string | Uint8Array,
@@ -129,7 +155,8 @@ export class FileProjectRepository {
     return ref;
   }
 
-  async readBlob(projectId: ProjectId, ref: BlobRef) {
+  /** Read a blob and verify its digest and byte length. */
+  async readBlob(projectId: ProjectId, ref: BlobRef): Promise<Buffer> {
     assertProjectId(projectId);
     const bytes = await readFile(this.blobPath(projectId, ref.sha256));
     const actual = createHash('sha256').update(bytes).digest('hex');
@@ -139,7 +166,8 @@ export class FileProjectRepository {
     return bytes;
   }
 
-  async readTextBlob(projectId: ProjectId, ref: BlobRef) {
+  /** Read and integrity-check a UTF-8 project blob. */
+  async readTextBlob(projectId: ProjectId, ref: BlobRef): Promise<string> {
     return (await this.readBlob(projectId, ref)).toString('utf8');
   }
 
@@ -204,6 +232,7 @@ export class FileProjectRepository {
   }
 }
 
+/** Default repository used by server routes and project operations. */
 export const projectRepository = new FileProjectRepository();
 
 function projectStorageRoot() {

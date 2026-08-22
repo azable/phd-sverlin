@@ -1,3 +1,9 @@
+/**
+ * In-process serialization for whole project commands.
+ *
+ * @packageDocumentation
+ */
+
 const commandTails = new Map<string, Promise<void>>();
 
 /**
@@ -5,7 +11,10 @@ const commandTails = new Map<string, Promise<void>>();
  * The repository still performs an optimistic head check at every append; this
  * queue only prevents two accepted commands from interleaving their events.
  */
-export async function runProjectCommand<T>(projectId: string, command: () => Promise<T>) {
+export async function runProjectCommand<T>(
+  projectId: string,
+  command: () => Promise<T>
+): Promise<T> {
   const previous = commandTails.get(projectId) ?? Promise.resolve();
   let release!: () => void;
   const tail = new Promise<void>((resolve) => {

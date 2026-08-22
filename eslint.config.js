@@ -48,5 +48,12 @@ export default defineConfig(
     rules: {
       'svelte/no-navigation-without-resolve': 'off'
     }
+  },
+  {
+    files: ['src/**/*.ts', 'src/**/*.svelte'],
+    ignores: ['src/lib/components/ui/**', 'src/lib/visualization/generated/**'],
+    rules: {
+      '@typescript-eslint/explicit-module-boundary-types': 'error'
+    }
   }
 );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ProjectEvent } from '$lib/projects/types';
+import type { ProjectEventOf } from '$lib/projects/events';
 
 import { presentProjectEvent } from './event-presentation';
 
@@ -21,7 +21,7 @@ describe('project event presentation', () => {
   });
 });
 
-function compilationFailure(): Extract<ProjectEvent, { type: 'compilation.failed' }> {
+function compilationFailure(): ProjectEventOf<'compilation.failed'> {
   return {
     ...base(),
     type: 'compilation.failed',
@@ -40,8 +40,8 @@ function compilationFailure(): Extract<ProjectEvent, { type: 'compilation.failed
 }
 
 function systemNotice(
-  severity: Extract<ProjectEvent, { type: 'system.notified' }>['payload']['severity']
-): Extract<ProjectEvent, { type: 'system.notified' }> {
+  severity: ProjectEventOf<'system.notified'>['payload']['severity']
+): ProjectEventOf<'system.notified'> {
   return { ...base(), type: 'system.notified', payload: { severity, message: severity } };
 }
 

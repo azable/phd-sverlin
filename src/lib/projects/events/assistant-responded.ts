@@ -1,0 +1,12 @@
+/** Assistant-response event contract. */
+
+import * as v from 'valibot';
+
+import { eventEnvelope } from './values';
+
+/** Runtime schema for an assistant's user-facing response. */
+export const assistantRespondedEventSchema = v.object({
+  ...eventEnvelope,
+  type: v.literal('assistant.responded'),
+  payload: v.object({ text: v.string() })
+});

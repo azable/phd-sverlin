@@ -1,5 +1,12 @@
-import type { ProjectEvent, ProjectEventType } from '$lib/projects/types';
+/**
+ * Human-readable presentation metadata for immutable project events.
+ *
+ * @packageDocumentation
+ */
 
+import { matchProjectEvent, type ProjectEvent, type ProjectEventCases } from '$lib/projects/events';
+
+/** Icon families available to Timeline event cards. */
 export type TimelineEventIcon =
   | 'assistant'
   | 'code'
@@ -8,6 +15,7 @@ export type TimelineEventIcon =
   | 'message'
   | 'visualization';
 
+/** Display text and styling derived from a project event. */
 export type TimelineEventPresentation = {
   title: string;
   detail: string;
@@ -15,12 +23,6 @@ export type TimelineEventPresentation = {
   progress: string;
   restorable: boolean;
   tone: 'default' | 'destructive';
-};
-
-type Presenters = {
-  [Type in ProjectEventType]: (
-    event: Extract<ProjectEvent, { type: Type }>
-  ) => TimelineEventPresentation;
 };
 
 const presenters = {
@@ -117,11 +119,11 @@ const presenters = {
       false,
       event.payload.severity === 'error' ? 'destructive' : 'default'
     )
-} satisfies Presenters;
+} satisfies ProjectEventCases<TimelineEventPresentation>;
 
+/** Convert a typed project event into its Timeline presentation. */
 export function presentProjectEvent(event: ProjectEvent): TimelineEventPresentation {
-  const present = presenters[event.type] as (value: ProjectEvent) => TimelineEventPresentation;
-  return present(event);
+  return matchProjectEvent(event, presenters);
 }
 
 function details(

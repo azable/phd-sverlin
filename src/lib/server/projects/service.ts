@@ -1,20 +1,27 @@
+/**
+ * Server-side project operations and the event-recorded compilation lifecycle.
+ *
+ * @packageDocumentation
+ */
+
 import { randomInt, randomUUID } from 'node:crypto';
 
 import bundledInitialSource from '../../../../examples/Minimal.sverlin?raw';
 
-import { projectAt, projectHead } from '$lib/projects/project';
+import type {
+  EventId,
+  NewProjectEvent,
+  ProjectEventOf,
+  ProjectEventType
+} from '$lib/projects/events';
 import type {
   ArtifactChange,
   ArtifactVersionOrigin,
   BlobRef,
-  EventId,
-  NewProjectEvent,
-  ProjectCommandResult,
-  ProjectDocument,
-  ProjectEvent,
-  ProjectView,
   RenderPurpose
-} from '$lib/projects/types';
+} from '$lib/projects/events/values';
+import type { ProjectCommandResult, ProjectDocument, ProjectView } from '$lib/projects/model';
+import { projectHead, projectSnapshotAt } from '$lib/projects/projection';
 import { compileSource, type CompileVisualizationResult } from '$lib/server/compile-visualization';
 import { decodeVisualization } from '$lib/visualization/types';
 
@@ -26,10 +33,32 @@ const minSeed = 1;
 const maxSeedExclusive = 2147483647;
 const entryArtifactId = 'dsl-main';
 
-export async function createProject(title = 'Untitled visualization') {
+type RecordedCompilationBase = {
+  document: ProjectDocument;
+  source: BlobRef;
+  seed: number;
+  operationId: string;
+};
+
+/** Compilation result together with the immutable event and blobs recorded for it. */
+export type RecordedCompilation = RecordedCompilationBase &
+  (
+    | {
+        result: Extract<CompileVisualizationResult, { ok: true }>;
+        compileEvent: NewProjectEvent<'compilation.succeeded'>;
+        render: BlobRef;
+      }
+    | {
+        result: Extract<CompileVisualizationResult, { ok: false }>;
+        compileEvent: NewProjectEvent<'compilation.failed'>;
+      }
+  );
+
+/** Create a project from the bundled minimal source and render its initial visualization. */
+export async function createProject(title = 'Untitled visualization'): Promise<ProjectDocument> {
   const projectId = randomUUID();
   const operationId = randomUUID();
-  const root: Extract<ProjectEvent, { type: 'project.created' }> = {
+  const root: ProjectEventOf<'project.created'> = {
     id: 1,
     type: 'project.created',
     actor: { kind: 'user' },
@@ -67,9 +96,10 @@ export async function createProject(title = 'Untitled visualization') {
   return renderDocument(document, randomInt(minSeed, maxSeedExclusive), 'initial', operationId);
 }
 
+/** Load a project, reconstruct the requested state, and hydrate its blobs for the UI. */
 export async function loadProjectView(projectId: string, at?: EventId): Promise<ProjectView> {
   const document = await projectRepository.load(projectId);
-  const snapshot = projectAt(document, at);
+  const snapshot = projectSnapshotAt(document, at);
   const artifacts = Object.fromEntries(
     await Promise.all(
       Object.entries(snapshot.artifacts).map(async ([artifactId, artifact]) => [
@@ -95,12 +125,13 @@ export async function loadProjectView(projectId: string, at?: EventId): Promise<
   };
 }
 
+/** Compile the current artifact with a new seed and record the resulting events. */
 export function renderProject(options: {
   projectId: string;
   expectedHead: EventId;
   seed: number;
   operationId: string;
-}) {
+}): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead);
     const document = await renderDocument(before, options.seed, 'seed-change', options.operationId);
@@ -108,15 +139,16 @@ export function renderProject(options: {
   });
 }
 
+/** Append a user-authored project title change. */
 export function renameProject(options: {
   projectId: string;
   expectedHead: EventId;
   title: string;
   operationId: string;
-}) {
+}): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead);
-    const snapshot = projectAt(before);
+    const snapshot = projectSnapshotAt(before);
     const title = options.title.trim();
     if (!title) throw new Error('Project title cannot be empty.');
     if (title === snapshot.title) return commandResult(before, before);
@@ -132,6 +164,7 @@ export function renameProject(options: {
   });
 }
 
+/** Save a manual artifact version and compile it into a new visualization. */
 export function updateProjectArtifact(options: {
   projectId: string;
   expectedHead: EventId;
@@ -139,10 +172,10 @@ export function updateProjectArtifact(options: {
   source: string;
   seed: number;
   operationId: string;
-}) {
+}): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead);
-    const current = projectAt(before).artifacts[options.artifactId];
+    const current = projectSnapshotAt(before).artifacts[options.artifactId];
     if (!current) throw new Error(`Unknown artifact ${options.artifactId}.`);
     const content = await projectRepository.putBlob(
       options.projectId,
@@ -161,17 +194,18 @@ export function updateProjectArtifact(options: {
   });
 }
 
+/** Copy historical artifacts forward and compile them as a new project state. */
 export function restoreProjectArtifacts(options: {
   projectId: string;
   expectedHead: EventId;
   from: EventId;
   seed: number;
   operationId: string;
-}) {
+}): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead);
-    const current = projectAt(before);
-    const historical = projectAt(before, options.from);
+    const current = projectSnapshotAt(before);
+    const historical = projectSnapshotAt(before, options.from);
     const changes: ArtifactChange[] = [
       ...Object.values(historical.artifacts).map(
         (artifact): ArtifactChange => ({ operation: 'upsert', artifact })
@@ -192,6 +226,7 @@ export function restoreProjectArtifacts(options: {
   });
 }
 
+/** Atomically append events to the supplied document's current head. */
 export async function appendProjectEvents(
   document: ProjectDocument,
   events: NewProjectEvent[]
@@ -200,7 +235,8 @@ export async function appendProjectEvents(
     .document;
 }
 
-export function draftEvent<Type extends ProjectEvent['type']>(
+/** Add a creation timestamp to a typed event before repository insertion. */
+export function draftEvent<Type extends ProjectEventType>(
   event: Omit<NewProjectEvent<Type>, 'createdAt'>
 ): NewProjectEvent<Type> {
   return { ...event, createdAt: new Date().toISOString() } as NewProjectEvent<Type>;
@@ -212,7 +248,7 @@ async function renderDocument(
   purpose: RenderPurpose,
   operationId: string
 ) {
-  const snapshot = projectAt(document);
+  const snapshot = projectSnapshotAt(document);
   const artifact = snapshot.artifacts[snapshot.entryArtifactId];
   if (!artifact) throw new Error('The project has no entry artifact.');
   const sourceContent = await projectRepository.readTextBlob(document.projectId, artifact.content);
@@ -229,6 +265,7 @@ async function renderDocument(
   return recorded.result.ok ? activateCompiledRender(recorded) : recorded.document;
 }
 
+/** Compile source and immutably record the request, diagnostics, and output blobs. */
 export async function compileProjectSource(options: {
   document: ProjectDocument;
   sourceContent: string;
@@ -239,7 +276,7 @@ export async function compileProjectSource(options: {
   input: 'committed-artifact' | 'assistant-candidate';
   operationId: string;
   attempt?: 1 | 2;
-}) {
+}): Promise<RecordedCompilation> {
   const dslRevision = await readDslRevision();
   const request = draftEvent<'compilation.requested'>({
     type: 'compilation.requested',
@@ -271,7 +308,7 @@ async function recordCompileResult(options: {
   source: BlobRef;
   seed: number;
   operationId: string;
-}) {
+}): Promise<RecordedCompilation> {
   const projectId = options.document.projectId;
   const stdout = await projectRepository.putBlob(
     projectId,
@@ -334,10 +371,11 @@ async function recordCompileResult(options: {
   };
 }
 
+/** Promote a successful recorded compilation to the project's active visualization. */
 export async function activateCompiledRender(
-  recorded: Awaited<ReturnType<typeof compileProjectSource>>
-) {
-  if (!recorded.result.ok || !recorded.render) return recorded.document;
+  recorded: RecordedCompilation
+): Promise<ProjectDocument> {
+  if (!('render' in recorded)) return recorded.document;
   return appendProjectEvents(recorded.document, [
     draftEvent({
       type: 'visualization.rendered',

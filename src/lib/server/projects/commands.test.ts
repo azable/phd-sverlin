@@ -4,8 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { projectAt } from '$lib/projects/project';
-import { projectHead } from '$lib/projects/project';
+import { projectHead, projectSnapshotAt } from '$lib/projects/projection';
 
 const mocks = vi.hoisted(() => ({
   compileSource: vi.fn(),
@@ -139,8 +138,8 @@ describe('submitProjectFeedback', () => {
     expect(
       result.document.events.filter(({ type }) => type === 'artifact.version-created')
     ).toHaveLength(1);
-    expect(projectAt(result.document).activeRender?.payload.seed).toBe(
-      projectAt(created).activeRender?.payload.seed
+    expect(projectSnapshotAt(result.document).activeRender?.payload.seed).toBe(
+      projectSnapshotAt(created).activeRender?.payload.seed
     );
   });
 
@@ -199,7 +198,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject('Focused history');
-    const render = projectAt(created).activeRender!;
+    const render = projectSnapshotAt(created).activeRender!;
 
     await submitProjectFeedback({
       projectId: created.projectId,
@@ -238,7 +237,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject('Selection validation');
-    const render = projectAt(created).activeRender!;
+    const render = projectSnapshotAt(created).activeRender!;
 
     await expect(
       submitProjectFeedback({

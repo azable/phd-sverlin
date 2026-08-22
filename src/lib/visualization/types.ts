@@ -1,12 +1,20 @@
+/**
+ * Shared visualization wire types and frontend rendering types.
+ *
+ * @packageDocumentation
+ */
+
+/** Canonical visualization IR types generated from the Haskell model. */
 export type * from './generated/visualization-ir';
 
 import type { RenderInstanceId, VisualElement, Visualization } from './generated/visualization-ir';
 
-/** A registry element paired with its identity in the current scene snapshot. */
+/** A visual element paired with its identity in the current scene snapshot. */
 export type LiveElement = VisualElement & {
   instanceId: RenderInstanceId;
 };
 
+/** Process and diagnostic metadata captured for one compiler invocation. */
 export type CompileDebug = {
   command: string;
   args: string[];
@@ -21,6 +29,7 @@ export type CompileDebug = {
   error?: string;
 };
 
+/** A structured diagnostic parsed from compiler output. */
 export type CompilerDiagnostic = {
   severity: 'error' | 'warning' | 'unknown';
   code?: string;
@@ -31,6 +40,7 @@ export type CompilerDiagnostic = {
   raw: string;
 };
 
+/** Stable categories used to route and present compilation failures. */
 export type CompileFailureKind =
   | 'source'
   | 'pipeline'

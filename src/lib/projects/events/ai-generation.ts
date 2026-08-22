@@ -1,0 +1,62 @@
+/** AI generation request and outcome event contracts. */
+
+import * as v from 'valibot';
+
+import {
+  blobRefSchema,
+  dslRevisionSchema,
+  eventEnvelope,
+  naturalSchema,
+  sha256Schema,
+  textSchema
+} from './values';
+
+/** Runtime schema for an AI generation request. */
+export const aiGenerationRequestedEventSchema = v.object({
+  ...eventEnvelope,
+  type: v.literal('ai.generation-requested'),
+  payload: v.object({
+    attempt: v.picklist([1, 2]),
+    purpose: v.picklist(['initial', 'repair']),
+    prompt: blobRefSchema,
+    promptTemplateSha256: sha256Schema,
+    dslRevision: v.optional(dslRevisionSchema),
+    requestedModel: textSchema,
+    parameters: v.record(v.string(), v.unknown())
+  })
+});
+
+/** Runtime schema for a successful AI generation. */
+export const aiGenerationSucceededEventSchema = v.object({
+  ...eventEnvelope,
+  type: v.literal('ai.generation-succeeded'),
+  payload: v.object({
+    attempt: v.picklist([1, 2]),
+    adapterId: textSchema,
+    requestedModel: textSchema,
+    model: v.optional(textSchema),
+    responseId: v.optional(textSchema),
+    durationMs: naturalSchema,
+    usage: v.optional(v.record(v.string(), v.number())),
+    response: blobRefSchema
+  })
+});
+
+/** Runtime schema for a failed AI generation. */
+export const aiGenerationFailedEventSchema = v.object({
+  ...eventEnvelope,
+  type: v.literal('ai.generation-failed'),
+  payload: v.object({
+    attempt: v.picklist([1, 2]),
+    failureKind: v.picklist([
+      'configuration',
+      'provider',
+      'timeout',
+      'cancelled',
+      'invalid-response'
+    ]),
+    durationMs: naturalSchema,
+    message: v.string(),
+    details: v.optional(blobRefSchema)
+  })
+});

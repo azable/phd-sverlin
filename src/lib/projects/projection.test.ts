@@ -1,20 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { projectAt } from './project';
 import {
   InvalidProjectDocumentError,
   normalizeProjectEventV1,
-  normalizeProjectV1,
-  parseProjectCommand,
-  type ProjectDocument,
-  type ProjectEvent
-} from './types';
+  type ProjectEvent,
+  type ProjectEventOf
+} from './events';
+import { normalizeProjectV1, parseProjectCommand, type ProjectDocument } from './model';
+import { projectEventChangesState, projectSnapshotAt } from './projection';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 const hash = '0'.repeat(64);
 const blob = { sha256: hash, byteLength: 0, mediaType: 'application/json' };
 
-describe('project model', () => {
+describe('project model and projection', () => {
   it('uses each event 1-based array position as its stable ID', () => {
     const document = documentWithHistory();
     expect(normalizeProjectV1(document)).toEqual(document);
@@ -84,13 +83,25 @@ describe('project model', () => {
   it('replays historical source and clears stale renders after an artifact edit', () => {
     const document = documentWithHistory();
 
-    expect(projectAt(document, 3).activeRender?.id).toBe(3);
-    expect(projectAt(document, 4).activeRender).toBeUndefined();
-    expect(projectAt(document, 2).artifacts['dsl-main']?.content.sha256).toBe(hash);
-    expect(projectAt(document).activeRender).toMatchObject({
+    expect(projectSnapshotAt(document, 3).activeRender?.id).toBe(3);
+    expect(projectSnapshotAt(document, 4).activeRender).toBeUndefined();
+    expect(projectSnapshotAt(document, 2).artifacts['dsl-main']?.content.sha256).toBe(hash);
+    expect(projectSnapshotAt(document).activeRender).toMatchObject({
       id: 5,
       payload: { source: { sha256: '1'.repeat(64) } }
     });
+  });
+
+  it('classifies state-changing events from the state transition registry', () => {
+    const events = documentWithHistory().events;
+    expect(events.map(projectEventChangesState)).toEqual([true, true, true, true, true]);
+    expect(
+      projectEventChangesState(
+        event(6, 'assistant.responded', {
+          text: 'Done'
+        })
+      )
+    ).toBe(false);
   });
 });
 
@@ -141,7 +152,7 @@ function documentWithHistory(): ProjectDocument {
 function event<Type extends ProjectEvent['type']>(
   id: number,
   type: Type,
-  payload: Extract<ProjectEvent, { type: Type }>['payload']
+  payload: ProjectEventOf<Type>['payload']
 ) {
   return {
     id,
@@ -150,5 +161,5 @@ function event<Type extends ProjectEvent['type']>(
     operationId,
     createdAt: `2026-01-01T00:00:0${id}.000Z`,
     payload
-  } as Extract<ProjectEvent, { type: Type }>;
+  } as ProjectEventOf<Type>;
 }

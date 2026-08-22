@@ -1,3 +1,9 @@
+/**
+ * OpenAI Responses API implementation of the provider-neutral chat adapter.
+ *
+ * @packageDocumentation
+ */
+
 import OpenAI from 'openai';
 import { env } from '$env/dynamic/private';
 
@@ -6,6 +12,7 @@ import type { ChatAdapter, ChatAdapterRequest, ChatAdapterResult } from './types
 const defaultMaxContextChars = 500_000;
 const defaultRequestTimeoutMs = 180_000;
 
+/** Raised when the server has no usable OpenAI API key. */
 export class OpenAIConfigurationError extends Error {
   constructor() {
     super('OpenAI is not configured on the server.');
@@ -13,6 +20,7 @@ export class OpenAIConfigurationError extends Error {
   }
 }
 
+/** Raised before a request when serialized project context exceeds its configured limit. */
 export class ChatContextOverflowError extends Error {
   constructor() {
     super('The complete project history is too large for the configured chat context.');
@@ -20,7 +28,9 @@ export class ChatContextOverflowError extends Error {
   }
 }
 
+/** Raised when the provider does not return the required structured chatbot result. */
 export class InvalidChatbotResponseError extends Error {
+  /** Raw provider response retained for diagnostics when available. */
   readonly providerResponse?: unknown;
 
   constructor(
@@ -60,6 +70,7 @@ function serializeContext(context: ChatAdapterRequest['context']) {
   return serialized;
 }
 
+/** Parse and validate the structured text returned by the provider. */
 export function parseResult(outputText: string, providerResponse?: unknown): ChatAdapterResult {
   try {
     const parsed = JSON.parse(outputText) as {
@@ -120,6 +131,7 @@ function containsRefusal(value: unknown): boolean {
   return record.type === 'refusal' || Object.values(record).some(containsRefusal);
 }
 
+/** Generate one response through the OpenAI Responses API. */
 export async function generateOpenAIReply(request: ChatAdapterRequest): Promise<ChatAdapterResult> {
   const client = new OpenAI({
     apiKey: readApiKey(),
@@ -173,6 +185,7 @@ export async function generateOpenAIReply(request: ChatAdapterRequest): Promise<
   };
 }
 
+/** Configured OpenAI implementation of the shared chat adapter contract. */
 export const openAIAdapter: ChatAdapter = {
   id: 'openai-responses',
   generateReply: generateOpenAIReply

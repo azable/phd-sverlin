@@ -6,19 +6,22 @@
 
   import type { HslColor, LiveElement, RenderInstanceId } from './types';
 
+  /** Public properties for the pannable, zoomable visualization viewport. */
+  type Props = {
+    width: number;
+    height: number;
+    elements: LiveElement[];
+    selectedIds?: RenderInstanceId[];
+    onSelectionChange?: (ids: RenderInstanceId[]) => void;
+  };
+
   let {
     width,
     height,
     elements,
     selectedIds = $bindable<RenderInstanceId[]>([]),
     onSelectionChange = (_ids: RenderInstanceId[]) => {}
-  }: {
-    width: number;
-    height: number;
-    elements: LiveElement[];
-    selectedIds?: RenderInstanceId[];
-    onSelectionChange?: (ids: RenderInstanceId[]) => void;
-  } = $props();
+  }: Props = $props();
 
   let svg = $state<SVGSVGElement | null>(null);
   let zoom = $state(1);
@@ -32,8 +35,8 @@
   const minZoom = 0.25;
   const maxZoom = 6;
 
-  let transform = $derived(`translate(${panX} ${panY}) scale(${zoom})`);
-  let orderedElements = $derived(
+  const transform = $derived(`translate(${panX} ${panY}) scale(${zoom})`);
+  const orderedElements = $derived(
     elements.toSorted(
       (left, right) =>
         (left.style.zIndex ?? 0) - (right.style.zIndex ?? 0) ||
@@ -41,7 +44,7 @@
         left.id - right.id
     )
   );
-  let selectionBox = $derived(
+  const selectionBox = $derived(
     dragMode === 'select'
       ? {
           x: Math.min(dragStart.x, dragCurrent.x),

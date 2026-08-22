@@ -1,3 +1,9 @@
+/**
+ * Server boundary for invoking the Haskell compiler and decoding its visualization.
+ *
+ * @packageDocumentation
+ */
+
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -13,6 +19,7 @@ import {
 import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
 import { createCompileOutput } from './workspace-output.js';
 
+/** Success or structured failure returned by a visualization compilation. */
 export type CompileVisualizationResult =
   | {
       ok: true;
@@ -28,6 +35,7 @@ export type CompileVisualizationResult =
       failureKind?: CompileFailureKind;
     };
 
+/** Inputs required to compile an isolated source snapshot. */
 export type CompileSourceOptions = {
   sourceContent: string;
   sourceLabel: string;
@@ -46,10 +54,17 @@ type RunCompileOptions = {
   onStderr?: (chunk: string, stderr: string) => void;
 };
 
+/** Executable command and arguments used to invoke the compiler wrapper. */
+export type CompileCommand = {
+  command: string;
+  args: string[];
+};
+
 const defaultCompileTimeoutMs = 300_000;
 const timeoutKillGraceMs = 1_000;
 const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
 
+/** Compile Sverlin source in an isolated workspace and decode its output. */
 export async function compileSource({
   sourceContent,
   sourceLabel,
@@ -159,6 +174,7 @@ function diagnosticsForFailure(debug: CompileDebug, fallback: string) {
     : [{ severity: 'unknown' as const, message: fallback, raw: fallback }];
 }
 
+/** Run a compiler process with streaming diagnostics, cancellation, and a hard timeout. */
 export function runCompile(
   command: string,
   args: string[],
@@ -294,12 +310,13 @@ export function runCompile(
   });
 }
 
+/** Build the Node wrapper command used to invoke the Haskell compiler. */
 export function compileCommand(
   seed: number,
   outputPath: string,
   sourcePath: string,
   sourceLabel: string
-) {
+): CompileCommand {
   const args = [
     'scripts/run-compile.mjs',
     '--',

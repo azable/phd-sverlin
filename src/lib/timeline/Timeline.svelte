@@ -8,13 +8,14 @@
 
   import TimelineEventCard from './TimelineEventCard.svelte';
 
-  let { session, seed }: { session: ProjectSession; seed: number } = $props();
+  /** Public properties for the project Timeline. */
+  type Props = { session: ProjectSession; seed: number };
+
+  let { session, seed }: Props = $props();
   let viewport = $state<HTMLElement | null>(null);
   let timelineEnd = $state<HTMLElement | null>(null);
   let following = $state(true);
-  const projectPath = $derived(
-    resolve('/projects/[projectId]', { projectId: session.document.projectId })
-  );
+  const projectPath = $derived(resolve('/projects/[projectId]', { projectId: session.projectId }));
 
   $effect(() => {
     const node = viewport;

@@ -13,31 +13,31 @@
 
   import type { ProjectSession } from './project-session.svelte';
 
+  /** Editing modes exposed to the parent project workspace. */
   export type ProjectArtifactEditMode = 'readonly' | 'editing';
+
+  /** Public properties for the source artifact panel. */
+  type Props = {
+    session: ProjectSession;
+    seed: number;
+    editMode?: ProjectArtifactEditMode;
+  };
 
   let {
     session,
     seed,
     editMode = $bindable<ProjectArtifactEditMode>('readonly')
-  }: {
-    session: ProjectSession;
-    seed: number;
-    editMode?: ProjectArtifactEditMode;
-  } = $props();
+  }: Props = $props();
 
   let draft = $state('');
   let discardRequested = $state(false);
   let editor = $state<{ focus: () => void } | null>(null);
-  let loadedSha256 = $state<string | null>(null);
 
   const artifact = $derived(session.snapshot.artifacts[session.snapshot.entryArtifactId]);
-  const dirty = $derived(artifact !== undefined && draft !== artifact.source);
-
-  $effect(() => {
-    if (!artifact || artifact.content.sha256 === loadedSha256 || editMode === 'editing') return;
-    loadedSha256 = artifact.content.sha256;
-    draft = artifact.source;
-  });
+  const displayedSource = $derived(editMode === 'editing' ? draft : (artifact?.source ?? ''));
+  const dirty = $derived(
+    editMode === 'editing' && artifact !== undefined && draft !== artifact.source
+  );
 
   function startEditing() {
     if (!artifact || !session.atHead || session.pending) return;
@@ -69,13 +69,12 @@
       seed
     });
     if (succeeded) {
-      const saved = session.snapshot.artifacts[session.snapshot.entryArtifactId];
-      if (saved) {
-        draft = saved.source;
-        loadedSha256 = saved.content.sha256;
-      }
       editMode = 'readonly';
     }
+  }
+
+  function updateDraft(source: string) {
+    draft = source;
   }
 </script>
 
@@ -125,9 +124,10 @@
       <div class="min-h-0 flex-1 overflow-hidden p-3">
         <CodeMirrorEditor
           bind:this={editor}
-          bind:value={draft}
+          value={displayedSource}
           editable={editMode === 'editing' && session.atHead && !session.pending}
           ariaLabel="Sverlin project source"
+          onChange={updateDraft}
         />
       </div>
     </div>

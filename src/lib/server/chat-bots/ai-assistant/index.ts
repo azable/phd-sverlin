@@ -1,3 +1,9 @@
+/**
+ * Primary AI assistant configuration and dynamically reloadable DSL authoring context.
+ *
+ * @packageDocumentation
+ */
+
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -5,6 +11,7 @@ import bundledDslInterfaceContext from './dsl-interface.md?raw';
 
 import type { ChatBotConfig } from '../types';
 
+/** Workspace path read on each development request for live prompt updates. */
 export const dslInterfacePath = path.resolve(
   process.cwd(),
   'src/lib/server/chat-bots/ai-assistant/dsl-interface.md'
@@ -23,6 +30,7 @@ export async function loadDslInterfaceContext(
   }
 }
 
+/** Primary visualization-authoring chatbot definition. */
 export default {
   id: 'ai-assistant',
   initialPrompt:

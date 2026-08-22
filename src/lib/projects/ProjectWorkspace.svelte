@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   import FilePlusIcon from '@lucide/svelte/icons/file-plus-2';
   import PencilIcon from '@lucide/svelte/icons/pencil';
@@ -26,9 +26,13 @@
     type ProjectArtifactEditMode
   } from './ProjectArtifactPanel.svelte';
   import { ProjectSession } from './project-session.svelte';
-  import type { EventId, VisualSelection } from './types';
+  import type { EventId } from './events';
+  import type { VisualSelection } from './events/values';
 
-  let { projectId, at }: { projectId: string; at?: EventId } = $props();
+  /** Public properties for a complete project workspace. */
+  type Props = { projectId: string; at?: EventId };
+
+  let { projectId, at }: Props = $props();
 
   // The parent keys this component by projectId, so this is intentionally instance-scoped.
   // svelte-ignore state_referenced_locally
@@ -74,21 +78,16 @@
   $effect(() => {
     const renderEventId = session.view?.snapshot.activeRender?.id ?? null;
     const visualization = session.visualization;
-    if (!visualization) {
-      if (player.hasVisualization) player.clear();
-      loadedRenderEventId = null;
-      selectedInstanceIds = [];
-      return;
-    }
     if (renderEventId === loadedRenderEventId) return;
     loadedRenderEventId = renderEventId;
-    player.setVisualization(visualization, { initialStep: 0 });
-    seedText = String(session.snapshot.activeRender?.payload.seed ?? 1);
-    selectedInstanceIds = [];
-  });
+    const seed = session.view?.snapshot.activeRender?.payload.seed ?? 1;
 
-  $effect(() => {
-    if (session.view && !renaming) titleDraft = session.snapshot.title;
+    untrack(() => {
+      if (visualization) player.setVisualization(visualization, { initialStep: 0 });
+      else if (player.hasVisualization) player.clear();
+      seedText = String(seed);
+      selectedInstanceIds = [];
+    });
   });
 
   onDestroy(() => {
@@ -110,6 +109,11 @@
     event.preventDefault();
     const succeeded = await session.runCommand({ type: 'rename', title: titleDraft });
     if (succeeded) renaming = false;
+  }
+
+  function startRenaming() {
+    titleDraft = session.snapshot.title;
+    renaming = true;
   }
 
   function selectProject(event: Event) {
@@ -171,7 +175,7 @@
                   type="button"
                   size="sm"
                   variant="ghost"
-                  onclick={() => (renaming = true)}
+                  onclick={startRenaming}
                   disabled={!session.atHead || !!session.pending || sourceEditing}
                   aria-label="Rename project"
                 >
