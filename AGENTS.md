@@ -19,7 +19,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## Engineering Rules
 
-- This project uses shadcn-svelte for reusable Svelte UI components. The project configuration is tracked in `components.json`, and the shadcn-svelte skill is installed under `.agents/skills/shadcn-svelte`.
+- This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout, and the shadcn-svelte skill is installed under `.agents/skills/shadcn-svelte`.
 - When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
 - When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.

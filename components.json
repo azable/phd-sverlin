@@ -6,10 +6,10 @@
   },
   "aliases": {
     "lib": "$lib",
-    "components": "$lib/components",
-    "utils": "$lib/utils",
-    "ui": "$lib/components/ui",
-    "hooks": "$lib/hooks"
+    "components": "$lib/client/components",
+    "utils": "$lib/client/components/utils",
+    "ui": "$lib/client/components/ui",
+    "hooks": "$lib/client/hooks"
   },
   "typescript": true,
   "registry": "https://shadcn-svelte.com/registry",

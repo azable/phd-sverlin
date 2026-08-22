@@ -9,9 +9,9 @@
   import PlayIcon from '@lucide/svelte/icons/play';
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 
-  import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import * as Card from '$lib/components/ui/card';
+  import { Badge } from '$lib/client/components/ui/badge';
+  import { Button } from '$lib/client/components/ui/button';
+  import * as Card from '$lib/client/components/ui/card';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import type { ProjectEvent } from '$lib/shared/projects/events';
 

@@ -2,10 +2,10 @@
   import SendIcon from '@lucide/svelte/icons/send';
   import XIcon from '@lucide/svelte/icons/x';
 
-  import { Badge } from '$lib/components/ui/badge';
-  import * as Field from '$lib/components/ui/field';
-  import * as InputGroup from '$lib/components/ui/input-group';
-  import { Spinner } from '$lib/components/ui/spinner';
+  import { Badge } from '$lib/client/components/ui/badge';
+  import * as Field from '$lib/client/components/ui/field';
+  import * as InputGroup from '$lib/client/components/ui/input-group';
+  import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
 

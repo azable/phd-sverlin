@@ -2,8 +2,8 @@
   import { resolve } from '$app/paths';
   import { tick } from 'svelte';
 
-  import { Button } from '$lib/components/ui/button';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { Button } from '$lib/client/components/ui/button';
+  import { ScrollArea } from '$lib/client/components/ui/scroll-area';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
 
   import TimelineEventCard from './TimelineEventCard.svelte';

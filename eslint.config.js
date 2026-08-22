@@ -44,14 +44,14 @@ export default defineConfig(
     }
   },
   {
-    files: ['src/lib/components/ui/**/*.svelte'],
+    files: ['src/lib/client/components/ui/**/*.svelte'],
     rules: {
       'svelte/no-navigation-without-resolve': 'off'
     }
   },
   {
     files: ['src/**/*.ts', 'src/**/*.svelte'],
-    ignores: ['src/lib/components/ui/**', 'src/lib/shared/visualization/generated/**'],
+    ignores: ['src/lib/client/components/ui/**', 'src/lib/shared/visualization/generated/**'],
     rules: {
       '@typescript-eslint/explicit-module-boundary-types': 'error'
     }

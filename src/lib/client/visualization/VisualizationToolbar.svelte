@@ -5,11 +5,11 @@
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
   import ShuffleIcon from '@lucide/svelte/icons/shuffle';
 
-  import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import * as Field from '$lib/components/ui/field';
-  import { Input } from '$lib/components/ui/input';
-  import { Spinner } from '$lib/components/ui/spinner';
+  import { Badge } from '$lib/client/components/ui/badge';
+  import { Button } from '$lib/client/components/ui/button';
+  import * as Field from '$lib/client/components/ui/field';
+  import { Input } from '$lib/client/components/ui/input';
+  import { Spinner } from '$lib/client/components/ui/spinner';
 
   /** Public properties for visualization playback and regeneration controls. */
   type Props = {

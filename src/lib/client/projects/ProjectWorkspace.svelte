@@ -6,14 +6,14 @@
   import FilePlusIcon from '@lucide/svelte/icons/file-plus-2';
   import PencilIcon from '@lucide/svelte/icons/pencil';
 
-  import * as Alert from '$lib/components/ui/alert';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import * as Resizable from '$lib/components/ui/resizable';
-  import { Skeleton } from '$lib/components/ui/skeleton';
-  import { Spinner } from '$lib/components/ui/spinner';
-  import * as Tabs from '$lib/components/ui/tabs';
+  import * as Alert from '$lib/client/components/ui/alert';
+  import { Badge } from '$lib/client/components/ui/badge';
+  import { Button } from '$lib/client/components/ui/button';
+  import { Input } from '$lib/client/components/ui/input';
+  import * as Resizable from '$lib/client/components/ui/resizable';
+  import { Skeleton } from '$lib/client/components/ui/skeleton';
+  import { Spinner } from '$lib/client/components/ui/spinner';
+  import * as Tabs from '$lib/client/components/ui/tabs';
   import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/client/timeline/Timeline.svelte';
   import { presentProjectEvent } from '$lib/client/timeline/event-presentation';

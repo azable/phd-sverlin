@@ -2,7 +2,7 @@
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
   import { scale } from 'svelte/transition';
 
-  import { Button } from '$lib/components/ui/button';
+  import { Button } from '$lib/client/components/ui/button';
 
   import type { HslColor, LiveElement, RenderInstanceId } from './types';
 

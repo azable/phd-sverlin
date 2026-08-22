@@ -6,10 +6,10 @@
   import XIcon from '@lucide/svelte/icons/x';
 
   import CodeMirrorEditor from '$lib/client/artifacts/CodeMirrorEditor.svelte';
-  import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import { Spinner } from '$lib/components/ui/spinner';
+  import * as AlertDialog from '$lib/client/components/ui/alert-dialog';
+  import { Badge } from '$lib/client/components/ui/badge';
+  import { Button } from '$lib/client/components/ui/button';
+  import { Spinner } from '$lib/client/components/ui/spinner';
 
   import type { ProjectSession } from './project-session.svelte';
 
