@@ -1,24 +1,37 @@
 import { tick } from 'svelte';
 import { describe, expect, it } from 'vitest';
 
-import { TracePlayer } from './trace-player.svelte';
-import type { CompiledVisualization } from './types';
+import { decodeVisualization, type Visualization } from './types';
+import { VisualizationPlayer } from './visualization-player.svelte';
 
-describe('TracePlayer', () => {
+describe('VisualizationPlayer', () => {
+  it('normalizes the former trace leaf tag in stored visualizations', () => {
+    const stored = visualization(['one']);
+    const json = JSON.stringify({
+      ...stored,
+      elements: stored.elements.map((element) => ({
+        ...element,
+        kind: { kind: 'trace' }
+      }))
+    });
+
+    expect(decodeVisualization(json).elements[0].kind).toEqual({ kind: 'leaf' });
+  });
+
   it('clears a stale render when the project state has no active visualization', () => {
-    const player = new TracePlayer();
-    player.setTrace(trace(['one']));
+    const player = new VisualizationPlayer();
+    player.setVisualization(visualization(['one']));
 
     player.clear();
 
-    expect(player.hasTrace).toBe(false);
+    expect(player.hasVisualization).toBe(false);
     expect(player.currentStep).toBe(-1);
     expect(player.elements).toEqual([]);
   });
 
   it('joins the first checkpoint step to the element registry', () => {
-    const player = new TracePlayer();
-    player.setTrace(trace(['one']));
+    const player = new VisualizationPlayer();
+    player.setVisualization(visualization(['one']));
 
     expect(player.currentStep).toBe(0);
     expect(player.stepCount).toBe(1);
@@ -29,8 +42,8 @@ describe('TracePlayer', () => {
   });
 
   it('seeks forward and backward with stable render lineage', () => {
-    const player = new TracePlayer();
-    player.setTrace(trace(['one', 'two']));
+    const player = new VisualizationPlayer();
+    player.setVisualization(visualization(['one', 'two']));
     player.next();
 
     expect(player.currentStep).toBe(1);
@@ -43,11 +56,11 @@ describe('TracePlayer', () => {
     expect(player.elements[0].content).toBe('one');
   });
 
-  it('keeps the requested step when installing a replacement trace', () => {
-    const player = new TracePlayer();
-    player.setTrace(trace(['one', 'two']));
+  it('keeps the requested step when installing a replacement visualization', () => {
+    const player = new VisualizationPlayer();
+    player.setVisualization(visualization(['one', 'two']));
     player.next();
-    player.setTrace(trace(['replacement-one', 'replacement-two']), {
+    player.setVisualization(visualization(['replacement-one', 'replacement-two']), {
       initialStep: player.currentStep
     });
 
@@ -56,35 +69,35 @@ describe('TracePlayer', () => {
   });
 
   it('opens a different render at its first step by default', () => {
-    const player = new TracePlayer();
-    player.setTrace(trace(['one', 'two']));
+    const player = new VisualizationPlayer();
+    player.setVisualization(visualization(['one', 'two']));
     player.next();
 
-    player.setTrace(trace(['replacement-one', 'replacement-two']));
+    player.setVisualization(visualization(['replacement-one', 'replacement-two']));
 
     expect(player.currentStep).toBe(0);
     expect(player.elements[0].content).toBe('replacement-one');
   });
 
   it('clamps a requested replacement step to the available timeline', () => {
-    const player = new TracePlayer();
-    player.setTrace(trace(['one']), { initialStep: 4 });
+    const player = new VisualizationPlayer();
+    player.setVisualization(visualization(['one']), { initialStep: 4 });
 
     expect(player.currentStep).toBe(0);
     expect(player.elements[0].content).toBe('one');
   });
 
   it('starts a fork at its origin and settles at its solved style', async () => {
-    const visualization = trace(['source', 'fork']);
-    visualization.steps[1].instances = [
+    const compiledVisualization = visualization(['source', 'fork']);
+    compiledVisualization.steps[1].instances = [
       { id: 1, elementId: 0 },
       { id: 2, elementId: 1, originElementId: 0 }
     ];
-    visualization.elements[0].style.left = 10;
-    visualization.elements[1].style.left = 80;
+    compiledVisualization.elements[0].style.left = 10;
+    compiledVisualization.elements[1].style.left = 80;
 
-    const player = new TracePlayer();
-    player.setTrace(visualization);
+    const player = new VisualizationPlayer();
+    player.setVisualization(compiledVisualization);
     player.next();
 
     expect(player.elements.find(({ instanceId }) => instanceId === 2)?.style.left).toBe(10);
@@ -94,32 +107,32 @@ describe('TracePlayer', () => {
   });
 
   it('removes absent instances immediately so Svelte can own their outro', () => {
-    const visualization = trace(['one']);
-    visualization.steps.push({ label: 'Empty', instances: [] });
+    const compiledVisualization = visualization(['one']);
+    compiledVisualization.steps.push({ label: 'Empty', instances: [] });
 
-    const player = new TracePlayer();
-    player.setTrace(visualization);
+    const player = new VisualizationPlayer();
+    player.setVisualization(compiledVisualization);
     player.next();
 
     expect(player.elements).toEqual([]);
   });
 
   it('represents an empty step directly when seeking', () => {
-    const player = new TracePlayer();
-    const visualization = trace(['one']);
-    visualization.steps.push({ label: 'Empty', instances: [] });
-    player.setTrace(visualization);
+    const player = new VisualizationPlayer();
+    const compiledVisualization = visualization(['one']);
+    compiledVisualization.steps.push({ label: 'Empty', instances: [] });
+    player.setVisualization(compiledVisualization);
     player.seek(1);
 
     expect(player.elements).toEqual([]);
   });
 });
 
-function trace(contents: string[]): CompiledVisualization {
+function visualization(contents: string[]): Visualization {
   const elements = contents.map((content, id) => ({
     id,
     role: 'Value',
-    kind: { kind: 'trace' as const },
+    kind: { kind: 'leaf' as const },
     content,
     style: { top: 0, left: id * 10, width: 10, height: 10 },
     styleVariables: []

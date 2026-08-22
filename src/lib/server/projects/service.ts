@@ -81,7 +81,7 @@ export async function loadProjectView(projectId: string, at?: EventId): Promise<
       ])
     )
   );
-  const trace = snapshot.activeRender
+  const visualization = snapshot.activeRender
     ? decodeVisualization(
         await projectRepository.readTextBlob(projectId, snapshot.activeRender.payload.render)
       )
@@ -90,7 +90,7 @@ export async function loadProjectView(projectId: string, at?: EventId): Promise<
   return {
     document,
     snapshot: { ...snapshot, artifacts },
-    ...(trace ? { trace } : {}),
+    ...(visualization ? { visualization } : {}),
     projects: await projectRepository.list()
   };
 }
@@ -314,7 +314,7 @@ async function recordCompileResult(options: {
 
   const render = await projectRepository.putBlob(
     projectId,
-    JSON.stringify(options.result.trace),
+    JSON.stringify(options.result.visualization),
     'application/json'
   );
   const compileEvent = draftEvent<'compilation.succeeded'>({

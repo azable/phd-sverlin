@@ -358,11 +358,11 @@ async function validateSelection(
   if (renderEvent?.type !== 'visualization.rendered') {
     throw new Error('The visual selection references an unknown render.');
   }
-  const trace = decodeVisualization(
+  const visualization = decodeVisualization(
     await projectRepository.readTextBlob(document.projectId, renderEvent.payload.render)
   );
-  const step = trace.steps[selection.step];
-  if (!step) throw new Error('The visual selection references an unknown trace step.');
+  const step = visualization.steps[selection.step];
+  if (!step) throw new Error('The visual selection references an unknown visualization step.');
   const available = new Set(step.instances.map(({ id }) => id));
   const instances = [...new Set(selection.instances)];
   if (instances.some((id) => !available.has(id))) {

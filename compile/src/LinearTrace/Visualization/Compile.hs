@@ -21,10 +21,7 @@ import           Prelude
 import qualified Solver                       as S
 
 compileSolved ::
-     FilePath
-  -> S.Solution
-  -> V.ViewGraph
-  -> Either String IR.CompiledVisualization
+     FilePath -> S.Solution -> V.ViewGraph -> Either String IR.Visualization
 compileSolved sourcePath solution graph = do
   elements <- traverse (compileElement solution) (V.viewNodes graph)
   steps <-
@@ -32,17 +29,17 @@ compileSolved sourcePath solution graph = do
       (compileSteps (elementLookup elements) (V.viewSteps graph))
       emptySceneState
   pure
-    IR.CompiledVisualization
-      { IR.compiledSeed = solutionSeedInt solution
-      , IR.compiledSourcePath = sourcePath
-      , IR.compiledCanvas =
+    IR.Visualization
+      { IR.visualizationSeed = solutionSeedInt solution
+      , IR.visualizationSourcePath = sourcePath
+      , IR.visualizationCanvas =
           IR.CanvasSpec
             { IR.canvasWidth = roundLayout (V.viewCanvasWidth graph)
             , IR.canvasHeight = roundLayout (V.viewCanvasHeight graph)
             }
-      , IR.compiledVariables = compileVariables solution
-      , IR.compiledElements = elements
-      , IR.compiledSteps = steps
+      , IR.visualizationVariables = compileVariables solution
+      , IR.visualizationElements = elements
+      , IR.visualizationSteps = steps
       }
 
 solutionSeedInt :: S.Solution -> Int
@@ -81,7 +78,7 @@ compileElement solution wrapped =
 compileElementKind :: V.NodeStructure -> IR.VisualElementKind
 compileElementKind structure =
   case structure of
-    V.LeafNode -> IR.ElementTrace
+    V.LeafNode -> IR.ElementLeaf
     V.CompoundNode _ children ->
       IR.ElementGroup (map (IR.VisualId . V.viewIdInt . V.nodeChildId) children)
 

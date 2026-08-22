@@ -1,33 +1,27 @@
 /* eslint-disable svelte/prefer-svelte-reactivity -- These Maps are ephemeral lookup tables, not reactive state. */
 import { tick } from 'svelte';
 
-import type {
-  LiveElement,
-  VisualElement,
-  VisualId,
-  VisualInstance,
-  CompiledVisualization
-} from './types';
+import type { LiveElement, VisualElement, VisualId, VisualInstance, Visualization } from './types';
 
-type SetTraceOptions = { initialStep?: number };
+type SetVisualizationOptions = { initialStep?: number };
 
 /**
  * A seekable player over compiler-produced checkpoint steps. Stable instance
  * identities animate updates; keyed Svelte transitions own entry and exit.
  */
-export class TracePlayer {
-  trace = $state<CompiledVisualization | null>(null);
+export class VisualizationPlayer {
+  visualization = $state<Visualization | null>(null);
   elements = $state<LiveElement[]>([]);
   currentStep = $state(-1);
 
   #transitionVersion = 0;
 
-  get hasTrace() {
-    return this.trace !== null;
+  get hasVisualization() {
+    return this.visualization !== null;
   }
 
   get stepCount() {
-    return this.trace?.steps.length ?? 0;
+    return this.visualization?.steps.length ?? 0;
   }
 
   get lastStep() {
@@ -43,25 +37,25 @@ export class TracePlayer {
   }
 
   get currentStepLabel() {
-    return this.currentStep >= 0 ? (this.trace?.steps[this.currentStep]?.label ?? '') : '';
+    return this.currentStep >= 0 ? (this.visualization?.steps[this.currentStep]?.label ?? '') : '';
   }
 
   get canvasWidth() {
-    return this.trace?.canvas.width ?? 0;
+    return this.visualization?.canvas.width ?? 0;
   }
 
   get canvasHeight() {
-    return this.trace?.canvas.height ?? 0;
+    return this.visualization?.canvas.height ?? 0;
   }
 
-  setTrace(trace: CompiledVisualization, options: SetTraceOptions = {}) {
-    this.trace = trace;
+  setVisualization(visualization: Visualization, options: SetVisualizationOptions = {}) {
+    this.visualization = visualization;
     this.seek(options.initialStep ?? 0);
   }
 
   clear() {
     this.#transitionVersion += 1;
-    this.trace = null;
+    this.visualization = null;
     this.elements = [];
     this.currentStep = -1;
   }
@@ -81,14 +75,14 @@ export class TracePlayer {
   seek(requestedStep: number) {
     this.#transitionVersion += 1;
 
-    if (!this.trace || this.trace.steps.length === 0) {
+    if (!this.visualization || this.visualization.steps.length === 0) {
       this.currentStep = -1;
       this.elements = [];
       return;
     }
 
     this.currentStep = this.clampStep(requestedStep);
-    this.elements = this.elementsForStep(this.trace.steps[this.currentStep].instances);
+    this.elements = this.elementsForStep(this.visualization.steps[this.currentStep].instances);
   }
 
   dispose() {
@@ -96,12 +90,12 @@ export class TracePlayer {
   }
 
   private transitionTo(step: number) {
-    if (!this.trace) return;
+    if (!this.visualization) return;
 
     this.#transitionVersion += 1;
 
     const current = new Map(this.elements.map((element) => [element.instanceId, element]));
-    const targetStep = this.trace.steps[step];
+    const targetStep = this.visualization.steps[step];
     const target = this.elementsForStep(targetStep.instances);
     const instances = new Map(targetStep.instances.map((instance) => [instance.id, instance]));
     const registry = this.elementRegistry();
@@ -137,7 +131,7 @@ export class TracePlayer {
 
   private elementRegistry() {
     return new Map<VisualId, VisualElement>(
-      this.trace?.elements.map((element) => [element.id, element]) ?? []
+      this.visualization?.elements.map((element) => [element.id, element]) ?? []
     );
   }
 

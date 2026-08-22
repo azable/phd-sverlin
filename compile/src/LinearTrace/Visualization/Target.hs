@@ -29,7 +29,7 @@ parseOutputTarget name =
     "ir-json" -> Right IrJson
     _ -> Left ("unknown output target " ++ show name ++ "; expected ir-json")
 
-compileTarget :: OutputTarget -> IR.CompiledVisualization -> BL.ByteString
+compileTarget :: OutputTarget -> IR.Visualization -> BL.ByteString
 compileTarget target visualization =
   case target of
     IrJson -> encodePretty visualization

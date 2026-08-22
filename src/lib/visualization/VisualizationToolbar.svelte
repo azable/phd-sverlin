@@ -12,9 +12,9 @@
   import { Spinner } from '$lib/components/ui/spinner';
 
   type Props = {
-    loadingTrace: boolean;
+    loadingVisualization: boolean;
     regenerating: boolean;
-    hasTrace: boolean;
+    hasVisualization: boolean;
     canPrevious: boolean;
     canNext: boolean;
     currentStep: number;
@@ -29,9 +29,9 @@
   };
 
   let {
-    loadingTrace,
+    loadingVisualization,
     regenerating,
-    hasTrace,
+    hasVisualization,
     canPrevious,
     canNext,
     currentStep,
@@ -45,8 +45,8 @@
     onRegenerate
   }: Props = $props();
 
-  const playbackBusy = $derived(loadingTrace || playbackDisabled);
-  const renderBusy = $derived(loadingTrace || regenerating || renderDisabled);
+  const playbackBusy = $derived(loadingVisualization || playbackDisabled);
+  const renderBusy = $derived(loadingVisualization || regenerating || renderDisabled);
   const minSeed = 1;
   const maxSeedExclusive = 2147483647;
 
@@ -75,13 +75,13 @@
   onsubmit={submitRegeneration}
 >
   <div class="flex flex-wrap items-center gap-3">
-    <div class="flex flex-wrap items-center gap-2" aria-label="Trace playback">
+    <div class="flex flex-wrap items-center gap-2" aria-label="Visualization playback">
       <Button
         type="button"
         variant="outline"
         size="sm"
         onclick={onReset}
-        disabled={!hasTrace || playbackBusy}
+        disabled={!hasVisualization || playbackBusy}
       >
         <RotateCcwIcon data-icon="inline-start" />
         Reset
@@ -108,8 +108,8 @@
       </Button>
     </div>
 
-    {#if hasTrace}
-      <div class="flex flex-wrap items-center gap-2" aria-label="Trace status">
+    {#if hasVisualization}
+      <div class="flex flex-wrap items-center gap-2" aria-label="Visualization status">
         <Badge variant="secondary">Step {currentStep + 1} of {stepCount}</Badge>
       </div>
     {/if}

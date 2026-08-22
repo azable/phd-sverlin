@@ -65,7 +65,7 @@ beforeEach(async () => {
     return {
       ok: true,
       debug,
-      trace: {
+      visualization: {
         seed,
         sourcePath: 'Main.sverlin',
         canvas: { width: 640, height: 360 },
@@ -254,7 +254,7 @@ describe('submitProjectFeedback', () => {
         seed: 7,
         operationId: '12345678-1234-4123-8123-123456789abc'
       })
-    ).rejects.toThrow('unknown trace step');
+    ).rejects.toThrow('unknown visualization step');
     expect(mocks.generatePrepared).not.toHaveBeenCalled();
   });
 });

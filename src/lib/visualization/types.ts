@@ -1,10 +1,6 @@
 export type * from './generated/visualization-ir';
 
-import type {
-  RenderInstanceId,
-  VisualElement,
-  CompiledVisualization
-} from './generated/visualization-ir';
+import type { RenderInstanceId, VisualElement, Visualization } from './generated/visualization-ir';
 
 /** A registry element paired with its identity in the current scene snapshot. */
 export type LiveElement = VisualElement & {
@@ -44,6 +40,14 @@ export type CompileFailureKind =
   | 'cancelled';
 
 /** Decode the trusted, Haskell-generated visualization wire format at its boundary. */
-export function decodeVisualization(json: string): CompiledVisualization {
-  return JSON.parse(json) as CompiledVisualization;
+export function decodeVisualization(json: string): Visualization {
+  const visualization = JSON.parse(json) as Visualization;
+
+  for (const element of visualization.elements) {
+    if ((element.kind as { kind: string }).kind === 'trace') {
+      element.kind = { kind: 'leaf' };
+    }
+  }
+
+  return visualization;
 }

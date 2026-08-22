@@ -17,9 +17,9 @@
   import FeedbackComposer from '$lib/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/timeline/Timeline.svelte';
   import { presentProjectEvent } from '$lib/timeline/event-presentation';
-  import { TracePlayer } from '$lib/visualization/trace-player.svelte';
-  import TraceToolbar from '$lib/visualization/TraceToolbar.svelte';
-  import TraceViewport from '$lib/visualization/TraceViewport.svelte';
+  import { VisualizationPlayer } from '$lib/visualization/visualization-player.svelte';
+  import VisualizationToolbar from '$lib/visualization/VisualizationToolbar.svelte';
+  import VisualizationViewport from '$lib/visualization/VisualizationViewport.svelte';
   import type { RenderInstanceId } from '$lib/visualization/types';
 
   import ProjectArtifactPanel, {
@@ -33,7 +33,7 @@
   // The parent keys this component by projectId, so this is intentionally instance-scoped.
   // svelte-ignore state_referenced_locally
   const session = new ProjectSession(projectId);
-  const player = new TracePlayer();
+  const player = new VisualizationPlayer();
 
   let seedText = $state('1');
   let selectedInstanceIds = $state<RenderInstanceId[]>([]);
@@ -73,16 +73,16 @@
 
   $effect(() => {
     const renderEventId = session.view?.snapshot.activeRender?.id ?? null;
-    const trace = session.trace;
-    if (!trace) {
-      if (player.hasTrace) player.clear();
+    const visualization = session.visualization;
+    if (!visualization) {
+      if (player.hasVisualization) player.clear();
       loadedRenderEventId = null;
       selectedInstanceIds = [];
       return;
     }
     if (renderEventId === loadedRenderEventId) return;
     loadedRenderEventId = renderEventId;
-    player.setTrace(trace, { initialStep: 0 });
+    player.setVisualization(visualization, { initialStep: 0 });
     seedText = String(session.snapshot.activeRender?.payload.seed ?? 1);
     selectedInstanceIds = [];
   });
@@ -204,15 +204,15 @@
               minSize={40}
               class="flex min-h-0 flex-col overflow-hidden"
             >
-              <TraceToolbar
+              <VisualizationToolbar
                 bind:seedText
                 canNext={player.canNext}
                 canPrevious={player.canPrevious}
                 currentStep={player.currentStep}
-                hasTrace={player.hasTrace}
+                hasVisualization={player.hasVisualization}
                 {playbackDisabled}
                 {renderDisabled}
-                loadingTrace={!player.hasTrace && !!session.pending}
+                loadingVisualization={!player.hasVisualization && !!session.pending}
                 onNext={() => player.next()}
                 onPrevious={() => player.previous()}
                 onRegenerate={regenerate}
@@ -225,8 +225,8 @@
                 class="relative min-h-0 flex-1 overflow-hidden bg-white"
                 aria-label="Visualization canvas"
               >
-                {#if player.hasTrace}
-                  <TraceViewport
+                {#if player.hasVisualization}
+                  <VisualizationViewport
                     bind:selectedIds={selectedInstanceIds}
                     elements={player.elements}
                     height={player.canvasHeight}

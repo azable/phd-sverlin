@@ -22,7 +22,7 @@ module LinearTrace.Visualization.IR
   , VisualElement(..)
   , VisualInstance(..)
   , TimelineStep(..)
-  , CompiledVisualization(..)
+  , Visualization(..)
   , irJsonOptions
   ) where
 
@@ -100,7 +100,7 @@ data StyleVariableBinding = StyleVariableBinding
   } deriving (Eq, Show, Generic)
 
 data VisualElementKind
-  = ElementTrace
+  = ElementLeaf
   | ElementGroup
       { elementGroupChildren :: [VisualId]
       }
@@ -126,13 +126,13 @@ data TimelineStep = TimelineStep
   , stepInstances :: [VisualInstance]
   } deriving (Eq, Show, Generic)
 
-data CompiledVisualization = CompiledVisualization
-  { compiledSeed       :: Int
-  , compiledSourcePath :: FilePath
-  , compiledCanvas     :: CanvasSpec
-  , compiledVariables  :: [CspVariable]
-  , compiledElements   :: [VisualElement]
-  , compiledSteps      :: [TimelineStep]
+data Visualization = Visualization
+  { visualizationSeed       :: Int
+  , visualizationSourcePath :: FilePath
+  , visualizationCanvas     :: CanvasSpec
+  , visualizationVariables  :: [CspVariable]
+  , visualizationElements   :: [VisualElement]
+  , visualizationSteps      :: [TimelineStep]
   } deriving (Eq, Show, Generic)
 
 $(deriveJSON irJsonOptions ''VisualId)
@@ -161,4 +161,4 @@ $(deriveJSON irJsonOptions ''VisualInstance)
 
 $(deriveJSON irJsonOptions ''TimelineStep)
 
-$(deriveJSON irJsonOptions ''CompiledVisualization)
+$(deriveJSON irJsonOptions ''Visualization)

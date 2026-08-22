@@ -37,7 +37,7 @@
     elements.toSorted(
       (left, right) =>
         (left.style.zIndex ?? 0) - (right.style.zIndex ?? 0) ||
-        Number(left.kind.kind === 'trace') - Number(right.kind.kind === 'trace') ||
+        Number(left.kind.kind !== 'group') - Number(right.kind.kind !== 'group') ||
         left.id - right.id
     )
   );

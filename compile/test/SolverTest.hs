@@ -174,7 +174,7 @@ viewMaterializationTests =
             ChoreographyFixtures.selectedColorGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.selectedColorGraph
-        case compiledRenderElements compiled of
+        case renderElements compiled of
           element:_ -> do
             assertBool
               "expected selected fill access to compile a concrete fill"
@@ -197,7 +197,7 @@ viewMaterializationTests =
             ChoreographyFixtures.selectedScalarGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.selectedScalarGraph
-        case compiledRenderElements compiled of
+        case renderElements compiled of
           element:_ -> do
             let style' = IR.elementStyle element
             IR.visualPadding style' @?= Just 6
@@ -228,7 +228,7 @@ viewMaterializationTests =
                    ++ ", got "
                    ++ show actual)
                 (abs (actual - expected) <= 0.01)
-        case compiledRenderElements compiled of
+        case renderElements compiled of
           []       -> assertFailure "expected centered render elements"
           elements -> mapM_ assertCentered elements
     , testCase "categorical style variables lower to concrete tokens" $ do
@@ -240,7 +240,7 @@ viewMaterializationTests =
           assertCompileSolved
             solution
             ChoreographyFixtures.categoricalStyleGraph
-        case compiledRenderElements compiled of
+        case renderElements compiled of
           element:_ -> do
             IR.visualFontFamily (IR.elementStyle element) @?= Just "monospace"
             assertTraceVariablesExist
@@ -256,7 +256,7 @@ viewMaterializationTests =
           assertCompileSolved
             solution
             ChoreographyFixtures.categoricalRelationGraph
-        case compiledRenderElements compiled of
+        case renderElements compiled of
           element:_ ->
             IR.visualFontFamily (IR.elementStyle element) @?= Just "Inter"
           [] -> assertFailure "expected at least one compiled render element"
@@ -268,7 +268,7 @@ viewMaterializationTests =
             ChoreographyFixtures.styledGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.styledGraph
-        case compiledRenderElements compiled of
+        case renderElements compiled of
           element:_ -> do
             let style' = IR.elementStyle element
             IR.visualPadding style' @?= Just 4
@@ -285,9 +285,9 @@ viewMaterializationTests =
             ChoreographyFixtures.styledGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.styledGraph
-        map IR.stepLabel (IR.compiledSteps compiled)
+        map IR.stepLabel (IR.visualizationSteps compiled)
           @?= ["created", "unchanged", "destroyed"]
-        map (length . IR.stepInstances) (IR.compiledSteps compiled)
+        map (length . IR.stepInstances) (IR.visualizationSteps compiled)
           @?= [2, 2, 2]
     , testCase "a checkpoint exposes introductions before silent removals" $ do
         solution <-
@@ -296,9 +296,10 @@ viewMaterializationTests =
             ChoreographyFixtures.transientGraph
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.transientGraph
-        map IR.stepLabel (IR.compiledSteps compiled)
+        map IR.stepLabel (IR.visualizationSteps compiled)
           @?= ["transient", "after transient"]
-        map (length . IR.stepInstances) (IR.compiledSteps compiled) @?= [2, 0]
+        map (length . IR.stepInstances) (IR.visualizationSteps compiled)
+          @?= [2, 0]
     ]
 
 nativeBoundsTests :: TestTree
@@ -636,15 +637,14 @@ assertErrorContains label expected action = do
         (expected `List.isInfixOf` show err)
     Right _ -> assertFailure (label ++ " did not throw an error")
 
-assertCompileSolved ::
-     Solution -> Choreography.ViewGraph -> IO IR.CompiledVisualization
+assertCompileSolved :: Solution -> Choreography.ViewGraph -> IO IR.Visualization
 assertCompileSolved solution graph =
   case Compile.compileSolved "compile/test/SolverTest.hs" solution graph of
     Left err       -> assertFailure err >> pure (error err)
     Right compiled -> pure compiled
 
-compiledRenderElements :: IR.CompiledVisualization -> [IR.VisualElement]
-compiledRenderElements = IR.compiledElements
+renderElements :: IR.Visualization -> [IR.VisualElement]
+renderElements = IR.visualizationElements
 
 styleBindingVariables :: String -> IR.VisualElement -> [IR.CspVariableId]
 styleBindingVariables field element =
@@ -654,13 +654,12 @@ styleBindingVariables field element =
     , IR.bindingField binding == field
     ]
 
-assertTraceVariablesExist ::
-     IR.CompiledVisualization -> [IR.CspVariableId] -> Assertion
+assertTraceVariablesExist :: IR.Visualization -> [IR.CspVariableId] -> Assertion
 assertTraceVariablesExist compiled referenced = do
   assertBool
     "expected style field to reference at least one CSP variable"
     (not (null referenced))
-  let available = map IR.cspVariableId (IR.compiledVariables compiled)
+  let available = map IR.cspVariableId (IR.visualizationVariables compiled)
   mapM_
     (\variableId ->
        assertBool

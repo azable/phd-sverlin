@@ -165,15 +165,15 @@ async function resolveFocus(document: ProjectDocument, feedback: FeedbackSubmitt
 async function resolveSelection(document: ProjectDocument, selection: VisualSelection) {
   const render = document.events[selection.render - 1];
   if (render?.type !== 'visualization.rendered') return undefined;
-  const trace = decodeVisualization(
+  const visualization = decodeVisualization(
     await projectRepository.readTextBlob(document.projectId, render.payload.render)
   );
-  const step = trace.steps[selection.step];
+  const step = visualization.steps[selection.step];
   if (!step) return undefined;
   const selected = new Set(selection.instances);
   const elements = step.instances.flatMap((instance) => {
     if (!selected.has(instance.id)) return [];
-    const element = trace.elements.find(({ id }) => id === instance.elementId);
+    const element = visualization.elements.find(({ id }) => id === instance.elementId);
     return element ? [{ instanceId: instance.id, ...element }] : [];
   });
   return {

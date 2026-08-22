@@ -53,8 +53,8 @@ export class ProjectSession {
     return this.view.snapshot;
   }
 
-  get trace() {
-    return this.view?.trace;
+  get visualization() {
+    return this.view?.visualization;
   }
 
   get projects() {

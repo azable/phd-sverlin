@@ -5,15 +5,6 @@ export interface CanvasSpec {
   height: number;
 }
 
-export interface CompiledVisualization {
-  seed: number;
-  sourcePath: string;
-  canvas: CanvasSpec;
-  variables: CspVariable[];
-  elements: VisualElement[];
-  steps: TimelineStep[];
-}
-
 export type CspValue = { kind: 'number'; value: number } | { kind: 'category'; value: string };
 
 export interface CspVariable {
@@ -50,7 +41,7 @@ export interface VisualElement {
   styleVariables: StyleVariableBinding[];
 }
 
-export type VisualElementKind = { kind: 'trace' } | { kind: 'group'; children: VisualId[] };
+export type VisualElementKind = { kind: 'leaf' } | { kind: 'group'; children: VisualId[] };
 
 export type VisualId = number;
 
@@ -80,4 +71,13 @@ export interface VisualStyle {
   textAlign?: string;
   borderStyle?: string;
   whiteSpace?: string;
+}
+
+export interface Visualization {
+  seed: number;
+  sourcePath: string;
+  canvas: CanvasSpec;
+  variables: CspVariable[];
+  elements: VisualElement[];
+  steps: TimelineStep[];
 }

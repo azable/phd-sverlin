@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 
-import type { CompiledVisualization, RenderInstanceId } from '$lib/visualization/types';
+import type { RenderInstanceId, Visualization } from '$lib/visualization/types';
 
 const text = v.pipe(v.string(), v.nonEmpty());
 const integer = v.pipe(v.number(), v.safeInteger());
@@ -321,7 +321,7 @@ export type ProjectView = {
   snapshot: Omit<ProjectSnapshot, 'artifacts'> & {
     artifacts: Record<ArtifactId, HydratedProjectArtifact>;
   };
-  trace?: CompiledVisualization;
+  visualization?: Visualization;
   projects: ProjectSummary[];
 };
 

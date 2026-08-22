@@ -77,7 +77,7 @@ runVisualization ::
   -> Double
   -> Int
   -> Choreography.VisualTraceGraph
-  -> IO (Either String IR.CompiledVisualization)
+  -> IO (Either String IR.Visualization)
 runVisualization options sourcePath sourceLoadMs seed graph = do
   (viewGraph, viewGraphMs) <-
     timedPhase (evaluate (forceViewGraph (Choreography.buildViewGraph graph)))
@@ -116,14 +116,13 @@ forceViewGraph graph =
       nodes `seq` constraints `seq` steps `seq` graph
 
 forceCompileResult ::
-     Either String IR.CompiledVisualization
-  -> Either String IR.CompiledVisualization
+     Either String IR.Visualization -> Either String IR.Visualization
 forceCompileResult result =
   case result of
     Left err       -> length err `seq` result
     Right compiled -> compiled `seq` result
 
-forceEncoded :: Target.OutputTarget -> IR.CompiledVisualization -> BL.ByteString
+forceEncoded :: Target.OutputTarget -> IR.Visualization -> BL.ByteString
 forceEncoded target compiled =
   let encoded = Target.compileTarget target compiled
    in BL.length encoded `seq` encoded
