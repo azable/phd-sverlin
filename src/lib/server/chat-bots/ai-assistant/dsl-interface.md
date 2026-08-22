@@ -31,35 +31,77 @@
 - Every relation expression produces a `VisualConstraint`, not a `VisualizationBuilder ()`. Emit it with `ensure` or `encourage`, including bridge expressions: write `ensure $ right first =| gap |= left second` and `encourage $ x item .==. x guide`. Never place `.==.`, `.<=.`, `.>=.`, `=| ... |=`, or `=/ ... /=` directly as a statement in `visualization`.
 - A `do` block cannot end with a pattern bind such as `Destroy <- destroy item`; follow the final destroy with `return ()` or a meaningful final checkpoint.
 
-### Canonical minimal pattern
+## Value-first computation
+
+- `create` is the ingress boundary. Use it to introduce external/source inputs, literal constants, operator values, and genuine prose annotations. Never use it to introduce a domain value that is semantically derived from values already present in the trace.
+- A meaningful unary or binary derivation must be performed by a typed operator: define `LOperator`, `CoreOperator`, and `Applicable1` or `Applicable2`, then execute it with `apply1` or `apply2`. The returned pending value is the result; materialize it with result facts and introduce its checkpoint there.
+- An algorithmic source is incomplete when it precomputes its results in Haskell and passes them to `create`, or when its only account of the computation is fixed text. In a Fibonacci visualization, only the initial `0` and `1` are input values; every later term must be produced by applying addition to owned copies of the preceding terms. Strings such as `"1 + 1 = 2"` may annotate those events only after the corresponding values and application exist in the trace.
+- `apply1` and `apply2` consume the operator and their operands. If an input or result must remain available, `copy` it first, materialize or `commit` the pending copy, and consume the appropriate owned copy. Create and materialize a fresh operator value for each repeated application because operators are also consumed.
+- Attach facts that distinguish inputs, operators, and results, then render payload-bound values from those facts. Text is appropriate for headings, short narration, and symbols; it must not carry computational meaning that should be present in the typed trace.
+- Do not manufacture operators for purely descriptive concepts with no meaningful value transformation. Algorithms based on movement, grouping, replacement, or lifecycle should encode those actual operations instead of forcing arithmetic into the story.
+
+### Canonical value-flow pattern
 
 ```haskell
-data Item
-type instance Payload Item = LInt Item
+data Addition = Addition
+type instance Payload Addition = LOperator Addition Addition
+
+instance CoreOperator Addition where
+  operatorPayloadText Addition = "+"
+  persistOperatorPayload Addition = Ur Addition
+
+data Number
+type instance Payload Number = LInt Number
+
+instance Applicable2 Addition Number Number where
+  type Apply2Result Addition Number Number = Number
+  applyPayload2 (LOperator Addition) = applyLinear2Into (Linear.+)
 
 program :: Choreography ()
 program = do
-  Create pending <- create @Item (LInt 3)
-  item <- materialize #item pending
-  checkpoint "Create item"
-  Destroy <- destroy item
+  Create pendingLeft <- create @Number (LInt 1)
+  leftInput <- materialize (#number <&> #input <&> #left) pendingLeft
+  Create pendingRight <- create @Number (LInt 1)
+  rightInput <- materialize (#number <&> #input <&> #right) pendingRight
+  Create pendingAddition <- create @Addition (LOperator Addition)
+  addition <- materialize #operator pendingAddition
+  checkpoint "Introduce inputs"
+
+  Apply2 pendingResult <- apply2 addition leftInput rightInput
+  result <- materialize (#number <&> #result) pendingResult
+  checkpoint "Apply addition"
+
+  Destroy <- destroy result
   return ()
 
 visualization :: VisualizationBuilder ()
 visualization = do
   Bound label <- bindContent
-  Selected item <- select @Item (#item <&> payload label)
-  render item $ do
+  Selected numbers <- select @Number (#number <&> payload label)
+  render numbers $ do
     content label
-    width (by 80)
-    height (by 64)
-    style @Fill (Hsl 215 0.76 0.93)
+    width (by 72)
+    height (by 56)
+    style @Fill (Hsl 210 0.55 0.9)
+    style @Radius (by 12)
+    style @TextAlign (FixedStyle TextAlignCenter)
+  ensure $ left numbers .>=. at 48
+  ensure $ right numbers .<=. at 752
+  ensure $ top numbers .>=. at 120
+  ensure $ bottom numbers .<=. at 480
+
+  Selected addition <- select @Addition #operator
+  render addition $ do
+    content "+"
+    width (by 48)
+    height (by 48)
+    style @FontSize (by 24)
     style @FontWeight (FixedStyle FontWeightBold)
     style @TextAlign (FixedStyle TextAlignCenter)
-  ensure $ left item .>=. at 48
-  ensure $ right item .<=. at 752
-  ensure $ top item .>=. at 96
-  ensure $ bottom item .<=. at 504
+  ensure $ left addition .>=. at 48
+  ensure $ right addition .<=. at 752
+  ensure $ top addition .>=. at 120
+  ensure $ bottom addition .<=. at 480
 ```
 
 Use this only as a syntax reference. Design the actual domain, facts, checkpoints, visual encoding, and layout around the user’s subject.
@@ -209,6 +251,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 ## Completion check
 
 - Work backward from the intended visual story: choose conceptual objects and state changes, give them typed payloads and semantic facts, then write reusable visual rules.
+- Audit every `create` whose payload is a domain value: it must be an external/source input or literal constant, never a result obtainable from live values. Rewrite any violation as `apply1`, `apply2`, or the corresponding lifecycle operation. An algorithmic visualization with derived values but no matching operation events is not complete.
 - Preserve the complete linear lifecycle of every value.
 - Ensure every selected object is rendered with visible content or styling and sufficient dimensions/layout constraints.
 - Ensure each checkpoint communicates a distinct stage and that the final state resolves the story.
