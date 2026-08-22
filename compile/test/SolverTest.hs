@@ -5,9 +5,11 @@
 module Main where
 
 import qualified Choreography.TestFixtures         as ChoreographyFixtures
-import           Control.Exception                 (ErrorCall, evaluate, try)
+import           Control.Exception                 (ErrorCall, SomeException,
+                                                    evaluate, try)
 import qualified Data.List                         as List
 import qualified Data.Map.Strict                   as Map
+import           Data.Maybe                        (isJust)
 import           LinearTrace.Choreography          (Applicable2 (..),
                                                     CoreOperator (..),
                                                     LBool (..), LInt (..),
@@ -83,6 +85,7 @@ main =
     (testGroup
        "solver"
        [ nativeBoundsTests
+       , backendDispatchTests
        , componentTests
        , cyclicDomainTests
        , categoricalTests
@@ -154,9 +157,7 @@ choreographyBridgeTests =
     , testCase "core retains checkpoints without pending events"
         $ let graph = Core.buildGraph (Core.checkpoint "idle")
               labels =
-                map
-                  (Core.foldTraceStep (\label _events -> label))
-                  (Core.traceGraphSteps graph)
+                map (Core.foldTraceStep const) (Core.traceGraphSteps graph)
            in labels @?= ["idle"]
     ]
 
@@ -178,7 +179,7 @@ viewMaterializationTests =
           element:_ -> do
             assertBool
               "expected selected fill access to compile a concrete fill"
-              (IR.visualFill (IR.elementStyle element) /= Nothing)
+              (isJust (IR.visualFill (IR.elementStyle element)))
             assertTraceVariablesExist
               compiled
               (styleBindingVariables "fill" element)
@@ -274,9 +275,7 @@ viewMaterializationTests =
             IR.visualPadding style' @?= Just 4
             IR.visualFontFamily style' @?= Just "Inter"
             IR.visualFontWeight style' @?= Just "bold"
-            assertBool
-              "expected concrete fill"
-              (IR.visualFill style' /= Nothing)
+            assertBool "expected concrete fill" (isJust (IR.visualFill style'))
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "checkpoints lower one-to-one to named timeline steps" $ do
         solution <-
@@ -300,13 +299,29 @@ viewMaterializationTests =
           @?= ["transient", "after transient"]
         map (length . IR.stepInstances) (IR.visualizationSteps compiled)
           @?= [2, 0]
+    , testCase "leaf nodes may use more than half the canvas width" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 23)
+            ChoreographyFixtures.wideLeafGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.wideLeafGraph
+        case renderElements compiled of
+          [] -> assertFailure "expected wide render elements"
+          elements ->
+            mapM_
+              (\element ->
+                 assertBool
+                   "expected the requested 620px width"
+                   (abs (IR.visualWidth (IR.elementStyle element) - 620) <= 0.01))
+              elements
     ]
 
 nativeBoundsTests :: TestTree
 nativeBoundsTests =
   testGroup
     "native bounds"
-    [ testCase "native bounds constrain soft optima" $ do
+    [ testCase "native bounds constrain sampled values" $ do
         let x = var "test.native.x" :: Expr TestLayout
             constraints = [within x (Range 10 20), soften (x @==@ num 100)]
         solution <-
@@ -407,6 +422,88 @@ nativeBoundsTests =
                          [within x (Range 0 10), within x (Range 20 30)])))))
     ]
 
+backendDispatchTests :: TestTree
+backendDispatchTests =
+  testGroup
+    "numeric backend dispatch"
+    [ testCase "bounded affine constraints use hit-and-run" $ do
+        let x = var "test.sample.x" :: Expr TestUnit
+            y = var "test.sample.y" :: Expr TestUnit
+            constraints = [x @+@ y @==@ num 1]
+        solution <-
+          solve (withInitialSeed (RandomSeed 27) defaultSolveConfig) constraints
+        solutionBackend solution @?= AffineSampler
+        assertEvalNear "affine sum" 1 solution (x @+@ y)
+        case solutionBackendStatistics solution of
+          AffineSamplingStatistics statistics -> do
+            samplingAmbientDimension statistics @?= 2
+            samplingReducedDimension statistics @?= 1
+            samplingEqualityCount statistics @?= 1
+            assertBool
+              "expected hit-and-run burn-in"
+              (samplingBurnInSteps statistics >= 256)
+          other ->
+            assertFailure ("unexpected backend statistics: " ++ show other)
+    , testCase "hard-space sampling ignores soft objective attraction" $ do
+        let x = var "test.sample.soft" :: Expr TestUnit
+            constraints = [soften (x @==@ num 0)]
+        solutions <-
+          traverse
+            (\seed ->
+               solve
+                 (withInitialSeed (RandomSeed seed) defaultSolveConfig)
+                 constraints)
+            [1 .. 32]
+        let values =
+              [ value
+              | solution <- solutions
+              , Just value <- [evalExpr solution x]
+              ]
+            average = sum values / fromIntegral (length values)
+        length values @?= 32
+        assertBool
+          "expected samples near the lower range"
+          (minimum values < 0.2)
+        assertBool
+          "expected samples near the upper range"
+          (maximum values > 0.8)
+        assertBool
+          ("expected a broad centered sample, mean was " ++ show average)
+          (average > 0.35 && average < 0.65)
+    , testCase "nonlinear hard constraints fall back to the optimizer" $ do
+        let x = var "test.fallback.nonlinear" :: Expr TestUnit
+            inspected =
+              inspectConstraints defaultSolveConfig [x @*@ x @==@ num 0.25]
+        inspectedBackend inspected @?= PenaltyOptimizer
+        assertBool
+          "expected a nonlinear fallback diagnostic"
+          (isJust (inspectedFallbackReason inspected))
+    , testCase "unbounded affine spaces fall back to the optimizer" $ do
+        let x = var "test.fallback.unbounded" :: Expr TestLayout
+            inspected = inspectConstraints defaultSolveConfig [x @==@ num 1]
+        inspectedBackend inspected @?= PenaltyOptimizer
+    , testCase "the optimizer can be selected explicitly" $ do
+        let x = var "test.force.optimizer" :: Expr TestUnit
+            inspected =
+              inspectConstraints
+                (withNumericBackend PenaltyOptimizer defaultSolveConfig)
+                [x @==@ num 0.5]
+        inspectedBackend inspected @?= PenaltyOptimizer
+    , testCase "an infeasible affine hard region fails instead of compromising" $ do
+        let x = var "test.sample.infeasible" :: Expr TestUnit
+        result <-
+          try (solve defaultSolveConfig [x @<=@ num (-1)]) :: IO
+            (Either SomeException Solution)
+        case result of
+          Left err ->
+            assertBool
+              ("unexpected feasibility error: " ++ show err)
+              ("feasible" `List.isInfixOf` show err)
+          Right solution ->
+            assertFailure
+              ("expected infeasible constraints to fail, got " ++ show solution)
+    ]
+
 componentTests :: TestTree
 componentTests =
   testGroup
@@ -491,6 +588,7 @@ cyclicDomainTests =
           ("hard energy should be near zero, got "
              ++ show (solutionEnergy solution))
           (solutionEnergy solution <= 1e-6)
+        solutionBackend solution @?= PenaltyOptimizer
         assertEvalNear "hue" 10 solution hueValue
     ]
 
@@ -535,6 +633,23 @@ categoricalTests =
           (evaluate
              (inspectedChoiceBranchCount
                 (compiledInspection (compileProblem config problem))))
+    , testCase "independent choices do not form a global Cartesian product" $ do
+        let probes =
+              [ choice ("test.choice.independent." ++ show index) :: Choice
+                TestProbe
+              | index <- [1 .. 12 :: Int]
+              ]
+            problem = solverProblemWithChoices [] (map freeChoice probes)
+            config = withMaxCategoricalBranches 2 defaultSolveConfig
+            inspected = compiledInspection (compileProblem config problem)
+        inspectedChoiceCount inspected @?= 12
+        inspectedChoiceComponentCount inspected @?= 12
+        inspectedChoiceBranchCount inspected @?= 24
+        inspectedLargestChoiceComponentBranches inspected @?= 2
+        solution <- solveProblem config problem
+        assertBool
+          "expected every independent choice to be sampled"
+          (all ((/= Nothing) . evalChoice solution) probes)
     ]
 
 seededFixtureTests :: TestTree

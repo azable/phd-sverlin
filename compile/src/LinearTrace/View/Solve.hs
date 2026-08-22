@@ -21,8 +21,12 @@ solveCSPWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
 solveCSPWithSeed seed graph =
   solveCSP (viewSolveConfig seed) graph P.>>= \solution ->
     case viewSolutionAcceptable solution of
-      P.True  -> P.pure solution
-      P.False -> solveCSP (viewRetrySolveConfig seed) graph
+      P.True -> P.pure solution
+      P.False ->
+        case S.solutionBackend solution of
+          S.PenaltyOptimizer ->
+            solveCSP (viewRetrySolveConfig seed) graph P.>>= requireAcceptable
+          S.AffineSampler -> rejectSolution solution
 
 viewSolveConfig :: RandomSeed -> SolveConfig
 viewSolveConfig seed =
@@ -42,7 +46,24 @@ viewRetrySolveConfig seed =
     P.$ S.withInitialSeed seed S.defaultSolveConfig
 
 viewSolutionAcceptable :: Solution -> P.Bool
-viewSolutionAcceptable solution = S.solutionEnergy solution P.<= 1e-4
+viewSolutionAcceptable solution =
+  S.solutionSuccess solution P.&& S.solutionEnergy solution P.<= 1e-4
+
+requireAcceptable :: Solution -> P.IO Solution
+requireAcceptable solution =
+  case viewSolutionAcceptable solution of
+    P.True  -> P.pure solution
+    P.False -> rejectSolution solution
+
+rejectSolution :: Solution -> P.IO a
+rejectSolution solution =
+  P.ioError
+    (P.userError
+       ("visualization constraints were not solved successfully (backend="
+          P.++ P.show (S.solutionBackend solution)
+          P.++ ", hard energy="
+          P.++ P.show (S.solutionEnergy solution)
+          P.++ ")"))
 
 viewSolveProblem :: ViewGraph -> SolverProblem
 viewSolveProblem graph =

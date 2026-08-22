@@ -38,26 +38,34 @@ defaultOptions =
     }
 
 data BenchRun = BenchRun
-  { benchFixtureName    :: String
-  , benchSeed           :: Int
-  , benchIteration      :: Int
-  , benchCompileMs      :: Double
-  , benchSolveMs        :: Double
-  , benchDurationMs     :: Double
-  , benchSolverSuccess  :: Bool
-  , benchEnergy         :: Double
-  , benchVariables      :: Int
-  , benchNativeBounds   :: Int
-  , benchEnergyTerms    :: Int
-  , benchRawTerms       :: Int
-  , benchCanonical      :: Int
-  , benchEliminated     :: Int
-  , benchChoices        :: Int
-  , benchChoiceBranches :: Int
-  , benchIterations     :: Int
-  , benchFuncEvals      :: Int
-  , benchGradEvals      :: Int
-  , benchFailures       :: [String]
+  { benchFixtureName            :: String
+  , benchSeed                   :: Int
+  , benchIteration              :: Int
+  , benchCompileMs              :: Double
+  , benchSolveMs                :: Double
+  , benchDurationMs             :: Double
+  , benchSolverSuccess          :: Bool
+  , benchEnergy                 :: Double
+  , benchVariables              :: Int
+  , benchNativeBounds           :: Int
+  , benchEnergyTerms            :: Int
+  , benchRawTerms               :: Int
+  , benchCanonical              :: Int
+  , benchEliminated             :: Int
+  , benchChoices                :: Int
+  , benchChoiceBranches         :: Int
+  , benchChoiceComponents       :: Int
+  , benchLargestChoiceComponent :: Int
+  , benchBackend                :: String
+  , benchReducedDimension       :: Maybe Int
+  , benchBurnInSteps            :: Int
+  , benchAffineEqualities       :: Int
+  , benchAffineInequalities     :: Int
+  , benchIgnoredSoftConstraints :: Int
+  , benchIterations             :: Int
+  , benchFuncEvals              :: Int
+  , benchGradEvals              :: Int
+  , benchFailures               :: [String]
   }
 
 main :: IO ()
@@ -102,6 +110,8 @@ timeFixtureSolve iteration fixture seed = do
   let failures = validateFixtureSolution fixture solution
       compileMs = durationMs start compiledAt
       solveMs = durationMs compiledAt end
+      (backendName, reducedDimension, burnInSteps, iterations, functionEvaluations, gradientEvaluations) =
+        backendMeasurements solution
   pure
     BenchRun
       { benchFixtureName = fixtureName fixture
@@ -120,11 +130,39 @@ timeFixtureSolve iteration fixture seed = do
       , benchEliminated = inspectedEliminatedCount inspection
       , benchChoices = inspectedChoiceCount inspection
       , benchChoiceBranches = inspectedChoiceBranchCount inspection
-      , benchIterations = solutionIterations solution
-      , benchFuncEvals = solutionFunctionEvaluations solution
-      , benchGradEvals = solutionGradientEvaluations solution
+      , benchChoiceComponents = inspectedChoiceComponentCount inspection
+      , benchLargestChoiceComponent =
+          inspectedLargestChoiceComponentBranches inspection
+      , benchBackend = backendName
+      , benchReducedDimension = reducedDimension
+      , benchBurnInSteps = burnInSteps
+      , benchAffineEqualities = inspectedAffineEqualityCount inspection
+      , benchAffineInequalities = inspectedAffineInequalityCount inspection
+      , benchIgnoredSoftConstraints =
+          inspectedIgnoredSoftConstraintCount inspection
+      , benchIterations = iterations
+      , benchFuncEvals = functionEvaluations
+      , benchGradEvals = gradientEvaluations
       , benchFailures = failures
       }
+
+backendMeasurements :: Solution -> (String, Maybe Int, Int, Int, Int, Int)
+backendMeasurements solution =
+  case solutionBackendStatistics solution of
+    AffineSamplingStatistics statistics ->
+      ( "affine-sampler"
+      , Just (samplingReducedDimension statistics)
+      , samplingBurnInSteps statistics
+      , 0
+      , 0
+      , 0)
+    PenaltyOptimizationStatistics statistics ->
+      ( "penalty-optimizer"
+      , Nothing
+      , 0
+      , optimizationIterations statistics
+      , optimizationFunctionEvaluations statistics
+      , optimizationGradientEvaluations statistics)
 
 forceInspection :: ProblemInspection -> ()
 forceInspection inspection =
@@ -137,6 +175,13 @@ forceInspection inspection =
     `seq` inspectedEliminatedCount inspection
     `seq` inspectedChoiceCount inspection
     `seq` inspectedChoiceBranchCount inspection
+    `seq` inspectedChoiceComponentCount inspection
+    `seq` inspectedLargestChoiceComponentBranches inspection
+    `seq` inspectedBackend inspection
+    `seq` inspectedFallbackReason inspection
+    `seq` inspectedAffineEqualityCount inspection
+    `seq` inspectedAffineInequalityCount inspection
+    `seq` inspectedIgnoredSoftConstraintCount inspection
     `seq` length (inspectedNativeBoundNames inspection)
     `seq` ()
 
@@ -285,6 +330,14 @@ runJson run =
     , "eliminatedTerms" .= benchEliminated run
     , "choices" .= benchChoices run
     , "choiceBranches" .= benchChoiceBranches run
+    , "choiceComponents" .= benchChoiceComponents run
+    , "largestChoiceComponent" .= benchLargestChoiceComponent run
+    , "backend" .= benchBackend run
+    , "reducedDimension" .= benchReducedDimension run
+    , "burnInSteps" .= benchBurnInSteps run
+    , "affineEqualities" .= benchAffineEqualities run
+    , "affineInequalities" .= benchAffineInequalities run
+    , "ignoredSoftConstraints" .= benchIgnoredSoftConstraints run
     , "iterations" .= benchIterations run
     , "functionEvaluations" .= benchFuncEvals run
     , "gradientEvaluations" .= benchGradEvals run
@@ -318,6 +371,9 @@ printTextBenchmark fixtures runs = do
          , "canon=" ++ show (benchCanonical run)
          , "elim=" ++ show (benchEliminated run)
          , "choices=" ++ show (benchChoices run)
+         , "backend=" ++ benchBackend run
+         , "dim=" ++ maybe "n/a" show (benchReducedDimension run)
+         , "burn=" ++ show (benchBurnInSteps run)
          , "iters=" ++ show (benchIterations run)
          , "evals=" ++ show (benchFuncEvals run)
          ])
@@ -349,23 +405,23 @@ stats :: [Double] -> Stats
 stats values =
   case sort values of
     [] -> Stats Nothing Nothing Nothing Nothing Nothing
-    sorted ->
+    sorted@(first:rest) ->
       let count = length sorted
           total = sum sorted
           p95Index = max 0 (ceiling (fromIntegral count * 0.95 :: Double) - 1)
        in Stats
-            { statMin = Just (head sorted)
+            { statMin = Just first
             , statMean = Just (total / fromIntegral count)
             , statMedian = Just (percentile sorted 0.5)
             , statP95 = Just (sorted !! p95Index)
-            , statMax = Just (last sorted)
+            , statMax = Just (foldl' max first rest)
             }
 
 percentile :: [Double] -> Double -> Double
 percentile sorted p =
   case sorted of
     [] -> 0
-    [_] -> head sorted
+    [value] -> value
     _ ->
       let index = fromIntegral (length sorted - 1) * p
           lower = floor index

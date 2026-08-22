@@ -75,6 +75,8 @@ library
     import:           warnings
     import:           app-dependencies
 
+    build-depends:    hmatrix >=0.20.2 && <0.21
+
     exposed-modules:
         LinearTrace.Choreography
         LinearTrace.Core
@@ -101,11 +103,15 @@ library
         LinearTrace.View.Primitives
         LinearTrace.View.Solve
         LinearTrace.View.Style
-        Solver.Backend
+        Solver.Affine
         Solver.Choice
+        Solver.Categorical
         Solver.Constraint
         Solver.Expr
+        Solver.Optimize
         Solver.Problem
+        Solver.Random
+        Solver.Sample
 
     hs-source-dirs:   src
 

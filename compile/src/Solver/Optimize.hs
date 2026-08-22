@@ -1,9 +1,9 @@
 {-# LANGUAGE RankNTypes #-}
 
--- | Optimizer-facing CSP backend. 'Solver.Problem' is the intended caller; this
+-- | Penalty-optimizer implementation. 'Solver.Problem' is the intended caller; this
 -- module exposes enough internals for solver tests and benchmarks while keeping
 -- the public user API at the top-level 'Solver' module.
-module Solver.Backend
+module Solver.Optimize
   ( -- * Compiled variables and energy expressions
     -- | Low-level variables and differentiable energy expressions produced by
     -- solver problem lowering.

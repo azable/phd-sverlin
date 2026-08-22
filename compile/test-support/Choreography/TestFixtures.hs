@@ -28,6 +28,7 @@ module Choreography.TestFixtures
   , selectedScalarGraph
   , styledGraph
   , transientGraph
+  , wideLeafGraph
   ) where
 
 import           Control.Functor.Linear   hiding ((<$>), (<&>), (<*>))
@@ -81,6 +82,9 @@ styledGraph = buildGraph styledSpec
 
 transientGraph :: ViewGraph
 transientGraph = buildGraphFor transientFixture groupSpec
+
+wideLeafGraph :: ViewGraph
+wideLeafGraph = buildGraph wideLeafSpec
 
 fixtureStats :: MatchSpec -> (Int, Int, Int)
 fixtureStats spec = viewGraphStats (buildGraph spec)
@@ -242,3 +246,13 @@ styledSpec =
       style @FontFamily (FixedStyle FontInter)
       style @FontWeight (FixedStyle FontWeightBold)
       style @Fill (Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit))
+
+wideLeafSpec :: MatchSpec
+wideLeafSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    render item $ do
+      width (by 620)
+      height (by 52)
+    ensure $ left item .>=. at 70
+    ensure $ right item .<=. at 730

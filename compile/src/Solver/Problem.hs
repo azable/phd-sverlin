@@ -1,21 +1,20 @@
 {-# LANGUAGE RankNTypes #-}
 
 -- | High-level solver problem compilation and solving. This module connects
--- expression/constraint/choice definitions to the optimizer backend; the public
+-- expression/constraint/choice definitions to numeric backends; the public
 -- 'Solver' facade re-exports the stable problem and solution API.
 module Solver.Problem
   ( -- * Seeded randomness
     -- | Deterministic initial sampling used by tests, benchmarks, and
     -- visualization regeneration.
     RandomSeed(..)
-  , RandomSample(..)
-  , randomSamplesFromSeed
-  , randomUnitsFromSeed
   , -- * Solve configuration
     -- | User-facing solver knobs plus backend optimizer tolerances. View
     -- solving supplies a tuned config through 'LinearTrace.View.Solve'.
     SolveConfig(..)
+  , NumericBackend(..)
   , defaultSolveConfig
+  , withNumericBackend
   , withInitialSeed
   , withInitialOverrides
   , withConstraintWeights
@@ -41,6 +40,9 @@ module Solver.Problem
     -- | Solve entrypoints and solution evaluation used by the view layer,
     -- compile pipeline, tests, and benchmarks.
     Solution(..)
+  , BackendStatistics(..)
+  , OptimizationStatistics(..)
+  , SamplingStatistics(..)
   , solve
   , solveProblem
   , solveCompiledProblem
@@ -57,33 +59,23 @@ import qualified Data.Map.Strict         as Map
 import           Data.Maybe              (fromMaybe)
 import qualified Numeric.Optimization.AD as Opt
 import           Prelude
-import           Solver.Backend
+import           Solver.Affine
+import           Solver.Categorical
 import           Solver.Choice
 import           Solver.Constraint
 import           Solver.Expr
-import           System.Random           (mkStdGen, randomRs)
+import           Solver.Optimize
+import           Solver.Random
+import           Solver.Sample
 
--- Seeded initial value generation
---------------------------------------------------------------------------------
-newtype RandomSeed =
-  RandomSeed Int
-  deriving (Eq, Ord, Show)
-
-data RandomSample = RandomSample
-  { randomSampleIndex :: Int
-  , randomSampleUnit  :: Double
-  } deriving (Eq, Show)
-
-randomSamplesFromSeed :: RandomSeed -> [RandomSample]
-randomSamplesFromSeed seed =
-  zipWith RandomSample [0 ..] (randomUnitsFromSeed seed)
-
-randomUnitsFromSeed :: RandomSeed -> [Double]
-randomUnitsFromSeed (RandomSeed seed) = randomRs (0.0, 1.0) (mkStdGen seed)
-
---------------------------------------------------------------------------------
 -- Named constraint solving
 --------------------------------------------------------------------------------
+-- | Numeric backend selected after inspecting the hard constraints.
+data NumericBackend
+  = AffineSampler
+  | PenaltyOptimizer
+  deriving (Eq, Show)
+
 data SolveConfig = SolveConfig
   { initialSeed       :: RandomSeed
   , initialOverrides  :: Map String Double
@@ -91,6 +83,7 @@ data SolveConfig = SolveConfig
   , encourageWeight   :: Rational
   , maxChoiceBranches :: Int
   , optimizerConfig   :: OptimizerConfig
+  , forcedBackend     :: Maybe NumericBackend
   }
 
 defaultSolveConfig :: SolveConfig
@@ -102,7 +95,11 @@ defaultSolveConfig =
     , encourageWeight = 1
     , maxChoiceBranches = 256
     , optimizerConfig = defaultOptimizerConfig
+    , forcedBackend = Nothing
     }
+
+withNumericBackend :: NumericBackend -> SolveConfig -> SolveConfig
+withNumericBackend backend config = config {forcedBackend = Just backend}
 
 withInitialSeed :: RandomSeed -> SolveConfig -> SolveConfig
 withInitialSeed seed config = config {initialSeed = seed}
@@ -154,11 +151,6 @@ sampleInitialWithinBounds bounds t =
 interior :: Double -> Double
 interior t = 0.05 + 0.9 * t
 
-data NamedCSP = NamedCSP
-  { namedVars :: Map String InternalVar
-  , namedCSP  :: CSP
-  }
-
 data SolverProblem = SolverProblem
   { solverConstraints       :: [Constraint]
   , solverChoiceConstraints :: [ChoiceConstraint]
@@ -194,38 +186,65 @@ withProblemInitialOverrides overrides problem =
   problem {solverInitialOverrides = overrides}
 
 data CompiledProblem = CompiledProblem
-  { compiledSeed       :: RandomSeed
-  , compiledVars       :: Map String InternalVar
-  , compiledCSP        :: CSP
-  , compiledChoices    :: Map String String
-  , compiledOptimizer  :: OptimizerConfig
-  , compiledInspection :: ProblemInspection
+  { compiledSeed            :: RandomSeed
+  , compiledNumericProblem  :: CompiledNumericProblem
+  , compiledInitialValues   :: Map String Double
+  , compiledHardConstraints :: [Constraint]
+  , compiledChoices         :: Map String String
+  , compiledInspection      :: ProblemInspection
   }
 
+data CompiledNumericProblem
+  = SampleAffineProblem AffineProblem
+  | OptimizePenaltyProblem (Map String InternalVar) CSP OptimizerConfig
+
+data BackendSelection
+  = SelectAffine AffineProblem
+  | SelectPenalty (Maybe String)
+
 data ProblemInspection = ProblemInspection
-  { inspectedVariableCount     :: Int
-  , inspectedNativeBoundCount  :: Int
-  , inspectedEnergyTermCount   :: Int
-  , inspectedFlattenedCount    :: Int
-  , inspectedRawCount          :: Int
-  , inspectedCanonicalCount    :: Int
-  , inspectedEliminatedCount   :: Int
-  , inspectedChoiceCount       :: Int
-  , inspectedChoiceBranchCount :: Int
-  , inspectedNativeBoundNames  :: [String]
+  { inspectedVariableCount                  :: Int
+  , inspectedNativeBoundCount               :: Int
+  , inspectedEnergyTermCount                :: Int
+  , inspectedFlattenedCount                 :: Int
+  , inspectedRawCount                       :: Int
+  , inspectedCanonicalCount                 :: Int
+  , inspectedEliminatedCount                :: Int
+  , inspectedChoiceCount                    :: Int
+  , inspectedChoiceBranchCount              :: Int
+  , inspectedChoiceComponentCount           :: Int
+  , inspectedLargestChoiceComponentBranches :: Int
+  , inspectedNativeBoundNames               :: [String]
+  , inspectedBackend                        :: NumericBackend
+  , inspectedFallbackReason                 :: Maybe String
+  , inspectedAffineEqualityCount            :: Int
+  , inspectedAffineInequalityCount          :: Int
+  , inspectedIgnoredSoftConstraintCount     :: Int
   } deriving (Eq, Show)
 
+-- | Native optimizer counters, absent from affine sampling runs.
+data OptimizationStatistics = OptimizationStatistics
+  { optimizationIterations          :: Int
+  , optimizationFunctionEvaluations :: Int
+  , optimizationGradientEvaluations :: Int
+  } deriving (Eq, Show)
+
+-- | Work performed by the selected numeric backend.
+data BackendStatistics
+  = AffineSamplingStatistics SamplingStatistics
+  | PenaltyOptimizationStatistics OptimizationStatistics
+  deriving (Eq, Show)
+
 data Solution = Solution
-  { solutionSuccess             :: Bool
-  , solutionSeed                :: RandomSeed
-  , solutionEnergy              :: Double
-  , solutionValues              :: Map String Double
-  , solutionChoices             :: Map String String
-  , solutionInspection          :: ProblemInspection
-  , solutionIterations          :: Int
-  , solutionFunctionEvaluations :: Int
-  , solutionGradientEvaluations :: Int
-  , solutionVector              :: [Double]
+  { solutionSuccess           :: Bool
+  , solutionSeed              :: RandomSeed
+  , solutionEnergy            :: Double
+  , solutionValues            :: Map String Double
+  , solutionChoices           :: Map String String
+  , solutionInspection        :: ProblemInspection
+  , solutionBackend           :: NumericBackend
+  , solutionBackendStatistics :: BackendStatistics
+  , solutionVector            :: [Double]
   } deriving (Eq, Show)
 
 solve :: SolveConfig -> [Constraint] -> IO Solution
@@ -238,17 +257,67 @@ solveCompiledProblem :: CompiledProblem -> IO Solution
 solveCompiledProblem compiled = do
   let choiceValues = compiledChoices compiled
   choiceValues `seq` pure ()
-  let named =
-        NamedCSP
-          {namedVars = compiledVars compiled, namedCSP = compiledCSP compiled}
-  result <- solveCSP (compiledOptimizer compiled) (compiledCSP compiled)
+  case compiledNumericProblem compiled of
+    SampleAffineProblem affine ->
+      solveAffineCompiled compiled affine choiceValues
+    OptimizePenaltyProblem variables csp optimizer ->
+      solveOptimizerCompiled compiled variables csp optimizer choiceValues
+
+solveAffineCompiled ::
+     CompiledProblem -> AffineProblem -> Map String String -> IO Solution
+solveAffineCompiled compiled affine choiceValues = do
+  (values, statistics) <-
+    case sampleAffineProblem
+           (compiledSeed compiled)
+           (compiledInitialValues compiled)
+           affine of
+      Left (FeasibilityFailure message) -> ioError (userError message)
+      Right sampled                     -> pure sampled
+  let variableNames = affineVariableNames affine
+      vector =
+        [ Map.findWithDefault
+          (error ("missing sampled solver variable: " ++ name))
+          name
+          values
+        | name <- variableNames
+        ]
+      hardEnergy =
+        hardConstraintEnergy values (compiledHardConstraints compiled)
+  pure
+    Solution
+      { solutionSuccess = hardEnergy <= 1.0e-8
+      , solutionSeed = compiledSeed compiled
+      , solutionEnergy = hardEnergy
+      , solutionValues = values
+      , solutionChoices = choiceValues
+      , solutionInspection = compiledInspection compiled
+      , solutionBackend = AffineSampler
+      , solutionBackendStatistics = AffineSamplingStatistics statistics
+      , solutionVector = vector
+      }
+
+solveOptimizerCompiled ::
+     CompiledProblem
+  -> Map String InternalVar
+  -> CSP
+  -> OptimizerConfig
+  -> Map String String
+  -> IO Solution
+solveOptimizerCompiled compiled variables csp optimizer choiceValues = do
+  result <- solveCSP optimizer csp
   let vector = Opt.resultSolution result
       stats = Opt.resultStatistics result
-      hardEnergy = cspHardEnergy (compiledCSP compiled) vector
+      hardEnergy = cspHardEnergy csp vector
       lookupValue (InternalVar i)
         | i < length vector = Just (vector !! i)
         | otherwise = Nothing
-      values = Map.mapMaybe lookupValue (namedVars named)
+      values = Map.mapMaybe lookupValue variables
+      statistics =
+        OptimizationStatistics
+          { optimizationIterations = Opt.totalIters stats
+          , optimizationFunctionEvaluations = Opt.funcEvals stats
+          , optimizationGradientEvaluations = Opt.gradEvals stats
+          }
   pure
     Solution
       { solutionSuccess = Opt.resultSuccess result
@@ -257,9 +326,8 @@ solveCompiledProblem compiled = do
       , solutionValues = values
       , solutionChoices = choiceValues
       , solutionInspection = compiledInspection compiled
-      , solutionIterations = Opt.totalIters stats
-      , solutionFunctionEvaluations = Opt.funcEvals stats
-      , solutionGradientEvaluations = Opt.gradEvals stats
+      , solutionBackend = PenaltyOptimizer
+      , solutionBackendStatistics = PenaltyOptimizationStatistics statistics
       , solutionVector = vector
       }
 
@@ -267,15 +335,15 @@ compileProblem :: SolveConfig -> SolverProblem -> CompiledProblem
 compileProblem config problem =
   CompiledProblem
     { compiledSeed = initialSeed config
-    , compiledVars = vars
-    , compiledCSP = csp
+    , compiledNumericProblem = numericProblem
+    , compiledInitialValues = configuredInitialValues
+    , compiledHardConstraints = flatConstraints
     , compiledChoices = choiceValues
-    , compiledOptimizer = optimizerConfig config
     , compiledInspection =
         choiceValues
           `seq` boundsValidation
           `seq` ProblemInspection
-                  { inspectedVariableCount = Map.size vars
+                  { inspectedVariableCount = Map.size varTypes
                   , inspectedNativeBoundCount = length nativeBoundNames
                   , inspectedEnergyTermCount = length energyConstraints
                   , inspectedFlattenedCount = length flatConstraints
@@ -284,16 +352,37 @@ compileProblem config problem =
                   , inspectedEliminatedCount =
                       max 0 (length rawConstraints - length flatConstraints)
                   , inspectedChoiceCount = Map.size choiceValues
-                  , inspectedChoiceBranchCount = choiceBranchCount
+                  , inspectedChoiceBranchCount =
+                      choiceCandidateCount choiceStatistics
+                  , inspectedChoiceComponentCount =
+                      choiceComponentCount choiceStatistics
+                  , inspectedLargestChoiceComponentBranches =
+                      choiceLargestComponentCandidates choiceStatistics
                   , inspectedNativeBoundNames = nativeBoundNames
+                  , inspectedBackend = selectedBackend
+                  , inspectedFallbackReason = fallbackReason
+                  , inspectedAffineEqualityCount =
+                      maybe 0 (length . affineEqualities) selectedAffine
+                  , inspectedAffineInequalityCount =
+                      maybe 0 (length . affineInequalities) selectedAffine
+                  , inspectedIgnoredSoftConstraintCount =
+                      maybe 0 affineSoftCount selectedAffine
                   }
     }
   where
     constraints = solverConstraints problem
     rawConstraints = concatMap flattenConstraint constraints
     flatConstraints = flattenConstraints constraints
-    (choiceValues, choiceBranchCount) =
-      solveChoiceConstraints config (solverChoiceConstraints problem)
+    (choiceValues, choiceStatistics) =
+      solveChoiceConstraints
+        (initialSeed config)
+        (maxChoiceBranches config)
+        (solverChoiceConstraints problem)
+    classification = classifyAffineProblem constraints
+    selection = selectBackend (forcedBackend config) classification
+    selectedBackend = selectionBackend selection
+    selectedAffine = selectionAffine selection
+    fallbackReason = selectionFallbackReason selection
     varTypes = collectConstraintVarTypes flatConstraints
     inferredBounds = inferDomainBounds flatConstraints
     finalBounds =
@@ -312,7 +401,7 @@ compileProblem config problem =
     initialSpecs =
       zipWith
         makeInitialSpec
-        (randomSamplesFromSeed (initialSeed config))
+        (randomUnitsFromSeed (initialSeed config))
         (Map.toAscList varTypes)
     rangeInitialValues =
       seedRangeInitialValues flatConstraints initialSpecs Map.empty
@@ -335,7 +424,7 @@ compileProblem config problem =
                      (Map.findWithDefault
                         (sampleInitialWithinBounds
                            (initialSpecBounds spec)
-                           (randomSampleUnit (initialSpecSample spec)))
+                           (initialSpecUnit spec))
                         name
                         configuredInitialValues)
              internal <- newInternalVar initial nativeBounds
@@ -346,9 +435,14 @@ compileProblem config problem =
       traverse_ (lowerConstraint config vars') energyConstraints
       pure vars'
     (vars, csp) = compileReturning build
-    makeInitialSpec sample (name, ty) =
+    numericProblem =
+      case selection of
+        SelectAffine affine -> SampleAffineProblem affine
+        SelectPenalty _ ->
+          OptimizePenaltyProblem vars csp (optimizerConfig config)
+    makeInitialSpec unit (name, ty) =
       InitialSpec
-        { initialSpecSample = sample
+        { initialSpecUnit = unit
         , initialSpecName = name
         , initialSpecType = ty
         , initialSpecBounds =
@@ -366,70 +460,39 @@ validateDomainBounds name bounds =
   case nativeBoundsFor name bounds of
     (lower, upper) -> lower `seq` upper `seq` bounds
 
-solveChoiceConstraints ::
-     SolveConfig -> [ChoiceConstraint] -> (Map String String, Int)
-solveChoiceConstraints _ [] = (Map.empty, 0)
-solveChoiceConstraints config constraints =
-  if branchCount > maxChoiceBranches config
-    then error
-           ("categorical solver branch count "
-              ++ show branchCount
-              ++ " exceeds configured limit "
-              ++ show (maxChoiceBranches config))
-    else case validAssignments of
-           [] ->
-             error
-               "categorical solver constraints have no satisfying assignment"
-           valid -> (valid !! selectedIndex valid, branchCount)
-  where
-    domains = choiceDomains constraints
-    choices = Map.toAscList domains
-    branchCount = product (map (length . snd) choices)
-    assignments = enumerateChoiceAssignments choices
-    validAssignments =
-      filter
-        (\assignment -> all (choiceConstraintSatisfied assignment) constraints)
-        assignments
-    selectedIndex valid =
-      min (length valid - 1) (floor (seedUnit * fromIntegral (length valid)))
-    seedUnit =
-      case randomUnitsFromSeed (initialSeed config) of
-        value:_ -> value
-        []      -> 0
+selectBackend ::
+     Maybe NumericBackend -> AffineClassification -> BackendSelection
+selectBackend forced classification =
+  case (forced, classification) of
+    (Just PenaltyOptimizer, _) ->
+      SelectPenalty (Just "optimizer backend explicitly selected")
+    (_, AffineInvalid message) -> error message
+    (Nothing, AffineReady affine) -> SelectAffine affine
+    (Nothing, AffineFallback reason) -> SelectPenalty (Just reason)
+    (Just AffineSampler, AffineReady affine) -> SelectAffine affine
+    (Just AffineSampler, AffineFallback reason) ->
+      error ("affine sampler cannot solve this problem: " ++ reason)
 
-choiceDomains :: [ChoiceConstraint] -> Map String [String]
-choiceDomains = foldl' addConstraint Map.empty
-  where
-    addConstraint domains constraint =
-      foldl' addSpec domains (choiceConstraintSpecs constraint)
-    addSpec domains (name, categories)
-      | null categories =
-        error ("categorical choice " ++ show name ++ " has an empty domain")
-      | otherwise =
-        Map.alter (Just . mergeChoiceDomain name categories) name domains
+selectionBackend :: BackendSelection -> NumericBackend
+selectionBackend selection =
+  case selection of
+    SelectAffine _  -> AffineSampler
+    SelectPenalty _ -> PenaltyOptimizer
 
-mergeChoiceDomain :: String -> [String] -> Maybe [String] -> [String]
-mergeChoiceDomain _ categories Nothing = categories
-mergeChoiceDomain name categories (Just old)
-  | old == categories = old
-  | otherwise =
-    error
-      ("categorical choice "
-         ++ show name
-         ++ " was used with incompatible domains")
+selectionAffine :: BackendSelection -> Maybe AffineProblem
+selectionAffine selection =
+  case selection of
+    SelectAffine affine -> Just affine
+    SelectPenalty _     -> Nothing
 
-enumerateChoiceAssignments :: [(String, [String])] -> [Map String String]
-enumerateChoiceAssignments choices =
-  case choices of
-    [] -> [Map.empty]
-    (name, categories):rest ->
-      [ Map.insert name categoryValue assignment
-      | categoryValue <- categories
-      , assignment <- enumerateChoiceAssignments rest
-      ]
+selectionFallbackReason :: BackendSelection -> Maybe String
+selectionFallbackReason selection =
+  case selection of
+    SelectAffine _       -> Nothing
+    SelectPenalty reason -> reason
 
 data InitialSpec = InitialSpec
-  { initialSpecSample :: RandomSample
+  { initialSpecUnit   :: Double
   , initialSpecName   :: String
   , initialSpecType   :: Domain
   , initialSpecBounds :: DomainBounds
@@ -477,7 +540,7 @@ nativeBoundConstraint constraint =
 
 singleVariableNativeBound :: RawExpr -> RawExpr -> Bool
 singleVariableNativeBound lhs rhs =
-  case linearRawExpr (rawSub lhs rhs) of
+  case linearRawExpr (ESub lhs rhs) of
     Nothing -> False
     Just (coefficients, constant) ->
       case nonZeroLinearTerms coefficients of
@@ -498,7 +561,7 @@ impliedByNativeBounds :: Map String DomainBounds -> Constraint -> Bool
 impliedByNativeBounds bounds constraint =
   case constraint of
     LessOrEqual lhs rhs ->
-      case linearRawExpr (rawSub lhs rhs) of
+      case linearRawExpr (ESub lhs rhs) of
         Nothing -> False
         Just (coefficients, constant) ->
           case maximumLinearValue bounds coefficients constant of
@@ -532,10 +595,7 @@ seedRangeInitialValues constraints specs values =
         Just rangeBounds ->
           let bounds = initialSpecBounds spec `mergeDomainBounds` rangeBounds
               nativeBounds = nativeBoundsFor (initialSpecName spec) bounds
-              sampled =
-                sampleInitialWithinBounds
-                  bounds
-                  (randomSampleUnit (initialSpecSample spec))
+              sampled = sampleInitialWithinBounds bounds (initialSpecUnit spec)
            in Map.insert
                 (initialSpecName spec)
                 (clampInitialValue nativeBounds sampled)
@@ -670,210 +730,6 @@ evalInitialRawExpr values expr =
     EMax lhs rhs ->
       max <$> evalInitialRawExpr values lhs <*> evalInitialRawExpr values rhs
 
-collectRawExprVarTypes :: RawExpr -> Map String Domain
-collectRawExprVarTypes expr =
-  case expr of
-    EVar ty v -> Map.singleton (varName v) ty
-    ELit _ -> Map.empty
-    EAdd lhs rhs ->
-      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
-    ESub lhs rhs ->
-      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
-    EMul lhs rhs ->
-      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
-    EDiv lhs rhs ->
-      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
-    ENeg inner -> collectRawExprVarTypes inner
-    EAbs inner -> collectRawExprVarTypes inner
-    ESignum inner -> collectRawExprVarTypes inner
-    EPow base to ->
-      mergeVarTypeMaps (collectRawExprVarTypes base) (collectRawExprVarTypes to)
-    EMin lhs rhs ->
-      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
-    EMax lhs rhs ->
-      mergeVarTypeMaps (collectRawExprVarTypes lhs) (collectRawExprVarTypes rhs)
-
-mergeVarTypeMaps :: Map String Domain -> Map String Domain -> Map String Domain
-mergeVarTypeMaps = Map.unionWith mergeVarTypes
-
-mergeVarTypes :: Domain -> Domain -> Domain
-mergeVarTypes a b
-  | a == b = a
-  | otherwise =
-    error
-      ("solver variable used with incompatible symbolic types: "
-         ++ show a
-         ++ " and "
-         ++ show b)
-
-collectConstraintVarTypes :: [Constraint] -> Map String Domain
-collectConstraintVarTypes = foldMap collectOne
-  where
-    collectOne constraint =
-      case constraint of
-        Equals _ lhs rhs ->
-          mergeVarTypeMaps
-            (collectRawExprVarTypes lhs)
-            (collectRawExprVarTypes rhs)
-        LessOrEqual lhs rhs ->
-          mergeVarTypeMaps
-            (collectRawExprVarTypes lhs)
-            (collectRawExprVarTypes rhs)
-        Minimize objective -> collectRawExprVarTypes objective
-        Soft inner -> collectConstraintVarTypes [inner]
-        All constraints -> collectConstraintVarTypes constraints
-
-inferDomainBounds :: [Constraint] -> Map String DomainBounds
-inferDomainBounds constraints =
-  foldl' (addAffineConstraint directBounds) directBounds constraints
-  where
-    directBounds = foldl' addDirectConstraint Map.empty constraints
-
-addDirectConstraint ::
-     Map String DomainBounds -> Constraint -> Map String DomainBounds
-addDirectConstraint bounds constraint =
-  case constraint of
-    LessOrEqual (ELit lo) (EVar _ v) ->
-      Map.alter
-        (Just . addDomainLower lo . fromMaybe unboundedDomainBounds)
-        (varName v)
-        bounds
-    LessOrEqual (EVar _ v) (ELit hi) ->
-      Map.alter
-        (Just . addDomainUpper hi . fromMaybe unboundedDomainBounds)
-        (varName v)
-        bounds
-    Soft _ -> bounds
-    All constraints -> foldl' addDirectConstraint bounds constraints
-    _ -> bounds
-
-addAffineConstraint ::
-     Map String DomainBounds
-  -> Map String DomainBounds
-  -> Constraint
-  -> Map String DomainBounds
-addAffineConstraint known bounds constraint =
-  case constraint of
-    LessOrEqual lhs rhs -> addLinearUpperBounds known (rawSub lhs rhs) bounds
-    Soft _              -> bounds
-    All constraints     -> foldl' (addAffineConstraint known) bounds constraints
-    _                   -> bounds
-
-rawSub :: RawExpr -> RawExpr -> RawExpr
-rawSub = ESub
-
-addLinearUpperBounds ::
-     Map String DomainBounds
-  -> RawExpr
-  -> Map String DomainBounds
-  -> Map String DomainBounds
-addLinearUpperBounds known expr bounds =
-  case linearRawExpr expr of
-    Nothing -> bounds
-    Just (coefficients, constant) ->
-      foldl'
-        (addLinearBound known coefficients constant)
-        bounds
-        (Map.toAscList coefficients)
-
-addLinearBound ::
-     Map String DomainBounds
-  -> Map String Double
-  -> Double
-  -> Map String DomainBounds
-  -> (String, Double)
-  -> Map String DomainBounds
-addLinearBound known coefficients constant bounds (target, coeff)
-  | abs coeff <= equalityEpsilon = bounds
-  | otherwise =
-    case boundFromOtherTerms known target coeff coefficients constant of
-      Nothing -> bounds
-      Just value
-        | coeff > 0 ->
-          Map.alter
-            (Just . addDomainUpper value . fromMaybe unboundedDomainBounds)
-            target
-            bounds
-        | otherwise ->
-          Map.alter
-            (Just . addDomainLower value . fromMaybe unboundedDomainBounds)
-            target
-            bounds
-
-boundFromOtherTerms ::
-     Map String DomainBounds
-  -> String
-  -> Double
-  -> Map String Double
-  -> Double
-  -> Maybe Double
-boundFromOtherTerms known target coeff coefficients constant = do
-  otherValue <- minOtherTerms known target coefficients
-  let bound = (-constant - otherValue) / coeff
-  pure bound
-
-minOtherTerms ::
-     Map String DomainBounds -> String -> Map String Double -> Maybe Double
-minOtherTerms known target coefficients =
-  sum
-    <$> traverse
-          termMinimum
-          [ (name, coeff)
-          | (name, coeff) <- Map.toAscList coefficients
-          , name /= target
-          ]
-  where
-    termMinimum (name, coeff)
-      | coeff >= 0 = do
-        bounds <- Map.lookup name known
-        lower <- domainLowerBound bounds
-        pure (coeff * lower)
-      | otherwise = do
-        bounds <- Map.lookup name known
-        upper <- domainUpperBound bounds
-        pure (coeff * upper)
-
-linearRawExpr :: RawExpr -> Maybe (Map String Double, Double)
-linearRawExpr expr =
-  case expr of
-    EVar _ variable -> Just (Map.singleton (varName variable) 1, 0)
-    ELit value -> Just (Map.empty, value)
-    EAdd lhs rhs -> addLinear lhs rhs
-    ESub lhs rhs -> subtractLinear lhs rhs
-    ENeg inner -> scaleLinear (-1) <$> linearRawExpr inner
-    EMul (ELit scalar) rhs -> scaleLinear scalar <$> linearRawExpr rhs
-    EMul lhs (ELit scalar) -> scaleLinear scalar <$> linearRawExpr lhs
-    EDiv lhs (ELit scalar)
-      | abs scalar > equalityEpsilon ->
-        scaleLinear (1 / scalar) <$> linearRawExpr lhs
-    _ -> Nothing
-
-addLinear :: RawExpr -> RawExpr -> Maybe (Map String Double, Double)
-addLinear lhs rhs = do
-  (lhsCoefficients, lhsConstant) <- linearRawExpr lhs
-  (rhsCoefficients, rhsConstant) <- linearRawExpr rhs
-  pure
-    ( Map.unionWith (+) lhsCoefficients rhsCoefficients
-    , lhsConstant + rhsConstant)
-
-subtractLinear :: RawExpr -> RawExpr -> Maybe (Map String Double, Double)
-subtractLinear lhs rhs = do
-  lhsLinear <- linearRawExpr lhs
-  rhsLinear <- linearRawExpr rhs
-  pure (addLinearValues lhsLinear (scaleLinear (-1) rhsLinear))
-
-addLinearValues ::
-     (Map String Double, Double)
-  -> (Map String Double, Double)
-  -> (Map String Double, Double)
-addLinearValues (lhsCoefficients, lhsConstant) (rhsCoefficients, rhsConstant) =
-  (Map.unionWith (+) lhsCoefficients rhsCoefficients, lhsConstant + rhsConstant)
-
-scaleLinear ::
-     Double -> (Map String Double, Double) -> (Map String Double, Double)
-scaleLinear scalar (coefficients, constant) =
-  (Map.map (* scalar) coefficients, scalar * constant)
-
 --------------------------------------------------------------------------------
 -- Lowering symbolic expressions to AD-friendly energy expressions
 --------------------------------------------------------------------------------
@@ -945,6 +801,45 @@ lowerExpr vars expr =
 --------------------------------------------------------------------------------
 -- Evaluating symbolic expressions against a solution
 --------------------------------------------------------------------------------
+hardConstraintEnergy :: Map String Double -> [Constraint] -> Double
+hardConstraintEnergy values = sum . map energy
+  where
+    energy constraint =
+      case constraint of
+        Equals ty lhs rhs ->
+          let difference = evalRawValues values lhs - evalRawValues values rhs
+           in case domainCircularPeriod ty of
+                Just period
+                  | period > 0 -> 2 - 2 * cos (2 * pi * difference / period)
+                _ -> difference * difference
+        LessOrEqual lhs rhs ->
+          let violation =
+                max 0 (evalRawValues values lhs - evalRawValues values rhs)
+           in violation * violation
+        Minimize _ -> 0
+        Soft _ -> 0
+        All constraints -> hardConstraintEnergy values constraints
+
+evalRawValues :: Map String Double -> RawExpr -> Double
+evalRawValues values expr =
+  case expr of
+    EVar _ symbolic ->
+      Map.findWithDefault
+        (error ("unknown solver variable: " ++ varName symbolic))
+        (varName symbolic)
+        values
+    ELit value -> value
+    EAdd lhs rhs -> evalRawValues values lhs + evalRawValues values rhs
+    ESub lhs rhs -> evalRawValues values lhs - evalRawValues values rhs
+    EMul lhs rhs -> evalRawValues values lhs * evalRawValues values rhs
+    EDiv lhs rhs -> evalRawValues values lhs / evalRawValues values rhs
+    ENeg inner -> negate (evalRawValues values inner)
+    EAbs inner -> abs (evalRawValues values inner)
+    ESignum inner -> signum (evalRawValues values inner)
+    EPow base to -> evalRawValues values base ** evalRawValues values to
+    EMin lhs rhs -> min (evalRawValues values lhs) (evalRawValues values rhs)
+    EMax lhs rhs -> max (evalRawValues values lhs) (evalRawValues values rhs)
+
 evalExpr :: Solution -> Expr ty -> Maybe Double
 evalExpr solution (Expr ty expr) =
   normalizeByType ty <$> evalRawExpr solution expr

@@ -116,6 +116,8 @@ import qualified Solver                         as S
 import qualified Solver.Expr                    as SolverExpr
 import qualified Text.Read                      as Read
 
+{-# ANN module "HLint: ignore Eta reduce" #-}
+
 data CoordRole
 
 data SpanRole

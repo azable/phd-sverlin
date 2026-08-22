@@ -10,7 +10,7 @@ module LinearTrace.Visualization.Options
 import           Data.Aeson
 import           Data.Char  (isAsciiUpper)
 import           Data.List  (stripPrefix)
-import           Data.Maybe (listToMaybe, mapMaybe)
+import           Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import           Prelude
 
 irJsonOptions :: Options
@@ -45,7 +45,7 @@ jsonFieldName name =
 
 jsonConstructorName :: String -> String
 jsonConstructorName name =
-  lowerFirst . maybe name id . listToMaybe . mapMaybe (`stripPrefix` name)
+  lowerFirst . fromMaybe name . listToMaybe . mapMaybe (`stripPrefix` name)
     $ ["Variable", "Csp", "Element"]
 
 lowerFirst :: String -> String

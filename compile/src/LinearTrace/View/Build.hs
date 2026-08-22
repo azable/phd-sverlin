@@ -234,8 +234,8 @@ leafBoundsRangeConstraints env =
     env
     minimumLayoutExtent
     minimumLayoutExtent
-    (P.max 20 (canvasWidthValue env P./ 2))
-    (P.max 20 (canvasHeightValue env P./ 2))
+    (canvasWidthValue env)
+    (canvasHeightValue env)
 
 compoundBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
 compoundBoundsRangeConstraints env =

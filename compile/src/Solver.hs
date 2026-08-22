@@ -2,7 +2,7 @@
 --
 -- Most callers should import this module only. The implementation modules
 -- under @Solver.*@ are kept separate so the expression language, constraint
--- layer, problem compiler, and optimizer backend can be tested independently
+-- layer, problem compiler, affine sampler, and penalty optimizer can be tested independently
 -- without making those modules part of the public surface.
 module Solver
   ( -- * Numeric domains
@@ -26,8 +26,8 @@ module Solver
     -- string tokens. They intentionally do not share the 'Expr' arithmetic
     -- API. Use 'freeChoice' to register an unconstrained finite choice, or
     -- relation constraints such as 'choose'/'sameChoice' to restrict it. A
-    -- compiled problem samples a satisfying categorical assignment before
-    -- numeric solving.
+    -- compiled problem samples a satisfying categorical assignment per
+    -- independent component before numeric solving.
     ChoiceDomain(..)
   , ChoiceValue(..)
   , Choice
@@ -83,9 +83,12 @@ module Solver
   , -- * Solving and inspection
     -- | A 'SolverProblem' compiles constraints, samples finite categorical
     -- choices, canonicalizes repeated constraints, infers native bounds, seeds
-    -- initial values, and solves through the bounded optimizer backend.
+    -- initial values, and dispatches bounded affine hard constraints to the
+    -- sampler while retaining the optimizer for nonlinear fallback.
     SolveConfig
+  , NumericBackend(..)
   , defaultSolveConfig
+  , withNumericBackend
   , withInitialSeed
   , withInitialOverrides
   , withConstraintWeights
@@ -110,17 +113,26 @@ module Solver
   , inspectedEliminatedCount
   , inspectedChoiceCount
   , inspectedChoiceBranchCount
+  , inspectedChoiceComponentCount
+  , inspectedLargestChoiceComponentBranches
   , inspectedNativeBoundNames
+  , inspectedBackend
+  , inspectedFallbackReason
+  , inspectedAffineEqualityCount
+  , inspectedAffineInequalityCount
+  , inspectedIgnoredSoftConstraintCount
   , Solution
+  , BackendStatistics(..)
+  , OptimizationStatistics(..)
+  , SamplingStatistics(..)
   , solutionSuccess
   , solutionSeed
   , solutionEnergy
   , solutionValues
   , solutionChoices
   , solutionInspection
-  , solutionIterations
-  , solutionFunctionEvaluations
-  , solutionGradientEvaluations
+  , solutionBackend
+  , solutionBackendStatistics
   , solve
   , solveProblem
   , solveCompiledProblem

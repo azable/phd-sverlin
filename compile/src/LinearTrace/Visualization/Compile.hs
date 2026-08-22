@@ -66,14 +66,17 @@ compileVariables solution =
 compileElement :: S.Solution -> V.ViewNode -> Either String IR.VisualElement
 compileElement solution wrapped =
   case wrapped of
-    V.ViewNode node ->
-      IR.VisualElement
-        <$> pure (visualId (V.nodeRef node))
-        <*> pure (V.viewLabelKind (V.nodeLabel node))
-        <*> pure (compileElementKind (V.nodeStructure node))
-        <*> pure (compileContent (V.nodeContent node))
-        <*> compileStyle solution (V.nodeStyle node)
-        <*> pure (compileStyleBindings (V.nodeStyle node))
+    V.ViewNode node -> do
+      style <- compileStyle solution (V.nodeStyle node)
+      pure
+        IR.VisualElement
+          { IR.elementId = visualId (V.nodeRef node)
+          , IR.elementRole = V.viewLabelKind (V.nodeLabel node)
+          , IR.elementKind = compileElementKind (V.nodeStructure node)
+          , IR.elementContent = compileContent (V.nodeContent node)
+          , IR.elementStyle = style
+          , IR.elementStyleVariables = compileStyleBindings (V.nodeStyle node)
+          }
 
 compileElementKind :: V.NodeStructure -> IR.VisualElementKind
 compileElementKind structure =

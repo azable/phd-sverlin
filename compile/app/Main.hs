@@ -14,6 +14,7 @@ import qualified LinearTrace.Visualization.IR      as IR
 import qualified LinearTrace.Visualization.Target  as Target
 import           Numeric                           (showFFloat)
 import           Options.Applicative
+import qualified Solver                            as S
 import           Sverlin.Interpreter               (withVisualization)
 import           Sverlin.Source                    (GeneratedSource (..),
                                                     SourceUnit (..),
@@ -97,16 +98,17 @@ runVisualization options sourcePath sourceLoadMs seed graph = do
         timedPhase (evaluate (forceEncoded (optionTarget options) compiled))
       ((), writeMs) <-
         timedPhase (writeCompiled (optionOutputPath options) encoded)
-      when (optionDetails options)
-        $ hPrintPhaseTimings
-            stdout
-            [ ("Source load", sourceLoadMs)
-            , ("View graph", viewGraphMs)
-            , ("Solve", solveMs)
-            , ("IR compile", compileMs)
-            , ("JSON encode", encodeMs)
-            , ("JSON write", writeMs)
-            ]
+      when (optionDetails options) $ do
+        hPrintSolverDetails stdout solved
+        hPrintPhaseTimings
+          stdout
+          [ ("Source load", sourceLoadMs)
+          , ("View graph", viewGraphMs)
+          , ("Solve", solveMs)
+          , ("IR compile", compileMs)
+          , ("JSON encode", encodeMs)
+          , ("JSON write", writeMs)
+          ]
       pure (Right compiled)
 
 forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
@@ -144,6 +146,33 @@ hPrintPhaseTimings handle timings = do
   where
     printTiming (name, ms) =
       hPutStrLn handle ("  " ++ name ++ ": " ++ formatMs ms)
+
+hPrintSolverDetails :: Handle -> S.Solution -> IO ()
+hPrintSolverDetails handle solution = do
+  hPutStrLn handle "Solver details:"
+  hPutStrLn handle ("  Backend: " ++ backendName (S.solutionBackend solution))
+  case S.solutionBackendStatistics solution of
+    S.AffineSamplingStatistics statistics -> do
+      hPutStrLn
+        handle
+        ("  Reduced dimension: " ++ show (S.samplingReducedDimension statistics))
+      hPutStrLn
+        handle
+        ("  Burn-in steps: " ++ show (S.samplingBurnInSteps statistics))
+    S.PenaltyOptimizationStatistics statistics -> do
+      hPutStrLn
+        handle
+        ("  Iterations: " ++ show (S.optimizationIterations statistics))
+      hPutStrLn
+        handle
+        ("  Function evaluations: "
+           ++ show (S.optimizationFunctionEvaluations statistics))
+
+backendName :: S.NumericBackend -> String
+backendName backend =
+  case backend of
+    S.AffineSampler    -> "affine-sampler"
+    S.PenaltyOptimizer -> "penalty-optimizer"
 
 formatMs :: Double -> String
 formatMs milliseconds = showFFloat (Just 1) milliseconds "ms"
