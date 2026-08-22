@@ -4,7 +4,7 @@ import {
   classifyCompileFailure,
   formatDiagnosticSummary,
   parseCompilerDiagnostics
-} from './compiler-diagnostics';
+} from './diagnostics';
 
 describe('compiler diagnostics', () => {
   it('parses source-labelled multiline GHC diagnostics', () => {

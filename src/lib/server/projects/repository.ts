@@ -1,22 +1,21 @@
 /**
- * Durable filesystem storage for immutable project documents and content-addressed blobs.
+ * Durable filesystem storage for complete immutable project documents.
  *
  * @packageDocumentation
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { summarizeProject } from '$lib/projects/projection';
-import type { NewProjectEvent, ProjectEvent } from '$lib/projects/events';
-import type { BlobRef } from '$lib/projects/events/values';
+import { summarizeProject } from '$lib/shared/projects/projection';
+import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
 import {
   normalizeProjectV1,
   type ProjectDocument,
   type ProjectId,
   type ProjectSummary
-} from '$lib/projects/model';
+} from '$lib/shared/projects/model';
 
 /** Validated document and stable events produced by one atomic append. */
 export type ProjectAppendResult = {
@@ -64,14 +63,13 @@ export class FileProjectRepository {
     return summaries.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  /** Persist a new validated project document and initialize its blob store. */
+  /** Persist a new validated project document. */
   async create(document: ProjectDocument): Promise<ProjectDocument> {
     assertProjectId(document.projectId);
     normalizeProjectV1(document);
     const directory = this.projectDirectory(document.projectId);
     await mkdir(this.root, { recursive: true });
     await mkdir(directory, { recursive: false });
-    await mkdir(this.blobDirectory(document.projectId), { recursive: true });
     await this.writeDocument(document);
     return structuredClone(document);
   }
@@ -121,54 +119,6 @@ export class FileProjectRepository {
       subscribers.delete(listener);
       if (subscribers.size === 0) this.#subscribers.delete(projectId);
     };
-  }
-
-  /** Store content by SHA-256 and return its immutable reference. */
-  async putBlob(
-    projectId: ProjectId,
-    value: string | Uint8Array,
-    mediaType: string
-  ): Promise<BlobRef> {
-    assertProjectId(projectId);
-    const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : Buffer.from(value);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    const ref: BlobRef = {
-      sha256,
-      byteLength: bytes.byteLength,
-      mediaType
-    };
-    const destination = this.blobPath(projectId, sha256);
-    const temporary = `${destination}.${randomUUID()}.tmp`;
-    await mkdir(path.dirname(destination), { recursive: true });
-
-    try {
-      await writeFile(temporary, bytes, { flag: 'wx' });
-      try {
-        await rename(temporary, destination);
-      } catch (error) {
-        if (!isAlreadyExists(error)) throw error;
-      }
-    } finally {
-      await rm(temporary, { force: true });
-    }
-
-    return ref;
-  }
-
-  /** Read a blob and verify its digest and byte length. */
-  async readBlob(projectId: ProjectId, ref: BlobRef): Promise<Buffer> {
-    assertProjectId(projectId);
-    const bytes = await readFile(this.blobPath(projectId, ref.sha256));
-    const actual = createHash('sha256').update(bytes).digest('hex');
-    if (actual !== ref.sha256 || bytes.byteLength !== ref.byteLength) {
-      throw new Error(`Project blob ${ref.sha256} failed its integrity check.`);
-    }
-    return bytes;
-  }
-
-  /** Read and integrity-check a UTF-8 project blob. */
-  async readTextBlob(projectId: ProjectId, ref: BlobRef): Promise<string> {
-    return (await this.readBlob(projectId, ref)).toString('utf8');
   }
 
   private async writeDocument(document: ProjectDocument) {
@@ -221,15 +171,6 @@ export class FileProjectRepository {
   private documentPath(projectId: ProjectId) {
     return path.join(this.projectDirectory(projectId), 'project.json');
   }
-
-  private blobDirectory(projectId: ProjectId) {
-    return path.join(this.projectDirectory(projectId), 'blobs');
-  }
-
-  private blobPath(projectId: ProjectId, sha256: string) {
-    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('Invalid project blob hash.');
-    return path.join(this.blobDirectory(projectId), sha256.slice(0, 2), sha256);
-  }
 }
 
 /** Default repository used by server routes and project operations. */
@@ -247,10 +188,6 @@ function assertProjectId(projectId: string) {
 
 function isMissing(error: unknown) {
   return isNodeError(error) && error.code === 'ENOENT';
-}
-
-function isAlreadyExists(error: unknown) {
-  return isNodeError(error) && error.code === 'EEXIST';
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

@@ -1,5 +1,5 @@
 /**
- * Browser-side project state, command submission, and live event synchronization.
+ * Browser-side project state, commands, history navigation, and live event sync.
  *
  * @packageDocumentation
  */
@@ -7,15 +7,24 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
-import { normalizeProjectEventV1, type EventId, type ProjectEvent } from './events';
-import type {
-  ProjectCommandInput,
-  ProjectConnectionState,
-  ProjectId,
-  ProjectSummary,
-  ProjectView
-} from './model';
-import { projectEventChangesState } from './projection';
+import {
+  normalizeProjectEventV1,
+  type EventId,
+  type ProjectEvent
+} from '$lib/shared/projects/events';
+import {
+  normalizeProjectResourceV1,
+  type ProjectCommandInput,
+  type ProjectId,
+  type ProjectResource,
+  type ProjectSnapshot,
+  type ProjectSummary
+} from '$lib/shared/projects/model';
+import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
+import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
+
+/** Browser-visible state of the project's server-sent event connection. */
+export type ProjectConnectionState = 'connecting' | 'open' | 'reconnecting';
 
 /** Metadata for the project command currently awaiting completion. */
 export type PendingProjectCommand = {
@@ -25,8 +34,8 @@ export type PendingProjectCommand = {
 };
 
 /**
- * Owns one project's reactive browser session, including historical navigation,
- * command state, and the server-sent event connection.
+ * Owns one project's reactive browser session. The complete document is the
+ * only synchronized state; snapshots and visualizations are local projections.
  */
 export class ProjectSession {
   /** Command currently running for this project. */
@@ -38,37 +47,39 @@ export class ProjectSession {
   /** Timeline events explicitly selected as feedback context. */
   focusedEvents = $state.raw<EventId[]>([]);
 
-  #view = $state.raw<ProjectView | null>(null);
+  #resource = $state.raw<ProjectResource | null>(null);
+  #selectedAt = $state<EventId | undefined>(undefined);
   #source?: EventSource;
   #request?: AbortController;
   #loadVersion = 0;
 
   constructor(readonly projectId: ProjectId) {}
 
-  /** Latest hydrated project view returned by the server. */
-  get view(): ProjectView | null {
-    return this.#view;
+  /** Complete project resource most recently received from the server. */
+  get resource(): ProjectResource | null {
+    return this.#resource;
   }
 
-  /** Project state reconstructed at the active cursor. */
-  get snapshot(): ProjectView['snapshot'] {
-    if (!this.view) throw new Error('The project has not loaded.');
-    return this.view.snapshot;
+  /** Project state reconstructed at the selected event position. */
+  get snapshot(): ProjectSnapshot {
+    if (!this.#resource) throw new Error('The project has not loaded.');
+    return projectSnapshotAt(this.#resource.document, this.#selectedAt);
   }
 
-  /** Visualization active at the current project cursor. */
-  get visualization(): ProjectView['visualization'] {
-    return this.view?.visualization;
+  /** Visualization decoded from the render active at the selected position. */
+  get visualization(): Visualization | undefined {
+    const render = this.#resource ? this.snapshot.activeRender : undefined;
+    return render ? decodeVisualization(render.payload.render.text) : undefined;
   }
 
   /** Available projects ordered by the server. */
   get projects(): ProjectSummary[] {
-    return this.view?.projects ?? [];
+    return this.#resource?.projects ?? [];
   }
 
   /** Immutable events in the loaded project document. */
   get events(): ProjectEvent[] {
-    return this.view?.document.events ?? [];
+    return this.#resource?.document.events ?? [];
   }
 
   /** Stable event ID at the project head, or zero before loading. */
@@ -78,7 +89,7 @@ export class ProjectSession {
 
   /** Whether the session is viewing the current project state. */
   get atHead(): boolean {
-    return this.view !== null && this.view.snapshot.at === this.head;
+    return this.#resource !== null && this.#selectedAt === undefined;
   }
 
   /** Most recent streamed event belonging to the pending command. */
@@ -90,25 +101,35 @@ export class ProjectSession {
     );
   }
 
-  /** Load a project view, optionally reconstructed at a historical event. */
-  async open(at?: EventId): Promise<void> {
+  /** Select a historical event locally; omitting it follows the live head. */
+  select(at?: EventId): void {
+    if (at !== undefined && this.#resource && at > this.head) {
+      this.error = `Unknown project event ${at}.`;
+      this.#selectedAt = undefined;
+      return;
+    }
+    this.#selectedAt = at;
+  }
+
+  /** Load the complete project resource once and start live synchronization. */
+  async open(): Promise<void> {
     const version = ++this.#loadVersion;
     this.disconnect();
     this.#request?.abort();
     const request = new AbortController();
     this.#request = request;
     this.connection = 'connecting';
-    const query = at ? `?at=${at}` : '';
 
     try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}${query}`, {
+      const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
         cache: 'no-store',
         signal: request.signal
       });
       if (!response.ok) throw new Error(await responseError(response));
-      const view = (await response.json()) as ProjectView;
+      const resource = parseProjectResource(await response.json());
       if (version !== this.#loadVersion) return;
-      this.#view = view;
+      this.#resource = resource;
+      this.select(this.#selectedAt);
       this.connect();
     } catch (cause) {
       if (request.signal.aborted || version !== this.#loadVersion) return;
@@ -148,9 +169,9 @@ export class ProjectSession {
     await goto(resolve('/projects/[projectId]', { projectId }));
   }
 
-  /** Submit a project command and install its authoritative resulting view. */
+  /** Submit a command and install the server's authoritative complete resource. */
   async runCommand(input: ProjectCommandInput): Promise<boolean> {
-    if (this.pending || !this.view || !this.atHead) return false;
+    if (this.pending || !this.#resource || !this.atHead) return false;
     const operationId = crypto.randomUUID();
     this.pending = { type: input.type, operationId, startedAfter: this.head };
     this.error = null;
@@ -162,7 +183,7 @@ export class ProjectSession {
         body: JSON.stringify({ ...input, operationId, expectedHead: this.head })
       });
       if (!response.ok) throw new Error(await responseError(response));
-      this.#view = (await response.json()) as ProjectView;
+      this.#resource = parseProjectResource(await response.json());
       return true;
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : 'The project operation failed.';
@@ -174,7 +195,7 @@ export class ProjectSession {
   }
 
   private connect(): void {
-    if (!this.view) return;
+    if (!this.#resource) return;
     const source = new EventSource(
       `/api/projects/${encodeURIComponent(this.projectId)}/events?after=${this.head}`
     );
@@ -197,8 +218,8 @@ export class ProjectSession {
   }
 
   private ingest(event: ProjectEvent): void {
-    if (!this.view) return;
-    const existing = this.view.document.events[event.id - 1];
+    if (!this.#resource) return;
+    const existing = this.#resource.document.events[event.id - 1];
     if (existing) {
       if (existing.operationId !== event.operationId || existing.type !== event.type) {
         void this.recover();
@@ -206,28 +227,28 @@ export class ProjectSession {
       return;
     }
     if (event.id !== this.head + 1) return void this.recover();
-    const wasAtHead = this.atHead;
-    this.#view = {
-      ...this.view,
-      document: {
-        ...this.view.document,
-        events: [...this.view.document.events, event]
-      },
-      snapshot: wasAtHead ? { ...this.view.snapshot, at: event.id } : this.view.snapshot
+
+    const document = {
+      ...this.#resource.document,
+      events: [...this.#resource.document.events, event]
     };
-    if (
-      wasAtHead &&
-      projectEventChangesState(event) &&
-      event.operationId !== this.pending?.operationId
-    ) {
-      void this.open();
-    }
+    const summary = summarizeProject(document);
+    this.#resource = {
+      document,
+      projects: this.#resource.projects
+        .map((project) => (project.projectId === this.projectId ? summary : project))
+        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    };
   }
 
   private async recover(): Promise<void> {
     this.connection = 'reconnecting';
-    await this.open(this.atHead ? undefined : this.snapshot.at);
+    await this.open();
   }
+}
+
+function parseProjectResource(value: unknown): ProjectResource {
+  return normalizeProjectResourceV1(value);
 }
 
 async function responseError(response: Response): Promise<string> {

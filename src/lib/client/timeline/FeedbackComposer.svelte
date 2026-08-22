@@ -6,8 +6,8 @@
   import * as Field from '$lib/components/ui/field';
   import * as InputGroup from '$lib/components/ui/input-group';
   import { Spinner } from '$lib/components/ui/spinner';
-  import type { ProjectSession } from '$lib/projects/project-session.svelte';
-  import type { VisualSelection } from '$lib/projects/events/values';
+  import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
+  import type { VisualSelection } from '$lib/shared/projects/events/values';
 
   /** Public properties for composing project feedback. */
   type Props = {

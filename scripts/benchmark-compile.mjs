@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-import { createCompileOutput } from '../src/lib/server/workspace-output.js';
+import { createCompileOutput } from '../src/lib/server/compiler/workspace-output.js';
 
 const defaultSeeds = [1, 320994595, 1988735004, 1731275846, 1999326623];
 

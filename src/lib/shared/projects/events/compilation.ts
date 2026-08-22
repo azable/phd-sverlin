@@ -3,12 +3,12 @@
 import * as v from 'valibot';
 
 import {
-  blobRefSchema,
   diagnosticSchema,
   dslRevisionSchema,
   eventEnvelope,
   integerSchema,
   naturalSchema,
+  recordedTextSchema,
   renderPurposeSchema,
   textSchema
 } from './values';
@@ -20,7 +20,7 @@ export const compilationRequestedEventSchema = v.object({
   payload: v.object({
     purpose: renderPurposeSchema,
     input: v.picklist(['committed-artifact', 'assistant-candidate']),
-    source: blobRefSchema,
+    source: recordedTextSchema,
     sourceLabel: textSchema,
     seed: v.pipe(integerSchema, v.minValue(1)),
     attempt: v.optional(v.picklist([1, 2])),
@@ -34,9 +34,9 @@ export const compilationSucceededEventSchema = v.object({
   type: v.literal('compilation.succeeded'),
   payload: v.object({
     durationMs: naturalSchema,
-    stdout: blobRefSchema,
-    stderr: blobRefSchema,
-    render: blobRefSchema
+    stdout: recordedTextSchema,
+    stderr: recordedTextSchema,
+    render: recordedTextSchema
   })
 });
 
@@ -56,8 +56,8 @@ export const compilationFailedEventSchema = v.object({
       'cancelled'
     ]),
     diagnostics: v.array(diagnosticSchema),
-    stdout: blobRefSchema,
-    stderr: blobRefSchema,
+    stdout: recordedTextSchema,
+    stderr: recordedTextSchema,
     timedOut: v.boolean(),
     repairEligible: v.boolean(),
     error: v.optional(v.string())

@@ -1,7 +1,7 @@
 import { tick } from 'svelte';
 import { describe, expect, it } from 'vitest';
 
-import { decodeVisualization, type Visualization } from './types';
+import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 import { VisualizationPlayer } from './visualization-player.svelte';
 
 describe('VisualizationPlayer', () => {

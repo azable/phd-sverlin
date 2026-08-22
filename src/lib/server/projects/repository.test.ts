@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { NewProjectEvent } from '$lib/projects/events';
-import type { ProjectDocument } from '$lib/projects/model';
+import type { NewProjectEvent } from '$lib/shared/projects/events';
+import type { ProjectDocument } from '$lib/shared/projects/model';
 
 import { FileProjectRepository, ProjectConflictError } from './repository';
 
@@ -19,12 +19,10 @@ afterEach(async () => {
 });
 
 describe('FileProjectRepository', () => {
-  it('persists validated documents and content-addressed blobs', async () => {
+  it('persists and lists validated self-contained documents', async () => {
     const repository = await temporaryRepository();
     await repository.create(rootDocument());
-    const ref = await repository.putBlob('repository-test', 'source', 'text/plain');
 
-    expect(await repository.readTextBlob('repository-test', ref)).toBe('source');
     expect(await repository.load('repository-test')).toEqual(rootDocument());
     expect((await repository.list())[0]).toMatchObject({
       projectId: 'repository-test',

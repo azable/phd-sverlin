@@ -5,7 +5,7 @@
   import SaveIcon from '@lucide/svelte/icons/save';
   import XIcon from '@lucide/svelte/icons/x';
 
-  import CodeMirrorEditor from '$lib/artifacts/CodeMirrorEditor.svelte';
+  import CodeMirrorEditor from '$lib/client/artifacts/CodeMirrorEditor.svelte';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -34,14 +34,14 @@
   let editor = $state<{ focus: () => void } | null>(null);
 
   const artifact = $derived(session.snapshot.artifacts[session.snapshot.entryArtifactId]);
-  const displayedSource = $derived(editMode === 'editing' ? draft : (artifact?.source ?? ''));
+  const displayedSource = $derived(editMode === 'editing' ? draft : (artifact?.content.text ?? ''));
   const dirty = $derived(
-    editMode === 'editing' && artifact !== undefined && draft !== artifact.source
+    editMode === 'editing' && artifact !== undefined && draft !== artifact.content.text
   );
 
   function startEditing() {
     if (!artifact || !session.atHead || session.pending) return;
-    draft = artifact.source;
+    draft = artifact.content.text;
     editMode = 'editing';
     void tick().then(() => editor?.focus());
   }
@@ -55,7 +55,7 @@
   }
 
   function discardDraft() {
-    if (artifact) draft = artifact.source;
+    if (artifact) draft = artifact.content.text;
     discardRequested = false;
     editMode = 'readonly';
   }

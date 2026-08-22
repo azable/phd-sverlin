@@ -4,11 +4,9 @@
  * @packageDocumentation
  */
 
-import type {
-  CompileDebug,
-  CompileFailureKind,
-  CompilerDiagnostic
-} from '$lib/visualization/types';
+import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
+
+import type { CompileDebug, CompileFailureKind } from './compile';
 
 const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 const diagnosticHeader = /^(.+?):(\d+):(\d+):\s+(error|warning):(?:\s+\[([^\]]+)\])?\s*$/;

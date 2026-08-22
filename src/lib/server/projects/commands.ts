@@ -4,18 +4,22 @@
  * @packageDocumentation
  */
 
-import type { EventId, NewProjectEvent } from '$lib/projects/events';
-import type { ArtifactChange, VisualSelection } from '$lib/projects/events/values';
-import type { ProjectCommandResult, ProjectDocument } from '$lib/projects/model';
-import { projectHead, projectSnapshotAt } from '$lib/projects/projection';
+import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
+import type { ArtifactChange, VisualSelection } from '$lib/shared/projects/events/values';
+import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
+import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import { decodeVisualization } from '$lib/shared/visualization';
 import { getChatbot } from '$lib/server/chat-bots/registry';
+import {
+  projectAiContext,
+  projectConversationMessages,
+  type AiContextSelection
+} from '$lib/server/chat-bots/ai-assistant/project-context';
 import type { CompilationFeedback } from '$lib/server/chat-bots/types';
-import { formatDiagnosticSummary } from '$lib/server/compiler-diagnostics';
-import { decodeVisualization } from '$lib/visualization/types';
+import { formatDiagnosticSummary } from '$lib/server/compiler/diagnostics';
 
-import { buildProjectPrompt } from './prompt-context';
 import { runProjectCommand } from './command-lock';
-import { readDslRevision, sourceSha256 } from './fingerprints';
+import { readDslRevision, recordText, sourceSha256 } from './fingerprints';
 import { projectRepository } from './repository';
 import {
   activateCompiledRender,
@@ -63,8 +67,17 @@ async function submitProjectFeedbackUnlocked(options: {
     payload: { ...(text ? { text } : {}), focus, ...(selection ? { selection } : {}) }
   });
   let document = await appendProjectEvents(before, [feedback]);
+  const contextSelection: AiContextSelection = {
+    eventIds: focus,
+    ...(selection ? { visualSelection: selection } : {})
+  };
 
-  const first = await runGeneration({ document, attempt: 1, operationId: options.operationId });
+  const first = await runGeneration({
+    document,
+    attempt: 1,
+    operationId: options.operationId,
+    contextSelection
+  });
   document = first.document;
   if (!first.ok) return finishMutation(before, document);
   if (first.result.sourceArtifactContent === undefined) {
@@ -118,6 +131,7 @@ async function submitProjectFeedbackUnlocked(options: {
     document,
     attempt: 2,
     operationId: options.operationId,
+    contextSelection,
     compilationFeedback: repairFeedback
   });
   document = repair.document;
@@ -164,15 +178,15 @@ async function runGeneration(options: {
   document: ProjectDocument;
   attempt: 1 | 2;
   operationId: string;
+  contextSelection: AiContextSelection;
   compilationFeedback?: CompilationFeedback;
 }) {
   const chatbot = getChatbot();
-  const input = await buildProjectPrompt(options.document);
   let prompt;
   try {
     prompt = await chatbot.preparePrompt({
-      messages: input.messages,
-      project: input.project,
+      messages: projectConversationMessages(options.document.events),
+      project: projectAiContext(options.document, options.contextSelection),
       ...(options.compilationFeedback ? { compilationFeedback: options.compilationFeedback } : {})
     });
   } catch (error) {
@@ -186,11 +200,7 @@ async function runGeneration(options: {
     };
   }
 
-  const promptRef = await projectRepository.putBlob(
-    options.document.projectId,
-    JSON.stringify(prompt),
-    'application/json'
-  );
+  const promptRecord = recordText(JSON.stringify(prompt), 'application/json');
   const dslRevision = await readDslRevision();
   const request = draftEvent<'ai.generation-requested'>({
     type: 'ai.generation-requested',
@@ -199,7 +209,7 @@ async function runGeneration(options: {
     payload: {
       attempt: options.attempt,
       purpose: options.attempt === 1 ? 'initial' : 'repair',
-      prompt: promptRef,
+      prompt: promptRecord,
       promptTemplateSha256: sourceSha256(prompt.initialPrompt),
       ...(dslRevision ? { dslRevision } : {}),
       requestedModel: prompt.parameters.model,
@@ -211,8 +221,7 @@ async function runGeneration(options: {
 
   try {
     const result = await chatbot.generatePrepared(prompt);
-    const response = await projectRepository.putBlob(
-      document.projectId,
+    const response = recordText(
       JSON.stringify(
         result.providerResponse ?? {
           reply: result.reply,
@@ -241,11 +250,7 @@ async function runGeneration(options: {
     return { ok: true as const, document, result, generationEvent };
   } catch (error) {
     const errorDetails = generationErrorDetails(error);
-    const details = await projectRepository.putBlob(
-      document.projectId,
-      errorDetails.value,
-      errorDetails.mediaType
-    );
+    const details = recordText(errorDetails.value, errorDetails.mediaType);
     const failed = draftEvent<'ai.generation-failed'>({
       type: 'ai.generation-failed',
       actor: { kind: 'system' },
@@ -272,11 +277,7 @@ async function compileCandidate(options: {
   operationId: string;
   attempt: 1 | 2;
 }) {
-  const source = await projectRepository.putBlob(
-    options.document.projectId,
-    options.candidate,
-    'text/x-sverlin'
-  );
+  const source = recordText(options.candidate, 'text/x-sverlin');
   const recorded = await compileProjectSource({
     document: options.document,
     sourceContent: options.candidate,
@@ -302,11 +303,7 @@ async function acceptCandidate(options: {
   const snapshot = projectSnapshotAt(options.document);
   const current = snapshot.artifacts[snapshot.entryArtifactId];
   if (!current) throw new Error('The project has no entry artifact.');
-  const content = await projectRepository.putBlob(
-    options.document.projectId,
-    options.candidate,
-    'text/x-sverlin'
-  );
+  const content = recordText(options.candidate, 'text/x-sverlin');
   const change: ArtifactChange = {
     operation: 'upsert',
     artifact: { ...current, content }
@@ -361,9 +358,7 @@ async function validateSelection(
   if (renderEvent?.type !== 'visualization.rendered') {
     throw new Error('The visual selection references an unknown render.');
   }
-  const visualization = decodeVisualization(
-    await projectRepository.readTextBlob(document.projectId, renderEvent.payload.render)
-  );
+  const visualization = decodeVisualization(renderEvent.payload.render.text);
   const step = visualization.steps[selection.step];
   if (!step) throw new Error('The visual selection references an unknown visualization step.');
   const available = new Set(step.instances.map(({ id }) => id));

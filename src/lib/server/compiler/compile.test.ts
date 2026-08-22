@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compileCommand, runCompile } from './compile-visualization';
+import { compileCommand, runCompile } from './compile';
 
 describe('runCompile', () => {
   it('streams stdout and stderr chunks while the command runs', async () => {

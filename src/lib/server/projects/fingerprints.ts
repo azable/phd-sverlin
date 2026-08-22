@@ -10,7 +10,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { DslRevision } from '$lib/projects/events/values';
+import type { DslRevision, RecordedText } from '$lib/shared/projects/events/values';
 
 const execFileAsync = promisify(execFile);
 const choreographyDirectory = 'compile/src/LinearTrace/Choreography';
@@ -20,6 +20,11 @@ const dslGitPaths = [...dslSourcePaths, choreographyDirectory];
 /** Calculate the lowercase SHA-256 digest for source text. */
 export function sourceSha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+/** Embed immutable text with the integrity metadata retained in project history. */
+export function recordText(text: string, mediaType: string): RecordedText {
+  return { text, sha256: sourceSha256(text), mediaType };
 }
 
 /** Read the current DSL content fingerprint and best-effort Git provenance. */

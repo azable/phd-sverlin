@@ -6,7 +6,7 @@
 
 import * as v from 'valibot';
 
-import type { RenderInstanceId } from '$lib/visualization/types';
+import type { RenderInstanceId } from '$lib/shared/visualization';
 
 /** Runtime schema for non-empty text stored in project events. */
 export const textSchema = v.pipe(v.string(), v.nonEmpty());
@@ -23,10 +23,10 @@ export const operationIdSchema = v.pipe(v.string(), v.uuid());
 
 const gitCommitSchema = v.pipe(v.string(), v.regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/));
 
-/** Runtime schema for immutable content-addressed project blobs. */
-export const blobRefSchema = v.object({
+/** Runtime schema for immutable text embedded directly in project history. */
+export const recordedTextSchema = v.object({
+  text: v.string(),
   sha256: sha256Schema,
-  byteLength: naturalSchema,
   mediaType: textSchema
 });
 
@@ -53,7 +53,7 @@ export const projectArtifactSchema = v.object({
   artifactId: textSchema,
   path: textSchema,
   language: v.literal('sverlin'),
-  content: blobRefSchema
+  content: recordedTextSchema
 });
 
 /** Runtime schema for artifact-version provenance. */
@@ -102,8 +102,10 @@ export const eventEnvelope = {
   createdAt: v.pipe(v.string(), v.isoTimestamp())
 };
 
-/** Content-addressed reference to a blob stored with a project. */
-export type BlobRef = v.InferOutput<typeof blobRefSchema>;
+/** Immutable text and its provenance embedded directly in a project event. */
+export type RecordedText = v.InferOutput<typeof recordedTextSchema>;
+/** Structured compiler diagnostic retained in project history. */
+export type CompilerDiagnostic = v.InferOutput<typeof diagnosticSchema>;
 /** Metadata for one versioned project source artifact. */
 export type ProjectArtifact = v.InferOutput<typeof projectArtifactSchema>;
 /** Upsert or deletion applied by an artifact-version event. */

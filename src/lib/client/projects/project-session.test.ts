@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProjectEvent, ProjectEventOf } from './events';
-import type { ProjectDocument, ProjectView } from './model';
+import type { ProjectEvent, ProjectEventOf } from '$lib/shared/projects/events';
+import type { ProjectDocument, ProjectResource } from '$lib/shared/projects/model';
+
 import { ProjectSession } from './project-session.svelte';
 
 const navigation = vi.hoisted(() => ({ goto: vi.fn() }));
@@ -53,10 +54,10 @@ afterEach(() => {
 });
 
 describe('ProjectSession', () => {
-  it('installs a command view without navigating, reloading, or reconnecting', async () => {
-    const initial = projectView([createdEvent()], 1, 'Initial');
+  it('installs a command resource without navigating, reloading, or reconnecting', async () => {
+    const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, operationId, 'Initial', 'Renamed');
-    const resulting = projectView([...initial.document.events, renamed], 2, 'Renamed');
+    const resulting = projectResource([...initial.document.events, renamed], 'Renamed');
     fetchMock.mockResolvedValueOnce(response(initial)).mockResolvedValueOnce(response(resulting));
 
     const session = createSession();
@@ -73,49 +74,48 @@ describe('ProjectSession', () => {
     expect(navigation.goto).not.toHaveBeenCalled();
   });
 
-  it('follows streamed events at the head while keeping historical views pinned', async () => {
-    const initial = projectView([createdEvent()], 1, 'Initial');
+  it('follows streamed events at the head while keeping local history pinned', async () => {
+    const initial = projectResource([createdEvent()], 'Initial');
     const responseEvent = assistantEvent(2);
     fetchMock.mockResolvedValueOnce(response(initial));
 
     const session = createSession();
     await session.open();
-    const previousView = session.view;
+    const previousResource = session.resource;
     FakeEventSource.instances[0].emit('project-event', responseEvent);
 
-    expect(session.view).not.toBe(previousView);
+    expect(session.resource).not.toBe(previousResource);
     expect(session.events).toHaveLength(2);
     expect(session.snapshot.at).toBe(2);
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    FakeEventSource.instances[0].emit('project-event', responseEvent);
-    expect(session.events).toHaveLength(2);
 
-    const historical = projectView([...initial.document.events, responseEvent], 1, 'Initial');
-    fetchMock.mockResolvedValueOnce(response(historical));
-    await session.open(1);
-    FakeEventSource.instances
-      .at(-1)!
-      .emit('project-event', renamedEvent(3, externalOperationId, 'Initial', 'External'));
+    session.select(1);
+    expect(session.atHead).toBe(false);
+    FakeEventSource.instances[0].emit(
+      'project-event',
+      renamedEvent(3, externalOperationId, 'Initial', 'External')
+    );
 
     expect(session.events).toHaveLength(3);
     expect(session.snapshot.at).toBe(1);
+    expect(session.snapshot.title).toBe('Initial');
     expect(session.atHead).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 
-  it('rehydrates after an external event changes projected state', async () => {
-    const initial = projectView([createdEvent()], 1, 'Initial');
+  it('projects external state-changing events without hydration fetches', async () => {
+    const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, externalOperationId, 'Initial', 'External');
-    const refreshed = projectView([...initial.document.events, renamed], 2, 'External');
-    fetchMock.mockResolvedValueOnce(response(initial)).mockResolvedValueOnce(response(refreshed));
+    fetchMock.mockResolvedValueOnce(response(initial));
 
     const session = createSession();
     await session.open();
     FakeEventSource.instances[0].emit('project-event', renamed);
 
-    await vi.waitFor(() => expect(session.snapshot.title).toBe('External'));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(session.snapshot.title).toBe('External');
     expect(session.atHead).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -125,13 +125,13 @@ function createSession(): ProjectSession {
   return session;
 }
 
-function response(view: ProjectView): Response {
-  return new Response(JSON.stringify(view), {
+function response(resource: ProjectResource): Response {
+  return new Response(JSON.stringify(resource), {
     headers: { 'content-type': 'application/json' }
   });
 }
 
-function projectView(events: ProjectEvent[], at: number, title: string): ProjectView {
+function projectResource(events: ProjectEvent[], title: string): ProjectResource {
   const document: ProjectDocument = {
     schemaVersion: 1,
     projectId: 'project-test',
@@ -139,7 +139,6 @@ function projectView(events: ProjectEvent[], at: number, title: string): Project
   };
   return {
     document,
-    snapshot: { at, title, entryArtifactId: 'dsl-main', artifacts: {} },
     projects: [
       {
         projectId: document.projectId,

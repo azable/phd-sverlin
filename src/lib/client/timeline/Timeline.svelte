@@ -4,7 +4,7 @@
 
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import type { ProjectSession } from '$lib/projects/project-session.svelte';
+  import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
 
   import TimelineEventCard from './TimelineEventCard.svelte';
 

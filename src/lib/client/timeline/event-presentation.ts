@@ -4,7 +4,11 @@
  * @packageDocumentation
  */
 
-import { matchProjectEvent, type ProjectEvent, type ProjectEventCases } from '$lib/projects/events';
+import {
+  matchProjectEvent,
+  type ProjectEvent,
+  type ProjectEventCases
+} from '$lib/shared/projects/events';
 
 /** Icon families available to Timeline event cards. */
 export type TimelineEventIcon =

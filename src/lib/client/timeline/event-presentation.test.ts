@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ProjectEventOf } from '$lib/projects/events';
+import type { ProjectEventOf } from '$lib/shared/projects/events';
 
 import { presentProjectEvent } from './event-presentation';
 
@@ -55,5 +55,5 @@ function base() {
 }
 
 function blob() {
-  return { sha256: '0'.repeat(64), byteLength: 0, mediaType: 'text/plain' };
+  return { text: '', sha256: '0'.repeat(64), mediaType: 'text/plain' };
 }

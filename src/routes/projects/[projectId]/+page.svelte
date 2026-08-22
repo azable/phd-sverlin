@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
 
-  import ProjectWorkspace from '$lib/projects/ProjectWorkspace.svelte';
+  import ProjectWorkspace from '$lib/client/projects/ProjectWorkspace.svelte';
 
   const at = $derived.by(() => {
     const value = page.url.searchParams.get('at');

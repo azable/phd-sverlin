@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process';
 
-import { createCompileOutput } from '../src/lib/server/workspace-output.js';
+import { createCompileOutput } from '../src/lib/server/compiler/workspace-output.js';
 
 const repoRoot = process.cwd();
 const command = 'cabal';

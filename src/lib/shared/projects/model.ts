@@ -9,8 +9,6 @@
 
 import * as v from 'valibot';
 
-import type { Visualization } from '$lib/visualization/types';
-
 import {
   InvalidProjectDocumentError,
   projectEventSchema,
@@ -19,6 +17,7 @@ import {
   type ProjectEventOf
 } from './events';
 import {
+  naturalSchema,
   operationIdSchema,
   positiveSchema,
   textSchema,
@@ -31,6 +30,20 @@ export const projectDocumentSchema = v.object({
   schemaVersion: v.literal(1),
   projectId: textSchema,
   events: v.pipe(v.array(projectEventSchema), v.minLength(1))
+});
+
+/** Runtime schema for compact project-selector metadata. */
+export const projectSummarySchema = v.object({
+  projectId: textSchema,
+  title: v.string(),
+  updatedAt: v.pipe(v.string(), v.isoTimestamp()),
+  eventCount: naturalSchema
+});
+
+/** Runtime schema for the complete project API resource. */
+export const projectResourceSchema = v.object({
+  document: projectDocumentSchema,
+  projects: v.array(projectSummarySchema)
 });
 
 const commandBase = { operationId: operationIdSchema, expectedHead: positiveSchema };
@@ -76,9 +89,6 @@ export type ProjectCommandInput = ProjectCommand extends infer Command
 export type ProjectId = string;
 /** Stable identifier for a project artifact. */
 export type ArtifactId = string;
-/** Browser-visible state of the project's server-sent event connection. */
-export type ProjectConnectionState = 'connecting' | 'open' | 'reconnecting';
-
 /** Project state reconstructed from events at a specific Timeline position. */
 export type ProjectSnapshot = {
   at: EventId;
@@ -88,23 +98,11 @@ export type ProjectSnapshot = {
   activeRender?: ProjectEventOf<'visualization.rendered'>;
 };
 
-/** Complete server response used to display a project workspace. */
-export type ProjectView = {
-  document: ProjectDocument;
-  snapshot: Omit<ProjectSnapshot, 'artifacts'> & {
-    artifacts: Record<ArtifactId, ProjectArtifact & { source: string }>;
-  };
-  visualization?: Visualization;
-  projects: ProjectSummary[];
-};
+/** Complete lossless project resource returned across the network boundary. */
+export type ProjectResource = v.InferOutput<typeof projectResourceSchema>;
 
 /** Compact project metadata used by project selectors. */
-export type ProjectSummary = {
-  projectId: ProjectId;
-  title: string;
-  updatedAt: string;
-  eventCount: number;
-};
+export type ProjectSummary = v.InferOutput<typeof projectSummarySchema>;
 
 /** Result of a project command and the events it appended. */
 export type ProjectCommandResult = {
@@ -117,6 +115,14 @@ export function normalizeProjectV1(value: unknown): ProjectDocument {
   const parsed = v.safeParse(projectDocumentSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   validateEventIds(parsed.output);
+  return parsed.output;
+}
+
+/** Parse and validate a complete project transport resource. */
+export function normalizeProjectResourceV1(value: unknown): ProjectResource {
+  const parsed = v.safeParse(projectResourceSchema, value);
+  if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
+  validateEventIds(parsed.output.document);
   return parsed.output;
 }
 

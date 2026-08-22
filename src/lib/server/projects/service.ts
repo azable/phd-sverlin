@@ -13,20 +13,23 @@ import type {
   NewProjectEvent,
   ProjectEventOf,
   ProjectEventType
-} from '$lib/projects/events';
+} from '$lib/shared/projects/events';
 import type {
   ArtifactChange,
   ArtifactVersionOrigin,
-  BlobRef,
+  RecordedText,
   RenderPurpose
-} from '$lib/projects/events/values';
-import type { ProjectCommandResult, ProjectDocument, ProjectView } from '$lib/projects/model';
-import { projectHead, projectSnapshotAt } from '$lib/projects/projection';
-import { compileSource, type CompileVisualizationResult } from '$lib/server/compile-visualization';
-import { decodeVisualization } from '$lib/visualization/types';
+} from '$lib/shared/projects/events/values';
+import type {
+  ProjectCommandResult,
+  ProjectDocument,
+  ProjectResource
+} from '$lib/shared/projects/model';
+import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import { compileSource, type CompileVisualizationResult } from '$lib/server/compiler/compile';
 
 import { runProjectCommand } from './command-lock';
-import { readDslRevision } from './fingerprints';
+import { readDslRevision, recordText } from './fingerprints';
 import { projectRepository } from './repository';
 
 const minSeed = 1;
@@ -35,7 +38,7 @@ const entryArtifactId = 'dsl-main';
 
 type RecordedCompilationBase = {
   document: ProjectDocument;
-  source: BlobRef;
+  source: RecordedText;
   seed: number;
   operationId: string;
 };
@@ -46,7 +49,7 @@ export type RecordedCompilation = RecordedCompilationBase &
     | {
         result: Extract<CompileVisualizationResult, { ok: true }>;
         compileEvent: NewProjectEvent<'compilation.succeeded'>;
-        render: BlobRef;
+        render: RecordedText;
       }
     | {
         result: Extract<CompileVisualizationResult, { ok: false }>;
@@ -67,11 +70,7 @@ export async function createProject(title = 'Untitled visualization'): Promise<P
     payload: { title, entryArtifactId }
   };
   let document = await projectRepository.create({ schemaVersion: 1, projectId, events: [root] });
-  const content = await projectRepository.putBlob(
-    projectId,
-    bundledInitialSource,
-    'text/x-sverlin'
-  );
+  const content = recordText(bundledInitialSource, 'text/x-sverlin');
   document = await appendProjectEvents(document, [
     draftEvent({
       type: 'artifact.version-created',
@@ -96,33 +95,10 @@ export async function createProject(title = 'Untitled visualization'): Promise<P
   return renderDocument(document, randomInt(minSeed, maxSeedExclusive), 'initial', operationId);
 }
 
-/** Load a project, reconstruct the requested state, and hydrate its blobs for the UI. */
-export async function loadProjectView(projectId: string, at?: EventId): Promise<ProjectView> {
+/** Load the complete project document and project selector metadata. */
+export async function loadProjectResource(projectId: string): Promise<ProjectResource> {
   const document = await projectRepository.load(projectId);
-  const snapshot = projectSnapshotAt(document, at);
-  const artifacts = Object.fromEntries(
-    await Promise.all(
-      Object.entries(snapshot.artifacts).map(async ([artifactId, artifact]) => [
-        artifactId,
-        {
-          ...artifact,
-          source: await projectRepository.readTextBlob(projectId, artifact.content)
-        }
-      ])
-    )
-  );
-  const visualization = snapshot.activeRender
-    ? decodeVisualization(
-        await projectRepository.readTextBlob(projectId, snapshot.activeRender.payload.render)
-      )
-    : undefined;
-
-  return {
-    document,
-    snapshot: { ...snapshot, artifacts },
-    ...(visualization ? { visualization } : {}),
-    projects: await projectRepository.list()
-  };
+  return { document, projects: await projectRepository.list() };
 }
 
 /** Compile the current artifact with a new seed and record the resulting events. */
@@ -177,11 +153,7 @@ export function updateProjectArtifact(options: {
     const before = await checkedDocument(options.projectId, options.expectedHead);
     const current = projectSnapshotAt(before).artifacts[options.artifactId];
     if (!current) throw new Error(`Unknown artifact ${options.artifactId}.`);
-    const content = await projectRepository.putBlob(
-      options.projectId,
-      options.source,
-      'text/x-sverlin'
-    );
+    const content = recordText(options.source, 'text/x-sverlin');
     let document = await appendProjectEvents(before, [
       artifactVersionEvent({
         operationId: options.operationId,
@@ -251,10 +223,9 @@ async function renderDocument(
   const snapshot = projectSnapshotAt(document);
   const artifact = snapshot.artifacts[snapshot.entryArtifactId];
   if (!artifact) throw new Error('The project has no entry artifact.');
-  const sourceContent = await projectRepository.readTextBlob(document.projectId, artifact.content);
   const recorded = await compileProjectSource({
     document,
-    sourceContent,
+    sourceContent: artifact.content.text,
     source: artifact.content,
     sourceLabel: artifact.path,
     seed,
@@ -269,7 +240,7 @@ async function renderDocument(
 export async function compileProjectSource(options: {
   document: ProjectDocument;
   sourceContent: string;
-  source: BlobRef;
+  source: RecordedText;
   sourceLabel: string;
   seed: number;
   purpose: RenderPurpose;
@@ -305,21 +276,12 @@ export async function compileProjectSource(options: {
 async function recordCompileResult(options: {
   document: ProjectDocument;
   result: CompileVisualizationResult;
-  source: BlobRef;
+  source: RecordedText;
   seed: number;
   operationId: string;
 }): Promise<RecordedCompilation> {
-  const projectId = options.document.projectId;
-  const stdout = await projectRepository.putBlob(
-    projectId,
-    options.result.debug.stdout,
-    'text/plain'
-  );
-  const stderr = await projectRepository.putBlob(
-    projectId,
-    options.result.debug.stderr,
-    'text/plain'
-  );
+  const stdout = recordText(options.result.debug.stdout, 'text/plain');
+  const stderr = recordText(options.result.debug.stderr, 'text/plain');
 
   if (!options.result.ok) {
     const compileEvent = draftEvent<'compilation.failed'>({
@@ -349,11 +311,7 @@ async function recordCompileResult(options: {
     };
   }
 
-  const render = await projectRepository.putBlob(
-    projectId,
-    JSON.stringify(options.result.visualization),
-    'application/json'
-  );
+  const render = recordText(JSON.stringify(options.result.visualization), 'application/json');
   const compileEvent = draftEvent<'compilation.succeeded'>({
     type: 'compilation.succeeded',
     actor: { kind: 'system' },

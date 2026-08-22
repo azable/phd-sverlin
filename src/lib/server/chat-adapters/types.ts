@@ -5,7 +5,6 @@
  */
 
 import type {
-  ChatBotConfig,
   ChatContext,
   ChatBotParameters,
   ConversationMessage,
@@ -15,7 +14,7 @@ import type {
 /** Fully prepared request accepted by a provider adapter. */
 export type ChatAdapterRequest = {
   messages: ConversationMessage[];
-  initialPrompt: ChatBotConfig['initialPrompt'];
+  initialPrompt: string;
   context: ChatContext;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;

@@ -9,12 +9,16 @@ import { env } from '$env/dynamic/private';
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
+import type { AiProjectContext } from './ai-assistant/project-context';
 import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
 import aiAssistantBot from './ai-assistant';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
-export function createChatbot(config: ChatBotConfig, adapter: ChatAdapter): Chatbot {
-  const preparePrompt = async (request: ChatbotRequest) => ({
+export function createChatbot<Project>(
+  config: ChatBotConfig<Project>,
+  adapter: ChatAdapter
+): Chatbot<Project> {
+  const preparePrompt = async (request: ChatbotRequest<Project>) => ({
     messages: request.messages,
     initialPrompt: config.initialPrompt,
     context: await config.buildContext(request),
@@ -38,15 +42,15 @@ export function createChatbot(config: ChatBotConfig, adapter: ChatAdapter): Chat
     config,
     preparePrompt,
     generatePrepared
-  } satisfies Chatbot;
+  } satisfies Chatbot<Project>;
 }
 
-const configuredChatbots: Record<string, Chatbot> = {
+const configuredChatbots: Record<string, Chatbot<AiProjectContext>> = {
   [aiAssistantBot.id]: createChatbot(aiAssistantBot, openAIAdapter)
 };
 
 /** Return the chatbot selected by server configuration. */
-export function getChatbot(): Chatbot {
+export function getChatbot(): Chatbot<AiProjectContext> {
   const configured = env.CHATBOT_CONFIG?.trim() || aiAssistantBot.id;
   const chatbot = configuredChatbots[configured];
 

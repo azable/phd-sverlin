@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { NewProjectEvent } from '$lib/projects/events';
-import type { ProjectDocument } from '$lib/projects/model';
+import type { NewProjectEvent } from '$lib/shared/projects/events';
+import type { ProjectDocument } from '$lib/shared/projects/model';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 let projectRoot: string;

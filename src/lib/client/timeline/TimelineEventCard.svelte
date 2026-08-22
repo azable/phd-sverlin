@@ -12,8 +12,8 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import type { ProjectSession } from '$lib/projects/project-session.svelte';
-  import type { ProjectEvent } from '$lib/projects/events';
+  import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
+  import type { ProjectEvent } from '$lib/shared/projects/events';
 
   import { presentProjectEvent } from './event-presentation';
 

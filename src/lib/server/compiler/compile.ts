@@ -8,16 +8,35 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-  decodeVisualization,
-  type CompileDebug,
-  type CompileFailureKind,
-  type CompilerDiagnostic,
-  type Visualization
-} from '$lib/visualization/types';
+import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
+import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
 
-import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
+import { classifyCompileFailure, parseCompilerDiagnostics } from './diagnostics';
 import { createCompileOutput } from './workspace-output.js';
+
+/** Process and diagnostic metadata captured for one compiler invocation. */
+export type CompileDebug = {
+  command: string;
+  args: string[];
+  cwd: string;
+  outputPath?: string;
+  timeoutMs?: number;
+  timedOut?: boolean;
+  durationMs: number;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  error?: string;
+};
+
+/** Stable categories used to route and present compilation failures. */
+export type CompileFailureKind =
+  | 'source'
+  | 'pipeline'
+  | 'infrastructure'
+  | 'timeout'
+  | 'invalid-output'
+  | 'cancelled';
 
 /** Success or structured failure returned by a visualization compilation. */
 export type CompileVisualizationResult =

@@ -1,15 +1,15 @@
 import { json } from '@sveltejs/kit';
 
-import { InvalidProjectDocumentError, type EventId } from '$lib/projects/events';
+import { InvalidProjectDocumentError } from '$lib/shared/projects/events';
 import {
   parseProjectCommand,
   type ProjectCommand,
   type ProjectCommandResult
-} from '$lib/projects/model';
+} from '$lib/shared/projects/model';
 import { submitProjectFeedback } from '$lib/server/projects/commands';
 import { ProjectConflictError, ProjectNotFoundError } from '$lib/server/projects/repository';
 import {
-  loadProjectView,
+  loadProjectResource,
   renameProject,
   renderProject,
   restoreProjectArtifacts,
@@ -18,10 +18,10 @@ import {
 
 import type { RequestHandler } from './$types';
 
-/** Load the current or historical hydrated view of a project. */
-export const GET: RequestHandler = async ({ params, url }) => {
+/** Load the complete project resource; historical views are projected by consumers. */
+export const GET: RequestHandler = async ({ params }) => {
   try {
-    return json(await loadProjectView(params.projectId, readCursor(url.searchParams.get('at'))));
+    return json(await loadProjectResource(params.projectId));
   } catch (cause) {
     return projectError(cause);
   }
@@ -32,7 +32,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
   try {
     const command = parseProjectCommand(await request.json());
     await runCommand(params.projectId, command);
-    return json(await loadProjectView(params.projectId));
+    return json(await loadProjectResource(params.projectId));
   } catch (cause) {
     return projectError(cause);
   }
@@ -67,13 +67,6 @@ function runCommand(projectId: string, command: ProjectCommand): Promise<Project
     case 'restore':
       return restoreProjectArtifacts({ ...common, from: command.from, seed: command.seed });
   }
-}
-
-function readCursor(value: string | null): EventId | undefined {
-  if (value === null) return undefined;
-  const at = Number(value);
-  if (!Number.isSafeInteger(at) || at < 1) throw new InvalidProjectDocumentError('Invalid cursor.');
-  return at;
 }
 
 function projectError(cause: unknown) {

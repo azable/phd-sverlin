@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { onDestroy, untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
   import FilePlusIcon from '@lucide/svelte/icons/file-plus-2';
   import PencilIcon from '@lucide/svelte/icons/pencil';
@@ -14,20 +14,20 @@
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { Spinner } from '$lib/components/ui/spinner';
   import * as Tabs from '$lib/components/ui/tabs';
-  import FeedbackComposer from '$lib/timeline/FeedbackComposer.svelte';
-  import Timeline from '$lib/timeline/Timeline.svelte';
-  import { presentProjectEvent } from '$lib/timeline/event-presentation';
-  import { VisualizationPlayer } from '$lib/visualization/visualization-player.svelte';
-  import VisualizationToolbar from '$lib/visualization/VisualizationToolbar.svelte';
-  import VisualizationViewport from '$lib/visualization/VisualizationViewport.svelte';
-  import type { RenderInstanceId } from '$lib/visualization/types';
+  import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
+  import Timeline from '$lib/client/timeline/Timeline.svelte';
+  import { presentProjectEvent } from '$lib/client/timeline/event-presentation';
+  import { VisualizationPlayer } from '$lib/client/visualization/visualization-player.svelte';
+  import VisualizationToolbar from '$lib/client/visualization/VisualizationToolbar.svelte';
+  import VisualizationViewport from '$lib/client/visualization/VisualizationViewport.svelte';
+  import type { EventId } from '$lib/shared/projects/events';
+  import type { VisualSelection } from '$lib/shared/projects/events/values';
+  import type { RenderInstanceId } from '$lib/shared/visualization';
 
   import ProjectArtifactPanel, {
     type ProjectArtifactEditMode
   } from './ProjectArtifactPanel.svelte';
   import { ProjectSession } from './project-session.svelte';
-  import type { EventId } from './events';
-  import type { VisualSelection } from './events/values';
 
   /** Public properties for a complete project workspace. */
   type Props = { projectId: string; at?: EventId };
@@ -50,10 +50,10 @@
   const playbackDisabled = $derived(sourceEditing || !!session.pending);
   const renderDisabled = $derived(playbackDisabled || !session.atHead);
   const activeSeed = $derived(
-    readSeed(seedText, session.view?.snapshot.activeRender?.payload.seed ?? 1)
+    readSeed(seedText, session.resource ? (session.snapshot.activeRender?.payload.seed ?? 1) : 1)
   );
   const selection = $derived.by<VisualSelection | undefined>(() => {
-    const render = session.view?.snapshot.activeRender;
+    const render = session.resource ? session.snapshot.activeRender : undefined;
     if (!render || player.currentStep < 0 || selectedInstanceIds.length === 0) return undefined;
     return {
       render: render.id,
@@ -71,16 +71,22 @@
     return 'Compiling and loading…';
   });
 
-  $effect(() => {
-    void session.open(at);
+  onMount(() => {
+    void session.open();
+    return () => session.dispose();
   });
 
   $effect(() => {
-    const renderEventId = session.view?.snapshot.activeRender?.id ?? null;
+    const selectedAt = at;
+    untrack(() => session.select(selectedAt));
+  });
+
+  $effect(() => {
+    const renderEventId = session.resource ? (session.snapshot.activeRender?.id ?? null) : null;
     const visualization = session.visualization;
     if (renderEventId === loadedRenderEventId) return;
     loadedRenderEventId = renderEventId;
-    const seed = session.view?.snapshot.activeRender?.payload.seed ?? 1;
+    const seed = session.resource ? (session.snapshot.activeRender?.payload.seed ?? 1) : 1;
 
     untrack(() => {
       if (visualization) player.setVisualization(visualization, { initialStep: 0 });
@@ -90,10 +96,7 @@
     });
   });
 
-  onDestroy(() => {
-    session.dispose();
-    player.dispose();
-  });
+  onMount(() => () => player.dispose());
 
   async function regenerate(nextSeed = seedText) {
     seedText = nextSeed;
@@ -134,7 +137,7 @@
 </script>
 
 <div class="dark h-screen overflow-hidden bg-background text-foreground">
-  {#if session.view}
+  {#if session.resource}
     <main class="h-full min-w-0 overflow-x-auto" inert={!!session.pending}>
       <Resizable.PaneGroup direction="horizontal" class="min-h-full min-w-[72rem]">
         <Resizable.Pane defaultSize={35} minSize={25} class="min-w-0">

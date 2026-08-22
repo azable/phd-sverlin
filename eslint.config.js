@@ -51,9 +51,57 @@ export default defineConfig(
   },
   {
     files: ['src/**/*.ts', 'src/**/*.svelte'],
-    ignores: ['src/lib/components/ui/**', 'src/lib/visualization/generated/**'],
+    ignores: ['src/lib/components/ui/**', 'src/lib/shared/visualization/generated/**'],
     rules: {
       '@typescript-eslint/explicit-module-boundary-types': 'error'
+    }
+  },
+  {
+    files: ['src/lib/shared/**/*.{ts,js}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['$lib/client/**', '$lib/server/**', '$app/**', '$env/**', 'node:*', 'svelte'],
+              message: 'Shared contracts and projections must remain environment-neutral.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['src/lib/client/**/*.{ts,js,svelte}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['$lib/server/**', '$env/**', 'node:*'],
+              message: 'Client modules cannot depend on server-only code.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['src/lib/server/**/*.{ts,js}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['$lib/client/**'],
+              message: 'Server modules cannot depend on browser-only code.'
+            }
+          ]
+        }
+      ]
     }
   }
 );

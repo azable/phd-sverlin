@@ -10,6 +10,7 @@ import path from 'node:path';
 import bundledDslInterfaceContext from './dsl-interface.md?raw';
 
 import type { ChatBotConfig } from '../types';
+import type { AiProjectContext } from './project-context';
 
 /** Workspace path read on each development request for live prompt updates. */
 export const dslInterfacePath = path.resolve(
@@ -60,4 +61,4 @@ export default {
       required: ['reply', 'sourceArtifactContent']
     }
   }
-} satisfies ChatBotConfig;
+} satisfies ChatBotConfig<AiProjectContext>;

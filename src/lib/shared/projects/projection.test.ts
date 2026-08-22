@@ -7,11 +7,11 @@ import {
   type ProjectEventOf
 } from './events';
 import { normalizeProjectV1, parseProjectCommand, type ProjectDocument } from './model';
-import { projectEventChangesState, projectSnapshotAt } from './projection';
+import { projectSnapshotAt } from './projection';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 const hash = '0'.repeat(64);
-const blob = { sha256: hash, byteLength: 0, mediaType: 'application/json' };
+const recorded = { text: '{}', sha256: hash, mediaType: 'application/json' };
 
 describe('project model and projection', () => {
   it('uses each event 1-based array position as its stable ID', () => {
@@ -57,7 +57,7 @@ describe('project model and projection', () => {
       payload: {
         purpose: 'manual-edit',
         input: 'committed-artifact',
-        source: blob,
+        source: recorded,
         sourceLabel: 'Main.sverlin',
         seed: 1,
         dslRevision: {
@@ -92,16 +92,13 @@ describe('project model and projection', () => {
     });
   });
 
-  it('classifies state-changing events from the state transition registry', () => {
-    const events = documentWithHistory().events;
-    expect(events.map(projectEventChangesState)).toEqual([true, true, true, true, true]);
-    expect(
-      projectEventChangesState(
-        event(6, 'assistant.responded', {
-          text: 'Done'
-        })
-      )
-    ).toBe(false);
+  it('ignores lifecycle-only events when reconstructing state', () => {
+    const document = documentWithHistory();
+    const withResponse = {
+      ...document,
+      events: [...document.events, event(6, 'assistant.responded', { text: 'Done' })]
+    };
+    expect(projectSnapshotAt(withResponse)).toEqual({ ...projectSnapshotAt(document), at: 6 });
   });
 });
 
@@ -120,12 +117,12 @@ function documentWithHistory(): ProjectDocument {
               artifactId: 'dsl-main',
               path: 'Main.sverlin',
               language: 'sverlin',
-              content: { ...blob, mediaType: 'text/x-sverlin' }
+              content: { ...recorded, text: 'initial', mediaType: 'text/x-sverlin' }
             }
           }
         ]
       }),
-      event(3, 'visualization.rendered', { seed: 1, source: blob, render: blob }),
+      event(3, 'visualization.rendered', { seed: 1, source: recorded, render: recorded }),
       event(4, 'artifact.version-created', {
         origin: { kind: 'manual-edit' },
         changes: [
@@ -135,15 +132,20 @@ function documentWithHistory(): ProjectDocument {
               artifactId: 'dsl-main',
               path: 'Main.sverlin',
               language: 'sverlin',
-              content: { ...blob, sha256: '1'.repeat(64), mediaType: 'text/x-sverlin' }
+              content: {
+                ...recorded,
+                text: 'edited',
+                sha256: '1'.repeat(64),
+                mediaType: 'text/x-sverlin'
+              }
             }
           }
         ]
       }),
       event(5, 'visualization.rendered', {
         seed: 2,
-        source: { ...blob, sha256: '1'.repeat(64) },
-        render: { ...blob, sha256: '2'.repeat(64) }
+        source: { ...recorded, text: 'edited', sha256: '1'.repeat(64) },
+        render: { ...recorded, text: '{"seed":2}', sha256: '2'.repeat(64) }
       })
     ]
   } as ProjectDocument;

@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 
-import type { ProjectEvent } from '$lib/projects/events';
+import type { ProjectEvent } from '$lib/shared/projects/events';
 import { projectRepository, ProjectNotFoundError } from '$lib/server/projects/repository';
 
 import type { RequestHandler } from './$types';

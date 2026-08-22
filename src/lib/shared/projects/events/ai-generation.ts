@@ -3,10 +3,10 @@
 import * as v from 'valibot';
 
 import {
-  blobRefSchema,
   dslRevisionSchema,
   eventEnvelope,
   naturalSchema,
+  recordedTextSchema,
   sha256Schema,
   textSchema
 } from './values';
@@ -18,7 +18,7 @@ export const aiGenerationRequestedEventSchema = v.object({
   payload: v.object({
     attempt: v.picklist([1, 2]),
     purpose: v.picklist(['initial', 'repair']),
-    prompt: blobRefSchema,
+    prompt: recordedTextSchema,
     promptTemplateSha256: sha256Schema,
     dslRevision: v.optional(dslRevisionSchema),
     requestedModel: textSchema,
@@ -38,7 +38,7 @@ export const aiGenerationSucceededEventSchema = v.object({
     responseId: v.optional(textSchema),
     durationMs: naturalSchema,
     usage: v.optional(v.record(v.string(), v.number())),
-    response: blobRefSchema
+    response: recordedTextSchema
   })
 });
 
@@ -57,6 +57,6 @@ export const aiGenerationFailedEventSchema = v.object({
     ]),
     durationMs: naturalSchema,
     message: v.string(),
-    details: v.optional(blobRefSchema)
+    details: v.optional(recordedTextSchema)
   })
 });

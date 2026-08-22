@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { projectHead, projectSnapshotAt } from '$lib/projects/projection';
+import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 
 const mocks = vi.hoisted(() => ({
   compileSource: vi.fn(),
@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   generatePrepared: vi.fn()
 }));
 
-vi.mock('$lib/server/compile-visualization', () => ({ compileSource: mocks.compileSource }));
+vi.mock('$lib/server/compiler/compile', () => ({ compileSource: mocks.compileSource }));
 vi.mock('$lib/server/chat-bots/registry', () => ({
   getChatbot: () => ({
     preparePrompt: mocks.preparePrompt,
@@ -25,7 +25,12 @@ vi.mock('./fingerprints', () => ({
     repositoryCommit: 'a'.repeat(40),
     workingTree: 'clean'
   })),
-  sourceSha256: (_value: string) => 'e'.repeat(64)
+  sourceSha256: (_value: string) => 'e'.repeat(64),
+  recordText: (text: string, mediaType: string) => ({
+    text,
+    mediaType,
+    sha256: 'e'.repeat(64)
+  })
 }));
 
 let projectRoot: string;
@@ -158,7 +163,6 @@ describe('submitProjectFeedback', () => {
     );
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const { projectRepository } = await import('./repository');
     const created = await createProject('Provider audit');
 
     const result = await submitProjectFeedback({
@@ -183,9 +187,7 @@ describe('submitProjectFeedback', () => {
     if (failed?.type !== 'ai.generation-failed' || !failed.payload.details) {
       throw new Error('Expected a recorded generation failure.');
     }
-    const details = JSON.parse(
-      await projectRepository.readTextBlob(created.projectId, failed.payload.details)
-    );
+    const details = JSON.parse(failed.payload.details.text);
     expect(details.providerResponse).toEqual(providerResponse);
   });
 
@@ -212,7 +214,7 @@ describe('submitProjectFeedback', () => {
     expect(mocks.preparePrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         project: expect.objectContaining({
-          focus: {
+          selected: {
             events: [
               expect.objectContaining({
                 event: expect.objectContaining({ id: render.id }),
@@ -225,8 +227,7 @@ describe('submitProjectFeedback', () => {
                   renderSha256: render.payload.render.sha256
                 })
               })
-            ],
-            selection: undefined
+            ]
           }
         })
       })

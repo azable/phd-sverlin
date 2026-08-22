@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-import type { CompilerDiagnostic } from '$lib/visualization/types';
+import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
 
 /** User or assistant message retained as conversational context. */
 export type ConversationMessage = {
@@ -22,9 +22,9 @@ export type CompilationFeedback = {
 };
 
 /** Inputs from which a bot definition builds provider context. */
-export type ChatContextInput = {
+export type ChatContextInput<Project> = {
   messages: ConversationMessage[];
-  project: Record<string, unknown>;
+  project: Project;
   compilationFeedback?: CompilationFeedback;
 };
 
@@ -47,10 +47,10 @@ export type ChatResponseFormat = {
 };
 
 /** Static behavior and context builder for one chatbot. */
-export type ChatBotConfig = {
+export type ChatBotConfig<Project> = {
   id: string;
   initialPrompt: string;
-  buildContext: (input: ChatContextInput) => ChatContext | Promise<ChatContext>;
+  buildContext: (input: ChatContextInput<Project>) => ChatContext | Promise<ChatContext>;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;
 };
@@ -65,9 +65,9 @@ export type ChatbotPrompt = {
 };
 
 /** Project conversation inputs accepted by a configured chatbot. */
-export type ChatbotRequest = {
+export type ChatbotRequest<Project> = {
   messages: ConversationMessage[];
-  project: Record<string, unknown>;
+  project: Project;
   compilationFeedback?: CompilationFeedback;
 };
 
@@ -90,13 +90,13 @@ export type ChatbotResult = {
 export type { ChatAdapter, ChatAdapterResult } from '$lib/server/chat-adapters/types';
 
 /** Executable chatbot assembled from a bot configuration and provider adapter. */
-export interface Chatbot {
+export interface Chatbot<Project> {
   /** Stable bot identifier recorded in project events. */
   readonly id: string;
   /** Static configuration used by this bot. */
-  readonly config: ChatBotConfig;
+  readonly config: ChatBotConfig<Project>;
   /** Assemble a provider-neutral prompt from project inputs. */
-  preparePrompt(request: ChatbotRequest): Promise<ChatbotPrompt>;
+  preparePrompt(request: ChatbotRequest<Project>): Promise<ChatbotPrompt>;
   /** Generate a response from an already prepared, recordable prompt. */
   generatePrepared(prompt: ChatbotPrompt): Promise<ChatbotResult>;
 }
