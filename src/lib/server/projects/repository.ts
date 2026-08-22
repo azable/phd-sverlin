@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { normalizeProjectV1 } from '$lib/projects/schema';
 import { summarizeProject } from '$lib/projects/project';
 import type {
   BlobRef,
@@ -12,6 +11,7 @@ import type {
   ProjectId,
   ProjectSummary
 } from '$lib/projects/types';
+import { normalizeProjectV1 } from '$lib/projects/types';
 
 export class ProjectNotFoundError extends Error {
   constructor(projectId: string) {
@@ -69,29 +69,15 @@ export class FileProjectRepository {
     }
   }
 
-  async append(
-    projectId: ProjectId,
-    expectedHeadEventId: string,
-    pendingEvents: NewProjectEvent[]
-  ) {
+  async append(projectId: ProjectId, expectedHead: number, pendingEvents: NewProjectEvent[]) {
     return this.withWriteLock(projectId, async () => {
       const document = await this.load(projectId);
       const head = document.events.at(-1)!;
-      if (head.eventId !== expectedHeadEventId) throw new ProjectConflictError();
+      if (head.id !== expectedHead) throw new ProjectConflictError();
 
-      const events: ProjectEvent[] = [];
-      let parentEventId = head.eventId;
-      let sequence = head.sequence + 1;
-      for (const pending of pendingEvents) {
-        const event = {
-          ...pending,
-          sequence,
-          parentEventId
-        } as ProjectEvent;
-        events.push(event);
-        parentEventId = event.eventId;
-        sequence += 1;
-      }
+      const events = pendingEvents.map(
+        (pending, index): ProjectEvent => ({ ...pending, id: head.id + index + 1 }) as ProjectEvent
+      );
 
       const next = normalizeProjectV1({ ...document, events: [...document.events, ...events] });
       await this.writeDocument(next);
@@ -123,8 +109,7 @@ export class FileProjectRepository {
     const ref: BlobRef = {
       sha256,
       byteLength: bytes.byteLength,
-      mediaType,
-      ...(typeof value === 'string' ? { encoding: 'utf-8' as const } : {})
+      mediaType
     };
     const destination = this.blobPath(projectId, sha256);
     const temporary = `${destination}.${randomUUID()}.tmp`;

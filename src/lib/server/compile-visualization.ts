@@ -2,11 +2,12 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  CompileDebug,
-  CompiledVisualization,
-  CompileFailureKind,
-  CompilerDiagnostic
+import {
+  decodeVisualization,
+  type CompileDebug,
+  type CompiledVisualization,
+  type CompileFailureKind,
+  type CompilerDiagnostic
 } from '$lib/visualization/types';
 
 import { classifyCompileFailure, parseCompilerDiagnostics } from './compiler-diagnostics';
@@ -133,7 +134,7 @@ export async function compileSource({
   try {
     return {
       ok: true,
-      trace: JSON.parse(compiledJson) as CompiledVisualization,
+      trace: decodeVisualization(compiledJson),
       debug
     };
   } catch (err) {

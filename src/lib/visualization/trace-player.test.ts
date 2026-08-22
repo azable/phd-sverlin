@@ -55,6 +55,17 @@ describe('TracePlayer', () => {
     expect(player.elements[0].content).toBe('replacement-two');
   });
 
+  it('opens a different render at its first step by default', () => {
+    const player = new TracePlayer();
+    player.setTrace(trace(['one', 'two']));
+    player.next();
+
+    player.setTrace(trace(['replacement-one', 'replacement-two']));
+
+    expect(player.currentStep).toBe(0);
+    expect(player.elements[0].content).toBe('replacement-one');
+  });
+
   it('clamps a requested replacement step to the available timeline', () => {
     const player = new TracePlayer();
     player.setTrace(trace(['one']), { initialStep: 4 });

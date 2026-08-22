@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { projectAt } from '$lib/projects/project';
+import { projectHead } from '$lib/projects/project';
 
 const mocks = vi.hoisted(() => ({
   compileSource: vi.fn(),
@@ -20,7 +21,11 @@ vi.mock('$lib/server/chat-bots/registry', () => ({
   })
 }));
 vi.mock('./fingerprints', () => ({
-  readDslApiFingerprint: vi.fn(async () => 'f'.repeat(64)),
+  readDslRevision: vi.fn(async () => ({
+    contentSha256: 'f'.repeat(64),
+    repositoryCommit: 'a'.repeat(40),
+    workingTree: 'clean'
+  })),
   sourceSha256: (_value: string) => 'e'.repeat(64)
 }));
 
@@ -96,14 +101,15 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject('Finite repair');
-    const correlationId = '12345678-1234-4123-8123-123456789abc';
+    const operationId = '12345678-1234-4123-8123-123456789abc';
 
     const result = await submitProjectFeedback({
-      projectId: created.document.projectId,
-      expectedHeadEventId: created.headEventId,
+      projectId: created.projectId,
+      expectedHead: projectHead(created).id,
       text: 'Change the visualization',
+      focus: [],
       seed: 7,
-      correlationId
+      operationId
     });
 
     expect(mocks.generatePrepared).toHaveBeenCalledTimes(2);
@@ -117,14 +123,24 @@ describe('submitProjectFeedback', () => {
       type: 'system.notified',
       payload: { severity: 'error' }
     });
-    expect(result.appendedEvents.every((event) => event.correlationId === correlationId)).toBe(
-      true
+    expect(result.appendedEvents.every((event) => event.operationId === operationId)).toBe(true);
+    const revisionEvents = result.appendedEvents.filter(
+      (event) => event.type === 'ai.generation-requested' || event.type === 'compilation.requested'
     );
+    expect(revisionEvents).toHaveLength(4);
+    expect(
+      revisionEvents.every(
+        (event) =>
+          event.payload.dslRevision?.contentSha256 === 'f'.repeat(64) &&
+          event.payload.dslRevision.repositoryCommit === 'a'.repeat(40) &&
+          event.payload.dslRevision.workingTree === 'clean'
+      )
+    ).toBe(true);
     expect(
       result.document.events.filter(({ type }) => type === 'artifact.version-created')
     ).toHaveLength(1);
     expect(projectAt(result.document).activeRender?.payload.seed).toBe(
-      created.snapshot.activeRender?.payload.seed
+      projectAt(created).activeRender?.payload.seed
     );
   });
 
@@ -147,10 +163,12 @@ describe('submitProjectFeedback', () => {
     const created = await createProject('Provider audit');
 
     const result = await submitProjectFeedback({
-      projectId: created.document.projectId,
-      expectedHeadEventId: created.headEventId,
+      projectId: created.projectId,
+      expectedHead: projectHead(created).id,
       text: 'Create a visualization',
-      seed: 7
+      focus: [],
+      seed: 7,
+      operationId: '12345678-1234-4123-8123-123456789abc'
     });
     const failed = result.appendedEvents.find((event) => event.type === 'ai.generation-failed');
 
@@ -167,9 +185,77 @@ describe('submitProjectFeedback', () => {
       throw new Error('Expected a recorded generation failure.');
     }
     const details = JSON.parse(
-      await projectRepository.readTextBlob(created.document.projectId, failed.payload.details)
+      await projectRepository.readTextBlob(created.projectId, failed.payload.details)
     );
     expect(details.providerResponse).toEqual(providerResponse);
+  });
+
+  it('resolves focused history into historical source and render context', async () => {
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: 'No source change needed.',
+      prompt: {},
+      generation: { botId: 'ai-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject('Focused history');
+    const render = projectAt(created).activeRender!;
+
+    await submitProjectFeedback({
+      projectId: created.projectId,
+      expectedHead: projectHead(created).id,
+      text: 'Use this as context',
+      focus: [render.id],
+      seed: 7,
+      operationId: '12345678-1234-4123-8123-123456789abc'
+    });
+
+    expect(mocks.preparePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: expect.objectContaining({
+          focus: {
+            events: [
+              expect.objectContaining({
+                event: expect.objectContaining({ id: render.id }),
+                workspace: expect.objectContaining({
+                  artifacts: [expect.objectContaining({ source: expect.any(String) })]
+                }),
+                activeRender: expect.objectContaining({
+                  id: render.id,
+                  seed: render.payload.seed,
+                  renderSha256: render.payload.render.sha256
+                })
+              })
+            ],
+            selection: undefined
+          }
+        })
+      })
+    );
+  });
+
+  it('rejects a compact visual selection that does not exist in the render', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject('Selection validation');
+    const render = projectAt(created).activeRender!;
+
+    await expect(
+      submitProjectFeedback({
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        focus: [],
+        selection: {
+          render: render.id,
+          step: 99,
+          instances: [1],
+          judgement: 'undesired'
+        },
+        seed: 7,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      })
+    ).rejects.toThrow('unknown trace step');
+    expect(mocks.generatePrepared).not.toHaveBeenCalled();
   });
 });
 

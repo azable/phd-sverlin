@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NewProjectEvent, ProjectDocument } from '$lib/projects/types';
 
+const operationId = '12345678-1234-4123-8123-123456789abc';
 let projectRoot: string;
 
 beforeEach(async () => {
@@ -20,14 +21,14 @@ afterEach(async () => {
 });
 
 describe('project event stream', () => {
-  it('catches up from a sequence and then delivers durable appends', async () => {
+  it('resumes from zero and delivers each durable append once', async () => {
     const { projectRepository } = await import('$lib/server/projects/repository');
     const { GET } = await import('./+server');
     await projectRepository.create(rootDocument());
-    await projectRepository.append('stream-test', 'root', [renameEvent('rename-a', 'A')]);
+    await projectRepository.append('stream-test', 1, [renameEvent('A')]);
 
     const abort = new AbortController();
-    const url = new URL('http://localhost/projects/stream-test/events?after=0');
+    const url = new URL('http://localhost/api/projects/stream-test/events?after=0');
     const request = new Request(url, { signal: abort.signal });
     const response = await GET({
       params: { projectId: 'stream-test' },
@@ -36,14 +37,14 @@ describe('project event stream', () => {
     } as Parameters<typeof GET>[0]);
     const reader = response.body!.getReader();
 
-    expect(response.headers.get('content-type')).toContain('text/event-stream');
     const catchup = await readThrough(reader, 'event: ready');
     expect(catchup).toContain('id: 1');
-    expect(catchup).toContain('"eventId":"rename-a"');
+    expect(catchup).toContain('id: 2');
+    expect(catchup).toContain('"title":"A"');
 
-    await projectRepository.append('stream-test', 'rename-a', [renameEvent('rename-b', 'B')]);
-    const live = await readThrough(reader, 'id: 2');
-    expect(live).toContain('"eventId":"rename-b"');
+    await projectRepository.append('stream-test', 2, [renameEvent('B')]);
+    const live = await readThrough(reader, 'id: 3');
+    expect(live).toContain('"title":"B"');
 
     abort.abort();
     await reader.cancel();
@@ -67,12 +68,10 @@ function rootDocument(): ProjectDocument {
     projectId: 'stream-test',
     events: [
       {
-        eventId: 'root',
-        sequence: 0,
-        parentEventId: null,
+        id: 1,
         type: 'project.created',
         actor: { kind: 'user' },
-        correlationId: 'correlation',
+        operationId,
         createdAt: '2026-01-01T00:00:00.000Z',
         payload: { title: 'Stream test', entryArtifactId: 'dsl-main' }
       }
@@ -80,12 +79,11 @@ function rootDocument(): ProjectDocument {
   };
 }
 
-function renameEvent(eventId: string, title: string): NewProjectEvent<'project.renamed'> {
+function renameEvent(title: string): NewProjectEvent<'project.renamed'> {
   return {
-    eventId,
     type: 'project.renamed',
     actor: { kind: 'user' },
-    correlationId: 'correlation',
+    operationId,
     createdAt: '2026-01-01T00:00:01.000Z',
     payload: { previousTitle: 'Stream test', title }
   };

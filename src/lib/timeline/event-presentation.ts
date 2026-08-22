@@ -1,4 +1,3 @@
-import { eventLabel } from '$lib/projects/project';
 import type { ProjectEvent, ProjectEventType } from '$lib/projects/types';
 
 export type TimelineEventIcon =
@@ -18,113 +17,120 @@ export type TimelineEventPresentation = {
   tone: 'default' | 'destructive';
 };
 
-type PresentationDetails = Omit<TimelineEventPresentation, 'title'>;
 type Presenters = {
-  [Type in ProjectEventType]: (event: Extract<ProjectEvent, { type: Type }>) => PresentationDetails;
+  [Type in ProjectEventType]: (
+    event: Extract<ProjectEvent, { type: Type }>
+  ) => TimelineEventPresentation;
 };
 
 const presenters = {
   'project.created': (event) =>
-    details(event.payload.title, 'default', 'default', 'Creating the project…'),
+    details('Project created', event.payload.title, 'default', 'Creating the project…'),
   'project.renamed': (event) =>
-    details(event.payload.title, 'default', 'default', 'Updating the project…'),
+    details('Project renamed', event.payload.title, 'default', 'Updating the project…'),
   'feedback.submitted': (event) =>
     details(
-      event.payload.text ?? `${event.payload.attachments.length} feedback attachment(s)`,
+      'Feedback submitted',
+      event.payload.text ??
+        `${event.payload.focus.length + Number(!!event.payload.selection)} focused item(s)`,
       'message',
-      'default',
       'Feedback recorded…'
     ),
   'ai.generation-requested': (event) =>
     details(
+      `AI generation requested · attempt ${event.payload.attempt}`,
       `${event.payload.requestedModel} · ${event.payload.purpose}`,
       'assistant',
-      'default',
       event.payload.purpose === 'repair'
         ? 'Repairing generated source…'
         : 'Generating a visualization…'
     ),
   'ai.generation-succeeded': (event) =>
     details(
+      `AI generation completed · attempt ${event.payload.attempt}`,
       `${event.payload.model ?? event.payload.requestedModel} · ${event.payload.durationMs} ms`,
       'assistant',
-      'default',
       'Checking the generated source…'
     ),
   'ai.generation-failed': (event) =>
-    details(event.payload.message, 'failure', 'destructive', 'Recording the AI failure…'),
-  'visualization.render-requested': (event) =>
     details(
-      `${event.payload.purpose} · seed ${event.payload.seed}`,
-      'visualization',
-      'default',
-      'Preparing the visualization…'
+      `AI generation failed · attempt ${event.payload.attempt}`,
+      event.payload.message,
+      'failure',
+      'Recording the AI failure…',
+      false,
+      'destructive'
     ),
   'compilation.requested': (event) =>
     details(
+      'Compilation requested',
       `${event.payload.sourceLabel} · seed ${event.payload.seed}`,
       'code',
-      'default',
       'Compiling generated source…'
     ),
   'compilation.succeeded': (event) =>
     details(
-      `${event.payload.durationMs} ms · ${event.payload.renderSha256.slice(0, 8)}`,
+      'Compilation succeeded',
+      `${event.payload.durationMs} ms · ${event.payload.render.sha256.slice(0, 8)}`,
       'code',
-      'default',
       'Compilation succeeded; activating…'
     ),
   'compilation.failed': (event) =>
     details(
+      'Compilation failed',
       event.payload.diagnostics[0]?.message ?? event.payload.error ?? event.payload.failureKind,
       'failure',
-      'destructive',
       event.payload.repairEligible
         ? 'Compilation failed; checking repair…'
-        : 'Recording the compilation failure…'
+        : 'Recording the compilation failure…',
+      false,
+      'destructive'
     ),
   'artifact.version-created': (event) =>
     details(
+      'Artifact version created',
       event.payload.changes
         .map((change) =>
           change.operation === 'delete' ? `Deleted ${change.artifactId}` : change.artifact.path
         )
         .join(', '),
       'code',
-      'default',
       'Loading the updated artifact…',
       true
     ),
   'visualization.rendered': (event) =>
     details(
-      `seed ${event.payload.seed} · ${event.payload.renderSha256.slice(0, 8)}`,
+      `Visualization rendered · seed ${event.payload.seed}`,
+      event.payload.render.sha256.slice(0, 8),
       'visualization',
-      'default',
       'Loading the visualization…',
       true
     ),
   'assistant.responded': (event) =>
-    details(event.payload.text, 'assistant', 'default', 'Finishing…'),
+    details('Assistant responded', event.payload.text, 'assistant', 'Finishing…'),
   'system.notified': (event) =>
     details(
+      'System notice',
       event.payload.message,
       event.payload.severity === 'error' ? 'failure' : 'default',
-      event.payload.severity === 'error' ? 'destructive' : 'default',
-      event.payload.severity === 'error' ? 'Finishing with an error…' : 'Finishing…'
+      event.payload.severity === 'error' ? 'Finishing with an error…' : 'Finishing…',
+      false,
+      event.payload.severity === 'error' ? 'destructive' : 'default'
     )
 } satisfies Presenters;
 
 export function presentProjectEvent(event: ProjectEvent): TimelineEventPresentation {
-  const present = presenters[event.type] as (value: ProjectEvent) => PresentationDetails;
-  return { title: eventLabel(event), ...present(event) };
+  const present = presenters[event.type] as (value: ProjectEvent) => TimelineEventPresentation;
+  return present(event);
 }
 
 function details(
+  title: string,
   detail: string,
   icon: TimelineEventIcon,
-  tone: TimelineEventPresentation['tone'],
   progress: string,
-  restorable = false
-): PresentationDetails {
-  return { detail, icon, progress, restorable, tone };
+  restorable = false,
+  tone: TimelineEventPresentation['tone'] = 'default'
+): TimelineEventPresentation {
+  return { title, detail, icon, progress, restorable, tone };
 }

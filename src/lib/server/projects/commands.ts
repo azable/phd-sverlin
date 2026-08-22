@@ -1,23 +1,20 @@
-import { randomUUID } from 'node:crypto';
-
 import { projectAt, projectHead } from '$lib/projects/project';
 import type {
   ArtifactChange,
-  FeedbackAttachment,
+  EventId,
   NewProjectEvent,
   ProjectCommandResult,
   ProjectDocument,
-  SelectedVisualElement,
-  VisualSelectionAttachment
+  VisualSelection
 } from '$lib/projects/types';
 import { getChatbot } from '$lib/server/chat-bots/registry';
 import type { CompilationFeedback } from '$lib/server/chat-bots/types';
 import { formatDiagnosticSummary } from '$lib/server/compiler-diagnostics';
-import type { LiveElement } from '$lib/visualization/types';
+import { decodeVisualization } from '$lib/visualization/types';
 
 import { buildProjectPrompt } from './context';
 import { runProjectCommand } from './command-lock';
-import { readDslApiFingerprint, sourceSha256 } from './fingerprints';
+import { readDslRevision, sourceSha256 } from './fingerprints';
 import { projectRepository } from './repository';
 import {
   activateCompiledRender,
@@ -26,56 +23,49 @@ import {
   draftEvent
 } from './service';
 
-export async function submitProjectFeedback(options: {
+export function submitProjectFeedback(options: {
   projectId: string;
-  expectedHeadEventId: string;
+  expectedHead: EventId;
   text?: string;
-  attachments?: FeedbackAttachment[];
+  focus: EventId[];
+  selection?: VisualSelection;
   seed: number;
-  correlationId?: string;
+  operationId: string;
 }): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, () => submitProjectFeedbackUnlocked(options));
 }
 
 async function submitProjectFeedbackUnlocked(options: {
   projectId: string;
-  expectedHeadEventId: string;
+  expectedHead: EventId;
   text?: string;
-  attachments?: FeedbackAttachment[];
+  focus: EventId[];
+  selection?: VisualSelection;
   seed: number;
-  correlationId?: string;
+  operationId: string;
 }): Promise<ProjectCommandResult> {
   const before = await projectRepository.load(options.projectId);
-  assertHead(before, options.expectedHeadEventId);
-  const attachments = await validateAttachments(before, options.attachments ?? []);
+  assertHead(before, options.expectedHead);
+  const focus = validateFocus(before, options.focus);
+  const selection = options.selection
+    ? await validateSelection(before, options.selection)
+    : undefined;
   const text = options.text?.trim();
-  if (!text && attachments.length === 0) throw new Error('Feedback cannot be empty.');
+  if (!text && focus.length === 0 && !selection) throw new Error('Feedback cannot be empty.');
 
-  const correlationId = options.correlationId ?? randomUUID();
   const feedback = draftEvent<'feedback.submitted'>({
     type: 'feedback.submitted',
     actor: { kind: 'user' },
-    correlationId,
-    payload: { ...(text ? { text } : {}), attachments }
+    operationId: options.operationId,
+    payload: { ...(text ? { text } : {}), focus, ...(selection ? { selection } : {}) }
   });
   let document = await appendProjectEvents(before, [feedback]);
 
-  const first = await runGeneration({
-    document,
-    feedbackEventId: feedback.eventId,
-    attempt: 1,
-    correlationId
-  });
+  const first = await runGeneration({ document, attempt: 1, operationId: options.operationId });
   document = first.document;
   if (!first.ok) return finishMutation(before, document);
   if (first.result.sourceArtifactContent === undefined) {
-    document = await appendAssistantResponse(
-      document,
-      feedback.eventId,
-      first.generationEvent.eventId,
-      first.result.reply,
-      correlationId
-    );
+    document = await appendAssistantResponse(document, first.result.reply, options.operationId);
     return finishMutation(before, document);
   }
 
@@ -84,7 +74,8 @@ async function submitProjectFeedbackUnlocked(options: {
     generationEvent: first.generationEvent,
     candidate: first.result.sourceArtifactContent,
     seed: options.seed,
-    correlationId
+    operationId: options.operationId,
+    attempt: 1
   });
   document = firstCompile.document;
   if (firstCompile.recorded.result.ok) {
@@ -92,38 +83,38 @@ async function submitProjectFeedbackUnlocked(options: {
       document,
       recorded: firstCompile.recorded,
       generationEvent: first.generationEvent,
-      feedbackEventId: feedback.eventId,
       reply: first.result.reply,
       candidate: first.result.sourceArtifactContent,
-      correlationId
+      operationId: options.operationId
     });
     return finishMutation(before, document);
   }
 
-  const failedEvent = firstCompile.recorded.compileEvent;
-  if (failedEvent.type !== 'compilation.failed' || !failedEvent.payload.repairEligible) {
+  const failed = firstCompile.recorded;
+  if (failed.result.ok) throw new Error('A successful compilation was not activated.');
+  if (
+    failed.compileEvent.type !== 'compilation.failed' ||
+    !failed.compileEvent.payload.repairEligible
+  ) {
     document = await appendSystemFailure(
       document,
-      `The proposed source could not be compiled. ${formatDiagnosticSummary(firstCompile.recorded.result.diagnostics)}`,
-      [failedEvent.eventId],
-      correlationId
+      `The proposed source could not be compiled. ${formatDiagnosticSummary(failed.result.diagnostics)}`,
+      options.operationId
     );
     return finishMutation(before, document);
   }
 
   const repairFeedback: CompilationFeedback = {
     attempt: 1,
-    compilationEventId: failedEvent.eventId,
+    compilationEventId: projectHead(document).id,
     failedSource: first.result.sourceArtifactContent,
     assistantReply: first.result.reply,
-    diagnostics: firstCompile.recorded.result.diagnostics
+    diagnostics: failed.result.diagnostics
   };
   const repair = await runGeneration({
     document,
-    feedbackEventId: feedback.eventId,
     attempt: 2,
-    correlationId,
-    repairOfCompilationEventId: failedEvent.eventId,
+    operationId: options.operationId,
     compilationFeedback: repairFeedback
   });
   document = repair.document;
@@ -132,8 +123,7 @@ async function submitProjectFeedbackUnlocked(options: {
     document = await appendSystemFailure(
       document,
       'The repair attempt did not return corrected source. The accepted artifact is unchanged.',
-      [repair.generationEvent.eventId],
-      correlationId
+      options.operationId
     );
     return finishMutation(before, document);
   }
@@ -143,15 +133,15 @@ async function submitProjectFeedbackUnlocked(options: {
     generationEvent: repair.generationEvent,
     candidate: repair.result.sourceArtifactContent,
     seed: options.seed,
-    correlationId
+    operationId: options.operationId,
+    attempt: 2
   });
   document = repairCompile.document;
   if (!repairCompile.recorded.result.ok) {
     document = await appendSystemFailure(
       document,
       `The corrected source still failed compilation. The accepted artifact is unchanged. ${formatDiagnosticSummary(repairCompile.recorded.result.diagnostics)}`,
-      [repairCompile.recorded.compileEvent.eventId],
-      correlationId
+      options.operationId
     );
     return finishMutation(before, document);
   }
@@ -160,20 +150,17 @@ async function submitProjectFeedbackUnlocked(options: {
     document,
     recorded: repairCompile.recorded,
     generationEvent: repair.generationEvent,
-    feedbackEventId: feedback.eventId,
     reply: repair.result.reply,
     candidate: repair.result.sourceArtifactContent,
-    correlationId
+    operationId: options.operationId
   });
   return finishMutation(before, document);
 }
 
 async function runGeneration(options: {
   document: ProjectDocument;
-  feedbackEventId: string;
   attempt: 1 | 2;
-  correlationId: string;
-  repairOfCompilationEventId?: string;
+  operationId: string;
   compilationFeedback?: CompilationFeedback;
 }) {
   const chatbot = getChatbot();
@@ -186,37 +173,32 @@ async function runGeneration(options: {
       ...(options.compilationFeedback ? { compilationFeedback: options.compilationFeedback } : {})
     });
   } catch (error) {
-    const document = await appendSystemFailure(
-      options.document,
-      safeErrorMessage(error),
-      [options.feedbackEventId],
-      options.correlationId
-    );
-    return { ok: false as const, document };
+    return {
+      ok: false as const,
+      document: await appendSystemFailure(
+        options.document,
+        safeErrorMessage(error),
+        options.operationId
+      )
+    };
   }
 
-  const promptJson = JSON.stringify(prompt);
   const promptRef = await projectRepository.putBlob(
     options.document.projectId,
-    promptJson,
+    JSON.stringify(prompt),
     'application/json'
   );
+  const dslRevision = await readDslRevision();
   const request = draftEvent<'ai.generation-requested'>({
     type: 'ai.generation-requested',
     actor: { kind: 'system' },
-    correlationId: options.correlationId,
-    causationEventId: options.repairOfCompilationEventId ?? options.feedbackEventId,
+    operationId: options.operationId,
     payload: {
       attempt: options.attempt,
       purpose: options.attempt === 1 ? 'initial' : 'repair',
-      feedbackEventId: options.feedbackEventId,
-      ...(options.repairOfCompilationEventId
-        ? { repairOfCompilationEventId: options.repairOfCompilationEventId }
-        : {}),
       prompt: promptRef,
-      promptSha256: promptRef.sha256,
       promptTemplateSha256: sourceSha256(prompt.initialPrompt),
-      ...(await optionalDslFingerprint()),
+      ...(dslRevision ? { dslRevision } : {}),
       requestedModel: prompt.parameters.model,
       parameters: { ...prompt.parameters }
     }
@@ -237,32 +219,19 @@ async function runGeneration(options: {
       ),
       'application/json'
     );
-    const candidateSource =
-      result.sourceArtifactContent !== undefined
-        ? await projectRepository.putBlob(
-            document.projectId,
-            result.sourceArtifactContent,
-            'text/x-sverlin'
-          )
-        : undefined;
     const generationEvent = draftEvent<'ai.generation-succeeded'>({
       type: 'ai.generation-succeeded',
       actor: { kind: 'assistant', botId: result.generation.botId },
-      correlationId: options.correlationId,
-      causationEventId: request.eventId,
+      operationId: options.operationId,
       payload: {
-        requestEventId: request.eventId,
         attempt: options.attempt,
         adapterId: result.generation.adapterId,
-        botId: result.generation.botId,
         requestedModel: prompt.parameters.model,
         ...(result.generation.model ? { model: result.generation.model } : {}),
         ...(result.generation.responseId ? { responseId: result.generation.responseId } : {}),
         durationMs: Math.round(performance.now() - startedAt),
         ...(result.generation.usage ? { usage: result.generation.usage } : {}),
-        response,
-        ...(candidateSource ? { candidateSource } : {}),
-        reply: result.reply
+        response
       }
     });
     document = await appendProjectEvents(document, [generationEvent]);
@@ -277,10 +246,8 @@ async function runGeneration(options: {
     const failed = draftEvent<'ai.generation-failed'>({
       type: 'ai.generation-failed',
       actor: { kind: 'system' },
-      correlationId: options.correlationId,
-      causationEventId: request.eventId,
+      operationId: options.operationId,
       payload: {
-        requestEventId: request.eventId,
         attempt: options.attempt,
         failureKind: generationFailureKind(error),
         durationMs: Math.round(performance.now() - startedAt),
@@ -289,30 +256,24 @@ async function runGeneration(options: {
       }
     });
     document = await appendProjectEvents(document, [failed]);
-    document = await appendSystemFailure(
-      document,
-      failed.payload.message,
-      [failed.eventId],
-      options.correlationId
-    );
+    document = await appendSystemFailure(document, failed.payload.message, options.operationId);
     return { ok: false as const, document };
   }
 }
 
 async function compileCandidate(options: {
   document: ProjectDocument;
-  generationEvent: Extract<NewProjectEvent, { type: 'ai.generation-succeeded' }>;
+  generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
   candidate: string;
   seed: number;
-  correlationId: string;
+  operationId: string;
+  attempt: 1 | 2;
 }) {
-  const source =
-    options.generationEvent.payload.candidateSource ??
-    (await projectRepository.putBlob(
-      options.document.projectId,
-      options.candidate,
-      'text/x-sverlin'
-    ));
+  const source = await projectRepository.putBlob(
+    options.document.projectId,
+    options.candidate,
+    'text/x-sverlin'
+  );
   const recorded = await compileProjectSource({
     document: options.document,
     sourceContent: options.candidate,
@@ -321,7 +282,8 @@ async function compileCandidate(options: {
     seed: options.seed,
     purpose: 'assistant-edit',
     input: 'assistant-candidate',
-    correlationId: options.correlationId
+    operationId: options.operationId,
+    attempt: options.attempt
   });
   return { document: recorded.document, recorded };
 }
@@ -329,145 +291,92 @@ async function compileCandidate(options: {
 async function acceptCandidate(options: {
   document: ProjectDocument;
   recorded: Awaited<ReturnType<typeof compileProjectSource>>;
-  generationEvent: Extract<NewProjectEvent, { type: 'ai.generation-succeeded' }>;
-  feedbackEventId: string;
+  generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
   reply: string;
   candidate: string;
-  correlationId: string;
+  operationId: string;
 }) {
   const snapshot = projectAt(options.document);
   const current = snapshot.artifacts[snapshot.entryArtifactId];
   if (!current) throw new Error('The project has no entry artifact.');
-  const content =
-    options.generationEvent.payload.candidateSource ??
-    (await projectRepository.putBlob(
-      options.document.projectId,
-      options.candidate,
-      'text/x-sverlin'
-    ));
+  const content = await projectRepository.putBlob(
+    options.document.projectId,
+    options.candidate,
+    'text/x-sverlin'
+  );
   const change: ArtifactChange = {
     operation: 'upsert',
-    artifact: { ...current, content, contentSha256: content.sha256 }
+    artifact: { ...current, content }
   };
-  const artifactEvent = draftEvent<'artifact.version-created'>({
-    type: 'artifact.version-created',
-    actor: { kind: 'assistant', botId: options.generationEvent.payload.botId },
-    correlationId: options.correlationId,
-    causationEventId: options.generationEvent.eventId,
-    payload: {
-      origin: { kind: 'assistant-edit', generationEventId: options.generationEvent.eventId },
-      changes: [change]
-    }
-  });
-  let document = await appendProjectEvents(options.document, [artifactEvent]);
-  document = await activateCompiledRender({ ...options.recorded, document });
-  return appendAssistantResponse(
-    document,
-    options.feedbackEventId,
-    options.generationEvent.eventId,
-    options.reply,
-    options.correlationId
-  );
-}
-
-async function appendAssistantResponse(
-  document: ProjectDocument,
-  feedbackEventId: string,
-  generationEventId: string,
-  text: string,
-  correlationId: string
-) {
-  const event = draftEvent<'assistant.responded'>({
-    type: 'assistant.responded',
-    actor: { kind: 'assistant', botId: 'ai-assistant' },
-    correlationId,
-    causationEventId: generationEventId,
-    payload: { feedbackEventId, generationEventId, text }
-  });
-  return appendProjectEvents(document, [event]);
-}
-
-async function appendSystemFailure(
-  document: ProjectDocument,
-  message: string,
-  relatedEventIds: string[],
-  correlationId: string
-) {
-  const event = draftEvent<'system.notified'>({
-    type: 'system.notified',
-    actor: { kind: 'system' },
-    correlationId,
-    causationEventId: relatedEventIds.at(-1),
-    payload: { severity: 'error', message, relatedEventIds }
-  });
-  return appendProjectEvents(document, [event]);
-}
-
-async function validateAttachments(
-  document: ProjectDocument,
-  attachments: FeedbackAttachment[]
-): Promise<FeedbackAttachment[]> {
-  const events = new Map(document.events.map((event) => [event.eventId, event]));
-  return Promise.all(
-    attachments.map(async (attachment) => {
-      if (attachment.kind === 'timeline-reference') {
-        for (const eventId of attachment.eventIds) {
-          if (!events.has(eventId)) throw new Error(`Unknown referenced event ${eventId}.`);
-        }
-        return attachment;
-      }
-
-      const renderEvent = events.get(attachment.renderEventId);
-      if (renderEvent?.type !== 'visualization.rendered') {
-        throw new Error('The visual selection references an unknown render.');
-      }
-      const trace = JSON.parse(
-        await projectRepository.readTextBlob(document.projectId, renderEvent.payload.render)
-      );
-      const step = trace.steps?.[attachment.step.index];
-      if (!step) throw new Error('The visual selection references an unknown trace step.');
-      const selectedIds = new Set(attachment.elements.map((element) => element.instanceId));
-      const instances = step.instances.filter((instance: { id: number }) =>
-        selectedIds.has(instance.id)
-      );
-      if (instances.length !== selectedIds.size) {
-        throw new Error('The visual selection contains an unknown render instance.');
-      }
-      const elements = instances.map((instance: { id: number; elementId: number }) => {
-        const element = trace.elements.find(
-          (candidate: LiveElement) => candidate.id === instance.elementId
-        );
-        if (!element) throw new Error('The visual selection contains an unknown element.');
-        return {
-          elementId: element.id,
-          instanceId: instance.id,
-          role: element.role,
-          ...(element.content ? { content: element.content } : {}),
-          kind: element.kind,
-          style: element.style,
-          styleVariables: element.styleVariables
-        } satisfies SelectedVisualElement;
-      });
-      return {
-        ...attachment,
-        step: { index: attachment.step.index, label: step.label },
-        elements
-      } satisfies VisualSelectionAttachment;
+  let document = await appendProjectEvents(options.document, [
+    draftEvent({
+      type: 'artifact.version-created',
+      actor: options.generationEvent.actor,
+      operationId: options.operationId,
+      payload: { origin: { kind: 'assistant-edit' }, changes: [change] }
     })
+  ]);
+  document = await activateCompiledRender({ ...options.recorded, document });
+  return appendAssistantResponse(document, options.reply, options.operationId);
+}
+
+function appendAssistantResponse(document: ProjectDocument, text: string, operationId: string) {
+  return appendProjectEvents(document, [
+    draftEvent({
+      type: 'assistant.responded',
+      actor: { kind: 'assistant', botId: 'ai-assistant' },
+      operationId,
+      payload: { text }
+    })
+  ]);
+}
+
+function appendSystemFailure(document: ProjectDocument, message: string, operationId: string) {
+  return appendProjectEvents(document, [
+    draftEvent({
+      type: 'system.notified',
+      actor: { kind: 'system' },
+      operationId,
+      payload: { severity: 'error', message }
+    })
+  ]);
+}
+
+function validateFocus(document: ProjectDocument, focus: EventId[]) {
+  const unique = [...new Set(focus)];
+  for (const id of unique) {
+    if (document.events[id - 1]?.id !== id) throw new Error(`Unknown focused event ${id}.`);
+  }
+  return unique;
+}
+
+async function validateSelection(
+  document: ProjectDocument,
+  selection: VisualSelection
+): Promise<VisualSelection> {
+  const renderEvent = document.events[selection.render - 1];
+  if (renderEvent?.type !== 'visualization.rendered') {
+    throw new Error('The visual selection references an unknown render.');
+  }
+  const trace = decodeVisualization(
+    await projectRepository.readTextBlob(document.projectId, renderEvent.payload.render)
   );
+  const step = trace.steps[selection.step];
+  if (!step) throw new Error('The visual selection references an unknown trace step.');
+  const available = new Set(step.instances.map(({ id }) => id));
+  const instances = [...new Set(selection.instances)];
+  if (instances.some((id) => !available.has(id))) {
+    throw new Error('The visual selection contains an unknown render instance.');
+  }
+  return { ...selection, instances };
 }
 
 function finishMutation(before: ProjectDocument, document: ProjectDocument): ProjectCommandResult {
   return { document, appendedEvents: document.events.slice(before.events.length) };
 }
 
-async function optionalDslFingerprint() {
-  const dslApiSha256 = await readDslApiFingerprint();
-  return dslApiSha256 ? { dslApiSha256 } : {};
-}
-
-function assertHead(document: ProjectDocument, expectedHeadEventId: string) {
-  if (projectHead(document).eventId !== expectedHeadEventId) {
+function assertHead(document: ProjectDocument, expectedHead: EventId) {
+  if (projectHead(document).id !== expectedHead) {
     const error = new Error('The project changed before this operation completed.');
     error.name = 'ProjectConflictError';
     throw error;
@@ -487,8 +396,9 @@ function generationFailureKind(error: unknown) {
 function safeErrorMessage(error: unknown) {
   if (error instanceof Error && error.name === 'OpenAIConfigurationError') return error.message;
   if (error instanceof Error && error.name === 'ChatContextOverflowError') return error.message;
-  if (error instanceof Error && error.name === 'APITimeoutError')
+  if (error instanceof Error && error.name === 'APITimeoutError') {
     return 'The AI request timed out.';
+  }
   if (error instanceof Error && error.name === 'InvalidChatbotResponseError') return error.message;
   return 'The AI service could not complete this request.';
 }
@@ -506,7 +416,7 @@ function generationErrorDetails(error: unknown) {
         mediaType: 'application/json'
       };
     } catch {
-      // Fall through to the readable error when a provider object is not serializable.
+      // Use the readable error if a provider object is not serializable.
     }
   }
   return { value: summary, mediaType: 'text/plain' };

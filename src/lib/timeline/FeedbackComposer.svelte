@@ -6,8 +6,8 @@
   import * as Field from '$lib/components/ui/field';
   import * as InputGroup from '$lib/components/ui/input-group';
   import { Spinner } from '$lib/components/ui/spinner';
-  import type { VisualSelectionAttachment } from '$lib/projects/types';
   import type { ProjectSession } from '$lib/projects/project-session.svelte';
+  import type { VisualSelection } from '$lib/projects/types';
 
   let {
     session,
@@ -16,28 +16,27 @@
   }: {
     session: ProjectSession;
     seed: number;
-    selection?: VisualSelectionAttachment;
+    selection?: VisualSelection;
   } = $props();
 
-  let judgement = $state<VisualSelectionAttachment['judgement']>('neutral');
+  let text = $state('');
+  let judgement = $state<VisualSelection['judgement']>('neutral');
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!session.atHead || session.pending) return;
-    const text = session.feedbackDraft.trim();
-    const attachments = [
-      ...session.attachments,
-      ...(selection ? [{ ...selection, judgement }] : [])
-    ];
-    if (!text && attachments.length === 0) return;
-    const succeeded = await session.runAction('feedback', {
-      text,
-      attachments: JSON.stringify(attachments),
-      seed: String(seed)
+    const message = text.trim();
+    if (!message && session.focusedEvents.length === 0 && !selection) return;
+    const succeeded = await session.runCommand({
+      type: 'feedback',
+      text: message || undefined,
+      focus: session.focusedEvents,
+      selection: selection ? { ...selection, judgement } : undefined,
+      seed
     });
     if (succeeded) {
-      session.feedbackDraft = '';
-      session.attachments = [];
+      text = '';
+      session.focusedEvents = [];
       judgement = 'neutral';
     }
   }
@@ -46,24 +45,22 @@
 <form class="border-t bg-background p-4" onsubmit={submit}>
   <Field.FieldGroup>
     <Field.Field>
-      {#if session.attachments.length > 0 || selection}
+      {#if session.focusedEvents.length > 0 || selection}
         <div class="flex flex-wrap gap-2">
-          {#each session.attachments as attachment, index (index)}
+          {#each session.focusedEvents as id (id)}
             <Badge variant="secondary">
-              {attachment.kind === 'timeline-reference'
-                ? `${attachment.eventIds.length} Timeline reference(s)`
-                : `${attachment.elements.length} selected element(s)`}
+              Event #{id}
               <button
                 type="button"
-                aria-label="Remove attachment"
-                onclick={() => session.removeAttachment(index)}
+                aria-label={`Remove event ${id}`}
+                onclick={() => session.removeFocus(id)}
               >
                 <XIcon class="size-3" />
               </button>
             </Badge>
           {/each}
           {#if selection}
-            <Badge variant="outline">{selection.elements.length} selected element(s)</Badge>
+            <Badge variant="outline">{selection.instances.length} selected element(s)</Badge>
             <label class="flex items-center gap-2 text-xs text-muted-foreground">
               Mark as
               <select
@@ -82,7 +79,7 @@
       {/if}
       <InputGroup.Root class="h-auto min-h-20">
         <InputGroup.Textarea
-          bind:value={session.feedbackDraft}
+          bind:value={text}
           aria-label="Project feedback"
           placeholder="Comment on the project or selected elements…"
           disabled={!session.atHead || !!session.pending}
@@ -99,9 +96,9 @@
             size="sm"
             disabled={!session.atHead ||
               !!session.pending ||
-              (!session.feedbackDraft.trim() && !selection && session.attachments.length === 0)}
+              (!text.trim() && !selection && session.focusedEvents.length === 0)}
           >
-            {#if session.pending?.action === 'feedback'}
+            {#if session.pending?.type === 'feedback'}
               <Spinner data-icon="inline-start" />Thinking
             {:else}
               <SendIcon data-icon="inline-start" />Submit

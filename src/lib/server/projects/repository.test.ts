@@ -8,6 +8,7 @@ import type { NewProjectEvent, ProjectDocument } from '$lib/projects/types';
 
 import { FileProjectRepository, ProjectConflictError } from './repository';
 
+const operationId = '12345678-1234-4123-8123-123456789abc';
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
@@ -30,29 +31,29 @@ describe('FileProjectRepository', () => {
     });
   });
 
-  it('allows only one concurrent append to extend an expected head', async () => {
+  it('assigns numeric IDs, publishes only durable appends, and rejects a stale head', async () => {
     const repository = await temporaryRepository();
     await repository.create(rootDocument());
-    const published: string[][] = [];
+    const published: number[][] = [];
     const unsubscribe = repository.subscribe('repository-test', (events) => {
-      published.push(events.map(({ eventId }) => eventId));
+      published.push(events.map(({ id }) => id));
     });
 
     const results = await Promise.allSettled([
-      repository.append('repository-test', 'root', [renameEvent('rename-a', 'A')]),
-      repository.append('repository-test', 'root', [renameEvent('rename-b', 'B')])
+      repository.append('repository-test', 1, [renameEvent('A')]),
+      repository.append('repository-test', 1, [renameEvent('B')])
     ]);
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    const failure = results.find((result) => result.status === 'rejected');
-    expect(failure).toMatchObject({ reason: expect.any(ProjectConflictError) });
-    expect((await repository.load('repository-test')).events).toHaveLength(2);
-    expect(published).toHaveLength(1);
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: expect.any(ProjectConflictError)
+    });
+    expect((await repository.load('repository-test')).events.map(({ id }) => id)).toEqual([1, 2]);
+    expect(published).toEqual([[2]]);
 
-    const head = (await repository.load('repository-test')).events.at(-1)!;
     unsubscribe();
-    await repository.append('repository-test', head.eventId, [renameEvent('rename-c', 'C')]);
-    expect(published).toHaveLength(1);
+    await repository.append('repository-test', 2, [renameEvent('C')]);
+    expect(published).toEqual([[2]]);
   });
 });
 
@@ -68,12 +69,10 @@ function rootDocument(): ProjectDocument {
     projectId: 'repository-test',
     events: [
       {
-        eventId: 'root',
-        sequence: 0,
-        parentEventId: null,
+        id: 1,
         type: 'project.created',
         actor: { kind: 'user' },
-        correlationId: 'correlation',
+        operationId,
         createdAt: '2026-01-01T00:00:00.000Z',
         payload: { title: 'Repository test', entryArtifactId: 'dsl-main' }
       }
@@ -81,12 +80,11 @@ function rootDocument(): ProjectDocument {
   };
 }
 
-function renameEvent(eventId: string, title: string): NewProjectEvent<'project.renamed'> {
+function renameEvent(title: string): NewProjectEvent<'project.renamed'> {
   return {
-    eventId,
     type: 'project.renamed',
     actor: { kind: 'user' },
-    correlationId: 'correlation',
+    operationId,
     createdAt: '2026-01-01T00:00:01.000Z',
     payload: { previousTitle: 'Repository test', title }
   };

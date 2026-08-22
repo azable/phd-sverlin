@@ -31,17 +31,17 @@
   let loadedSha256 = $state<string | null>(null);
 
   const artifact = $derived(session.snapshot.artifacts[session.snapshot.entryArtifactId]);
-  const dirty = $derived(artifact !== undefined && draft !== artifact.content);
+  const dirty = $derived(artifact !== undefined && draft !== artifact.source);
 
   $effect(() => {
-    if (!artifact || artifact.contentSha256 === loadedSha256 || editMode === 'editing') return;
-    loadedSha256 = artifact.contentSha256;
-    draft = artifact.content;
+    if (!artifact || artifact.content.sha256 === loadedSha256 || editMode === 'editing') return;
+    loadedSha256 = artifact.content.sha256;
+    draft = artifact.source;
   });
 
   function startEditing() {
     if (!artifact || !session.atHead || session.pending) return;
-    draft = artifact.content;
+    draft = artifact.source;
     editMode = 'editing';
     void tick().then(() => editor?.focus());
   }
@@ -55,23 +55,24 @@
   }
 
   function discardDraft() {
-    if (artifact) draft = artifact.content;
+    if (artifact) draft = artifact.source;
     discardRequested = false;
     editMode = 'readonly';
   }
 
   async function saveDraft() {
     if (!artifact || !dirty || session.pending || !session.atHead) return;
-    const succeeded = await session.runAction('saveArtifact', {
+    const succeeded = await session.runCommand({
+      type: 'save',
       artifactId: artifact.artifactId,
-      content: draft,
-      seed: String(seed)
+      source: draft,
+      seed
     });
     if (succeeded) {
       const saved = session.snapshot.artifacts[session.snapshot.entryArtifactId];
       if (saved) {
-        draft = saved.content;
-        loadedSha256 = saved.contentSha256;
+        draft = saved.source;
+        loadedSha256 = saved.content.sha256;
       }
       editMode = 'readonly';
     }
@@ -86,12 +87,10 @@
         <div class="mr-auto min-w-0">
           <p class="truncate font-mono text-xs">{artifact.path}</p>
           <p class="text-xs text-muted-foreground">
-            {session.atHead
-              ? 'Current artifact'
-              : `Artifact at event #${session.snapshot.eventId.slice(0, 8)}`}
+            {session.atHead ? 'Current artifact' : `Artifact at event #${session.snapshot.at}`}
           </p>
         </div>
-        <Badge variant="outline">{artifact.contentSha256.slice(0, 8)}</Badge>
+        <Badge variant="outline">{artifact.content.sha256.slice(0, 8)}</Badge>
         {#if editMode === 'readonly'}
           <Button
             size="sm"
@@ -107,7 +106,7 @@
             <XIcon data-icon="inline-start" />Cancel
           </Button>
           <Button size="sm" onclick={saveDraft} disabled={!dirty || !!session.pending}>
-            {#if session.pending?.action === 'saveArtifact'}
+            {#if session.pending?.type === 'save'}
               <Spinner data-icon="inline-start" />Compiling
             {:else}
               <SaveIcon data-icon="inline-start" />Save & render

@@ -1,259 +1,222 @@
-import { deserialize } from '$app/forms';
-import { invalidateAll } from '$app/navigation';
+import { goto } from '$app/navigation';
+import { resolve } from '$app/paths';
 
-import { projectEventNeedsHydration } from './event-policy';
-import { normalizeProjectEventV1 } from './schema';
-import type {
-  FeedbackAttachment,
-  ProjectActionAck,
-  ProjectActionName,
-  ProjectDocument,
-  ProjectEvent,
-  ProjectPageState,
-  TimelineReferenceAttachment
+import {
+  normalizeProjectEventV1,
+  type EventId,
+  type ProjectCommandInput,
+  type ProjectConnectionState,
+  type ProjectEvent,
+  type ProjectView
 } from './types';
 
-export type PendingProjectAction = {
-  action: ProjectActionName;
-  correlationId: string;
-  startedAfterSequence: number;
+export type PendingProjectCommand = {
+  type: ProjectCommandInput['type'];
+  operationId: string;
+  startedAfter: EventId;
 };
 
-export type ProjectConnectionState = 'connecting' | 'open' | 'reconnecting';
+const projectionEvents = new Set<ProjectEvent['type']>([
+  'project.renamed',
+  'artifact.version-created',
+  'visualization.rendered'
+]);
 
 export class ProjectSession {
-  pending = $state.raw<PendingProjectAction | null>(null);
+  view = $state<ProjectView | null>(null);
+  cursor = $state<EventId | null>(null);
+  pending = $state<PendingProjectCommand | null>(null);
   connection = $state<ProjectConnectionState>('connecting');
   error = $state<string | null>(null);
-  feedbackDraft = $state('');
-  attachments = $state.raw<FeedbackAttachment[]>([]);
-  #streamedEvents = $state.raw<ProjectEvent[]>([]);
-  #refreshTail: Promise<void> = Promise.resolve();
+  focusedEvents = $state<EventId[]>([]);
 
-  constructor(private readonly getPage: () => ProjectPageState) {}
+  #projectId: string;
+  #source?: EventSource;
+  #request?: AbortController;
+  #loadVersion = 0;
 
-  get page() {
-    return this.getPage();
+  constructor(projectId: string) {
+    this.#projectId = projectId;
   }
 
-  get events() {
-    return mergeProjectEvents(this.page.document.events, this.#streamedEvents);
+  get ready() {
+    return this.view !== null;
   }
 
-  get document(): ProjectDocument {
-    return { ...this.page.document, events: this.events };
+  get document() {
+    if (!this.view) throw new Error('The project has not loaded.');
+    return this.view.document;
   }
 
   get snapshot() {
-    return this.page.snapshot;
+    if (!this.view) throw new Error('The project has not loaded.');
+    return this.view.snapshot;
   }
 
   get trace() {
-    return this.page.trace;
+    return this.view?.trace;
   }
 
-  get headEventId() {
-    return this.events.at(-1)!.eventId;
+  get projects() {
+    return this.view?.projects ?? [];
   }
 
-  get cursorEventId() {
-    return this.atHead ? this.headEventId : this.page.cursorEventId;
+  get events() {
+    return this.view?.document.events ?? [];
+  }
+
+  get head() {
+    return this.events.length;
   }
 
   get atHead() {
-    return this.page.cursorEventId === this.page.headEventId;
+    return this.cursor === null || this.cursor === this.head;
   }
 
   get pendingEvent() {
     const pending = this.pending;
     if (!pending) return undefined;
     return this.events.findLast(
-      (event) =>
-        event.sequence > pending.startedAfterSequence &&
-        event.correlationId === pending.correlationId
+      (event) => event.id > pending.startedAfter && event.operationId === pending.operationId
     );
   }
 
-  connectLive() {
-    const projectId = this.page.document.projectId;
-    const after = this.events.at(-1)!.sequence;
-    const path = `/projects/${encodeURIComponent(projectId)}/events?after=${after}`;
-    const source = new EventSource(path);
+  async open(at?: EventId) {
+    const version = ++this.#loadVersion;
+    this.disconnect();
+    this.#request?.abort();
+    const request = new AbortController();
+    this.#request = request;
     this.connection = 'connecting';
-
-    const receiveEvent = (message: MessageEvent<string>) => {
-      try {
-        this.ingest(normalizeProjectEventV1(JSON.parse(message.data)));
-      } catch {
-        this.recoverLiveState();
-      }
-    };
-    const ready = (message: MessageEvent<string>) => {
-      try {
-        const value = JSON.parse(message.data) as Record<string, unknown>;
-        if (value.schemaVersion !== 1 || value.projectId !== projectId) throw new Error();
-        this.connection = 'open';
-      } catch {
-        this.recoverLiveState();
-      }
-    };
-    const reconnecting = () => {
-      this.connection = 'reconnecting';
-    };
-
-    source.addEventListener('project-event', receiveEvent as EventListener);
-    source.addEventListener('ready', ready as EventListener);
-    source.addEventListener('error', reconnecting);
-
-    return () => {
-      source.removeEventListener('project-event', receiveEvent as EventListener);
-      source.removeEventListener('ready', ready as EventListener);
-      source.removeEventListener('error', reconnecting);
-      source.close();
-    };
-  }
-
-  attachTimelineEvent(eventId: string, relationship: TimelineReferenceAttachment['relationship']) {
-    const existing = this.attachments.find(
-      (attachment): attachment is TimelineReferenceAttachment =>
-        attachment.kind === 'timeline-reference' && attachment.relationship === relationship
-    );
-    if (existing?.eventIds.includes(eventId)) return;
-    this.attachments = existing
-      ? this.attachments.map((attachment) =>
-          attachment === existing
-            ? { ...existing, eventIds: [...existing.eventIds, eventId] }
-            : attachment
-        )
-      : [...this.attachments, { kind: 'timeline-reference', relationship, eventIds: [eventId] }];
-  }
-
-  removeAttachment(index: number) {
-    this.attachments = this.attachments.filter((_, attachmentIndex) => attachmentIndex !== index);
-  }
-
-  async runAction(action: ProjectActionName, values: Record<string, string>) {
-    if (this.pending) return false;
-    const correlationId = crypto.randomUUID();
-    this.pending = {
-      action,
-      correlationId,
-      startedAfterSequence: this.events.at(-1)!.sequence
-    };
-    this.error = null;
-    const data = new FormData();
-    data.set('correlationId', correlationId);
-    data.set('expectedHeadEventId', this.headEventId);
-    Object.entries(values).forEach(([key, value]) => data.set(key, value));
-    let succeeded = false;
+    const query = at ? `?at=${at}` : '';
 
     try {
-      const response = await fetch(`?/${action}`, {
-        method: 'POST',
-        headers: { accept: 'application/json', 'x-sveltekit-action': 'true' },
+      const response = await fetch(`/api/projects/${encodeURIComponent(this.#projectId)}${query}`, {
         cache: 'no-store',
-        body: data
+        signal: request.signal
       });
-      const result = deserialize(await response.text());
-      if (result.type === 'success') {
-        const ack = result.data as ProjectActionAck;
-        if (ack.correlationId !== correlationId)
-          throw new Error('Project action response mismatch.');
-        succeeded = true;
-      } else if (result.type === 'failure') {
-        this.error = actionError(result.data);
-      } else {
-        this.error = 'The project operation was interrupted.';
-      }
+      if (!response.ok) throw new Error(await responseError(response));
+      const view = (await response.json()) as ProjectView;
+      if (version !== this.#loadVersion) return;
+      this.view = view;
+      this.cursor = at && at !== view.document.events.length ? at : null;
+      this.connect();
+    } catch (cause) {
+      if (request.signal.aborted || version !== this.#loadVersion) return;
+      this.error = cause instanceof Error ? cause.message : 'The project could not be loaded.';
+      this.connection = 'reconnecting';
+    }
+  }
+
+  dispose() {
+    this.#loadVersion += 1;
+    this.#request?.abort();
+    this.disconnect();
+  }
+
+  toggleFocus(id: EventId) {
+    this.focusedEvents = this.focusedEvents.includes(id)
+      ? this.focusedEvents.filter((focused) => focused !== id)
+      : [...this.focusedEvents, id].toSorted((left, right) => left - right);
+  }
+
+  removeFocus(id: EventId) {
+    this.focusedEvents = this.focusedEvents.filter((focused) => focused !== id);
+  }
+
+  async createProject() {
+    if (this.pending) return;
+    const response = await fetch('/api/projects', { method: 'POST' });
+    if (!response.ok) {
+      this.error = await responseError(response);
+      return;
+    }
+    const { projectId } = (await response.json()) as { projectId: string };
+    await goto(resolve('/projects/[projectId]', { projectId }));
+  }
+
+  async runCommand(input: ProjectCommandInput) {
+    if (this.pending || !this.view) return false;
+    const operationId = crypto.randomUUID();
+    this.pending = { type: input.type, operationId, startedAfter: this.head };
+    this.error = null;
+
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(this.#projectId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...input, operationId, expectedHead: this.head })
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      await goto(resolve('/projects/[projectId]', { projectId: this.#projectId }), {
+        replaceState: this.cursor !== null
+      });
+      await this.open();
+      return true;
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : 'The project operation failed.';
-    }
-
-    try {
-      await this.refreshPage();
-    } catch (cause) {
-      this.error =
-        cause instanceof Error ? cause.message : 'The project completed but could not be reloaded.';
-      succeeded = false;
+      await this.open(this.cursor ?? undefined);
+      return false;
     } finally {
       this.pending = null;
     }
-    return succeeded;
+  }
+
+  private connect() {
+    if (!this.view) return;
+    const source = new EventSource(
+      `/api/projects/${encodeURIComponent(this.#projectId)}/events?after=${this.head}`
+    );
+    this.#source = source;
+
+    source.addEventListener('project-event', (message) => {
+      try {
+        this.ingest(normalizeProjectEventV1(JSON.parse((message as MessageEvent<string>).data)));
+      } catch {
+        void this.recover();
+      }
+    });
+    source.addEventListener('ready', () => (this.connection = 'open'));
+    source.addEventListener('error', () => (this.connection = 'reconnecting'));
+  }
+
+  private disconnect() {
+    this.#source?.close();
+    this.#source = undefined;
   }
 
   private ingest(event: ProjectEvent) {
-    const events = this.events;
-    const existing = events[event.sequence];
+    if (!this.view) return;
+    const existing = this.view.document.events[event.id - 1];
     if (existing) {
-      if (existing.eventId !== event.eventId) {
-        this.recoverLiveState();
+      if (existing.operationId !== event.operationId || existing.type !== event.type) {
+        void this.recover();
       }
       return;
     }
-
-    const head = events.at(-1)!;
-    if (event.sequence !== head.sequence + 1 || event.parentEventId !== head.eventId) {
-      this.recoverLiveState();
-      return;
-    }
-
-    const baseLength = this.page.document.events.length;
-    this.#streamedEvents = [
-      ...this.#streamedEvents.filter(({ sequence }) => sequence >= baseLength),
-      event
-    ];
-    if (projectEventNeedsHydration(event) && event.correlationId !== this.pending?.correlationId) {
-      this.refreshFromStream();
+    if (event.id !== this.head + 1) return void this.recover();
+    this.view.document.events.push(event);
+    if (
+      this.atHead &&
+      projectionEvents.has(event.type) &&
+      event.operationId !== this.pending?.operationId
+    ) {
+      void this.open();
     }
   }
 
-  private recoverLiveState() {
+  private async recover() {
     this.connection = 'reconnecting';
-    this.refreshFromStream();
-  }
-
-  private refreshFromStream() {
-    void this.refreshPage().then(
-      () => {
-        this.connection = 'open';
-      },
-      () => {
-        this.connection = 'reconnecting';
-      }
-    );
-  }
-
-  private refreshPage() {
-    const refresh = this.#refreshTail.then(async () => {
-      await invalidateAll();
-      const baseLength = this.page.document.events.length;
-      this.#streamedEvents = this.#streamedEvents.filter(({ sequence }) => sequence >= baseLength);
-    });
-    this.#refreshTail = refresh.catch(() => undefined);
-    return refresh;
+    await this.open(this.cursor ?? undefined);
   }
 }
 
-export function mergeProjectEvents(base: ProjectEvent[], streamed: ProjectEvent[]) {
-  if (streamed.length === 0) return base;
-  const merged = [...base];
-  for (const event of streamed.toSorted((left, right) => left.sequence - right.sequence)) {
-    const existing = merged[event.sequence];
-    if (existing?.eventId === event.eventId) continue;
-    if (event.sequence !== merged.length || event.parentEventId !== merged.at(-1)?.eventId) break;
-    merged.push(event);
+async function responseError(response: Response) {
+  try {
+    const value = (await response.json()) as { error?: unknown };
+    if (typeof value.error === 'string') return value.error;
+  } catch {
+    // Fall back to the status below.
   }
-  return merged;
-}
-
-function actionError(data: unknown) {
-  if (
-    typeof data === 'object' &&
-    data !== null &&
-    'error' in data &&
-    typeof data.error === 'string'
-  ) {
-    return data.error;
-  }
-  return 'The project operation failed.';
+  return `Project request failed (${response.status}).`;
 }

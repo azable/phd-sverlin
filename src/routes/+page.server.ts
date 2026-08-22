@@ -7,6 +7,6 @@ import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async () => {
   const projects = await projectRepository.list();
-  const projectId = projects[0]?.projectId ?? (await createProject()).document.projectId;
+  const projectId = projects[0]?.projectId ?? (await createProject()).projectId;
   redirect(307, `/projects/${projectId}`);
 };

@@ -1,157 +1,154 @@
 import { describe, expect, it } from 'vitest';
 
 import { projectAt } from './project';
-import { InvalidProjectDocumentError, normalizeProjectEventV1, normalizeProjectV1 } from './schema';
-import type { BlobRef, ProjectDocument, ProjectEvent } from './types';
+import {
+  InvalidProjectDocumentError,
+  normalizeProjectEventV1,
+  normalizeProjectV1,
+  parseProjectCommand,
+  type ProjectDocument,
+  type ProjectEvent
+} from './types';
 
+const operationId = '12345678-1234-4123-8123-123456789abc';
 const hash = '0'.repeat(64);
-const blob: BlobRef = {
-  sha256: hash,
-  byteLength: 0,
-  mediaType: 'text/plain',
-  encoding: 'utf-8'
-};
+const blob = { sha256: hash, byteLength: 0, mediaType: 'application/json' };
 
-describe('normalizeProjectV1', () => {
-  it('accepts additive v1 fields while preserving the known event contract', () => {
-    const document = {
-      ...rootDocument(),
-      experimentalProjectField: true,
-      events: [
-        {
-          ...rootDocument().events[0],
-          experimentalEventField: 'kept',
-          payload: {
-            ...rootDocument().events[0].payload,
-            experimentalPayloadField: 42
-          }
-        }
-      ]
-    };
+describe('project model', () => {
+  it('uses each event 1-based array position as its stable ID', () => {
+    const document = documentWithHistory();
+    expect(normalizeProjectV1(document)).toEqual(document);
 
-    const normalized = normalizeProjectV1(document) as ProjectDocument & {
-      experimentalProjectField: boolean;
-    };
-    expect(normalized.experimentalProjectField).toBe(true);
-    expect(normalized.events[0]).toMatchObject({ experimentalEventField: 'kept' });
-    expect(normalized.events[0].payload).toMatchObject({ experimentalPayloadField: 42 });
-  });
-
-  it('rejects malformed nested payloads and non-linear chains', () => {
-    const malformed = rootDocument();
-    malformed.events.push({
-      eventId: 'feedback',
-      sequence: 3,
-      parentEventId: 'not-the-head',
-      type: 'feedback.submitted',
-      actor: { kind: 'user' },
-      correlationId: 'correlation',
-      createdAt: '2026-01-01T00:00:01.000Z',
-      payload: {
-        attachments: [{ kind: 'timeline-reference', eventIds: [], relationship: 'maybe' }]
-      }
-    } as unknown as ProjectEvent);
-
-    expect(() => normalizeProjectV1(malformed)).toThrow(InvalidProjectDocumentError);
-  });
-});
-
-describe('normalizeProjectEventV1', () => {
-  it('validates a standalone streamed event payload', () => {
-    const event = rootDocument().events[0];
-    expect(normalizeProjectEventV1(event)).toEqual(event);
     expect(() =>
-      normalizeProjectEventV1({ ...event, payload: { title: '', entryArtifactId: '' } })
+      normalizeProjectV1({
+        ...document,
+        events: document.events.map((event, index) => (index === 2 ? { ...event, id: 4 } : event))
+      })
+    ).toThrow(InvalidProjectDocumentError);
+    expect(() => normalizeProjectV1({ ...document, events: document.events.slice(1) })).toThrow(
+      InvalidProjectDocumentError
+    );
+  });
+
+  it('validates operation UUIDs, command focus, and compact visual references', () => {
+    expect(() =>
+      normalizeProjectEventV1({ ...documentWithHistory().events[0], operationId: 'not-a-uuid' })
+    ).toThrow(InvalidProjectDocumentError);
+
+    expect(
+      parseProjectCommand({
+        type: 'feedback',
+        operationId,
+        expectedHead: 4,
+        text: 'Prefer these',
+        focus: [2],
+        selection: { render: 3, step: 0, instances: [1], judgement: 'preferred' },
+        seed: 9
+      })
+    ).toMatchObject({ type: 'feedback', focus: [2] });
+  });
+
+  it('validates DSL content and repository revision metadata', () => {
+    const request = {
+      id: 2,
+      operationId,
+      actor: { kind: 'system' },
+      createdAt: '2026-01-01T00:00:02.000Z',
+      type: 'compilation.requested',
+      payload: {
+        purpose: 'manual-edit',
+        input: 'committed-artifact',
+        source: blob,
+        sourceLabel: 'Main.sverlin',
+        seed: 1,
+        dslRevision: {
+          contentSha256: hash,
+          repositoryCommit: 'a'.repeat(40),
+          workingTree: 'clean'
+        }
+      }
+    };
+
+    expect(normalizeProjectEventV1(request)).toEqual(request);
+    expect(() =>
+      normalizeProjectEventV1({
+        ...request,
+        payload: {
+          ...request.payload,
+          dslRevision: { ...request.payload.dslRevision, repositoryCommit: 'not-a-commit' }
+        }
+      })
     ).toThrow(InvalidProjectDocumentError);
   });
-});
 
-describe('projectAt', () => {
-  it('reconstructs historical artifacts and never pairs a changed artifact with a stale render', () => {
-    const root = rootDocument().events[0];
-    const artifact = event('artifact', 1, root.eventId, 'artifact.version-created', {
-      origin: { kind: 'initial' },
-      changes: [
-        {
-          operation: 'upsert',
-          artifact: {
-            artifactId: 'dsl-main',
-            path: 'Main.sverlin',
-            language: 'sverlin',
-            content: blob,
-            contentSha256: hash
-          }
-        }
-      ]
-    });
-    const rendered = event('render', 2, artifact.eventId, 'visualization.rendered', {
-      renderRequestEventId: 'render-request',
-      compilationEventId: 'compile',
-      artifactVersionEventId: artifact.eventId,
-      artifactVersions: { 'dsl-main': artifact.eventId },
-      seed: 1,
-      render: blob,
-      renderSha256: hash,
-      sourceSha256: hash,
-      cacheHit: false
-    });
-    const edit = event('edit', 3, rendered.eventId, 'artifact.version-created', {
-      origin: { kind: 'manual-edit' },
-      changes: [
-        {
-          operation: 'upsert',
-          artifact: {
-            artifactId: 'dsl-main',
-            path: 'Main.sverlin',
-            language: 'sverlin',
-            content: { ...blob, sha256: '1'.repeat(64) },
-            contentSha256: '1'.repeat(64)
-          }
-        }
-      ]
-    });
-    const document = { ...rootDocument(), events: [root, artifact, rendered, edit] };
+  it('replays historical source and clears stale renders after an artifact edit', () => {
+    const document = documentWithHistory();
 
-    expect(projectAt(document, rendered.eventId).activeRender?.eventId).toBe(rendered.eventId);
-    expect(projectAt(document, edit.eventId).activeRender).toBeUndefined();
-    expect(projectAt(document, artifact.eventId).artifacts['dsl-main']?.contentSha256).toBe(hash);
+    expect(projectAt(document, 3).activeRender?.id).toBe(3);
+    expect(projectAt(document, 4).activeRender).toBeUndefined();
+    expect(projectAt(document, 2).artifacts['dsl-main']?.content.sha256).toBe(hash);
+    expect(projectAt(document).activeRender).toMatchObject({
+      id: 5,
+      payload: { source: { sha256: '1'.repeat(64) } }
+    });
   });
 });
 
-function rootDocument(): ProjectDocument {
+function documentWithHistory(): ProjectDocument {
   return {
     schemaVersion: 1,
     projectId: 'project-test',
     events: [
-      {
-        eventId: 'root',
-        sequence: 0,
-        parentEventId: null,
-        type: 'project.created',
-        actor: { kind: 'user' },
-        correlationId: 'correlation',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        payload: { title: 'Test project', entryArtifactId: 'dsl-main' }
-      }
+      event(1, 'project.created', { title: 'Test', entryArtifactId: 'dsl-main' }),
+      event(2, 'artifact.version-created', {
+        origin: { kind: 'initial' },
+        changes: [
+          {
+            operation: 'upsert',
+            artifact: {
+              artifactId: 'dsl-main',
+              path: 'Main.sverlin',
+              language: 'sverlin',
+              content: { ...blob, mediaType: 'text/x-sverlin' }
+            }
+          }
+        ]
+      }),
+      event(3, 'visualization.rendered', { seed: 1, source: blob, render: blob }),
+      event(4, 'artifact.version-created', {
+        origin: { kind: 'manual-edit' },
+        changes: [
+          {
+            operation: 'upsert',
+            artifact: {
+              artifactId: 'dsl-main',
+              path: 'Main.sverlin',
+              language: 'sverlin',
+              content: { ...blob, sha256: '1'.repeat(64), mediaType: 'text/x-sverlin' }
+            }
+          }
+        ]
+      }),
+      event(5, 'visualization.rendered', {
+        seed: 2,
+        source: { ...blob, sha256: '1'.repeat(64) },
+        render: { ...blob, sha256: '2'.repeat(64) }
+      })
     ]
-  };
+  } as ProjectDocument;
 }
 
-function event(
-  eventId: string,
-  sequence: number,
-  parentEventId: string,
-  type: ProjectEvent['type'],
-  payload: ProjectEvent['payload']
+function event<Type extends ProjectEvent['type']>(
+  id: number,
+  type: Type,
+  payload: Extract<ProjectEvent, { type: Type }>['payload']
 ) {
   return {
-    eventId,
-    sequence,
-    parentEventId,
+    id,
     type,
     actor: { kind: 'system' as const },
-    correlationId: 'correlation',
-    createdAt: `2026-01-01T00:00:0${sequence}.000Z`,
+    operationId,
+    createdAt: `2026-01-01T00:00:0${id}.000Z`,
     payload
-  } as ProjectEvent;
+  } as Extract<ProjectEvent, { type: Type }>;
 }

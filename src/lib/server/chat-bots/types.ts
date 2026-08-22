@@ -7,7 +7,7 @@ export type ConversationMessage = {
 
 export type CompilationFeedback = {
   attempt: number;
-  compilationEventId: string;
+  compilationEventId: number;
   failedSource: string;
   assistantReply: string;
   diagnostics: CompilerDiagnostic[];

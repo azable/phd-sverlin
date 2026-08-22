@@ -60,3 +60,8 @@ export type CompileFailureKind =
   | 'timeout'
   | 'invalid-output'
   | 'cancelled';
+
+/** Decode the trusted, Haskell-generated visualization wire format at its boundary. */
+export function decodeVisualization(json: string): CompiledVisualization {
+  return JSON.parse(json) as CompiledVisualization;
+}

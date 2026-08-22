@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CompilationFailedEvent, SystemNotifiedEvent } from '$lib/projects/types';
+import type { ProjectEvent } from '$lib/projects/types';
 
 import { presentProjectEvent } from './event-presentation';
 
+const operationId = '12345678-1234-4123-8123-123456789abc';
+
 describe('project event presentation', () => {
   it('describes repairable compilation failures as visible repair progress', () => {
-    const presentation = presentProjectEvent(compilationFailure());
-
-    expect(presentation).toMatchObject({
+    expect(presentProjectEvent(compilationFailure())).toMatchObject({
       icon: 'failure',
       progress: 'Compilation failed; checking repair…',
       tone: 'destructive'
@@ -21,17 +21,11 @@ describe('project event presentation', () => {
   });
 });
 
-function compilationFailure(): CompilationFailedEvent {
+function compilationFailure(): Extract<ProjectEvent, { type: 'compilation.failed' }> {
   return {
-    eventId: 'compile-failed',
-    sequence: 1,
-    parentEventId: 'root',
+    ...base(),
     type: 'compilation.failed',
-    actor: { kind: 'system' },
-    correlationId: 'correlation',
-    createdAt: '2026-01-01T00:00:01.000Z',
     payload: {
-      requestEventId: 'compile-request',
       durationMs: 10,
       exitCode: 1,
       failureKind: 'source',
@@ -45,24 +39,21 @@ function compilationFailure(): CompilationFailedEvent {
   };
 }
 
-function systemNotice(severity: SystemNotifiedEvent['payload']['severity']): SystemNotifiedEvent {
+function systemNotice(
+  severity: Extract<ProjectEvent, { type: 'system.notified' }>['payload']['severity']
+): Extract<ProjectEvent, { type: 'system.notified' }> {
+  return { ...base(), type: 'system.notified', payload: { severity, message: severity } };
+}
+
+function base() {
   return {
-    eventId: `notice-${severity}`,
-    sequence: 1,
-    parentEventId: 'root',
-    type: 'system.notified',
-    actor: { kind: 'system' },
-    correlationId: 'correlation',
-    createdAt: '2026-01-01T00:00:01.000Z',
-    payload: { severity, message: severity, relatedEventIds: [] }
+    id: 2,
+    actor: { kind: 'system' as const },
+    operationId,
+    createdAt: '2026-01-01T00:00:01.000Z'
   };
 }
 
 function blob() {
-  return {
-    sha256: '0'.repeat(64),
-    byteLength: 0,
-    mediaType: 'text/plain',
-    encoding: 'utf-8' as const
-  };
+  return { sha256: '0'.repeat(64), byteLength: 0, mediaType: 'text/plain' };
 }

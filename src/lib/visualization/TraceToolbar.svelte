@@ -20,7 +20,8 @@
     currentStep: number;
     stepCount: number;
     seedText?: string;
-    locked?: boolean;
+    playbackDisabled?: boolean;
+    renderDisabled?: boolean;
     onReset: () => void;
     onPrevious: () => void;
     onNext: () => void;
@@ -36,14 +37,16 @@
     currentStep,
     stepCount,
     seedText = $bindable(''),
-    locked = false,
+    playbackDisabled = false,
+    renderDisabled = false,
     onReset,
     onPrevious,
     onNext,
     onRegenerate
   }: Props = $props();
 
-  const busy = $derived(loadingTrace || regenerating || locked);
+  const playbackBusy = $derived(loadingTrace || playbackDisabled);
+  const renderBusy = $derived(loadingTrace || regenerating || renderDisabled);
   const minSeed = 1;
   const maxSeedExclusive = 2147483647;
 
@@ -73,25 +76,33 @@
 >
   <div class="flex flex-wrap items-center gap-3">
     <div class="flex flex-wrap items-center gap-2" aria-label="Trace playback">
-      <Button variant="outline" size="sm" onclick={onReset} disabled={!hasTrace || busy}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onclick={onReset}
+        disabled={!hasTrace || playbackBusy}
+      >
         <RotateCcwIcon data-icon="inline-start" />
         Reset
       </Button>
       <Button
         aria-label="Previous step"
+        type="button"
         variant="outline"
         size="icon-sm"
         onclick={onPrevious}
-        disabled={!canPrevious || busy}
+        disabled={!canPrevious || playbackBusy}
       >
         <ChevronLeftIcon />
       </Button>
       <Button
         aria-label="Next step"
+        type="button"
         variant="outline"
         size="icon-sm"
         onclick={onNext}
-        disabled={!canNext || busy}
+        disabled={!canNext || playbackBusy}
       >
         <ChevronRightIcon />
       </Button>
@@ -117,7 +128,7 @@
         id="next-seed"
         class="w-36"
         bind:value={seedText}
-        disabled={busy}
+        disabled={renderBusy}
         inputmode="numeric"
         placeholder="random"
         type="text"
@@ -127,14 +138,14 @@
         variant="outline"
         size="sm"
         onclick={randomizeAndRegenerate}
-        disabled={busy}
+        disabled={renderBusy}
       >
         <ShuffleIcon data-icon="inline-start" />
         Random
       </Button>
     </Field.Field>
 
-    <Button type="submit" disabled={busy}>
+    <Button type="submit" disabled={renderBusy}>
       {#if regenerating}
         <Spinner data-icon="inline-start" />
         Regenerating

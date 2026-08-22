@@ -1,6 +1,6 @@
 <script lang="ts">
+  /* eslint-disable svelte/no-navigation-without-resolve -- historyHref resolves the route before adding its query. */
   import { resolve } from '$app/paths';
-  import type { Pathname } from '$app/types';
 
   import AlertCircleIcon from '@lucide/svelte/icons/circle-alert';
   import BotIcon from '@lucide/svelte/icons/bot';
@@ -23,14 +23,21 @@
   const presentation = $derived(presentProjectEvent(event));
 
   async function restore() {
-    await session.runAction('restore', {
-      restoredFromEventId: event.eventId,
-      seed: String(seed)
+    await session.runCommand({
+      type: 'restore',
+      from: event.id,
+      seed
     });
   }
 
   function formatTime(value: string) {
     return new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(new Date(value));
+  }
+
+  function historyHref() {
+    return `${resolve('/projects/[projectId]', {
+      projectId: session.document.projectId
+    })}?at=${event.id}`;
   }
 </script>
 
@@ -53,20 +60,15 @@
   {/if}
 </span>
 
-<article aria-current={session.cursorEventId === event.eventId ? 'step' : undefined}>
+<article aria-current={session.snapshot.at === event.id ? 'step' : undefined}>
   <Card.Root size="sm">
     <Card.Header>
       <Card.Title>
-        <a
-          class="hover:underline"
-          href={resolve(
-            `/projects/${encodeURIComponent(session.document.projectId)}?at=${encodeURIComponent(event.eventId)}` as Pathname
-          )}>{presentation.title}</a
-        >
+        <a class="hover:underline" href={historyHref()}>{presentation.title}</a>
       </Card.Title>
       <Card.Action>
         <Badge variant={presentation.tone === 'destructive' ? 'destructive' : 'outline'}>
-          #{event.sequence}
+          #{event.id}
         </Badge>
       </Card.Action>
       <Card.Description class="line-clamp-4 whitespace-pre-wrap">
@@ -77,16 +79,16 @@
       <span class="mr-auto text-[0.7rem] text-muted-foreground">
         {formatTime(event.createdAt)}
       </span>
-      {#if session.atHead && event.eventId !== session.headEventId}
+      {#if event.id !== session.head}
         <Button
           size="xs"
-          variant="ghost"
-          onclick={() => session.attachTimelineEvent(event.eventId, 'reference')}
+          variant={session.focusedEvents.includes(event.id) ? 'secondary' : 'ghost'}
+          onclick={() => session.toggleFocus(event.id)}
         >
-          Attach
+          {session.focusedEvents.includes(event.id) ? 'Focused' : 'Focus'}
         </Button>
       {/if}
-      {#if presentation.restorable && event.eventId !== session.headEventId}
+      {#if presentation.restorable && event.id !== session.head}
         <Button size="xs" variant="ghost" onclick={restore} disabled={!!session.pending}>
           <RotateCcwIcon data-icon="inline-start" />Restore
         </Button>

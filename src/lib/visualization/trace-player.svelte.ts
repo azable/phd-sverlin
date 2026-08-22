@@ -1,5 +1,5 @@
+/* eslint-disable svelte/prefer-svelte-reactivity -- These Maps are ephemeral lookup tables, not reactive state. */
 import { tick } from 'svelte';
-import { SvelteMap } from 'svelte/reactivity';
 
 import type {
   CompiledVisualization,
@@ -100,12 +100,10 @@ export class TracePlayer {
 
     this.#transitionVersion += 1;
 
-    const current = new SvelteMap(this.elements.map((element) => [element.instanceId, element]));
+    const current = new Map(this.elements.map((element) => [element.instanceId, element]));
     const targetStep = this.trace.steps[step];
     const target = this.elementsForStep(targetStep.instances);
-    const instances = new SvelteMap(
-      targetStep.instances.map((instance) => [instance.id, instance])
-    );
+    const instances = new Map(targetStep.instances.map((instance) => [instance.id, instance]));
     const registry = this.elementRegistry();
 
     const next = target.map((element) => {
@@ -138,7 +136,7 @@ export class TracePlayer {
   }
 
   private elementRegistry() {
-    return new SvelteMap<VisualId, VisualElement>(
+    return new Map<VisualId, VisualElement>(
       this.trace?.elements.map((element) => [element.id, element]) ?? []
     );
   }

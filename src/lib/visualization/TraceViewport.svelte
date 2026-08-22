@@ -4,20 +4,20 @@
 
   import { Button } from '$lib/components/ui/button';
 
-  import type { HslColor, LiveElement, VisualId } from './types';
+  import type { HslColor, LiveElement, RenderInstanceId } from './types';
 
   let {
     width,
     height,
     elements,
-    selectedIds = $bindable<VisualId[]>([]),
-    onSelectionChange = (_ids: VisualId[]) => {}
+    selectedIds = $bindable<RenderInstanceId[]>([]),
+    onSelectionChange = (_ids: RenderInstanceId[]) => {}
   }: {
     width: number;
     height: number;
     elements: LiveElement[];
-    selectedIds?: VisualId[];
-    onSelectionChange?: (ids: VisualId[]) => void;
+    selectedIds?: RenderInstanceId[];
+    onSelectionChange?: (ids: RenderInstanceId[]) => void;
   } = $props();
 
   let svg = $state<SVGSVGElement | null>(null);
@@ -72,19 +72,19 @@
     if (!svg || event.button === 2) return;
 
     const target = (event.target as Element | null)?.closest<SVGGraphicsElement>(
-      '[data-visual-id]'
+      '[data-instance-id]'
     );
-    const visualIdText = target?.dataset.visualId;
-    const visualId = visualIdText === undefined ? undefined : Number(visualIdText);
+    const instanceIdText = target?.dataset.instanceId;
+    const instanceId = instanceIdText === undefined ? undefined : Number(instanceIdText);
     const wantsPan = event.button === 1 || event.altKey || event.ctrlKey;
 
-    if (visualId !== undefined && !wantsPan) {
+    if (instanceId !== undefined && !wantsPan) {
       setSelection(
         event.shiftKey
-          ? selectedIds.includes(visualId)
-            ? selectedIds.filter((id) => id !== visualId)
-            : [...selectedIds, visualId]
-          : [visualId]
+          ? selectedIds.includes(instanceId)
+            ? selectedIds.filter((id) => id !== instanceId)
+            : [...selectedIds, instanceId]
+          : [instanceId]
       );
       return;
     }
@@ -120,7 +120,9 @@
     if (dragMode === 'select' && selectionBox) {
       const dragged = selectionBox.width > 4 || selectionBox.height > 4;
       const ids = dragged
-        ? elements.filter((element) => intersects(selectionBox!, element)).map(({ id }) => id)
+        ? elements
+            .filter((element) => intersects(selectionBox!, element))
+            .map(({ instanceId }) => instanceId)
         : [];
       setSelection(event.shiftKey ? unique([...selectedIds, ...ids]) : ids);
     }
@@ -130,7 +132,7 @@
     dragMode = null;
   }
 
-  function setSelection(ids: VisualId[]) {
+  function setSelection(ids: RenderInstanceId[]) {
     selectedIds = unique(ids);
     onSelectionChange(selectedIds);
   }
@@ -177,7 +179,7 @@
     return Math.min(upper, Math.max(lower, value));
   }
 
-  function unique(ids: VisualId[]) {
+  function unique(ids: RenderInstanceId[]) {
     return [...new Set(ids)];
   }
 </script>
@@ -234,7 +236,7 @@
               transition:scale={{ duration: 300, start: 0.9 }}
             >
               <div
-                class:selected={selectedIds.includes(element.id)}
+                class:selected={selectedIds.includes(element.instanceId)}
                 class="visual-element"
                 style:opacity={style.opacity ?? 1}
                 style:padding={`${style.padding ?? 0}px`}
