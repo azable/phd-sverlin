@@ -163,9 +163,8 @@ styleValueVarsFor view =
 nodeRoot :: Node tag -> NodeVarRoot
 nodeRoot node =
   case nodeOrigin node of
-    TraceOrigin _ -> traceNodeRoot (nodeRef node)
-    GeneratedOrigin meta ->
-      generatedNodeRoot (generatedKey meta) (generatedQueryKey meta)
+    TraceOrigin _        -> traceNodeRoot (nodeRef node)
+    GeneratedOrigin meta -> generatedNodeRoot (generatedKey meta)
 
 boundsField :: LayoutAttr -> Node tag -> LayoutExpr
 boundsField field node =

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import aiAssistant, { dslInterfacePath, loadDslInterfaceContext } from '.';
+import aiAssistant, {
+  dslApiIndexPath,
+  dslInterfacePath,
+  loadDslApiIndex,
+  loadDslInterfaceContext
+} from '.';
 
 describe('AI assistant DSL interface', () => {
   it('reads the guide again for every request', async () => {
@@ -13,6 +18,33 @@ describe('AI assistant DSL interface', () => {
     await expect(loadDslInterfaceContext(readPrompt)).resolves.toBe('second revision');
     expect(readPrompt).toHaveBeenNthCalledWith(1, dslInterfacePath, 'utf8');
     expect(readPrompt).toHaveBeenNthCalledWith(2, dslInterfacePath, 'utf8');
+  });
+
+  it('reads the source-derived API index again for every request', async () => {
+    const readPrompt = vi
+      .fn()
+      .mockResolvedValueOnce('first API revision')
+      .mockResolvedValueOnce('second API revision');
+
+    await expect(loadDslApiIndex(readPrompt)).resolves.toBe('first API revision');
+    await expect(loadDslApiIndex(readPrompt)).resolves.toBe('second API revision');
+    expect(readPrompt).toHaveBeenNthCalledWith(1, dslApiIndexPath, 'utf8');
+    expect(readPrompt).toHaveBeenNthCalledWith(2, dslApiIndexPath, 'utf8');
+  });
+
+  it('supplies the complete documented facade index to the model', async () => {
+    const index = await loadDslApiIndex();
+    expect(index).toContain('# Public Sverlin DSL API index');
+    expect(index).toContain('`node` —');
+    expect(index).toContain(
+      '`fitText` — Type: `fitText :: ContentValue -> VisualizationBuilder ()`'
+    );
+
+    const context = await aiAssistant.buildContext({
+      messages: [],
+      project: {} as never
+    });
+    expect(context.dslApiIndex).toBe(index);
   });
 
   it('makes linear value flow the source of computational meaning', async () => {

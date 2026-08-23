@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createCompileOutput } from '../src/lib/server/compiler/workspace-output.js';
 
-const repoRoot = process.cwd();
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const compileRoot = path.join(repoRoot, 'compile');
+const cabalConfig = path.join(repoRoot, '.devcontainer', 'cabal.config');
+const cabalEnvironment = {
+  ...process.env,
+  CABAL_CONFIG: cabalConfig,
+  XDG_CACHE_HOME: path.join(repoRoot, '.cache'),
+  XDG_STATE_HOME: path.join(repoRoot, '.local', 'state')
+};
 const command = 'cabal';
 let userArgs = dropLeadingSeparator(process.argv.slice(2));
 const seed = readPositiveIntFlag(userArgs, '--seed') ?? undefined;
+const authoredSourcePath = readFlagValue(userArgs, '--source');
 const generatedOutput = readFlagValue(userArgs, '--output')
   ? null
   : seed
@@ -18,10 +29,18 @@ if (generatedOutput) {
   userArgs = [...userArgs, '--output', generatedOutput.outputPath];
 }
 
+if (authoredSourcePath && readFlagValue(userArgs, '--source-label') === null) {
+  userArgs = [...userArgs, '--source-label', authoredSourcePath];
+}
+
+for (const flag of ['--source', '--output', '--emit-haskell']) {
+  userArgs = resolvePathFlag(userArgs, flag, repoRoot);
+}
+
 const buildResult = await runCompile(
   command,
-  ['build', '-v0', 'compile-app', '--builddir=compile/dist-newstyle'],
-  repoRoot
+  [`--config-file=${cabalConfig}`, 'build', '-v0', 'compile-app'],
+  compileRoot
 );
 
 if (buildResult.exitCode !== 0) {
@@ -30,9 +49,9 @@ if (buildResult.exitCode !== 0) {
   process.exit();
 }
 
-const args = ['exec', '--builddir=compile/dist-newstyle', '--', 'compile-app', ...userArgs];
+const args = [`--config-file=${cabalConfig}`, 'exec', '--', 'compile-app', ...userArgs];
 
-const result = await runCompile(command, args, repoRoot);
+const result = await runCompile(command, args, compileRoot);
 process.exitCode = result.exitCode ?? signalExitCode(result.signal);
 
 /**
@@ -67,6 +86,23 @@ function readPositiveIntFlag(args, flag) {
 }
 
 /**
+ * @param {string[]} args
+ * @param {string} flag
+ * @param {string} root
+ */
+function resolvePathFlag(args, flag, root) {
+  const index = args.indexOf(flag);
+  if (index === -1) return args;
+
+  const value = args[index + 1];
+  if (!value || value.startsWith('--') || path.isAbsolute(value)) return args;
+
+  const resolved = [...args];
+  resolved[index + 1] = path.resolve(root, value);
+  return resolved;
+}
+
+/**
  * @param {string} command
  * @param {string[]} args
  * @param {string} cwd
@@ -77,6 +113,7 @@ function runCompile(command, args, cwd) {
     const child = spawn(command, args, {
       cwd,
       detached: process.platform !== 'win32',
+      env: cabalEnvironment,
       stdio: 'inherit'
     });
 

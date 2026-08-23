@@ -23,7 +23,7 @@ module LinearTrace.View.Primitives
   , AngleExpr
   , ColorExpr
   , -- * Geometry
-    -- | Bounds and geometry helpers used by graph nodes, patches, build
+    -- | Bounds and geometry helpers used by graph nodes, templates, build
     -- constraints, and concrete materialization.
     Bounds(..)
   , BoundsExpr

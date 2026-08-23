@@ -1,28 +1,22 @@
 {-# LANGUAGE TypeApplications #-}
 
--- | View graph output builder. Choreography accumulates 'ViewOutput' values
--- while processing core events; this module finalizes those outputs into a
--- solver-ready 'ViewGraph'.
+-- | Solver-ready construction for hierarchical view graphs.
 module LinearTrace.View.Build
-  ( -- * Output accumulation
-    -- | Monoidal output of nodes and render intents emitted by match
-    -- rules and graph construction. Constraints remain attached to nodes until
-    -- graph finalization.
-    ViewOutput(..)
+  ( ViewOutput(..)
   , renderIntentOutput
-  , -- * Graph construction
-    -- | Applies node patches and finalizes accumulated output into a view
-    -- graph with canvas/style constraints.
-    patchedNodeOutput
   , viewNodeConstraints
   , finalizeViewGraph
   ) where
 
+import           Data.Maybe                  (mapMaybe)
+import           LinearTrace.View.Box        (EdgeInsets (..), nodeBoxBounds,
+                                              nodeBoxChoiceConstraints,
+                                              nodeBoxConstraints, nodeBoxMargin,
+                                              nodeBoxPadding,
+                                              paddingForGeometry)
 import           LinearTrace.View.Graph
-import qualified LinearTrace.View.Patch      as Patch
 import           LinearTrace.View.Primitives
-import           LinearTrace.View.Style      (nodeStyleBounds,
-                                              nodeStyleChoiceConstraints,
+import           LinearTrace.View.Style      (nodeStyleChoiceConstraints,
                                               nodeStyleConstraints)
 import qualified LinearTrace.View.Style      as Style
 import           Prelude                     (Maybe (..), Monoid (..),
@@ -66,41 +60,28 @@ instance Monoid ViewOutput where
 renderIntentOutput :: RenderIntent -> ViewOutput
 renderIntentOutput intent = P.mempty {emittedRenderIntents = [intent]}
 
-patchedNodeOutput :: Patch.NodePatch -> Node tag -> ViewOutput
-patchedNodeOutput patch node0 =
-  let styledNode =
-        node0
-          { nodeStyle = Patch.nodePatchStyleUpdate patch (nodeStyle node0)
-          , nodeContent =
-              case Patch.nodePatchContent patch of
-                Nothing      -> nodeContent node0
-                Just content -> content
-          }
-      node =
-        styledNode
-          { nodeConstraints =
-              nodeConstraints styledNode
-                P.++ Patch.patchGeometryConstraints patch styledNode
-          }
-   in P.mempty {emittedNodes = [ViewNode node]}
-
 finalizeViewGraph ::
-     [ViewNode] -> [Constraint] -> [ChoiceConstraint] -> [ViewStep] -> ViewGraph
-finalizeViewGraph nodes baseConstraints baseChoiceConstraints steps =
-  let allNodeConstraints = P.concatMap viewNodeConstraints nodes
-      allNodeStyleChoiceConstraints =
-        P.concatMap viewNodeStyleChoiceConstraints nodes
-      constraints = baseConstraints P.++ allNodeConstraints
+     [ViewNode]
+  -> [Constraint]
+  -> [ChoiceConstraint]
+  -> [ViewStep]
+  -> [ViewDiagnostic]
+  -> ViewGraph
+finalizeViewGraph nodes baseConstraints baseChoiceConstraints steps diagnostics =
+  let constraints =
+        baseConstraints
+          P.++ P.concatMap viewNodeConstraints nodes
+          P.++ hierarchyConstraints defaultViewEnv nodes
       choiceConstraints =
-        baseChoiceConstraints P.++ allNodeStyleChoiceConstraints
-      finalizedSteps = addCompoundRenderSteps nodes steps
+        baseChoiceConstraints P.++ P.concatMap viewNodeChoiceConstraints nodes
    in ViewGraph
         { viewCanvasWidth = canvasWidthValue defaultViewEnv
         , viewCanvasHeight = canvasHeightValue defaultViewEnv
         , viewNodes = nodes
         , viewConstraints = constraints
         , viewChoiceConstraints = choiceConstraints
-        , viewSteps = finalizedSteps
+        , viewSteps = addGeneratedRenderSteps nodes steps
+        , viewDiagnostics = diagnostics
         }
 
 viewNodeConstraints :: ViewNode -> [Constraint]
@@ -108,13 +89,12 @@ viewNodeConstraints wrapped =
   case wrapped of
     ViewNode node ->
       nodeStyleConstraints (nodeStyle node)
+        P.++ nodeBoxConstraints (nodeBox node)
         P.++ fontSizeRangeConstraints defaultViewEnv (nodeStyle node)
-        P.++ viewNodeRangeConstraints defaultViewEnv wrapped
-        P.++ [ right node S.@<=@ canvasWidth defaultViewEnv
-             , bottom node S.@<=@ canvasHeight defaultViewEnv
-             ]
+        P.++ boundsRangeConstraints
+               defaultViewEnv
+               (nodeBoxBounds (nodeBox node))
         P.++ nodeConstraints node
-        P.++ structureConstraints node (nodeStructure node)
 
 fontSizeRangeConstraints :: ViewEnv -> Style.NodeStyle -> [Constraint]
 fontSizeRangeConstraints env style' =
@@ -124,216 +104,293 @@ fontSizeRangeConstraints env style' =
   | expression <- Style.styleFieldValues @Style.FontSize style'
   ]
 
-structureConstraints :: Node tag -> NodeStructure -> [Constraint]
-structureConstraints node structure =
-  case structure of
-    LeafNode -> []
-    CompoundNode ShrinkWrapChildren children ->
-      compoundFitConstraints node children
-
-compoundFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
-compoundFitConstraints node children =
-  case children of
-    [] -> []
-    _  -> compoundTightFitConstraints node children
-
-compoundTightFitConstraints :: Node tag -> [NodeChild] -> [Constraint]
-compoundTightFitConstraints node children =
-  case children of
-    [] -> []
-    _ ->
-      minimumFitConstraints "left" left nodeChildLeft
-        P.++ minimumFitConstraints "top" top nodeChildTop
-        P.++ maximumFitConstraints "right" right nodeChildRight
-        P.++ maximumFitConstraints "bottom" bottom nodeChildBottom
-  where
-    padding = compoundPadding node
-    minimumFitConstraints edgeName containerEdge childEdge =
-      [ containerEdge node S.@+@ padding S.@<=@ childEdge child
-      | child <- children
-      ]
-        P.++ [ tightEdgeDecision
-                 edgeName
-                 (\child ->
-                    containerEdge node S.@==@ childEdge child S.@-@ padding)
-             ]
-    maximumFitConstraints edgeName containerEdge childEdge =
-      [ childEdge child S.@+@ padding S.@<=@ containerEdge node
-      | child <- children
-      ]
-        P.++ [ tightEdgeDecision
-                 edgeName
-                 (\child ->
-                    containerEdge node S.@==@ childEdge child S.@+@ padding)
-             ]
-    tightEdgeDecision edgeName equalityFor =
-      case P.map
-             (\child ->
-                S.alternative
-                  ("child." P.++ P.show (viewIdInt (nodeChildId child)))
-                  [equalityFor child])
-             children of
-        [] -> P.error "Cannot shrinkwrap an empty compound node."
-        first:rest ->
-          S.oneOf
-            ("view.compound."
-               P.++ P.show (viewRefInt (nodeRef node))
-               P.++ ".fit."
-               P.++ edgeName)
-            first
-            rest
-
-compoundPadding :: Node tag -> LayoutExpr
-compoundPadding node =
-  case Style.getStyleField @Style.Padding (nodeStyle node) of
-    Nothing    -> num 0
-    Just value -> value
-
-nodeChildLeft :: NodeChild -> LayoutExpr
-nodeChildLeft child = left (nodeChildBounds child)
-
-nodeChildTop :: NodeChild -> LayoutExpr
-nodeChildTop child = top (nodeChildBounds child)
-
-nodeChildRight :: NodeChild -> LayoutExpr
-nodeChildRight child = right (nodeChildBounds child)
-
-nodeChildBottom :: NodeChild -> LayoutExpr
-nodeChildBottom child = bottom (nodeChildBounds child)
-
-viewNodeStyleChoiceConstraints :: ViewNode -> [ChoiceConstraint]
-viewNodeStyleChoiceConstraints node =
-  case node of
-    ViewNode viewNode -> nodeStyleChoiceConstraints (nodeStyle viewNode)
-
-viewNodeRangeConstraints :: ViewEnv -> ViewNode -> [Constraint]
-viewNodeRangeConstraints env node =
-  case node of
-    ViewNode viewNode ->
-      case nodeStructure viewNode of
-        LeafNode ->
-          leafBoundsRangeConstraints env (nodeStyleBounds (nodeStyle viewNode))
-        CompoundNode _ _ ->
-          compoundBoundsRangeConstraints
-            env
-            (nodeStyleBounds (nodeStyle viewNode))
-
-boundsRangeConstraints ::
-     ViewEnv
-  -> P.Double
-  -> P.Double
-  -> P.Double
-  -> P.Double
-  -> BoundsExpr
-  -> [Constraint]
-boundsRangeConstraints env minWidth minHeight maxWidth maxHeight bounds' =
+boundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
+boundsRangeConstraints env bounds' =
   case bounds' of
     Bounds topExpr leftExpr widthExpr heightExpr ->
       [ S.within
           topExpr
-          (Range 0 (P.max 0 (canvasHeightValue env P.- minHeight)))
+          (Range 0 (P.max 0 (canvasHeightValue env P.- minimumLayoutExtent)))
       , S.within
           leftExpr
-          (Range 0 (P.max 0 (canvasWidthValue env P.- minWidth)))
-      , S.within widthExpr (Range minWidth maxWidth)
-      , S.within heightExpr (Range minHeight maxHeight)
+          (Range 0 (P.max 0 (canvasWidthValue env P.- minimumLayoutExtent)))
+      , S.within widthExpr (Range minimumLayoutExtent (canvasWidthValue env))
+      , S.within heightExpr (Range minimumLayoutExtent (canvasHeightValue env))
       ]
 
 minimumLayoutExtent :: P.Double
 minimumLayoutExtent = 20
 
-leafBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
-leafBoundsRangeConstraints env =
-  boundsRangeConstraints
-    env
-    minimumLayoutExtent
-    minimumLayoutExtent
-    (canvasWidthValue env)
-    (canvasHeightValue env)
+viewNodeChoiceConstraints :: ViewNode -> [ChoiceConstraint]
+viewNodeChoiceConstraints wrapped =
+  case wrapped of
+    ViewNode node ->
+      nodeStyleChoiceConstraints (nodeStyle node)
+        P.++ nodeBoxChoiceConstraints (nodeBox node)
 
-compoundBoundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
-compoundBoundsRangeConstraints env =
-  boundsRangeConstraints
-    env
-    minimumLayoutExtent
-    minimumLayoutExtent
-    (canvasWidthValue env)
-    (canvasHeightValue env)
+hierarchyConstraints :: ViewEnv -> [ViewNode] -> [Constraint]
+hierarchyConstraints env nodes = P.concatMap constraintsForNode nodes
+  where
+    constraintsForNode wrapped =
+      case wrapped of
+        ViewNode node ->
+          (case nodeParent node of
+             Nothing -> canvasContainment env node
+             Just _  -> [])
+            P.++ childFitConstraints nodes node
+            P.++ relativePinConstraints env nodes node
 
-addCompoundRenderSteps :: [ViewNode] -> [ViewStep] -> [ViewStep]
-addCompoundRenderSteps nodes steps =
-  let lifecycles = compoundLifecycles nodes
-   in case lifecycles of
-        [] -> steps
-        _  -> addCompoundLifecycleSteps lifecycles steps
+canvasContainment :: ViewEnv -> Node tag -> [Constraint]
+canvasContainment env node =
+  let margin = nodeBoxMargin (nodeBox node)
+   in [ S.num 0 S.@<=@ left node S.@-@ insetLeft margin
+      , S.num 0 S.@<=@ top node S.@-@ insetTop margin
+      , right node S.@+@ insetRight margin S.@<=@ canvasWidth env
+      , bottom node S.@+@ insetBottom margin S.@<=@ canvasHeight env
+      ]
 
-data CompoundLifecycle =
-  CompoundLifecycle ViewNode [ViewId] [ViewId]
-
-compoundLifecycles :: [ViewNode] -> [CompoundLifecycle]
-compoundLifecycles nodes =
-  case nodes of
+childFitConstraints :: [ViewNode] -> Node tag -> [Constraint]
+childFitConstraints nodes parent =
+  case mapMaybe (`findNode` nodes) (nodeChildren parent) of
     [] -> []
-    wrapped@(ViewNode node):rest ->
-      case nodeStructure node of
-        CompoundNode _ children ->
-          CompoundLifecycle wrapped (compoundChildIds children) []
-            : compoundLifecycles rest
-        LeafNode -> compoundLifecycles rest
+    children ->
+      let padding = paddingForGeometry (nodeBoxPadding (nodeBox parent))
+       in axisFitConstraints
+            parent
+            children
+            Horizontal
+            (nodeHorizontalFit parent)
+            padding
+            P.++ axisFitConstraints
+                   parent
+                   children
+                   Vertical
+                   (nodeVerticalFit parent)
+                   padding
 
-compoundChildIds :: [NodeChild] -> [ViewId]
-compoundChildIds = P.map nodeChildId
+axisFitConstraints ::
+     Node tag
+  -> [ViewNode]
+  -> Axis
+  -> ContentFit
+  -> EdgeInsets LayoutExpr
+  -> [Constraint]
+axisFitConstraints parent children axis fit padding = containment P.++ tightness
+  where
+    containment =
+      P.concatMap
+        (\child ->
+           [ parentStart parent padding S.@<=@ childStart child
+           , childEnd child S.@<=@ parentEnd parent padding
+           ])
+        children
+    tightness =
+      case fit of
+        Contain -> []
+        Hug ->
+          [ tightEdgeDecision "start" (parentStart parent padding) childStart
+          , tightEdgeDecision "end" (parentEnd parent padding) childEnd
+          ]
+    parentStart node insets =
+      case axis of
+        Horizontal -> left node S.@+@ insetLeft insets
+        Vertical   -> top node S.@+@ insetTop insets
+        Both       -> P.error "Both is not a concrete layout axis"
+    parentEnd node insets =
+      case axis of
+        Horizontal -> right node S.@-@ insetRight insets
+        Vertical   -> bottom node S.@-@ insetBottom insets
+        Both       -> P.error "Both is not a concrete layout axis"
+    childStart wrapped =
+      case wrapped of
+        ViewNode child ->
+          let margin = nodeBoxMargin (nodeBox child)
+           in case axis of
+                Horizontal -> left child S.@-@ insetLeft margin
+                Vertical   -> top child S.@-@ insetTop margin
+                Both       -> P.error "Both is not a concrete layout axis"
+    childEnd wrapped =
+      case wrapped of
+        ViewNode child ->
+          let margin = nodeBoxMargin (nodeBox child)
+           in case axis of
+                Horizontal -> right child S.@+@ insetRight margin
+                Vertical   -> bottom child S.@+@ insetBottom margin
+                Both       -> P.error "Both is not a concrete layout axis"
+    tightEdgeDecision edge parentExpression childExpression =
+      case P.map
+             (\wrapped ->
+                case wrapped of
+                  ViewNode child ->
+                    S.alternative
+                      ("child." P.++ P.show (viewRefInt (nodeRef child)))
+                      [parentExpression S.@==@ childExpression wrapped])
+             children of
+        [] -> P.error "Cannot fit a node around an empty child list"
+        first:rest ->
+          S.oneOf
+            ("view.node."
+               P.++ P.show (viewRefInt (nodeRef parent))
+               P.++ ".fit."
+               P.++ axisName axis
+               P.++ "."
+               P.++ edge)
+            first
+            rest
 
-addCompoundLifecycleSteps :: [CompoundLifecycle] -> [ViewStep] -> [ViewStep]
-addCompoundLifecycleSteps lifecycles steps =
+axisName :: Axis -> P.String
+axisName axis =
+  case axis of
+    Horizontal -> "horizontal"
+    Vertical   -> "vertical"
+    Both       -> "both"
+
+data ParentContentBox = ParentContentBox
+  { parentContentLeft   :: LayoutExpr
+  , parentContentTop    :: LayoutExpr
+  , parentContentWidth  :: LayoutExpr
+  , parentContentHeight :: LayoutExpr
+  }
+
+relativePinConstraints :: ViewEnv -> [ViewNode] -> Node tag -> [Constraint]
+relativePinConstraints env nodes node =
+  case nodeRelativePins node of
+    [] -> []
+    pins ->
+      case parentContentBoxFor env nodes node of
+        Nothing ->
+          P.error
+            ("Node "
+               P.++ nodeDeclaration node
+               P.++ " references a missing parent")
+        Just parentBox -> P.map (relativePinConstraint parentBox node) pins
+
+relativePinConstraint ::
+     ParentContentBox -> Node tag -> RelativeLayoutPin -> Constraint
+relativePinConstraint parentBox node pin =
+  let ratio = S.num (relativeLayoutRatio pin)
+   in case relativeLayoutAttr pin of
+        RelativeCenterX ->
+          centerX node
+            S.@==@ parentContentLeft parentBox
+            S.@+@ parentContentWidth parentBox
+            S.@*@ ratio
+        RelativeCenterY ->
+          centerY node
+            S.@==@ parentContentTop parentBox
+            S.@+@ parentContentHeight parentBox
+            S.@*@ ratio
+        RelativeWidth ->
+          width node S.@==@ parentContentWidth parentBox S.@*@ ratio
+        RelativeHeight ->
+          height node S.@==@ parentContentHeight parentBox S.@*@ ratio
+
+parentContentBoxFor ::
+     ViewEnv -> [ViewNode] -> Node tag -> Maybe ParentContentBox
+parentContentBoxFor env nodes node =
+  case nodeParent node of
+    Nothing ->
+      Just
+        ParentContentBox
+          { parentContentLeft = S.num 0
+          , parentContentTop = S.num 0
+          , parentContentWidth = canvasWidth env
+          , parentContentHeight = canvasHeight env
+          }
+    Just identifier ->
+      case findNode identifier nodes of
+        Nothing                -> Nothing
+        Just (ViewNode parent) -> Just (nodeContentBox parent)
+
+nodeContentBox :: Node tag -> ParentContentBox
+nodeContentBox node =
+  let padding = paddingForGeometry (nodeBoxPadding (nodeBox node))
+   in ParentContentBox
+        { parentContentLeft = left node S.@+@ insetLeft padding
+        , parentContentTop = top node S.@+@ insetTop padding
+        , parentContentWidth =
+            width node S.@-@ insetLeft padding S.@-@ insetRight padding
+        , parentContentHeight =
+            height node S.@-@ insetTop padding S.@-@ insetBottom padding
+        }
+
+findNode :: ViewId -> [ViewNode] -> Maybe ViewNode
+findNode identifier nodes =
+  case nodes of
+    [] -> Nothing
+    wrapped@(ViewNode node):rest
+      | viewRefId (nodeRef node) P.== identifier -> Just wrapped
+      | P.otherwise -> findNode identifier rest
+
+addGeneratedRenderSteps :: [ViewNode] -> [ViewStep] -> [ViewStep]
+addGeneratedRenderSteps nodes =
+  addGeneratedLifecycleSteps (generatedLifecycles nodes)
+
+data GeneratedLifecycle =
+  GeneratedLifecycle ViewNode [ViewId] [ViewId]
+
+generatedLifecycles :: [ViewNode] -> [GeneratedLifecycle]
+generatedLifecycles nodes =
+  [ GeneratedLifecycle wrapped (nodeChildren node) []
+  | wrapped@(ViewNode node) <- nodes
+  , P.not (P.null (nodeChildren node))
+  ]
+
+addGeneratedLifecycleSteps :: [GeneratedLifecycle] -> [ViewStep] -> [ViewStep]
+addGeneratedLifecycleSteps lifecycles steps =
   case steps of
     [] -> []
     step:rest ->
-      let (nextLifecycles, compoundIntents) =
-            updateCompoundLifecycles (viewStepIntents step) lifecycles
+      let (nextLifecycles, generatedIntents) =
+            updateGeneratedLifecycles (viewStepIntents step) lifecycles
           nextStep =
-            step {viewStepIntents = viewStepIntents step P.++ compoundIntents}
-       in nextStep : addCompoundLifecycleSteps nextLifecycles rest
+            step {viewStepIntents = viewStepIntents step P.++ generatedIntents}
+       in nextStep : addGeneratedLifecycleSteps nextLifecycles rest
 
-updateCompoundLifecycles ::
+updateGeneratedLifecycles ::
      [RenderIntent]
-  -> [CompoundLifecycle]
-  -> ([CompoundLifecycle], [RenderIntent])
-updateCompoundLifecycles frame lifecycles =
+  -> [GeneratedLifecycle]
+  -> ([GeneratedLifecycle], [RenderIntent])
+updateGeneratedLifecycles frame lifecycles =
   case lifecycles of
     [] -> ([], [])
     lifecycle:rest ->
-      let (nextLifecycle, intents) = updateCompoundLifecycle frame lifecycle
-          (nextRest, restIntents) = updateCompoundLifecycles frame rest
+      let (nextLifecycle, intents) = updateGeneratedLifecycle frame lifecycle
+          (nextRest, restIntents) =
+            updateGeneratedLifecycles (frame P.++ intents) rest
        in (nextLifecycle : nextRest, intents P.++ restIntents)
 
-updateCompoundLifecycle ::
-     [RenderIntent] -> CompoundLifecycle -> (CompoundLifecycle, [RenderIntent])
-updateCompoundLifecycle frame lifecycle =
+updateGeneratedLifecycle ::
+     [RenderIntent]
+  -> GeneratedLifecycle
+  -> (GeneratedLifecycle, [RenderIntent])
+updateGeneratedLifecycle frame lifecycle =
   case lifecycle of
-    CompoundLifecycle node childIds liveIds ->
+    GeneratedLifecycle wrapped childIds liveIds ->
       let wasLive = P.not (P.null liveIds)
           (introductions, removals) = splitRenderIntents frame
           visibleLiveIds =
-            P.foldl (applyCompoundRenderIntent childIds) liveIds introductions
+            P.foldl (applyGeneratedRenderIntent childIds) liveIds introductions
           nextLiveIds =
-            P.foldl (applyCompoundRenderIntent childIds) visibleLiveIds removals
+            P.foldl
+              (applyGeneratedRenderIntent childIds)
+              visibleLiveIds
+              removals
           visibleIsLive = P.not (P.null visibleLiveIds)
           isLive = P.not (P.null nextLiveIds)
-          nextLifecycle = CompoundLifecycle node childIds nextLiveIds
+          nextLifecycle = GeneratedLifecycle wrapped childIds nextLiveIds
           introductionIntents =
             case (wasLive, visibleIsLive) of
-              (P.False, P.True) -> [compoundFreshIntent node]
+              (P.False, P.True) -> [generatedFreshIntent wrapped]
               _                 -> []
           removalIntents =
             case (wasLive P.|| visibleIsLive, isLive) of
-              (P.True, P.False) -> [compoundRemoveIntent node]
+              (P.True, P.False) -> [generatedRemoveIntent wrapped]
               _                 -> []
-          lifecycleIntents = introductionIntents P.++ removalIntents
-       in (nextLifecycle, lifecycleIntents)
+       in (nextLifecycle, introductionIntents P.++ removalIntents)
 
-applyCompoundRenderIntent :: [ViewId] -> [ViewId] -> RenderIntent -> [ViewId]
-applyCompoundRenderIntent childIds liveIds intent =
+applyGeneratedRenderIntent :: [ViewId] -> [ViewId] -> RenderIntent -> [ViewId]
+applyGeneratedRenderIntent childIds liveIds intent =
   case intent of
     RenderFresh ref -> addLiveChild childIds (viewRefId ref) liveIds
     RenderFork _ ref -> addLiveChild childIds (viewRefId ref) liveIds
@@ -345,23 +402,20 @@ applyCompoundRenderIntent childIds liveIds intent =
     RenderRemove ref -> removeLiveChild (viewRefId ref) liveIds
 
 addLiveChild :: [ViewId] -> ViewId -> [ViewId] -> [ViewId]
-addLiveChild childIds childId liveIds =
-  case childId `P.elem` childIds of
-    P.False -> liveIds
-    P.True ->
-      case childId `P.elem` liveIds of
-        P.True  -> liveIds
-        P.False -> childId : liveIds
+addLiveChild childIds childId liveIds
+  | childId `P.notElem` childIds = liveIds
+  | childId `P.elem` liveIds = liveIds
+  | P.otherwise = childId : liveIds
 
 removeLiveChild :: ViewId -> [ViewId] -> [ViewId]
 removeLiveChild childId = P.filter (P./= childId)
 
-compoundFreshIntent :: ViewNode -> RenderIntent
-compoundFreshIntent wrapped =
+generatedFreshIntent :: ViewNode -> RenderIntent
+generatedFreshIntent wrapped =
   case wrapped of
     ViewNode node -> RenderFresh (nodeRef node)
 
-compoundRemoveIntent :: ViewNode -> RenderIntent
-compoundRemoveIntent wrapped =
+generatedRemoveIntent :: ViewNode -> RenderIntent
+generatedRemoveIntent wrapped =
   case wrapped of
     ViewNode node -> RenderRemove (nodeRef node)

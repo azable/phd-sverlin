@@ -82,5 +82,5 @@
     "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind,readonly"
   ],
 
-  "postCreateCommand": "npm install -g @openai/codex@latest && pnpm install --frozen-lockfile && mkdir -p outputs && cabal update && cabal build -v0 compile-app --builddir=compile/dist-newstyle"
+  "postCreateCommand": "npm install -g @openai/codex@latest && pnpm install --frozen-lockfile && mkdir -p outputs .cache/cabal/packages .cache/cabal/logs .local/state/cabal/store && node scripts/run-cabal.mjs update && node scripts/run-cabal.mjs build -v0 compile-app"
 }

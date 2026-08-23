@@ -2,21 +2,19 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
--- | Choreography matching and view graph assembly. This module turns core
--- trace events, query matches, node patches, and value endpoints into symbolic
--- view output.
+-- | Choreography matching and hierarchical view graph assembly.
 module LinearTrace.Choreography.Match
-  ( -- * Match specs
-    -- | Accumulated node, layout, and grouping rules produced by the
-    -- public choreography DSL.
+  ( -- * Specifications
     MatchSpec
   , emptyMatchSpec
   , matchSpecAppend
-  , matchQueryNode
-  , matchAnyQueryNode
-  , matchQueryPayloadNode
-  , matchGroupNode
-  , MatchContext(..)
+  , validateMatchSpec
+  , ParentRef(..)
+  , registerQuerySelection
+  , registerAnyQuerySelection
+  , declareTraceNode
+  , declareGeneratedNode
+  , editNodeDeclaration
   , -- * Layout/value relations
     -- | Selection and component relation API. The DSL uses this to connect
     -- view lifespans and style/layout values through solver constraints.
@@ -45,26 +43,29 @@ module LinearTrace.Choreography.Match
   , buildMatchedViewGraphWith
   ) where
 
-import           Data.Maybe              (fromMaybe)
-import           Data.Proxy              (Proxy (..))
-import           Data.Type.Equality      ((:~:) (..))
-import           Data.Typeable           (eqT)
-import qualified LinearTrace.Core        as C
-import qualified LinearTrace.View.Access as VA
-import qualified LinearTrace.View.Build  as V
-import qualified LinearTrace.View.Graph  as V
-import qualified LinearTrace.View.Patch  as VP
-import           Prelude                 (Bool (..), Maybe (..), otherwise)
-import qualified Prelude                 as P
-import qualified Solver                  as S
+import           Data.List                   (find)
+import           Data.Maybe                  (mapMaybe)
+import           Data.Proxy                  (Proxy (..))
+import           Data.Type.Equality          ((:~:) (..))
+import           Data.Typeable               (eqT)
+import qualified LinearTrace.Core            as C
+import qualified LinearTrace.View.Access     as VA
+import qualified LinearTrace.View.Box        as VB
+import qualified LinearTrace.View.Build      as V
+import qualified LinearTrace.View.Graph      as V
+import qualified LinearTrace.View.Primitives as VP
+import qualified LinearTrace.View.Style      as VS
+import qualified LinearTrace.View.Template   as VT
+import           Prelude                     (Bool (..), Maybe (..), otherwise)
+import qualified Prelude                     as P
+import qualified Solver                      as S
+import qualified Solver.Expr                 as SolverExpr
 
 type ValueComponent = VA.ValueComponent
 
-type NodePatch = VP.NodePatch
-
 data NodeSelection
-  = TraceSelection C.Query
-  | GroupSelection P.String C.Query
+  = NodeSelection P.String
+  | CanvasSelection
   deriving (P.Eq, P.Show)
 
 data ConstraintStrength
@@ -91,23 +92,43 @@ data CategoryEndpoint value
   | SelectionCategoryEndpoint NodeSelection (VA.CategoryAccess value)
 
 data MatchSpec =
-  MatchSpec [NodeRule] [LayoutRule] [GroupRule]
+  MatchSpec
+    [SelectionRule]
+    [TraceNodeDeclaration]
+    [GeneratedNodeDeclaration]
+    [NodeEdit]
+    [LayoutRule]
 
-data NodeRule where
-  QueryNodeRule
-    :: C.Traceable tag=> Proxy tag
+data ParentRef
+  = CanvasParent
+  | GeneratedParent P.String
+  deriving (P.Eq, P.Show)
+
+data SelectionRule where
+  QuerySelectionRule
+    :: C.Traceable tag=> P.String
+    -> Proxy tag
     -> C.Query
     -> C.PayloadPattern tag
-    -> (MatchContext tag -> NodePatch)
-    -> NodeRule
-  AnyQueryNodeRule :: C.Query -> (C.MatchBindings -> NodePatch) -> NodeRule
+    -> SelectionRule
+  AnyQuerySelectionRule :: P.String -> C.Query -> SelectionRule
 
-data MatchContext tag = MatchContext
-  { matchContextIndex    :: P.Int
-  , matchContextPayload  :: C.Payload tag
-  , matchContextLabel    :: C.PayloadView
-  , matchContextBindings :: C.MatchBindings
+data TraceNodeDeclaration = TraceNodeDeclaration
+  { traceDeclarationKey      :: P.String
+  , traceDeclarationSelector :: P.String
+  , traceDeclarationParent   :: ParentRef
   }
+
+data GeneratedNodeDeclaration = GeneratedNodeDeclaration
+  { generatedDeclarationKey    :: P.String
+  , generatedDeclarationParent :: ParentRef
+  }
+
+data NodeEdit =
+  NodeEdit
+    P.String
+    P.String
+    (C.MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate)
 
 data LayoutRule where
   ValueRelationLayout
@@ -136,53 +157,86 @@ data LayoutRule where
     -> LayoutRule
   FiniteDecisionLayout :: P.String -> [(P.String, [LayoutRule])] -> LayoutRule
 
-data GroupRule =
-  GroupRule P.String C.Query NodePatch
-
 emptyMatchSpec :: MatchSpec
-emptyMatchSpec = MatchSpec [] [] []
+emptyMatchSpec = MatchSpec [] [] [] [] []
 
 matchSpecAppend :: MatchSpec -> MatchSpec -> MatchSpec
 matchSpecAppend lhs rhs =
   case lhs of
-    MatchSpec leftNodes leftLayouts leftGroups ->
+    MatchSpec leftSelections leftTrace leftGenerated leftEdits leftLayouts ->
       case rhs of
-        MatchSpec rightNodes rightLayouts rightGroups ->
+        MatchSpec rightSelections rightTrace rightGenerated rightEdits rightLayouts ->
           MatchSpec
-            (leftNodes P.++ rightNodes)
+            (leftSelections P.++ rightSelections)
+            (leftTrace P.++ rightTrace)
+            (leftGenerated P.++ rightGenerated)
+            (leftEdits P.++ rightEdits)
             (leftLayouts P.++ rightLayouts)
-            (leftGroups P.++ rightGroups)
 
-matchQueryNode ::
+validateMatchSpec :: MatchSpec -> MatchSpec
+validateMatchSpec spec =
+  case spec of
+    MatchSpec selections traceDeclarations generatedDeclarations edits _ ->
+      case duplicateValues (P.map selectionRuleKey selections) of
+        key:_ -> P.error ("Duplicate visual selection key " P.++ key)
+        [] ->
+          let declarations =
+                P.map traceDeclarationKey traceDeclarations
+                  P.++ P.map generatedDeclarationKey generatedDeclarations
+           in case duplicateValues declarations of
+                key:_ -> P.error ("Duplicate node declaration key " P.++ key)
+                [] ->
+                  case [ target
+                       | NodeEdit target _ _ <- edits
+                       , target `P.notElem` declarations
+                       ] of
+                    target:_ ->
+                      P.error
+                        ("A node property was declared outside a node body: "
+                           P.++ target)
+                    [] -> spec
+
+duplicateValues :: P.Eq value => [value] -> [value]
+duplicateValues values =
+  case values of
+    [] -> []
+    value:rest
+      | value `P.elem` rest -> value : duplicateValues rest
+      | otherwise -> duplicateValues rest
+
+registerQuerySelection ::
      forall tag. C.Traceable tag
-  => C.Query
-  -> (MatchContext tag -> NodePatch)
-  -> MatchSpec
-matchQueryNode query makePatch =
-  MatchSpec
-    [QueryNodeRule (Proxy :: Proxy tag) query C.anyPayloadPattern makePatch]
-    []
-    []
-
-matchAnyQueryNode :: C.Query -> (C.MatchBindings -> NodePatch) -> MatchSpec
-matchAnyQueryNode query makePatch =
-  MatchSpec [AnyQueryNodeRule query makePatch] [] []
-
-matchQueryPayloadNode ::
-     forall tag. C.Traceable tag
-  => C.Query
+  => P.String
+  -> C.Query
   -> C.PayloadPattern tag
-  -> (MatchContext tag -> NodePatch)
   -> MatchSpec
-matchQueryPayloadNode query payloadPattern makePatch =
+registerQuerySelection key query payloadPattern =
   MatchSpec
-    [QueryNodeRule (Proxy :: Proxy tag) query payloadPattern makePatch]
+    [QuerySelectionRule key (Proxy :: Proxy tag) query payloadPattern]
+    []
+    []
     []
     []
 
-matchGroupNode :: P.String -> C.Query -> NodePatch -> MatchSpec
-matchGroupNode key query patch =
-  MatchSpec [] [] [GroupRule (C.safeKey key) query patch]
+registerAnyQuerySelection :: P.String -> C.Query -> MatchSpec
+registerAnyQuerySelection key query =
+  MatchSpec [AnyQuerySelectionRule key query] [] [] [] []
+
+declareTraceNode :: P.String -> P.String -> ParentRef -> MatchSpec
+declareTraceNode declaration selector parent =
+  MatchSpec [] [TraceNodeDeclaration declaration selector parent] [] [] []
+
+declareGeneratedNode :: P.String -> ParentRef -> MatchSpec
+declareGeneratedNode key parent =
+  MatchSpec [] [] [GeneratedNodeDeclaration key parent] [] []
+
+editNodeDeclaration ::
+     P.String
+  -> P.String
+  -> (C.MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate)
+  -> MatchSpec
+editNodeDeclaration declaration property update =
+  MatchSpec [] [] [] [NodeEdit declaration property update] []
 
 rawValueEndpoint :: ValueComponent -> ValueEndpoint
 rawValueEndpoint = RawValueEndpoint
@@ -204,7 +258,7 @@ matchValueRelation ::
   -> [ValueEndpoint]
   -> MatchSpec
 matchValueRelation strength lhs relation rhs =
-  MatchSpec [] [ValueRelationLayout strength lhs relation rhs] []
+  MatchSpec [] [] [] [] [ValueRelationLayout strength lhs relation rhs]
 
 matchCategoryRelation ::
      S.ChoiceDomain value
@@ -214,7 +268,7 @@ matchCategoryRelation ::
   -> [CategoryEndpoint value]
   -> MatchSpec
 matchCategoryRelation strength lhs relation rhs =
-  MatchSpec [] [CategoryRelationLayout strength lhs relation rhs] []
+  MatchSpec [] [] [] [] [CategoryRelationLayout strength lhs relation rhs]
 
 matchValueDirectedBridge ::
      ConstraintStrength
@@ -223,7 +277,7 @@ matchValueDirectedBridge ::
   -> [ValueEndpoint]
   -> MatchSpec
 matchValueDirectedBridge strength lhs gap rhs =
-  MatchSpec [] [ValueDirectedBridgeLayout strength lhs gap rhs] []
+  MatchSpec [] [] [] [] [ValueDirectedBridgeLayout strength lhs gap rhs]
 
 matchValueSymmetricBridge ::
      ConstraintStrength
@@ -232,18 +286,22 @@ matchValueSymmetricBridge ::
   -> [ValueEndpoint]
   -> MatchSpec
 matchValueSymmetricBridge strength lhs delta rhs =
-  MatchSpec [] [ValueSymmetricBridgeLayout strength lhs delta rhs] []
+  MatchSpec [] [] [] [] [ValueSymmetricBridgeLayout strength lhs delta rhs]
 
 matchFiniteDecision :: P.String -> [(P.String, MatchSpec)] -> MatchSpec
 matchFiniteDecision name alternatives =
   MatchSpec
-    (P.concatMap alternativeNodeRules alternatives)
+    (P.concatMap alternativeSelections alternatives)
+    (P.concatMap alternativeTraceDeclarations alternatives)
+    (P.concatMap alternativeGeneratedDeclarations alternatives)
+    (P.concatMap alternativeEdits alternatives)
     [FiniteDecisionLayout name (P.map alternativeLayouts alternatives)]
-    (P.concatMap alternativeGroupRules alternatives)
   where
-    alternativeNodeRules (_, MatchSpec rules _ _) = rules
-    alternativeLayouts (token, MatchSpec _ rules _) = (token, rules)
-    alternativeGroupRules (_, MatchSpec _ _ rules) = rules
+    alternativeSelections (_, MatchSpec rules _ _ _ _) = rules
+    alternativeTraceDeclarations (_, MatchSpec _ rules _ _ _) = rules
+    alternativeGeneratedDeclarations (_, MatchSpec _ _ rules _ _) = rules
+    alternativeEdits (_, MatchSpec _ _ _ rules _) = rules
+    alternativeLayouts (token, MatchSpec _ _ _ _ rules) = (token, rules)
 
 traceNodeOfEventBlock :: C.BlockSnapshot tag -> V.Node tag
 traceNodeOfEventBlock block =
@@ -253,10 +311,17 @@ traceNodeOfEventBlock block =
         , V.nodeLabel =
             viewLabelFromPayloadView (C.blockSnapshotPayloadView block)
         , V.nodeContent = V.ContentEmpty
+        , V.nodeBox = V.boxForRef ref
         , V.nodeStyle = V.styleForRef ref
         , V.nodeOrigin =
             V.TraceOrigin (viewTagsFromFacts (C.blockSnapshotFacts block))
-        , V.nodeStructure = V.LeafNode
+        , V.nodeDeclaration = ""
+        , V.nodeSelectionBindings = []
+        , V.nodeParent = Nothing
+        , V.nodeChildren = []
+        , V.nodeHorizontalFit = V.Hug
+        , V.nodeVerticalFit = V.Hug
+        , V.nodeRelativePins = []
         , V.nodeConstraints = []
         }
 
@@ -264,12 +329,31 @@ matchedNodeOutput :: MatchSpec -> C.BlockSnapshot tag -> V.ViewOutput
 matchedNodeOutput spec eventBlock =
   C.withBlockSnapshot
     eventBlock
-    (case spec of
-       MatchSpec nodeRules _ _ ->
-         let node = traceNodeOfEventBlock eventBlock
-          in case matchedNodePatch eventBlock nodeRules of
-               Nothing    -> P.mempty
-               Just patch -> V.patchedNodeOutput patch node)
+    (case matchingTraceDeclarations spec eventBlock of
+       [] -> P.mempty
+       [(declaration, bindings)] ->
+         let base = traceNodeOfEventBlock eventBlock
+             template =
+               templateForDeclaration
+                 spec
+                 (traceDeclarationKey declaration)
+                 bindings
+             node =
+               VT.applyNodeTemplate
+                 template
+                 base
+                   { V.nodeDeclaration = traceDeclarationKey declaration
+                   , V.nodeSelectionBindings =
+                       selectionBindingsForBlock spec eventBlock
+                   , V.nodeParent =
+                       parentViewId (traceDeclarationParent declaration)
+                   }
+          in P.mempty {V.emittedNodes = [V.ViewNode node]}
+       matches ->
+         P.error
+           ("A trace output matched more than one node declaration: "
+              P.++ commaSeparated
+                     (P.map (traceDeclarationKey P.. P.fst) matches)))
 
 coreViewRef :: C.BlockRef tag -> V.ViewRef tag
 coreViewRef ref = V.viewRefFromId (C.blockRefId ref)
@@ -292,83 +376,115 @@ viewTagFromFact fact =
         C.FactInt int  -> (name, V.ViewTagInt int)
         C.FactSymbol _ -> (name, V.ViewTagAtom)
 
-matchedNodePatch ::
-     forall tag. C.Traceable tag
-  => C.BlockSnapshot tag
-  -> [NodeRule]
-  -> Maybe NodePatch
-matchedNodePatch block rules =
-  foldNodePatches (matchingNodePatches 0 block rules)
+data SelectionMatch =
+  SelectionMatch C.MatchBindings C.QueryBindings
 
-matchingNodePatches ::
-     forall tag. C.Traceable tag
-  => P.Int
+matchingTraceDeclarations ::
+     C.Traceable tag
+  => MatchSpec
   -> C.BlockSnapshot tag
-  -> [NodeRule]
-  -> [NodePatch]
-matchingNodePatches _ _ [] = []
-matchingNodePatches matchIndex block (rule:rest) =
-  case nodeRulePatch matchIndex block rule of
-    Nothing    -> matchingNodePatches matchIndex block rest
-    Just patch -> patch : matchingNodePatches (matchIndex P.+ 1) block rest
+  -> [(TraceNodeDeclaration, C.MatchBindings)]
+matchingTraceDeclarations spec block =
+  case spec of
+    MatchSpec selections declarations _ _ _ ->
+      [ (declaration, bindings)
+      | declaration <- declarations
+      , Just rule <-
+          [findSelectionRule (traceDeclarationSelector declaration) selections]
+      , Just (SelectionMatch bindings _) <- [selectionRuleMatch block rule]
+      ]
 
-nodeRulePatch ::
-     forall sourceTag. C.Traceable sourceTag
-  => P.Int
-  -> C.BlockSnapshot sourceTag
-  -> NodeRule
-  -> Maybe NodePatch
-nodeRulePatch matchIndex block rule =
+findSelectionRule :: P.String -> [SelectionRule] -> Maybe SelectionRule
+findSelectionRule key = find ((P.== key) P.. selectionRuleKey)
+
+selectionRuleKey :: SelectionRule -> P.String
+selectionRuleKey rule =
   case rule of
-    AnyQueryNodeRule query makePatch ->
-      case C.queryMatches query (C.blockSnapshotFacts block) of
-        Nothing       -> Nothing
-        Just bindings -> Just (makePatch (C.queryMatchBindings bindings))
-    QueryNodeRule (_ :: Proxy matchedTag) query payloadPattern makePatch ->
+    QuerySelectionRule key _ _ _ -> key
+    AnyQuerySelectionRule key _  -> key
+
+selectionRuleMatch ::
+     forall sourceTag. C.Traceable sourceTag
+  => C.BlockSnapshot sourceTag
+  -> SelectionRule
+  -> Maybe SelectionMatch
+selectionRuleMatch block rule =
+  case rule of
+    AnyQuerySelectionRule _ query -> do
+      queryBindings <- C.queryMatches query (C.blockSnapshotFacts block)
+      P.pure (SelectionMatch (C.queryMatchBindings queryBindings) queryBindings)
+    QuerySelectionRule _ (_ :: Proxy matchedTag) query payloadPattern ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
-        Just Refl ->
-          case C.queryMatches query (C.blockSnapshotFacts block) of
-            Nothing -> Nothing
-            Just bindings ->
-              matchedPayloadNodePatch
-                matchIndex
-                (C.queryMatchBindings bindings)
-                block
-                payloadPattern
-                makePatch
+        Just Refl -> do
+          queryBindings <- C.queryMatches query (C.blockSnapshotFacts block)
+          payloadBindings <-
+            C.payloadPatternMatches
+              payloadPattern
+              (C.blockSnapshotPayload block)
+          P.pure
+            (SelectionMatch
+               (C.queryMatchBindings queryBindings P.++ payloadBindings)
+               queryBindings)
 
-matchedPayloadNodePatch ::
-     P.Int
-  -> C.MatchBindings
+selectionBindingsForBlock ::
+     C.Traceable tag
+  => MatchSpec
   -> C.BlockSnapshot tag
-  -> C.PayloadPattern tag
-  -> (MatchContext tag -> NodePatch)
-  -> Maybe NodePatch
-matchedPayloadNodePatch matchIndex factBindings block payloadPattern makePatch =
-  case C.payloadPatternMatches payloadPattern (C.blockSnapshotPayload block) of
-    Nothing -> Nothing
-    Just payloadBindings ->
-      Just
-        (makePatch
-           (MatchContext
-              { matchContextIndex = matchIndex
-              , matchContextPayload = C.blockSnapshotPayload block
-              , matchContextLabel = C.blockSnapshotPayloadView block
-              , matchContextBindings = factBindings P.++ payloadBindings
-              }))
+  -> [(P.String, C.QueryBindings)]
+selectionBindingsForBlock spec block =
+  case spec of
+    MatchSpec selections _ _ _ _ ->
+      [ (selectionRuleKey rule, bindings)
+      | rule <- selections
+      , Just (SelectionMatch _ bindings) <- [selectionRuleMatch block rule]
+      ]
 
-foldNodePatches :: [NodePatch] -> Maybe NodePatch
-foldNodePatches patches =
-  case patches of
-    []         -> Nothing
-    patch:rest -> Just (foldNodePatchesFrom patch rest)
+templateForDeclaration ::
+     MatchSpec -> P.String -> C.MatchBindings -> VT.NodeTemplate
+templateForDeclaration spec declaration bindings =
+  substituteTemplateBindings
+    bindings
+    (P.foldl applyEdit VT.emptyNodeTemplate (declarationEdits spec declaration))
+  where
+    applyEdit template edit =
+      case edit of
+        NodeEdit _ _ update -> update bindings template
 
-foldNodePatchesFrom :: NodePatch -> [NodePatch] -> NodePatch
-foldNodePatchesFrom current patches =
-  case patches of
-    []         -> current
-    patch:rest -> foldNodePatchesFrom (VP.appendNodePatch current patch) rest
+declarationEdits :: MatchSpec -> P.String -> [NodeEdit]
+declarationEdits spec declaration =
+  case spec of
+    MatchSpec _ _ _ edits _ ->
+      [edit | edit@(NodeEdit target _ _) <- edits, target P.== declaration]
+
+substituteTemplateBindings ::
+     C.MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate
+substituteTemplateBindings bindings =
+  VT.mapNodeTemplateExprs
+    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
+
+bindingExprSubstitutions :: C.MatchBindings -> [(P.String, P.Double)]
+bindingExprSubstitutions bindings =
+  case bindings of
+    [] -> []
+    C.MatchBinding name value:rest ->
+      case P.reads value of
+        [(number, "")] ->
+          ("global." P.++ name, number) : bindingExprSubstitutions rest
+        _ -> bindingExprSubstitutions rest
+
+parentViewId :: ParentRef -> Maybe V.ViewId
+parentViewId parent =
+  case parent of
+    CanvasParent        -> Nothing
+    GeneratedParent key -> Just (V.ViewId (V.generatedNodeId key))
+
+commaSeparated :: [P.String] -> P.String
+commaSeparated values =
+  case values of
+    []         -> ""
+    [value]    -> value
+    value:rest -> value P.++ ", " P.++ commaSeparated rest
 
 buildMatchedViewGraph ::
      MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> V.ViewGraph
@@ -381,19 +497,25 @@ buildMatchedViewGraphWith ::
   -> [V.ViewStep]
   -> V.ViewGraph
 buildMatchedViewGraphWith transformNodes spec builtNodes steps =
-  let traceNodes = applyAccessRequirementsForSpec spec builtNodes
-      groupNodes =
-        applyAccessRequirementsForSpec spec (groupNodesForSpec spec traceNodes)
-      nodes = transformNodes (traceNodes P.++ groupNodes)
+  let generatedNodes = generatedNodesForSpec spec builtNodes
+      hierarchicalNodes = cascadeNodeStyles (builtNodes P.++ generatedNodes)
+      nodes =
+        transformNodes (applyAccessRequirementsForSpec spec hierarchicalNodes)
       (matchConstraints, matchChoiceConstraints) =
         matchSpecConstraints spec nodes
-   in V.finalizeViewGraph nodes matchConstraints matchChoiceConstraints steps
+      diagnostics = hierarchyDiagnostics spec nodes steps
+   in V.finalizeViewGraph
+        nodes
+        matchConstraints
+        matchChoiceConstraints
+        steps
+        diagnostics
 
 matchSpecConstraints ::
      MatchSpec -> [V.ViewNode] -> ([S.Constraint], [S.ChoiceConstraint])
 matchSpecConstraints spec nodes =
   case spec of
-    MatchSpec _ layoutRules _ ->
+    MatchSpec _ _ _ _ layoutRules ->
       foldConstraintPairs (P.map (layoutRuleConstraints nodes) layoutRules)
 
 foldConstraintPairs ::
@@ -578,11 +700,14 @@ matchingCategoryEndpointNodes endpoint nodes =
 matchingSelectionNodes ::
      NodeSelection -> [V.ViewNode] -> [(V.AnyLayoutView, C.QueryBindings)]
 matchingSelectionNodes selection nodes =
-  case nodes of
-    [] -> []
-    node:rest ->
-      selectionNodeMatches selection node
-        P.++ matchingSelectionNodes selection rest
+  case selection of
+    CanvasSelection -> [(canvasLayoutView, [])]
+    NodeSelection _ ->
+      case nodes of
+        [] -> []
+        node:rest ->
+          selectionNodeMatches selection node
+            P.++ matchingSelectionNodes selection rest
 
 selectionNodeMatches ::
      NodeSelection -> V.ViewNode -> [(V.AnyLayoutView, C.QueryBindings)]
@@ -590,46 +715,11 @@ selectionNodeMatches selection wrapped =
   case wrapped of
     V.ViewNode node ->
       case selection of
-        TraceSelection query ->
-          case V.traceNodeTags node of
-            Nothing -> []
-            Just tags ->
-              case queryMatchesViewTags query tags of
-                Nothing       -> []
-                Just bindings -> [(V.AnyLayoutView node, bindings)]
-        GroupSelection key query ->
-          case V.generatedNodeMeta node of
-            Just meta
-              | key P.== V.generatedKey meta
-                  P.&& C.queryKey query P.== V.generatedQueryKey meta ->
-                [(V.AnyLayoutView node, [])]
-            _ -> []
-
-traceNodeQueryMatches ::
-     C.Query -> V.AnyTraceNode -> [(V.AnyTraceNode, C.QueryBindings)]
-traceNodeQueryMatches query anyNode =
-  case anyNode of
-    V.AnyTraceNode node ->
-      case V.traceNodeTags node of
-        Nothing -> []
-        Just tags ->
-          case queryMatchesViewTags query tags of
+        CanvasSelection -> []
+        NodeSelection key ->
+          case P.lookup key (V.nodeSelectionBindings node) of
             Nothing       -> []
-            Just bindings -> [(anyNode, bindings)]
-
-queryMatchesViewTags :: C.Query -> V.ViewTags -> Maybe C.QueryBindings
-queryMatchesViewTags query tags = C.queryMatches query (viewTagsFacts tags)
-
-viewTagsFacts :: V.ViewTags -> C.Facts
-viewTagsFacts tags = C.Facts (P.map viewTagFact (V.viewTagsToList tags))
-
-viewTagFact :: (P.String, V.ViewTagValue) -> C.Fact
-viewTagFact tag =
-  case tag of
-    (name, value) ->
-      case value of
-        V.ViewTagAtom    -> C.factAtom name
-        V.ViewTagInt int -> C.factInt name int
+            Just bindings -> [(V.AnyLayoutView node, bindings)]
 
 mergeQueryBindings ::
      C.QueryBindings -> C.QueryBindings -> Maybe C.QueryBindings
@@ -782,7 +872,7 @@ joinCategoryTokenRest tokens =
 applyAccessRequirementsForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
 applyAccessRequirementsForSpec spec nodes =
   case spec of
-    MatchSpec _ layoutRules _ ->
+    MatchSpec _ _ _ _ layoutRules ->
       P.map (applyAccessRequirementsForRules layoutRules) nodes
 
 applyAccessRequirementsForRules :: [LayoutRule] -> V.ViewNode -> V.ViewNode
@@ -855,81 +945,246 @@ nodeMatchesSelection selection node =
     [] -> False
     _  -> True
 
-groupNodesForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
-groupNodesForSpec spec nodes =
+generatedNodesForSpec :: MatchSpec -> [V.ViewNode] -> [V.ViewNode]
+generatedNodesForSpec spec traceNodes =
+  P.concatMap
+    (generatedTreeForDeclaration spec traceNodes)
+    (rootGeneratedDeclarations spec)
+
+rootGeneratedDeclarations :: MatchSpec -> [GeneratedNodeDeclaration]
+rootGeneratedDeclarations spec =
   case spec of
-    MatchSpec _ _ groupRules -> maybeGroupNodes (mergedGroupRules groupRules)
-  where
-    traceNodes = V.viewTraceNodes nodes
-    maybeGroupNodes rules =
-      case rules of
+    MatchSpec _ _ declarations _ _ ->
+      [ declaration
+      | declaration <- declarations
+      , generatedDeclarationParent declaration P.== CanvasParent
+      ]
+
+generatedTreeForDeclaration ::
+     MatchSpec -> [V.ViewNode] -> GeneratedNodeDeclaration -> [V.ViewNode]
+generatedTreeForDeclaration spec traceNodes declaration =
+  let key = generatedDeclarationKey declaration
+      nestedTrees =
+        P.map
+          (generatedTreeForDeclaration spec traceNodes)
+          (childGeneratedDeclarations spec key)
+      nestedNodes = P.concat nestedTrees
+      nestedRoots = mapMaybe lastNodeId nestedTrees
+      traceChildIds =
+        [ V.viewRefId (V.nodeRef node)
+        | V.ViewNode node <- traceNodes
+        , V.nodeParent node P.== Just (V.ViewId (V.generatedNodeId key))
+        ]
+      childIds = traceChildIds P.++ nestedRoots
+   in case childIds of
         [] -> []
-        rule:rest ->
-          case groupNodeForRule traceNodes rule of
-            Nothing   -> maybeGroupNodes rest
-            Just node -> node : maybeGroupNodes rest
+        _ ->
+          nestedNodes
+            P.++ [generatedNodeForDeclaration spec declaration childIds]
 
-mergedGroupRules :: [GroupRule] -> [GroupRule]
-mergedGroupRules rules =
-  case rules of
-    [] -> []
-    GroupRule key query patch:rest ->
-      case mergeGroupRule key query patch rest of
-        (mergedPatch, remaining) ->
-          GroupRule key query mergedPatch : mergedGroupRules remaining
+lastNodeId :: [V.ViewNode] -> Maybe V.ViewId
+lastNodeId nodes =
+  case P.reverse nodes of
+    []                -> Nothing
+    V.ViewNode node:_ -> Just (V.viewRefId (V.nodeRef node))
 
-mergeGroupRule ::
-     P.String -> C.Query -> NodePatch -> [GroupRule] -> (NodePatch, [GroupRule])
-mergeGroupRule key query patch rules =
-  case rules of
-    [] -> (patch, [])
-    GroupRule nextKey nextQuery nextPatch:rest ->
-      case key P.== nextKey P.&& query P.== nextQuery of
-        True ->
-          mergeGroupRule key query (VP.appendNodePatch patch nextPatch) rest
-        False ->
-          case mergeGroupRule key query patch rest of
-            (mergedPatch, remaining) ->
-              (mergedPatch, GroupRule nextKey nextQuery nextPatch : remaining)
+childGeneratedDeclarations ::
+     MatchSpec -> P.String -> [GeneratedNodeDeclaration]
+childGeneratedDeclarations spec parentKey =
+  case spec of
+    MatchSpec _ _ declarations _ _ ->
+      [ declaration
+      | declaration <- declarations
+      , generatedDeclarationParent declaration P.== GeneratedParent parentKey
+      ]
 
-groupNodeForRule :: [V.AnyTraceNode] -> GroupRule -> Maybe V.ViewNode
-groupNodeForRule traceNodes rule =
-  case rule of
-    GroupRule key query patch ->
-      case matchingQueryTraceNodes query traceNodes of
-        [] -> Nothing
-        children ->
+generatedNodeForDeclaration ::
+     MatchSpec -> GeneratedNodeDeclaration -> [V.ViewId] -> V.ViewNode
+generatedNodeForDeclaration spec declaration children =
+  let key = generatedDeclarationKey declaration
+      ref = V.viewRefFromId (V.generatedNodeId key)
+      template = templateForDeclaration spec key []
+      base =
+        V.Node
+          { V.nodeRef = ref
+          , V.nodeLabel = V.ViewLabel ("Node." P.++ key)
+          , V.nodeContent = V.ContentEmpty
+          , V.nodeBox = V.boxForNodeRoot (V.generatedNodeRoot key)
+          , V.nodeStyle = V.styleForNodeRoot (V.generatedNodeRoot key)
+          , V.nodeOrigin = V.GeneratedOrigin (V.GeneratedMeta key)
+          , V.nodeDeclaration = key
+          , V.nodeSelectionBindings = [(key, [])]
+          , V.nodeParent = parentViewId (generatedDeclarationParent declaration)
+          , V.nodeChildren = children
+          , V.nodeHorizontalFit = V.Hug
+          , V.nodeVerticalFit = V.Hug
+          , V.nodeRelativePins = []
+          , V.nodeConstraints = []
+          }
+   in V.ViewNode (VT.applyNodeTemplate template base)
+
+cascadeNodeStyles :: [V.ViewNode] -> [V.ViewNode]
+cascadeNodeStyles nodes = P.map cascadeNode nodes
+  where
+    cascadeNode wrapped =
+      case wrapped of
+        V.ViewNode node ->
+          V.ViewNode
+            node
+              { V.nodeStyle =
+                  case V.nodeParent node P.>>= cascadedStyleFor of
+                    Nothing -> V.nodeStyle node
+                    Just parentStyle ->
+                      VS.cascadeNodeStyle parentStyle (V.nodeStyle node)
+              }
+    cascadedStyleFor identifier =
+      case findNode identifier nodes of
+        Nothing -> Nothing
+        Just (V.ViewNode node) ->
           Just
-            (V.ViewNode
-               (generatedCompoundNodeForRule key query patch children :: V.Node
-                  ()))
+            (case V.nodeParent node P.>>= cascadedStyleFor of
+               Nothing -> V.nodeStyle node
+               Just parentStyle ->
+                 VS.cascadeNodeStyle parentStyle (V.nodeStyle node))
 
-matchingQueryTraceNodes :: C.Query -> [V.AnyTraceNode] -> [V.AnyTraceNode]
-matchingQueryTraceNodes query nodes =
-  [ anyNode
-  | anyNode <- nodes
-  , (_matchedNode, _bindings) <- traceNodeQueryMatches query anyNode
-  ]
+findNode :: V.ViewId -> [V.ViewNode] -> Maybe V.ViewNode
+findNode identifier =
+  find (\(V.ViewNode node) -> V.viewRefId (V.nodeRef node) P.== identifier)
 
-generatedCompoundNodeForRule ::
-     P.String -> C.Query -> NodePatch -> [V.AnyTraceNode] -> V.Node tag
-generatedCompoundNodeForRule key query patch children =
-  let queryKey' = C.queryKey query
-      ref = V.viewRefFromId (V.generatedNodeId key queryKey')
-      baseStyle = V.styleForNodeRoot (V.generatedNodeRoot key queryKey')
-      style' = VP.nodePatchStyleUpdate patch baseStyle
-   in V.Node
-        { V.nodeRef = ref
-        , V.nodeLabel = V.ViewLabel ("Group." P.++ key)
-        , V.nodeContent = fromMaybe V.ContentEmpty (VP.nodePatchContent patch)
-        , V.nodeStyle = style'
-        , V.nodeOrigin =
-            V.GeneratedOrigin
-              V.GeneratedMeta
-                {V.generatedKey = key, V.generatedQueryKey = queryKey'}
-        , V.nodeStructure =
-            V.CompoundNode
-              V.ShrinkWrapChildren
-              (P.map V.nodeChildFromTraceNode children)
-        , V.nodeConstraints = VP.patchGeometryConstraints patch style'
-        }
+hierarchyDiagnostics ::
+     MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> [V.ViewDiagnostic]
+hierarchyDiagnostics spec nodes steps =
+  traceDeclarationDiagnostics spec nodes steps
+    P.++ generatedDeclarationDiagnostics spec nodes steps
+
+traceDeclarationDiagnostics ::
+     MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> [V.ViewDiagnostic]
+traceDeclarationDiagnostics spec nodes steps =
+  case spec of
+    MatchSpec _ declarations _ _ _ -> mapMaybe diagnostic declarations
+  where
+    visibleIds = introducedViewIds steps
+    diagnostic declaration =
+      let matchingNodes =
+            nodesForDeclaration (traceDeclarationKey declaration) nodes
+          visible =
+            P.length
+              (P.filter (`P.elem` visibleIds) (P.map nodeId matchingNodes))
+          matched = P.length matchingNodes
+       in if matched P.== 0 P.|| visible P.== 0
+            then Just
+                   V.ViewDiagnostic
+                     { V.viewDiagnosticCode = "hierarchy.node-never-rendered"
+                     , V.viewDiagnosticMessage =
+                         "A node declaration never produced visible output."
+                     , V.viewDiagnosticDeclaration =
+                         traceDeclarationKey declaration
+                     , V.viewDiagnosticReason =
+                         if matched P.== 0
+                           then "the selection matched no materialized trace output"
+                           else "matched nodes were never introduced at a checkpoint"
+                     , V.viewDiagnosticMatched = matched
+                     , V.viewDiagnosticVisible = visible
+                     }
+            else Nothing
+
+generatedDeclarationDiagnostics ::
+     MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> [V.ViewDiagnostic]
+generatedDeclarationDiagnostics spec nodes steps =
+  case spec of
+    MatchSpec _ _ declarations _ _ -> mapMaybe diagnostic declarations
+  where
+    visibleIds = introducedViewIds steps
+    diagnostic declaration =
+      case nodesForDeclaration (generatedDeclarationKey declaration) nodes of
+        [] ->
+          Just
+            V.ViewDiagnostic
+              { V.viewDiagnosticCode = "hierarchy.parent-pruned"
+              , V.viewDiagnosticMessage =
+                  "An empty generated parent was pruned from the output."
+              , V.viewDiagnosticDeclaration =
+                  generatedDeclarationKey declaration
+              , V.viewDiagnosticReason =
+                  "none of its child declarations produced a node"
+              , V.viewDiagnosticMatched = 0
+              , V.viewDiagnosticVisible = 0
+              }
+        matchingNodes ->
+          let visible =
+                P.length
+                  [ ()
+                  | wrapped <- matchingNodes
+                  , nodeOrDescendantVisible nodes visibleIds wrapped
+                  ]
+           in if visible P.== 0
+                then Just
+                       V.ViewDiagnostic
+                         { V.viewDiagnosticCode =
+                             "hierarchy.node-never-rendered"
+                         , V.viewDiagnosticMessage =
+                             "A generated node never produced visible output."
+                         , V.viewDiagnosticDeclaration =
+                             generatedDeclarationKey declaration
+                         , V.viewDiagnosticReason =
+                             "none of its descendants were introduced at a checkpoint"
+                         , V.viewDiagnosticMatched = P.length matchingNodes
+                         , V.viewDiagnosticVisible = 0
+                         }
+                else Nothing
+
+nodesForDeclaration :: P.String -> [V.ViewNode] -> [V.ViewNode]
+nodesForDeclaration declaration =
+  P.filter (\(V.ViewNode node) -> V.nodeDeclaration node P.== declaration)
+
+nodeId :: V.ViewNode -> V.ViewId
+nodeId wrapped =
+  case wrapped of
+    V.ViewNode node -> V.viewRefId (V.nodeRef node)
+
+introducedViewIds :: [V.ViewStep] -> [V.ViewId]
+introducedViewIds =
+  P.concatMap (P.concatMap introducedByIntent P.. V.viewStepIntents)
+  where
+    introducedByIntent intent =
+      case intent of
+        V.RenderFresh ref      -> [V.viewRefId ref]
+        V.RenderContinue _ ref -> [V.viewRefId ref]
+        V.RenderFork _ ref     -> [V.viewRefId ref]
+        V.RenderRemove _       -> []
+
+nodeOrDescendantVisible :: [V.ViewNode] -> [V.ViewId] -> V.ViewNode -> P.Bool
+nodeOrDescendantVisible nodes visibleIds wrapped =
+  case wrapped of
+    V.ViewNode node ->
+      V.viewRefId (V.nodeRef node) `P.elem` visibleIds
+        P.|| P.any childVisible (V.nodeChildren node)
+  where
+    childVisible identifier =
+      case findNode identifier nodes of
+        Nothing    -> False
+        Just child -> nodeOrDescendantVisible nodes visibleIds child
+
+canvasLayoutView :: V.AnyLayoutView
+canvasLayoutView =
+  let ref = V.viewRefFromId 0
+      node =
+        V.Node
+          { V.nodeRef = ref
+          , V.nodeLabel = V.ViewLabel "Canvas"
+          , V.nodeContent = V.ContentEmpty
+          , V.nodeBox =
+              VB.nodeBoxWithBounds
+                (VP.Bounds (S.num 0) (S.num 0) (S.num 800) (S.num 600))
+          , V.nodeStyle = V.styleForNodeRoot (V.generatedNodeRoot "canvas")
+          , V.nodeOrigin = V.GeneratedOrigin (V.GeneratedMeta "canvas")
+          , V.nodeDeclaration = "canvas"
+          , V.nodeSelectionBindings = []
+          , V.nodeParent = Nothing
+          , V.nodeChildren = []
+          , V.nodeHorizontalFit = V.Contain
+          , V.nodeVerticalFit = V.Contain
+          , V.nodeRelativePins = []
+          , V.nodeConstraints = []
+          }
+   in V.AnyLayoutView node

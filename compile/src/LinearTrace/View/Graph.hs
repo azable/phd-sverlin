@@ -28,9 +28,11 @@ module LinearTrace.View.Graph
   , Node(..)
   , NodeOrigin(..)
   , GeneratedMeta(..)
-  , NodeStructure(..)
-  , CompoundFit(..)
-  , NodeChild(..)
+  , ContentFit(..)
+  , Axis(..)
+  , RelativeLayoutAttr(..)
+  , RelativeLayoutPin(..)
+  , ViewDiagnostic(..)
   , NodeVarRoot(..)
   , ViewStep(..)
   , RenderIntent(..)
@@ -43,26 +45,28 @@ module LinearTrace.View.Graph
     -- compile identity tracking.
     traceNodeTags
   , generatedNodeMeta
+  , boxForRef
   , styleForRef
   , traceNodeRoot
   , generatedNodeRoot
   , generatedNodeId
+  , boxForNodeRoot
   , styleForNodeRoot
   , nodeVarName
   , nodeVar
   , stableKey
-  , nodeChildFromTraceNode
   , viewTraceNodes
   ) where
 
-import           LinearTrace.View.Primitives (Bounds (..), BoundsExpr,
-                                              HasBounds (..))
-import           LinearTrace.View.Style      (NodeStyle, nodeStyleBounds,
-                                              nodeStyleWithBounds)
+import           Data.List                   (stripPrefix)
+import           LinearTrace.View.Box        (NodeBox, nodeBoxWithBounds)
+import           LinearTrace.View.Primitives (Bounds (..), HasBounds (..))
+import           LinearTrace.View.Style      (NodeStyle, emptyNodeStyle)
 import qualified Prelude                     as P
 import qualified Solver                      as S
 import           Solver                      (ChoiceConstraint, Constraint,
                                               Expr, SymbolicType)
+import           Text.Read                   (readMaybe)
 
 newtype ViewId =
   ViewId P.Int
@@ -133,44 +137,70 @@ data CodeContentSpec = CodeContentSpec
   } deriving (P.Eq, P.Show)
 
 data Node tag = Node
-  { nodeRef         :: ViewRef tag
-  , nodeLabel       :: ViewLabel
-  , nodeContent     :: ContentMode
-  , nodeStyle       :: NodeStyle
-  , nodeOrigin      :: NodeOrigin
-  , nodeStructure   :: NodeStructure
-  , nodeConstraints :: [Constraint]
+  { nodeRef               :: ViewRef tag
+  , nodeLabel             :: ViewLabel
+  , nodeContent           :: ContentMode
+  , nodeBox               :: NodeBox
+  , nodeStyle             :: NodeStyle
+  , nodeOrigin            :: NodeOrigin
+  , nodeDeclaration       :: P.String
+  , nodeSelectionBindings :: [(P.String, [(P.String, P.Int)])]
+  , nodeParent            :: P.Maybe ViewId
+  , nodeChildren          :: [ViewId]
+  , nodeHorizontalFit     :: ContentFit
+  , nodeVerticalFit       :: ContentFit
+  , nodeRelativePins      :: [RelativeLayoutPin]
+  , nodeConstraints       :: [Constraint]
   }
 
 data NodeOrigin
   = TraceOrigin ViewTags
   | GeneratedOrigin GeneratedMeta
 
-data GeneratedMeta = GeneratedMeta
-  { generatedKey      :: P.String
-  , generatedQueryKey :: P.String
+newtype GeneratedMeta = GeneratedMeta
+  { generatedKey :: P.String
   }
 
-data NodeStructure
-  = LeafNode
-  | CompoundNode CompoundFit [NodeChild]
+data ContentFit
+  = Hug
+  | Contain
+  deriving (P.Eq, P.Show)
 
-data CompoundFit =
-  ShrinkWrapChildren
+data Axis
+  = Horizontal
+  | Vertical
+  | Both
+  deriving (P.Eq, P.Show)
 
-data NodeChild = NodeChild
-  { nodeChildId     :: ViewId
-  , nodeChildBounds :: BoundsExpr
-  }
+data RelativeLayoutAttr
+  = RelativeCenterX
+  | RelativeCenterY
+  | RelativeWidth
+  | RelativeHeight
+  deriving (P.Eq, P.Show)
+
+data RelativeLayoutPin = RelativeLayoutPin
+  { relativeLayoutAttr  :: RelativeLayoutAttr
+  , relativeLayoutRatio :: P.Double
+  } deriving (P.Eq, P.Show)
+
+data ViewDiagnostic = ViewDiagnostic
+  { viewDiagnosticCode        :: P.String
+  , viewDiagnosticMessage     :: P.String
+  , viewDiagnosticDeclaration :: P.String
+  , viewDiagnosticReason      :: P.String
+  , viewDiagnosticMatched     :: P.Int
+  , viewDiagnosticVisible     :: P.Int
+  } deriving (P.Eq, P.Show)
 
 newtype NodeVarRoot =
   NodeVarRoot [P.String]
 
 instance HasBounds (Node tag) where
-  top node = top (nodeStyle node)
-  left node = left (nodeStyle node)
-  width node = width (nodeStyle node)
-  height node = height (nodeStyle node)
+  top node = top (nodeBox node)
+  left node = left (nodeBox node)
+  width node = width (nodeBox node)
+  height node = height (nodeBox node)
 
 data ViewNode where
   ViewNode :: Node tag -> ViewNode
@@ -182,6 +212,7 @@ data ViewGraph = ViewGraph
   , viewConstraints       :: [Constraint]
   , viewChoiceConstraints :: [ChoiceConstraint]
   , viewSteps             :: [ViewStep]
+  , viewDiagnostics       :: [ViewDiagnostic]
   }
 
 data ViewStep = ViewStep
@@ -234,15 +265,6 @@ generatedNodeMeta node =
     TraceOrigin _        -> P.Nothing
     GeneratedOrigin meta -> P.Just meta
 
-nodeChildFromTraceNode :: AnyTraceNode -> NodeChild
-nodeChildFromTraceNode anyNode =
-  case anyNode of
-    AnyTraceNode node ->
-      NodeChild
-        { nodeChildId = viewRefId (nodeRef node)
-        , nodeChildBounds = nodeStyleBounds (nodeStyle node)
-        }
-
 viewTraceNodes :: [ViewNode] -> [AnyTraceNode]
 viewTraceNodes nodes =
   case nodes of
@@ -255,11 +277,17 @@ viewTraceNodes nodes =
             GeneratedOrigin _ -> viewTraceNodes rest
 
 styleForRef :: ViewRef tag -> NodeStyle
-styleForRef ref = styleForNodeRoot (traceNodeRoot ref)
+styleForRef _ = emptyNodeStyle
 
 styleForNodeRoot :: NodeVarRoot -> NodeStyle
-styleForNodeRoot root =
-  nodeStyleWithBounds
+styleForNodeRoot _ = emptyNodeStyle
+
+boxForRef :: ViewRef tag -> NodeBox
+boxForRef ref = boxForNodeRoot (traceNodeRoot ref)
+
+boxForNodeRoot :: NodeVarRoot -> NodeBox
+boxForNodeRoot root =
+  nodeBoxWithBounds
     (Bounds
        (nodeVar root [] "top")
        (nodeVar root [] "left")
@@ -269,12 +297,14 @@ styleForNodeRoot root =
 traceNodeRoot :: ViewRef tag -> NodeVarRoot
 traceNodeRoot ref = NodeVarRoot ["B" P.++ P.show (viewRefInt ref)]
 
-generatedNodeRoot :: P.String -> P.String -> NodeVarRoot
-generatedNodeRoot key queryKey' = NodeVarRoot ["V", key, safeKey queryKey']
+generatedNodeRoot :: P.String -> NodeVarRoot
+generatedNodeRoot key = NodeVarRoot ["V", safeKey key]
 
-generatedNodeId :: P.String -> P.String -> P.Int
-generatedNodeId key queryKey' =
-  P.negate (1 P.+ positiveHash (key P.++ ":" P.++ queryKey'))
+generatedNodeId :: P.String -> P.Int
+generatedNodeId key =
+  case stripPrefix "generated-node-" key P.>>= readMaybe of
+    P.Just counter -> P.negate (1 P.+ counter)
+    P.Nothing      -> P.error ("Invalid internal generated-node key: " P.++ key)
 
 nodeVarName :: NodeVarRoot -> [P.String] -> P.String -> P.String
 nodeVarName root path field =

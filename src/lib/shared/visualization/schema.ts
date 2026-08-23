@@ -111,13 +111,8 @@ const visualContentSchema = v.variant('kind', [
 ]);
 
 const visualStyleSchema = v.strictObject({
-  top: finite,
-  left: finite,
-  width: v.pipe(finite, v.minValue(0)),
-  height: v.pipe(finite, v.minValue(0)),
   opacity: v.optional(v.pipe(finite, v.minValue(0), v.maxValue(1))),
   zIndex: v.optional(finite),
-  padding: v.optional(v.pipe(finite, v.minValue(0))),
   fontSize: v.optional(positive),
   radius: v.optional(v.pipe(finite, v.minValue(0))),
   strokeWidth: v.optional(v.pipe(finite, v.minValue(0))),
@@ -132,18 +127,29 @@ const visualStyleSchema = v.strictObject({
   whiteSpace: v.optional(v.string())
 });
 
+const edgeInsetsSchema = v.strictObject({
+  top: v.pipe(finite, v.minValue(0)),
+  right: v.pipe(finite, v.minValue(0)),
+  bottom: v.pipe(finite, v.minValue(0)),
+  left: v.pipe(finite, v.minValue(0))
+});
+
+const visualBoxSchema = v.strictObject({
+  bounds: layoutRectSchema,
+  padding: edgeInsetsSchema,
+  margin: edgeInsetsSchema
+});
+
 const styleVariableBindingSchema = v.strictObject({
   field: text,
   variables: v.array(v.string())
 });
 
 const visualElementSchema = v.strictObject({
-  id: natural,
+  id: integer,
   role: v.string(),
-  kind: v.variant('kind', [
-    v.strictObject({ kind: v.literal('leaf') }),
-    v.strictObject({ kind: v.literal('group'), children: v.array(natural) })
-  ]),
+  box: visualBoxSchema,
+  children: v.array(integer),
   content: v.optional(visualContentSchema),
   style: visualStyleSchema,
   styleVariables: v.array(styleVariableBindingSchema)
@@ -174,7 +180,7 @@ const findingSchema = v.strictObject({
   findingSeverity: v.picklist(['findingInfo', 'findingWarning']),
   findingCode: text,
   findingMessage: text,
-  findingElementIds: v.array(natural),
+  findingElementIds: v.array(integer),
   findingStepIndices: v.array(natural),
   findingEvidence: v.array(findingEvidenceSchema)
 });
@@ -189,8 +195,8 @@ const cspVariableSchema = v.strictObject({
 
 const visualInstanceSchema = v.strictObject({
   id: natural,
-  elementId: natural,
-  originElementId: v.optional(natural),
+  elementId: integer,
+  originElementId: v.optional(integer),
   codeEmphasisRanges: v.optional(v.array(textSourceRangeSchema))
 });
 
@@ -199,9 +205,9 @@ const timelineStepSchema = v.strictObject({
   instances: v.array(visualInstanceSchema)
 });
 
-/** Strict runtime schema for visualization IR version 2. */
-export const visualizationV2Schema = v.strictObject({
-  irVersion: v.literal(2),
+/** Strict runtime schema for visualization IR version 3. */
+export const visualizationV3Schema = v.strictObject({
+  irVersion: v.literal(3),
   seed: integer,
   sourcePath: v.string(),
   sampling: v.optional(
@@ -256,11 +262,9 @@ export function validateVisualizationReferences(visualization: Visualization): v
   }
 
   for (const element of visualization.elements) {
-    if (element.kind.kind === 'group') {
-      for (const child of element.kind.children) {
-        if (!elements.has(child))
-          throw new Error(`Element ${element.id} references unknown child ${child}.`);
-      }
+    for (const child of element.children) {
+      if (!elements.has(child))
+        throw new Error(`Element ${element.id} references unknown child ${child}.`);
     }
 
     if (
@@ -325,6 +329,29 @@ export function validateVisualizationReferences(visualization: Visualization): v
           throw new Error(`Element ${element.id} has incomplete code token ranges.`);
         }
       });
+    }
+  }
+
+  const parents = new Map<number, number>();
+  for (const element of visualization.elements) {
+    for (const child of element.children) {
+      const previous = parents.get(child);
+      if (previous !== undefined) {
+        throw new Error(`Element ${child} has multiple parents: ${previous} and ${element.id}.`);
+      }
+      parents.set(child, element.id);
+    }
+  }
+
+  for (const element of visualization.elements) {
+    const path = new Set<number>();
+    let current: number | undefined = element.id;
+    while (current !== undefined) {
+      if (path.has(current)) {
+        throw new Error(`Element hierarchy contains a cycle through element ${current}.`);
+      }
+      path.add(current);
+      current = parents.get(current);
     }
   }
 

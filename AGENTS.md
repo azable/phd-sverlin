@@ -31,15 +31,22 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## DSL LLM Authoring Context
 
-- `src/lib/server/chat-bots/ai-assistant/dsl-interface.md` contains the canonical
-  DSL interface context for the primary `ai-assistant` bot. It is a human-readable
-  authoring reference specifically designed to guide an OpenAI code-generating
-  model (currently configured as `gpt-5.6-luna`) when it edits the current Sverlin
-  project artifact presented by the frontend.
-- The guide is read from disk for every model request during local development,
-  so saved edits are picked up without restarting the SvelteKit server. The
-  sibling `index.ts` keeps the short role prompt, model configuration, structured
-  response contract, and a bundled fallback for packaged deployments.
+- `compile/src/LinearTrace/Choreography.hs` is the canonical public-name and
+  per-symbol behavior contract. Keep one Haddock description on every explicit
+  facade export. `scripts/dsl-api-index.mjs` validates and indexes those comments
+  together with GHC-inferred public signatures; run
+  `pnpm run generate:dsl-api-index` after changing them. Never edit the
+  generated `src/lib/server/chat-bots/ai-assistant/dsl-api-index.md` by hand.
+- `src/lib/server/chat-bots/ai-assistant/dsl-interface.md` is the complementary
+  human-readable composition and authoring guide for the primary `ai-assistant`
+  bot (currently configured as `gpt-5.6-luna`). It should explain cross-cutting
+  invariants, syntax hazards, and examples without duplicating the exhaustive API
+  index.
+- The guide and generated index are read from disk for every model request during
+  local development, so saved edits are picked up without restarting the
+  SvelteKit server. The sibling `index.ts` keeps the short role prompt, model
+  configuration, structured response contract, and bundled fallbacks for
+  packaged deployments.
 - Keep this context synchronized in the same change whenever the public DSL
   changes. At minimum, review it when editing
   `compile/src/LinearTrace/Choreography.hs`, its re-exported public modules,
@@ -50,9 +57,10 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   the shape of the generated visual runner. Remove stale API names and add new public API
   before merging the corresponding implementation change.
 - Derive API statements from the public choreography facade and the frontend's
-  minimal starting example. Do not document private implementation
-  details as if they were stable DSL affordances, and do not invent helpers that
-  are not exported by the facade.
+  minimal starting example. Do not document private implementation details as if
+  they were stable DSL affordances, and do not invent helpers that are not
+  exported by the facade. `pnpm run check:dsl-api-index` must pass; the normal
+  lint command also enforces generated-index drift and missing export docs.
 - Keep the context human-readable and organized as compact dot-point sections.
   Explain the linear ownership invariants, the semantic-fact/materialization
   bridge from trace values to visual nodes, and the separation between program

@@ -19,6 +19,8 @@ module LinearTrace.Visualization.IR
   , CanvasSpec(..)
   , HslColor(..)
   , LayoutRect(..)
+  , EdgeInsets(..)
+  , VisualBox(..)
   , CoordinateSystem(..)
   , ResourceKind(..)
   , ResourceDescriptor(..)
@@ -40,7 +42,6 @@ module LinearTrace.Visualization.IR
   , VisualContent(..)
   , VisualStyle(..)
   , StyleVariableBinding(..)
-  , VisualElementKind(..)
   , VisualElement(..)
   , VisualInstance(..)
   , TimelineStep(..)
@@ -109,6 +110,19 @@ data LayoutRect = LayoutRect
   , layoutRectY      :: Double
   , layoutRectWidth  :: Double
   , layoutRectHeight :: Double
+  } deriving (Eq, Show, Generic)
+
+data EdgeInsets = EdgeInsets
+  { insetsTop    :: Double
+  , insetsRight  :: Double
+  , insetsBottom :: Double
+  , insetsLeft   :: Double
+  } deriving (Eq, Show, Generic)
+
+data VisualBox = VisualBox
+  { boxBounds  :: LayoutRect
+  , boxPadding :: EdgeInsets
+  , boxMargin  :: EdgeInsets
   } deriving (Eq, Show, Generic)
 
 -- | Explicit renderer-neutral coordinate convention.
@@ -269,17 +283,10 @@ data VisualContent
       }
   deriving (Eq, Show, Generic)
 
--- | Concrete counterpart of 'NodeStyle'. Bounds always exist; every other
--- field is present only when its required or conditional style plan resolves
--- active for this solution.
+-- | Concrete semantic and surface style. Geometry belongs to 'VisualBox'.
 data VisualStyle = VisualStyle
-  { visualTop         :: Double
-  , visualLeft        :: Double
-  , visualWidth       :: Double
-  , visualHeight      :: Double
-  , visualOpacity     :: Maybe Double
+  { visualOpacity     :: Maybe Double
   , visualZIndex      :: Maybe Double
-  , visualPadding     :: Maybe Double
   , visualFontSize    :: Maybe Double
   , visualRadius      :: Maybe Double
   , visualStrokeWidth :: Maybe Double
@@ -301,17 +308,11 @@ data StyleVariableBinding = StyleVariableBinding
   , bindingVariables :: [CspVariableId]
   } deriving (Eq, Show, Generic)
 
-data VisualElementKind
-  = ElementLeaf
-  | ElementGroup
-      { elementGroupChildren :: [VisualId]
-      }
-  deriving (Eq, Show, Generic)
-
 data VisualElement = VisualElement
   { elementId             :: VisualId
   , elementRole           :: String
-  , elementKind           :: VisualElementKind
+  , elementBox            :: VisualBox
+  , elementChildren       :: [VisualId]
   , elementContent        :: Maybe VisualContent
   , elementStyle          :: VisualStyle
   , elementStyleVariables :: [StyleVariableBinding]
@@ -420,11 +421,13 @@ $(deriveJSON irJsonOptions ''VisualContent)
 
 $(deriveJSON irJsonOptions ''CanvasSpec)
 
+$(deriveJSON irJsonOptions ''EdgeInsets)
+
+$(deriveJSON irJsonOptions ''VisualBox)
+
 $(deriveJSON irJsonOptions ''VisualStyle)
 
 $(deriveJSON irJsonOptions ''StyleVariableBinding)
-
-$(deriveJSON irJsonOptions ''VisualElementKind)
 
 $(deriveJSON irJsonOptions ''VisualElement)
 

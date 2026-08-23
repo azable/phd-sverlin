@@ -176,16 +176,12 @@ instance (ConstraintValue hue, ConstraintValue unit) =>
 selectedSpec :: Selected tag -> MatchSpec
 selectedSpec selected =
   case selected of
-    SelectedHandle selection ->
-      case selection of
-        Selection _ spec -> spec
+    SelectedHandle (Selection _) -> emptyMatchSpec
 
 selectedNodeSelection :: Selected tag -> NodeSelection
 selectedNodeSelection selected =
   case selected of
-    SelectedHandle selection ->
-      case selection of
-        Selection handle _ -> nodeSelection handle
+    SelectedHandle (Selection handle) -> nodeSelection handle
 
 class RelateValues lhs rhs where
   relateValues :: LayoutRelation -> lhs -> rhs -> VisualConstraint

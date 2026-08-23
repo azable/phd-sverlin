@@ -115,7 +115,7 @@ typographyTests =
     [ testCase "adds pinned fit constraints and explicit text layout" $ do
         (initial, final, output, compiled) <- runTypographyPipeline 1
         solutionChoices final @?= solutionChoices initial
-        IR.visualizationIrVersion compiled @?= 2
+        IR.visualizationIrVersion compiled @?= 3
         case renderElements compiled of
           [element] ->
             case IR.elementContent element of
@@ -250,10 +250,14 @@ typographyTests =
             denseSizes = List.nub (map IR.textLayoutFontSize denseLayouts)
             sparseHeights =
               List.nub
-                (map (IR.visualHeight . IR.elementStyle) (renderElements sparse))
+                (map
+                   (IR.layoutRectHeight . IR.boxBounds . IR.elementBox)
+                   (renderElements sparse))
             denseHeights =
               List.nub
-                (map (IR.visualHeight . IR.elementStyle) (renderElements dense))
+                (map
+                   (IR.layoutRectHeight . IR.boxBounds . IR.elementBox)
+                   (renderElements dense))
         length sparseLayouts @?= 2
         length denseLayouts @?= 5
         case (sparseSizes, denseSizes, sparseHeights, denseHeights) of
@@ -463,10 +467,16 @@ choreographyBridgeTests =
         $ let (nodeCount, _constraintCount, _stepCount) =
                 ChoreographyFixtures.payloadMatchedStats
            in nodeCount @?= 1
-    , testCase "grouping matches neutral view tags"
+    , testCase "recursive nodes contain matching selections"
         $ let (nodeCount, _constraintCount, _stepCount) =
-                ChoreographyFixtures.groupStats
+                ChoreographyFixtures.nestedNodeStats
            in nodeCount @?= 3
+    , testCase "a trace output cannot have overlapping node declarations"
+        $ assertErrorContains
+            "overlapping declarations"
+            "matched more than one node declaration"
+            (evaluate
+               (statsTotal ChoreographyFixtures.overlappingDeclarationStats))
     , testCase "apply2 payload operators consume built-in wrappers linearly" $ do
         oneUseBool
           (OneUse
@@ -514,7 +524,7 @@ viewMaterializationTests =
             let style' = IR.elementStyle element
             IR.visualOpacity style' @?= Nothing
             IR.visualZIndex style' @?= Nothing
-            IR.visualPadding style' @?= Nothing
+            IR.boxPadding (IR.elementBox element) @?= IR.EdgeInsets 0 0 0 0
             IR.visualFontSize style' @?= Nothing
             IR.visualRadius style' @?= Nothing
             IR.visualStrokeWidth style' @?= Nothing
@@ -529,10 +539,10 @@ viewMaterializationTests =
         case renderElements compiled of
           element:_ -> do
             let style' = IR.elementStyle element
-            IR.visualPadding style' @?= Just 6
+            IR.visualRadius style' @?= Just 6
             assertTraceVariablesExist
               compiled
-              (styleBindingVariables "padding" element)
+              (styleBindingVariables "radius" element)
             IR.visualFontSize style' @?= Nothing
             IR.visualOpacity style' @?= Nothing
           [] -> assertFailure "expected at least one compiled render element"
@@ -544,11 +554,11 @@ viewMaterializationTests =
         compiled <-
           assertCompileSolved solution ChoreographyFixtures.centerGraph
         let assertCentered element = do
-              let style' = IR.elementStyle element
-              assertNear "left" 80 (IR.visualLeft style')
-              assertNear "top" 50 (IR.visualTop style')
-              assertNear "width" 80 (IR.visualWidth style')
-              assertNear "height" 80 (IR.visualHeight style')
+              let bounds' = IR.boxBounds (IR.elementBox element)
+              assertNear "left" 80 (IR.layoutRectX bounds')
+              assertNear "top" 50 (IR.layoutRectY bounds')
+              assertNear "width" 80 (IR.layoutRectWidth bounds')
+              assertNear "height" 80 (IR.layoutRectHeight bounds')
             assertNear label expected actual =
               assertBool
                 (label
@@ -600,7 +610,7 @@ viewMaterializationTests =
         case renderElements compiled of
           element:_ -> do
             let style' = IR.elementStyle element
-            IR.visualPadding style' @?= Just 4
+            IR.boxPadding (IR.elementBox element) @?= IR.EdgeInsets 4 4 4 4
             IR.visualFontFamily style' @?= Just "Inter"
             IR.visualFontWeight style' @?= Just "bold"
             assertBool "expected concrete fill" (isJust (IR.visualFill style'))
@@ -670,14 +680,82 @@ viewMaterializationTests =
         first <- solveAndCompile 36 ChoreographyFixtures.generativeGraph
         second <- solveAndCompile 36 ChoreographyFixtures.generativeGraph
         first @?= second
-    , testCase "automatic group profiles cover every balanced treatment" $ do
-        solutions <-
-          Choreography.solveViewGraphWithSeeds
-            (map RandomSeed [1 .. 64])
-            ChoreographyFixtures.generativeGroupGraph
+    , testCase "generated parents are structurally transparent by default" $ do
+        compiled <-
+          solveAndCompile 37 ChoreographyFixtures.generativeParentGraph
+        case filter
+               (not . null . IR.elementChildren)
+               (IR.visualizationElements compiled) of
+          [parent] -> do
+            IR.visualFill (IR.elementStyle parent) @?= Nothing
+            IR.visualStroke (IR.elementStyle parent) @?= Nothing
+            length (IR.elementChildren parent) @?= 2
+            let parentInstances =
+                  [ instance'
+                  | step <- IR.visualizationSteps compiled
+                  , instance' <- IR.stepInstances step
+                  , IR.instanceElementId instance' == IR.elementId parent
+                  ]
+            assertBool
+              "expected the generated parent to have a selectable instance"
+              (not (null parentInstances))
+            assertBool
+              "render instance IDs must remain nonnegative"
+              (all
+                 (all
+                    (\instance' ->
+                       case IR.instanceId instance' of
+                         IR.RenderInstanceId identifier -> identifier >= 0)
+                    . IR.stepInstances)
+                 (IR.visualizationSteps compiled))
+          parents ->
+            assertFailure
+              ("expected one generated parent, got " ++ show (length parents))
+    , testCase "generated nodes use ordinary handles and affine child boxes" $ do
+        compiled <- solveAndCompile 38 ChoreographyFixtures.hierarchyBoxGraph
+        case filter
+               (not . null . IR.elementChildren)
+               (IR.visualizationElements compiled) of
+          [parent] -> do
+            let parentBounds = IR.boxBounds (IR.elementBox parent)
+            assertBoxNear "parent left" 200 (IR.layoutRectX parentBounds)
+            assertBoxNear "parent top" 150 (IR.layoutRectY parentBounds)
+            assertBoxNear "parent width" 400 (IR.layoutRectWidth parentBounds)
+            assertBoxNear "parent height" 300 (IR.layoutRectHeight parentBounds)
+            IR.boxPadding (IR.elementBox parent) @?= IR.EdgeInsets 10 20 30 40
+            IR.boxMargin (IR.elementBox parent) @?= IR.EdgeInsets 5 7 5 7
+            case IR.elementChildren parent of
+              [childId] ->
+                case List.find
+                       ((== childId) . IR.elementId)
+                       (IR.visualizationElements compiled) of
+                  Nothing ->
+                    assertFailure "expected the generated parent's child"
+                  Just childElement -> do
+                    let childBounds = IR.boxBounds (IR.elementBox childElement)
+                    assertBoxNear "child left" 325 (IR.layoutRectX childBounds)
+                    assertBoxNear "child top" 238 (IR.layoutRectY childBounds)
+                    assertBoxNear
+                      "child width"
+                      170
+                      (IR.layoutRectWidth childBounds)
+                    assertBoxNear
+                      "child height"
+                      104
+                      (IR.layoutRectHeight childBounds)
+                    IR.visualFontFamily (IR.elementStyle childElement)
+                      @?= Just "serif"
+              childIds ->
+                assertFailure
+                  ("expected one child, got " ++ show (length childIds))
+          parents ->
+            assertFailure
+              ("expected one generated parent, got " ++ show (length parents))
+    , testCase "pruned declarations are retained as warning findings" $ do
+        compiled <- solveAndCompile 39 ChoreographyFixtures.prunedHierarchyGraph
         List.sort
-          (List.nub (concatMap (profileChoiceValues ".group.profile") solutions))
-          @?= ["invisible", "rounded-outline", "soft-panel", "square-outline"]
+          (map IR.visualizationFindingCode (IR.visualizationFindings compiled))
+          @?= ["hierarchy.node-never-rendered", "hierarchy.parent-pruned"]
     , testCase "inferred peers share automatic profile tokens" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -692,7 +770,8 @@ viewMaterializationTests =
                 secondStyle = IR.elementStyle second
             IR.visualFill firstStyle @?= IR.visualFill secondStyle
             IR.visualStroke firstStyle @?= IR.visualStroke secondStyle
-            IR.visualPadding firstStyle @?= IR.visualPadding secondStyle
+            IR.boxPadding (IR.elementBox first)
+              @?= IR.boxPadding (IR.elementBox second)
             IR.visualRadius firstStyle @?= IR.visualRadius secondStyle
             IR.visualFontFamily firstStyle @?= IR.visualFontFamily secondStyle
             IR.visualFontSize firstStyle @?= IR.visualFontSize secondStyle
@@ -756,7 +835,10 @@ viewMaterializationTests =
               (\element ->
                  assertBool
                    "expected the requested 620px width"
-                   (abs (IR.visualWidth (IR.elementStyle element) - 620) <= 0.01))
+                   (abs
+                      (IR.layoutRectWidth (IR.boxBounds (IR.elementBox element))
+                         - 620)
+                      <= 0.01))
               elements
     , testCase "visual alternatives compile once and vary across seeds" $ do
         solutions <-
@@ -774,6 +856,11 @@ viewMaterializationTests =
           "expected the right visual alternative"
           (Just "right" `elem` positions)
     ]
+  where
+    assertBoxNear label expected actual =
+      assertBool
+        (label ++ " expected " ++ show expected ++ ", got " ++ show actual)
+        (abs (actual - expected) <= 0.01)
 
 nativeBoundsTests :: TestTree
 nativeBoundsTests =

@@ -48,26 +48,24 @@ module LinearTrace.Choreography.Layout
   ) where
 
 import           Control.Functor.Linear        hiding ((<$>), (<&>), (<*>))
-import           LinearTrace.Choreography.Node (Coord, LayoutValue (..),
-                                                NodeRecipe, Offset, Scalar,
-                                                Selected (..),
+import           LinearTrace.Choreography.Node (Coord, LayoutValue (..), Offset,
+                                                Scalar, Selected (..),
                                                 SelectionValue (..), Span,
+                                                VisualizationBuilder,
                                                 coordConstraints, coordExpr,
-                                                coordPin, offsetConstraints,
-                                                offsetExpr, scalarConstraints,
-                                                scalarExpr, setNodePatch,
+                                                coordPin, editCurrentNode,
+                                                offsetConstraints, offsetExpr,
+                                                scalarConstraints, scalarExpr,
                                                 spanConstraints, spanExpr,
-                                                spanPin,
-                                                substituteCoordBindings,
-                                                substituteSpanBindings)
-import           LinearTrace.Core              (MatchBindings, QueryInt (..),
-                                                queryIntAdd, queryIntConst)
+                                                spanPin)
+import           LinearTrace.Core              (QueryInt (..), queryIntAdd,
+                                                queryIntConst)
 import           LinearTrace.View.Access       (LayoutAttr (..),
                                                 layoutValueAccess)
-import qualified LinearTrace.View.Patch        as VP
 import           LinearTrace.View.Primitives   (Bounds (..), BoundsExpr,
                                                 LayoutExpr, Unit)
 import qualified LinearTrace.View.Primitives   as V
+import qualified LinearTrace.View.Template     as VT
 import qualified Prelude                       as P
 import           Prelude.Linear                hiding (fromInteger,
                                                 fromRational, (*), (+), (-),
@@ -397,31 +395,25 @@ class Center input where
   type CenterOutput input
   center :: input -> CenterOutput input
 
-instance Left Coord (NodeRecipe ()) where
-  left =
-    setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchLeft = maybePin})
+instance Left Coord (VisualizationBuilder ()) where
+  left = setPin coordPin (\spec maybePin -> spec {VT.templateLeft = maybePin})
 
-instance Top Coord (NodeRecipe ()) where
-  top =
-    setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchTop = maybePin})
+instance Top Coord (VisualizationBuilder ()) where
+  top = setPin coordPin (\spec maybePin -> spec {VT.templateTop = maybePin})
 
-instance Width Span (NodeRecipe ()) where
-  width =
-    setPin spanValuePin (\spec maybePin -> spec {VP.nodePatchWidth = maybePin})
+instance Width Span (VisualizationBuilder ()) where
+  width = setPin spanPin (\spec maybePin -> spec {VT.templateWidth = maybePin})
 
-instance Height Span (NodeRecipe ()) where
+instance Height Span (VisualizationBuilder ()) where
   height =
-    setPin spanValuePin (\spec maybePin -> spec {VP.nodePatchHeight = maybePin})
+    setPin spanPin (\spec maybePin -> spec {VT.templateHeight = maybePin})
 
-instance Right Coord (NodeRecipe ()) where
-  right =
-    setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchRight = maybePin})
+instance Right Coord (VisualizationBuilder ()) where
+  right = setPin coordPin (\spec maybePin -> spec {VT.templateRight = maybePin})
 
-instance Bottom Coord (NodeRecipe ()) where
+instance Bottom Coord (VisualizationBuilder ()) where
   bottom =
-    setPin
-      coordValuePin
-      (\spec maybePin -> spec {VP.nodePatchBottom = maybePin})
+    setPin coordPin (\spec maybePin -> spec {VT.templateBottom = maybePin})
 
 instance Left (Selected tag) (SelectionValue Coord tag) where
   left selection = SelectionValue selection (layoutValueAccess AttrLeft)
@@ -441,11 +433,11 @@ instance Right (Selected tag) (SelectionValue Coord tag) where
 instance Bottom (Selected tag) (SelectionValue Coord tag) where
   bottom selection = SelectionValue selection (layoutValueAccess AttrBottom)
 
-instance X Coord (NodeRecipe ()) where
-  x = setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchX = maybePin})
+instance X Coord (VisualizationBuilder ()) where
+  x = setPin coordPin (\spec maybePin -> spec {VT.templateX = maybePin})
 
-instance Y Coord (NodeRecipe ()) where
-  y = setPin coordValuePin (\spec maybePin -> spec {VP.nodePatchY = maybePin})
+instance Y Coord (VisualizationBuilder ()) where
+  y = setPin coordPin (\spec maybePin -> spec {VT.templateY = maybePin})
 
 instance X (Selected tag) (SelectionValue Coord tag) where
   x selection = SelectionValue selection (layoutValueAccess AttrCenterX)
@@ -457,40 +449,35 @@ instance Center (Selected tag) where
   type CenterOutput (Selected tag) = Vec2 (SelectionValue Coord tag)
   center selection = vec2 (x selection) (y selection)
 
-sequenceNodeRecipes :: [NodeRecipe ()] -> NodeRecipe ()
-sequenceNodeRecipes recipes =
-  case recipes of
+sequenceNodeActions :: [VisualizationBuilder ()] -> VisualizationBuilder ()
+sequenceNodeActions actions =
+  case actions of
     [] -> pure ()
-    headRecipe:tailRecipes ->
-      liftA2 (\() () -> ()) headRecipe (sequenceNodeRecipes tailRecipes)
+    headAction:tailActions ->
+      liftA2 (\() () -> ()) headAction (sequenceNodeActions tailActions)
 
 instance Center (Vec2 Coord) where
-  type CenterOutput (Vec2 Coord) = NodeRecipe ()
-  center (Vec2 valueX valueY) = sequenceNodeRecipes [x valueX, y valueY]
+  type CenterOutput (Vec2 Coord) = VisualizationBuilder ()
+  center (Vec2 valueX valueY) = sequenceNodeActions [x valueX, y valueY]
 
 size :: (Width input value, Height input value) => input -> Vec2 value
 size selection = vec2 (width selection) (height selection)
 
-bounds :: BoundsExpr -> NodeRecipe ()
+bounds :: BoundsExpr -> VisualizationBuilder ()
 bounds (Bounds topExpr leftExpr widthExpr heightExpr) =
-  sequenceNodeRecipes
+  sequenceNodeActions
     [ top (mkCoord topExpr [])
     , left (mkCoord leftExpr [])
     , width (mkSpan widthExpr [])
     , height (mkSpan heightExpr [])
     ]
 
-coordValuePin :: MatchBindings -> Coord -> VP.LayoutPin
-coordValuePin bindings = coordPin P.. substituteCoordBindings bindings
-
-spanValuePin :: MatchBindings -> Span -> VP.LayoutPin
-spanValuePin bindings = spanPin P.. substituteSpanBindings bindings
-
 setPin ::
-     (MatchBindings -> value -> VP.LayoutPin)
-  -> (VP.NodePatch -> Maybe VP.LayoutPin -> VP.NodePatch)
+     (value -> VT.LayoutPin)
+  -> (VT.NodeTemplate -> Maybe VT.LayoutPin -> VT.NodeTemplate)
   -> value
-  -> NodeRecipe ()
+  -> VisualizationBuilder ()
 setPin toPin setField value =
-  setNodePatch
-    (\bindings -> setField VP.emptyNodePatch (P.pure (toPin bindings value)))
+  editCurrentNode
+    "geometry"
+    (\_bindings template -> setField template (P.pure (toPin value)))

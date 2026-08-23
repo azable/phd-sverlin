@@ -13,10 +13,11 @@
 -- app example.
 module Choreography.TestFixtures
   ( -- * Graph statistics
-    -- | Compact graph stats used by tests for query and grouping
+    -- | Compact graph stats used by tests for query and hierarchy
     -- behavior.
     payloadMatchedStats
-  , groupStats
+  , nestedNodeStats
+  , overlappingDeclarationStats
   , pendingMaterializedStepCount
   , pendingReplaceEventNames
   , pendingTailEventNames
@@ -38,8 +39,10 @@ module Choreography.TestFixtures
   , fixedLargeTypographyGraph
   , forbiddenStyleGraph
   , generativeGraph
-  , generativeGroupGraph
+  , generativeParentGraph
   , generativeRequiredStyleGraph
+  , hierarchyBoxGraph
+  , prunedHierarchyGraph
   , separatedFamiliesGraph
   , selectedColorGraph
   , selectedScalarGraph
@@ -78,8 +81,11 @@ instance ChoiceDomain TestTreatment where
 payloadMatchedStats :: (Int, Int, Int)
 payloadMatchedStats = fixtureStats payloadMatchedSpec
 
-groupStats :: (Int, Int, Int)
-groupStats = fixtureStats groupSpec
+nestedNodeStats :: (Int, Int, Int)
+nestedNodeStats = fixtureStats nestedNodeSpec
+
+overlappingDeclarationStats :: (Int, Int, Int)
+overlappingDeclarationStats = fixtureStats overlappingDeclarationSpec
 
 pendingMaterializedStepCount :: Int
 pendingMaterializedStepCount =
@@ -159,11 +165,17 @@ forbiddenStyleGraph = buildGenerativeGraph forbiddenStyleSpec
 generativeGraph :: ViewGraph
 generativeGraph = buildGenerativeGraph generativeSpec
 
-generativeGroupGraph :: ViewGraph
-generativeGroupGraph = buildGenerativeGraph generativeGroupSpec
+generativeParentGraph :: ViewGraph
+generativeParentGraph = buildGenerativeGraph generativeParentSpec
 
 generativeRequiredStyleGraph :: ViewGraph
 generativeRequiredStyleGraph = buildGenerativeGraph selectedColorSpec
+
+hierarchyBoxGraph :: ViewGraph
+hierarchyBoxGraph = buildGraph hierarchyBoxSpec
+
+prunedHierarchyGraph :: ViewGraph
+prunedHierarchyGraph = buildGraph prunedHierarchySpec
 
 separatedFamiliesGraph :: ViewGraph
 separatedFamiliesGraph = buildGenerativeGraph separatedFamiliesSpec
@@ -172,7 +184,7 @@ styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
 
 transientGraph :: ViewGraph
-transientGraph = buildGraphFor transientFixture groupSpec
+transientGraph = buildGraphFor transientFixture nestedNodeSpec
 
 typographyGraph :: ViewGraph
 typographyGraph = buildGenerativeGraph typographySpec
@@ -288,53 +300,99 @@ payloadMatchedSpec :: MatchSpec
 payloadMatchedSpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
 
-groupSpec :: MatchSpec
-groupSpec =
+nestedNodeSpec :: MatchSpec
+nestedNodeSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    Selected _parent <-
+      node $ do
+        padding (uniform (by 8))
+        node item $ do
+          width (by 80)
+          height (by 80)
+    return ()
+
+overlappingDeclarationSpec :: MatchSpec
+overlappingDeclarationSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    node item $ do
       width (by 80)
       height (by 80)
-    Selected group <- node item
-    render group $ do
-      style @Padding (by 8)
+    node item $ do
+      width (by 60)
+      height (by 60)
 
 generativeSpec :: MatchSpec
 generativeSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
 
-generativeGroupSpec :: MatchSpec
-generativeGroupSpec =
+generativeParentSpec :: MatchSpec
+generativeParentSpec =
   visualize $ do
-    Selected items <- select @TestValue #item
     Selected first <- select @TestValue (#item <&> payload (7 :: Int))
     Selected second <- select @TestValue (#item <&> payload (8 :: Int))
-    render items $ do
-      width (by 80)
-      height (by 80)
-    render first $ do
-      left (at 80)
-      top (at 80)
-    render second $ do
-      left (at 200)
-      top (at 80)
-    Selected group <- node items
-    render group $ do
-      style @Padding (by 8)
+    Selected _parent <-
+      node $ do
+        padding (uniform (by 8))
+        node first $ do
+          width (by 80)
+          height (by 80)
+          left (at 80)
+          top (at 80)
+        node second $ do
+          width (by 80)
+          height (by 80)
+          left (at 200)
+          top (at 80)
+    return ()
+
+hierarchyBoxSpec :: MatchSpec
+hierarchyBoxSpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    Selected parent <-
+      node $ do
+        Selected current <- self
+        width (by 400)
+        height (by 300)
+        padding (edges (by 10) (by 20) (by 30) (by 40))
+        margin (symmetric (by 5) (by 7))
+        contentFit Both Contain
+        style @FontFamily (FixedStyle FontSerif)
+        ensure $ x current .==. x canvas
+        node item $ do
+          content (text "7")
+          widthOf (percent 50)
+          heightOf (percent 40)
+          xAt (percent 50)
+          yAt (percent 50)
+    ensure $ y parent .==. y canvas
+
+prunedHierarchySpec :: MatchSpec
+prunedHierarchySpec =
+  visualize $ do
+    Selected missing <- select @TestValue (#item <&> payload (999 :: Int))
+    Selected _parent <-
+      node $ do
+        node missing $ do
+          width (by 80)
+          height (by 80)
+    return ()
 
 selectedColorSpec :: MatchSpec
 selectedColorSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
     ensure
@@ -344,17 +402,17 @@ selectedScalarSpec :: MatchSpec
 selectedScalarSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
-    ensure $ styleOf @Padding item .==. by 6
+    ensure $ styleOf @Radius item .==. by 6
 
 categoricalStyleSpec :: MatchSpec
 categoricalStyleSpec =
   visualize $ do
     Selected item <- select @TestValue #item
     Variable family <- choice @FontFamily
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
       style @FontFamily (VariableStyle family)
@@ -364,7 +422,7 @@ categoricalRelationSpec :: MatchSpec
 categoricalRelationSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
     ensure $ styleOf @FontFamily item .==. FontInter
@@ -374,11 +432,11 @@ centerSpec =
   visualize $ do
     Selected first <- select @TestValue (#item <&> payload (7 :: Int))
     Selected second <- select @TestValue (#item <&> payload (8 :: Int))
-    render first $ do
+    node first $ do
       width (by 80)
       height (by 80)
       center (vec2 (at 120) (at 90))
-    render second $ do
+    node second $ do
       width (by 80)
       height (by 80)
     ensure $ center second .==. center first
@@ -387,7 +445,7 @@ disjunctiveSpec :: MatchSpec
 disjunctiveSpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
     oneOf
@@ -400,7 +458,7 @@ conditionalStyleSpec selectedTreatment =
   visualize $ do
     Selected item <- select @TestValue #item
     Variable treatment <- choice @TestTreatment
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
       styleCase @Fill treatment $ \case
@@ -413,7 +471,7 @@ conditionalStyleAccessSpec =
   visualize $ do
     Selected item <- select @TestValue #item
     Variable treatment <- choice @TestTreatment
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
       styleCase @Fill treatment $ \case
@@ -426,7 +484,7 @@ forbiddenStyleSpec :: MatchSpec
 forbiddenStyleSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
       withoutStyle @Fill
@@ -435,7 +493,7 @@ forbiddenStyleAccessSpec :: MatchSpec
 forbiddenStyleAccessSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
       withoutStyle @Fill
@@ -447,11 +505,11 @@ separatedFamiliesSpec =
   visualize $ do
     Selected first <- select @TestValue (#item <&> payload (7 :: Int))
     Selected second <- select @TestValue (#item <&> payload (8 :: Int))
-    render first $ do
+    node first $ do
       width (by 80)
       height (by 80)
       styleFamily "first"
-    render second $ do
+    node second $ do
       width (by 80)
       height (by 80)
       styleFamily "second"
@@ -460,10 +518,10 @@ styledSpec :: MatchSpec
 styledSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 80)
       height (by 80)
-      style @Padding (by 4)
+      padding (uniform (by 4))
       style @FontFamily (FixedStyle FontInter)
       style @FontWeight (FixedStyle FontWeightBold)
       style @Fill (Hsl (120 :: Angle) (0.4 :: Unit) (0.7 :: Unit))
@@ -472,7 +530,7 @@ wideLeafSpec :: MatchSpec
 wideLeafSpec =
   visualize $ do
     Selected item <- select @TestValue #item
-    render item $ do
+    node item $ do
       width (by 620)
       height (by 52)
     ensure $ left item .>=. at 70
@@ -482,7 +540,7 @@ typographySpec :: MatchSpec
 typographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       content
         (text
            "This label is deliberately long enough to exercise deterministic fitting")
@@ -496,7 +554,7 @@ maximumTypographySpec :: MatchSpec
 maximumTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       fitText
         (text
            "This label is deliberately long enough to exercise deterministic fitting")
@@ -510,7 +568,7 @@ explicitFitTypographySpec :: MatchSpec
 explicitFitTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       fitText
         (text
            "This explicitly sized label may be reduced by the compiler when requested")
@@ -525,7 +583,7 @@ uncappedFitTypographySpec :: MatchSpec
 uncappedFitTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       fitText (text "7")
       width (by 88)
       height (by 68)
@@ -539,7 +597,7 @@ oversizedFitTypographySpec :: MatchSpec
 oversizedFitTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       fitText (text "7")
       width (by 88)
       height (by 68)
@@ -554,7 +612,7 @@ fixedLargeTypographySpec :: MatchSpec
 fixedLargeTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       content (text "7")
       width (by 120)
       height (by 100)
@@ -568,7 +626,7 @@ responsiveSparseTypographySpec =
   visualize $ do
     Selected first <- select @TestValue (#item <&> payload (7 :: Int))
     Selected second <- select @TestValue (#item <&> payload (8 :: Int))
-    render first $ do
+    node first $ do
       fitText (text "7")
       width (by 120)
       height (by 250)
@@ -576,7 +634,7 @@ responsiveSparseTypographySpec =
       top (at 40)
       style @FontFamily (FixedStyle FontMono)
       style @FontWeight (FixedStyle FontWeightBold)
-    render second $ do
+    node second $ do
       fitText (text "8")
       width (by 120)
       height (by 250)
@@ -593,7 +651,7 @@ responsiveDenseTypographySpec =
     Selected value9 <- select @TestValue (#item <&> payload (9 :: Int))
     Selected value10 <- select @TestValue (#item <&> payload (10 :: Int))
     Selected value11 <- select @TestValue (#item <&> payload (11 :: Int))
-    render value7 $ do
+    node value7 $ do
       fitText (text "7")
       width (by 120)
       height (by 88)
@@ -601,7 +659,7 @@ responsiveDenseTypographySpec =
       top (at 40)
       style @FontFamily (FixedStyle FontMono)
       style @FontWeight (FixedStyle FontWeightBold)
-    render value8 $ do
+    node value8 $ do
       fitText (text "8")
       width (by 120)
       height (by 88)
@@ -609,7 +667,7 @@ responsiveDenseTypographySpec =
       top (at 148)
       style @FontFamily (FixedStyle FontMono)
       style @FontWeight (FixedStyle FontWeightBold)
-    render value9 $ do
+    node value9 $ do
       fitText (text "9")
       width (by 120)
       height (by 88)
@@ -617,7 +675,7 @@ responsiveDenseTypographySpec =
       top (at 256)
       style @FontFamily (FixedStyle FontMono)
       style @FontWeight (FixedStyle FontWeightBold)
-    render value10 $ do
+    node value10 $ do
       fitText (text "10")
       width (by 120)
       height (by 88)
@@ -625,7 +683,7 @@ responsiveDenseTypographySpec =
       top (at 364)
       style @FontFamily (FixedStyle FontMono)
       style @FontWeight (FixedStyle FontWeightBold)
-    render value11 $ do
+    node value11 $ do
       fitText (text "11")
       width (by 120)
       height (by 88)
@@ -638,7 +696,7 @@ codeTypographySpec :: MatchSpec
 codeTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       emphasizeCode
         "created"
         [codeRange 4 10, codeRange 8 12]
@@ -662,7 +720,7 @@ invalidCodeEmphasisSpec :: MatchSpec
 invalidCodeEmphasisSpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       emphasizeCode
         "created"
         [codeRange 0 100]
@@ -676,7 +734,7 @@ invisibleCodeEmphasisSpec :: MatchSpec
 invisibleCodeEmphasisSpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
-    render item $ do
+    node item $ do
       emphasizeCode
         "missing"
         [codeRange 0 3]

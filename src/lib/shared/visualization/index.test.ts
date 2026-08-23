@@ -3,19 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { decodeVisualization, InvalidVisualizationError, type Visualization } from './index';
 
 describe('decodeVisualization', () => {
-  it('strictly accepts a well-formed version-two visualization', () => {
+  it('strictly accepts a well-formed version-three visualization', () => {
     expect(decodeVisualization(JSON.stringify(visualization()))).toEqual(visualization());
   });
 
-  it('rejects unknown version-two fields instead of silently stripping them', () => {
+  it('rejects unknown version-three fields instead of silently stripping them', () => {
     expect(() =>
       decodeVisualization(JSON.stringify({ ...visualization(), unexpected: true }))
     ).toThrow(InvalidVisualizationError);
   });
 
   it('rejects unsupported versions and dangling resource references', () => {
-    expect(() => decodeVisualization(JSON.stringify({ ...visualization(), irVersion: 3 }))).toThrow(
-      'Unsupported visualization IR version 3'
+    expect(() => decodeVisualization(JSON.stringify({ ...visualization(), irVersion: 2 }))).toThrow(
+      InvalidVisualizationError
     );
 
     const malformed = visualization();
@@ -60,25 +60,74 @@ describe('decodeVisualization', () => {
     );
   });
 
-  it('migrates the unversioned historical wire shape explicitly', () => {
+  it('rejects the unversioned historical wire shape', () => {
     const current = visualization();
     const legacy = {
       seed: current.seed,
       sourcePath: current.sourcePath,
       canvas: current.canvas,
       variables: current.variables,
-      elements: current.elements.map(({ content: _content, ...element }) => ({
-        ...element,
+      elements: current.elements.map((element) => ({
+        id: element.id,
+        role: element.role,
+        style: { top: 0, left: 0, width: 100, height: 20 },
+        styleVariables: element.styleVariables,
         kind: { kind: 'trace' },
         content: 'historical'
       })),
       steps: current.steps
     };
 
-    expect(decodeVisualization(JSON.stringify(legacy)).elements[0]).toMatchObject({
-      kind: { kind: 'leaf' },
-      content: { kind: 'legacyTextContent', textSource: 'historical' }
+    expect(() => decodeVisualization(JSON.stringify(legacy))).toThrow(InvalidVisualizationError);
+  });
+
+  it('requires an acyclic single-parent element hierarchy', () => {
+    const cyclic = visualization();
+    cyclic.elements.push({
+      id: -1,
+      role: 'Node.parent',
+      box: emptyBox(),
+      children: [0],
+      style: {},
+      styleVariables: []
     });
+    cyclic.elements[0].children = [-1];
+    expect(() => decodeVisualization(JSON.stringify(cyclic))).toThrow(
+      'Element hierarchy contains a cycle'
+    );
+
+    const multipleParents = visualization();
+    multipleParents.elements.push(
+      {
+        id: -1,
+        role: 'Node.first',
+        box: emptyBox(),
+        children: [0],
+        style: {},
+        styleVariables: []
+      },
+      {
+        id: -2,
+        role: 'Node.second',
+        box: emptyBox(),
+        children: [0],
+        style: {},
+        styleVariables: []
+      }
+    );
+    expect(() => decodeVisualization(JSON.stringify(multipleParents))).toThrow(
+      'Element 0 has multiple parents'
+    );
+  });
+
+  it('keeps render-instance IDs nonnegative even when element IDs are signed', () => {
+    const current = visualization();
+    current.elements[0].id = -1;
+    current.steps[0].instances[0].elementId = -1;
+    expect(decodeVisualization(JSON.stringify(current)).elements[0].id).toBe(-1);
+
+    current.steps[0].instances[0].id = -1;
+    expect(() => decodeVisualization(JSON.stringify(current))).toThrow(InvalidVisualizationError);
   });
 
   it('accepts code highlight arrays and enforces exact UTF-8 token ranges', () => {
@@ -171,7 +220,7 @@ describe('decodeVisualization', () => {
 
 function visualization(): Visualization {
   return {
-    irVersion: 2,
+    irVersion: 3,
     seed: 1,
     sourcePath: 'Main.sverlin',
     sampling: { mode: 'balancedChoices', coverage: 'exactEnumeration' },
@@ -189,12 +238,25 @@ function visualization(): Visualization {
       {
         id: 0,
         role: 'Value',
-        kind: { kind: 'leaf' },
+        box: {
+          bounds: { rectX: 0, rectY: 0, rectWidth: 100, rectHeight: 20 },
+          padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        },
+        children: [],
         content: { kind: 'legacyTextContent', textSource: 'hello' },
-        style: { top: 0, left: 0, width: 100, height: 20 },
+        style: {},
         styleVariables: []
       }
     ],
     steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]
+  };
+}
+
+function emptyBox() {
+  return {
+    bounds: { rectX: 0, rectY: 0, rectWidth: 100, rectHeight: 20 },
+    padding: { top: 0, right: 0, bottom: 0, left: 0 },
+    margin: { top: 0, right: 0, bottom: 0, left: 0 }
   };
 }

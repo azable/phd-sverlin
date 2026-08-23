@@ -24,7 +24,6 @@ module LinearTrace.View.Style
     -- | Type-level names for supported optional node-style fields.
     Opacity
   , ZIndex
-  , Padding
   , FontSize
   , Radius
   , StrokeWidth
@@ -34,8 +33,7 @@ module LinearTrace.View.Style
   , TextOccupancy
   , -- * Style model
     NodeStyle
-  , nodeStyleWithBounds
-  , nodeStyleBounds
+  , emptyNodeStyle
   , StyleField(..)
   , StyleValueVars(..)
   , getStyleField
@@ -48,6 +46,7 @@ module LinearTrace.View.Style
   , materializeStyleField
   , setStyleFamily
   , nodeStyleFamily
+  , cascadeNodeStyle
   , -- * Traversal and lowering
     mapNodeStyleExprs
   , mapNodeStyleExprLeaves
@@ -77,8 +76,6 @@ import           Solver                      hiding (num)
 data Opacity
 
 data ZIndex
-
-data Padding
 
 data FontSize
 
@@ -111,17 +108,6 @@ instance StyleField ZIndex where
   styleValueExprLeaves = scalarLeaves
   styleValueConstraints _ =
     scalarConstraints (Just (Range (-10) 10)) noConstraints
-  materializeStyleValue = materializeScalar
-
-instance StyleField Padding where
-  type StyleValue Padding = LayoutExpr
-  type ResolvedStyleValue Padding = Double
-  styleFieldName _ = "padding"
-  generatedStyleValue = scalarValue
-  mapStyleValueExprs f = f
-  styleValueExprLeaves = scalarLeaves
-  styleValueConstraints _ =
-    scalarConstraints (Just (Range 0 24)) nonNegativeConstraints
   materializeStyleValue = materializeScalar
 
 instance StyleField FontSize where
@@ -481,21 +467,12 @@ anyStyleFieldName field =
     AnyStyleField proxy _ -> styleFieldName proxy
 
 data NodeStyle = NodeStyle
-  { nodeStyleBounds :: BoundsExpr
-  , nodeStyleFields :: [AnyStyleField]
+  { nodeStyleFields :: [AnyStyleField]
   , nodeStyleFamily :: Maybe String
   }
 
-nodeStyleWithBounds :: BoundsExpr -> NodeStyle
-nodeStyleWithBounds bounds =
-  NodeStyle
-    {nodeStyleBounds = bounds, nodeStyleFields = [], nodeStyleFamily = Nothing}
-
-instance HasBounds NodeStyle where
-  top = top . nodeStyleBounds
-  left = left . nodeStyleBounds
-  width = width . nodeStyleBounds
-  height = height . nodeStyleBounds
+emptyNodeStyle :: NodeStyle
+emptyNodeStyle = NodeStyle {nodeStyleFields = [], nodeStyleFamily = Nothing}
 
 getStyleField ::
      forall field. StyleField field
@@ -578,6 +555,35 @@ setStyleFieldPlan plan style' =
 
 setStyleFamily :: String -> NodeStyle -> NodeStyle
 setStyleFamily family style' = style' {nodeStyleFamily = Just family}
+
+-- | Inherit only semantic text fields. Surface and geometry treatments remain
+-- local to the node that declared them.
+cascadeNodeStyle :: NodeStyle -> NodeStyle -> NodeStyle
+cascadeNodeStyle parent child =
+  NodeStyle
+    { nodeStyleFields =
+        foldl
+          (flip (replaceByName anyStyleFieldName))
+          inheritedFields
+          (nodeStyleFields child)
+    , nodeStyleFamily =
+        case nodeStyleFamily child of
+          Just family -> Just family
+          Nothing     -> nodeStyleFamily parent
+    }
+  where
+    inheritedFields =
+      filter
+        ((`elem` semanticFieldNames) . anyStyleFieldName)
+        (nodeStyleFields parent)
+    semanticFieldNames =
+      [ styleFieldName (Proxy @FontFamily)
+      , styleFieldName (Proxy @FontWeight)
+      , styleFieldName (Proxy @FontStyle)
+      , styleFieldName (Proxy @FontSize)
+      , styleFieldName (Proxy @TextAlign)
+      , styleFieldName (Proxy @WhiteSpace)
+      ]
 
 requireStyleField ::
      forall field. StyleField field
@@ -677,8 +683,7 @@ mapNodeStyleExprs ::
      (forall (ty :: Type). Expr ty -> Expr ty) -> NodeStyle -> NodeStyle
 mapNodeStyleExprs f style' =
   NodeStyle
-    { nodeStyleBounds = fmap f (nodeStyleBounds style')
-    , nodeStyleFields = map (mapAnyStyleFieldExprs f) (nodeStyleFields style')
+    { nodeStyleFields = map (mapAnyStyleFieldExprs f) (nodeStyleFields style')
     , nodeStyleFamily = nodeStyleFamily style'
     }
 
@@ -707,12 +712,7 @@ mapStyleFieldPlanExprs f plan =
 
 nodeStyleExprLeaves :: NodeStyle -> [StyleExprLeaf]
 nodeStyleExprLeaves style' =
-  [ StyleExprLeaf "top" (top style')
-  , StyleExprLeaf "left" (left style')
-  , StyleExprLeaf "width" (width style')
-  , StyleExprLeaf "height" (height style')
-  ]
-    ++ concatMap anyStyleFieldExprLeaves (nodeStyleFields style')
+  concatMap anyStyleFieldExprLeaves (nodeStyleFields style')
 
 anyStyleFieldExprLeaves :: AnyStyleField -> [StyleExprLeaf]
 anyStyleFieldExprLeaves field =
@@ -773,23 +773,7 @@ styleVariableBindings solution style' = do
     , not (null variables)
     ]
   where
-    grouped activeFields =
-      Map.fromListWith
-        (++)
-        (map boundsBinding (boundsExprLeaves style') ++ concat activeFields)
-    boundsBinding leaf =
-      case leaf of
-        StyleExprLeaf name expr -> numericBinding name expr
-    numericBinding name expr =
-      (rootField name, expressionVariableNames (exprView expr))
-
-boundsExprLeaves :: NodeStyle -> [StyleExprLeaf]
-boundsExprLeaves style' =
-  [ StyleExprLeaf "top" (top style')
-  , StyleExprLeaf "left" (left style')
-  , StyleExprLeaf "width" (width style')
-  , StyleExprLeaf "height" (height style')
-  ]
+    grouped activeFields = Map.fromListWith (++) (concat activeFields)
 
 activeFieldBinding ::
      Solution -> AnyStyleField -> Either String [(String, [String])]

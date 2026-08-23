@@ -107,6 +107,7 @@ library
 
     other-modules:
         LinearTrace.Choreography.Constraint
+        LinearTrace.Choreography.Box
         LinearTrace.Choreography.Graph
         LinearTrace.Choreography.Layout
         LinearTrace.Choreography.Match
@@ -116,13 +117,14 @@ library
         LinearTrace.Core.Internal
         LinearTrace.Core.Query
         LinearTrace.View.Access
+        LinearTrace.View.Box
         LinearTrace.View.Build
         LinearTrace.View.Graph
-        LinearTrace.View.Patch
         LinearTrace.View.Primitives
         LinearTrace.View.Solve
         LinearTrace.View.Style
         LinearTrace.View.StyleProfile
+        LinearTrace.View.Template
         LinearTrace.Visualization.FontCatalog
         LinearTrace.Visualization.CodeHighlight
         LinearTrace.Visualization.HarfBuzz

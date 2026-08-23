@@ -1,32 +1,10 @@
 import { tick } from 'svelte';
 import { describe, expect, it } from 'vitest';
 
-import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
+import type { Visualization } from '$lib/shared/visualization';
 import { VisualizationPlayer } from './visualization-player.svelte';
 
 describe('VisualizationPlayer', () => {
-  it('normalizes the former trace leaf tag in stored visualizations', () => {
-    const stored = visualization(['one']);
-    const json = JSON.stringify({
-      seed: stored.seed,
-      sourcePath: stored.sourcePath,
-      canvas: stored.canvas,
-      variables: stored.variables,
-      elements: stored.elements.map((element) => ({
-        id: element.id,
-        role: element.role,
-        style: element.style,
-        styleVariables: element.styleVariables,
-        content:
-          element.content?.kind === 'legacyTextContent' ? element.content.textSource : undefined,
-        kind: { kind: 'trace' }
-      })),
-      steps: stored.steps
-    });
-
-    expect(decodeVisualization(json).elements[0].kind).toEqual({ kind: 'leaf' });
-  });
-
   it('clears a stale render when the project state has no active visualization', () => {
     const player = new VisualizationPlayer();
     player.setVisualization(visualization(['one']));
@@ -130,17 +108,17 @@ describe('VisualizationPlayer', () => {
       { id: 1, elementId: 0 },
       { id: 2, elementId: 1, originElementId: 0 }
     ];
-    compiledVisualization.elements[0].style.left = 10;
-    compiledVisualization.elements[1].style.left = 80;
+    compiledVisualization.elements[0].box.bounds.rectX = 10;
+    compiledVisualization.elements[1].box.bounds.rectX = 80;
 
     const player = new VisualizationPlayer();
     player.setVisualization(compiledVisualization);
     player.next();
 
-    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.style.left).toBe(10);
+    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.box.bounds.rectX).toBe(10);
     await tick();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.style.left).toBe(80);
+    expect(player.elements.find(({ instanceId }) => instanceId === 2)?.box.bounds.rectX).toBe(80);
   });
 
   it('removes absent instances immediately so Svelte can own their outro', () => {
@@ -169,14 +147,19 @@ function visualization(contents: string[]): Visualization {
   const elements = contents.map((content, id) => ({
     id,
     role: 'Value',
-    kind: { kind: 'leaf' as const },
+    box: {
+      bounds: { rectX: id * 10, rectY: 0, rectWidth: 10, rectHeight: 10 },
+      padding: { top: 0, right: 0, bottom: 0, left: 0 },
+      margin: { top: 0, right: 0, bottom: 0, left: 0 }
+    },
+    children: [],
     content: { kind: 'legacyTextContent' as const, textSource: content },
-    style: { top: 0, left: id * 10, width: 10, height: 10 },
+    style: {},
     styleVariables: []
   }));
 
   return {
-    irVersion: 2,
+    irVersion: 3,
     seed: 1,
     sourcePath: 'Main.sverlin',
     sampling: { mode: 'legacyOptimizer', coverage: 'legacyCoverage' },

@@ -10,8 +10,7 @@
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
 
--- | Node recipe, selection, rendering, and query-patching implementation for
--- choreography. The public facade re-exports the DSL surface from here.
+-- | Hierarchical node declarations, selections, and shared builder values.
 module LinearTrace.Choreography.Node
   ( ContentValue(..)
   , content
@@ -54,8 +53,9 @@ module LinearTrace.Choreography.Node
   , SelectionCategory(..)
   , Selection(..)
   , AnyPayload
+  , GeneratedNode
+  , CanvasNode
   , NodeRef(..)
-  , NodeRecipe(..)
   , VisualizationResult(..)
   , VisualizationBuilder(..)
   , preferLater
@@ -63,22 +63,18 @@ module LinearTrace.Choreography.Node
   , emptyVisualizationBuilder
   , emitVisualizationBuilder
   , freshVisualizationValue
-  , setNodePatch
-  , substituteCoordBindings
-  , substituteSpanBindings
-  , substituteStyleBindings
-  , GroupNode
+  , editCurrentNode
   , Node
   , node
+  , self
+  , canvas
   , Select
   , SelectQuery
   , select
-  , render
   , visualize
   , QueryAppend
   , (<&>)
   , nodeSelection
-  , nodeRefQuery
   , traceQueryPayloadPattern
   , traceQueryQuery
   ) where
@@ -90,15 +86,17 @@ import           GHC.Exts                       (Multiplicity (Many))
 import           GHC.OverloadedLabels           (IsLabel (fromLabel))
 import           GHC.TypeLits                   (KnownSymbol)
 import           LinearTrace.Choreography.Match (MatchSpec, NodeSelection (..),
+                                                 ParentRef (..),
+                                                 declareGeneratedNode,
+                                                 declareTraceNode,
+                                                 editNodeDeclaration,
                                                  emptyMatchSpec,
-                                                 matchAnyQueryNode,
-                                                 matchContextBindings,
-                                                 matchGroupNode,
-                                                 matchQueryPayloadNode,
-                                                 matchSpecAppend)
+                                                 matchSpecAppend,
+                                                 registerAnyQuerySelection,
+                                                 registerQuerySelection,
+                                                 validateMatchSpec)
 import           LinearTrace.Core               (LBool, LDouble, LInt, LString,
-                                                 LUnit, MatchBinding (..),
-                                                 MatchBindings, Payload,
+                                                 LUnit, MatchBindings, Payload,
                                                  PayloadPattern, Query,
                                                  QueryInt (..),
                                                  anyPayloadPattern, emptyQuery,
@@ -114,14 +112,12 @@ import           LinearTrace.Core               (LBool, LDouble, LInt, LString,
 import qualified LinearTrace.Core               as C
 import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
 import qualified LinearTrace.View.Graph         as V
-import qualified LinearTrace.View.Patch         as VP
 import qualified LinearTrace.View.Primitives    as Primitives
 import qualified LinearTrace.View.Style         as VS
+import qualified LinearTrace.View.Template      as VT
 import qualified Prelude                        as P
 import           Prelude.Linear
 import qualified Solver                         as S
-import qualified Solver.Expr                    as SolverExpr
-import qualified Text.Read                      as Read
 
 {-# ANN module "HLint: ignore Eta reduce" #-}
 
@@ -148,7 +144,7 @@ type Offset = LayoutValue OffsetRole
 type Scalar = LayoutValue ScalarRole
 
 layoutValueExpr :: LayoutValue tag -> LayoutExpr
-layoutValueExpr (LayoutValue expr _) = expr
+layoutValueExpr (LayoutValue expression _) = expression
 
 layoutValueConstraints :: LayoutValue tag -> [S.Constraint]
 layoutValueConstraints (LayoutValue _ constraints) = constraints
@@ -193,10 +189,14 @@ instance KnownSymbol name => IsLabel name (QueryInt -> TraceQuery tag) where
 
 data AnyPayload
 
+data GeneratedNode
+
+data CanvasNode
+
 data NodeRef tag where
-  TraceNodeRef :: C.Traceable tag => TraceQuery tag -> NodeRef tag
-  AnyNodeRef :: Query -> NodeRef AnyPayload
-  GroupNodeRef :: P.String -> Query -> NodeRef tag
+  TraceNodeRef :: P.String -> NodeRef tag
+  GeneratedNodeRef :: P.String -> NodeRef GeneratedNode
+  CanvasNodeRef :: NodeRef CanvasNode
 
 data Selected tag where
   SelectedHandle :: Selection (NodeRef tag) -> Selected tag
@@ -211,11 +211,10 @@ data NodeBinding a where
   Selected :: a %Many -> NodeBinding a
 
 selectedNodeBinding :: NodeRef tag -> NodeBinding (Selected tag)
-selectedNodeBinding nodeRef =
-  Selected (SelectedHandle (Selection nodeRef emptyMatchSpec))
+selectedNodeBinding nodeRef = Selected (SelectedHandle (Selection nodeRef))
 
 data Selection a where
-  Selection :: a %1 -> MatchSpec -> Selection a
+  Selection :: a %1 -> Selection a
 
 data SelectionValue value tag =
   SelectionValue (Selected tag) ValueAccess
@@ -233,75 +232,33 @@ text = ContentLiteral
 instance IsString ContentValue where
   fromString = ContentLiteral
 
-data NodeRecipe a where
-  NodeRecipe :: a %1 -> (MatchBindings -> VP.NodePatch) -> NodeRecipe a
-
-appendNodePatch ::
-     (MatchBindings -> VP.NodePatch)
-  -> (MatchBindings -> VP.NodePatch)
-  -> (MatchBindings -> VP.NodePatch)
-appendNodePatch first second bindings =
-  VP.appendNodePatch (first bindings) (second bindings)
-
-nodeRecipePure :: a %1 -> NodeRecipe a
-nodeRecipePure value = NodeRecipe value (P.const VP.emptyNodePatch)
-
-nodeRecipeMapData :: (a %1 -> b) -> NodeRecipe a %1 -> NodeRecipe b
-nodeRecipeMapData f (NodeRecipe value patch) = NodeRecipe (f value) patch
-
-nodeRecipeMapControl :: (a %1 -> b) %1 -> NodeRecipe a %1 -> NodeRecipe b
-nodeRecipeMapControl f (NodeRecipe value patch) = NodeRecipe (f value) patch
-
-nodeRecipeAp ::
-     (a %1 -> c %1 -> b)
-     %1 -> NodeRecipe a
-     %1 -> NodeRecipe c
-     %1 -> NodeRecipe b
-nodeRecipeAp f (NodeRecipe leftValue first) (NodeRecipe rightValue second) =
-  NodeRecipe (f leftValue rightValue) (appendNodePatch first second)
-
-nodeRecipeBind :: NodeRecipe a %1 -> (a %1 -> NodeRecipe b) %1 -> NodeRecipe b
-nodeRecipeBind (NodeRecipe value patch) next =
-  case next value of
-    NodeRecipe output second -> NodeRecipe output (appendNodePatch patch second)
-
-instance DFL.Functor NodeRecipe where
-  fmap = nodeRecipeMapData
-
-instance CF.Functor NodeRecipe where
-  fmap = nodeRecipeMapControl
-
-instance DFL.Applicative NodeRecipe where
-  pure value = nodeRecipePure value
-  liftA2 f lhs rhs = nodeRecipeAp f lhs rhs
-
-instance CF.Applicative NodeRecipe where
-  pure = nodeRecipePure
-  liftA2 = nodeRecipeAp
-
-instance CF.Monad NodeRecipe where
-  (>>=) = nodeRecipeBind
+data BuilderContext
+  = RootContext
+  | TraceNodeContext P.String ParentRef
+  | GeneratedNodeContext P.String ParentRef
 
 data VisualizationResult a where
   VisualizationResult :: a %1 -> P.Int -> MatchSpec -> VisualizationResult a
 
 data VisualizationBuilder a where
   VisualizationBuilder
-    :: (P.Int -> VisualizationResult a) %1 -> VisualizationBuilder a
+    :: (BuilderContext -> P.Int -> VisualizationResult a)
+       %1 -> VisualizationBuilder a
 
 emptyVisualizationBuilder :: a %1 -> VisualizationBuilder a
 emptyVisualizationBuilder value =
   VisualizationBuilder
-    (\counter -> VisualizationResult value counter emptyMatchSpec)
+    (\_context counter -> VisualizationResult value counter emptyMatchSpec)
 
 emitVisualizationBuilder :: a -> MatchSpec -> VisualizationBuilder a
 emitVisualizationBuilder value spec =
-  VisualizationBuilder (\counter -> VisualizationResult value counter spec)
+  VisualizationBuilder
+    (\_context counter -> VisualizationResult value counter spec)
 
 freshVisualizationValue :: P.String -> (P.String -> a) -> VisualizationBuilder a
 freshVisualizationValue prefix build =
   VisualizationBuilder
-    (\counter ->
+    (\_context counter ->
        VisualizationResult
          (build (prefix P.++ P.show counter))
          (counter P.+ 1)
@@ -328,8 +285,8 @@ visualizationBuilderMapData ::
      (a %1 -> b) -> VisualizationBuilder a %1 -> VisualizationBuilder b
 visualizationBuilderMapData f (VisualizationBuilder run) =
   VisualizationBuilder
-    (\counter0 ->
-       case run counter0 of
+    (\context counter0 ->
+       case run context counter0 of
          VisualizationResult value counter1 spec ->
            VisualizationResult (f value) counter1 spec)
 
@@ -337,8 +294,8 @@ visualizationBuilderMapControl ::
      (a %1 -> b) %1 -> VisualizationBuilder a %1 -> VisualizationBuilder b
 visualizationBuilderMapControl f (VisualizationBuilder run) =
   VisualizationBuilder
-    (\counter0 ->
-       case run counter0 of
+    (\context counter0 ->
+       case run context counter0 of
          VisualizationResult value counter1 spec ->
            VisualizationResult (f value) counter1 spec)
 
@@ -349,10 +306,10 @@ visualizationBuilderAp ::
      %1 -> VisualizationBuilder c
 visualizationBuilderAp f (VisualizationBuilder runLeft) (VisualizationBuilder runRight) =
   VisualizationBuilder
-    (\counter0 ->
-       case runLeft counter0 of
+    (\context counter0 ->
+       case runLeft context counter0 of
          VisualizationResult leftValue counter1 first ->
-           case runRight counter1 of
+           case runRight context counter1 of
              VisualizationResult rightValue counter2 second ->
                VisualizationResult
                  (f leftValue rightValue)
@@ -365,12 +322,12 @@ visualizationBuilderBind ::
      %1 -> VisualizationBuilder b
 visualizationBuilderBind (VisualizationBuilder runFirst) next =
   VisualizationBuilder
-    (\counter0 ->
-       case runFirst counter0 of
+    (\context counter0 ->
+       case runFirst context counter0 of
          VisualizationResult value counter1 first ->
            case next value of
              VisualizationBuilder runSecond ->
-               case runSecond counter1 of
+               case runSecond context counter1 of
                  VisualizationResult output counter2 second ->
                    VisualizationResult
                      output
@@ -381,96 +338,124 @@ preferLater :: Maybe a -> Maybe a -> Maybe a
 preferLater earlier Nothing = earlier
 preferLater _ later         = later
 
+editCurrentNode ::
+     P.String
+  -> (MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate)
+  -> VisualizationBuilder ()
+editCurrentNode property update =
+  VisualizationBuilder
+    (\context counter ->
+       case context of
+         RootContext ->
+           P.error (property P.++ " must be declared inside a node body")
+         TraceNodeContext declaration _ ->
+           VisualizationResult
+             ()
+             counter
+             (editNodeDeclaration declaration property update)
+         GeneratedNodeContext declaration _ ->
+           VisualizationResult
+             ()
+             counter
+             (editNodeDeclaration declaration property update))
+
 infixr 6 <&>
-content :: ContentValue -> NodeRecipe ()
+content :: ContentValue -> VisualizationBuilder ()
 content value =
-  setNodePatch
-    (\bindings ->
-       VP.emptyNodePatch
-         {VP.nodePatchContent = P.pure (contentMode bindings value)})
+  editCurrentNode
+    "content"
+    (\bindings template ->
+       template {VT.templateContent = Just (contentMode bindings value)})
 
--- | Set text content and request compiler-owned font-size fitting. With no
--- authored @FontSize@, the compiler uses the largest size that fits the solved
--- content box. An authored @FontSize@ is instead an upper bound.
-fitText :: ContentValue -> NodeRecipe ()
+fitText :: ContentValue -> VisualizationBuilder ()
 fitText value =
-  setNodePatch
-    (\bindings ->
-       VP.emptyNodePatch
-         {VP.nodePatchContent = P.pure (fitContentMode bindings value)})
+  editCurrentNode
+    "content"
+    (\bindings template ->
+       template {VT.templateContent = Just (fitContentMode bindings value)})
 
--- | Set verbatim code content. Compiler-owned layout preserves whitespace and
--- never delegates wrapping to a renderer.
-codeContent :: ContentValue -> NodeRecipe ()
+codeContent :: ContentValue -> VisualizationBuilder ()
 codeContent value =
-  setNodePatch
-    (\bindings ->
-       VP.emptyNodePatch
-         { VP.nodePatchStyleUpdate =
-             VS.setStyleField @VS.FontFamily (S.Fixed VS.FontJetBrainsMonoNL)
-         , VP.nodePatchContent =
-             P.Just
+  editCurrentNode
+    "content"
+    (\bindings template ->
+       template
+         { VT.templateStyle =
+             VS.setStyleField @VS.FontFamily
+               (S.Fixed VS.FontJetBrainsMonoNL)
+               (VT.templateStyle template)
+         , VT.templateContent =
+             Just
                (V.ContentCode
                   V.CodeContentSpec
                     { V.codeContentSource = contentSource bindings value
                     , V.codeContentWrapMode = V.CodeNoWrap
-                    , V.codeContentLanguage = P.Nothing
+                    , V.codeContentLanguage = Nothing
                     , V.codeContentEmphasis = []
                     })
          })
 
--- | Permit up to two compiler-selected visual breaks in verbatim code.
-codeWrap :: NodeRecipe () %1 -> NodeRecipe ()
-codeWrap (NodeRecipe () build) =
-  NodeRecipe
-    ()
-    (updateCodeContent
-       "codeWrap"
-       (\code -> code {V.codeContentWrapMode = V.CodeSoftWrap})
-       P.. build)
+codeWrap :: VisualizationBuilder () %1 -> VisualizationBuilder ()
+codeWrap inner =
+  inner CF.>>= \() ->
+    editCurrentNode
+      "content.wrap"
+      (P.const
+         (updateCodeTemplate
+            "codeWrap"
+            (\code -> code {V.codeContentWrapMode = V.CodeSoftWrap})))
 
--- | Request semantic compiler-owned highlighting for a supported language.
-highlightCode :: P.String -> NodeRecipe () %1 -> NodeRecipe ()
-highlightCode language (NodeRecipe () build) =
-  NodeRecipe
-    ()
-    (updateCodeContent
-       "highlightCode"
-       (\code -> code {V.codeContentLanguage = P.Just language})
-       P.. build)
+highlightCode ::
+     P.String -> VisualizationBuilder () %1 -> VisualizationBuilder ()
+highlightCode language inner =
+  inner CF.>>= \() ->
+    editCurrentNode
+      "content.language"
+      (P.const
+         (updateCodeTemplate
+            "highlightCode"
+            (\code -> code {V.codeContentLanguage = Just language})))
 
--- | Half-open Unicode character offsets in authored code.
 type CodeRange = V.CodeRange
 
 codeRange :: P.Int -> P.Int -> CodeRange
 codeRange = V.CodeRange
 
--- | Emphasize source ranges only while the node is visible at checkpoints
--- with the supplied label. Syntax highlighting remains an independent static
--- layer and may be composed inside or outside this wrapper.
-emphasizeCode :: P.String -> [CodeRange] -> NodeRecipe () %1 -> NodeRecipe ()
-emphasizeCode stepLabel ranges (NodeRecipe () build) =
-  NodeRecipe
-    ()
-    (updateCodeContent
-       "emphasizeCode"
-       (\code ->
-          code
-            { V.codeContentEmphasis =
-                V.codeContentEmphasis code P.++ [(stepLabel, ranges)]
-            })
-       P.. build)
+emphasizeCode ::
+     P.String
+  -> [CodeRange]
+  -> VisualizationBuilder ()
+     %1 -> VisualizationBuilder ()
+emphasizeCode stepLabel ranges inner =
+  inner CF.>>= \() ->
+    editCurrentNode
+      ("content.emphasis." P.++ stepLabel)
+      (P.const
+         (updateCodeTemplate
+            "emphasizeCode"
+            (\code ->
+               code
+                 { V.codeContentEmphasis =
+                     V.codeContentEmphasis code P.++ [(stepLabel, ranges)]
+                 })))
+
+updateCodeTemplate ::
+     P.String
+  -> (V.CodeContentSpec -> V.CodeContentSpec)
+  -> VT.NodeTemplate
+  -> VT.NodeTemplate
+updateCodeTemplate helper transform = VT.updateTemplateContent helper update
+  where
+    update mode =
+      case mode of
+        V.ContentCode code -> V.ContentCode (transform code)
+        _                  -> P.error (helper P.++ " must wrap codeContent")
 
 payload ::
      forall tag selector. PayloadSelector tag selector
   => selector
   -> TraceQuery tag
 payload selector = TraceQuery emptyQuery (Just (payloadSelector @tag selector))
-
-setNodePatch :: (MatchBindings -> VP.NodePatch) -> NodeRecipe ()
-setNodePatch = NodeRecipe ()
-
-data GroupNode
 
 class Node input result | input -> result where
   node :: input -> result
@@ -485,15 +470,26 @@ class Select payload query where
 
 instance Select AnyPayload Query where
   selectWithPayload query =
-    emitVisualizationBuilder
-      (selectedNodeBinding (AnyNodeRef query))
-      emptyMatchSpec
+    VisualizationBuilder
+      (\_context counter ->
+         let key = selectionKey counter
+          in VisualizationResult
+               (selectedNodeBinding (TraceNodeRef key))
+               (counter P.+ 1)
+               (registerAnyQuerySelection key query))
 
 instance C.Traceable tag => Select tag (TraceQuery tag) where
-  selectWithPayload query =
-    emitVisualizationBuilder
-      (selectedNodeBinding (TraceNodeRef query))
-      emptyMatchSpec
+  selectWithPayload selector =
+    VisualizationBuilder
+      (\_context counter ->
+         let key = selectionKey counter
+          in VisualizationResult
+               (selectedNodeBinding (TraceNodeRef key))
+               (counter P.+ 1)
+               (registerQuerySelection @tag
+                  key
+                  (traceQueryQuery selector)
+                  (traceQueryPayloadPattern selector)))
 
 select ::
      forall payload. Select payload (SelectQuery payload)
@@ -501,66 +497,124 @@ select ::
   -> VisualizationBuilder (NodeBinding (Selected payload))
 select = selectWithPayload @payload @(SelectQuery payload)
 
-nodePatch :: MatchBindings -> NodeRecipe () -> VP.NodePatch
-nodePatch bindings (NodeRecipe () spec) =
-  let patch = spec bindings
-   in patch
-        { VP.nodePatchStyleUpdate =
-            substituteStyleBindings bindings P.. VP.nodePatchStyleUpdate patch
-        }
+instance Node
+           (Selected child)
+           (VisualizationBuilder () -> VisualizationBuilder ()) where
+  node = declareSelectedNode
 
-substituteStyleBindings :: MatchBindings -> VS.NodeStyle -> VS.NodeStyle
-substituteStyleBindings bindings =
-  VS.mapNodeStyleExprs
-    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
+instance Node
+           (NodeBinding (Selected child))
+           (VisualizationBuilder () -> VisualizationBuilder ()) where
+  node (Selected selected) = declareSelectedNode selected
 
-substituteCoordBindings :: MatchBindings -> Coord -> Coord
-substituteCoordBindings = substituteLayoutBindings
+instance Node
+           (VisualizationBuilder ())
+           (VisualizationBuilder (NodeBinding (Selected GeneratedNode))) where
+  node = declareGeneratedParent
 
-substituteSpanBindings :: MatchBindings -> Span -> Span
-substituteSpanBindings = substituteLayoutBindings
+declareSelectedNode ::
+     Selected tag -> VisualizationBuilder () -> VisualizationBuilder ()
+declareSelectedNode selected (VisualizationBuilder runBody) =
+  VisualizationBuilder
+    (\outerContext counter0 ->
+       let declaration = traceDeclarationKey counter0
+           parent = childParent outerContext
+        in case runBody (TraceNodeContext declaration parent) (counter0 P.+ 1) of
+             VisualizationResult () counter1 bodySpec ->
+               VisualizationResult
+                 ()
+                 counter1
+                 (declareTraceNode declaration (selectedKey selected) parent
+                    `matchSpecAppend` bodySpec))
 
-substituteLayoutBindings :: MatchBindings -> LayoutValue tag -> LayoutValue tag
-substituteLayoutBindings bindings (LayoutValue expr constraints) =
-  LayoutValue
-    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings) expr)
-    constraints
+declareGeneratedParent ::
+     VisualizationBuilder ()
+  -> VisualizationBuilder (NodeBinding (Selected GeneratedNode))
+declareGeneratedParent (VisualizationBuilder runBody) =
+  VisualizationBuilder
+    (\outerContext counter0 ->
+       let key = generatedDeclarationKey counter0
+           parent = childParent outerContext
+        in case runBody (GeneratedNodeContext key parent) (counter0 P.+ 1) of
+             VisualizationResult () counter1 bodySpec ->
+               VisualizationResult
+                 (selectedNodeBinding (GeneratedNodeRef key))
+                 counter1
+                 (declareGeneratedNode key parent `matchSpecAppend` bodySpec))
 
-bindingExprSubstitutions :: MatchBindings -> [(P.String, P.Double)]
-bindingExprSubstitutions [] = []
-bindingExprSubstitutions (MatchBinding name value:rest) =
-  case Read.readMaybe value of
-    Nothing -> bindingExprSubstitutions rest
-    Just numericValue ->
-      ("global." P.++ name, numericValue) : bindingExprSubstitutions rest
+childParent :: BuilderContext -> ParentRef
+childParent context =
+  case context of
+    RootContext -> CanvasParent
+    GeneratedNodeContext key _ -> GeneratedParent key
+    TraceNodeContext declaration _ ->
+      P.error
+        ("Trace-selected node "
+           P.++ declaration
+           P.++ " is terminal and cannot contain child nodes")
+
+self :: VisualizationBuilder (NodeBinding (Selected GeneratedNode))
+self =
+  VisualizationBuilder
+    (\context counter ->
+       case context of
+         GeneratedNodeContext key _ ->
+           VisualizationResult
+             (selectedNodeBinding (GeneratedNodeRef key))
+             counter
+             emptyMatchSpec
+         RootContext ->
+           P.error "self is only available inside an anonymous node body"
+         TraceNodeContext _ _ ->
+           P.error "self is only available inside an anonymous node body")
+
+canvas :: Selected CanvasNode
+canvas = SelectedHandle (Selection CanvasNodeRef)
+
+selectedKey :: Selected tag -> P.String
+selectedKey selected =
+  case selected of
+    SelectedHandle (Selection ref) ->
+      case ref of
+        TraceNodeRef key -> key
+        GeneratedNodeRef key -> key
+        CanvasNodeRef -> P.error "The canvas cannot be emitted as a child node"
+
+nodeSelection :: NodeRef tag -> NodeSelection
+nodeSelection handle =
+  case handle of
+    TraceNodeRef key     -> NodeSelection key
+    GeneratedNodeRef key -> NodeSelection key
+    CanvasNodeRef        -> CanvasSelection
+
+selectionKey :: P.Int -> P.String
+selectionKey counter = "selection-" P.++ P.show counter
+
+traceDeclarationKey :: P.Int -> P.String
+traceDeclarationKey counter = "trace-node-" P.++ P.show counter
+
+generatedDeclarationKey :: P.Int -> P.String
+generatedDeclarationKey counter = "generated-node-" P.++ P.show counter
+
+visualize :: VisualizationBuilder () -> MatchSpec
+visualize (VisualizationBuilder run) =
+  case run RootContext 0 of
+    VisualizationResult () _ spec -> validateMatchSpec spec
 
 contentMode :: MatchBindings -> ContentValue -> V.ContentMode
-contentMode _bindings (ContentLiteral value) = V.ContentText value
+contentMode _ (ContentLiteral value) = V.ContentText value
 contentMode bindings (ContentBinding binding) =
   V.ContentText (bindingContent bindings binding)
 
 fitContentMode :: MatchBindings -> ContentValue -> V.ContentMode
-fitContentMode _bindings (ContentLiteral value) = V.ContentFitText value
+fitContentMode _ (ContentLiteral value) = V.ContentFitText value
 fitContentMode bindings (ContentBinding binding) =
   V.ContentFitText (bindingContent bindings binding)
 
 contentSource :: MatchBindings -> ContentValue -> P.String
-contentSource _bindings (ContentLiteral value) = value
+contentSource _ (ContentLiteral value) = value
 contentSource bindings (ContentBinding binding) =
   bindingContent bindings binding
-
-updateCodeContent ::
-     P.String
-  -> (V.CodeContentSpec -> V.CodeContentSpec)
-  -> VP.NodePatch
-  -> VP.NodePatch
-updateCodeContent helper transform patch =
-  patch
-    { VP.nodePatchContent =
-        case VP.nodePatchContent patch of
-          P.Just (V.ContentCode code) -> P.Just (V.ContentCode (transform code))
-          _ -> P.error (helper P.++ " must wrap codeContent")
-    }
 
 bindingContent :: MatchBindings -> Binding -> P.String
 bindingContent bindings (Binding name) =
@@ -568,91 +622,11 @@ bindingContent bindings (Binding name) =
     Nothing -> P.error ("Unbound view binding #" P.++ name P.++ " in content")
     Just value -> value
 
-coordPin :: Coord -> VP.LayoutPin
-coordPin value = VP.LayoutPin (coordExpr value) (coordConstraints value)
+coordPin :: Coord -> VT.LayoutPin
+coordPin value = VT.LayoutPin (coordExpr value) (coordConstraints value)
 
-spanPin :: Span -> VP.LayoutPin
-spanPin value = VP.LayoutPin (spanExpr value) (spanConstraints value)
-
-instance Node
-           (Selected child)
-           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node (SelectedHandle (Selection child childSpec)) =
-    let query = nodeRefQuery child
-     in VisualizationBuilder
-          (\counter ->
-             let key = groupNodeKey counter
-                 groupSpec = matchGroupNode key query VP.emptyNodePatch
-              in VisualizationResult
-                   (Selected
-                      (SelectedHandle
-                         (Selection (GroupNodeRef key query) emptyMatchSpec)))
-                   (counter P.+ 1)
-                   (matchSpecAppend childSpec groupSpec))
-
-instance Node
-           (NodeBinding (Selected child))
-           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node (Selected children) = node children
-
-instance Node
-           (VisualizationBuilder (NodeBinding (Selected child)))
-           (VisualizationBuilder (NodeBinding (Selected GroupNode))) where
-  node (VisualizationBuilder runFirst) =
-    VisualizationBuilder
-      (\counter0 ->
-         case runFirst counter0 of
-           VisualizationResult binding counter1 first ->
-             case node binding of
-               VisualizationBuilder runSecond ->
-                 case runSecond counter1 of
-                   VisualizationResult selected counter2 second ->
-                     VisualizationResult
-                       selected
-                       counter2
-                       (matchSpecAppend first second))
-
-render :: Selected tag -> NodeRecipe () -> VisualizationBuilder ()
-render (SelectedHandle (Selection handle spec)) recipe =
-  VisualizationBuilder
-    (\counter ->
-       VisualizationResult
-         ()
-         counter
-         (matchSpecAppend spec (nodeRefStyleSpec handle recipe)))
-
-nodeRefStyleSpec :: NodeRef tag -> NodeRecipe () -> MatchSpec
-nodeRefStyleSpec handle recipe =
-  case handle of
-    AnyNodeRef query -> matchAnyQueryNode query (`nodePatch` recipe)
-    TraceNodeRef selector ->
-      matchQueryPayloadNode
-        (traceQueryQuery selector)
-        (traceQueryPayloadPattern selector)
-        (\context -> nodePatch (matchContextBindings context) recipe)
-    GroupNodeRef key query -> matchGroupNode key query (nodePatch [] recipe)
-
-nodeRefQuery :: NodeRef tag -> Query
-nodeRefQuery handle =
-  case handle of
-    AnyNodeRef query      -> query
-    TraceNodeRef selector -> traceQueryQuery selector
-    GroupNodeRef _ query  -> query
-
-nodeSelection :: NodeRef tag -> NodeSelection
-nodeSelection handle =
-  case handle of
-    AnyNodeRef query       -> TraceSelection query
-    TraceNodeRef selector  -> TraceSelection (traceQueryQuery selector)
-    GroupNodeRef key query -> GroupSelection key query
-
-groupNodeKey :: P.Int -> P.String
-groupNodeKey counter = "group-node-" P.++ P.show counter
-
-visualize :: VisualizationBuilder () -> MatchSpec
-visualize (VisualizationBuilder run) =
-  case run 0 of
-    VisualizationResult () _ spec -> spec
+spanPin :: Span -> VT.LayoutPin
+spanPin value = VT.LayoutPin (spanExpr value) (spanConstraints value)
 
 class PayloadSelector tag selector where
   payloadSelector :: selector -> PayloadPattern tag

@@ -43,6 +43,13 @@ export type CspVariableId = string;
 
 export type DecisionCoverage = 'exactEnumeration' | 'mipConditioning' | 'legacyCoverage';
 
+export interface EdgeInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 export interface FindingEvidence {
   evidenceKey: string;
   evidenceValue: FindingValue;
@@ -155,6 +162,12 @@ export interface TimelineStep {
   instances: VisualInstance[];
 }
 
+export interface VisualBox {
+  bounds: LayoutRect;
+  padding: EdgeInsets;
+  margin: EdgeInsets;
+}
+
 export type VisualContent =
   | { kind: 'plainTextContent'; textLayout: TextLayout }
   | {
@@ -168,13 +181,12 @@ export type VisualContent =
 export interface VisualElement {
   id: VisualId;
   role: string;
-  kind: VisualElementKind;
+  box: VisualBox;
+  children: VisualId[];
   content?: VisualContent;
   style: VisualStyle;
   styleVariables: StyleVariableBinding[];
 }
-
-export type VisualElementKind = { kind: 'leaf' } | { kind: 'group'; children: VisualId[] };
 
 export type VisualId = number;
 
@@ -186,13 +198,8 @@ export interface VisualInstance {
 }
 
 export interface VisualStyle {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
   opacity?: number;
   zIndex?: number;
-  padding?: number;
   fontSize?: number;
   radius?: number;
   strokeWidth?: number;

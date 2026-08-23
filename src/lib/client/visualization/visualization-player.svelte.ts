@@ -138,7 +138,7 @@ export class VisualizationPlayer {
       if (!origin) return element;
 
       this.scheduleSettle(element);
-      return { ...element, style: origin.style };
+      return { ...element, box: origin.box, style: origin.style };
     });
 
     this.currentStep = step;

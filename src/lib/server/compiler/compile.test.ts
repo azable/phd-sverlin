@@ -134,7 +134,7 @@ describe('compileSource', () => {
 
 function emptyVisualization(): Visualization {
   return {
-    irVersion: 2,
+    irVersion: 3,
     seed: 1,
     sourcePath: 'Main.sverlin',
     coordinates: {

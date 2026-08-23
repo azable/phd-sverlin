@@ -20,23 +20,24 @@ module LinearTrace.Choreography.Style
   ) where
 
 import           Data.Kind                     (Type)
-import           LinearTrace.Choreography.Node (NodeRecipe, Selected (..),
+import           LinearTrace.Choreography.Node (Selected (..),
                                                 SelectionCategory (..),
                                                 SelectionValue (..), Span,
-                                                setNodePatch, spanExpr)
+                                                VisualizationBuilder,
+                                                editCurrentNode, spanExpr)
 import           LinearTrace.View.Access       (HslPart (..),
                                                 styleChoiceValueAccess,
                                                 styleColorPartValueAccess,
                                                 styleValueAccess)
-import qualified LinearTrace.View.Patch        as VP
 import           LinearTrace.View.Primitives   (Angle, Color, Free, Hsl (..),
                                                 Unit)
 import           LinearTrace.View.Style        (Alpha, BorderStyle, Fill,
                                                 FontFamily, FontSize, FontStyle,
-                                                FontWeight, Opacity, Padding,
-                                                Radius, Stroke, StrokeWidth,
-                                                TextAlign, WhiteSpace, ZIndex)
+                                                FontWeight, Opacity, Radius,
+                                                Stroke, StrokeWidth, TextAlign,
+                                                WhiteSpace, ZIndex)
 import qualified LinearTrace.View.Style        as VS
+import qualified LinearTrace.View.Template     as VT
 import qualified Prelude                       as P
 import           Prelude.Linear
 import qualified Solver                        as S
@@ -45,20 +46,23 @@ data StyleChoice value
   = FixedStyle value
   | VariableStyle (S.Choice value)
 
-setStyleWith :: (VS.NodeStyle -> VS.NodeStyle) -> NodeRecipe ()
+setStyleWith :: (VS.NodeStyle -> VS.NodeStyle) -> VisualizationBuilder ()
 setStyleWith update =
-  setNodePatch (P.const VP.emptyNodePatch {VP.nodePatchStyleUpdate = update})
+  editCurrentNode
+    "style"
+    (\_bindings template ->
+       template {VT.templateStyle = update (VT.templateStyle template)})
 
 style ::
      forall field. (VS.StyleField field, StyleFieldInput field)
   => StyleInputValue field
-  -> NodeRecipe ()
+  -> VisualizationBuilder ()
 style input =
   setStyleWith (VS.setStyleField @field (styleFieldInput @field input))
 
 withoutStyle ::
      forall field. VS.StyleField field
-  => NodeRecipe ()
+  => VisualizationBuilder ()
 withoutStyle = setStyleWith (VS.forbidStyleField @field)
 
 styleCase ::
@@ -66,14 +70,14 @@ styleCase ::
      (VS.StyleField field, StyleFieldInput field, S.ChoiceDomain value)
   => S.Choice value
   -> (value -> P.Maybe (StyleInputValue field))
-  -> NodeRecipe ()
+  -> VisualizationBuilder ()
 styleCase selected inputFor =
   setStyleWith
     (VS.setConditionalStyleField @field
        selected
        (P.fmap (styleFieldInput @field) P.. inputFor))
 
-styleFamily :: P.String -> NodeRecipe ()
+styleFamily :: P.String -> VisualizationBuilder ()
 styleFamily family = setStyleWith (VS.setStyleFamily family)
 
 class StyleFieldInput field where
@@ -87,10 +91,6 @@ instance StyleFieldInput Opacity where
 instance StyleFieldInput ZIndex where
   type StyleInputValue ZIndex = Free
   styleFieldInput = P.id
-
-instance StyleFieldInput Padding where
-  type StyleInputValue Padding = Span
-  styleFieldInput = spanExpr
 
 instance StyleFieldInput FontSize where
   type StyleInputValue FontSize = Span
@@ -190,10 +190,6 @@ instance SelectStyle Opacity where
 instance SelectStyle ZIndex where
   type SelectedStyle ZIndex tag = SelectionValue Free tag
   selectStyle = selectedScalarStyle @ZIndex
-
-instance SelectStyle Padding where
-  type SelectedStyle Padding tag = SelectionValue Span tag
-  selectStyle = selectedScalarStyle @Padding
 
 instance SelectStyle FontSize where
   type SelectedStyle FontSize tag = SelectionValue Span tag

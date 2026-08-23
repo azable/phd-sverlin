@@ -59,7 +59,7 @@
     elements.toSorted(
       (left, right) =>
         (left.style.zIndex ?? 0) - (right.style.zIndex ?? 0) ||
-        Number(left.kind.kind !== 'group') - Number(right.kind.kind !== 'group') ||
+        Number(left.children.length === 0) - Number(right.children.length === 0) ||
         left.id - right.id
     )
   );
@@ -214,12 +214,12 @@
     box: { x: number; y: number; width: number; height: number },
     element: LiveElement
   ) {
-    const style = element.style;
+    const bounds = element.box.bounds;
     return (
-      style.left < box.x + box.width &&
-      style.left + style.width > box.x &&
-      style.top < box.y + box.height &&
-      style.top + style.height > box.y
+      bounds.rectX < box.x + box.width &&
+      bounds.rectX + bounds.rectWidth > box.x &&
+      bounds.rectY < box.y + box.height &&
+      bounds.rectY + bounds.rectHeight > box.y
     );
   }
 
@@ -268,12 +268,13 @@
   }
 
   function legacyTextX(element: LiveElement): number {
-    const padding = element.style.padding ?? 0;
-    if (element.style.textAlign === 'left') return element.style.left + padding;
+    const bounds = element.box.bounds;
+    const padding = element.box.padding;
+    if (element.style.textAlign === 'left') return bounds.rectX + padding.left;
     if (element.style.textAlign === 'right') {
-      return element.style.left + element.style.width - padding;
+      return bounds.rectX + bounds.rectWidth - padding.right;
     }
-    return element.style.left + element.style.width / 2;
+    return bounds.rectX + bounds.rectWidth / 2;
   }
 
   function legacyTextAnchor(element: LiveElement): 'start' | 'middle' | 'end' {
@@ -376,10 +377,10 @@
         {#each orderedElements as element (element.instanceId)}
           <clipPath id={`visual-clip-${element.instanceId}`}>
             <rect
-              x={element.style.left}
-              y={element.style.top}
-              width={element.style.width}
-              height={element.style.height}
+              x={element.box.bounds.rectX}
+              y={element.box.bounds.rectY}
+              width={element.box.bounds.rectWidth}
+              height={element.box.bounds.rectHeight}
               rx={element.style.radius ?? 0}
             />
           </clipPath>
@@ -388,6 +389,7 @@
 
       {#each orderedElements as element (element.instanceId)}
         {@const style = element.style}
+        {@const bounds = element.box.bounds}
         <g
           data-visual-id={element.id}
           data-instance-id={element.instanceId}
@@ -397,10 +399,10 @@
         >
           <rect
             class="visual-element"
-            x={style.left}
-            y={style.top}
-            width={style.width}
-            height={style.height}
+            x={bounds.rectX}
+            y={bounds.rectY}
+            width={bounds.rectWidth}
+            height={bounds.rectHeight}
             rx={style.radius ?? 0}
             fill={color(style.fill, style.alpha)}
             stroke={style.borderStyle === 'none'
@@ -493,7 +495,7 @@
             <text
               class="legacy-text"
               x={legacyTextX(element)}
-              y={style.top + style.height / 2}
+              y={bounds.rectY + bounds.rectHeight / 2}
               fill="#0f172a"
               font-family={style.fontFamily}
               font-size={style.fontSize ?? 14}
@@ -509,10 +511,10 @@
           {#if selectedIds.includes(element.instanceId)}
             <rect
               class="selection-outline"
-              x={style.left}
-              y={style.top}
-              width={style.width}
-              height={style.height}
+              x={bounds.rectX}
+              y={bounds.rectY}
+              width={bounds.rectWidth}
+              height={bounds.rectHeight}
               rx={style.radius ?? 0}
             />
           {/if}

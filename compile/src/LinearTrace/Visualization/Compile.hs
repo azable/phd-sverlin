@@ -18,6 +18,7 @@ import           Data.Map.Strict                      (Map)
 import qualified Data.Map.Strict                      as Map
 import qualified Data.Text                            as Text
 import qualified Data.Text.Encoding                   as TextEncoding
+import qualified LinearTrace.View.Box                 as VB
 import qualified LinearTrace.View.Graph               as V
 import qualified LinearTrace.View.Primitives          as VP
 import qualified LinearTrace.View.Style               as VS
@@ -61,15 +62,16 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
   elements <- traverse (compileElement solution contents) (V.viewNodes graph)
   let emphasis = emphasisLookup (V.viewNodes graph)
       elementsById = elementLookup elements
+      instanceIds = instanceIdLookup elements
   validateEmphasisContent elementsById emphasis
   steps <-
     evalStateT
-      (compileSteps elementsById emphasis (V.viewSteps graph))
+      (compileSteps elementsById instanceIds emphasis (V.viewSteps graph))
       emptySceneState
   validateEmphasisTargets emphasis steps
   pure
     IR.Visualization
-      { IR.visualizationIrVersion = 2
+      { IR.visualizationIrVersion = 3
       , IR.visualizationSeed = solutionSeedInt solution
       , IR.visualizationSourcePath = sourcePath
       , IR.visualizationSampling = Just (compileSampling solution)
@@ -86,7 +88,10 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
             , IR.canvasHeight = roundLayout (V.viewCanvasHeight graph)
             }
       , IR.visualizationResources = resources
-      , IR.visualizationFindings = map (attachFindingSteps steps) findings
+      , IR.visualizationFindings =
+          map
+            (attachFindingSteps steps)
+            (findings ++ compileViewDiagnostics graph)
       , IR.visualizationVariables = compileVariables solution
       , IR.visualizationElements = elements
       , IR.visualizationSteps = steps
@@ -135,24 +140,20 @@ compileElement ::
 compileElement solution contents wrapped =
   case wrapped of
     V.ViewNode node -> do
+      box <- compileBox solution (V.nodeBox node)
       style <- compileStyle solution (V.nodeStyle node)
-      styleBindings <- compileStyleBindings solution (V.nodeStyle node)
+      styleBindings <- compileVariableBindings solution node
       pure
         IR.VisualElement
           { IR.elementId = visualId (V.nodeRef node)
           , IR.elementRole = V.viewLabelKind (V.nodeLabel node)
-          , IR.elementKind = compileElementKind (V.nodeStructure node)
+          , IR.elementBox = box
+          , IR.elementChildren =
+              map (IR.VisualId . V.viewIdInt) (V.nodeChildren node)
           , IR.elementContent = compileContent contents node
           , IR.elementStyle = style
           , IR.elementStyleVariables = styleBindings
           }
-
-compileElementKind :: V.NodeStructure -> IR.VisualElementKind
-compileElementKind structure =
-  case structure of
-    V.LeafNode -> IR.ElementLeaf
-    V.CompoundNode _ children ->
-      IR.ElementGroup (map (IR.VisualId . V.viewIdInt . V.nodeChildId) children)
 
 visualId :: V.ViewRef tag -> IR.VisualId
 visualId = IR.VisualId . V.viewRefInt
@@ -189,15 +190,9 @@ attachFindingSteps steps finding
 
 compileStyle :: S.Solution -> VS.NodeStyle -> Either String IR.VisualStyle
 compileStyle solution style = do
-  let VP.Bounds top left width height = VS.nodeStyleBounds style
   IR.VisualStyle
-    <$> solved "top" top
-    <*> solved "left" left
-    <*> solved "width" width
-    <*> solved "height" height
-    <*> resolvedScalar @VS.Opacity
+    <$> resolvedScalar @VS.Opacity
     <*> resolvedScalar @VS.ZIndex
-    <*> resolvedScalar @VS.Padding
     <*> resolvedScalar @VS.FontSize
     <*> resolvedScalar @VS.Radius
     <*> resolvedScalar @VS.StrokeWidth
@@ -211,14 +206,6 @@ compileStyle solution style = do
     <*> resolved @VS.BorderStyle
     <*> resolved @VS.WhiteSpace
   where
-    solved label expression =
-      case S.evalExpr solution expression of
-        Just value -> Right (roundLayout value)
-        Nothing ->
-          Left
-            ("could not materialize "
-               ++ label
-               ++ "; the expression references an unsolved variable")
     resolved ::
          forall field. VS.StyleField field
       => Either String (Maybe (VS.ResolvedStyleValue field))
@@ -234,6 +221,42 @@ compileStyle solution style = do
       => Either String (Maybe IR.HslColor)
     resolvedColor = fmap (fmap compileColor) (resolved @field)
 
+compileBox :: S.Solution -> VB.NodeBox -> Either String IR.VisualBox
+compileBox solution box = do
+  let VP.Bounds top left width height = VB.nodeBoxBounds box
+  bounds <-
+    IR.LayoutRect
+      <$> solved "left" left
+      <*> solved "top" top
+      <*> solved "width" width
+      <*> solved "height" height
+  padding <- VB.materializeNodePadding solution box
+  margin <- VB.materializeNodeMargin solution box
+  pure
+    IR.VisualBox
+      { IR.boxBounds = bounds
+      , IR.boxPadding = compileInsets padding
+      , IR.boxMargin = compileInsets margin
+      }
+  where
+    solved label expression =
+      case S.evalExpr solution expression of
+        Just value -> Right (roundLayout value)
+        Nothing ->
+          Left
+            ("could not materialize "
+               ++ label
+               ++ "; the expression references an unsolved variable")
+
+compileInsets :: VB.ConcreteInsets -> IR.EdgeInsets
+compileInsets insets =
+  IR.EdgeInsets
+    { IR.insetsTop = roundLayout (VB.insetTop insets)
+    , IR.insetsRight = roundLayout (VB.insetRight insets)
+    , IR.insetsBottom = roundLayout (VB.insetBottom insets)
+    , IR.insetsLeft = roundLayout (VB.insetLeft insets)
+    }
+
 compileColor :: VP.ConcreteHsl -> IR.HslColor
 compileColor color =
   IR.HslColor
@@ -242,24 +265,77 @@ compileColor color =
     , IR.hslLightness = roundLayout (VP.lightness color)
     }
 
-compileStyleBindings ::
-     S.Solution -> VS.NodeStyle -> Either String [IR.StyleVariableBinding]
-compileStyleBindings solution style =
-  map
-    (\(field, variables) ->
-       IR.StyleVariableBinding
-         { IR.bindingField = field
-         , IR.bindingVariables = map IR.CspVariableId variables
-         })
-    <$> VS.styleVariableBindings solution style
+compileVariableBindings ::
+     S.Solution -> V.Node tag -> Either String [IR.StyleVariableBinding]
+compileVariableBindings solution node = do
+  boxBindings <- VB.nodeBoxVariableBindings solution (V.nodeBox node)
+  styleBindings <- VS.styleVariableBindings solution (V.nodeStyle node)
+  pure (map compileBinding (boxBindings ++ styleBindings))
+  where
+    compileBinding (field, variables) =
+      IR.StyleVariableBinding
+        { IR.bindingField = field
+        , IR.bindingVariables = map IR.CspVariableId variables
+        }
+
+compileViewDiagnostics :: V.ViewGraph -> [IR.VisualizationFinding]
+compileViewDiagnostics graph =
+  zipWith compileDiagnostic [0 :: Int ..] (V.viewDiagnostics graph)
+  where
+    compileDiagnostic index diagnostic =
+      IR.VisualizationFinding
+        { IR.visualizationFindingId =
+            "hierarchy-"
+              ++ show index
+              ++ "-"
+              ++ V.viewDiagnosticDeclaration diagnostic
+        , IR.visualizationFindingSeverity = IR.FindingWarning
+        , IR.visualizationFindingCode = V.viewDiagnosticCode diagnostic
+        , IR.visualizationFindingMessage = V.viewDiagnosticMessage diagnostic
+        , IR.visualizationFindingElementIds =
+            [ visualId (V.nodeRef node)
+            | V.ViewNode node <- V.viewNodes graph
+            , V.nodeDeclaration node == V.viewDiagnosticDeclaration diagnostic
+            ]
+        , IR.visualizationFindingStepIndices = []
+        , IR.visualizationFindingEvidence =
+            [ IR.FindingEvidence
+                "declaration"
+                (IR.FindingText (V.viewDiagnosticDeclaration diagnostic))
+                Nothing
+            , IR.FindingEvidence
+                "reason"
+                (IR.FindingText (V.viewDiagnosticReason diagnostic))
+                Nothing
+            , IR.FindingEvidence
+                "matched"
+                (IR.FindingNumber
+                   (fromIntegral (V.viewDiagnosticMatched diagnostic)))
+                Nothing
+            , IR.FindingEvidence
+                "visible"
+                (IR.FindingNumber
+                   (fromIntegral (V.viewDiagnosticVisible diagnostic)))
+                Nothing
+            ]
+        }
 
 type ElementLookup = Map IR.VisualId IR.VisualElement
+
+type InstanceIdLookup = Map IR.VisualId IR.RenderInstanceId
 
 type EmphasisLookup = Map IR.VisualId (String, [(String, [V.CodeRange])])
 
 elementLookup :: [IR.VisualElement] -> ElementLookup
 elementLookup elements =
   Map.fromList [(IR.elementId element, element) | element <- elements]
+
+instanceIdLookup :: [IR.VisualElement] -> InstanceIdLookup
+instanceIdLookup elements =
+  Map.fromList
+    [ (IR.elementId element, IR.RenderInstanceId index)
+    | (index, element) <- zip [0 ..] elements
+    ]
 
 emphasisLookup :: [V.ViewNode] -> EmphasisLookup
 emphasisLookup = Map.fromList . foldMap entry
@@ -300,24 +376,30 @@ type CompileM = StateT SceneState (Either String)
 
 compileSteps ::
      ElementLookup
+  -> InstanceIdLookup
   -> EmphasisLookup
   -> [V.ViewStep]
   -> CompileM [IR.TimelineStep]
-compileSteps lookup' emphasis = traverse (compileStep lookup' emphasis)
+compileSteps lookup' instanceIds emphasis =
+  traverse (compileStep lookup' instanceIds emphasis)
 
 compileStep ::
-     ElementLookup -> EmphasisLookup -> V.ViewStep -> CompileM IR.TimelineStep
-compileStep lookup' emphasis step = do
+     ElementLookup
+  -> InstanceIdLookup
+  -> EmphasisLookup
+  -> V.ViewStep
+  -> CompileM IR.TimelineStep
+compileStep lookup' instanceIds emphasis step = do
   modify clearOrigins
   let (introductions, removals) = V.splitRenderIntents (V.viewStepIntents step)
-  mapM_ (applyIntent lookup') introductions
+  mapM_ (applyIntent lookup' instanceIds) introductions
   baseInstances <- gets (Map.elems . sceneInstances)
   instances <-
     lift
       (traverse
          (attachCodeEmphasis emphasis (V.viewStepLabel step))
          baseInstances)
-  mapM_ (applyIntent lookup') removals
+  mapM_ (applyIntent lookup' instanceIds) removals
   pure
     IR.TimelineStep
       {IR.stepLabel = V.viewStepLabel step, IR.stepInstances = instances}
@@ -431,20 +513,27 @@ validateEmphasisTargets emphasis steps =
       IR.stepLabel step == stepLabel
         && any ((== elementId) . IR.instanceElementId) (IR.stepInstances step)
 
-applyIntent :: ElementLookup -> V.RenderIntent -> CompileM ()
-applyIntent lookup' intent =
+applyIntent ::
+     ElementLookup -> InstanceIdLookup -> V.RenderIntent -> CompileM ()
+applyIntent lookup' instanceIds intent =
   case intent of
-    V.RenderFresh ref -> mapM_ createElement (lookupElement lookup' ref)
+    V.RenderFresh ref ->
+      mapM_ (createElement instanceIds) (lookupElement lookup' ref)
     V.RenderRemove ref -> mapM_ destroyElement (lookupElement lookup' ref)
-    V.RenderContinue source target -> continueRef lookup' source target
-    V.RenderFork source target -> forkRef lookup' source target
+    V.RenderContinue source target ->
+      continueRef lookup' instanceIds source target
+    V.RenderFork source target -> forkRef lookup' instanceIds source target
 
 continueRef ::
-     ElementLookup -> V.ViewRef source -> V.ViewRef target -> CompileM ()
-continueRef lookup' sourceRef targetRef =
+     ElementLookup
+  -> InstanceIdLookup
+  -> V.ViewRef source
+  -> V.ViewRef target
+  -> CompileM ()
+continueRef lookup' instanceIds sourceRef targetRef =
   case (lookupElement lookup' sourceRef, lookupElement lookup' targetRef) of
     (Nothing, Nothing)         -> pure ()
-    (Nothing, Just target)     -> createElement target
+    (Nothing, Just target)     -> createElement instanceIds target
     (Just source, Nothing)     -> destroyElement source
     (Just source, Just target) -> continueElement source target
 
@@ -471,8 +560,13 @@ continueElement source target = do
                (sceneInstances scene)
          })
 
-forkRef :: ElementLookup -> V.ViewRef source -> V.ViewRef target -> CompileM ()
-forkRef lookup' sourceRef targetRef =
+forkRef ::
+     ElementLookup
+  -> InstanceIdLookup
+  -> V.ViewRef source
+  -> V.ViewRef target
+  -> CompileM ()
+forkRef lookup' instanceIds sourceRef targetRef =
   case lookupElement lookup' targetRef of
     Nothing -> pure ()
     Just target -> do
@@ -482,31 +576,35 @@ forkRef lookup' sourceRef targetRef =
           Just source -> do
             _ <- requireLineage source
             pure (Just (IR.elementId source))
-      createElementWithOrigin origin target
+      createElementWithOrigin instanceIds origin target
 
-createElement :: IR.VisualElement -> CompileM ()
-createElement = createElementWithOrigin Nothing
+createElement :: InstanceIdLookup -> IR.VisualElement -> CompileM ()
+createElement instanceIds = createElementWithOrigin instanceIds Nothing
 
-createElementWithOrigin :: Maybe IR.VisualId -> IR.VisualElement -> CompileM ()
-createElementWithOrigin origin element =
+createElementWithOrigin ::
+     InstanceIdLookup -> Maybe IR.VisualId -> IR.VisualElement -> CompileM ()
+createElementWithOrigin instanceIds origin element =
   let elementId' = IR.elementId element
-      instanceId = instanceIdFor elementId'
-   in modify
-        (\scene ->
-           scene
-             { sceneLineage =
-                 Map.insert elementId' instanceId (sceneLineage scene)
-             , sceneInstances =
-                 Map.insert
-                   instanceId
-                   (IR.VisualInstance
-                      { IR.instanceId = instanceId
-                      , IR.instanceElementId = elementId'
-                      , IR.instanceOriginElementId = origin
-                      , IR.instanceCodeEmphasisRanges = Nothing
-                      })
-                   (sceneInstances scene)
-             })
+   in case Map.lookup elementId' instanceIds of
+        Nothing ->
+          lift (Left ("no render-instance identity for " ++ show elementId'))
+        Just instanceId ->
+          modify
+            (\scene ->
+               scene
+                 { sceneLineage =
+                     Map.insert elementId' instanceId (sceneLineage scene)
+                 , sceneInstances =
+                     Map.insert
+                       instanceId
+                       (IR.VisualInstance
+                          { IR.instanceId = instanceId
+                          , IR.instanceElementId = elementId'
+                          , IR.instanceOriginElementId = origin
+                          , IR.instanceCodeEmphasisRanges = Nothing
+                          })
+                       (sceneInstances scene)
+                 })
 
 destroyElement :: IR.VisualElement -> CompileM ()
 destroyElement element = do
@@ -528,11 +626,6 @@ requireLineage element = do
 
 lookupElement :: ElementLookup -> V.ViewRef tag -> Maybe IR.VisualElement
 lookupElement lookup' ref = Map.lookup (visualId ref) lookup'
-
-instanceIdFor :: IR.VisualId -> IR.RenderInstanceId
-instanceIdFor elementId' =
-  case elementId' of
-    IR.VisualId value -> IR.RenderInstanceId value
 
 roundLayout :: Double -> Double
 roundLayout value =

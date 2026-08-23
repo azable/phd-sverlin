@@ -40,13 +40,12 @@ jsonFieldName name =
       , ("cspCategoryValue", "value")
       , ("cspVariableId", "id")
       , ("cspVariableValue", "value")
-      , ("elementGroupChildren", "children")
       ]
 
 jsonConstructorName :: String -> String
 jsonConstructorName name =
   lowerFirst . fromMaybe name . listToMaybe . mapMaybe (`stripPrefix` name)
-    $ ["Variable", "Csp", "Element"]
+    $ ["Variable", "Csp"]
 
 lowerFirst :: String -> String
 lowerFirst text =

@@ -86,7 +86,7 @@ describe('AI project context projection', () => {
     };
     const document = projectDocument(request);
     const visualization = {
-      irVersion: 2,
+      irVersion: 3,
       seed: 1,
       sourcePath: 'Main.sverlin',
       coordinates: {
@@ -113,9 +113,14 @@ describe('AI project context projection', () => {
         {
           id: 0,
           role: 'Value',
-          kind: { kind: 'leaf' },
+          box: {
+            bounds: { rectX: 0, rectY: 0, rectWidth: 100, rectHeight: 20 },
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+          },
+          children: [],
           content: { kind: 'legacyTextContent', textSource: 'hello' },
-          style: { top: 0, left: 0, width: 100, height: 20 },
+          style: {},
           styleVariables: []
         }
       ],

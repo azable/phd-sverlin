@@ -78,7 +78,7 @@ beforeEach(async () => {
         shapingEngineVersion: '1'
       },
       visualization: {
-        irVersion: 2,
+        irVersion: 3,
         seed,
         sourcePath: 'Main.sverlin',
         coordinates: {

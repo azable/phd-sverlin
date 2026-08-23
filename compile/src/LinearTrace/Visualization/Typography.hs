@@ -36,6 +36,7 @@ import           Data.Maybe                              (catMaybes, fromMaybe,
                                                           listToMaybe)
 import qualified Data.Text                               as Text
 import qualified Data.Text.Encoding                      as Text
+import qualified LinearTrace.View.Box                    as VB
 import qualified LinearTrace.View.Graph                  as V
 import qualified LinearTrace.View.Primitives             as VP
 import qualified LinearTrace.View.Style                  as VS
@@ -95,11 +96,11 @@ data TextDraft = TextDraft
   , draftLines             :: [PreparedLine]
   , draftInsertedBreaks    :: Int
   , draftTextAlign         :: String
-  , draftPaddingExpression :: VP.LayoutExpr
+  , draftPaddingExpression :: VB.InsetsExpr
   , draftStrokeExpression  :: VP.LayoutExpr
   , draftWidthValue        :: Double
   , draftHeightValue       :: Double
-  , draftPaddingValue      :: Double
+  , draftPaddingValue      :: VB.ConcreteInsets
   , draftStrokeValue       :: Double
   , draftSizeCap           :: Maybe (VP.LayoutExpr, Double)
   , draftContentFlavor     :: ContentFlavor
@@ -200,8 +201,7 @@ prepareTextNode ::
   -> String
   -> IO (Either String (Maybe DraftChoice))
 prepareTextNode flavor explicitFit whiteSpaceOverride solution node source = do
-  let style = V.nodeStyle node
-  case resolvedTextStyle explicitFit solution style of
+  case resolvedTextStyle explicitFit solution node of
     Left err -> pure (Left (nodePrefix node ++ err))
     Right initialResolved -> do
       let resolved =
@@ -227,23 +227,24 @@ data ResolvedTextStyle = ResolvedTextStyle
   , resolvedWeight          :: Int
   , resolvedFontStyle       :: String
   , resolvedSizePolicy      :: SizePolicy
-  , resolvedPadding         :: Double
+  , resolvedPadding         :: VB.ConcreteInsets
   , resolvedStrokeWidth     :: Double
   , resolvedTextAlign       :: String
   , resolvedWhiteSpace      :: String
-  , resolvedPaddingExpr     :: VP.LayoutExpr
+  , resolvedPaddingExpr     :: VB.InsetsExpr
   , resolvedStrokeWidthExpr :: VP.LayoutExpr
   }
 
 resolvedTextStyle ::
-     Bool -> S.Solution -> VS.NodeStyle -> Either String ResolvedTextStyle
-resolvedTextStyle explicitFit solution style = do
+     Bool -> S.Solution -> V.Node tag -> Either String ResolvedTextStyle
+resolvedTextStyle explicitFit solution node = do
   family <- resolvedOr @VS.FontFamily "Inter"
   weightToken <- resolvedOr @VS.FontWeight "normal"
   fontStyle <- resolvedOr @VS.FontStyle "normal"
   fontSizeValue <- VS.materializeStyleField @VS.FontSize solution style
   occupancyValue <- VS.materializeStyleField @VS.TextOccupancy solution style
-  paddingValue <- resolvedOr @VS.Padding 0
+  paddingValue <- VB.materializeNodePadding solution (V.nodeBox node)
+  paddingExpression <- VB.activeNodePaddingExpr solution (V.nodeBox node)
   strokeValue <- resolvedOr @VS.StrokeWidth 0
   borderStyle <- resolvedOr @VS.BorderStyle "solid"
   textAlign <- resolvedOr @VS.TextAlign "center"
@@ -261,8 +262,6 @@ resolvedTextStyle explicitFit solution style = do
             Nothing -> FixedSizePolicy 14 (S.num 14)
         | Just occupancy <- occupancyValue = OccupancyFitPolicy occupancy
         | otherwise = CappedFitPolicy 14 Nothing
-      paddingExpression =
-        fromMaybe (S.num paddingValue) (VS.getStyleField @VS.Padding style)
       visibleStroke =
         if borderStyle == "none"
           then 0
@@ -287,6 +286,7 @@ resolvedTextStyle explicitFit solution style = do
       , resolvedStrokeWidthExpr = strokeExpression
       }
   where
+    style = V.nodeStyle node
     resolvedOr ::
          forall field. VS.StyleField field
       => VS.ResolvedStyleValue field
@@ -322,12 +322,24 @@ prepareTextDraft solution node resolved fontResolution flavor source = do
           sourceCandidates
       pure $ do
         candidates <- shaped
-        let bounds = VS.nodeStyleBounds (V.nodeStyle node)
-        widthValue <- evaluate "width" solution (VP.width bounds)
-        heightValue <- evaluate "height" solution (VP.height bounds)
-        let inset = resolvedPadding resolved + resolvedStrokeWidth resolved
-            availableWidth = max 0 (widthValue - 2 * inset)
-            availableHeight = max 0 (heightValue - 2 * inset)
+        widthValue <- evaluate "width" solution (VP.width node)
+        heightValue <- evaluate "height" solution (VP.height node)
+        let padding = resolvedPadding resolved
+            stroke = resolvedStrokeWidth resolved
+            availableWidth =
+              max
+                0
+                (widthValue
+                   - VB.insetLeft padding
+                   - VB.insetRight padding
+                   - 2 * stroke)
+            availableHeight =
+              max
+                0
+                (heightValue
+                   - VB.insetTop padding
+                   - VB.insetBottom padding
+                   - 2 * stroke)
             sizedCandidates =
               map (withMaximumSize availableWidth availableHeight) candidates
         selected <-
@@ -583,11 +595,11 @@ selectCandidate policy candidates =
               , draftLines = candidateLines best
               , draftInsertedBreaks = candidateInsertedBreaks best
               , draftTextAlign = "center"
-              , draftPaddingExpression = S.num 0
+              , draftPaddingExpression = VB.zeroInsets
               , draftStrokeExpression = S.num 0
               , draftWidthValue = 0
               , draftHeightValue = 0
-              , draftPaddingValue = 0
+              , draftPaddingValue = VB.EdgeInsets 0 0 0 0
               , draftStrokeValue = 0
               , draftSizeCap = Nothing
               , draftContentFlavor = PlainTextFlavor
@@ -706,9 +718,9 @@ typographyInputPins :: V.Node tag -> TextDraft -> [S.Constraint]
 typographyInputPins node draft =
   [ VP.width node S.@==@ S.num (draftWidthValue draft)
   , VP.height node S.@==@ S.num (draftHeightValue draft)
-  , draftPaddingExpression draft S.@==@ S.num (draftPaddingValue draft)
   , draftStrokeExpression draft S.@==@ S.num (draftStrokeValue draft)
   ]
+    ++ insetPins (draftPaddingExpression draft) (draftPaddingValue draft)
     ++ case draftSizeMode draft of
          FixedSize expression ->
            [expression S.@==@ S.num (draftPreferredSize draft)]
@@ -725,7 +737,17 @@ textConstraints node draft =
       case draftSizeMode draft of
         FixedSize expression -> expression
         FittedSize _ size    -> S.num size
-    inset = draftPaddingExpression draft S.@+@ draftStrokeExpression draft
+    padding = draftPaddingExpression draft
+    horizontalInset =
+      VB.insetLeft padding
+        S.@+@ VB.insetRight padding
+        S.@+@ draftStrokeExpression draft
+        S.@*@ S.num 2
+    verticalInset =
+      VB.insetTop padding
+        S.@+@ VB.insetBottom padding
+        S.@+@ draftStrokeExpression draft
+        S.@*@ S.num 2
     upem =
       fromIntegral
         (max
@@ -747,9 +769,16 @@ textConstraints node draft =
         / upem
         * metricSafetyFactor
     requiredWidth =
-      inset S.@*@ S.num 2 S.@+@ sizeExpression S.@*@ S.num maximumWidthEm
-    requiredHeight =
-      inset S.@*@ S.num 2 S.@+@ sizeExpression S.@*@ S.num heightEm
+      horizontalInset S.@+@ sizeExpression S.@*@ S.num maximumWidthEm
+    requiredHeight = verticalInset S.@+@ sizeExpression S.@*@ S.num heightEm
+
+insetPins :: VB.InsetsExpr -> VB.ConcreteInsets -> [S.Constraint]
+insetPins expressions values =
+  [ VB.insetTop expressions S.@==@ S.num (VB.insetTop values)
+  , VB.insetRight expressions S.@==@ S.num (VB.insetRight values)
+  , VB.insetBottom expressions S.@==@ S.num (VB.insetBottom values)
+  , VB.insetLeft expressions S.@==@ S.num (VB.insetLeft values)
+  ]
 
 materializeTypography ::
      S.Solution -> PreparedTypography -> Either String TypographyOutput
@@ -789,13 +818,14 @@ materializeDraft ::
        , [Resource.ResourceBlob]
        , [IR.VisualizationFinding])
 materializeDraft solution graph draft = do
-  style <- lookupNodeStyle (draftVisualId draft) (V.viewNodes graph)
-  let VP.Bounds topExpr leftExpr widthExpr heightExpr = VS.nodeStyleBounds style
+  (box, style) <-
+    lookupNodeBoxAndStyle (draftVisualId draft) (V.viewNodes graph)
+  let VP.Bounds topExpr leftExpr widthExpr heightExpr = VB.nodeBoxBounds box
   topValue <- evaluate "top" solution topExpr
   leftValue <- evaluate "left" solution leftExpr
   widthValue <- evaluate "width" solution widthExpr
   heightValue <- evaluate "height" solution heightExpr
-  padding <- resolvedScalar @VS.Padding solution style 0
+  padding <- VB.materializeNodePadding solution box
   strokeWidth <- resolvedScalar @VS.StrokeWidth solution style 0
   borderStyle <- resolvedChoice @VS.BorderStyle solution style "solid"
   fontSize <-
@@ -807,13 +837,28 @@ materializeDraft solution graph draft = do
         if borderStyle == "none"
           then 0
           else strokeWidth
-      inset = padding + visibleStroke
       contentBox =
         IR.LayoutRect
-          { IR.layoutRectX = roundLayout (leftValue + inset)
-          , IR.layoutRectY = roundLayout (topValue + inset)
-          , IR.layoutRectWidth = roundLayout (max 0 (widthValue - 2 * inset))
-          , IR.layoutRectHeight = roundLayout (max 0 (heightValue - 2 * inset))
+          { IR.layoutRectX =
+              roundLayout (leftValue + VB.insetLeft padding + visibleStroke)
+          , IR.layoutRectY =
+              roundLayout (topValue + VB.insetTop padding + visibleStroke)
+          , IR.layoutRectWidth =
+              roundLayout
+                (max
+                   0
+                   (widthValue
+                      - VB.insetLeft padding
+                      - VB.insetRight padding
+                      - 2 * visibleStroke))
+          , IR.layoutRectHeight =
+              roundLayout
+                (max
+                   0
+                   (heightValue
+                      - VB.insetTop padding
+                      - VB.insetBottom padding
+                      - 2 * visibleStroke))
           }
       fontFace = Font.fontResolutionFace (draftFontResolution draft)
       fontResource = Font.fontFaceResource fontFace
@@ -1383,11 +1428,12 @@ lookupNode identifier nodes =
       case wrapped of
         V.ViewNode node -> V.viewRefInt (V.nodeRef node) == identifier
 
-lookupNodeStyle :: Int -> [V.ViewNode] -> Either String VS.NodeStyle
-lookupNodeStyle identifier nodes = do
+lookupNodeBoxAndStyle ::
+     Int -> [V.ViewNode] -> Either String (VB.NodeBox, VS.NodeStyle)
+lookupNodeBoxAndStyle identifier nodes = do
   wrapped <- lookupNode identifier nodes
   case wrapped of
-    V.ViewNode node -> Right (V.nodeStyle node)
+    V.ViewNode node -> Right (V.nodeBox node, V.nodeStyle node)
 
 nodePrefix :: V.Node tag -> String
 nodePrefix node = "text node " ++ show (V.viewRefInt (V.nodeRef node)) ++ ": "

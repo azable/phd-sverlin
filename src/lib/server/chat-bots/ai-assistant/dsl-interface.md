@@ -13,17 +13,18 @@
 
 ## Public source contract
 
-- Treat this guide as the stable public DSL contract and the supplied artefact as the current source of truth.
+- Treat the source-derived `dslApiIndex` as the exhaustive public-name, compiler-inferred type, and per-symbol behavior reference. It combines GHC signatures with Haddock export documentation from the `LinearTrace.Choreography` facade; do not infer additional APIs from examples or private modules.
+- Treat this guide as the stable composition and authoring contract and the supplied artefact as the current project source of truth. Where this guide adds syntax constraints or examples, they refine rather than expand the facade API.
 - Return body-only Haskell declarations: never add a module header, imports, or `LANGUAGE`/`OPTIONS` pragmas.
 - Define `program :: Choreography ()`; execution of this algorithm becomes the trace.
-- Define `visualization :: VisualizationBuilder ()`; it declares selection, rendering, styling, and layout rules.
+- Define `visualization :: VisualizationBuilder ()`; it declares selections, hierarchical nodes, styling, and layout rules.
 - The compiler supplies the public `LinearTrace.Choreography` facade, linear Prelude imports, extensions, and a generated runner that enables coherent generative styles. Do not define the runner or reach into private core/view modules.
 - Use only helpers exported by the public facade. If behavior is not expressible by this contract, explain the limitation rather than inventing an API.
 
 ## Compiler-critical syntax
 
 - `Payload` is not injective. Give `create` an explicit tag application: write `Create pending <- create @Item (LInt 3)`, not `create (LInt 3)` or `(3 :: LInt Item)`. This applies to all payload wrappers.
-- `select @Tag query` returns `VisualizationBuilder (NodeBinding (Selected Tag))`. Unwrap it only as `Selected item <- select @Tag query`; neither `item <- select ...` nor `NodeBinding item <- select ...` is valid. Pass the unpacked `item` to `render`.
+- `select @Tag query` returns `VisualizationBuilder (NodeBinding (Selected Tag))`. Unwrap it only as `Selected item <- select @Tag query`; neither `item <- select ...` nor `NodeBinding item <- select ...` is valid. Pass the unpacked selection to `node`.
 - Unwrap visualization values with their public constructors: `Bound value <- bindContent`, `Bound i <- bindInt`, and `Variable gap <- variable @Span`.
 - Positions are `Coord`: use `at` for `left`, `top`, `right`, `bottom`, `x`, `y`, and center coordinates. Sizes are `Span`: use `by` for width, height, gaps, padding, radius, stroke width, and font size.
 - `Hsl` uses degrees for hue and values from 0 to 1 for saturation and lightness, for example `Hsl 215 0.76 0.93`, not CSS percentages.
@@ -82,7 +83,7 @@ visualization :: VisualizationBuilder ()
 visualization = do
   Bound label <- bindContent
   Selected numbers <- select @Number (#number <&> payload label)
-  render numbers $ do
+  node numbers $ do
     content label
     width (by 72)
     height (by 56)
@@ -92,7 +93,7 @@ visualization = do
   ensure $ bottom numbers .<=. at 480
 
   Selected addition <- select @Addition #operator
-  render addition $ do
+  node addition $ do
     content "+"
     width (by 48)
     height (by 48)
@@ -136,14 +137,19 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 ## Visual rules
 
 - A selection rule applies to every matching trace snapshot, including repeated iterations. Prefer reusable semantic rules over one rule per occurrence.
-- `node selected` groups selected trace nodes into a synthetic container. Render and constrain a group for membership, a row, cluster, or background.
-- `render selected recipe` attaches content, typed style, and geometry to a selection.
+- `node selected $ do ...` declares every trace output matched by a selection and attaches content, box geometry, style, and constraints. Each materialized trace output must match exactly one such declaration: unmatched outputs are not visual nodes, while overlapping declarations are a compile error.
+- `Selected parent <- node $ do ...` declares an anonymous generated node. Any `node` declarations nested in that `do` block become its children; nesting can be recursive. A trace-selected node is terminal and cannot contain children. A selection may match one or many trace outputs, so an entire selection can be nested without enumerating its members.
+- Every node has one parent: either the canvas or one generated node. Empty generated branches are pruned. The compiler emits warning findings when a declaration matches no visible trace output or a generated parent is pruned.
+- Generated parents are ordinary selectable node handles. Bind the result and use `left`, `right`, `center`, `size`, `styleOf`, and other relations on it just as on a trace selection. Inside an anonymous node, `Selected current <- self` retrieves the same handle; `canvas` is the ordinary root-layout handle.
+- Generated parents default to `Hug` on each axis: their content edge is tight to at least one child edge while containing every child margin box. Use `contentFit Horizontal Contain`, `contentFit Vertical Contain`, or `contentFit Both Contain` when a parent may be larger than its children.
+- `padding` and `margin` use a real four-edge box model. Construct insets with `uniform span`, `symmetric vertical horizontal`, or `edges top right bottom left`. Parent containment uses the content box inside padding; child margins remain separate and never collapse.
+- Parent-relative setters are explicit and affine: `xAt (percent 50)` and `yAt (percent 50)` place the node center at the midpoint of its parent content box; `widthOf (percent 60)` and `heightOf (percent 40)` size it from that content box. Percent values are in the inclusive range 0–100. These work for children and for canvas children.
 - Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
 - `content value` uses managed typography and prefers one line, with at most two compiler-selected fallback breaks. When its `FontSize` is omitted, the automatic profile selects a proportional size after geometry is solved; an authored `FontSize` is fixed. `fitText value` instead maximizes the feasible size when `FontSize` is omitted, or treats an authored size as a cap. Automatic fitting uses 0.25 px steps with a 12 px physical minimum. Always provide adequate width and height; no feasible layout is a compile error.
 - For exact code or other verbatim output, start with `codeContent value`. Wrap it with `codeWrap` only when up to two compiler-selected visual breaks are acceptable, and wrap that with `highlightCode "language"` for semantic syntax tokens. For example:
 
   ```haskell
-  render example $ do
+  node example $ do
     emphasizeCode
       "computed"
       [codeRange 4 10]
@@ -159,9 +165,9 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
   `emphasizeCode "checkpoint" [codeRange start end] recipe` adds emphasis only when the selected node is visible at a checkpoint with that exact label. Ranges are half-open, zero-based Unicode character offsets in the authored source; the compiler converts them to UTF-8 byte ranges, merges overlap, and rejects invalid or invisible schedules. Emphasis is separate from syntax roles, so do not rewrite highlighted tokens to simulate it. Supported highlighting aliases cover `sverlin`/`haskell`/`hs`, JavaScript/TypeScript and common C-like languages, Python/shell, JSON, CSS, and SQL. Code defaults to the managed non-ligature JetBrains Mono face. Do not simulate code with ordinary wrapped prose.
 
 - Managed font choices are `FontInter`, `FontSystem` (pinned Source Sans 3), `FontMono` (pinned JetBrains Mono NL), `FontSerif` (pinned Source Serif 4), `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`, `FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`, `FontJetBrainsMonoNL`, and `FontIBMPlexMono`.
-- Style fields are `Opacity`, `ZIndex`, `Padding`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`.
+- Style fields are `Opacity`, `ZIndex`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`. Padding and margin are box declarations, not styles.
 - Treat an explicitly requested border as one composite visual property. Set a positive `StrokeWidth`, a contrasting `Stroke`, and a deterministic non-empty `BorderStyle`, normally `FixedStyle BorderSolid`. Do not claim a border was added after changing only its width, and do not rely on renderer fallbacks or automatic profiles for an explicit request; `BorderNone` always suppresses the border.
-- Geometry setters are `width`, `height`, `top`, `left`, `right`, `bottom`, `x`, `y`, `bounds`, and `center`; `size` reads a selected node’s dimensions.
+- Absolute geometry setters are `width`, `height`, `top`, `left`, `right`, `bottom`, `x`, `y`, `bounds`, and `center`; `size` reads a selected node’s dimensions. Prefer parent-relative setters for hierarchical composition when percentages express the intent directly.
 - Use separate fact/payload selections for semantic sub-states such as neutral, active, success, and failure.
 - `FixedStyle` supplies deterministic categorical values. `VariableStyle` with `choice` allows solver-selected categories. `styleOf` reads a selected style field for relations.
 - If a node needs distinct content, color, position, or status, encode that distinction in semantic facts or payload patterns rather than list order or incidental compiler output.
@@ -169,15 +175,16 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 ## Semantic encoding and fluid presentation
 
 - Facts and typed selections determine what an element means. “Local” means scoped to a semantic family or state rule, not independently randomized for every matching node.
-- The body-only runner groups trace leaves by payload type and generated containers by group identity. Leaf families share surface, weight, palette, and fitted-size decisions, so peers remain coherent within an output while seeds can produce different treatments.
-- Unspecified leaves make independent balanced choices: one exact managed font face and one text occupancy target are global to the output; surface treatment and weight are per semantic family. Font faces sample equally across all eight managed faces, occupancy across 68%, 78%, 86%, and 94% of the maximum feasible size, surfaces across transparent, outline, flat fill, soft card, and pill treatments, and weights across 400, 500, and 600. Generated groups sample invisible, square outline, rounded outline, and pale panel profiles. These are compiler defaults, not APIs to reproduce manually, and they do not infer a semantic role from payload text or names.
+- The body-only runner assigns trace leaves a semantic family by payload type. Leaf families share surface, weight, palette, and fitted-size decisions, so peers remain coherent within an output while seeds can produce different treatments. Generated structural parents remain transparent unless their node body explicitly styles them.
+- Unspecified leaves make balanced choices: one exact managed font face and one text occupancy target are global to the output; surface treatment and weight are per semantic family. Font faces sample equally across all eight managed faces, occupancy across 68%, 78%, 86%, and 94% of the maximum feasible size, surfaces across transparent, outline, flat fill, soft card, and pill treatments, and weights across 400, 500, and 600. These are compiler defaults, not APIs to reproduce manually, and they do not infer a semantic role from payload text or names.
 - Let unspecified presentation use those defaults. Choose a font, weight, alignment, surface, or colour only when the user asks for it or the choice actually communicates a semantic distinction—for example, managed monospace for code or left alignment for a scannable table. Do not make a numeric list “technical,” a heading “editorial,” or each state visually different merely to add variety.
-- Use `styleFamily "name"` when one payload type has multiple semantic roles that should vary independently. Apply the same explicit key to peers that should share a family; leaf and group namespaces remain separate.
+- Styles declared on an anonymous parent cascade through all descendants unless a child overrides them, but only for semantic text properties: `FontFamily`, `FontWeight`, `FontStyle`, `FontSize`, `TextAlign`, `WhiteSpace`, and `styleFamily`. Surface properties such as fill, stroke, radius, opacity, and z-index stay local to the node that declares them.
+- Use `styleFamily "name"` when one payload type has multiple semantic roles that should vary independently. Apply the same explicit key to peers that should share a family.
 - `style @Field value` is a hard authoring requirement and overrides the default for that field. `withoutStyle @Field` is also hard and keeps the field absent for every seed. Omitted fields remain available to the family profile.
 - Plain text that must remain unboxed should explicitly forbid fill and border width instead of relying on omission:
 
   ```haskell
-  render caption $ do
+  node caption $ do
     content "Current comparison"
     withoutStyle @Fill
     withoutStyle @StrokeWidth
@@ -196,7 +203,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
         Highlighted -> "highlighted"
 
   Variable treatment <- choice @Treatment
-  render items $ do
+  node items $ do
     styleCase @Fill treatment $ \candidate ->
       case candidate of
         Typographic -> Nothing
@@ -246,9 +253,9 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - Keep a generative numeric problem on that sampling path when practical: use variables, constants, addition/subtraction, and multiplication or division by constants in hard constraints, and give every independent value finite lower and upper bounds. Variable-by-variable multiplication/division, `absExpr`, `minExpr`, `maxExpr`, cyclic equality, or an unbounded value selects the nonlinear penalty fallback and can make seeds converge on similar results.
 - On the bounded affine path, `encourage` and `minimize` are deliberately ignored: they describe attraction toward an optimum, which conflicts with broad exploration. Express the user's minimum requirements, semantic relationships, containment, contrast, and legibility with `ensure`, then leave all other values free inside broad hard ranges. Exact hard equalities remain valid but reduce the dimension available for variation.
 - Hard constraints must have a non-empty common region. Check fixed widths/heights against containment, accumulated row gaps against canvas width, and shared-variable ranges against every use; the compiler rejects contradictions instead of weakening one of the requirements.
-- For generative requests, use at least two independent, bounded, seed-controlled degrees of freedom that affect major spatial composition: group X/Y placement, inter-group relationships, spacing, wrapping, lane offsets, or alignment when alignment is not semantic. The automatic family profile supplies routine style variation; do not duplicate it with authored style variables.
-- Do not count movement of a few pixels in one shared gap as meaningful variation. Aim for seed changes to move at least one major group across a substantial part of its allowed region and to visibly change a second spatial relationship.
-- Avoid exact `left (at ...)` and `top (at ...)` pins except for a small number of deliberate anchors. Hard alignment is appropriate when it communicates a list, table, common baseline, ordered sequence, or direct comparison. In that case, align the members relative to one another, then preserve variation by moving the aligned assembly, varying its gap or dimensions, or varying surrounding groups. Do not break a useful alignment merely to satisfy randomness.
+- For generative requests, use at least two independent, bounded, seed-controlled degrees of freedom that affect major spatial composition: parent-node X/Y placement, relationships between parent nodes, spacing, wrapping, lane offsets, or alignment when alignment is not semantic. The automatic family profile supplies routine style variation; do not duplicate it with authored style variables.
+- Do not count movement of a few pixels in one shared gap as meaningful variation. Aim for seed changes to move at least one major parent node across a substantial part of its allowed region and to visibly change a second spatial relationship.
+- Avoid exact `left (at ...)` and `top (at ...)` pins except for a small number of deliberate anchors. Hard alignment is appropriate when it communicates a list, table, common baseline, ordered sequence, or direct comparison. In that case, align the members relative to one another, then preserve variation by moving the aligned assembly, varying its gap or dimensions, or varying surrounding parent nodes. Do not break a useful alignment merely to satisfy randomness.
 - Prefer local constraints on selected geometry. They apply to each matching visual node and give each node's own solver geometry a bounded feasible region:
 
   ```haskell
@@ -269,13 +276,13 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
   ensure $ right first =| gap |= left second
   ```
 
-- Create several independent, bounded variables when layout variation should be large: separate horizontal and vertical gaps, group offsets, and shared sizes. Add HSL or other style variables only for a semantic or explicit user requirement. Keep minimum dimensions, canvas containment, semantic order, and collision-preventing lanes as hard constraints so every seed remains legible.
+- Create several independent, bounded variables when layout variation should be large: separate horizontal and vertical gaps, parent-node offsets, and shared sizes. Add HSL or other style variables only for a semantic or explicit user requirement. Keep minimum dimensions, canvas containment, semantic order, and collision-preventing lanes as hard constraints so every seed remains legible.
 - Use categorical `choice` only where every remaining alternative fits the semantics, such as a permitted font family or non-empty border style. Do not randomize text alignment for a list or table when that alignment aids scanning, and do not randomize each semantic state independently:
 
   ```haskell
   Variable border <- choice @BorderStyle
   ensure $ border /= BorderNone
-  render labels $ style @BorderStyle (VariableStyle border)
+  node labels $ style @BorderStyle (VariableStyle border)
   ```
 
 - Prefer layouts whose safety comes from topology rather than exact coordinates: an aligned list with a movable anchor and variable spacing, an ordered lane with bounded stagger, separated clusters with movable anchors, or a bounded focal/satellite composition. Preserve semantic order, meaningful alignment, and non-overlap while leaving translation, spacing, secondary relationships, and whitespace genuinely free.
