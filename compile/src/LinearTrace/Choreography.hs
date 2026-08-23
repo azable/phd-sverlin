@@ -14,6 +14,7 @@ module LinearTrace.Choreography
   , buildViewGraph
   , solveViewGraphWithSeed
   , solveViewGraphWithSeeds
+  , solveViewGraphWithPinnedSolution
   , viewGraphStats
   , runChoreography
   , runChoreographyWith
@@ -113,6 +114,10 @@ module LinearTrace.Choreography
   , QueryAppend
   , visualize
   , content
+  , fitText
+  , codeContent
+  , codeWrap
+  , highlightCode
   , payload
   , node
   , render

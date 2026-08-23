@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE LinearTypes       #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedLabels  #-}
@@ -26,9 +27,11 @@ module Choreography.TestFixtures
     categoricalRelationGraph
   , categoricalStyleGraph
   , centerGraph
+  , codeTypographyGraph
   , conditionalAbsentGraph
   , conditionalPresentGraph
   , disjunctiveGraph
+  , explicitFitTypographyGraph
   , forbiddenStyleGraph
   , generativeGraph
   , generativeGroupGraph
@@ -38,6 +41,7 @@ module Choreography.TestFixtures
   , selectedScalarGraph
   , styledGraph
   , transientGraph
+  , typographyGraph
   , wideLeafGraph
   ) where
 
@@ -104,6 +108,9 @@ categoricalRelationGraph = buildGraph categoricalRelationSpec
 centerGraph :: ViewGraph
 centerGraph = buildGraph centerSpec
 
+codeTypographyGraph :: ViewGraph
+codeTypographyGraph = buildGraph codeTypographySpec
+
 conditionalAbsentGraph :: ViewGraph
 conditionalAbsentGraph = buildGraph (conditionalStyleSpec TestPlain)
 
@@ -112,6 +119,9 @@ conditionalPresentGraph = buildGraph (conditionalStyleSpec TestFilled)
 
 disjunctiveGraph :: ViewGraph
 disjunctiveGraph = buildGraph disjunctiveSpec
+
+explicitFitTypographyGraph :: ViewGraph
+explicitFitTypographyGraph = buildGraph explicitFitTypographySpec
 
 forbiddenStyleGraph :: ViewGraph
 forbiddenStyleGraph = buildGenerativeGraph forbiddenStyleSpec
@@ -133,6 +143,9 @@ styledGraph = buildGraph styledSpec
 
 transientGraph :: ViewGraph
 transientGraph = buildGraphFor transientFixture groupSpec
+
+typographyGraph :: ViewGraph
+typographyGraph = buildGenerativeGraph typographySpec
 
 wideLeafGraph :: ViewGraph
 wideLeafGraph = buildGraph wideLeafSpec
@@ -337,10 +350,9 @@ conditionalStyleSpec selectedTreatment =
     render item $ do
       width (by 80)
       height (by 80)
-      styleCase @Fill treatment $ \candidate ->
-        case candidate of
-          TestPlain  -> P.Nothing
-          TestFilled -> P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
+      styleCase @Fill treatment $ \case
+        TestPlain -> P.Nothing
+        TestFilled -> P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
     ensure $ treatment .==. selectedTreatment
 
 conditionalStyleAccessSpec :: MatchSpec
@@ -351,10 +363,9 @@ conditionalStyleAccessSpec =
     render item $ do
       width (by 80)
       height (by 80)
-      styleCase @Fill treatment $ \candidate ->
-        case candidate of
-          TestPlain  -> P.Nothing
-          TestFilled -> P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
+      styleCase @Fill treatment $ \case
+        TestPlain -> P.Nothing
+        TestFilled -> P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
     ensure
       $ styleOf @Fill item .==. Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit)
 
@@ -413,3 +424,50 @@ wideLeafSpec =
       height (by 52)
     ensure $ left item .>=. at 70
     ensure $ right item .<=. at 730
+
+typographySpec :: MatchSpec
+typographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      content
+        (text
+           "This label is deliberately long enough to exercise deterministic fitting")
+      width (by 220)
+      height (by 64)
+      left (at 40)
+      top (at 40)
+      style @FontFamily (FixedStyle FontInter)
+
+explicitFitTypographySpec :: MatchSpec
+explicitFitTypographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      fitText
+        (text
+           "This explicitly sized label may be reduced by the compiler when requested")
+      width (by 220)
+      height (by 64)
+      left (at 40)
+      top (at 40)
+      style @FontFamily (FixedStyle FontInter)
+      style @FontSize (by 24)
+
+codeTypographySpec :: MatchSpec
+codeTypographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      highlightCode
+        "haskell"
+        (codeWrap
+           (codeContent
+              (text
+                 "let greeting = \"a deliberately long value\"\n-- this comment is deliberately long as well\nin greeting")))
+      width (by 250)
+      height (by 110)
+      left (at 40)
+      top (at 40)
+      style @FontSize (by 14)
+      style @TextAlign (FixedStyle TextAlignLeft)

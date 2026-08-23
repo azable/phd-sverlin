@@ -194,16 +194,42 @@ data FontFamily
   | FontSystem
   | FontMono
   | FontSerif
+  | FontSourceSans3
+  | FontAtkinsonHyperlegibleNext
+  | FontSpaceGrotesk
+  | FontSourceSerif4
+  | FontLiterata
+  | FontJetBrainsMonoNL
+  | FontIBMPlexMono
   deriving (Eq, Show)
 
 instance ChoiceDomain FontFamily where
-  choiceDomain = [FontInter, FontSystem, FontMono, FontSerif]
+  choiceDomain =
+    [ FontInter
+    , FontSystem
+    , FontMono
+    , FontSerif
+    , FontSourceSans3
+    , FontAtkinsonHyperlegibleNext
+    , FontSpaceGrotesk
+    , FontSourceSerif4
+    , FontLiterata
+    , FontJetBrainsMonoNL
+    , FontIBMPlexMono
+    ]
   choiceToken value =
     case value of
-      FontInter  -> "Inter"
-      FontSystem -> "system-ui"
-      FontMono   -> "monospace"
-      FontSerif  -> "serif"
+      FontInter                    -> "Inter"
+      FontSystem                   -> "system-ui"
+      FontMono                     -> "monospace"
+      FontSerif                    -> "serif"
+      FontSourceSans3              -> "Source Sans 3"
+      FontAtkinsonHyperlegibleNext -> "Atkinson Hyperlegible Next"
+      FontSpaceGrotesk             -> "Space Grotesk"
+      FontSourceSerif4             -> "Source Serif 4"
+      FontLiterata                 -> "Literata"
+      FontJetBrainsMonoNL          -> "JetBrains Mono NL"
+      FontIBMPlexMono              -> "IBM Plex Mono"
 
 instance StyleField FontFamily where
   type StyleValue FontFamily = ChoiceValue FontFamily
@@ -463,8 +489,7 @@ setStyleField ::
   => StyleValue field
   -> NodeStyle
   -> NodeStyle
-setStyleField value style' =
-  setStyleFieldPlan @field (RequiredStyle value) style'
+setStyleField value = setStyleFieldPlan @field (RequiredStyle value)
 
 forbidStyleField ::
      forall field. StyleField field
@@ -748,10 +773,7 @@ styleValueBindings proxy value =
         StyleExprLeaf name expr ->
           (rootField name, expressionVariableNames (exprView expr))
     variables = styleValueChoiceNames proxy value
-    choiceBinding =
-      if null variables
-        then []
-        else [(field, variables)]
+    choiceBinding = [(field, variables) | not (null variables)]
 
 rootField :: String -> String
 rootField = takeWhile (/= '.')

@@ -4,26 +4,30 @@
 
 module Main where
 
-import qualified Choreography.TestFixtures         as ChoreographyFixtures
-import           Control.Exception                 (ErrorCall, SomeException,
-                                                    evaluate, try)
-import qualified Data.List                         as List
-import qualified Data.Map.Strict                   as Map
-import           Data.Maybe                        (isJust)
-import           LinearTrace.Choreography          (Applicable2 (..),
-                                                    CoreOperator (..),
-                                                    LBool (..), LInt (..),
-                                                    LOperator (..), OneUse (..),
-                                                    Payload, applyLinear2Into)
-import qualified LinearTrace.Choreography          as Choreography
-import qualified LinearTrace.Core                  as Core
-import qualified LinearTrace.Visualization.Compile as Compile
-import qualified LinearTrace.Visualization.IR      as IR
-import           Prelude.Linear                    (Ur (..))
-import qualified Prelude.Linear                    as Linear
+import qualified Choreography.TestFixtures            as ChoreographyFixtures
+import           Control.Exception                    (ErrorCall, SomeException,
+                                                       evaluate, try)
+import           Control.Monad                        (zipWithM_)
+import qualified Data.List                            as List
+import qualified Data.Map.Strict                      as Map
+import           Data.Maybe                           (isJust)
+import           LinearTrace.Choreography             (Applicable2 (..),
+                                                       CoreOperator (..),
+                                                       LBool (..), LInt (..),
+                                                       LOperator (..),
+                                                       OneUse (..), Payload,
+                                                       applyLinear2Into)
+import qualified LinearTrace.Choreography             as Choreography
+import qualified LinearTrace.Core                     as Core
+import qualified LinearTrace.Visualization.Compile    as Compile
+import qualified LinearTrace.Visualization.IR         as IR
+import qualified LinearTrace.Visualization.Resource   as Resource
+import qualified LinearTrace.Visualization.Typography as Typography
+import           Prelude.Linear                       (Ur (..))
+import qualified Prelude.Linear                       as Linear
 import           Solver
 import           Solver.TestFixtures
-import           System.Timeout                    (timeout)
+import           System.Timeout                       (timeout)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -101,7 +105,181 @@ main =
        , coreQueryTests
        , choreographyBridgeTests
        , viewMaterializationTests
+       , typographyTests
        ])
+
+typographyTests :: TestTree
+typographyTests =
+  testGroup
+    "compiler typography"
+    [ testCase "adds pinned fit constraints and explicit text layout" $ do
+        (initial, final, output, compiled) <- runTypographyPipeline 1
+        solutionChoices final @?= solutionChoices initial
+        IR.visualizationIrVersion compiled @?= 2
+        case renderElements compiled of
+          [element] ->
+            case IR.elementContent element of
+              Just (IR.PlainTextContent layout) -> do
+                let lines' = IR.textLayoutLines layout
+                    contentBox = IR.textLayoutContentBox layout
+                assertBool
+                  "expected compiler-selected wrapping"
+                  (length lines' > 1)
+                assertBool
+                  "expected at most three fitted lines"
+                  (length lines' <= 3)
+                assertBool
+                  "expected a bounded fitted font size"
+                  (IR.textLayoutFontSize layout >= 12
+                     && IR.textLayoutFontSize layout
+                          <= IR.textLayoutPreferredSize layout)
+                mapM_ (assertLineInside contentBox) lines'
+              other ->
+                assertFailure ("expected plain text layout, got " ++ show other)
+          elements ->
+            assertFailure
+              ("expected exactly one typography element, got "
+                 ++ show (length elements))
+        let descriptors =
+              map
+                Resource.resourceBlobDescriptor
+                (Typography.typographyOutputResources output)
+            kinds = map IR.resourceDescriptorKind descriptors
+            findingCodes =
+              map
+                IR.visualizationFindingCode
+                (IR.visualizationFindings compiled)
+        assertBool
+          "expected an exact bundled font resource"
+          (IR.FontResource `elem` kinds)
+        assertBool
+          "expected a deterministic glyph-run resource"
+          (IR.TextRunResource `elem` kinds)
+        assertBool
+          "expected wrapping to remain inspectable"
+          ("typography.fallback-wrap" `elem` findingCodes)
+    , testCase "font fitting and IR materialization are deterministic" $ do
+        (_, _, firstOutput, first) <- runTypographyPipeline 1
+        (_, _, secondOutput, second) <- runTypographyPipeline 1
+        first @?= second
+        map
+          Resource.resourceBlobDescriptor
+          (Typography.typographyOutputResources firstOutput)
+          @?= map
+                Resource.resourceBlobDescriptor
+                (Typography.typographyOutputResources secondOutput)
+    , testCase "fitText opts an explicit font size into bounded fitting" $ do
+        (_, _, _, compiled) <-
+          runTypographyGraph 1 ChoreographyFixtures.explicitFitTypographyGraph
+        case renderElements compiled of
+          [element] ->
+            case IR.elementContent element of
+              Just (IR.PlainTextContent layout) -> do
+                IR.textLayoutPreferredSize layout @?= 24
+                assertBool
+                  "expected the explicit preferred size to be reduced"
+                  (IR.textLayoutFontSize layout < 24
+                     && IR.textLayoutFontSize layout >= 12)
+              other ->
+                assertFailure ("expected fitted text, got " ++ show other)
+          _ -> assertFailure "expected one fitted text element"
+    , testCase "verbatim code emits aligned semantic highlight tokens" $ do
+        (_, _, output, compiled) <-
+          runTypographyGraph 1 ChoreographyFixtures.codeTypographyGraph
+        case renderElements compiled of
+          [element] ->
+            case IR.elementContent element of
+              Just (IR.CodeTextContent layout language highlightLines) -> do
+                language @?= Just "haskell"
+                IR.fontInstanceFamily (IR.textLayoutFont layout)
+                  @?= "JetBrains Mono NL"
+                IR.fontInstanceFeatures (IR.textLayoutFont layout)
+                  @?= ["liga=0", "calt=0"]
+                length (IR.textLayoutLines layout) @?= 5
+                length highlightLines @?= length (IR.textLayoutLines layout)
+                zipWithM_
+                  (\line highlighting ->
+                     concatMap IR.codeTokenText highlighting
+                       @?= IR.textLineDisplayText line)
+                  (IR.textLayoutLines layout)
+                  highlightLines
+                let kinds = concatMap (map IR.codeTokenKind) highlightLines
+                assertBool
+                  "expected keyword highlighting"
+                  (IR.CodeKeyword `elem` kinds)
+                assertBool
+                  "expected string highlighting"
+                  (IR.CodeString `elem` kinds)
+                assertBool
+                  "expected comment highlighting"
+                  (IR.CodeComment `elem` kinds)
+              other ->
+                assertFailure ("expected highlighted code, got " ++ show other)
+          _ -> assertFailure "expected one highlighted code element"
+        let mediaTypes =
+              map
+                (IR.resourceDescriptorMediaType
+                   . Resource.resourceBlobDescriptor)
+                (Typography.typographyOutputResources output)
+        assertBool
+          "expected text-run format v2"
+          ("application/vnd.sverlin.text-run-v2" `elem` mediaTypes)
+    ]
+
+runTypographyPipeline ::
+     Int
+  -> IO (Solution, Solution, Typography.TypographyOutput, IR.Visualization)
+runTypographyPipeline seed = do
+  runTypographyGraph seed ChoreographyFixtures.typographyGraph
+
+runTypographyGraph ::
+     Int
+  -> Choreography.ViewGraph
+  -> IO (Solution, Solution, Typography.TypographyOutput, IR.Visualization)
+runTypographyGraph seed graph = do
+  let randomSeed = RandomSeed seed
+  initial <- Choreography.solveViewGraphWithSeed randomSeed graph
+  preparedResult <- Typography.prepareTypography initial graph
+  prepared <- assertEither preparedResult
+  final <-
+    Choreography.solveViewGraphWithPinnedSolution
+      randomSeed
+      initial
+      (Typography.preparedTypographyGraph prepared)
+  output <- assertEither (Typography.materializeTypography final prepared)
+  compiled <-
+    assertEither
+      (Compile.compileSolvedWithTypography
+         "Typography.sverlin"
+         final
+         (Typography.preparedTypographyGraph prepared)
+         output)
+  pure (initial, final, output, compiled)
+
+assertLineInside :: IR.LayoutRect -> IR.TextLine -> Assertion
+assertLineInside contentBox line = do
+  let ink = IR.textLineInkBounds line
+      lineTolerance = 0.02
+  assertBool
+    "line ink starts inside its content box"
+    (IR.layoutRectX ink + lineTolerance >= IR.layoutRectX contentBox
+       && IR.layoutRectY ink + lineTolerance >= IR.layoutRectY contentBox)
+  assertBool
+    "line ink ends inside its content box"
+    (IR.layoutRectX ink + IR.layoutRectWidth ink
+       <= IR.layoutRectX contentBox
+            + IR.layoutRectWidth contentBox
+            + lineTolerance
+       && IR.layoutRectY ink + IR.layoutRectHeight ink
+            <= IR.layoutRectY contentBox
+                 + IR.layoutRectHeight contentBox
+                 + lineTolerance)
+
+assertEither :: Either String value -> IO value
+assertEither result =
+  case result of
+    Left err    -> assertFailure err
+    Right value -> pure value
 
 coreQueryTests :: TestTree
 coreQueryTests =

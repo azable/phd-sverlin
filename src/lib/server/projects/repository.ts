@@ -4,12 +4,13 @@
  * @packageDocumentation
  */
 
-import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { link, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { summarizeProject } from '$lib/shared/projects/projection';
 import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
+import type { CompilationResource } from '$lib/shared/projects/events/values';
 import {
   normalizeProjectV1,
   type ProjectDocument,
@@ -22,6 +23,9 @@ export type ProjectAppendResult = {
   document: ProjectDocument;
   events: ProjectEvent[];
 };
+
+/** Verified compiler resource bytes committed alongside referencing events. */
+export type ProjectResourceBlob = CompilationResource & { bytes: Uint8Array };
 
 /** Raised when a requested project directory does not exist. */
 export class ProjectNotFoundError extends Error {
@@ -90,7 +94,8 @@ export class FileProjectRepository {
   async append(
     projectId: ProjectId,
     expectedHead: number,
-    pendingEvents: NewProjectEvent[]
+    pendingEvents: NewProjectEvent[],
+    resources: readonly ProjectResourceBlob[] = []
   ): Promise<ProjectAppendResult> {
     return this.withWriteLock(projectId, async () => {
       const document = await this.load(projectId);
@@ -102,10 +107,23 @@ export class FileProjectRepository {
       );
 
       const next = normalizeProjectV1({ ...document, events: [...document.events, ...events] });
+      await Promise.all(resources.map((resource) => this.writeResource(projectId, resource)));
       await this.writeDocument(next);
       this.publish(projectId, events);
       return { document: structuredClone(next), events: structuredClone(events) };
     });
+  }
+
+  /** Read one immutable content-addressed resource belonging to a project. */
+  async readResource(projectId: ProjectId, resourceId: string): Promise<Uint8Array> {
+    assertProjectId(projectId);
+    assertResourceId(resourceId);
+    try {
+      return await readFile(this.resourcePath(projectId, resourceId));
+    } catch (error) {
+      if (isMissing(error)) throw new ProjectResourceNotFoundError(resourceId);
+      throw error;
+    }
   }
 
   /** Subscribe to events after they have been durably appended. */
@@ -131,6 +149,28 @@ export class FileProjectRepository {
         flag: 'wx'
       });
       await rename(temporary, destination);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+
+  private async writeResource(projectId: ProjectId, resource: ProjectResourceBlob) {
+    assertResource(resource);
+    const destination = this.resourcePath(projectId, resource.id);
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    await mkdir(path.dirname(destination), { recursive: true });
+
+    try {
+      await writeFile(temporary, resource.bytes, { flag: 'wx' });
+      try {
+        await link(temporary, destination);
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+        const existing = await readFile(destination);
+        if (!Buffer.from(existing).equals(Buffer.from(resource.bytes))) {
+          throw new Error(`Stored resource ${resource.id} does not match its content address.`);
+        }
+      }
     } finally {
       await rm(temporary, { force: true });
     }
@@ -171,6 +211,10 @@ export class FileProjectRepository {
   private documentPath(projectId: ProjectId) {
     return path.join(this.projectDirectory(projectId), 'project.json');
   }
+
+  private resourcePath(projectId: ProjectId, resourceId: string) {
+    return path.join(this.projectDirectory(projectId), 'resources', resourceId);
+  }
 }
 
 /** Default repository used by server routes and project operations. */
@@ -186,8 +230,37 @@ function assertProjectId(projectId: string) {
   }
 }
 
+function assertResource(resource: ProjectResourceBlob) {
+  assertResourceId(resource.id);
+  if (resource.id !== `sha256-${resource.sha256}`) {
+    throw new Error(`Resource ID ${resource.id} does not match its digest.`);
+  }
+  if (resource.byteLength !== resource.bytes.byteLength) {
+    throw new Error(`Resource ${resource.id} has an unexpected byte length.`);
+  }
+  const digest = createHash('sha256').update(resource.bytes).digest('hex');
+  if (digest !== resource.sha256)
+    throw new Error(`Resource ${resource.id} failed SHA-256 verification.`);
+}
+
+function assertResourceId(resourceId: string) {
+  if (!/^sha256-[a-f0-9]{64}$/.test(resourceId)) throw new Error('Invalid resource ID.');
+}
+
+/** Raised when a content-addressed project resource does not exist. */
+export class ProjectResourceNotFoundError extends Error {
+  constructor(resourceId: string) {
+    super(`Unknown project resource ${resourceId}.`);
+    this.name = 'ProjectResourceNotFoundError';
+  }
+}
+
 function isMissing(error: unknown) {
   return isNodeError(error) && error.code === 'ENOENT';
+}
+
+function isAlreadyExists(error: unknown) {
+  return isNodeError(error) && error.code === 'EEXIST';
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

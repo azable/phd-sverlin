@@ -70,6 +70,76 @@ describe('AI project context projection', () => {
     expect(expanded.selected.events[0].event).toEqual(request);
     expect(JSON.stringify(expanded.selected.events[0])).toContain('private prompt');
   });
+
+  it('exposes compiler findings globally and on the selected zero-based instance', () => {
+    const request: ProjectEventOf<'ai.generation-requested'> = {
+      ...base(3),
+      type: 'ai.generation-requested',
+      payload: {
+        attempt: 1,
+        purpose: 'initial',
+        prompt: recorded('{}', 'application/json'),
+        promptTemplateSha256: '1'.repeat(64),
+        requestedModel: 'test-model',
+        parameters: {}
+      }
+    };
+    const document = projectDocument(request);
+    const visualization = {
+      irVersion: 2,
+      seed: 1,
+      sourcePath: 'Main.sverlin',
+      coordinates: {
+        systemName: 'sverlin-css96-y-down',
+        systemUnitsPerInch: 96,
+        systemOrigin: 'top-left',
+        systemYAxis: 'down'
+      },
+      canvas: { width: 100, height: 80 },
+      resources: [],
+      findings: [
+        {
+          findingId: 'typography.size-reduced.0',
+          findingSeverity: 'findingWarning',
+          findingCode: 'typography.size-reduced',
+          findingMessage: 'Text was made smaller.',
+          findingElementIds: [0],
+          findingStepIndices: [0],
+          findingEvidence: []
+        }
+      ],
+      variables: [],
+      elements: [
+        {
+          id: 0,
+          role: 'Value',
+          kind: { kind: 'leaf' },
+          content: { kind: 'legacyTextContent', textSource: 'hello' },
+          style: { top: 0, left: 0, width: 100, height: 20 },
+          styleVariables: []
+        }
+      ],
+      steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]
+    };
+    document.events.push(
+      event(4, 'visualization.rendered', {
+        seed: 1,
+        source: recorded('current source', 'text/x-sverlin'),
+        render: recorded(JSON.stringify(visualization), 'application/json')
+      })
+    );
+
+    const context = projectAiContext(document, {
+      eventIds: [],
+      visualSelection: { render: 4, step: 0, instances: [0] }
+    });
+
+    expect(context.activeVisualizationFindings).toHaveLength(1);
+    expect(context.selected.visualization?.elements[0]).toMatchObject({
+      instanceId: 0,
+      findings: [{ findingCode: 'typography.size-reduced' }]
+    });
+  });
 });
 
 function projectDocument(request: ProjectEventOf<'ai.generation-requested'>): ProjectDocument {

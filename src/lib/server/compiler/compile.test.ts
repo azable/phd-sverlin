@@ -1,6 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
-import { compileCommand, runCompile } from './compile';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import type { Visualization } from '$lib/shared/visualization';
+
+import { compileCommand, readCompileBundle, runCompile } from './compile';
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  );
+});
 
 describe('runCompile', () => {
   it('streams stdout and stderr chunks while the command runs', async () => {
@@ -78,4 +93,93 @@ describe('compileSource', () => {
       ])
     );
   });
+
+  it('accepts only manifest attachments matching the IR, path, size, and digest', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sverlin-compile-package-'));
+    temporaryRoots.push(root);
+    const outputPath = path.join(root, 'compiled.json');
+    const bytes = new TextEncoder().encode('font payload');
+    const sha256 = digest(bytes);
+    const id = `sha256-${sha256}`;
+    const visualization = emptyVisualization();
+    visualization.resources.push({
+      descriptorId: id,
+      descriptorKind: 'fontResource',
+      descriptorSha256: sha256,
+      descriptorMediaType: 'font/ttf',
+      descriptorByteLength: bytes.byteLength
+    });
+    const compiledJson = JSON.stringify(visualization);
+    await mkdir(path.join(root, 'resources'));
+    await writeFile(outputPath, compiledJson);
+    await writeFile(path.join(root, 'resources', id), bytes);
+    await writeFile(
+      `${outputPath}.manifest.json`,
+      JSON.stringify(manifest(compiledJson, id, sha256, bytes.byteLength))
+    );
+
+    const result = await readCompileBundle(outputPath, compiledJson, visualization);
+    expect(result.resources).toHaveLength(1);
+    expect(result.resources[0]).toMatchObject({ id, sha256, byteLength: bytes.byteLength });
+    expect(result.targetDiagnostics).toEqual([
+      { severity: 'warning', code: 'target.test', message: 'Target warning' }
+    ]);
+
+    await writeFile(path.join(root, 'resources', id), 'tampered');
+    await expect(readCompileBundle(outputPath, compiledJson, visualization)).rejects.toThrow(
+      /byte length|SHA-256/
+    );
+  });
 });
+
+function emptyVisualization(): Visualization {
+  return {
+    irVersion: 2,
+    seed: 1,
+    sourcePath: 'Main.sverlin',
+    coordinates: {
+      systemName: 'sverlin-css96-y-down',
+      systemUnitsPerInch: 96,
+      systemOrigin: 'top-left',
+      systemYAxis: 'down'
+    },
+    canvas: { width: 640, height: 360 },
+    resources: [],
+    findings: [],
+    variables: [],
+    elements: [],
+    steps: []
+  };
+}
+
+function manifest(compiledJson: string, id: string, sha256: string, byteLength: number) {
+  return {
+    manifestVersion: 1,
+    primary: {
+      relativePath: 'compiled.json',
+      mediaType: 'application/json',
+      sha256: digest(new TextEncoder().encode(compiledJson)),
+      byteLength: Buffer.byteLength(compiledJson)
+    },
+    attachments: [
+      {
+        relativePath: `resources/${id}`,
+        mediaType: 'font/ttf',
+        sha256,
+        byteLength
+      }
+    ],
+    diagnostics: [{ severity: 'warning', code: 'target.test', message: 'Target warning' }],
+    provenance: {
+      packageVersion: 1,
+      textRunFormatVersion: 2,
+      shapingEngine: 'harfbuzz',
+      shapingEngineVersion: 'test',
+      fontCatalogSha256: null
+    }
+  };
+}
+
+function digest(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}

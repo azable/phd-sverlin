@@ -6,6 +6,7 @@ module LinearTrace.View.Solve
     -- and a retry configuration for low-energy visualization output.
     solveCSPWithSeed
   , solveCSPWithSeeds
+  , solveCSPWithPinnedSolution
   ) where
 
 import           LinearTrace.View.Graph
@@ -17,27 +18,48 @@ import           Solver                 (RandomSeed, Solution, SolveConfig,
 
 solveCSP :: RandomSeed -> SolveConfig -> ViewGraph -> P.IO Solution
 solveCSP seed config graph =
-  case S.compileDesignSpace config (viewSolveProblem graph) of
+  solveViewProblem seed config graph (viewSolveProblem graph)
+
+solveViewProblem ::
+     RandomSeed -> SolveConfig -> ViewGraph -> SolverProblem -> P.IO Solution
+solveViewProblem seed config graph problem =
+  case S.compileDesignSpace config problem of
     P.Right designSpace ->
       S.sampleDesignSpace S.BalancedDesignChoices seed designSpace
         P.>>= P.either designSpaceFailure P.pure
     P.Left err
       | S.hasConstraintDecisions (viewConstraints graph) ->
         designSpaceFailure err
-      | P.otherwise -> S.solveProblem config (viewSolveProblem graph)
+      | P.otherwise -> S.solveProblem config problem
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
 solveCSPWithSeed seed graph =
-  solveCSP seed (viewSolveConfig seed) graph P.>>= acceptOrRetry seed graph
+  let problem = viewSolveProblem graph
+   in solveCSP seed (viewSolveConfig seed) graph
+        P.>>= acceptOrRetry seed problem
 
-acceptOrRetry :: RandomSeed -> ViewGraph -> Solution -> P.IO Solution
-acceptOrRetry seed graph solution =
+-- | Re-solve a text-prepared view while retaining every finite aesthetic and
+-- structure decision from the initial solution.
+solveCSPWithPinnedSolution ::
+     RandomSeed -> Solution -> ViewGraph -> P.IO Solution
+solveCSPWithPinnedSolution seed initial graph =
+  case S.pinProblemChoices (S.solutionChoices initial) (viewSolveProblem graph) of
+    P.Left err ->
+      P.ioError (P.userError ("could not pin visualization choices: " P.++ err))
+    P.Right pinned ->
+      let problem =
+            S.withProblemInitialOverrides (S.solutionValues initial) pinned
+       in solveViewProblem seed (viewSolveConfig seed) graph problem
+            P.>>= acceptOrRetry seed problem
+
+acceptOrRetry :: RandomSeed -> SolverProblem -> Solution -> P.IO Solution
+acceptOrRetry seed problem solution =
   case viewSolutionAcceptable solution of
     P.True -> P.pure solution
     P.False ->
       case S.solutionBackend solution of
         S.PenaltyOptimizer ->
-          S.solveProblem (viewRetrySolveConfig seed) (viewSolveProblem graph)
+          S.solveProblem (viewRetrySolveConfig seed) problem
             P.>>= requireAcceptable
         S.AffineSampler -> rejectSolution solution
 
@@ -60,8 +82,9 @@ solveCSPWithSeeds seeds graph =
 
 solveLegacyWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
 solveLegacyWithSeed seed graph =
-  S.solveProblem (viewSolveConfig seed) (viewSolveProblem graph)
-    P.>>= acceptOrRetry seed graph
+  let problem = viewSolveProblem graph
+   in S.solveProblem (viewSolveConfig seed) problem
+        P.>>= acceptOrRetry seed problem
 
 designSpaceFailure :: S.DesignSpaceError -> P.IO value
 designSpaceFailure err =

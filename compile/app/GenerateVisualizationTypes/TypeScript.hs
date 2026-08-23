@@ -39,6 +39,7 @@ declarationTypes info =
       pure (concatMap constructorTypes constructors)
     TyConI (NewtypeD _ _ _ _ constructor _) ->
       pure (constructorTypes constructor)
+    TyConI (TySynD _ _ nested) -> pure (typeNames nested)
     _ -> pure []
 
 constructorTypes :: Con -> [Name]
@@ -95,6 +96,8 @@ declarationText typeName info =
       dataDeclaration typeName constructors
     TyConI (NewtypeD _ _ _ _ (RecC _ fields) _) ->
       interfaceDeclaration typeName fields
+    TyConI (TySynD _ _ nested) ->
+      ["export type " ++ typeName ++ " = " ++ tsType nested ++ ";"]
     _ -> []
 
 dataDeclaration :: String -> [Con] -> [String]

@@ -30,7 +30,7 @@ import { compileSource, type CompileVisualizationResult } from '$lib/server/comp
 
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, recordText } from './fingerprints';
-import { projectRepository } from './repository';
+import { projectRepository, type ProjectResourceBlob } from './repository';
 
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
@@ -201,10 +201,12 @@ export function restoreProjectArtifacts(options: {
 /** Atomically append events to the supplied document's current head. */
 export async function appendProjectEvents(
   document: ProjectDocument,
-  events: NewProjectEvent[]
+  events: NewProjectEvent[],
+  resources: readonly ProjectResourceBlob[] = []
 ): Promise<ProjectDocument> {
-  return (await projectRepository.append(document.projectId, projectHead(document).id, events))
-    .document;
+  return (
+    await projectRepository.append(document.projectId, projectHead(document).id, events, resources)
+  ).document;
 }
 
 /** Add a creation timestamp to a typed event before repository insertion. */
@@ -312,14 +314,23 @@ async function recordCompileResult(options: {
   }
 
   const render = recordText(JSON.stringify(options.result.visualization), 'application/json');
+  const resources = options.result.resources.map(({ bytes: _bytes, ...resource }) => resource);
   const compileEvent = draftEvent<'compilation.succeeded'>({
     type: 'compilation.succeeded',
     actor: { kind: 'system' },
     operationId: options.operationId,
-    payload: { durationMs: options.result.debug.durationMs, stdout, stderr, render }
+    payload: {
+      durationMs: options.result.debug.durationMs,
+      stdout,
+      stderr,
+      render,
+      resources,
+      provenance: options.result.provenance,
+      targetDiagnostics: options.result.targetDiagnostics
+    }
   });
   return {
-    document: await appendProjectEvents(options.document, [compileEvent]),
+    document: await appendProjectEvents(options.document, [compileEvent], options.result.resources),
     result: options.result,
     compileEvent,
     render,
@@ -339,7 +350,20 @@ export async function activateCompiledRender(
       type: 'visualization.rendered',
       actor: { kind: 'system' },
       operationId: recorded.operationId,
-      payload: { seed: recorded.seed, source: recorded.source, render: recorded.render }
+      payload: {
+        seed: recorded.seed,
+        source: recorded.source,
+        render: recorded.render,
+        resources: recorded.result.ok
+          ? recorded.result.resources.map(({ bytes: _bytes, ...resource }) => resource)
+          : [],
+        ...(recorded.result.ok
+          ? {
+              provenance: recorded.result.provenance,
+              targetDiagnostics: recorded.result.targetDiagnostics
+            }
+          : {})
+      }
     })
   ]);
 }

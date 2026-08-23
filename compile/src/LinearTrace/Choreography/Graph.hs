@@ -7,6 +7,7 @@ module LinearTrace.Choreography.Graph
   , buildViewGraph
   , solveViewGraphWithSeed
   , solveViewGraphWithSeeds
+  , solveViewGraphWithPinnedSolution
   , viewGraphStats
   , runChoreography
   , runChoreographyWith
@@ -55,6 +56,10 @@ solveViewGraphWithSeed = V.solveCSPWithSeed
 
 solveViewGraphWithSeeds :: [RandomSeed] -> ViewGraph -> P.IO [S.Solution]
 solveViewGraphWithSeeds = V.solveCSPWithSeeds
+
+solveViewGraphWithPinnedSolution ::
+     RandomSeed -> S.Solution -> ViewGraph -> P.IO S.Solution
+solveViewGraphWithPinnedSolution = V.solveCSPWithPinnedSolution
 
 viewGraphStats :: ViewGraph -> (P.Int, P.Int, P.Int)
 viewGraphStats graph =

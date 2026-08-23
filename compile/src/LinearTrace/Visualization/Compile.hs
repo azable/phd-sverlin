@@ -8,36 +8,77 @@
 -- | Lower a solved symbolic view graph into the renderer-independent IR.
 module LinearTrace.Visualization.Compile
   ( compileSolved
+  , compileSolvedWithTypography
   ) where
 
 import           Control.Monad.State.Strict
-import           Data.Map.Strict              (Map)
-import qualified Data.Map.Strict              as Map
-import qualified LinearTrace.View.Graph       as V
-import qualified LinearTrace.View.Primitives  as VP
-import qualified LinearTrace.View.Style       as VS
-import qualified LinearTrace.Visualization.IR as IR
+import           Data.Map.Strict                      (Map)
+import qualified Data.Map.Strict                      as Map
+import qualified LinearTrace.View.Graph               as V
+import qualified LinearTrace.View.Primitives          as VP
+import qualified LinearTrace.View.Style               as VS
+import qualified LinearTrace.Visualization.IR         as IR
+import qualified LinearTrace.Visualization.Resource   as Resource
+import qualified LinearTrace.Visualization.Typography as Typography
 import           Prelude
-import qualified Solver                       as S
+import qualified Solver                               as S
 
 compileSolved ::
      FilePath -> S.Solution -> V.ViewGraph -> Either String IR.Visualization
-compileSolved sourcePath solution graph = do
-  elements <- traverse (compileElement solution) (V.viewNodes graph)
+compileSolved sourcePath solution graph =
+  compileSolvedWith sourcePath solution graph Map.empty [] []
+
+compileSolvedWithTypography ::
+     FilePath
+  -> S.Solution
+  -> V.ViewGraph
+  -> Typography.TypographyOutput
+  -> Either String IR.Visualization
+compileSolvedWithTypography sourcePath solution graph typography =
+  compileSolvedWith
+    sourcePath
+    solution
+    graph
+    (Typography.typographyOutputContents typography)
+    (map
+       Resource.resourceBlobDescriptor
+       (Typography.typographyOutputResources typography))
+    (Typography.typographyOutputFindings typography)
+
+compileSolvedWith ::
+     FilePath
+  -> S.Solution
+  -> V.ViewGraph
+  -> Map Int IR.VisualContent
+  -> [IR.ResourceDescriptor]
+  -> [IR.VisualizationFinding]
+  -> Either String IR.Visualization
+compileSolvedWith sourcePath solution graph contents resources findings = do
+  elements <- traverse (compileElement solution contents) (V.viewNodes graph)
   steps <-
     evalStateT
       (compileSteps (elementLookup elements) (V.viewSteps graph))
       emptySceneState
   pure
     IR.Visualization
-      { IR.visualizationSeed = solutionSeedInt solution
+      { IR.visualizationIrVersion = 2
+      , IR.visualizationSeed = solutionSeedInt solution
       , IR.visualizationSourcePath = sourcePath
       , IR.visualizationSampling = Just (compileSampling solution)
+      , IR.visualizationCoordinates =
+          IR.CoordinateSystem
+            { IR.coordinateSystemName = "sverlin-css96-y-down"
+            , IR.coordinateSystemUnitsPerInch = 96
+            , IR.coordinateSystemOrigin = "top-left"
+            , IR.coordinateSystemYAxis = "down"
+            }
       , IR.visualizationCanvas =
           IR.CanvasSpec
             { IR.canvasWidth = roundLayout (V.viewCanvasWidth graph)
             , IR.canvasHeight = roundLayout (V.viewCanvasHeight graph)
             }
+      , IR.visualizationResources = resources
+      , IR.visualizationFindings = map (attachFindingSteps steps) findings
       , IR.visualizationVariables = compileVariables solution
       , IR.visualizationElements = elements
       , IR.visualizationSteps = steps
@@ -78,8 +119,12 @@ compileVariables solution =
         , IR.cspVariableValue = IR.CspCategory value
         }
 
-compileElement :: S.Solution -> V.ViewNode -> Either String IR.VisualElement
-compileElement solution wrapped =
+compileElement ::
+     S.Solution
+  -> Map Int IR.VisualContent
+  -> V.ViewNode
+  -> Either String IR.VisualElement
+compileElement solution contents wrapped =
   case wrapped of
     V.ViewNode node -> do
       style <- compileStyle solution (V.nodeStyle node)
@@ -89,7 +134,7 @@ compileElement solution wrapped =
           { IR.elementId = visualId (V.nodeRef node)
           , IR.elementRole = V.viewLabelKind (V.nodeLabel node)
           , IR.elementKind = compileElementKind (V.nodeStructure node)
-          , IR.elementContent = compileContent (V.nodeContent node)
+          , IR.elementContent = compileContent contents node
           , IR.elementStyle = style
           , IR.elementStyleVariables = styleBindings
           }
@@ -104,11 +149,35 @@ compileElementKind structure =
 visualId :: V.ViewRef tag -> IR.VisualId
 visualId = IR.VisualId . V.viewRefInt
 
-compileContent :: V.ContentMode -> Maybe String
-compileContent content =
-  case content of
-    V.ContentEmpty      -> Nothing
-    V.ContentText value -> Just value
+compileContent ::
+     Map Int IR.VisualContent -> V.Node tag -> Maybe IR.VisualContent
+compileContent contents node =
+  case Map.lookup (V.viewRefInt (V.nodeRef node)) contents of
+    Just content -> Just content
+    Nothing ->
+      case V.nodeContent node of
+        V.ContentEmpty -> Nothing
+        V.ContentText value -> Just (IR.LegacyTextContent value)
+        V.ContentFitText value -> Just (IR.LegacyTextContent value)
+        V.ContentCode code ->
+          Just (IR.LegacyTextContent (V.codeContentSource code))
+
+attachFindingSteps ::
+     [IR.TimelineStep] -> IR.VisualizationFinding -> IR.VisualizationFinding
+attachFindingSteps steps finding
+  | not (null (IR.visualizationFindingStepIndices finding)) = finding
+  | otherwise =
+    finding
+      { IR.visualizationFindingStepIndices =
+          [ index
+          | (index, step) <- zip [0 :: Int ..] steps
+          , any
+              (\instance' ->
+                 IR.instanceElementId instance'
+                   `elem` IR.visualizationFindingElementIds finding)
+              (IR.stepInstances step)
+          ]
+      }
 
 compileStyle :: S.Solution -> VS.NodeStyle -> Either String IR.VisualStyle
 compileStyle solution style = do

@@ -7,7 +7,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
-import { FileProjectRepository, ProjectConflictError } from './repository';
+import {
+  FileProjectRepository,
+  ProjectConflictError,
+  type ProjectResourceBlob
+} from './repository';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 const temporaryRoots: string[] = [];
@@ -54,6 +58,26 @@ describe('FileProjectRepository', () => {
     await repository.append('repository-test', 2, [renameEvent('C')]);
     expect(published).toEqual([[2]]);
   });
+
+  it('verifies, deduplicates, and serves immutable content-addressed resources', async () => {
+    const repository = await temporaryRepository();
+    await repository.create(rootDocument());
+    const resource = resourceBlob('font bytes');
+
+    await repository.append('repository-test', 1, [renameEvent('A')], [resource, resource]);
+
+    expect(Buffer.from(await repository.readResource('repository-test', resource.id))).toEqual(
+      Buffer.from(resource.bytes)
+    );
+    await expect(
+      repository.append(
+        'repository-test',
+        2,
+        [renameEvent('B')],
+        [{ ...resource, byteLength: resource.byteLength + 1 }]
+      )
+    ).rejects.toThrow('unexpected byte length');
+  });
 });
 
 async function temporaryRepository() {
@@ -88,3 +112,17 @@ function renameEvent(title: string): NewProjectEvent<'project.renamed'> {
     payload: { previousTitle: 'Repository test', title }
   };
 }
+
+function resourceBlob(value: string): ProjectResourceBlob {
+  const bytes = new TextEncoder().encode(value);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  return {
+    id: `sha256-${sha256}`,
+    kind: 'fontResource',
+    sha256,
+    mediaType: 'font/ttf',
+    byteLength: bytes.byteLength,
+    bytes
+  };
+}
+import { createHash } from 'node:crypto';

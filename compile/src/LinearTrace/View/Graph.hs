@@ -17,6 +17,8 @@ module LinearTrace.View.Graph
   , ViewTags(..)
   , viewTagsToList
   , ContentMode(..)
+  , CodeWrapMode(..)
+  , CodeContentSpec(..)
   , -- * Graph data
     -- | Symbolic graph, node, and render-intent records shared by the view
     -- builder, solver, and materializer.
@@ -106,7 +108,20 @@ viewTagsToList tags =
 data ContentMode
   = ContentEmpty
   | ContentText P.String
+  | ContentFitText P.String
+  | ContentCode CodeContentSpec
   deriving (P.Eq, P.Show)
+
+data CodeWrapMode
+  = CodeNoWrap
+  | CodeSoftWrap
+  deriving (P.Eq, P.Show)
+
+data CodeContentSpec = CodeContentSpec
+  { codeContentSource   :: P.String
+  , codeContentWrapMode :: CodeWrapMode
+  , codeContentLanguage :: P.Maybe P.String
+  } deriving (P.Eq, P.Show)
 
 data Node tag = Node
   { nodeRef         :: ViewRef tag

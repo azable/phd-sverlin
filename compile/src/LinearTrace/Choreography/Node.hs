@@ -15,6 +15,10 @@
 module LinearTrace.Choreography.Node
   ( ContentValue(..)
   , content
+  , fitText
+  , codeContent
+  , codeWrap
+  , highlightCode
   , Binding(..)
   , CoordRole
   , SpanRole
@@ -382,6 +386,54 @@ content value =
        VP.emptyNodePatch
          {VP.nodePatchContent = P.pure (contentMode bindings value)})
 
+-- | Set text content and explicitly permit compiler-owned font-size fitting,
+-- including when the recipe also supplies a concrete @FontSize@.
+fitText :: ContentValue -> NodeRecipe ()
+fitText value =
+  setNodePatch
+    (\bindings ->
+       VP.emptyNodePatch
+         {VP.nodePatchContent = P.pure (fitContentMode bindings value)})
+
+-- | Set verbatim code content. Compiler-owned layout preserves whitespace and
+-- never delegates wrapping to a renderer.
+codeContent :: ContentValue -> NodeRecipe ()
+codeContent value =
+  setNodePatch
+    (\bindings ->
+       VP.emptyNodePatch
+         { VP.nodePatchStyleUpdate =
+             VS.setStyleField @VS.FontFamily (S.Fixed VS.FontJetBrainsMonoNL)
+         , VP.nodePatchContent =
+             P.Just
+               (V.ContentCode
+                  V.CodeContentSpec
+                    { V.codeContentSource = contentSource bindings value
+                    , V.codeContentWrapMode = V.CodeNoWrap
+                    , V.codeContentLanguage = P.Nothing
+                    })
+         })
+
+-- | Permit up to two compiler-selected visual breaks in verbatim code.
+codeWrap :: NodeRecipe () %1 -> NodeRecipe ()
+codeWrap (NodeRecipe () build) =
+  NodeRecipe
+    ()
+    (updateCodeContent
+       "codeWrap"
+       (\code -> code {V.codeContentWrapMode = V.CodeSoftWrap})
+       P.. build)
+
+-- | Request semantic compiler-owned highlighting for a supported language.
+highlightCode :: P.String -> NodeRecipe () %1 -> NodeRecipe ()
+highlightCode language (NodeRecipe () build) =
+  NodeRecipe
+    ()
+    (updateCodeContent
+       "highlightCode"
+       (\code -> code {V.codeContentLanguage = P.Just language})
+       P.. build)
+
 payload ::
      forall tag selector. PayloadSelector tag selector
   => selector
@@ -459,6 +511,29 @@ contentMode :: MatchBindings -> ContentValue -> V.ContentMode
 contentMode _bindings (ContentLiteral value) = V.ContentText value
 contentMode bindings (ContentBinding binding) =
   V.ContentText (bindingContent bindings binding)
+
+fitContentMode :: MatchBindings -> ContentValue -> V.ContentMode
+fitContentMode _bindings (ContentLiteral value) = V.ContentFitText value
+fitContentMode bindings (ContentBinding binding) =
+  V.ContentFitText (bindingContent bindings binding)
+
+contentSource :: MatchBindings -> ContentValue -> P.String
+contentSource _bindings (ContentLiteral value) = value
+contentSource bindings (ContentBinding binding) =
+  bindingContent bindings binding
+
+updateCodeContent ::
+     P.String
+  -> (V.CodeContentSpec -> V.CodeContentSpec)
+  -> VP.NodePatch
+  -> VP.NodePatch
+updateCodeContent helper transform patch =
+  patch
+    { VP.nodePatchContent =
+        case VP.nodePatchContent patch of
+          P.Just (V.ContentCode code) -> P.Just (V.ContentCode (transform code))
+          _ -> P.error (helper P.++ " must wrap codeContent")
+    }
 
 bindingContent :: MatchBindings -> Binding -> P.String
 bindingContent bindings (Binding name) =

@@ -69,10 +69,27 @@ beforeEach(async () => {
     return {
       ok: true,
       debug,
+      resources: [],
+      targetDiagnostics: [],
+      provenance: {
+        packageVersion: 1,
+        textRunFormatVersion: 2,
+        shapingEngine: 'test',
+        shapingEngineVersion: '1'
+      },
       visualization: {
+        irVersion: 2,
         seed,
         sourcePath: 'Main.sverlin',
+        coordinates: {
+          systemName: 'sverlin-css96-y-down',
+          systemUnitsPerInch: 96,
+          systemOrigin: 'top-left',
+          systemYAxis: 'down'
+        },
         canvas: { width: 640, height: 360 },
+        resources: [],
+        findings: [],
         variables: [],
         elements: [],
         steps: []

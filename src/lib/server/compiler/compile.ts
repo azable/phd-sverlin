@@ -5,11 +5,18 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import * as v from 'valibot';
 
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
-import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
+import type {
+  CompilationProvenance,
+  CompilationResource,
+  CompilerDiagnostic,
+  TargetDiagnostic
+} from '$lib/shared/projects/events/values';
 
 import { classifyCompileFailure, parseCompilerDiagnostics } from './diagnostics';
 import { createCompileOutput } from './workspace-output.js';
@@ -43,6 +50,9 @@ export type CompileVisualizationResult =
   | {
       ok: true;
       visualization: Visualization;
+      resources: CompileResource[];
+      provenance: CompileProvenance;
+      targetDiagnostics: TargetDiagnostic[];
       debug: CompileDebug;
     }
   | {
@@ -53,6 +63,12 @@ export type CompileVisualizationResult =
       diagnostics: CompilerDiagnostic[];
       failureKind?: CompileFailureKind;
     };
+
+/** Verified resource bytes emitted beside a compiler result. */
+export type CompileResource = CompilationResource & { bytes: Uint8Array };
+
+/** Deterministic toolchain provenance emitted by the compiler package. */
+export type CompileProvenance = CompilationProvenance;
 
 /** Inputs required to compile an isolated source snapshot. */
 export type CompileSourceOptions = {
@@ -82,6 +98,32 @@ export type CompileCommand = {
 const defaultCompileTimeoutMs = 300_000;
 const timeoutKillGraceMs = 1_000;
 const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
+const sha256Schema = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/));
+const manifestArtifactSchema = v.strictObject({
+  relativePath: v.string(),
+  mediaType: v.pipe(v.string(), v.nonEmpty()),
+  sha256: sha256Schema,
+  byteLength: v.pipe(v.number(), v.safeInteger(), v.minValue(0))
+});
+const compileManifestSchema = v.strictObject({
+  manifestVersion: v.literal(1),
+  primary: manifestArtifactSchema,
+  attachments: v.array(manifestArtifactSchema),
+  diagnostics: v.array(
+    v.strictObject({
+      severity: v.picklist(['info', 'warning']),
+      code: v.pipe(v.string(), v.nonEmpty()),
+      message: v.string()
+    })
+  ),
+  provenance: v.strictObject({
+    packageVersion: v.literal(1),
+    textRunFormatVersion: v.literal(2),
+    shapingEngine: v.string(),
+    shapingEngineVersion: v.string(),
+    fontCatalogSha256: v.nullable(sha256Schema)
+  })
+});
 
 /** Compile Sverlin source in an isolated workspace and decode its output. */
 export async function compileSource({
@@ -166,13 +208,18 @@ export async function compileSource({
   }
 
   try {
+    const visualization = decodeVisualization(compiledJson);
+    const bundle = await readCompileBundle(outputPath, compiledJson, visualization);
     return {
       ok: true,
-      visualization: decodeVisualization(compiledJson),
+      visualization,
+      resources: bundle.resources,
+      provenance: bundle.provenance,
+      targetDiagnostics: bundle.targetDiagnostics,
       debug
     };
   } catch (err) {
-    const error = `Compile backend wrote invalid JSON: ${
+    const error = `Compile backend wrote an invalid output package: ${
       err instanceof Error ? err.message : String(err)
     }`;
     return {
@@ -184,6 +231,106 @@ export async function compileSource({
       failureKind: 'invalid-output'
     };
   }
+}
+
+/** Read, constrain, and cryptographically verify one compiler output package. */
+export async function readCompileBundle(
+  outputPath: string,
+  compiledJson: string,
+  visualization: Visualization
+): Promise<{
+  resources: CompileResource[];
+  provenance: CompileProvenance;
+  targetDiagnostics: TargetDiagnostic[];
+}> {
+  const manifestPath = `${outputPath}.manifest.json`;
+  const rawManifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown;
+  const parsed = v.safeParse(compileManifestSchema, rawManifest);
+  if (!parsed.success) throw new Error(`Invalid compile manifest: ${v.summarize(parsed.issues)}`);
+
+  const manifest = parsed.output;
+  if (manifest.primary.relativePath !== path.basename(outputPath)) {
+    throw new Error('Compile manifest primary path does not match the requested output.');
+  }
+  if (manifest.primary.mediaType !== 'application/json') {
+    throw new Error('Compile manifest primary media type must be application/json.');
+  }
+  verifyBytes(Buffer.from(compiledJson), manifest.primary, 'primary visualization');
+
+  const descriptors = new Map(
+    visualization.resources.map((descriptor) => [descriptor.descriptorId, descriptor])
+  );
+  if (descriptors.size !== visualization.resources.length) {
+    throw new Error('Visualization contains duplicate resource descriptors.');
+  }
+  if (manifest.attachments.length !== descriptors.size) {
+    throw new Error('Compile manifest attachments do not match visualization resources.');
+  }
+  const attachmentIds = manifest.attachments.map(({ sha256 }) => `sha256-${sha256}`);
+  if (new Set(attachmentIds).size !== attachmentIds.length) {
+    throw new Error('Compile manifest contains duplicate attachments.');
+  }
+
+  const resources = await Promise.all(
+    manifest.attachments.map(async (attachment): Promise<CompileResource> => {
+      const id = `sha256-${attachment.sha256}`;
+      if (attachment.relativePath !== `resources/${id}`) {
+        throw new Error(
+          `Unsafe or non-canonical compile attachment path ${attachment.relativePath}.`
+        );
+      }
+      const descriptor = descriptors.get(id);
+      if (
+        !descriptor ||
+        descriptor.descriptorSha256 !== attachment.sha256 ||
+        descriptor.descriptorMediaType !== attachment.mediaType ||
+        descriptor.descriptorByteLength !== attachment.byteLength
+      ) {
+        throw new Error(`Compile attachment ${id} does not match its IR descriptor.`);
+      }
+
+      const attachmentPath = path.join(
+        path.dirname(outputPath),
+        ...attachment.relativePath.split('/')
+      );
+      const bytes = await readFile(attachmentPath);
+      verifyBytes(bytes, attachment, id);
+      return {
+        id,
+        kind: descriptor.descriptorKind,
+        sha256: attachment.sha256,
+        mediaType: attachment.mediaType,
+        byteLength: attachment.byteLength,
+        bytes
+      };
+    })
+  );
+
+  return {
+    resources,
+    targetDiagnostics: manifest.diagnostics,
+    provenance: {
+      packageVersion: manifest.provenance.packageVersion,
+      textRunFormatVersion: manifest.provenance.textRunFormatVersion,
+      shapingEngine: manifest.provenance.shapingEngine,
+      shapingEngineVersion: manifest.provenance.shapingEngineVersion,
+      ...(manifest.provenance.fontCatalogSha256
+        ? { fontCatalogSha256: manifest.provenance.fontCatalogSha256 }
+        : {})
+    }
+  };
+}
+
+function verifyBytes(
+  bytes: Uint8Array,
+  expected: { byteLength: number; sha256: string },
+  label: string
+): void {
+  if (bytes.byteLength !== expected.byteLength) {
+    throw new Error(`Compile ${label} has an unexpected byte length.`);
+  }
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  if (digest !== expected.sha256) throw new Error(`Compile ${label} failed SHA-256 verification.`);
 }
 
 function diagnosticsForFailure(debug: CompileDebug, fallback: string) {

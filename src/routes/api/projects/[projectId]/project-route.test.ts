@@ -64,6 +64,26 @@ describe('project JSON API', () => {
     expect(stale.status).toBe(409);
     await expect(stale.json()).resolves.toEqual({ error: 'stale' });
   });
+
+  it('accepts zero-based render instance IDs in visual selections', async () => {
+    const { POST } = await import('./+server');
+    const response = await POST(
+      request('POST', {
+        type: 'feedback',
+        operationId,
+        expectedHead: 4,
+        text: 'Make this clearer',
+        focus: [],
+        selection: { render: 3, step: 0, instances: [0] },
+        seed: 1
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.submitProjectFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ selection: { render: 3, step: 0, instances: [0] } })
+    );
+  });
 });
 
 function request(method: string, body: unknown) {

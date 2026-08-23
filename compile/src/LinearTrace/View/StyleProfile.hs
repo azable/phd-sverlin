@@ -137,10 +137,8 @@ leafStyle family style0 =
 groupStyle :: String -> Style.NodeStyle -> (Style.NodeStyle, [S.Constraint])
 groupStyle family style0 =
   ( style6
-  , concat
-      [ constraintsWhenMissing @Style.Fill style0 (fillConstraints fill)
-      , constraintsWhenMissing @Style.Stroke style0 (strokeConstraints stroke)
-      ])
+  , constraintsWhenMissing @Style.Fill style0 (fillConstraints fill)
+      ++ constraintsWhenMissing @Style.Stroke style0 (strokeConstraints stroke))
   where
     base = "view.style.family." ++ family ++ ".group"
     profile = S.choice (base ++ ".profile")

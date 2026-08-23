@@ -4,12 +4,15 @@ import * as v from 'valibot';
 
 import {
   diagnosticSchema,
+  compilationResourceSchema,
+  compilationProvenanceSchema,
   dslRevisionSchema,
   eventEnvelope,
   integerSchema,
   naturalSchema,
   recordedTextSchema,
   renderPurposeSchema,
+  targetDiagnosticSchema,
   textSchema
 } from './values';
 
@@ -36,7 +39,10 @@ export const compilationSucceededEventSchema = v.object({
     durationMs: naturalSchema,
     stdout: recordedTextSchema,
     stderr: recordedTextSchema,
-    render: recordedTextSchema
+    render: recordedTextSchema,
+    resources: v.optional(v.array(compilationResourceSchema)),
+    provenance: v.optional(compilationProvenanceSchema),
+    targetDiagnostics: v.optional(v.array(targetDiagnosticSchema))
   })
 });
 

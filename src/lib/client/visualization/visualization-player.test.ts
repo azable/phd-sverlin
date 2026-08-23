@@ -8,11 +8,20 @@ describe('VisualizationPlayer', () => {
   it('normalizes the former trace leaf tag in stored visualizations', () => {
     const stored = visualization(['one']);
     const json = JSON.stringify({
-      ...stored,
+      seed: stored.seed,
+      sourcePath: stored.sourcePath,
+      canvas: stored.canvas,
+      variables: stored.variables,
       elements: stored.elements.map((element) => ({
-        ...element,
+        id: element.id,
+        role: element.role,
+        style: element.style,
+        styleVariables: element.styleVariables,
+        content:
+          element.content?.kind === 'legacyTextContent' ? element.content.textSource : undefined,
         kind: { kind: 'trace' }
-      }))
+      })),
+      steps: stored.steps
     });
 
     expect(decodeVisualization(json).elements[0].kind).toEqual({ kind: 'leaf' });
@@ -37,7 +46,7 @@ describe('VisualizationPlayer', () => {
     expect(player.stepCount).toBe(1);
     expect(player.currentStepLabel).toBe('Step 1');
     expect(player.elements).toHaveLength(1);
-    expect(player.elements[0].content).toBe('one');
+    expect(player.elements[0].content).toEqual({ kind: 'legacyTextContent', textSource: 'one' });
     expect(player.elements[0].instanceId).toBe(1);
   });
 
@@ -48,12 +57,12 @@ describe('VisualizationPlayer', () => {
 
     expect(player.currentStep).toBe(1);
     expect(player.currentStepLabel).toBe('Step 2');
-    expect(player.elements[0].content).toBe('two');
+    expect(player.elements[0].content).toEqual({ kind: 'legacyTextContent', textSource: 'two' });
 
     player.previous();
     expect(player.currentStep).toBe(0);
     expect(player.currentStepLabel).toBe('Step 1');
-    expect(player.elements[0].content).toBe('one');
+    expect(player.elements[0].content).toEqual({ kind: 'legacyTextContent', textSource: 'one' });
   });
 
   it('keeps the requested step when installing a replacement visualization', () => {
@@ -65,7 +74,10 @@ describe('VisualizationPlayer', () => {
     });
 
     expect(player.currentStep).toBe(1);
-    expect(player.elements[0].content).toBe('replacement-two');
+    expect(player.elements[0].content).toEqual({
+      kind: 'legacyTextContent',
+      textSource: 'replacement-two'
+    });
   });
 
   it('opens a different render at its first step by default', () => {
@@ -76,7 +88,10 @@ describe('VisualizationPlayer', () => {
     player.setVisualization(visualization(['replacement-one', 'replacement-two']));
 
     expect(player.currentStep).toBe(0);
-    expect(player.elements[0].content).toBe('replacement-one');
+    expect(player.elements[0].content).toEqual({
+      kind: 'legacyTextContent',
+      textSource: 'replacement-one'
+    });
   });
 
   it('clamps a requested replacement step to the available timeline', () => {
@@ -84,7 +99,7 @@ describe('VisualizationPlayer', () => {
     player.setVisualization(visualization(['one']), { initialStep: 4 });
 
     expect(player.currentStep).toBe(0);
-    expect(player.elements[0].content).toBe('one');
+    expect(player.elements[0].content).toEqual({ kind: 'legacyTextContent', textSource: 'one' });
   });
 
   it('starts a fork at its origin and settles at its solved style', async () => {
@@ -133,15 +148,25 @@ function visualization(contents: string[]): Visualization {
     id,
     role: 'Value',
     kind: { kind: 'leaf' as const },
-    content,
+    content: { kind: 'legacyTextContent' as const, textSource: content },
     style: { top: 0, left: id * 10, width: 10, height: 10 },
     styleVariables: []
   }));
 
   return {
+    irVersion: 2,
     seed: 1,
     sourcePath: 'Main.sverlin',
+    sampling: { mode: 'legacyOptimizer', coverage: 'legacyCoverage' },
+    coordinates: {
+      systemName: 'sverlin-css96-y-down',
+      systemUnitsPerInch: 96,
+      systemOrigin: 'top-left',
+      systemYAxis: 'down'
+    },
     canvas: { width: 100, height: 80 },
+    resources: [],
+    findings: [],
     variables: [],
     elements,
     steps: elements.map((element, index) => ({

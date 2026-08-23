@@ -28,6 +28,7 @@
 - Positions are `Coord`: use `at` for `left`, `top`, `right`, `bottom`, `x`, `y`, and center coordinates. Sizes are `Span`: use `by` for width, height, gaps, padding, radius, stroke width, and font size.
 - `Hsl` uses degrees for hue and values from 0 to 1 for saturation and lightness, for example `Hsl 215 0.76 0.93`, not CSS percentages.
 - Categorical styles require `FixedStyle` or `VariableStyle`, not strings or bare numbers. Examples include `FixedStyle FontWeightBold`, `FixedStyle (FontWeightNumber 700)`, and `FixedStyle TextAlignCenter`.
+- The compiler, not the browser, chooses text lines. Leave `FontSize` unspecified when automatic fitting is acceptable. A supplied `style @FontSize` is fixed unless the same recipe uses `fitText` instead of `content`.
 - Style authoring has three states. `style @Field value` requires a field, `withoutStyle @Field` requires its absence, and omission leaves it to the compiler’s family profile. Do not add `Fill`, `Radius`, `StrokeWidth`, or typography merely to create seeded variation.
 - `styleFamily "key"` gives selected peers one explicit family identity when payload type alone is too broad. `styleCase @Field choice` exhaustively maps a typed categorical choice to `Just value` or `Nothing` for authored conditional presence.
 - Every relation expression produces a `VisualConstraint`, not a `VisualizationBuilder ()`. Emit it with `ensure` or `encourage`, including bridge expressions: write `ensure $ right first =| gap |= left second` and `encourage $ x item .==. x guide`. Never place `.==.`, `.<=.`, `.>=.`, `=| ... |=`, or `=/ ... /=` directly as a statement in `visualization`.
@@ -138,6 +139,23 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - `node selected` groups selected trace nodes into a synthetic container. Render and constrain a group for membership, a row, cluster, or background.
 - `render selected recipe` attaches content, typed style, and geometry to a selection.
 - Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
+- `content value` uses managed plain typography and prefers one line, with at most two compiler-selected fallback breaks. `fitText value` has the same content semantics but permits an authored `FontSize` to shrink no lower than 12 px in 0.25 px steps. Always provide adequate width and height; no feasible layout is a compile error.
+- For exact code or other verbatim output, start with `codeContent value`. Wrap it with `codeWrap` only when up to two compiler-selected visual breaks are acceptable, and wrap that with `highlightCode "language"` for semantic syntax tokens. For example:
+
+  ```haskell
+  render example $ do
+    highlightCode
+      "haskell"
+      (codeWrap
+        (codeContent "let answer = 40 + 2\n-- computed result"))
+    width (by 280)
+    height (by 96)
+    style @TextAlign (FixedStyle TextAlignLeft)
+  ```
+
+  Supported highlighting aliases cover `sverlin`/`haskell`/`hs`, JavaScript/TypeScript and common C-like languages, Python/shell, JSON, CSS, and SQL. Code defaults to the managed non-ligature JetBrains Mono face. Do not simulate code with ordinary wrapped prose.
+
+- Managed font choices are `FontInter`, `FontSystem` (pinned Source Sans 3), `FontMono` (pinned JetBrains Mono NL), `FontSerif` (pinned Source Serif 4), `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`, `FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`, `FontJetBrainsMonoNL`, and `FontIBMPlexMono`.
 - Style fields are `Opacity`, `ZIndex`, `Padding`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`.
 - Treat an explicitly requested border as one composite visual property. Set a positive `StrokeWidth`, a contrasting `Stroke`, and a deterministic non-empty `BorderStyle`, normally `FixedStyle BorderSolid`. Do not claim a border was added after changing only its width, and do not rely on renderer fallbacks or automatic profiles for an explicit request; `BorderNone` always suppresses the border.
 - Geometry setters are `width`, `height`, `top`, `left`, `right`, `bottom`, `x`, `y`, `bounds`, and `center`; `size` reads a selected node’s dimensions.
@@ -191,6 +209,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - The current renderer has a fixed dark foreground text colour and the public DSL has no foreground-colour field. Any generated fill behind text must therefore remain light, normally with `lightness (styleOf @Fill selection) .>=. (0.78 :: Unit)`. Do not use dark fills for text-bearing nodes. Transparent text is safe on the white canvas.
 - The DSL has no separate shape primitive. Express a family shape through shared width, height, radius, stroke width, and border style: small radii suggest cells, large radii suggest pills or badges, and equal width/height with a sufficiently large radius suggests a circle. Do not invent unsupported shape constructors.
 - Preserve enough width and height for every valid profile; automatic padding and typography do not replace legibility and containment constraints.
+- Compiler findings retain reductions to small text, fallback wrapping, and substituted static weights. Avoid forcing small boxes merely because fitting can make a candidate compile.
 
 ## Solver-backed layout
 
@@ -265,6 +284,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - Audit every `create` whose payload is a domain value: it must be an external/source input or literal constant, never a result obtainable from live values. Rewrite any violation as `apply1`, `apply2`, or the corresponding lifecycle operation. An algorithmic visualization with derived values but no matching operation events is not complete.
 - Preserve the complete linear lifecycle of every value.
 - Ensure every selected object is rendered with visible content or styling and sufficient dimensions/layout constraints.
+- Audit every text-bearing box at its longest expected value. Prefer more space or an intentional `codeWrap`/`fitText` policy over relying on minimum-size output.
 - For an explicitly requested visual property, audit its complete rendering dependencies before returning source. In particular, requested borders must have a positive width, a contrasting stroke colour, and a non-empty border style on every intended semantic selection.
 - Ensure each checkpoint communicates a distinct stage and that the final state resolves the story.
 - Audit equivalent peers before returning source: use payload-type family inference by default, add `styleFamily` only when one type has distinct roles, and justify every explicit within-family override with a semantic fact or payload.

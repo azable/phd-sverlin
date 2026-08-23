@@ -2,7 +2,14 @@
 
 import * as v from 'valibot';
 
-import { eventEnvelope, positiveSchema, recordedTextSchema } from './values';
+import {
+  compilationResourceSchema,
+  compilationProvenanceSchema,
+  eventEnvelope,
+  positiveSchema,
+  recordedTextSchema,
+  targetDiagnosticSchema
+} from './values';
 
 /** Runtime schema for activating a compiled visualization. */
 export const visualizationRenderedEventSchema = v.object({
@@ -11,6 +18,9 @@ export const visualizationRenderedEventSchema = v.object({
   payload: v.object({
     seed: positiveSchema,
     source: recordedTextSchema,
-    render: recordedTextSchema
+    render: recordedTextSchema,
+    resources: v.optional(v.array(compilationResourceSchema)),
+    provenance: v.optional(compilationProvenanceSchema),
+    targetDiagnostics: v.optional(v.array(targetDiagnosticSchema))
   })
 });

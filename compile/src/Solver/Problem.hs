@@ -29,6 +29,7 @@ module Solver.Problem
   , solverProblem
   , solverProblemWithChoices
   , withChoiceConstraints
+  , pinProblemChoices
   , withProblemInitialOverrides
   , -- * Compilation and inspection
     -- | Compiled backend problem plus diagnostics consumed by tests,
@@ -185,6 +186,46 @@ withChoiceConstraints choiceConstraints problem =
     { solverChoiceConstraints =
         solverChoiceConstraints problem ++ choiceConstraints
     }
+
+-- | Pin an already-resolved finite assignment without exposing internal
+-- categorical or decision constructors. Domains are recovered from the
+-- problem and checked before the pins are added.
+pinProblemChoices ::
+     Map String String -> SolverProblem -> Either String SolverProblem
+pinProblemChoices assignment problem = do
+  domains <- problemChoiceDomains problem
+  pins <- traverse (pinOne domains) (Map.toAscList assignment)
+  pure (withChoiceConstraints pins problem)
+  where
+    pinOne domains (name, token) =
+      case Map.lookup name domains of
+        Nothing -> Left ("cannot pin unknown finite choice " ++ show name)
+        Just categories
+          | token `elem` categories ->
+            Right (ChoiceIs (ChoiceSpec name categories) token)
+          | otherwise ->
+            Left
+              ("cannot pin token "
+                 ++ show token
+                 ++ " for finite choice "
+                 ++ show name)
+
+problemChoiceDomains :: SolverProblem -> Either String (Map String [String])
+problemChoiceDomains problem = foldl addSpec (Right Map.empty) allSpecs
+  where
+    allSpecs =
+      [ (decisionSpecName spec, map fst (decisionSpecAlternatives spec))
+      | spec <- constraintDecisionSpecs (solverConstraints problem)
+      ]
+        ++ concatMap choiceConstraintSpecs (solverChoiceConstraints problem)
+    addSpec result (name, categories) = do
+      domains <- result
+      case Map.lookup name domains of
+        Nothing -> Right (Map.insert name categories domains)
+        Just previous
+          | previous == categories -> Right domains
+          | otherwise ->
+            Left ("finite choice has incompatible domains: " ++ show name)
 
 withProblemInitialOverrides ::
      Map String Double -> SolverProblem -> SolverProblem

@@ -49,7 +49,13 @@ extra-doc-files:    CHANGELOG.md
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
 extra-source-files:
+    cbits/sverlin_harfbuzz.h
+    fonts/README.md
     test/fixtures/Invalid.sverlin
+
+data-files:
+    fonts/*/*.ttf
+    fonts/*/OFL.txt
 
 common warnings
     ghc-options: -Wall
@@ -77,10 +83,16 @@ library
 
     build-depends:    hmatrix >=0.20.2 && <0.21,
                       MIP >=0.2.0.1 && <0.3,
+                      binary,
+                      cryptohash-sha256 >=0.11.102 && <0.12,
                       data-default-class,
+                      filepath,
                       scientific,
+                      skylighting-core ==0.14.7,
                       temporary,
                       text
+
+    pkgconfig-depends: harfbuzz >=3.3
 
     exposed-modules:
         LinearTrace.Choreography
@@ -89,7 +101,9 @@ library
         LinearTrace.Visualization.Compile
         LinearTrace.Visualization.IR
         LinearTrace.Visualization.Options
+        LinearTrace.Visualization.Resource
         LinearTrace.Visualization.Target
+        LinearTrace.Visualization.Typography
 
     other-modules:
         LinearTrace.Choreography.Constraint
@@ -109,6 +123,10 @@ library
         LinearTrace.View.Solve
         LinearTrace.View.Style
         LinearTrace.View.StyleProfile
+        LinearTrace.Visualization.FontCatalog
+        LinearTrace.Visualization.CodeHighlight
+        LinearTrace.Visualization.HarfBuzz
+        Paths_compile
         Solver.Affine
         Solver.Choice
         Solver.Categorical
@@ -122,6 +140,10 @@ library
         Solver.Sample
 
     hs-source-dirs:   src
+
+    c-sources:        cbits/sverlin_harfbuzz.c
+
+    include-dirs:     cbits
 
 executable compile-app
     -- Import common warning flags.

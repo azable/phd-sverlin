@@ -1,30 +1,34 @@
 module Main where
 
-import           Control.Exception                 (IOException, evaluate, try)
-import           Control.Monad                     (when)
-import qualified Data.ByteString.Lazy              as BL
-import           Data.Maybe                        (fromMaybe)
-import           Data.Word                         (Word64)
-import           GHC.Clock                         (getMonotonicTimeNSec)
-import           Language.Haskell.Interpreter      (GhcError (..),
-                                                    InterpreterError (..))
-import qualified LinearTrace.Choreography          as Choreography
-import qualified LinearTrace.Visualization.Compile as Compile
-import qualified LinearTrace.Visualization.IR      as IR
-import qualified LinearTrace.Visualization.Target  as Target
-import           Numeric                           (showFFloat)
+import           Control.Exception                    (IOException, evaluate,
+                                                       try)
+import           Control.Monad                        (when, zipWithM)
+import qualified Data.ByteString                      as BS
+import qualified Data.ByteString.Lazy                 as BL
+import           Data.Maybe                           (fromMaybe)
+import           Data.Word                            (Word64)
+import           GHC.Clock                            (getMonotonicTimeNSec)
+import           Language.Haskell.Interpreter         (GhcError (..),
+                                                       InterpreterError (..))
+import qualified LinearTrace.Choreography             as Choreography
+import qualified LinearTrace.Visualization.Compile    as Compile
+import qualified LinearTrace.Visualization.IR         as IR
+import qualified LinearTrace.Visualization.Resource   as Resource
+import qualified LinearTrace.Visualization.Target     as Target
+import qualified LinearTrace.Visualization.Typography as Typography
+import           Numeric                              (showFFloat)
 import           Options.Applicative
-import qualified Solver                            as S
-import           Sverlin.Interpreter               (withVisualization)
-import           Sverlin.Source                    (GeneratedSource (..),
-                                                    SourceUnit (..),
-                                                    elaborateSource)
-import           System.Directory                  (createDirectoryIfMissing)
-import           System.Exit                       (exitFailure)
-import           System.FilePath                   (takeDirectory)
-import           System.IO                         (Handle, hPutStrLn, stderr,
-                                                    stdout)
-import           System.Random                     (randomRIO)
+import qualified Solver                               as S
+import           Sverlin.Interpreter                  (withVisualization)
+import           Sverlin.Source                       (GeneratedSource (..),
+                                                       SourceUnit (..),
+                                                       elaborateSource)
+import           System.Directory                     (createDirectoryIfMissing)
+import           System.Exit                          (exitFailure)
+import           System.FilePath                      (takeDirectory, (</>))
+import           System.IO                            (Handle, hPutStrLn,
+                                                       stderr, stdout)
+import           System.Random                        (randomRIO)
 
 data Options = Options
   { optionSourcePath  :: FilePath
@@ -84,41 +88,114 @@ runVisualization ::
 runVisualization options sourcePath sourceLoadMs seeds graph = do
   (viewGraph, viewGraphMs) <-
     timedPhase (evaluate (forceViewGraph (Choreography.buildViewGraph graph)))
-  (solutions, solveMs) <-
+  (initialSolutions, solveMs) <-
     timedPhase
       (Choreography.solveViewGraphWithSeeds
          (map Choreography.RandomSeed seeds)
          viewGraph)
-  (compiledResult, compileMs) <-
+  (preparedResult, typographyMs) <-
     timedPhase
-      (evaluate
-         (forceCompileResults
-            (traverse
-               (\solution -> Compile.compileSolved sourcePath solution viewGraph)
-               solutions)))
-  case compiledResult of
+      (fmap
+         sequence
+         (zipWithM
+            (\_seed solution -> Typography.prepareTypography solution viewGraph)
+            seeds
+            initialSolutions))
+  case preparedResult of
     Left err -> pure (Left err)
-    Right compiled -> do
-      (encoded, encodeMs) <-
+    Right prepared -> do
+      (solutions, constraintSolveMs) <-
+        timedPhase
+          (zipWithM
+             (\seed (initial, typography) ->
+                solvePrepared seed initial typography)
+             seeds
+             (zip initialSolutions prepared))
+      (compiledResult, compileMs) <-
         timedPhase
           (evaluate
-             (forceEncoded (optionTarget options) (optionCount options) compiled))
-      ((), writeMs) <-
-        timedPhase (writeCompiled (optionOutputPath options) encoded)
-      when (optionDetails options) $ do
-        case solutions of
-          solution:_ -> hPrintSolverDetails stdout solution
-          []         -> pure ()
-        hPrintPhaseTimings
-          stdout
-          [ ("Source load", sourceLoadMs)
-          , ("View graph", viewGraphMs)
-          , ("Solve", solveMs)
-          , ("IR compile", compileMs)
-          , ("JSON encode", encodeMs)
-          , ("JSON write", writeMs)
-          ]
-      pure (Right compiled)
+             (forcePackageResult (compilePrepared sourcePath solutions prepared)))
+      case compiledResult of
+        Left err -> pure (Left err)
+        Right package -> do
+          (bundleResult, encodeMs) <-
+            timedPhase
+              (evaluate
+                 (forceTargetBundle
+                    (Target.compileTarget
+                       (Target.defaultTargetRequest (optionTarget options))
+                       package)))
+          case bundleResult of
+            Left (Target.TargetError err) -> pure (Left err)
+            Right bundle -> do
+              ((), writeMs) <-
+                timedPhase (writeCompiled (optionOutputPath options) bundle)
+              when (optionDetails options) $ do
+                case solutions of
+                  solution:_ -> hPrintSolverDetails stdout solution
+                  []         -> pure ()
+                hPrintPhaseTimings
+                  stdout
+                  [ ("Source load", sourceLoadMs)
+                  , ("View graph", viewGraphMs)
+                  , ("Aesthetic solve", solveMs)
+                  , ("Text prepare", typographyMs)
+                  , ("Constraint solve", constraintSolveMs)
+                  , ("IR compile", compileMs)
+                  , ("Target encode", encodeMs)
+                  , ("Target write", writeMs)
+                  ]
+              pure (Right (Resource.compilationPackageVisualizations package))
+  where
+    solvePrepared seed initial prepared
+      | Typography.preparedTypographyNeedsResolve prepared =
+        Choreography.solveViewGraphWithPinnedSolution
+          (Choreography.RandomSeed seed)
+          initial
+          (Typography.preparedTypographyGraph prepared)
+      | otherwise = pure initial
+
+compilePrepared ::
+     FilePath
+  -> [S.Solution]
+  -> [Typography.PreparedTypography]
+  -> Either String Resource.CompilationPackage
+compilePrepared sourcePath solutions prepared = do
+  outputs <- zipWithM Typography.materializeTypography solutions prepared
+  visualizations <-
+    sequence
+      [ Compile.compileSolvedWithTypography
+        sourcePath
+        solution
+        (Typography.preparedTypographyGraph typography)
+        output
+      | (solution, typography, output) <- zip3 solutions prepared outputs
+      ]
+  pure
+    Resource.CompilationPackage
+      { Resource.compilationPackageVisualizations = visualizations
+      , Resource.compilationPackageResources =
+          Resource.deduplicateResourceBlobs
+            (concatMap Typography.typographyOutputResources outputs)
+      , Resource.compilationPackageProvenance =
+          Typography.typographyCompilationProvenance
+      }
+
+forcePackageResult ::
+     Either String Resource.CompilationPackage
+  -> Either String Resource.CompilationPackage
+forcePackageResult result =
+  case result of
+    Left err -> length err `seq` result
+    Right package ->
+      let visualizationCount =
+            length (Resource.compilationPackageVisualizations package)
+          resourceBytes =
+            sum
+              (map
+                 (BS.length . Resource.resourceBlobBytes)
+                 (Resource.compilationPackageResources package))
+       in visualizationCount `seq` resourceBytes `seq` result
 
 forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
 forceViewGraph graph =
@@ -126,21 +203,21 @@ forceViewGraph graph =
     (nodes, constraints, steps) ->
       nodes `seq` constraints `seq` steps `seq` graph
 
-forceCompileResults ::
-     Either String [IR.Visualization] -> Either String [IR.Visualization]
-forceCompileResults result =
+forceTargetBundle ::
+     Either Target.TargetError Target.TargetBundle
+  -> Either Target.TargetError Target.TargetBundle
+forceTargetBundle result =
   case result of
-    Left err       -> length err `seq` result
-    Right compiled -> length compiled `seq` result
-
-forceEncoded ::
-     Target.OutputTarget -> Int -> [IR.Visualization] -> BL.ByteString
-forceEncoded target count compiled =
-  let encoded =
-        case (count, compiled) of
-          (1, visualization:_) -> Target.compileTarget target visualization
-          _                    -> Target.compileTargets target compiled
-   in BL.length encoded `seq` encoded
+    Left err -> length (show err) `seq` result
+    Right bundle ->
+      let byteCount =
+            BS.length
+              (Target.targetArtifactBytes (Target.targetBundlePrimary bundle))
+              + sum
+                  (map
+                     (BS.length . Target.targetArtifactBytes)
+                     (Target.targetBundleAttachments bundle))
+       in byteCount `seq` result
 
 timedPhase :: IO a -> IO (a, Double)
 timedPhase ioAction = do
@@ -190,10 +267,21 @@ backendName backend =
 formatMs :: Double -> String
 formatMs milliseconds = showFFloat (Just 1) milliseconds "ms"
 
-writeCompiled :: FilePath -> BL.ByteString -> IO ()
-writeCompiled path encoded = do
-  BL.writeFile path encoded
-  putStrLn ("Compiled JSON at: " ++ path)
+writeCompiled :: FilePath -> Target.TargetBundle -> IO ()
+writeCompiled path bundle = do
+  createDirectoryIfMissing True (takeDirectory path)
+  BS.writeFile
+    path
+    (Target.targetArtifactBytes (Target.targetBundlePrimary bundle))
+  mapM_ writeAttachment (Target.targetBundleAttachments bundle)
+  BL.writeFile (path ++ ".manifest.json") (Target.targetManifestFor path bundle)
+  putStrLn ("Compiled target at: " ++ path)
+  where
+    writeAttachment artifact = do
+      let destination =
+            takeDirectory path </> Target.targetArtifactRelativePath artifact
+      createDirectoryIfMissing True (takeDirectory destination)
+      BS.writeFile destination (Target.targetArtifactBytes artifact)
 
 chooseSeed :: Maybe Int -> IO Int
 chooseSeed = maybe (randomRIO (minSeed, maxSeed)) pure

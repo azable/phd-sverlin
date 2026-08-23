@@ -16,13 +16,18 @@ import {
   type ProjectEventOf,
   type ProjectEventType
 } from '$lib/shared/projects/events';
-import type { VisualSelection } from '$lib/shared/projects/events/values';
+import type {
+  CompilationProvenance,
+  TargetDiagnostic,
+  VisualSelection
+} from '$lib/shared/projects/events/values';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import {
   decodeVisualization,
   type RenderInstanceId,
-  type VisualElement
+  type VisualElement,
+  type VisualizationFinding
 } from '$lib/shared/visualization';
 import type { ConversationMessage } from '$lib/server/chat-bots/types';
 
@@ -57,6 +62,8 @@ export type AiRenderSummary = {
   seed: number;
   sourceSha256: string;
   renderSha256: string;
+  provenance?: CompilationProvenance;
+  targetDiagnostics?: TargetDiagnostic[];
 };
 
 /** Full details resolved for an event explicitly selected by the user. */
@@ -67,7 +74,10 @@ export type AiEventDetail = {
 };
 
 /** One selected rendered element paired with its instance identity. */
-export type AiSelectedElement = VisualElement & { instanceId: RenderInstanceId };
+export type AiSelectedElement = VisualElement & {
+  instanceId: RenderInstanceId;
+  findings: VisualizationFinding[];
+};
 
 /** Expanded visual details for a user-selected set of render instances. */
 export type AiVisualSelection = VisualSelection & {
@@ -89,6 +99,7 @@ export type AiProjectContext = {
   headEventId: EventId;
   currentWorkspace: AiWorkspace;
   activeRender?: AiRenderSummary;
+  activeVisualizationFindings: VisualizationFinding[];
   timeline: AiTimelineEntry[];
   selected: {
     events: AiEventDetail[];
@@ -175,6 +186,9 @@ export function projectAiContext(
     headEventId: projectHead(document).id,
     currentWorkspace: projectWorkspace(snapshot),
     ...(snapshot.activeRender ? { activeRender: renderSummary(snapshot.activeRender) } : {}),
+    activeVisualizationFindings: snapshot.activeRender
+      ? decodeVisualization(snapshot.activeRender.payload.render.text).findings
+      : [],
     timeline: document.events.map(projectAiTimelineEntry),
     selected: {
       events: selection.eventIds.map((id) => eventDetail(document, id)),
@@ -207,7 +221,19 @@ function resolveVisualSelection(
   const elements = step.instances.flatMap((instance) => {
     if (!selected.has(instance.id)) return [];
     const element = visualization.elements.find(({ id }) => id === instance.elementId);
-    return element ? [{ instanceId: instance.id, ...element }] : [];
+    return element
+      ? [
+          {
+            instanceId: instance.id,
+            ...element,
+            findings: visualization.findings.filter(
+              (finding) =>
+                finding.findingElementIds.includes(element.id) &&
+                finding.findingStepIndices.includes(selection.step)
+            )
+          }
+        ]
+      : [];
   });
   return {
     ...selection,
@@ -249,7 +275,11 @@ function renderSummary(event: ProjectEventOf<'visualization.rendered'>): AiRende
     id: event.id,
     seed: event.payload.seed,
     sourceSha256: event.payload.source.sha256,
-    renderSha256: event.payload.render.sha256
+    renderSha256: event.payload.render.sha256,
+    ...(event.payload.provenance ? { provenance: event.payload.provenance } : {}),
+    ...(event.payload.targetDiagnostics
+      ? { targetDiagnostics: event.payload.targetDiagnostics }
+      : {})
   };
 }
 

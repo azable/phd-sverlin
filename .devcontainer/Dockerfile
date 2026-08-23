@@ -24,6 +24,8 @@ RUN apt-get update \
         gfortran \
         git \
         jq \
+        libfreetype6-dev \
+        libharfbuzz-dev \
         liblapack-dev \
         liblbfgsb-dev \
         libopenblas-dev \
@@ -112,6 +114,8 @@ RUN cabal update \
 RUN ghc --version \
     && cabal --version \
     && highs --version \
+    && pkg-config --modversion freetype2 \
+    && pkg-config --modversion harfbuzz \
     && jq --version \
     && haskell-language-server-wrapper --version \
     && hindent --version \

@@ -1,9 +1,5 @@
 packages: ./compile
-
--- MIP 0.2.0.1 relies on the ParseSettings Default instance removed in
--- xml-conduit 1.9.
-constraints: xml-conduit < 1.9
-allow-newer: xml-conduit:transformers
+          ./vendor/MIP-0.2.0.1
 
 package numeric-optimization
   flags: +with-lbfgsb

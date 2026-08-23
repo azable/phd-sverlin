@@ -105,6 +105,7 @@ module Solver
   , solverProblem
   , solverProblemWithChoices
   , withChoiceConstraints
+  , pinProblemChoices
   , withProblemInitialOverrides
   , CompiledProblem
   , compiledInspection

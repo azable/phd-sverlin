@@ -11,11 +11,33 @@
 module LinearTrace.Visualization.IR
   ( VisualId(..)
   , RenderInstanceId(..)
+  , ResourceId(..)
+  , Sha256(..)
   , CspVariableId(..)
   , CspValue(..)
   , CspVariable(..)
   , CanvasSpec(..)
   , HslColor(..)
+  , LayoutRect(..)
+  , CoordinateSystem(..)
+  , ResourceKind(..)
+  , ResourceDescriptor(..)
+  , FindingSeverity(..)
+  , FindingValue(..)
+  , FindingEvidence(..)
+  , VisualizationFinding(..)
+  , TextDirection(..)
+  , TextWhitespace(..)
+  , TextWrapMode(..)
+  , TextSourceRange(..)
+  , FontAxis(..)
+  , FontInstance(..)
+  , TextLine(..)
+  , TextLayout(..)
+  , CodeTokenKind(..)
+  , CodeToken(..)
+  , CodeHighlightLine
+  , VisualContent(..)
   , VisualStyle(..)
   , StyleVariableBinding(..)
   , VisualElementKind(..)
@@ -40,6 +62,16 @@ newtype VisualId =
 
 newtype RenderInstanceId =
   RenderInstanceId Int
+  deriving (Eq, Ord, Show, Generic)
+
+-- | Stable logical identifier for a content-addressed package resource.
+newtype ResourceId =
+  ResourceId String
+  deriving (Eq, Ord, Show, Generic)
+
+-- | Lower-case hexadecimal SHA-256 digest.
+newtype Sha256 =
+  Sha256 String
   deriving (Eq, Ord, Show, Generic)
 
 newtype CspVariableId =
@@ -70,6 +102,172 @@ data HslColor = HslColor
   , hslSaturation :: Double
   , hslLightness  :: Double
   } deriving (Eq, Show, Generic)
+
+-- | Axis-aligned box in canonical visualization layout units.
+data LayoutRect = LayoutRect
+  { layoutRectX      :: Double
+  , layoutRectY      :: Double
+  , layoutRectWidth  :: Double
+  , layoutRectHeight :: Double
+  } deriving (Eq, Show, Generic)
+
+-- | Explicit renderer-neutral coordinate convention.
+data CoordinateSystem = CoordinateSystem
+  { coordinateSystemName         :: String
+  , coordinateSystemUnitsPerInch :: Double
+  , coordinateSystemOrigin       :: String
+  , coordinateSystemYAxis        :: String
+  } deriving (Eq, Show, Generic)
+
+data ResourceKind
+  = FontResource
+  | TextRunResource
+  | VectorResource
+  deriving (Eq, Show, Generic)
+
+-- | Public metadata for bytes carried beside an IR artifact.
+data ResourceDescriptor = ResourceDescriptor
+  { resourceDescriptorId         :: ResourceId
+  , resourceDescriptorKind       :: ResourceKind
+  , resourceDescriptorSha256     :: Sha256
+  , resourceDescriptorMediaType  :: String
+  , resourceDescriptorByteLength :: Int
+  } deriving (Eq, Show, Generic)
+
+data FindingSeverity
+  = FindingInfo
+  | FindingWarning
+  deriving (Eq, Show, Generic)
+
+data FindingValue
+  = FindingNumber
+      { findingNumberValue :: Double
+      }
+  | FindingText
+      { findingTextValue :: String
+      }
+  | FindingBoolean
+      { findingBooleanValue :: Bool
+      }
+  deriving (Eq, Show, Generic)
+
+data FindingEvidence = FindingEvidence
+  { findingEvidenceKey   :: String
+  , findingEvidenceValue :: FindingValue
+  , findingEvidenceUnit  :: Maybe String
+  } deriving (Eq, Show, Generic)
+
+-- | Deterministic compiler finding retained with successful IR.
+data VisualizationFinding = VisualizationFinding
+  { visualizationFindingId          :: String
+  , visualizationFindingSeverity    :: FindingSeverity
+  , visualizationFindingCode        :: String
+  , visualizationFindingMessage     :: String
+  , visualizationFindingElementIds  :: [VisualId]
+  , visualizationFindingStepIndices :: [Int]
+  , visualizationFindingEvidence    :: [FindingEvidence]
+  } deriving (Eq, Show, Generic)
+
+data TextDirection
+  = TextLeftToRight
+  | TextRightToLeft
+  deriving (Eq, Show, Generic)
+
+data TextWhitespace
+  = TextCollapseWhitespace
+  | TextPreserveWhitespace
+  deriving (Eq, Show, Generic)
+
+data TextWrapMode
+  = TextNoAutomaticWrap
+  | TextPreferSingleLine
+      { textWrapMaximumAutomaticBreaks :: Int
+      }
+  deriving (Eq, Show, Generic)
+
+-- | Half-open UTF-8 byte range in the semantic source text.
+data TextSourceRange = TextSourceRange
+  { textSourceRangeStart :: Int
+  , textSourceRangeEnd   :: Int
+  } deriving (Eq, Show, Generic)
+
+data FontAxis = FontAxis
+  { fontAxisTag   :: String
+  , fontAxisValue :: Double
+  } deriving (Eq, Show, Generic)
+
+-- | Exact managed font instance used for shaping and target rendering.
+data FontInstance = FontInstance
+  { fontInstanceFamily     :: String
+  , fontInstanceResourceId :: ResourceId
+  , fontInstanceWeight     :: Int
+  , fontInstanceStyle      :: String
+  , fontInstanceAxes       :: [FontAxis]
+  , fontInstanceFeatures   :: [String]
+  } deriving (Eq, Show, Generic)
+
+-- | One compiler-selected visual line with an explicit baseline.
+data TextLine = TextLine
+  { textLineSourceRange :: TextSourceRange
+  , textLineDisplayText :: String
+  , textLineOriginX     :: Double
+  , textLineBaselineY   :: Double
+  , textLineAdvance     :: Double
+  , textLineInkBounds   :: LayoutRect
+  } deriving (Eq, Show, Generic)
+
+data TextLayout = TextLayout
+  { textLayoutSource          :: String
+  , textLayoutWhitespace      :: TextWhitespace
+  , textLayoutWrapMode        :: TextWrapMode
+  , textLayoutFont            :: FontInstance
+  , textLayoutFontSize        :: Double
+  , textLayoutPreferredSize   :: Double
+  , textLayoutLineHeight      :: Double
+  , textLayoutDirection       :: TextDirection
+  , textLayoutScript          :: String
+  , textLayoutLanguage        :: String
+  , textLayoutAlignment       :: String
+  , textLayoutContentBox      :: LayoutRect
+  , textLayoutLines           :: [TextLine]
+  , textLayoutTextRunResource :: ResourceId
+  } deriving (Eq, Show, Generic)
+
+-- | Renderer-neutral semantic roles emitted by compiler-owned highlighting.
+data CodeTokenKind
+  = CodeNormal
+  | CodeKeyword
+  | CodeType
+  | CodeNumber
+  | CodeString
+  | CodeComment
+  | CodeFunction
+  | CodeVariable
+  | CodeOperator
+  | CodeError
+  deriving (Eq, Show, Generic)
+
+data CodeToken = CodeToken
+  { codeTokenSourceRange :: TextSourceRange
+  , codeTokenText        :: String
+  , codeTokenKind        :: CodeTokenKind
+  } deriving (Eq, Show, Generic)
+
+type CodeHighlightLine = [CodeToken]
+
+data VisualContent
+  = PlainTextContent
+      { plainTextLayout :: TextLayout
+      }
+  | CodeTextContent
+      { codeTextLayout         :: TextLayout
+      , codeTextLanguage       :: Maybe String
+      , codeTextHighlightLines :: [CodeHighlightLine]
+      }
+  | LegacyTextContent
+      { legacyTextSource :: String
+      }
+  deriving (Eq, Show, Generic)
 
 -- | Concrete counterpart of 'NodeStyle'. Bounds always exist; every other
 -- field is present only when its required or conditional style plan resolves
@@ -114,7 +312,7 @@ data VisualElement = VisualElement
   { elementId             :: VisualId
   , elementRole           :: String
   , elementKind           :: VisualElementKind
-  , elementContent        :: Maybe String
+  , elementContent        :: Maybe VisualContent
   , elementStyle          :: VisualStyle
   , elementStyleVariables :: [StyleVariableBinding]
   } deriving (Eq, Show, Generic)
@@ -152,18 +350,26 @@ data SamplingProvenance = SamplingProvenance
   } deriving (Eq, Show, Generic)
 
 data Visualization = Visualization
-  { visualizationSeed       :: Int
-  , visualizationSourcePath :: FilePath
-  , visualizationSampling   :: Maybe SamplingProvenance
-  , visualizationCanvas     :: CanvasSpec
-  , visualizationVariables  :: [CspVariable]
-  , visualizationElements   :: [VisualElement]
-  , visualizationSteps      :: [TimelineStep]
+  { visualizationIrVersion   :: Int
+  , visualizationSeed        :: Int
+  , visualizationSourcePath  :: FilePath
+  , visualizationSampling    :: Maybe SamplingProvenance
+  , visualizationCoordinates :: CoordinateSystem
+  , visualizationCanvas      :: CanvasSpec
+  , visualizationResources   :: [ResourceDescriptor]
+  , visualizationFindings    :: [VisualizationFinding]
+  , visualizationVariables   :: [CspVariable]
+  , visualizationElements    :: [VisualElement]
+  , visualizationSteps       :: [TimelineStep]
   } deriving (Eq, Show, Generic)
 
 $(deriveJSON irJsonOptions ''VisualId)
 
 $(deriveJSON irJsonOptions ''RenderInstanceId)
+
+$(deriveJSON irJsonOptions ''ResourceId)
+
+$(deriveJSON irJsonOptions ''Sha256)
 
 $(deriveJSON irJsonOptions ''CspVariableId)
 
@@ -172,6 +378,44 @@ $(deriveJSON irJsonOptions ''CspValue)
 $(deriveJSON irJsonOptions ''CspVariable)
 
 $(deriveJSON irJsonOptions ''HslColor)
+
+$(deriveJSON irJsonOptions ''LayoutRect)
+
+$(deriveJSON irJsonOptions ''CoordinateSystem)
+
+$(deriveJSON irJsonOptions ''ResourceKind)
+
+$(deriveJSON irJsonOptions ''ResourceDescriptor)
+
+$(deriveJSON irJsonOptions ''FindingSeverity)
+
+$(deriveJSON irJsonOptions ''FindingValue)
+
+$(deriveJSON irJsonOptions ''FindingEvidence)
+
+$(deriveJSON irJsonOptions ''VisualizationFinding)
+
+$(deriveJSON irJsonOptions ''TextDirection)
+
+$(deriveJSON irJsonOptions ''TextWhitespace)
+
+$(deriveJSON irJsonOptions ''TextWrapMode)
+
+$(deriveJSON irJsonOptions ''TextSourceRange)
+
+$(deriveJSON irJsonOptions ''FontAxis)
+
+$(deriveJSON irJsonOptions ''FontInstance)
+
+$(deriveJSON irJsonOptions ''TextLine)
+
+$(deriveJSON irJsonOptions ''TextLayout)
+
+$(deriveJSON irJsonOptions ''CodeTokenKind)
+
+$(deriveJSON irJsonOptions ''CodeToken)
+
+$(deriveJSON irJsonOptions ''VisualContent)
 
 $(deriveJSON irJsonOptions ''CanvasSpec)
 

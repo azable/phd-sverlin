@@ -18,6 +18,8 @@ export const naturalSchema = v.pipe(integerSchema, v.minValue(0));
 export const positiveSchema = v.pipe(integerSchema, v.minValue(1));
 /** Runtime schema for lowercase SHA-256 digests. */
 export const sha256Schema = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/));
+/** Runtime schema for content-addressed resource identifiers. */
+export const resourceIdSchema = v.pipe(v.string(), v.regex(/^sha256-[a-f0-9]{64}$/));
 /** Runtime schema for project operation UUIDs. */
 export const operationIdSchema = v.pipe(v.string(), v.uuid());
 
@@ -46,6 +48,31 @@ export const diagnosticSchema = v.object({
   column: v.optional(positiveSchema),
   message: v.string(),
   raw: v.string()
+});
+
+/** Runtime schema for an immutable compiler resource stored outside the event log. */
+export const compilationResourceSchema = v.object({
+  id: resourceIdSchema,
+  kind: v.picklist(['fontResource', 'textRunResource', 'vectorResource']),
+  sha256: sha256Schema,
+  mediaType: textSchema,
+  byteLength: naturalSchema
+});
+
+/** Runtime schema for the deterministic compiler package/toolchain contract. */
+export const compilationProvenanceSchema = v.object({
+  packageVersion: positiveSchema,
+  textRunFormatVersion: positiveSchema,
+  shapingEngine: textSchema,
+  shapingEngineVersion: textSchema,
+  fontCatalogSha256: v.optional(sha256Schema)
+});
+
+/** Runtime schema for a successful output target's non-fatal diagnostic. */
+export const targetDiagnosticSchema = v.object({
+  severity: v.picklist(['info', 'warning']),
+  code: textSchema,
+  message: v.string()
 });
 
 /** Runtime schema for source artifacts tracked by a project. */
@@ -105,6 +132,12 @@ export const eventEnvelope = {
 export type RecordedText = v.InferOutput<typeof recordedTextSchema>;
 /** Structured compiler diagnostic retained in project history. */
 export type CompilerDiagnostic = v.InferOutput<typeof diagnosticSchema>;
+/** Content-addressed compiler resource referenced by project events. */
+export type CompilationResource = v.InferOutput<typeof compilationResourceSchema>;
+/** Versioned compiler package and shaping-engine provenance. */
+export type CompilationProvenance = v.InferOutput<typeof compilationProvenanceSchema>;
+/** Non-fatal diagnostic emitted by a concrete output target. */
+export type TargetDiagnostic = v.InferOutput<typeof targetDiagnosticSchema>;
 /** Metadata for one versioned project source artifact. */
 export type ProjectArtifact = v.InferOutput<typeof projectArtifactSchema>;
 /** Upsert or deletion applied by an artifact-version event. */

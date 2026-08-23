@@ -1,10 +1,21 @@
 <script lang="ts">
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
-  import { scale } from 'svelte/transition';
 
   import { Button } from '$lib/client/components/ui/button';
 
-  import type { HslColor, LiveElement, RenderInstanceId } from './types';
+  import {
+    compilerFontFamily,
+    ensureCompilerFont,
+    fontFeatureSettings,
+    fontVariationSettings
+  } from './font-resources';
+  import type {
+    HslColor,
+    CodeTokenKind,
+    LiveElement,
+    RenderInstanceId,
+    TextRuntimeObservation
+  } from './types';
 
   /** Public properties for the pannable, zoomable visualization viewport. */
   type Props = {
@@ -12,7 +23,10 @@
     height: number;
     elements: LiveElement[];
     selectedIds?: RenderInstanceId[];
+    resourceBaseUrl?: string;
     onSelectionChange?: (ids: RenderInstanceId[]) => void;
+    onFontLoadFailure?: (resourceId: string, message: string) => void;
+    onRuntimeObservation?: (observation: TextRuntimeObservation) => void;
   };
 
   let {
@@ -20,7 +34,10 @@
     height,
     elements,
     selectedIds = $bindable<RenderInstanceId[]>([]),
-    onSelectionChange = (_ids: RenderInstanceId[]) => {}
+    resourceBaseUrl,
+    onSelectionChange = (_ids: RenderInstanceId[]) => {},
+    onFontLoadFailure = (_resourceId: string, _message: string) => {},
+    onRuntimeObservation = (_observation: TextRuntimeObservation) => {}
   }: Props = $props();
 
   let svg = $state<SVGSVGElement | null>(null);
@@ -31,6 +48,7 @@
   let dragMode = $state<'pan' | 'select' | null>(null);
   let dragStart = $state({ x: 0, y: 0 });
   let dragCurrent = $state({ x: 0, y: 0 });
+  let fontStates = $state<Record<string, 'loading' | 'ready' | 'failed'>>({});
 
   const minZoom = 0.25;
   const maxZoom = 6;
@@ -54,6 +72,37 @@
         }
       : null
   );
+
+  $effect(() => {
+    for (const element of elements) {
+      if (
+        element.content?.kind !== 'plainTextContent' &&
+        element.content?.kind !== 'codeTextContent'
+      ) {
+        continue;
+      }
+      const font = element.content.textLayout.layoutFont;
+      const resourceId = font.instanceResourceId;
+      if (fontStates[resourceId]) continue;
+      if (!resourceBaseUrl) {
+        fontStates[resourceId] = 'failed';
+        onFontLoadFailure(resourceId, 'No compiler resource URL was supplied for this font.');
+        continue;
+      }
+
+      fontStates[resourceId] = 'loading';
+      const resourceUrl = `${resourceBaseUrl.replace(/\/$/, '')}/${encodeURIComponent(resourceId)}`;
+      void ensureCompilerFont(font, resourceUrl).then(
+        () => {
+          fontStates[resourceId] = 'ready';
+        },
+        (cause: unknown) => {
+          fontStates[resourceId] = 'failed';
+          onFontLoadFailure(resourceId, cause instanceof Error ? cause.message : String(cause));
+        }
+      );
+    }
+  });
 
   function resetViewport() {
     zoom = 1;
@@ -185,6 +234,106 @@
   function unique(ids: RenderInstanceId[]) {
     return [...new Set(ids)];
   }
+
+  function borderDasharray(borderStyle: string | undefined): string | undefined {
+    if (borderStyle === 'dashed') return '6 4';
+    if (borderStyle === 'dotted') return '2 3';
+    return undefined;
+  }
+
+  function codeTokenColor(kind: CodeTokenKind): string {
+    switch (kind) {
+      case 'codeKeyword':
+        return '#7c3aed';
+      case 'codeType':
+        return '#0f766e';
+      case 'codeNumber':
+        return '#1d4ed8';
+      case 'codeString':
+        return '#15803d';
+      case 'codeComment':
+        return '#64748b';
+      case 'codeFunction':
+        return '#0369a1';
+      case 'codeVariable':
+        return '#9a3412';
+      case 'codeOperator':
+        return '#334155';
+      case 'codeError':
+        return '#dc2626';
+      case 'codeNormal':
+        return '#0f172a';
+    }
+  }
+
+  function legacyTextX(element: LiveElement): number {
+    const padding = element.style.padding ?? 0;
+    if (element.style.textAlign === 'left') return element.style.left + padding;
+    if (element.style.textAlign === 'right') {
+      return element.style.left + element.style.width - padding;
+    }
+    return element.style.left + element.style.width / 2;
+  }
+
+  function legacyTextAnchor(element: LiveElement): 'start' | 'middle' | 'end' {
+    if (element.style.textAlign === 'left') return 'start';
+    if (element.style.textAlign === 'right') return 'end';
+    return 'middle';
+  }
+
+  type TextProbe = {
+    instanceId: RenderInstanceId;
+    elementId: number;
+    lineIndex: number;
+    fontResourceId: string;
+    expectedAdvance: number;
+    fontState: 'loading' | 'ready' | 'failed' | undefined;
+  };
+
+  function observeText(node: SVGTextElement, initial: TextProbe) {
+    let probe = initial;
+    let disposed = false;
+    let lastReport = '';
+
+    function measure() {
+      if (disposed || probe.fontState !== 'ready') return;
+      void document.fonts.ready.then(() => {
+        requestAnimationFrame(() => {
+          if (disposed) return;
+          const textLength = node.getAttribute('textLength');
+          node.removeAttribute('textLength');
+          const measuredAdvance = node.getComputedTextLength();
+          if (textLength !== null) node.setAttribute('textLength', textLength);
+          const difference = Math.abs(measuredAdvance - probe.expectedAdvance);
+          const tolerance = Math.max(0.25, probe.expectedAdvance * 0.005);
+          const reportKey = `${probe.fontResourceId}:${probe.expectedAdvance}:${measuredAdvance.toFixed(3)}`;
+          if (difference <= tolerance || reportKey === lastReport) return;
+          lastReport = reportKey;
+          onRuntimeObservation({
+            code: 'text.metric-mismatch',
+            instanceId: probe.instanceId,
+            elementId: probe.elementId,
+            lineIndex: probe.lineIndex,
+            fontResourceId: probe.fontResourceId,
+            expectedAdvance: probe.expectedAdvance,
+            measuredAdvance,
+            difference
+          });
+        });
+      });
+    }
+
+    measure();
+    return {
+      update(next: TextProbe) {
+        probe = next;
+        measure();
+      },
+      destroy() {
+        disposed = true;
+      }
+    };
+  }
 </script>
 
 <div class="viewport" aria-label="Visualization canvas">
@@ -222,49 +371,150 @@
         stroke-dasharray="6 4"
         vector-effect="non-scaling-stroke"
       />
-      <foreignObject x="0" y="0" {width} {height}>
-        <div class="visual-canvas" xmlns="http://www.w3.org/1999/xhtml">
-          {#each orderedElements as element (element.instanceId)}
-            {@const style = element.style}
-            <div
-              data-visual-id={element.id}
-              data-instance-id={element.instanceId}
-              class="visual-presence"
-              aria-label={`${element.role} ${element.id}`}
-              style:top={`${style.top}px`}
-              style:left={`${style.left}px`}
-              style:width={`${style.width}px`}
-              style:height={`${style.height}px`}
-              style:z-index={style.zIndex}
-              transition:scale={{ duration: 300, start: 0.9 }}
+      <defs>
+        {#each orderedElements as element (element.instanceId)}
+          <clipPath id={`visual-clip-${element.instanceId}`}>
+            <rect
+              x={element.style.left}
+              y={element.style.top}
+              width={element.style.width}
+              height={element.style.height}
+              rx={element.style.radius ?? 0}
+            />
+          </clipPath>
+        {/each}
+      </defs>
+
+      {#each orderedElements as element (element.instanceId)}
+        {@const style = element.style}
+        <g
+          data-visual-id={element.id}
+          data-instance-id={element.instanceId}
+          class="visual-presence"
+          aria-label={`${element.role} ${element.id}`}
+          opacity={style.opacity ?? 1}
+        >
+          <rect
+            class="visual-element"
+            x={style.left}
+            y={style.top}
+            width={style.width}
+            height={style.height}
+            rx={style.radius ?? 0}
+            fill={color(style.fill, style.alpha)}
+            stroke={style.borderStyle === 'none'
+              ? 'none'
+              : color(style.stroke, style.alpha, 'currentColor')}
+            stroke-width={style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}
+            stroke-dasharray={borderDasharray(style.borderStyle)}
+          />
+
+          {#if element.content?.kind === 'plainTextContent'}
+            {@const layout = element.content.textLayout}
+            {@const font = layout.layoutFont}
+            <g
+              class:font-ready={fontStates[font.instanceResourceId] === 'ready'}
+              class="compiler-text"
+              clip-path={`url(#visual-clip-${element.instanceId})`}
+              aria-label={layout.layoutSource}
             >
-              <div
-                class:selected={selectedIds.includes(element.instanceId)}
-                class="visual-element"
-                style:opacity={style.opacity ?? 1}
-                style:padding={`${style.padding ?? 0}px`}
-                style:border-radius={`${style.radius ?? 0}px`}
-                style:border-width={`${style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}px`}
-                style:border-style={style.borderStyle ?? 'solid'}
-                style:border-color={color(style.stroke, style.alpha, 'currentColor')}
-                style:background-color={color(style.fill, style.alpha)}
-                style:font-family={style.fontFamily}
-                style:font-size={`${style.fontSize ?? 14}px`}
-                style:font-weight={style.fontWeight}
-                style:font-style={style.fontStyle}
-                style:text-align={style.textAlign ?? 'center'}
-                style:white-space={style.whiteSpace ?? 'normal'}
-              >
-                {#if element.content}
-                  <div class="visual-content">
-                    {element.content}
-                  </div>
-                {/if}
-              </div>
-            </div>
-          {/each}
-        </div>
-      </foreignObject>
+              {#each layout.layoutLines as line, lineIndex (lineIndex)}
+                <text
+                  use:observeText={{
+                    instanceId: element.instanceId,
+                    elementId: element.id,
+                    lineIndex,
+                    fontResourceId: font.instanceResourceId,
+                    expectedAdvance: line.lineAdvance,
+                    fontState: fontStates[font.instanceResourceId]
+                  }}
+                  x={line.lineOriginX}
+                  y={line.lineBaselineY}
+                  fill="#0f172a"
+                  font-family={compilerFontFamily(font.instanceResourceId)}
+                  font-size={layout.layoutFontSize}
+                  font-style={font.instanceStyle}
+                  font-weight={font.instanceWeight}
+                  direction={layout.layoutDirection === 'textRightToLeft' ? 'rtl' : 'ltr'}
+                  text-anchor="start"
+                  lengthAdjust="spacing"
+                  textLength={line.lineAdvance > 0 ? line.lineAdvance : undefined}
+                  style:font-feature-settings={fontFeatureSettings(font)}
+                  style:font-optical-sizing="none"
+                  style:font-variation-settings={fontVariationSettings(font)}
+                  >{line.lineDisplayText}</text
+                >
+              {/each}
+            </g>
+          {:else if element.content?.kind === 'codeTextContent'}
+            {@const layout = element.content.textLayout}
+            {@const font = layout.layoutFont}
+            <g
+              class:font-ready={fontStates[font.instanceResourceId] === 'ready'}
+              class="compiler-text"
+              clip-path={`url(#visual-clip-${element.instanceId})`}
+              aria-label={layout.layoutSource}
+            >
+              {#each layout.layoutLines as line, lineIndex (lineIndex)}
+                {@const highlights = element.content.textHighlightLines[lineIndex]}
+                <text
+                  use:observeText={{
+                    instanceId: element.instanceId,
+                    elementId: element.id,
+                    lineIndex,
+                    fontResourceId: font.instanceResourceId,
+                    expectedAdvance: line.lineAdvance,
+                    fontState: fontStates[font.instanceResourceId]
+                  }}
+                  x={line.lineOriginX}
+                  y={line.lineBaselineY}
+                  fill="#0f172a"
+                  font-family={compilerFontFamily(font.instanceResourceId)}
+                  font-size={layout.layoutFontSize}
+                  font-style={font.instanceStyle}
+                  font-weight={font.instanceWeight}
+                  direction={layout.layoutDirection === 'textRightToLeft' ? 'rtl' : 'ltr'}
+                  text-anchor="start"
+                  lengthAdjust="spacing"
+                  textLength={line.lineAdvance > 0 ? line.lineAdvance : undefined}
+                  style:font-feature-settings={fontFeatureSettings(font)}
+                  style:font-optical-sizing="none"
+                  style:font-variation-settings={fontVariationSettings(font)}
+                  >{#if highlights}{#each highlights as token, tokenIndex (tokenIndex)}<tspan
+                        fill={codeTokenColor(token.tokenKind)}>{token.tokenText}</tspan
+                      >{/each}{/if}</text
+                >
+              {/each}
+            </g>
+          {:else if element.content?.kind === 'legacyTextContent'}
+            <text
+              class="legacy-text"
+              x={legacyTextX(element)}
+              y={style.top + style.height / 2}
+              fill="#0f172a"
+              font-family={style.fontFamily}
+              font-size={style.fontSize ?? 14}
+              font-style={style.fontStyle}
+              font-weight={style.fontWeight}
+              text-anchor={legacyTextAnchor(element)}
+              dominant-baseline="middle"
+              clip-path={`url(#visual-clip-${element.instanceId})`}
+              >{element.content.textSource}</text
+            >
+          {/if}
+
+          {#if selectedIds.includes(element.instanceId)}
+            <rect
+              class="selection-outline"
+              x={style.left}
+              y={style.top}
+              width={style.width}
+              height={style.height}
+              rx={style.radius ?? 0}
+            />
+          {/if}
+        </g>
+      {/each}
 
       {#if selectionBox}
         <rect class="selection-box" {...selectionBox} />
@@ -301,53 +551,39 @@
     pointer-events: none;
   }
 
-  .visual-canvas {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    color: #0f172a;
-  }
-
   .visual-presence {
-    position: absolute;
-    box-sizing: border-box;
-    transition:
-      top 300ms ease,
-      left 300ms ease,
-      width 300ms ease,
-      height 300ms ease;
+    cursor: pointer;
   }
 
   .visual-element {
-    display: flex;
-    width: 100%;
-    height: 100%;
-    box-sizing: border-box;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    cursor: pointer;
-    user-select: none;
     transition:
-      opacity 300ms ease,
-      padding 300ms ease,
-      border-color 300ms ease,
-      border-radius 300ms ease,
-      border-width 300ms ease,
-      background-color 300ms ease,
-      font-size 300ms ease;
+      fill 300ms ease,
+      stroke 300ms ease;
   }
 
-  .visual-content {
-    width: 100%;
-    overflow: hidden;
+  .compiler-text,
+  .legacy-text {
+    pointer-events: none;
+    white-space: pre;
   }
 
-  .visual-element.selected {
-    box-shadow:
-      0 0 0 2px #2563eb,
-      0 0 5px rgb(37 99 235 / 0.9);
+  .compiler-text {
+    font-synthesis: none;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .compiler-text.font-ready {
+    opacity: 1;
+  }
+
+  .selection-outline {
+    fill: none;
+    stroke: #2563eb;
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+    filter: drop-shadow(0 0 2px rgb(37 99 235 / 0.9));
   }
 
   .selection-box {

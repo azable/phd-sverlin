@@ -12,3 +12,15 @@ import type { RenderInstanceId, VisualElement } from '$lib/shared/visualization'
 export type LiveElement = VisualElement & {
   instanceId: RenderInstanceId;
 };
+
+/** Ephemeral renderer evidence kept separate from immutable compiler findings. */
+export type TextRuntimeObservation = {
+  code: 'text.metric-mismatch';
+  instanceId: RenderInstanceId;
+  elementId: number;
+  lineIndex: number;
+  fontResourceId: string;
+  expectedAdvance: number;
+  measuredAdvance: number;
+  difference: number;
+};
