@@ -339,9 +339,8 @@ conditionalStyleSpec selectedTreatment =
       height (by 80)
       styleCase @Fill treatment $ \candidate ->
         case candidate of
-          TestPlain -> P.Nothing
-          TestFilled ->
-            P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
+          TestPlain  -> P.Nothing
+          TestFilled -> P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
     ensure $ treatment .==. selectedTreatment
 
 conditionalStyleAccessSpec :: MatchSpec
@@ -354,9 +353,8 @@ conditionalStyleAccessSpec =
       height (by 80)
       styleCase @Fill treatment $ \candidate ->
         case candidate of
-          TestPlain -> P.Nothing
-          TestFilled ->
-            P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
+          TestPlain  -> P.Nothing
+          TestFilled -> P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
     ensure
       $ styleOf @Fill item .==. Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit)
 

@@ -25,8 +25,8 @@ import           Solver.Constraint
 import           Solver.Expr
 import           Solver.Problem
 import           Solver.Random
-import           System.IO                            (hClose, hPutStrLn)
-import           System.IO.Temp                       (withSystemTempFile)
+import           System.IO                             (hClose, hPutStrLn)
+import           System.IO.Temp                        (withSystemTempFile)
 
 type Assignment = Map String String
 
@@ -100,9 +100,6 @@ buildMipProblem seed domains problem = do
          (guardedConstraints [] (solverConstraints problem)))
   let binaries = Map.elems (choiceMipVariables variables)
       objectiveUnits = randomUnitsFromSeed (deriveSeed seed "highs.objective")
-      -- MIP 0.2.0.1's HiGHS solution parser rejects signed numeric fields.
-      -- Positive costs preserve randomized selection because every domain is
-      -- one-hot, so a common cost translation per domain is constant.
       objective =
         sum
           [ scientificExpr unit * MIP.varExpr variable
@@ -131,6 +128,9 @@ buildMipProblem seed domains problem = do
           , MIP.constraints = oneHot ++ categorical ++ numeric
           , MIP.varDomains = variableDomains
           }
+      -- MIP 0.2.0.1's HiGHS solution parser rejects signed numeric fields.
+      -- Positive costs preserve randomized selection because every domain is
+      -- one-hot, so a common cost translation per domain is constant.
   pure (variables, mipProblem)
 
 makeMipVariables ::
@@ -288,8 +288,7 @@ affineMaximum bounds row =
           else maybeBound name "lower" (domainLowerBound variableBounds)
       pure (total + coefficient * bound)
 
-affineLowerShift ::
-     Map String DomainBounds -> AffineRow -> Either String Double
+affineLowerShift :: Map String DomainBounds -> AffineRow -> Either String Double
 affineLowerShift bounds row =
   foldl addTerm (Right 0) (Map.toAscList (affineRowCoefficients row))
   where
@@ -300,8 +299,7 @@ affineLowerShift bounds row =
           (Left ("missing bounds for MIP variable " ++ show name))
           Right
           (Map.lookup name bounds)
-      lower <-
-        maybeBound name "lower" (domainLowerBound variableBounds)
+      lower <- maybeBound name "lower" (domainLowerBound variableBounds)
       pure (total + coefficient * lower)
 
 maybeBound :: String -> String -> Maybe Double -> Either String Double
@@ -359,15 +357,15 @@ choiceVariable variables name token =
     (choiceMipVariables variables)
 
 shiftedScientificBounds :: DomainBounds -> MIP.Bounds Scientific
-shiftedScientificBounds bounds =
+shiftedScientificBounds bounds
   -- The shift is also reflected in every lowered affine row. Besides improving
   -- conditioning, nonnegative columns avoid signed primal values that the MIP
   -- 0.2.0.1 HiGHS solution parser cannot read.
+ =
   case (domainLowerBound bounds, domainUpperBound bounds) of
     (Just lower, Just upper) ->
       (MIP.Finite 0, MIP.Finite (scientific (upper - lower)))
-    _ ->
-      error "non-finite numeric bounds reached affine MIP variable lowering"
+    _ -> error "non-finite numeric bounds reached affine MIP variable lowering"
 
 scientific :: Double -> Scientific
 scientific = fromFloatDigits

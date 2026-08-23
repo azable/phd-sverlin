@@ -56,7 +56,9 @@ style ::
 style input =
   setStyleWith (VS.setStyleField @field (styleFieldInput @field input))
 
-withoutStyle :: forall field. VS.StyleField field => NodeRecipe ()
+withoutStyle ::
+     forall field. VS.StyleField field
+  => NodeRecipe ()
 withoutStyle = setStyleWith (VS.forbidStyleField @field)
 
 styleCase ::

@@ -398,8 +398,7 @@ data StyleFieldPlan field where
   RequiredStyle :: StyleValue field -> StyleFieldPlan field
   ForbiddenStyle :: StyleFieldPlan field
   ConditionalStyle
-    :: ChoiceDomain value
-    => Choice value
+    :: ChoiceDomain value=> Choice value
     -> [(String, Maybe (StyleValue field))]
     -> StyleFieldPlan field
 
@@ -421,10 +420,7 @@ data NodeStyle = NodeStyle
 nodeStyleWithBounds :: BoundsExpr -> NodeStyle
 nodeStyleWithBounds bounds =
   NodeStyle
-    { nodeStyleBounds = bounds
-    , nodeStyleFields = []
-    , nodeStyleFamily = Nothing
-    }
+    {nodeStyleBounds = bounds, nodeStyleFields = [], nodeStyleFamily = Nothing}
 
 instance HasBounds NodeStyle where
   top = top . nodeStyleBounds
@@ -446,7 +442,10 @@ getStyleField style' = go (nodeStyleFields style')
             Just Refl -> requiredStyleValue plan
             Nothing   -> go rest
 
-hasStyleField :: forall field. StyleField field => NodeStyle -> Bool
+hasStyleField ::
+     forall field. StyleField field
+  => NodeStyle
+  -> Bool
 hasStyleField style' =
   case getStyleFieldPlan @field style' of
     Nothing -> False
@@ -455,8 +454,8 @@ hasStyleField style' =
 requiredStyleValue :: StyleFieldPlan field -> Maybe (StyleValue field)
 requiredStyleValue plan =
   case plan of
-    RequiredStyle value -> Just value
-    ForbiddenStyle      -> Nothing
+    RequiredStyle value  -> Just value
+    ForbiddenStyle       -> Nothing
     ConditionalStyle _ _ -> Nothing
 
 setStyleField ::
@@ -467,12 +466,14 @@ setStyleField ::
 setStyleField value style' =
   setStyleFieldPlan @field (RequiredStyle value) style'
 
-forbidStyleField :: forall field. StyleField field => NodeStyle -> NodeStyle
+forbidStyleField ::
+     forall field. StyleField field
+  => NodeStyle
+  -> NodeStyle
 forbidStyleField = setStyleFieldPlan @field ForbiddenStyle
 
 setConditionalStyleField ::
-     forall field value.
-     (StyleField field, ChoiceDomain value)
+     forall field value. (StyleField field, ChoiceDomain value)
   => Choice value
   -> (value -> Maybe (StyleValue field))
   -> NodeStyle
@@ -481,9 +482,7 @@ setConditionalStyleField selected valueFor =
   setStyleFieldPlan @field
     (ConditionalStyle
        selected
-       [ (choiceToken value, valueFor value)
-       | value <- choiceDomain :: [value]
-       ])
+       [(choiceToken value, valueFor value) | value <- choiceDomain :: [value]])
 
 setStyleFieldPlan ::
      forall field. StyleField field
@@ -514,12 +513,14 @@ requireStyleField vars style' =
     Just plan ->
       case plan of
         RequiredStyle _ -> style'
-        ForbiddenStyle ->
-          invalidStyleAccess @field "explicitly forbidden"
+        ForbiddenStyle -> invalidStyleAccess @field "explicitly forbidden"
         ConditionalStyle _ _ ->
           invalidStyleAccess @field "conditionally present"
 
-invalidStyleAccess :: forall field value. StyleField field => String -> value
+invalidStyleAccess ::
+     forall field value. StyleField field
+  => String
+  -> value
 invalidStyleAccess state =
   error
     ("styleOf @"
@@ -535,7 +536,7 @@ materializeStyleField ::
   -> Either String (Maybe (ResolvedStyleValue field))
 materializeStyleField solution style' =
   case getStyleFieldPlan @field style' of
-    Nothing   -> Right Nothing
+    Nothing -> Right Nothing
     Just plan -> do
       active <- activeStyleValue solution plan
       traverse (materializeStyleValue (Proxy @field) solution) active
@@ -561,7 +562,7 @@ activeStyleValue ::
 activeStyleValue solution plan =
   case plan of
     RequiredStyle value -> Right (Just value)
-    ForbiddenStyle      -> Right Nothing
+    ForbiddenStyle -> Right Nothing
     ConditionalStyle selected alternatives -> do
       selectedValue <-
         maybe
@@ -611,15 +612,13 @@ mapAnyStyleFieldExprs f field =
       AnyStyleField proxy (mapStyleFieldPlanExprs @field f plan)
 
 mapStyleFieldPlanExprs ::
-     forall field.
-     StyleField field
+     forall field. StyleField field
   => (forall (ty :: Type). Expr ty -> Expr ty)
   -> StyleFieldPlan field
   -> StyleFieldPlan field
 mapStyleFieldPlanExprs f plan =
   case plan of
-    RequiredStyle value ->
-      RequiredStyle (mapStyleValueExprs @field f value)
+    RequiredStyle value -> RequiredStyle (mapStyleValueExprs @field f value)
     ForbiddenStyle -> ForbiddenStyle
     ConditionalStyle selected alternatives ->
       ConditionalStyle
@@ -646,10 +645,9 @@ anyStyleFieldExprLeaves field =
 styleFieldPlanValues :: StyleFieldPlan field -> [StyleValue field]
 styleFieldPlanValues plan =
   case plan of
-    RequiredStyle value -> [value]
-    ForbiddenStyle      -> []
-    ConditionalStyle _ alternatives ->
-      mapMaybe snd alternatives
+    RequiredStyle value             -> [value]
+    ForbiddenStyle                  -> []
+    ConditionalStyle _ alternatives -> mapMaybe snd alternatives
 
 mapNodeStyleExprLeaves ::
      (forall (ty :: Type). String -> Expr ty -> a) -> NodeStyle -> [a]
@@ -689,7 +687,8 @@ controllingChoice plan =
 styleVariableBindings ::
      Solution -> NodeStyle -> Either String [(String, [String])]
 styleVariableBindings solution style' = do
-  activeFields <- traverse (activeFieldBinding solution) (nodeStyleFields style')
+  activeFields <-
+    traverse (activeFieldBinding solution) (nodeStyleFields style')
   pure
     [ (field, nub variables)
     | (field, variables) <- Map.toAscList (grouped activeFields)
@@ -699,8 +698,7 @@ styleVariableBindings solution style' = do
     grouped activeFields =
       Map.fromListWith
         (++)
-        (map boundsBinding (boundsExprLeaves style')
-           ++ concat activeFields)
+        (map boundsBinding (boundsExprLeaves style') ++ concat activeFields)
     boundsBinding leaf =
       case leaf of
         StyleExprLeaf name expr -> numericBinding name expr
@@ -723,7 +721,7 @@ activeFieldBinding solution field =
       active <- activeStyleValue solution plan
       pure
         (case active of
-           Nothing    -> []
+           Nothing -> []
            Just value ->
              styleValueBindings proxy value
                ++ conditionalChoiceBinding proxy plan)
@@ -740,13 +738,9 @@ conditionalChoiceBinding proxy plan =
     _ -> []
 
 styleValueBindings ::
-     StyleField field
-  => Proxy field
-  -> StyleValue field
-  -> [(String, [String])]
+     StyleField field => Proxy field -> StyleValue field -> [(String, [String])]
 styleValueBindings proxy value =
-  map numericBinding (styleValueExprLeaves proxy value)
-    ++ choiceBinding
+  map numericBinding (styleValueExprLeaves proxy value) ++ choiceBinding
   where
     field = styleFieldName proxy
     numericBinding leaf =

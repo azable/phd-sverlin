@@ -23,7 +23,7 @@ import           Prelude.Linear                    (Ur (..))
 import qualified Prelude.Linear                    as Linear
 import           Solver
 import           Solver.TestFixtures
-import           System.Timeout                      (timeout)
+import           System.Timeout                    (timeout)
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -285,8 +285,7 @@ viewMaterializationTests =
             assertBool "expected concrete fill" (isJust (IR.visualFill style'))
           [] -> assertFailure "expected at least one compiled render element"
     , testCase "conditional style cases emit only the selected branch" $ do
-        absent <-
-          solveAndCompile 31 ChoreographyFixtures.conditionalAbsentGraph
+        absent <- solveAndCompile 31 ChoreographyFixtures.conditionalAbsentGraph
         present <-
           solveAndCompile 31 ChoreographyFixtures.conditionalPresentGraph
         map (IR.visualFill . IR.elementStyle) (renderElements absent)
@@ -307,15 +306,15 @@ viewMaterializationTests =
         assertErrorContains
           "conditional style access"
           "conditionally present"
-          (evaluate (statsTotal ChoreographyFixtures.conditionalStyleAccessStats))
+          (evaluate
+             (statsTotal ChoreographyFixtures.conditionalStyleAccessStats))
     , testCase "style access rejects explicitly forbidden presence" $ do
         assertErrorContains
           "forbidden style access"
           "explicitly forbidden"
           (evaluate (statsTotal ChoreographyFixtures.forbiddenStyleAccessStats))
     , testCase "forbidden styles remain absent under automatic profiles" $ do
-        compiled <-
-          solveAndCompile 32 ChoreographyFixtures.forbiddenStyleGraph
+        compiled <- solveAndCompile 32 ChoreographyFixtures.forbiddenStyleGraph
         map (IR.visualFill . IR.elementStyle) (renderElements compiled)
           @?= [Nothing, Nothing]
     , testCase "automatic leaf profiles cover every balanced treatment" $ do
@@ -324,8 +323,7 @@ viewMaterializationTests =
             (map RandomSeed [1 .. 64])
             ChoreographyFixtures.generativeGraph
         List.sort
-          (List.nub
-             (concatMap (profileChoiceValues ".leaf.profile") solutions))
+          (List.nub (concatMap (profileChoiceValues ".leaf.profile") solutions))
           @?= [ "editorial"
               , "flat"
               , "outline"
@@ -344,13 +342,8 @@ viewMaterializationTests =
             (map RandomSeed [1 .. 64])
             ChoreographyFixtures.generativeGroupGraph
         List.sort
-          (List.nub
-             (concatMap (profileChoiceValues ".group.profile") solutions))
-          @?= [ "invisible"
-              , "rounded-outline"
-              , "soft-panel"
-              , "square-outline"
-              ]
+          (List.nub (concatMap (profileChoiceValues ".group.profile") solutions))
+          @?= ["invisible", "rounded-outline", "soft-panel", "square-outline"]
     , testCase "inferred peers share automatic profile tokens" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -380,9 +373,7 @@ viewMaterializationTests =
         length (profileChoiceValues ".leaf.profile" solution) @?= 2
     , testCase "style access remains required before profile injection" $ do
         compiled <-
-          solveAndCompile
-            35
-            ChoreographyFixtures.generativeRequiredStyleGraph
+          solveAndCompile 35 ChoreographyFixtures.generativeRequiredStyleGraph
         mapM_
           (\element ->
              case IR.visualFill (IR.elementStyle element) of
@@ -924,17 +915,15 @@ designSpaceTests =
             (map RandomSeed [1 .. 16])
             design
         solutions <- assertDesignSampled sampled
-        let selected =
-              map (Map.lookup decisionName . solutionChoices) solutions
+        let selected = map (Map.lookup decisionName . solutionChoices) solutions
         assertBool "expected low MIP assignments" (Just "low" `elem` selected)
         assertBool "expected high MIP assignments" (Just "high" `elem` selected)
         mapM_
           (\solution -> do
              solutionSampling solution
-               @?= SampledWith
-                     BalancedDesignChoices
-                     MipConditionedDecisions
-             case (Map.lookup decisionName (solutionChoices solution), evalExpr solution x) of
+               @?= SampledWith BalancedDesignChoices MipConditionedDecisions
+             case ( Map.lookup decisionName (solutionChoices solution)
+                  , evalExpr solution x) of
                (Just "low", Just value) ->
                  assertBool
                    "low MIP branch escaped its region"
@@ -960,12 +949,10 @@ designSpaceTests =
         completed <-
           timeout
             (5 * 1000 * 1000)
-            (sampleDesignSpace
-               BalancedDesignChoices
-               (RandomSeed 1)
-               design)
+            (sampleDesignSpace BalancedDesignChoices (RandomSeed 1) design)
         case completed of
-          Nothing -> assertFailure "HiGHS infeasibility sampling did not terminate"
+          Nothing ->
+            assertFailure "HiGHS infeasibility sampling did not terminate"
           Just (Left (SamplingFailed message)) ->
             assertBool
               ("unexpected HiGHS failure: " ++ message)

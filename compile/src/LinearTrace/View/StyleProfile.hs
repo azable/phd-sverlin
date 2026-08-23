@@ -54,11 +54,7 @@ data GroupProfile
 
 instance S.ChoiceDomain GroupProfile where
   choiceDomain =
-    [ GroupInvisible
-    , GroupSquareOutline
-    , GroupRoundedOutline
-    , GroupSoftPanel
-    ]
+    [GroupInvisible, GroupSquareOutline, GroupRoundedOutline, GroupSoftPanel]
   choiceToken profile =
     case profile of
       GroupInvisible      -> "invisible"
@@ -76,7 +72,7 @@ applyProfile wrapped =
       let family = styleFamilyKey node
           (style', constraints) =
             case nodeStructure node of
-              LeafNode       -> leafStyle family (nodeStyle node)
+              LeafNode         -> leafStyle family (nodeStyle node)
               CompoundNode _ _ -> groupStyle family (nodeStyle node)
        in ViewNode
             node
@@ -91,10 +87,8 @@ styleFamilyKey node =
        Just explicit -> structurePrefix node ++ ":explicit:" ++ explicit
        Nothing ->
          case nodeOrigin node of
-           TraceOrigin _ ->
-             "leaf:payload:" ++ viewLabelKind (nodeLabel node)
-           GeneratedOrigin meta ->
-             "group:generated:" ++ generatedKey meta)
+           TraceOrigin _ -> "leaf:payload:" ++ viewLabelKind (nodeLabel node)
+           GeneratedOrigin meta -> "group:generated:" ++ generatedKey meta)
 
 structurePrefix :: Node tag -> String
 structurePrefix node =
@@ -108,8 +102,7 @@ leafStyle family style0 =
   , concat
       [ constraintsWhenMissing @Style.Fill style0 (fillConstraints fill)
       , constraintsWhenMissing @Style.Stroke style0 (strokeConstraints stroke)
-      , constraintsWhenMissing
-          @Style.Radius
+      , constraintsWhenMissing @Style.Radius
           style0
           [S.within softRadius (S.Range 6 16)]
       ])
@@ -119,54 +112,27 @@ leafStyle family style0 =
     fill = familyFill base
     stroke = familyStroke base
     softRadius = S.var (base ++ ".soft-card.radius") :: LayoutExpr
-    style1 =
-      conditionalWhenMissing @Style.Fill
-        profile
-        (leafFill fill)
-        style0
+    style1 = conditionalWhenMissing @Style.Fill profile (leafFill fill) style0
     style2 =
-      conditionalWhenMissing @Style.Stroke
-        profile
-        (leafStroke stroke)
-        style1
+      conditionalWhenMissing @Style.Stroke profile (leafStroke stroke) style1
     style3 =
-      conditionalWhenMissing @Style.StrokeWidth
-        profile
-        leafStrokeWidth
-        style2
+      conditionalWhenMissing @Style.StrokeWidth profile leafStrokeWidth style2
     style4 =
-      conditionalWhenMissing @Style.BorderStyle
-        profile
-        leafBorderStyle
-        style3
-    style5 =
-      conditionalWhenMissing @Style.Padding
-        profile
-        leafPadding
-        style4
+      conditionalWhenMissing @Style.BorderStyle profile leafBorderStyle style3
+    style5 = conditionalWhenMissing @Style.Padding profile leafPadding style4
     style6 =
       conditionalWhenMissing @Style.Radius
         profile
         (leafRadius softRadius style0)
         style5
     style7 =
-      conditionalWhenMissing @Style.FontFamily
-        profile
-        leafFontFamily
-        style6
-    style8 =
-      conditionalWhenMissing @Style.FontSize
-        profile
-        leafFontSize
-        style7
+      conditionalWhenMissing @Style.FontFamily profile leafFontFamily style6
+    style8 = conditionalWhenMissing @Style.FontSize profile leafFontSize style7
     style9 =
       conditionalWhenMissing @Style.FontWeight
         profile
         leafFontWeight
-        (conditionalWhenMissing @Style.TextAlign
-           profile
-           leafTextAlign
-           style8)
+        (conditionalWhenMissing @Style.TextAlign profile leafTextAlign style8)
 
 groupStyle :: String -> Style.NodeStyle -> (Style.NodeStyle, [S.Constraint])
 groupStyle family style0 =
@@ -180,52 +146,28 @@ groupStyle family style0 =
     profile = S.choice (base ++ ".profile")
     fill = familyFill base
     stroke = familyStroke base
-    style1 =
-      conditionalWhenMissing @Style.Fill
-        profile
-        (groupFill fill)
-        style0
+    style1 = conditionalWhenMissing @Style.Fill profile (groupFill fill) style0
     style2 =
-      conditionalWhenMissing @Style.Stroke
-        profile
-        (groupStroke stroke)
-        style1
+      conditionalWhenMissing @Style.Stroke profile (groupStroke stroke) style1
     style3 =
-      conditionalWhenMissing @Style.StrokeWidth
-        profile
-        groupStrokeWidth
-        style2
+      conditionalWhenMissing @Style.StrokeWidth profile groupStrokeWidth style2
     style4 =
-      conditionalWhenMissing @Style.BorderStyle
-        profile
-        groupBorderStyle
-        style3
-    style5 =
-      conditionalWhenMissing @Style.Radius
-        profile
-        groupRadius
-        style4
-    style6 =
-      conditionalWhenMissing @Style.ZIndex
-        profile
-        groupZIndex
-        style5
+      conditionalWhenMissing @Style.BorderStyle profile groupBorderStyle style3
+    style5 = conditionalWhenMissing @Style.Radius profile groupRadius style4
+    style6 = conditionalWhenMissing @Style.ZIndex profile groupZIndex style5
 
 conditionalWhenMissing ::
-     forall field value.
-     (Style.StyleField field, S.ChoiceDomain value)
+     forall field value. (Style.StyleField field, S.ChoiceDomain value)
   => S.Choice value
   -> (value -> Maybe (Style.StyleValue field))
   -> Style.NodeStyle
   -> Style.NodeStyle
 conditionalWhenMissing selected valueFor style'
   | Style.hasStyleField @field style' = style'
-  | otherwise =
-    Style.setConditionalStyleField @field selected valueFor style'
+  | otherwise = Style.setConditionalStyleField @field selected valueFor style'
 
 constraintsWhenMissing ::
-     forall field.
-     Style.StyleField field
+     forall field. Style.StyleField field
   => Style.NodeStyle
   -> [S.Constraint]
   -> [S.Constraint]
