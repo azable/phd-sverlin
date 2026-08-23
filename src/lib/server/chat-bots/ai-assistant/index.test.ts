@@ -26,4 +26,15 @@ describe('AI assistant DSL interface', () => {
       'Treat an explicitly requested border as one composite visual property'
     );
   });
+
+  it('delegates unspecified presentation to conditional family profiles', async () => {
+    expect(aiAssistant.initialPrompt).toContain(
+      'Leave visual style fields unspecified unless the user or the visualization’s semantics require them'
+    );
+    const guide = await loadDslInterfaceContext();
+    expect(guide).toContain('`style @Field value` is a hard authoring requirement');
+    expect(guide).toContain('`withoutStyle @Field` is also hard');
+    expect(guide).toContain('Use `styleCase` only when the requested design itself needs');
+    expect(guide).toContain('plain system text, editorial serif text, technical monospace text');
+  });
 });

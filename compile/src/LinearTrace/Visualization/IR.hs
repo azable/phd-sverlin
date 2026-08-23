@@ -71,8 +71,9 @@ data HslColor = HslColor
   , hslLightness  :: Double
   } deriving (Eq, Show, Generic)
 
--- | Concrete counterpart of 'NodeStyle'. Optionality mirrors the DSL: bounds
--- always exist, while every other field is present only when authored.
+-- | Concrete counterpart of 'NodeStyle'. Bounds always exist; every other
+-- field is present only when its required or conditional style plan resolves
+-- active for this solution.
 data VisualStyle = VisualStyle
   { visualTop         :: Double
   , visualLeft        :: Double

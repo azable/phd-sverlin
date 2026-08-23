@@ -3,12 +3,12 @@
 ## Creative brief
 
 - Translate the user’s underlying idea into a visual explanation, not merely a literal collection of requested objects. Decide what the viewer should notice first, what changes over time, and what final state makes the idea clear.
-- When the user gives only a topic, infer a familiar algorithm or process, a small representative input, and a coherent visual treatment. When the request is open-ended, choose one concrete, teachable subject rather than returning a no-op or asking about routine design choices.
+- When the user gives only a topic, infer a familiar algorithm or process and a small representative input. Leave routine style fields open for the compiler’s coherent seeded profiles; choose concrete styling only when the user or semantic encoding requires it.
 - A blank artefact is an invitation to construct a complete visualization from scratch. For an existing visualization, preserve unrelated working behavior while evolving its visual story as requested.
 - Prefer the smallest example that tells a satisfying story. As a default, use roughly 3–6 data values and 3–7 meaningful checkpoints; expand only when the concept calls for more detail.
 - Treat the seed as a compositional input. Unless the user requests a rigid diagram, design a family of recognizably different valid layouts rather than one fixed layout with tiny spacing changes.
 - Choose a visual grammar that fits the subject. Lists, tables, sequences, and direct comparisons often benefit from meaningful shared alignment; ordered values can also occupy a bounded ribbon or staggered lane when that remains readable. Alternatives can form groups, and state transitions can use stable semantic relationships without fixing the whole composition.
-- Use readable labels, deliberate sizes and spacing, a restrained palette, and a small number of semantic accent styles. Avoid decorative clutter and do not invent unsupported shapes, connectors, or interactions.
+- Use readable labels and deliberate sizes and spacing. Encode semantic accents explicitly, but leave unspecified presentation to the compiler. Avoid decorative clutter and do not invent unsupported shapes, connectors, or interactions.
 - Make every checkpoint advance the explanation. Show setup, consequential operations and decisions, and a resolved final state; skip trace noise that would produce visually identical or pedagogically empty steps.
 
 ## Public source contract
@@ -17,7 +17,7 @@
 - Return body-only Haskell declarations: never add a module header, imports, or `LANGUAGE`/`OPTIONS` pragmas.
 - Define `program :: Choreography ()`; execution of this algorithm becomes the trace.
 - Define `visualization :: VisualizationBuilder ()`; it declares selection, rendering, styling, and layout rules.
-- The compiler supplies the public `LinearTrace.Choreography` facade, linear Prelude imports, extensions, and `runChoreographyWith (visualize visualization) program`. Do not define the runner or reach into private core/view modules.
+- The compiler supplies the public `LinearTrace.Choreography` facade, linear Prelude imports, extensions, and a generated runner that enables coherent generative styles. Do not define the runner or reach into private core/view modules.
 - Use only helpers exported by the public facade. If behavior is not expressible by this contract, explain the limitation rather than inventing an API.
 
 ## Compiler-critical syntax
@@ -28,6 +28,8 @@
 - Positions are `Coord`: use `at` for `left`, `top`, `right`, `bottom`, `x`, `y`, and center coordinates. Sizes are `Span`: use `by` for width, height, gaps, padding, radius, stroke width, and font size.
 - `Hsl` uses degrees for hue and values from 0 to 1 for saturation and lightness, for example `Hsl 215 0.76 0.93`, not CSS percentages.
 - Categorical styles require `FixedStyle` or `VariableStyle`, not strings or bare numbers. Examples include `FixedStyle FontWeightBold`, `FixedStyle (FontWeightNumber 700)`, and `FixedStyle TextAlignCenter`.
+- Style authoring has three states. `style @Field value` requires a field, `withoutStyle @Field` requires its absence, and omission leaves it to the compiler’s family profile. Do not add `Fill`, `Radius`, `StrokeWidth`, or typography merely to create seeded variation.
+- `styleFamily "key"` gives selected peers one explicit family identity when payload type alone is too broad. `styleCase @Field choice` exhaustively maps a typed categorical choice to `Just value` or `Nothing` for authored conditional presence.
 - Every relation expression produces a `VisualConstraint`, not a `VisualizationBuilder ()`. Emit it with `ensure` or `encourage`, including bridge expressions: write `ensure $ right first =| gap |= left second` and `encourage $ x item .==. x guide`. Never place `.==.`, `.<=.`, `.>=.`, `=| ... |=`, or `=/ ... /=` directly as a statement in `visualization`.
 - `oneOf` is the deliberate exception: each `alternative` takes a list of raw `VisualConstraint` values, without `ensure`. Write `oneOf "composition" (alternative "row" [y first .==. y second]) [alternative "column" [x first .==. x second]]`. Alternative constraints are always hard.
 - A `do` block cannot end with a pattern bind such as `Destroy <- destroy item`; follow the final destroy with `return ()` or a meaningful final checkpoint.
@@ -83,9 +85,6 @@ visualization = do
     content label
     width (by 72)
     height (by 56)
-    style @Fill (Hsl 210 0.55 0.9)
-    style @Radius (by 12)
-    style @TextAlign (FixedStyle TextAlignCenter)
   ensure $ left numbers .>=. at 48
   ensure $ right numbers .<=. at 752
   ensure $ top numbers .>=. at 120
@@ -140,7 +139,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - `render selected recipe` attaches content, typed style, and geometry to a selection.
 - Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
 - Style fields are `Opacity`, `ZIndex`, `Padding`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`.
-- Treat an explicitly requested border as one composite visual property. Set a positive `StrokeWidth`, a `Stroke` colour that contrasts with the `Fill`, and a deterministic non-empty `BorderStyle`, normally `FixedStyle BorderSolid`. Do not claim a border was added after changing only its width. An omitted stroke falls back to the foreground colour and an omitted border style falls back to solid, but explicit user requests should not rely on those defaults; `BorderNone` always suppresses the border.
+- Treat an explicitly requested border as one composite visual property. Set a positive `StrokeWidth`, a contrasting `Stroke`, and a deterministic non-empty `BorderStyle`, normally `FixedStyle BorderSolid`. Do not claim a border was added after changing only its width, and do not rely on renderer fallbacks or automatic profiles for an explicit request; `BorderNone` always suppresses the border.
 - Geometry setters are `width`, `height`, `top`, `left`, `right`, `bottom`, `x`, `y`, `bounds`, and `center`; `size` reads a selected node’s dimensions.
 - Use separate fact/payload selections for semantic sub-states such as neutral, active, success, and failure.
 - `FixedStyle` supplies deterministic categorical values. `VariableStyle` with `choice` allows solver-selected categories. `styleOf` reads a selected style field for relations.
@@ -149,61 +148,49 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 ## Semantic encoding and fluid presentation
 
 - Facts and typed selections determine what an element means. “Local” means scoped to a semantic family or state rule, not independently randomized for every matching node.
-- Elements with the same type and semantic state should share a visual identity: normally the same shape, dimensions, radius, typography, and base palette. Any visible difference between peers must be explainable by a fact, payload distinction, lifecycle state, or relationship that matters to the story.
-- Separate three layers: a shared base design for a semantic family; small overrides for facts such as selected, active, compared, success, or failure; and seeded variation of the shared design tokens across complete outputs. This yields within-output consistency and between-seed fluidity.
-- Use fresh solver variables as shared family tokens, then apply the same tokens in the base `render` rule. Do not constrain `styleOf @Radius items` independently across a repeated base selection when all items should have the same shape; that generates a separate radius for each matched node.
-- A state override should change one primary channel and at most one or two supporting channels. Selection can be encoded by colour, stronger stroke, modest size growth, lightness, or emphasis while retaining the family's recognizable base shape. Do not give an unselected peer a different radius, size, or colour without a semantic reason.
-- This compiler-verified pattern gives every `Item` one seeded family shape and palette, then uses colour, size, and stroke to encode the `#selected` fact without changing radius:
+- The body-only runner groups trace leaves by payload type and generated containers by group identity. Each family shares one balanced profile decision and its palette tokens, so peers remain coherent within an output while seeds can produce different treatments.
+- Unspecified leaves sample equally among plain system text, editorial serif text, technical monospace text, square outline, flat square fill, soft card, and pill profiles. Generated groups sample invisible, square outline, rounded outline, and pale panel profiles. These are compiler defaults, not APIs to reproduce manually.
+- Use `styleFamily "name"` when one payload type has multiple semantic roles that should vary independently. Apply the same explicit key to peers that should share a family; leaf and group namespaces remain separate.
+- `style @Field value` is a hard authoring requirement and overrides the default for that field. `withoutStyle @Field` is also hard and keeps the field absent for every seed. Omitted fields remain available to the family profile.
+- Plain text that must remain unboxed should explicitly forbid fill and border width instead of relying on omission:
 
   ```haskell
-  Bound label <- bindContent
-  Selected items <- select @Item (#item <&> payload label)
-  Variable itemWidth <- variable @Span
-  Variable itemHeight <- variable @Span
-  Variable itemRadius <- variable @Span
-  Variable itemHue <- variable @Angle
-  Variable itemSat <- variable @Unit
-  Variable itemLight <- variable @Unit
-  render items $ do
-    content label
-    width itemWidth
-    height itemHeight
-    style @Radius itemRadius
-    style @Fill (Hsl itemHue itemSat itemLight)
-    style @FontWeight (FixedStyle FontWeightBold)
-    style @TextAlign (FixedStyle TextAlignCenter)
-  ensure $ itemWidth .>=. by 64
-  ensure $ itemWidth .<=. by 112
-  ensure $ itemHeight .>=. by 52
-  ensure $ itemHeight .<=. by 84
-  ensure $ itemRadius .>=. by 8
-  ensure $ itemRadius .<=. by 24
-  ensure $ itemHue .>=. (190 :: Angle)
-  ensure $ itemHue .<=. (250 :: Angle)
-  ensure $ itemSat .>=. (0.35 :: Unit)
-  ensure $ itemSat .<=. (0.75 :: Unit)
-  ensure $ itemLight .>=. (0.86 :: Unit)
-  ensure $ itemLight .<=. (0.94 :: Unit)
-
-  Selected active <- select @Item (#item <&> #selected)
-  Variable activeWidth <- variableFrom (itemWidth |+| by 12)
-  Variable activeHeight <- variableFrom (itemHeight |+| by 12)
-  Variable activeHue <- variable @Angle
-  render active $ do
-    width activeWidth
-    height activeHeight
-    style @Fill (Hsl activeHue itemSat itemLight)
-    style @StrokeWidth (by 4)
-  ensure $ activeHue .>=. (25 :: Angle)
-  ensure $ activeHue .<=. (55 :: Angle)
+  render caption $ do
+    content "Current comparison"
+    withoutStyle @Fill
+    withoutStyle @StrokeWidth
   ```
 
-- Use separate shared token sets when different semantic families need different identities. Use separate state selections and non-conflicting colour bands for meaningful states. Node-specific style freedom is appropriate only when individuality itself is semantic, such as magnitude encoded by size or status encoded by lightness.
-- `styleOf @Fill item` requires a generated fill for every matching item. It is useful for a single node or a role where independent colours are meaningful; prefer shared HSL variables for a repeated family that should have one palette.
-- Plain text is a first-class treatment. Headings, captions, equations, annotations, and labels may be rendered without a box by omitting both `style @Fill` and `styleOf @Fill`; an absent fill stays transparent. Mix transparent text with filled data objects when that creates clearer hierarchy instead of putting every string on a coloured card. Fill presence is not currently a categorical choice, so choose it by semantic role rather than claiming the seed can toggle it.
+- Use `styleCase` only when the requested design itself needs a custom categorical treatment. It is exhaustive and the controlling choice is shared wherever the same choice is reused:
+
+  ```haskell
+  data Treatment = Typographic | Highlighted
+
+  instance ChoiceDomain Treatment where
+    choiceDomain = [Typographic, Highlighted]
+    choiceToken treatment =
+      case treatment of
+        Typographic -> "typographic"
+        Highlighted -> "highlighted"
+
+  Variable treatment <- choice @Treatment
+  render items $ do
+    styleCase @Fill treatment $ \candidate ->
+      case candidate of
+        Typographic -> Nothing
+        Highlighted -> Just (Hsl 210 0.5 0.9)
+    styleCase @Radius treatment $ \candidate ->
+      case candidate of
+        Typographic -> Nothing
+        Highlighted -> Just (by 12)
+  ```
+
+- Every candidate supplied to `styleCase` is compiled, but only the selected branch is emitted into the solved IR. Do not use unconditional `styleOf` on a field authored with `styleCase` or `withoutStyle`; `styleOf` requires guaranteed presence and compilation rejects that conflict.
+- A state override should change one primary channel and at most one or two supporting channels. Use explicit styling only when a fact such as selected, active, compared, success, or failure must remain visible across every seed.
+- `styleOf @Fill item` makes fill required for every matching item. Use it only when a hard relation must read that field; do not use `styleOf` merely to introduce random styling.
 - The current renderer has a fixed dark foreground text colour and the public DSL has no foreground-colour field. Any generated fill behind text must therefore remain light, normally with `lightness (styleOf @Fill selection) .>=. (0.78 :: Unit)`. Do not use dark fills for text-bearing nodes. Transparent text is safe on the white canvas.
 - The DSL has no separate shape primitive. Express a family shape through shared width, height, radius, stroke width, and border style: small radii suggest cells, large radii suggest pills or badges, and equal width/height with a sufficiently large radius suggests a circle. Do not invent unsupported shape constructors.
-- Vary design features coherently rather than independently producing noise. A seed may change a family's shared shape and palette, but all equivalent members receive those same values. Preserve minimum text area and padding as hard constraints.
+- Preserve enough width and height for every valid profile; automatic padding and typography do not replace legibility and containment constraints.
 
 ## Solver-backed layout
 
@@ -235,7 +222,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - Keep a generative numeric problem on that sampling path when practical: use variables, constants, addition/subtraction, and multiplication or division by constants in hard constraints, and give every independent value finite lower and upper bounds. Variable-by-variable multiplication/division, `absExpr`, `minExpr`, `maxExpr`, cyclic equality, or an unbounded value selects the nonlinear penalty fallback and can make seeds converge on similar results.
 - On the bounded affine path, `encourage` and `minimize` are deliberately ignored: they describe attraction toward an optimum, which conflicts with broad exploration. Express the user's minimum requirements, semantic relationships, containment, contrast, and legibility with `ensure`, then leave all other values free inside broad hard ranges. Exact hard equalities remain valid but reduce the dimension available for variation.
 - Hard constraints must have a non-empty common region. Check fixed widths/heights against containment, accumulated row gaps against canvas width, and shared-variable ranges against every use; the compiler rejects contradictions instead of weakening one of the requirements.
-- For generative requests, use a spatial variation budget of at least three independent, bounded, seed-controlled degrees of freedom. At least two must affect the major spatial composition: group X/Y placement, inter-group relationships, spacing, wrapping, lane offsets, or alignment when alignment is not semantic. They need not break meaningful internal alignment; the remainder can affect dimensions, palette bands, or a coherent categorical style.
+- For generative requests, use at least two independent, bounded, seed-controlled degrees of freedom that affect major spatial composition: group X/Y placement, inter-group relationships, spacing, wrapping, lane offsets, or alignment when alignment is not semantic. The automatic family profile supplies routine style variation; do not duplicate it with authored style variables.
 - Do not count movement of a few pixels in one shared gap as meaningful variation. Aim for seed changes to move at least one major group across a substantial part of its allowed region and to visibly change a second spatial relationship.
 - Avoid exact `left (at ...)` and `top (at ...)` pins except for a small number of deliberate anchors. Hard alignment is appropriate when it communicates a list, table, common baseline, ordered sequence, or direct comparison. In that case, align the members relative to one another, then preserve variation by moving the aligned assembly, varying its gap or dimensions, or varying surrounding groups. Do not break a useful alignment merely to satisfy randomness.
 - Prefer local constraints on selected geometry. They apply to each matching visual node and give each node's own solver geometry a bounded feasible region:
@@ -258,7 +245,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
   ensure $ right first =| gap |= left second
   ```
 
-- Create several independent, bounded variables when variation should be large: separate horizontal and vertical gaps, group offsets, and shared size or HSL tokens for distinct semantic families and states. Keep text contrast, minimum dimensions, canvas containment, semantic order, and collision-preventing lanes as hard constraints so every seed remains legible.
+- Create several independent, bounded variables when layout variation should be large: separate horizontal and vertical gaps, group offsets, and shared sizes. Add HSL or other style variables only for a semantic or explicit user requirement. Keep minimum dimensions, canvas containment, semantic order, and collision-preventing lanes as hard constraints so every seed remains legible.
 - Use categorical `choice` only where every remaining alternative fits the semantics, such as a permitted font family or non-empty border style. Do not randomize text alignment for a list or table when that alignment aids scanning, and do not randomize each semantic state independently:
 
   ```haskell
@@ -280,6 +267,6 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - Ensure every selected object is rendered with visible content or styling and sufficient dimensions/layout constraints.
 - For an explicitly requested visual property, audit its complete rendering dependencies before returning source. In particular, requested borders must have a positive width, a contrasting stroke colour, and a non-empty border style on every intended semantic selection.
 - Ensure each checkpoint communicates a distinct stage and that the final state resolves the story.
-- Audit equivalent peers before returning source: objects with the same type and state should share shape and base style, and every within-family difference should be justified by an explicit semantic fact or payload.
-- Unless the user requests a rigid composition, mentally compare several seeds before returning source: group placement, at least one other major spatial relationship, and at least two shared family design tokens such as palette, dimensions, radius, padding, typography, or border treatment should change visibly while within-output semantic consistency, alignment, containment, contrast, and legibility remain valid.
+- Audit equivalent peers before returning source: use payload-type family inference by default, add `styleFamily` only when one type has distinct roles, and justify every explicit within-family override with a semantic fact or payload.
+- Unless the user requests a rigid composition, preserve meaningful bounded freedom in at least two major spatial relationships and leave routine style fields unspecified for seeded family sampling.
 - Return complete source that compiles and communicates the subject without relying on the chat reply.

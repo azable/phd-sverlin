@@ -36,9 +36,14 @@ module LinearTrace.View.Style
   , StyleField(..)
   , StyleValueVars(..)
   , getStyleField
+  , hasStyleField
   , setStyleField
+  , forbidStyleField
+  , setConditionalStyleField
   , requireStyleField
   , materializeStyleField
+  , setStyleFamily
+  , nodeStyleFamily
   , -- * Traversal and lowering
     mapNodeStyleExprs
   , mapNodeStyleExprLeaves
@@ -130,7 +135,7 @@ instance StyleField Radius where
   mapStyleValueExprs f = f
   styleValueExprLeaves = scalarLeaves
   styleValueConstraints _ =
-    scalarConstraints (Just (Range 0 32)) nonNegativeConstraints
+    scalarConstraints (Just (Range 0 400)) nonNegativeConstraints
   materializeStyleValue = materializeScalar
 
 instance StyleField StrokeWidth where
@@ -389,9 +394,18 @@ class Typeable field =>
     -> StyleValue field
     -> Either String (ResolvedStyleValue field)
 
+data StyleFieldPlan field where
+  RequiredStyle :: StyleValue field -> StyleFieldPlan field
+  ForbiddenStyle :: StyleFieldPlan field
+  ConditionalStyle
+    :: ChoiceDomain value
+    => Choice value
+    -> [(String, Maybe (StyleValue field))]
+    -> StyleFieldPlan field
+
 data AnyStyleField where
   AnyStyleField
-    :: StyleField field => Proxy field -> StyleValue field -> AnyStyleField
+    :: StyleField field => Proxy field -> StyleFieldPlan field -> AnyStyleField
 
 anyStyleFieldName :: AnyStyleField -> String
 anyStyleFieldName field =
@@ -401,11 +415,16 @@ anyStyleFieldName field =
 data NodeStyle = NodeStyle
   { nodeStyleBounds :: BoundsExpr
   , nodeStyleFields :: [AnyStyleField]
+  , nodeStyleFamily :: Maybe String
   }
 
 nodeStyleWithBounds :: BoundsExpr -> NodeStyle
 nodeStyleWithBounds bounds =
-  NodeStyle {nodeStyleBounds = bounds, nodeStyleFields = []}
+  NodeStyle
+    { nodeStyleBounds = bounds
+    , nodeStyleFields = []
+    , nodeStyleFamily = Nothing
+    }
 
 instance HasBounds NodeStyle where
   top = top . nodeStyleBounds
@@ -422,10 +441,23 @@ getStyleField style' = go (nodeStyleFields style')
     go fields =
       case fields of
         [] -> Nothing
-        AnyStyleField (_ :: Proxy other) value:rest ->
+        AnyStyleField (_ :: Proxy other) plan:rest ->
           case eqT @field @other of
-            Just Refl -> Just value
+            Just Refl -> requiredStyleValue plan
             Nothing   -> go rest
+
+hasStyleField :: forall field. StyleField field => NodeStyle -> Bool
+hasStyleField style' =
+  case getStyleFieldPlan @field style' of
+    Nothing -> False
+    Just _  -> True
+
+requiredStyleValue :: StyleFieldPlan field -> Maybe (StyleValue field)
+requiredStyleValue plan =
+  case plan of
+    RequiredStyle value -> Just value
+    ForbiddenStyle      -> Nothing
+    ConditionalStyle _ _ -> Nothing
 
 setStyleField ::
      forall field. StyleField field
@@ -433,13 +465,42 @@ setStyleField ::
   -> NodeStyle
   -> NodeStyle
 setStyleField value style' =
+  setStyleFieldPlan @field (RequiredStyle value) style'
+
+forbidStyleField :: forall field. StyleField field => NodeStyle -> NodeStyle
+forbidStyleField = setStyleFieldPlan @field ForbiddenStyle
+
+setConditionalStyleField ::
+     forall field value.
+     (StyleField field, ChoiceDomain value)
+  => Choice value
+  -> (value -> Maybe (StyleValue field))
+  -> NodeStyle
+  -> NodeStyle
+setConditionalStyleField selected valueFor =
+  setStyleFieldPlan @field
+    (ConditionalStyle
+       selected
+       [ (choiceToken value, valueFor value)
+       | value <- choiceDomain :: [value]
+       ])
+
+setStyleFieldPlan ::
+     forall field. StyleField field
+  => StyleFieldPlan field
+  -> NodeStyle
+  -> NodeStyle
+setStyleFieldPlan plan style' =
   style'
     { nodeStyleFields =
         replaceByName
           anyStyleFieldName
-          (AnyStyleField (Proxy :: Proxy field) value)
+          (AnyStyleField (Proxy :: Proxy field) plan)
           (nodeStyleFields style')
     }
+
+setStyleFamily :: String -> NodeStyle -> NodeStyle
+setStyleFamily family style' = style' {nodeStyleFamily = Just family}
 
 requireStyleField ::
      forall field. StyleField field
@@ -447,10 +508,25 @@ requireStyleField ::
   -> NodeStyle
   -> NodeStyle
 requireStyleField vars style' =
-  case getStyleField @field style' of
-    Just _ -> style'
+  case getStyleFieldPlan @field style' of
     Nothing ->
       setStyleField @field (generatedStyleValue (Proxy @field) vars) style'
+    Just plan ->
+      case plan of
+        RequiredStyle _ -> style'
+        ForbiddenStyle ->
+          invalidStyleAccess @field "explicitly forbidden"
+        ConditionalStyle _ _ ->
+          invalidStyleAccess @field "conditionally present"
+
+invalidStyleAccess :: forall field value. StyleField field => String -> value
+invalidStyleAccess state =
+  error
+    ("styleOf @"
+       ++ styleFieldName (Proxy @field)
+       ++ " requires an always-present style field, but the field is "
+       ++ state
+       ++ "; use style @Field for unconditional access")
 
 materializeStyleField ::
      forall field. StyleField field
@@ -458,9 +534,51 @@ materializeStyleField ::
   -> NodeStyle
   -> Either String (Maybe (ResolvedStyleValue field))
 materializeStyleField solution style' =
-  traverse
-    (materializeStyleValue (Proxy @field) solution)
-    (getStyleField @field style')
+  case getStyleFieldPlan @field style' of
+    Nothing   -> Right Nothing
+    Just plan -> do
+      active <- activeStyleValue solution plan
+      traverse (materializeStyleValue (Proxy @field) solution) active
+
+getStyleFieldPlan ::
+     forall field. StyleField field
+  => NodeStyle
+  -> Maybe (StyleFieldPlan field)
+getStyleFieldPlan style' = go (nodeStyleFields style')
+  where
+    go fields =
+      case fields of
+        [] -> Nothing
+        AnyStyleField (_ :: Proxy other) plan:rest ->
+          case eqT @field @other of
+            Just Refl -> Just plan
+            Nothing   -> go rest
+
+activeStyleValue ::
+     Solution
+  -> StyleFieldPlan field
+  -> Either String (Maybe (StyleValue field))
+activeStyleValue solution plan =
+  case plan of
+    RequiredStyle value -> Right (Just value)
+    ForbiddenStyle      -> Right Nothing
+    ConditionalStyle selected alternatives -> do
+      selectedValue <-
+        maybe
+          (Left
+             ("could not materialize conditional style choice "
+                ++ choiceName selected))
+          Right
+          (evalChoice solution selected)
+      let token = choiceToken selectedValue
+      maybe
+        (Left
+           ("conditional style choice "
+              ++ choiceName selected
+              ++ " has no branch for token "
+              ++ token))
+        Right
+        (lookup token alternatives)
 
 replaceByName :: (a -> String) -> a -> [a] -> [a]
 replaceByName getName newValue = go
@@ -482,14 +600,33 @@ mapNodeStyleExprs f style' =
   NodeStyle
     { nodeStyleBounds = fmap f (nodeStyleBounds style')
     , nodeStyleFields = map (mapAnyStyleFieldExprs f) (nodeStyleFields style')
+    , nodeStyleFamily = nodeStyleFamily style'
     }
 
 mapAnyStyleFieldExprs ::
      (forall (ty :: Type). Expr ty -> Expr ty) -> AnyStyleField -> AnyStyleField
 mapAnyStyleFieldExprs f field =
   case field of
-    AnyStyleField (proxy :: Proxy field) value ->
-      AnyStyleField proxy (mapStyleValueExprs @field f value)
+    AnyStyleField (proxy :: Proxy field) plan ->
+      AnyStyleField proxy (mapStyleFieldPlanExprs @field f plan)
+
+mapStyleFieldPlanExprs ::
+     forall field.
+     StyleField field
+  => (forall (ty :: Type). Expr ty -> Expr ty)
+  -> StyleFieldPlan field
+  -> StyleFieldPlan field
+mapStyleFieldPlanExprs f plan =
+  case plan of
+    RequiredStyle value ->
+      RequiredStyle (mapStyleValueExprs @field f value)
+    ForbiddenStyle -> ForbiddenStyle
+    ConditionalStyle selected alternatives ->
+      ConditionalStyle
+        selected
+        [ (token, fmap (mapStyleValueExprs @field f) value)
+        | (token, value) <- alternatives
+        ]
 
 nodeStyleExprLeaves :: NodeStyle -> [StyleExprLeaf]
 nodeStyleExprLeaves style' =
@@ -503,7 +640,16 @@ nodeStyleExprLeaves style' =
 anyStyleFieldExprLeaves :: AnyStyleField -> [StyleExprLeaf]
 anyStyleFieldExprLeaves field =
   case field of
-    AnyStyleField proxy value -> styleValueExprLeaves proxy value
+    AnyStyleField proxy plan ->
+      concatMap (styleValueExprLeaves proxy) (styleFieldPlanValues plan)
+
+styleFieldPlanValues :: StyleFieldPlan field -> [StyleValue field]
+styleFieldPlanValues plan =
+  case plan of
+    RequiredStyle value -> [value]
+    ForbiddenStyle      -> []
+    ConditionalStyle _ alternatives ->
+      mapMaybe snd alternatives
 
 mapNodeStyleExprLeaves ::
      (forall (ty :: Type). String -> Expr ty -> a) -> NodeStyle -> [a]
@@ -520,7 +666,8 @@ nodeStyleConstraints style' =
 anyStyleFieldConstraints :: AnyStyleField -> [Constraint]
 anyStyleFieldConstraints field =
   case field of
-    AnyStyleField proxy value -> styleValueConstraints proxy value
+    AnyStyleField proxy plan ->
+      concatMap (styleValueConstraints proxy) (styleFieldPlanValues plan)
 
 nodeStyleChoiceConstraints :: NodeStyle -> [ChoiceConstraint]
 nodeStyleChoiceConstraints style' =
@@ -529,29 +676,88 @@ nodeStyleChoiceConstraints style' =
 anyStyleFieldChoices :: AnyStyleField -> [ChoiceConstraint]
 anyStyleFieldChoices field =
   case field of
-    AnyStyleField proxy value -> styleValueChoices proxy value
+    AnyStyleField proxy plan ->
+      controllingChoice plan
+        ++ concatMap (styleValueChoices proxy) (styleFieldPlanValues plan)
 
-styleVariableBindings :: NodeStyle -> [(String, [String])]
-styleVariableBindings style' =
-  [ (field, nub variables)
-  | (field, variables) <- Map.toAscList grouped
-  , not (null variables)
-  ]
+controllingChoice :: StyleFieldPlan field -> [ChoiceConstraint]
+controllingChoice plan =
+  case plan of
+    ConditionalStyle selected _ -> [freeChoice selected]
+    _                           -> []
+
+styleVariableBindings ::
+     Solution -> NodeStyle -> Either String [(String, [String])]
+styleVariableBindings solution style' = do
+  activeFields <- traverse (activeFieldBinding solution) (nodeStyleFields style')
+  pure
+    [ (field, nub variables)
+    | (field, variables) <- Map.toAscList (grouped activeFields)
+    , not (null variables)
+    ]
   where
-    grouped =
+    grouped activeFields =
       Map.fromListWith
         (++)
-        (mapNodeStyleExprLeaves numericBinding style'
-           ++ mapMaybe choiceBinding (nodeStyleFields style'))
+        (map boundsBinding (boundsExprLeaves style')
+           ++ concat activeFields)
+    boundsBinding leaf =
+      case leaf of
+        StyleExprLeaf name expr -> numericBinding name expr
     numericBinding name expr =
       (rootField name, expressionVariableNames (exprView expr))
-    choiceBinding field =
-      case field of
-        AnyStyleField proxy value ->
-          let variables = styleValueChoiceNames proxy value
-           in if null variables
-                then Nothing
-                else Just (styleFieldName proxy, variables)
+
+boundsExprLeaves :: NodeStyle -> [StyleExprLeaf]
+boundsExprLeaves style' =
+  [ StyleExprLeaf "top" (top style')
+  , StyleExprLeaf "left" (left style')
+  , StyleExprLeaf "width" (width style')
+  , StyleExprLeaf "height" (height style')
+  ]
+
+activeFieldBinding ::
+     Solution -> AnyStyleField -> Either String [(String, [String])]
+activeFieldBinding solution field =
+  case field of
+    AnyStyleField proxy plan -> do
+      active <- activeStyleValue solution plan
+      pure
+        (case active of
+           Nothing    -> []
+           Just value ->
+             styleValueBindings proxy value
+               ++ conditionalChoiceBinding proxy plan)
+
+conditionalChoiceBinding ::
+     StyleField field
+  => Proxy field
+  -> StyleFieldPlan field
+  -> [(String, [String])]
+conditionalChoiceBinding proxy plan =
+  case plan of
+    ConditionalStyle selected _ ->
+      [(styleFieldName proxy, [choiceName selected])]
+    _ -> []
+
+styleValueBindings ::
+     StyleField field
+  => Proxy field
+  -> StyleValue field
+  -> [(String, [String])]
+styleValueBindings proxy value =
+  map numericBinding (styleValueExprLeaves proxy value)
+    ++ choiceBinding
+  where
+    field = styleFieldName proxy
+    numericBinding leaf =
+      case leaf of
+        StyleExprLeaf name expr ->
+          (rootField name, expressionVariableNames (exprView expr))
+    variables = styleValueChoiceNames proxy value
+    choiceBinding =
+      if null variables
+        then []
+        else [(field, variables)]
 
 rootField :: String -> String
 rootField = takeWhile (/= '.')

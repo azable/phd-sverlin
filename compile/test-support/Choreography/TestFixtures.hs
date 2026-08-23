@@ -19,12 +19,21 @@ module Choreography.TestFixtures
   , pendingMaterializedStepCount
   , pendingReplaceEventNames
   , pendingTailEventNames
+  , conditionalStyleAccessStats
+  , forbiddenStyleAccessStats
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
     categoricalRelationGraph
   , categoricalStyleGraph
   , centerGraph
+  , conditionalAbsentGraph
+  , conditionalPresentGraph
   , disjunctiveGraph
+  , forbiddenStyleGraph
+  , generativeGraph
+  , generativeGroupGraph
+  , generativeRequiredStyleGraph
+  , separatedFamiliesGraph
   , selectedColorGraph
   , selectedScalarGraph
   , styledGraph
@@ -42,6 +51,17 @@ import           Prelude.Linear           hiding (fromInteger, fromRational,
 data TestValue
 
 type instance Payload TestValue = LInt TestValue
+
+data TestTreatment
+  = TestPlain
+  | TestFilled
+
+instance ChoiceDomain TestTreatment where
+  choiceDomain = [TestPlain, TestFilled]
+  choiceToken treatment =
+    case treatment of
+      TestPlain  -> "plain"
+      TestFilled -> "filled"
 
 payloadMatchedStats :: (Int, Int, Int)
 payloadMatchedStats = fixtureStats payloadMatchedSpec
@@ -63,6 +83,12 @@ pendingTailEventNames :: [P.String]
 pendingTailEventNames =
   eventNames (Core.traceGraphPendingEvents pendingTailGraph)
 
+conditionalStyleAccessStats :: (Int, Int, Int)
+conditionalStyleAccessStats = fixtureStats conditionalStyleAccessSpec
+
+forbiddenStyleAccessStats :: (Int, Int, Int)
+forbiddenStyleAccessStats = fixtureStats forbiddenStyleAccessSpec
+
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
 
@@ -78,8 +104,29 @@ categoricalRelationGraph = buildGraph categoricalRelationSpec
 centerGraph :: ViewGraph
 centerGraph = buildGraph centerSpec
 
+conditionalAbsentGraph :: ViewGraph
+conditionalAbsentGraph = buildGraph (conditionalStyleSpec TestPlain)
+
+conditionalPresentGraph :: ViewGraph
+conditionalPresentGraph = buildGraph (conditionalStyleSpec TestFilled)
+
 disjunctiveGraph :: ViewGraph
 disjunctiveGraph = buildGraph disjunctiveSpec
+
+forbiddenStyleGraph :: ViewGraph
+forbiddenStyleGraph = buildGenerativeGraph forbiddenStyleSpec
+
+generativeGraph :: ViewGraph
+generativeGraph = buildGenerativeGraph generativeSpec
+
+generativeGroupGraph :: ViewGraph
+generativeGroupGraph = buildGenerativeGraph generativeGroupSpec
+
+generativeRequiredStyleGraph :: ViewGraph
+generativeRequiredStyleGraph = buildGenerativeGraph selectedColorSpec
+
+separatedFamiliesGraph :: ViewGraph
+separatedFamiliesGraph = buildGenerativeGraph separatedFamiliesSpec
 
 styledGraph :: ViewGraph
 styledGraph = buildGraph styledSpec
@@ -95,6 +142,10 @@ fixtureStats spec = viewGraphStats (buildGraph spec)
 
 buildGraph :: MatchSpec -> ViewGraph
 buildGraph = buildGraphFor fixture
+
+buildGenerativeGraph :: MatchSpec -> ViewGraph
+buildGenerativeGraph spec =
+  buildViewGraph (runChoreographyWithGenerativeStyles spec fixture)
 
 buildGraphFor :: Choreography () -> MatchSpec -> ViewGraph
 buildGraphFor choreography spec =
@@ -186,6 +237,33 @@ groupSpec =
     render group $ do
       style @Padding (by 8)
 
+generativeSpec :: MatchSpec
+generativeSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    render item $ do
+      width (by 80)
+      height (by 80)
+
+generativeGroupSpec :: MatchSpec
+generativeGroupSpec =
+  visualize $ do
+    Selected items <- select @TestValue #item
+    Selected first <- select @TestValue (#item <&> payload (7 :: Int))
+    Selected second <- select @TestValue (#item <&> payload (8 :: Int))
+    render items $ do
+      width (by 80)
+      height (by 80)
+    render first $ do
+      left (at 80)
+      top (at 80)
+    render second $ do
+      left (at 200)
+      top (at 80)
+    Selected group <- node items
+    render group $ do
+      style @Padding (by 8)
+
 selectedColorSpec :: MatchSpec
 selectedColorSpec =
   visualize $ do
@@ -250,6 +328,71 @@ disjunctiveSpec =
       "test.visual.position"
       (alternative "left" [left item .==. at 40])
       [alternative "right" [left item .==. at 680]]
+
+conditionalStyleSpec :: TestTreatment -> MatchSpec
+conditionalStyleSpec selectedTreatment =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    Variable treatment <- choice @TestTreatment
+    render item $ do
+      width (by 80)
+      height (by 80)
+      styleCase @Fill treatment $ \candidate ->
+        case candidate of
+          TestPlain -> P.Nothing
+          TestFilled ->
+            P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
+    ensure $ treatment .==. selectedTreatment
+
+conditionalStyleAccessSpec :: MatchSpec
+conditionalStyleAccessSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    Variable treatment <- choice @TestTreatment
+    render item $ do
+      width (by 80)
+      height (by 80)
+      styleCase @Fill treatment $ \candidate ->
+        case candidate of
+          TestPlain -> P.Nothing
+          TestFilled ->
+            P.Just (Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit))
+    ensure
+      $ styleOf @Fill item .==. Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit)
+
+forbiddenStyleSpec :: MatchSpec
+forbiddenStyleSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    render item $ do
+      width (by 80)
+      height (by 80)
+      withoutStyle @Fill
+
+forbiddenStyleAccessSpec :: MatchSpec
+forbiddenStyleAccessSpec =
+  visualize $ do
+    Selected item <- select @TestValue #item
+    render item $ do
+      width (by 80)
+      height (by 80)
+      withoutStyle @Fill
+    ensure
+      $ styleOf @Fill item .==. Hsl (210 :: Angle) (0.5 :: Unit) (0.9 :: Unit)
+
+separatedFamiliesSpec :: MatchSpec
+separatedFamiliesSpec =
+  visualize $ do
+    Selected first <- select @TestValue (#item <&> payload (7 :: Int))
+    Selected second <- select @TestValue (#item <&> payload (8 :: Int))
+    render first $ do
+      width (by 80)
+      height (by 80)
+      styleFamily "first"
+    render second $ do
+      width (by 80)
+      height (by 80)
+      styleFamily "second"
 
 styledSpec :: MatchSpec
 styledSpec =

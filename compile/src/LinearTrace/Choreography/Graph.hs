@@ -10,10 +10,12 @@ module LinearTrace.Choreography.Graph
   , viewGraphStats
   , runChoreography
   , runChoreographyWith
+  , runChoreographyWithGenerativeStyles
   ) where
 
 import           LinearTrace.Choreography.Match (MatchSpec,
                                                  buildMatchedViewGraph,
+                                                 buildMatchedViewGraphWith,
                                                  emptyMatchSpec,
                                                  matchedNodeOutput,
                                                  traceNodeOfEventBlock)
@@ -21,19 +23,32 @@ import qualified LinearTrace.Core               as C
 import qualified LinearTrace.View.Build         as V
 import qualified LinearTrace.View.Graph         as V
 import qualified LinearTrace.View.Solve         as V
+import qualified LinearTrace.View.StyleProfile  as V
 import qualified Prelude                        as P
 import qualified Solver                         as S
 import           Solver                         (RandomSeed)
 
+data StylePolicy
+  = SparseStyles
+  | GenerativeStyles
+
 data VisualTraceGraph =
-  VisualTraceGraph MatchSpec C.TraceGraph
+  VisualTraceGraph StylePolicy MatchSpec C.TraceGraph
 
 type ViewGraph = V.ViewGraph
 
 buildViewGraph :: VisualTraceGraph -> ViewGraph
-buildViewGraph (VisualTraceGraph spec coreGraph) =
+buildViewGraph (VisualTraceGraph policy spec coreGraph) =
   let output = viewTraceSteps spec (C.traceGraphSteps coreGraph)
-   in buildMatchedViewGraph spec (viewNodes output) (viewSteps output)
+   in case policy of
+        SparseStyles ->
+          buildMatchedViewGraph spec (viewNodes output) (viewSteps output)
+        GenerativeStyles ->
+          buildMatchedViewGraphWith
+            V.applyGenerativeStyleProfiles
+            spec
+            (viewNodes output)
+            (viewSteps output)
 
 solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> P.IO S.Solution
 solveViewGraphWithSeed = V.solveCSPWithSeed
@@ -135,4 +150,10 @@ runChoreography :: C.TraceBuilder () -> VisualTraceGraph
 runChoreography = runChoreographyWith emptyMatchSpec
 
 runChoreographyWith :: MatchSpec -> C.TraceBuilder () -> VisualTraceGraph
-runChoreographyWith spec builder = VisualTraceGraph spec (C.buildGraph builder)
+runChoreographyWith spec builder =
+  VisualTraceGraph SparseStyles spec (C.buildGraph builder)
+
+runChoreographyWithGenerativeStyles ::
+     MatchSpec -> C.TraceBuilder () -> VisualTraceGraph
+runChoreographyWithGenerativeStyles spec builder =
+  VisualTraceGraph GenerativeStyles spec (C.buildGraph builder)

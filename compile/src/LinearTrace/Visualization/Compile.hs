@@ -83,6 +83,7 @@ compileElement solution wrapped =
   case wrapped of
     V.ViewNode node -> do
       style <- compileStyle solution (V.nodeStyle node)
+      styleBindings <- compileStyleBindings solution (V.nodeStyle node)
       pure
         IR.VisualElement
           { IR.elementId = visualId (V.nodeRef node)
@@ -90,7 +91,7 @@ compileElement solution wrapped =
           , IR.elementKind = compileElementKind (V.nodeStructure node)
           , IR.elementContent = compileContent (V.nodeContent node)
           , IR.elementStyle = style
-          , IR.elementStyleVariables = compileStyleBindings (V.nodeStyle node)
+          , IR.elementStyleVariables = styleBindings
           }
 
 compileElementKind :: V.NodeStructure -> IR.VisualElementKind
@@ -164,15 +165,16 @@ compileColor color =
     , IR.hslLightness = roundLayout (VP.lightness color)
     }
 
-compileStyleBindings :: VS.NodeStyle -> [IR.StyleVariableBinding]
-compileStyleBindings =
+compileStyleBindings ::
+     S.Solution -> VS.NodeStyle -> Either String [IR.StyleVariableBinding]
+compileStyleBindings solution style =
   map
     (\(field, variables) ->
        IR.StyleVariableBinding
          { IR.bindingField = field
          , IR.bindingVariables = map IR.CspVariableId variables
          })
-    . VS.styleVariableBindings
+    <$> VS.styleVariableBindings solution style
 
 type ElementLookup = Map IR.VisualId IR.VisualElement
 

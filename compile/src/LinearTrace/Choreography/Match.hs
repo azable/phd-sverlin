@@ -42,6 +42,7 @@ module LinearTrace.Choreography.Match
     traceNodeOfEventBlock
   , matchedNodeOutput
   , buildMatchedViewGraph
+  , buildMatchedViewGraphWith
   ) where
 
 import           Data.Maybe              (fromMaybe)
@@ -371,11 +372,19 @@ foldNodePatchesFrom current patches =
 
 buildMatchedViewGraph ::
      MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> V.ViewGraph
-buildMatchedViewGraph spec builtNodes steps =
+buildMatchedViewGraph = buildMatchedViewGraphWith P.id
+
+buildMatchedViewGraphWith ::
+     ([V.ViewNode] -> [V.ViewNode])
+  -> MatchSpec
+  -> [V.ViewNode]
+  -> [V.ViewStep]
+  -> V.ViewGraph
+buildMatchedViewGraphWith transformNodes spec builtNodes steps =
   let traceNodes = applyAccessRequirementsForSpec spec builtNodes
       groupNodes =
         applyAccessRequirementsForSpec spec (groupNodesForSpec spec traceNodes)
-      nodes = traceNodes P.++ groupNodes
+      nodes = transformNodes (traceNodes P.++ groupNodes)
       (matchConstraints, matchChoiceConstraints) =
         matchSpecConstraints spec nodes
    in V.finalizeViewGraph nodes matchConstraints matchChoiceConstraints steps

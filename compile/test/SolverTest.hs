@@ -284,6 +284,114 @@ viewMaterializationTests =
             IR.visualFontWeight style' @?= Just "bold"
             assertBool "expected concrete fill" (isJust (IR.visualFill style'))
           [] -> assertFailure "expected at least one compiled render element"
+    , testCase "conditional style cases emit only the selected branch" $ do
+        absent <-
+          solveAndCompile 31 ChoreographyFixtures.conditionalAbsentGraph
+        present <-
+          solveAndCompile 31 ChoreographyFixtures.conditionalPresentGraph
+        map (IR.visualFill . IR.elementStyle) (renderElements absent)
+          @?= [Nothing, Nothing]
+        case renderElements present of
+          [] -> assertFailure "expected conditionally styled elements"
+          elements ->
+            mapM_
+              (\element -> do
+                 assertBool
+                   "expected the selected conditional fill"
+                   (isJust (IR.visualFill (IR.elementStyle element)))
+                 assertTraceVariablesExist
+                   present
+                   (styleBindingVariables "fill" element))
+              elements
+    , testCase "style access rejects authored conditional presence" $ do
+        assertErrorContains
+          "conditional style access"
+          "conditionally present"
+          (evaluate (statsTotal ChoreographyFixtures.conditionalStyleAccessStats))
+    , testCase "style access rejects explicitly forbidden presence" $ do
+        assertErrorContains
+          "forbidden style access"
+          "explicitly forbidden"
+          (evaluate (statsTotal ChoreographyFixtures.forbiddenStyleAccessStats))
+    , testCase "forbidden styles remain absent under automatic profiles" $ do
+        compiled <-
+          solveAndCompile 32 ChoreographyFixtures.forbiddenStyleGraph
+        map (IR.visualFill . IR.elementStyle) (renderElements compiled)
+          @?= [Nothing, Nothing]
+    , testCase "automatic leaf profiles cover every balanced treatment" $ do
+        solutions <-
+          Choreography.solveViewGraphWithSeeds
+            (map RandomSeed [1 .. 64])
+            ChoreographyFixtures.generativeGraph
+        List.sort
+          (List.nub
+             (concatMap (profileChoiceValues ".leaf.profile") solutions))
+          @?= [ "editorial"
+              , "flat"
+              , "outline"
+              , "pill"
+              , "plain"
+              , "soft-card"
+              , "technical"
+              ]
+    , testCase "automatic family styles are deterministic for one seed" $ do
+        first <- solveAndCompile 36 ChoreographyFixtures.generativeGraph
+        second <- solveAndCompile 36 ChoreographyFixtures.generativeGraph
+        first @?= second
+    , testCase "automatic group profiles cover every balanced treatment" $ do
+        solutions <-
+          Choreography.solveViewGraphWithSeeds
+            (map RandomSeed [1 .. 64])
+            ChoreographyFixtures.generativeGroupGraph
+        List.sort
+          (List.nub
+             (concatMap (profileChoiceValues ".group.profile") solutions))
+          @?= [ "invisible"
+              , "rounded-outline"
+              , "soft-panel"
+              , "square-outline"
+              ]
+    , testCase "inferred peers share automatic profile tokens" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 33)
+            ChoreographyFixtures.generativeGraph
+        compiled <-
+          assertCompileSolved solution ChoreographyFixtures.generativeGraph
+        length (profileChoiceValues ".leaf.profile" solution) @?= 1
+        case renderElements compiled of
+          [first, second] -> do
+            let firstStyle = IR.elementStyle first
+                secondStyle = IR.elementStyle second
+            IR.visualFill firstStyle @?= IR.visualFill secondStyle
+            IR.visualStroke firstStyle @?= IR.visualStroke secondStyle
+            IR.visualPadding firstStyle @?= IR.visualPadding secondStyle
+            IR.visualRadius firstStyle @?= IR.visualRadius secondStyle
+            IR.visualFontFamily firstStyle @?= IR.visualFontFamily secondStyle
+            IR.visualFontSize firstStyle @?= IR.visualFontSize secondStyle
+            IR.visualFontWeight firstStyle @?= IR.visualFontWeight secondStyle
+            IR.visualTextAlign firstStyle @?= IR.visualTextAlign secondStyle
+          _ -> assertFailure "expected exactly two inferred peer elements"
+    , testCase "explicit family keys separate one payload type" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 34)
+            ChoreographyFixtures.separatedFamiliesGraph
+        length (profileChoiceValues ".leaf.profile" solution) @?= 2
+    , testCase "style access remains required before profile injection" $ do
+        compiled <-
+          solveAndCompile
+            35
+            ChoreographyFixtures.generativeRequiredStyleGraph
+        mapM_
+          (\element ->
+             case IR.visualFill (IR.elementStyle element) of
+               Nothing -> assertFailure "required fill was omitted"
+               Just color -> do
+                 IR.hslHue color @?= 120
+                 IR.hslSaturation color @?= 0.4
+                 IR.hslLightness color @?= 0.7)
+          (renderElements compiled)
     , testCase "checkpoints lower one-to-one to named timeline steps" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -994,6 +1102,21 @@ assertCompileSolved solution graph =
 
 renderElements :: IR.Visualization -> [IR.VisualElement]
 renderElements = IR.visualizationElements
+
+solveAndCompile :: Int -> Choreography.ViewGraph -> IO IR.Visualization
+solveAndCompile seed graph = do
+  solution <- Choreography.solveViewGraphWithSeed (RandomSeed seed) graph
+  assertCompileSolved solution graph
+
+profileChoiceValues :: String -> Solution -> [String]
+profileChoiceValues suffix solution =
+  [ value
+  | (name, value) <- Map.toList (solutionChoices solution)
+  , suffix `List.isInfixOf` name
+  ]
+
+statsTotal :: (Int, Int, Int) -> Int
+statsTotal (nodes, constraints, steps) = nodes + constraints + steps
 
 styleBindingVariables :: String -> IR.VisualElement -> [IR.CspVariableId]
 styleBindingVariables field element =

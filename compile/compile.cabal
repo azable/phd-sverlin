@@ -108,6 +108,7 @@ library
         LinearTrace.View.Primitives
         LinearTrace.View.Solve
         LinearTrace.View.Style
+        LinearTrace.View.StyleProfile
         Solver.Affine
         Solver.Choice
         Solver.Categorical

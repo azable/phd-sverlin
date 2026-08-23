@@ -61,7 +61,7 @@ generatedFooter :: [String]
 generatedFooter =
   [ "_sverlinResult :: VisualTraceGraph"
   , "_sverlinResult ="
-  , "  runChoreographyWith (visualize visualization) program"
+  , "  runChoreographyWithGenerativeStyles (visualize visualization) program"
   ]
 
 linePragma :: Int -> FilePath -> String

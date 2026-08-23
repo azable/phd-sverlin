@@ -17,6 +17,7 @@ module LinearTrace.Choreography
   , viewGraphStats
   , runChoreography
   , runChoreographyWith
+  , runChoreographyWithGenerativeStyles
   , create
   , copy
   , use
@@ -120,6 +121,9 @@ module LinearTrace.Choreography
     -- | Type-applied style assignment and selected-style access.
     StyleChoice(..)
   , style
+  , withoutStyle
+  , styleCase
+  , styleFamily
   , styleOf
   , sat
   , -- * Re-exported from LinearTrace.View.Style
@@ -152,6 +156,8 @@ module LinearTrace.Choreography
   , -- * Re-exported from Solver
     -- | Solver-facing random seed and vector constructor used by the public DSL.
     RandomSeed(..)
+  , ChoiceDomain(..)
+  , Choice
   , Vec2(..)
   , vec2
   , -- * Re-exported from GHC.OverloadedLabels
@@ -237,7 +243,8 @@ import           LinearTrace.View.Style              (Alpha, BorderStyle (..),
                                                       StrokeWidth,
                                                       TextAlign (..),
                                                       WhiteSpace (..), ZIndex)
-import           Solver                              (RandomSeed (..),
+import           Solver                              (Choice, ChoiceDomain (..),
+                                                      RandomSeed (..),
                                                       Vec2 (..), vec2)
 
 type Choreography a = TraceBuilder a

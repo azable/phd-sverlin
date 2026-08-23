@@ -22,7 +22,7 @@ main =
              , ( "{-# LINE 1 \"examples/Custom.sverlin\" #-}"
                , "source-labelled line pragma")
              , ("program :: Choreography ()", "source body")
-             , ( "runChoreographyWith (visualize visualization) program"
+             , ( "runChoreographyWithGenerativeStyles (visualize visualization) program"
                , "fixed runner")
              ]
        , testCase "places declarations after the source boundary" $ do

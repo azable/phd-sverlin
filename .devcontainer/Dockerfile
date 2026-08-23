@@ -6,6 +6,9 @@ ARG TARGETARCH
 ARG GHC_VERSION=9.10.3
 ARG HLS_VERSION=2.14.0.0
 ARG HIGHS_VERSION=1.15.1
+ARG HINDENT_VERSION=6.3.0
+ARG HLINT_VERSION=3.10
+ARG STYLISH_HASKELL_VERSION=0.15.1.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -20,6 +23,7 @@ RUN apt-get update \
         curl \
         gfortran \
         git \
+        jq \
         liblapack-dev \
         liblbfgsb-dev \
         libopenblas-dev \
@@ -93,8 +97,23 @@ RUN set -eux; \
         /usr/local/bin/haskell-language-server; \
     rm -rf /tmp/hls /tmp/hls.tar.xz
 
+# Pin the project-owned Haskell formatter and lint toolchain in the image so
+# verification works immediately after a rebuild, before post-create hooks run.
+RUN cabal update \
+    && cabal install \
+        "hindent-${HINDENT_VERSION}" \
+        "hlint-${HLINT_VERSION}" \
+        "stylish-haskell-${STYLISH_HASKELL_VERSION}" \
+        --installdir=/usr/local/bin \
+        --install-method=copy \
+        --overwrite-policy=always
+
 # Verify Haskell environment during image construction.
 RUN ghc --version \
     && cabal --version \
     && highs --version \
-    && haskell-language-server-wrapper --version
+    && jq --version \
+    && haskell-language-server-wrapper --version \
+    && hindent --version \
+    && hlint --version \
+    && stylish-haskell --version

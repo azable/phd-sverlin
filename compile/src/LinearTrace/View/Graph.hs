@@ -47,6 +47,7 @@ module LinearTrace.View.Graph
   , styleForNodeRoot
   , nodeVarName
   , nodeVar
+  , stableKey
   , nodeChildFromTraceNode
   , viewTraceNodes
   ) where
@@ -290,6 +291,9 @@ safeKey value =
               P.True  -> ch
               P.False -> '_'
        in safeChar : safeKey rest
+
+stableKey :: P.String -> P.String
+stableKey value = safeKey value P.++ "-" P.++ P.show (positiveHash value)
 
 isSafeKeyChar :: P.Char -> P.Bool
 isSafeKeyChar ch = ch `P.elem` safeKeyChars

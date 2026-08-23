@@ -12,6 +12,9 @@
 module LinearTrace.Choreography.Style
   ( StyleChoice(..)
   , style
+  , withoutStyle
+  , styleCase
+  , styleFamily
   , styleOf
   , sat
   ) where
@@ -52,6 +55,24 @@ style ::
   -> NodeRecipe ()
 style input =
   setStyleWith (VS.setStyleField @field (styleFieldInput @field input))
+
+withoutStyle :: forall field. VS.StyleField field => NodeRecipe ()
+withoutStyle = setStyleWith (VS.forbidStyleField @field)
+
+styleCase ::
+     forall field value.
+     (VS.StyleField field, StyleFieldInput field, S.ChoiceDomain value)
+  => S.Choice value
+  -> (value -> P.Maybe (StyleInputValue field))
+  -> NodeRecipe ()
+styleCase selected inputFor =
+  setStyleWith
+    (VS.setConditionalStyleField @field
+       selected
+       (P.fmap (styleFieldInput @field) P.. inputFor))
+
+styleFamily :: P.String -> NodeRecipe ()
+styleFamily family = setStyleWith (VS.setStyleFamily family)
 
 class StyleFieldInput field where
   type StyleInputValue field
