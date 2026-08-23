@@ -389,8 +389,9 @@ content value =
        VP.emptyNodePatch
          {VP.nodePatchContent = P.pure (contentMode bindings value)})
 
--- | Set text content and explicitly permit compiler-owned font-size fitting,
--- including when the recipe also supplies a concrete @FontSize@.
+-- | Set text content and request compiler-owned font-size fitting. With no
+-- authored @FontSize@, the compiler uses the largest size that fits the solved
+-- content box. An authored @FontSize@ is instead an upper bound.
 fitText :: ContentValue -> NodeRecipe ()
 fitText value =
   setNodePatch

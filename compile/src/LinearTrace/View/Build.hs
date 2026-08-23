@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+
 -- | View graph output builder. Choreography accumulates 'ViewOutput' values
 -- while processing core events; this module finalizes those outputs into a
 -- solver-ready 'ViewGraph'.
@@ -106,12 +108,21 @@ viewNodeConstraints wrapped =
   case wrapped of
     ViewNode node ->
       nodeStyleConstraints (nodeStyle node)
+        P.++ fontSizeRangeConstraints defaultViewEnv (nodeStyle node)
         P.++ viewNodeRangeConstraints defaultViewEnv wrapped
         P.++ [ right node S.@<=@ canvasWidth defaultViewEnv
              , bottom node S.@<=@ canvasHeight defaultViewEnv
              ]
         P.++ nodeConstraints node
         P.++ structureConstraints node (nodeStructure node)
+
+fontSizeRangeConstraints :: ViewEnv -> Style.NodeStyle -> [Constraint]
+fontSizeRangeConstraints env style' =
+  [ S.within
+    expression
+    (Range 8 (P.max (canvasWidthValue env) (canvasHeightValue env)))
+  | expression <- Style.styleFieldValues @Style.FontSize style'
+  ]
 
 structureConstraints :: Node tag -> NodeStructure -> [Constraint]
 structureConstraints node structure =

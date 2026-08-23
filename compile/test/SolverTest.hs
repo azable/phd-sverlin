@@ -158,6 +158,28 @@ typographyTests =
         assertBool
           "expected wrapping to remain inspectable"
           ("typography.fallback-wrap" `elem` findingCodes)
+    , testCase "automatic occupancy scales the maximum feasible size" $ do
+        (initial, _, _, automatic) <- runTypographyPipeline 1
+        (_, _, _, maximumFit) <-
+          runTypographyGraph 1 ChoreographyFixtures.maximumTypographyGraph
+        case ( profileChoiceValues "typography.occupancy" initial
+             , plainTextLayouts automatic
+             , plainTextLayouts maximumFit) of
+          ([token], [automaticLayout], [maximumLayout]) -> do
+            let occupancy = (read token :: Double) / 100
+                maximumSize = IR.textLayoutFontSize maximumLayout
+                target = min maximumSize (max 12 (occupancy * maximumSize))
+                expected = fromIntegral (floor (target * 4) :: Int) / 4
+            assertBool
+              ("expected occupancy-selected size "
+                 ++ show expected
+                 ++ ", got "
+                 ++ show (IR.textLayoutFontSize automaticLayout))
+              (abs (IR.textLayoutFontSize automaticLayout - expected) <= epsilon)
+          values ->
+            assertFailure
+              ("expected one occupancy and two text layouts, got "
+                 ++ show values)
     , testCase "font fitting and IR materialization are deterministic" $ do
         (_, _, firstOutput, first) <- runTypographyPipeline 1
         (_, _, secondOutput, second) <- runTypographyPipeline 1
@@ -183,6 +205,69 @@ typographyTests =
               other ->
                 assertFailure ("expected fitted text, got " ++ show other)
           _ -> assertFailure "expected one fitted text element"
+    , testCase "fitText without a size uses the maximum feasible size" $ do
+        (_, _, _, uncapped) <-
+          runTypographyGraph 1 ChoreographyFixtures.uncappedFitTypographyGraph
+        (_, _, _, capped) <-
+          runTypographyGraph 1 ChoreographyFixtures.oversizedFitTypographyGraph
+        case (plainTextLayouts uncapped, plainTextLayouts capped) of
+          ([uncappedLayout], [cappedLayout]) -> do
+            IR.textLayoutPreferredSize cappedLayout @?= 56
+            IR.textLayoutFontSize uncappedLayout
+              @?= IR.textLayoutFontSize cappedLayout
+            IR.textLayoutPreferredSize uncappedLayout
+              @?= IR.textLayoutFontSize uncappedLayout
+            assertBool
+              "expected the fitted numeral to make substantial use of its box"
+              (IR.textLayoutFontSize uncappedLayout > 40)
+          (uncappedLayouts, cappedLayouts) ->
+            assertFailure
+              ("expected one uncapped and one capped text layout, got "
+                 ++ show (map length [uncappedLayouts, cappedLayouts]))
+    , testCase "content FontSize remains a fixed authored value" $ do
+        (_, _, _, compiled) <-
+          runTypographyGraph 1 ChoreographyFixtures.fixedLargeTypographyGraph
+        case plainTextLayouts compiled of
+          [layout] -> do
+            IR.textLayoutPreferredSize layout @?= 56
+            IR.textLayoutFontSize layout @?= 56
+          layouts ->
+            assertFailure
+              ("expected one fixed-size text layout, got "
+                 ++ show (length layouts))
+    , testCase "responsive list geometry drives typography density" $ do
+        (_, _, _, sparse) <-
+          runTypographyGraph
+            1
+            ChoreographyFixtures.responsiveSparseTypographyGraph
+        (_, _, _, dense) <-
+          runTypographyGraph
+            1
+            ChoreographyFixtures.responsiveDenseTypographyGraph
+        let sparseLayouts = plainTextLayouts sparse
+            denseLayouts = plainTextLayouts dense
+            sparseSizes = List.nub (map IR.textLayoutFontSize sparseLayouts)
+            denseSizes = List.nub (map IR.textLayoutFontSize denseLayouts)
+            sparseHeights =
+              List.nub
+                (map (IR.visualHeight . IR.elementStyle) (renderElements sparse))
+            denseHeights =
+              List.nub
+                (map (IR.visualHeight . IR.elementStyle) (renderElements dense))
+        length sparseLayouts @?= 2
+        length denseLayouts @?= 5
+        case (sparseSizes, denseSizes, sparseHeights, denseHeights) of
+          ([sparseSize], [denseSize], [sparseHeight], [denseHeight]) -> do
+            assertBool
+              "expected more list items to produce shorter cells"
+              (sparseHeight > denseHeight)
+            assertBool
+              "expected typography to adapt to the shorter solved cells"
+              (sparseSize > denseSize)
+          values ->
+            assertFailure
+              ("expected shared sizes and heights within each list, got "
+                 ++ show values)
     , testCase "verbatim code emits aligned semantic highlight tokens" $ do
         (_, _, output, compiled) <-
           runTypographyGraph 1 ChoreographyFixtures.codeTypographyGraph
@@ -553,21 +638,34 @@ viewMaterializationTests =
         compiled <- solveAndCompile 32 ChoreographyFixtures.forbiddenStyleGraph
         map (IR.visualFill . IR.elementStyle) (renderElements compiled)
           @?= [Nothing, Nothing]
-    , testCase "automatic leaf profiles cover every balanced treatment" $ do
+    , testCase "automatic leaf profiles cover every surface treatment" $ do
         solutions <-
           Choreography.solveViewGraphWithSeeds
-            (map RandomSeed [1 .. 64])
+            (map RandomSeed [1 .. 128])
             ChoreographyFixtures.generativeGraph
         List.sort
           (List.nub (concatMap (profileChoiceValues ".leaf.profile") solutions))
-          @?= [ "editorial"
-              , "flat"
-              , "outline"
-              , "pill"
-              , "plain"
-              , "soft-card"
-              , "technical"
+          @?= ["flat", "outline", "pill", "soft-card", "transparent"]
+        List.sort
+          (List.nub
+             (concatMap (profileChoiceValues "typography.font-face") solutions))
+          @?= [ "atkinson-hyperlegible-next"
+              , "ibm-plex-mono"
+              , "inter"
+              , "jetbrains-mono-nl"
+              , "literata"
+              , "source-sans-3"
+              , "source-serif-4"
+              , "space-grotesk"
               ]
+        List.sort
+          (List.nub
+             (concatMap (profileChoiceValues "typography.occupancy") solutions))
+          @?= ["68", "78", "86", "94"]
+        List.sort
+          (List.nub
+             (concatMap (profileChoiceValues ".leaf.font-weight") solutions))
+          @?= ["400", "500", "600"]
     , testCase "automatic family styles are deterministic for one seed" $ do
         first <- solveAndCompile 36 ChoreographyFixtures.generativeGraph
         second <- solveAndCompile 36 ChoreographyFixtures.generativeGraph
@@ -607,6 +705,9 @@ viewMaterializationTests =
             (RandomSeed 34)
             ChoreographyFixtures.separatedFamiliesGraph
         length (profileChoiceValues ".leaf.profile" solution) @?= 2
+        length (profileChoiceValues ".leaf.font-weight" solution) @?= 2
+        length (profileChoiceValues "typography.font-face" solution) @?= 1
+        length (profileChoiceValues "typography.occupancy" solution) @?= 1
     , testCase "style access remains required before profile injection" $ do
         compiled <-
           solveAndCompile 35 ChoreographyFixtures.generativeRequiredStyleGraph
@@ -1325,6 +1426,13 @@ assertCompileSolved solution graph =
 
 renderElements :: IR.Visualization -> [IR.VisualElement]
 renderElements = IR.visualizationElements
+
+plainTextLayouts :: IR.Visualization -> [IR.TextLayout]
+plainTextLayouts visualization =
+  [ layout
+  | element <- renderElements visualization
+  , Just (IR.PlainTextContent layout) <- [IR.elementContent element]
+  ]
 
 solveAndCompile :: Int -> Choreography.ViewGraph -> IO IR.Visualization
 solveAndCompile seed graph = do

@@ -16,9 +16,7 @@ import           Prelude
 import qualified Solver                      as S
 
 data LeafProfile
-  = LeafPlain
-  | LeafEditorial
-  | LeafTechnical
+  = LeafTransparent
   | LeafOutline
   | LeafFlat
   | LeafSoftCard
@@ -27,23 +25,61 @@ data LeafProfile
 
 instance S.ChoiceDomain LeafProfile where
   choiceDomain =
-    [ LeafPlain
-    , LeafEditorial
-    , LeafTechnical
-    , LeafOutline
-    , LeafFlat
-    , LeafSoftCard
-    , LeafPill
-    ]
+    [LeafTransparent, LeafOutline, LeafFlat, LeafSoftCard, LeafPill]
   choiceToken profile =
     case profile of
-      LeafPlain     -> "plain"
-      LeafEditorial -> "editorial"
-      LeafTechnical -> "technical"
-      LeafOutline   -> "outline"
-      LeafFlat      -> "flat"
-      LeafSoftCard  -> "soft-card"
-      LeafPill      -> "pill"
+      LeafTransparent -> "transparent"
+      LeafOutline     -> "outline"
+      LeafFlat        -> "flat"
+      LeafSoftCard    -> "soft-card"
+      LeafPill        -> "pill"
+
+data AutomaticFontFace
+  = AutomaticInter
+  | AutomaticSourceSans3
+  | AutomaticAtkinson
+  | AutomaticSpaceGrotesk
+  | AutomaticSourceSerif4
+  | AutomaticLiterata
+  | AutomaticJetBrainsMono
+  | AutomaticIBMPlexMono
+  deriving (Eq, Show)
+
+instance S.ChoiceDomain AutomaticFontFace where
+  choiceDomain =
+    [ AutomaticInter
+    , AutomaticSourceSans3
+    , AutomaticAtkinson
+    , AutomaticSpaceGrotesk
+    , AutomaticSourceSerif4
+    , AutomaticLiterata
+    , AutomaticJetBrainsMono
+    , AutomaticIBMPlexMono
+    ]
+  choiceToken face =
+    case face of
+      AutomaticInter         -> "inter"
+      AutomaticSourceSans3   -> "source-sans-3"
+      AutomaticAtkinson      -> "atkinson-hyperlegible-next"
+      AutomaticSpaceGrotesk  -> "space-grotesk"
+      AutomaticSourceSerif4  -> "source-serif-4"
+      AutomaticLiterata      -> "literata"
+      AutomaticJetBrainsMono -> "jetbrains-mono-nl"
+      AutomaticIBMPlexMono   -> "ibm-plex-mono"
+
+data AutomaticFontWeight
+  = AutomaticWeight400
+  | AutomaticWeight500
+  | AutomaticWeight600
+  deriving (Eq, Show)
+
+instance S.ChoiceDomain AutomaticFontWeight where
+  choiceDomain = [AutomaticWeight400, AutomaticWeight500, AutomaticWeight600]
+  choiceToken weight =
+    case weight of
+      AutomaticWeight400 -> "400"
+      AutomaticWeight500 -> "500"
+      AutomaticWeight600 -> "600"
 
 data GroupProfile
   = GroupInvisible
@@ -98,7 +134,7 @@ structurePrefix node =
 
 leafStyle :: String -> Style.NodeStyle -> (Style.NodeStyle, [S.Constraint])
 leafStyle family style0 =
-  ( style9
+  ( style10
   , concat
       [ constraintsWhenMissing @Style.Fill style0 (fillConstraints fill)
       , constraintsWhenMissing @Style.Stroke style0 (strokeConstraints stroke)
@@ -109,6 +145,9 @@ leafStyle family style0 =
   where
     base = "view.style.family." ++ family ++ ".leaf"
     profile = S.choice (base ++ ".profile")
+    fontFace = S.choice "view.style.typography.font-face"
+    occupancy = S.choice "view.style.typography.occupancy"
+    fontWeight = S.choice (base ++ ".font-weight")
     fill = familyFill base
     stroke = familyStroke base
     softRadius = S.var (base ++ ".soft-card.radius") :: LayoutExpr
@@ -126,13 +165,24 @@ leafStyle family style0 =
         (leafRadius softRadius style0)
         style5
     style7 =
-      conditionalWhenMissing @Style.FontFamily profile leafFontFamily style6
-    style8 = conditionalWhenMissing @Style.FontSize profile leafFontSize style7
+      conditionalWhenMissing @Style.FontFamily
+        fontFace
+        automaticFontFamily
+        style6
+    style8
+      | Style.hasStyleField @Style.FontSize style0 = style7
+      | otherwise =
+        conditionalWhenMissing @Style.TextOccupancy
+          occupancy
+          (Just . S.num . Style.textOccupancyRatio)
+          style7
     style9 =
       conditionalWhenMissing @Style.FontWeight
-        profile
-        leafFontWeight
-        (conditionalWhenMissing @Style.TextAlign profile leafTextAlign style8)
+        fontWeight
+        automaticFontWeight
+        style8
+    style10 =
+      conditionalWhenMissing @Style.TextAlign profile leafTextAlign style9
 
 groupStyle :: String -> Style.NodeStyle -> (Style.NodeStyle, [S.Constraint])
 groupStyle family style0 =
@@ -241,52 +291,39 @@ leafRadius softRadius style' profile =
     LeafPill     -> Just (height style' S.@/@ S.num 2)
     _            -> Nothing
 
-leafFontFamily :: LeafProfile -> Maybe (S.ChoiceValue Style.FontFamily)
-leafFontFamily profile =
+automaticFontFamily ::
+     AutomaticFontFace -> Maybe (S.ChoiceValue Style.FontFamily)
+automaticFontFamily face =
   Just
     (S.Fixed
-       (case profile of
-          LeafPlain     -> Style.FontSystem
-          LeafEditorial -> Style.FontSerif
-          LeafTechnical -> Style.FontMono
-          LeafOutline   -> Style.FontSystem
-          LeafFlat      -> Style.FontInter
-          LeafSoftCard  -> Style.FontInter
-          LeafPill      -> Style.FontSystem))
+       (case face of
+          AutomaticInter         -> Style.FontInter
+          AutomaticSourceSans3   -> Style.FontSourceSans3
+          AutomaticAtkinson      -> Style.FontAtkinsonHyperlegibleNext
+          AutomaticSpaceGrotesk  -> Style.FontSpaceGrotesk
+          AutomaticSourceSerif4  -> Style.FontSourceSerif4
+          AutomaticLiterata      -> Style.FontLiterata
+          AutomaticJetBrainsMono -> Style.FontJetBrainsMonoNL
+          AutomaticIBMPlexMono   -> Style.FontIBMPlexMono))
 
-leafFontSize :: LeafProfile -> Maybe LayoutExpr
-leafFontSize profile =
-  Just
-    (S.num
-       (case profile of
-          LeafPlain     -> 16
-          LeafEditorial -> 18
-          LeafTechnical -> 14
-          LeafOutline   -> 14
-          LeafFlat      -> 14
-          LeafSoftCard  -> 15
-          LeafPill      -> 14))
-
-leafFontWeight :: LeafProfile -> Maybe (S.ChoiceValue Style.FontWeight)
-leafFontWeight profile =
+automaticFontWeight ::
+     AutomaticFontWeight -> Maybe (S.ChoiceValue Style.FontWeight)
+automaticFontWeight weight =
   Just
     (S.Fixed
-       (case profile of
-          LeafOutline  -> Style.FontWeightNumber 500
-          LeafFlat     -> Style.FontWeightNumber 500
-          LeafSoftCard -> Style.FontWeightNumber 600
-          LeafPill     -> Style.FontWeightNumber 600
-          _            -> Style.FontWeightNormal))
+       (Style.FontWeightNumber
+          (case weight of
+             AutomaticWeight400 -> 400
+             AutomaticWeight500 -> 500
+             AutomaticWeight600 -> 600)))
 
 leafTextAlign :: LeafProfile -> Maybe (S.ChoiceValue Style.TextAlign)
 leafTextAlign profile =
   Just
     (S.Fixed
        (case profile of
-          LeafPlain     -> Style.TextAlignLeft
-          LeafEditorial -> Style.TextAlignLeft
-          LeafTechnical -> Style.TextAlignLeft
-          _             -> Style.TextAlignCenter))
+          LeafTransparent -> Style.TextAlignLeft
+          _               -> Style.TextAlignCenter))
 
 groupFill :: ColorExpr -> GroupProfile -> Maybe ColorExpr
 groupFill color profile =

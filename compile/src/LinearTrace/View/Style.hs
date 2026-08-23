@@ -18,6 +18,8 @@ module LinearTrace.View.Style
   , TextAlign(..)
   , BorderStyle(..)
   , WhiteSpace(..)
+  , TextOccupancyChoice(..)
+  , textOccupancyRatio
   , -- * Defined here: field markers
     -- | Type-level names for supported optional node-style fields.
     Opacity
@@ -29,6 +31,7 @@ module LinearTrace.View.Style
   , Alpha
   , Fill
   , Stroke
+  , TextOccupancy
   , -- * Style model
     NodeStyle
   , nodeStyleWithBounds
@@ -36,6 +39,7 @@ module LinearTrace.View.Style
   , StyleField(..)
   , StyleValueVars(..)
   , getStyleField
+  , styleFieldValues
   , hasStyleField
   , setStyleField
   , forbidStyleField
@@ -77,6 +81,10 @@ data ZIndex
 data Padding
 
 data FontSize
+
+-- | Compiler-internal proportional target for automatically sized text. It is
+-- intentionally not re-exported by the public choreography facade.
+data TextOccupancy
 
 data Radius
 
@@ -123,8 +131,43 @@ instance StyleField FontSize where
   generatedStyleValue = scalarValue
   mapStyleValueExprs f = f
   styleValueExprLeaves = scalarLeaves
+  styleValueConstraints _ = scalarConstraints Nothing nonNegativeConstraints
+  materializeStyleValue = materializeScalar
+
+data TextOccupancyChoice
+  = TextOccupancy68
+  | TextOccupancy78
+  | TextOccupancy86
+  | TextOccupancy94
+  deriving (Eq, Show)
+
+instance ChoiceDomain TextOccupancyChoice where
+  choiceDomain =
+    [TextOccupancy68, TextOccupancy78, TextOccupancy86, TextOccupancy94]
+  choiceToken value =
+    case value of
+      TextOccupancy68 -> "68"
+      TextOccupancy78 -> "78"
+      TextOccupancy86 -> "86"
+      TextOccupancy94 -> "94"
+
+textOccupancyRatio :: TextOccupancyChoice -> Double
+textOccupancyRatio value =
+  case value of
+    TextOccupancy68 -> 0.68
+    TextOccupancy78 -> 0.78
+    TextOccupancy86 -> 0.86
+    TextOccupancy94 -> 0.94
+
+instance StyleField TextOccupancy where
+  type StyleValue TextOccupancy = UnitExpr
+  type ResolvedStyleValue TextOccupancy = Double
+  styleFieldName _ = "automaticTextOccupancy"
+  generatedStyleValue = scalarValue
+  mapStyleValueExprs f = f
+  styleValueExprLeaves = scalarLeaves
   styleValueConstraints _ =
-    scalarConstraints (Just (Range 8 48)) nonNegativeConstraints
+    scalarConstraints (Just unitRange) nonNegativeConstraints
   materializeStyleValue = materializeScalar
 
 instance StyleField Radius where
@@ -467,6 +510,16 @@ getStyleField style' = go (nodeStyleFields style')
           case eqT @field @other of
             Just Refl -> requiredStyleValue plan
             Nothing   -> go rest
+
+-- | Return every authored or conditional value for one field. Graph
+-- finalization uses this to install canvas-dependent bounds without exposing
+-- style-plan internals.
+styleFieldValues ::
+     forall field. StyleField field
+  => NodeStyle
+  -> [StyleValue field]
+styleFieldValues style' =
+  maybe [] styleFieldPlanValues (getStyleFieldPlan @field style')
 
 hasStyleField ::
      forall field. StyleField field

@@ -35,6 +35,7 @@ describe('AI assistant DSL interface', () => {
     expect(guide).toContain('`style @Field value` is a hard authoring requirement');
     expect(guide).toContain('`withoutStyle @Field` is also hard');
     expect(guide).toContain('Use `styleCase` only when the requested design itself needs');
-    expect(guide).toContain('plain system text, editorial serif text, technical monospace text');
+    expect(guide).toContain('one exact managed font face and one text occupancy target');
+    expect(guide).toContain('Do not make a numeric list');
   });
 });

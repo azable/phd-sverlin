@@ -76,6 +76,12 @@ data SizeMode
   = FixedSize VP.LayoutExpr
   | FittedSize String Double
 
+data SizePolicy
+  = FixedSizePolicy Double VP.LayoutExpr
+  | CappedFitPolicy Double (Maybe VP.LayoutExpr)
+  | MaximumFitPolicy
+  | OccupancyFitPolicy Double
+
 data TextDraft = TextDraft
   { draftVisualId          :: Int
   , draftSource            :: String
@@ -91,6 +97,11 @@ data TextDraft = TextDraft
   , draftTextAlign         :: String
   , draftPaddingExpression :: VP.LayoutExpr
   , draftStrokeExpression  :: VP.LayoutExpr
+  , draftWidthValue        :: Double
+  , draftHeightValue       :: Double
+  , draftPaddingValue      :: Double
+  , draftStrokeValue       :: Double
+  , draftSizeCap           :: Maybe (VP.LayoutExpr, Double)
   , draftContentFlavor     :: ContentFlavor
   }
 
@@ -215,13 +226,11 @@ data ResolvedTextStyle = ResolvedTextStyle
   { resolvedFamily          :: String
   , resolvedWeight          :: Int
   , resolvedFontStyle       :: String
-  , resolvedFontSize        :: Double
+  , resolvedSizePolicy      :: SizePolicy
   , resolvedPadding         :: Double
   , resolvedStrokeWidth     :: Double
   , resolvedTextAlign       :: String
   , resolvedWhiteSpace      :: String
-  , resolvedSizeMayFit      :: Bool
-  , resolvedSizeExpression  :: Maybe VP.LayoutExpr
   , resolvedPaddingExpr     :: VP.LayoutExpr
   , resolvedStrokeWidthExpr :: VP.LayoutExpr
   }
@@ -233,20 +242,25 @@ resolvedTextStyle explicitFit solution style = do
   weightToken <- resolvedOr @VS.FontWeight "normal"
   fontStyle <- resolvedOr @VS.FontStyle "normal"
   fontSizeValue <- VS.materializeStyleField @VS.FontSize solution style
+  occupancyValue <- VS.materializeStyleField @VS.TextOccupancy solution style
   paddingValue <- resolvedOr @VS.Padding 0
   strokeValue <- resolvedOr @VS.StrokeWidth 0
   borderStyle <- resolvedOr @VS.BorderStyle "solid"
   textAlign <- resolvedOr @VS.TextAlign "center"
   whiteSpace <- resolvedOr @VS.WhiteSpace "normal"
   let sizeExpression = VS.getStyleField @VS.FontSize style
-      sizeMayFit =
-        explicitFit
-          || case sizeExpression of
-               Just _ -> False
-               Nothing ->
-                 case fontSizeValue of
-                   Just _  -> True
-                   Nothing -> not (VS.hasStyleField @VS.FontSize style)
+      sizePolicy
+        | explicitFit =
+          case fontSizeValue of
+            Just value -> CappedFitPolicy value sizeExpression
+            Nothing    -> MaximumFitPolicy
+        | VS.hasStyleField @VS.FontSize style =
+          case fontSizeValue of
+            Just value ->
+              FixedSizePolicy value (fromMaybe (S.num value) sizeExpression)
+            Nothing -> FixedSizePolicy 14 (S.num 14)
+        | Just occupancy <- occupancyValue = OccupancyFitPolicy occupancy
+        | otherwise = CappedFitPolicy 14 Nothing
       paddingExpression =
         fromMaybe (S.num paddingValue) (VS.getStyleField @VS.Padding style)
       visibleStroke =
@@ -264,13 +278,11 @@ resolvedTextStyle explicitFit solution style = do
       { resolvedFamily = family
       , resolvedWeight = parseFontWeight weightToken
       , resolvedFontStyle = fontStyle
-      , resolvedFontSize = fromMaybe 14 fontSizeValue
+      , resolvedSizePolicy = sizePolicy
       , resolvedPadding = paddingValue
       , resolvedStrokeWidth = visibleStroke
       , resolvedTextAlign = textAlign
       , resolvedWhiteSpace = whiteSpace
-      , resolvedSizeMayFit = sizeMayFit
-      , resolvedSizeExpression = sizeExpression
       , resolvedPaddingExpr = paddingExpression
       , resolvedStrokeWidthExpr = strokeExpression
       }
@@ -316,25 +328,25 @@ prepareTextDraft solution node resolved fontResolution flavor source = do
         let inset = resolvedPadding resolved + resolvedStrokeWidth resolved
             availableWidth = max 0 (widthValue - 2 * inset)
             availableHeight = max 0 (heightValue - 2 * inset)
-            preferredSize = resolvedFontSize resolved
             sizedCandidates =
-              map
-                (withMaximumSize availableWidth availableHeight preferredSize)
-                candidates
+              map (withMaximumSize availableWidth availableHeight) candidates
         selected <-
-          selectCandidate
-            (resolvedSizeMayFit resolved)
-            preferredSize
-            sizedCandidates
+          selectCandidate (resolvedSizePolicy resolved) sizedCandidates
         let fittedFamily =
-              familyFitKey node resolved fontResolution preferredSize
+              familyFitKey
+                node
+                resolved
+                fontResolution
+                (sizePolicyKey (resolvedSizePolicy resolved))
             sizeMode =
-              if resolvedSizeMayFit resolved
-                then FittedSize fittedFamily (choiceSelectedSize selected)
-                else FixedSize
-                       (fromMaybe
-                          (S.num preferredSize)
-                          (resolvedSizeExpression resolved))
+              case resolvedSizePolicy resolved of
+                FixedSizePolicy _ expression -> FixedSize expression
+                _ -> FittedSize fittedFamily (choiceSelectedSize selected)
+            sizeCap =
+              case resolvedSizePolicy resolved of
+                CappedFitPolicy value (Just expression) ->
+                  Just (expression, value)
+                _ -> Nothing
             chosen = choiceDraft selected
             draft =
               chosen
@@ -345,11 +357,15 @@ prepareTextDraft solution node resolved fontResolution flavor source = do
                 , draftWrapMode = compileWrapMode (resolvedWhiteSpace resolved)
                 , draftFontResolution = fontResolution
                 , draftFontFeatures = fontFeatures
-                , draftPreferredSize = preferredSize
                 , draftSizeMode = sizeMode
                 , draftTextAlign = resolvedTextAlign resolved
                 , draftPaddingExpression = resolvedPaddingExpr resolved
                 , draftStrokeExpression = resolvedStrokeWidthExpr resolved
+                , draftWidthValue = widthValue
+                , draftHeightValue = heightValue
+                , draftPaddingValue = resolvedPadding resolved
+                , draftStrokeValue = resolvedStrokeWidth resolved
+                , draftSizeCap = sizeCap
                 , draftContentFlavor = flavor
                 }
         pure (Just selected {choiceDraft = draft})
@@ -501,9 +517,8 @@ verticalBlockHeightUnits :: VerticalBlockMetric -> Double
 verticalBlockHeightUnits metric =
   verticalBlockBottomUnits metric - verticalBlockTopUnits metric
 
-withMaximumSize ::
-     Double -> Double -> Double -> ShapedCandidate -> ShapedCandidate
-withMaximumSize availableWidth availableHeight preferred candidate =
+withMaximumSize :: Double -> Double -> ShapedCandidate -> ShapedCandidate
+withMaximumSize availableWidth availableHeight candidate =
   candidate {candidateMaximumSize = maximumSize}
   where
     lines' = candidateLines candidate
@@ -529,34 +544,30 @@ withMaximumSize availableWidth availableHeight preferred candidate =
         * metricSafetyFactor
     widthSize =
       if maximumWidthEm <= 0
-        then preferred
+        then availableHeight
         else availableWidth / maximumWidthEm
     heightSize =
       if requiredHeightEm <= 0
-        then preferred
+        then availableWidth
         else availableHeight / requiredHeightEm
-    maximumSize = min preferred (min widthSize heightSize)
+    maximumSize = min widthSize heightSize
 
 metricSafetyFactor :: Double
 metricSafetyFactor = 1.005
 
-selectCandidate ::
-     Bool -> Double -> [ShapedCandidate] -> Either String DraftChoice
-selectCandidate mayFit preferred candidates =
+selectCandidate :: SizePolicy -> [ShapedCandidate] -> Either String DraftChoice
+selectCandidate policy candidates =
   case firstUsableTier of
     Nothing ->
       Left
         ("text has no feasible compiler-selected layout at "
-           ++ (if mayFit
-                 then show minimumFittedSize ++ "px"
-                 else show preferred ++ "px")
+           ++ requiredSizeDescription policy
            ++ "; enlarge its bounds, reduce padding, or choose a shorter label")
     Just tier ->
       let best = minimumBy candidateOrdering tier
-          selectedSize =
-            if mayFit
-              then quantizeSize (min preferred (candidateMaximumSize best))
-              else preferred
+          maximumSize = candidateMaximumSize best
+          selectedSize = selectedSizeFor policy maximumSize
+          preferredSize = preferredSizeFor policy selectedSize
           emptyDraft =
             TextDraft
               { draftVisualId = 0
@@ -566,7 +577,7 @@ selectCandidate mayFit preferred candidates =
               , draftFontResolution =
                   error "font resolution is installed after candidate selection"
               , draftFontFeatures = []
-              , draftPreferredSize = preferred
+              , draftPreferredSize = preferredSize
               , draftSizeMode = FittedSize "" selectedSize
               , draftLineHeightEm = candidateLineHeightEm best
               , draftLines = candidateLines best
@@ -574,6 +585,11 @@ selectCandidate mayFit preferred candidates =
               , draftTextAlign = "center"
               , draftPaddingExpression = S.num 0
               , draftStrokeExpression = S.num 0
+              , draftWidthValue = 0
+              , draftHeightValue = 0
+              , draftPaddingValue = 0
+              , draftStrokeValue = 0
+              , draftSizeCap = Nothing
               , draftContentFlavor = PlainTextFlavor
               }
        in Right
@@ -582,9 +598,7 @@ selectCandidate mayFit preferred candidates =
   where
     eligible candidate =
       candidateMaximumSize candidate + fitTolerance
-        >= if mayFit
-             then minimumFittedSize
-             else preferred
+        >= minimumRequiredSize policy
     tiers =
       [ filter
         (\candidate -> candidateInsertedBreaks candidate == breakCount)
@@ -601,6 +615,46 @@ selectCandidate mayFit preferred candidates =
         ( negate (candidateMaximumSize right)
         , lineBalanceScore (candidateLines right)
         , map preparedLineDisplay (candidateLines right))
+
+minimumRequiredSize :: SizePolicy -> Double
+minimumRequiredSize policy =
+  case policy of
+    FixedSizePolicy value _ -> value
+    CappedFitPolicy cap _   -> min cap minimumFittedSize
+    _                       -> minimumFittedSize
+
+requiredSizeDescription :: SizePolicy -> String
+requiredSizeDescription policy =
+  case policy of
+    FixedSizePolicy value _ -> show value ++ "px"
+    CappedFitPolicy cap _   -> show (min cap minimumFittedSize) ++ "px"
+    _                       -> show minimumFittedSize ++ "px"
+
+selectedSizeFor :: SizePolicy -> Double -> Double
+selectedSizeFor policy maximumSize =
+  case policy of
+    FixedSizePolicy value _ -> value
+    CappedFitPolicy cap _ -> quantizeSize (min cap maximumSize)
+    MaximumFitPolicy -> quantizeSize maximumSize
+    OccupancyFitPolicy occupancy ->
+      quantizeSize
+        (min maximumSize (max minimumFittedSize (occupancy * maximumSize)))
+
+preferredSizeFor :: SizePolicy -> Double -> Double
+preferredSizeFor policy selectedSize =
+  case policy of
+    FixedSizePolicy value _ -> value
+    CappedFitPolicy cap _   -> cap
+    MaximumFitPolicy        -> selectedSize
+    OccupancyFitPolicy _    -> selectedSize
+
+sizePolicyKey :: SizePolicy -> String
+sizePolicyKey policy =
+  case policy of
+    FixedSizePolicy value _      -> "fixed:" ++ show value
+    CappedFitPolicy cap _        -> "capped:" ++ show cap
+    MaximumFitPolicy             -> "maximum"
+    OccupancyFitPolicy occupancy -> "occupancy:" ++ show occupancy
 
 minimumFittedSize :: Double
 minimumFittedSize = 12
@@ -645,7 +699,23 @@ applyDraft drafts wrapped =
                       (S.num selected)
                       (V.nodeStyle node)
               updated = V.ViewNode node {V.nodeStyle = style}
-           in (updated, textConstraints node draft)
+           in ( updated
+              , textConstraints node draft ++ typographyInputPins node draft)
+
+typographyInputPins :: V.Node tag -> TextDraft -> [S.Constraint]
+typographyInputPins node draft =
+  [ VP.width node S.@==@ S.num (draftWidthValue draft)
+  , VP.height node S.@==@ S.num (draftHeightValue draft)
+  , draftPaddingExpression draft S.@==@ S.num (draftPaddingValue draft)
+  , draftStrokeExpression draft S.@==@ S.num (draftStrokeValue draft)
+  ]
+    ++ case draftSizeMode draft of
+         FixedSize expression ->
+           [expression S.@==@ S.num (draftPreferredSize draft)]
+         FittedSize _ _ ->
+           case draftSizeCap draft of
+             Just (expression, value) -> [expression S.@==@ S.num value]
+             Nothing                  -> []
 
 textConstraints :: V.Node tag -> TextDraft -> [S.Constraint]
 textConstraints node draft =
@@ -1246,8 +1316,8 @@ effectiveFontFeatures flavor face =
       | otherwise = existing ++ [feature]
 
 familyFitKey ::
-     V.Node tag -> ResolvedTextStyle -> Font.FontResolution -> Double -> String
-familyFitKey node resolved resolution preferred =
+     V.Node tag -> ResolvedTextStyle -> Font.FontResolution -> String -> String
+familyFitKey node resolved resolution sizePolicy =
   let explicitFamily =
         fromMaybe
           (V.viewLabelKind (V.nodeLabel node))
@@ -1258,7 +1328,7 @@ familyFitKey node resolved resolution preferred =
         , Font.fontFaceFamily face
         , Font.fontFaceStyle face
         , show (Font.fontFaceWeight face)
-        , show preferred
+        , sizePolicy
         , resolvedTextAlign resolved
         ]
 

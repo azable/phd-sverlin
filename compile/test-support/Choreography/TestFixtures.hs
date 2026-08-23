@@ -30,10 +30,12 @@ module Choreography.TestFixtures
   , codeTypographyGraph
   , invalidCodeEmphasisGraph
   , invisibleCodeEmphasisGraph
+  , maximumTypographyGraph
   , conditionalAbsentGraph
   , conditionalPresentGraph
   , disjunctiveGraph
   , explicitFitTypographyGraph
+  , fixedLargeTypographyGraph
   , forbiddenStyleGraph
   , generativeGraph
   , generativeGroupGraph
@@ -44,6 +46,10 @@ module Choreography.TestFixtures
   , styledGraph
   , transientGraph
   , typographyGraph
+  , uncappedFitTypographyGraph
+  , oversizedFitTypographyGraph
+  , responsiveDenseTypographyGraph
+  , responsiveSparseTypographyGraph
   , wideLeafGraph
   ) where
 
@@ -131,6 +137,22 @@ disjunctiveGraph = buildGraph disjunctiveSpec
 explicitFitTypographyGraph :: ViewGraph
 explicitFitTypographyGraph = buildGraph explicitFitTypographySpec
 
+fixedLargeTypographyGraph :: ViewGraph
+fixedLargeTypographyGraph = buildGraph fixedLargeTypographySpec
+
+uncappedFitTypographyGraph :: ViewGraph
+uncappedFitTypographyGraph = buildGraph uncappedFitTypographySpec
+
+oversizedFitTypographyGraph :: ViewGraph
+oversizedFitTypographyGraph = buildGraph oversizedFitTypographySpec
+
+responsiveSparseTypographyGraph :: ViewGraph
+responsiveSparseTypographyGraph = buildGraph responsiveSparseTypographySpec
+
+responsiveDenseTypographyGraph :: ViewGraph
+responsiveDenseTypographyGraph =
+  buildGraphFor responsiveDenseFixture responsiveDenseTypographySpec
+
 forbiddenStyleGraph :: ViewGraph
 forbiddenStyleGraph = buildGenerativeGraph forbiddenStyleSpec
 
@@ -154,6 +176,9 @@ transientGraph = buildGraphFor transientFixture groupSpec
 
 typographyGraph :: ViewGraph
 typographyGraph = buildGenerativeGraph typographySpec
+
+maximumTypographyGraph :: ViewGraph
+maximumTypographyGraph = buildGenerativeGraph maximumTypographySpec
 
 wideLeafGraph :: ViewGraph
 wideLeafGraph = buildGraph wideLeafSpec
@@ -182,6 +207,26 @@ fixture = do
   checkpoint "unchanged"
   Destroy <- destroy first
   Destroy <- destroy second
+  checkpoint "destroyed"
+
+responsiveDenseFixture :: Choreography ()
+responsiveDenseFixture = do
+  Create pending7 <- create @TestValue (LInt 7)
+  value7 <- materialize #item pending7
+  Create pending8 <- create @TestValue (LInt 8)
+  value8 <- materialize #item pending8
+  Create pending9 <- create @TestValue (LInt 9)
+  value9 <- materialize #item pending9
+  Create pending10 <- create @TestValue (LInt 10)
+  value10 <- materialize #item pending10
+  Create pending11 <- create @TestValue (LInt 11)
+  value11 <- materialize #item pending11
+  checkpoint "created"
+  Destroy <- destroy value11
+  Destroy <- destroy value10
+  Destroy <- destroy value9
+  Destroy <- destroy value8
+  Destroy <- destroy value7
   checkpoint "destroyed"
 
 transientFixture :: Choreography ()
@@ -447,6 +492,20 @@ typographySpec =
       top (at 40)
       style @FontFamily (FixedStyle FontInter)
 
+maximumTypographySpec :: MatchSpec
+maximumTypographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      fitText
+        (text
+           "This label is deliberately long enough to exercise deterministic fitting")
+      width (by 220)
+      height (by 64)
+      left (at 40)
+      top (at 40)
+      style @FontFamily (FixedStyle FontInter)
+
 explicitFitTypographySpec :: MatchSpec
 explicitFitTypographySpec =
   visualize $ do
@@ -461,6 +520,119 @@ explicitFitTypographySpec =
       top (at 40)
       style @FontFamily (FixedStyle FontInter)
       style @FontSize (by 24)
+
+uncappedFitTypographySpec :: MatchSpec
+uncappedFitTypographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      fitText (text "7")
+      width (by 88)
+      height (by 68)
+      left (at 40)
+      top (at 40)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+      style @StrokeWidth (by 2)
+
+oversizedFitTypographySpec :: MatchSpec
+oversizedFitTypographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      fitText (text "7")
+      width (by 88)
+      height (by 68)
+      left (at 40)
+      top (at 40)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+      style @FontSize (by 56)
+      style @StrokeWidth (by 2)
+
+fixedLargeTypographySpec :: MatchSpec
+fixedLargeTypographySpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      content (text "7")
+      width (by 120)
+      height (by 100)
+      left (at 40)
+      top (at 40)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontSize (by 56)
+
+responsiveSparseTypographySpec :: MatchSpec
+responsiveSparseTypographySpec =
+  visualize $ do
+    Selected first <- select @TestValue (#item <&> payload (7 :: Int))
+    Selected second <- select @TestValue (#item <&> payload (8 :: Int))
+    render first $ do
+      fitText (text "7")
+      width (by 120)
+      height (by 250)
+      left (at 340)
+      top (at 40)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+    render second $ do
+      fitText (text "8")
+      width (by 120)
+      height (by 250)
+      left (at 340)
+      top (at 310)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+
+responsiveDenseTypographySpec :: MatchSpec
+responsiveDenseTypographySpec =
+  visualize $ do
+    Selected value7 <- select @TestValue (#item <&> payload (7 :: Int))
+    Selected value8 <- select @TestValue (#item <&> payload (8 :: Int))
+    Selected value9 <- select @TestValue (#item <&> payload (9 :: Int))
+    Selected value10 <- select @TestValue (#item <&> payload (10 :: Int))
+    Selected value11 <- select @TestValue (#item <&> payload (11 :: Int))
+    render value7 $ do
+      fitText (text "7")
+      width (by 120)
+      height (by 88)
+      left (at 340)
+      top (at 40)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+    render value8 $ do
+      fitText (text "8")
+      width (by 120)
+      height (by 88)
+      left (at 340)
+      top (at 148)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+    render value9 $ do
+      fitText (text "9")
+      width (by 120)
+      height (by 88)
+      left (at 340)
+      top (at 256)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+    render value10 $ do
+      fitText (text "10")
+      width (by 120)
+      height (by 88)
+      left (at 340)
+      top (at 364)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
+    render value11 $ do
+      fitText (text "11")
+      width (by 120)
+      height (by 88)
+      left (at 340)
+      top (at 472)
+      style @FontFamily (FixedStyle FontMono)
+      style @FontWeight (FixedStyle FontWeightBold)
 
 codeTypographySpec :: MatchSpec
 codeTypographySpec =
