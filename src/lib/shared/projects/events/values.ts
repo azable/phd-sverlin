@@ -74,7 +74,7 @@ export const artifactChangeSchema = v.variant('operation', [
 export const visualSelectionSchema = v.object({
   render: positiveSchema,
   step: naturalSchema,
-  instances: v.pipe(v.array(positiveSchema), v.minLength(1))
+  instances: v.pipe(v.array(naturalSchema), v.minLength(1))
 });
 
 /** Runtime schema identifying the exact DSL implementation used for a compilation. */
