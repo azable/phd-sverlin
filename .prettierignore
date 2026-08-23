@@ -13,6 +13,7 @@ build
 dist
 coverage
 compile/dist-newstyle*
+compile/vendor/**
 
 # Installed Codex/shadcn skills are vendored documentation and metadata.
 .agents/skills/**

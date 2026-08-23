@@ -152,6 +152,17 @@ describe('decodeVisualization', () => {
       textHighlightLines: [[{ tokenText: 'λ = 1' }]]
     });
 
+    current.steps[0].instances[0].codeEmphasisRanges = [{ sourceRangeStart: 0, sourceRangeEnd: 2 }];
+    expect(decodeVisualization(JSON.stringify(current)).steps[0].instances[0]).toMatchObject({
+      codeEmphasisRanges: [{ sourceRangeStart: 0, sourceRangeEnd: 2 }]
+    });
+
+    current.steps[0].instances[0].codeEmphasisRanges[0].sourceRangeEnd = 1;
+    expect(() => decodeVisualization(JSON.stringify(current))).toThrow(
+      'Text source range does not end at a valid UTF-8 boundary'
+    );
+    current.steps[0].instances[0].codeEmphasisRanges[0].sourceRangeEnd = 2;
+
     if (current.elements[0].content.kind !== 'codeTextContent') throw new Error('unreachable');
     current.elements[0].content.textHighlightLines[0][0].tokenSourceRange.sourceRangeEnd = 5;
     expect(() => decodeVisualization(JSON.stringify(current))).toThrow('invalid code token ranges');

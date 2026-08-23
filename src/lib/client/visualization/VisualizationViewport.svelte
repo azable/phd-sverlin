@@ -3,6 +3,7 @@
 
   import { Button } from '$lib/client/components/ui/button';
 
+  import { codeRenderSegments } from './code-emphasis';
   import {
     compilerFontFamily,
     ensureCompilerFont,
@@ -457,6 +458,7 @@
             >
               {#each layout.layoutLines as line, lineIndex (lineIndex)}
                 {@const highlights = element.content.textHighlightLines[lineIndex]}
+                {@const segments = codeRenderSegments(highlights ?? [], element.codeEmphasisRanges)}
                 <text
                   use:observeText={{
                     instanceId: element.instanceId,
@@ -480,9 +482,10 @@
                   style:font-feature-settings={fontFeatureSettings(font)}
                   style:font-optical-sizing="none"
                   style:font-variation-settings={fontVariationSettings(font)}
-                  >{#if highlights}{#each highlights as token, tokenIndex (tokenIndex)}<tspan
-                        fill={codeTokenColor(token.tokenKind)}>{token.tokenText}</tspan
-                      >{/each}{/if}</text
+                  >{#each segments as segment, segmentIndex (segmentIndex)}<tspan
+                      class:code-emphasis={segment.emphasized}
+                      fill={codeTokenColor(segment.tokenKind)}>{segment.text}</tspan
+                    >{/each}</text
                 >
               {/each}
             </g>
@@ -575,6 +578,13 @@
 
   .compiler-text.font-ready {
     opacity: 1;
+  }
+
+  .code-emphasis {
+    text-decoration-line: underline;
+    text-decoration-color: var(--chart-1);
+    text-decoration-thickness: 0.14em;
+    text-underline-offset: 0.18em;
   }
 
   .selection-outline {

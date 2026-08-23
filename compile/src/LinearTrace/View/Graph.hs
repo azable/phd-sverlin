@@ -18,6 +18,7 @@ module LinearTrace.View.Graph
   , viewTagsToList
   , ContentMode(..)
   , CodeWrapMode(..)
+  , CodeRange(..)
   , CodeContentSpec(..)
   , -- * Graph data
     -- | Symbolic graph, node, and render-intent records shared by the view
@@ -117,10 +118,18 @@ data CodeWrapMode
   | CodeSoftWrap
   deriving (P.Eq, P.Show)
 
+-- | Half-open Unicode character offsets in authored code. Visualization
+-- compilation converts these into canonical UTF-8 byte ranges.
+data CodeRange = CodeRange
+  { codeRangeStart :: P.Int
+  , codeRangeEnd   :: P.Int
+  } deriving (P.Eq, P.Show)
+
 data CodeContentSpec = CodeContentSpec
   { codeContentSource   :: P.String
   , codeContentWrapMode :: CodeWrapMode
   , codeContentLanguage :: P.Maybe P.String
+  , codeContentEmphasis :: [(P.String, [CodeRange])]
   } deriving (P.Eq, P.Show)
 
 data Node tag = Node

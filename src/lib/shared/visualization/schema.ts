@@ -190,7 +190,8 @@ const cspVariableSchema = v.strictObject({
 const visualInstanceSchema = v.strictObject({
   id: natural,
   elementId: natural,
-  originElementId: v.optional(natural)
+  originElementId: v.optional(natural),
+  codeEmphasisRanges: v.optional(v.array(textSourceRangeSchema))
 });
 
 const timelineStepSchema = v.strictObject({
@@ -245,7 +246,8 @@ export function validateVisualizationReferences(visualization: Visualization): v
   const resources = new Map(
     visualization.resources.map((resource) => [resource.descriptorId, resource])
   );
-  const elements = new Set(visualization.elements.map(({ id }) => id));
+  const elementRegistry = new Map(visualization.elements.map((element) => [element.id, element]));
+  const elements = new Set(elementRegistry.keys());
 
   for (const resource of visualization.resources) {
     if (resource.descriptorId !== `sha256-${resource.descriptorSha256}`) {
@@ -338,6 +340,18 @@ export function validateVisualizationReferences(visualization: Visualization): v
       if (instance.originElementId !== undefined && !elements.has(instance.originElementId)) {
         throw new Error(`Step ${stepIndex} references unknown origin ${instance.originElementId}.`);
       }
+      if (instance.codeEmphasisRanges !== undefined) {
+        const content = elementRegistry.get(instance.elementId)?.content;
+        if (content?.kind !== 'codeTextContent') {
+          throw new Error(`Step ${stepIndex} emphasizes non-code element ${instance.elementId}.`);
+        }
+        validateCodeEmphasisRanges(
+          instance.codeEmphasisRanges,
+          content.textLayout.layoutSource,
+          stepIndex,
+          instance.elementId
+        );
+      }
     }
   });
 
@@ -351,6 +365,25 @@ export function validateVisualizationReferences(visualization: Visualization): v
         throw new Error(`Finding ${finding.findingId} references unknown step ${stepIndex}.`);
       }
     }
+  }
+}
+
+function validateCodeEmphasisRanges(
+  ranges: readonly { sourceRangeStart: number; sourceRangeEnd: number }[],
+  source: string,
+  stepIndex: number,
+  elementId: number
+): void {
+  const sourceBytes = new TextEncoder().encode(source);
+  let previousEnd = 0;
+  for (const { sourceRangeStart: start, sourceRangeEnd: end } of ranges) {
+    if (start < previousEnd || end <= start || end > sourceBytes.byteLength) {
+      throw new Error(
+        `Step ${stepIndex} has invalid code emphasis ranges for element ${elementId}.`
+      );
+    }
+    decodeUtf8Range(sourceBytes, start, end);
+    previousEnd = end;
   }
 }
 

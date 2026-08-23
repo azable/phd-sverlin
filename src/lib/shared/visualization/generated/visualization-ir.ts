@@ -182,6 +182,7 @@ export interface VisualInstance {
   id: RenderInstanceId;
   elementId: VisualId;
   originElementId?: VisualId;
+  codeEmphasisRanges?: TextSourceRange[];
 }
 
 export interface VisualStyle {

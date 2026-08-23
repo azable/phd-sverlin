@@ -16,6 +16,12 @@
 
   "runArgs": ["--security-opt=seccomp=unconfined"],
 
+  "containerEnv": {
+    "CABAL_CONFIG": "${containerWorkspaceFolder}/.devcontainer/cabal.config",
+    "XDG_CACHE_HOME": "${containerWorkspaceFolder}/.cache",
+    "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state"
+  },
+
   "remoteEnv": {
     "SVERLIN_COMPILE_TIMEOUT_MS": "300000"
   },
@@ -70,6 +76,8 @@
   },
 
   "mounts": [
+    "source=${devcontainerId}-cabal-cache,target=${containerWorkspaceFolder}/.cache/cabal,type=volume",
+    "source=${devcontainerId}-cabal-state,target=${containerWorkspaceFolder}/.local/state/cabal,type=volume",
     "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly",
     "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind,readonly"
   ],

@@ -105,6 +105,7 @@ module LinearTrace.Choreography
   , Scalar
   , NodeRecipe
   , ContentValue
+  , CodeRange
   , text
   , -- * Re-exported from LinearTrace.Choreography.Node
     -- | Selection, content, grouping, rendering, and query composition helpers.
@@ -118,6 +119,8 @@ module LinearTrace.Choreography
   , codeContent
   , codeWrap
   , highlightCode
+  , codeRange
+  , emphasizeCode
   , payload
   , node
   , render

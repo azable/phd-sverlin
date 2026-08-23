@@ -318,9 +318,10 @@ data VisualElement = VisualElement
   } deriving (Eq, Show, Generic)
 
 data VisualInstance = VisualInstance
-  { instanceId              :: RenderInstanceId
-  , instanceElementId       :: VisualId
-  , instanceOriginElementId :: Maybe VisualId
+  { instanceId                 :: RenderInstanceId
+  , instanceElementId          :: VisualId
+  , instanceOriginElementId    :: Maybe VisualId
+  , instanceCodeEmphasisRanges :: Maybe [TextSourceRange]
   } deriving (Eq, Show, Generic)
 
 data TimelineStep = TimelineStep

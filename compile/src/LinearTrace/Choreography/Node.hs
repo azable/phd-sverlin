@@ -19,6 +19,9 @@ module LinearTrace.Choreography.Node
   , codeContent
   , codeWrap
   , highlightCode
+  , CodeRange
+  , codeRange
+  , emphasizeCode
   , Binding(..)
   , CoordRole
   , SpanRole
@@ -411,6 +414,7 @@ codeContent value =
                     { V.codeContentSource = contentSource bindings value
                     , V.codeContentWrapMode = V.CodeNoWrap
                     , V.codeContentLanguage = P.Nothing
+                    , V.codeContentEmphasis = []
                     })
          })
 
@@ -432,6 +436,28 @@ highlightCode language (NodeRecipe () build) =
     (updateCodeContent
        "highlightCode"
        (\code -> code {V.codeContentLanguage = P.Just language})
+       P.. build)
+
+-- | Half-open Unicode character offsets in authored code.
+type CodeRange = V.CodeRange
+
+codeRange :: P.Int -> P.Int -> CodeRange
+codeRange = V.CodeRange
+
+-- | Emphasize source ranges only while the node is visible at checkpoints
+-- with the supplied label. Syntax highlighting remains an independent static
+-- layer and may be composed inside or outside this wrapper.
+emphasizeCode :: P.String -> [CodeRange] -> NodeRecipe () %1 -> NodeRecipe ()
+emphasizeCode stepLabel ranges (NodeRecipe () build) =
+  NodeRecipe
+    ()
+    (updateCodeContent
+       "emphasizeCode"
+       (\code ->
+          code
+            { V.codeContentEmphasis =
+                V.codeContentEmphasis code P.++ [(stepLabel, ranges)]
+            })
        P.. build)
 
 payload ::

@@ -65,6 +65,28 @@ describe('VisualizationPlayer', () => {
     expect(player.elements[0].content).toEqual({ kind: 'legacyTextContent', textSource: 'one' });
   });
 
+  it('joins checkpoint-specific code emphasis onto a stable render instance', () => {
+    const compiledVisualization = visualization(['one', 'two']);
+    compiledVisualization.steps[0].instances[0].codeEmphasisRanges = [
+      { sourceRangeStart: 0, sourceRangeEnd: 3 }
+    ];
+    compiledVisualization.steps[1].instances[0].codeEmphasisRanges = [
+      { sourceRangeStart: 4, sourceRangeEnd: 7 }
+    ];
+
+    const player = new VisualizationPlayer();
+    player.setVisualization(compiledVisualization);
+    expect(player.elements[0].codeEmphasisRanges).toEqual([
+      { sourceRangeStart: 0, sourceRangeEnd: 3 }
+    ]);
+
+    player.next();
+    expect(player.elements[0].instanceId).toBe(1);
+    expect(player.elements[0].codeEmphasisRanges).toEqual([
+      { sourceRangeStart: 4, sourceRangeEnd: 7 }
+    ]);
+  });
+
   it('keeps the requested step when installing a replacement visualization', () => {
     const player = new VisualizationPlayer();
     player.setVisualization(visualization(['one', 'two']));

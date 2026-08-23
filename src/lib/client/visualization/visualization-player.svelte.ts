@@ -150,7 +150,15 @@ export class VisualizationPlayer {
 
     return instances.flatMap<LiveElement>((instance) => {
       const element = registry.get(instance.elementId);
-      return element ? [{ ...element, instanceId: instance.id }] : [];
+      return element
+        ? [
+            {
+              ...element,
+              instanceId: instance.id,
+              codeEmphasisRanges: instance.codeEmphasisRanges ?? []
+            }
+          ]
+        : [];
     });
   }
 

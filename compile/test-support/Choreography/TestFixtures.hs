@@ -28,6 +28,8 @@ module Choreography.TestFixtures
   , categoricalStyleGraph
   , centerGraph
   , codeTypographyGraph
+  , invalidCodeEmphasisGraph
+  , invisibleCodeEmphasisGraph
   , conditionalAbsentGraph
   , conditionalPresentGraph
   , disjunctiveGraph
@@ -110,6 +112,12 @@ centerGraph = buildGraph centerSpec
 
 codeTypographyGraph :: ViewGraph
 codeTypographyGraph = buildGraph codeTypographySpec
+
+invalidCodeEmphasisGraph :: ViewGraph
+invalidCodeEmphasisGraph = buildGraph invalidCodeEmphasisSpec
+
+invisibleCodeEmphasisGraph :: ViewGraph
+invisibleCodeEmphasisGraph = buildGraph invisibleCodeEmphasisSpec
 
 conditionalAbsentGraph :: ViewGraph
 conditionalAbsentGraph = buildGraph (conditionalStyleSpec TestPlain)
@@ -459,15 +467,49 @@ codeTypographySpec =
   visualize $ do
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
     render item $ do
-      highlightCode
-        "haskell"
-        (codeWrap
-           (codeContent
-              (text
-                 "let greeting = \"a deliberately long value\"\n-- this comment is deliberately long as well\nin greeting")))
+      emphasizeCode
+        "created"
+        [codeRange 4 10, codeRange 8 12]
+        (emphasizeCode
+           "unchanged"
+           [codeRange 51 58]
+           (highlightCode
+              "haskell"
+              (codeWrap
+                 (codeContent
+                    (text
+                       "let greeting = \"λ deliberately long value\"\n-- this comment is deliberately long as well\nin greeting")))))
       width (by 250)
       height (by 110)
       left (at 40)
       top (at 40)
       style @FontSize (by 14)
       style @TextAlign (FixedStyle TextAlignLeft)
+
+invalidCodeEmphasisSpec :: MatchSpec
+invalidCodeEmphasisSpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      emphasizeCode
+        "created"
+        [codeRange 0 100]
+        (codeContent (text "let value = 1"))
+      width (by 250)
+      height (by 64)
+      left (at 40)
+      top (at 40)
+
+invisibleCodeEmphasisSpec :: MatchSpec
+invisibleCodeEmphasisSpec =
+  visualize $ do
+    Selected item <- select @TestValue (#item <&> payload (7 :: Int))
+    render item $ do
+      emphasizeCode
+        "missing"
+        [codeRange 0 3]
+        (codeContent (text "let value = 1"))
+      width (by 250)
+      height (by 64)
+      left (at 40)
+      top (at 40)

@@ -213,6 +213,16 @@ typographyTests =
                 assertBool
                   "expected comment highlighting"
                   (IR.CodeComment `elem` kinds)
+                case IR.visualizationSteps compiled of
+                  created:unchanged:destroyed:_ -> do
+                    instanceEmphasis created @?= Just [IR.TextSourceRange 4 12]
+                    instanceEmphasis unchanged
+                      @?= Just [IR.TextSourceRange 52 59]
+                    instanceEmphasis destroyed @?= Nothing
+                  steps ->
+                    assertFailure
+                      ("expected three code-emphasis steps, got "
+                         ++ show (length steps))
               other ->
                 assertFailure ("expected highlighted code, got " ++ show other)
           _ -> assertFailure "expected one highlighted code element"
@@ -224,7 +234,34 @@ typographyTests =
         assertBool
           "expected text-run format v2"
           ("application/vnd.sverlin.text-run-v2" `elem` mediaTypes)
+    , testCase "rejects code emphasis beyond the authored source" $ do
+        (_, _, _, result) <-
+          compileTypographyGraph 1 ChoreographyFixtures.invalidCodeEmphasisGraph
+        assertLeftContains "ends after the source" result
+    , testCase "rejects emphasis where its element is not visible" $ do
+        (_, _, _, result) <-
+          compileTypographyGraph
+            1
+            ChoreographyFixtures.invisibleCodeEmphasisGraph
+        assertLeftContains "where the element is not visible" result
+    , testCase "rejects emphasis without compiler-owned code typography" $ do
+        solution <-
+          Choreography.solveViewGraphWithSeed
+            (RandomSeed 1)
+            ChoreographyFixtures.codeTypographyGraph
+        assertLeftContains
+          "requires compiler-owned code typography"
+          (Compile.compileSolved
+             "Typography.sverlin"
+             solution
+             ChoreographyFixtures.codeTypographyGraph)
     ]
+  where
+    instanceEmphasis step =
+      case IR.stepInstances step of
+        [instance'] -> IR.instanceCodeEmphasisRanges instance'
+        instances ->
+          error ("expected one code instance, got " ++ show (length instances))
 
 runTypographyPipeline ::
      Int
@@ -237,6 +274,19 @@ runTypographyGraph ::
   -> Choreography.ViewGraph
   -> IO (Solution, Solution, Typography.TypographyOutput, IR.Visualization)
 runTypographyGraph seed graph = do
+  (initial, final, output, compiledResult) <- compileTypographyGraph seed graph
+  compiled <- assertEither compiledResult
+  pure (initial, final, output, compiled)
+
+compileTypographyGraph ::
+     Int
+  -> Choreography.ViewGraph
+  -> IO
+       ( Solution
+       , Solution
+       , Typography.TypographyOutput
+       , Either String IR.Visualization)
+compileTypographyGraph seed graph = do
   let randomSeed = RandomSeed seed
   initial <- Choreography.solveViewGraphWithSeed randomSeed graph
   preparedResult <- Typography.prepareTypography initial graph
@@ -247,13 +297,12 @@ runTypographyGraph seed graph = do
       initial
       (Typography.preparedTypographyGraph prepared)
   output <- assertEither (Typography.materializeTypography final prepared)
-  compiled <-
-    assertEither
-      (Compile.compileSolvedWithTypography
-         "Typography.sverlin"
-         final
-         (Typography.preparedTypographyGraph prepared)
-         output)
+  let compiled =
+        Compile.compileSolvedWithTypography
+          "Typography.sverlin"
+          final
+          (Typography.preparedTypographyGraph prepared)
+          output
   pure (initial, final, output, compiled)
 
 assertLineInside :: IR.LayoutRect -> IR.TextLine -> Assertion
@@ -280,6 +329,15 @@ assertEither result =
   case result of
     Left err    -> assertFailure err
     Right value -> pure value
+
+assertLeftContains :: String -> Either String value -> Assertion
+assertLeftContains expected result =
+  case result of
+    Left err ->
+      assertBool
+        ("expected error containing " ++ show expected ++ ", got " ++ show err)
+        (expected `List.isInfixOf` err)
+    Right _ -> assertFailure ("expected failure containing " ++ show expected)
 
 coreQueryTests :: TestTree
 coreQueryTests =

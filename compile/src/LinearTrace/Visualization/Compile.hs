@@ -12,8 +12,12 @@ module LinearTrace.Visualization.Compile
   ) where
 
 import           Control.Monad.State.Strict
+import qualified Data.ByteString                      as BS
+import           Data.List                            (sortOn)
 import           Data.Map.Strict                      (Map)
 import qualified Data.Map.Strict                      as Map
+import qualified Data.Text                            as Text
+import qualified Data.Text.Encoding                   as TextEncoding
 import qualified LinearTrace.View.Graph               as V
 import qualified LinearTrace.View.Primitives          as VP
 import qualified LinearTrace.View.Style               as VS
@@ -55,10 +59,14 @@ compileSolvedWith ::
   -> Either String IR.Visualization
 compileSolvedWith sourcePath solution graph contents resources findings = do
   elements <- traverse (compileElement solution contents) (V.viewNodes graph)
+  let emphasis = emphasisLookup (V.viewNodes graph)
+      elementsById = elementLookup elements
+  validateEmphasisContent elementsById emphasis
   steps <-
     evalStateT
-      (compileSteps (elementLookup elements) (V.viewSteps graph))
+      (compileSteps elementsById emphasis (V.viewSteps graph))
       emptySceneState
+  validateEmphasisTargets emphasis steps
   pure
     IR.Visualization
       { IR.visualizationIrVersion = 2
@@ -247,9 +255,38 @@ compileStyleBindings solution style =
 
 type ElementLookup = Map IR.VisualId IR.VisualElement
 
+type EmphasisLookup = Map IR.VisualId (String, [(String, [V.CodeRange])])
+
 elementLookup :: [IR.VisualElement] -> ElementLookup
 elementLookup elements =
   Map.fromList [(IR.elementId element, element) | element <- elements]
+
+emphasisLookup :: [V.ViewNode] -> EmphasisLookup
+emphasisLookup = Map.fromList . foldMap entry
+  where
+    entry wrapped =
+      case wrapped of
+        V.ViewNode node ->
+          case V.nodeContent node of
+            V.ContentCode code
+              | not (null (V.codeContentEmphasis code)) ->
+                [ ( visualId (V.nodeRef node)
+                  , (V.codeContentSource code, V.codeContentEmphasis code))
+                ]
+            _ -> []
+
+validateEmphasisContent :: ElementLookup -> EmphasisLookup -> Either String ()
+validateEmphasisContent elements emphasis =
+  mapM_ validateElement (Map.keys emphasis)
+  where
+    validateElement elementId =
+      case IR.elementContent =<< Map.lookup elementId elements of
+        Just IR.CodeTextContent {} -> pure ()
+        _ ->
+          Left
+            ("code emphasis for element "
+               ++ show elementId
+               ++ " requires compiler-owned code typography")
 
 data SceneState = SceneState
   { sceneLineage   :: Map IR.VisualId IR.RenderInstanceId
@@ -261,15 +298,25 @@ emptySceneState = SceneState Map.empty Map.empty
 
 type CompileM = StateT SceneState (Either String)
 
-compileSteps :: ElementLookup -> [V.ViewStep] -> CompileM [IR.TimelineStep]
-compileSteps lookup' = traverse (compileStep lookup')
+compileSteps ::
+     ElementLookup
+  -> EmphasisLookup
+  -> [V.ViewStep]
+  -> CompileM [IR.TimelineStep]
+compileSteps lookup' emphasis = traverse (compileStep lookup' emphasis)
 
-compileStep :: ElementLookup -> V.ViewStep -> CompileM IR.TimelineStep
-compileStep lookup' step = do
+compileStep ::
+     ElementLookup -> EmphasisLookup -> V.ViewStep -> CompileM IR.TimelineStep
+compileStep lookup' emphasis step = do
   modify clearOrigins
   let (introductions, removals) = V.splitRenderIntents (V.viewStepIntents step)
   mapM_ (applyIntent lookup') introductions
-  instances <- gets (Map.elems . sceneInstances)
+  baseInstances <- gets (Map.elems . sceneInstances)
+  instances <-
+    lift
+      (traverse
+         (attachCodeEmphasis emphasis (V.viewStepLabel step))
+         baseInstances)
   mapM_ (applyIntent lookup') removals
   pure
     IR.TimelineStep
@@ -283,6 +330,106 @@ clearOrigins scene =
           (\instance' -> instance' {IR.instanceOriginElementId = Nothing})
           (sceneInstances scene)
     }
+
+attachCodeEmphasis ::
+     EmphasisLookup
+  -> String
+  -> IR.VisualInstance
+  -> Either String IR.VisualInstance
+attachCodeEmphasis emphasis stepLabel instance' =
+  case Map.lookup (IR.instanceElementId instance') emphasis of
+    Nothing -> pure instance'
+    Just (source, schedule) -> do
+      ranges <-
+        compileCodeRanges
+          (IR.instanceElementId instance')
+          source
+          (concat
+             [ configured
+             | (configuredStep, configured) <- schedule
+             , configuredStep == stepLabel
+             ])
+      pure
+        instance'
+          { IR.instanceCodeEmphasisRanges =
+              if null ranges
+                then Nothing
+                else Just ranges
+          }
+
+compileCodeRanges ::
+     IR.VisualId
+  -> String
+  -> [V.CodeRange]
+  -> Either String [IR.TextSourceRange]
+compileCodeRanges elementId source ranges = do
+  mapM_ validateRange ranges
+  pure (map compileRange (mergeCodeRanges (sortOn rangeBounds ranges)))
+  where
+    sourceLength = length source
+    rangeBounds range = (V.codeRangeStart range, V.codeRangeEnd range)
+    validateRange range
+      | start < 0 = invalid "starts before the source"
+      | end <= start = invalid "must have a positive length"
+      | end > sourceLength = invalid "ends after the source"
+      | otherwise = pure ()
+      where
+        start = V.codeRangeStart range
+        end = V.codeRangeEnd range
+        invalid reason =
+          Left
+            ("code emphasis range "
+               ++ show (start, end)
+               ++ " for element "
+               ++ show elementId
+               ++ " "
+               ++ reason)
+    compileRange range =
+      IR.TextSourceRange
+        { IR.textSourceRangeStart = utf8Offset (V.codeRangeStart range)
+        , IR.textSourceRangeEnd = utf8Offset (V.codeRangeEnd range)
+        }
+    utf8Offset offset =
+      BS.length (TextEncoding.encodeUtf8 (Text.pack (take offset source)))
+
+mergeCodeRanges :: [V.CodeRange] -> [V.CodeRange]
+mergeCodeRanges ranges =
+  case ranges of
+    []         -> []
+    first:rest -> reverse (foldl merge [first] rest)
+  where
+    merge merged next =
+      case merged of
+        [] -> [next]
+        current:previous
+          | V.codeRangeStart next <= V.codeRangeEnd current ->
+            current
+              { V.codeRangeEnd =
+                  max (V.codeRangeEnd current) (V.codeRangeEnd next)
+              }
+              : previous
+          | otherwise -> next : merged
+
+validateEmphasisTargets ::
+     EmphasisLookup -> [IR.TimelineStep] -> Either String ()
+validateEmphasisTargets emphasis steps =
+  mapM_ validateElement (Map.toAscList emphasis)
+  where
+    validateElement (elementId, (_, schedule)) =
+      mapM_ (validateStep elementId) schedule
+    validateStep _ (_, []) = pure ()
+    validateStep elementId (stepLabel, _)
+      | any (isVisibleAt elementId stepLabel) steps = pure ()
+      | otherwise =
+        Left
+          ("code emphasis for element "
+             ++ show elementId
+             ++ " references checkpoint "
+             ++ show stepLabel
+             ++ " where the element is not visible")
+    isVisibleAt elementId stepLabel step =
+      IR.stepLabel step == stepLabel
+        && any ((== elementId) . IR.instanceElementId) (IR.stepInstances step)
 
 applyIntent :: ElementLookup -> V.RenderIntent -> CompileM ()
 applyIntent lookup' intent =
@@ -315,7 +462,12 @@ continueElement source target = do
          , sceneInstances =
              Map.insert
                instanceId
-               (IR.VisualInstance instanceId (IR.elementId target) Nothing)
+               (IR.VisualInstance
+                  { IR.instanceId = instanceId
+                  , IR.instanceElementId = IR.elementId target
+                  , IR.instanceOriginElementId = Nothing
+                  , IR.instanceCodeEmphasisRanges = Nothing
+                  })
                (sceneInstances scene)
          })
 
@@ -347,7 +499,12 @@ createElementWithOrigin origin element =
              , sceneInstances =
                  Map.insert
                    instanceId
-                   (IR.VisualInstance instanceId elementId' origin)
+                   (IR.VisualInstance
+                      { IR.instanceId = instanceId
+                      , IR.instanceElementId = elementId'
+                      , IR.instanceOriginElementId = origin
+                      , IR.instanceCodeEmphasisRanges = Nothing
+                      })
                    (sceneInstances scene)
              })
 

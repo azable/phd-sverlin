@@ -144,16 +144,19 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 
   ```haskell
   render example $ do
-    highlightCode
-      "haskell"
-      (codeWrap
-        (codeContent "let answer = 40 + 2\n-- computed result"))
+    emphasizeCode
+      "computed"
+      [codeRange 4 10]
+      (highlightCode
+        "haskell"
+        (codeWrap
+          (codeContent "let answer = 40 + 2\n-- computed result")))
     width (by 280)
     height (by 96)
     style @TextAlign (FixedStyle TextAlignLeft)
   ```
 
-  Supported highlighting aliases cover `sverlin`/`haskell`/`hs`, JavaScript/TypeScript and common C-like languages, Python/shell, JSON, CSS, and SQL. Code defaults to the managed non-ligature JetBrains Mono face. Do not simulate code with ordinary wrapped prose.
+  `emphasizeCode "checkpoint" [codeRange start end] recipe` adds emphasis only when the selected node is visible at a checkpoint with that exact label. Ranges are half-open, zero-based Unicode character offsets in the authored source; the compiler converts them to UTF-8 byte ranges, merges overlap, and rejects invalid or invisible schedules. Emphasis is separate from syntax roles, so do not rewrite highlighted tokens to simulate it. Supported highlighting aliases cover `sverlin`/`haskell`/`hs`, JavaScript/TypeScript and common C-like languages, Python/shell, JSON, CSS, and SQL. Code defaults to the managed non-ligature JetBrains Mono face. Do not simulate code with ordinary wrapped prose.
 
 - Managed font choices are `FontInter`, `FontSystem` (pinned Source Sans 3), `FontMono` (pinned JetBrains Mono NL), `FontSerif` (pinned Source Serif 4), `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`, `FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`, `FontJetBrainsMonoNL`, and `FontIBMPlexMono`.
 - Style fields are `Opacity`, `ZIndex`, `Padding`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`.
