@@ -163,9 +163,9 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `bounds` — Type: `bounds :: BoundsExpr -> VisualizationBuilder ()` — Constrain all four bounds of the current node at once.
 - `Vec2` — Type: `Vec2 :: Type -> Type; data Vec2 a = Vec2 a a` — Two-dimensional value used for centers, sizes, and vector arithmetic.
 - `vec2` — Type: `vec2 :: a -> a -> Vec2 a` — Construct a two-dimensional value from its components.
-- `at` — Type: `at :: Double -> Coord` — Construct an absolute pixel coordinate.
-- `by` — Type: `by :: Double -> Span` — Construct a non-negative pixel span.
-- `shift` — Type: `shift :: Double -> Offset` — Construct a signed pixel displacement.
+- `at` — Type: `at :: Double -> Coord` — Construct an absolute coordinate in scalable canvas layout units.
+- `by` — Type: `by :: Double -> Span` — Construct a non-negative span in scalable canvas layout units.
+- `shift` — Type: `shift :: Double -> Offset` — Construct a signed displacement in scalable canvas layout units.
 - `asScalar` — Type: `asScalar :: QueryInt -> Scalar` — Interpret a captured query integer as a unitless scalar.
 - `asCoord` — Type: `asCoord :: Offset -> Coord` — Reinterpret a signed offset as a coordinate expression.
 - `asSpan` — Type: `asSpan :: Offset -> Span` — Reinterpret a signed offset as a span expression.
@@ -189,6 +189,7 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `Axis` — Type: `Axis :: Type; data Axis = Horizontal | Vertical | Both` — Layout axis used by content-fit rules.
 - `ContentFit` — Type: `ContentFit :: Type; data ContentFit = Hug | Contain` — Policy controlling how a parent fits around its children.
 - `contentFit` — Type: `contentFit :: Axis -> ContentFit -> VisualizationBuilder ()` — Set the current node's child-fitting policy.
+- `aspectRatio` — Type: `aspectRatio :: Double -> Double -> VisualizationBuilder ()` — Constrain the canvas to a finite positive horizontal:vertical ratio.
 - `Percent` — Type: `Percent :: Type` — Percentage in the inclusive 0 to 100 parent-relative domain.
 - `percent` — Type: `percent :: Double -> Percent` — Construct a validated parent-relative percentage.
 - `xAt` — Type: `xAt :: Percent -> VisualizationBuilder ()` — Pin the current node's horizontal center within its parent content box.
@@ -208,7 +209,7 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `NodeStyle` — Type: `NodeStyle :: Type` — Complete accumulated style plan for a node.
 - `Opacity` — Type: `Opacity :: Type` — Opacity style field in the unit interval.
 - `ZIndex` — Type: `ZIndex :: Type` — Z-order style field.
-- `FontSize` — Type: `FontSize :: Type` — Font-size style field in pixels; with `fitText` it acts as a cap.
+- `FontSize` — Type: `FontSize :: Type` — Font-size field in layout units; with `fitText` it acts as a cap.
 - `Radius` — Type: `Radius :: Type` — Corner-radius style field.
 - `StrokeWidth` — Type: `StrokeWidth :: Type` — Border/stroke-width style field.
 - `Alpha` — Type: `Alpha :: Type` — Colour alpha-channel style field.

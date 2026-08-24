@@ -164,8 +164,7 @@ function visualization(contents: string[]): Visualization {
     sourcePath: 'Main.sverlin',
     sampling: { mode: 'legacyOptimizer', coverage: 'legacyCoverage' },
     coordinates: {
-      systemName: 'sverlin-css96-y-down',
-      systemUnitsPerInch: 96,
+      systemName: 'sverlin-logical-y-down',
       systemOrigin: 'top-left',
       systemYAxis: 'down'
     },

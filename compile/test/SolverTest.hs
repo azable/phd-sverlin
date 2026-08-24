@@ -580,6 +580,53 @@ viewMaterializationTests =
               120
               (IR.layoutRectHeight bounds')
             IR.boxPadding (IR.elementBox root) @?= IR.EdgeInsets 10 20 30 40
+    , testCase "an aspect-ratio canvas hugs content on the limiting axis" $ do
+        compiled <-
+          solveAndCompile 44 ChoreographyFixtures.aspectRatioAutomaticGraph
+        let bounds' = canvasBounds compiled
+        assertBoxNear
+          "aspect-ratio automatic width"
+          (120 * 16 / 9)
+          (IR.layoutRectWidth bounds')
+        assertBoxNear
+          "aspect-ratio automatic height"
+          120
+          (IR.layoutRectHeight bounds')
+    , testCase "an empty aspect-ratio canvas fits the default envelope" $ do
+        compiled <-
+          solveAndCompile 45 ChoreographyFixtures.aspectRatioEmptyGraph
+        let bounds' = canvasBounds compiled
+        assertBoxNear
+          "empty aspect-ratio width"
+          800
+          (IR.layoutRectWidth bounds')
+        assertBoxNear
+          "empty aspect-ratio height"
+          450
+          (IR.layoutRectHeight bounds')
+    , testCase "one explicit aspect-ratio axis derives the other" $ do
+        compiled <-
+          solveAndCompile 46 ChoreographyFixtures.aspectRatioExplicitGraph
+        let bounds' = canvasBounds compiled
+        assertBoxNear
+          "derived aspect-ratio width"
+          1600
+          (IR.layoutRectWidth bounds')
+        assertBoxNear
+          "explicit aspect-ratio height"
+          900
+          (IR.layoutRectHeight bounds')
+    , testCase "aspect-ratio components must be finite and positive"
+        $ assertErrorContains
+            "invalid aspect ratio"
+            "finite positive numbers"
+            (evaluate (Choreography.visualize (Choreography.aspectRatio 0 9)))
+    , testCase "explicit canvas dimensions must agree with the aspect ratio"
+        $ assertErrorContains
+            "conflicting aspect ratio"
+            "conflict with aspect ratio"
+            (evaluate
+               (statsTotal ChoreographyFixtures.conflictingAspectRatioStats))
     , testCase "selected color access adds a compiled color style" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
@@ -929,7 +976,7 @@ viewMaterializationTests =
             mapM_
               (\element ->
                  assertBool
-                   "expected the requested 620px width"
+                   "expected the requested 620-unit width"
                    (abs
                       (IR.layoutRectWidth (IR.boxBounds (IR.elementBox element))
                          - 620)
@@ -1620,6 +1667,14 @@ assertCompileSolved solution graph =
 renderElements :: IR.Visualization -> [IR.VisualElement]
 renderElements =
   filter ((/= "Canvas") . IR.elementRole) . IR.visualizationElements
+
+canvasBounds :: IR.Visualization -> IR.LayoutRect
+canvasBounds visualization =
+  case List.find
+         ((== IR.visualizationRoot visualization) . IR.elementId)
+         (IR.visualizationElements visualization) of
+    Nothing   -> error "expected the canonical canvas root"
+    Just root -> IR.boxBounds (IR.elementBox root)
 
 plainTextLayouts :: IR.Visualization -> [IR.TextLayout]
 plainTextLayouts visualization =

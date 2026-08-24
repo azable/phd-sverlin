@@ -206,8 +206,7 @@ function visualization(): Visualization {
     sourcePath: 'Main.sverlin',
     sampling: { mode: 'balancedChoices', coverage: 'exactEnumeration' },
     coordinates: {
-      systemName: 'sverlin-css96-y-down',
-      systemUnitsPerInch: 96,
+      systemName: 'sverlin-logical-y-down',
       systemOrigin: 'top-left',
       systemYAxis: 'down'
     },

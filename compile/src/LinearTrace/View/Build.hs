@@ -95,16 +95,20 @@ boundsRangeConstraints node =
               widthExpr
               (Range
                  minimumLayoutExtent
-                 (if canvasWidthExplicit meta
-                    then maximumLayoutExtent
-                    else automaticCanvasWidth))
+                 (canvasAxisMaximum
+                    (canvasWidthExplicit meta)
+                    (canvasHeightExplicit meta)
+                    (canvasAspectRatio meta)
+                    automaticCanvasWidth))
           , S.within
               heightExpr
               (Range
                  minimumLayoutExtent
-                 (if canvasHeightExplicit meta
-                    then maximumLayoutExtent
-                    else automaticCanvasHeight))
+                 (canvasAxisMaximum
+                    (canvasHeightExplicit meta)
+                    (canvasWidthExplicit meta)
+                    (canvasAspectRatio meta)
+                    automaticCanvasHeight))
           ]
         _ ->
           [ S.within
@@ -128,6 +132,19 @@ automaticCanvasWidth = 800
 
 automaticCanvasHeight :: P.Double
 automaticCanvasHeight = 600
+
+canvasAxisMaximum ::
+     P.Bool -> P.Bool -> P.Maybe P.Double -> P.Double -> P.Double
+canvasAxisMaximum explicit counterpartExplicit aspect automaticMaximum =
+  if explicit P.|| (counterpartExplicit P.&& hasAspectRatio aspect)
+    then maximumLayoutExtent
+    else automaticMaximum
+
+hasAspectRatio :: P.Maybe P.Double -> P.Bool
+hasAspectRatio maybeRatio =
+  case maybeRatio of
+    Nothing -> P.False
+    Just _  -> P.True
 
 viewNodeChoiceConstraints :: ViewNode -> [ChoiceConstraint]
 viewNodeChoiceConstraints wrapped =
@@ -160,28 +177,90 @@ childFitConstraints children parent =
   case Map.findWithDefault [] (viewRefId (nodeRef parent)) children of
     [] ->
       case nodeOrigin parent of
-        CanvasOrigin meta ->
-          [ width parent S.@==@ S.num automaticCanvasWidth
-          | P.not (canvasWidthExplicit meta)
-          ]
-            P.++ [ height parent S.@==@ S.num automaticCanvasHeight
-                 | P.not (canvasHeightExplicit meta)
-                 ]
-        _ -> []
+        CanvasOrigin meta -> emptyCanvasConstraints meta parent
+        _                 -> []
     childNodes ->
       let padding = paddingForGeometry (nodeBoxPadding (nodeBox parent))
-       in axisFitConstraints
-            parent
-            childNodes
-            Horizontal
-            (nodeHorizontalFit parent)
-            padding
-            P.++ axisFitConstraints
-                   parent
-                   childNodes
-                   Vertical
-                   (nodeVerticalFit parent)
-                   padding
+       in case nodeOrigin parent of
+            CanvasOrigin meta
+              | hasAspectRatio (canvasAspectRatio meta)
+                  P.&& nodeHorizontalFit parent P.== Hug
+                  P.&& nodeVerticalFit parent P.== Hug ->
+                axisFitConstraints parent childNodes Horizontal Contain padding
+                  P.++ axisFitConstraints
+                         parent
+                         childNodes
+                         Vertical
+                         Contain
+                         padding
+                  P.++ [aspectCanvasTightness parent childNodes padding]
+            _ ->
+              axisFitConstraints
+                parent
+                childNodes
+                Horizontal
+                (nodeHorizontalFit parent)
+                padding
+                P.++ axisFitConstraints
+                       parent
+                       childNodes
+                       Vertical
+                       (nodeVerticalFit parent)
+                       padding
+
+emptyCanvasConstraints :: CanvasMeta -> Node tag -> [Constraint]
+emptyCanvasConstraints meta parent =
+  case canvasAspectRatio meta of
+    Nothing ->
+      [ width parent S.@==@ S.num automaticCanvasWidth
+      | P.not (canvasWidthExplicit meta)
+      ]
+        P.++ [ height parent S.@==@ S.num automaticCanvasHeight
+             | P.not (canvasHeightExplicit meta)
+             ]
+    Just ratio ->
+      case (canvasWidthExplicit meta, canvasHeightExplicit meta) of
+        (P.False, P.False) ->
+          let automaticWidth =
+                P.min automaticCanvasWidth (automaticCanvasHeight P.* ratio)
+              automaticHeight = automaticWidth P./ ratio
+           in [ width parent S.@==@ S.num automaticWidth
+              , height parent S.@==@ S.num automaticHeight
+              ]
+        _ -> []
+
+aspectCanvasTightness ::
+     Node tag -> [ViewNode] -> EdgeInsets LayoutExpr -> Constraint
+aspectCanvasTightness parent children padding =
+  case horizontalAlternatives P.++ verticalAlternatives of
+    [] -> P.error "Cannot fit an aspect-ratio canvas around an empty child list"
+    first:rest ->
+      S.oneOf
+        ("view.node."
+           P.++ P.show (viewRefInt (nodeRef parent))
+           P.++ ".fit.aspect-ratio")
+        first
+        rest
+  where
+    horizontalAlternatives = P.map (tightAlternative Horizontal) children
+    verticalAlternatives = P.map (tightAlternative Vertical) children
+    tightAlternative axis wrapped@(ViewNode child) =
+      S.alternative
+        (axisName axis P.++ ".child." P.++ P.show (viewRefInt (nodeRef child)))
+        [parentEnd axis S.@==@ childEnd axis wrapped]
+    parentEnd axis =
+      case axis of
+        Horizontal -> right parent S.@-@ insetRight padding
+        Vertical   -> bottom parent S.@-@ insetBottom padding
+        Both       -> P.error "Both is not a concrete layout axis"
+    childEnd axis wrapped =
+      case wrapped of
+        ViewNode child ->
+          let margin = nodeBoxMargin (nodeBox child)
+           in case axis of
+                Horizontal -> right child S.@+@ insetRight margin
+                Vertical   -> bottom child S.@+@ insetBottom margin
+                Both       -> P.error "Both is not a concrete layout axis"
 
 axisFitConstraints ::
      Node tag

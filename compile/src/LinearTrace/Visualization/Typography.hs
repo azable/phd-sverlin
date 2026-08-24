@@ -638,9 +638,9 @@ minimumRequiredSize policy =
 requiredSizeDescription :: SizePolicy -> String
 requiredSizeDescription policy =
   case policy of
-    FixedSizePolicy value _ -> show value ++ "px"
-    CappedFitPolicy cap _   -> show (min cap minimumFittedSize) ++ "px"
-    _                       -> show minimumFittedSize ++ "px"
+    FixedSizePolicy value _ -> show value ++ " layout units"
+    CappedFitPolicy cap _ -> show (min cap minimumFittedSize) ++ " layout units"
+    _ -> show minimumFittedSize ++ " layout units"
 
 selectedSizeFor :: SizePolicy -> Double -> Double
 selectedSizeFor policy maximumSize =
@@ -1007,16 +1007,19 @@ draftFindings fontSize draft =
       [ base
         "size-reduced"
         "Text was made smaller to retain the compiler-selected line layout."
-        [ numberEvidence "preferredSize" (draftPreferredSize draft) "px"
-        , numberEvidence "selectedSize" fontSize "px"
+        [ numberEvidence
+            "preferredSize"
+            (draftPreferredSize draft)
+            "layout-unit"
+        , numberEvidence "selectedSize" fontSize "layout-unit"
         ]
       | fontSize + fitTolerance < draftPreferredSize draft
       ]
     smallFinding =
       [ base
-        "small-physical-size"
-        "Text is at the minimum managed font size and may be hard to read."
-        [numberEvidence "selectedSize" fontSize "px"]
+        "small-layout-size"
+        "Text is at the minimum managed layout size and may be hard to read."
+        [numberEvidence "selectedSize" fontSize "layout-unit"]
       | fontSize <= minimumFittedSize + fitTolerance
       ]
     wrapFinding =

@@ -33,8 +33,9 @@
 -- content, styles, and constraints use the same API as leaf nodes.
 --
 -- The body of 'visualize' edits the persistent canvas root. Root 'width' and
--- 'height' may be explicit; under the default 'Hug' fit, an omitted axis hugs its retained children up to
--- 800 by 600, with an empty canvas falling back to that size. Root padding,
+-- 'height' may be explicit; 'aspectRatio' relates them with an affine
+-- constraint. Under the default 'Hug' fit, an omitted axis hugs its retained
+-- children within the 800 by 600 automatic envelope. Root padding,
 -- content-fit, and styles use the ordinary node behavior. Position, margin,
 -- and content declarations are rejected on the root because its origin is
 -- fixed at @(0,0)@ and it is never a timeline instance.
@@ -42,9 +43,10 @@
 -- = Geometry and text
 --
 -- Layout expressions are affine and typed as coordinates, spans, offsets, or
--- unitless scalars. Percentage pins are resolved against the parent content
--- box. 'fitText' makes font size a solver decision capped by the authored font
--- size, so text fills available node space without trial-and-error resizing.
+-- unitless scalars. Geometry and typography use scalable logical layout units,
+-- while percentage pins are resolved against the parent content box. 'fitText'
+-- makes font size a solver decision capped by the authored font size, so text
+-- fills available node space without trial-and-error resizing.
 --
 -- = Documentation contract
 --
@@ -330,11 +332,11 @@ module LinearTrace.Choreography
     Vec2(..)
   , -- | Construct a two-dimensional value from its components.
     vec2
-  , -- | Construct an absolute pixel coordinate.
+  , -- | Construct an absolute coordinate in scalable canvas layout units.
     at
-  , -- | Construct a non-negative pixel span.
+  , -- | Construct a non-negative span in scalable canvas layout units.
     by
-  , -- | Construct a signed pixel displacement.
+  , -- | Construct a signed displacement in scalable canvas layout units.
     shift
   , -- | Interpret a captured query integer as a unitless scalar.
     asScalar
@@ -377,6 +379,8 @@ module LinearTrace.Choreography
     ContentFit(..)
   , -- | Set the current node's child-fitting policy.
     contentFit
+  , -- | Constrain the canvas to a finite positive horizontal:vertical ratio.
+    aspectRatio
   , -- | Percentage in the inclusive 0 to 100 parent-relative domain.
     Percent
   , -- | Construct a validated parent-relative percentage.
@@ -410,7 +414,7 @@ module LinearTrace.Choreography
     Opacity
   , -- | Z-order style field.
     ZIndex
-  , -- | Font-size style field in pixels; with 'fitText' it acts as a cap.
+  , -- | Font-size field in layout units; with 'fitText' it acts as a cap.
     FontSize
   , -- | Corner-radius style field.
     Radius

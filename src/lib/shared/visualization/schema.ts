@@ -217,8 +217,7 @@ export const visualizationV1Schema = v.strictObject({
     })
   ),
   coordinates: v.strictObject({
-    systemName: v.literal('sverlin-css96-y-down'),
-    systemUnitsPerInch: v.literal(96),
+    systemName: v.literal('sverlin-logical-y-down'),
     systemOrigin: v.literal('top-left'),
     systemYAxis: v.literal('down')
   }),

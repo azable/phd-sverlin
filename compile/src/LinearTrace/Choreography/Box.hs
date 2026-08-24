@@ -11,6 +11,7 @@ module LinearTrace.Choreography.Box
   , Axis(..)
   , ContentFit(..)
   , contentFit
+  , aspectRatio
   , Percent
   , percent
   , xAt
@@ -20,7 +21,7 @@ module LinearTrace.Choreography.Box
   ) where
 
 import           LinearTrace.Choreography.Node (Span, VisualizationBuilder,
-                                                editCurrentNode,
+                                                editCanvasNode, editCurrentNode,
                                                 spanConstraints, spanExpr)
 import qualified LinearTrace.View.Box          as Box
 import           LinearTrace.View.Graph        (Axis (..), ContentFit (..),
@@ -92,6 +93,19 @@ contentFit axis fit =
              { Template.templateHorizontalFit = fit
              , Template.templateVerticalFit = fit
              })
+
+aspectRatio :: P.Double -> P.Double -> VisualizationBuilder ()
+aspectRatio horizontal vertical
+  | invalid horizontal P.|| invalid vertical =
+    P.error "aspectRatio components must be finite positive numbers"
+  | P.otherwise =
+    editCanvasNode
+      "aspectRatio"
+      (\_bindings template ->
+         template
+           {Template.templateAspectRatio = Just (horizontal P./ vertical)})
+  where
+    invalid value = value P.<= 0 P.|| P.isNaN value P.|| P.isInfinite value
 
 newtype Percent =
   Percent P.Double

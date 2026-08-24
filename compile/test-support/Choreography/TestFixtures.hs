@@ -24,9 +24,13 @@ module Choreography.TestFixtures
   , pendingTailEventNames
   , conditionalStyleAccessStats
   , forbiddenStyleAccessStats
+  , conflictingAspectRatioStats
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
     affineSelectionGraph
+  , aspectRatioAutomaticGraph
+  , aspectRatioEmptyGraph
+  , aspectRatioExplicitGraph
   , automaticCanvasGraph
   , cascadedSurfaceGraph
   , categoricalRelationGraph
@@ -114,6 +118,9 @@ conditionalStyleAccessStats = fixtureStats conditionalStyleAccessSpec
 forbiddenStyleAccessStats :: (Int, Int, Int)
 forbiddenStyleAccessStats = fixtureStats forbiddenStyleAccessSpec
 
+conflictingAspectRatioStats :: (Int, Int, Int)
+conflictingAspectRatioStats = fixtureStats conflictingAspectRatioSpec
+
 selectedColorGraph :: ViewGraph
 selectedColorGraph = buildGraph selectedColorSpec
 
@@ -131,6 +138,15 @@ cascadedSurfaceGraph = buildGraph cascadedSurfaceSpec
 
 affineSelectionGraph :: ViewGraph
 affineSelectionGraph = buildGraphFor indexedFixture affineSelectionSpec
+
+aspectRatioAutomaticGraph :: ViewGraph
+aspectRatioAutomaticGraph = buildGraph aspectRatioAutomaticSpec
+
+aspectRatioEmptyGraph :: ViewGraph
+aspectRatioEmptyGraph = buildGraph aspectRatioEmptySpec
+
+aspectRatioExplicitGraph :: ViewGraph
+aspectRatioExplicitGraph = buildGraph aspectRatioExplicitSpec
 
 automaticCanvasGraph :: ViewGraph
 automaticCanvasGraph = buildGraph automaticCanvasSpec
@@ -367,6 +383,34 @@ automaticCanvasSpec =
       top (at 50)
       width (by 80)
       height (by 40)
+
+aspectRatioAutomaticSpec :: MatchSpec
+aspectRatioAutomaticSpec =
+  visualize $ do
+    aspectRatio 16 9
+    padding (edges (by 10) (by 20) (by 30) (by 40))
+    Selected item <- select @TestValue (#item <&> payload (7 :: P.Int))
+    node item $ do
+      left (at 100)
+      top (at 50)
+      width (by 80)
+      height (by 40)
+
+aspectRatioEmptySpec :: MatchSpec
+aspectRatioEmptySpec = visualize $ aspectRatio 16 9
+
+aspectRatioExplicitSpec :: MatchSpec
+aspectRatioExplicitSpec =
+  visualize $ do
+    aspectRatio 16 9
+    height (by 900)
+
+conflictingAspectRatioSpec :: MatchSpec
+conflictingAspectRatioSpec =
+  visualize $ do
+    aspectRatio 16 9
+    width (by 800)
+    height (by 600)
 
 nestedNodeSpec :: MatchSpec
 nestedNodeSpec =

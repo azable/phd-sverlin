@@ -119,12 +119,12 @@ data VisualBox = VisualBox
   , boxMargin  :: EdgeInsets
   } deriving (Eq, Show, Generic)
 
--- | Explicit renderer-neutral coordinate convention.
+-- | Explicit renderer-neutral logical coordinate convention. Values are SVG-like
+-- user units and carry no CSS-pixel, DPI, or physical-size assumption.
 data CoordinateSystem = CoordinateSystem
-  { coordinateSystemName         :: String
-  , coordinateSystemUnitsPerInch :: Double
-  , coordinateSystemOrigin       :: String
-  , coordinateSystemYAxis        :: String
+  { coordinateSystemName   :: String
+  , coordinateSystemOrigin :: String
+  , coordinateSystemYAxis  :: String
   } deriving (Eq, Show, Generic)
 
 data ResourceKind

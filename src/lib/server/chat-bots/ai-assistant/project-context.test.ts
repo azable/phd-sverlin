@@ -90,8 +90,7 @@ describe('AI project context projection', () => {
       seed: 1,
       sourcePath: 'Main.sverlin',
       coordinates: {
-        systemName: 'sverlin-css96-y-down',
-        systemUnitsPerInch: 96,
+        systemName: 'sverlin-logical-y-down',
         systemOrigin: 'top-left',
         systemYAxis: 'down'
       },

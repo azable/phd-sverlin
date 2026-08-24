@@ -163,6 +163,7 @@ data NodeOrigin
 data CanvasMeta = CanvasMeta
   { canvasWidthExplicit  :: P.Bool
   , canvasHeightExplicit :: P.Bool
+  , canvasAspectRatio    :: P.Maybe P.Double
   }
 
 newtype GeneratedMeta = GeneratedMeta

@@ -64,6 +64,7 @@ module LinearTrace.Choreography.Node
   , emitVisualizationBuilder
   , freshVisualizationValue
   , editCurrentNode
+  , editCanvasNode
   , Node
   , node
   , self
@@ -342,9 +343,31 @@ editCurrentNode property update =
              counter
              (editNodeDeclaration declaration property update))
 
+editCanvasNode ::
+     P.String
+  -> (MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate)
+  -> VisualizationBuilder ()
+editCanvasNode property update =
+  VisualizationBuilder
+    (\context counter ->
+       case context of
+         RootContext ->
+           VisualizationResult
+             ()
+             counter
+             (editNodeDeclaration canvasDeclarationKey property update)
+         _ -> P.error (property P.++ " can only be declared on the canvas root"))
+
 rootPropertyAllowed :: P.String -> P.Bool
 rootPropertyAllowed property =
-  property `P.elem` ["width", "height", "padding", "contentFit", "style"]
+  property
+    `P.elem` [ "width"
+             , "height"
+             , "padding"
+             , "contentFit"
+             , "aspectRatio"
+             , "style"
+             ]
 
 infixr 6 <&>
 content :: ContentValue -> VisualizationBuilder ()

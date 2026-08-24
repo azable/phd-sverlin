@@ -81,6 +81,7 @@ program = do
 
 visualization :: VisualizationBuilder ()
 visualization = do
+  aspectRatio 16 9
   Bound label <- bindContent
   Selected numbers <- select @Number (#number <&> payload label)
   node numbers $ do
@@ -136,8 +137,10 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 
 ## Visual rules
 
-- The body of `visualization = do ...` is the persistent canvas root. At root level, `width`, `height`, `padding`, `contentFit`, and `style` edit that canvas; position, margin, and content declarations are rejected. The root origin is always `(0,0)`, it contains all top-level children, and it is rendered continuously rather than appearing in timeline instances.
-- Under the default `Hug` fit, omitted canvas axes hug retained children and their margins/padding, capped at 800 px wide and 600 px high. An empty omitted canvas is 800×600. Set `width` and/or `height` at the top level for an explicit canvas (up to 4096 px per axis), and normally use `contentFit Both Contain` when explicit dimensions should leave unused room instead of requiring a child to touch the trailing edge.
+- The body of `visualization = do ...` is the persistent canvas root. At root level, `width`, `height`, `aspectRatio`, `padding`, `contentFit`, and `style` edit that canvas; position, margin, and content declarations are rejected. The root origin is always `(0,0)`, it contains all top-level children, and it is rendered continuously rather than appearing in timeline instances.
+- All geometry and typography use scalable logical layout units. The solved IR records these units without a CSS-pixel or physical-resolution assumption, and renderers scale them through the root canvas viewport.
+- `aspectRatio horizontal vertical` adds a fixed affine ratio to the canvas, for example `aspectRatio 16 9`. With one explicit axis it derives the other; with neither axis it hugs the limiting content axis, and an empty ratio canvas takes the largest matching rectangle in the 800×600 automatic envelope. Prefer 16:9 when the user has not specified a format and a stable presentation canvas is appropriate. Keep content-driven sizing when the subject benefits from a naturally shaped list, table, or diagram rather than forcing a format.
+- Under the default `Hug` fit, omitted canvas axes hug retained children and their margins/padding, capped at 800 layout units wide and 600 layout units high. An empty omitted canvas is 800×600. Set `width` and/or `height` at the top level for an explicit canvas (up to 4096 layout units per axis), and normally use `contentFit Both Contain` when explicit dimensions should leave unused room instead of requiring a child to touch the trailing edge.
 - A selection rule applies to every matching trace snapshot, including repeated iterations. Prefer reusable semantic rules over one rule per occurrence.
 - `node selected $ do ...` declares every trace output matched by a selection and attaches content, box geometry, style, and constraints. Each materialized trace output must match exactly one such declaration: unmatched outputs are not visual nodes, while overlapping declarations are a compile error.
 - `Selected parent <- node $ do ...` declares an anonymous generated node. Any `node` declarations nested in that `do` block become its children; nesting can be recursive. A trace-selected node is terminal and cannot contain children. A selection may match one or many trace outputs, so an entire selection can be nested without enumerating its members.
@@ -160,7 +163,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
   Selection accessors return `VisualExpr` values, so formulas such as `ensure $ x group .==. left first + (right last - left first) / 2` are lowered as one joined relation rather than guessed through repeated AI edits. Multiplication and division in selected expressions must use a fixed or query-resolved scalar so the result remains affine.
 
 - Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
-- `content value` uses managed typography and prefers one line, with at most two compiler-selected fallback breaks. When its `FontSize` is omitted, the automatic profile selects a proportional size after geometry is solved; an authored `FontSize` is fixed. `fitText value` instead maximizes the feasible size when `FontSize` is omitted, or treats an authored size as a cap. Automatic fitting uses 0.25 px steps with a 12 px physical minimum. Always provide adequate width and height; no feasible layout is a compile error.
+- `content value` uses managed typography and prefers one line, with at most two compiler-selected fallback breaks. When its `FontSize` is omitted, the automatic profile selects a proportional size after geometry is solved; an authored `FontSize` is fixed. `fitText value` instead maximizes the feasible size when `FontSize` is omitted, or treats an authored size as a cap. Automatic fitting uses 0.25-layout-unit steps with a 12-layout-unit managed minimum. Always provide adequate width and height; no feasible layout is a compile error.
 - For exact code or other verbatim output, start with `codeContent value`. Wrap it with `codeWrap` only when up to two compiler-selected visual breaks are acceptable, and wrap that with `highlightCode "language"` for semantic syntax tokens. For example:
 
   ```haskell
@@ -269,7 +272,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - On the bounded affine path, `encourage` and `minimize` are deliberately ignored: they describe attraction toward an optimum, which conflicts with broad exploration. Express the user's minimum requirements, semantic relationships, containment, contrast, and legibility with `ensure`, then leave all other values free inside broad hard ranges. Exact hard equalities remain valid but reduce the dimension available for variation.
 - Hard constraints must have a non-empty common region. Check fixed widths/heights against containment, accumulated row gaps against canvas width, and shared-variable ranges against every use; the compiler rejects contradictions instead of weakening one of the requirements.
 - For generative requests, use at least two independent, bounded, seed-controlled degrees of freedom that affect major spatial composition: parent-node X/Y placement, relationships between parent nodes, spacing, wrapping, lane offsets, or alignment when alignment is not semantic. The automatic family profile supplies routine style variation; do not duplicate it with authored style variables.
-- Do not count movement of a few pixels in one shared gap as meaningful variation. Aim for seed changes to move at least one major parent node across a substantial part of its allowed region and to visibly change a second spatial relationship.
+- Do not count movement of a few layout units in one shared gap as meaningful variation. Aim for seed changes to move at least one major parent node across a substantial part of its allowed region and to visibly change a second spatial relationship.
 - Avoid exact `left (at ...)` and `top (at ...)` pins except for a small number of deliberate anchors. Hard alignment is appropriate when it communicates a list, table, common baseline, ordered sequence, or direct comparison. In that case, align the members relative to one another, then preserve variation by moving the aligned assembly, varying its gap or dimensions, or varying surrounding parent nodes. Do not break a useful alignment merely to satisfy randomness.
 - Prefer local constraints on selected geometry. They apply to each matching visual node and give each node's own solver geometry a bounded feasible region:
 

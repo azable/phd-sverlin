@@ -200,7 +200,31 @@ validateMatchSpec spec =
                       P.error
                         ("A node property was declared outside a node body: "
                            P.++ target)
-                    [] -> spec
+                    [] -> validateCanvasAspectRatio spec
+
+validateCanvasAspectRatio :: MatchSpec -> MatchSpec
+validateCanvasAspectRatio spec =
+  let template = templateForDeclaration spec canvasDeclarationKey []
+   in case ( VT.templateAspectRatio template
+           , constantPinValue (VT.templateWidth template)
+           , constantPinValue (VT.templateHeight template)) of
+        (Just ratio, Just widthValue, Just heightValue)
+          | P.abs (widthValue P.- ratio P.* heightValue) P.> 1.0e-9 ->
+            P.error
+              ("Canvas width "
+                 P.++ P.show widthValue
+                 P.++ " and height "
+                 P.++ P.show heightValue
+                 P.++ " conflict with aspect ratio "
+                 P.++ P.show ratio)
+        _ -> spec
+
+constantPinValue :: P.Maybe VT.LayoutPin -> P.Maybe P.Double
+constantPinValue maybePin =
+  case maybePin of
+    Just (VT.LayoutPin expression _) ->
+      S.componentConstantValue (S.component expression [])
+    _ -> Nothing
 
 duplicateValues :: P.Eq value => [value] -> [value]
 duplicateValues values =
@@ -1144,6 +1168,7 @@ canvasNodeForSpec spec =
                   { V.canvasWidthExplicit = explicit (VT.templateWidth template)
                   , V.canvasHeightExplicit =
                       explicit (VT.templateHeight template)
+                  , V.canvasAspectRatio = VT.templateAspectRatio template
                   }
           , V.nodeDeclaration = canvasDeclarationKey
           , V.nodeSelectionBindings = []

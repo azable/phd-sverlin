@@ -80,8 +80,7 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
       , IR.visualizationSampling = Just (compileSampling solution)
       , IR.visualizationCoordinates =
           IR.CoordinateSystem
-            { IR.coordinateSystemName = "sverlin-css96-y-down"
-            , IR.coordinateSystemUnitsPerInch = 96
+            { IR.coordinateSystemName = "sverlin-logical-y-down"
             , IR.coordinateSystemOrigin = "top-left"
             , IR.coordinateSystemYAxis = "down"
             }

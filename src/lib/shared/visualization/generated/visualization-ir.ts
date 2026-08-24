@@ -22,7 +22,6 @@ export type CodeTokenKind =
 
 export interface CoordinateSystem {
   systemName: string;
-  systemUnitsPerInch: number;
   systemOrigin: string;
   systemYAxis: string;
 }

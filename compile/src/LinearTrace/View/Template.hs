@@ -42,6 +42,7 @@ data NodeTemplate = NodeTemplate
   , templateMargin        :: Maybe InsetsExpr
   , templateHorizontalFit :: ContentFit
   , templateVerticalFit   :: ContentFit
+  , templateAspectRatio   :: Maybe P.Double
   , templateConstraints   :: [Constraint]
   , templateLeft          :: Maybe LayoutPin
   , templateTop           :: Maybe LayoutPin
@@ -62,6 +63,7 @@ emptyNodeTemplate =
     , templateMargin = Nothing
     , templateHorizontalFit = Hug
     , templateVerticalFit = Hug
+    , templateAspectRatio = Nothing
     , templateConstraints = []
     , templateLeft = Nothing
     , templateTop = Nothing
@@ -136,6 +138,13 @@ templateGeometryConstraints template node =
     P.++ pinConstraints (bottom node) (templateBottom template)
     P.++ pinConstraints (centerX node) (templateX template)
     P.++ pinConstraints (centerY node) (templateY template)
+    P.++ aspectRatioConstraints node (templateAspectRatio template)
+
+aspectRatioConstraints :: Node tag -> Maybe P.Double -> [Constraint]
+aspectRatioConstraints node maybeRatio =
+  case maybeRatio of
+    Nothing    -> []
+    Just ratio -> [width node S.@==@ height node S.@*@ S.num ratio]
 
 pinConstraints :: LayoutExpr -> Maybe LayoutPin -> [Constraint]
 pinConstraints expression maybePin =
