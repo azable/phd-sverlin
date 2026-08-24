@@ -1,10 +1,5 @@
 // THIS FILE IS GENERATED. Run: pnpm run generate:visualization-types
 
-export interface CanvasSpec {
-  width: number;
-  height: number;
-}
-
 export type CodeHighlightLine = CodeToken[];
 
 export interface CodeToken {
@@ -220,7 +215,7 @@ export interface Visualization {
   sourcePath: string;
   sampling?: SamplingProvenance;
   coordinates: CoordinateSystem;
-  canvas: CanvasSpec;
+  root: VisualId;
   resources: ResourceDescriptor[];
   findings: VisualizationFinding[];
   variables: CspVariable[];

@@ -16,7 +16,6 @@ module LinearTrace.Visualization.IR
   , CspVariableId(..)
   , CspValue(..)
   , CspVariable(..)
-  , CanvasSpec(..)
   , HslColor(..)
   , LayoutRect(..)
   , EdgeInsets(..)
@@ -91,11 +90,6 @@ data CspValue
 data CspVariable = CspVariable
   { cspVariableId    :: CspVariableId
   , cspVariableValue :: CspValue
-  } deriving (Eq, Show, Generic)
-
-data CanvasSpec = CanvasSpec
-  { canvasWidth  :: Double
-  , canvasHeight :: Double
   } deriving (Eq, Show, Generic)
 
 data HslColor = HslColor
@@ -357,7 +351,7 @@ data Visualization = Visualization
   , visualizationSourcePath  :: FilePath
   , visualizationSampling    :: Maybe SamplingProvenance
   , visualizationCoordinates :: CoordinateSystem
-  , visualizationCanvas      :: CanvasSpec
+  , visualizationRoot        :: VisualId
   , visualizationResources   :: [ResourceDescriptor]
   , visualizationFindings    :: [VisualizationFinding]
   , visualizationVariables   :: [CspVariable]
@@ -418,8 +412,6 @@ $(deriveJSON irJsonOptions ''CodeTokenKind)
 $(deriveJSON irJsonOptions ''CodeToken)
 
 $(deriveJSON irJsonOptions ''VisualContent)
-
-$(deriveJSON irJsonOptions ''CanvasSpec)
 
 $(deriveJSON irJsonOptions ''EdgeInsets)
 

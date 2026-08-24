@@ -27,6 +27,7 @@ module LinearTrace.View.Graph
   , ViewNode(..)
   , Node(..)
   , NodeOrigin(..)
+  , CanvasMeta(..)
   , GeneratedMeta(..)
   , ContentFit(..)
   , Axis(..)
@@ -49,6 +50,8 @@ module LinearTrace.View.Graph
   , styleForRef
   , traceNodeRoot
   , generatedNodeRoot
+  , canvasNodeRoot
+  , canvasViewId
   , generatedNodeId
   , boxForNodeRoot
   , styleForNodeRoot
@@ -146,7 +149,6 @@ data Node tag = Node
   , nodeDeclaration       :: P.String
   , nodeSelectionBindings :: [(P.String, [(P.String, P.Int)])]
   , nodeParent            :: P.Maybe ViewId
-  , nodeChildren          :: [ViewId]
   , nodeHorizontalFit     :: ContentFit
   , nodeVerticalFit       :: ContentFit
   , nodeRelativePins      :: [RelativeLayoutPin]
@@ -154,8 +156,14 @@ data Node tag = Node
   }
 
 data NodeOrigin
-  = TraceOrigin ViewTags
+  = CanvasOrigin CanvasMeta
+  | TraceOrigin ViewTags
   | GeneratedOrigin GeneratedMeta
+
+data CanvasMeta = CanvasMeta
+  { canvasWidthExplicit  :: P.Bool
+  , canvasHeightExplicit :: P.Bool
+  }
 
 newtype GeneratedMeta = GeneratedMeta
   { generatedKey :: P.String
@@ -206,9 +214,7 @@ data ViewNode where
   ViewNode :: Node tag -> ViewNode
 
 data ViewGraph = ViewGraph
-  { viewCanvasWidth       :: P.Double
-  , viewCanvasHeight      :: P.Double
-  , viewNodes             :: [ViewNode]
+  { viewNodes             :: [ViewNode]
   , viewConstraints       :: [Constraint]
   , viewChoiceConstraints :: [ChoiceConstraint]
   , viewSteps             :: [ViewStep]
@@ -256,12 +262,14 @@ data AnyLayoutView where
 traceNodeTags :: Node tag -> P.Maybe ViewTags
 traceNodeTags node =
   case nodeOrigin node of
+    CanvasOrigin _    -> P.Nothing
     TraceOrigin tags  -> P.Just tags
     GeneratedOrigin _ -> P.Nothing
 
 generatedNodeMeta :: Node tag -> P.Maybe GeneratedMeta
 generatedNodeMeta node =
   case nodeOrigin node of
+    CanvasOrigin _       -> P.Nothing
     TraceOrigin _        -> P.Nothing
     GeneratedOrigin meta -> P.Just meta
 
@@ -273,6 +281,7 @@ viewTraceNodes nodes =
       case node of
         ViewNode viewNode ->
           case nodeOrigin viewNode of
+            CanvasOrigin _    -> viewTraceNodes rest
             TraceOrigin _     -> AnyTraceNode viewNode : viewTraceNodes rest
             GeneratedOrigin _ -> viewTraceNodes rest
 
@@ -300,10 +309,16 @@ traceNodeRoot ref = NodeVarRoot ["B" P.++ P.show (viewRefInt ref)]
 generatedNodeRoot :: P.String -> NodeVarRoot
 generatedNodeRoot key = NodeVarRoot ["V", safeKey key]
 
+canvasNodeRoot :: NodeVarRoot
+canvasNodeRoot = NodeVarRoot ["C"]
+
+canvasViewId :: ViewId
+canvasViewId = ViewId (-1)
+
 generatedNodeId :: P.String -> P.Int
 generatedNodeId key =
   case stripPrefix "generated-node-" key P.>>= readMaybe of
-    P.Just counter -> P.negate (1 P.+ counter)
+    P.Just counter -> P.negate (2 P.+ counter)
     P.Nothing      -> P.error ("Invalid internal generated-node key: " P.++ key)
 
 nodeVarName :: NodeVarRoot -> [P.String] -> P.String -> P.String

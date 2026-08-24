@@ -38,12 +38,16 @@ module LinearTrace.Core
     Query(..)
   , QueryTerm(..)
   , QueryValue(..)
+  , QueryPayload(..)
   , QueryInt(..)
   , QueryBindings
   , emptyQuery
   , queryAtom
   , queryInt
   , queryAppend
+  , queryPayloadEquals
+  , queryPayloadBinding
+  , queryPayloadMatches
   , queryKey
   , queryFacts
   , queryMatches

@@ -205,9 +205,9 @@ const timelineStepSchema = v.strictObject({
   instances: v.array(visualInstanceSchema)
 });
 
-/** Strict runtime schema for visualization IR version 3. */
-export const visualizationV3Schema = v.strictObject({
-  irVersion: v.literal(3),
+/** Strict runtime schema for the root-based visualization IR version 1. */
+export const visualizationV1Schema = v.strictObject({
+  irVersion: v.literal(1),
   seed: integer,
   sourcePath: v.string(),
   sampling: v.optional(
@@ -222,7 +222,7 @@ export const visualizationV3Schema = v.strictObject({
     systemOrigin: v.literal('top-left'),
     systemYAxis: v.literal('down')
   }),
-  canvas: v.strictObject({ width: positive, height: positive }),
+  root: integer,
   resources: v.array(resourceDescriptorSchema),
   findings: v.array(findingSchema),
   variables: v.array(cspVariableSchema),
@@ -254,6 +254,22 @@ export function validateVisualizationReferences(visualization: Visualization): v
   );
   const elementRegistry = new Map(visualization.elements.map((element) => [element.id, element]));
   const elements = new Set(elementRegistry.keys());
+  const root = elementRegistry.get(visualization.root);
+  if (visualization.root !== -1 || root === undefined) {
+    throw new Error('Visualization root must reference the canonical canvas element -1.');
+  }
+  if (root.role !== 'Canvas') throw new Error('Visualization root must have the Canvas role.');
+  if (
+    root.box.bounds.rectX !== 0 ||
+    root.box.bounds.rectY !== 0 ||
+    root.box.margin.top !== 0 ||
+    root.box.margin.right !== 0 ||
+    root.box.margin.bottom !== 0 ||
+    root.box.margin.left !== 0 ||
+    root.content !== undefined
+  ) {
+    throw new Error('Visualization root must have origin (0,0), zero margin, and no content.');
+  }
 
   for (const resource of visualization.resources) {
     if (resource.descriptorId !== `sha256-${resource.descriptorSha256}`) {
@@ -263,6 +279,9 @@ export function validateVisualizationReferences(visualization: Visualization): v
 
   for (const element of visualization.elements) {
     for (const child of element.children) {
+      if (child === visualization.root) {
+        throw new Error('Visualization root cannot be the child of another element.');
+      }
       if (!elements.has(child))
         throw new Error(`Element ${element.id} references unknown child ${child}.`);
     }
@@ -344,6 +363,11 @@ export function validateVisualizationReferences(visualization: Visualization): v
   }
 
   for (const element of visualization.elements) {
+    if (element.id === visualization.root) {
+      if (parents.has(element.id)) throw new Error('Visualization root cannot have a parent.');
+    } else if (!parents.has(element.id)) {
+      throw new Error(`Element ${element.id} is not reachable from the visualization root.`);
+    }
     const path = new Set<number>();
     let current: number | undefined = element.id;
     while (current !== undefined) {
@@ -361,6 +385,12 @@ export function validateVisualizationReferences(visualization: Visualization): v
       `render instance ID in step ${stepIndex}`
     );
     for (const instance of step.instances) {
+      if (
+        instance.elementId === visualization.root ||
+        instance.originElementId === visualization.root
+      ) {
+        throw new Error(`Step ${stepIndex} cannot reference the visualization root.`);
+      }
       if (!elements.has(instance.elementId)) {
         throw new Error(`Step ${stepIndex} references unknown element ${instance.elementId}.`);
       }

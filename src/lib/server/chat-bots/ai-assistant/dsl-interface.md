@@ -127,23 +127,38 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 ## Semantic facts and queries
 
 - Materialized snapshots contain payload, lifecycle provenance, and `Facts`. Facts are the stable semantic address used by visual rules; never depend on generated IDs or source line numbers.
-- Give every visual-worthy value a meaningful path such as `#target <&> #source`, `#array <&> #index index`, `#result <&> payload True`, or `#array <&> #processed`.
-- `#label` creates an atom query. Compose paths with `<&>` and use `@: i` to insert a dynamic `QueryInt`, normally unpacked from `bindInt`.
-- Programmatic query helpers include `emptyQuery`, `queryAtom`, `queryInt`, `queryAppend`, and `queryIndex`. Prefer overloaded labels for readable semantic paths.
+- Give every visual-worthy value a meaningful path such as `#target <&> #source`, `#array <&> #index @: 3`, `#result <&> payload True`, or `#array <&> #processed`.
+- `#label` creates an atom query. Compose paths with `<&>` and use the same `#name @: value` form for integer facts: the value may be a literal or a `QueryInt` unpacked from `bindInt`.
+- The public programmatic query helpers are `emptyQuery`, `queryAtom`, and `queryInt`. Prefer overloaded labels and `<&>` for readable semantic paths.
 - `materializeWithTags baseQuery selectQuery pending` adds a base path plus payload-dependent facts.
 - `payload` creates a typed payload pattern. Match literal values or a value unpacked from `bindContent`. Use `select @AnyPayload query` only when the tag is intentionally irrelevant.
 - Attach facts consistently across sources, probes, results, replacements, and updates so visual rules can follow the complete lineage.
 
 ## Visual rules
 
+- The body of `visualization = do ...` is the persistent canvas root. At root level, `width`, `height`, `padding`, `contentFit`, and `style` edit that canvas; position, margin, and content declarations are rejected. The root origin is always `(0,0)`, it contains all top-level children, and it is rendered continuously rather than appearing in timeline instances.
+- Under the default `Hug` fit, omitted canvas axes hug retained children and their margins/padding, capped at 800 px wide and 600 px high. An empty omitted canvas is 800×600. Set `width` and/or `height` at the top level for an explicit canvas (up to 4096 px per axis), and normally use `contentFit Both Contain` when explicit dimensions should leave unused room instead of requiring a child to touch the trailing edge.
 - A selection rule applies to every matching trace snapshot, including repeated iterations. Prefer reusable semantic rules over one rule per occurrence.
 - `node selected $ do ...` declares every trace output matched by a selection and attaches content, box geometry, style, and constraints. Each materialized trace output must match exactly one such declaration: unmatched outputs are not visual nodes, while overlapping declarations are a compile error.
 - `Selected parent <- node $ do ...` declares an anonymous generated node. Any `node` declarations nested in that `do` block become its children; nesting can be recursive. A trace-selected node is terminal and cannot contain children. A selection may match one or many trace outputs, so an entire selection can be nested without enumerating its members.
 - Every node has one parent: either the canvas or one generated node. Empty generated branches are pruned. The compiler emits warning findings when a declaration matches no visible trace output or a generated parent is pruned.
-- Generated parents are ordinary selectable node handles. Bind the result and use `left`, `right`, `center`, `size`, `styleOf`, and other relations on it just as on a trace selection. Inside an anonymous node, `Selected current <- self` retrieves the same handle; `canvas` is the ordinary root-layout handle.
+- Generated parents are ordinary selectable node handles. Bind the result and use `left`, `right`, `center`, `size`, `styleOf`, and other relations on it just as on a trace selection. Inside an anonymous node, `Selected current <- self` retrieves the same handle; `canvas` is the ordinary root-layout handle. A relation may combine several selected handles in one affine expression; repeated use of one handle resolves to the same node, while distinct query selections join on compatible bound query integers.
 - Generated parents default to `Hug` on each axis: their content edge is tight to at least one child edge while containing every child margin box. Use `contentFit Horizontal Contain`, `contentFit Vertical Contain`, or `contentFit Both Contain` when a parent may be larger than its children.
 - `padding` and `margin` use a real four-edge box model. Construct insets with `uniform span`, `symmetric vertical horizontal`, or `edges top right bottom left`. Parent containment uses the content box inside padding; child margins remain separate and never collapse.
 - Parent-relative setters are explicit and affine: `xAt (percent 50)` and `yAt (percent 50)` place the node center at the midpoint of its parent content box; `widthOf (percent 60)` and `heightOf (percent 40)` size it from that content box. Percent values are in the inclusive range 0–100. These work for children and for canvas children.
+- For indexed repeated nodes, bind the index once and let geometry scale from it instead of enumerating every item:
+
+  ```haskell
+  Bound i <- bindInt
+  Selected items <- select @Item (#item <&> #index @: i)
+  node items $ do
+    left (at 48 + asScalar i * shift 64)
+    width (by 48)
+    height (by 48)
+  ```
+
+  Selection accessors return `VisualExpr` values, so formulas such as `ensure $ x group .==. left first + (right last - left first) / 2` are lowered as one joined relation rather than guessed through repeated AI edits. Multiplication and division in selected expressions must use a fixed or query-resolved scalar so the result remains affine.
+
 - Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
 - `content value` uses managed typography and prefers one line, with at most two compiler-selected fallback breaks. When its `FontSize` is omitted, the automatic profile selects a proportional size after geometry is solved; an authored `FontSize` is fixed. `fitText value` instead maximizes the feasible size when `FontSize` is omitted, or treats an authored size as a cap. Automatic fitting uses 0.25 px steps with a 12 px physical minimum. Always provide adequate width and height; no feasible layout is a compile error.
 - For exact code or other verbatim output, start with `codeContent value`. Wrap it with `codeWrap` only when up to two compiler-selected visual breaks are acceptable, and wrap that with `highlightCode "language"` for semantic syntax tokens. For example:
@@ -178,7 +193,7 @@ Use this only as a syntax reference. Design the actual domain, facts, checkpoint
 - The body-only runner assigns trace leaves a semantic family by payload type. Leaf families share surface, weight, palette, and fitted-size decisions, so peers remain coherent within an output while seeds can produce different treatments. Generated structural parents remain transparent unless their node body explicitly styles them.
 - Unspecified leaves make balanced choices: one exact managed font face and one text occupancy target are global to the output; surface treatment and weight are per semantic family. Font faces sample equally across all eight managed faces, occupancy across 68%, 78%, 86%, and 94% of the maximum feasible size, surfaces across transparent, outline, flat fill, soft card, and pill treatments, and weights across 400, 500, and 600. These are compiler defaults, not APIs to reproduce manually, and they do not infer a semantic role from payload text or names.
 - Let unspecified presentation use those defaults. Choose a font, weight, alignment, surface, or colour only when the user asks for it or the choice actually communicates a semantic distinction—for example, managed monospace for code or left alignment for a scannable table. Do not make a numeric list “technical,” a heading “editorial,” or each state visually different merely to add variety.
-- Styles declared on an anonymous parent cascade through all descendants unless a child overrides them, but only for semantic text properties: `FontFamily`, `FontWeight`, `FontStyle`, `FontSize`, `TextAlign`, `WhiteSpace`, and `styleFamily`. Surface properties such as fill, stroke, radius, opacity, and z-index stay local to the node that declares them.
+- Every style declared on the canvas or an anonymous parent cascades through all descendants unless a child replaces it with `style`, `withoutStyle`, or `styleCase`. This includes typography, fill, stroke, radius, opacity, z-index, and `styleFamily`. Style a parent itself only when that shared semantic treatment is intended for the complete subtree; omitted styles still allow ordinary family defaults at the leaves.
 - Use `styleFamily "name"` when one payload type has multiple semantic roles that should vary independently. Apply the same explicit key to peers that should share a family.
 - `style @Field value` is a hard authoring requirement and overrides the default for that field. `withoutStyle @Field` is also hard and keeps the field absent for every seed. Omitted fields remain available to the family profile.
 - Plain text that must remain unboxed should explicitly forbid fill and border width instead of relying on omission:

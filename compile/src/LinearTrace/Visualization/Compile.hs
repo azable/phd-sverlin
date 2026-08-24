@@ -59,7 +59,10 @@ compileSolvedWith ::
   -> [IR.VisualizationFinding]
   -> Either String IR.Visualization
 compileSolvedWith sourcePath solution graph contents resources findings = do
-  elements <- traverse (compileElement solution contents) (V.viewNodes graph)
+  let children = childIndex (V.viewNodes graph)
+  elements <-
+    traverse (compileElement solution contents children) (V.viewNodes graph)
+  _ <- requireCanvasRoot elements
   let emphasis = emphasisLookup (V.viewNodes graph)
       elementsById = elementLookup elements
       instanceIds = instanceIdLookup elements
@@ -71,7 +74,7 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
   validateEmphasisTargets emphasis steps
   pure
     IR.Visualization
-      { IR.visualizationIrVersion = 3
+      { IR.visualizationIrVersion = 1
       , IR.visualizationSeed = solutionSeedInt solution
       , IR.visualizationSourcePath = sourcePath
       , IR.visualizationSampling = Just (compileSampling solution)
@@ -82,11 +85,7 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
             , IR.coordinateSystemOrigin = "top-left"
             , IR.coordinateSystemYAxis = "down"
             }
-      , IR.visualizationCanvas =
-          IR.CanvasSpec
-            { IR.canvasWidth = roundLayout (V.viewCanvasWidth graph)
-            , IR.canvasHeight = roundLayout (V.viewCanvasHeight graph)
-            }
+      , IR.visualizationRoot = IR.VisualId (-1)
       , IR.visualizationResources = resources
       , IR.visualizationFindings =
           map
@@ -135,9 +134,10 @@ compileVariables solution =
 compileElement ::
      S.Solution
   -> Map Int IR.VisualContent
+  -> Map V.ViewId [V.ViewId]
   -> V.ViewNode
   -> Either String IR.VisualElement
-compileElement solution contents wrapped =
+compileElement solution contents children wrapped =
   case wrapped of
     V.ViewNode node -> do
       box <- compileBox solution (V.nodeBox node)
@@ -149,11 +149,29 @@ compileElement solution contents wrapped =
           , IR.elementRole = V.viewLabelKind (V.nodeLabel node)
           , IR.elementBox = box
           , IR.elementChildren =
-              map (IR.VisualId . V.viewIdInt) (V.nodeChildren node)
+              map
+                (IR.VisualId . V.viewIdInt)
+                (Map.findWithDefault [] (V.viewRefId (V.nodeRef node)) children)
           , IR.elementContent = compileContent contents node
           , IR.elementStyle = style
           , IR.elementStyleVariables = styleBindings
           }
+
+childIndex :: [V.ViewNode] -> Map V.ViewId [V.ViewId]
+childIndex = foldl addChild Map.empty
+  where
+    addChild index (V.ViewNode node) =
+      case V.nodeParent node of
+        Nothing -> index
+        Just parent ->
+          Map.insertWith (flip (++)) parent [V.viewRefId (V.nodeRef node)] index
+
+requireCanvasRoot :: [IR.VisualElement] -> Either String IR.VisualElement
+requireCanvasRoot elements =
+  case filter ((== IR.VisualId (-1)) . IR.elementId) elements of
+    [root] -> Right root
+    []     -> Left "visualization graph has no canvas root"
+    _      -> Left "visualization graph has more than one canvas root"
 
 visualId :: V.ViewRef tag -> IR.VisualId
 visualId = IR.VisualId . V.viewRefInt

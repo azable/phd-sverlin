@@ -21,10 +21,11 @@ module LinearTrace.Choreography.Style
 
 import           Data.Kind                     (Type)
 import           LinearTrace.Choreography.Node (Selected (..),
-                                                SelectionCategory (..),
-                                                SelectionValue (..), Span,
+                                                SelectionCategory (..), Span,
+                                                VisualExpr,
                                                 VisualizationBuilder,
-                                                editCurrentNode, spanExpr)
+                                                editCurrentNode,
+                                                selectedVisualExpr, spanExpr)
 import           LinearTrace.View.Access       (HslPart (..),
                                                 styleChoiceValueAccess,
                                                 styleColorPartValueAccess,
@@ -161,19 +162,23 @@ selectedScalarStyle ::
      forall field value tag (ty :: Type).
      (VS.StyleField field, VS.StyleValue field ~ S.Expr ty, S.SymbolicType ty)
   => Selected tag
-  -> SelectionValue value tag
+  -> VisualExpr value
 selectedScalarStyle selection =
-  SelectionValue selection (styleValueAccess @field)
+  selectedVisualExpr selection (styleValueAccess @field)
 
 selectedColorStyle ::
      forall field tag. (VS.StyleField field, VS.StyleValue field ~ Color)
   => Selected tag
-  -> Hsl (SelectionValue Angle tag) (SelectionValue Unit tag)
+  -> Hsl (VisualExpr Angle) (VisualExpr Unit)
 selectedColorStyle selection =
   Hsl
-    (SelectionValue selection (styleColorPartValueAccess @field HslHue))
-    (SelectionValue selection (styleColorPartValueAccess @field HslSaturation))
-    (SelectionValue selection (styleColorPartValueAccess @field HslLightness))
+    (selectedVisualExpr selection (styleColorPartValueAccess @field HslHue))
+    (selectedVisualExpr
+       selection
+       (styleColorPartValueAccess @field HslSaturation))
+    (selectedVisualExpr
+       selection
+       (styleColorPartValueAccess @field HslLightness))
 
 selectedChoiceStyle ::
      forall field value tag.
@@ -184,39 +189,35 @@ selectedChoiceStyle selection =
   SelectionCategory selection (styleChoiceValueAccess @field)
 
 instance SelectStyle Opacity where
-  type SelectedStyle Opacity tag = SelectionValue Unit tag
+  type SelectedStyle Opacity tag = VisualExpr Unit
   selectStyle = selectedScalarStyle @Opacity
 
 instance SelectStyle ZIndex where
-  type SelectedStyle ZIndex tag = SelectionValue Free tag
+  type SelectedStyle ZIndex tag = VisualExpr Free
   selectStyle = selectedScalarStyle @ZIndex
 
 instance SelectStyle FontSize where
-  type SelectedStyle FontSize tag = SelectionValue Span tag
+  type SelectedStyle FontSize tag = VisualExpr Span
   selectStyle = selectedScalarStyle @FontSize
 
 instance SelectStyle Radius where
-  type SelectedStyle Radius tag = SelectionValue Span tag
+  type SelectedStyle Radius tag = VisualExpr Span
   selectStyle = selectedScalarStyle @Radius
 
 instance SelectStyle StrokeWidth where
-  type SelectedStyle StrokeWidth tag = SelectionValue Span tag
+  type SelectedStyle StrokeWidth tag = VisualExpr Span
   selectStyle = selectedScalarStyle @StrokeWidth
 
 instance SelectStyle Alpha where
-  type SelectedStyle Alpha tag = SelectionValue Unit tag
+  type SelectedStyle Alpha tag = VisualExpr Unit
   selectStyle = selectedScalarStyle @Alpha
 
 instance SelectStyle Fill where
-  type SelectedStyle Fill tag = Hsl
-    (SelectionValue Angle tag)
-    (SelectionValue Unit tag)
+  type SelectedStyle Fill tag = Hsl (VisualExpr Angle) (VisualExpr Unit)
   selectStyle = selectedColorStyle @Fill
 
 instance SelectStyle Stroke where
-  type SelectedStyle Stroke tag = Hsl
-    (SelectionValue Angle tag)
-    (SelectionValue Unit tag)
+  type SelectedStyle Stroke tag = Hsl (VisualExpr Angle) (VisualExpr Unit)
   selectStyle = selectedColorStyle @Stroke
 
 instance SelectStyle FontFamily where

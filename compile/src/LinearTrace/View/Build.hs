@@ -8,7 +8,7 @@ module LinearTrace.View.Build
   , finalizeViewGraph
   ) where
 
-import           Data.Maybe                  (mapMaybe)
+import qualified Data.Map.Strict             as Map
 import           LinearTrace.View.Box        (EdgeInsets (..), nodeBoxBounds,
                                               nodeBoxChoiceConstraints,
                                               nodeBoxConstraints, nodeBoxMargin,
@@ -25,22 +25,6 @@ import qualified Prelude                     as P
 import qualified Solver                      as S
 import           Solver                      (ChoiceConstraint, Constraint,
                                               Range (..))
-
-data ViewEnv = ViewEnv
-  { canvasWidthValue  :: P.Double
-  , canvasHeightValue :: P.Double
-  , canvasWidth       :: LayoutExpr
-  , canvasHeight      :: LayoutExpr
-  }
-
-defaultViewEnv :: ViewEnv
-defaultViewEnv =
-  ViewEnv
-    { canvasWidthValue = 800
-    , canvasHeightValue = 600
-    , canvasWidth = num 800
-    , canvasHeight = num 600
-    }
 
 data ViewOutput = ViewOutput
   { emittedNodes         :: [ViewNode]
@@ -68,19 +52,18 @@ finalizeViewGraph ::
   -> [ViewDiagnostic]
   -> ViewGraph
 finalizeViewGraph nodes baseConstraints baseChoiceConstraints steps diagnostics =
-  let constraints =
+  let children = childIndex nodes
+      constraints =
         baseConstraints
           P.++ P.concatMap viewNodeConstraints nodes
-          P.++ hierarchyConstraints defaultViewEnv nodes
+          P.++ hierarchyConstraints children nodes
       choiceConstraints =
         baseChoiceConstraints P.++ P.concatMap viewNodeChoiceConstraints nodes
    in ViewGraph
-        { viewCanvasWidth = canvasWidthValue defaultViewEnv
-        , viewCanvasHeight = canvasHeightValue defaultViewEnv
-        , viewNodes = nodes
+        { viewNodes = nodes
         , viewConstraints = constraints
         , viewChoiceConstraints = choiceConstraints
-        , viewSteps = addGeneratedRenderSteps nodes steps
+        , viewSteps = addGeneratedRenderSteps children nodes steps
         , viewDiagnostics = diagnostics
         }
 
@@ -90,36 +73,61 @@ viewNodeConstraints wrapped =
     ViewNode node ->
       nodeStyleConstraints (nodeStyle node)
         P.++ nodeBoxConstraints (nodeBox node)
-        P.++ fontSizeRangeConstraints defaultViewEnv (nodeStyle node)
-        P.++ boundsRangeConstraints
-               defaultViewEnv
-               (nodeBoxBounds (nodeBox node))
+        P.++ fontSizeRangeConstraints (nodeStyle node)
+        P.++ boundsRangeConstraints node
         P.++ nodeConstraints node
 
-fontSizeRangeConstraints :: ViewEnv -> Style.NodeStyle -> [Constraint]
-fontSizeRangeConstraints env style' =
-  [ S.within
-    expression
-    (Range 8 (P.max (canvasWidthValue env) (canvasHeightValue env)))
+fontSizeRangeConstraints :: Style.NodeStyle -> [Constraint]
+fontSizeRangeConstraints style' =
+  [ S.within expression (Range 8 maximumLayoutExtent)
   | expression <- Style.styleFieldValues @Style.FontSize style'
   ]
 
-boundsRangeConstraints :: ViewEnv -> BoundsExpr -> [Constraint]
-boundsRangeConstraints env bounds' =
-  case bounds' of
+boundsRangeConstraints :: Node tag -> [Constraint]
+boundsRangeConstraints node =
+  case nodeBoxBounds (nodeBox node) of
     Bounds topExpr leftExpr widthExpr heightExpr ->
-      [ S.within
-          topExpr
-          (Range 0 (P.max 0 (canvasHeightValue env P.- minimumLayoutExtent)))
-      , S.within
-          leftExpr
-          (Range 0 (P.max 0 (canvasWidthValue env P.- minimumLayoutExtent)))
-      , S.within widthExpr (Range minimumLayoutExtent (canvasWidthValue env))
-      , S.within heightExpr (Range minimumLayoutExtent (canvasHeightValue env))
-      ]
+      case nodeOrigin node of
+        CanvasOrigin meta ->
+          [ topExpr S.@==@ S.num 0
+          , leftExpr S.@==@ S.num 0
+          , S.within
+              widthExpr
+              (Range
+                 minimumLayoutExtent
+                 (if canvasWidthExplicit meta
+                    then maximumLayoutExtent
+                    else automaticCanvasWidth))
+          , S.within
+              heightExpr
+              (Range
+                 minimumLayoutExtent
+                 (if canvasHeightExplicit meta
+                    then maximumLayoutExtent
+                    else automaticCanvasHeight))
+          ]
+        _ ->
+          [ S.within
+              topExpr
+              (Range 0 (maximumLayoutExtent P.- minimumLayoutExtent))
+          , S.within
+              leftExpr
+              (Range 0 (maximumLayoutExtent P.- minimumLayoutExtent))
+          , S.within widthExpr (Range minimumLayoutExtent maximumLayoutExtent)
+          , S.within heightExpr (Range minimumLayoutExtent maximumLayoutExtent)
+          ]
 
 minimumLayoutExtent :: P.Double
 minimumLayoutExtent = 20
+
+maximumLayoutExtent :: P.Double
+maximumLayoutExtent = 4096
+
+automaticCanvasWidth :: P.Double
+automaticCanvasWidth = 800
+
+automaticCanvasHeight :: P.Double
+automaticCanvasHeight = 600
 
 viewNodeChoiceConstraints :: ViewNode -> [ChoiceConstraint]
 viewNodeChoiceConstraints wrapped =
@@ -128,42 +136,49 @@ viewNodeChoiceConstraints wrapped =
       nodeStyleChoiceConstraints (nodeStyle node)
         P.++ nodeBoxChoiceConstraints (nodeBox node)
 
-hierarchyConstraints :: ViewEnv -> [ViewNode] -> [Constraint]
-hierarchyConstraints env nodes = P.concatMap constraintsForNode nodes
+type ChildIndex = Map.Map ViewId [ViewNode]
+
+childIndex :: [ViewNode] -> ChildIndex
+childIndex = P.foldl addChild Map.empty
+  where
+    addChild index wrapped@(ViewNode node) =
+      case nodeParent node of
+        Nothing     -> index
+        Just parent -> Map.insertWith (P.flip (P.++)) parent [wrapped] index
+
+hierarchyConstraints :: ChildIndex -> [ViewNode] -> [Constraint]
+hierarchyConstraints children nodes = P.concatMap constraintsForNode nodes
   where
     constraintsForNode wrapped =
       case wrapped of
         ViewNode node ->
-          (case nodeParent node of
-             Nothing -> canvasContainment env node
-             Just _  -> [])
-            P.++ childFitConstraints nodes node
-            P.++ relativePinConstraints env nodes node
+          childFitConstraints children node
+            P.++ relativePinConstraints nodes node
 
-canvasContainment :: ViewEnv -> Node tag -> [Constraint]
-canvasContainment env node =
-  let margin = nodeBoxMargin (nodeBox node)
-   in [ S.num 0 S.@<=@ left node S.@-@ insetLeft margin
-      , S.num 0 S.@<=@ top node S.@-@ insetTop margin
-      , right node S.@+@ insetRight margin S.@<=@ canvasWidth env
-      , bottom node S.@+@ insetBottom margin S.@<=@ canvasHeight env
-      ]
-
-childFitConstraints :: [ViewNode] -> Node tag -> [Constraint]
-childFitConstraints nodes parent =
-  case mapMaybe (`findNode` nodes) (nodeChildren parent) of
-    [] -> []
-    children ->
+childFitConstraints :: ChildIndex -> Node tag -> [Constraint]
+childFitConstraints children parent =
+  case Map.findWithDefault [] (viewRefId (nodeRef parent)) children of
+    [] ->
+      case nodeOrigin parent of
+        CanvasOrigin meta ->
+          [ width parent S.@==@ S.num automaticCanvasWidth
+          | P.not (canvasWidthExplicit meta)
+          ]
+            P.++ [ height parent S.@==@ S.num automaticCanvasHeight
+                 | P.not (canvasHeightExplicit meta)
+                 ]
+        _ -> []
+    childNodes ->
       let padding = paddingForGeometry (nodeBoxPadding (nodeBox parent))
        in axisFitConstraints
             parent
-            children
+            childNodes
             Horizontal
             (nodeHorizontalFit parent)
             padding
             P.++ axisFitConstraints
                    parent
-                   children
+                   childNodes
                    Vertical
                    (nodeVerticalFit parent)
                    padding
@@ -188,9 +203,15 @@ axisFitConstraints parent children axis fit padding = containment P.++ tightness
       case fit of
         Contain -> []
         Hug ->
-          [ tightEdgeDecision "start" (parentStart parent padding) childStart
-          , tightEdgeDecision "end" (parentEnd parent padding) childEnd
-          ]
+          (case nodeOrigin parent of
+             CanvasOrigin _ -> []
+             _ ->
+               [ tightEdgeDecision
+                   "start"
+                   (parentStart parent padding)
+                   childStart
+               ])
+            P.++ [tightEdgeDecision "end" (parentEnd parent padding) childEnd]
     parentStart node insets =
       case axis of
         Horizontal -> left node S.@+@ insetLeft insets
@@ -252,12 +273,12 @@ data ParentContentBox = ParentContentBox
   , parentContentHeight :: LayoutExpr
   }
 
-relativePinConstraints :: ViewEnv -> [ViewNode] -> Node tag -> [Constraint]
-relativePinConstraints env nodes node =
+relativePinConstraints :: [ViewNode] -> Node tag -> [Constraint]
+relativePinConstraints nodes node =
   case nodeRelativePins node of
     [] -> []
     pins ->
-      case parentContentBoxFor env nodes node of
+      case parentContentBoxFor nodes node of
         Nothing ->
           P.error
             ("Node "
@@ -285,18 +306,10 @@ relativePinConstraint parentBox node pin =
         RelativeHeight ->
           height node S.@==@ parentContentHeight parentBox S.@*@ ratio
 
-parentContentBoxFor ::
-     ViewEnv -> [ViewNode] -> Node tag -> Maybe ParentContentBox
-parentContentBoxFor env nodes node =
+parentContentBoxFor :: [ViewNode] -> Node tag -> Maybe ParentContentBox
+parentContentBoxFor nodes node =
   case nodeParent node of
-    Nothing ->
-      Just
-        ParentContentBox
-          { parentContentLeft = S.num 0
-          , parentContentTop = S.num 0
-          , parentContentWidth = canvasWidth env
-          , parentContentHeight = canvasHeight env
-          }
+    Nothing -> Nothing
     Just identifier ->
       case findNode identifier nodes of
         Nothing                -> Nothing
@@ -322,19 +335,29 @@ findNode identifier nodes =
       | viewRefId (nodeRef node) P.== identifier -> Just wrapped
       | P.otherwise -> findNode identifier rest
 
-addGeneratedRenderSteps :: [ViewNode] -> [ViewStep] -> [ViewStep]
-addGeneratedRenderSteps nodes =
-  addGeneratedLifecycleSteps (generatedLifecycles nodes)
+addGeneratedRenderSteps :: ChildIndex -> [ViewNode] -> [ViewStep] -> [ViewStep]
+addGeneratedRenderSteps children nodes =
+  addGeneratedLifecycleSteps (generatedLifecycles children nodes)
 
 data GeneratedLifecycle =
   GeneratedLifecycle ViewNode [ViewId] [ViewId]
 
-generatedLifecycles :: [ViewNode] -> [GeneratedLifecycle]
-generatedLifecycles nodes =
-  [ GeneratedLifecycle wrapped (nodeChildren node) []
+generatedLifecycles :: ChildIndex -> [ViewNode] -> [GeneratedLifecycle]
+generatedLifecycles children nodes =
+  [ GeneratedLifecycle wrapped childIds []
   | wrapped@(ViewNode node) <- nodes
-  , P.not (P.null (nodeChildren node))
+  , let childIds =
+          P.map
+            nodeId
+            (Map.findWithDefault [] (viewRefId (nodeRef node)) children)
+  , P.not (P.null childIds)
+  , GeneratedOrigin _ <- [nodeOrigin node]
   ]
+
+nodeId :: ViewNode -> ViewId
+nodeId wrapped =
+  case wrapped of
+    ViewNode node -> viewRefId (nodeRef node)
 
 addGeneratedLifecycleSteps :: [GeneratedLifecycle] -> [ViewStep] -> [ViewStep]
 addGeneratedLifecycleSteps lifecycles steps =

@@ -9,7 +9,7 @@ export type * from './generated/visualization-ir';
 import * as v from 'valibot';
 
 import type { Visualization } from './generated/visualization-ir';
-import { validateVisualizationReferences, visualizationV3Schema } from './schema';
+import { validateVisualizationReferences, visualizationV1Schema } from './schema';
 
 /** Raised when compiler output does not satisfy the current visualization contract. */
 export class InvalidVisualizationError extends Error {
@@ -19,7 +19,7 @@ export class InvalidVisualizationError extends Error {
   }
 }
 
-/** Decode and strictly validate Haskell-generated visualization IR v3. */
+/** Decode and strictly validate Haskell-generated root-based visualization IR v1. */
 export function decodeVisualization(json: string): Visualization {
   let input: unknown;
   try {
@@ -30,10 +30,10 @@ export function decodeVisualization(json: string): Visualization {
     );
   }
 
-  const parsed = v.safeParse(visualizationV3Schema, input);
+  const parsed = v.safeParse(visualizationV1Schema, input);
   if (!parsed.success) {
     throw new InvalidVisualizationError(
-      `Invalid visualization IR v3: ${v.summarize(parsed.issues)}`
+      `Invalid visualization IR v1: ${v.summarize(parsed.issues)}`
     );
   }
 

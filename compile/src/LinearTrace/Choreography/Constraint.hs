@@ -29,7 +29,7 @@ import           LinearTrace.Choreography.Match (CategoryEndpoint,
                                                  CategoryRelation (..),
                                                  ConstraintStrength (..),
                                                  LayoutRelation (..), MatchSpec,
-                                                 NodeSelection, ValueEndpoint,
+                                                 NodeSelection, ValueExpr,
                                                  emptyMatchSpec,
                                                  matchCategoryRelation,
                                                  matchFiniteDecision,
@@ -38,13 +38,12 @@ import           LinearTrace.Choreography.Match (CategoryEndpoint,
                                                  matchValueRelation,
                                                  matchValueSymmetricBridge,
                                                  rawCategoryEndpoint,
-                                                 rawValueEndpoint,
-                                                 selectionCategoryEndpoint,
-                                                 selectionValueEndpoint)
+                                                 rawValueExpr,
+                                                 selectionCategoryEndpoint)
 import           LinearTrace.Choreography.Node  (Coord, Offset, Scalar,
                                                  Selected (..), Selection (..),
-                                                 SelectionCategory (..),
-                                                 SelectionValue (..), Span,
+                                                 SelectionCategory (..), Span,
+                                                 VisualExpr (..),
                                                  VisualizationBuilder,
                                                  coordConstraints, coordExpr,
                                                  emitVisualizationBuilder,
@@ -52,7 +51,7 @@ import           LinearTrace.Choreography.Node  (Coord, Offset, Scalar,
                                                  offsetConstraints, offsetExpr,
                                                  scalarConstraints, scalarExpr,
                                                  spanConstraints, spanExpr)
-import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
+import           LinearTrace.View.Access        (CategoryAccess)
 import           LinearTrace.View.Primitives    (Hsl (..))
 import qualified Prelude                        as P
 import qualified Solver                         as S
@@ -75,7 +74,7 @@ data VisualAlternative =
   VisualAlternative P.String [VisualConstraint]
 
 data ValueTerm =
-  ValueTerm MatchSpec [ValueEndpoint]
+  ValueTerm MatchSpec [ValueExpr]
 
 data CategoryTerm value =
   CategoryTerm MatchSpec [CategoryEndpoint value]
@@ -84,17 +83,11 @@ class ConstraintValue value where
   valueTerm :: value -> ValueTerm
 
 rawValueTerm :: S.Component -> ValueTerm
-rawValueTerm component = ValueTerm emptyMatchSpec [rawValueEndpoint component]
+rawValueTerm component = ValueTerm emptyMatchSpec [rawValueExpr component]
 
 rawExprValueTerm ::
      S.SymbolicType ty => S.Expr ty -> [S.Constraint] -> ValueTerm
 rawExprValueTerm expr constraints = rawValueTerm (S.component expr constraints)
-
-selectedValueTerm :: Selected tag -> ValueAccess -> ValueTerm
-selectedValueTerm selected access =
-  ValueTerm
-    (selectedSpec selected)
-    [selectionValueEndpoint (selectedNodeSelection selected) access]
 
 rawCategoryTerm ::
      S.ChoiceDomain value => S.ChoiceValue value -> CategoryTerm value
@@ -156,10 +149,10 @@ instance ConstraintValue Offset where
 instance S.SymbolicType ty => ConstraintValue (S.Expr ty) where
   valueTerm expr = rawExprValueTerm expr []
 
-instance ConstraintValue (SelectionValue value tag) where
+instance ConstraintValue (VisualExpr value) where
   valueTerm selected =
     case selected of
-      SelectionValue selection access -> selectedValueTerm selection access
+      VisualExpr expression -> ValueTerm emptyMatchSpec [expression]
 
 instance ConstraintValue x => ConstraintValue (Vec2 x) where
   valueTerm value =
@@ -444,7 +437,7 @@ valueTermSpec term =
   case term of
     ValueTerm spec _ -> spec
 
-valueTermEndpoints :: ValueTerm -> [ValueEndpoint]
+valueTermEndpoints :: ValueTerm -> [ValueExpr]
 valueTermEndpoints term =
   case term of
     ValueTerm _ endpoints -> endpoints

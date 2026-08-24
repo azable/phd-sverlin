@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const compileRoot = path.join(repositoryRoot, 'compile');
 const configPath = path.join(repositoryRoot, '.devcontainer', 'cabal.config');
+const cabalDirectory = path.join(repositoryRoot, '.cache', 'cabal');
 const cabalEnvironment = {
   ...process.env,
+  CABAL_DIR: cabalDirectory,
   CABAL_CONFIG: configPath,
   XDG_CACHE_HOME: path.join(repositoryRoot, '.cache'),
   XDG_STATE_HOME: path.join(repositoryRoot, '.local', 'state')

@@ -115,7 +115,7 @@ typographyTests =
     [ testCase "adds pinned fit constraints and explicit text layout" $ do
         (initial, final, output, compiled) <- runTypographyPipeline 1
         solutionChoices final @?= solutionChoices initial
-        IR.visualizationIrVersion compiled @?= 3
+        IR.visualizationIrVersion compiled @?= 1
         case renderElements compiled of
           [element] ->
             case IR.elementContent element of
@@ -466,11 +466,41 @@ choreographyBridgeTests =
     [ testCase "payload selector controls matched blocks"
         $ let (nodeCount, _constraintCount, _stepCount) =
                 ChoreographyFixtures.payloadMatchedStats
-           in nodeCount @?= 1
+           in nodeCount @?= 2
+    , testCase "payload bindings compose with semantic query terms"
+        $ let (nodeCount, _constraintCount, _stepCount) =
+                ChoreographyFixtures.payloadBoundStats
+           in nodeCount @?= 3
     , testCase "recursive nodes contain matching selections"
         $ let (nodeCount, _constraintCount, _stepCount) =
                 ChoreographyFixtures.nestedNodeStats
-           in nodeCount @?= 3
+           in nodeCount @?= 4
+    , testCase "selected affine expressions share handles and query bindings" $ do
+        compiled <- solveAndCompile 41 ChoreographyFixtures.affineSelectionGraph
+        let traceElements =
+              filter
+                (\element ->
+                   case IR.elementId element of
+                     IR.VisualId identifier -> identifier >= 0)
+                (renderElements compiled)
+            traceLefts =
+              List.sort
+                (map
+                   (IR.layoutRectX . IR.boxBounds . IR.elementBox)
+                   traceElements)
+        traceLefts @?= [70, 125]
+        case filter (not . null . IR.elementChildren) (renderElements compiled) of
+          [group] ->
+            let bounds' = IR.boxBounds (IR.elementBox group)
+                midpoint =
+                  IR.layoutRectX bounds' + IR.layoutRectWidth bounds' / 2
+             in assertBool
+                  ("affine group midpoint expected 117.5, got " ++ show midpoint)
+                  (abs (midpoint - 117.5) <= 1e-3)
+          groups ->
+            assertFailure
+              ("expected one affine generated group, got "
+                 ++ show (length groups))
     , testCase "a trace output cannot have overlapping node declarations"
         $ assertErrorContains
             "overlapping declarations"
@@ -506,7 +536,51 @@ viewMaterializationTests :: TestTree
 viewMaterializationTests =
   testGroup
     "view materialization"
-    [ testCase "selected color access adds a compiled color style" $ do
+    [ testCase "compileSolved emits one non-timeline canvas root" $ do
+        compiled <- solveAndCompile 40 ChoreographyFixtures.generativeGraph
+        case List.find
+               ((== IR.visualizationRoot compiled) . IR.elementId)
+               (IR.visualizationElements compiled) of
+          Nothing -> assertFailure "expected the canonical canvas root"
+          Just root -> do
+            IR.visualizationRoot compiled @?= IR.VisualId (-1)
+            IR.elementRole root @?= "Canvas"
+            let rootBounds = IR.boxBounds (IR.elementBox root)
+            assertBoxNear "canvas left" 0 (IR.layoutRectX rootBounds)
+            assertBoxNear "canvas top" 0 (IR.layoutRectY rootBounds)
+            IR.boxMargin (IR.elementBox root) @?= IR.EdgeInsets 0 0 0 0
+            IR.elementContent root @?= Nothing
+            List.sort (IR.elementChildren root)
+              @?= List.sort (map IR.elementId (renderElements compiled))
+            assertBool
+              "canvas must not have a render instance"
+              (all
+                 (all
+                    (\instance' ->
+                       IR.instanceElementId instance'
+                         /= IR.visualizationRoot compiled
+                         && IR.instanceOriginElementId instance'
+                              /= Just (IR.visualizationRoot compiled))
+                    . IR.stepInstances)
+                 (IR.visualizationSteps compiled))
+    , testCase "omitted canvas dimensions hug retained content and padding" $ do
+        compiled <- solveAndCompile 43 ChoreographyFixtures.automaticCanvasGraph
+        case List.find
+               ((== IR.visualizationRoot compiled) . IR.elementId)
+               (IR.visualizationElements compiled) of
+          Nothing -> assertFailure "expected an automatic canvas root"
+          Just root -> do
+            let bounds' = IR.boxBounds (IR.elementBox root)
+            assertBoxNear
+              "automatic canvas width"
+              200
+              (IR.layoutRectWidth bounds')
+            assertBoxNear
+              "automatic canvas height"
+              120
+              (IR.layoutRectHeight bounds')
+            IR.boxPadding (IR.elementBox root) @?= IR.EdgeInsets 10 20 30 40
+    , testCase "selected color access adds a compiled color style" $ do
         solution <-
           Choreography.solveViewGraphWithSeed
             (RandomSeed 11)
@@ -683,9 +757,7 @@ viewMaterializationTests =
     , testCase "generated parents are structurally transparent by default" $ do
         compiled <-
           solveAndCompile 37 ChoreographyFixtures.generativeParentGraph
-        case filter
-               (not . null . IR.elementChildren)
-               (IR.visualizationElements compiled) of
+        case filter (not . null . IR.elementChildren) (renderElements compiled) of
           [parent] -> do
             IR.visualFill (IR.elementStyle parent) @?= Nothing
             IR.visualStroke (IR.elementStyle parent) @?= Nothing
@@ -711,11 +783,34 @@ viewMaterializationTests =
           parents ->
             assertFailure
               ("expected one generated parent, got " ++ show (length parents))
+    , testCase "all parent style fields cascade unless a child overrides them" $ do
+        compiled <- solveAndCompile 42 ChoreographyFixtures.cascadedSurfaceGraph
+        case filter
+               (\element ->
+                  IR.elementRole element /= "Canvas"
+                    && not (null (IR.elementChildren element)))
+               (IR.visualizationElements compiled) of
+          [parent] -> do
+            let registry =
+                  Map.fromList
+                    [ (IR.elementId element, element)
+                    | element <- IR.visualizationElements compiled
+                    ]
+            fmap IR.hslHue (IR.visualFill (IR.elementStyle parent)) @?= Just 30
+            case traverse (`Map.lookup` registry) (IR.elementChildren parent) of
+              Just children ->
+                List.sort
+                  [ IR.hslHue fill
+                  | child <- children
+                  , Just fill <- [IR.visualFill (IR.elementStyle child)]
+                  ]
+                  @?= [30, 210]
+              Nothing ->
+                assertFailure "styled parent referenced an unknown child"
+          _ -> assertFailure "expected one styled generated parent"
     , testCase "generated nodes use ordinary handles and affine child boxes" $ do
         compiled <- solveAndCompile 38 ChoreographyFixtures.hierarchyBoxGraph
-        case filter
-               (not . null . IR.elementChildren)
-               (IR.visualizationElements compiled) of
+        case filter (not . null . IR.elementChildren) (renderElements compiled) of
           [parent] -> do
             let parentBounds = IR.boxBounds (IR.elementBox parent)
             assertBoxNear "parent left" 200 (IR.layoutRectX parentBounds)
@@ -1058,6 +1153,17 @@ componentTests =
             y = var "term.equal.y" :: Expr TestLayout
         relateComponents ComponentEqual [exprComponent x] [exprComponent y]
           @?= [x @==@ y]
+    , testCase
+        "canonicalizes bounded cyclic visual components for affine solving" $ do
+        let hueValue = var "term.equal.bounded-hue" :: Expr TestBoundedAngle
+            constraints =
+              relateComponents
+                ComponentEqual
+                [exprComponent hueValue]
+                [exprComponent (num 360 :: Expr TestBoundedAngle)]
+        solution <- solve defaultSolveConfig constraints
+        solutionBackend solution @?= AffineSampler
+        assertEvalNear "canonical hue" 0 solution hueValue
     , testCase "relates ordered components with side constraints" $ do
         let x = var "term.ordered.x" :: Expr TestLayout
             y = var "term.ordered.y" :: Expr TestLayout
@@ -1512,7 +1618,8 @@ assertCompileSolved solution graph =
     Right compiled -> pure compiled
 
 renderElements :: IR.Visualization -> [IR.VisualElement]
-renderElements = IR.visualizationElements
+renderElements =
+  filter ((/= "Canvas") . IR.elementRole) . IR.visualizationElements
 
 plainTextLayouts :: IR.Visualization -> [IR.TextLayout]
 plainTextLayouts visualization =

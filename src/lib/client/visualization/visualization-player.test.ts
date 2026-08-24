@@ -159,7 +159,7 @@ function visualization(contents: string[]): Visualization {
   }));
 
   return {
-    irVersion: 3,
+    irVersion: 1,
     seed: 1,
     sourcePath: 'Main.sverlin',
     sampling: { mode: 'legacyOptimizer', coverage: 'legacyCoverage' },
@@ -169,11 +169,25 @@ function visualization(contents: string[]): Visualization {
       systemOrigin: 'top-left',
       systemYAxis: 'down'
     },
-    canvas: { width: 100, height: 80 },
+    root: -1,
     resources: [],
     findings: [],
     variables: [],
-    elements,
+    elements: [
+      ...elements,
+      {
+        id: -1,
+        role: 'Canvas',
+        box: {
+          bounds: { rectX: 0, rectY: 0, rectWidth: 100, rectHeight: 80 },
+          padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        },
+        children: elements.map(({ id }) => id),
+        style: {},
+        styleVariables: []
+      }
+    ],
     steps: elements.map((element, index) => ({
       label: `Step ${index + 1}`,
       instances: [{ id: 1, elementId: element.id }]

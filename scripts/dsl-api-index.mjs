@@ -12,6 +12,7 @@ const indexPath = path.join(
 );
 const sourceLabel = 'compile/src/LinearTrace/Choreography.hs';
 const cabalConfigPath = path.join(repositoryRoot, '.devcontainer/cabal.config');
+const cabalDirectory = path.join(repositoryRoot, '.cache', 'cabal');
 const ghciMarker = '__DSL_API_ENTRY_';
 
 function fail(message) {
@@ -47,6 +48,7 @@ function runGhci(commands) {
         cwd: path.join(repositoryRoot, 'compile'),
         env: {
           ...process.env,
+          CABAL_DIR: cabalDirectory,
           CABAL_CONFIG: cabalConfigPath,
           XDG_CACHE_HOME: path.join(repositoryRoot, '.cache'),
           XDG_STATE_HOME: path.join(repositoryRoot, '.local/state')

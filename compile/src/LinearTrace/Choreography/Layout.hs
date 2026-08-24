@@ -13,12 +13,12 @@ module LinearTrace.Choreography.Layout
   , RationalLiteral(..)
   , fromInteger
   , fromRational
-  , queryIndex
+  , QueryField
   , (@:)
   , at
   , by
   , shift
-  , asUnit
+  , asScalar
   , asCoord
   , asSpan
   , AddExpr(..)
@@ -47,31 +47,37 @@ module LinearTrace.Choreography.Layout
   , mkScalar
   ) where
 
-import           Control.Functor.Linear        hiding ((<$>), (<&>), (<*>))
-import           LinearTrace.Choreography.Node (Coord, LayoutValue (..), Offset,
-                                                Scalar, Selected (..),
-                                                SelectionValue (..), Span,
-                                                VisualizationBuilder,
-                                                coordConstraints, coordExpr,
-                                                coordPin, editCurrentNode,
-                                                offsetConstraints, offsetExpr,
-                                                scalarConstraints, scalarExpr,
-                                                spanConstraints, spanExpr,
-                                                spanPin)
-import           LinearTrace.Core              (QueryInt (..), queryIntAdd,
-                                                queryIntConst)
-import           LinearTrace.View.Access       (LayoutAttr (..),
-                                                layoutValueAccess)
-import           LinearTrace.View.Primitives   (Bounds (..), BoundsExpr,
-                                                LayoutExpr, Unit)
-import qualified LinearTrace.View.Primitives   as V
-import qualified LinearTrace.View.Template     as VT
-import qualified Prelude                       as P
-import           Prelude.Linear                hiding (fromInteger,
-                                                fromRational, (*), (+), (-),
-                                                (/), (<>))
-import qualified Solver                        as S
-import           Solver                        (Vec2 (..), vec2)
+import           Control.Functor.Linear         hiding ((<$>), (<&>), (<*>))
+import           Data.Proxy                     (Proxy (..))
+import           GHC.OverloadedLabels           (IsLabel (fromLabel))
+import           GHC.TypeLits                   (KnownSymbol)
+import qualified LinearTrace.Choreography.Match as Match
+import           LinearTrace.Choreography.Node  (Coord, LayoutValue (..),
+                                                 Offset, Scalar, Selected (..),
+                                                 Span, VisualExpr (..),
+                                                 VisualizationBuilder,
+                                                 coordConstraints, coordExpr,
+                                                 coordPin, editCurrentNode,
+                                                 offsetConstraints, offsetExpr,
+                                                 scalarConstraints, scalarExpr,
+                                                 selectedVisualExpr,
+                                                 spanConstraints, spanExpr,
+                                                 spanPin)
+import           LinearTrace.Core               (Query, QueryInt (..),
+                                                 labelName, queryInt,
+                                                 queryIntAdd)
+import           LinearTrace.View.Access        (LayoutAttr (..),
+                                                 layoutValueAccess)
+import           LinearTrace.View.Primitives    (Bounds (..), BoundsExpr,
+                                                 LayoutExpr)
+import qualified LinearTrace.View.Primitives    as V
+import qualified LinearTrace.View.Template      as VT
+import qualified Prelude                        as P
+import           Prelude.Linear                 hiding (fromInteger,
+                                                 fromRational, (*), (+), (-),
+                                                 (/), (<>))
+import qualified Solver                         as S
+import           Solver                         (Vec2 (..), vec2)
 
 nonNegative :: LayoutExpr -> S.Constraint
 nonNegative expr = (S.num 0 :: LayoutExpr) S.@<=@ expr
@@ -122,6 +128,9 @@ instance IntegerLiteral P.Integer where
 instance IntegerLiteral P.Double where
   integerLiteral = P.fromInteger
 
+instance IntegerLiteral QueryInt where
+  integerLiteral = QueryIntConst P.. P.fromInteger
+
 instance RationalLiteral P.Double where
   rationalLiteral = P.fromRational
 
@@ -161,14 +170,14 @@ instance IntegerLiteral Scalar where
 instance RationalLiteral Scalar where
   rationalLiteral value = num (P.fromRational value)
 
-instance IntegerLiteral QueryInt where
-  integerLiteral value = queryIntConst (P.fromInteger value)
+newtype QueryField =
+  QueryField P.String
 
-queryIndex :: P.Int -> QueryInt
-queryIndex = queryIntConst
+instance KnownSymbol name => IsLabel name QueryField where
+  fromLabel = QueryField (labelName (Proxy @name))
 
-(@:) :: (QueryInt -> query) -> QueryInt -> query
-(@:) buildField = buildField
+(@:) :: QueryField -> QueryInt -> Query
+QueryField name @: value = queryInt name value
 
 at :: P.Double -> Coord
 at = num
@@ -187,8 +196,8 @@ queryIntExpr queryIntValue =
     QueryIntAdd base offset ->
       queryIntExpr base S.@+@ S.num (P.fromIntegral offset)
 
-asUnit :: QueryInt -> Unit
-asUnit = queryIntExpr
+asScalar :: QueryInt -> Scalar
+asScalar value = mkScalar (queryIntExpr value) []
 
 asCoord :: Offset -> Coord
 asCoord value = mkCoord (offsetExpr value) (offsetConstraints value)
@@ -196,11 +205,33 @@ asCoord value = mkCoord (offsetExpr value) (offsetConstraints value)
 asSpan :: Offset -> Span
 asSpan value = mkSpan (offsetExpr value) (offsetConstraints value)
 
-class AddExpr lhs rhs result
-  | lhs rhs -> result
-  , lhs result -> rhs
-  , result -> lhs rhs
-  where
+rawVisualExpr :: LayoutValue valueRole -> VisualExpr valueRole
+rawVisualExpr (LayoutValue expression constraints) =
+  VisualExpr (Match.rawValueExpr (S.component expression constraints))
+
+addVisualExpr :: VisualExpr lhs -> VisualExpr rhs -> VisualExpr result
+addVisualExpr (VisualExpr lhs) (VisualExpr rhs) =
+  VisualExpr (Match.addValueExpr lhs rhs)
+
+subtractVisualExpr :: VisualExpr lhs -> VisualExpr rhs -> VisualExpr result
+subtractVisualExpr (VisualExpr lhs) (VisualExpr rhs) =
+  VisualExpr (Match.subtractValueExpr lhs rhs)
+
+scaleVisualExpr :: VisualExpr value -> Scalar -> VisualExpr value
+scaleVisualExpr (VisualExpr expression) scalar =
+  VisualExpr
+    (Match.scaleValueExpr
+       expression
+       (S.component (scalarExpr scalar) (scalarConstraints scalar)))
+
+divideVisualExpr :: VisualExpr value -> Scalar -> VisualExpr value
+divideVisualExpr (VisualExpr expression) scalar =
+  VisualExpr
+    (Match.divideValueExpr
+       expression
+       (S.component (scalarExpr scalar) (scalarConstraints scalar)))
+
+class AddExpr lhs rhs result | lhs rhs -> result where
   addExpr :: lhs -> rhs -> result
 
 instance S.SymbolicType ty => AddExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
@@ -224,11 +255,56 @@ instance AddExpr Coord Span Coord where
       (coordExpr lhs S.@+@ spanExpr rhs)
       (coordConstraints lhs P.++ spanConstraints rhs)
 
+instance AddExpr Coord Offset Coord where
+  addExpr lhs rhs =
+    mkCoord
+      (coordExpr lhs S.@+@ offsetExpr rhs)
+      (coordConstraints lhs P.++ offsetConstraints rhs)
+
+instance AddExpr Span Span Span where
+  addExpr lhs rhs =
+    mkSpan
+      (spanExpr lhs S.@+@ spanExpr rhs)
+      (spanConstraints lhs P.++ spanConstraints rhs)
+
 instance AddExpr Offset Span Offset where
   addExpr lhs rhs =
     mkOffset
       (offsetExpr lhs S.@+@ spanExpr rhs)
       (offsetConstraints lhs P.++ spanConstraints rhs)
+
+instance AddExpr Offset Offset Offset where
+  addExpr lhs rhs =
+    mkOffset
+      (offsetExpr lhs S.@+@ offsetExpr rhs)
+      (offsetConstraints lhs P.++ offsetConstraints rhs)
+
+instance AddExpr (VisualExpr Coord) (VisualExpr Span) (VisualExpr Coord) where
+  addExpr = addVisualExpr
+
+instance AddExpr (VisualExpr Coord) (VisualExpr Offset) (VisualExpr Coord) where
+  addExpr = addVisualExpr
+
+instance AddExpr (VisualExpr Span) (VisualExpr Span) (VisualExpr Span) where
+  addExpr = addVisualExpr
+
+instance AddExpr (VisualExpr Offset) (VisualExpr Span) (VisualExpr Offset) where
+  addExpr = addVisualExpr
+
+instance AddExpr (VisualExpr Offset) (VisualExpr Offset) (VisualExpr Offset) where
+  addExpr = addVisualExpr
+
+instance AddExpr (VisualExpr Coord) Span (VisualExpr Coord) where
+  addExpr lhs rhs = addVisualExpr lhs (rawVisualExpr rhs)
+
+instance AddExpr (VisualExpr Coord) Offset (VisualExpr Coord) where
+  addExpr lhs rhs = addVisualExpr lhs (rawVisualExpr rhs)
+
+instance AddExpr Coord (VisualExpr Span) (VisualExpr Coord) where
+  addExpr lhs = addVisualExpr (rawVisualExpr lhs)
+
+instance AddExpr Coord (VisualExpr Offset) (VisualExpr Coord) where
+  addExpr lhs = addVisualExpr (rawVisualExpr lhs)
 
 class SubExpr lhs rhs result | lhs rhs -> result where
   subExpr :: lhs -> rhs -> result
@@ -245,11 +321,17 @@ instance SubExpr P.Integer P.Integer P.Integer where
 instance SubExpr P.Double P.Double P.Double where
   subExpr = (P.-)
 
-instance SubExpr Coord Span Offset where
+instance SubExpr Coord Span Coord where
   subExpr lhs rhs =
-    mkOffset
+    mkCoord
       (coordExpr lhs S.@-@ spanExpr rhs)
       (coordConstraints lhs P.++ spanConstraints rhs)
+
+instance SubExpr Coord Offset Coord where
+  subExpr lhs rhs =
+    mkCoord
+      (coordExpr lhs S.@-@ offsetExpr rhs)
+      (coordConstraints lhs P.++ offsetConstraints rhs)
 
 instance SubExpr Coord Coord Offset where
   subExpr lhs rhs =
@@ -275,12 +357,31 @@ instance SubExpr Offset Offset Offset where
       (offsetExpr lhs S.@-@ offsetExpr rhs)
       (offsetConstraints lhs P.++ offsetConstraints rhs)
 
-class MulExpr lhs rhs result
-  | lhs rhs -> result
-  , lhs result -> rhs
-  , rhs result -> lhs
-  , result -> lhs rhs
-  where
+instance SubExpr (VisualExpr Coord) (VisualExpr Coord) (VisualExpr Offset) where
+  subExpr = subtractVisualExpr
+
+instance SubExpr (VisualExpr Coord) (VisualExpr Span) (VisualExpr Coord) where
+  subExpr = subtractVisualExpr
+
+instance SubExpr (VisualExpr Coord) (VisualExpr Offset) (VisualExpr Coord) where
+  subExpr = subtractVisualExpr
+
+instance SubExpr (VisualExpr Span) (VisualExpr Span) (VisualExpr Offset) where
+  subExpr = subtractVisualExpr
+
+instance SubExpr (VisualExpr Offset) (VisualExpr Span) (VisualExpr Offset) where
+  subExpr = subtractVisualExpr
+
+instance SubExpr (VisualExpr Offset) (VisualExpr Offset) (VisualExpr Offset) where
+  subExpr = subtractVisualExpr
+
+instance SubExpr (VisualExpr Coord) Coord (VisualExpr Offset) where
+  subExpr lhs rhs = subtractVisualExpr lhs (rawVisualExpr rhs)
+
+instance SubExpr Coord (VisualExpr Coord) (VisualExpr Offset) where
+  subExpr lhs = subtractVisualExpr (rawVisualExpr lhs)
+
+class MulExpr lhs rhs result | lhs rhs -> result where
   mulExpr :: lhs -> rhs -> result
 
 instance S.SymbolicType ty => MulExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
@@ -307,17 +408,31 @@ instance MulExpr Offset Scalar Offset where
       (offsetExpr lhs S.@*@ scalarExpr rhs)
       (offsetConstraints lhs P.++ scalarConstraints rhs)
 
+instance MulExpr Scalar Span Span where
+  mulExpr lhs rhs = mulExpr rhs lhs
+
+instance MulExpr Scalar Offset Offset where
+  mulExpr lhs rhs = mulExpr rhs lhs
+
+instance MulExpr (VisualExpr Span) Scalar (VisualExpr Span) where
+  mulExpr = scaleVisualExpr
+
+instance MulExpr (VisualExpr Offset) Scalar (VisualExpr Offset) where
+  mulExpr = scaleVisualExpr
+
+instance MulExpr Scalar (VisualExpr Span) (VisualExpr Span) where
+  mulExpr scalar value = scaleVisualExpr value scalar
+
+instance MulExpr Scalar (VisualExpr Offset) (VisualExpr Offset) where
+  mulExpr scalar value = scaleVisualExpr value scalar
+
 instance MulExpr Scalar Scalar Scalar where
   mulExpr lhs rhs =
     mkScalar
       (scalarExpr lhs S.@*@ scalarExpr rhs)
       (scalarConstraints lhs P.++ scalarConstraints rhs)
 
-class DivExpr lhs rhs result
-  | lhs rhs -> result
-  , lhs result -> rhs
-  , result -> lhs rhs
-  where
+class DivExpr lhs rhs result | lhs rhs -> result, lhs -> rhs result where
   divExpr :: lhs -> rhs -> result
 
 instance S.SymbolicType ty => DivExpr (S.Expr ty) (S.Expr ty) (S.Expr ty) where
@@ -337,6 +452,12 @@ instance DivExpr Offset Scalar Offset where
     mkOffset
       (offsetExpr lhs S.@/@ scalarExpr rhs)
       (offsetConstraints lhs P.++ scalarConstraints rhs)
+
+instance DivExpr (VisualExpr Span) Scalar (VisualExpr Span) where
+  divExpr = divideVisualExpr
+
+instance DivExpr (VisualExpr Offset) Scalar (VisualExpr Offset) where
+  divExpr = divideVisualExpr
 
 instance DivExpr Scalar Scalar Scalar where
   divExpr lhs rhs =
@@ -367,28 +488,28 @@ lhs |+| rhs =
     (spanExpr lhs S.@+@ spanExpr rhs)
     (spanConstraints lhs P.++ spanConstraints rhs)
 
-class Left input output | input -> output, output -> input where
+class Left input output | input -> output where
   left :: input -> output
 
-class Top input output | input -> output, output -> input where
+class Top input output | input -> output where
   top :: input -> output
 
-class Width input output | input -> output, output -> input where
+class Width input output | input -> output where
   width :: input -> output
 
-class Height input output | input -> output, output -> input where
+class Height input output | input -> output where
   height :: input -> output
 
-class Right input output | input -> output, output -> input where
+class Right input output | input -> output where
   right :: input -> output
 
-class Bottom input output | input -> output, output -> input where
+class Bottom input output | input -> output where
   bottom :: input -> output
 
-class X input output | input -> output, output -> input where
+class X input output | input -> output where
   x :: input -> output
 
-class Y input output | input -> output, output -> input where
+class Y input output | input -> output where
   y :: input -> output
 
 class Center input where
@@ -396,57 +517,73 @@ class Center input where
   center :: input -> CenterOutput input
 
 instance Left Coord (VisualizationBuilder ()) where
-  left = setPin coordPin (\spec maybePin -> spec {VT.templateLeft = maybePin})
+  left =
+    setPin "left" coordPin (\spec maybePin -> spec {VT.templateLeft = maybePin})
 
 instance Top Coord (VisualizationBuilder ()) where
-  top = setPin coordPin (\spec maybePin -> spec {VT.templateTop = maybePin})
+  top =
+    setPin "top" coordPin (\spec maybePin -> spec {VT.templateTop = maybePin})
 
 instance Width Span (VisualizationBuilder ()) where
-  width = setPin spanPin (\spec maybePin -> spec {VT.templateWidth = maybePin})
+  width =
+    setPin
+      "width"
+      spanPin
+      (\spec maybePin -> spec {VT.templateWidth = maybePin})
 
 instance Height Span (VisualizationBuilder ()) where
   height =
-    setPin spanPin (\spec maybePin -> spec {VT.templateHeight = maybePin})
+    setPin
+      "height"
+      spanPin
+      (\spec maybePin -> spec {VT.templateHeight = maybePin})
 
 instance Right Coord (VisualizationBuilder ()) where
-  right = setPin coordPin (\spec maybePin -> spec {VT.templateRight = maybePin})
+  right =
+    setPin
+      "right"
+      coordPin
+      (\spec maybePin -> spec {VT.templateRight = maybePin})
 
 instance Bottom Coord (VisualizationBuilder ()) where
   bottom =
-    setPin coordPin (\spec maybePin -> spec {VT.templateBottom = maybePin})
+    setPin
+      "bottom"
+      coordPin
+      (\spec maybePin -> spec {VT.templateBottom = maybePin})
 
-instance Left (Selected tag) (SelectionValue Coord tag) where
-  left selection = SelectionValue selection (layoutValueAccess AttrLeft)
+instance Left (Selected tag) (VisualExpr Coord) where
+  left selection = selectedVisualExpr selection (layoutValueAccess AttrLeft)
 
-instance Top (Selected tag) (SelectionValue Coord tag) where
-  top selection = SelectionValue selection (layoutValueAccess AttrTop)
+instance Top (Selected tag) (VisualExpr Coord) where
+  top selection = selectedVisualExpr selection (layoutValueAccess AttrTop)
 
-instance Width (Selected tag) (SelectionValue Span tag) where
-  width selection = SelectionValue selection (layoutValueAccess AttrWidth)
+instance Width (Selected tag) (VisualExpr Span) where
+  width selection = selectedVisualExpr selection (layoutValueAccess AttrWidth)
 
-instance Height (Selected tag) (SelectionValue Span tag) where
-  height selection = SelectionValue selection (layoutValueAccess AttrHeight)
+instance Height (Selected tag) (VisualExpr Span) where
+  height selection = selectedVisualExpr selection (layoutValueAccess AttrHeight)
 
-instance Right (Selected tag) (SelectionValue Coord tag) where
-  right selection = SelectionValue selection (layoutValueAccess AttrRight)
+instance Right (Selected tag) (VisualExpr Coord) where
+  right selection = selectedVisualExpr selection (layoutValueAccess AttrRight)
 
-instance Bottom (Selected tag) (SelectionValue Coord tag) where
-  bottom selection = SelectionValue selection (layoutValueAccess AttrBottom)
+instance Bottom (Selected tag) (VisualExpr Coord) where
+  bottom selection = selectedVisualExpr selection (layoutValueAccess AttrBottom)
 
 instance X Coord (VisualizationBuilder ()) where
-  x = setPin coordPin (\spec maybePin -> spec {VT.templateX = maybePin})
+  x = setPin "x" coordPin (\spec maybePin -> spec {VT.templateX = maybePin})
 
 instance Y Coord (VisualizationBuilder ()) where
-  y = setPin coordPin (\spec maybePin -> spec {VT.templateY = maybePin})
+  y = setPin "y" coordPin (\spec maybePin -> spec {VT.templateY = maybePin})
 
-instance X (Selected tag) (SelectionValue Coord tag) where
-  x selection = SelectionValue selection (layoutValueAccess AttrCenterX)
+instance X (Selected tag) (VisualExpr Coord) where
+  x selection = selectedVisualExpr selection (layoutValueAccess AttrCenterX)
 
-instance Y (Selected tag) (SelectionValue Coord tag) where
-  y selection = SelectionValue selection (layoutValueAccess AttrCenterY)
+instance Y (Selected tag) (VisualExpr Coord) where
+  y selection = selectedVisualExpr selection (layoutValueAccess AttrCenterY)
 
 instance Center (Selected tag) where
-  type CenterOutput (Selected tag) = Vec2 (SelectionValue Coord tag)
+  type CenterOutput (Selected tag) = Vec2 (VisualExpr Coord)
   center selection = vec2 (x selection) (y selection)
 
 sequenceNodeActions :: [VisualizationBuilder ()] -> VisualizationBuilder ()
@@ -473,11 +610,12 @@ bounds (Bounds topExpr leftExpr widthExpr heightExpr) =
     ]
 
 setPin ::
-     (value -> VT.LayoutPin)
+     P.String
+  -> (value -> VT.LayoutPin)
   -> (VT.NodeTemplate -> Maybe VT.LayoutPin -> VT.NodeTemplate)
   -> value
   -> VisualizationBuilder ()
-setPin toPin setField value =
+setPin property toPin setField value =
   editCurrentNode
-    "geometry"
+    property
     (\_bindings template -> setField template (P.pure (toPin value)))

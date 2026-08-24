@@ -13,12 +13,16 @@ module LinearTrace.Core.Query
     Query(..)
   , QueryTerm(..)
   , QueryValue(..)
+  , QueryPayload(..)
   , QueryInt(..)
   , QueryBindings
   , emptyQuery
   , queryAtom
   , queryInt
   , queryAppend
+  , queryPayloadEquals
+  , queryPayloadBinding
+  , queryPayloadMatches
   , queryKey
   , queryFacts
   , queryMatches
@@ -71,20 +75,25 @@ data QueryTerm =
   QueryTerm P.String QueryValue
   deriving (P.Eq, P.Ord, P.Show)
 
-newtype Query =
-  Query [QueryTerm]
+data QueryPayload
+  = QueryPayloadEquals P.String
+  | QueryPayloadBinding P.String
+  deriving (P.Eq, P.Ord, P.Show)
+
+data Query =
+  Query [QueryTerm] (Maybe QueryPayload)
   deriving (P.Eq, P.Ord, P.Show)
 
 type QueryBindings = [(P.String, P.Int)]
 
 emptyQuery :: Query
-emptyQuery = Query []
+emptyQuery = Query [] Nothing
 
 queryAtom :: P.String -> Query
-queryAtom name = Query [QueryTerm name QueryAtom]
+queryAtom name = Query [QueryTerm name QueryAtom] Nothing
 
 queryInt :: P.String -> QueryInt -> Query
-queryInt name value = Query [QueryTerm name (QueryIntValue value)]
+queryInt name value = Query [QueryTerm name (QueryIntValue value)] Nothing
 
 queryIntConst :: P.Int -> QueryInt
 queryIntConst = QueryIntConst
@@ -98,9 +107,43 @@ queryIntAdd = QueryIntAdd
 queryAppend :: Query -> Query -> Query
 queryAppend lhs rhs =
   case lhs of
-    Query leftTerms ->
+    Query leftTerms leftPayload ->
       case rhs of
-        Query rightTerms -> Query (canonicalTerms (leftTerms P.++ rightTerms))
+        Query rightTerms rightPayload ->
+          Query
+            (canonicalTerms (leftTerms P.++ rightTerms))
+            (appendPayloadQuery leftPayload rightPayload)
+
+appendPayloadQuery ::
+     Maybe QueryPayload -> Maybe QueryPayload -> Maybe QueryPayload
+appendPayloadQuery lhs rhs =
+  case (lhs, rhs) of
+    (Nothing, value) -> value
+    (value, Nothing) -> value
+    (Just leftValue, Just rightValue)
+      | leftValue P.== rightValue -> Just leftValue
+      | P.otherwise ->
+        P.error
+          "A semantic query cannot contain two different payload patterns."
+
+queryPayloadEquals :: P.String -> Query
+queryPayloadEquals expected = Query [] (Just (QueryPayloadEquals expected))
+
+queryPayloadBinding :: P.String -> Query
+queryPayloadBinding name = Query [] (Just (QueryPayloadBinding name))
+
+queryPayloadMatches ::
+     C.Traceable tag => Query -> C.Payload tag -> Maybe MatchBindings
+queryPayloadMatches query payload =
+  case query of
+    Query _ Nothing -> Just []
+    Query _ (Just payloadQuery) ->
+      case payloadQuery of
+        QueryPayloadEquals expected
+          | C.payloadText payload P.== expected -> Just []
+          | P.otherwise -> Nothing
+        QueryPayloadBinding name ->
+          Just [MatchBinding name (C.payloadText payload)]
 
 labelName :: KnownSymbol name => Proxy name -> P.String
 labelName proxy = dotName (symbolVal proxy)
@@ -120,21 +163,27 @@ dotChar char =
 instance KnownSymbol name => IsLabel name Query where
   fromLabel = queryAtom (labelName (Proxy @name))
 
-instance KnownSymbol name => IsLabel name (P.Int -> Query) where
-  fromLabel value = queryInt (labelName (Proxy @name)) (queryIntConst value)
-
-instance KnownSymbol name => IsLabel name (QueryInt -> Query) where
-  fromLabel = queryInt (labelName (Proxy @name))
-
 queryKey :: Query -> P.String
 queryKey query =
   case query of
-    Query terms -> joinPath ("q" : P.map queryTermKey (canonicalTerms terms))
+    Query terms payloadQuery ->
+      joinPath
+        ("q"
+           : P.map queryTermKey (canonicalTerms terms)
+           P.++ case payloadQuery of
+                  Nothing      -> []
+                  Just payload -> [payloadQueryKey payload])
+
+payloadQueryKey :: QueryPayload -> P.String
+payloadQueryKey payloadQuery =
+  case payloadQuery of
+    QueryPayloadEquals expected -> "payload-equals-" P.++ safeKey expected
+    QueryPayloadBinding name    -> "payload-binding-" P.++ safeKey name
 
 queryFacts :: Query -> C.Facts
 queryFacts query =
   case query of
-    Query terms -> C.Facts (P.map queryTermToFact (canonicalTerms terms))
+    Query terms _ -> C.Facts (P.map queryTermToFact (canonicalTerms terms))
 
 queryTermKey :: QueryTerm -> P.String
 queryTermKey term =
@@ -154,7 +203,7 @@ queryIntKey intPattern =
 queryMatches :: Query -> C.Facts -> Maybe QueryBindings
 queryMatches query facts =
   case query of
-    Query terms -> matchQueryTerms (canonicalTerms terms) facts []
+    Query terms _ -> matchQueryTerms (canonicalTerms terms) facts []
 
 queryBindingValue :: QueryBindings -> P.Int -> P.Int
 queryBindingValue bindings fallback =

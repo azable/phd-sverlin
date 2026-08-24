@@ -236,6 +236,7 @@
                     bind:selectedIds={selectedInstanceIds}
                     elements={player.elements}
                     height={player.canvasHeight}
+                    root={player.canvasRoot!}
                     resourceBaseUrl={`/api/projects/${encodeURIComponent(session.projectId)}/resources`}
                     width={player.canvasWidth}
                   />

@@ -134,7 +134,7 @@ describe('compileSource', () => {
 
 function emptyVisualization(): Visualization {
   return {
-    irVersion: 3,
+    irVersion: 1,
     seed: 1,
     sourcePath: 'Main.sverlin',
     coordinates: {
@@ -143,11 +143,24 @@ function emptyVisualization(): Visualization {
       systemOrigin: 'top-left',
       systemYAxis: 'down'
     },
-    canvas: { width: 640, height: 360 },
+    root: -1,
     resources: [],
     findings: [],
     variables: [],
-    elements: [],
+    elements: [
+      {
+        id: -1,
+        role: 'Canvas',
+        box: {
+          bounds: { rectX: 0, rectY: 0, rectWidth: 640, rectHeight: 360 },
+          padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        },
+        children: [],
+        style: {},
+        styleVariables: []
+      }
+    ],
     steps: []
   };
 }

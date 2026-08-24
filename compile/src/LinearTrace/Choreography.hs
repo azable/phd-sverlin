@@ -27,10 +27,17 @@
 --
 -- 'node' is the single hierarchy primitive. A generated node may contain trace
 -- selections, generated nodes, or whole query selections. Every child is
--- constrained to its parent's content box. Parent style fields cascade to
--- descendants unless a descendant explicitly overrides or removes the field.
--- Generated groups are ordinary nodes: their layout handles, padding, margin,
+-- constrained to its parent's content box. Every parent style field cascades
+-- to descendants unless a descendant explicitly overrides or removes it.
+-- Generated parents are ordinary nodes: their layout handles, padding, margin,
 -- content, styles, and constraints use the same API as leaf nodes.
+--
+-- The body of 'visualize' edits the persistent canvas root. Root 'width' and
+-- 'height' may be explicit; under the default 'Hug' fit, an omitted axis hugs its retained children up to
+-- 800 by 600, with an empty canvas falling back to that size. Root padding,
+-- content-fit, and styles use the ordinary node behavior. Position, margin,
+-- and content declarations are rejected on the root because its origin is
+-- fixed at @(0,0)@ and it is never a timeline instance.
 --
 -- = Geometry and text
 --
@@ -196,8 +203,6 @@ module LinearTrace.Choreography
   , -- * Visualization rules and selections #selection#
     -- | Compiled collection of selections, node declarations, edits, and rules.
     MatchSpec
-  , -- | Typed query whose matches can be bound as visual trace nodes.
-    TraceQuery
   , -- | Reference to one declared visual node or the canvas.
     Selected
   , -- | Solver-backed reusable value introduced inside visual rules.
@@ -208,15 +213,19 @@ module LinearTrace.Choreography
     NodeBinding(..)
   , -- | Existential payload marker for heterogeneous trace selections.
     AnyPayload
+  , -- | Marker carried by handles for anonymous generated parent nodes.
+    GeneratedNode
+  , -- | Marker carried by the persistent root canvas handle.
+    CanvasNode
+  , -- | Supported literal/bound 'ContentValue', 'Bool', 'Int', 'Double', or unit selector.
+    PayloadQuery
   , -- | Linear builder that accumulates visual declarations and constraints.
     VisualizationBuilder
   , -- | Select trace payloads matching a semantic query.
     select
   , -- | Overloaded selection class for typed and heterogeneous payload queries.
     Select
-  , -- | Append compatible query predicates or visual query fragments.
-    QueryAppend
-  , -- | Compile a completed visualization builder into a reusable rule spec.
+  , -- | Compile a root-canvas body and its descendant declarations into reusable rules.
     visualize
   , -- | Append query fragments with the visual-query composition operator.
     (<&>)
@@ -239,13 +248,13 @@ module LinearTrace.Choreography
     codeRange
   , -- | Emphasize source ranges while the named checkpoint is visible.
     emphasizeCode
-  , -- | Use the selected trace payload's display text as node content.
+  , -- | Match a literal payload display value or capture it through bound content.
     payload
-  , -- | Declare a trace node or create a generated parent around child declarations.
+  , -- | Declare trace selections as children or create a recursively nestable parent node.
     node
   , -- | Bind the current generated parent from inside its node body.
     self
-  , -- | Root canvas selection; it participates in ordinary layout constraints.
+  , -- | Persistent root canvas handle; read its geometry like any selected node.
     canvas
   , -- | Construct literal textual content.
     text
@@ -277,6 +286,8 @@ module LinearTrace.Choreography
     Offset
   , -- | Unitless numeric expression.
     Scalar
+  , -- | Affine expression over one or more selected node values.
+    VisualExpr
   , -- | Overloaded left-edge accessor or assignment.
     Left
   , -- | Overloaded top-edge accessor or assignment.
@@ -325,10 +336,8 @@ module LinearTrace.Choreography
     by
   , -- | Construct a signed pixel displacement.
     shift
-  , -- | Read an integer captured by a zero-based query binding index.
-    queryIndex
   , -- | Interpret a captured query integer as a unitless scalar.
-    asUnit
+    asScalar
   , -- | Reinterpret a signed offset as a coordinate expression.
     asCoord
   , -- | Reinterpret a signed offset as a span expression.
@@ -438,7 +447,9 @@ module LinearTrace.Choreography
     oneOf
   , -- | Apply branch-specific visual rules for a finite choice.
     caseOf
-  , -- | Attach a query, binding, or selection to a visual rule body.
+  , -- | Overloaded-label field name consumed by the integer query operator.
+    QueryField
+  , -- | Construct a named integer query from a literal or bound 'QueryInt'.
     (@:)
   , -- | Less-than-or-equal relation for compatible numeric expressions.
     (.<=.)

@@ -556,34 +556,21 @@ setStyleFieldPlan plan style' =
 setStyleFamily :: String -> NodeStyle -> NodeStyle
 setStyleFamily family style' = style' {nodeStyleFamily = Just family}
 
--- | Inherit only semantic text fields. Surface and geometry treatments remain
--- local to the node that declared them.
+-- | Inherit every declared style field. A required, forbidden, or conditional
+-- child plan replaces the corresponding parent plan explicitly.
 cascadeNodeStyle :: NodeStyle -> NodeStyle -> NodeStyle
 cascadeNodeStyle parent child =
   NodeStyle
     { nodeStyleFields =
         foldl
           (flip (replaceByName anyStyleFieldName))
-          inheritedFields
+          (nodeStyleFields parent)
           (nodeStyleFields child)
     , nodeStyleFamily =
         case nodeStyleFamily child of
           Just family -> Just family
           Nothing     -> nodeStyleFamily parent
     }
-  where
-    inheritedFields =
-      filter
-        ((`elem` semanticFieldNames) . anyStyleFieldName)
-        (nodeStyleFields parent)
-    semanticFieldNames =
-      [ styleFieldName (Proxy @FontFamily)
-      , styleFieldName (Proxy @FontWeight)
-      , styleFieldName (Proxy @FontStyle)
-      , styleFieldName (Proxy @FontSize)
-      , styleFieldName (Proxy @TextAlign)
-      , styleFieldName (Proxy @WhiteSpace)
-      ]
 
 requireStyleField ::
      forall field. StyleField field

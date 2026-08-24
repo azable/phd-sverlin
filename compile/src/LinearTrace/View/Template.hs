@@ -7,6 +7,7 @@ module LinearTrace.View.Template
   , NodeTemplate(..)
   , emptyNodeTemplate
   , mapNodeTemplateExprs
+  , substituteNodeTemplateVars
   , templateGeometryConstraints
   , applyNodeTemplate
   , updateTemplateContent
@@ -90,6 +91,33 @@ mapNodeTemplateExprs f template =
     , templateX = P.fmap (mapLayoutPin f) (templateX template)
     , templateY = P.fmap (mapLayoutPin f) (templateY template)
     }
+
+substituteNodeTemplateVars ::
+     [(P.String, P.Double)] -> NodeTemplate -> NodeTemplate
+substituteNodeTemplateVars substitutions template =
+  (mapNodeTemplateExprs (S.substituteExprVars substitutions) template)
+    { templateConstraints =
+        P.map
+          (S.substituteConstraintVars substitutions)
+          (templateConstraints template)
+    , templateLeft = substitutePin (templateLeft template)
+    , templateTop = substitutePin (templateTop template)
+    , templateWidth = substitutePin (templateWidth template)
+    , templateHeight = substitutePin (templateHeight template)
+    , templateRight = substitutePin (templateRight template)
+    , templateBottom = substitutePin (templateBottom template)
+    , templateX = substitutePin (templateX template)
+    , templateY = substitutePin (templateY template)
+    }
+  where
+    substitutePin = P.fmap substituteOnePin
+    substituteOnePin pin =
+      case pin of
+        LayoutPin expression constraints ->
+          LayoutPin
+            (S.substituteExprVars substitutions expression)
+            (P.map (S.substituteConstraintVars substitutions) constraints)
+        ParentPercentPin attr ratio -> ParentPercentPin attr ratio
 
 mapLayoutPin ::
      (forall (ty :: Type). S.Expr ty -> S.Expr ty) -> LayoutPin -> LayoutPin

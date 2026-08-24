@@ -15,13 +15,15 @@
     CodeTokenKind,
     LiveElement,
     RenderInstanceId,
-    TextRuntimeObservation
+    TextRuntimeObservation,
+    VisualElement
   } from './types';
 
   /** Public properties for the pannable, zoomable visualization viewport. */
   type Props = {
     width: number;
     height: number;
+    root: VisualElement;
     elements: LiveElement[];
     selectedIds?: RenderInstanceId[];
     resourceBaseUrl?: string;
@@ -33,6 +35,7 @@
   let {
     width,
     height,
+    root,
     elements,
     selectedIds = $bindable<RenderInstanceId[]>([]),
     resourceBaseUrl,
@@ -363,7 +366,19 @@
     onpointercancel={onPointerUp}
   >
     <g {transform}>
-      <rect {width} {height} fill="white" />
+      <rect
+        data-visual-id={root.id}
+        {width}
+        {height}
+        rx={root.style.radius ?? 0}
+        fill={color(root.style.fill, root.style.alpha, 'white')}
+        opacity={root.style.opacity ?? 1}
+        stroke={root.style.borderStyle === 'none'
+          ? 'none'
+          : color(root.style.stroke, root.style.alpha, 'transparent')}
+        stroke-width={root.style.borderStyle === 'none' ? 0 : (root.style.strokeWidth ?? 0)}
+        stroke-dasharray={borderDasharray(root.style.borderStyle)}
+      />
       <rect
         class="scene-boundary"
         {width}

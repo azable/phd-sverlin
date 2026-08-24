@@ -92,18 +92,19 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 ## Visualization rules and selections
 
 - `MatchSpec` — Type: `MatchSpec :: Type` — Compiled collection of selections, node declarations, edits, and rules.
-- `TraceQuery` — Type: `TraceQuery :: Type -> Type` — Typed query whose matches can be bound as visual trace nodes.
 - `Selected` — Type: `Selected :: Type -> Type` — Reference to one declared visual node or the canvas.
 - `Variable` — Type: `Variable :: Type -> Type; data Variable a where; Variable :: a -> Variable a` — Solver-backed reusable value introduced inside visual rules.
 - `Bound` — Type: `Bound :: Type -> Type; data Bound a where; Bound :: a -> Bound a` — Value captured from the current query match.
 - `NodeBinding` — Type: `NodeBinding :: Type -> Type; data NodeBinding a where; Selected :: a -> NodeBinding a` — Explicit node handle returned by generated-parent declarations.
 - `AnyPayload` — Type: `AnyPayload :: Type` — Existential payload marker for heterogeneous trace selections.
+- `GeneratedNode` — Type: `GeneratedNode :: Type` — Marker carried by handles for anonymous generated parent nodes.
+- `CanvasNode` — Type: `CanvasNode :: Type` — Marker carried by the persistent root canvas handle.
+- `PayloadQuery` — Type: `PayloadQuery :: Type -> Constraint; class PayloadQuery selector` — Supported literal/bound `ContentValue`, `Bool`, `Int`, `Double`, or unit selector.
 - `VisualizationBuilder` — Type: `VisualizationBuilder :: Type -> Type` — Linear builder that accumulates visual declarations and constraints.
-- `select` — Type: `select :: Select payload (SelectQuery payload) => SelectQuery payload -> VisualizationBuilder (NodeBinding (Selected payload))` — Select trace payloads matching a semantic query.
-- `Select` — Type: `Select :: Type -> Type -> Constraint; class Select payload query` — Overloaded selection class for typed and heterogeneous payload queries.
-- `QueryAppend` — Type: `QueryAppend :: Type -> Constraint; class QueryAppend query` — Append compatible query predicates or visual query fragments.
-- `visualize` — Type: `visualize :: VisualizationBuilder () -> MatchSpec` — Compile a completed visualization builder into a reusable rule spec.
-- `<&>` — Type: `(<&>) :: QueryAppend query => query -> query -> query` — Append query fragments with the visual-query composition operator.
+- `select` — Type: `select :: Select payload => Query -> VisualizationBuilder (NodeBinding (Selected payload))` — Select trace payloads matching a semantic query.
+- `Select` — Type: `Select :: Type -> Constraint; class Select payload` — Overloaded selection class for typed and heterogeneous payload queries.
+- `visualize` — Type: `visualize :: VisualizationBuilder () -> MatchSpec` — Compile a root-canvas body and its descendant declarations into reusable rules.
+- `<&>` — Type: `(<&>) :: Query -> Query -> Query` — Append query fragments with the visual-query composition operator.
 
 ## Node hierarchy and content
 
@@ -116,10 +117,10 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `CodeRange` — Type: `CodeRange :: Type` — Half-open source range measured in character offsets.
 - `codeRange` — Type: `codeRange :: Int -> Int -> CodeRange` — Construct a half-open source range from start and end offsets.
 - `emphasizeCode` — Type: `emphasizeCode :: String -> [CodeRange] -> VisualizationBuilder () %1 -> VisualizationBuilder ()` — Emphasize source ranges while the named checkpoint is visible.
-- `payload` — Type: `payload :: PayloadSelector tag selector => selector -> TraceQuery tag` — Use the selected trace payload's display text as node content.
-- `node` — Type: `node :: Node input result => input -> result` — Declare a trace node or create a generated parent around child declarations.
+- `payload` — Type: `payload :: PayloadQuery selector => selector -> Query` — Match a literal payload display value or capture it through bound content.
+- `node` — Type: `node :: Node input result => input -> result` — Declare trace selections as children or create a recursively nestable parent node.
 - `self` — Type: `self :: VisualizationBuilder (NodeBinding (Selected GeneratedNode))` — Bind the current generated parent from inside its node body.
-- `canvas` — Type: `canvas :: Selected CanvasNode` — Root canvas selection; it participates in ordinary layout constraints.
+- `canvas` — Type: `canvas :: Selected CanvasNode` — Persistent root canvas handle; read its geometry like any selected node.
 - `text` — Type: `text :: String -> ContentValue` — Construct literal textual content.
 - `ContentValue` — Type: `ContentValue :: Type` — Content expression accepted by text and code content functions.
 
@@ -140,14 +141,15 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `Span` — Type: `Span :: Type; type Span = LayoutValue SpanRole` — Non-negative width or height.
 - `Offset` — Type: `Offset :: Type; type Offset = LayoutValue OffsetRole` — Signed displacement between positions.
 - `Scalar` — Type: `Scalar :: Type; type Scalar = LayoutValue ScalarRole` — Unitless numeric expression.
-- `Left` — Type: `Left :: Type -> Type -> Constraint; class Left input output | input -> output, output -> input` — Overloaded left-edge accessor or assignment.
-- `Top` — Type: `Top :: Type -> Type -> Constraint; class Top input output | input -> output, output -> input` — Overloaded top-edge accessor or assignment.
-- `Right` — Type: `Right :: Type -> Type -> Constraint; class Right input output | input -> output, output -> input` — Overloaded right-edge accessor or assignment.
-- `Bottom` — Type: `Bottom :: Type -> Type -> Constraint; class Bottom input output | input -> output, output -> input` — Overloaded bottom-edge accessor or assignment.
-- `Width` — Type: `Width :: Type -> Type -> Constraint; class Width input output | input -> output, output -> input` — Overloaded width accessor or assignment.
-- `Height` — Type: `Height :: Type -> Type -> Constraint; class Height input output | input -> output, output -> input` — Overloaded height accessor or assignment.
-- `X` — Type: `X :: Type -> Type -> Constraint; class X input output | input -> output, output -> input` — Overloaded horizontal-center accessor or assignment.
-- `Y` — Type: `Y :: Type -> Type -> Constraint; class Y input output | input -> output, output -> input` — Overloaded vertical-center accessor or assignment.
+- `VisualExpr` — Type: `VisualExpr :: forall {k}. k -> Type` — Affine expression over one or more selected node values.
+- `Left` — Type: `Left :: Type -> Type -> Constraint; class Left input output | input -> output` — Overloaded left-edge accessor or assignment.
+- `Top` — Type: `Top :: Type -> Type -> Constraint; class Top input output | input -> output` — Overloaded top-edge accessor or assignment.
+- `Right` — Type: `Right :: Type -> Type -> Constraint; class Right input output | input -> output` — Overloaded right-edge accessor or assignment.
+- `Bottom` — Type: `Bottom :: Type -> Type -> Constraint; class Bottom input output | input -> output` — Overloaded bottom-edge accessor or assignment.
+- `Width` — Type: `Width :: Type -> Type -> Constraint; class Width input output | input -> output` — Overloaded width accessor or assignment.
+- `Height` — Type: `Height :: Type -> Type -> Constraint; class Height input output | input -> output` — Overloaded height accessor or assignment.
+- `X` — Type: `X :: Type -> Type -> Constraint; class X input output | input -> output` — Overloaded horizontal-center accessor or assignment.
+- `Y` — Type: `Y :: Type -> Type -> Constraint; class Y input output | input -> output` — Overloaded vertical-center accessor or assignment.
 - `Center` — Type: `Center :: Type -> Constraint; class Center input where; type CenterOutput :: Type -> Type; type family CenterOutput input; center :: input -> CenterOutput input` — Set or read both center coordinates as a typed vector.
 - `x` — Type: `x :: X input output => input -> output` — Read the horizontal center of a selected node.
 - `y` — Type: `y :: Y input output => input -> output` — Read the vertical center of a selected node.
@@ -164,8 +166,7 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `at` — Type: `at :: Double -> Coord` — Construct an absolute pixel coordinate.
 - `by` — Type: `by :: Double -> Span` — Construct a non-negative pixel span.
 - `shift` — Type: `shift :: Double -> Offset` — Construct a signed pixel displacement.
-- `queryIndex` — Type: `queryIndex :: Int -> QueryInt` — Read an integer captured by a zero-based query binding index.
-- `asUnit` — Type: `asUnit :: QueryInt -> Unit` — Interpret a captured query integer as a unitless scalar.
+- `asScalar` — Type: `asScalar :: QueryInt -> Scalar` — Interpret a captured query integer as a unitless scalar.
 - `asCoord` — Type: `asCoord :: Offset -> Coord` — Reinterpret a signed offset as a coordinate expression.
 - `asSpan` — Type: `asSpan :: Offset -> Span` — Reinterpret a signed offset as a span expression.
 - `num` — Type: `num :: NumExpr a => Double -> a` — Construct a solver numeric literal in an inferred typed domain.
@@ -228,7 +229,8 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `alternative` — Type: `alternative :: String -> [VisualConstraint] -> VisualAlternative` — Construct one named visual alternative branch.
 - `oneOf` — Type: `oneOf :: String -> VisualAlternative -> [VisualAlternative] -> VisualizationBuilder ()` — Require exactly one named alternative from a non-empty set.
 - `caseOf` — Type: `caseOf :: ChoiceDomain value => Choice value -> (value -> [VisualConstraint]) -> VisualizationBuilder ()` — Apply branch-specific visual rules for a finite choice.
-- `@:` — Type: `(@:) :: (QueryInt -> query) -> QueryInt -> query` — Attach a query, binding, or selection to a visual rule body.
+- `QueryField` — Type: `QueryField :: Type` — Overloaded-label field name consumed by the integer query operator.
+- `@:` — Type: `(@:) :: QueryField -> QueryInt -> Query` — Construct a named integer query from a literal or bound `QueryInt`.
 - `.<=.` — Type: `(.<=.) :: RelateValues lhs rhs => lhs -> rhs -> VisualConstraint` — Less-than-or-equal relation for compatible numeric expressions.
 - `.>=.` — Type: `(.>=.) :: RelateValues rhs lhs => lhs -> rhs -> VisualConstraint` — Greater-than-or-equal relation for compatible numeric expressions.
 - `.==.` — Type: `(.==.) :: RelateValues lhs rhs => lhs -> rhs -> VisualConstraint` — Equality relation for compatible numeric expressions.

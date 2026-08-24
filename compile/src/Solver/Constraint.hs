@@ -43,6 +43,13 @@ module Solver.Constraint
   , component
   , exprComponent
   , componentConstraints
+  , addComponentConstraints
+  , addComponents
+  , subtractComponents
+  , scaleComponent
+  , substituteComponentVars
+  , componentConstantValue
+  , substituteConstraintVars
   , relateComponents
   , directedBridgeComponents
   , symmetricBridgeComponents
@@ -353,6 +360,76 @@ componentConstraints value =
   case value of
     Component _ _ constraints -> constraints
 
+addComponentConstraints :: [Constraint] -> Component -> Component
+addComponentConstraints additional value =
+  case value of
+    Component domain raw constraints ->
+      Component domain raw (constraints ++ additional)
+
+addComponents :: Component -> Component -> Component
+addComponents = combineComponents EAdd
+
+subtractComponents :: Component -> Component -> Component
+subtractComponents = combineComponents ESub
+
+combineComponents ::
+     (RawExpr -> RawExpr -> RawExpr) -> Component -> Component -> Component
+combineComponents combine lhs rhs =
+  case (lhs, rhs) of
+    (Component lhsType lhsRaw lhsConstraints, Component rhsType rhsRaw rhsConstraints) ->
+      if lhsType == rhsType
+        then Component
+               lhsType
+               (combine lhsRaw rhsRaw)
+               (lhsConstraints ++ rhsConstraints)
+        else error
+               ("Cannot combine values with different scalar types: "
+                  ++ domainName lhsType
+                  ++ " and "
+                  ++ domainName rhsType)
+
+scaleComponent :: Double -> Component -> Component
+scaleComponent factor value =
+  case value of
+    Component domain raw constraints ->
+      Component domain (EMul raw (ELit factor)) constraints
+
+substituteComponentVars :: [(String, Double)] -> Component -> Component
+substituteComponentVars substitutions value =
+  case value of
+    Component domain raw constraints ->
+      Component
+        domain
+        (substituteRawExprVars substitutions raw)
+        (map (substituteConstraintVars substitutions) constraints)
+
+componentConstantValue :: Component -> Maybe Double
+componentConstantValue value =
+  case value of
+    Component _ raw _ -> constantRawExprValue raw
+
+substituteConstraintVars :: [(String, Double)] -> Constraint -> Constraint
+substituteConstraintVars substitutions constraint =
+  case constraint of
+    Equals domain lhs rhs ->
+      Equals
+        domain
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    LessOrEqual lhs rhs ->
+      LessOrEqual
+        (substituteRawExprVars substitutions lhs)
+        (substituteRawExprVars substitutions rhs)
+    Minimize expr -> Minimize (substituteRawExprVars substitutions expr)
+    Soft inner -> Soft (substituteConstraintVars substitutions inner)
+    All constraints ->
+      All (map (substituteConstraintVars substitutions) constraints)
+    Cases spec ->
+      Cases
+        (mapDecisionConstraints
+           (map (substituteConstraintVars substitutions))
+           spec)
+
 relateComponents ::
      ComponentRelation -> [Component] -> [Component] -> [Constraint]
 relateComponents relation = zipComponentsWith (componentRelation relation)
@@ -403,9 +480,46 @@ componentRelation relation lhs rhs =
     (Component lhsType lhsRaw _, Component rhsType rhsRaw _) ->
       if lhsType == rhsType
         then case relation of
-               ComponentEqual       -> Equals lhsType lhsRaw rhsRaw
+               ComponentEqual       -> componentEquality lhsType lhsRaw rhsRaw
                ComponentLessOrEqual -> LessOrEqual lhsRaw rhsRaw
         else componentTypeError lhsType rhsType
+
+-- Bounded cyclic visual components have one duplicated endpoint (for example,
+-- 0 and 360 degrees are the same hue). Relating their canonical numeric
+-- representatives is sufficient and keeps otherwise-affine visual design
+-- spaces on the affine backend. Unbounded cyclic domains retain the general
+-- modulo equality handled by the optimizer.
+componentEquality :: Domain -> RawExpr -> RawExpr -> Constraint
+componentEquality domain lhs rhs =
+  case canonicalCyclicBounds domain of
+    Nothing -> Equals domain lhs rhs
+    Just (lower, period) ->
+      Equals
+        (realDomain (domainName domain))
+        (canonicalizeCyclicConstant lower period lhs)
+        (canonicalizeCyclicConstant lower period rhs)
+
+canonicalCyclicBounds :: Domain -> Maybe (Double, Double)
+canonicalCyclicBounds domain =
+  case (domainCircularPeriod domain, domainDefaultBounds domain) of
+    (Just period, DomainBounds (Just lower) (Just upper))
+      | period > 0 && upper - lower <= period + equalityEpsilon ->
+        Just (lower, period)
+    _ -> Nothing
+
+canonicalizeCyclicConstant :: Double -> Double -> RawExpr -> RawExpr
+canonicalizeCyclicConstant lower period expression =
+  case constantRawExprValue expression of
+    Nothing -> expression
+    Just value ->
+      let wrapped =
+            value
+              - period
+                  * fromInteger (floor ((value - lower) / period) :: Integer)
+       in ELit
+            (if abs (wrapped - (lower + period)) <= equalityEpsilon
+               then lower
+               else wrapped)
 
 directedBridgeComponent :: Component -> Component -> Component -> Constraint
 directedBridgeComponent lhs gap rhs =

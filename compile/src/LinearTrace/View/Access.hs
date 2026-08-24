@@ -163,6 +163,7 @@ styleValueVarsFor view =
 nodeRoot :: Node tag -> NodeVarRoot
 nodeRoot node =
   case nodeOrigin node of
+    CanvasOrigin _       -> canvasNodeRoot
     TraceOrigin _        -> traceNodeRoot (nodeRef node)
     GeneratedOrigin meta -> generatedNodeRoot (generatedKey meta)
 

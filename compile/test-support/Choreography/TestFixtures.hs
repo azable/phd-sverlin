@@ -16,6 +16,7 @@ module Choreography.TestFixtures
     -- | Compact graph stats used by tests for query and hierarchy
     -- behavior.
     payloadMatchedStats
+  , payloadBoundStats
   , nestedNodeStats
   , overlappingDeclarationStats
   , pendingMaterializedStepCount
@@ -25,7 +26,10 @@ module Choreography.TestFixtures
   , forbiddenStyleAccessStats
   , -- * View graphs
     -- | Concrete fixture graphs used by materialization/style tests.
-    categoricalRelationGraph
+    affineSelectionGraph
+  , automaticCanvasGraph
+  , cascadedSurfaceGraph
+  , categoricalRelationGraph
   , categoricalStyleGraph
   , centerGraph
   , codeTypographyGraph
@@ -81,6 +85,9 @@ instance ChoiceDomain TestTreatment where
 payloadMatchedStats :: (Int, Int, Int)
 payloadMatchedStats = fixtureStats payloadMatchedSpec
 
+payloadBoundStats :: (Int, Int, Int)
+payloadBoundStats = fixtureStats payloadBoundSpec
+
 nestedNodeStats :: (Int, Int, Int)
 nestedNodeStats = fixtureStats nestedNodeSpec
 
@@ -118,6 +125,15 @@ categoricalStyleGraph = buildGraph categoricalStyleSpec
 
 categoricalRelationGraph :: ViewGraph
 categoricalRelationGraph = buildGraph categoricalRelationSpec
+
+cascadedSurfaceGraph :: ViewGraph
+cascadedSurfaceGraph = buildGraph cascadedSurfaceSpec
+
+affineSelectionGraph :: ViewGraph
+affineSelectionGraph = buildGraphFor indexedFixture affineSelectionSpec
+
+automaticCanvasGraph :: ViewGraph
+automaticCanvasGraph = buildGraph automaticCanvasSpec
 
 centerGraph :: ViewGraph
 centerGraph = buildGraph centerSpec
@@ -221,6 +237,17 @@ fixture = do
   Destroy <- destroy second
   checkpoint "destroyed"
 
+indexedFixture :: Choreography ()
+indexedFixture = do
+  Create firstPending <- create @TestValue (LInt 7)
+  first <- materialize (#item <&> #index @: 0) firstPending
+  Create secondPending <- create @TestValue (LInt 8)
+  second <- materialize (#item <&> #index @: 1) secondPending
+  checkpoint "created"
+  Destroy <- destroy first
+  Destroy <- destroy second
+  checkpoint "destroyed"
+
 responsiveDenseFixture :: Choreography ()
 responsiveDenseFixture = do
   Create pending7 <- create @TestValue (LInt 7)
@@ -304,6 +331,43 @@ payloadMatchedSpec =
       width (by 80)
       height (by 80)
 
+payloadBoundSpec :: MatchSpec
+payloadBoundSpec =
+  visualize $ do
+    Bound label <- bindContent
+    Selected item <- select @TestValue (#item <&> payload label)
+    node item $ do
+      content label
+      width (by 80)
+      height (by 80)
+
+affineSelectionSpec :: MatchSpec
+affineSelectionSpec =
+  visualize $ do
+    Bound i <- bindInt
+    Selected indexed <- select @TestValue (#item <&> (#index @: i))
+    Selected first <- select @TestValue (#item <&> #index @: 0)
+    Selected final <- select @TestValue (#item <&> #index @: 1)
+    Selected group <-
+      node $ do
+        node indexed $ do
+          left (at 70 + asScalar i * shift 55)
+          top (at 50)
+          width (by 40)
+          height (by 40)
+    ensure $ x group .==. left first + (right final - left first) / 2
+
+automaticCanvasSpec :: MatchSpec
+automaticCanvasSpec =
+  visualize $ do
+    padding (edges (by 10) (by 20) (by 30) (by 40))
+    Selected item <- select @TestValue (#item <&> payload (7 :: P.Int))
+    node item $ do
+      left (at 100)
+      top (at 50)
+      width (by 80)
+      height (by 40)
+
 nestedNodeSpec :: MatchSpec
 nestedNodeSpec =
   visualize $ do
@@ -358,6 +422,9 @@ generativeParentSpec =
 hierarchyBoxSpec :: MatchSpec
 hierarchyBoxSpec =
   visualize $ do
+    width (by 800)
+    height (by 600)
+    contentFit Both Contain
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
     Selected parent <-
       node $ do
@@ -418,6 +485,23 @@ categoricalStyleSpec =
       style @FontFamily (VariableStyle family)
     ensure $ family .==. FontMono
 
+cascadedSurfaceSpec :: MatchSpec
+cascadedSurfaceSpec =
+  visualize $ do
+    Selected first <- select @TestValue (#item <&> payload (7 :: P.Int))
+    Selected second <- select @TestValue (#item <&> payload (8 :: P.Int))
+    Selected _parent <-
+      node $ do
+        style @Fill (Hsl (30 :: Angle) (0.5 :: Unit) (0.8 :: Unit))
+        node first $ do
+          width (by 80)
+          height (by 80)
+        node second $ do
+          width (by 80)
+          height (by 80)
+          style @Fill (Hsl (210 :: Angle) (0.6 :: Unit) (0.7 :: Unit))
+    return ()
+
 categoricalRelationSpec :: MatchSpec
 categoricalRelationSpec =
   visualize $ do
@@ -444,6 +528,9 @@ centerSpec =
 disjunctiveSpec :: MatchSpec
 disjunctiveSpec =
   visualize $ do
+    width (by 800)
+    height (by 600)
+    contentFit Both Contain
     Selected item <- select @TestValue (#item <&> payload (7 :: Int))
     node item $ do
       width (by 80)

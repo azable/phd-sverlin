@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { decodeVisualization, InvalidVisualizationError, type Visualization } from './index';
 
 describe('decodeVisualization', () => {
-  it('strictly accepts a well-formed version-three visualization', () => {
+  it('strictly accepts a well-formed root-based version-one visualization', () => {
     expect(decodeVisualization(JSON.stringify(visualization()))).toEqual(visualization());
   });
 
-  it('rejects unknown version-three fields instead of silently stripping them', () => {
+  it('rejects unknown version-one fields instead of silently stripping them', () => {
     expect(() =>
       decodeVisualization(JSON.stringify({ ...visualization(), unexpected: true }))
     ).toThrow(InvalidVisualizationError);
@@ -19,7 +19,7 @@ describe('decodeVisualization', () => {
     );
 
     const malformed = visualization();
-    malformed.elements[0].content = {
+    malformed.elements[1].content = {
       kind: 'plainTextContent',
       textLayout: {
         layoutSource: 'hello',
@@ -65,7 +65,7 @@ describe('decodeVisualization', () => {
     const legacy = {
       seed: current.seed,
       sourcePath: current.sourcePath,
-      canvas: current.canvas,
+      canvas: { width: 100, height: 80 },
       variables: current.variables,
       elements: current.elements.map((element) => ({
         id: element.id,
@@ -81,40 +81,23 @@ describe('decodeVisualization', () => {
     expect(() => decodeVisualization(JSON.stringify(legacy))).toThrow(InvalidVisualizationError);
   });
 
-  it('requires an acyclic single-parent element hierarchy', () => {
+  it('requires a rooted single-parent element hierarchy', () => {
     const cyclic = visualization();
-    cyclic.elements.push({
-      id: -1,
-      role: 'Node.parent',
+    cyclic.elements[1].children = [-1];
+    expect(() => decodeVisualization(JSON.stringify(cyclic))).toThrow(
+      'Visualization root cannot be the child'
+    );
+
+    const multipleParents = visualization();
+    multipleParents.elements[0].children.push(-2);
+    multipleParents.elements.push({
+      id: -2,
+      role: 'Node.second',
       box: emptyBox(),
       children: [0],
       style: {},
       styleVariables: []
     });
-    cyclic.elements[0].children = [-1];
-    expect(() => decodeVisualization(JSON.stringify(cyclic))).toThrow(
-      'Element hierarchy contains a cycle'
-    );
-
-    const multipleParents = visualization();
-    multipleParents.elements.push(
-      {
-        id: -1,
-        role: 'Node.first',
-        box: emptyBox(),
-        children: [0],
-        style: {},
-        styleVariables: []
-      },
-      {
-        id: -2,
-        role: 'Node.second',
-        box: emptyBox(),
-        children: [0],
-        style: {},
-        styleVariables: []
-      }
-    );
     expect(() => decodeVisualization(JSON.stringify(multipleParents))).toThrow(
       'Element 0 has multiple parents'
     );
@@ -122,8 +105,6 @@ describe('decodeVisualization', () => {
 
   it('keeps render-instance IDs nonnegative even when element IDs are signed', () => {
     const current = visualization();
-    current.elements[0].id = -1;
-    current.steps[0].instances[0].elementId = -1;
     expect(decodeVisualization(JSON.stringify(current)).elements[0].id).toBe(-1);
 
     current.steps[0].instances[0].id = -1;
@@ -150,7 +131,7 @@ describe('decodeVisualization', () => {
         descriptorByteLength: 20
       }
     ];
-    current.elements[0].content = {
+    current.elements[1].content = {
       kind: 'codeTextContent',
       textLayout: {
         layoutSource: 'λ = 1',
@@ -196,7 +177,7 @@ describe('decodeVisualization', () => {
       ]
     };
 
-    expect(decodeVisualization(JSON.stringify(current)).elements[0].content).toMatchObject({
+    expect(decodeVisualization(JSON.stringify(current)).elements[1].content).toMatchObject({
       kind: 'codeTextContent',
       textHighlightLines: [[{ tokenText: 'λ = 1' }]]
     });
@@ -212,15 +193,15 @@ describe('decodeVisualization', () => {
     );
     current.steps[0].instances[0].codeEmphasisRanges[0].sourceRangeEnd = 2;
 
-    if (current.elements[0].content.kind !== 'codeTextContent') throw new Error('unreachable');
-    current.elements[0].content.textHighlightLines[0][0].tokenSourceRange.sourceRangeEnd = 5;
+    if (current.elements[1].content.kind !== 'codeTextContent') throw new Error('unreachable');
+    current.elements[1].content.textHighlightLines[0][0].tokenSourceRange.sourceRangeEnd = 5;
     expect(() => decodeVisualization(JSON.stringify(current))).toThrow('invalid code token ranges');
   });
 });
 
 function visualization(): Visualization {
   return {
-    irVersion: 3,
+    irVersion: 1,
     seed: 1,
     sourcePath: 'Main.sverlin',
     sampling: { mode: 'balancedChoices', coverage: 'exactEnumeration' },
@@ -230,11 +211,23 @@ function visualization(): Visualization {
       systemOrigin: 'top-left',
       systemYAxis: 'down'
     },
-    canvas: { width: 100, height: 80 },
+    root: -1,
     resources: [],
     findings: [],
     variables: [],
     elements: [
+      {
+        id: -1,
+        role: 'Canvas',
+        box: {
+          bounds: { rectX: 0, rectY: 0, rectWidth: 100, rectHeight: 80 },
+          padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        },
+        children: [0],
+        style: {},
+        styleVariables: []
+      },
       {
         id: 0,
         role: 'Value',

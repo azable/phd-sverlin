@@ -46,6 +46,7 @@ module Solver
   , var
   , num
   , exprView
+  , substituteExprVars
   , (@+@)
   , (@-@)
   , (@*@)
@@ -82,6 +83,14 @@ module Solver
   , ComponentRelation(..)
   , component
   , exprComponent
+  , componentConstraints
+  , addComponentConstraints
+  , addComponents
+  , subtractComponents
+  , scaleComponent
+  , substituteComponentVars
+  , componentConstantValue
+  , substituteConstraintVars
   , relateComponents
   , directedBridgeComponents
   , symmetricBridgeComponents

@@ -83,10 +83,10 @@ instance S.ChoiceDomain AutomaticFontWeight where
       AutomaticWeight600 -> "600"
 
 applyGenerativeStyleProfiles :: [ViewNode] -> [ViewNode]
-applyGenerativeStyleProfiles = map applyProfile
+applyGenerativeStyleProfiles nodes = map (applyProfile nodes) nodes
 
-applyProfile :: ViewNode -> ViewNode
-applyProfile wrapped =
+applyProfile :: [ViewNode] -> ViewNode -> ViewNode
+applyProfile nodes wrapped =
   case wrapped of
     ViewNode node ->
       let family = styleFamilyKey node
@@ -100,14 +100,25 @@ applyProfile wrapped =
                 profile
                 (fmap Box.uniformInsets . leafPadding)
                 (nodeBox node)
+          hasChildren =
+            any
+              (\(ViewNode candidate) ->
+                 nodeParent candidate == Just (viewRefId (nodeRef node)))
+              nodes
        in ViewNode
-            (if null (nodeChildren node)
+            (if not (isCanvas node) && not hasChildren
                then node
                       { nodeBox = box'
                       , nodeStyle = style'
                       , nodeConstraints = constraints ++ nodeConstraints node
                       }
                else node)
+
+isCanvas :: Node tag -> Bool
+isCanvas node =
+  case nodeOrigin node of
+    CanvasOrigin _ -> True
+    _              -> False
 
 styleFamilyKey :: Node tag -> String
 styleFamilyKey node =
@@ -116,6 +127,7 @@ styleFamilyKey node =
        Just explicit -> "node:explicit:" ++ explicit
        Nothing ->
          case nodeOrigin node of
+           CanvasOrigin _ -> "node:canvas"
            TraceOrigin _ -> "node:payload:" ++ viewLabelKind (nodeLabel node)
            GeneratedOrigin meta -> "node:generated:" ++ generatedKey meta)
 

@@ -58,12 +58,20 @@ export class VisualizationPlayer {
 
   /** Solved canvas width for the loaded visualization. */
   get canvasWidth(): number {
-    return this.visualization?.canvas.width ?? 0;
+    return this.canvasRoot?.box.bounds.rectWidth ?? 0;
   }
 
   /** Solved canvas height for the loaded visualization. */
   get canvasHeight(): number {
-    return this.visualization?.canvas.height ?? 0;
+    return this.canvasRoot?.box.bounds.rectHeight ?? 0;
+  }
+
+  /** Canonical root element rendered continuously as the canvas background. */
+  get canvasRoot(): VisualElement | null {
+    if (!this.visualization) return null;
+    return (
+      this.visualization.elements.find((element) => element.id === this.visualization?.root) ?? null
+    );
   }
 
   /** Load a visualization and seek to its requested initial checkpoint. */

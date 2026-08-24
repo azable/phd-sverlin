@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
@@ -10,6 +11,7 @@ module LinearTrace.Choreography.Match
   , matchSpecAppend
   , validateMatchSpec
   , ParentRef(..)
+  , canvasDeclarationKey
   , registerQuerySelection
   , registerAnyQuerySelection
   , declareTraceNode
@@ -23,11 +25,15 @@ module LinearTrace.Choreography.Match
   , LayoutRelation(..)
   , CategoryRelation(..)
   , ValueComponent
-  , ValueEndpoint
+  , ValueExpr
   , CategoryEndpoint
-  , rawValueEndpoint
+  , rawValueExpr
+  , selectionValueExpr
+  , addValueExpr
+  , subtractValueExpr
+  , scaleValueExpr
+  , divideValueExpr
   , rawCategoryEndpoint
-  , selectionValueEndpoint
   , selectionCategoryEndpoint
   , matchValueRelation
   , matchCategoryRelation
@@ -43,29 +49,26 @@ module LinearTrace.Choreography.Match
   , buildMatchedViewGraphWith
   ) where
 
-import           Data.List                   (find)
-import           Data.Maybe                  (mapMaybe)
-import           Data.Proxy                  (Proxy (..))
-import           Data.Type.Equality          ((:~:) (..))
-import           Data.Typeable               (eqT)
-import qualified LinearTrace.Core            as C
-import qualified LinearTrace.View.Access     as VA
-import qualified LinearTrace.View.Box        as VB
-import qualified LinearTrace.View.Build      as V
-import qualified LinearTrace.View.Graph      as V
-import qualified LinearTrace.View.Primitives as VP
-import qualified LinearTrace.View.Style      as VS
-import qualified LinearTrace.View.Template   as VT
-import           Prelude                     (Bool (..), Maybe (..), otherwise)
-import qualified Prelude                     as P
-import qualified Solver                      as S
-import qualified Solver.Expr                 as SolverExpr
+import           Data.List                 (find)
+import           Data.Maybe                (mapMaybe)
+import           Data.Proxy                (Proxy (..))
+import           Data.Type.Equality        ((:~:) (..))
+import           Data.Typeable             (eqT)
+import qualified LinearTrace.Core          as C
+import qualified LinearTrace.View.Access   as VA
+import qualified LinearTrace.View.Build    as V
+import qualified LinearTrace.View.Graph    as V
+import qualified LinearTrace.View.Style    as VS
+import qualified LinearTrace.View.Template as VT
+import           Prelude                   (Bool (..), Maybe (..), otherwise)
+import qualified Prelude                   as P
+import qualified Solver                    as S
 
 type ValueComponent = VA.ValueComponent
 
 data NodeSelection
-  = NodeSelection P.String
-  | CanvasSelection
+  = QueryNodeSelection P.String
+  | ExactNodeSelection V.ViewId
   deriving (P.Eq, P.Show)
 
 data ConstraintStrength
@@ -83,9 +86,13 @@ data CategoryRelation
   | CategoryDifferent
   deriving (P.Eq, P.Show)
 
-data ValueEndpoint
-  = RawValueEndpoint ValueComponent
-  | SelectionValueEndpoint NodeSelection VA.ValueAccess
+data ValueExpr
+  = RawValueExpr ValueComponent
+  | SelectionValueExpr NodeSelection VA.ValueAccess
+  | AddValueExpr ValueExpr ValueExpr
+  | SubtractValueExpr ValueExpr ValueExpr
+  | ScaleValueExpr ValueExpr ValueComponent
+  | DivideValueExpr ValueExpr ValueComponent
 
 data CategoryEndpoint value
   = RawCategoryEndpoint (S.ChoiceValue value)
@@ -99,18 +106,16 @@ data MatchSpec =
     [NodeEdit]
     [LayoutRule]
 
-data ParentRef
-  = CanvasParent
-  | GeneratedParent P.String
+newtype ParentRef =
+  ParentRef P.String
   deriving (P.Eq, P.Show)
+
+canvasDeclarationKey :: P.String
+canvasDeclarationKey = "canvas"
 
 data SelectionRule where
   QuerySelectionRule
-    :: C.Traceable tag=> P.String
-    -> Proxy tag
-    -> C.Query
-    -> C.PayloadPattern tag
-    -> SelectionRule
+    :: C.Traceable tag => P.String -> Proxy tag -> C.Query -> SelectionRule
   AnyQuerySelectionRule :: P.String -> C.Query -> SelectionRule
 
 data TraceNodeDeclaration = TraceNodeDeclaration
@@ -133,9 +138,9 @@ data NodeEdit =
 data LayoutRule where
   ValueRelationLayout
     :: ConstraintStrength
-    -> [ValueEndpoint]
+    -> [ValueExpr]
     -> LayoutRelation
-    -> [ValueEndpoint]
+    -> [ValueExpr]
     -> LayoutRule
   CategoryRelationLayout
     :: S.ChoiceDomain value=> ConstraintStrength
@@ -145,15 +150,15 @@ data LayoutRule where
     -> LayoutRule
   ValueDirectedBridgeLayout
     :: ConstraintStrength
-    -> [ValueEndpoint]
-    -> [ValueEndpoint]
-    -> [ValueEndpoint]
+    -> [ValueExpr]
+    -> [ValueExpr]
+    -> [ValueExpr]
     -> LayoutRule
   ValueSymmetricBridgeLayout
     :: ConstraintStrength
-    -> [ValueEndpoint]
-    -> [ValueEndpoint]
-    -> [ValueEndpoint]
+    -> [ValueExpr]
+    -> [ValueExpr]
+    -> [ValueExpr]
     -> LayoutRule
   FiniteDecisionLayout :: P.String -> [(P.String, [LayoutRule])] -> LayoutRule
 
@@ -181,7 +186,8 @@ validateMatchSpec spec =
         key:_ -> P.error ("Duplicate visual selection key " P.++ key)
         [] ->
           let declarations =
-                P.map traceDeclarationKey traceDeclarations
+                canvasDeclarationKey
+                  : P.map traceDeclarationKey traceDeclarations
                   P.++ P.map generatedDeclarationKey generatedDeclarations
            in case duplicateValues declarations of
                 key:_ -> P.error ("Duplicate node declaration key " P.++ key)
@@ -208,15 +214,9 @@ registerQuerySelection ::
      forall tag. C.Traceable tag
   => P.String
   -> C.Query
-  -> C.PayloadPattern tag
   -> MatchSpec
-registerQuerySelection key query payloadPattern =
-  MatchSpec
-    [QuerySelectionRule key (Proxy :: Proxy tag) query payloadPattern]
-    []
-    []
-    []
-    []
+registerQuerySelection key query =
+  MatchSpec [QuerySelectionRule key (Proxy :: Proxy tag) query] [] [] [] []
 
 registerAnyQuerySelection :: P.String -> C.Query -> MatchSpec
 registerAnyQuerySelection key query =
@@ -238,14 +238,26 @@ editNodeDeclaration ::
 editNodeDeclaration declaration property update =
   MatchSpec [] [] [] [NodeEdit declaration property update] []
 
-rawValueEndpoint :: ValueComponent -> ValueEndpoint
-rawValueEndpoint = RawValueEndpoint
+rawValueExpr :: ValueComponent -> ValueExpr
+rawValueExpr = RawValueExpr
+
+selectionValueExpr :: NodeSelection -> VA.ValueAccess -> ValueExpr
+selectionValueExpr = SelectionValueExpr
+
+addValueExpr :: ValueExpr -> ValueExpr -> ValueExpr
+addValueExpr = AddValueExpr
+
+subtractValueExpr :: ValueExpr -> ValueExpr -> ValueExpr
+subtractValueExpr = SubtractValueExpr
+
+scaleValueExpr :: ValueExpr -> ValueComponent -> ValueExpr
+scaleValueExpr = ScaleValueExpr
+
+divideValueExpr :: ValueExpr -> ValueComponent -> ValueExpr
+divideValueExpr = DivideValueExpr
 
 rawCategoryEndpoint :: S.ChoiceValue value -> CategoryEndpoint value
 rawCategoryEndpoint = RawCategoryEndpoint
-
-selectionValueEndpoint :: NodeSelection -> VA.ValueAccess -> ValueEndpoint
-selectionValueEndpoint = SelectionValueEndpoint
 
 selectionCategoryEndpoint ::
      NodeSelection -> VA.CategoryAccess value -> CategoryEndpoint value
@@ -253,9 +265,9 @@ selectionCategoryEndpoint = SelectionCategoryEndpoint
 
 matchValueRelation ::
      ConstraintStrength
-  -> [ValueEndpoint]
+  -> [ValueExpr]
   -> LayoutRelation
-  -> [ValueEndpoint]
+  -> [ValueExpr]
   -> MatchSpec
 matchValueRelation strength lhs relation rhs =
   MatchSpec [] [] [] [] [ValueRelationLayout strength lhs relation rhs]
@@ -272,18 +284,18 @@ matchCategoryRelation strength lhs relation rhs =
 
 matchValueDirectedBridge ::
      ConstraintStrength
-  -> [ValueEndpoint]
-  -> [ValueEndpoint]
-  -> [ValueEndpoint]
+  -> [ValueExpr]
+  -> [ValueExpr]
+  -> [ValueExpr]
   -> MatchSpec
 matchValueDirectedBridge strength lhs gap rhs =
   MatchSpec [] [] [] [] [ValueDirectedBridgeLayout strength lhs gap rhs]
 
 matchValueSymmetricBridge ::
      ConstraintStrength
-  -> [ValueEndpoint]
-  -> [ValueEndpoint]
-  -> [ValueEndpoint]
+  -> [ValueExpr]
+  -> [ValueExpr]
+  -> [ValueExpr]
   -> MatchSpec
 matchValueSymmetricBridge strength lhs delta rhs =
   MatchSpec [] [] [] [] [ValueSymmetricBridgeLayout strength lhs delta rhs]
@@ -318,7 +330,6 @@ traceNodeOfEventBlock block =
         , V.nodeDeclaration = ""
         , V.nodeSelectionBindings = []
         , V.nodeParent = Nothing
-        , V.nodeChildren = []
         , V.nodeHorizontalFit = V.Hug
         , V.nodeVerticalFit = V.Hug
         , V.nodeRelativePins = []
@@ -400,8 +411,8 @@ findSelectionRule key = find ((P.== key) P.. selectionRuleKey)
 selectionRuleKey :: SelectionRule -> P.String
 selectionRuleKey rule =
   case rule of
-    QuerySelectionRule key _ _ _ -> key
-    AnyQuerySelectionRule key _  -> key
+    QuerySelectionRule key _ _  -> key
+    AnyQuerySelectionRule key _ -> key
 
 selectionRuleMatch ::
      forall sourceTag. C.Traceable sourceTag
@@ -412,16 +423,19 @@ selectionRuleMatch block rule =
   case rule of
     AnyQuerySelectionRule _ query -> do
       queryBindings <- C.queryMatches query (C.blockSnapshotFacts block)
-      P.pure (SelectionMatch (C.queryMatchBindings queryBindings) queryBindings)
-    QuerySelectionRule _ (_ :: Proxy matchedTag) query payloadPattern ->
+      payloadBindings <-
+        C.queryPayloadMatches query (C.blockSnapshotPayload block)
+      P.pure
+        (SelectionMatch
+           (C.queryMatchBindings queryBindings P.++ payloadBindings)
+           queryBindings)
+    QuerySelectionRule _ (_ :: Proxy matchedTag) query ->
       case eqT @sourceTag @matchedTag of
         Nothing -> Nothing
         Just Refl -> do
           queryBindings <- C.queryMatches query (C.blockSnapshotFacts block)
           payloadBindings <-
-            C.payloadPatternMatches
-              payloadPattern
-              (C.blockSnapshotPayload block)
+            C.queryPayloadMatches query (C.blockSnapshotPayload block)
           P.pure
             (SelectionMatch
                (C.queryMatchBindings queryBindings P.++ payloadBindings)
@@ -460,8 +474,7 @@ declarationEdits spec declaration =
 substituteTemplateBindings ::
      C.MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate
 substituteTemplateBindings bindings =
-  VT.mapNodeTemplateExprs
-    (SolverExpr.substituteExprVars (bindingExprSubstitutions bindings))
+  VT.substituteNodeTemplateVars (bindingExprSubstitutions bindings)
 
 bindingExprSubstitutions :: C.MatchBindings -> [(P.String, P.Double)]
 bindingExprSubstitutions bindings =
@@ -476,8 +489,9 @@ bindingExprSubstitutions bindings =
 parentViewId :: ParentRef -> Maybe V.ViewId
 parentViewId parent =
   case parent of
-    CanvasParent        -> Nothing
-    GeneratedParent key -> Just (V.ViewId (V.generatedNodeId key))
+    ParentRef key
+      | key P.== canvasDeclarationKey -> Just V.canvasViewId
+      | P.otherwise -> Just (V.ViewId (V.generatedNodeId key))
 
 commaSeparated :: [P.String] -> P.String
 commaSeparated values =
@@ -497,13 +511,18 @@ buildMatchedViewGraphWith ::
   -> [V.ViewStep]
   -> V.ViewGraph
 buildMatchedViewGraphWith transformNodes spec builtNodes steps =
-  let generatedNodes = generatedNodesForSpec spec builtNodes
-      hierarchicalNodes = cascadeNodeStyles (builtNodes P.++ generatedNodes)
+  let visibleIds = introducedViewIds steps
+      retainedTraceNodes =
+        P.filter (\wrapped -> nodeId wrapped `P.elem` visibleIds) builtNodes
+      generatedNodes = generatedNodesForSpec spec retainedTraceNodes
+      rootNode = canvasNodeForSpec spec
+      hierarchicalNodes =
+        cascadeNodeStyles (rootNode : retainedTraceNodes P.++ generatedNodes)
       nodes =
         transformNodes (applyAccessRequirementsForSpec spec hierarchicalNodes)
       (matchConstraints, matchChoiceConstraints) =
         matchSpecConstraints spec nodes
-      diagnostics = hierarchyDiagnostics spec nodes steps
+      diagnostics = hierarchyDiagnostics spec builtNodes nodes steps
    in V.finalizeViewGraph
         nodes
         matchConstraints
@@ -550,15 +569,15 @@ layoutRuleConstraints nodes layoutRule =
       ( applyConstraintStrength
           strength
           (P.concatMap
-             valueDirectedBridgeConstraints
-             (matchingValueTermTriples lhs gap rhs nodes))
+             valueDirectedBridgeRelationConstraints
+             (matchingValueExprTriples lhs gap rhs nodes))
       , [])
     ValueSymmetricBridgeLayout strength lhs delta rhs ->
       ( applyConstraintStrength
           strength
           (P.concatMap
              valueSymmetricBridgeConstraints
-             (matchingValueTermTriples lhs delta rhs nodes))
+             (matchingValueExprTriples lhs delta rhs nodes))
       , [])
     FiniteDecisionLayout name alternatives ->
       ([finiteDecisionConstraint name alternatives], [])
@@ -581,15 +600,12 @@ applyConstraintStrength strength constraints =
     EnsureConstraint    -> constraints
     EncourageConstraint -> P.map S.soften constraints
 
-data LayoutEndpointMatch =
-  LayoutEndpointMatch ValueComponent C.QueryBindings
-
 data CategoryEndpointMatch value =
   CategoryEndpointMatch (S.ChoiceValue value) C.QueryBindings
 
 matchingValueTerms ::
-     [ValueEndpoint]
-  -> [ValueEndpoint]
+     [ValueExpr]
+  -> [ValueExpr]
   -> [V.ViewNode]
   -> [([ValueComponent], [ValueComponent])]
 matchingValueTerms lhs rhs nodes =
@@ -598,53 +614,115 @@ matchingValueTerms lhs rhs nodes =
       matchingValueTermGroups [lhs, rhs] nodes
   ]
 
-matchingValueTermTriples ::
-     [ValueEndpoint]
-  -> [ValueEndpoint]
-  -> [ValueEndpoint]
+matchingValueExprTriples ::
+     [ValueExpr]
+  -> [ValueExpr]
+  -> [ValueExpr]
   -> [V.ViewNode]
   -> [([ValueComponent], [ValueComponent], [ValueComponent])]
-matchingValueTermTriples first second third nodes =
+matchingValueExprTriples first second third nodes =
   [ (firstComponents, secondComponents, thirdComponents)
   | ([firstComponents, secondComponents, thirdComponents], _) <-
       matchingValueTermGroups [first, second, third] nodes
   ]
 
 matchingValueTermGroups ::
-     [[ValueEndpoint]]
-  -> [V.ViewNode]
-  -> [([[ValueComponent]], C.QueryBindings)]
-matchingValueTermGroups endpointGroups nodes =
-  case endpointGroups of
+     [[ValueExpr]] -> [V.ViewNode] -> [([[ValueComponent]], C.QueryBindings)]
+matchingValueTermGroups expressionGroups nodes =
+  [ ( P.map (P.map (lowerValueExpr assignment bindings)) expressionGroups
+    , bindings)
+  | (assignment, bindings) <-
+      matchingSelectionAssignments
+        (uniqueSelections
+           (P.concatMap (P.concatMap valueExprSelections) expressionGroups))
+        nodes
+  ]
+
+type SelectionAssignment = [(NodeSelection, V.AnyLayoutView)]
+
+matchingSelectionAssignments ::
+     [NodeSelection] -> [V.ViewNode] -> [(SelectionAssignment, C.QueryBindings)]
+matchingSelectionAssignments selections nodes =
+  case selections of
     [] -> [([], [])]
-    endpoints:rest ->
-      [ (components : restComponents, mergedBindings)
-      | (components, bindings) <- matchingValueTerm endpoints nodes
-      , (restComponents, restBindings) <- matchingValueTermGroups rest nodes
+    selection:rest ->
+      [ ((selection, view) : assignment, mergedBindings)
+      | (view, bindings) <- matchingSelectionNodes selection nodes
+      , (assignment, restBindings) <- matchingSelectionAssignments rest nodes
       , Just mergedBindings <- [mergeQueryBindings bindings restBindings]
       ]
 
-matchingValueTerm ::
-     [ValueEndpoint] -> [V.ViewNode] -> [([ValueComponent], C.QueryBindings)]
-matchingValueTerm endpoints nodes =
-  case endpoints of
-    [] -> [([], [])]
-    endpoint:rest ->
-      [ (component : restComponents, mergedBindings)
-      | LayoutEndpointMatch component bindings <-
-          matchingEndpointNodes endpoint nodes
-      , (restComponents, restBindings) <- matchingValueTerm rest nodes
-      , Just mergedBindings <- [mergeQueryBindings bindings restBindings]
-      ]
+uniqueSelections :: [NodeSelection] -> [NodeSelection]
+uniqueSelections selections =
+  case selections of
+    [] -> []
+    selection:rest
+      | selection `P.elem` rest -> uniqueSelections rest
+      | P.otherwise -> selection : uniqueSelections rest
 
-matchingEndpointNodes :: ValueEndpoint -> [V.ViewNode] -> [LayoutEndpointMatch]
-matchingEndpointNodes endpoint nodes =
-  case endpoint of
-    RawValueEndpoint component -> [LayoutEndpointMatch component []]
-    SelectionValueEndpoint selection access ->
-      [ LayoutEndpointMatch (VA.valueAccessComponent access node) bindings
-      | (node, bindings) <- matchingSelectionNodes selection nodes
-      ]
+valueExprSelections :: ValueExpr -> [NodeSelection]
+valueExprSelections expression =
+  case expression of
+    RawValueExpr _ -> []
+    SelectionValueExpr selection _ -> [selection]
+    AddValueExpr lhs rhs -> valueExprSelections lhs P.++ valueExprSelections rhs
+    SubtractValueExpr lhs rhs ->
+      valueExprSelections lhs P.++ valueExprSelections rhs
+    ScaleValueExpr value _ -> valueExprSelections value
+    DivideValueExpr value _ -> valueExprSelections value
+
+lowerValueExpr ::
+     SelectionAssignment -> C.QueryBindings -> ValueExpr -> ValueComponent
+lowerValueExpr assignment bindings expression =
+  case expression of
+    RawValueExpr component -> substituteBindings bindings component
+    SelectionValueExpr selection access ->
+      case P.lookup selection assignment of
+        Nothing -> P.error "A selected visual expression was not resolved."
+        Just view ->
+          substituteBindings bindings (VA.valueAccessComponent access view)
+    AddValueExpr lhs rhs ->
+      S.addComponents
+        (lowerValueExpr assignment bindings lhs)
+        (lowerValueExpr assignment bindings rhs)
+    SubtractValueExpr lhs rhs ->
+      S.subtractComponents
+        (lowerValueExpr assignment bindings lhs)
+        (lowerValueExpr assignment bindings rhs)
+    ScaleValueExpr value factor ->
+      lowerScaledValue False assignment bindings value factor
+    DivideValueExpr value divisor ->
+      lowerScaledValue True assignment bindings value divisor
+
+lowerScaledValue ::
+     P.Bool
+  -> SelectionAssignment
+  -> C.QueryBindings
+  -> ValueExpr
+  -> ValueComponent
+  -> ValueComponent
+lowerScaledValue reciprocal assignment bindings expression scalar =
+  let resolvedScalar = substituteBindings bindings scalar
+      scale =
+        case S.componentConstantValue resolvedScalar of
+          Nothing ->
+            P.error
+              "A visual expression may only be scaled by a fixed or query-resolved scalar."
+          Just 0
+            | reciprocal ->
+              P.error "A visual expression cannot be divided by zero."
+          Just value ->
+            if reciprocal
+              then 1 P./ value
+              else value
+      scaled =
+        S.scaleComponent scale (lowerValueExpr assignment bindings expression)
+   in S.addComponentConstraints (S.componentConstraints resolvedScalar) scaled
+
+substituteBindings :: C.QueryBindings -> ValueComponent -> ValueComponent
+substituteBindings bindings =
+  S.substituteComponentVars
+    [("global." P.++ name, P.fromIntegral value) | (name, value) <- bindings]
 
 matchingCategoryTerms ::
      [CategoryEndpoint value]
@@ -700,14 +778,11 @@ matchingCategoryEndpointNodes endpoint nodes =
 matchingSelectionNodes ::
      NodeSelection -> [V.ViewNode] -> [(V.AnyLayoutView, C.QueryBindings)]
 matchingSelectionNodes selection nodes =
-  case selection of
-    CanvasSelection -> [(canvasLayoutView, [])]
-    NodeSelection _ ->
-      case nodes of
-        [] -> []
-        node:rest ->
-          selectionNodeMatches selection node
-            P.++ matchingSelectionNodes selection rest
+  case nodes of
+    [] -> []
+    node:rest ->
+      selectionNodeMatches selection node
+        P.++ matchingSelectionNodes selection rest
 
 selectionNodeMatches ::
      NodeSelection -> V.ViewNode -> [(V.AnyLayoutView, C.QueryBindings)]
@@ -715,8 +790,11 @@ selectionNodeMatches selection wrapped =
   case wrapped of
     V.ViewNode node ->
       case selection of
-        CanvasSelection -> []
-        NodeSelection key ->
+        ExactNodeSelection identifier
+          | V.viewRefId (V.nodeRef node) P.== identifier ->
+            [(V.AnyLayoutView node, [])]
+          | P.otherwise -> []
+        QueryNodeSelection key ->
           case P.lookup key (V.nodeSelectionBindings node) of
             Nothing       -> []
             Just bindings -> [(V.AnyLayoutView node, bindings)]
@@ -744,12 +822,28 @@ termRelation relation =
     LayoutEqual       -> S.ComponentEqual
     LayoutLessOrEqual -> S.ComponentLessOrEqual
 
-valueDirectedBridgeConstraints ::
+valueDirectedBridgeRelationConstraints ::
      ([ValueComponent], [ValueComponent], [ValueComponent]) -> [S.Constraint]
-valueDirectedBridgeConstraints triple =
+valueDirectedBridgeRelationConstraints triple =
   case triple of
     (lhsComponents, gapComponents, rhsComponents) ->
-      S.directedBridgeComponents lhsComponents gapComponents rhsComponents
+      S.relateComponents
+        S.ComponentEqual
+        (zipValueComponents S.addComponents lhsComponents gapComponents)
+        rhsComponents
+
+zipValueComponents ::
+     (ValueComponent -> ValueComponent -> ValueComponent)
+  -> [ValueComponent]
+  -> [ValueComponent]
+  -> [ValueComponent]
+zipValueComponents combine lhs rhs =
+  case (lhs, rhs) of
+    ([], []) -> []
+    (leftComponent:leftRest, rightComponent:rightRest) ->
+      combine leftComponent rightComponent
+        : zipValueComponents combine leftRest rightRest
+    _ -> P.error "Cannot combine visual values with different component counts."
 
 valueSymmetricBridgeConstraints ::
      ([ValueComponent], [ValueComponent], [ValueComponent]) -> [S.Constraint]
@@ -888,13 +982,13 @@ applyAccessRequirementsForRule :: LayoutRule -> V.ViewNode -> V.ViewNode
 applyAccessRequirementsForRule rule node =
   case rule of
     ValueRelationLayout _ lhs _ rhs ->
-      applyAccessRequirementsForEndpoints (lhs P.++ rhs) node
+      applyAccessRequirementsForValueExprs (lhs P.++ rhs) node
     CategoryRelationLayout _ lhs _ rhs ->
       applyAccessRequirementsForCategoryEndpoints (lhs P.++ rhs) node
     ValueDirectedBridgeLayout _ lhs gap rhs ->
-      applyAccessRequirementsForEndpoints (lhs P.++ gap P.++ rhs) node
+      applyAccessRequirementsForValueExprs (lhs P.++ gap P.++ rhs) node
     ValueSymmetricBridgeLayout _ lhs delta rhs ->
-      applyAccessRequirementsForEndpoints (lhs P.++ delta P.++ rhs) node
+      applyAccessRequirementsForValueExprs (lhs P.++ delta P.++ rhs) node
     FiniteDecisionLayout _ alternatives ->
       applyAccessRequirementsForRules (P.concatMap P.snd alternatives) node
 
@@ -919,25 +1013,33 @@ applyAccessRequirementsForCategoryEndpoint endpoint node =
         True ->
           VA.applyStyleRequirements (VA.categoryAccessRequirements access) node
 
-applyAccessRequirementsForEndpoints ::
-     [ValueEndpoint] -> V.ViewNode -> V.ViewNode
-applyAccessRequirementsForEndpoints endpoints node =
-  case endpoints of
+applyAccessRequirementsForValueExprs :: [ValueExpr] -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForValueExprs expressions node =
+  case expressions of
     [] -> node
-    endpoint:rest ->
-      applyAccessRequirementsForEndpoints
+    expression:rest ->
+      applyAccessRequirementsForValueExprs
         rest
-        (applyAccessRequirementsForEndpoint endpoint node)
+        (applyAccessRequirementsForValueExpr expression node)
 
-applyAccessRequirementsForEndpoint :: ValueEndpoint -> V.ViewNode -> V.ViewNode
-applyAccessRequirementsForEndpoint endpoint node =
-  case endpoint of
-    RawValueEndpoint _ -> node
-    SelectionValueEndpoint selection access ->
+applyAccessRequirementsForValueExpr :: ValueExpr -> V.ViewNode -> V.ViewNode
+applyAccessRequirementsForValueExpr expression node =
+  case expression of
+    RawValueExpr _ -> node
+    SelectionValueExpr selection access ->
       case nodeMatchesSelection selection node of
         False -> node
         True ->
           VA.applyStyleRequirements (VA.valueAccessRequirements access) node
+    AddValueExpr lhs rhs -> applyBinary lhs rhs
+    SubtractValueExpr lhs rhs -> applyBinary lhs rhs
+    ScaleValueExpr value _ -> applyAccessRequirementsForValueExpr value node
+    DivideValueExpr value _ -> applyAccessRequirementsForValueExpr value node
+  where
+    applyBinary lhs rhs =
+      applyAccessRequirementsForValueExpr
+        rhs
+        (applyAccessRequirementsForValueExpr lhs node)
 
 nodeMatchesSelection :: NodeSelection -> V.ViewNode -> P.Bool
 nodeMatchesSelection selection node =
@@ -957,7 +1059,8 @@ rootGeneratedDeclarations spec =
     MatchSpec _ _ declarations _ _ ->
       [ declaration
       | declaration <- declarations
-      , generatedDeclarationParent declaration P.== CanvasParent
+      , generatedDeclarationParent declaration
+          P.== ParentRef canvasDeclarationKey
       ]
 
 generatedTreeForDeclaration ::
@@ -975,12 +1078,10 @@ generatedTreeForDeclaration spec traceNodes declaration =
         | V.ViewNode node <- traceNodes
         , V.nodeParent node P.== Just (V.ViewId (V.generatedNodeId key))
         ]
-      childIds = traceChildIds P.++ nestedRoots
-   in case childIds of
+      children = traceChildIds P.++ nestedRoots
+   in case children of
         [] -> []
-        _ ->
-          nestedNodes
-            P.++ [generatedNodeForDeclaration spec declaration childIds]
+        _  -> nestedNodes P.++ [generatedNodeForDeclaration spec declaration]
 
 lastNodeId :: [V.ViewNode] -> Maybe V.ViewId
 lastNodeId nodes =
@@ -995,12 +1096,12 @@ childGeneratedDeclarations spec parentKey =
     MatchSpec _ _ declarations _ _ ->
       [ declaration
       | declaration <- declarations
-      , generatedDeclarationParent declaration P.== GeneratedParent parentKey
+      , generatedDeclarationParent declaration P.== ParentRef parentKey
       ]
 
 generatedNodeForDeclaration ::
-     MatchSpec -> GeneratedNodeDeclaration -> [V.ViewId] -> V.ViewNode
-generatedNodeForDeclaration spec declaration children =
+     MatchSpec -> GeneratedNodeDeclaration -> V.ViewNode
+generatedNodeForDeclaration spec declaration =
   let key = generatedDeclarationKey declaration
       ref = V.viewRefFromId (V.generatedNodeId key)
       template = templateForDeclaration spec key []
@@ -1015,7 +1116,38 @@ generatedNodeForDeclaration spec declaration children =
           , V.nodeDeclaration = key
           , V.nodeSelectionBindings = [(key, [])]
           , V.nodeParent = parentViewId (generatedDeclarationParent declaration)
-          , V.nodeChildren = children
+          , V.nodeHorizontalFit = V.Hug
+          , V.nodeVerticalFit = V.Hug
+          , V.nodeRelativePins = []
+          , V.nodeConstraints = []
+          }
+   in V.ViewNode (VT.applyNodeTemplate template base)
+
+canvasNodeForSpec :: MatchSpec -> V.ViewNode
+canvasNodeForSpec spec =
+  let template = templateForDeclaration spec canvasDeclarationKey []
+      explicit pin =
+        case pin of
+          Nothing -> False
+          Just _  -> True
+      root = V.generatedNodeRoot canvasDeclarationKey
+      base =
+        V.Node
+          { V.nodeRef = V.ViewRef V.canvasViewId
+          , V.nodeLabel = V.ViewLabel "Canvas"
+          , V.nodeContent = V.ContentEmpty
+          , V.nodeBox = V.boxForNodeRoot V.canvasNodeRoot
+          , V.nodeStyle = V.styleForNodeRoot root
+          , V.nodeOrigin =
+              V.CanvasOrigin
+                V.CanvasMeta
+                  { V.canvasWidthExplicit = explicit (VT.templateWidth template)
+                  , V.canvasHeightExplicit =
+                      explicit (VT.templateHeight template)
+                  }
+          , V.nodeDeclaration = canvasDeclarationKey
+          , V.nodeSelectionBindings = []
+          , V.nodeParent = Nothing
           , V.nodeHorizontalFit = V.Hug
           , V.nodeVerticalFit = V.Hug
           , V.nodeRelativePins = []
@@ -1052,10 +1184,14 @@ findNode identifier =
   find (\(V.ViewNode node) -> V.viewRefId (V.nodeRef node) P.== identifier)
 
 hierarchyDiagnostics ::
-     MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> [V.ViewDiagnostic]
-hierarchyDiagnostics spec nodes steps =
-  traceDeclarationDiagnostics spec nodes steps
-    P.++ generatedDeclarationDiagnostics spec nodes steps
+     MatchSpec
+  -> [V.ViewNode]
+  -> [V.ViewNode]
+  -> [V.ViewStep]
+  -> [V.ViewDiagnostic]
+hierarchyDiagnostics spec matchedNodes retainedNodes steps =
+  traceDeclarationDiagnostics spec matchedNodes steps
+    P.++ generatedDeclarationDiagnostics spec retainedNodes steps
 
 traceDeclarationDiagnostics ::
      MatchSpec -> [V.ViewNode] -> [V.ViewStep] -> [V.ViewDiagnostic]
@@ -1158,33 +1294,14 @@ nodeOrDescendantVisible nodes visibleIds wrapped =
   case wrapped of
     V.ViewNode node ->
       V.viewRefId (V.nodeRef node) `P.elem` visibleIds
-        P.|| P.any childVisible (V.nodeChildren node)
+        P.|| P.any
+               childVisible
+               [ nodeId child
+               | child@(V.ViewNode childNode) <- nodes
+               , V.nodeParent childNode P.== Just (V.viewRefId (V.nodeRef node))
+               ]
   where
     childVisible identifier =
       case findNode identifier nodes of
         Nothing    -> False
         Just child -> nodeOrDescendantVisible nodes visibleIds child
-
-canvasLayoutView :: V.AnyLayoutView
-canvasLayoutView =
-  let ref = V.viewRefFromId 0
-      node =
-        V.Node
-          { V.nodeRef = ref
-          , V.nodeLabel = V.ViewLabel "Canvas"
-          , V.nodeContent = V.ContentEmpty
-          , V.nodeBox =
-              VB.nodeBoxWithBounds
-                (VP.Bounds (S.num 0) (S.num 0) (S.num 800) (S.num 600))
-          , V.nodeStyle = V.styleForNodeRoot (V.generatedNodeRoot "canvas")
-          , V.nodeOrigin = V.GeneratedOrigin (V.GeneratedMeta "canvas")
-          , V.nodeDeclaration = "canvas"
-          , V.nodeSelectionBindings = []
-          , V.nodeParent = Nothing
-          , V.nodeChildren = []
-          , V.nodeHorizontalFit = V.Contain
-          , V.nodeVerticalFit = V.Contain
-          , V.nodeRelativePins = []
-          , V.nodeConstraints = []
-          }
-   in V.AnyLayoutView node

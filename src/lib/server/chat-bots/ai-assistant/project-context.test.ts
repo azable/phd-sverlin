@@ -86,7 +86,7 @@ describe('AI project context projection', () => {
     };
     const document = projectDocument(request);
     const visualization = {
-      irVersion: 3,
+      irVersion: 1,
       seed: 1,
       sourcePath: 'Main.sverlin',
       coordinates: {
@@ -95,7 +95,7 @@ describe('AI project context projection', () => {
         systemOrigin: 'top-left',
         systemYAxis: 'down'
       },
-      canvas: { width: 100, height: 80 },
+      root: -1,
       resources: [],
       findings: [
         {
@@ -110,6 +110,18 @@ describe('AI project context projection', () => {
       ],
       variables: [],
       elements: [
+        {
+          id: -1,
+          role: 'Canvas',
+          box: {
+            bounds: { rectX: 0, rectY: 0, rectWidth: 100, rectHeight: 80 },
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+          },
+          children: [0],
+          style: {},
+          styleVariables: []
+        },
         {
           id: 0,
           role: 'Value',

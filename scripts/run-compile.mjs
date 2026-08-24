@@ -9,8 +9,10 @@ import { createCompileOutput } from '../src/lib/server/compiler/workspace-output
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const compileRoot = path.join(repoRoot, 'compile');
 const cabalConfig = path.join(repoRoot, '.devcontainer', 'cabal.config');
+const cabalDirectory = path.join(repoRoot, '.cache', 'cabal');
 const cabalEnvironment = {
   ...process.env,
+  CABAL_DIR: cabalDirectory,
   CABAL_CONFIG: cabalConfig,
   XDG_CACHE_HOME: path.join(repoRoot, '.cache'),
   XDG_STATE_HOME: path.join(repoRoot, '.local', 'state')

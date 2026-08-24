@@ -17,6 +17,7 @@
   "runArgs": ["--security-opt=seccomp=unconfined"],
 
   "containerEnv": {
+    "CABAL_DIR": "${containerWorkspaceFolder}/.cache/cabal",
     "CABAL_CONFIG": "${containerWorkspaceFolder}/.devcontainer/cabal.config",
     "XDG_CACHE_HOME": "${containerWorkspaceFolder}/.cache",
     "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state"

@@ -44,12 +44,13 @@ module LinearTrace.Choreography.Node
   , coordPin
   , spanPin
   , payload
-  , TraceQuery
+  , PayloadQuery
   , Selected(..)
   , Variable(..)
   , Bound(..)
   , NodeBinding(..)
-  , SelectionValue(..)
+  , VisualExpr(..)
+  , selectedVisualExpr
   , SelectionCategory(..)
   , Selection(..)
   , AnyPayload
@@ -58,7 +59,6 @@ module LinearTrace.Choreography.Node
   , NodeRef(..)
   , VisualizationResult(..)
   , VisualizationBuilder(..)
-  , preferLater
   , text
   , emptyVisualizationBuilder
   , emitVisualizationBuilder
@@ -69,24 +69,18 @@ module LinearTrace.Choreography.Node
   , self
   , canvas
   , Select
-  , SelectQuery
   , select
   , visualize
-  , QueryAppend
   , (<&>)
   , nodeSelection
-  , traceQueryPayloadPattern
-  , traceQueryQuery
   ) where
 
 import qualified Control.Functor.Linear         as CF
 import qualified Data.Functor.Linear            as DFL
-import           Data.Proxy                     (Proxy (..))
 import           GHC.Exts                       (Multiplicity (Many))
-import           GHC.OverloadedLabels           (IsLabel (fromLabel))
-import           GHC.TypeLits                   (KnownSymbol)
 import           LinearTrace.Choreography.Match (MatchSpec, NodeSelection (..),
                                                  ParentRef (..),
+                                                 canvasDeclarationKey,
                                                  declareGeneratedNode,
                                                  declareTraceNode,
                                                  editNodeDeclaration,
@@ -95,20 +89,11 @@ import           LinearTrace.Choreography.Match (MatchSpec, NodeSelection (..),
                                                  registerAnyQuerySelection,
                                                  registerQuerySelection,
                                                  validateMatchSpec)
-import           LinearTrace.Core               (LBool, LDouble, LInt, LString,
-                                                 LUnit, MatchBindings, Payload,
-                                                 PayloadPattern, Query,
-                                                 QueryInt (..),
-                                                 anyPayloadPattern, emptyQuery,
-                                                 labelName, matchBindingValue,
-                                                 payloadBindingPattern,
-                                                 payloadBoolPattern,
-                                                 payloadDoublePattern,
-                                                 payloadIntPattern,
-                                                 payloadStringPattern,
-                                                 payloadUnitPattern,
-                                                 queryAppend, queryAtom,
-                                                 queryInt)
+import qualified LinearTrace.Choreography.Match as Match
+import           LinearTrace.Core               (MatchBindings, Query,
+                                                 matchBindingValue, queryAppend,
+                                                 queryPayloadBinding,
+                                                 queryPayloadEquals)
 import qualified LinearTrace.Core               as C
 import           LinearTrace.View.Access        (CategoryAccess, ValueAccess)
 import qualified LinearTrace.View.Graph         as V
@@ -177,16 +162,6 @@ newtype Binding =
   Binding P.String
   deriving (P.Eq, P.Show)
 
-data TraceQuery tag =
-  TraceQuery Query (Maybe (PayloadPattern tag))
-
-instance KnownSymbol name => IsLabel name (TraceQuery tag) where
-  fromLabel = TraceQuery (queryAtom (labelName (Proxy @name))) Nothing
-
-instance KnownSymbol name => IsLabel name (QueryInt -> TraceQuery tag) where
-  fromLabel value =
-    TraceQuery (queryInt (labelName (Proxy @name)) value) Nothing
-
 data AnyPayload
 
 data GeneratedNode
@@ -216,8 +191,14 @@ selectedNodeBinding nodeRef = Selected (SelectedHandle (Selection nodeRef))
 data Selection a where
   Selection :: a %1 -> Selection a
 
-data SelectionValue value tag =
-  SelectionValue (Selected tag) ValueAccess
+newtype VisualExpr value =
+  VisualExpr Match.ValueExpr
+
+selectedVisualExpr :: Selected tag -> ValueAccess -> VisualExpr value
+selectedVisualExpr selected access =
+  case selected of
+    SelectedHandle (Selection handle) ->
+      VisualExpr (Match.selectionValueExpr (nodeSelection handle) access)
 
 data SelectionCategory value tag =
   SelectionCategory (Selected tag) (CategoryAccess value)
@@ -334,10 +315,6 @@ visualizationBuilderBind (VisualizationBuilder runFirst) next =
                      counter2
                      (matchSpecAppend first second))
 
-preferLater :: Maybe a -> Maybe a -> Maybe a
-preferLater earlier Nothing = earlier
-preferLater _ later         = later
-
 editCurrentNode ::
      P.String
   -> (MatchBindings -> VT.NodeTemplate -> VT.NodeTemplate)
@@ -347,7 +324,13 @@ editCurrentNode property update =
     (\context counter ->
        case context of
          RootContext ->
-           P.error (property P.++ " must be declared inside a node body")
+           if rootPropertyAllowed property
+             then VisualizationResult
+                    ()
+                    counter
+                    (editNodeDeclaration canvasDeclarationKey property update)
+             else P.error
+                    (property P.++ " cannot be declared on the canvas root")
          TraceNodeContext declaration _ ->
            VisualizationResult
              ()
@@ -358,6 +341,10 @@ editCurrentNode property update =
              ()
              counter
              (editNodeDeclaration declaration property update))
+
+rootPropertyAllowed :: P.String -> P.Bool
+rootPropertyAllowed property =
+  property `P.elem` ["width", "height", "padding", "contentFit", "style"]
 
 infixr 6 <&>
 content :: ContentValue -> VisualizationBuilder ()
@@ -451,24 +438,38 @@ updateCodeTemplate helper transform = VT.updateTemplateContent helper update
         V.ContentCode code -> V.ContentCode (transform code)
         _                  -> P.error (helper P.++ " must wrap codeContent")
 
-payload ::
-     forall tag selector. PayloadSelector tag selector
-  => selector
-  -> TraceQuery tag
-payload selector = TraceQuery emptyQuery (Just (payloadSelector @tag selector))
+payload :: PayloadQuery selector => selector -> Query
+payload = payloadQuery
+
+class PayloadQuery selector where
+  payloadQuery :: selector -> Query
+
+instance PayloadQuery ContentValue where
+  payloadQuery value =
+    case value of
+      ContentBinding (Binding name) -> queryPayloadBinding name
+      ContentLiteral expected       -> queryPayloadEquals expected
+
+instance PayloadQuery P.Bool where
+  payloadQuery = queryPayloadEquals P.. P.show
+
+instance PayloadQuery P.Int where
+  payloadQuery = queryPayloadEquals P.. P.show
+
+instance PayloadQuery P.Double where
+  payloadQuery = queryPayloadEquals P.. P.show
+
+instance PayloadQuery () where
+  payloadQuery () = queryPayloadEquals "()"
 
 class Node input result | input -> result where
   node :: input -> result
 
-type family SelectQuery payload where
-  SelectQuery AnyPayload = Query
-  SelectQuery payload = TraceQuery payload
-
-class Select payload query where
+class Select payload where
   selectWithPayload ::
-       query -> VisualizationBuilder (NodeBinding (Selected payload))
+       Query -> VisualizationBuilder (NodeBinding (Selected payload))
 
-instance Select AnyPayload Query where
+instance Select AnyPayload where
   selectWithPayload query =
     VisualizationBuilder
       (\_context counter ->
@@ -478,24 +479,21 @@ instance Select AnyPayload Query where
                (counter P.+ 1)
                (registerAnyQuerySelection key query))
 
-instance C.Traceable tag => Select tag (TraceQuery tag) where
-  selectWithPayload selector =
+instance C.Traceable tag => Select tag where
+  selectWithPayload query =
     VisualizationBuilder
       (\_context counter ->
          let key = selectionKey counter
           in VisualizationResult
                (selectedNodeBinding (TraceNodeRef key))
                (counter P.+ 1)
-               (registerQuerySelection @tag
-                  key
-                  (traceQueryQuery selector)
-                  (traceQueryPayloadPattern selector)))
+               (registerQuerySelection @tag key query))
 
 select ::
-     forall payload. Select payload (SelectQuery payload)
-  => SelectQuery payload
+     forall payload. Select payload
+  => Query
   -> VisualizationBuilder (NodeBinding (Selected payload))
-select = selectWithPayload @payload @(SelectQuery payload)
+select = selectWithPayload @payload
 
 instance Node
            (Selected child)
@@ -545,8 +543,8 @@ declareGeneratedParent (VisualizationBuilder runBody) =
 childParent :: BuilderContext -> ParentRef
 childParent context =
   case context of
-    RootContext -> CanvasParent
-    GeneratedNodeContext key _ -> GeneratedParent key
+    RootContext -> ParentRef canvasDeclarationKey
+    GeneratedNodeContext key _ -> ParentRef key
     TraceNodeContext declaration _ ->
       P.error
         ("Trace-selected node "
@@ -583,9 +581,10 @@ selectedKey selected =
 nodeSelection :: NodeRef tag -> NodeSelection
 nodeSelection handle =
   case handle of
-    TraceNodeRef key     -> NodeSelection key
-    GeneratedNodeRef key -> NodeSelection key
-    CanvasNodeRef        -> CanvasSelection
+    TraceNodeRef key -> QueryNodeSelection key
+    GeneratedNodeRef key ->
+      ExactNodeSelection (V.ViewId (V.generatedNodeId key))
+    CanvasNodeRef -> ExactNodeSelection V.canvasViewId
 
 selectionKey :: P.Int -> P.String
 selectionKey counter = "selection-" P.++ P.show counter
@@ -628,50 +627,5 @@ coordPin value = VT.LayoutPin (coordExpr value) (coordConstraints value)
 spanPin :: Span -> VT.LayoutPin
 spanPin value = VT.LayoutPin (spanExpr value) (spanConstraints value)
 
-class PayloadSelector tag selector where
-  payloadSelector :: selector -> PayloadPattern tag
-
-instance C.Traceable tag => PayloadSelector tag ContentValue where
-  payloadSelector (ContentBinding (Binding name)) = payloadBindingPattern name
-  payloadSelector (ContentLiteral _) =
-    P.error "Literal content cannot be used as a payload binding selector"
-
-instance (Payload tag ~ LBool tag) => PayloadSelector tag P.Bool where
-  payloadSelector = payloadBoolPattern
-
-instance (Payload tag ~ LInt tag) => PayloadSelector tag P.Int where
-  payloadSelector = payloadIntPattern
-
-instance (Payload tag ~ LDouble tag) => PayloadSelector tag P.Double where
-  payloadSelector = payloadDoublePattern
-
-instance (Payload tag ~ LString tag) => PayloadSelector tag P.String where
-  payloadSelector = payloadStringPattern
-
-instance (Payload tag ~ LUnit tag) => PayloadSelector tag () where
-  payloadSelector = payloadUnitPattern
-
-traceQueryQuery :: TraceQuery tag -> Query
-traceQueryQuery (TraceQuery query _) = query
-
-traceQueryPayloadPattern :: TraceQuery tag -> PayloadPattern tag
-traceQueryPayloadPattern (TraceQuery _ Nothing) = anyPayloadPattern
-traceQueryPayloadPattern (TraceQuery _ (Just payloadPattern)) = payloadPattern
-
-traceQueryAppend :: TraceQuery tag -> TraceQuery tag -> TraceQuery tag
-traceQueryAppend (TraceQuery leftQuery leftPayload) (TraceQuery rightQuery rightPayload) =
-  TraceQuery
-    (queryAppend leftQuery rightQuery)
-    (preferLater leftPayload rightPayload)
-
-class QueryAppend query where
-  appendQuery :: query -> query -> query
-
-instance QueryAppend Query where
-  appendQuery = queryAppend
-
-instance QueryAppend (TraceQuery tag) where
-  appendQuery = traceQueryAppend
-
-(<&>) :: QueryAppend query => query -> query -> query
-(<&>) = appendQuery
+(<&>) :: Query -> Query -> Query
+(<&>) = queryAppend
