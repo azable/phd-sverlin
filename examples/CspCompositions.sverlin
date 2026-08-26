@@ -1,0 +1,70 @@
+data Item
+
+type instance Payload Item = LString Item
+
+program :: Choreography ()
+program = do
+  Create firstPending <- create @Item (LString "Parse")
+  first <- materialize #first firstPending
+  Create secondPending <- create @Item (LString "Solve")
+  second <- materialize #second secondPending
+  Create thirdPending <- create @Item (LString "Render")
+  third <- materialize #third thirdPending
+  checkpoint "Pipeline"
+  Destroy <- destroy first
+  Destroy <- destroy second
+  Destroy <- destroy third
+  checkpoint "Complete"
+
+visualization :: VisualizationBuilder ()
+visualization = do
+  width (by 800)
+  height (by 600)
+  contentFit Both Contain
+
+  Bound firstLabel <- bindContent
+  Selected first <- select @Item (#first <&> payload firstLabel)
+  Bound secondLabel <- bindContent
+  Selected second <- select @Item (#second <&> payload secondLabel)
+  Bound thirdLabel <- bindContent
+  Selected third <- select @Item (#third <&> payload thirdLabel)
+
+  node first $ do
+    fitText firstLabel
+    width (by 144)
+    height (by 88)
+  node second $ do
+    fitText secondLabel
+    width (by 144)
+    height (by 88)
+  node third $ do
+    fitText thirdLabel
+    width (by 144)
+    height (by 88)
+
+  Variable gap <- variable @Span
+  ensure $ gap .>=. by 24
+  ensure $ gap .<=. by 72
+  oneOf
+    "pipeline.composition"
+    (alternative
+       "row"
+       [ right first =| gap |= left second
+       , right second =| gap |= left third
+       , y first .==. y second
+       , y second .==. y third
+       , x second .==. x canvas
+       , y second .>=. at 180
+       , y second .<=. at 420
+       ])
+    [ alternative
+        "column"
+        [ bottom first =| gap |= top second
+        , bottom second =| gap |= top third
+        , x first .==. x second
+        , x second .==. x third
+        , y second .==. y canvas
+        , x second .>=. at 260
+        , x second .<=. at 540
+        ]
+    ]

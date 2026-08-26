@@ -2,11 +2,16 @@
 
 import * as v from 'valibot';
 
+import { recordedProjectCreationSchema } from '../creation';
 import { eventEnvelope, textSchema } from './values';
 
 /** Runtime schema for the root event of a project. */
 export const projectCreatedEventSchema = v.object({
   ...eventEnvelope,
   type: v.literal('project.created'),
-  payload: v.object({ title: v.string(), entryArtifactId: textSchema })
+  payload: v.object({
+    title: v.string(),
+    entryArtifactId: textSchema,
+    creation: v.optional(recordedProjectCreationSchema)
+  })
 });

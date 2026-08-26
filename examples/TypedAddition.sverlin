@@ -1,0 +1,73 @@
+data Value
+
+type instance Payload Value = LInt Value
+
+data Add = Add
+
+type instance Payload Add = LOperator Add Add
+
+instance CoreOperator Add where
+  operatorPayloadText Add = "+"
+  persistOperatorPayload Add = Ur Add
+
+instance Applicable2 Add Value Value where
+  type Apply2Result Add Value Value = Value
+  applyPayload2 (LOperator Add) = applyLinear2Into (Linear.+)
+
+program :: Choreography ()
+program = do
+  Create leftPending <- create @Value (LInt 20)
+  leftValue <- materialize #leftInput leftPending
+  Create rightPending <- create @Value (LInt 22)
+  rightValue <- materialize #rightInput rightPending
+  Create addPending <- create @Add (LOperator Add)
+  addOperator <- materialize #operator addPending
+  checkpoint "Inputs"
+  Apply2 resultPending <- apply2 addOperator leftValue rightValue
+  result <- materialize #result resultPending
+  checkpoint "Result"
+  Destroy <- destroy result
+  checkpoint "Complete"
+
+visualization :: VisualizationBuilder ()
+visualization = do
+  width (by 800)
+  height (by 450)
+  contentFit Both Contain
+
+  Bound leftLabel <- bindContent
+  Selected leftValue <- select @Value (#leftInput <&> payload leftLabel)
+  Bound rightLabel <- bindContent
+  Selected rightValue <- select @Value (#rightInput <&> payload rightLabel)
+  Bound resultLabel <- bindContent
+  Selected result <- select @Value (#result <&> payload resultLabel)
+  Selected addOperator <- select @Add #operator
+
+  Selected expression <- node $ do
+    node leftValue $ do
+      fitText leftLabel
+      width (by 132)
+      height (by 96)
+    node addOperator $ do
+      fitText (text "+")
+      width (by 72)
+      height (by 72)
+    node rightValue $ do
+      fitText rightLabel
+      width (by 132)
+      height (by 96)
+    node result $ do
+      fitText resultLabel
+      width (by 160)
+      height (by 112)
+      styleFamily "result"
+
+  ensure $ x expression .==. x canvas
+  ensure $ left leftValue .==. at 72
+  ensure $ y leftValue .==. at 160
+  ensure $ left addOperator .==. at 244
+  ensure $ y addOperator .==. y leftValue
+  ensure $ left rightValue .==. at 356
+  ensure $ y rightValue .==. y leftValue
+  ensure $ left result .==. at 568
+  ensure $ y result .==. y leftValue

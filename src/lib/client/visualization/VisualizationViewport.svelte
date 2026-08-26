@@ -341,7 +341,7 @@
   }
 </script>
 
-<div class="viewport" aria-label="Visualization canvas">
+<div class="viewport" aria-label="Visualization viewport">
   <Button
     class="absolute top-3 right-3 z-10"
     variant="outline"

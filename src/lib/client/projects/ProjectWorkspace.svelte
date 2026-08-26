@@ -3,16 +3,17 @@
   import { resolve } from '$app/paths';
   import { onMount, untrack } from 'svelte';
 
-  import FilePlusIcon from '@lucide/svelte/icons/file-plus-2';
   import PencilIcon from '@lucide/svelte/icons/pencil';
 
   import * as Alert from '$lib/client/components/ui/alert';
   import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
   import { Input } from '$lib/client/components/ui/input';
+  import { Label } from '$lib/client/components/ui/label';
   import * as Resizable from '$lib/client/components/ui/resizable';
   import { Skeleton } from '$lib/client/components/ui/skeleton';
   import { Spinner } from '$lib/client/components/ui/spinner';
+  import { Switch } from '$lib/client/components/ui/switch';
   import * as Tabs from '$lib/client/components/ui/tabs';
   import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/client/timeline/Timeline.svelte';
@@ -22,17 +23,24 @@
   import VisualizationViewport from '$lib/client/visualization/VisualizationViewport.svelte';
   import type { EventId } from '$lib/shared/projects/events';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
+  import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { RenderInstanceId } from '$lib/shared/visualization';
 
   import ProjectArtifactPanel, {
     type ProjectArtifactEditMode
   } from './ProjectArtifactPanel.svelte';
+  import NewProjectDialog from './NewProjectDialog.svelte';
   import { ProjectSession } from './project-session.svelte';
 
   /** Public properties for a complete project workspace. */
-  type Props = { projectId: string; at?: EventId };
+  type Props = {
+    projectId: string;
+    templates: ProjectTemplateSummary[];
+    at?: EventId;
+    devMode?: boolean;
+  };
 
-  let { projectId, at }: Props = $props();
+  let { projectId, templates, at, devMode = false }: Props = $props();
 
   // The parent keys this component by projectId, so this is intentionally instance-scoped.
   // svelte-ignore state_referenced_locally
@@ -47,8 +55,13 @@
   let loadedRenderEventId: EventId | null = null;
 
   const sourceEditing = $derived(editMode === 'editing');
-  const playbackDisabled = $derived(sourceEditing || !!session.pending);
-  const renderDisabled = $derived(playbackDisabled || !session.atHead);
+  const busy = $derived(!!session.pending || session.creating);
+  const mutationsDisabled = $derived(busy || session.maintenanceLocked);
+  const maintenanceReason = $derived(
+    session.maintenance.locked ? session.maintenance.reason : undefined
+  );
+  const playbackDisabled = $derived(sourceEditing || busy);
+  const renderDisabled = $derived(playbackDisabled || !session.atHead || session.maintenanceLocked);
   const activeSeed = $derived(
     readSeed(seedText, session.resource ? (session.snapshot.activeRender?.payload.seed ?? 1) : 1)
   );
@@ -62,6 +75,7 @@
     };
   });
   const operationMessage = $derived.by(() => {
+    if (session.creating) return 'Creating and compiling the new project…';
     const event = session.pendingEvent;
     if (event) return presentProjectEvent(event).progress;
     if (session.connection === 'reconnecting') return 'Working; reconnecting live updates…';
@@ -121,7 +135,10 @@
   function selectProject(event: Event) {
     const selectedProjectId = (event.currentTarget as HTMLSelectElement).value;
     if (selectedProjectId !== projectId) {
-      void goto(resolve('/projects/[projectId]', { projectId: selectedProjectId }));
+      const path = resolve('/projects/[projectId]', { projectId: selectedProjectId });
+      // The route is resolved above; the optional search parameter is client-owned UI state.
+      // eslint-disable-next-line svelte/no-navigation-without-resolve
+      void goto(devMode ? `${path}?dev=1` : path);
     }
   }
 
@@ -133,11 +150,29 @@
   function readSeed(value: string, fallback: number) {
     return parseSeed(value) ?? fallback;
   }
+
+  function toggleDevMode(enabled: boolean) {
+    const params = [at ? `at=${at}` : null, enabled ? 'dev=1' : null].filter(Boolean);
+    const path = resolve('/projects/[projectId]', { projectId });
+    const href = params.length ? `${path}?${params.join('&')}` : path;
+    // The route is resolved above; query parameters are browser-owned view state.
+    // eslint-disable-next-line svelte/no-navigation-without-resolve
+    void goto(href, { keepFocus: true, noScroll: true, replaceState: true });
+  }
 </script>
 
 <div class="dark h-screen overflow-hidden bg-background text-foreground">
   {#if session.resource}
-    <main class="h-full min-w-0 overflow-x-auto" inert={!!session.pending}>
+    {#if session.maintenanceLocked}
+      <Alert.Root class="fixed inset-x-6 top-4 z-50 mx-auto max-w-3xl">
+        <Alert.Title>Read-only maintenance mode</Alert.Title>
+        <Alert.Description>
+          {maintenanceReason ??
+            'Project viewing and playback remain available; changes are temporarily disabled.'}
+        </Alert.Description>
+      </Alert.Root>
+    {/if}
+    <main class="h-full min-w-0 overflow-x-auto" inert={busy}>
       <Resizable.PaneGroup direction="horizontal" class="min-h-full min-w-[72rem]">
         <Resizable.Pane defaultSize={35} minSize={25} class="min-w-0">
           <Tabs.Root value="timeline" class="h-full min-w-0 gap-0 rounded-none border-r">
@@ -146,12 +181,13 @@
               class="w-full shrink-0 justify-start rounded-none border-b px-4"
             >
               <Tabs.Trigger value="timeline">Timeline</Tabs.Trigger>
+              {#if devMode}<Badge variant="secondary">Dev details</Badge>{/if}
               <select
                 class="ml-auto h-8 max-w-44 rounded-md border bg-background px-2 text-xs"
                 value={projectId}
                 onchange={selectProject}
                 aria-label="Open project"
-                disabled={!!session.pending || sourceEditing}
+                disabled={busy || sourceEditing}
               >
                 {#each session.projects as project (project.projectId)}
                   <option value={project.projectId}>
@@ -162,7 +198,9 @@
               {#if renaming}
                 <form class="flex items-center gap-1" onsubmit={rename}>
                   <Input class="h-8 w-40" bind:value={titleDraft} aria-label="Project title" />
-                  <Button type="submit" size="sm" disabled={!titleDraft.trim()}>Save</Button>
+                  <Button type="submit" size="sm" disabled={!titleDraft.trim() || mutationsDisabled}
+                    >Save</Button
+                  >
                   <Button
                     type="button"
                     size="sm"
@@ -178,24 +216,44 @@
                   size="sm"
                   variant="ghost"
                   onclick={startRenaming}
-                  disabled={!session.atHead || !!session.pending || sourceEditing}
+                  disabled={!session.atHead || mutationsDisabled || sourceEditing}
                   aria-label="Rename project"
                 >
                   <PencilIcon />
                 </Button>
               {/if}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={!!session.pending}
-                onclick={() => session.createProject()}
-              >
-                <FilePlusIcon data-icon="inline-start" />New project
-              </Button>
+              <NewProjectDialog
+                {session}
+                {templates}
+                {devMode}
+                disabled={mutationsDisabled || sourceEditing}
+              />
+              <div class="flex items-center gap-2 px-1">
+                <Switch
+                  id="dev-mode"
+                  size="sm"
+                  checked={devMode}
+                  onCheckedChange={toggleDevMode}
+                  disabled={busy || sourceEditing}
+                />
+                <Label for="dev-mode" class="text-xs">Dev mode</Label>
+              </div>
             </Tabs.List>
             <Tabs.Content value="timeline" class="flex min-h-0 flex-1 flex-col">
-              <Timeline {session} seed={activeSeed} />
+              {#if devMode}
+                <div class="flex flex-wrap items-center gap-2 border-b bg-muted px-4 py-2 text-xs">
+                  <Badge variant="secondary">Expanded diagnostics</Badge>
+                  <span class="mr-auto text-muted-foreground">
+                    Complete event payloads and compiler records are available below.
+                  </span>
+                  <Button
+                    href={`/api/projects/${encodeURIComponent(projectId)}`}
+                    size="xs"
+                    variant="outline">Raw project JSON</Button
+                  >
+                </div>
+              {/if}
+              <Timeline {session} seed={activeSeed} inspect={devMode} />
               <FeedbackComposer {session} seed={activeSeed} {selection} />
             </Tabs.Content>
           </Tabs.Root>
@@ -229,7 +287,7 @@
 
               <div
                 class="relative min-h-0 flex-1 overflow-hidden bg-white"
-                aria-label="Visualization canvas"
+                aria-label="Visualization panel"
               >
                 {#if player.hasVisualization}
                   <VisualizationViewport
@@ -250,7 +308,7 @@
                   </div>
                 {/if}
 
-                {#if session.pending}
+                {#if busy}
                   <div
                     class="pointer-events-none absolute inset-0 grid place-items-center bg-background/40 backdrop-blur-[1px]"
                   >

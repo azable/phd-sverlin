@@ -1,21 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { cabalConfig, cabalEnvironment, compileRoot } from './compiler-environment.mjs';
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const compileRoot = path.join(repositoryRoot, 'compile');
-const configPath = path.join(repositoryRoot, '.devcontainer', 'cabal.config');
-const cabalDirectory = path.join(repositoryRoot, '.cache', 'cabal');
-const cabalEnvironment = {
-  ...process.env,
-  CABAL_DIR: cabalDirectory,
-  CABAL_CONFIG: configPath,
-  XDG_CACHE_HOME: path.join(repositoryRoot, '.cache'),
-  XDG_STATE_HOME: path.join(repositoryRoot, '.local', 'state')
-};
-const child = spawn('cabal', [`--config-file=${configPath}`, ...process.argv.slice(2)], {
+const child = spawn('cabal', [`--config-file=${cabalConfig}`, ...process.argv.slice(2)], {
   cwd: compileRoot,
   detached: process.platform !== 'win32',
   env: cabalEnvironment,

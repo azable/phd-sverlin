@@ -11,7 +11,7 @@ The Haskell application under `compile/` loads a supplied Sverlin source file, b
 - `src/lib/client/` contains browser behavior and UI. Its project session owns live synchronization and local history selection; the timeline, artifact editor, and visualization player are consumer views over that session. Bundled presentation assets live in `client/assets/`; files requiring stable public URLs live in `static/`. `client/components/ui/` contains the generated shadcn-svelte design-system source, with its styling and prop helpers colocated in `client/components/utils.ts`. This placement is intentional: UI is part of the client boundary, while `components.json` points future shadcn additions and updates at these paths.
 - `src/lib/server/projects/` owns durable project documents, whole-command serialization, AI orchestration, and compilation event recording. AI-specific history projection lives beside the assistant under `src/lib/server/chat-bots/ai-assistant/`.
 - `src/lib/server/compiler/` runs the Haskell compiler against isolated source snapshots and owns process diagnostics. ESLint enforces the shared/client/server import direction.
-- `examples/Minimal.sverlin` defines every new project's blank starting canvas and can also be supplied directly to the CLI. Project edits never rewrite this example.
+- `examples/Minimal.sverlin` defines the default blank template. The other catalogued templates cover lifecycle, lineage, typed operations, code, typography, hierarchy, relational layout, and seeded CSP composition. See `examples/README.md`; project edits never rewrite these bundled sources.
 - `.sverlin` input is a body-only Haskell authoring profile with two required declarations: `program :: Choreography ()` and `visualization :: VisualizationBuilder ()`. The compiler supplies the module, imports, extensions, and visual runner. Query terms are intersected with `<&>`, for example `#array <&> #index @: i`.
 - `compile/app/` contains executable-only Haskell modules.
 - `compile/app/Sverlin/` owns the small source boundary: it elaborates a `.sverlin` body into a generated Haskell module and loads the resulting typed `VisualTraceGraph` through Hint/GHC.
@@ -47,12 +47,16 @@ pnpm run compile -- --source examples/Minimal.sverlin --seed 1988735004
 
 This writes to a path like `outputs/seed-1988735004/manual-abc123/compiled-seed-1988735004.json`.
 Pass `--output` when you want a specific file path or when you omit `--seed`.
-The wrapper refreshes `compile-app` and launches it through `cabal exec`, which
-supplies the package environment required by Hint. `pnpm run cabal -- ...` exposes
-the same compile-local Cabal launcher for ad hoc commands. A direct executable
-invocation therefore uses compile-relative paths, for example
-`pnpm run cabal -- exec -- compile-app --source ../examples/Minimal.sverlin --output ../outputs/manual.json`.
-Direct invocations still require `--output FILE`.
+Run `pnpm run prepare:compiler` after compiler inputs change. Preparation builds
+`compile-app` once and records its direct executable plus the GHC package
+environment required by dynamic Sverlin loading. Manual and web compilation then
+use that prepared executable without putting Cabal inside every request. A stale
+or missing preparation fails explicitly instead of silently running an old
+compiler. The descriptor is bound to the checkout from which the command is run;
+prepare separately in each checkout or worktree. `dev`, `build`, `preview`, and
+the adapter-node `start` command all prepare before serving. `pnpm run cabal --
+...` remains available for ad hoc Cabal commands.
+Direct compiler invocations still require `--output FILE`.
 
 Useful compiler options:
 
@@ -114,7 +118,7 @@ Use the full compile benchmark when changing the Haskell-to-JSON path, project c
 pnpm run bench:compile
 ```
 
-The default benchmark runs the same build-and-execute wrapper used by SvelteKit project compilation:
+The default benchmark runs the same prepared-executable wrapper used by SvelteKit project compilation:
 
 ```sh
 node scripts/run-compile.mjs -- --source examples/Minimal.sverlin --output <generated-seed-output-file> --target ir-json --seed <seed>
@@ -145,7 +149,46 @@ pnpm run dev
 
 Open the printed local URL. The root opens the most recently updated project or creates one from the empty minimal source. **New project** creates another independent Timeline. Trace playback presents one labelled step per DSL checkpoint and animates solved geometry/style updates, entries, exits, and compiler-provided fork origins; this is a preview capability and does not constrain future artifact targets. Introductions appear in the checkpoint that records them, while removals update the starting state for the following checkpoint, so a final cleanup checkpoint still displays the completed result.
 
+**New project** opens the server-owned template catalog. The blank
+`Minimal.sverlin` template and every executable example use the same creation
+path: the selected source is copied into a new independent Timeline and its
+`templateId` is retained in the root event. Template selection does not change
+the available editor or assistant behavior. Creation chooses a fresh random
+positive seed for every template; the catalog does not pin examples to showcase
+seeds. Fixed seed lists belong only in repeatable tests and benchmarks.
+
+**Dev mode** is a reversible frontend detail toggle, not a project type. It
+shows complete event payloads, retained compiler/provider records, and raw
+project JSON for whichever project is open. The preference is represented by
+`?dev=1`, so it survives project and history navigation without becoming part
+of immutable project history.
+
+### Read-only maintenance lock
+
+Use the repository-local lock when changing application behavior while another
+person may have the frontend open:
+
+```sh
+pnpm run app:lock -- "Updating project command boundaries"
+pnpm run app:lock:status
+pnpm run app:unlock
+```
+
+The ignored `.cache/sverlin/app-lock.json` file survives a killed shell or agent,
+so unlocking is always explicit. While locked, the server returns HTTP 423 with
+`code: "app_locked"` for every mutation under `/api/projects`, including future
+mutation methods and sub-routes. Project reads, history inspection, raw JSON,
+Dev details, and visualization playback remain available. Open browsers poll the
+status every two seconds and disable creation, feedback, editing, rename,
+restore, and regeneration controls. Set `SVERLIN_APP_LOCK_PATH` only when an
+isolated test or deployment needs a different lock path.
+
 The workspace has a resizable Timeline beside the visualization and source artifact. Every internal operation is visible as its own event; there is no separate chat history, edit history, or compilation-error store. A per-project server-sent event feed publishes complete events only after their atomic project write, so AI, compilation, repair, and activation stages appear while a command is still running. The browser immutably appends those events and derives its snapshot and active visualization locally; it reloads only to recover from a stream gap or failed command. Select an old event to reconstruct that exact read-only project state without a server request; its visualization can still be stepped, selected, panned, and zoomed even as later events arrive. **Restore** copies its artifacts forward as new events rather than changing history. Prior events can be focused while browsing history and then included in feedback after returning to the present. Canvas feedback stores only the render event, checkpoint, and selected render-instance IDs; the AI projection resolves their semantic roles and solved styles from the inline immutable render.
+
+Playwright exercises real compiled project creation, maintenance behavior, and
+Dev-detail display headlessly and
+stores screenshots, traces, videos, isolated project Timelines, and compiler
+artifacts under ignored `outputs/playwright/`; no X11 display is required.
 
 Editing source, changing a seed, restoring, and giving AI feedback are project commands. The interface stays locked while their correlated Timeline events arrive and unlocks only after the command response installs the authoritative complete project resource. The live delivery adapter is process-local, matching the single Node process and local project directory used by the app; durable catch-up survives browser reconnections and server restarts. Manual source is retained even when it fails compilation, with no stale visualization paired to it. AI source remains an unaccepted candidate until it compiles. A source or pipeline failure permits exactly one explicit repair generation and compile; provider retries are disabled, infrastructure failures are not sent back for repair, and there is no internal retry loop. A failed attempt and its terminal notice remain immutable Timeline events.
 
@@ -159,7 +202,7 @@ The v1 Timeline event types are:
 
 The schema deliberately remains version 1 while the product is refined. Valibot schemas are the source of the TypeScript event, command, and transport types, and event IDs must be contiguous from 1. Historical state is derived by a pure fold over the prefix ending at the selected event. Every event must be added to the aggregate event schema and exhaustively handled by the state projection, Timeline presentation, AI timeline index, and AI conversation projection; TypeScript reports a missing case. Concurrent mutations include the expected numeric head so a stale command cannot overwrite a newer result. The client loads the lossless resource from `GET /api/projects/:projectId`, submits discriminated JSON commands to `POST /api/projects/:projectId`, and follows durable complete events from `GET /api/projects/:projectId/events?after=<event-id>`. The URL's `at` parameter is a client-owned history cursor and does not alter the resource request.
 
-The devcontainer post-create step updates Cabal's package index and warms `compile-app` with the repository Cabal config before the first browser-triggered regeneration; it does not need to produce visualization JSON. That config explicitly places the package index and logs under `.cache/cabal` and the store and world file under `.local/state/cabal`; the devcontainer mounts both as persistent workspace-local volumes and points HLS at the workspace-local XDG cache. Every package script passes the config explicitly, so sandboxed commands do not fall back to `/root/.cache/cabal` even when an inherited environment variable is absent. Rebuild or reopen an existing devcontainer once after this change so its long-lived processes inherit the new XDG paths. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
+The devcontainer post-create step updates Cabal's package index and prepares `compile-app` with the repository Cabal config before the first browser-triggered regeneration; it does not need to produce visualization JSON. That config explicitly places the package index and logs under `.cache/cabal` and the store and world file under `.local/state/cabal`; the devcontainer mounts both as persistent workspace-local volumes and points HLS at the workspace-local XDG cache. Every package script passes the config explicitly, so sandboxed commands do not fall back to `/root/.cache/cabal` even when an inherited environment variable is absent. Rebuild or reopen an existing devcontainer once after this change so its long-lived processes inherit the new XDG paths. Web regeneration has a server-side timeout controlled by `SVERLIN_COMPILE_TIMEOUT_MS`; it defaults to `300000` milliseconds, and the devcontainer sets that value explicitly.
 
 ### Configure the AI assistant
 
@@ -179,6 +222,19 @@ The chatbot receives the current source workspace, a compact body-free index of 
 pnpm run check
 pnpm run lint
 pnpm run test
+```
+
+`pnpm run test:unit -- --run` is the fast TypeScript suite. `pnpm run test`
+runs that suite and then compiles every catalogued `.sverlin` example through
+the production boundary at fixed test seeds. Keep `pnpm run test:e2e` separate
+because it starts a browser and an isolated application server.
+
+For browser-level mode, diagnostics, playback, and rendering checks, install the
+headless Chromium build once and run Playwright:
+
+```sh
+PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright pnpm exec playwright install chromium
+pnpm run test:e2e
 ```
 
 ## Haskell Checks

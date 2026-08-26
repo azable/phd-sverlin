@@ -7,7 +7,7 @@ import {
   type ProjectEventOf
 } from './events';
 import { normalizeProjectV1, parseProjectCommand, type ProjectDocument } from './model';
-import { projectSnapshotAt } from './projection';
+import { projectSnapshotAt, summarizeProject } from './projection';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 const hash = '0'.repeat(64);
@@ -99,6 +99,29 @@ describe('project model and projection', () => {
       events: [...document.events, event(6, 'assistant.responded', { text: 'Done' })]
     };
     expect(projectSnapshotAt(withResponse)).toEqual({ ...projectSnapshotAt(document), at: 6 });
+  });
+
+  it('normalizes missing and legacy mode metadata to template selections', () => {
+    const document = documentWithHistory();
+    expect(projectSnapshotAt(document).creation).toEqual({ templateId: 'blank' });
+    expect(summarizeProject(document).templateId).toBe('blank');
+
+    const devDocument = {
+      ...document,
+      events: document.events.map((projectEvent, index) =>
+        index === 0 && projectEvent.type === 'project.created'
+          ? {
+              ...projectEvent,
+              payload: {
+                ...projectEvent.payload,
+                creation: { mode: 'dev' as const, exampleId: 'linear-search' }
+              }
+            }
+          : projectEvent
+      )
+    } as ProjectDocument;
+    expect(projectSnapshotAt(devDocument).creation).toEqual({ templateId: 'linear-search' });
+    expect(summarizeProject(devDocument).templateId).toBe('linear-search');
   });
 });
 

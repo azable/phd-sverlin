@@ -1,23 +1,17 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { writeSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { createCompileOutput } from '../src/lib/server/compiler/workspace-output.js';
+import {
+  CompilerNotReadyError,
+  preparedCompilerEnvironment,
+  readPreparedCompiler
+} from '../src/lib/server/compiler/prepared-compiler.js';
+import { compileRoot, repositoryRoot as repoRoot } from './compiler-environment.mjs';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const compileRoot = path.join(repoRoot, 'compile');
-const cabalConfig = path.join(repoRoot, '.devcontainer', 'cabal.config');
-const cabalDirectory = path.join(repoRoot, '.cache', 'cabal');
-const cabalEnvironment = {
-  ...process.env,
-  CABAL_DIR: cabalDirectory,
-  CABAL_CONFIG: cabalConfig,
-  XDG_CACHE_HOME: path.join(repoRoot, '.cache'),
-  XDG_STATE_HOME: path.join(repoRoot, '.local', 'state')
-};
-const command = 'cabal';
 let userArgs = dropLeadingSeparator(process.argv.slice(2));
 const seed = readPositiveIntFlag(userArgs, '--seed') ?? undefined;
 const authoredSourcePath = readFlagValue(userArgs, '--source');
@@ -39,22 +33,26 @@ for (const flag of ['--source', '--output', '--emit-haskell']) {
   userArgs = resolvePathFlag(userArgs, flag, repoRoot);
 }
 
-const buildResult = await runCompile(
-  command,
-  [`--config-file=${cabalConfig}`, 'build', '-v0', 'compile-app'],
-  compileRoot
-);
-
-if (buildResult.exitCode !== 0) {
-  console.error('[sverlin:build-failed]');
-  process.exitCode = buildResult.exitCode ?? signalExitCode(buildResult.signal);
-  process.exit();
+try {
+  const prepared = await readPreparedCompiler();
+  const result = await runCompile(
+    prepared.binaryPath,
+    userArgs,
+    compileRoot,
+    preparedCompilerEnvironment(prepared)
+  );
+  process.exitCode = result.exitCode ?? signalExitCode(result.signal);
+} catch (error) {
+  if (error instanceof CompilerNotReadyError) {
+    writeSync(
+      2,
+      `[sverlin:compiler-not-ready] ${error.message} Run \`pnpm run prepare:compiler\`.\n`
+    );
+    process.exitCode = 1;
+  } else {
+    throw error;
+  }
 }
-
-const args = [`--config-file=${cabalConfig}`, 'exec', '--', 'compile-app', ...userArgs];
-
-const result = await runCompile(command, args, compileRoot);
-process.exitCode = result.exitCode ?? signalExitCode(result.signal);
 
 /**
  * @param {string[]} args
@@ -110,12 +108,12 @@ function resolvePathFlag(args, flag, root) {
  * @param {string} cwd
  * @returns {Promise<{ exitCode: number | null, signal: NodeJS.Signals | null }>}
  */
-function runCompile(command, args, cwd) {
+function runCompile(command, args, cwd, env) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       detached: process.platform !== 'win32',
-      env: cabalEnvironment,
+      env,
       stdio: 'inherit'
     });
 

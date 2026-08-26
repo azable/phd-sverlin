@@ -58,7 +58,10 @@ describe('ProjectSession', () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, operationId, 'Initial', 'Renamed');
     const resulting = projectResource([...initial.document.events, renamed], 'Renamed');
-    fetchMock.mockResolvedValueOnce(response(initial)).mockResolvedValueOnce(response(resulting));
+    fetchMock
+      .mockResolvedValueOnce(maintenanceResponse(false))
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(response(resulting));
 
     const session = createSession();
     await session.open();
@@ -69,7 +72,7 @@ describe('ProjectSession', () => {
     expect(session.snapshot.title).toBe('Renamed');
     expect(session.head).toBe(2);
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(FakeEventSource.instances).toEqual([source]);
     expect(navigation.goto).not.toHaveBeenCalled();
   });
@@ -77,7 +80,9 @@ describe('ProjectSession', () => {
   it('follows streamed events at the head while keeping local history pinned', async () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const responseEvent = assistantEvent(2);
-    fetchMock.mockResolvedValueOnce(response(initial));
+    fetchMock
+      .mockResolvedValueOnce(maintenanceResponse(false))
+      .mockResolvedValueOnce(response(initial));
 
     const session = createSession();
     await session.open();
@@ -100,14 +105,16 @@ describe('ProjectSession', () => {
     expect(session.snapshot.at).toBe(1);
     expect(session.snapshot.title).toBe('Initial');
     expect(session.atHead).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(FakeEventSource.instances).toHaveLength(1);
   });
 
   it('projects external state-changing events without hydration fetches', async () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, externalOperationId, 'Initial', 'External');
-    fetchMock.mockResolvedValueOnce(response(initial));
+    fetchMock
+      .mockResolvedValueOnce(maintenanceResponse(false))
+      .mockResolvedValueOnce(response(initial));
 
     const session = createSession();
     await session.open();
@@ -115,7 +122,58 @@ describe('ProjectSession', () => {
 
     expect(session.snapshot.title).toBe('External');
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('creates a project from an explicit template and preserves Dev detail', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ projectId: 'dev-project' }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+    const session = createSession();
+
+    await session.createProject({ templateId: 'linear-search' }, true);
+
+    const request = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(request[0]).toBe('/api/projects');
+    expect(JSON.parse(String(request[1].body))).toEqual({
+      templateId: 'linear-search'
+    });
+    expect(navigation.goto).toHaveBeenCalledWith('/projects/dev-project?dev=1');
+    expect(session.creating).toBe(false);
+  });
+
+  it('releases project creation state after a server failure', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'Compiler unavailable.' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      })
+    );
+    const session = createSession();
+
+    await expect(session.createProject({ templateId: 'blank' })).resolves.toBe(false);
+
+    expect(session.creating).toBe(false);
+    expect(session.error).toBe('Compiler unavailable.');
+    expect(navigation.goto).not.toHaveBeenCalled();
+  });
+
+  it('blocks project creation and commands locally while maintenance is locked', async () => {
+    const initial = projectResource([createdEvent()], 'Initial');
+    fetchMock
+      .mockResolvedValueOnce(maintenanceResponse(true))
+      .mockResolvedValueOnce(response(initial));
+    const session = createSession();
+    await session.open();
+
+    expect(session.maintenanceLocked).toBe(true);
+    await expect(session.createProject({ templateId: 'blank' })).resolves.toBe(false);
+    await expect(session.runCommand({ type: 'rename', title: 'Blocked' })).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(session.snapshot.title).toBe('Initial');
   });
 });
 
@@ -131,6 +189,17 @@ function response(resource: ProjectResource): Response {
   });
 }
 
+function maintenanceResponse(locked: boolean): Response {
+  return new Response(
+    JSON.stringify(
+      locked
+        ? { locked: true, lockedAt: '2026-01-01T00:00:00.000Z', reason: 'Test maintenance' }
+        : { locked: false }
+    ),
+    { headers: { 'content-type': 'application/json' } }
+  );
+}
+
 function projectResource(events: ProjectEvent[], title: string): ProjectResource {
   const document: ProjectDocument = {
     schemaVersion: 1,
@@ -144,7 +213,8 @@ function projectResource(events: ProjectEvent[], title: string): ProjectResource
         projectId: document.projectId,
         title,
         updatedAt: events.at(-1)!.createdAt,
-        eventCount: events.length
+        eventCount: events.length,
+        templateId: 'blank'
       }
     ]
   };

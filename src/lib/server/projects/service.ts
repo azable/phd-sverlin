@@ -6,8 +6,6 @@
 
 import { randomInt, randomUUID } from 'node:crypto';
 
-import bundledInitialSource from '../../../../examples/Minimal.sverlin?raw';
-
 import type {
   EventId,
   NewProjectEvent,
@@ -25,12 +23,14 @@ import type {
   ProjectDocument,
   ProjectResource
 } from '$lib/shared/projects/model';
+import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { compileSource, type CompileVisualizationResult } from '$lib/server/compiler/compile';
 
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, recordText } from './fingerprints';
 import { projectRepository, type ProjectResourceBlob } from './repository';
+import { resolveProjectTemplate } from './starter-catalog';
 
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
@@ -57,8 +57,17 @@ export type RecordedCompilation = RecordedCompilationBase &
       }
   );
 
-/** Create a project from the bundled minimal source and render its initial visualization. */
-export async function createProject(title = 'Untitled visualization'): Promise<ProjectDocument> {
+/** Options for creating one project from an immutable template. */
+type CreateProjectOptions = {
+  creation?: ProjectCreation;
+  title?: string;
+};
+
+/** Create a project from its validated template and render the initial visualization. */
+export async function createProject(options: CreateProjectOptions = {}): Promise<ProjectDocument> {
+  const creation = options.creation ?? defaultProjectCreation;
+  const template = resolveProjectTemplate(creation);
+  const title = options.title?.trim() || template.title;
   const projectId = randomUUID();
   const operationId = randomUUID();
   const root: ProjectEventOf<'project.created'> = {
@@ -67,10 +76,10 @@ export async function createProject(title = 'Untitled visualization'): Promise<P
     actor: { kind: 'user' },
     operationId,
     createdAt: new Date().toISOString(),
-    payload: { title, entryArtifactId }
+    payload: { title, entryArtifactId, creation }
   };
   let document = await projectRepository.create({ schemaVersion: 1, projectId, events: [root] });
-  const content = recordText(bundledInitialSource, 'text/x-sverlin');
+  const content = recordText(template.source, 'text/x-sverlin');
   document = await appendProjectEvents(document, [
     draftEvent({
       type: 'artifact.version-created',
@@ -92,7 +101,8 @@ export async function createProject(title = 'Untitled visualization'): Promise<P
       }
     })
   ]);
-  return renderDocument(document, randomInt(minSeed, maxSeedExclusive), 'initial', operationId);
+  const seed = randomInt(minSeed, maxSeedExclusive);
+  return renderDocument(document, seed, 'initial', operationId);
 }
 
 /** Load the complete project document and project selector metadata. */

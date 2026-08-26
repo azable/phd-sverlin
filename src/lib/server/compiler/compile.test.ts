@@ -76,14 +76,14 @@ describe('runCompile', () => {
 describe('compileSource', () => {
   it('passes an isolated source snapshot and its canonical label to the compiler', () => {
     const command = compileCommand(
+      '/tmp/prepared/compile-app',
       42,
       '/tmp/request-a/compiled.json',
       '/tmp/request-a/source/Main.sverlin',
       'Main.sverlin'
     );
 
-    expect(command.command).toBe('node');
-    expect(command.args.slice(0, 2)).toEqual(['scripts/run-compile.mjs', '--']);
+    expect(command.command).toBe('/tmp/prepared/compile-app');
     expect(command.args).toEqual(
       expect.arrayContaining([
         '--source',

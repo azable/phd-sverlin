@@ -7,6 +7,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
+import { unlockedMaintenanceStatus, type MaintenanceStatus } from '$lib/shared/maintenance';
 import {
   normalizeProjectEventV1,
   type EventId,
@@ -20,6 +21,7 @@ import {
   type ProjectSnapshot,
   type ProjectSummary
 } from '$lib/shared/projects/model';
+import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
@@ -40,17 +42,22 @@ export type PendingProjectCommand = {
 export class ProjectSession {
   /** Command currently running for this project. */
   pending = $state.raw<PendingProjectCommand | null>(null);
+  /** Whether a new template-backed project is currently being created. */
+  creating = $state(false);
   /** Current state of the live event connection. */
   connection = $state<ProjectConnectionState>('connecting');
   /** Last user-facing session error. */
   error = $state<string | null>(null);
   /** Timeline events explicitly selected as feedback context. */
   focusedEvents = $state.raw<EventId[]>([]);
+  /** Whether the server has temporarily disabled project mutations. */
+  maintenance = $state.raw<MaintenanceStatus>(unlockedMaintenanceStatus);
 
   #resource = $state.raw<ProjectResource | null>(null);
   #selectedAt = $state<EventId | undefined>(undefined);
   #source?: EventSource;
   #request?: AbortController;
+  #maintenanceTimer?: ReturnType<typeof setInterval>;
   #loadVersion = 0;
 
   constructor(readonly projectId: ProjectId) {}
@@ -92,6 +99,11 @@ export class ProjectSession {
     return this.#resource !== null && this.#selectedAt === undefined;
   }
 
+  /** Whether create, edit, feedback, and render commands are currently blocked. */
+  get maintenanceLocked(): boolean {
+    return this.maintenance.locked;
+  }
+
   /** Most recent streamed event belonging to the pending command. */
   get pendingEvent(): ProjectEvent | undefined {
     const pending = this.pending;
@@ -119,6 +131,9 @@ export class ProjectSession {
     const request = new AbortController();
     this.#request = request;
     this.connection = 'connecting';
+    await this.refreshMaintenance();
+    if (version !== this.#loadVersion) return;
+    this.startMaintenancePolling();
 
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
@@ -143,6 +158,27 @@ export class ProjectSession {
     this.#loadVersion += 1;
     this.#request?.abort();
     this.disconnect();
+    if (this.#maintenanceTimer) clearInterval(this.#maintenanceTimer);
+    this.#maintenanceTimer = undefined;
+  }
+
+  /** Refresh the server-owned read-only state without disturbing project loading. */
+  async refreshMaintenance(): Promise<void> {
+    try {
+      const response = await fetch('/api/maintenance', { cache: 'no-store' });
+      if (!response.ok) return;
+      const value = (await response.json()) as Partial<MaintenanceStatus>;
+      if (value.locked === false) this.maintenance = { locked: false };
+      else if (value.locked === true && typeof value.lockedAt === 'string') {
+        this.maintenance = {
+          locked: true,
+          lockedAt: value.lockedAt,
+          ...(typeof value.reason === 'string' ? { reason: value.reason } : {})
+        };
+      }
+    } catch {
+      // The server remains authoritative; retain the most recent known state.
+    }
   }
 
   /** Toggle an event's inclusion in future feedback context. */
@@ -158,20 +194,41 @@ export class ProjectSession {
   }
 
   /** Create a new project and navigate to it. */
-  async createProject(): Promise<void> {
-    if (this.pending) return;
-    const response = await fetch('/api/projects', { method: 'POST' });
-    if (!response.ok) {
-      this.error = await responseError(response);
-      return;
+  async createProject(
+    creation: ProjectCreation = defaultProjectCreation,
+    devMode = false
+  ): Promise<boolean> {
+    if (this.pending || this.creating || this.maintenanceLocked) return false;
+    this.creating = true;
+    this.error = null;
+
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(creation)
+      });
+      if (!response.ok) {
+        if (response.status === 423) await this.refreshMaintenance();
+        throw new Error(await responseError(response));
+      }
+      const { projectId } = (await response.json()) as { projectId: string };
+      const path = resolve('/projects/[projectId]', { projectId });
+      // The route is resolved above; the optional query controls browser-only detail.
+      // eslint-disable-next-line svelte/no-navigation-without-resolve
+      await goto(devMode ? `${path}?dev=1` : path);
+      return true;
+    } catch (cause) {
+      this.error = cause instanceof Error ? cause.message : 'Project creation failed.';
+      return false;
+    } finally {
+      this.creating = false;
     }
-    const { projectId } = (await response.json()) as { projectId: string };
-    await goto(resolve('/projects/[projectId]', { projectId }));
   }
 
   /** Submit a command and install the server's authoritative complete resource. */
   async runCommand(input: ProjectCommandInput): Promise<boolean> {
-    if (this.pending || !this.#resource || !this.atHead) return false;
+    if (this.pending || !this.#resource || !this.atHead || this.maintenanceLocked) return false;
     const operationId = crypto.randomUUID();
     this.pending = { type: input.type, operationId, startedAfter: this.head };
     this.error = null;
@@ -182,7 +239,10 @@ export class ProjectSession {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ ...input, operationId, expectedHead: this.head })
       });
-      if (!response.ok) throw new Error(await responseError(response));
+      if (!response.ok) {
+        if (response.status === 423) await this.refreshMaintenance();
+        throw new Error(await responseError(response));
+      }
       this.#resource = parseProjectResource(await response.json());
       return true;
     } catch (cause) {
@@ -210,6 +270,11 @@ export class ProjectSession {
     });
     source.addEventListener('ready', () => (this.connection = 'open'));
     source.addEventListener('error', () => (this.connection = 'reconnecting'));
+  }
+
+  private startMaintenancePolling(): void {
+    if (this.#maintenanceTimer) return;
+    this.#maintenanceTimer = setInterval(() => void this.refreshMaintenance(), 2_000);
   }
 
   private disconnect(): void {

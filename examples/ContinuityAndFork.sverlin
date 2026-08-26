@@ -1,0 +1,68 @@
+data Value
+
+type instance Payload Value = LInt Value
+
+program :: Choreography ()
+program = do
+  Create pending <- create @Value (LInt 7)
+  original <- materialize #original pending
+  checkpoint "Original"
+
+  Copy originalAfterFork forkPending <- copy original
+  forked <- materialize #forked forkPending
+  checkpoint "Forked"
+
+  Copy originalBeforeReplace replacementPending <- copy originalAfterFork
+  Replace continuedPending <- replace originalBeforeReplace replacementPending
+  selected <- materialize #selected continuedPending
+  checkpoint "Selected"
+
+  Copy selectedBeforeReplace ordinaryPending <- copy selected
+  Replace ordinaryContinued <- replace selectedBeforeReplace ordinaryPending
+  continued <- materialize #continued ordinaryContinued
+  checkpoint "Selection cleared"
+
+  Destroy <- destroy forked
+  Destroy <- destroy continued
+  checkpoint "Complete"
+
+valueNode :: ContentValue -> VisualizationBuilder ()
+valueNode label = do
+  fitText label
+  width (by 180)
+  height (by 112)
+
+visualization :: VisualizationBuilder ()
+visualization = do
+  width (by 800)
+  height (by 450)
+  contentFit Both Contain
+
+  Bound originalLabel <- bindContent
+  Selected original <- select @Value (#original <&> payload originalLabel)
+  Bound forkedLabel <- bindContent
+  Selected forked <- select @Value (#forked <&> payload forkedLabel)
+  Bound selectedLabel <- bindContent
+  Selected selected <- select @Value (#selected <&> payload selectedLabel)
+  Bound continuedLabel <- bindContent
+  Selected continued <- select @Value (#continued <&> payload continuedLabel)
+
+  node original $ do
+    valueNode originalLabel
+    x (at 260)
+    y (at 200)
+  node forked $ do
+    valueNode forkedLabel
+    x (at 540)
+    y (at 200)
+  node selected $ do
+    valueNode selectedLabel
+    x (at 260)
+    y (at 200)
+    style @StrokeWidth (by 6)
+    style @Stroke (Hsl (216 :: Angle) (0.72 :: Unit) (0.42 :: Unit))
+    style @BorderStyle (FixedStyle BorderSolid)
+  node continued $ do
+    valueNode continuedLabel
+    x (at 260)
+    y (at 200)

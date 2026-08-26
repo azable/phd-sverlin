@@ -19,6 +19,11 @@ import type {
 } from '$lib/shared/projects/events/values';
 
 import { classifyCompileFailure, parseCompilerDiagnostics } from './diagnostics';
+import {
+  CompilerNotReadyError,
+  preparedCompilerEnvironment,
+  readPreparedCompiler
+} from './prepared-compiler.js';
 import { createCompileOutput } from './workspace-output.js';
 
 /** Process and diagnostic metadata captured for one compiler invocation. */
@@ -85,6 +90,7 @@ type CompileRun = CompileDebug & {
 
 type RunCompileOptions = {
   signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
   onStdout?: (chunk: string, stdout: string) => void;
   onStderr?: (chunk: string, stderr: string) => void;
 };
@@ -156,11 +162,39 @@ export async function compileSource({
     };
   }
 
-  const { command, args } = compileCommand(seed, outputPath, sourcePath, sourceLabel);
+  let prepared;
+  try {
+    prepared = await readPreparedCompiler();
+  } catch (error) {
+    const message =
+      error instanceof CompilerNotReadyError
+        ? `${error.message} Run \`pnpm run prepare:compiler\`.`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    const debug = emptyCompileDebug(cwd, message);
+    return {
+      ok: false,
+      error: message,
+      debug,
+      status: 503,
+      diagnostics: diagnosticsForFailure(debug, message),
+      failureKind: 'infrastructure'
+    };
+  }
+
+  const { command, args } = compileCommand(
+    prepared.binaryPath,
+    seed,
+    outputPath,
+    sourcePath,
+    sourceLabel
+  );
 
   const timeoutMs = readCompileTimeoutMs();
   let debug = await runCompile(command, args, cwd, timeoutMs, {
-    signal
+    signal,
+    env: preparedCompilerEnvironment(prepared)
   });
   let compiledJson = '';
 
@@ -353,6 +387,7 @@ export function runCompile(
     const child = spawn(command, args, {
       cwd,
       detached: process.platform !== 'win32',
+      env: options.env,
       stdio: ['ignore', 'pipe', 'pipe']
     });
     let stdout = '';
@@ -476,16 +511,15 @@ export function runCompile(
   });
 }
 
-/** Build the Node wrapper command used to invoke the Haskell compiler. */
+/** Build the direct command used to invoke one prepared Haskell compiler. */
 export function compileCommand(
+  binaryPath: string,
   seed: number,
   outputPath: string,
   sourcePath: string,
   sourceLabel: string
 ): CompileCommand {
   const args = [
-    'scripts/run-compile.mjs',
-    '--',
     '--source',
     sourcePath,
     '--source-label',
@@ -499,7 +533,7 @@ export function compileCommand(
     String(seed)
   ];
 
-  return { command: 'node', args };
+  return { command: binaryPath, args };
 }
 
 function emptyCompileDebug(cwd: string, error: string): CompileDebug {

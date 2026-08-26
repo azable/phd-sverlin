@@ -24,6 +24,7 @@ import {
   visualSelectionSchema,
   type ProjectArtifact
 } from './events/values';
+import { projectTemplateIdSchema, type ProjectCreation } from './creation';
 
 /** Runtime schema for a complete persisted project document. */
 export const projectDocumentSchema = v.object({
@@ -37,7 +38,8 @@ export const projectSummarySchema = v.object({
   projectId: textSchema,
   title: v.string(),
   updatedAt: v.pipe(v.string(), v.isoTimestamp()),
-  eventCount: naturalSchema
+  eventCount: naturalSchema,
+  templateId: projectTemplateIdSchema
 });
 
 /** Runtime schema for the complete project API resource. */
@@ -94,6 +96,7 @@ export type ProjectSnapshot = {
   at: EventId;
   title: string;
   entryArtifactId: ArtifactId;
+  creation: ProjectCreation;
   artifacts: Record<ArtifactId, ProjectArtifact>;
   activeRender?: ProjectEventOf<'visualization.rendered'>;
 };

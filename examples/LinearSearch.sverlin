@@ -1,0 +1,250 @@
+data Value
+
+type instance Payload Value = LInt Value
+
+data Match
+
+type instance Payload Match = LBool Match
+
+data EqualValue = EqualValue
+
+type instance Payload EqualValue = LOperator EqualValue EqualValue
+
+instance CoreOperator EqualValue where
+  operatorPayloadText EqualValue = "=="
+  persistOperatorPayload EqualValue = Ur EqualValue
+
+instance Applicable2 EqualValue Value Value where
+  type Apply2Result EqualValue Value Value = Match
+  applyPayload2 (LOperator EqualValue) = applyLinear2Into (Linear.==)
+
+data SourceCode
+
+type instance Payload SourceCode = LString SourceCode
+
+data SearchInput where
+  SearchInput :: Payload Value %1 -> InputValues %1 -> SearchInput
+
+data InputValues where
+  NoInputValues :: InputValues
+  MoreInputValue :: Query -> Payload Value %1 -> InputValues %1 -> InputValues
+
+data Elements where
+  NoElements :: Elements
+  MoreElement :: Query -> Block Value %1 -> Elements %1 -> Elements
+
+data SearchResult where
+  SearchResult :: Block Value %1 -> Elements %1 -> SearchResult
+
+data PreparedComparison where
+  PreparedComparison
+    :: Block Value
+       %1 -> Block Value
+       %1 -> Block Value
+       %1 -> Block Value
+       %1 -> PreparedComparison
+
+data ComparedValues where
+  ValuesMatched :: ComparedValues
+  ValuesDifferent :: ComparedValues
+
+program :: Choreography ()
+program = do
+  Create codePending <-
+    create @SourceCode
+      (LString
+         "linearSearch target values =\n  compare target (head values)\n  if equal then found\n  else linearSearch target (tail values)")
+  code <- materialize #code codePending
+  checkpoint "Ready"
+  linearSearch
+    (SearchInput
+       (LInt 7)
+       (MoreInputValue
+          (#index @: 0)
+          (LInt 4)
+          (MoreInputValue
+             (#index @: 1)
+             (LInt 9)
+             (MoreInputValue
+                (#index @: 2)
+                (LInt 2)
+                (MoreInputValue (#index @: 3) (LInt 7) NoInputValues)))))
+  Destroy <- destroy code
+  checkpoint "Complete"
+
+linearSearch :: SearchInput %1 -> Choreography ()
+linearSearch (SearchInput targetPayload valuePayloads) = do
+  Create targetPending <- create targetPayload
+  target <- materialize (#target <&> #source) targetPending
+  checkpoint "Create target"
+  elements <- createElements valuePayloads
+  SearchResult targetAfter searchedElements <- searchIteration target elements
+  Destroy <- destroy targetAfter
+  destroyElements searchedElements
+  checkpoint "Search complete"
+
+createElements :: InputValues %1 -> Choreography Elements
+createElements inputs =
+  case inputs of
+    NoInputValues -> return NoElements
+    MoreInputValue indexFacts valuePayload rest -> do
+      Create elementPending <- create valuePayload
+      element <-
+        materialize (#array <&> #available <&> indexFacts) elementPending
+      checkpoint "Create element"
+      elements <- createElements rest
+      return (MoreElement indexFacts element elements)
+
+searchIteration :: Block Value %1 -> Elements %1 -> Choreography SearchResult
+searchIteration target elements =
+  case elements of
+    NoElements -> do
+      checkpoint "Search exhausted"
+      return (SearchResult target NoElements)
+    MoreElement indexFacts element rest -> do
+      PreparedComparison targetAfter elementAfter targetProbe elementProbe <-
+        prepareComparison target indexFacts element
+      checkpoint "Prepare comparison"
+      comparison <- compareValues targetProbe elementProbe
+      case comparison of
+        ValuesMatched -> do
+          checkpoint "Found target"
+          return (SearchResult targetAfter (MoreElement indexFacts elementAfter rest))
+        ValuesDifferent -> do
+          processedElement <- markProcessed indexFacts elementAfter
+          checkpoint "Not this element"
+          SearchResult finalTarget finalRest <- searchIteration targetAfter rest
+          return
+            (SearchResult
+               finalTarget
+               (MoreElement indexFacts processedElement finalRest))
+
+prepareComparison
+  :: Block Value %1
+  -> Query
+  -> Block Value %1
+  -> Choreography PreparedComparison
+prepareComparison target indexFacts element = do
+  Copy targetAfter targetProbePending <- copy target
+  targetProbe <- materialize #targetProbe targetProbePending
+  Copy elementAfter elementProbePending <- copy element
+  elementProbe <-
+    materialize (#elementProbe <&> indexFacts) elementProbePending
+  return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
+
+compareValues :: Block Value %1 -> Block Value %1 -> Choreography ComparedValues
+compareValues targetProbe elementProbe = do
+  Create equalPending <- create @EqualValue (LOperator EqualValue)
+  equalOperator <- materialize #operator equalPending
+  Apply2 matchPending <- apply2 equalOperator targetProbe elementProbe
+  matchBlock <- materialize #result matchPending
+  Use matchPayload <- use matchBlock
+  case matchPayload of
+    OneUse (LBool answer) ->
+      case answer of
+        True -> return ValuesMatched
+        False -> return ValuesDifferent
+
+markProcessed :: Query -> Block Value %1 -> Choreography (Block Value)
+markProcessed indexFacts element = do
+  Copy original processedPending <- copy element
+  Replace continuedPending <- replace original processedPending
+  materialize (#array <&> #processed <&> indexFacts) continuedPending
+
+destroyElements :: Elements %1 -> Choreography ()
+destroyElements elements =
+  case elements of
+    NoElements -> return ()
+    MoreElement _ element rest -> do
+      Destroy <- destroy element
+      destroyElements rest
+
+visualization :: VisualizationBuilder ()
+visualization = do
+  width (by 1000)
+  height (by 640)
+  contentFit Both Contain
+
+  Bound codeLabel <- bindContent
+  Selected code <- select @SourceCode (#code <&> payload codeLabel)
+  Bound targetLabel <- bindContent
+  Selected target <- select @Value (#target <&> #source <&> payload targetLabel)
+  Bound targetProbeLabel <- bindContent
+  Selected targetProbe <-
+    select @Value (#targetProbe <&> payload targetProbeLabel)
+  Bound elementProbeLabel <- bindContent
+  Bound probeIndex <- bindInt
+  Selected elementProbe <-
+    select @Value
+      (#elementProbe <&> #index @: probeIndex <&> payload elementProbeLabel)
+  Bound availableLabel <- bindContent
+  Bound availableIndex <- bindInt
+  Selected available <-
+    select @Value
+      (#array <&> #available <&> #index @: availableIndex <&> payload availableLabel)
+  Bound processedLabel <- bindContent
+  Bound processedIndex <- bindInt
+  Selected processed <-
+    select @Value
+      (#array <&> #processed <&> #index @: processedIndex <&> payload processedLabel)
+  Selected equalOperator <- select @EqualValue #operator
+  Bound resultLabel <- bindContent
+  Selected result <- select @Match (#result <&> payload resultLabel)
+
+  node code $ do
+    highlightCode "haskell" (codeWrap (codeContent codeLabel))
+    left (at 36)
+    top (at 40)
+    width (by 360)
+    height (by 540)
+    style @TextAlign (FixedStyle TextAlignLeft)
+    styleFamily "source-code"
+  node target $ do
+    fitText targetLabel
+    left (at 476)
+    top (at 56)
+    width (by 132)
+    height (by 96)
+    styleFamily "target"
+  node targetProbe $ do
+    fitText targetProbeLabel
+    left (at 476)
+    top (at 224)
+    width (by 116)
+    height (by 88)
+    styleFamily "probe"
+  node elementProbe $ do
+    fitText elementProbeLabel
+    left (at 640)
+    top (at 224)
+    width (by 116)
+    height (by 88)
+    styleFamily "probe"
+  node equalOperator $ do
+    fitText (text "==")
+    left (at 600)
+    top (at 236)
+    width (by 32)
+    height (by 64)
+    withoutStyle @Fill
+    withoutStyle @StrokeWidth
+  node result $ do
+    fitText resultLabel
+    left (at 804)
+    top (at 224)
+    width (by 132)
+    height (by 88)
+    styleFamily "result"
+  node available $ do
+    fitText availableLabel
+    left (at 460 + asScalar availableIndex * shift 118)
+    top (at 444)
+    width (by 96)
+    height (by 88)
+  node processed $ do
+    fitText processedLabel
+    left (at 460 + asScalar processedIndex * shift 118)
+    top (at 444)
+    width (by 96)
+    height (by 88)
+    style @Opacity (0.46 :: Unit)

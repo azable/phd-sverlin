@@ -9,13 +9,15 @@
   import TimelineEventCard from './TimelineEventCard.svelte';
 
   /** Public properties for the project Timeline. */
-  type Props = { session: ProjectSession; seed: number };
+  type Props = { session: ProjectSession; seed: number; inspect?: boolean };
 
-  let { session, seed }: Props = $props();
+  let { session, seed, inspect = false }: Props = $props();
   let viewport = $state<HTMLElement | null>(null);
   let timelineEnd = $state<HTMLElement | null>(null);
   let following = $state(true);
-  const projectPath = $derived(resolve('/projects/[projectId]', { projectId: session.projectId }));
+  const projectPath = $derived(
+    `${resolve('/projects/[projectId]', { projectId: session.projectId })}${inspect ? '?dev=1' : ''}`
+  );
 
   $effect(() => {
     const node = viewport;
@@ -48,7 +50,7 @@
     <ol class="timeline flex flex-col gap-3 p-4 pr-6">
       {#each session.events as event (event.id)}
         <li class="timeline-event relative pl-8">
-          <TimelineEventCard {event} {seed} {session} />
+          <TimelineEventCard {event} {seed} {session} {inspect} />
         </li>
       {/each}
       <li class="h-px" aria-hidden="true"><span bind:this={timelineEnd}></span></li>

@@ -129,11 +129,40 @@ afterEach(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
+describe('createProject', () => {
+  it('copies an exact example, records its creation profile, and chooses a valid seed', async () => {
+    const { getProjectTemplate } = await import('./starter-catalog');
+    const { createProject } = await import('./service');
+    const template = getProjectTemplate('linear-search');
+
+    const created = await createProject({
+      creation: { templateId: template.id }
+    });
+    const snapshot = projectSnapshotAt(created);
+
+    expect(created.events[0]).toMatchObject({
+      type: 'project.created',
+      payload: {
+        title: template.title,
+        creation: { templateId: template.id }
+      }
+    });
+    expect(snapshot.creation).toEqual({ templateId: template.id });
+    expect(snapshot.artifacts[snapshot.entryArtifactId].content.text).toBe(template.source);
+    expect(mocks.compileSource).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceContent: template.source, seed: expect.any(Number) })
+    );
+    const seed = mocks.compileSource.mock.calls[0][0].seed as number;
+    expect(Number.isSafeInteger(seed)).toBe(true);
+    expect(seed).toBeGreaterThan(0);
+  });
+});
+
 describe('submitProjectFeedback', () => {
   it('records both failed candidates and stops after one explicit repair', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject('Finite repair');
+    const created = await createProject({ title: 'Finite repair' });
     const operationId = '12345678-1234-4123-8123-123456789abc';
 
     const result = await submitProjectFeedback({
@@ -192,7 +221,7 @@ describe('submitProjectFeedback', () => {
     );
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject('Provider audit');
+    const created = await createProject({ title: 'Provider audit' });
 
     const result = await submitProjectFeedback({
       projectId: created.projectId,
@@ -228,7 +257,7 @@ describe('submitProjectFeedback', () => {
     });
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject('Focused history');
+    const created = await createProject({ title: 'Focused history' });
     const render = projectSnapshotAt(created).activeRender!;
 
     await submitProjectFeedback({
@@ -266,7 +295,7 @@ describe('submitProjectFeedback', () => {
   it('rejects a compact visual selection that does not exist in the render', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject('Selection validation');
+    const created = await createProject({ title: 'Selection validation' });
     const render = projectSnapshotAt(created).activeRender!;
 
     await expect(

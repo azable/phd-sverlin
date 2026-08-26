@@ -18,9 +18,10 @@
   import { presentProjectEvent } from './event-presentation';
 
   /** Public properties for one project Timeline event card. */
-  type Props = { event: ProjectEvent; seed: number; session: ProjectSession };
+  type Props = { event: ProjectEvent; seed: number; session: ProjectSession; inspect?: boolean };
 
-  let { event, seed, session }: Props = $props();
+  let { event, seed, session, inspect = false }: Props = $props();
+  let detailsOpen = $state(false);
 
   const presentation = $derived(presentProjectEvent(event));
 
@@ -39,8 +40,10 @@
   function historyHref() {
     return `${resolve('/projects/[projectId]', {
       projectId: session.projectId
-    })}?at=${event.id}`;
+    })}?at=${event.id}${inspect ? '&dev=1' : ''}`;
   }
+
+  const eventJson = $derived(detailsOpen ? JSON.stringify(event, null, 2) : '');
 </script>
 
 <span
@@ -77,6 +80,21 @@
         {presentation.detail}
       </Card.Description>
     </Card.Header>
+    {#if inspect}
+      <Card.Content>
+        <details bind:open={detailsOpen} class="rounded-md border bg-muted/30">
+          <summary class="cursor-pointer px-3 py-2 text-xs font-medium">
+            Event payload and retained diagnostics
+          </summary>
+          {#if detailsOpen}
+            <pre
+              class="max-h-96 overflow-auto border-t p-3 text-[0.7rem] leading-relaxed break-words whitespace-pre-wrap"><code
+                >{eventJson}</code
+              ></pre>
+          {/if}
+        </details>
+      </Card.Content>
+    {/if}
     <Card.Footer class="flex-wrap gap-2">
       <span class="mr-auto text-[0.7rem] text-muted-foreground">
         {formatTime(event.createdAt)}
@@ -91,7 +109,12 @@
         </Button>
       {/if}
       {#if presentation.restorable && event.id !== session.head}
-        <Button size="xs" variant="ghost" onclick={restore} disabled={!!session.pending}>
+        <Button
+          size="xs"
+          variant="ghost"
+          onclick={restore}
+          disabled={!!session.pending || session.maintenanceLocked}
+        >
           <RotateCcwIcon data-icon="inline-start" />Restore
         </Button>
       {/if}

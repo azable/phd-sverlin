@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "blank",
+      "file": "Minimal.sverlin",
+      "title": "Blank project",
+      "summary": "Start from the smallest valid Sverlin program and visualization.",
+      "features": ["minimal source", "AI-assisted editing"]
+    },
+    {
+      "id": "lifecycle",
+      "file": "Lifecycle.sverlin",
+      "title": "Linear lifecycle",
+      "summary": "Create, materialize, checkpoint, and destroy one typed Block.",
+      "features": ["Block", "linear ownership", "checkpoints", "semantic selection"]
+    },
+    {
+      "id": "typed-addition",
+      "file": "TypedAddition.sverlin",
+      "title": "Typed addition",
+      "summary": "Derive a result by consuming typed inputs through an explicit operator.",
+      "features": ["apply2", "typed operators", "derived values", "hierarchy"]
+    },
+    {
+      "id": "continuity-and-fork",
+      "file": "ContinuityAndFork.sverlin",
+      "title": "Continuity and fork",
+      "summary": "Contrast a copied branch with a replacement that preserves visual continuity.",
+      "features": ["copy", "replace", "lineage", "temporary state"]
+    },
+    {
+      "id": "linear-search",
+      "file": "LinearSearch.sverlin",
+      "title": "Linear search",
+      "summary": "Search an array through recursive ownership, typed comparison, and visible checkpoints.",
+      "features": ["recursion", "branching", "apply2", "code", "typography"]
+    },
+    {
+      "id": "csp-compositions",
+      "file": "CspCompositions.sverlin",
+      "title": "CSP compositions",
+      "summary": "Sample valid row and column compositions from the same semantic trace.",
+      "features": ["oneOf", "affine constraints", "hierarchy", "seeded variation"]
+    }
+  ]
+}

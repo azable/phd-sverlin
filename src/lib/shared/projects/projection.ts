@@ -6,6 +6,7 @@
 
 import type { EventId, ProjectEvent, ProjectEventOf, ProjectEventType } from './events';
 import type { ProjectDocument, ProjectSnapshot, ProjectSummary } from './model';
+import { defaultProjectCreation, normalizeRecordedProjectCreation } from './creation';
 
 type SnapshotDraft = Omit<ProjectSnapshot, 'at'>;
 type StateTransition<Type extends ProjectEventType> =
@@ -19,6 +20,7 @@ const stateTransitions = {
   'project.created': (state, event) => {
     state.title = event.payload.title;
     state.entryArtifactId = event.payload.entryArtifactId;
+    state.creation = normalizeRecordedProjectCreation(event.payload.creation);
   },
   'project.renamed': (state, event) => {
     state.title = event.payload.title;
@@ -59,6 +61,7 @@ export function projectSnapshotAt(
   const state: SnapshotDraft = {
     title: '',
     entryArtifactId: '',
+    creation: defaultProjectCreation,
     artifacts: {}
   };
   for (const event of document.events.slice(0, at)) applyProjectEvent(state, event);
@@ -73,7 +76,8 @@ export function summarizeProject(document: ProjectDocument): ProjectSummary {
     projectId: document.projectId,
     title: snapshot.title,
     updatedAt: projectHead(document).createdAt,
-    eventCount: document.events.length
+    eventCount: document.events.length,
+    templateId: snapshot.creation.templateId
   };
 }
 

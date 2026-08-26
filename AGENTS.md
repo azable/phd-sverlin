@@ -14,14 +14,17 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## Commands
 
+- Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.
 - To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
 - To run the SvelteKit application, use `pnpm run dev` from the root directory. This will start the development server, with hot-reloading.
 
 ## Engineering Rules
 
+- Before an agent modifies Svelte application behavior, announce it and run `pnpm run app:lock -- "reason"`. The persistent ignored lock makes an already-open app read-only without disabling inspection or playback and survives a killed agent. Check it with `pnpm run app:lock:status`; unlock explicitly with `pnpm run app:unlock` only after static checks and focused tests pass. Taking the shared dev server offline remains appropriate for server-boundary changes, but never stop unrelated processes or modify project data to establish the lock.
 - This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout, and the shadcn-svelte skill is installed under `.agents/skills/shadcn-svelte`.
 - When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
 - When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
+- `pnpm run test:unit -- --run` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. Run `pnpm run test:e2e` after Svelte behavior changes.
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
 - When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Use `pnpm run bench:compile` as an additional end-to-end check when the compile server path or generated JSON pipeline can be affected. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
 - `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.

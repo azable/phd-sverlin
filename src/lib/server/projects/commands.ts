@@ -81,7 +81,12 @@ async function submitProjectFeedbackUnlocked(options: {
   document = first.document;
   if (!first.ok) return finishMutation(before, document);
   if (first.result.sourceArtifactContent === undefined) {
-    document = await appendAssistantResponse(document, first.result.reply, options.operationId);
+    document = await appendAssistantResponse(
+      document,
+      first.result.reply,
+      assistantBotId(first.generationEvent),
+      options.operationId
+    );
     return finishMutation(before, document);
   }
 
@@ -317,18 +322,35 @@ async function acceptCandidate(options: {
     })
   ]);
   document = await activateCompiledRender({ ...options.recorded, document });
-  return appendAssistantResponse(document, options.reply, options.operationId);
+  return appendAssistantResponse(
+    document,
+    options.reply,
+    assistantBotId(options.generationEvent),
+    options.operationId
+  );
 }
 
-function appendAssistantResponse(document: ProjectDocument, text: string, operationId: string) {
+function appendAssistantResponse(
+  document: ProjectDocument,
+  text: string,
+  botId: string,
+  operationId: string
+) {
   return appendProjectEvents(document, [
     draftEvent({
       type: 'assistant.responded',
-      actor: { kind: 'assistant', botId: 'ai-assistant' },
+      actor: { kind: 'assistant', botId },
       operationId,
       payload: { text }
     })
   ]);
+}
+
+function assistantBotId(event: NewProjectEvent<'ai.generation-succeeded'>): string {
+  if (event.actor.kind !== 'assistant') {
+    throw new Error('A successful AI generation must have an assistant actor.');
+  }
+  return event.actor.botId;
 }
 
 function appendSystemFailure(document: ProjectDocument, message: string, operationId: string) {

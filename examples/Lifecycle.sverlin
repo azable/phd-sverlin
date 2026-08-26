@@ -1,0 +1,23 @@
+data Value
+
+type instance Payload Value = LInt Value
+
+program :: Choreography ()
+program = do
+  Create pending <- create @Value (LInt 7)
+  value <- materialize #value pending
+  checkpoint "Value is live"
+  Destroy <- destroy value
+  checkpoint "Value is destroyed"
+
+visualization :: VisualizationBuilder ()
+visualization = do
+  aspectRatio 16 9
+  Bound label <- bindContent
+  Selected value <- select @Value (#value <&> payload label)
+  node value $ do
+    fitText label
+    width (by 180)
+    height (by 120)
+    xAt (percent 50)
+    yAt (percent 50)

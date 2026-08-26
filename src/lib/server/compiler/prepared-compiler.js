@@ -1,0 +1,189 @@
+/** Prepared compiler discovery and source-fingerprint validation. */
+
+import { createHash, randomUUID } from 'node:crypto';
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+export const repositoryRoot = process.cwd();
+const preparedCompilerSchemaVersion = 1;
+
+const fingerprintFiles = [
+  '.devcontainer/cabal.config',
+  'compile/cabal.project',
+  'compile/compile.cabal'
+];
+const optionalFingerprintFiles = ['compile/cabal.project.freeze'];
+const fingerprintDirectories = [
+  'compile/app',
+  'compile/cbits',
+  'compile/fonts',
+  'compile/src',
+  'compile/vendor'
+];
+
+/** Raised when no direct compiler binary matches the current checkout. */
+export class CompilerNotReadyError extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = 'CompilerNotReadyError';
+  }
+}
+
+/** Return the ignored descriptor path for a checkout. */
+function preparedCompilerDescriptorPath(root = repositoryRoot) {
+  return path.join(root, '.cache', 'sverlin', 'compiler.json');
+}
+
+/**
+ * Return the runtime environment required by the direct compiler executable.
+ *
+ * @param {{ ghcEnvironmentPath: string }} prepared
+ * @param {string} [root]
+ */
+export function preparedCompilerEnvironment(prepared, root = repositoryRoot) {
+  return {
+    ...process.env,
+    GHC_ENVIRONMENT: prepared.ghcEnvironmentPath,
+    compile_datadir: path.join(root, 'compile'),
+    MIP_datadir: path.join(root, 'compile', 'vendor', 'MIP-0.2.0.1')
+  };
+}
+
+/** Hash every owned source, configuration, and bundled asset used by the compiler. */
+export async function compilerSourceFingerprint(root = repositoryRoot) {
+  const relativePaths = [...fingerprintFiles];
+  for (const optional of optionalFingerprintFiles) {
+    try {
+      if ((await stat(path.join(root, optional))).isFile()) relativePaths.push(optional);
+    } catch {
+      // An absent optional freeze file contributes no compiler input.
+    }
+  }
+  for (const directory of fingerprintDirectories) {
+    relativePaths.push(...(await filesBelow(root, directory)));
+  }
+  relativePaths.sort();
+
+  const hash = createHash('sha256');
+  for (const relativePath of relativePaths) {
+    hash.update(relativePath);
+    hash.update('\0');
+    hash.update(await readFile(path.join(root, relativePath)));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * Atomically record one successfully built compiler binary.
+ *
+ * @param {string} binaryPath
+ * @param {string} sourceSha256
+ * @param {string} ghcEnvironment
+ * @param {string} [root]
+ */
+export async function writePreparedCompiler(
+  binaryPath,
+  sourceSha256,
+  ghcEnvironment,
+  root = repositoryRoot
+) {
+  if (!path.isAbsolute(binaryPath)) throw new Error('Prepared compiler path must be absolute.');
+  await assertExecutable(binaryPath);
+  assertSha256(sourceSha256);
+
+  if (typeof ghcEnvironment !== 'string' || !ghcEnvironment.includes('package-id compile-')) {
+    throw new Error('Prepared compiler GHC environment is invalid.');
+  }
+  const environmentPath = path.join(root, '.cache', 'sverlin', 'ghc.environment');
+  const descriptor = {
+    schemaVersion: preparedCompilerSchemaVersion,
+    sourceSha256,
+    binaryPath,
+    ghcEnvironmentPath: environmentPath,
+    preparedAt: new Date().toISOString()
+  };
+  const destination = preparedCompilerDescriptorPath(root);
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  await mkdir(path.dirname(destination), { recursive: true });
+  try {
+    await writeFile(environmentPath, ghcEnvironment, 'utf8');
+    await writeFile(temporary, `${JSON.stringify(descriptor, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx'
+    });
+    await rename(temporary, destination);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  return descriptor;
+}
+
+/** Read and verify that the prepared binary exactly matches current inputs. */
+export async function readPreparedCompiler(root = repositoryRoot) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(preparedCompilerDescriptorPath(root), 'utf8'));
+  } catch (error) {
+    throw new CompilerNotReadyError(
+      `The compiler has not been prepared (${error instanceof Error ? error.message : String(error)}).`
+    );
+  }
+
+  if (
+    !parsed ||
+    parsed.schemaVersion !== preparedCompilerSchemaVersion ||
+    typeof parsed.binaryPath !== 'string' ||
+    !path.isAbsolute(parsed.binaryPath) ||
+    typeof parsed.ghcEnvironmentPath !== 'string' ||
+    !path.isAbsolute(parsed.ghcEnvironmentPath) ||
+    typeof parsed.sourceSha256 !== 'string'
+  ) {
+    throw new CompilerNotReadyError('The prepared compiler descriptor is invalid.');
+  }
+
+  try {
+    assertSha256(parsed.sourceSha256);
+    await assertExecutable(parsed.binaryPath);
+    if (!(await stat(parsed.ghcEnvironmentPath)).isFile()) {
+      throw new Error('Prepared compiler GHC environment is not a file.');
+    }
+  } catch (error) {
+    throw new CompilerNotReadyError(error instanceof Error ? error.message : String(error));
+  }
+
+  if ((await compilerSourceFingerprint(root)) !== parsed.sourceSha256) {
+    throw new CompilerNotReadyError('Compiler inputs changed after the binary was prepared.');
+  }
+  return parsed;
+}
+
+/**
+ * @param {string} root
+ * @param {string} relativeDirectory
+ * @returns {Promise<string[]>}
+ */
+async function filesBelow(root, relativeDirectory) {
+  const directory = path.join(root, relativeDirectory);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const relativePath = path.join(relativeDirectory, entry.name);
+    if (entry.isDirectory()) files.push(...(await filesBelow(root, relativePath)));
+    else if (entry.isFile()) files.push(relativePath);
+  }
+  return files;
+}
+
+/** @param {string} binaryPath */
+async function assertExecutable(binaryPath) {
+  const details = await stat(binaryPath);
+  if (!details.isFile()) throw new Error('Prepared compiler path is not a file.');
+  await access(binaryPath, process.platform === 'win32' ? undefined : 1);
+}
+
+/** @param {string} value */
+function assertSha256(value) {
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid compiler input fingerprint.');
+}
