@@ -53,6 +53,9 @@ Register an administrator passkey. Setup becomes unavailable after the administr
 5. Verify that the participant sees only their projects while the administrator can see all projects.
 
 Passwords can be rotated from `/admin`; rotation and disabling an account revoke its active sessions.
+The same page provides verified participant/study exports and explicitly
+confirmed research-data deletion. Exports omit authentication secrets and
+verify every immutable resource before download.
 
 AI feedback is optional and requires `OPENAI_API_KEY` in the worker environment:
 
@@ -162,6 +165,8 @@ These tables cover every script declared in `package.json`. Pass script-specific
 | `pnpm run db:generate`          | Generate a Drizzle migration from the TypeScript schema.         |
 | `pnpm run db:migrate`           | Apply checked-in Drizzle migrations to `DATABASE_URL`.           |
 | `pnpm run data:export`          | Export and verify the legacy/local file project repository.      |
+| `pnpm run infra:plan`           | Plan the checked-in Railway TypeScript infrastructure changes.   |
+| `pnpm run infra:apply`          | Apply a separately reviewed plan to the linked Railway project.  |
 | `pnpm run smoke:deployment`     | Check a deployed service configured by `SVERLIN_SMOKE_URL`.      |
 | `pnpm run app:lock -- "reason"` | Put local application mutations into read-only maintenance mode. |
 | `pnpm run app:lock:status`      | Inspect the local maintenance lock.                              |
@@ -188,6 +193,7 @@ These tables cover every script declared in `package.json`. Pass script-specific
 | Command                        | Purpose                                                            |
 | ------------------------------ | ------------------------------------------------------------------ |
 | `pnpm run test:unit -- --run`  | Run the fast TypeScript suite once.                                |
+| `pnpm run test:postgres`       | Run the opt-in real PostgreSQL/pg-boss durability test.            |
 | `pnpm run test`                | Run unit tests and compile every catalogued example.               |
 | `pnpm run test:examples`       | Compile every catalogued example through the production boundary.  |
 | `pnpm run test:e2e`            | Run Playwright against an isolated file-backed application server. |
@@ -210,7 +216,12 @@ worker:    node build-worker/index.js
 predeploy: node build-migrate/index.js
 ```
 
-The web and worker share Railway PostgreSQL and a private Bucket. Only the web service receives a public domain. No GitHub Actions workflow is required or bundled.
+The web and worker share Railway PostgreSQL and a private Bucket. Only the web
+service receives a public domain. The complete Singapore topology lives in
+[`.railway/railway.ts`](.railway/railway.ts); plan it before applying any
+infrastructure change. `pnpm install` provides the project-pinned Railway CLI
+needed by the plan/apply scripts. No GitHub Actions workflow is required or
+bundled.
 
 Follow [`docs/deployment.md`](docs/deployment.md) for service creation, variables, administrator bootstrap, smoke checks, backups, scaling, and rollback.
 

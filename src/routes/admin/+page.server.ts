@@ -7,7 +7,7 @@ import {
   resetParticipantPassword,
   setParticipantEnabled
 } from '$lib/server/participants';
-import { projectRepository } from '$lib/server/projects/repository';
+import { purgeParticipantResearchData, purgeStudyResearchData } from '$lib/server/research-data';
 
 import type { Actions, PageServerLoad } from './$types';
 
@@ -67,13 +67,34 @@ export const actions: Actions = {
       return fail(400, { error: cause instanceof Error ? cause.message : 'Access update failed.' });
     }
   },
-  resetProjects: async ({ locals, request }) => {
+  purgeParticipant: async ({ locals, request }) => {
     requireAdmin(locals);
-    const form = await request.formData();
-    if (form.get('confirmation') !== 'DELETE PROJECTS') {
-      return fail(400, { error: 'Enter DELETE PROJECTS to confirm the reset.' });
+    try {
+      const form = await request.formData();
+      const userId = String(form.get('id') ?? '');
+      const participantId = await purgeParticipantResearchData(
+        userId,
+        String(form.get('confirmation') ?? ''),
+        request.headers
+      );
+      return { participantPurged: participantId };
+    } catch (cause) {
+      return fail(409, {
+        error: cause instanceof Error ? cause.message : 'Participant deletion failed.'
+      });
     }
-    await projectRepository.deleteAll();
-    return { projectsReset: true };
+  },
+  purgeStudy: async ({ locals, request }) => {
+    requireAdmin(locals);
+    try {
+      const form = await request.formData();
+      if (form.get('confirmation') !== 'DELETE STUDY DATA') {
+        return fail(400, { error: 'Enter DELETE STUDY DATA to confirm the purge.' });
+      }
+      const participantsPurged = await purgeStudyResearchData(request.headers);
+      return { studyPurged: true, participantsPurged };
+    } catch (cause) {
+      return fail(409, { error: cause instanceof Error ? cause.message : 'Study purge failed.' });
+    }
   }
 };

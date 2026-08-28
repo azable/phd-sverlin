@@ -56,6 +56,17 @@ export type ProjectJobView = {
   finishedAt: Date | null;
 };
 
+export type ResearchProjectJob = {
+  id: string;
+  projectId: string;
+  operationId: string;
+  status: ProjectJobView['status'];
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
 /** Enqueue one idempotent command, using its operation UUID as the durable job ID. */
 export async function createProjectJob(
   data: ProjectJobData
@@ -107,6 +118,66 @@ export async function readProjectJob(
     startedAt: job.startedOn ?? null,
     finishedAt: job.completedOn
   };
+}
+
+/** Return research-safe job outcomes without command payloads or owner identifiers. */
+export async function listResearchProjectJobs(ownerUserId?: string): Promise<ResearchProjectJob[]> {
+  const jobs = await findProjectJobs(ownerUserId);
+  return jobs.map((job) => {
+    const output = projectJobOutput(job.output);
+    return {
+      id: job.id,
+      projectId: job.data.projectId,
+      operationId: job.data.operationId,
+      status: projectJobStatus(job),
+      error: output?.status === 'failed' ? output.error : transportError(job),
+      createdAt: job.createdOn.toISOString(),
+      startedAt: job.startedOn?.toISOString() ?? null,
+      finishedAt: job.completedOn?.toISOString() ?? null
+    };
+  });
+}
+
+/** Refuse destructive work while a project command may still mutate its Timeline. */
+export async function assertNoActiveProjectJobs(ownerUserId?: string): Promise<void> {
+  const jobs = await findProjectJobs(ownerUserId);
+  if (jobs.some(({ state }) => state === 'active')) {
+    throw new Error('A project command is currently running. Wait for it to finish and try again.');
+  }
+}
+
+/** Require a completely idle queue before taking a study-wide checkpoint. */
+export async function assertProjectQueueIdle(): Promise<void> {
+  const jobs = await findProjectJobs();
+  if (jobs.some(({ state }) => state === 'created' || state === 'retry' || state === 'active')) {
+    throw new Error('The project queue is not idle. Wait for queued work to finish and try again.');
+  }
+}
+
+/** Cancel pending work and remove all retained queue records for one participant. */
+export async function deleteParticipantProjectJobs(ownerUserId: string): Promise<void> {
+  const boss = await projectJobBoss(false);
+  await assertNoActiveProjectJobs(ownerUserId);
+  const pending = (await findProjectJobs(ownerUserId)).filter(
+    ({ state }) => state === 'created' || state === 'retry'
+  );
+  if (pending.length)
+    await boss.cancel(
+      queueName,
+      pending.map(({ id }) => id)
+    );
+
+  const remaining = await findProjectJobs(ownerUserId);
+  if (remaining.some(({ state }) => state === 'active')) {
+    throw new Error(
+      'A project command started while deletion was prepared. Try again after it finishes.'
+    );
+  }
+  if (remaining.length)
+    await boss.deleteJob(
+      queueName,
+      remaining.map(({ id }) => id)
+    );
 }
 
 /** Identify only command-specific terminal events, not merely any committed append. */
@@ -291,6 +362,13 @@ async function findProjectJob(
   id: string
 ): Promise<JobWithMetadata<ProjectJobData> | null> {
   return (await boss.findJobs<ProjectJobData>(queueName, { id }))[0] ?? null;
+}
+
+async function findProjectJobs(ownerUserId?: string): Promise<JobWithMetadata<ProjectJobData>[]> {
+  return (await projectJobBoss(false)).findJobs<ProjectJobData>(
+    queueName,
+    ownerUserId ? { data: { ownerUserId } } : undefined
+  );
 }
 
 function projectJobStatus(job: JobWithMetadata<ProjectJobData>): ProjectJobView['status'] {
