@@ -133,6 +133,8 @@ automaticCanvasWidth = 800
 automaticCanvasHeight :: P.Double
 automaticCanvasHeight = 600
 
+-- TODO how arbitrary are the above constants? should this be parameterised?
+
 canvasAxisMaximum ::
      P.Bool -> P.Bool -> P.Maybe P.Double -> P.Double -> P.Double
 canvasAxisMaximum explicit counterpartExplicit aspect automaticMaximum =

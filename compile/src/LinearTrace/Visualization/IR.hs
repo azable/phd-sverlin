@@ -295,6 +295,9 @@ data VisualStyle = VisualStyle
   , visualWhiteSpace  :: Maybe String
   } deriving (Eq, Show, Generic)
 
+-- TODO check if there is some unnecessary redundancy here -- if a new
+-- style attribute is added, does this have to be updated too?
+
 -- | Sparse traceback from a concrete style field to the CSP variables that
 -- contributed to it. Literal-only fields do not need an entry.
 data StyleVariableBinding = StyleVariableBinding
