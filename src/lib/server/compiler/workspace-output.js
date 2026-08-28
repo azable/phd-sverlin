@@ -12,7 +12,8 @@ const defaultWorkspaceOutputDir = 'outputs';
  * @returns {string}
  */
 export function readWorkspaceOutputDir() {
-  const configuredDir = process.env[workspaceOutputDirEnvVar]?.trim();
+  const configuredDir =
+    process.env.SVERLIN_SCRATCH_DIR?.trim() || process.env[workspaceOutputDirEnvVar]?.trim();
   return configuredDir
     ? path.resolve(configuredDir)
     : path.join(process.cwd(), defaultWorkspaceOutputDir);

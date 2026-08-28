@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   compilerSourceFingerprint,
   CompilerNotReadyError,
+  isUnsupportedDirectorySyncError,
   readPreparedCompiler,
   writePreparedCompiler
 } from './prepared-compiler.js';
@@ -18,6 +19,21 @@ afterEach(async () => {
 });
 
 describe('prepared compiler descriptor', () => {
+  it.each(['EINVAL', 'ENOTSUP', 'EBADF'])(
+    'accepts unsupported directory fsync error %s',
+    (code) => {
+      expect(
+        isUnsupportedDirectorySyncError(Object.assign(new Error('fsync failed'), { code }))
+      ).toBe(true);
+    }
+  );
+
+  it('does not suppress unexpected directory fsync errors', () => {
+    expect(
+      isUnsupportedDirectorySyncError(Object.assign(new Error('fsync failed'), { code: 'EIO' }))
+    ).toBe(false);
+  });
+
   it('rejects a missing descriptor', async () => {
     const root = await fixtureRoot();
     await expect(readPreparedCompiler(root)).rejects.toBeInstanceOf(CompilerNotReadyError);

@@ -25,7 +25,7 @@ import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projec
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
-/** Browser-visible state of the project's server-sent event connection. */
+/** Browser-visible state of the project's durable event polling connection. */
 export type ProjectConnectionState = 'connecting' | 'open' | 'reconnecting';
 
 /** Metadata for the project command currently awaiting completion. */
@@ -55,8 +55,9 @@ export class ProjectSession {
 
   #resource = $state.raw<ProjectResource | null>(null);
   #selectedAt = $state<EventId | undefined>(undefined);
-  #source?: EventSource;
+  #eventTimer?: ReturnType<typeof setInterval>;
   #request?: AbortController;
+  #commandRequest?: AbortController;
   #maintenanceTimer?: ReturnType<typeof setInterval>;
   #loadVersion = 0;
 
@@ -157,6 +158,7 @@ export class ProjectSession {
   dispose(): void {
     this.#loadVersion += 1;
     this.#request?.abort();
+    this.#commandRequest?.abort();
     this.disconnect();
     if (this.#maintenanceTimer) clearInterval(this.#maintenanceTimer);
     this.#maintenanceTimer = undefined;
@@ -212,11 +214,20 @@ export class ProjectSession {
         if (response.status === 423) await this.refreshMaintenance();
         throw new Error(await responseError(response));
       }
-      const { projectId } = (await response.json()) as { projectId: string };
+      const { projectId, jobId } = (await response.json()) as {
+        projectId: string;
+        jobId?: string;
+      };
       const path = resolve('/projects/[projectId]', { projectId });
+      const parameters = [
+        devMode ? 'dev=1' : null,
+        jobId ? `job=${encodeURIComponent(jobId)}` : null
+      ]
+        .filter(Boolean)
+        .join('&');
       // The route is resolved above; the optional query controls browser-only detail.
       // eslint-disable-next-line svelte/no-navigation-without-resolve
-      await goto(devMode ? `${path}?dev=1` : path);
+      await goto(parameters ? `${path}?${parameters}` : path);
       return true;
     } catch (cause) {
       this.error = cause instanceof Error ? cause.message : 'Project creation failed.';
@@ -230,6 +241,9 @@ export class ProjectSession {
   async runCommand(input: ProjectCommandInput): Promise<boolean> {
     if (this.pending || !this.#resource || !this.atHead || this.maintenanceLocked) return false;
     const operationId = crypto.randomUUID();
+    const request = new AbortController();
+    this.#commandRequest?.abort();
+    this.#commandRequest = request;
     this.pending = { type: input.type, operationId, startedAfter: this.head };
     this.error = null;
 
@@ -237,39 +251,73 @@ export class ProjectSession {
       const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...input, operationId, expectedHead: this.head })
+        body: JSON.stringify({ ...input, operationId, expectedHead: this.head }),
+        signal: request.signal
       });
       if (!response.ok) {
         if (response.status === 423) await this.refreshMaintenance();
         throw new Error(await responseError(response));
       }
-      this.#resource = parseProjectResource(await response.json());
+      if (response.status === 202) {
+        const accepted = (await response.json()) as { jobId: string };
+        await this.waitForJob(accepted.jobId, request.signal);
+        await this.reloadResource(request.signal);
+      } else {
+        this.#resource = parseProjectResource(await response.json());
+      }
       return true;
     } catch (cause) {
+      if (request.signal.aborted) return false;
       this.error = cause instanceof Error ? cause.message : 'The project operation failed.';
       await this.open();
       return false;
     } finally {
-      this.pending = null;
+      if (this.#commandRequest === request) {
+        this.#commandRequest = undefined;
+        this.pending = null;
+      }
+    }
+  }
+
+  /** Resume the initial job carried by a newly created project URL. */
+  async resumeJob(jobId: string): Promise<void> {
+    if (this.pending || !this.#resource) return;
+    const request = new AbortController();
+    this.#commandRequest?.abort();
+    this.#commandRequest = request;
+    try {
+      const job = await this.readJob(jobId, request.signal);
+      if (job.projectId !== this.projectId) {
+        throw new Error('The project job does not match this project.');
+      }
+      this.pending = {
+        type: 'render',
+        operationId: job.operationId,
+        startedAfter: this.head
+      };
+      if (job.status !== 'succeeded') {
+        if (job.status === 'failed' || job.status === 'cancelled') {
+          throw new Error(job.error || 'Initial project compilation failed.');
+        }
+        await this.waitForJob(jobId, request.signal);
+      }
+      await this.reloadResource(request.signal);
+    } catch (cause) {
+      if (!request.signal.aborted) {
+        this.error = cause instanceof Error ? cause.message : 'Initial project compilation failed.';
+      }
+    } finally {
+      if (this.#commandRequest === request) {
+        this.#commandRequest = undefined;
+        this.pending = null;
+      }
     }
   }
 
   private connect(): void {
     if (!this.#resource) return;
-    const source = new EventSource(
-      `/api/projects/${encodeURIComponent(this.projectId)}/events?after=${this.head}`
-    );
-    this.#source = source;
-
-    source.addEventListener('project-event', (message) => {
-      try {
-        this.ingest(normalizeProjectEventV1(JSON.parse((message as MessageEvent<string>).data)));
-      } catch {
-        void this.recover();
-      }
-    });
-    source.addEventListener('ready', () => (this.connection = 'open'));
-    source.addEventListener('error', () => (this.connection = 'reconnecting'));
+    this.connection = 'open';
+    this.#eventTimer = setInterval(() => void this.pollEvents(), 1_000);
   }
 
   private startMaintenancePolling(): void {
@@ -278,8 +326,53 @@ export class ProjectSession {
   }
 
   private disconnect(): void {
-    this.#source?.close();
-    this.#source = undefined;
+    if (this.#eventTimer) clearInterval(this.#eventTimer);
+    this.#eventTimer = undefined;
+  }
+
+  private async pollEvents(): Promise<void> {
+    if (!this.#resource) return;
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(this.projectId)}/events?after=${this.head}`,
+        { cache: 'no-store' }
+      );
+      if (!response.ok) throw new Error(await responseError(response));
+      const value = (await response.json()) as { events?: unknown[] };
+      for (const event of value.events ?? []) this.ingest(normalizeProjectEventV1(event));
+      this.connection = 'open';
+    } catch {
+      this.connection = 'reconnecting';
+    }
+  }
+
+  private async waitForJob(jobId: string, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      const job = await this.readJob(jobId, signal);
+      if (job.status === 'succeeded') return;
+      if (job.status === 'failed' || job.status === 'cancelled') {
+        throw new Error(job.error || 'The project operation failed.');
+      }
+      await delay(1_000, signal);
+    }
+  }
+
+  private async readJob(jobId: string, signal: AbortSignal): Promise<ProjectJobState> {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+      cache: 'no-store',
+      signal
+    });
+    if (!response.ok) throw new Error(await responseError(response));
+    return (await response.json()) as ProjectJobState;
+  }
+
+  private async reloadResource(signal: AbortSignal): Promise<void> {
+    const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
+      cache: 'no-store',
+      signal
+    });
+    if (!response.ok) throw new Error(await responseError(response));
+    this.#resource = parseProjectResource(await response.json());
   }
 
   private ingest(event: ProjectEvent): void {
@@ -324,4 +417,29 @@ async function responseError(response: Response): Promise<string> {
     // Fall back to the status below.
   }
   return `Project request failed (${response.status}).`;
+}
+
+type ProjectJobState = {
+  projectId: string;
+  operationId: string;
+  status: string;
+  error?: string | null;
+};
+
+function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolveDelay, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(signal.reason);
+    };
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolveDelay();
+    }, milliseconds);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }

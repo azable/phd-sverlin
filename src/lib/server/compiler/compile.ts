@@ -6,7 +6,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as v from 'valibot';
 
@@ -20,10 +20,13 @@ import type {
 
 import { classifyCompileFailure, parseCompilerDiagnostics } from './diagnostics';
 import {
+  compilerWorkspaceLockPath,
   CompilerNotReadyError,
+  compilerSourceFingerprint,
   preparedCompilerEnvironment,
   readPreparedCompiler
 } from './prepared-compiler.js';
+import { compilerScheduler, type CompilePriority } from './scheduler';
 import { createCompileOutput } from './workspace-output.js';
 
 /** Process and diagnostic metadata captured for one compiler invocation. */
@@ -38,6 +41,7 @@ export type CompileDebug = {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  prefetched?: boolean;
   error?: string;
 };
 
@@ -58,6 +62,7 @@ export type CompileVisualizationResult =
       resources: CompileResource[];
       provenance: CompileProvenance;
       targetDiagnostics: TargetDiagnostic[];
+      compilerSourceSha256?: string;
       debug: CompileDebug;
     }
   | {
@@ -81,6 +86,7 @@ export type CompileSourceOptions = {
   sourceLabel: string;
   seed: number;
   owner: string;
+  priority?: CompilePriority;
   signal?: AbortSignal;
 };
 
@@ -104,6 +110,14 @@ export type CompileCommand = {
 const defaultCompileTimeoutMs = 300_000;
 const timeoutKillGraceMs = 1_000;
 const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
+const maxCompileSourceBytes = 512 * 1024;
+const maxCompilerLogBytes = 2 * 1024 * 1024;
+const maxVisualizationBytes = 32 * 1024 * 1024;
+const maxManifestBytes = 1024 * 1024;
+const maxResourceBytes = 16 * 1024 * 1024;
+const maxResourceBundleBytes = 64 * 1024 * 1024;
+const maxResourceCount = 128;
+const compilerLockConflictExitCode = 75;
 const sha256Schema = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/));
 const manifestArtifactSchema = v.strictObject({
   relativePath: v.string(),
@@ -132,24 +146,38 @@ const compileManifestSchema = v.strictObject({
 });
 
 /** Compile Sverlin source in an isolated workspace and decode its output. */
-export async function compileSource({
-  sourceContent,
-  sourceLabel,
-  seed,
-  owner,
-  signal
-}: CompileSourceOptions): Promise<CompileVisualizationResult> {
+export async function compileSource(
+  options: CompileSourceOptions
+): Promise<CompileVisualizationResult> {
+  const { sourceContent, sourceLabel, seed, owner, priority = 'foreground', signal } = options;
   const cwd = process.cwd();
+  if (Buffer.byteLength(sourceContent, 'utf8') > maxCompileSourceBytes) {
+    const error = `Compile source exceeds the ${maxCompileSourceBytes} byte limit.`;
+    const debug = emptyCompileDebug(cwd, error);
+    return {
+      ok: false,
+      error,
+      debug,
+      status: 413,
+      diagnostics: diagnosticsForFailure(debug, error),
+      failureKind: 'source'
+    };
+  }
   let outputPath: string;
+  let outputDir: string | undefined;
   let sourcePath: string;
 
   try {
     const output = await createCompileOutput({ owner, seed });
+    outputDir = output.outputDir;
     outputPath = output.outputPath;
     sourcePath = path.join(output.outputDir, 'source', 'Main.sverlin');
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(sourcePath, sourceContent, 'utf8');
   } catch (error) {
+    if (outputDir) {
+      await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     const message = error instanceof Error ? error.message : String(error);
     const debug = emptyCompileDebug(cwd, message);
     return {
@@ -162,6 +190,11 @@ export async function compileSource({
     };
   }
 
+  const finish = async (result: CompileVisualizationResult) => {
+    await rm(outputDir!, { recursive: true, force: true }).catch(() => undefined);
+    return result;
+  };
+
   let prepared;
   try {
     prepared = await readPreparedCompiler();
@@ -173,97 +206,166 @@ export async function compileSource({
           ? error.message
           : String(error);
     const debug = emptyCompileDebug(cwd, message);
-    return {
+    return finish({
       ok: false,
       error: message,
       debug,
       status: 503,
       diagnostics: diagnosticsForFailure(debug, message),
       failureKind: 'infrastructure'
-    };
+    });
   }
 
-  const { command, args } = compileCommand(
-    prepared.binaryPath,
-    seed,
-    outputPath,
-    sourcePath,
-    sourceLabel
+  const direct = compileCommand(prepared.binaryPath, seed, outputPath, sourcePath, sourceLabel);
+  const { command, args } = compilerLockCommand(
+    direct.command,
+    direct.args,
+    compilerWorkspaceLockPath()
   );
 
   const timeoutMs = readCompileTimeoutMs();
-  let debug = await runCompile(command, args, cwd, timeoutMs, {
-    signal,
-    env: preparedCompilerEnvironment(prepared)
-  });
+  let debug: CompileRun;
+  try {
+    debug = await compilerScheduler.run(
+      priority,
+      (scheduledSignal) =>
+        runCompile(command, args, cwd, timeoutMs, {
+          signal: scheduledSignal,
+          env: preparedCompilerEnvironment(prepared)
+        }),
+      signal
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = emptyCompileDebug(cwd, message);
+    return finish({
+      ok: false,
+      error: message,
+      debug: failed,
+      status: errorName(error) === 'CompileQueueFullError' ? 429 : 503,
+      diagnostics: diagnosticsForFailure(failed, message),
+      failureKind:
+        errorName(error) === 'CompilerShuttingDownError' || errorName(error) === 'AbortError'
+          ? 'cancelled'
+          : 'infrastructure'
+    });
+  }
   let compiledJson = '';
 
+  let outputReadError: string | undefined;
   try {
-    compiledJson = await readFile(outputPath, 'utf8');
-  } catch {
-    compiledJson = '';
+    compiledJson = await readTextFileBounded(
+      outputPath,
+      maxVisualizationBytes,
+      'Compiler visualization output'
+    );
+  } catch (error) {
+    outputReadError = error instanceof Error ? error.message : String(error);
   }
 
   debug = { ...debug, outputPath };
   if (debug.error) {
     const diagnostics = diagnosticsForFailure(debug, debug.error);
-    return {
+    return finish({
       ok: false,
       error: debug.error,
       debug,
       status: 500,
       diagnostics,
       failureKind: classifyCompileFailure(debug)
-    };
+    });
   }
 
   if (debug.timedOut) {
     const error = `Compile backend timed out after ${formatDuration(timeoutMs)}.`;
-    return {
+    return finish({
       ok: false,
       error,
       debug,
       status: 504,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'timeout'
-    };
+    });
   }
 
   if (debug.exitCode !== 0) {
-    const error = `Compile backend exited with code ${debug.exitCode}.`;
-    return {
+    const lockBusy = debug.exitCode === compilerLockConflictExitCode;
+    const error = lockBusy
+      ? 'Compiler preparation is in progress. Try again when the prepared compiler is ready.'
+      : `Compile backend exited with code ${debug.exitCode}.`;
+    return finish({
       ok: false,
       error,
       debug,
-      status: 500,
+      status: lockBusy ? 503 : 500,
       diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: classifyCompileFailure(debug)
-    };
+      failureKind: lockBusy ? 'infrastructure' : classifyCompileFailure(debug)
+    });
   }
 
   try {
-    const visualization = decodeVisualization(compiledJson);
-    const bundle = await readCompileBundle(outputPath, compiledJson, visualization);
-    return {
-      ok: true,
-      visualization,
-      resources: bundle.resources,
-      provenance: bundle.provenance,
-      targetDiagnostics: bundle.targetDiagnostics,
-      debug
-    };
-  } catch (err) {
-    const error = `Compile backend wrote an invalid output package: ${
-      err instanceof Error ? err.message : String(err)
+    if ((await compilerSourceFingerprint()) !== prepared.sourceSha256) {
+      const error =
+        'Compiler inputs changed while this request was queued or running. Prepare the compiler and try again.';
+      return finish({
+        ok: false,
+        error,
+        debug,
+        status: 503,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: 'infrastructure'
+      });
+    }
+  } catch (cause) {
+    const error = `Compiler inputs could not be verified after compilation: ${
+      cause instanceof Error ? cause.message : String(cause)
     }`;
-    return {
+    return finish({
+      ok: false,
+      error,
+      debug,
+      status: 503,
+      diagnostics: diagnosticsForFailure(debug, error),
+      failureKind: 'infrastructure'
+    });
+  }
+
+  if (outputReadError) {
+    const error = `Compile backend did not produce a readable output package: ${outputReadError}`;
+    return finish({
       ok: false,
       error,
       debug,
       status: 502,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'invalid-output'
-    };
+    });
+  }
+
+  try {
+    const visualization = decodeVisualization(compiledJson);
+    const bundle = await readCompileBundle(outputPath, compiledJson, visualization);
+    return finish({
+      ok: true,
+      visualization,
+      resources: bundle.resources,
+      provenance: bundle.provenance,
+      targetDiagnostics: bundle.targetDiagnostics,
+      compilerSourceSha256: prepared.sourceSha256,
+      debug
+    });
+  } catch (err) {
+    const error = `Compile backend wrote an invalid output package: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    return finish({
+      ok: false,
+      error,
+      debug,
+      status: 502,
+      diagnostics: diagnosticsForFailure(debug, error),
+      failureKind: 'invalid-output'
+    });
   }
 }
 
@@ -278,11 +380,26 @@ export async function readCompileBundle(
   targetDiagnostics: TargetDiagnostic[];
 }> {
   const manifestPath = `${outputPath}.manifest.json`;
-  const rawManifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown;
+  const rawManifest = JSON.parse(
+    await readTextFileBounded(manifestPath, maxManifestBytes, 'Compile manifest')
+  ) as unknown;
   const parsed = v.safeParse(compileManifestSchema, rawManifest);
   if (!parsed.success) throw new Error(`Invalid compile manifest: ${v.summarize(parsed.issues)}`);
 
   const manifest = parsed.output;
+  if (manifest.attachments.length > maxResourceCount) {
+    throw new Error(`Compile manifest exceeds the ${maxResourceCount} attachment limit.`);
+  }
+  const totalResourceBytes = manifest.attachments.reduce(
+    (total, attachment) => total + attachment.byteLength,
+    0
+  );
+  if (manifest.attachments.some(({ byteLength }) => byteLength > maxResourceBytes)) {
+    throw new Error(`Compile attachment exceeds the ${maxResourceBytes} byte limit.`);
+  }
+  if (totalResourceBytes > maxResourceBundleBytes) {
+    throw new Error(`Compile attachments exceed the ${maxResourceBundleBytes} byte bundle limit.`);
+  }
   if (manifest.primary.relativePath !== path.basename(outputPath)) {
     throw new Error('Compile manifest primary path does not match the requested output.');
   }
@@ -327,7 +444,11 @@ export async function readCompileBundle(
         path.dirname(outputPath),
         ...attachment.relativePath.split('/')
       );
-      const bytes = await readFile(attachmentPath);
+      const bytes = await readBinaryFileBounded(
+        attachmentPath,
+        maxResourceBytes,
+        `Compile attachment ${id}`
+      );
       verifyBytes(bytes, attachment, id);
       return {
         id,
@@ -392,6 +513,8 @@ export function runCompile(
     });
     let stdout = '';
     let stderr = '';
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let settled = false;
     let timedOut = false;
     let cancelled = false;
@@ -468,12 +591,16 @@ export function runCompile(
     child.stderr.setEncoding('utf8');
 
     child.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
+      const captured = appendBoundedLog(stdout, chunk);
+      stdout = captured.value;
+      stdoutTruncated ||= captured.truncated;
       options.onStdout?.(chunk, stdout);
     });
 
     child.stderr.on('data', (chunk: string) => {
-      stderr += chunk;
+      const captured = appendBoundedLog(stderr, chunk);
+      stderr = captured.value;
+      stderrTruncated ||= captured.truncated;
       options.onStderr?.(chunk, stderr);
     });
 
@@ -495,6 +622,9 @@ export function runCompile(
     child.on('close', (exitCode) => {
       const error = cancelled ? 'Compile backend was cancelled.' : undefined;
 
+      if (stdoutTruncated) stdout += '\n[compiler stdout truncated]\n';
+      if (stderrTruncated) stderr += '\n[compiler stderr truncated]\n';
+
       settle({
         command,
         args,
@@ -509,6 +639,34 @@ export function runCompile(
       });
     });
   });
+}
+
+async function readTextFileBounded(destination: string, maximum: number, label: string) {
+  const bytes = await readBinaryFileBounded(destination, maximum, label);
+  return Buffer.from(bytes).toString('utf8');
+}
+
+async function readBinaryFileBounded(destination: string, maximum: number, label: string) {
+  const details = await stat(destination);
+  if (!details.isFile()) throw new Error(`${label} is not a regular file.`);
+  if (details.size > maximum) throw new Error(`${label} exceeds the ${maximum} byte limit.`);
+  const bytes = await readFile(destination);
+  if (bytes.byteLength > maximum) throw new Error(`${label} exceeds the ${maximum} byte limit.`);
+  return bytes;
+}
+
+function appendBoundedLog(current: string, chunk: string) {
+  const currentBytes = Buffer.byteLength(current, 'utf8');
+  const remaining = maxCompilerLogBytes - currentBytes;
+  if (remaining <= 0) return { value: current, truncated: true };
+  const incoming = Buffer.from(chunk);
+  if (incoming.byteLength <= remaining) {
+    return { value: current + chunk, truncated: false };
+  }
+  return {
+    value: current + incoming.subarray(0, remaining).toString('utf8'),
+    truncated: true
+  };
 }
 
 /** Build the direct command used to invoke one prepared Haskell compiler. */
@@ -536,6 +694,28 @@ export function compileCommand(
   return { command: binaryPath, args };
 }
 
+/** Wrap a compiler child in a non-blocking shared lock against Cabal preparation. */
+export function compilerLockCommand(
+  command: string,
+  args: string[],
+  lockPath: string
+): CompileCommand {
+  if (process.platform === 'win32') return { command, args };
+  return {
+    command: 'flock',
+    args: [
+      '--shared',
+      '--nonblock',
+      '--no-fork',
+      '--conflict-exit-code',
+      String(compilerLockConflictExitCode),
+      lockPath,
+      command,
+      ...args
+    ]
+  };
+}
+
 function emptyCompileDebug(cwd: string, error: string): CompileDebug {
   return {
     command: 'node',
@@ -546,6 +726,10 @@ function emptyCompileDebug(cwd: string, error: string): CompileDebug {
     stdout: '',
     stderr: error
   };
+}
+
+function errorName(error: unknown) {
+  return error instanceof Error ? error.name : undefined;
 }
 
 function terminateCompile(pid: number | undefined, signal: NodeJS.Signals) {

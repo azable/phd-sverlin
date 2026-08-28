@@ -1,100 +1,42 @@
-import { error } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 
-import type { ProjectEvent } from '$lib/shared/projects/events';
-import { projectRepository, ProjectNotFoundError } from '$lib/server/projects/repository';
+import { requireProjectAccess } from '$lib/server/authorization';
+import {
+  projectRepository,
+  ProjectConflictError,
+  ProjectNotFoundError
+} from '$lib/server/projects/repository';
 
 import type { RequestHandler } from './$types';
 
-const encoder = new TextEncoder();
-const heartbeatIntervalMs = 15_000;
-
-/** Stream durably appended project events, replaying from the requested event position. */
-export const GET: RequestHandler = async ({ params, request, url }) => {
-  const after = readAfter(request, url);
-  const queued: ProjectEvent[] = [];
-  let deliver: ((events: ProjectEvent[]) => void) | undefined;
-  const unsubscribe = projectRepository.subscribe(params.projectId, (events) => {
-    if (deliver) deliver(events);
-    else queued.push(...events);
-  });
-
-  let document;
+/** Return an immutable Timeline suffix for durable client polling. */
+export const GET: RequestHandler = async ({ params, locals, url }) => {
+  await requireProjectAccess(locals, params.projectId);
+  const after = readAfter(url);
   try {
-    document = await projectRepository.load(params.projectId);
+    const events = await projectRepository.eventsAfter(params.projectId, after);
+    return json(
+      { schemaVersion: 1, projectId: params.projectId, after, head: after + events.length, events },
+      { headers: { 'cache-control': 'private, no-store' } }
+    );
   } catch (cause) {
-    unsubscribe();
-    if (cause instanceof ProjectNotFoundError) error(404, cause.message);
+    if (cause instanceof ProjectNotFoundError) {
+      return json({ error: cause.message }, { status: 404 });
+    }
+    if (cause instanceof ProjectConflictError) {
+      return json(
+        { error: 'The requested event position is ahead of the project head.' },
+        { status: 409 }
+      );
+    }
     throw cause;
   }
-
-  if (after > document.events.length) {
-    unsubscribe();
-    error(409, 'The requested project event position is ahead of the project head.');
-  }
-
-  let cleanup = unsubscribe;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-      let lastId = after;
-      const send = (value: string) => {
-        if (!closed) controller.enqueue(encoder.encode(value));
-      };
-      const heartbeat = setInterval(() => send(': keepalive\n\n'), heartbeatIntervalMs);
-      const close = () => {
-        if (closed) return;
-        closed = true;
-        clearInterval(heartbeat);
-        unsubscribe();
-        request.signal.removeEventListener('abort', close);
-        try {
-          controller.close();
-        } catch {
-          // The runtime may already have closed the stream.
-        }
-      };
-      cleanup = close;
-
-      const sendEvent = (event: ProjectEvent) => {
-        if (event.id <= lastId) return;
-        if (event.id !== lastId + 1) return close();
-        send(`event: project-event\nid: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
-        lastId = event.id;
-      };
-
-      [...document.events.filter(({ id }) => id > after), ...queued]
-        .toSorted((left, right) => left.id - right.id)
-        .forEach(sendEvent);
-      deliver = (events) => events.forEach(sendEvent);
-      send(
-        `event: ready\ndata: ${JSON.stringify({
-          schemaVersion: 1,
-          projectId: document.projectId,
-          head: lastId
-        })}\n\n`
-      );
-
-      request.signal.addEventListener('abort', close, { once: true });
-      if (request.signal.aborted) close();
-    },
-    cancel() {
-      cleanup();
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'content-type': 'text/event-stream; charset=utf-8',
-      'x-accel-buffering': 'no'
-    }
-  });
 };
 
-function readAfter(request: Request, url: URL) {
-  const value = request.headers.get('last-event-id') ?? url.searchParams.get('after') ?? '0';
-  const id = Number(value);
-  if (!Number.isSafeInteger(id) || id < 0) error(400, 'Invalid project event position.');
+function readAfter(url: URL) {
+  const id = Number(url.searchParams.get('after') ?? '0');
+  if (!Number.isSafeInteger(id) || id < 0) {
+    error(400, 'Invalid project event position.');
+  }
   return id;
 }

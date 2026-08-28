@@ -40,6 +40,7 @@ describe('project compiler resources', () => {
     await projectRepository.append('resource-test', 1, [compilationEvent(resource)], [resource]);
 
     const response = await GET({
+      locals: testLocals(),
       params: { projectId: 'resource-test', resourceId: resource.id }
     } as Parameters<typeof GET>[0]);
 
@@ -49,6 +50,19 @@ describe('project compiler resources', () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
   });
 });
+
+function testLocals() {
+  return {
+    principal: {
+      kind: 'participant',
+      user: { id: 'user-test' },
+      session: {},
+      participant: {
+        participantId: 'P001'
+      }
+    }
+  };
+}
 
 function rootDocument(): ProjectDocument {
   return {

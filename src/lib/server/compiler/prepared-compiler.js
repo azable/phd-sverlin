@@ -1,11 +1,16 @@
 /** Prepared compiler discovery and source-fingerprint validation. */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 export const repositoryRoot = process.cwd();
 const preparedCompilerSchemaVersion = 1;
+
+/** Return the OS-lock path shared by compiler invocation and preparation. */
+export function compilerWorkspaceLockPath(root = repositoryRoot) {
+  return path.join(root, '.cache', 'sverlin', 'compiler-workspace.lock');
+}
 
 const fingerprintFiles = [
   '.devcontainer/cabal.config',
@@ -32,7 +37,10 @@ export class CompilerNotReadyError extends Error {
 
 /** Return the ignored descriptor path for a checkout. */
 function preparedCompilerDescriptorPath(root = repositoryRoot) {
-  return path.join(root, '.cache', 'sverlin', 'compiler.json');
+  const configured = process.env.SVERLIN_COMPILER_DIR?.trim();
+  return configured
+    ? path.join(path.resolve(configured), 'compiler.json')
+    : path.join(root, '.cache', 'sverlin', 'compiler.json');
 }
 
 /**
@@ -96,7 +104,10 @@ export async function writePreparedCompiler(
   if (typeof ghcEnvironment !== 'string' || !ghcEnvironment.includes('package-id compile-')) {
     throw new Error('Prepared compiler GHC environment is invalid.');
   }
-  const environmentPath = path.join(root, '.cache', 'sverlin', 'ghc.environment');
+  const environmentPath = path.join(
+    path.dirname(preparedCompilerDescriptorPath(root)),
+    `ghc-${sourceSha256}.environment`
+  );
   const descriptor = {
     schemaVersion: preparedCompilerSchemaVersion,
     sourceSha256,
@@ -105,18 +116,9 @@ export async function writePreparedCompiler(
     preparedAt: new Date().toISOString()
   };
   const destination = preparedCompilerDescriptorPath(root);
-  const temporary = `${destination}.${randomUUID()}.tmp`;
   await mkdir(path.dirname(destination), { recursive: true });
-  try {
-    await writeFile(environmentPath, ghcEnvironment, 'utf8');
-    await writeFile(temporary, `${JSON.stringify(descriptor, null, 2)}\n`, {
-      encoding: 'utf8',
-      flag: 'wx'
-    });
-    await rename(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true });
-  }
+  await writeAtomicDurable(environmentPath, ghcEnvironment);
+  await writeAtomicDurable(destination, `${JSON.stringify(descriptor, null, 2)}\n`);
   return descriptor;
 }
 
@@ -138,7 +140,9 @@ export async function readPreparedCompiler(root = repositoryRoot) {
     !path.isAbsolute(parsed.binaryPath) ||
     typeof parsed.ghcEnvironmentPath !== 'string' ||
     !path.isAbsolute(parsed.ghcEnvironmentPath) ||
-    typeof parsed.sourceSha256 !== 'string'
+    typeof parsed.sourceSha256 !== 'string' ||
+    typeof parsed.preparedAt !== 'string' ||
+    Number.isNaN(Date.parse(parsed.preparedAt))
   ) {
     throw new CompilerNotReadyError('The prepared compiler descriptor is invalid.');
   }
@@ -157,6 +161,47 @@ export async function readPreparedCompiler(root = repositoryRoot) {
     throw new CompilerNotReadyError('Compiler inputs changed after the binary was prepared.');
   }
   return parsed;
+}
+
+/** @param {string} destination @param {string} contents */
+async function writeAtomicDurable(destination, contents) {
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  const handle = await open(temporary, 'wx');
+  try {
+    await handle.writeFile(contents, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await rename(temporary, destination);
+    await syncDirectory(path.dirname(destination));
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+/** @param {string} directory */
+async function syncDirectory(directory) {
+  if (process.platform === 'win32') return;
+  const handle = await open(directory, 'r');
+  try {
+    await handle.sync();
+  } catch (error) {
+    if (!isUnsupportedDirectorySyncError(error)) throw error;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** @param {unknown} error */
+export function isUnsupportedDirectorySyncError(error) {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    ['EINVAL', 'ENOTSUP', 'EBADF'].includes(error.code)
+  );
 }
 
 /**

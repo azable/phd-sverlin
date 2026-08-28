@@ -5,7 +5,6 @@
  */
 
 import OpenAI from 'openai';
-import { env } from '$env/dynamic/private';
 
 import type { ChatAdapter, ChatAdapterRequest, ChatAdapterResult } from './types';
 
@@ -44,7 +43,7 @@ export class InvalidChatbotResponseError extends Error {
 }
 
 function readApiKey() {
-  const apiKey = env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
 
   if (!apiKey) throw new OpenAIConfigurationError();
 
@@ -52,13 +51,13 @@ function readApiKey() {
 }
 
 function readMaxContextChars() {
-  const configured = Number.parseInt(env.CHATBOT_MAX_CONTEXT_CHARS ?? '', 10);
+  const configured = Number.parseInt(process.env.CHATBOT_MAX_CONTEXT_CHARS ?? '', 10);
 
   return Number.isSafeInteger(configured) && configured > 0 ? configured : defaultMaxContextChars;
 }
 
 function readRequestTimeoutMs() {
-  const configured = Number.parseInt(env.CHATBOT_REQUEST_TIMEOUT_MS ?? '', 10);
+  const configured = Number.parseInt(process.env.CHATBOT_REQUEST_TIMEOUT_MS ?? '', 10);
   return Number.isSafeInteger(configured) && configured > 0 ? configured : defaultRequestTimeoutMs;
 }
 
@@ -138,7 +137,7 @@ export async function generateOpenAIReply(request: ChatAdapterRequest): Promise<
     maxRetries: 0,
     timeout: readRequestTimeoutMs()
   });
-  const model = env.OPENAI_MODEL?.trim() || request.parameters.model;
+  const model = process.env.OPENAI_MODEL?.trim() || request.parameters.model;
   const context = serializeContext(request.context);
   const response = await client.responses.create({
     model,

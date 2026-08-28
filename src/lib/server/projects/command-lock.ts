@@ -4,7 +4,11 @@
  * @packageDocumentation
  */
 
-const commandTails = new Map<string, Promise<void>>();
+const commandTailsKey = Symbol.for('sverlin.project-command-tails');
+const shared = globalThis as typeof globalThis & {
+  [commandTailsKey]?: Map<string, Promise<void>>;
+};
+const commandTails = (shared[commandTailsKey] ??= new Map());
 
 /**
  * Serialize whole project commands, including slow provider and compiler work.

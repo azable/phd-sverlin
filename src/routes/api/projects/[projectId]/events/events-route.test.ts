@@ -21,46 +21,51 @@ afterEach(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-describe('project event stream', () => {
-  it('resumes from zero and delivers each durable append once', async () => {
+describe('project event delta', () => {
+  it('resumes from a durable event position without duplicates', async () => {
     const { projectRepository } = await import('$lib/server/projects/repository');
     const { GET } = await import('./+server');
     await projectRepository.create(rootDocument());
     await projectRepository.append('stream-test', 1, [renameEvent('A')]);
 
-    const abort = new AbortController();
     const url = new URL('http://localhost/api/projects/stream-test/events?after=0');
-    const request = new Request(url, { signal: abort.signal });
     const response = await GET({
+      locals: testLocals(),
       params: { projectId: 'stream-test' },
-      request,
       url
     } as Parameters<typeof GET>[0]);
-    const reader = response.body!.getReader();
-
-    const catchup = await readThrough(reader, 'event: ready');
-    expect(catchup).toContain('id: 1');
-    expect(catchup).toContain('id: 2');
-    expect(catchup).toContain('"title":"A"');
+    await expect(response.json()).resolves.toMatchObject({
+      after: 0,
+      head: 2,
+      events: [{ id: 1 }, { id: 2, payload: { title: 'A' } }]
+    });
 
     await projectRepository.append('stream-test', 2, [renameEvent('B')]);
-    const live = await readThrough(reader, 'id: 3');
-    expect(live).toContain('"title":"B"');
-
-    abort.abort();
-    await reader.cancel();
+    const nextUrl = new URL('http://localhost/api/projects/stream-test/events?after=2');
+    const next = await GET({
+      locals: testLocals(),
+      params: { projectId: 'stream-test' },
+      url: nextUrl
+    } as Parameters<typeof GET>[0]);
+    await expect(next.json()).resolves.toMatchObject({
+      after: 2,
+      head: 3,
+      events: [{ id: 3, payload: { title: 'B' } }]
+    });
   });
 });
 
-async function readThrough(reader: ReadableStreamDefaultReader<Uint8Array>, expected: string) {
-  const decoder = new TextDecoder();
-  let text = '';
-  while (!text.includes(expected)) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    text += decoder.decode(chunk.value, { stream: true });
-  }
-  return text;
+function testLocals() {
+  return {
+    principal: {
+      kind: 'participant',
+      user: { id: 'user-test' },
+      session: {},
+      participant: {
+        participantId: 'P001'
+      }
+    }
+  };
 }
 
 function rootDocument(): ProjectDocument {

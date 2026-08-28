@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
+
+import { requireProjectAccess } from '$lib/server/authorization';
 
 import {
   projectRepository,
@@ -11,8 +13,9 @@ import {
 import type { RequestHandler } from './$types';
 
 /** Serve one immutable compiler resource only when it is referenced by project history. */
-export const GET: RequestHandler = async ({ params }) => {
+export const GET: RequestHandler = async ({ params, locals }) => {
   try {
+    await requireProjectAccess(locals, params.projectId);
     const document = await projectRepository.load(params.projectId);
     const reference = document.events
       .flatMap((event) => {
@@ -23,6 +26,9 @@ export const GET: RequestHandler = async ({ params }) => {
       })
       .find(({ id }) => id === params.resourceId);
     if (!reference) error(404, 'Unknown project resource.');
+
+    const downloadUrl = await projectRepository.resourceDownloadUrl(params.projectId, reference.id);
+    if (downloadUrl) redirect(302, downloadUrl);
 
     const bytes = await projectRepository.readResource(params.projectId, reference.id);
     if (bytes.byteLength !== reference.byteLength) {
@@ -35,7 +41,7 @@ export const GET: RequestHandler = async ({ params }) => {
 
     return new Response(Uint8Array.from(bytes).buffer, {
       headers: {
-        'cache-control': 'public, max-age=31536000, immutable',
+        'cache-control': 'private, max-age=300, immutable',
         'content-length': String(bytes.byteLength),
         'content-type': reference.mediaType,
         etag: `"${reference.sha256}"`,

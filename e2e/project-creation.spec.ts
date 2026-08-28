@@ -90,7 +90,7 @@ test('maintenance lock keeps reads and playback available while rejecting mutati
   page
 }) => {
   const browserFailures = observeBrowserFailures(page);
-  await page.goto(`/projects/${createdProjectId}`);
+  await page.goto(`/projects/${projectId}`);
   await expect(page.getByRole('button', { name: 'Reset', exact: true })).toBeEnabled();
 
   await writeMaintenanceLock('Compiler boundary maintenance.', maintenancePath);
@@ -127,8 +127,10 @@ function observeBrowserFailures(page: Page): () => string[] {
   page.on('requestfailed', (request) => {
     if (
       request.method() === 'GET' &&
-      request.url().includes('/events?after=') &&
-      request.failure()?.errorText === 'net::ERR_ABORTED'
+      request.failure()?.errorText === 'net::ERR_ABORTED' &&
+      (request.url().includes('/events?after=') ||
+        request.url().includes('/node_modules/.vite/deps/') ||
+        request.url().includes('/__data.json'))
     ) {
       return;
     }

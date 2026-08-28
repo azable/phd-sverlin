@@ -26,6 +26,7 @@ import type {
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { compileSource, type CompileVisualizationResult } from '$lib/server/compiler/compile';
+import { consumePrefetch, schedulePrefetch } from '$lib/server/compiler/prefetch';
 
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, recordText } from './fingerprints';
@@ -39,6 +40,7 @@ const entryArtifactId = 'dsl-main';
 type RecordedCompilationBase = {
   document: ProjectDocument;
   source: RecordedText;
+  sourceLabel: string;
   seed: number;
   operationId: string;
 };
@@ -61,15 +63,27 @@ export type RecordedCompilation = RecordedCompilationBase &
 type CreateProjectOptions = {
   creation?: ProjectCreation;
   title?: string;
+  ownerUserId?: string;
+  projectId?: string;
+  operationId?: string;
 };
 
 /** Create a project from its validated template and render the initial visualization. */
 export async function createProject(options: CreateProjectOptions = {}): Promise<ProjectDocument> {
+  const { document, operationId } = await createProjectSkeleton(options);
+  const seed = randomInt(minSeed, maxSeedExclusive);
+  return renderDocument(document, seed, 'initial', operationId);
+}
+
+/** Persist the cheap event-sourced project skeleton before asynchronous compilation. */
+export async function createProjectSkeleton(
+  options: CreateProjectOptions = {}
+): Promise<{ document: ProjectDocument; operationId: string }> {
   const creation = options.creation ?? defaultProjectCreation;
   const template = resolveProjectTemplate(creation);
   const title = options.title?.trim() || template.title;
-  const projectId = randomUUID();
-  const operationId = randomUUID();
+  const projectId = options.projectId ?? randomUUID();
+  const operationId = options.operationId ?? randomUUID();
   const root: ProjectEventOf<'project.created'> = {
     id: 1,
     type: 'project.created',
@@ -78,7 +92,10 @@ export async function createProject(options: CreateProjectOptions = {}): Promise
     createdAt: new Date().toISOString(),
     payload: { title, entryArtifactId, creation }
   };
-  let document = await projectRepository.create({ schemaVersion: 1, projectId, events: [root] });
+  let document = await projectRepository.create(
+    { schemaVersion: 1, projectId, events: [root] },
+    options.ownerUserId
+  );
   const content = recordText(template.source, 'text/x-sverlin');
   document = await appendProjectEvents(document, [
     draftEvent({
@@ -101,14 +118,30 @@ export async function createProject(options: CreateProjectOptions = {}): Promise
       }
     })
   ]);
-  const seed = randomInt(minSeed, maxSeedExclusive);
-  return renderDocument(document, seed, 'initial', operationId);
+  return { document, operationId };
+}
+
+/** Compile the initial artifact for a previously persisted skeleton. */
+export async function renderInitialProject(options: {
+  projectId: string;
+  expectedHead: EventId;
+  seed: number;
+  operationId: string;
+}): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    const before = await checkedDocument(options.projectId, options.expectedHead);
+    const document = await renderDocument(before, options.seed, 'initial', options.operationId);
+    return commandResult(before, document);
+  });
 }
 
 /** Load the complete project document and project selector metadata. */
-export async function loadProjectResource(projectId: string): Promise<ProjectResource> {
+export async function loadProjectResource(
+  projectId: string,
+  ownerUserId?: string
+): Promise<ProjectResource> {
   const document = await projectRepository.load(projectId);
-  return { document, projects: await projectRepository.list() };
+  return { document, projects: await projectRepository.list(ownerUserId) };
 }
 
 /** Compile the current artifact with a new seed and record the resulting events. */
@@ -276,12 +309,23 @@ export async function compileProjectSource(options: {
     }
   });
   const document = await appendProjectEvents(options.document, [request]);
-  const result = await compileSource({
-    sourceContent: options.sourceContent,
-    sourceLabel: options.sourceLabel,
-    seed: options.seed,
-    owner: 'project'
-  });
+  const prefetched =
+    options.input === 'committed-artifact'
+      ? await consumePrefetch({
+          projectId: document.projectId,
+          sourceLabel: options.sourceLabel,
+          sourceSha256: options.source.sha256,
+          seed: options.seed
+        })
+      : undefined;
+  const result =
+    prefetched ??
+    (await compileSource({
+      sourceContent: options.sourceContent,
+      sourceLabel: options.sourceLabel,
+      seed: options.seed,
+      owner: 'project'
+    }));
   return recordCompileResult({ ...options, document, result });
 }
 
@@ -289,6 +333,7 @@ async function recordCompileResult(options: {
   document: ProjectDocument;
   result: CompileVisualizationResult;
   source: RecordedText;
+  sourceLabel: string;
   seed: number;
   operationId: string;
 }): Promise<RecordedCompilation> {
@@ -318,6 +363,7 @@ async function recordCompileResult(options: {
       result: options.result,
       compileEvent,
       source: options.source,
+      sourceLabel: options.sourceLabel,
       seed: options.seed,
       operationId: options.operationId
     };
@@ -345,6 +391,7 @@ async function recordCompileResult(options: {
     compileEvent,
     render,
     source: options.source,
+    sourceLabel: options.sourceLabel,
     seed: options.seed,
     operationId: options.operationId
   };
@@ -355,7 +402,7 @@ export async function activateCompiledRender(
   recorded: RecordedCompilation
 ): Promise<ProjectDocument> {
   if (!('render' in recorded)) return recorded.document;
-  return appendProjectEvents(recorded.document, [
+  const document = await appendProjectEvents(recorded.document, [
     draftEvent({
       type: 'visualization.rendered',
       actor: { kind: 'system' },
@@ -376,6 +423,20 @@ export async function activateCompiledRender(
       }
     })
   ]);
+  if (
+    recorded.result.ok &&
+    recorded.seed < maxSeedExclusive - 1 &&
+    process.env.SVERLIN_DISABLE_PREFETCH !== 'true'
+  ) {
+    schedulePrefetch({
+      projectId: document.projectId,
+      sourceContent: recorded.source.text,
+      sourceLabel: recorded.sourceLabel,
+      sourceSha256: recorded.source.sha256,
+      seed: recorded.seed + 1
+    });
+  }
+  return document;
 }
 
 function artifactVersionEvent(options: {

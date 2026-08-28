@@ -14,6 +14,8 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+/build-migrate
+/build-worker
 
 # OS
 .DS_Store
@@ -35,3 +37,4 @@ dist-newstyle*
 compiled.json
 
 temp.txt
+/.swc

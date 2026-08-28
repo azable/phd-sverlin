@@ -1,12 +1,31 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
+  compilerWorkspaceLockPath,
   compilerSourceFingerprint,
   writePreparedCompiler
 } from '../src/lib/server/compiler/prepared-compiler.js';
 import { cabalConfig, cabalEnvironment, compileRoot } from './compiler-environment.mjs';
+
+if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_LOCK_HELD !== '1') {
+  const lockPath = compilerWorkspaceLockPath();
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  const locked = await run(
+    'flock',
+    ['--exclusive', '--no-fork', lockPath, process.execPath, fileURLToPath(import.meta.url)],
+    {
+      captureStdout: false,
+      cwd: process.cwd(),
+      env: { ...process.env, SVERLIN_COMPILER_LOCK_HELD: '1' }
+    }
+  );
+  process.exit(locked.exitCode);
+}
 
 const beforeBuild = await compilerSourceFingerprint();
 const common = [`--config-file=${cabalConfig}`];
@@ -39,9 +58,9 @@ console.log(`Prepared compiler: ${binaryPath}`);
 function run(command, args, options) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
-      cwd: compileRoot,
+      cwd: options.cwd ?? compileRoot,
       detached: process.platform !== 'win32',
-      env: cabalEnvironment,
+      env: options.env ?? cabalEnvironment,
       stdio: ['ignore', options.captureStdout ? 'pipe' : 'inherit', 'inherit']
     });
     let stdout = '';

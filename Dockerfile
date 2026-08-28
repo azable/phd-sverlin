@@ -1,0 +1,261 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:24.19.0-bookworm-slim AS node-toolchain
+
+FROM haskell:9.10.3-bookworm AS toolchain
+
+ARG HIGHS_VERSION=1.15.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY --from=node-toolchain /usr/local/ /usr/local/
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bubblewrap \
+        ca-certificates \
+        cmake \
+        curl \
+        gfortran \
+        git \
+        jq \
+        libfreetype6-dev \
+        libharfbuzz-dev \
+        liblapack-dev \
+        liblbfgsb-dev \
+        libopenblas-dev \
+        openssh-client \
+        pkg-config \
+        util-linux \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global pnpm@10.12.1
+
+# MIP invokes the HiGHS executable. Build the same pinned release for amd64 and arm64.
+RUN curl \
+        --fail \
+        --location \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        "https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERSION}.tar.gz" \
+        -o /tmp/highs.tar.gz \
+    && echo "a840d269dff2fafb371dd247df13ad5e026d7ce3b35ad3dc1eedd59bf0c2fb16  /tmp/highs.tar.gz" \
+        | sha256sum -c - \
+    && tar -xzf /tmp/highs.tar.gz -C /tmp \
+    && cmake \
+        -S "/tmp/HiGHS-${HIGHS_VERSION}" \
+        -B /tmp/highs-build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+    && cmake --build /tmp/highs-build --parallel 2 --target highs-bin \
+    && install -m 0755 /tmp/highs-build/bin/highs /usr/local/bin/highs \
+    && rm -rf /tmp/highs.tar.gz /tmp/highs-build "/tmp/HiGHS-${HIGHS_VERSION}"
+
+RUN node --version \
+    && pnpm --version \
+    && ghc --version \
+    && cabal --version \
+    && highs --version \
+    && flock --version
+
+FROM toolchain AS development
+
+ARG TARGETARCH
+ARG GHC_VERSION=9.10.3
+ARG HLS_VERSION=2.14.0.0
+ARG HINDENT_VERSION=6.3.0
+ARG HLINT_VERSION=3.10
+ARG STYLISH_HASKELL_VERSION=0.15.1.0
+
+# Browser runtime libraries are development-only and let the checked-in
+# Playwright suite run immediately after a devcontainer rebuild.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-freefont-ttf \
+        fonts-ipafont-gothic \
+        fonts-liberation \
+        fonts-noto-color-emoji \
+        fonts-tlwg-loma-otf \
+        fonts-unifont \
+        fonts-wqy-zenhei \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libatspi2.0-0 \
+        libcairo2 \
+        libcups2 \
+        libdbus-1-3 \
+        libdrm2 \
+        libfontconfig1 \
+        libgbm1 \
+        libnspr4 \
+        libnss3 \
+        libpango-1.0-0 \
+        libx11-6 \
+        libxcb1 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxkbcommon0 \
+        libxrandr2 \
+        xfonts-scalable \
+        xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Editor-only HLS binaries are architecture-specific and remain outside production.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) \
+            hls_platform="x86_64-linux-deb12"; \
+            hls_sha256="b12e11da456637293db56e32fce8b6265b5a2c4bfa643a2bdc50c7c49260d5e2"; \
+            ;; \
+        arm64) \
+            hls_platform="aarch64-linux-ubuntu2204"; \
+            hls_sha256="7d2e9356487a802a2ccf903f570872c028fb91b1d34906629c3a0054a1f33daa"; \
+            ;; \
+        *) \
+            echo "Unsupported architecture: ${TARGETARCH}"; \
+            exit 1; \
+            ;; \
+    esac; \
+    hls_archive="haskell-language-server-${HLS_VERSION}-${hls_platform}.tar.xz"; \
+    curl \
+        --fail \
+        --location \
+        --retry 5 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        "https://github.com/haskell/haskell-language-server/releases/download/${HLS_VERSION}/${hls_archive}" \
+        -o /tmp/hls.tar.xz; \
+    echo "${hls_sha256}  /tmp/hls.tar.xz" | sha256sum -c -; \
+    mkdir -p /tmp/hls; \
+    tar -xJf /tmp/hls.tar.xz -C /tmp/hls; \
+    wrapper="$(find /tmp/hls -type f -name 'haskell-language-server-wrapper' -print -quit)"; \
+    server="$(find /tmp/hls -type f -name "haskell-language-server-${GHC_VERSION}" -print -quit)"; \
+    test -n "${wrapper}"; \
+    test -n "${server}"; \
+    install -m 0755 "${wrapper}" /usr/local/bin/haskell-language-server-wrapper; \
+    install -m 0755 "${server}" "/usr/local/bin/haskell-language-server-${GHC_VERSION}"; \
+    ln -sf "haskell-language-server-${GHC_VERSION}" /usr/local/bin/haskell-language-server; \
+    rm -rf /tmp/hls /tmp/hls.tar.xz
+
+RUN cabal update \
+    && cabal install \
+        "hindent-${HINDENT_VERSION}" \
+        "hlint-${HLINT_VERSION}" \
+        "stylish-haskell-${STYLISH_HASKELL_VERSION}" \
+        --installdir=/usr/local/bin \
+        --install-method=copy \
+        --overwrite-policy=always
+
+RUN haskell-language-server-wrapper --version \
+    && hindent --version \
+    && hlint --version \
+    && stylish-haskell --version
+
+# Resolve and build external compiler dependencies in an image layer keyed only
+# by Cabal metadata. The workspace bind mount hides image files under /workspaces,
+# so retain a seed beneath /opt for post-create to copy into the named volumes.
+WORKDIR /workspaces/phd-sverlin/compile
+
+COPY .devcontainer/cabal.config ../.devcontainer/cabal.config
+COPY compile/cabal.project compile/compile.cabal ./
+COPY compile/vendor/MIP-0.2.0.1/MIP.cabal ./vendor/MIP-0.2.0.1/MIP.cabal
+
+RUN mkdir -p \
+        ../.cache/cabal/packages \
+        ../.cache/cabal/logs \
+        ../.local/state/cabal/store \
+    && cabal --config-file=../.devcontainer/cabal.config update \
+    && cabal --config-file=../.devcontainer/cabal.config build \
+        -v0 \
+        --jobs=1 \
+        --only-dependencies \
+        all \
+    && mkdir -p /opt/sverlin-cabal-seed/cache /opt/sverlin-cabal-seed/state \
+    && cp -a ../.cache/cabal/. /opt/sverlin-cabal-seed/cache/ \
+    && cp -a ../.local/state/cabal/. /opt/sverlin-cabal-seed/state/ \
+    && rm -rf ../.cache/cabal ../.local/state/cabal
+
+WORKDIR /workspaces/phd-sverlin
+
+FROM toolchain AS build
+
+WORKDIR /workspaces/phd-sverlin
+
+ENV CABAL_DIR=/workspaces/phd-sverlin/.cache/cabal \
+    CABAL_CONFIG=/workspaces/phd-sverlin/.devcontainer/cabal.config \
+    XDG_CACHE_HOME=/workspaces/phd-sverlin/.cache \
+    XDG_STATE_HOME=/workspaces/phd-sverlin/.local/state
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+RUN mkdir -p \
+        outputs \
+        .cache/cabal/packages \
+        .cache/cabal/logs \
+        .local/state/cabal/store \
+    && node scripts/run-cabal.mjs update \
+    && pnpm run build
+
+RUN prepared_binary="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('.cache/sverlin/compiler.json','utf8')).binaryPath)")" \
+    && install -m 0755 "${prepared_binary}" /tmp/sverlin-compile
+
+FROM build AS verification
+
+RUN pnpm run check \
+    && pnpm run lint \
+    && pnpm run test:unit -- --run \
+    && pnpm run test:examples
+
+FROM toolchain AS production-dependencies
+
+WORKDIR /workspaces/phd-sverlin
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+
+FROM toolchain AS runtime
+
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000 \
+    BODY_SIZE_LIMIT=20M \
+    SHUTDOWN_TIMEOUT=30 \
+    PROTOCOL_HEADER=x-forwarded-proto \
+    HOST_HEADER=x-forwarded-host \
+    SVERLIN_PROJECT_STORE=postgres \
+    SVERLIN_DISABLE_PREFETCH=true \
+    SVERLIN_SCRATCH_DIR=/tmp/sverlin \
+    CABAL_DIR=/workspaces/phd-sverlin/.cache/cabal \
+    CABAL_CONFIG=/workspaces/phd-sverlin/.devcontainer/cabal.config \
+    XDG_CACHE_HOME=/workspaces/phd-sverlin/.cache \
+    XDG_STATE_HOME=/workspaces/phd-sverlin/.local/state
+
+WORKDIR /workspaces/phd-sverlin
+
+RUN useradd --create-home --uid 10001 sverlin \
+    && mkdir -p /tmp/sverlin outputs .cache .local/state \
+    && chown -R sverlin:sverlin /tmp/sverlin outputs .cache .local
+
+COPY --from=production-dependencies --chown=sverlin:sverlin /workspaces/phd-sverlin/node_modules ./node_modules
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build ./build
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-migrate ./build-migrate
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-worker ./build-worker
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile ./compile
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/examples ./examples
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/drizzle ./drizzle
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/.cache/sverlin ./.cache/sverlin
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/.local/state/cabal ./.local/state/cabal
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/.devcontainer/cabal.config ./.devcontainer/cabal.config
+COPY --chown=sverlin:sverlin package.json ./package.json
+
+USER sverlin
+
+EXPOSE 3000
+
+CMD ["node", "build"]

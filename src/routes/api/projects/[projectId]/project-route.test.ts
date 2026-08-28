@@ -46,7 +46,7 @@ describe('project JSON API', () => {
       expectedHead: 4,
       title: 'Renamed'
     });
-    expect(mocks.loadProjectResource).toHaveBeenCalledWith('project-test');
+    expect(mocks.loadProjectResource).toHaveBeenCalledWith('project-test', 'user-test');
   });
 
   it('returns structured client and conflict errors', async () => {
@@ -89,6 +89,7 @@ describe('project JSON API', () => {
 function request(method: string, body: unknown) {
   const url = new URL('http://localhost/api/projects/project-test');
   return {
+    locals: testLocals(),
     params: { projectId: 'project-test' },
     url,
     request: new Request(url, {
@@ -97,4 +98,17 @@ function request(method: string, body: unknown) {
       body: JSON.stringify(body)
     })
   } as never;
+}
+
+function testLocals() {
+  return {
+    principal: {
+      kind: 'participant',
+      user: { id: 'user-test' },
+      session: {},
+      participant: {
+        participantId: 'P001'
+      }
+    }
+  };
 }

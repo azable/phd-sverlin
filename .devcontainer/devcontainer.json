@@ -1,33 +1,38 @@
 {
   "name": "Sverlin",
 
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
+  "dockerComposeFile": "../compose.yaml",
+  "service": "workspace",
+  "workspaceFolder": "/workspaces/phd-sverlin",
 
   "remoteUser": "root",
-
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "24",
-      "pnpmVersion": "10.12.1"
-    }
-  },
-
-  "runArgs": ["--security-opt=seccomp=unconfined"],
 
   "containerEnv": {
     "CABAL_DIR": "${containerWorkspaceFolder}/.cache/cabal",
     "CABAL_CONFIG": "${containerWorkspaceFolder}/.devcontainer/cabal.config",
     "XDG_CACHE_HOME": "${containerWorkspaceFolder}/.cache",
-    "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state"
+    "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state",
+    "SVERLIN_SCRATCH_DIR": "/tmp/sverlin",
+    "SVERLIN_STATE_DIR": "/var/data"
   },
 
   "remoteEnv": {
     "SVERLIN_COMPILE_TIMEOUT_MS": "300000"
   },
 
+  "features": {
+    "ghcr.io/dirien/devcontainer-feature-codex/codex:0": {}
+  },
+
   "forwardPorts": [5173],
+
+  "portsAttributes": {
+    "5173": {
+      "label": "Sverlin development server",
+      "onAutoForward": "notify",
+      "requireLocalPort": true
+    }
+  },
 
   "customizations": {
     "vscode": {
@@ -77,11 +82,9 @@
   },
 
   "mounts": [
-    "source=${devcontainerId}-cabal-cache,target=${containerWorkspaceFolder}/.cache/cabal,type=volume",
-    "source=${devcontainerId}-cabal-state,target=${containerWorkspaceFolder}/.local/state/cabal,type=volume",
     "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly",
     "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind,readonly"
   ],
 
-  "postCreateCommand": "npm install -g @openai/codex@latest && pnpm install --frozen-lockfile && mkdir -p outputs .cache/cabal/packages .cache/cabal/logs .local/state/cabal/store && node scripts/run-cabal.mjs update && pnpm run prepare:compiler"
+  "postCreateCommand": "pnpm install --frozen-lockfile && mkdir -p outputs /tmp/sverlin .cache/cabal/packages .cache/cabal/logs .local/state/cabal/store && cp -a /opt/sverlin-cabal-seed/cache/. .cache/cabal/ && cp -a /opt/sverlin-cabal-seed/state/. .local/state/cabal/ && pnpm run db:migrate"
 }

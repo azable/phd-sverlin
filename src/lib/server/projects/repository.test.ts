@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -32,6 +32,20 @@ describe('FileProjectRepository', () => {
       projectId: 'repository-test',
       eventCount: 1
     });
+  });
+
+  it('cleans abandoned staging directories and skips incomplete project entries', async () => {
+    const repository = await temporaryRepository();
+    const root = temporaryRoots.at(-1)!;
+    await mkdir(path.join(root, '.abandoned.tmp'));
+    await mkdir(path.join(root, 'incomplete-project'));
+    await writeFile(path.join(root, 'incomplete-project', 'project.json'), '{not-json');
+
+    await repository.initialize();
+    await repository.create(rootDocument());
+
+    expect(await repository.list()).toHaveLength(1);
+    await expect(pathExists(path.join(root, '.abandoned.tmp'))).resolves.toBe(false);
   });
 
   it('assigns numeric IDs, publishes only durable appends, and rejects a stale head', async () => {
@@ -79,6 +93,16 @@ describe('FileProjectRepository', () => {
     ).rejects.toThrow('unexpected byte length');
   });
 });
+
+async function pathExists(destination: string) {
+  try {
+    await readdir(destination);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
 
 async function temporaryRepository() {
   const root = await mkdtemp(path.join(tmpdir(), 'sverlin-project-repository-'));

@@ -1,5 +1,6 @@
 /** Validated, server-owned source starters for project creation. */
 
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import * as v from 'valibot';
 
@@ -25,13 +26,14 @@ const catalogSchema = v.strictObject({
   templates: v.pipe(v.array(exampleSchema), v.minLength(1))
 });
 
-const sourceModules = import.meta.glob('../../../../examples/*.sverlin', {
-  eager: true,
-  import: 'default',
-  query: '?raw'
-}) as Record<string, string>;
+const examplesDirectory = path.resolve(
+  process.env.SVERLIN_REPOSITORY_ROOT?.trim() || process.cwd(),
+  'examples'
+);
 const sourcesByFile = new Map(
-  Object.entries(sourceModules).map(([modulePath, source]) => [path.basename(modulePath), source])
+  readdirSync(examplesDirectory)
+    .filter((fileName) => fileName.endsWith('.sverlin'))
+    .map((fileName) => [fileName, readFileSync(path.join(examplesDirectory, fileName), 'utf8')])
 );
 const parsedCatalog = v.safeParse(catalogSchema, catalogValue);
 if (!parsedCatalog.success) {

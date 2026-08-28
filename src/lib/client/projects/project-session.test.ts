@@ -14,37 +14,9 @@ const externalOperationId = '22345678-1234-4234-8234-123456789abc';
 const sessions: ProjectSession[] = [];
 let fetchMock: ReturnType<typeof vi.fn>;
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-
-  readonly close = vi.fn();
-  readonly url: string;
-  readonly #listeners = new Map<string, Set<(event: Event) => void>>();
-
-  constructor(url: string | URL) {
-    this.url = String(url);
-    FakeEventSource.instances.push(this);
-  }
-
-  addEventListener(type: string, listener: EventListener): void {
-    const listeners = this.#listeners.get(type) ?? new Set();
-    listeners.add(listener);
-    this.#listeners.set(type, listeners);
-  }
-
-  emit(type: string, event?: ProjectEvent): void {
-    const message = event
-      ? ({ data: JSON.stringify(event) } as MessageEvent<string>)
-      : (new Event(type) as MessageEvent<string>);
-    for (const listener of this.#listeners.get(type) ?? []) listener(message);
-  }
-}
-
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
-  vi.stubGlobal('EventSource', FakeEventSource);
-  FakeEventSource.instances = [];
   navigation.goto.mockReset();
 });
 
@@ -54,7 +26,7 @@ afterEach(() => {
 });
 
 describe('ProjectSession', () => {
-  it('installs a command resource without navigating, reloading, or reconnecting', async () => {
+  it('installs a synchronous command resource without navigating or reconnecting', async () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, operationId, 'Initial', 'Renamed');
     const resulting = projectResource([...initial.document.events, renamed], 'Renamed');
@@ -65,7 +37,6 @@ describe('ProjectSession', () => {
 
     const session = createSession();
     await session.open();
-    const source = FakeEventSource.instances[0];
 
     await expect(session.runCommand({ type: 'rename', title: 'Renamed' })).resolves.toBe(true);
 
@@ -73,21 +44,21 @@ describe('ProjectSession', () => {
     expect(session.head).toBe(2);
     expect(session.atHead).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(FakeEventSource.instances).toEqual([source]);
     expect(navigation.goto).not.toHaveBeenCalled();
   });
 
-  it('follows streamed events at the head while keeping local history pinned', async () => {
+  it('follows polled events at the head while keeping local history pinned', async () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const responseEvent = assistantEvent(2);
     fetchMock
       .mockResolvedValueOnce(maintenanceResponse(false))
-      .mockResolvedValueOnce(response(initial));
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(eventResponse([responseEvent]));
 
     const session = createSession();
     await session.open();
     const previousResource = session.resource;
-    FakeEventSource.instances[0].emit('project-event', responseEvent);
+    await pollEvents(session);
 
     expect(session.resource).not.toBe(previousResource);
     expect(session.events).toHaveLength(2);
@@ -96,17 +67,16 @@ describe('ProjectSession', () => {
 
     session.select(1);
     expect(session.atHead).toBe(false);
-    FakeEventSource.instances[0].emit(
-      'project-event',
-      renamedEvent(3, externalOperationId, 'Initial', 'External')
+    fetchMock.mockResolvedValueOnce(
+      eventResponse([renamedEvent(3, externalOperationId, 'Initial', 'External')])
     );
+    await pollEvents(session);
 
     expect(session.events).toHaveLength(3);
     expect(session.snapshot.at).toBe(1);
     expect(session.snapshot.title).toBe('Initial');
     expect(session.atHead).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('projects external state-changing events without hydration fetches', async () => {
@@ -114,21 +84,22 @@ describe('ProjectSession', () => {
     const renamed = renamedEvent(2, externalOperationId, 'Initial', 'External');
     fetchMock
       .mockResolvedValueOnce(maintenanceResponse(false))
-      .mockResolvedValueOnce(response(initial));
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(eventResponse([renamed]));
 
     const session = createSession();
     await session.open();
-    FakeEventSource.instances[0].emit('project-event', renamed);
+    await pollEvents(session);
 
     expect(session.snapshot.title).toBe('External');
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('creates a project from an explicit template and preserves Dev detail', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ projectId: 'dev-project' }), {
-        status: 201,
+      new Response(JSON.stringify({ projectId: 'dev-project', jobId: 'initial-job' }), {
+        status: 202,
         headers: { 'content-type': 'application/json' }
       })
     );
@@ -141,7 +112,7 @@ describe('ProjectSession', () => {
     expect(JSON.parse(String(request[1].body))).toEqual({
       templateId: 'linear-search'
     });
-    expect(navigation.goto).toHaveBeenCalledWith('/projects/dev-project?dev=1');
+    expect(navigation.goto).toHaveBeenCalledWith('/projects/dev-project?dev=1&job=initial-job');
     expect(session.creating).toBe(false);
   });
 
@@ -198,6 +169,20 @@ function maintenanceResponse(locked: boolean): Response {
     ),
     { headers: { 'content-type': 'application/json' } }
   );
+}
+
+function eventResponse(events: ProjectEvent[]): Response {
+  return new Response(JSON.stringify({ events }), {
+    headers: { 'content-type': 'application/json' }
+  });
+}
+
+function pollEvents(session: ProjectSession): Promise<void> {
+  return (
+    session as unknown as {
+      pollEvents(): Promise<void>;
+    }
+  ).pollEvents();
 }
 
 function projectResource(events: ProjectEvent[], title: string): ProjectResource {

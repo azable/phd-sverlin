@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Visualization } from '$lib/shared/visualization';
 
-import { compileCommand, readCompileBundle, runCompile } from './compile';
+import { compileCommand, compilerLockCommand, readCompileBundle, runCompile } from './compile';
 
 const temporaryRoots: string[] = [];
 
@@ -92,6 +92,29 @@ describe('compileSource', () => {
         'Main.sverlin'
       ])
     );
+  });
+
+  it('uses the portable flock argument form without a command separator', () => {
+    const command = compilerLockCommand('/tmp/compile-app', ['--seed', '1'], '/tmp/compiler.lock');
+
+    if (process.platform === 'win32') {
+      expect(command).toEqual({ command: '/tmp/compile-app', args: ['--seed', '1'] });
+      return;
+    }
+    expect(command).toEqual({
+      command: 'flock',
+      args: [
+        '--shared',
+        '--nonblock',
+        '--no-fork',
+        '--conflict-exit-code',
+        '75',
+        '/tmp/compiler.lock',
+        '/tmp/compile-app',
+        '--seed',
+        '1'
+      ]
+    });
   });
 
   it('accepts only manifest attachments matching the IR, path, size, and digest', async () => {

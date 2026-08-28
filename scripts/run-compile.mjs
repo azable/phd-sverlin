@@ -2,15 +2,37 @@
 
 import { spawn } from 'node:child_process';
 import { writeSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createCompileOutput } from '../src/lib/server/compiler/workspace-output.js';
 import {
+  compilerWorkspaceLockPath,
   CompilerNotReadyError,
   preparedCompilerEnvironment,
   readPreparedCompiler
 } from '../src/lib/server/compiler/prepared-compiler.js';
 import { compileRoot, repositoryRoot as repoRoot } from './compiler-environment.mjs';
+
+if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_SHARED_LOCK_HELD !== '1') {
+  const lockPath = compilerWorkspaceLockPath();
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  const locked = await runCompile(
+    'flock',
+    [
+      '--shared',
+      '--no-fork',
+      lockPath,
+      process.execPath,
+      fileURLToPath(import.meta.url),
+      ...process.argv.slice(2)
+    ],
+    repoRoot,
+    { ...process.env, SVERLIN_COMPILER_SHARED_LOCK_HELD: '1' }
+  );
+  process.exit(locked.exitCode ?? signalExitCode(locked.signal));
+}
 
 let userArgs = dropLeadingSeparator(process.argv.slice(2));
 const seed = readPositiveIntFlag(userArgs, '--seed') ?? undefined;

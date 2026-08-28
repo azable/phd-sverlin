@@ -4,6 +4,8 @@
   import { onMount, untrack } from 'svelte';
 
   import PencilIcon from '@lucide/svelte/icons/pencil';
+  import LogOutIcon from '@lucide/svelte/icons/log-out';
+  import SettingsIcon from '@lucide/svelte/icons/settings';
 
   import * as Alert from '$lib/client/components/ui/alert';
   import { Badge } from '$lib/client/components/ui/badge';
@@ -36,11 +38,22 @@
   type Props = {
     projectId: string;
     templates: ProjectTemplateSummary[];
+    authEnabled?: boolean;
+    isAdmin?: boolean;
+    initialJobId?: string;
     at?: EventId;
     devMode?: boolean;
   };
 
-  let { projectId, templates, at, devMode = false }: Props = $props();
+  let {
+    projectId,
+    templates,
+    authEnabled = false,
+    isAdmin = false,
+    initialJobId,
+    at,
+    devMode = false
+  }: Props = $props();
 
   // The parent keys this component by projectId, so this is intentionally instance-scoped.
   // svelte-ignore state_referenced_locally
@@ -85,7 +98,7 @@
   });
 
   onMount(() => {
-    void session.open();
+    void session.open().then(() => (initialJobId ? session.resumeJob(initialJobId) : undefined));
     return () => session.dispose();
   });
 
@@ -238,6 +251,23 @@
                 />
                 <Label for="dev-mode" class="text-xs">Dev mode</Label>
               </div>
+              {#if authEnabled}
+                {#if isAdmin}
+                  <Button
+                    href={resolve('/admin')}
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Administration"
+                  >
+                    <SettingsIcon />
+                  </Button>
+                {/if}
+                <form method="POST" action={resolve('/logout')}>
+                  <Button type="submit" size="icon-sm" variant="ghost" aria-label="Sign out">
+                    <LogOutIcon />
+                  </Button>
+                </form>
+              {/if}
             </Tabs.List>
             <Tabs.Content value="timeline" class="flex min-h-0 flex-1 flex-col">
               {#if devMode}

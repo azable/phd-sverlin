@@ -16,7 +16,8 @@ describe('project creation API', () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toEqual({ projectId: 'project-created' });
     expect(mocks.createProject).toHaveBeenCalledWith({
-      creation: { templateId: 'linear-search' }
+      creation: { templateId: 'linear-search' },
+      ownerUserId: 'user-test'
     });
   });
 
@@ -25,7 +26,10 @@ describe('project creation API', () => {
     const response = await POST(request());
 
     expect(response.status).toBe(201);
-    expect(mocks.createProject).toHaveBeenCalledWith({ creation: { templateId: 'blank' } });
+    expect(mocks.createProject).toHaveBeenCalledWith({
+      creation: { templateId: 'blank' },
+      ownerUserId: 'user-test'
+    });
   });
 
   it('rejects malformed and legacy mode requests before project creation', async () => {
@@ -55,6 +59,7 @@ describe('project creation API', () => {
 function request(body?: unknown) {
   const url = new URL('http://localhost/api/projects');
   return {
+    locals: testLocals(),
     request: new Request(url, {
       method: 'POST',
       ...(body === undefined
@@ -65,4 +70,17 @@ function request(body?: unknown) {
           })
     })
   } as never;
+}
+
+function testLocals() {
+  return {
+    principal: {
+      kind: 'participant',
+      user: { id: 'user-test' },
+      session: {},
+      participant: {
+        participantId: 'P001'
+      }
+    }
+  };
 }

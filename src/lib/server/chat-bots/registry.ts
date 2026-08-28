@@ -4,8 +4,6 @@
  * @packageDocumentation
  */
 
-import { env } from '$env/dynamic/private';
-
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
@@ -51,7 +49,7 @@ const configuredChatbots: Record<string, Chatbot<AiProjectContext>> = {
 
 /** Return the chatbot selected by server configuration. */
 export function getChatbot(): Chatbot<AiProjectContext> {
-  const configured = env.CHATBOT_CONFIG?.trim() || aiAssistantBot.id;
+  const configured = process.env.CHATBOT_CONFIG?.trim() || aiAssistantBot.id;
   const chatbot = configuredChatbots[configured];
 
   if (!chatbot) {

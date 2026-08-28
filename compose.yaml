@@ -1,0 +1,52 @@
+services:
+  workspace:
+    build:
+      context: .
+      target: development
+    command: sleep infinity
+    init: true
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/sverlin
+      BETTER_AUTH_URL: http://localhost:5173
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-development-only-secret-at-least-32-bytes}
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:5173
+      SVERLIN_ADMIN_SETUP_TOKEN: ${SVERLIN_ADMIN_SETUP_TOKEN:-development-setup-token}
+      SVERLIN_PROJECT_STORE: postgres
+      SVERLIN_STATE_DIR: /var/data
+      SVERLIN_SCRATCH_DIR: /tmp/sverlin
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - .:/workspaces/phd-sverlin
+      - cabal-cache:/workspaces/phd-sverlin/.cache/cabal
+      - cabal-state:/workspaces/phd-sverlin/.local/state/cabal
+      - sverlin-state:/var/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sverlin
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d sverlin']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  cabal-cache:
+  cabal-state:
+  postgres-data:
+  sverlin-state:

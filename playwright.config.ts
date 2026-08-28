@@ -21,14 +21,17 @@ export default defineConfig({
   },
   webServer: {
     command:
-      'pnpm run prepare:compiler && pnpm exec vite dev --host 127.0.0.1 --port 4173 --strictPort',
+      'pnpm run prepare:compiler && node scripts/run-with-state-lock.mjs node node_modules/vite/bin/vite.js dev --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173/projects/__ready__',
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     reuseExistingServer: false,
     timeout: 180_000,
     env: {
-      SVERLIN_PROJECT_DIR: path.join(outputRoot, 'projects'),
-      SVERLIN_OUTPUT_DIR: path.join(outputRoot, 'compiler'),
-      SVERLIN_APP_LOCK_PATH: path.join(outputRoot, 'app-lock.json')
+      SVERLIN_STATE_DIR: path.join(outputRoot, 'state'),
+      SVERLIN_SCRATCH_DIR: path.join(outputRoot, 'compiler'),
+      SVERLIN_APP_LOCK_PATH: path.join(outputRoot, 'app-lock.json'),
+      SVERLIN_E2E_AUTH_BYPASS: 'true',
+      SVERLIN_PROJECT_STORE: 'file'
     }
   }
 });

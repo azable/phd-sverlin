@@ -105,6 +105,219 @@ flowchart TD
     O --> P[Record immutable compilation and render events]
 ```
 
+### High-level code path
+
+The following shortened excerpts show how the boxes above connect in the
+current implementation. They omit validation branches and event payload fields,
+but retain the real function and data flow.
+
+#### Browser: submit a project command
+
+The visualization toolbar ultimately calls `ProjectSession.runCommand`. The
+browser sends the command together with a new operation ID and the Timeline head
+it expects to update. When the request completes, it replaces its local resource
+with the complete server-validated response.
+
+```ts
+// src/lib/client/projects/project-session.svelte.ts
+async runCommand(input: ProjectCommandInput): Promise<boolean> {
+  const operationId = crypto.randomUUID();
+
+  const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      ...input,
+      operationId,
+      expectedHead: this.head
+    })
+  });
+
+  this.#resource = parseProjectResource(await response.json());
+  return true;
+}
+
+// One caller: regenerate the current visualization with a selected seed.
+await session.runCommand({ type: 'render', seed });
+```
+
+#### SvelteKit route: validate and dispatch
+
+The route parses the discriminated command, dispatches it to the corresponding
+project operation, waits for that operation to finish, and returns the complete
+project resource rather than a second partial representation.
+
+```ts
+// src/routes/api/projects/[projectId]/+server.ts
+export const POST: RequestHandler = async ({ params, request }) => {
+  const command = parseProjectCommand(await request.json());
+  await runCommand(params.projectId, command);
+  return json(await loadProjectResource(params.projectId));
+};
+
+function runCommand(projectId: string, command: ProjectCommand) {
+  const common = {
+    projectId,
+    expectedHead: command.expectedHead,
+    operationId: command.operationId
+  };
+
+  switch (command.type) {
+    case 'render':
+      return renderProject({ ...common, seed: command.seed });
+    case 'save':
+      return updateProjectArtifact({
+        ...common,
+        artifactId: command.artifactId,
+        source: command.source,
+        seed: command.seed
+      });
+    // rename, feedback, and restore follow the same boundary.
+  }
+}
+```
+
+#### Project service: snapshot, record, and compile
+
+The service derives the current source from the immutable Timeline. It records
+`compilation.requested` before invoking the compiler, records either success or
+failure afterward, and only activates a render after successful compilation.
+
+```ts
+// src/lib/server/projects/service.ts
+async function renderDocument(document, seed, purpose, operationId) {
+  const snapshot = projectSnapshotAt(document);
+  const artifact = snapshot.artifacts[snapshot.entryArtifactId];
+
+  const recorded = await compileProjectSource({
+    document,
+    sourceContent: artifact.content.text,
+    source: artifact.content,
+    sourceLabel: artifact.path,
+    seed,
+    purpose,
+    input: 'committed-artifact',
+    operationId
+  });
+
+  return recorded.result.ok ? activateCompiledRender(recorded) : recorded.document;
+}
+
+export async function compileProjectSource(options) {
+  const request = draftEvent<'compilation.requested'>({
+    type: 'compilation.requested',
+    actor: { kind: 'system' },
+    operationId: options.operationId,
+    payload: {
+      purpose: options.purpose,
+      input: options.input,
+      source: options.source,
+      sourceLabel: options.sourceLabel,
+      seed: options.seed
+    }
+  });
+  const document = await appendProjectEvents(options.document, [request]);
+
+  const result = await compileSource({
+    sourceContent: options.sourceContent,
+    sourceLabel: options.sourceLabel,
+    seed: options.seed,
+    owner: 'project'
+  });
+
+  return recordCompileResult({ ...options, document, result });
+}
+```
+
+#### Compiler boundary: isolated source to validated visualization
+
+`compileSource` writes the exact source snapshot, refuses a missing or stale
+prepared compiler, runs the recorded binary, then validates the resulting JSON
+and package attachments before returning success.
+
+```ts
+// src/lib/server/compiler/compile.ts
+export async function compileSource({ sourceContent, sourceLabel, seed, owner }) {
+  const { outputDir, outputPath } = await createCompileOutput({ owner, seed });
+  const sourcePath = path.join(outputDir, 'source', 'Main.sverlin');
+  await writeFile(sourcePath, sourceContent, 'utf8');
+
+  const prepared = await readPreparedCompiler();
+  const { command, args } = compileCommand(
+    prepared.binaryPath,
+    seed,
+    outputPath,
+    sourcePath,
+    sourceLabel
+  );
+
+  const debug = await runCompile(command, args, process.cwd(), readCompileTimeoutMs(), {
+    env: preparedCompilerEnvironment(prepared)
+  });
+  const compiledJson = await readFile(outputPath, 'utf8');
+  const visualization = decodeVisualization(compiledJson);
+  const bundle = await readCompileBundle(outputPath, compiledJson, visualization);
+
+  return {
+    ok: true,
+    visualization,
+    resources: bundle.resources,
+    provenance: bundle.provenance,
+    targetDiagnostics: bundle.targetDiagnostics,
+    debug
+  };
+}
+```
+
+The binary represented by `command` performs the Haskell half of the flowchart:
+body-only source generation, Hint/GHC loading, linear-trace execution, CSP
+solving, typography, IR materialization, and package writing.
+
+#### Browser return path: live events and final rendering
+
+Committed stages are visible before the command response through the project's
+server-sent event stream. The final HTTP response remains authoritative. Once a
+new active render is present, the workspace decodes it, loads it into the
+player, and passes the current materialized elements to the SVG viewport.
+
+```ts
+// src/lib/client/projects/project-session.svelte.ts
+const source = new EventSource(
+  `/api/projects/${encodeURIComponent(this.projectId)}/events?after=${this.head}`
+);
+
+source.addEventListener('project-event', (message) => {
+  this.ingest(
+    normalizeProjectEventV1(JSON.parse((message as MessageEvent<string>).data))
+  );
+});
+
+get visualization(): Visualization | undefined {
+  const render = this.#resource ? this.snapshot.activeRender : undefined;
+  return render ? decodeVisualization(render.payload.render.text) : undefined;
+}
+```
+
+```svelte
+<!-- src/lib/client/projects/ProjectWorkspace.svelte -->
+<script lang="ts">
+  $effect(() => {
+    const visualization = session.visualization;
+    if (visualization) {
+      player.setVisualization(visualization, { initialStep: 0 });
+    }
+  });
+</script>
+
+<VisualizationViewport
+  elements={player.elements}
+  root={player.canvasRoot!}
+  width={player.canvasWidth}
+  height={player.canvasHeight}
+  resourceBaseUrl={`/api/projects/${encodeURIComponent(session.projectId)}/resources`}
+/>
+```
+
 ### 1. Project command and source snapshot
 
 `src/lib/server/projects/service.ts` obtains the current entry artifact from the
@@ -234,6 +447,13 @@ its payload through a one-use wrapper; arbitrary computation after that point
 is not automatically represented as a trace operation. That limitation should
 remain explicit rather than being hidden behind stronger claims.
 
+- TODO rather than `Choreography`, the exposed trace monad should be `Program`,
+  probably with a refactored internal structure to remove the current `Choreography`
+  module or replace it.
+- TODO what is involved in removing `use` or restricting it? does the current
+  pattern encourage arbitrary `create` after `use`?
+- TODO more comprehensive domain model to restrict `create` ?
+
 ### 5. Semantic-to-visual projection
 
 Materialization attaches facts to immutable snapshots. Visual rules query those
@@ -285,6 +505,12 @@ Typography is deliberately a compiler phase rather than browser guesswork:
 This two-solve path is real work, not duplicate decoration logic. Removing it
 in the later refactor materially reduced output quality.
 
+- TODO could text width/height be expressed as linear/affine constraints directly,
+  thus allowing for solving in one pass?
+- TODO it would make sense that a node with text has pre-defined minimum and
+  width and height based on affine text width/height constraints. is this the
+  ideal model?
+
 ### 7. IR, resources, and Svelte validation
 
 `LinearTrace.Visualization.Compile` turns the solved graph and typography output
@@ -305,6 +531,11 @@ resource descriptors, manifest, and bytes before a successful compilation can
 be activated. A failure is recorded as `compilation.failed`; a success is
 recorded as `compilation.succeeded` and only then promoted through
 `visualization.rendered`.
+
+- TODO how do content-addressed attachments work? why are these separated?
+  what is their purpose?
+- TODO how is the IR currently documented for consumer services, e.g. the front end?
+  is the structure of the IR clearly documented and/or automatically generatable?
 
 ## Interface inventory
 
@@ -401,6 +632,11 @@ is not. No current authoring guide or end-to-end example explains it.
 `View.Template` and the matching/build path. There is no remaining parallel
 Patch module to delete.
 
+- TODO how are style profiles currently defined? how does one add a profile
+  and configure it?
+- TODO double check removal of patch did not negatively affect automatic
+  animatable transitions for blocks with shared lineages
+
 ### Visualization modules
 
 | Module                                    | What it does                                                               | Used by                                | Assessment                                                                                                   |
@@ -458,6 +694,18 @@ coexist with numeric instances; several direct comparison operators and domain
 accessors have no external consumer. These should be audited as a solver API
 task, not deleted during the author-facade split.
 
+- TODO create a unified solver API deprecating old APIs; as part of this,
+  we need to check whether there are legacy operators in other layers, and decide
+  which operators are available to .sverlin defs
+- TODO need to confirm solver architecture. my understanding is that DesignSpace
+  solves non-convex constaints to produce an affine constraint system. this can
+  then be solved linearly? in theory, would it be possible to encode affine
+  constraints in the DSL with valid domains for variables such that a front-end
+  is able to visualise these, e.g. a "gap" variable between pairs of elements
+  can all render to a red line between those?
+- TODO are there current examples of non-affine constraints, or possible examples
+  that can test the soft constraint layer?
+
 ### Executables, generators, tests, and fixtures
 
 | Module                                  | What it does                                                                                            | Assessment                                                                                                  |
@@ -472,6 +720,9 @@ task, not deleted during the author-facade split.
 | `Choreography.TestFixtures`             | Rich direct-Haskell trace/view fixtures                                                                 | Keep, but do not treat them as author-source coverage.                                                      |
 | `SolverTest.hs`                         | 96 solver, trace, view, style, and typography tests                                                     | Strong internal coverage; currently oversized but coherent enough for the baseline.                         |
 | `SverlinSourceTest.hs`                  | Checks generated source text and boundary placement                                                     | Expand: it currently has two string-level tests and does not compile all examples.                          |
+
+- TODO remove app and make the Sverlin module the main entry point?
+- TODO move SolverTest to solver module? best practice for haskell testing?
 
 ## Current author facade evaluation
 
@@ -508,18 +759,33 @@ Only the empty Minimal program is a checked-in example. Functions such as
 `encourage`, bridge operators, several style domains, and much of the box model
 have no checked-in source example. That is a test gap, not a deletion list.
 
+- TODO methodically go through APIs to ensure nothing that is deprecated isn't
+  being erroneously tracked via old tests
+- TODO with the Sverlin module being the main entrypoint, there should be a single
+  facade/API boundary that clearly defines what is available in a .sverlin
+  source file, with the ability to generate docs from comments (or whatever
+  is best practice); this can then serve as a guide to determine internals that
+  might be deletable
+
 ### Known incomplete or confusing surface
 
 1. **Host operations in the author index.** `buildViewGraph`, solve functions,
    statistics, and runners are implementation plumbing.
 2. **Incomplete Slot/observe lifecycle.** Result types are public without their
    operations.
+   - TODO what does this mean exactly?
 3. **Overloaded operations.** `node`, `select`, `left`, `top`, `width`,
    `height`, `center`, numeric literals, arithmetic, style assignment, and
    bridge operators rely on classes whose names leak into error messages.
+   - TODO let's aim to unify the .sverlin interface as discussed, hopefully
+     addressing this in the process
 4. **Rebindable conditional syntax.** Ordinary Haskell `if` desugars to
    `ifThenElse`, which is not supplied. Later work correctly documented that
    linear branches should use `case`; the current guide and source tests do not.
+   - TODO very important - I want to avoid case as this leads to deeply nested
+     code. if .sverlin was templated/transformed, could this be mitigated? the idea
+     is to create an actual restricted DSL here, not allow all arbitrary Haskell
+     code to be executed, so perhaps some preliminary parsing makes sense?
 5. **Generated signature noise.** The index prints
    `ghc-internal:GHC.Internal.Maybe.Maybe` for `styleCase` and refers to private
    support constraints without explaining them.
@@ -549,6 +815,10 @@ coverage over readability.
 The correct fix is first to narrow the facade, then improve normalization. A
 more elaborate documentation generator cannot make a mixed interface simple.
 
+- TODO agree, see comment earlier about Sverlin module; this is where the interface
+  should be defined, as well as be the place where docs are generated from.
+  all other modules shouldn't be accessible in .sverlin files
+
 ### Haskell IR to TypeScript
 
 `visualization-types` uses Template Haskell to recursively inspect
@@ -573,6 +843,8 @@ of the schema can drift even while the generated TypeScript file is current.
 An eventual generator should either emit the structural runtime schema or emit
 machine-readable metadata that the handwritten invariant layer composes with.
 The invariant checks themselves should remain handwritten and readable.
+
+- TODO need more detail on "The risk is that the structural half of the schema can drift even while the generated TypeScript file is current. " -- what do you mean by this?
 
 ### Manifest boundary
 
