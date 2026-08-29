@@ -10,7 +10,7 @@ import {
   compilerSourceFingerprint,
   writePreparedCompiler
 } from '../src/lib/server/compiler/prepared-compiler.js';
-import { cabalConfig, cabalEnvironment, compileRoot } from './compiler-environment.mjs';
+import { compileRoot, stackEnvironment } from './stack-environment.mjs';
 
 if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_LOCK_HELD !== '1') {
   const lockPath = compilerWorkspaceLockPath();
@@ -28,31 +28,25 @@ if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_LOCK_HELD !== '
 }
 
 const beforeBuild = await compilerSourceFingerprint();
-const common = [`--config-file=${cabalConfig}`];
-const build = await run('cabal', [...common, 'build', '-v0', '--jobs=1', 'compile-app'], {
+const build = await run('stack', ['build', 'compile:compile-app', '--jobs=1'], {
   captureStdout: false
 });
 if (build.exitCode !== 0) process.exit(build.exitCode);
 
-const listed = await run('cabal', [...common, 'list-bin', '-v0', 'compile-app'], {
+const installRoot = await run('stack', ['path', '--local-install-root'], {
   captureStdout: true
 });
-if (listed.exitCode !== 0) process.exit(listed.exitCode);
+if (installRoot.exitCode !== 0) process.exit(installRoot.exitCode);
 
-const binaryPath = listed.stdout.trim();
-const ghcEnvironment = await run(
-  'cabal',
-  [...common, 'exec', '-v0', '--', 'bash', '-c', 'cat "$GHC_ENVIRONMENT"'],
-  { captureStdout: true }
-);
-if (ghcEnvironment.exitCode !== 0) process.exit(ghcEnvironment.exitCode);
+const binaryPath = path.join(installRoot.stdout.trim(), 'bin', 'compile-app');
+const ghcEnvironment = await stackGhcEnvironment();
 const afterBuild = await compilerSourceFingerprint();
 if (beforeBuild !== afterBuild) {
   console.error('Compiler inputs changed during preparation; run prepare:compiler again.');
   process.exit(1);
 }
 
-await writePreparedCompiler(binaryPath, afterBuild, ghcEnvironment.stdout);
+await writePreparedCompiler(binaryPath, afterBuild, ghcEnvironment);
 console.log(`Prepared compiler: ${binaryPath}`);
 
 function run(command, args, options) {
@@ -60,7 +54,7 @@ function run(command, args, options) {
     const child = spawn(command, args, {
       cwd: options.cwd ?? compileRoot,
       detached: process.platform !== 'win32',
-      env: options.env ?? cabalEnvironment,
+      env: options.env ?? stackEnvironment,
       stdio: ['ignore', options.captureStdout ? 'pipe' : 'inherit', 'inherit']
     });
     let stdout = '';
@@ -76,6 +70,30 @@ function run(command, args, options) {
       resolve({ exitCode: exitCode ?? signalExitCode(signal), stdout });
     });
   });
+}
+
+async function stackGhcEnvironment() {
+  const [snapshotDb, localDb, packages] = await Promise.all([
+    run('stack', ['path', '--snapshot-pkg-db'], { captureStdout: true }),
+    run('stack', ['path', '--local-pkg-db'], { captureStdout: true }),
+    run('stack', ['exec', '--', 'ghc-pkg', 'field', '*', 'id', '--simple-output'], {
+      captureStdout: true
+    })
+  ]);
+  for (const result of [snapshotDb, localDb, packages]) {
+    if (result.exitCode !== 0) process.exit(result.exitCode);
+  }
+  return [
+    'clear-package-db',
+    'global-package-db',
+    `package-db ${snapshotDb.stdout.trim()}`,
+    `package-db ${localDb.stdout.trim()}`,
+    ...packages.stdout
+      .trim()
+      .split(/\s+/)
+      .map((packageId) => `package-id ${packageId}`),
+    ''
+  ].join('\n');
 }
 
 function signalExitCode(signal) {

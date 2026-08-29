@@ -444,7 +444,7 @@ printHelp :: IO ()
 printHelp =
   putStrLn
     (unlines
-       [ "Usage: cabal run solver-bench -- [options]"
+       [ "Usage: stack exec solver-bench -- [options]"
        , ""
        , "Options:"
        , "  --fixture NAME    Fixture to run. Can be repeated. Default: all"

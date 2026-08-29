@@ -6,11 +6,13 @@ Each project is an immutable Timeline. In the production-style path, SvelteKit q
 
 ## Local development
 
-The recommended environment is the checked-in devcontainer. It uses the root [`Dockerfile`](Dockerfile), while [`compose.yaml`](compose.yaml) adds PostgreSQL and persistent development volumes.
+The recommended environment is the checked-in devcontainer. It uses the root [`Dockerfile`](Dockerfile), while [`compose.yaml`](compose.yaml) adds PostgreSQL and persistent development volumes. The repository source remains bind-mounted so host and container editors see the same files; high-churn generated data (`node_modules`, Stack's local-package work directories and package root, PostgreSQL, and application state) stays in Docker-managed named volumes instead of crossing the host filesystem boundary. The generated-data volumes mount under `/opt/sverlin-dev`, outside the workspace bind. A small post-create helper links only the conventional workspace paths that Node and Stack require (`node_modules` and each local package's `.stack-work`); Stack's package root is used directly through `STACK_ROOT`. This remains reliable when an editor or agent overlays the workspace mount. The official Docker-in-Docker feature provides an isolated Docker daemon, Buildx, and Compose for running the repository's container checks locally without exposing the host Docker socket.
 
 ### 1. Prepare the environment
 
-In VS Code, run **Dev Containers: Rebuild and Reopen in Container**. The image caches external Cabal dependencies, and post-create installs Node dependencies, seeds the persistent Cabal cache, and migrates PostgreSQL. It does not compile project-owned Haskell source. The development workspace receives `SYS_ADMIN` and an unconfined seccomp profile so Codex can use Bubblewrap inside the container; these settings apply only to the local Compose workspace service.
+On macOS with the beta Docker VMM, first add this repository (or a parent directory) explicitly under **Docker Desktop → Settings → Resources → File Sharing**; Docker VMM does not add bind-mounted paths automatically. Keep Docker Desktop current because Docker VMM and its VirtioFS implementation are still evolving.
+
+Start the host SSH agent and load any key needed by the repository, then in VS Code run **Dev Containers: Rebuild and Reopen in Container**. Dev Containers forwards the active agent and copies the host Git configuration, so private SSH keys and `.gitconfig` are not bind-mounted into the workspace container. The image caches the pinned Stack snapshot; post-create installs Node dependencies into its named volume, seeds the persistent Stack package root when empty, and migrates PostgreSQL. It does not compile project-owned Haskell source. The development workspace receives `SYS_ADMIN` and an unconfined seccomp profile so Codex can use Bubblewrap inside the container. Docker-in-Docker also requires the workspace container to run privileged; its daemon and persistent data volumes are managed by the feature and remain separate from the host Docker daemon. These settings apply only to the local Compose workspace service, which should run trusted repository code.
 
 If the container is already current, rerun individual setup steps when needed:
 
@@ -91,13 +93,22 @@ authenticated browser
 
 The root container files have distinct responsibilities:
 
-| File                                                                 | Responsibility                                                               |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [`Dockerfile`](Dockerfile)                                           | Shared development, build, verification, and Railway runtime image targets.  |
-| [`compose.yaml`](compose.yaml)                                       | Local workspace, PostgreSQL service, and persistent volumes.                 |
-| [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) | Attaches the editor to Compose's `workspace` service and runs project setup. |
+| File                                                                 | Responsibility                                                                               |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [`Dockerfile`](Dockerfile)                                           | Shared development, build, verification, and Railway runtime image targets.                  |
+| [`compose.yaml`](compose.yaml)                                       | Local workspace, PostgreSQL service, and persistent volumes.                                 |
+| [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) | Attaches the editor, installs development features including Docker, and runs project setup. |
 
 These definitions overlap intentionally: the Dockerfile owns the image, Compose owns the local multi-service topology, and the devcontainer owns the editor experience.
+
+The production `runtime` target is separate from the development and
+verification stages. It uses the official slim Haskell image and includes only
+the Node server, runtime libraries, prepared Sverlin compiler, solver, and the
+GHC package data required to interpret generated Sverlin source. HLS, Haskell
+formatters and linters, browser dependencies, C/C++/Fortran build tools, Git,
+pnpm, and executable/test build trees remain in discarded development or build
+stages and are not shipped to staging or production. The two in-place Haskell
+libraries retain only their registered library artifacts.
 
 ## Project layout
 
@@ -155,7 +166,7 @@ These tables cover every script declared in `package.json`. Pass script-specific
 | `pnpm run build:migrate`     | Build only `build-migrate/index.js`.                                       |
 | `pnpm run prepare`           | Internal package lifecycle hook that synchronizes SvelteKit types.         |
 | `pnpm run prepare:compiler`  | Build and fingerprint the direct Haskell compiler executable.              |
-| `pnpm run cabal -- <args>`   | Run Cabal against the repository's pinned project/configuration.           |
+| `pnpm run stack -- <args>`   | Run Stack against the repository's pinned snapshot and package set.        |
 | `pnpm run compile -- <args>` | Compile a `.sverlin` source through the prepared executable.               |
 
 ### Database, data, and operations
@@ -208,7 +219,8 @@ After Haskell changes, run the relevant compile, Haskell tests, solver tests, an
 
 ## Railway deployment
 
-Railway deploys the same runtime image as:
+Railway uses the same runtime image for an isolated web service and durable
+worker:
 
 ```text
 web:       node build
@@ -216,14 +228,29 @@ worker:    node build-worker/index.js
 predeploy: node build-migrate/index.js
 ```
 
-The web and worker share Railway PostgreSQL and a private Bucket. Only the web
-service receives a public domain. The complete Singapore topology lives in
-[`.railway/railway.ts`](.railway/railway.ts); plan it before applying any
-infrastructure change. `pnpm install` provides the project-pinned Railway CLI
-needed by the plan/apply scripts. No GitHub Actions workflow is required or
-bundled.
+Each Railway environment has its own PostgreSQL database, private Bucket,
+variables, services, and network. The complete Singapore topology lives in
+[`.railway/railway.ts`](.railway/railway.ts). Bootstrap or update the currently
+linked Railway environment with the project-pinned CLI:
 
-Follow [`docs/deployment.md`](docs/deployment.md) for service creation, variables, administrator bootstrap, smoke checks, backups, scaling, and rollback.
+```sh
+pnpm exec railway login
+pnpm exec railway link
+pnpm exec railway environment production
+pnpm run infra:plan
+# Review the complete plan before mutating Railway resources.
+pnpm run infra:apply
+```
+
+The required `verify` workflow builds the Docker `verification` target for pull
+requests and `main`. CI-green `main` commits deploy automatically to staging;
+production has no GitHub source and accepts only an exact-SHA run of the manual
+`Promote production` workflow. That workflow verifies both staging services,
+then deploys web/migrations before worker and runs the deployment smoke test.
+
+Follow [`docs/deployment.md`](docs/deployment.md) for environment creation,
+GitHub and Railway variables, administrator bootstrap, promotion, diagnostics,
+backups, scaling, and rollback.
 
 ## Maintenance lock
 

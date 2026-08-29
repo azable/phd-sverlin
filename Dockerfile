@@ -55,7 +55,7 @@ RUN curl \
 RUN node --version \
     && pnpm --version \
     && ghc --version \
-    && cabal --version \
+    && stack --version \
     && highs --version \
     && flock --version
 
@@ -141,43 +141,28 @@ RUN set -eux; \
     ln -sf "haskell-language-server-${GHC_VERSION}" /usr/local/bin/haskell-language-server; \
     rm -rf /tmp/hls /tmp/hls.tar.xz
 
-RUN cabal update \
-    && cabal install \
+RUN stack --resolver lts-24.52 install \
         "hindent-${HINDENT_VERSION}" \
         "hlint-${HLINT_VERSION}" \
         "stylish-haskell-${STYLISH_HASKELL_VERSION}" \
-        --installdir=/usr/local/bin \
-        --install-method=copy \
-        --overwrite-policy=always
+        --local-bin-path=/usr/local/bin \
+    && rm -rf /root/.stack
 
 RUN haskell-language-server-wrapper --version \
     && hindent --version \
     && hlint --version \
     && stylish-haskell --version
 
-# Resolve and build external compiler dependencies in an image layer keyed only
-# by Cabal metadata. The workspace bind mount hides image files under /workspaces,
-# so retain a seed beneath /opt for post-create to copy into the named volumes.
+# Resolve external compiler dependencies in an image layer keyed only by Stack
+# metadata. Post-create copies this seed into the named Stack root volume.
 WORKDIR /workspaces/phd-sverlin/compile
 
-COPY .devcontainer/cabal.config ../.devcontainer/cabal.config
-COPY compile/cabal.project compile/compile.cabal ./
+ENV STACK_ROOT=/opt/sverlin-stack-seed
+
+COPY compile/stack.yaml compile/stack.yaml.lock compile/compile.cabal ./
 COPY compile/vendor/MIP-0.2.0.1/MIP.cabal ./vendor/MIP-0.2.0.1/MIP.cabal
 
-RUN mkdir -p \
-        ../.cache/cabal/packages \
-        ../.cache/cabal/logs \
-        ../.local/state/cabal/store \
-    && cabal --config-file=../.devcontainer/cabal.config update \
-    && cabal --config-file=../.devcontainer/cabal.config build \
-        -v0 \
-        --jobs=1 \
-        --only-dependencies \
-        all \
-    && mkdir -p /opt/sverlin-cabal-seed/cache /opt/sverlin-cabal-seed/state \
-    && cp -a ../.cache/cabal/. /opt/sverlin-cabal-seed/cache/ \
-    && cp -a ../.local/state/cabal/. /opt/sverlin-cabal-seed/state/ \
-    && rm -rf ../.cache/cabal ../.local/state/cabal
+RUN stack build --jobs=1 --only-dependencies
 
 WORKDIR /workspaces/phd-sverlin
 
@@ -185,27 +170,30 @@ FROM toolchain AS build
 
 WORKDIR /workspaces/phd-sverlin
 
-ENV CABAL_DIR=/workspaces/phd-sverlin/.cache/cabal \
-    CABAL_CONFIG=/workspaces/phd-sverlin/.devcontainer/cabal.config \
+ENV STACK_ROOT=/opt/sverlin-stack-seed \
     XDG_CACHE_HOME=/workspaces/phd-sverlin/.cache \
     XDG_STATE_HOME=/workspaces/phd-sverlin/.local/state
+
+# Reuse the external-package snapshot from the metadata-keyed development
+# stage. Project-owned packages are still compiled after the source copy.
+COPY --from=development /opt/sverlin-stack-seed /opt/sverlin-stack-seed
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN mkdir -p \
-        outputs \
-        .cache/cabal/packages \
-        .cache/cabal/logs \
-        .local/state/cabal/store \
-    && node scripts/run-cabal.mjs update \
+RUN mkdir -p outputs \
     && pnpm run build
 
 RUN prepared_binary="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('.cache/sverlin/compiler.json','utf8')).binaryPath)")" \
-    && install -m 0755 "${prepared_binary}" /tmp/sverlin-compile
+    && prepared_environment="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('.cache/sverlin/compiler.json','utf8')).ghcEnvironmentPath)")" \
+    && install -m 0755 "${prepared_binary}" /tmp/sverlin-compile \
+    && install -m 0644 "${prepared_environment}" /tmp/sverlin-ghc.environment \
+    && node -e "const fs=require('fs'); const descriptor=JSON.parse(fs.readFileSync('.cache/sverlin/compiler.json','utf8')); descriptor.binaryPath='/usr/local/bin/sverlin-compile'; descriptor.ghcEnvironmentPath='/workspaces/phd-sverlin/.cache/sverlin/ghc.environment'; fs.writeFileSync('/tmp/sverlin-compiler.json', JSON.stringify(descriptor, null, 2) + '\\n')"
 
 FROM build AS verification
+
+ENV SVERLIN_PROJECT_STORE=file
 
 RUN pnpm run check \
     && pnpm run lint \
@@ -219,7 +207,35 @@ WORKDIR /workspaces/phd-sverlin
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
-FROM toolchain AS runtime
+# Generated Sverlin source is interpreted at request time, so the runtime needs
+# GHC and its package store. The official slim variant omits profiling libraries
+# and common build utilities while retaining the interpreter toolchain.
+FROM haskell:9.10.3-slim-bookworm AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY --from=node-toolchain /usr/local/ /usr/local/
+COPY --from=toolchain /usr/local/bin/highs /usr/local/bin/highs
+
+RUN apt-get update \
+    && apt-get purge -y git git-man \
+    && apt-get install -y --no-install-recommends \
+        bubblewrap \
+        ca-certificates \
+        libfreetype6-dev \
+        libharfbuzz-dev \
+        liblapack-dev \
+        liblbfgsb-dev \
+        libopenblas-dev \
+        libstdc++6 \
+        util-linux \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/local/bin/cabal /usr/local/bin/stack /usr/local/bin/plan.json \
+    && node --version \
+    && ghc --version \
+    && highs --version \
+    && flock --version
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
@@ -230,11 +246,7 @@ ENV NODE_ENV=production \
     HOST_HEADER=x-forwarded-host \
     SVERLIN_PROJECT_STORE=postgres \
     SVERLIN_DISABLE_PREFETCH=true \
-    SVERLIN_SCRATCH_DIR=/tmp/sverlin \
-    CABAL_DIR=/workspaces/phd-sverlin/.cache/cabal \
-    CABAL_CONFIG=/workspaces/phd-sverlin/.devcontainer/cabal.config \
-    XDG_CACHE_HOME=/workspaces/phd-sverlin/.cache \
-    XDG_STATE_HOME=/workspaces/phd-sverlin/.local/state
+    SVERLIN_SCRATCH_DIR=/tmp/sverlin
 
 WORKDIR /workspaces/phd-sverlin
 
@@ -246,12 +258,19 @@ COPY --from=production-dependencies --chown=sverlin:sverlin /workspaces/phd-sver
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build ./build
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-migrate ./build-migrate
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-worker ./build-worker
-COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile ./compile
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/examples ./examples
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/drizzle ./drizzle
-COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/.cache/sverlin ./.cache/sverlin
-COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/.local/state/cabal ./.local/state/cabal
-COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/.devcontainer/cabal.config ./.devcontainer/cabal.config
+COPY --from=build /tmp/sverlin-compile /usr/local/bin/sverlin-compile
+COPY --from=build --chown=sverlin:sverlin /tmp/sverlin-compiler.json ./.cache/sverlin/compiler.json
+COPY --from=build --chown=sverlin:sverlin /tmp/sverlin-ghc.environment ./.cache/sverlin/ghc.environment
+COPY --from=build --chown=sverlin:sverlin /opt/sverlin-stack-seed/snapshots /opt/sverlin-stack-seed/snapshots
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/.stack-work/install ./compile/.stack-work/install
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/stack.yaml /workspaces/phd-sverlin/compile/stack.yaml.lock /workspaces/phd-sverlin/compile/compile.cabal ./compile/
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/app ./compile/app
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/cbits ./compile/cbits
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/fonts ./compile/fonts
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/src ./compile/src
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/compile/vendor ./compile/vendor
 COPY --chown=sverlin:sverlin package.json ./package.json
 
 USER sverlin

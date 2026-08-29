@@ -206,6 +206,8 @@ visualization = do
     width (by 132)
     height (by 96)
     styleFamily "target"
+    -- TODO where does "target" get defined as a style family?
+    -- or does this just ensure unified styles within this definition?
   node targetProbe $ do
     fitText targetProbeLabel
     left (at 476)

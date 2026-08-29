@@ -105,9 +105,24 @@ module LinearTrace.Choreography
     materializeWithTags
   , -- | Materialize a pending value without adding semantic facts.
     commit
-  , -- | Consume a live block and record its removal from the semantic trace.
+  , -- TODO consider removing commit and letting users call materialize directly w/o args?
+    -- | Consume a live block and record its removal from the semantic trace.
     destroy
-  , -- | Attach a materialized event to the visible trace checkpoint sequence.
+  , -- TODO restore the public slot interface, including seal/unseal and the
+    -- unseal -> copy/replace -> reseal read/write lifecycle. The owner BlockId,
+    -- not the reconstructed Slot token, is the stable storage-location identity.
+    -- TODO restore the view projection that relates each stored child to its
+    -- owner; the current graph drops TraceSeal and TraceUnseal events. In
+    -- 970907d, compile/app/DSL/Main.hs used BlockRef-derived owner geometry plus
+    -- sameBounds on DeclareVar/WriteVar, so new child IDs reused the location.
+    -- TODO adapt that commit's variable/Fibonacci example to the current source
+    -- contract when restoring slots. Use its seal-on-declare, copy-and-reseal
+    -- read, and replace-and-reseal write as the behavior reference and an
+    -- end-to-end view regression scenario. Add two new examples for each under
+    -- the examples directory.
+    -- TODO add an owner/key/role SlotId before supporting multiple same-typed
+    -- slots on one owner; the original owner-as-location model covered one.
+    -- | Attach a materialized event to the visible trace checkpoint sequence.
     checkpoint
   , -- * Facts and semantic queries #facts#
     -- | Primitive semantic fact values: atoms, symbols, and integers.
@@ -465,7 +480,8 @@ module LinearTrace.Choreography
     (=|)
   , -- | Start a symmetric-distance bridge whose magnitude is supplied by '(=/)'.
     (=/)
-  , -- | Complete a directed affine bridge begun by '(=|)'.
+  , -- TODO how does this work with affine constraints? OR is not affine?
+    -- | Complete a directed affine bridge begun by '(=|)'.
     (|=)
   , -- | Complete a symmetric-distance bridge, or require categorical inequality.
     (/=)

@@ -1,0 +1,208 @@
+name: Promote production
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full main-branch commit SHA already deployed successfully to staging
+        required: true
+        type: string
+
+permissions:
+  checks: read
+  contents: read
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    name: Verify staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      PROMOTION_SHA: ${{ inputs.sha }}
+      RAILWAY_CALLER: github-actions:promote-production
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      SVERLIN_SMOKE_URL: ${{ vars.SVERLIN_SMOKE_URL }}
+    steps:
+      - name: Validate the requested SHA format
+        shell: bash
+        run: |
+          if [[ ! "$PROMOTION_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "sha must be a full 40-character Git commit SHA." >&2
+            exit 64
+          fi
+
+      - name: Check out the requested revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+
+      - name: Verify main membership and required CI
+        shell: bash
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git merge-base --is-ancestor "$PROMOTION_SHA" origin/main
+
+          check_count="$(
+            curl --fail-with-body --silent --show-error \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$PROMOTION_SHA/check-runs?filter=latest&per_page=100" \
+              | jq '[.check_runs[] | select(.name == "verify" and .conclusion == "success")] | length'
+          )"
+          if [[ "$check_count" -lt 1 ]]; then
+            echo "The requested commit has no successful required verify check." >&2
+            exit 1
+          fi
+
+      - name: Install the pinned Railway CLI
+        run: npm install --global @railway/cli@5.45.7
+
+      - name: Wait for the exact staging deployments
+        shell: bash
+        run: |
+          wait_for_deployment() {
+            local service="$1"
+            local deployment_sha
+            local status
+            local payload
+            local state
+
+            for _ in {1..120}; do
+              payload="$(
+                railway deployment list \
+                  --project "$RAILWAY_PROJECT_ID" \
+                  --environment staging \
+                  --service "$service" \
+                  --limit 100 \
+                  --json
+              )"
+              state="$(
+                jq '
+                  def commit_shas:
+                    [
+                      .. | objects | to_entries[]
+                      | select(
+                          (.key | ascii_downcase | test("commit(hash|sha)$"))
+                        )
+                      | (.value | tostring | ascii_downcase)
+                    ];
+                  if length == 0 then
+                    ["MISSING", "UNKNOWN"]
+                  else
+                    [
+                      (.[0].status // "MISSING"),
+                      ((.[0] | commit_shas)[0] // "UNKNOWN")
+                    ]
+                  end
+                  | @tsv
+                ' <<<"$payload" --raw-output
+              )"
+              IFS=$'\t' read -r status deployment_sha <<<"$state"
+
+              if [[ "$deployment_sha" != "${PROMOTION_SHA,,}" ]]; then
+                echo "$service latest staging deployment is $deployment_sha, waiting for $PROMOTION_SHA."
+                sleep 15
+                continue
+              fi
+
+              case "$status" in
+                SUCCESS)
+                  echo "$service staging deployment is successful at $PROMOTION_SHA."
+                  return 0
+                  ;;
+                FAILED|CRASHED|REMOVED|REMOVING|SKIPPED|NEEDS_APPROVAL|SLEEPING)
+                  echo "$service staging deployment reached terminal state $status." >&2
+                  return 1
+                  ;;
+                *)
+                  echo "$service staging deployment state: $status"
+                  sleep 15
+                  ;;
+              esac
+            done
+
+            echo "Timed out waiting for $service staging deployment at $PROMOTION_SHA." >&2
+            return 1
+          }
+
+          wait_for_deployment web
+          wait_for_deployment worker
+
+      - name: Smoke-test the exact staging revision
+        env:
+          SVERLIN_SMOKE_BUILD_SHA: ${{ inputs.sha }}
+        run: node scripts/deployment-smoke.mjs
+
+  production:
+    name: Deploy production
+    needs: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    env:
+      PROMOTION_SHA: ${{ inputs.sha }}
+      RAILWAY_CALLER: github-actions:promote-production
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      SVERLIN_SMOKE_URL: ${{ vars.SVERLIN_SMOKE_URL }}
+    steps:
+      - name: Check out the approved revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha }}
+
+      - name: Install the pinned Railway CLI
+        run: npm install --global @railway/cli@5.45.7
+
+      - name: Set web build identity without deploying
+        run: >-
+          railway variable set
+          --project "$RAILWAY_PROJECT_ID"
+          --environment production
+          --service web
+          --skip-deploys
+          "SVERLIN_BUILD_SHA=$PROMOTION_SHA"
+
+      - name: Deploy web and apply migrations
+        run: >-
+          railway up
+          --project "$RAILWAY_PROJECT_ID"
+          --environment production
+          --service web
+          --message "Promote web $PROMOTION_SHA by $GITHUB_ACTOR"
+
+      - name: Set worker build identity without deploying
+        run: >-
+          railway variable set
+          --project "$RAILWAY_PROJECT_ID"
+          --environment production
+          --service worker
+          --skip-deploys
+          "SVERLIN_BUILD_SHA=$PROMOTION_SHA"
+
+      - name: Deploy worker
+        run: >-
+          railway up
+          --project "$RAILWAY_PROJECT_ID"
+          --environment production
+          --service worker
+          --message "Promote worker $PROMOTION_SHA by $GITHUB_ACTOR"
+
+      - name: Smoke-test production
+        env:
+          SVERLIN_SMOKE_BUILD_SHA: ${{ inputs.sha }}
+        run: node scripts/deployment-smoke.mjs
+
+      - name: Record the promoted revision
+        run: echo "### Promoted $PROMOTION_SHA to production" >> "$GITHUB_STEP_SUMMARY"

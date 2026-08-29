@@ -1,5 +1,0 @@
-packages: .
-          ./vendor/MIP-0.2.0.1
-
-package numeric-optimization
-  flags: +with-lbfgsb

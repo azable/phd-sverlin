@@ -11,8 +11,6 @@ const indexPath = path.join(
   'src/lib/server/chat-bots/ai-assistant/dsl-api-index.md'
 );
 const sourceLabel = 'compile/src/LinearTrace/Choreography.hs';
-const cabalConfigPath = path.join(repositoryRoot, '.devcontainer/cabal.config');
-const cabalDirectory = path.join(repositoryRoot, '.cache', 'cabal');
 const ghciMarker = '__DSL_API_ENTRY_';
 
 function fail(message) {
@@ -41,21 +39,11 @@ function ghciCommand(entry) {
 
 function runGhci(commands) {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      'cabal',
-      [`--config-file=${cabalConfigPath}`, 'repl', '-v0', 'lib:compile'],
-      {
-        cwd: path.join(repositoryRoot, 'compile'),
-        env: {
-          ...process.env,
-          CABAL_DIR: cabalDirectory,
-          CABAL_CONFIG: cabalConfigPath,
-          XDG_CACHE_HOME: path.join(repositoryRoot, '.cache'),
-          XDG_STATE_HOME: path.join(repositoryRoot, '.local/state')
-        },
-        stdio: ['pipe', 'pipe', 'pipe']
-      }
-    );
+    const child = spawn('stack', ['repl', 'compile:lib'], {
+      cwd: path.join(repositoryRoot, 'compile'),
+      env: process.env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
@@ -78,11 +66,13 @@ function normalizeGhcNames(typeInformation, entry) {
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Int/g, 'Int')
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Double/g, 'Double')
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Bool/g, 'Bool')
+    .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Maybe/g, 'Maybe')
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.IO/g, 'IO')
     .replace(/GHC\.Num\.Integer\.Integer/g, 'Integer')
     .replace(/ghc-internal(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Rational/g, 'Rational')
     .replace(/Data\.Unrestricted\.Linear\.Internal\.Ur\.Ur/g, 'Ur')
     .replace(/\bInternal\.Typeable\b/g, 'Typeable')
+    .replace(/\b(?:Constraint|Style|Variable)\./g, '')
     .replace(/\b(?:LinearTrace|Solver)(?:\.[A-Z][A-Za-z0-9_]*)+\.([A-Z][A-Za-z0-9_']*)\b/g, '$1');
   return entry.name === 'Choreography'
     ? normalized
@@ -144,7 +134,12 @@ function compactTypeInformation(rawInformation, entry) {
 }
 
 async function loadCompiledTypes(entries) {
-  const commands = [':set prompt ""', ':set prompt-cont ""', ':set -fno-print-explicit-foralls'];
+  const commands = [
+    ':set prompt ""',
+    ':set prompt-cont ""',
+    ':set -fno-print-explicit-foralls',
+    ':module *LinearTrace.Choreography'
+  ];
   for (const [index, entry] of entries.entries()) {
     commands.push(`:! echo ${ghciMarker}${index}__`, ghciCommand(entry));
   }
@@ -160,11 +155,13 @@ async function loadCompiledTypes(entries) {
   return entries.map((entry, index) => {
     const match = matches[index];
     const nextMatch = matches[index + 1];
-    const rawInformation = output.slice(
-      match.index + match[0].length,
-      nextMatch?.index ?? output.length
+    const rawInformation = output
+      .slice(match.index + match[0].length, nextMatch?.index ?? output.length)
+      .replace(/\s*Leaving GHCi\.\s*$/, '');
+    const type = compactTypeInformation(
+      rawInformation.replaceAll('LinearTrace.Choreography.', ''),
+      entry
     );
-    const type = compactTypeInformation(rawInformation, entry);
     if (!type || /<interactive>|not in scope|error:/i.test(type)) {
       fail(`could not infer a public type for ${entry.export}: ${type || 'no output'}`);
     }

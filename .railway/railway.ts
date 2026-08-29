@@ -1,9 +1,23 @@
-import { bucket, defineRailway, github, group, postgres, project, ref, service } from 'railway/iac';
+import {
+  bucket,
+  defineRailway,
+  empty,
+  github,
+  group,
+  postgres,
+  project,
+  ref,
+  service
+} from 'railway/iac';
 
 const applicationRegion = 'asia-southeast1-eqsg3a';
-const source = github('azable/phd-sverlin', { branch: 'main' });
 
 export default defineRailway((ctx) => {
+  // Staging follows CI-green main commits. Production accepts only an explicit
+  // CLI upload from the reviewed exact-SHA promotion workflow.
+  const source = ctx.isEnvironment('staging')
+    ? github('azable/phd-sverlin', { branch: 'main', checkSuites: true })
+    : empty();
   const database = postgres('postgres', { region: applicationRegion });
   const resources = bucket('project-resources', { region: 'sin' });
   const sharedRuntime = {

@@ -8,8 +8,7 @@
   "remoteUser": "root",
 
   "containerEnv": {
-    "CABAL_DIR": "${containerWorkspaceFolder}/.cache/cabal",
-    "CABAL_CONFIG": "${containerWorkspaceFolder}/.devcontainer/cabal.config",
+    "STACK_ROOT": "/opt/sverlin-dev/stack-root",
     "XDG_CACHE_HOME": "${containerWorkspaceFolder}/.cache",
     "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state",
     "SVERLIN_SCRATCH_DIR": "/tmp/sverlin",
@@ -21,6 +20,7 @@
   },
 
   "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4": {},
     "ghcr.io/dirien/devcontainer-feature-codex/codex:0": {}
   },
 
@@ -50,8 +50,7 @@
           "*.lhs": "haskell",
           "*.hs-boot": "haskell",
           "*.hsc": "haskell",
-          "*.cabal": "cabal",
-          "cabal.project": "plaintext"
+          "*.cabal": "cabal"
         },
 
         "haskell.manageHLS": "PATH",
@@ -81,10 +80,5 @@
     }
   },
 
-  "mounts": [
-    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly",
-    "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind,readonly"
-  ],
-
-  "postCreateCommand": "pnpm install --frozen-lockfile && mkdir -p outputs /tmp/sverlin .cache/cabal/packages .cache/cabal/logs .local/state/cabal/store && cp -a /opt/sverlin-cabal-seed/cache/. .cache/cabal/ && cp -a /opt/sverlin-cabal-seed/state/. .local/state/cabal/ && pnpm run db:migrate"
+  "postCreateCommand": "node .devcontainer/link-workspace-storage.mjs && pnpm install --frozen-lockfile && mkdir -p outputs /tmp/sverlin && if [ -z \"$(find /opt/sverlin-dev/stack-root -mindepth 1 -print -quit)\" ]; then cp -a /opt/sverlin-stack-seed/. /opt/sverlin-dev/stack-root/; fi && pnpm run db:migrate"
 }

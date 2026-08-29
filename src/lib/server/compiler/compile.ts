@@ -694,7 +694,7 @@ export function compileCommand(
   return { command: binaryPath, args };
 }
 
-/** Wrap a compiler child in a non-blocking shared lock against Cabal preparation. */
+/** Wrap a compiler child in a non-blocking shared lock against compiler preparation. */
 export function compilerLockCommand(
   command: string,
   args: string[],

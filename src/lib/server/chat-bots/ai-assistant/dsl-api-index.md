@@ -202,7 +202,7 @@ This compact index combines the Haddock export documentation in `compile/src/Lin
 - `StyleChoice` — Type: `StyleChoice :: Type -> Type; data StyleChoice value = FixedStyle value | VariableStyle (Choice value)` — Type-directed style assignment, including fixed and finite-choice values.
 - `style` — Type: `style :: (StyleField field, StyleFieldInput field) => StyleInputValue field -> VisualizationBuilder ()` — Set or override one style field on the current node.
 - `withoutStyle` — Type: `withoutStyle :: StyleField field => VisualizationBuilder ()` — Explicitly remove an inherited or automatic style field.
-- `styleCase` — Type: `styleCase :: (StyleField field, StyleFieldInput field, ChoiceDomain value) => Choice value -> (value -> ghc-internal:GHC.Internal.Maybe.Maybe (StyleInputValue field)) -> VisualizationBuilder ()` — Select a style value from a named finite decision.
+- `styleCase` — Type: `styleCase :: (StyleField field, StyleFieldInput field, ChoiceDomain value) => Choice value -> (value -> Maybe (StyleInputValue field)) -> VisualizationBuilder ()` — Select a style value from a named finite decision.
 - `styleFamily` — Type: `styleFamily :: String -> VisualizationBuilder ()` — Set a semantic family shared by automatic descendant styling.
 - `styleOf` — Type: `styleOf :: forall {k} (field :: k) tag. SelectStyle field => Selected tag -> SelectedStyle field tag` — Read a selected node's style field as a constraint expression.
 - `sat` — Type: `sat :: Hsl hue unit -> unit` — Convert colour saturation to a unitless scalar expression.

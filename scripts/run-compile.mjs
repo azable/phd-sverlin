@@ -13,7 +13,7 @@ import {
   preparedCompilerEnvironment,
   readPreparedCompiler
 } from '../src/lib/server/compiler/prepared-compiler.js';
-import { compileRoot, repositoryRoot as repoRoot } from './compiler-environment.mjs';
+import { compileRoot, repositoryRoot as repoRoot } from './stack-environment.mjs';
 
 if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_SHARED_LOCK_HELD !== '1') {
   const lockPath = compilerWorkspaceLockPath();

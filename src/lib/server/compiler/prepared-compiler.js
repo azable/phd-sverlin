@@ -12,12 +12,7 @@ export function compilerWorkspaceLockPath(root = repositoryRoot) {
   return path.join(root, '.cache', 'sverlin', 'compiler-workspace.lock');
 }
 
-const fingerprintFiles = [
-  '.devcontainer/cabal.config',
-  'compile/cabal.project',
-  'compile/compile.cabal'
-];
-const optionalFingerprintFiles = ['compile/cabal.project.freeze'];
+const fingerprintFiles = ['compile/compile.cabal', 'compile/stack.yaml', 'compile/stack.yaml.lock'];
 const fingerprintDirectories = [
   'compile/app',
   'compile/cbits',
@@ -61,13 +56,6 @@ export function preparedCompilerEnvironment(prepared, root = repositoryRoot) {
 /** Hash every owned source, configuration, and bundled asset used by the compiler. */
 export async function compilerSourceFingerprint(root = repositoryRoot) {
   const relativePaths = [...fingerprintFiles];
-  for (const optional of optionalFingerprintFiles) {
-    try {
-      if ((await stat(path.join(root, optional))).isFile()) relativePaths.push(optional);
-    } catch {
-      // An absent optional freeze file contributes no compiler input.
-    }
-  }
   for (const directory of fingerprintDirectories) {
     relativePaths.push(...(await filesBelow(root, directory)));
   }
@@ -153,6 +141,7 @@ export async function readPreparedCompiler(root = repositoryRoot) {
     if (!(await stat(parsed.ghcEnvironmentPath)).isFile()) {
       throw new Error('Prepared compiler GHC environment is not a file.');
     }
+    await assertLocalCompilerPackage(await readFile(parsed.ghcEnvironmentPath, 'utf8'));
   } catch (error) {
     throw new CompilerNotReadyError(error instanceof Error ? error.message : String(error));
   }
@@ -161,6 +150,33 @@ export async function readPreparedCompiler(root = repositoryRoot) {
     throw new CompilerNotReadyError('Compiler inputs changed after the binary was prepared.');
   }
   return parsed;
+}
+
+/**
+ * Verify that Stack's mutable local package registration still matches the environment.
+ * @param {string} ghcEnvironment
+ */
+async function assertLocalCompilerPackage(ghcEnvironment) {
+  const lines = ghcEnvironment.split(/\r?\n/);
+  const packageDatabases = lines
+    .filter((line) => line.startsWith('package-db '))
+    .map((line) => line.slice('package-db '.length).trim());
+  const compilerUnit = lines
+    .find((line) => line.startsWith('package-id compile-'))
+    ?.slice('package-id '.length)
+    .trim();
+  if (!compilerUnit || packageDatabases.length === 0) {
+    throw new Error('Prepared compiler GHC environment is invalid.');
+  }
+
+  for (const database of packageDatabases) {
+    try {
+      if ((await stat(path.join(database, `${compilerUnit}.conf`))).isFile()) return;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+  }
+  throw new Error('Prepared compiler package registration changed; prepare the compiler again.');
 }
 
 /** @param {string} destination @param {string} contents */
@@ -215,8 +231,9 @@ async function filesBelow(root, relativeDirectory) {
   const files = [];
   for (const entry of entries) {
     const relativePath = path.join(relativeDirectory, entry.name);
-    if (entry.isDirectory()) files.push(...(await filesBelow(root, relativePath)));
-    else if (entry.isFile()) files.push(relativePath);
+    if (entry.isDirectory() && entry.name !== '.stack-work') {
+      files.push(...(await filesBelow(root, relativePath)));
+    } else if (entry.isFile()) files.push(relativePath);
   }
   return files;
 }

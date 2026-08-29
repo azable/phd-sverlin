@@ -21,8 +21,12 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - .:/workspaces/phd-sverlin
-      - cabal-cache:/workspaces/phd-sverlin/.cache/cabal
-      - cabal-state:/workspaces/phd-sverlin/.local/state/cabal
+      # Keep generated data outside the workspace bind. The devcontainer
+      # post-create step links the ignored workspace paths to these volumes.
+      - node-modules:/opt/sverlin-dev/node_modules
+      - mip-stack-work:/opt/sverlin-dev/mip-stack-work
+      - stack-root:/opt/sverlin-dev/stack-root
+      - stack-work:/opt/sverlin-dev/stack-work
       - sverlin-state:/var/data
     depends_on:
       postgres:
@@ -46,7 +50,9 @@ services:
       retries: 20
 
 volumes:
-  cabal-cache:
-  cabal-state:
+  mip-stack-work:
+  node-modules:
   postgres-data:
   sverlin-state:
+  stack-root:
+  stack-work:
