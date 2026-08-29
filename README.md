@@ -6,13 +6,27 @@ Each project is an immutable Timeline. In the production-style path, SvelteKit q
 
 ## Local development
 
-The recommended environment is the checked-in devcontainer. It uses the root [`Dockerfile`](Dockerfile), while [`compose.yaml`](compose.yaml) adds PostgreSQL and persistent development volumes. The repository source remains bind-mounted so host and container editors see the same files; high-churn generated data (`node_modules`, Stack's local-package work directories and package root, PostgreSQL, and application state) stays in Docker-managed named volumes instead of crossing the host filesystem boundary. The generated-data volumes mount under `/opt/sverlin-dev`, outside the workspace bind. A small post-create helper links only the conventional workspace paths that Node and Stack require (`node_modules` and each local package's `.stack-work`); Stack's package root is used directly through `STACK_ROOT`. This remains reliable when an editor or agent overlays the workspace mount. The official Docker-in-Docker feature provides an isolated Docker daemon, Buildx, and Compose for running the repository's container checks locally without exposing the host Docker socket.
+The recommended environment is the checked-in devcontainer. It uses the root [`Dockerfile`](Dockerfile), while [`compose.yaml`](compose.yaml) adds PostgreSQL and persistent development volumes. The repository source remains bind-mounted so host and container editors see the same files; high-churn generated data (`node_modules`, Stack's local-package work directories and package root, PostgreSQL, and application state) stays in Docker-managed named volumes instead of crossing the host filesystem boundary. The generated-data volumes mount under `/opt/sverlin-dev`, outside the workspace bind. Railway CLI login and project-link state stays in a separate named volume mounted at `/root/.railway`. A small post-create helper links only the conventional workspace paths that Node and Stack require (`node_modules` and each local package's `.stack-work`); Stack's package root is used directly through `STACK_ROOT`. This remains reliable when an editor or agent overlays the workspace mount. The official Docker-in-Docker feature provides an isolated Docker daemon, Buildx, and Compose for running the repository's container checks locally without exposing the host Docker socket.
 
 ### 1. Prepare the environment
 
 On macOS with the beta Docker VMM, first add this repository (or a parent directory) explicitly under **Docker Desktop → Settings → Resources → File Sharing**; Docker VMM does not add bind-mounted paths automatically. Keep Docker Desktop current because Docker VMM and its VirtioFS implementation are still evolving.
 
+If `.env` does not already exist, copy [`.env.example`](.env.example) to `.env`
+before creating the devcontainer. Keep personal values in `.env`; it is ignored by
+Git. Do not overwrite an existing file.
+
+```sh
+cp .env.example .env
+```
+
 Start the host SSH agent and load any key needed by the repository, then in VS Code run **Dev Containers: Rebuild and Reopen in Container**. Dev Containers forwards the active agent and copies the host Git configuration, so private SSH keys and `.gitconfig` are not bind-mounted into the workspace container. The image caches the pinned Stack snapshot; post-create installs Node dependencies into its named volume, seeds the persistent Stack package root when empty, and migrates PostgreSQL. It does not compile project-owned Haskell source. The development workspace receives `SYS_ADMIN` and an unconfined seccomp profile so Codex can use Bubblewrap inside the container. Docker-in-Docker also requires the workspace container to run privileged; its daemon and persistent data volumes are managed by the feature and remain separate from the host Docker daemon. These settings apply only to the local Compose workspace service, which should run trusted repository code.
+
+After the first rebuild with this configuration, run `pnpm exec railway login`
+inside the devcontainer. The `railway-state` named volume retains that login and
+the local Railway project link across later container rebuilds. Removing Compose
+volumes, for example with `docker compose down --volumes`, also removes the saved
+Railway state.
 
 If the container is already current, rerun individual setup steps when needed:
 
@@ -59,14 +73,10 @@ The same page provides verified participant/study exports and explicitly
 confirmed research-data deletion. Exports omit authentication secrets and
 verify every immutable resource before download.
 
-AI feedback is optional and requires `OPENAI_API_KEY` in the worker environment:
-
-```sh
-export OPENAI_API_KEY=your_api_key_here
-pnpm run dev
-```
-
-Normal project compilation does not require an OpenAI key.
+AI feedback is optional. Set `OPENAI_API_KEY`, `OPENAI_MODEL`, and
+`CHATBOT_CONFIG` in the root `.env`, then rebuild or recreate the devcontainer so
+Compose passes them to the web and worker processes. Normal project compilation
+does not require an OpenAI key.
 
 ### Health checks
 
@@ -242,15 +252,18 @@ pnpm run infra:plan
 pnpm run infra:apply
 ```
 
-The required `verify` workflow builds the Docker `verification` target for pull
-requests and `main`. CI-green `main` commits deploy automatically to staging;
-production has no GitHub source and accepts only an exact-SHA run of the manual
-`Promote production` workflow. That workflow verifies both staging services,
-then deploys web/migrations before worker and runs the deployment smoke test.
+The required GitHub `verify` workflow builds the Docker `verification` target for pull
+requests and `main`. Both Railway environments follow CI-green commits on
+`main`. Staging deploys automatically. Production auto-deploy is disabled in
+the Railway dashboard, so a release is a deliberate manual action: confirm the
+tested staging revision is still the latest `main`, deploy production `web`
+first, wait for its migration and readiness checks, then deploy `worker` and run
+the smoke test. GitHub does not need Railway tokens, project IDs, or deployment
+URLs.
 
 Follow [`docs/deployment.md`](docs/deployment.md) for environment creation,
-GitHub and Railway variables, administrator bootstrap, promotion, diagnostics,
-backups, scaling, and rollback.
+central Railway variables, administrator bootstrap, manual release,
+diagnostics, backups, scaling, and rollback.
 
 ## Maintenance lock
 

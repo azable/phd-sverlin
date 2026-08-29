@@ -19,8 +19,12 @@ services:
       SVERLIN_STATE_DIR: /var/data
       SVERLIN_SCRATCH_DIR: /tmp/sverlin
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      CHATBOT_CONFIG: ${CHATBOT_CONFIG:-}
     volumes:
       - .:/workspaces/phd-sverlin
+      # Preserve Railway CLI login and project-link state across container recreation.
+      - railway-state:/root/.railway
       # Keep generated data outside the workspace bind. The devcontainer
       # post-create step links the ignored workspace paths to these volumes.
       - node-modules:/opt/sverlin-dev/node_modules
@@ -53,6 +57,7 @@ volumes:
   mip-stack-work:
   node-modules:
   postgres-data:
+  railway-state:
   sverlin-state:
   stack-root:
   stack-work:

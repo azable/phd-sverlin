@@ -1,252 +1,136 @@
-# Stack-based compiler workflow, CI-gated deployment, and API analysis
+# Central environment settings and simple Railway releases
+
+This snapshot covers the completed environment-variable cleanup and the simpler
+`main` → staging → manual production release path. No Railway project or
+deployment was created or changed.
+
+| Files                                                                | Change                                                                                                                                                                             |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`.railway/railway.ts`](.railway/railway.ts)                         | Connect both environments to CI-checked `main`, reference hosted settings from Railway shared variables, and express the worker drain window as job expiry plus a shutdown margin. |
+| [`.env.example`](.env.example), [`compose.yaml`](compose.yaml)       | Keep local choices in `.env`, pass AI settings into the devcontainer, and persist Railway CLI login and project-link state in a named volume.                                      |
+| [`.github/workflows/`](.github/workflows/)                           | Delete the custom production-promotion workflow; GitHub now verifies code but holds no Railway tokens, IDs, or deployment URLs.                                                    |
+| [`README.md`](README.md), [`docs/deployment.md`](docs/deployment.md) | Explain the two sources of environment settings and the ordered manual production release in plain language, with Railway-specific terms defined where first used.                 |
 
 ## Resume
 
-Implementation is complete. The next safe action is review and commit the
-current agent-authored migration, deployment, and API-analysis changes while
-preserving the concurrent files named under limitations. Cabal-install,
-`cabal.project`, Cabal cache/state volumes, and `dist-newstyle` have been
-replaced by Stack 3.3.1 with pinned LTS 24.52. The rebuilt devcontainer uses
-`/opt/sverlin-dev/stack-root` plus linked named-volume paths for `node_modules`,
-the compiler `.stack-work`, and vendored MIP `.stack-work`. Compiler preparation,
-static checks, Haskell checks, solver tests, unit tests, all starter examples,
-the Docker verification target, and the final runtime compiler smoke test pass.
+Implementation is complete, the final diff review is complete, and the application
+lock is released. The next safe action is to commit these changes while preserving
+the unrelated user edit listed under limitations. The CI-equivalent verification and runtime
+images both build, static checks pass for the agent-authored files, all 105 unit
+tests pass, and every starter example compiles through the production boundary.
 
-The required full Hindent then Stylish Haskell pipeline ran exactly once after
-the final Haskell source changes; all subsequent verification was non-modifying.
-The application lock has been released. The runtime preserves Stack/GHC package
-databases at their original absolute paths, validates the prepared compiler's
-exact mutable local unit registration, and includes the native linker names
-needed by request-time Hint interpretation. No live Railway or GitHub project
-state was changed.
-
-The old VirtioFS-backed `node_modules` could not be recursively removed because
-some generated files returned `EBADF`; the helper preserved it under the
-ignored `.sverlin-stale-storage/` quarantine and installed a clean dependency
-volume. Repository integrity is sound: `git fsck` passed and all 503 present
-tracked files were readable with no I/O errors. Remove the quarantine from the
-host only after the devcontainer is closed; it is not used by any build.
-
-The LinearTrace API/slot investigation is complete as analysis. Its restart-safe
-handoff is `compile/src/LinearTrace/API_refactoring.md`; no recommended API or
-frontend behavior has been implemented by that document. The next safe API
-action is to select one staged slice from its decision/implementation sections,
-then acquire the app lock before any Svelte behavior change. The note preserves
-the inline TODO answers, corrects the earlier owner-lineage assessment, names
-the relevant historical commits/files, and distinguishes proven regressions
-from archived experiments. `compile/src/LinearTrace/API_plan.md` is the current
-authoritative target design. The evidence document now includes a concise
-restart handoff pointing to that plan and summarizing the settled Domain,
-Program, Render, Sverlin-facade, host-boundary, and slot decisions. No API
-implementation has begun.
-
-| Files                                                                                                                                                                                                                                                                                | Change                                                                                                                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json), [`.devcontainer/devcontainer-lock.json`](.devcontainer/devcontainer-lock.json), [`.devcontainer/link-workspace-storage.mjs`](.devcontainer/link-workspace-storage.mjs), [`compose.yaml`](compose.yaml)         | Add pinned isolated Docker-in-Docker; persist Node/Stack data outside the workspace overlay; repair the three conventional tool paths during post-create; quarantine irrecoverably stale generated trees.  |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml), [`.github/workflows/promote-production.yml`](.github/workflows/promote-production.yml)                                                                                                                                       | Add full Docker verification and manual, exact-SHA staging verification plus ordered production promotion.                                                                                                 |
-| [`.railway/railway.ts`](.railway/railway.ts)                                                                                                                                                                                                                                         | Make staging a CI-gated `main` source and production an empty source deployable only through the promotion workflow.                                                                                       |
-| [`Dockerfile`](Dockerfile)                                                                                                                                                                                                                                                           | Seed and reuse a metadata-keyed Stack snapshot at one stable absolute path, build through Stack, and package exact package databases plus request-time linker libraries into the slim interpreter runtime. |
-| [`compile/stack.yaml`](compile/stack.yaml), [`compile/stack.yaml.lock`](compile/stack.yaml.lock), [`compile/compile.cabal`](compile/compile.cabal), [`compile/hie.yaml`](compile/hie.yaml), [`compile/.gitignore`](compile/.gitignore)                                               | Pin LTS 24.52 and non-snapshot solver dependencies, use the Stack HLS cradle, accept Stack's Cabal library, and ignore linked `.stack-work` paths.                                                         |
-| [`package.json`](package.json), [`scripts/stack-environment.mjs`](scripts/stack-environment.mjs), [`scripts/run-stack.mjs`](scripts/run-stack.mjs), [`scripts/prepare-compiler.mjs`](scripts/prepare-compiler.mjs), [`scripts/run-compile.mjs`](scripts/run-compile.mjs)             | Replace Cabal command orchestration with signal-aware Stack commands and generate the direct compiler's exact GHC package environment from Stack package databases.                                        |
-| [`src/lib/server/compiler/prepared-compiler.js`](src/lib/server/compiler/prepared-compiler.js), [`src/lib/server/compiler/prepared-compiler.test.ts`](src/lib/server/compiler/prepared-compiler.test.ts), [`src/lib/server/compiler/compile.ts`](src/lib/server/compiler/compile.ts) | Fingerprint Stack metadata, ignore generated `.stack-work`, reject stale exact local package registrations, test both drift modes, and update compiler-boundary terminology.                               |
-| [`scripts/dsl-api-index.mjs`](scripts/dsl-api-index.mjs), [`src/lib/server/chat-bots/ai-assistant/dsl-api-index.md`](src/lib/server/chat-bots/ai-assistant/dsl-api-index.md)                                                                                                         | Run facade inspection in Stack GHCi and normalize qualified GHC 9.10 output; regenerate the 208-name index with a stable `Maybe` signature.                                                                |
-| [`.devcontainer/`](.devcontainer/), [`scripts/`](scripts/)                                                                                                                                                                                                                           | Delete obsolete Cabal configuration and command/environment wrappers; replace them with the linked-storage and Stack helpers above.                                                                        |
-| [`README.md`](README.md), [`docs/deployment.md`](docs/deployment.md)                                                                                                                                                                                                                 | Document the Stack dev workflow, isolated environments, CI, promotion, partial failures, configuration, and diagnostics; remove the redundant `.railway/README.md`.                                        |
-| [`compile/src/LinearTrace/Choreography.hs`](compile/src/LinearTrace/Choreography.hs)                                                                                                                                                                                                 | Record the slot-restoration contract: owner identity, read/write lifecycle, historical example/test, view projection, and multi-slot boundary.                                                             |
-| [`compile/src/LinearTrace/API_refactoring.md`](compile/src/LinearTrace/API_refactoring.md), [`compile/src/LinearTrace/API_plan.md`](compile/src/LinearTrace/API_plan.md)                                                                                                             | Preserve the full API evidence and restart handoff alongside the concise, authoritative target API design and per-operation examples.                                                                      |
-| [`compile/src/LinearTrace/View/Build.hs`](compile/src/LinearTrace/View/Build.hs), [`compile/src/LinearTrace/Visualization/IR.hs`](compile/src/LinearTrace/Visualization/IR.hs)                                                                                                       | Normalize two comment gaps through the required full Haskell formatter pipeline.                                                                                                                           |
+When live Railway setup is authorized, create or link the intended project,
+review and apply the checked-in graph separately to production and staging, add
+the six shared variables named below, and turn off automatic deployments for
+both production services in Railway's dashboard. No live plan, apply, variable,
+domain, project, service, or deployment operation has been performed.
 
 ## Architecture and behavior
 
-One TypeScript IaC graph still owns web, worker, PostgreSQL, Bucket, references,
-placement, health checks, and drain policy in each environment. Its source is
-selected from Railway environment context:
+Local and hosted settings now have separate, simple homes:
+
+- The ignored root `.env` contains only choices made by a local developer.
+  Compose supplies database URLs, local application paths, and safe development
+  defaults, then forwards `OPENAI_API_KEY`, `OPENAI_MODEL`, and
+  `CHATBOT_CONFIG` into the devcontainer.
+- The Docker-managed `railway-state` volume mounts at `/root/.railway` and
+  retains Railway CLI login and local project-link state across devcontainer
+  recreation without committing credentials or copying them into the image.
+- Each Railway environment has one shared-variable list for
+  `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `SVERLIN_ADMIN_SETUP_TOKEN`,
+  `OPENAI_API_KEY`, `OPENAI_MODEL`, and `CHATBOT_CONFIG`. The first, third, and
+  fourth values should be sealed in Railway. Staging and production use
+  different values.
+- PostgreSQL and Bucket connection values remain automatic references to their
+  Railway resources. Pool size, queue timing, and request timeout values come
+  from checked-in application defaults, so they are not copied into deployment
+  configuration.
+
+Both services in both environments now use the same source:
 
 ```ts
-const source = ctx.isEnvironment('staging')
-  ? github('azable/phd-sverlin', { branch: 'main', checkSuites: true })
-  : empty();
+const source = github('azable/phd-sverlin', {
+  branch: 'main',
+  checkSuites: true
+});
 ```
 
-Pull requests and `main` build the Docker `verification` target and final
-`runtime` target under one required `verify` job. A manual promotion accepts
-only a full SHA on `main` with a successful check, requires the latest staging
-deployments for both services to be that SHA and successful, and verifies
-staging's reported build SHA. It then sets each service's `SVERLIN_BUILD_SHA`
-without triggering a deployment and uploads that checkout to production web
-first, allowing migrations and readiness to finish, followed by worker and an
-exact-SHA production smoke test. Railway messages and the GitHub workflow
-summary record the SHA and actor. A worker
-failure after web succeeds is reported as a partial release and is retried at
-the same SHA; database rollback is never automatic.
+Railway automatically deploys staging after the GitHub `verify` job succeeds.
+Production also points to `main`, but an operator disables its automatic
+deployments in Railway. A release therefore confirms staging is running the
+latest `main`, manually deploys production `web` and waits for its database
+update and readiness check, then manually deploys `worker` and runs the quick
+deployment check. The deleted GitHub promotion workflow and its Railway secrets
+are no longer part of the path.
 
-Production and staging use separate GitHub environments, Railway project
-tokens, smoke URLs, shared secrets, PostgreSQL databases, Buckets, and private
-networks. The root README remains a compact entry point; the deployment runbook
-owns setup, release, diagnostics, backup, and incident detail.
+The automatic-deployment switch is not supported by the installed TypeScript
+Railway SDK. It must be set in the Railway dashboard after the initial apply and
+rechecked after changing a service's source settings.
 
-The devcontainer declares the official `docker-in-docker:4` feature. Its
-lockfile resolves version `4.1.0` by digest; feature metadata supplies the
-privileged runtime, Docker daemon entrypoint, Buildx/Compose tooling, and
-per-devcontainer Docker/containerd volumes. This keeps local Docker builds
-isolated from the host socket and avoids duplicating feature-owned mounts or
-lifecycle configuration in `compose.yaml`.
+The worker drain window retains its existing 1,860-second value but now states
+the policy explicitly: a 30-minute job-expiry window plus a 60-second shutdown
+margin. The guide makes clear that this is a worst-case allowance for a slow AI
+generation-and-repair command, not a fixed deployment delay; the old worker
+stops as soon as its active command finishes.
 
-Only editable repository source crosses Docker VMM's VirtioFS bind. Compose
-mounts Node modules, Stack's package root, and both local-package work trees at
-stable paths under `/opt/sverlin-dev`. The post-create helper links the three
-conventional workspace paths (`node_modules` and the two `.stack-work` paths)
-before installation or compilation; Stack uses its package root directly via
-`STACK_ROOT`. If a corrupt generated tree cannot be removed, the helper first
-renames it into `.sverlin-stale-storage` so setup can continue without data
-loss. This layout avoids editor or agent workspace overlays hiding nested named
-volumes. PostgreSQL and application state remain separate volumes. Docker VMM
-users must explicitly share the repository path before rebuilding. Direct
-read-only binds of `~/.ssh` and `~/.gitconfig` were removed; VS Code Dev
-Containers forwards an active host SSH agent and copies host Git configuration
-without exposing private-key files.
-
-Stack is now the only project build driver. `compile/stack.yaml` selects LTS
-24.52/GHC 9.10.3, includes the vendored MIP package, pins extra solver packages
-through `stack.yaml.lock`, requires the image-provided GHC, and enables the
-LBFGSB backend. The `.cabal` files remain solely as package manifests consumed
-by Stack's Cabal library; the `cabal` executable, project/freeze configuration,
-index/cache state, and `dist-newstyle` are gone. Package scripts route builds,
-tests, benchmarks, GHCi API inspection, and compiler preparation through Stack.
-Preparation records the Stack binary and creates a GHC environment containing
-the snapshot and local package databases plus exact unit IDs, so request-time
-Hint interpretation does not need Stack itself.
-
-The final deployable image starts from `haskell:9.10.3-slim-bookworm` instead of
-inheriting the complete build toolchain. GHC and registered library artifacts
-remain necessary because project commands interpret generated Sverlin source at
-request time. The image copies a stable prepared-compiler descriptor, compiler
-binary, GHC environment, Stack snapshot/local package databases at their
-original absolute paths, selected compiler source/font/vendor inputs, solver,
-production Node dependencies, and runtime shared libraries. Stack and
-cabal-install are removed from the runtime; HLS, HLint, Hindent, Stylish
-Haskell, browser tooling, CMake, Git, jq, and pnpm remain in discarded
-development or build stages.
-
-The official Railway OAuth MCP entry was installed for Codex outside the
-repository. Restart Codex and complete OAuth before using it. The current
-session exposes no GitHub connector installer, so GitHub read access must be
-connected through Codex plugin settings; writes should continue to require
-approval.
-
-The choreography facade now records the intended restoration boundary without
-changing behavior: the persistent owner `BlockId` identifies one storage
-location, `Slot` is its reconstructed linear occupancy proof, reads and writes
-cycle through unseal/copy-or-replace/reseal, and the view must retain the
-owner-child relationship. Multiple same-typed slots on one owner require an
-explicit owner/key/role `SlotId` rather than overloading owner identity.
-The TODO also identifies the concrete historical projection in commit
-`970907d`'s `compile/app/DSL/Main.hs`: declaration and write used `sameBounds`
-with `BlockRef`-derived owner geometry, allowing replacement children with new
-IDs to reuse the persistent location. Its variable/Fibonacci program is also
-named as the example to adapt to the current body-only source contract and use
-as an end-to-end regression: seal on declaration, copy and reseal on read, and
-replace and reseal on write.
-
-The API-refactoring handoff extends that concise TODO with the broader evidence
-needed to implement it safely. Core already records `TraceSeal` and
-`TraceUnseal` with actual owner/child snapshots, so reusing the same owner
-`BlockId` does provide trace-level storage lineage; the missing current behavior
-is that `Choreography.Graph` drops those events and the facade omits the public
-operations. Historical rendering also separated stable owner/location identity
-from replaceable occupant/render identity. Current internal `RenderContinue`
-only models continuation of the old occupant and is not a public slot feature,
-so a restored write needs an adoption/three-party identity decision rather than
-blindly reusing continuation.
-
-The same handoff answers the remaining inline and deleted-audit questions. It
-recommends a narrow `Sverlin`/`Program` author facade and separate host seam;
-finite affine cases for symmetric bridges; explicit treatment of soft
-constraints currently ignored by affine sampling; configurable but
-deterministic canvas/style profiles; generated structural IR validation with
-handwritten semantic invariants; and an eventual parsed DSL boundary instead of
-treating body-only Haskell as a sandbox. It also locates the frontend geometry
-and enter/exit transition regression at the SVG typography conversion in
-`9efb493`, not at the later removal of the non-temporal `View.Patch`, and names
-`03c4e14` as the most complete SVG-transition/slot donor to adapt to current
-typography.
+The deployment guide now distinguishes previews from applied infrastructure
+changes, names source files for the worker timing values, explains Railway terms
+at first use, and uses the installed CLI's current `--remote` Codex connection
+command. Repeated catch-all documentation links were removed in favor of links
+next to the behavior they explain. Its runtime overview also shows the relevant
+Dockerfile excerpt and explains how one image contains all three Node bundles
+while Docker supplies the web command when no command is given and Railway
+selects the web, migration, and worker commands explicitly, with a focused
+`railway.ts` excerpt and direct line links to the complete service definitions.
+The guide states directly that these command fields are authored in
+`.railway/railway.ts` and become Railway service settings when it is applied.
+Omission comments inside the abridged excerpt distinguish it from the complete
+service objects linked immediately above it.
 
 ## Verification
 
-- `pnpm run check` passed with zero diagnostics; `pnpm run lint` passed
-  Prettier, ESLint, and the generated 208-name DSL index drift check.
+- `pnpm run check` passed with zero Svelte or TypeScript diagnostics.
+- `pnpm run lint` passed Prettier, ESLint, and the 208-name generated DSL index
+  check before the unrelated `AGENTS.md` edit appeared. Focused Prettier and
+  ESLint checks for the agent-authored configuration and documentation still
+  pass; `pnpm run check:dsl-api-index` also passes.
 - `SVERLIN_PROJECT_STORE=file pnpm run test:unit -- --run` passed 105 tests;
-  two opt-in tests skipped. The prepared-compiler suite passed all 10 cases,
-  including source drift and mutable Stack package-registration drift.
-- `pnpm run test:examples` passed every catalogued starter through the
-  production compiler boundary. The seeded Minimal compile also passed.
-- LTS 24.52 resolved, compiler preparation passed with exact package unit IDs,
-  `pnpm run test:solver` passed all 96 cases, and `pnpm run lint:haskell`
-  reported no hints.
-- The required final `pnpm run format:haskell` pipeline (Hindent followed by
-  Stylish Haskell) completed exactly once; subsequent checks were read-only.
-- `docker build --target verification -t sverlin-verification:stack .` passed
-  static checks, lint, 105 unit tests with two skips, and all starter examples.
-  The metadata-keyed dependency seed was reused by the source-keyed build stage.
-- `docker build --target runtime -t sverlin-runtime:stack .` passed. Inside the
-  final arm64 image, Node 24.19.0, GHC 9.10.3, HiGHS 1.15.1, and `flock` ran;
-  Stack and Cabal were absent; direct Hint-backed compilation of
-  `examples/Minimal.sverlin` produced non-empty JSON. Image size is 979,116,108
-  bytes.
-- `docker build --target development -t sverlin-development:stack .` passed
-  from a cold Stack cache. Its smoke test confirmed Stack 3.3.1, HLS 2.14.0.0,
-  Hindent 6.3.0, HLint 3.10, Stylish Haskell 0.15.1.0, and the snapshot seed.
-- Dev Container CLI `0.82.0` resolved Docker-in-Docker `4.1.0` and its integrity
-  digest; the checked-in lockfile matches.
-- `docker compose config --quiet` — passed; the rendered workspace graph uses
-  external Node/Stack volumes beneath `/opt/sverlin-dev` and no generated-data
-  volume is nested under the workspace bind.
-- Storage recovery — the helper quarantined the unreadable generated
-  `node_modules`, linked all three Node/Stack work paths to Docker storage, and
-  `pnpm install --frozen-lockfile` completed against the clean volume. Its own
-  syntax check and ignore checks pass.
-- Repository corruption audit — `git fsck --no-progress` exited zero (only
-  ordinary dangling edit objects); a complete read audit covered all 503
-  currently present tracked files with zero failures. Six tracked paths are
-  intentionally deleted by the current uncommitted work.
-- Railway graph evaluation produced the expected six-resource staging and
-  production graphs; the promotion parser passed synthetic latest-deployment
-  SHA/status extraction. No live infrastructure was changed.
-- API-refactoring handoff — all named historical commits resolved with
-  `git log --no-walk`; `git diff --check` passed for the tracked tree, and
-  `git diff --no-index --check -- /dev/null compile/src/LinearTrace/API_refactoring.md`
-  emitted no whitespace diagnostics for the new file (its expected status is 1
-  because the file differs from `/dev/null`).
-- Stack migration syntax/whitespace — all new JavaScript helpers pass
-  `node --check`; `.stack-work` symlinks are ignored; `git diff --check` passes;
-  the lockfile has normal `0644` permissions.
+  two optional integration tests skipped.
+- A local evaluation of `.railway/railway.ts` for both `staging` and
+  `production` confirmed two GitHub-backed services on `main`, required GitHub
+  checks, all six intended shared-variable references, and removal of redundant
+  application-default overrides.
+- A secret-safe rendered Compose check confirmed the devcontainer receives all
+  three AI settings without printing their values.
+- `docker build --target verification --tag sverlin-verification:local .`
+  passed the full application build, checks, lint, unit suite, and every starter
+  example.
+- `docker build --target runtime --tag sverlin-runtime:local .` passed.
+- The final source/documentation consistency review corrected the AI settings table
+  to identify `web`, not `worker`, as the service that performs AI-assisted editing.
+- `pnpm exec prettier --check docs/deployment.md AGENTS_LOG.md` and the final
+  `git diff --check` passed after that correction.
+- `pnpm exec prettier --check .railway/railway.ts AGENTS_LOG.md` and
+  `pnpm exec eslint .railway/railway.ts` passed after naming the worker drain
+  calculation; no remote Railway plan or apply was run.
+- `pnpm exec prettier --check docs/deployment.md AGENTS_LOG.md` and
+  `git diff --check` passed after the deployment-guide language review.
+- No Svelte component behavior or Haskell source changed, so Playwright, solver
+  tests, HLint, and the Haskell formatter were not required.
 
-## Limitations and operational notes
+## Limitations and excluded changes
 
-- Docker storage was expanded after the earlier exhaustion. The isolated daemon
-  completed the cold snapshot, verification, and runtime builds.
-- The clean Node/Stack links work in the current container, but the checked-in
-  Compose/devcontainer lifecycle and newly seeded image must still be exercised
-  by rebuilding. Do not delete `.sverlin-stale-storage` from inside the running
-  container; close it and remove that ignored quarantine from the host when it
-  is no longer needed.
-- Rotate the current `OPENAI_API_KEY`: `docker compose config` expanded it into
-  diagnostic command output while the mount graph was being inspected. The
-  value is not recorded in this file.
-- The Railway CLI is not authenticated or linked in this workspace. No live
-  plan, environment creation, apply, source change, domain, variable, token,
-  deployment, log, metric, or smoke operation was performed.
-- GitHub branch protection, environments, reviewer policy, variables, secrets,
-  and connector authorization remain operator setup steps documented in the
-  runbook.
-- The CLI installed Railway's official OAuth MCP config at the user level; a
-  Codex restart is required before it becomes available.
-- The pre-existing `commit` and affine-constraint TODOs in
-  `compile/src/LinearTrace/Choreography.hs` appeared before the facade TODO and
-  remain unmodified user or concurrent-worker work. Their current/history
-  analysis is now preserved in `compile/src/LinearTrace/API_refactoring.md`.
-- `examples/LinearSearch.sverlin` changed while this task was in progress and is
-  deliberately excluded as user or concurrent-worker work.
-- `compile/src/LinearTrace/API_plan.md` also appeared and changed while the Stack
-  migration was in progress; it is treated as concurrent-worker work and was
-  not modified or summarized by this task.
+- Railway's production automatic-deployment setting remains a manual dashboard
+  step; the runbook calls this out at setup and release time.
+- The current container is not authenticated with Railway and this repository is
+  not linked to a Railway project. After rebuilding, run
+  `pnpm exec railway login` once; the new named volume retains that state. No
+  deployment has occurred.
+- Rebuild or recreate the devcontainer after changing `.env`; an already-created
+  container does not receive newly forwarded Compose variables automatically.
+- Rotate the current local `OPENAI_API_KEY` before hosting. An earlier diagnostic
+  command expanded it into terminal output; the value is not stored here.
+- The edit in
+  [`.devcontainer/link-workspace-storage.mjs`](.devcontainer/link-workspace-storage.mjs)
+  belongs to the user and is deliberately not modified or summarized as part of
+  this implementation.

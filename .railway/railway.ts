@@ -1,23 +1,13 @@
-import {
-  bucket,
-  defineRailway,
-  empty,
-  github,
-  group,
-  postgres,
-  project,
-  ref,
-  service
-} from 'railway/iac';
+import { bucket, defineRailway, github, group, postgres, project, ref, service } from 'railway/iac';
 
 const applicationRegion = 'asia-southeast1-eqsg3a';
+const workerJobExpirySeconds = 30 * 60;
+const workerShutdownMarginSeconds = 60;
 
 export default defineRailway((ctx) => {
-  // Staging follows CI-green main commits. Production accepts only an explicit
-  // CLI upload from the reviewed exact-SHA promotion workflow.
-  const source = ctx.isEnvironment('staging')
-    ? github('azable/phd-sverlin', { branch: 'main', checkSuites: true })
-    : empty();
+  // Both environments build main commits after GitHub checks pass. Railway automatically
+  // deploys staging; production auto-deploys are disabled in the dashboard.
+  const source = github('azable/phd-sverlin', { branch: 'main', checkSuites: true });
   const database = postgres('postgres', { region: applicationRegion });
   const resources = bucket('project-resources', { region: 'sin' });
   const sharedRuntime = {
@@ -26,11 +16,7 @@ export default defineRailway((ctx) => {
     ENDPOINT: ref(resources, 'ENDPOINT'),
     ACCESS_KEY_ID: ref(resources, 'ACCESS_KEY_ID'),
     SECRET_ACCESS_KEY: ref(resources, 'SECRET_ACCESS_KEY'),
-    REGION: ref(resources, 'REGION'),
-    SVERLIN_PROJECT_STORE: 'postgres',
-    SVERLIN_DATABASE_POOL_SIZE: '5',
-    SVERLIN_JOB_EXPIRE_SECONDS: '1800',
-    SVERLIN_JOB_HEARTBEAT_SECONDS: '60'
+    REGION: ref(resources, 'REGION')
   };
 
   const web = service('web', {
@@ -61,7 +47,7 @@ export default defineRailway((ctx) => {
     start: 'node build-worker/index.js',
     replicas: { [applicationRegion]: 1 },
     deploy: {
-      drainingSeconds: 1860,
+      drainingSeconds: workerJobExpirySeconds + workerShutdownMarginSeconds,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 10,
       limitOverride: { containers: { memoryBytes: 4 * 1024 * 1024 * 1024 } }
@@ -69,8 +55,8 @@ export default defineRailway((ctx) => {
     env: {
       ...sharedRuntime,
       OPENAI_API_KEY: ctx.shared.OPENAI_API_KEY,
-      SVERLIN_COMPILE_TIMEOUT_MS: '300000',
-      CHATBOT_REQUEST_TIMEOUT_MS: '180000'
+      OPENAI_MODEL: ctx.shared.OPENAI_MODEL,
+      CHATBOT_CONFIG: ctx.shared.CHATBOT_CONFIG
     }
   });
 

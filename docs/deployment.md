@@ -1,20 +1,72 @@
 # Railway deployment and research-data operations
 
-Railway is the supported hosted target. The checked-in
-[`railway.ts`](../.railway/railway.ts) defines the same deliberately small
-Singapore topology independently in staging and production:
+[`Railway`](https://docs.railway.com/) is the supported hosted target. The checked-in
+[`railway.ts`](../.railway/railway.ts) defines the same small set of services and
+data stores independently in staging and production:
 
 - one public `web` service running `node build`;
 - one private `worker` service running `node build-worker/index.js`;
 - one PostgreSQL database for Better Auth, Timelines, ownership, and pg-boss;
-- one private Bucket for immutable compiler resources.
+- one private Railway Bucket (object storage) for immutable compiler resources.
 
-The web and worker build the same Dockerfile revision. Only the web runs
-`node build-migrate/index.js` as a pre-deploy migration. The worker is kept at
-one replica with one-command concurrency and a 1,860-second drain window, longer
-than the default 1,800-second job expiry. Staging follows CI-green `main`
-commits. Production is source-empty and receives only manually promoted,
-reviewed commits.
+The web and worker build the same Git commit with the same
+[`Dockerfile`](../Dockerfile#L258-L280). Its final image contains the web,
+database-migration, and worker bundles:
+
+```dockerfile
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build ./build
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-migrate ./build-migrate
+COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-worker ./build-worker
+
+CMD ["node", "build"]
+```
+
+When this image starts without another command, Docker uses its final `CMD` and
+runs `node build`, which starts the web server. The service commands are written
+directly in `.railway/railway.ts`: the `web` definition contains
+`start: 'node build'` and `preDeploy: 'node build-migrate/index.js'`, while the
+`worker` definition contains `start: 'node build-worker/index.js'`. When the
+infrastructure definition is applied, these fields tell Railway what to run for
+each service and when to run the web database migration.
+
+Source: [`web` service definition](../.railway/railway.ts#L22-L42) and
+[`worker` service definition](../.railway/railway.ts#L44-L60). The excerpt is
+abridged to show only the relevant fields:
+
+```ts
+const web = service('web', {
+  // Source and image-build settings omitted.
+  start: 'node build',
+  preDeploy: 'node build-migrate/index.js'
+  // Health-check, deployment, and environment settings omitted.
+});
+
+const worker = service('worker', {
+  // Source and image-build settings omitted.
+  start: 'node build-worker/index.js'
+  // Replica, deployment, and environment settings omitted.
+});
+```
+
+Building one shared image avoids separate web and worker build definitions while
+keeping their runtime processes independent.
+
+One copy of the worker runs at a time. During a deployment, Railway allows the
+previous copy up to 1,860 seconds to finish before forcing it to stop. This is a
+maximum allowance, not a fixed delay: the previous worker stops as soon as its
+active command finishes, so a normal deployment is likely to use much less
+time. The long upper bound accommodates an unusually slow AI command that needs
+both its initial generation and its one permitted repair attempt. The
+[drain period](https://docs.railway.com/deployments/deployment-teardown) is the
+application's 1,800-second job-expiry default plus a 60-second shutdown margin;
+the values come from [`jobs.ts`](../src/lib/server/projects/jobs.ts) and
+[`railway.ts`](../.railway/railway.ts).
+
+Staging automatically follows `main` commits that passed GitHub's `verify` check.
+Production follows the same branch but has
+[automatic deployments](https://docs.railway.com/guides/github-autodeploys)
+disabled in Railway, so releases happen only when an operator chooses
+**Deploy Latest Commit**.
 
 Both services use the Dockerfile's final `runtime` stage. Its official slim
 Haskell base retains GHC because generated Sverlin source is interpreted during
@@ -30,12 +82,15 @@ location, data classes, retention period, access roles, incident process, and
 the transfer from Railway to university-managed storage. Treat this guide as an
 engineering control, not legal or ethics advice.
 
-## Infrastructure as code
+## Infrastructure configuration
 
-`pnpm install` installs both the Railway CLI and TypeScript IaC SDK as
-development dependencies. TypeScript IaC is generally available and owns one
-complete project environment at a time. Authenticate and link the project
-before the first use.
+`pnpm install` installs the Railway command-line tool and TypeScript library as
+development dependencies. The checked-in `railway.ts` file is the source of
+truth for one complete project environment at a time. Railway calls this
+[TypeScript infrastructure as code](https://docs.railway.com/infrastructure-as-code):
+the repository describes the required Railway resources, and Railway compares
+that description with the selected environment. Sign in and link this working
+copy to the intended Railway project before the first use.
 
 ```sh
 pnpm exec railway login
@@ -44,9 +99,11 @@ pnpm exec railway environment production
 pnpm run infra:plan
 ```
 
-The production plan creates four resources and two canvas groups. Review the
-complete plan, especially any destroy/replace actions. Applying changes is a
-separate, deliberate operation:
+The production plan creates the two services, PostgreSQL database, Bucket, and
+two visual groups in Railway's project view. A plan is only a preview; it does
+not change Railway. Review the complete preview, paying particular attention to
+anything Railway proposes to remove or recreate. Applying the reviewed plan is
+a separate operation:
 
 ```sh
 pnpm run infra:apply
@@ -64,94 +121,104 @@ pnpm run infra:apply
 ```
 
 Use `pnpm exec railway environment production` or
-`pnpm exec railway environment staging` before later plan/apply operations. IaC
-connects staging services to `main` with check suites enabled. It deliberately
-leaves production services without a repository source so a push cannot bypass
-staging and the promotion gate.
+`pnpm exec railway environment staging` before later preview or apply
+operations. The checked-in definition connects both environments to `main`
+with GitHub checks enabled, so Railway waits for the `verify` job before
+deploying a commit.
+
+After applying the definition, open each service's source settings in Railway.
+Keep automatic deployments enabled for staging `web` and `worker`. Disable them
+for production `web` and `worker`. This switch is not represented by the
+current TypeScript library, so this is a manual dashboard setting. Check it
+after the first apply and after changing either service's source settings.
 
 Never commit generated Railway domains, project UUIDs, tokens, or secret values.
-Do not add a `railway.json`; the TypeScript definition owns both services and
-their project resources. Keep CLI and SDK versions controlled through the
-lockfile and review release notes when upgrading them.
+Do not add a `railway.json`; the TypeScript definition manages both services and
+their project resources. Keep the command-line tool and TypeScript library
+versions controlled through the lockfile, and review release notes when
+upgrading them.
 
 The definition intentionally does not create generated public domains. Generate
 a distinct Railway domain for each environment's `web` service, then create
-these shared variables separately in staging and production:
+the following
+[shared variables](https://docs.railway.com/variables/reference#shared-variables)
+separately in staging and production. Shared means they are entered once per
+environment and referenced by the services that need them; it does not mean
+staging and production share values. Mark the three secrets as
+[sealed](https://docs.railway.com/variables#sealed-variables), which prevents
+their values from being viewed again in Railway after they are saved.
 
-```text
-BETTER_AUTH_SECRET=<at least 32 random bytes>
-BETTER_AUTH_URL=https://<web domain>
-SVERLIN_ADMIN_SETUP_TOKEN=<long one-time setup secret>
-OPENAI_API_KEY=<provider secret, when AI feedback is enabled>
-```
+| Variable                    | Visibility | Purpose                                                             |
+| --------------------------- | ---------- | ------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`        | Sealed     | Signs login sessions; use a different random value per environment. |
+| `SVERLIN_ADMIN_SETUP_TOKEN` | Sealed     | One-time administrator setup link.                                  |
+| `OPENAI_API_KEY`            | Sealed     | Enables AI-assisted editing in the web service.                     |
+| `BETTER_AUTH_URL`           | Normal     | The environment's public `web` URL.                                 |
+| `OPENAI_MODEL`              | Normal     | Model name, normally `gpt-5.6-luna`.                                |
+| `CHATBOT_CONFIG`            | Normal     | Bot configuration, normally `ai-assistant`.                         |
 
-`BETTER_AUTH_TRUSTED_ORIGINS` follows `BETTER_AUTH_URL` in IaC. Database and
-Bucket credentials are resource references rather than copied secrets. The
-private Railway database URL normally does not require TLS; set `PGSSLMODE` only
-when the selected connection URL requires it.
+`BETTER_AUTH_TRUSTED_ORIGINS` follows `BETTER_AUTH_URL` in the TypeScript
+definition. Database and Bucket variables come directly from the Railway
+resources rather than being copied into this list. The application selects
+PostgreSQL on Railway and uses its checked-in defaults for pool size, job
+timings, and request timeouts. Do not copy the local `.env` file to Railway. The
+private Railway database URL normally does not require encrypted transport;
+set `PGSSLMODE` only when the selected connection URL requires TLS.
 
-Adding shared variables may trigger a staging deployment without changing the
-IaC graph. Production remains deployed through the promotion workflow. IaC
-fixes both services in Singapore, configures the readiness health check, restart
-policy, pool and job timings, and gives the compiler worker a 4 GiB memory
-limit. Adjust that limit only after measuring representative workloads.
+Changing shared variables may trigger a staging deployment. Confirm that
+production automatic deployments are still disabled before changing production
+variables. The definition fixes both services in Singapore, configures the readiness health
+check and restart policy, and gives the compiler worker a 4 GiB memory limit.
+Adjust that limit only after measuring representative workloads.
 
-## CI and exact-SHA promotion
+## GitHub checks and manual production release
 
 The required GitHub `verify` job builds the Docker `verification` stage and then
 the final cached `runtime` stage. Verification compiles the real runtime inputs
 and runs checks, lint, file-mode unit tests, and every catalogued example.
-Protect `main` in GitHub so `verify` must pass before merge. Railway's staging
-sources also use check suites, so a failed push check is skipped instead of
-deployed.
+Protect `main` in GitHub so `verify` must pass before merge. Railway also waits
+for that check, so it does not deploy a failed commit.
 
-Create GitHub environments named `staging` and `production`. Configure each
-with credentials for only its matching Railway environment:
+No Railway token, project ID, deployment URL, or Railway environment is needed
+in GitHub. GitHub verifies the code; Railway stores the hosted configuration and
+performs deployments.
 
-| Location              | Name                 | Value                                   |
-| --------------------- | -------------------- | --------------------------------------- |
-| Repository variable   | `RAILWAY_PROJECT_ID` | Railway project UUID                    |
-| `staging` secret      | `RAILWAY_TOKEN`      | Staging-scoped Railway project token    |
-| `staging` variable    | `SVERLIN_SMOKE_URL`  | Staging web URL                         |
-| `production` secret   | `RAILWAY_TOKEN`      | Production-scoped Railway project token |
-| `production` variable | `SVERLIN_SMOKE_URL`  | Production web URL                      |
+Use this release sequence:
 
-When the GitHub plan supports it, require a reviewer on the `production`
-environment. Manual workflow dispatch remains an explicit gate either way.
+1. In GitHub, confirm the latest commit on `main` has a successful `verify` job.
+2. In Railway staging, confirm both `web` and `worker` successfully deployed
+   that same commit. Run this quick deployment check:
+   `SVERLIN_SMOKE_URL=https://<staging-domain> pnpm run smoke:deployment` and
+   exercise one disposable queued command.
+3. Check `main` again immediately before release. If it advanced, wait for the
+   new commit to pass its GitHub checks and staging instead of releasing an
+   older revision.
+4. In Railway production, open `web` and choose **Deploy Latest Commit**. Wait
+   for its pre-deploy migration and readiness check to succeed.
+5. Open production `worker` and choose **Deploy Latest Commit**. Wait for it to
+   become ready and confirm it reports the same commit as `web`.
+6. Run `SVERLIN_SMOKE_URL=https://<production-domain> pnpm run smoke:deployment`
+   and record the released commit in the study's operations log.
 
-To release, copy the full 40-character SHA of a CI-green `main` commit whose
-staging deployment is ready, then run the `Promote production` workflow with
-that SHA. The workflow:
-
-1. Confirms the SHA belongs to `main` and has a successful `verify` check.
-2. Finds successful staging web and worker deployments for that exact SHA.
-3. Smoke-tests staging and verifies the web reports that SHA.
-4. Sets the web's `SVERLIN_BUILD_SHA` without triggering a deployment, uploads
-   the checked-out SHA, and waits for migration, readiness, and terminal
-   deployment success.
-5. Sets the same worker build identity without deploying, uploads the same tree,
-   and waits for terminal success.
-6. Smoke-tests production, requires its version endpoint to report the promoted
-   SHA, and records that SHA in the workflow summary and Railway messages.
-
-GitHub-triggered services otherwise deploy independently, so migrations must
-remain backward compatible. If web succeeds and worker fails, production is in
-a deliberate partial-release state: retry the same SHA after diagnosing the
-worker. Do not roll the database backward automatically.
+The services deploy independently, so migrations must remain backward
+compatible. If `web` succeeds and `worker` fails, retry the same latest commit
+after diagnosing the worker. Do not roll the database backward automatically.
 
 ## First deployment
 
-1. Apply the reviewed production IaC plan, then generate its web domain and set
-   its shared variables.
-2. Create empty staging, apply its reviewed IaC plan, generate its web domain,
-   and set distinct staging variables.
-3. Configure the GitHub repository/environments above and require `verify` on
-   `main`.
-4. Push a commit to `main`; wait for CI and both staging services, then run
+1. Apply the reviewed production infrastructure plan, generate its web domain,
+   set its shared variables, and disable automatic deployments for both services.
+2. Create empty staging, apply its reviewed infrastructure plan, generate its
+   web domain, set distinct staging variables, and leave automatic deployments
+   enabled.
+3. Require the GitHub `verify` job on `main`.
+4. Push a commit to `main`; wait for its GitHub checks and both staging services,
+   then run
    `SVERLIN_SMOKE_URL=https://<staging-domain> pnpm run smoke:deployment`.
 5. Visit `https://<staging-domain>/setup?token=<staging-token>` and register a
    staging administrator. Exercise a disposable participant and queued command.
-6. Promote the successful SHA through GitHub Actions.
+6. Release the tested latest commit manually: production `web` first, then
+   production `worker`, then the production smoke test.
 7. Visit `https://<production-domain>/setup?token=<production-token>`, register
    the production admin passkey, then remove or rotate the one-time setup token.
 
@@ -161,21 +228,28 @@ checks gate deployments but are not continuous monitoring.
 
 ## Deployment diagnostics
 
-Install Railway's remote MCP for Codex, authenticate it with user OAuth, and
-restart Codex so future sessions can inspect project state without storing a
+Install Railway's remote Model Context Protocol (MCP) connection, which lets
+Codex query Railway through the signed-in command-line tool. Restart Codex after
+installation so future sessions can use the connection without storing a
 project token in the repository:
 
 ```sh
-pnpm exec railway mcp install --agent codex --oauth
+pnpm exec railway mcp install --agent codex --remote
 ```
+
+The devcontainer mounts a Docker-managed `railway-state` volume at
+`/root/.railway`. It preserves the command-line login and local project link
+across container rebuilds without copying credentials into the image or
+repository. Removing the Compose volumes also removes this saved login.
 
 Connect the GitHub integration in Codex as well. Permit deployment, log, metric,
 workflow, check, and issue reads; retain approval for writes such as redeploying,
 changing variables, or creating an issue. These account connections are local
 operator setup, not repository state.
 
-The pinned local CLI remains the deterministic fallback. Always scope reads to
-the exact project, environment, and service, and keep log queries bounded:
+The pinned local command-line tool remains useful when exact, scriptable output
+is needed. Always identify the project, environment, and service explicitly,
+and limit log queries so an investigation does not download an unbounded log:
 
 ```sh
 pnpm exec railway deployment list --project <project-id> --environment production --service web --json
@@ -184,9 +258,10 @@ pnpm exec railway logs --project <project-id> --environment production --service
 pnpm exec railway metrics --project <project-id> --environment production --all --since 1h --json
 ```
 
-For an incident, start with the failed GitHub job and its exact SHA, then inspect
-the matching Railway deployment, build logs, runtime logs, and metrics. Do not
-redeploy, mutate variables, or file a GitHub issue without explicit approval.
+For an incident, start with the failed deployment and its Git commit, then
+inspect the matching GitHub check, Railway build logs, runtime logs, and metrics.
+Do not redeploy, mutate variables, or file a GitHub issue without explicit
+approval.
 
 ## Reliability and monitoring
 
@@ -240,12 +315,3 @@ leaving PostgreSQL and the Bucket intact. Pause the worker before investigating
 possible corruption. For a suspected incident, disable affected participants,
 preserve evidence required by university policy, rotate exposed secrets, and
 follow the institutional reporting process.
-
-Relevant official Railway documentation:
-
-- [TypeScript infrastructure as code](https://docs.railway.com/infrastructure-as-code)
-- [PostgreSQL](https://docs.railway.com/databases/postgresql)
-- [Storage Buckets](https://docs.railway.com/storage-buckets)
-- [Deployment teardown and drain](https://docs.railway.com/deployments/deployment-teardown)
-- [Health checks](https://docs.railway.com/deployments/healthchecks)
-- [Variables](https://docs.railway.com/variables/reference)
