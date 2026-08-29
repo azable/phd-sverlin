@@ -1,6 +1,4 @@
 node_modules
-.sverlin-stale-storage/
-.pnpm-store
 /.cache/
 /.local/
 
@@ -36,4 +34,3 @@ vite.config.ts.timestamp-*
 compiled.json
 
 temp.txt
-/.swc

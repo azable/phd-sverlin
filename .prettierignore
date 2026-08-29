@@ -12,7 +12,6 @@ node_modules
 build
 dist
 coverage
-compile/dist-newstyle*
 compile/vendor/**
 src/lib/server/chat-bots/ai-assistant/dsl-api-index.md
 

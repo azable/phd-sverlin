@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 
 await run('pnpm', ['run', 'prepare:compiler']);
+await run('pnpm', ['exec', 'svelte-kit', 'sync']);
 await run('pnpm', ['exec', 'vite', 'build']);
 await run('pnpm', ['run', 'build:migrate']);
 await run('pnpm', ['run', 'build:worker']);

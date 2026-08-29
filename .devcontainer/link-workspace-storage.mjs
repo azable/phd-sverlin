@@ -1,10 +1,8 @@
-import { lstat, mkdir, readlink, rename, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
-const staleStorageRoot = path.join(repositoryRoot, '.sverlin-stale-storage');
-
 const links = [
   ['node_modules', '/opt/sverlin-dev/node_modules'],
   ['compile/.stack-work', '/opt/sverlin-dev/stack-work'],
@@ -33,20 +31,7 @@ for (const [relativePath, volumePath] of links) {
   }
 
   if (existingTarget !== undefined) {
-    try {
-      await rm(linkPath, { recursive: true, force: true });
-    } catch (error) {
-      const stalePath = path.join(
-        staleStorageRoot,
-        `${relativePath.replaceAll('/', '-')}-${Date.now()}`
-      );
-
-      await mkdir(staleStorageRoot, { recursive: true });
-      await rename(linkPath, stalePath);
-      console.warn(
-        `Could not remove ${relativePath} (${error.code ?? 'unknown error'}); preserved it at ${path.relative(repositoryRoot, stalePath)}.`
-      );
-    }
+    await rm(linkPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
   }
 
   await mkdir(path.dirname(linkPath), { recursive: true });

@@ -3,10 +3,8 @@
 .svelte-kit
 build
 node_modules
-.pnpm-store
 .cache
 .local
-.sverlin-stale-storage
 outputs
 data/projects
 data/project-archives

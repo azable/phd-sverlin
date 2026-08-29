@@ -59,7 +59,21 @@ RUN node --version \
     && highs --version \
     && flock --version
 
-FROM toolchain AS development
+# Resolve external compiler dependencies in a layer shared by development and
+# production builds. Keeping this before the development fork prevents runtime
+# builds from compiling editor and formatting tools.
+FROM toolchain AS compiler-dependencies
+
+WORKDIR /workspaces/phd-sverlin/compile
+
+ENV STACK_ROOT=/opt/sverlin-stack-seed
+
+COPY compile/stack.yaml compile/stack.yaml.lock compile/compile.cabal ./
+COPY compile/vendor/MIP-0.2.0.1/MIP.cabal ./vendor/MIP-0.2.0.1/MIP.cabal
+
+RUN stack build --jobs=1 --only-dependencies
+
+FROM compiler-dependencies AS development
 
 ARG TARGETARCH
 ARG GHC_VERSION=9.10.3
@@ -153,30 +167,15 @@ RUN haskell-language-server-wrapper --version \
     && hlint --version \
     && stylish-haskell --version
 
-# Resolve external compiler dependencies in an image layer keyed only by Stack
-# metadata. Post-create copies this seed into the named Stack root volume.
-WORKDIR /workspaces/phd-sverlin/compile
-
-ENV STACK_ROOT=/opt/sverlin-stack-seed
-
-COPY compile/stack.yaml compile/stack.yaml.lock compile/compile.cabal ./
-COPY compile/vendor/MIP-0.2.0.1/MIP.cabal ./vendor/MIP-0.2.0.1/MIP.cabal
-
-RUN stack build --jobs=1 --only-dependencies
-
 WORKDIR /workspaces/phd-sverlin
 
-FROM toolchain AS build
+FROM compiler-dependencies AS build
 
 WORKDIR /workspaces/phd-sverlin
 
 ENV STACK_ROOT=/opt/sverlin-stack-seed \
     XDG_CACHE_HOME=/workspaces/phd-sverlin/.cache \
     XDG_STATE_HOME=/workspaces/phd-sverlin/.local/state
-
-# Reuse the external-package snapshot from the metadata-keyed development
-# stage. Project-owned packages are still compiled after the source copy.
-COPY --from=development /opt/sverlin-stack-seed /opt/sverlin-stack-seed
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
