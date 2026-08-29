@@ -28,10 +28,12 @@ disappear as a public API name; do not preserve it as the conceptual umbrella.
 ### Domain
 
 Add a new Domain module and builder context. Domain owns semantic declarations,
-fact construction, payload vocabulary, operator vocabulary, and queries shared
-by Program and Render. Keep the declaration representation abstract so the
-facade can validate a complete domain before executing a program or compiling
-render rules.
+fact construction, payload vocabulary, operator and relation vocabulary, and
+queries shared by Program and Render. Keep the declaration representation
+abstract so the facade can validate a complete domain before executing a
+program or compiling render rules. A relation kind supplies the semantic label
+for a slot-to-slot relation and defines whether endpoint order is meaningful;
+the exact declaration combinators remain open with the rest of Domain.
 
 Move the following existing interfaces into Domain:
 
@@ -70,19 +72,34 @@ author-facing `TraceBuilder` API to `Program`; target authored signatures must
 use `Program` exclusively. Internal implementation types may remain temporarily
 while modules are migrated.
 
+The Slot restoration baseline is commit `970907d` from 16 June 2026. Restore
+that model deliberately: public `Slot owner tag`, one slot per owner, the owner
+`BlockId` as stable storage-location identity, `unseal` consuming the slot and
+returning owner plus occupant, and `seal` reconstructing the slot with the same
+owner. Reads compose unseal, copy, and reseal; writes compose unseal, replace,
+and reseal. Do not import the August experimental `SlotId`/`SlotRef`,
+vacant/occupied typestate, `declareSlot`, `occupySlot`, `vacateSlot`, or
+`retireSlot` APIs into this restoration.
+
 - Program context: `Program` (replacing `Choreography`).
-- Linear resources: `Block`, `SlotHandle`, and `Pending`; `Payload` is defined
-  by Domain and consumed here.
+- Linear resources: `Block`, `Slot`, `RelationHandle`, and `Pending`;
+  `Payload` and relation-kind vocabulary are defined by Domain and consumed
+  here.
 - Lifecycle operations: `create`, `copy`, `use`, `apply1`, `apply2`, `replace`,
-  `materialize`, `materializeWithTags`, `commit`, `destroy`, and `checkpoint`.
+  `seal`, `unseal`, `relate`, `unrelate`, `materialize`,
+  `materializeWithTags`, `commit`, `destroy`, and `checkpoint`.
 - Lifecycle results: `OneUse`, `Create`, `Observe`, `Use`, `Copy`, `Replace`,
-  `Apply1`, `Apply2`, `Destroy`, `Seal`, `Unseal`, `(<$>)`, and `(<*>)`.
+  `Apply1`, `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `Unrelate`,
+  `(<$>)`, and `(<*>)`.
 
 Restore the lowercase `seal` and `unseal` operations alongside the existing
-`Seal` and `Unseal` result types. Keep `SlotHandle` opaque and linear. Do not
-add declaration, read, write, variable, or other workflow helpers to Program;
-higher-level APIs and authored programs compose those behaviors from the
-general primitives.
+`Seal` and `Unseal` result types. Add `relate` and `unrelate` only for slot
+locations; do not overload them for blocks. `Slot` and `RelationHandle` remain
+linear values supplied by lifecycle operations: authors cannot construct them,
+inspect their internal identities, or extract a stored child except through the
+corresponding Program operation. Do not add declaration, read, write, variable,
+or other workflow helpers to Program; higher-level APIs and authored programs
+compose those behaviors from the general primitives.
 
 #### Lifecycle operations
 
@@ -179,10 +196,13 @@ Destroy <- destroy obsolete
 
 ##### Seal
 
-Restore public `seal`. It consumes a live owner and child and returns the same
-owner plus an opaque occupied `SlotHandle`. The trace records their association:
-the owner identifies a stable storage location and the child identifies its
-current occupant. Render can constrain that occupant to the owner's location.
+Restore public `seal`. It takes exclusive ownership of a live owner and child,
+then reissues the owner with the same `BlockId` and returns a linear `Slot`
+containing the child. The child is no longer available as a `Block` while it is
+inside the slot; it can be recovered only by passing that slot with the matching
+owner to `unseal`. The trace records the association: the owner identifies the
+stable storage location and the contained child identifies its current
+occupant. Render can constrain that occupant to the owner's location.
 
 ```haskell
 Seal owner slot <- seal owner value
@@ -190,14 +210,57 @@ Seal owner slot <- seal owner value
 
 ##### Unseal
 
-Restore public `unseal`. It consumes the owner and occupied slot and returns the
-same owner plus the stored child. It exposes the occupant for arbitrary Program
-composition—copy, replace, use, destroy, or reseal—without embedding a fixed
-read/write abstraction in the core language.
+Restore public `unseal`. It takes exclusive ownership of a live owner and a
+`Slot` containing a child, verifies that the owner matches the slot's location,
+then reissues the same owner and returns the contained child as a live `Block`.
+The consumed slot no longer exists; calling `seal` with that owner and a child
+constructs the next slot for the same location. The recovered child is available
+for arbitrary Program composition—copy, replace, use, destroy, or reseal—without
+embedding a fixed read/write abstraction in the core language.
 
 ```haskell
 Unseal owner value <- unseal owner slot
 ```
+
+##### Relate
+
+`relate` creates a temporal semantic relation between two persistent slot
+locations. It consumes two `Slot`s, each containing its current child, and
+returns both slots unchanged together with a new linear `RelationHandle`.
+Consuming and returning the slots threads their capabilities without giving the
+relation ownership of either child. The relation records the owner `BlockId`s
+that identify the two locations, not the `BlockId`s of their current occupants.
+
+```haskell
+Relate sourceSlot1 targetSlot1 relation <-
+  relate DependsOn sourceSlot0 targetSlot0
+```
+
+The June baseline supports one slot per owner, so the owner `BlockId` is the
+complete location identity. Unsealing and resealing through that owner
+reconstructs a `Slot` for the same location and does not create a new relation
+endpoint. Multiple slots per owner are outside this restoration and require a
+separate design discussion; they must not cause `SlotId` to leak into the
+authored facade by default.
+
+##### Unrelate
+
+`unrelate` removes exactly the relation represented by a linear
+`RelationHandle`. It consumes that handle plus the current `Slot`s for both
+endpoints, verifies that their owner identities match the relation, and returns
+the two slots. Supplying the current slots makes endpoint identity explicit and
+ensures the operation composes with ordinary linear slot threading.
+
+```haskell
+Unrelate sourceSlot2 targetSlot2 <-
+  unrelate relation sourceSlot1 targetSlot1
+```
+
+A slot may participate in several relations: thread the returned `Slot` through
+each `relate` or `unrelate` call while retaining one distinct linear
+`RelationHandle` per active edge. Every relation handle must eventually be
+consumed. An owner or slot cannot complete its lifecycle while a relation to
+that location remains active.
 
 #### Materialization
 
@@ -432,16 +495,47 @@ Authored body source may import only `Sverlin`.
 
 ## Semantics and invariants
 
-- `seal` consumes a live owner and live child, then returns `Seal` containing
-  the same owner capability and a new occupied `Slot`.
-- `unseal` consumes a live owner and occupied `Slot`, then returns `Unseal`
-  containing the same owner capability and stored child.
+- `seal` takes exclusive ownership of a live owner and child, reissues the same
+  owner identity, and returns a linear `Slot` containing the child. No separate
+  child capability remains available while the child is stored.
+- `unseal` takes exclusive ownership of the matching live owner and that `Slot`,
+  consumes the slot, reissues the same owner identity, and returns the contained
+  child as a live `Block`.
 - Preserve owner and child identity in `TraceSeal` and `TraceUnseal`; the owner
   represents the stable storage location while occupants may change.
 - Do not encode declaration, read, or write semantics in these primitives.
   Copy-and-reseal and replace-and-reseal are author-level compositions.
+- `relate` and `unrelate` operate only on slot locations. There is no general
+  block relation: exact-block provenance remains represented by create, copy,
+  apply, replace, use, and destroy events, while purely visual connections
+  belong to Render.
+- `relate` consumes and returns two `Slot`s containing their children plus a
+  fresh linear `RelationHandle`. The relation handle contains stable endpoint
+  identities but no owner or child capability; it cannot expose, copy, replace,
+  or destroy either child.
+- A relation remains active when either slot is unsealed, temporarily empty,
+  resealed, or given a replacement occupant. It follows neither old nor new
+  occupant `BlockId`: its endpoints remain the same persistent locations, so no
+  retarget event is produced by a write.
+- `unrelate` consumes the exact `RelationHandle` and the current `Slot`s for its
+  two endpoints, validates both owner identities, and returns those slots.
+  Passing a slot reconstructed through another same-typed owner is an error.
+- Active relations must be removed before their endpoint locations or owners
+  are destroyed. Relation creation and removal are checkpointed trace events;
+  relation lifetime is independent of occupant lifetime.
 
 ## View and rendering
+
+Project `relate` and `unrelate` as explicit `TraceRelate relationId kind
+leftOwnerId rightOwnerId` and `TraceUnrelate relationId` events. Render resolves
+each endpoint against the stable owner geometry rather than the current
+occupant element. Consequently a rendered connector stays anchored while an
+occupant exits, enters, or changes identity, and it may remain visible when a
+slot is deliberately empty at a checkpoint. Forward playback introduces and
+removes the relation at its events; reverse playback performs the inverse using
+the same `relationId`. Render rules may choose how a declared relation kind is
+drawn, but they must not infer semantic relations from block lineage, solver
+variable names, or proximity.
 
 ## Compiler and runtime boundary
 
