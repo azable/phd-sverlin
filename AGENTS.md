@@ -32,6 +32,10 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   clear whether a statement is established behavior, a recommendation, or an
   assumption. If sources conflict or the behavior cannot be verified, state the
   uncertainty and ask before turning it into a durable instruction.
+- During guided external-service setup, account explicitly for every warning or error
+  in command output before giving the next step. Classify it as blocking, actionable,
+  or harmless; follow any applicable skill remediation; and verify the resulting
+  external state with a read-only check where possible.
 - Watch for repeated, contradictory, or stale documentation. Keep the root `README.md`
   as the concise project entry point, and keep detailed subject-specific documentation
   in the relevant files under `docs/`. When consolidation would help, identify the
