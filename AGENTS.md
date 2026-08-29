@@ -4,6 +4,41 @@
 
 This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines: local file mode uses `data/projects/`, while the Railway target uses PostgreSQL plus a private Bucket. PostgreSQL project commands enter a pg-boss queue and are completed by a separate worker running the Haskell executable; local file-mode commands execute synchronously. The Haskell application generates the data that the SvelteKit application displays.
 
+## Communication and Documentation
+
+- Write explanations for a developer with in-depth programming knowledge but only
+  basic DevOps and Railway knowledge. Be concise, but include the context needed to
+  understand why an operational step or constraint exists; do not assume familiarity
+  with infrastructure-specific terminology.
+- Prefer plain language. Define an unavoidable specialist term at its first meaningful
+  use when the intended reader may not know it. In repository documentation, link that
+  first use to an authoritative source when the definition would otherwise interrupt
+  the explanation, prioritizing official product documentation, standards, research
+  papers, and then a suitable reference such as Wikipedia.
+- Do not add links for ordinary programming terms, repeat the same explanatory link
+  throughout a document, or link a term whose meaning is already clear from nearby
+  text. The goal is reader understanding rather than exhaustive annotation.
+- If a terminology choice remains ambiguous after applying these guidelines, ask for
+  clarification. When the same user preference recurs across tasks, suggest adding it
+  to this file, but do not modify the standing instructions without approval.
+- In Markdown documentation, link references to repository files with relative
+  Markdown links so that they remain navigable in GitHub and can be opened directly
+  from the documentation in VS Code. Prefer a named heading or symbol when a specific
+  passage matters; use a line anchor only for a fixed revision where its line numbers
+  cannot drift. Otherwise, link to the file. Use inline code, not a link, for
+  illustrative or nonexistent paths.
+- When documenting behavior, keep the explanation close to its source of truth. Name
+  the relevant source file, configuration, test, or external documentation, and make
+  clear whether a statement is established behavior, a recommendation, or an
+  assumption. If sources conflict or the behavior cannot be verified, state the
+  uncertainty and ask before turning it into a durable instruction.
+- Watch for repeated, contradictory, or stale documentation. Keep the root `README.md`
+  as the concise project entry point, and keep detailed subject-specific documentation
+  in the relevant files under `docs/`. When consolidation would help, identify the
+  conflicting material and ask before moving, deleting, or substantially rewriting it.
+- Document the rationale and source for operational constants, limits, timeouts, retry
+  counts, and other non-obvious numeric choices.
+
 ## How To Navigate
 
 - The SvelteKit application is located in the root directory, and its source code can be found in the `src/` directory.
@@ -27,9 +62,19 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - If `AGENTS_LOG.md` is already modified or untracked when a task begins, revise that same file in place so it continues to summarize **all** current uncommitted agent-authored changes. Do not discard earlier uncommitted work, reduce the log to only the latest task, append a dated diary entry, or create a second work-log file. Once the existing log and the changes it describes have been committed, replace its contents for the next task's new working-tree snapshot.
 - Keep a concise resume section near the top of `AGENTS_LOG.md`. State whether implementation is complete or mid-flight, the next safe action, remaining work or blockers, validations already run and their outcomes, and any relevant operational state such as an intentionally held app lock. Record durable facts and commands rather than transient process IDs. The log must be self-contained enough to resume safely without relying on the conversation transcript.
 - On the first turn after a devcontainer rebuild or agent restart, read `AGENTS.md` and `AGENTS_LOG.md` completely, inspect `git status` and the relevant diffs, and check any operational state named in the resume section before changing files. Continue from the recorded next safe action, re-run only checks invalidated by the rebuild, preserve user and concurrent-worker changes, and update the same log when the resumed task completes.
-- This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout, and the shadcn-svelte skill is installed under `.agents/skills/shadcn-svelte`.
+- Repository-local skills are available under `.agents/skills/`; their `SKILL.md`
+  files describe when and how to use them. Review the available skills for work that
+  matches their scope, follow every applicable skill, and consider whether a suitable
+  skill exists when the repository does not already provide one. Before adding a skill,
+  explain the expected benefit and ask the developer for approval. Manage skills with
+  the `skills` CLI, normally invoked through `npx skills`; it installs skill directories
+  under `.agents/skills/` and records their source and content hash in the root
+  `skills-lock.json`. Use the CLI to add, update, or remove skills rather than editing
+  installed skill directories or the lockfile by hand. Treat either file set as a normal
+  repository change that must be reviewed and committed. A newly added, removed, or
+  updated skill may require a fresh agent session before its availability changes.
+- This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout.
 - When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
-- Railway's official `use-railway` skill is installed under `.agents/skills/use-railway`. Use it for Railway setup, deployment, configuration, and operations tasks; it is repository-local so trusted clones inherit the same guidance.
 - When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
 - `pnpm run test:unit -- --run` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. Run `pnpm run test:e2e` after Svelte behavior changes.
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
@@ -41,6 +86,13 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## DSL LLM Authoring Context
 
+- For current implemented behavior, use
+  `compile/src/LinearTrace/Choreography.hs` and the generated DSL API index described
+  below. For proposed API changes, consult
+  [`compile/src/LinearTrace/API_plan.md`](compile/src/LinearTrace/API_plan.md); it
+  describes a target design and does not override current behavior until implemented.
+  [`compile/src/LinearTrace/API_refactoring.md`](compile/src/LinearTrace/API_refactoring.md)
+  is supporting rationale rather than the current implementation contract.
 - `compile/src/LinearTrace/Choreography.hs` is the canonical public-name and
   per-symbol behavior contract. Keep one Haddock description on every explicit
   facade export. `scripts/dsl-api-index.mjs` validates and indexes those comments
