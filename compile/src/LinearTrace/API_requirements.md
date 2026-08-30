@@ -80,6 +80,15 @@ Passing an optional handle through an ordinary Haskell value that loses that
 provenance must be rejected. Omitting a geometry-neutral component does not create
 another affine solver branch; optional geometry does.
 
+## Keep classification separate from visual mapping
+
+Program must give every materialized block exactly one typed semantic `Kind`,
+including temporary values and operators. Classification makes a block available
+for typed selection; it does not create a visual node or require that Render select
+it. Render alone decides whether a kind has no mapping, a fixed mapping, or a
+seeded optional mapping through `sometimes`. Do not use an unclassified
+materialization operation as an indirect visibility control.
+
 ## Preserve behavior while collapsing implementation layers
 
 The authored package boundary should expose only `Sverlin`; compiler assembly

@@ -49,8 +49,24 @@ data Kind tag
 It distinguishes semantic roles that share a trace tag: for example,
 `valueKind` and `resultKind` may both have type `Kind Number`. The type prevents
 a kind declared for `Number` from being attached to or used to select a
-`Block SourceCode`. Each classified block has exactly one `Kind`; `commit`
-creates a deliberately unclassified block.
+`Block SourceCode`. Every materialized block has exactly one `Kind`.
+
+A `Kind` is semantic classification, not a request to draw the block. Render
+may ignore it, map it with an ordinary `node` rule, or make that mapping seeded
+and optional with `sometimes`. Program therefore classifies temporary values
+and operators too; it does not hide them by omitting classification.
+
+```haskell
+additions <- select additionOperatorKind
+
+-- `always` makes the fixed presence policy explicit.
+always $ node additions $ content (text "+")
+
+-- Or make the same kind's visual mapping a seeded design choice.
+sometimes $ node additions $ content (text "+")
+```
+
+These two mappings illustrate alternatives, not declarations to use together.
 
 Keep compound selection outside the baseline. Use a more specific kind such as
 `availableValueKind` when one exclusive role needs its own Render rule, and use
@@ -262,8 +278,7 @@ vacant/occupied typestate, `declareSlot`, `occupySlot`, `vacateSlot`, or
 - Linear resources: `Block`, `Slot`, and `Pending`; `Payload` and relation-kind
   vocabulary are defined by Domain and consumed here.
 - Lifecycle operations: `create`, `copy`, `use`, `apply1`, `apply2`, `replace`,
-  `seal`, `unseal`, `relate`, `materialize`, `materializeWithKind`, `commit`,
-  and `destroy`.
+  `seal`, `unseal`, `relate`, `materialize`, and `destroy`.
 - Named Program composition: typed, nestable `step`.
 - Lifecycle results: `OneUse`, `Create`, `Use`, `Copy`, `Replace`, `Apply1`,
   `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `(<$>)`, and `(<*>)`.
@@ -464,7 +479,7 @@ occupant.
 
 Materialization resolves the `Pending` obligations produced by lifecycle
 operations. It assigns a block identity, completes the pending trace event, and
-optionally attaches declared Domain kinds used by Render selection.
+attaches the block's one declared Domain `Kind`.
 
 ##### Materialize
 
@@ -481,33 +496,11 @@ materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)
 block <- materialize availableValueKind pending
 ```
 
-##### Materialize with a payload-derived kind
-
-`materializeWithKind` chooses one declared kind from the payload being
-materialized. The classifier may choose among predeclared finite
-classifications such as `negativeValueKind` and `nonNegativeValueKind`; it must
-not turn each numeric payload into a new kind.
-
-```haskell
-materializeWithKind
-  :: (Payload tag -> Kind tag)
-  -> Pending tag %1
-  -> Program (Block tag)
-```
-
-```haskell
-classified <- materializeWithKind classifySign pending
-```
-
-##### Commit
-
-`commit` materializes a pending value without attaching Domain kinds. Use it
-for traceable intermediate values that Render addresses only through operation
-lineage, or that should not participate in semantic selection.
-
-```haskell
-unclassified <- commit pendingUnclassified
-```
+This is the only materialization operation. Remove `commit` and do not add
+`materializeWithKind`: absence of a kind must not be used as a visibility
+control, and payload-derived classification has no demonstrated baseline use.
+If that need appears later, add a typed operation for the concrete semantics
+rather than retaining a speculative classifier callback.
 
 #### Named steps
 
@@ -2265,16 +2258,19 @@ relations. General graphs need no separate public handle.
 
 The classification and relation slices are intentionally breaking at the new
 `Sverlin` facade. Replace atom tags such as `#value` with typed Domain `Kind`
-declarations, attach them through `materialize` or `materializeWithKind`, and
-select them directly. Replace structural `#index @: value` joins with declared
-relations and derived graph values. Payload text needed for display is read
-through `bindContent`, not captured by a query.
+declarations, attach exactly one through `materialize`, and select them
+directly. Replace structural `#index @: value` joins with declared relations
+and derived graph values. Payload text needed for display is read through
+`bindContent`, not captured by a query.
 
 Remove `FactValue`, `Fact`, `Facts`, `emptyFacts`, `factAtom`, `factSymbol`,
 `factInt`, `factsUnion`, `factsToList`, `Query`, `QueryInt`, `QueryField`,
 `emptyQuery`, `queryAtom`, `queryInt`, `queryFacts`, `payload`, `PayloadQuery`,
 `AnyPayload`, the public query-based `Select` class, `NodeBinding`, `(@:)`,
-query `(<&>)`, query `fromLabel`, and `bindInt` from `Sverlin`. Typed `select`
+query `(<&>)`, query `fromLabel`, `bindInt`, and `materializeWithTags` from
+`Sverlin`. Replace it with the single typed `materialize kind pending`
+operation; arbitrary payload-derived facts and classifier callbacks are not
+retained. Typed `select`
 returns `Selected` nodes or `Relations` directly through private closed
 dispatch; no public binding wrapper or selection class replaces `NodeBinding`.
 Existing fact/query representations may remain temporarily behind the compiler
@@ -2302,8 +2298,9 @@ Add focused facade and compiler tests for:
   unrelated component;
 - independent seeded inclusion of repeated `sometimes $ frame @Step` occurrences,
   with frame choices kept outside the affine configuration count;
-- `materializeWithKind` choosing among predeclared classifications from a
-  payload without creating numeric or string-keyed facts;
+- every materialized block receiving exactly one compatible `Kind`, including
+  temporary values and operators, without creating a visual node until Render
+  maps that kind, plus fixed and `sometimes` mappings of the same operator kind;
 - heterogeneous relations such as `ProbeAt Probe Cell`, including endpoint
   type errors, duplicate-edge rejection, typed context-local `first` and
   `second`, rejection outside their matching relation scope, affine endpoint
@@ -2382,12 +2379,6 @@ layout problem.
   them available to Domain, Program, and Render with stable diagnostic and
   serialization identities. Free string keys and overloaded-label fallback are
   excluded regardless of the chosen syntax.
-- Decide whether fixed-kind `materialize`, payload-derived
-  `materializeWithKind`, and unclassified `commit` should remain three
-  operations or become one operation taking an explicit classification plan.
-  A combined operation must still distinguish one fixed `Kind`, a classifier
-  choosing one declared kind, and deliberately no kind; it must not reintroduce
-  facts or an untyped callback result.
 - Define a typed, entity-bound accessor for numeric payload or property values
   when their magnitude must affect layout. It must remain distinct from
   `FixedInt`, which contains compiler-calculated graph data, and must not

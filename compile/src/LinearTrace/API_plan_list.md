@@ -162,8 +162,6 @@ seal   :: Block owner %1 -> Block tag %1 -> Program (Seal owner tag)
 unseal :: Block owner %1 -> Slot owner tag %1 -> Program (Unseal owner tag)
 
 materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)
-materializeWithKind :: (Payload tag -> Kind tag) -> Pending tag %1 -> Program (Block tag)
-commit :: Pending tag %1 -> Program (Block tag)
 
 (<$>) :: (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
 (<*>) :: OneUse (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
@@ -181,6 +179,12 @@ reason to keep sampling.
 ```haskell
 relate :: RelationKind source target -> ... -> Program (Relate ...)
 ```
+
+Every materialized block receives exactly one semantic `Kind`, including
+temporary values and operators. Classification alone produces no visual node:
+Render may omit the kind, map it normally or with `always`, or wrap its mapping
+in `sometimes`. There is no unclassified or payload-classifier materialization
+variant.
 
 ### Named steps
 
@@ -496,7 +500,12 @@ orientation is intentionally a random authored choice.
   top-level `Solver`, and optional stable IR boundaries.
 - Free facts and queries: `FactValue`, `Fact`, `Facts`, all `fact*` and
   `query*` operations, `Query`, `QueryInt`, `QueryField`, `(@:)`, query
-  `(<&>)`, query `fromLabel`, and `bindInt`.
+  `(<&>)`, query `fromLabel`, `bindInt`, and `materializeWithTags`. Use the
+  single typed `materialize kind pending`; arbitrary payload-derived facts are
+  not retained.
+- Alternate materialization operations: `commit` and `materializeWithKind`.
+  Every block receives one explicit `Kind`; Render independently decides
+  whether its mapping is absent, fixed, or seeded with `sometimes`.
 - Query-era selection and binding: `AnyPayload`, `PayloadQuery`, the old
   query-based `Select` class, `payload`, and `NodeBinding`.
 - Mechanical result wrappers: `SelectionBinding`, `Variable`, and `Bound`.
@@ -553,7 +562,6 @@ orientation is intentionally a random authored choice.
 4. Internal provenance representation and supporting constraint for values returned
    by `sometimes`.
 5. Exact `TextBuilder` input and fragment signatures.
-6. Whether three materialization operations remain separate.
-7. The Render projection from a stable slot owner to its current occupant.
-8. Graph-template APIs and their sampling weights.
-9. Whether `BorderDouble` and `TextAlignJustify` remain public.
+6. The Render projection from a stable slot owner to its current occupant.
+7. Graph-template APIs and their sampling weights.
+8. Whether `BorderDouble` and `TextAlignJustify` remain public.

@@ -62,10 +62,13 @@ elementKind :: Kind Number
 indexReadKind :: Kind Number
 targetReadKind :: Kind Number
 elementReadKind :: Kind Number
+incrementAmountKind :: Kind Number
 comparisonKind :: Kind Condition
 targetCellKind :: Kind TargetCell
 indexCellKind :: Kind IndexCell
 elementCellKind :: Kind ElementCell
+additionOperatorKind :: Kind Add
+equalityOperatorKind :: Kind Equal
 adjacent :: RelationKind ElementCell ElementCell
 
 type LinearSearch = "linear-search"
@@ -114,10 +117,13 @@ domain = do
   declareKind indexReadKind
   declareKind targetReadKind
   declareKind elementReadKind
+  declareKind incrementAmountKind
   declareKind comparisonKind
   declareKind targetCellKind
   declareKind indexCellKind
   declareKind elementCellKind
+  declareKind additionOperatorKind
+  declareKind equalityOperatorKind
   declareRelation adjacent -- ordered previous-to-next endpoints
   declareBranches @'[InitializeTarget, InitializeIndex, CreateElement] @CreateStoredChildren
   declareSteps
@@ -330,7 +336,7 @@ compareTarget :: Block Number %1 -> Block Number %1 -> Program Bool
 compareTarget element target = step @CompareTarget $ do
   equal <- step @CreateEqualOperator $ do
     Create pending <- create @Equal LOperator
-    commit pending
+    materialize equalityOperatorKind pending
 
   step @ApplyEquality $ do
     Apply2 conditionPending <- apply2 equal element target
@@ -356,11 +362,11 @@ incrementIndex index = step @IncrementIndex $ do
 
   one <- step @CreateOne $ do
     Create pending <- create @Number (LInt 1)
-    commit pending
+    materialize incrementAmountKind pending
 
   add <- step @CreateAddOperator $ do
     Create pending <- create @Add LOperator
-    commit pending
+    materialize additionOperatorKind pending
 
   nextPending <- step @AddOneToIndex $ do
     Apply2 pending <- apply2 add indexProbe one
@@ -674,3 +680,13 @@ render = do
     top (at 480)
     width (by 100)
     height (by 76)
+
+  -- Materialization classifies Add blocks but does not draw them. Render owns
+  -- this independent, seeded decision to give each active addition a "+" node.
+  additions <- select additionOperatorKind
+  sometimes $ node additions $ do
+    content (text "+")
+    left (at 880)
+    top (at 480)
+    width (by 60)
+    height (by 60)
