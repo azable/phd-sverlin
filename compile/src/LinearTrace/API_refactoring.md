@@ -685,13 +685,9 @@ constraints. Therefore the facade description of `encourage` as improving
 ranking is not true for the normal affine visualization path. A direct test
 currently confirms broad sampling despite a softened target.
 
-A public author feature should not be silently ignored. Choose one of:
-
-1. hide/remove `encourage` until it has defined behavior;
-2. make compilation emit an explicit diagnostic/error when the selected
-   backend ignores it; or
-3. implement preference-aware post-sampling/ranking while preserving hard-space
-   correctness and record that policy in provenance.
+The target facade therefore removes `encourage`. A future preference operation
+should be added only when its effect on sampling or post-sampling ranking is
+defined and recorded in provenance.
 
 Add separate tests for optimizer-mode soft influence, affine-mode handling, and
 backend diagnostics. If a nonlinear example is added, label it diagnostic
@@ -774,12 +770,10 @@ than facts recoverable from Git:
    `SlotId` immediately? The inline TODO correctly requires `SlotId` before
    multiple same-typed slots. Adding it immediately avoids a second wire-format
    migration.
-3. **Soft preferences:** remove, diagnose, or implement ranking in affine mode.
-   Keeping silent no-op behavior is not acceptable.
-4. **Facade compatibility:** whether `LinearTrace.Choreography` remains a
+3. **Facade compatibility:** whether `LinearTrace.Choreography` remains a
    deprecated re-export for one release or changes with the new `Sverlin`
    facade immediately.
-5. **Syntax boundary:** how much interim GHC-AST restriction is worthwhile
+4. **Syntax boundary:** how much interim GHC-AST restriction is worthwhile
    before implementing a dedicated parser.
 
 ## Recommended implementation order
@@ -799,8 +793,8 @@ than facts recoverable from Git:
    operations, view projection, occupant-adoption intent, IR validation,
    variable/Fibonacci and focused examples, and forward/reverse tests.
 5. **Make solver guarantees truthful.** Remove bridge operators from the
-   authored facade, decide soft-constraint behavior, restrict author arithmetic
-   to affine-safe forms, and reject unsupported nonlinear constraints.
+   authored facade, remove `encourage`, restrict author arithmetic to affine-safe
+   forms, and reject unsupported nonlinear constraints.
 6. **Generate the structural wire schema.** Retain handwritten semantic
    invariants and document IR coordinate/identity rules.
 7. **Data-drive host style profiles and canvas defaults.** Record their profile

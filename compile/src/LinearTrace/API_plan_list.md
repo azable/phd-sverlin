@@ -446,7 +446,6 @@ data VisualConstraint              -- abstract
 data VisualAlternative             -- abstract
 
 ensure    :: VisualConstraint -> Render ()
-encourage :: VisualConstraint -> Render ()
 
 alternative :: String -> [VisualConstraint] -> VisualAlternative
 oneOf      :: String -> VisualAlternative -> [VisualAlternative] -> Render ()
@@ -459,9 +458,6 @@ separatedBy :: Span -> Selected first -> Selected second -> VisualConstraint
 
 Write directed gaps with ordinary affine arithmetic. Use `oneOf` when either
 orientation is intentionally a random authored choice.
-
-`encourage` remains in the proposed inventory, but its meaning without nonlinear
-optimization is still open.
 
 ## Deliberately absent from `Sverlin`
 
@@ -500,6 +496,9 @@ optimization is still open.
 - Constraint bridge operators: `(=|)`, `(|=)`, `(=/)`, and `(/=)`. Write a
   directed affine equality directly; express a random unordered orientation as
   explicit `oneOf` alternatives.
+- Soft constraint operation: `encourage`. The bounded affine sampler does not
+  rank samples by soft constraints; add a preference API later only with defined
+  sampling semantics.
 
 ## Still preventing a fully final facade
 
@@ -512,5 +511,4 @@ optimization is still open.
 6. Whether three materialization operations remain separate.
 7. The Render projection from a stable slot owner to its current occupant.
 8. Connector and anchor APIs, graph-template APIs, and their sampling weights.
-9. Affine meaning for `encourage`.
-10. Whether `BorderDouble` and `TextAlignJustify` remain public.
+9. Whether `BorderDouble` and `TextAlignJustify` remain public.

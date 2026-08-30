@@ -1966,13 +1966,11 @@ or solver-backed z-index.
 
 #### Constraints and alternatives
 
-Retain `ensure`, `encourage`, `VisualConstraint`, `VisualAlternative`,
-`alternative`, `oneOf`, `caseOf`, `separatedBy`, `(.<=.)`, `(.>=.)`,
-and `(.==.)`.
+Retain `ensure`, `VisualConstraint`, `VisualAlternative`, `alternative`,
+`oneOf`, `caseOf`, `separatedBy`, `(.<=.)`, `(.>=.)`, and `(.==.)`.
 
 ```haskell
 ensure (width item .>=. by 80)
-encourage (x item .==. x canvas)
 ensure (left second .==. right first + by 16)
 
 oneOf "flow"
@@ -1993,8 +1991,10 @@ constraint. A component-wise vector bridge would require a separate alternative
 for every sign combination and is not Euclidean distance, so the facade should
 not imply a general distance operation.
 
-`encourage` remains listed because it exists, even though affine-mode behavior
-must be made explicit before the refactor is complete.
+Remove `encourage` from the target facade. The bounded affine sampler does not
+rank solutions by soft constraints, so retaining it would expose an operation
+that has no effect on the target solver path. A future preference API should be
+added only with explicit sampling and ranking semantics.
 
 ### Sverlin facade and host boundary
 
