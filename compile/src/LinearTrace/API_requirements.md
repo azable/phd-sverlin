@@ -20,3 +20,23 @@ The closed payload machinery and wrappers such as `LInt` in
 hide, derive, retain, or replace that mechanism, but must provide the same guarantee.
 It need not associate payloads or operators with display text; presentation belongs
 to `Render`.
+
+## Derive aggregate geometry from local constraints
+
+Render should prefer local relationships—parent-child containment, padding,
+adjacency, and alignment—over APIs that expose aggregate measurements or require
+authors to calculate absolute extents. The compiler should derive a group's size
+and position from those relationships: for example, a hugging array parent gets
+its width from its children's bounds and padding, not from a node count multiplied
+by their spacing. Add a count or absolute-extent accessor only when that value must
+itself be visualized or cannot be derived from existing constraints.
+
+Examples:
+
+- In an array row, constrain each declared adjacent pair to share an axis and have
+  a fixed or sampled gap. A hugging parent plus padding then determines the row's
+  complete bounds; the author does not need its length or a calculated width.
+- For one shaped text line, its text, chosen font, and variable font size determine
+  its intrinsic bounds. Text fitting and parent containment should use those bounds
+  directly rather than exposing a character count or asking the author to estimate
+  width from an average glyph size.
