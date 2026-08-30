@@ -21,7 +21,7 @@ import type {
   TargetDiagnostic,
   VisualSelection
 } from '$lib/shared/projects/events/values';
-import type { MessageContent } from '$lib/shared/projects/events/message-content';
+import { plainMessageText } from '$lib/shared/projects/events/message-content';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
 import type { RenderablePresentation } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
@@ -178,7 +178,7 @@ const conversationCases = {
     } as const
   ],
   'assistant.responded': (event) => [
-    { role: 'assistant', content: messageContentText(event.payload.content) } as const
+    { role: 'assistant', content: plainMessageText(event.payload.content) } as const
   ],
   'system.notified': () => []
 } satisfies ProjectEventCases<ConversationMessage[]>;
@@ -320,7 +320,7 @@ function projectWorkspace(snapshot: ProjectSnapshot): AiWorkspace {
 }
 
 function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
-  const details = [messageContentText(event.payload.content)];
+  const details = [plainMessageText(event.payload.content)];
   if (event.payload.focus.length > 0) {
     details.push(`Focused timeline events: ${event.payload.focus.join(', ')}`);
   }
@@ -357,19 +357,6 @@ function activePresentationFindings(snapshot: ProjectSnapshot): VisualizationFin
       ? decodeVisualization(presentation.render.text).findings
       : [];
   });
-}
-
-function messageContentText(content: MessageContent): string {
-  return content
-    .map((segment) => {
-      if (segment.type === 'markdown') return segment.text;
-      if (segment.type === 'presentation-ref') {
-        return `[Presentation ${segment.presentationId}]`;
-      }
-      return `[Elements ${segment.instances.join(', ')} in presentation ${segment.presentationId}, step ${segment.step + 1}]`;
-    })
-    .join(' ')
-    .trim();
 }
 
 function shortHash(sha256: string): string {

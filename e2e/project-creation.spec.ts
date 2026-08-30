@@ -16,7 +16,7 @@ test.beforeAll(async ({ request }) => {
   const startedAt = performance.now();
   console.info('[e2e setup] Creating and compiling the initial project fixture…');
   projectId = await createProject(request, 'blank');
-  selectionProjectId = await createProject(request, 'linear-search');
+  selectionProjectId = await createProject(request, 'typed-addition');
   await runProjectCommand(request, selectionProjectId, { type: 'render', seed: 2026 });
   console.info(
     `[e2e setup] Initial project compilation completed in ${Math.round(performance.now() - startedAt)} ms.`
@@ -38,13 +38,31 @@ test('canvas element selection is included in submitted feedback', async ({ page
   const browserFailures = observeBrowserFailures(page);
   await page.goto(`/projects/${selectionProjectId}`);
   const viewport = page.getByRole('region', { name: 'Visualization 1' });
-  const element = viewport.locator('[data-instance-id]').first();
-  await expect(element).toBeVisible();
-  await expect(page.getByText(/^Step 1 of \d+$/)).toBeVisible();
-  await element.click();
+  const stepStatus = page.getByText(/^Step \d+ of \d+$/);
+  await expect(stepStatus).toBeVisible();
+  const initialStepText = await stepStatus.textContent();
+  const stepCount = Number(initialStepText?.match(/of (\d+)$/)?.[1]);
+  expect(stepCount).toBeGreaterThan(1);
+  for (let step = 1; step < stepCount; step += 1) {
+    await page.getByLabel('Next visualization step').click();
+  }
+  await expect(stepStatus).toHaveText(`Step ${stepCount} of ${stepCount}`);
+
+  const elements = viewport.locator('[data-instance-id]');
+  const firstElement = elements.nth(0);
+  const secondElement = elements.nth(1);
+  await expect(firstElement).toBeVisible();
+  await expect(secondElement).toBeVisible();
+  const firstInstance = Number(await firstElement.getAttribute('data-instance-id'));
+  const secondInstance = Number(await secondElement.getAttribute('data-instance-id'));
+  await firstElement.click();
+  await secondElement.click({ modifiers: ['Shift'] });
   const referenceSelection = page.getByRole('button', { name: 'Reference selection' });
   await expect(referenceSelection).toBeVisible();
-  await expect(page.getByTestId('automatic-feedback-context')).toContainText('1 element');
+  const automaticContext = page.getByTestId('automatic-feedback-context');
+  await expect(automaticContext.locator('[data-slot="badge"]')).toHaveCount(2);
+  await expect(automaticContext).toContainText(`/ S${stepCount} / E${firstInstance}`);
+  await expect(automaticContext).toContainText(`/ S${stepCount} / E${secondInstance}`);
 
   const feedbackResponse = page.waitForResponse(
     (response) =>
@@ -68,8 +86,14 @@ test('canvas element selection is included in submitted feedback', async ({ page
   expect(payload.content[1]).toMatchObject({
     type: 'element-ref',
     presentationEvent: expect.any(Number),
-    step: 0,
-    instances: [expect.any(Number)]
+    step: stepCount - 1,
+    instances: [firstInstance]
+  });
+  expect(payload.content[2]).toMatchObject({
+    type: 'element-ref',
+    presentationEvent: expect.any(Number),
+    step: stepCount - 1,
+    instances: [secondInstance]
   });
   expect(payload.content.at(-1)).toMatchObject({
     type: 'markdown',
@@ -81,9 +105,39 @@ test('canvas element selection is included in submitted feedback', async ({ page
     .locator('article')
     .filter({ hasText: 'Focus on this element' })
     .last();
-  const submittedReference = submittedFeedback.getByRole('button').first();
-  await expect(submittedReference).toBeVisible();
-  expect(await submittedReference.evaluate(elementContrastRatio)).toBeGreaterThanOrEqual(4.5);
+  const submittedReferences = submittedFeedback.getByRole('button');
+  await expect(submittedReferences).toHaveCount(2);
+  await expect(submittedReferences.nth(0)).toContainText(`/ S${stepCount} / E${firstInstance}`);
+  await expect(submittedReferences.nth(1)).toContainText(`/ S${stepCount} / E${secondInstance}`);
+  expect(await submittedReferences.nth(0).evaluate(elementContrastRatio)).toBeGreaterThanOrEqual(
+    4.5
+  );
+
+  await submittedReferences.nth(0).click();
+  await expect(viewport.locator('.selection-outline')).toHaveCount(1);
+  await submittedReferences.nth(1).click({ modifiers: ['Shift'] });
+  await expect(viewport.locator('.selection-outline')).toHaveCount(2);
+  expect(browserFailures()).toEqual([]);
+});
+
+test('same-source candidates retain the current visualization step', async ({ page }) => {
+  const browserFailures = observeBrowserFailures(page);
+  await page.goto(`/projects/${selectionProjectId}`);
+
+  const nextStep = page.getByLabel('Next visualization step');
+  await expect(nextStep).toBeEnabled();
+  await nextStep.click();
+  await expect(page.getByText(/^Step 2 of \d+$/)).toBeVisible();
+
+  const candidates = page.getByRole('button', { name: /^Candidate/ });
+  expect(await candidates.count()).toBeGreaterThan(1);
+  const firstSelected = (await candidates.nth(0).getAttribute('aria-pressed')) === 'true';
+  const targetCard = candidates.nth(firstSelected ? 1 : 0).locator('..');
+  const cardBounds = await targetCard.boundingBox();
+  expect(cardBounds).not.toBeNull();
+  await targetCard.click({ position: { x: 12, y: cardBounds!.height - 8 } });
+
+  await expect(page.getByText(/^Step 2 of \d+$/)).toBeVisible();
   expect(browserFailures()).toEqual([]);
 });
 
@@ -185,7 +239,7 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   const projectResponse = await page.request.get(`/api/projects/${selectionProjectId}`);
   expect(projectResponse.ok()).toBe(true);
   const resource = (await projectResponse.json()) as ProjectResourceView;
-  expect(resource.document.events[0].payload.creation).toEqual({ templateId: 'linear-search' });
+  expect(resource.document.events[0].payload.creation).toEqual({ templateId: 'typed-addition' });
   expect(browserFailures()).toEqual([]);
 });
 

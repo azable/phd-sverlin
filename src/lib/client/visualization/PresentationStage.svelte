@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
   import { fly } from 'svelte/transition';
@@ -9,10 +10,13 @@
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import type { ProjectOperationKind } from '$lib/shared/projects/events';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
-  import { presentationStepLabels, type PresentationLayout } from '$lib/shared/presentations';
+  import type { PresentationLayout } from '$lib/shared/presentations';
 
   import type { PresentationSelection } from './presentation-selection.svelte';
-  import type { PresentationPlayback } from './presentation-playback.svelte';
+  import {
+    presentationPlaybackContext,
+    type PresentationPlayback
+  } from './presentation-playback.svelte';
   import PresentationViewport from './PresentationViewport.svelte';
 
   type Props = {
@@ -50,11 +54,13 @@
     session.refillPending ||
       (!!session.pending && visualizationOperationKinds.includes(session.pending.type))
   );
-  const selectionKey = $derived(
-    visible.map(({ presentation }) => presentation.presentationId).join(':')
-  );
-  const step = $derived(playback.stepFor(selectionKey));
-  const labels = $derived(visible[0] ? presentationStepLabels(visible[0].presentation) : []);
+  const playbackContext = $derived(presentationPlaybackContext(visible));
+  $effect.pre(() => {
+    const context = playbackContext;
+    untrack(() => playback.activate(context));
+  });
+  const step = $derived(playback.stepFor(playbackContext));
+  const stepCount = $derived(playbackContext.stepCount);
   const selectedIds = $derived(visible.map(({ presentation }) => presentation.presentationId));
   const preferred = $derived.by(() => {
     if (visible.length !== 2) return undefined;
@@ -70,7 +76,7 @@
   });
 
   function seek(next: number) {
-    playback.seek(selectionKey, next);
+    playback.seek(playbackContext, next);
     onVisualSelectionChange(undefined);
   }
 
@@ -135,18 +141,18 @@
       size="icon-sm"
       variant="ghost"
       aria-label="Previous visualization step"
-      onclick={() => seek(Math.max(0, step - 1))}
+      onclick={() => seek(step - 1)}
       disabled={disabled || step === 0}><ChevronLeftIcon /></Button
     >
     <span class="min-w-32 text-center text-sm text-muted-foreground">
-      {labels.length ? `Step ${step + 1} of ${labels.length}` : 'No steps'}
+      {stepCount ? `Step ${step + 1} of ${stepCount}` : 'No steps'}
     </span>
     <Button
       size="icon-sm"
       variant="ghost"
       aria-label="Next visualization step"
-      onclick={() => seek(Math.min(labels.length - 1, step + 1))}
-      disabled={disabled || step >= labels.length - 1}><ChevronRightIcon /></Button
+      onclick={() => seek(step + 1)}
+      disabled={disabled || step >= stepCount - 1}><ChevronRightIcon /></Button
     >
     {#if layout === 'comparison' && visible.length === 2}
       <Button

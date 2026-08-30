@@ -27,7 +27,8 @@
     onPresentationChange?: () => void;
     onReferenceRequest?: (presentation: TimelinePresentation) => void;
     onElementReferenceActivate?: (
-      reference: Extract<MessageContentSegment, { type: 'element-ref' }>
+      reference: Extract<MessageContentSegment, { type: 'element-ref' }>,
+      extend: boolean
     ) => void;
   };
 
@@ -62,9 +63,13 @@
       ({ presentation: value }) => value.presentationId === reference.presentationId
     );
     if (!presentation) return;
-    onPresentationChange();
-    selection.activate(presentation, session.events, layout, extend);
-    if (reference.type === 'element-ref') onElementReferenceActivate(reference);
+    if (reference.type === 'presentation-ref') {
+      onPresentationChange();
+      selection.activate(presentation, session.events, layout, extend);
+      return;
+    }
+    selection.activate(presentation, session.events, layout);
+    onElementReferenceActivate(reference, extend);
   }
 </script>
 

@@ -1,11 +1,8 @@
 import type { TimelinePresentation } from '$lib/client/visualization/presentation-history';
-import type {
-  MessageContent,
-  MessageContentSegment
-} from '$lib/shared/projects/events/message-content';
+import type { MessageContent } from '$lib/shared/projects/events/message-content';
 import type { VisualSelection } from '$lib/shared/projects/events/values';
 
-type ReferenceSegment = Exclude<MessageContentSegment, { type: 'markdown' }>;
+import { singletonReferenceSegments, type ReferenceSegment } from './reference-labels';
 
 /** Describe the currently visible visualization context with retained inline references. */
 export function automaticFeedbackContext(
@@ -18,13 +15,17 @@ export function automaticFeedbackContext(
     automaticReference(presentation, visualSelection)
   );
   if (references.length === 1) {
-    return [{ type: 'markdown', text: 'Viewing ' }, references[0], { type: 'markdown', text: '.' }];
+    return [
+      { type: 'markdown', text: 'Viewing ' },
+      ...references[0],
+      { type: 'markdown', text: '.' }
+    ];
   }
   return [
     { type: 'markdown', text: 'Comparing ' },
-    references[0],
+    ...references[0],
     { type: 'markdown', text: ' with ' },
-    references[1],
+    ...references[1],
     { type: 'markdown', text: '.' }
   ];
 }
@@ -53,18 +54,20 @@ export function feedbackSubmissionContent(
 function automaticReference(
   presentation: TimelinePresentation,
   visualSelection?: VisualSelection
-): ReferenceSegment {
+): ReferenceSegment[] {
   if (visualSelection?.presentationEvent === presentation.eventId) {
-    return {
+    return singletonReferenceSegments({
       type: 'element-ref',
       presentationId: presentation.presentation.presentationId,
       presentationEvent: visualSelection.presentationEvent,
       step: visualSelection.step,
       instances: visualSelection.instances
-    };
+    });
   }
-  return {
-    type: 'presentation-ref',
-    presentationId: presentation.presentation.presentationId
-  };
+  return [
+    {
+      type: 'presentation-ref',
+      presentationId: presentation.presentation.presentationId
+    }
+  ];
 }

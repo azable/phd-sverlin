@@ -53,10 +53,15 @@ export function markdownMessage(text: string): MessageContent {
 /** Flatten structured content for compact logs and model-provider text channels. */
 export function plainMessageText(content: MessageContent): string {
   return content
-    .map((segment) => {
-      if (segment.type === 'markdown') return segment.text;
-      if (segment.type === 'presentation-ref') return `[Presentation ${segment.presentationId}]`;
-      return `[Elements ${segment.instances.join(', ')} in presentation ${segment.presentationId}, step ${segment.step + 1}]`;
+    .flatMap((segment) => {
+      if (segment.type === 'markdown') return [segment.text];
+      if (segment.type === 'presentation-ref') {
+        return [`[Presentation ${segment.presentationId}]`];
+      }
+      return segment.instances.map(
+        (instance) =>
+          `[Element E${instance} in presentation ${segment.presentationId}, step ${segment.step + 1}]`
+      );
     })
     .join(' ')
     .trim();

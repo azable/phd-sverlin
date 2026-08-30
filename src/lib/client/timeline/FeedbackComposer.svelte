@@ -8,20 +8,19 @@
   import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import {
-    presentationDisplayId,
     timelinePresentations,
     type TimelinePresentation
   } from '$lib/client/visualization/presentation-history';
-  import type {
-    MessageContent,
-    MessageContentSegment
-  } from '$lib/shared/projects/events/message-content';
+  import type { MessageContent } from '$lib/shared/projects/events/message-content';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
 
   import MessageContentView from './MessageContent.svelte';
   import { automaticFeedbackContext, feedbackSubmissionContent } from './feedback-context';
-
-  type ReferenceSegment = Exclude<MessageContentSegment, { type: 'markdown' }>;
+  import {
+    referenceChipLabel,
+    singletonReferenceSegments,
+    type ReferenceSegment
+  } from './reference-labels';
 
   type Props = {
     session: ProjectSession;
@@ -57,13 +56,15 @@
       ({ eventId }) => eventId === selection.presentationEvent
     );
     if (!presentation) return;
-    insertReference({
-      type: 'element-ref',
-      presentationId: presentation.presentation.presentationId,
-      presentationEvent: selection.presentationEvent,
-      step: selection.step,
-      instances: selection.instances
-    });
+    insertReferences(
+      singletonReferenceSegments({
+        type: 'element-ref',
+        presentationId: presentation.presentation.presentationId,
+        presentationEvent: selection.presentationEvent,
+        step: selection.step,
+        instances: selection.instances
+      })
+    );
   }
 
   async function submit(event: SubmitEvent) {
@@ -109,7 +110,12 @@
   }
 
   function insertReference(reference: ReferenceSegment) {
+    insertReferences([reference]);
+  }
+
+  function insertReferences(references: ReferenceSegment[]) {
     if (!editor || session.readOnly || !session.atHead) return;
+    if (references.length === 0) return;
     editor.focus();
     const range =
       savedRange && editor.contains(savedRange.commonAncestorContainer)
@@ -119,12 +125,17 @@
       range.selectNodeContents(editor);
       range.collapse(false);
     }
-    const chip = referenceChip(reference);
-    const spacer = document.createTextNode('\u00a0');
     range.deleteContents();
-    range.insertNode(spacer);
-    range.insertNode(chip);
-    range.setStartAfter(spacer);
+    const fragment = document.createDocumentFragment();
+    let finalSpacer: Text | undefined;
+    for (const reference of references) {
+      fragment.append(referenceChip(reference));
+      finalSpacer = document.createTextNode('\u00a0');
+      fragment.append(finalSpacer);
+    }
+    range.insertNode(fragment);
+    if (!finalSpacer) return;
+    range.setStartAfter(finalSpacer);
     range.collapse(true);
     const selection = window.getSelection();
     selection?.removeAllRanges();
@@ -141,7 +152,7 @@
     chip.className =
       'mx-0.5 inline-flex items-center gap-1 rounded-md border bg-muted px-1.5 py-0.5 align-baseline font-mono text-sm text-foreground';
     const label = document.createElement('span');
-    label.textContent = referenceLabel(reference);
+    label.textContent = referenceChipLabel(reference);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.setAttribute('aria-label', `Remove reference ${label.textContent}`);
@@ -154,13 +165,6 @@
     };
     chip.append(label, remove);
     return chip;
-  }
-
-  function referenceLabel(reference: ReferenceSegment): string {
-    const presentation = presentationDisplayId(reference.presentationId);
-    return reference.type === 'presentation-ref'
-      ? presentation
-      : `${reference.instances.length} element${reference.instances.length === 1 ? '' : 's'} · ${presentation} · Step ${reference.step + 1}`;
   }
 
   function serializeEditor(): MessageContent {

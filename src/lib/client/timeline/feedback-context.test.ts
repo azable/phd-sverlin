@@ -21,11 +21,11 @@ describe('automatic feedback context', () => {
     ]);
   });
 
-  it('uses the selected element chip inside an automatic comparison', () => {
+  it('uses one exact chip per selected element inside an automatic comparison', () => {
     expect(
       automaticFeedbackContext(
         [presentation(4, presentationIds[0]), presentation(5, presentationIds[1])],
-        { presentationEvent: 4, step: 2, instances: [7] }
+        { presentationEvent: 4, step: 2, instances: [7, 2] }
       )
     ).toEqual([
       { type: 'markdown', text: 'Comparing ' },
@@ -35,6 +35,13 @@ describe('automatic feedback context', () => {
         presentationEvent: 4,
         step: 2,
         instances: [7]
+      },
+      {
+        type: 'element-ref',
+        presentationId: presentationIds[0],
+        presentationEvent: 4,
+        step: 2,
+        instances: [2]
       },
       { type: 'markdown', text: ' with ' },
       { type: 'presentation-ref', presentationId: presentationIds[1] },

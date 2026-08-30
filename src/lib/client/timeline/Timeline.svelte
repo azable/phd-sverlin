@@ -25,7 +25,8 @@
     onPresentationChange?: () => void;
     onReferenceRequest?: (presentation: TimelinePresentation) => void;
     onElementReferenceActivate?: (
-      reference: Extract<MessageContentSegment, { type: 'element-ref' }>
+      reference: Extract<MessageContentSegment, { type: 'element-ref' }>,
+      extend: boolean
     ) => void;
   };
 

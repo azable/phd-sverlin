@@ -1,15 +1,15 @@
 <script lang="ts">
   import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
-  import { presentationDisplayId } from '$lib/client/visualization/presentation-history';
-  import type {
-    MessageContent,
-    MessageContentSegment
-  } from '$lib/shared/projects/events/message-content';
+  import type { MessageContent } from '$lib/shared/projects/events/message-content';
 
   import { renderSafeMarkdown } from './markdown';
+  import {
+    referenceChipLabel,
+    singletonReferenceSegments,
+    type ReferenceSegment
+  } from './reference-labels';
 
-  type ReferenceSegment = Exclude<MessageContentSegment, { type: 'markdown' }>;
   type Props = {
     content: MessageContent;
     interactive?: boolean;
@@ -23,13 +23,6 @@
     inverted = false,
     onReferenceActivate = () => {}
   }: Props = $props();
-
-  function referenceLabel(reference: ReferenceSegment): string {
-    const label = presentationDisplayId(reference.presentationId);
-    return reference.type === 'presentation-ref'
-      ? label
-      : `${reference.instances.length} element${reference.instances.length === 1 ? '' : 's'} · ${label} · Step ${reference.step + 1}`;
-  }
 </script>
 
 <div class="message-content text-base">
@@ -38,23 +31,27 @@
       <!-- renderSafeMarkdown applies the allowlist and URL policy before this HTML boundary. -->
       <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       <span class="message-markdown">{@html renderSafeMarkdown(segment.text)}</span>
-    {:else if interactive}
-      <Button
-        type="button"
-        size="xs"
-        variant={inverted ? 'secondary' : 'outline'}
-        class="mx-0.5 inline-flex align-baseline font-mono"
-        onclick={(event) => onReferenceActivate(segment, event.shiftKey)}
-      >
-        {referenceLabel(segment)}
-      </Button>
     {:else}
-      <Badge
-        variant={inverted ? 'secondary' : 'outline'}
-        class="mx-0.5 inline-flex overflow-visible align-baseline font-mono"
-      >
-        {referenceLabel(segment)}
-      </Badge>
+      {#each singletonReferenceSegments(segment) as reference (reference.type === 'presentation-ref' ? `presentation:${reference.presentationId}` : `element:${reference.presentationEvent}:${reference.step}:${reference.instances[0]}`)}
+        {#if interactive}
+          <Button
+            type="button"
+            size="xs"
+            variant={inverted ? 'secondary' : 'outline'}
+            class="mx-0.5 inline-flex align-baseline font-mono"
+            onclick={(event) => onReferenceActivate(reference, event.shiftKey)}
+          >
+            {referenceChipLabel(reference)}
+          </Button>
+        {:else}
+          <Badge
+            variant={inverted ? 'secondary' : 'outline'}
+            class="mx-0.5 inline-flex overflow-visible align-baseline font-mono"
+          >
+            {referenceChipLabel(reference)}
+          </Badge>
+        {/if}
+      {/each}
     {/if}
   {/each}
 </div>

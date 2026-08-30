@@ -23,7 +23,10 @@
   import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/client/timeline/Timeline.svelte';
   import PresentationStage from '$lib/client/visualization/PresentationStage.svelte';
-  import { PresentationPlayback } from '$lib/client/visualization/presentation-playback.svelte';
+  import {
+    presentationPlaybackContext,
+    PresentationPlayback
+  } from '$lib/client/visualization/presentation-playback.svelte';
   import { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
@@ -109,6 +112,19 @@
   let expired = $state(study?.expired ?? false);
   let studyAdvancing = $state(false);
   let visualSelection = $state.raw<VisualSelection | undefined>(undefined);
+
+  function toggleInstances(
+    current: VisualSelection['instances'],
+    toggled: VisualSelection['instances']
+  ): VisualSelection['instances'] {
+    const next = [...current];
+    for (const instance of toggled) {
+      const index = next.indexOf(instance);
+      if (index >= 0) next.splice(index, 1);
+      else next.push(instance);
+    }
+    return next;
+  }
 
   const adminPreview = $derived(study?.context === 'admin-preview');
   const showAdminControls = $derived(isAdmin && !adminPreview && !session.readOnly);
@@ -330,17 +346,26 @@
                 onPresentationChange={() => (visualSelection = undefined)}
                 onReferenceRequest={(presentation) =>
                   feedbackComposer?.referencePresentation(presentation)}
-                onElementReferenceActivate={(reference) => {
-                  const selectionKey = presentationSelection
-                    .selected(session.events, layout)
-                    .map(({ presentation }) => presentation.presentationId)
-                    .join(':');
-                  presentationPlayback.seek(selectionKey, reference.step);
-                  visualSelection = {
-                    presentationEvent: reference.presentationEvent,
-                    step: reference.step,
-                    instances: reference.instances
-                  };
+                onElementReferenceActivate={(reference, extend) => {
+                  const context = presentationPlaybackContext(
+                    presentationSelection.selected(session.events, layout)
+                  );
+                  const step = presentationPlayback.seek(context, reference.step);
+                  const sameSelection =
+                    extend &&
+                    visualSelection?.presentationEvent === reference.presentationEvent &&
+                    visualSelection.step === step;
+                  const instances =
+                    sameSelection && visualSelection
+                      ? toggleInstances(visualSelection.instances, reference.instances)
+                      : reference.instances;
+                  visualSelection = instances.length
+                    ? {
+                        presentationEvent: reference.presentationEvent,
+                        step,
+                        instances
+                      }
+                    : undefined;
                 }}
               />
               {#if !expired && !session.readOnly}
