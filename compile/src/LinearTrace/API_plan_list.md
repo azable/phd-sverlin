@@ -46,18 +46,15 @@ data Kind tag                         -- abstract block classification
 data RelationKind source target      -- abstract location relation
 ```
 
-**Open:** final declaration operations for payload types, kinds, operators, and
-ordered or symmetric relation kinds. Names such as `declarePayload`,
-`declareKind`, `declareOperator`, and `declareRelation` in examples are
-placeholders, not settled exports.
+**Open:** final declaration operations for kinds, operators, and ordered or
+symmetric relation kinds. Names such as `declareKind`, `declareOperator`, and
+`declareRelation` in examples are placeholders, not settled exports.
 
 ### Payloads
 
 ```haskell
-type family Payload tag = payload | payload -> tag
-class Traceable tag
-
-newtype PayloadView = PayloadView { payloadKind :: String }
+class Traceable tag where
+  type Payload tag = payload | payload -> tag
 
 data LUnit tag              = LUnit
 data LBool tag              = LBool Bool
@@ -65,6 +62,16 @@ data LInt tag               = LInt Int
 data LDouble tag            = LDouble Double
 data LString tag            = LString String
 data LOperator operator tag = LOperator
+```
+
+One instance declares both the trace type and its payload representation. Here,
+`Number` is only an author-defined example name, not a built-in Sverlin type:
+
+```haskell
+data Number
+
+instance Traceable Number where
+  type Payload Number = LInt Number
 ```
 
 ### Operators
@@ -359,6 +366,7 @@ optimization is still open.
   `query*` operations, `Query`, `QueryInt`, `QueryField`, `(@:)`, query
   `(<&>)`, query `fromLabel`, and `bindInt`.
 - Query-era selection: `AnyPayload`, `PayloadQuery`, `Select`, and `payload`.
+- Legacy payload metadata: `PayloadView` and `payloadKind`.
 - Specialized or wrapped code text: `codeContent`, `codeWrap`,
   `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode`.
 - Removed styles: `WhiteSpace(..)` and `ZIndex`.

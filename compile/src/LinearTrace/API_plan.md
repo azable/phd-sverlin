@@ -70,34 +70,39 @@ than free strings or overloaded labels, are the authored contract; fact
 construction, query conversion, and numeric query binding are not re-exported
 by `Sverlin`.
 
-#### `Payload` and `Traceable`
+#### `Traceable` and `Payload`
 
 ```haskell
-type family Payload tag = payload | payload -> tag
-class Traceable tag
+class Traceable tag where
+  type Payload tag = payload | payload -> tag
 ```
 
 `tag` is the semantic trace type used by `Block tag`, such as `Number`.
-`Payload tag` is a type-level lookup for the linear value stored by that block;
-it is not a declaration value passed to Program or Render. For example:
+One `Traceable` instance declares both that the type can participate in the
+trace and the linear value stored by its blocks. `Payload tag` is the associated
+type selected by that instance; it is not a declaration value passed to Program
+or Render. In this example, `Number` is an author-defined name for one semantic
+value type; it is not a built-in Sverlin type:
 
 ```haskell
 data Number
-type instance Payload Number = LInt Number
+
+instance Traceable Number where
+  type Payload Number = LInt Number
 ```
 
 Here, `Number` identifies the trace type, `Payload Number` reduces to the
-carrier type `LInt Number`, and `LInt 7` is a concrete payload value.
-`Traceable Number` states that this mapping can participate in the trace and be
-persisted for rendering. A `Kind Number` classifies such blocks without changing
-their payload representation.
+carrier type `LInt Number`, and `LInt 7` is a concrete payload value. The
+compiler accepts an instance only when its associated payload uses a supported
+wrapper that Core can preserve safely. A `Kind Number` classifies such blocks
+without changing their payload representation.
 
 This differs from `RelationKind`, which is a first-class Domain declaration
 such as `Adjacent` that authors pass to `relate` and `relationsOf`. The semantic
 parallel is between `Kind` and `RelationKind`; `Payload` describes stored data.
 Do not rename it to `PayloadKind`, which would imply another classification
-label. If the type family later needs a more explicit name, `PayloadOf tag` is
-the accurate alternative.
+label. If the associated type later needs a more explicit name, `PayloadOf tag`
+is the accurate alternative.
 
 #### `RelationKind`
 
@@ -146,9 +151,15 @@ Move the following existing interfaces into Domain:
 - Relations: `RelationKind source target`; each Domain declares its concrete
   relation kinds, including their ordered or symmetric endpoint meaning, and
   shares them with Program and Render.
-- Payload and operator vocabulary: `PayloadView`, `Traceable`, `Payload`,
+- Payload and operator vocabulary: `Traceable`, its associated type `Payload`,
   `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, `LOperator`, `Applicable1`,
   and `Applicable2`.
+
+Do not re-export `PayloadView` or `payloadKind`. They are legacy wrappers around
+a compiler-derived type-name string, not authored payload data or a Domain
+`Kind`. Render receives content through its binding API and classifications
+through typed `Kind` declarations. Any temporary snapshot equivalent remains
+compiler-internal.
 
 Do not re-export `LinearPayload`, `withPayload`, `buildPayload`,
 `applyLinear1`, `applyLinear1Into`, `applyLinear2`, or `applyLinear2Into` from
@@ -168,15 +179,15 @@ input rather than hidden state inside a `Scale` operator. Operator spellings
 such as `+`, `==`, or `equals` belong to the particular Render mapping.
 
 The exact declaration combinators and concrete builder type name are still to
-be designed. They must support this separation without requiring authors to
-import internal Core modules.
+be designed. `Traceable` instances are the payload declarations, so Domain does
+not repeat them with `declarePayload`. The remaining declarations must support
+this separation without requiring authors to import internal Core modules.
 
 ```haskell
 domain :: Domain ()
 domain = do
-  -- Declare payload types, kinds, operators, and relation kinds used by the
-  -- program and render rules. Exact declaration combinators remain open.
-  declarePayload @Number
+  -- Declare kinds, operators, and relation kinds used by the program and
+  -- render rules. Exact declaration combinators remain open.
   declareKind valueKind
   declareKind resultKind
   declareOperator @Add
