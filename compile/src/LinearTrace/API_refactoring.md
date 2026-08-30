@@ -67,7 +67,7 @@ support restoring an old branch wholesale.
 | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LinearTrace.Choreography`: remove `commit` and call `materialize` without arguments?                                        | Core `commit` is exactly an alias for untagged Core `materialize`. The facade shadows that name with `materialize :: Query -> Pending tag %1 -> Choreography (Block tag)`. `commit` is not a transaction or checkpoint.                           | Remove the misleading `commit` alias after compatibility checks. Keep `materialize query pending` and use `emptyQuery`, or add an explicitly named `materializeUntagged`. Do not simulate optional arguments with another overloaded type class.           |
 | `LinearTrace.Choreography`: restore slots, seal/unseal, the read/write lifecycle, view projection, examples, and a `SlotId`? | Yes. Core has most of the linear lifecycle, and the historical view model demonstrates the intended stable-location behavior. The present facade and projection are incomplete.                                                                   | Restore the lifecycle as one end-to-end feature, including identities, view intents, frontend animation, examples, and tests. Add a distinct `SlotId` before allowing multiple same-typed slots on one owner.                                              |
-| `LinearTrace.Choreography`: how can symmetric `=/ ... /=` work with affine constraints when OR is not affine?                | It currently lowers to `abs (lhs - rhs) == delta`, which is non-affine and falls back to the legacy optimizer. The `Or` in the implementation's type-class names is not a solver disjunction.                                                     | Lower a scalar symmetric bridge to two finite affine cases: `lhs + delta == rhs` or `rhs + delta == lhs`. Give the decision a deterministic ID and define vector-component semantics explicitly. Hide or clearly document the operator until this is done. |
+| `LinearTrace.Choreography`: how can symmetric `=/ ... /=` work with affine constraints when OR is not affine?                | It currently lowers to `abs (lhs - rhs) == delta`, which is non-affine and falls back to the legacy optimizer. The `Or` in the implementation's type-class names is not a solver disjunction.                                                     | Remove both bridge pairs from the target facade. Write a directed gap as an ordinary affine equality; use explicit named `oneOf` alternatives when either scalar orientation is an authored random choice.                                              |
 | `LinearTrace.View.Build`: are automatic `800 x 600` and canvas limits arbitrary; should they be parameterized?               | They are historical logical-canvas policy, not browser measurements. They affect constraint solving, text layout, and reproducibility.                                                                                                            | Keep deterministic defaults, but put them in host compiler configuration and include that configuration in provenance/fingerprints. Do not derive them from the browser viewport.                                                                          |
 | `LinearTrace.Visualization.IR`: must `StyleVariableBinding` change for every new style attribute?                            | No. It is already a generic sparse `field path -> [VariableId]` record, and `styleVariableBindings` traverses style-field metadata. A new concrete field still has to cross the Haskell IR, compiler, generated TS, runtime schema, and renderer. | Rename the broader collection to reflect that it also contains box fields, and consider a typed `VisualField` key to prevent string drift. Do not add one binding-record member per style property.                                                        |
 | `examples/LinearSearch.sverlin`: where is style family `"target"` defined?                                                   | It is not declared in a registry. `styleFamily "target"` supplies a grouping key inline. Elements with the same key share automatic profile choices; authored style values still override them.                                                   | Clarify this in facade documentation. Keep semantic family keys author-defined unless a future profile vocabulary intentionally makes them closed.                                                                                                         |
@@ -334,7 +334,7 @@ Before changing it, add a test for copy/rematerialization facts. A copied
 facts; only the query supplied at materialization attaches new facts. That may
 be intentional, but it should not remain accidental.
 
-## Symmetric bridges and affine solving
+## Bridge operators and affine solving
 
 The TODO beside `(=/)` is justified. The current numeric implementation of:
 
@@ -362,10 +362,12 @@ OR
 rhs + delta == lhs
 ```
 
-The solver already has finite alternatives, so the right lowering is a
-deterministic `Cases`/`oneOf` decision whose selected branch contains only
-affine constraints. The decision ID should derive from the visual rule,
-declaration, and component so a seed remains reproducible.
+The solver can represent those finite alternatives, but silently introducing
+them would hide a sampling decision inside constraint lowering. When both
+orientations are part of the authored design space, the author can state them
+as two named `oneOf` alternatives. When the split is merely mathematical, its
+branches should instead be weighted by their valid numeric regions rather than
+automatically treated as equally likely authored choices.
 
 For vectors, the present componentwise absolute value permits each component
 to select its sign independently. Preserving that meaning creates up to `2^n`
@@ -373,10 +375,12 @@ branches. Either document the operator as scalar-only, generate the Cartesian
 product explicitly for small fixed dimensions, or define a different vector
 meaning. Do not accidentally force one sign for every component.
 
-Directed bridges `=| delta |=` are already affine and should remain the default
-recommendation. Until finite lowering exists, either hide the symmetric form
-from authored Sverlin or document its optimizer fallback and performance
-implications honestly.
+The target facade removes both bridge pairs. A directed bridge such as
+`right first =| gap |= left second` is just
+`left second .==. right first + gap`, so the special syntax and its supporting
+public types add no capability. The symmetric spelling also obscures its scalar
+branching and ambiguous vector meaning; explicit `oneOf` alternatives are
+clearer when random orientation is intended.
 
 ## Automatic canvas constants
 
@@ -772,12 +776,10 @@ than facts recoverable from Git:
    migration.
 3. **Soft preferences:** remove, diagnose, or implement ranking in affine mode.
    Keeping silent no-op behavior is not acceptable.
-4. **Symmetric bridge vectors:** scalar-only, independent component signs, or a
-   different vector-distance definition.
-5. **Facade compatibility:** whether `LinearTrace.Choreography` remains a
+4. **Facade compatibility:** whether `LinearTrace.Choreography` remains a
    deprecated re-export for one release or changes with the new `Sverlin`
    facade immediately.
-6. **Syntax boundary:** how much interim GHC-AST restriction is worthwhile
+5. **Syntax boundary:** how much interim GHC-AST restriction is worthwhile
    before implementing a dedicated parser.
 
 ## Recommended implementation order
@@ -796,9 +798,9 @@ than facts recoverable from Git:
 4. **Restore slots end to end.** Add stable `SlotId`/storage binding, facade
    operations, view projection, occupant-adoption intent, IR validation,
    variable/Fibonacci and focused examples, and forward/reverse tests.
-5. **Make solver guarantees truthful.** Lower symmetric bridges to finite
-   affine alternatives, decide soft-constraint behavior, restrict author
-   arithmetic to affine-safe forms, and expose nonlinear fallback explicitly.
+5. **Make solver guarantees truthful.** Remove bridge operators from the
+   authored facade, decide soft-constraint behavior, restrict author arithmetic
+   to affine-safe forms, and reject unsupported nonlinear constraints.
 6. **Generate the structural wire schema.** Retain handwritten semantic
    invariants and document IR coordinate/identity rules.
 7. **Data-drive host style profiles and canvas defaults.** Record their profile

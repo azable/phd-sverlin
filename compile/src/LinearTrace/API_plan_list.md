@@ -455,9 +455,10 @@ caseOf     :: Choice value -> (value -> [VisualConstraint]) -> Render ()
 separatedBy :: Span -> Selected first -> Selected second -> VisualConstraint
 
 (.<=.), (.>=.), (.==.) :: ...
-(=|), (|=)             :: ...       -- directed affine gap bridge
-(=/), (/=)             :: ...       -- symmetric bridge; lowering still open
 ```
+
+Write directed gaps with ordinary affine arithmetic. Use `oneOf` when either
+orientation is intentionally a random authored choice.
 
 `encourage` remains in the proposed inventory, but its meaning without nonlinear
 optimization is still open.
@@ -496,6 +497,9 @@ optimization is still open.
   `variable` creates a fresh solver value.
 - Solver execution input: `RandomSeed`. The compiler service supplies seeds;
   authored Domain, Program, and Render code cannot inspect them.
+- Constraint bridge operators: `(=|)`, `(|=)`, `(=/)`, and `(/=)`. Write a
+  directed affine equality directly; express a random unordered orientation as
+  explicit `oneOf` alternatives.
 
 ## Still preventing a fully final facade
 
@@ -508,5 +512,5 @@ optimization is still open.
 6. Whether three materialization operations remain separate.
 7. The Render projection from a stable slot owner to its current occupant.
 8. Connector and anchor APIs, graph-template APIs, and their sampling weights.
-9. Affine meanings for `encourage` and the symmetric bridge.
+9. Affine meaning for `encourage`.
 10. Whether `BorderDouble` and `TextAlignJustify` remain public.

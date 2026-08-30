@@ -1968,21 +1968,32 @@ or solver-backed z-index.
 
 Retain `ensure`, `encourage`, `VisualConstraint`, `VisualAlternative`,
 `alternative`, `oneOf`, `caseOf`, `separatedBy`, `(.<=.)`, `(.>=.)`,
-`(.==.)`, `(=|)`, `(=/)`, `(|=)`, and `(/=)`.
+and `(.==.)`.
 
 ```haskell
 ensure (width item .>=. by 80)
 encourage (x item .==. x canvas)
-ensure (right first =| by 16 |= left second)
+ensure (left second .==. right first + by 16)
 
 oneOf "flow"
   (alternative "row" [right first .<=. left second])
   [alternative "column" [bottom first .<=. top second]]
+
+oneOf "horizontal-order"
+  (alternative "first-before-second" [x second .==. x first + distance])
+  [alternative "second-before-first" [x first .==. x second + distance]]
 ```
 
-The symmetric bridge `(=/) ... (/=)` remains public for now, but its affine
-lowering and vector semantics remain an open decision below. `encourage`
-likewise remains listed because it exists, even though affine-mode behavior
+Remove `(=|) ... (|=)` and `(=/) ... (/=)` from the target facade. A directed
+gap is already an ordinary affine equality. If the author wants either scalar
+orientation to be selected randomly, `oneOf` states and names those two choices
+directly. It also makes the authored sampling policy visible: the alternatives
+are choices, rather than hidden branches created while reducing a mathematical
+constraint. A component-wise vector bridge would require a separate alternative
+for every sign combination and is not Euclidean distance, so the facade should
+not imply a general distance operation.
+
+`encourage` remains listed because it exists, even though affine-mode behavior
 must be made explicit before the refactor is complete.
 
 ### Sverlin facade and host boundary
