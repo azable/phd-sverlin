@@ -84,7 +84,8 @@ export function presentationStepLabels(presentation: RenderablePresentation): st
     return parsed.frames.map(({ label }) => label);
   }
   const value = JSON.parse(presentation.render.text) as { steps?: Array<{ label?: unknown }> };
-  return value.steps?.map(({ label }) => (typeof label === 'string' ? label : '')) ?? [];
+  const labels = value.steps?.map(({ label }) => (typeof label === 'string' ? label : '')) ?? [];
+  return labels.length ? labels : ['Initial view'];
 }
 
 /** Stable presentation identity for legacy single-render Timeline events. */

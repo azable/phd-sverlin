@@ -5,20 +5,53 @@ import type { ProjectEvent } from '$lib/shared/projects/events';
 import { participantTimeline } from './participant-timeline';
 
 describe('participant Timeline projection', () => {
-  it('keeps messages and individual renders while hiding internal preference mechanics', () => {
+  it('keeps messages, preference actions, and individual presentations', () => {
     const items = participantTimeline(events());
 
     expect(items.map(({ kind }) => kind)).toEqual([
       'message',
       'message',
       'presentation',
-      'presentation'
+      'presentation',
+      'message'
     ]);
     expect(items[0]).toMatchObject({ kind: 'message', actor: 'user', text: 'Show addition' });
     expect(items[1]).toMatchObject({
       kind: 'message',
       actor: 'assistant',
       text: 'Here are two versions.'
+    });
+    expect(items[4]).toMatchObject({
+      kind: 'message',
+      actor: 'user',
+      text: expect.stringMatching(/^Preferred .+ over .+$/),
+      details: ['Step 1']
+    });
+  });
+
+  it('retains comparison and canvas context on textless feedback bubbles', () => {
+    const values = events().slice(1, 5);
+    values.push({
+      id: 6,
+      type: 'feedback.submitted',
+      actor: { kind: 'user' },
+      operationId: '32345678-1234-4234-8234-123456789abc',
+      createdAt: '2026-08-30T00:00:06.000Z',
+      payload: {
+        focus: [],
+        presentations: [
+          '12345678-1234-4123-8123-123456789ac1',
+          '12345678-1234-4123-8123-123456789ac2'
+        ],
+        selection: { presentationEvent: 3, step: 0, instances: [0, 2] }
+      }
+    });
+
+    expect(participantTimeline(values).at(-1)).toMatchObject({
+      kind: 'message',
+      actor: 'user',
+      text: 'Submitted visual feedback',
+      details: [expect.stringMatching(/^Compared /), expect.stringContaining('2 selected elements')]
     });
   });
 });
@@ -75,7 +108,7 @@ function events(): ProjectEvent[] {
       id: 5,
       type: 'visualization.preference-recorded',
       actor: { kind: 'user' },
-      operationId,
+      operationId: '22345678-1234-4234-8234-123456789abc',
       createdAt: '2026-08-30T00:00:05.000Z',
       payload: {
         displaySetId,

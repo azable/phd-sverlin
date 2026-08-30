@@ -2,6 +2,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
 import StudyPage from './+page.svelte';
+import { actions } from './+page.server';
 
 const completionState = {
   studyId: 'pilot-study',
@@ -43,5 +44,36 @@ describe('completed study page', () => {
 
     expect(body).toContain('No gift card has been assigned. Please contact the researcher.');
     expect(body).toContain('action="/logout"');
+  });
+});
+
+describe('study progression actions', () => {
+  it('uses named actions consistently once early completion is available', () => {
+    expect(actions).toHaveProperty('continue');
+    expect(actions).toHaveProperty('early');
+    expect(actions).not.toHaveProperty('default');
+  });
+
+  it('posts ordinary progression to the named continue action', () => {
+    const { body } = render(StudyPage, {
+      props: {
+        data: {
+          state: {
+            ...completionState,
+            phaseIndex: 0,
+            phase: {
+              id: 'welcome',
+              kind: 'instruction' as const,
+              title: 'Welcome',
+              paragraphs: ['Welcome to the study.'],
+              continueLabel: 'Start'
+            }
+          }
+        },
+        form: null
+      } as never
+    });
+
+    expect(body).toContain('action="/study?/continue"');
   });
 });

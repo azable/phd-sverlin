@@ -28,6 +28,7 @@
     templates={data.templates}
     authEnabled={data.authEnabled}
     isAdmin={data.isAdmin}
+    readOnly={data.readOnly}
     {at}
     {devMode}
     study={data.study}

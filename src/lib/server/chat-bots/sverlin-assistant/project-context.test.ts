@@ -156,6 +156,27 @@ describe('AI project context projection', () => {
       instanceId: 0,
       findings: [{ findingCode: 'typography.size-reduced' }]
     });
+
+    document.events.push(
+      event(5, 'visualization.presented', {
+        displaySetId: '12345678-1234-4123-8123-123456789abd',
+        slot: 0,
+        presentation: {
+          presentationId: '12345678-1234-4123-8123-123456789ac1',
+          format: 'sverlin-ir-v1',
+          stepSignature: 'show',
+          seed: 2,
+          source: recorded('current source', 'text/x-sverlin'),
+          render: recorded(JSON.stringify(visualization), 'application/json')
+        }
+      })
+    );
+    const presented = projectAiContext(document, {
+      eventIds: [],
+      visualSelection: { presentationEvent: 5, step: 0, instances: [0] }
+    });
+    expect(presented.selected.visualization?.renderSummary).toMatchObject({ id: 5, seed: 2 });
+    expect(presented.selected.visualization?.elements[0]).toMatchObject({ instanceId: 0 });
   });
 });
 

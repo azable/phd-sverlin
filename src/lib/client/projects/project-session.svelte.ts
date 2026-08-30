@@ -10,7 +10,8 @@ import { resolve } from '$app/paths';
 import {
   normalizeProjectEventV1,
   type EventId,
-  type ProjectEvent
+  type ProjectEvent,
+  type ProjectOperationKind
 } from '$lib/shared/projects/events';
 import {
   normalizeProjectResourceV1,
@@ -24,6 +25,7 @@ import {
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
 import { activeProjectOperation, projectOperation } from '$lib/shared/projects/operations';
+import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
 /** Browser-visible state of the project's durable event polling connection. */
@@ -31,7 +33,7 @@ export type ProjectConnectionState = 'connecting' | 'open' | 'reconnecting';
 
 /** Metadata for the project command currently awaiting completion. */
 export type PendingProjectCommand = {
-  type: ProjectCommandInput['type'];
+  type: ProjectOperationKind;
   operationId: string;
   startedAfter: EventId;
 };
@@ -56,24 +58,37 @@ export class ProjectSession {
   #eventTimer?: ReturnType<typeof setInterval>;
   #request?: AbortController;
   #commandRequest?: AbortController;
+  #refillRequest?: AbortController;
+  #refillBlocked = false;
   #loadVersion = 0;
+  /** Last non-cancellation failure while filling the ahead-of-time presentation buffer. */
+  refillError = $state<string | null>(null);
 
   constructor(
     readonly projectId: ProjectId,
     readonly developerView = true,
-    readonly layout: 'single' | 'comparison' = 'single'
+    readonly layout: 'single' | 'comparison' = 'single',
+    readonly presentationBufferTarget?: number,
+    readonly enforcedReadOnly = false
   ) {}
 
   /** Command currently accepted or running according to the durable Timeline. */
   get pending(): PendingProjectCommand | null {
     if (this.#submitting) return this.#submitting;
     const operation = this.#resource ? activeProjectOperation(this.#resource.document) : undefined;
-    if (!operation) return null;
+    if (!operation || operation.kind === 'presentation-refill') return null;
     return {
       type: operation.kind === 'initial-render' ? 'render' : operation.kind,
       operationId: operation.operationId,
       startedAfter: operation.acceptedEventId - 1
     };
+  }
+
+  /** Background presentation generation currently recorded at the Timeline head. */
+  get refillPending(): boolean {
+    return (
+      activeProjectOperation(this.events)?.kind === 'presentation-refill' || !!this.#refillRequest
+    );
   }
 
   /** Complete project resource most recently received from the server. */
@@ -88,7 +103,7 @@ export class ProjectSession {
 
   /** Whether the server has locked this workspace. */
   get readOnly(): boolean {
-    return this.#workspace?.readOnly ?? false;
+    return this.enforcedReadOnly || (this.#workspace?.readOnly ?? false);
   }
 
   /** Label used for retained user-authored messages in the current inspection context. */
@@ -178,6 +193,7 @@ export class ProjectSession {
     this.#loadVersion += 1;
     this.#request?.abort();
     this.#commandRequest?.abort();
+    this.#refillRequest?.abort();
     this.disconnect();
   }
 
@@ -264,6 +280,19 @@ export class ProjectSession {
     }
   }
 
+  /** Explicitly retry a failed automatic presentation refill. */
+  retryPresentationRefill(): void {
+    this.#refillBlocked = false;
+    this.refillError = null;
+    this.reconcilePresentationBuffer();
+  }
+
+  /** Stop automatic generation when the local task timer reaches its deadline. */
+  disablePresentationBuffer(): void {
+    this.#refillBlocked = true;
+    this.#refillRequest?.abort();
+  }
+
   private connect(): void {
     if (!this.loaded) return;
     this.connection = 'open';
@@ -340,6 +369,19 @@ export class ProjectSession {
         .map((project) => (project.projectId === this.projectId ? summary : project))
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     };
+    if (event.type === 'operation.failed' && event.payload.kind === 'presentation-refill') {
+      if (event.payload.failureKind !== 'cancelled') {
+        this.#refillBlocked = true;
+        this.refillError = event.payload.message;
+      }
+    } else if (
+      event.type === 'operation.completed' &&
+      event.payload.kind === 'presentation-refill'
+    ) {
+      this.#refillBlocked = false;
+      this.refillError = null;
+    }
+    this.reconcilePresentationBuffer();
   }
 
   private async recover(): Promise<void> {
@@ -357,6 +399,8 @@ export class ProjectSession {
     if (this.developerView) {
       this.#resource = parseProjectResource(value);
       this.#workspace = null;
+      this.restoreRefillFailure();
+      this.reconcilePresentationBuffer();
       return;
     }
     const workspace = value as WorkspaceResource;
@@ -372,6 +416,71 @@ export class ProjectSession {
       document: workspace.document,
       projects: workspace.projects
     });
+    this.restoreRefillFailure();
+    this.reconcilePresentationBuffer();
+  }
+
+  private restoreRefillFailure(): void {
+    const failure = this.events.findLast(
+      (event) =>
+        event.type === 'operation.failed' &&
+        event.payload.kind === 'presentation-refill' &&
+        event.payload.failureKind !== 'cancelled'
+    );
+    const laterSuccess = failure
+      ? this.events.some(
+          (event) =>
+            event.id > failure.id &&
+            event.type === 'operation.completed' &&
+            event.payload.kind === 'presentation-refill'
+        )
+      : false;
+    const retryRunning =
+      activeProjectOperation(this.events)?.kind === 'presentation-refill' && !!failure;
+    this.#refillBlocked = !!failure && !laterSuccess && !retryRunning;
+    this.refillError =
+      this.#refillBlocked && failure?.type === 'operation.failed' ? failure.payload.message : null;
+  }
+
+  private reconcilePresentationBuffer(): void {
+    if (
+      !this.presentationBufferTarget ||
+      !this.#resource ||
+      !this.atHead ||
+      this.readOnly ||
+      this.#refillBlocked ||
+      this.#refillRequest ||
+      activeProjectOperation(this.events)
+    ) {
+      return;
+    }
+    if (
+      presentationBufferState(this.#resource.document, this.presentationBufferTarget).deficit === 0
+    ) {
+      return;
+    }
+    const request = new AbortController();
+    this.#refillRequest = request;
+    const operationId = crypto.randomUUID();
+    void fetch(`/api/projects/${encodeURIComponent(this.projectId)}/presentation-refill`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ operationId, expectedHead: this.head }),
+      signal: request.signal
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await responseError(response));
+        await this.reloadResource(request.signal);
+      })
+      .catch((cause: unknown) => {
+        if (request.signal.aborted) return;
+        this.#refillBlocked = true;
+        this.refillError =
+          cause instanceof Error ? cause.message : 'Presentation generation failed.';
+      })
+      .finally(() => {
+        if (this.#refillRequest === request) this.#refillRequest = undefined;
+      });
   }
 }
 

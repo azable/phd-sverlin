@@ -216,6 +216,43 @@ describe('createProject', () => {
   });
 });
 
+describe('presentation buffer refill', () => {
+  it('fills the exact current-source deficit and becomes idempotent at the target', async () => {
+    const { createProject, replenishProjectPresentations } = await import('./service');
+    const created = await createProject(
+      { title: 'Buffered comparison', presentationCount: 2 },
+      serviceDependencies
+    );
+    mocks.generateBatch.mockClear();
+
+    const filled = await replenishProjectPresentations(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        target: 4,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      serviceDependencies
+    );
+
+    expect(
+      filled.appendedEvents.filter(({ type }) => type === 'visualization.presented')
+    ).toHaveLength(2);
+    expect(mocks.generateBatch).toHaveBeenCalledTimes(1);
+    const unchanged = await replenishProjectPresentations(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(filled.document).id,
+        target: 4,
+        operationId: '22345678-1234-4234-8234-123456789abc'
+      },
+      serviceDependencies
+    );
+    expect(unchanged.appendedEvents).toEqual([]);
+    expect(mocks.generateBatch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('submitProjectFeedback', () => {
   it('compiles a synchronized comparison directly from two distinct fresh seeds', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue(generation('valid source', 'Ready'));

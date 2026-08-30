@@ -28,7 +28,7 @@
           <Button type="submit">Advance preview</Button>
         </form>
       {:else}
-        <form method="POST" action={resolve('/study')}>
+        <form method="POST" action={`${resolve('/study')}?/continue`}>
           <Button type="submit">Continue study</Button>
         </form>
       {/if}

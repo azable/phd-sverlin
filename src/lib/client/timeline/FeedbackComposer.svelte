@@ -18,10 +18,17 @@
     presentationSelection: PresentationSelection;
     layout: PresentationLayout;
     visualSelection?: VisualSelection;
+    onVisualSelectionChange?: (selection?: VisualSelection) => void;
   };
 
-  let { session, presentationCount, presentationSelection, layout, visualSelection }: Props =
-    $props();
+  let {
+    session,
+    presentationCount,
+    presentationSelection,
+    layout,
+    visualSelection,
+    onVisualSelectionChange = (_selection?: VisualSelection) => {}
+  }: Props = $props();
 
   let text = $state('');
   const selectedPresentationIds = $derived(
@@ -46,6 +53,7 @@
     if (succeeded) {
       text = '';
       session.focusedEvents = [];
+      onVisualSelectionChange(undefined);
       presentationSelection.returnToLatest();
     }
   }

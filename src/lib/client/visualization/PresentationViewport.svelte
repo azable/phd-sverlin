@@ -8,6 +8,7 @@
     type RenderablePresentation
   } from '$lib/shared/presentations';
   import { decodeVisualization } from '$lib/shared/visualization';
+  import type { RenderInstanceId } from '$lib/shared/visualization';
   import * as v from 'valibot';
 
   import VisualizationViewport from './VisualizationViewport.svelte';
@@ -18,9 +19,18 @@
     step: number;
     projectId: string;
     label: string;
+    selectedIds?: RenderInstanceId[];
+    onSelectionChange?: (ids: RenderInstanceId[]) => void;
   };
 
-  let { presentation, step, projectId, label }: Props = $props();
+  let {
+    presentation,
+    step,
+    projectId,
+    label,
+    selectedIds = [],
+    onSelectionChange = (_ids: RenderInstanceId[]) => {}
+  }: Props = $props();
   const player = new VisualizationPlayer();
   let loadedPresentationId: string | undefined;
 
@@ -61,6 +71,8 @@
       root={player.canvasRoot!}
       resourceBaseUrl={`/api/projects/${encodeURIComponent(projectId)}/resources`}
       width={player.canvasWidth}
+      {selectedIds}
+      {onSelectionChange}
     />
   {:else if presentation?.format === 'html-frames-v1' && htmlDocument}
     <iframe

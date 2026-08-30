@@ -1,6 +1,7 @@
 /** Client-side projection of immutable visualization events into selectable presentations. */
 
 import type { ProjectEvent } from '$lib/shared/projects/events';
+import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import {
   legacyPresentationId,
   type PresentationLayout,
@@ -80,6 +81,7 @@ const presentationNouns = [
 /** One render recorded in the Timeline, with its display-set context retained. */
 export type TimelinePresentation = {
   eventId: number;
+  eventType: 'visualization.rendered' | 'visualization.presented';
   operationId: string;
   displaySetId?: string;
   slot: 0 | 1;
@@ -106,6 +108,7 @@ export function timelinePresentations(events: readonly ProjectEvent[]): Timeline
       return [
         {
           eventId: event.id,
+          eventType: 'visualization.presented',
           operationId: event.operationId,
           displaySetId: event.payload.displaySetId,
           slot: event.payload.slot,
@@ -118,6 +121,7 @@ export function timelinePresentations(events: readonly ProjectEvent[]): Timeline
     return [
       {
         eventId: event.id,
+        eventType: 'visualization.rendered',
         operationId: event.operationId,
         slot: 0 as const,
         presentation: {
@@ -144,6 +148,26 @@ export function latestPresentations(
   const latest = presentations.at(-1);
   if (!latest) return [];
   return presentationGroup(presentations, latest, layout);
+}
+
+/** Return the FIFO current-source candidates not consumed by committed participant actions. */
+export function availablePresentations(
+  events: readonly ProjectEvent[],
+  layout: PresentationLayout
+): TimelinePresentation[] {
+  const all = timelinePresentations(events);
+  const latest = all.findLast(({ presentation }) => presentation.format === 'sverlin-ir-v1');
+  if (!latest || latest.presentation.format !== 'sverlin-ir-v1') {
+    return latestPresentations(all, layout);
+  }
+  const availableIds = new Set(
+    presentationBufferState(events, 0, latest.presentation.source.sha256).available.map(
+      ({ presentationId }) => presentationId
+    )
+  );
+  return all
+    .filter(({ presentation }) => availableIds.has(presentation.presentationId))
+    .slice(0, layout === 'comparison' ? 2 : 1);
 }
 
 /** Return the generated set containing a selected render, subject to the current layout. */

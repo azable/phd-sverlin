@@ -4,9 +4,9 @@ import type { ProjectEvent } from '$lib/shared/projects/events';
 import type { PresentationLayout } from '$lib/shared/presentations';
 
 import {
+  availablePresentations,
   compatibleSverlinPair,
   latestPresentations,
-  presentationGroup,
   presentationsById,
   timelinePresentations,
   type TimelinePresentation
@@ -18,10 +18,12 @@ export class PresentationSelection {
   followingLatest = $state(true);
   notice = $state<string | null>(null);
 
+  constructor(readonly buffered = false) {}
+
   /** Presentations currently shown on the stage. */
   selected(events: readonly ProjectEvent[], layout: PresentationLayout): TimelinePresentation[] {
     const all = timelinePresentations(events);
-    if (this.followingLatest) return latestPresentations(all, layout);
+    if (this.followingLatest) return this.automatic(events, all, layout);
     return presentationsById(all, this.selectedIds).slice(0, layout === 'comparison' ? 2 : 1);
   }
 
@@ -39,19 +41,19 @@ export class PresentationSelection {
         return;
       }
       const activeIds = this.followingLatest
-        ? latestPresentations(all, layout).map(({ presentation: value }) => value.presentationId)
+        ? this.automatic(events, all, layout).map(({ presentation: value }) => value.presentationId)
         : this.selectedIds;
       this.extend(presentation, all, activeIds);
       return;
     }
-    const next = presentationGroup(all, presentation, layout).map(
-      ({ presentation: value }) => value.presentationId
-    );
+    const next = [presentation.presentation.presentationId];
     this.setIds(next);
-    this.followingLatest = sameIds(
-      next,
-      latestPresentations(all, layout).map(({ presentation: value }) => value.presentationId)
-    );
+    this.followingLatest =
+      layout === 'single' &&
+      sameIds(
+        next,
+        this.automatic(events, all, layout).map(({ presentation: value }) => value.presentationId)
+      );
     this.notice = null;
   }
 
@@ -59,6 +61,16 @@ export class PresentationSelection {
   returnToLatest(): void {
     this.followingLatest = true;
     this.notice = null;
+  }
+
+  private automatic(
+    events: readonly ProjectEvent[],
+    all: readonly TimelinePresentation[],
+    layout: PresentationLayout
+  ): TimelinePresentation[] {
+    return this.buffered
+      ? availablePresentations(events, layout)
+      : latestPresentations(all, layout);
   }
 
   private extend(

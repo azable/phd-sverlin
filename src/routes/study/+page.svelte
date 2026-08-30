@@ -58,7 +58,7 @@
     </Card.Content>
     <Card.Footer class="flex justify-between gap-3">
       {#if phase.kind !== 'completion'}
-        <form method="POST" action={resolve('/study')}>
+        <form method="POST" action={`${resolve('/study')}?/continue`}>
           <Button type="submit">
             {phase.kind === 'instruction' ? phase.continueLabel : 'Continue'}
           </Button>

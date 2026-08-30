@@ -26,7 +26,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ locals }) => {
+  continue: async ({ locals }) => {
     const principal = requirePrincipal(locals);
     if (principal.kind === 'admin') redirect(303, '/');
     let state;

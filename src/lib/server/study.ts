@@ -48,6 +48,7 @@ export type StudyProjectContext = {
   isCurrent: boolean;
   active: boolean;
   expired: boolean;
+  presentationBufferTarget?: number;
   layout?: string;
   view?: string;
 };
@@ -184,7 +185,7 @@ export async function createStudyPreview(options: {
   if (startPhaseIndex < 0) throw new Error(`Unknown study phase ${options.phaseId}.`);
   const phase = phases[startPhaseIndex];
   if (!phase) throw new Error('The study preview has no phase to show.');
-  const now = new Date();
+  const createdAt = new Date();
   const [run] = await database()
     .insert(schema.studyRuns)
     .values({
@@ -196,8 +197,8 @@ export async function createStudyPreview(options: {
       currentPhaseIndex: startPhaseIndex,
       startPhaseIndex,
       ...(options.phaseId ? { stopAfterPhaseIndex: startPhaseIndex } : {}),
-      startedAt: now,
-      ...(phase.kind === 'completion' ? { completedAt: now } : {})
+      ...(phase.kind === 'task' ? {} : { startedAt: createdAt }),
+      ...(phase.kind === 'completion' ? { completedAt: createdAt } : {})
     })
     .returning();
   if (!run) throw new Error('The preview run could not be created.');
@@ -207,17 +208,24 @@ export async function createStudyPreview(options: {
       phase.kind === 'task'
         ? await ensureTaskProject({ run, phase, definitionName: definition.name })
         : undefined;
+    const activatedAt = new Date();
+    if (phase.kind === 'task') {
+      await database()
+        .update(schema.studyRuns)
+        .set({ startedAt: activatedAt })
+        .where(eq(schema.studyRuns.id, run.id));
+    }
     await database()
       .insert(schema.studyPhaseRuns)
       .values(
         phase.kind === 'completion'
           ? {
-              ...phaseRunValues(run.id, startPhaseIndex, phase, now, projectId),
+              ...phaseRunValues(run.id, startPhaseIndex, phase, activatedAt, projectId),
               status: 'completed',
-              endedAt: now,
+              endedAt: activatedAt,
               endReason: 'flow-complete'
             }
-          : phaseRunValues(run.id, startPhaseIndex, phase, now, projectId)
+          : phaseRunValues(run.id, startPhaseIndex, phase, activatedAt, projectId)
       )
       .onConflictDoNothing();
     return loadStudyRunState(run.id);
@@ -265,6 +273,9 @@ export async function studyProjectContext(
       ownerUserId: schema.studyRuns.ownerUserId,
       currentPhaseIndex: schema.studyRuns.currentPhaseIndex,
       completedAt: schema.studyRuns.completedAt,
+      studyId: schema.studyRuns.studyId,
+      studyVersion: schema.studyRuns.studyVersion,
+      armId: schema.studyRuns.armId,
       phaseId: schema.studyPhaseRuns.phaseId,
       sequenceIndex: schema.studyPhaseRuns.sequenceIndex,
       status: schema.studyPhaseRuns.status,
@@ -278,6 +289,9 @@ export async function studyProjectContext(
     .limit(1);
   if (!row) return undefined;
   const expired = !!row.deadlineAt && row.deadlineAt.getTime() <= Date.now();
+  const phase = resolveStudyArm(studyDefinition(row.studyId, row.studyVersion), row.armId).find(
+    ({ id }) => id === row.phaseId
+  );
   return {
     runId: row.runId,
     mode: row.mode,
@@ -287,6 +301,9 @@ export async function studyProjectContext(
     isCurrent: row.sequenceIndex === row.currentPhaseIndex,
     active: row.status === 'active' && !row.completedAt,
     expired,
+    ...(phase?.kind === 'task' && phase.condition.presentationBufferTarget
+      ? { presentationBufferTarget: phase.condition.presentationBufferTarget }
+      : {}),
     ...(row.layout ? { layout: row.layout } : {}),
     ...(row.view ? { view: row.view } : {})
   };
@@ -346,17 +363,18 @@ async function advanceStudyRun(
 
     const definition = studyDefinition(run.studyId, run.studyVersion);
     const phases = resolveStudyArm(definition, run.armId);
-    const transitionAt = new Date();
     const stopAfter = run.stopAfterPhaseIndex ?? phases.length - 1;
     const completesRun = run.currentPhaseIndex >= stopAfter;
     const nextIndex = run.currentPhaseIndex + 1;
     const nextPhase = completesRun ? undefined : phases[nextIndex];
     if (!completesRun && !nextPhase) throw new Error('The study protocol has no next phase.');
 
+    const transitionAt = new Date();
     const nextProjectId =
       nextPhase?.kind === 'task'
         ? await ensureTaskProject({ run, phase: nextPhase, definitionName: definition.name })
         : undefined;
+    const activatedAt = new Date();
     const currentReason = endReason(state, action);
 
     await database().transaction(async (transaction) => {
@@ -381,7 +399,7 @@ async function advanceStudyRun(
         });
 
       if (nextPhase) {
-        const values = phaseRunValues(run.id, nextIndex, nextPhase, transitionAt, nextProjectId);
+        const values = phaseRunValues(run.id, nextIndex, nextPhase, activatedAt, nextProjectId);
         await transaction
           .insert(schema.studyPhaseRuns)
           .values(
@@ -401,7 +419,7 @@ async function advanceStudyRun(
         .update(schema.studyRuns)
         .set({
           currentPhaseIndex: nextPhase ? nextIndex : run.currentPhaseIndex,
-          ...(run.startedAt ? {} : { startedAt: transitionAt }),
+          ...(run.startedAt ? {} : { startedAt: nextPhase ? activatedAt : transitionAt }),
           ...(completesRun || nextPhase?.kind === 'completion' ? { completedAt: transitionAt } : {})
         })
         .where(

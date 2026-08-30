@@ -8,6 +8,7 @@ import type {
 
 export type StudyCondition = {
   renderer: VisualizationMode;
+  presentationBufferTarget?: number;
   workspace: {
     view: WorkspaceView;
     layout: PresentationLayout;
@@ -87,6 +88,15 @@ export function defineStudy<const Definition extends StudyDefinition>(
   for (const [id, condition] of Object.entries(definition.conditions)) {
     if (!Number.isSafeInteger(condition.durationSeconds) || condition.durationSeconds <= 0) {
       throw new Error(`Study condition ${id} needs a positive duration.`);
+    }
+    if (
+      condition.presentationBufferTarget !== undefined &&
+      (!Number.isSafeInteger(condition.presentationBufferTarget) ||
+        condition.presentationBufferTarget < (condition.workspace.layout === 'comparison' ? 2 : 1))
+    ) {
+      throw new Error(
+        `Study condition ${id} needs a presentation buffer large enough for its workspace layout.`
+      );
     }
   }
   for (const armId of definition.assignment.tieBreakOrder) {

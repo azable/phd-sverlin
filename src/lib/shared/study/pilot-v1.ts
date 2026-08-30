@@ -14,6 +14,8 @@ export const pilotStudyV1 = defineStudy({
   conditions: {
     sverlin: {
       renderer: 'sverlin',
+      // Keep two comparison pairs ready: one visible pair and one ahead-of-time pair.
+      presentationBufferTarget: 4,
       workspace: { view: 'participant', layout: 'comparison', artifactEditor: 'collapsible' },
       project: { templateId: 'blank' },
       durationSeconds: minutes(15)

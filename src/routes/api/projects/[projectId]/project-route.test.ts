@@ -102,6 +102,29 @@ describe('project JSON API', () => {
       })
     );
   });
+
+  it('accepts current presentation-event visual selections', async () => {
+    const { POST } = await import('./+server');
+    const response = await POST(
+      request('POST', {
+        type: 'feedback',
+        operationId,
+        expectedHead: 4,
+        focus: [],
+        selection: { presentationEvent: 3, step: 0, instances: [0] },
+        presentationCount: 2
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.accept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.objectContaining({
+          selection: { presentationEvent: 3, step: 0, instances: [0] }
+        })
+      })
+    );
+  });
 });
 
 function request(method: string, body: unknown) {

@@ -97,12 +97,16 @@ export const artifactChangeSchema = v.variant('operation', [
   v.object({ operation: v.literal('delete'), artifactId: textSchema })
 ]);
 
-/** Runtime schema for feedback attached to concrete visualization instances. */
-export const visualSelectionSchema = v.object({
-  render: positiveSchema,
+const visualSelectionPosition = {
   step: naturalSchema,
   instances: v.pipe(v.array(naturalSchema), v.minLength(1))
-});
+};
+
+/** Runtime schema for feedback attached to concrete visualization instances. */
+export const visualSelectionSchema = v.union([
+  v.object({ presentationEvent: positiveSchema, ...visualSelectionPosition }),
+  v.object({ render: positiveSchema, ...visualSelectionPosition })
+]);
 
 /** Runtime schema identifying the exact DSL implementation used for a compilation. */
 export const dslRevisionSchema = v.object({
@@ -144,10 +148,13 @@ export type ProjectArtifact = v.InferOutput<typeof projectArtifactSchema>;
 export type ArtifactChange = v.InferOutput<typeof artifactChangeSchema>;
 /** Provenance of an artifact version. */
 export type ArtifactVersionOrigin = v.InferOutput<typeof artifactOriginSchema>;
-/** Feedback selection tied to render instances at a specific visualization step. */
-export type VisualSelection = Omit<v.InferOutput<typeof visualSelectionSchema>, 'instances'> & {
-  instances: RenderInstanceId[];
-};
+type ParsedVisualSelection = v.InferOutput<typeof visualSelectionSchema>;
+/** Feedback selection tied to presentation instances at a specific visualization step. */
+export type VisualSelection = ParsedVisualSelection extends infer Selection
+  ? Selection extends { instances: number[] }
+    ? Omit<Selection, 'instances'> & { instances: RenderInstanceId[] }
+    : never
+  : never;
 /** Fingerprint of the DSL implementation used to compile a visualization. */
 export type DslRevision = v.InferOutput<typeof dslRevisionSchema>;
 /** Reason a visualization render was requested. */

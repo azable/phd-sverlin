@@ -2,6 +2,8 @@
   import { fly } from 'svelte/transition';
 
   import { Spinner } from '$lib/client/components/ui/spinner';
+  import { Badge } from '$lib/client/components/ui/badge';
+  import { Button } from '$lib/client/components/ui/button';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import { presentationDisplayId } from '$lib/client/visualization/presentation-history';
   import type { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
@@ -13,15 +15,24 @@
     session: ProjectSession;
     selection: PresentationSelection;
     layout: PresentationLayout;
+    onPresentationChange?: () => void;
   };
 
-  let { session, selection, layout }: Props = $props();
+  let { session, selection, layout, onPresentationChange = () => {} }: Props = $props();
   const items = $derived(participantTimeline(session.events));
   const selectedIds = $derived(
     selection
       .selected(session.events, layout)
       .map(({ presentation }) => presentation.presentationId)
   );
+
+  function activatePresentation(
+    item: Extract<(typeof items)[number], { kind: 'presentation' }>,
+    event: MouseEvent
+  ) {
+    onPresentationChange();
+    selection.activate(item.value, session.events, layout, event.shiftKey);
+  }
 </script>
 
 {#each items as item (item.id)}
@@ -41,6 +52,13 @@
           {item.actor === 'user' ? session.userAuthorLabel : 'Sverlin Assistant'}
         </p>
         <p class="text-base whitespace-pre-wrap">{item.text}</p>
+        {#if item.details?.length}
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {#each item.details as detail (detail)}
+              <Badge variant={item.actor === 'user' ? 'secondary' : 'outline'}>{detail}</Badge>
+            {/each}
+          </div>
+        {/if}
       </article>
     {:else if item.kind === 'presentation'}
       {@const id = item.value.presentation.presentationId}
@@ -51,7 +69,7 @@
         class:border-primary={selected}
         class:bg-muted={selected}
         aria-pressed={selected}
-        onclick={(event) => selection.activate(item.value, session.events, layout, event.shiftKey)}
+        onclick={(event) => activatePresentation(item, event)}
       >
         <span class="flex items-baseline gap-2 text-base font-medium">
           <span>Visualization</span>
@@ -63,7 +81,7 @@
           {item.value.presentation.format === 'sverlin-ir-v1'
             ? `Seed ${item.value.presentation.seed} · `
             : ''}Select to view{layout === 'comparison'
-            ? ' · Shift-select to build a comparison'
+            ? ' · Select one, then Shift-select another'
             : ''}
         </span>
       </button>
@@ -84,6 +102,25 @@
     >
       <Spinner />
       <span>Sverlin Assistant is working…</span>
+    </div>
+  </li>
+{:else if session.refillPending}
+  <li in:fly={{ y: 12, duration: 180 }}>
+    <div
+      class="flex max-w-[88%] items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-base text-muted-foreground shadow-sm"
+      role="status"
+    >
+      <Spinner />
+      <span>Generating more visualizations…</span>
+    </div>
+  </li>
+{:else if session.refillError}
+  <li in:fly={{ y: 12, duration: 180 }}>
+    <div class="flex max-w-[88%] items-center gap-3 rounded-2xl border bg-card px-4 py-3 shadow-sm">
+      <p class="text-sm text-muted-foreground">More visualizations could not be generated.</p>
+      <Button size="sm" variant="outline" onclick={() => session.retryPresentationRefill()}
+        >Retry</Button
+      >
     </div>
   </li>
 {/if}

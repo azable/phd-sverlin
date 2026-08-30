@@ -5,6 +5,7 @@
 
   import { Button } from '$lib/client/components/ui/button';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
+  import type { VisualSelection } from '$lib/shared/projects/events/values';
   import { presentationStepLabels, type PresentationLayout } from '$lib/shared/presentations';
 
   import type { PresentationSelection } from './presentation-selection.svelte';
@@ -15,9 +16,18 @@
     selection: PresentationSelection;
     layout: PresentationLayout;
     disabled?: boolean;
+    visualSelection?: VisualSelection;
+    onVisualSelectionChange?: (selection?: VisualSelection) => void;
   };
 
-  let { session, selection, layout, disabled = false }: Props = $props();
+  let {
+    session,
+    selection,
+    layout,
+    disabled = false,
+    visualSelection,
+    onVisualSelectionChange = (_selection?: VisualSelection) => {}
+  }: Props = $props();
   let playback = $state<{ selectionKey: string; step: number }>({ selectionKey: '', step: 0 });
 
   const visible = $derived(selection.selected(session.events, layout));
@@ -44,6 +54,7 @@
 
   function seek(next: number) {
     playback = { selectionKey, step: next };
+    onVisualSelectionChange(undefined);
   }
 
   async function prefer(preferred: string) {
@@ -54,7 +65,34 @@
       preferred,
       step
     });
-    if (succeeded) selection.returnToLatest();
+    if (succeeded) {
+      onVisualSelectionChange(undefined);
+      selection.returnToLatest();
+    }
+  }
+
+  function returnToCurrent() {
+    onVisualSelectionChange(undefined);
+    selection.returnToLatest();
+  }
+
+  function selectedInstances(entry: (typeof visible)[number]) {
+    if (!visualSelection || visualSelection.step !== step) return [];
+    const selectedEvent =
+      'presentationEvent' in visualSelection
+        ? visualSelection.presentationEvent
+        : visualSelection.render;
+    return selectedEvent === entry.eventId ? visualSelection.instances : [];
+  }
+
+  function selectInstances(entry: (typeof visible)[number], instances: number[]) {
+    onVisualSelectionChange(
+      instances.length
+        ? entry.eventType === 'visualization.presented'
+          ? { presentationEvent: entry.eventId, step, instances }
+          : { render: entry.eventId, step, instances }
+        : undefined
+    );
   }
 </script>
 
@@ -100,9 +138,7 @@
       </Button>
     {/if}
     {#if !selection.followingLatest}
-      <Button size="sm" variant="ghost" onclick={() => selection.returnToLatest()}
-        >Return to latest</Button
-      >
+      <Button size="sm" variant="ghost" onclick={returnToCurrent}>Return to current</Button>
     {/if}
   </div>
   {#if selection.notice}
@@ -127,6 +163,8 @@
             {step}
             projectId={session.projectId}
             label={`Visualization ${index + 1}`}
+            selectedIds={selectedInstances(entry)}
+            onSelectionChange={(instances) => selectInstances(entry, instances)}
           />
         </div>
       </div>

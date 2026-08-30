@@ -12,7 +12,6 @@ import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects
 import type { HtmlFramesPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
 import { legacyPresentationId } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
-import { decodeVisualization } from '$lib/shared/visualization';
 import { getChatbot, getHtmlChatbot } from '$lib/server/chat-bots/registry';
 import {
   projectAiContext,
@@ -41,6 +40,7 @@ import {
   type RecordedCompilation,
   type RecordedCompilationBatch
 } from './service';
+import { resolveProjectVisualSelection } from './visual-selection';
 
 /** Replaceable AI and persistence boundaries used by command unit tests. */
 export type ProjectCommandDependencies = {
@@ -731,19 +731,7 @@ async function validateSelection(
   document: ProjectDocument,
   selection: VisualSelection
 ): Promise<VisualSelection> {
-  const renderEvent = document.events[selection.render - 1];
-  if (renderEvent?.type !== 'visualization.rendered') {
-    throw new Error('The visual selection references an unknown render.');
-  }
-  const visualization = decodeVisualization(renderEvent.payload.render.text);
-  const step = visualization.steps[selection.step];
-  if (!step) throw new Error('The visual selection references an unknown visualization step.');
-  const available = new Set(step.instances.map(({ id }) => id));
-  const instances = [...new Set(selection.instances)];
-  if (instances.some((id) => !available.has(id))) {
-    throw new Error('The visual selection contains an unknown render instance.');
-  }
-  return { ...selection, instances };
+  return resolveProjectVisualSelection(document, selection).selection;
 }
 
 function finishMutation(before: ProjectDocument, document: ProjectDocument): ProjectCommandResult {

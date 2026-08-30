@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 let projectId: string;
+let selectionProjectId: string;
 let createdProjectId: string;
 const templateCount = (
   JSON.parse(readFileSync(path.resolve('examples/catalog.json'), 'utf8')) as {
@@ -15,9 +16,50 @@ test.beforeAll(async ({ request }) => {
   const startedAt = performance.now();
   console.info('[e2e setup] Creating and compiling the initial project fixture…');
   projectId = await createProject(request, 'blank');
+  selectionProjectId = await createProject(request, 'linear-search');
   console.info(
     `[e2e setup] Initial project compilation completed in ${Math.round(performance.now() - startedAt)} ms.`
   );
+});
+
+test('administrator root remains an explicit project landing page', async ({ page }) => {
+  const browserFailures = observeBrowserFailures(page);
+  await page.goto('/');
+
+  await expect(page).toHaveURL('/');
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page.getByText('Your projects and previews', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open' }).first()).toBeVisible();
+  expect(browserFailures()).toEqual([]);
+});
+
+test('canvas element selection is included in submitted feedback', async ({ page }) => {
+  const browserFailures = observeBrowserFailures(page);
+  await page.goto(`/projects/${selectionProjectId}`);
+  const viewport = page.getByRole('region', { name: 'Visualization 1' });
+  const element = viewport.locator('[data-instance-id]').first();
+  await expect(element).toBeVisible();
+  await element.click();
+  await expect(page.getByText('1 selected element(s)', { exact: true })).toBeVisible();
+
+  const feedbackResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/projects/${selectionProjectId}`) &&
+      response.request().method() === 'POST'
+  );
+  await page.getByLabel('Project feedback').fill('Focus on this element');
+  await page.getByLabel('Project feedback').press('Enter');
+  const response = await feedbackResponse;
+  expect(response.status()).toBe(202);
+  const payload = response.request().postDataJSON() as {
+    selection?: { render?: number; step: number; instances: number[] };
+  };
+  expect(payload.selection).toMatchObject({
+    render: expect.any(Number),
+    step: 0,
+    instances: [expect.any(Number)]
+  });
+  expect(browserFailures()).toEqual([]);
 });
 
 test('new project combines template selection with the current Dev-detail preference', async ({
@@ -118,7 +160,17 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(page.getByRole('link', { name: 'Return to administration' })).toBeVisible();
   await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^Visualization/ })).toHaveCount(2);
+  await expect(page.getByText('Generating more visualizations…', { exact: true })).toBeVisible();
+  const candidates = page.getByRole('button', { name: /^Visualization/ });
+  await expect(candidates).toHaveCount(4, { timeout: 150_000 });
+  await candidates.nth(0).click();
+  await expect(candidates.nth(0)).toHaveAttribute('aria-pressed', 'true');
+  await expect(candidates.nth(1)).toHaveAttribute('aria-pressed', 'false');
+  await candidates.nth(2).click({ modifiers: ['Shift'] });
+  await expect(candidates.nth(0)).toHaveAttribute('aria-pressed', 'true');
+  await expect(candidates.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Prefer top' }).click();
+  await expect(page.getByText(/^Preferred .+ over .+$/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Force next phase' }).click();
   await expect(page).toHaveURL(/\/admin\/previews\//);

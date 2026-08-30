@@ -20,9 +20,17 @@
     selection: PresentationSelection;
     layout: PresentationLayout;
     inspect?: boolean;
+    onPresentationChange?: () => void;
   };
 
-  let { session, seed, selection, layout, inspect = false }: Props = $props();
+  let {
+    session,
+    seed,
+    selection,
+    layout,
+    inspect = false,
+    onPresentationChange = () => {}
+  }: Props = $props();
   let viewport = $state<HTMLElement | null>(null);
   let timelineEnd = $state<HTMLElement | null>(null);
   let following = $state(true);
@@ -65,19 +73,23 @@
             <TimelineEventCard {event} {seed} {session} {inspect} />
           </li>
         {/each}
-        {#if session.pending}
+        {#if session.pending || session.refillPending}
           <li class="timeline-event relative pl-8" in:fly={{ y: 12, duration: 180 }}>
             <div
               class="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-base text-muted-foreground"
               role="status"
             >
               <Spinner />
-              <span>The assistant is working…</span>
+              <span
+                >{session.pending
+                  ? 'The assistant is working…'
+                  : 'Generating more visualizations…'}</span
+              >
             </div>
           </li>
         {/if}
       {:else}
-        <ParticipantTimeline {session} {selection} {layout} />
+        <ParticipantTimeline {session} {selection} {layout} {onPresentationChange} />
       {/if}
       <li class="h-px" aria-hidden="true"><span bind:this={timelineEnd}></span></li>
     </ol>

@@ -41,29 +41,58 @@ describe('presentation history', () => {
   it('builds a custom compatible pair and rejects a third selection', () => {
     const events = comparisonEvents();
     const entries = timelinePresentations(events);
-    const selection = new PresentationSelection();
+    const selection = new PresentationSelection(true);
 
     expect(
       selection
         .selected(events, 'comparison')
         .map(({ presentation }) => presentation.presentationId)
-    ).toEqual(presentationIds.slice(2));
+    ).toEqual(presentationIds.slice(0, 2));
 
-    selection.activate(entries[0], events, 'comparison');
-    expect(selection.selectedIds).toEqual(presentationIds.slice(0, 2));
+    selection.activate(entries[2], events, 'comparison');
+    expect(selection.selectedIds).toEqual([presentationIds[2]]);
     expect(selection.followingLatest).toBe(false);
 
     selection.activate(entries[0], events, 'comparison', true);
-    selection.activate(entries[2], events, 'comparison', true);
-    expect(selection.selectedIds).toEqual([presentationIds[1], presentationIds[2]]);
+    expect(selection.selectedIds).toEqual([presentationIds[2], presentationIds[0]]);
 
     selection.activate(entries[3], events, 'comparison', true);
-    expect(selection.selectedIds).toEqual([presentationIds[1], presentationIds[2]]);
+    expect(selection.selectedIds).toEqual([presentationIds[2], presentationIds[0]]);
     expect(selection.notice).toContain('Deselect one');
 
-    selection.returnToLatest();
-    selection.activate(entries[3], events, 'comparison', true);
+    selection.activate(entries[0], events, 'comparison', true);
     expect(selection.selectedIds).toEqual([presentationIds[2]]);
+  });
+
+  it('advances the automatic comparison after a committed preference consumes a pair', () => {
+    const events = comparisonEvents();
+    events.push({
+      id: 5,
+      type: 'visualization.preference-recorded',
+      actor: { kind: 'user' },
+      operationId,
+      createdAt: '2026-08-30T00:00:05.000Z',
+      payload: {
+        displaySetId: setOne,
+        presentations: [presentationIds[0], presentationIds[1]],
+        preferred: presentationIds[0],
+        step: 0
+      }
+    });
+
+    expect(
+      new PresentationSelection(true)
+        .selected(events, 'comparison')
+        .map(({ presentation }) => presentation.presentationId)
+    ).toEqual(presentationIds.slice(2));
+  });
+
+  it('keeps non-buffered workspaces on the latest generated display set', () => {
+    expect(
+      new PresentationSelection()
+        .selected(comparisonEvents(), 'comparison')
+        .map(({ presentation }) => presentation.presentationId)
+    ).toEqual(presentationIds.slice(2));
   });
 });
 

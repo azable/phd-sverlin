@@ -31,6 +31,7 @@ import {
   type VisualizationFinding
 } from '$lib/shared/visualization';
 import type { ConversationMessage } from '$lib/server/chat-bots/types';
+import { resolveProjectVisualSelection } from '$lib/server/projects/visual-selection';
 
 /** Compact, body-free entry that lets the AI identify any event in history. */
 export type AiTimelineEntry = {
@@ -275,11 +276,8 @@ function resolveVisualSelection(
   document: ProjectDocument,
   selection: VisualSelection
 ): AiVisualSelection | undefined {
-  const render = document.events[selection.render - 1];
-  if (render?.type !== 'visualization.rendered') return undefined;
-  const visualization = decodeVisualization(render.payload.render.text);
-  const step = visualization.steps[selection.step];
-  if (!step) return undefined;
+  const resolved = resolveProjectVisualSelection(document, selection);
+  const { visualization, step } = resolved;
   const selected = new Set(selection.instances);
   const elements = step.instances.flatMap((instance) => {
     if (!selected.has(instance.id)) return [];
@@ -299,9 +297,16 @@ function resolveVisualSelection(
       : [];
   });
   return {
-    ...selection,
+    ...resolved.selection,
     stepLabel: step.label,
-    renderSummary: renderSummary(render),
+    renderSummary: {
+      id: resolved.event.id,
+      seed: resolved.seed,
+      sourceSha256: resolved.sourceSha256,
+      renderSha256: resolved.renderSha256,
+      ...(resolved.provenance ? { provenance: resolved.provenance } : {}),
+      ...(resolved.targetDiagnostics ? { targetDiagnostics: resolved.targetDiagnostics } : {})
+    },
     elements
   };
 }
@@ -326,8 +331,10 @@ function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
   }
   if (event.payload.selection) {
     const selection = event.payload.selection;
+    const eventId =
+      'presentationEvent' in selection ? selection.presentationEvent : selection.render;
     details.push(
-      `Visual selection in render ${selection.render}, step ${selection.step}: instances ${selection.instances.join(', ')}`
+      `Visual selection in presentation event ${eventId}, step ${selection.step}: instances ${selection.instances.join(', ')}`
     );
   }
   if (event.payload.presentations?.length) {

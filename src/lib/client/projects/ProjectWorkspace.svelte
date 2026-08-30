@@ -26,12 +26,14 @@
   import type { PresentationLayout } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { EventId } from '$lib/shared/projects/events';
+  import type { VisualSelection } from '$lib/shared/projects/events/values';
 
   import NewProjectDialog from './NewProjectDialog.svelte';
   import ProjectArtifactPanel, {
     type ProjectArtifactEditMode
   } from './ProjectArtifactPanel.svelte';
   import { ProjectSession } from './project-session.svelte';
+  import { shouldShowPhaseExpiredDialog } from './study-controls';
 
   type StudyTask =
     | {
@@ -43,6 +45,7 @@
         deadlineAt?: string;
         expired: boolean;
         layout: PresentationLayout;
+        presentationBufferTarget?: number;
         allowEarlyCompletion: boolean;
       }
     | {
@@ -54,6 +57,7 @@
         deadlineAt: string;
         expired: boolean;
         layout: PresentationLayout;
+        presentationBufferTarget?: number;
         allowEarlyCompletion: false;
       };
 
@@ -64,6 +68,7 @@
     isAdmin?: boolean;
     at?: EventId;
     devMode?: boolean;
+    readOnly?: boolean;
     study?: StudyTask;
   };
 
@@ -74,6 +79,7 @@
     isAdmin = false,
     at,
     devMode = false,
+    readOnly = false,
     study
   }: Props = $props();
 
@@ -82,9 +88,13 @@
   const session = new ProjectSession(
     projectId,
     isAdmin && study?.context !== 'admin-preview' && devMode,
-    study?.layout ?? 'single'
+    study?.layout ?? 'single',
+    study?.expired || readOnly ? undefined : study?.presentationBufferTarget,
+    readOnly
   );
-  const presentationSelection = new PresentationSelection();
+  const presentationSelection = new PresentationSelection(
+    untrack(() => !!study?.presentationBufferTarget)
+  );
   let editMode = $state<ProjectArtifactEditMode>('readonly');
   let renaming = $state(false);
   let titleDraft = $state('');
@@ -93,6 +103,7 @@
   let layout = $state<PresentationLayout>(study?.layout ?? 'single');
   // svelte-ignore state_referenced_locally
   let expired = $state(study?.expired ?? false);
+  let visualSelection = $state.raw<VisualSelection | undefined>(undefined);
 
   const adminPreview = $derived(study?.context === 'admin-preview');
   const showAdminControls = $derived(isAdmin && !adminPreview);
@@ -154,6 +165,11 @@
       replaceState: true
     });
   }
+
+  function expireStudyPhase() {
+    expired = true;
+    session.disablePresentationBuffer();
+  }
 </script>
 
 <div class="dark h-screen overflow-hidden bg-background text-foreground">
@@ -170,7 +186,7 @@
           </div>
           {#if study.deadlineAt && !expired}
             <Badge variant="secondary">
-              <StudyTimer deadlineAt={study.deadlineAt} onExpire={() => (expired = true)} />
+              <StudyTimer deadlineAt={study.deadlineAt} onExpire={expireStudyPhase} />
             </Badge>
           {/if}
           {#if study.context === 'admin-preview'}
@@ -284,9 +300,17 @@
                 selection={presentationSelection}
                 {layout}
                 inspect={developerView}
+                onPresentationChange={() => (visualSelection = undefined)}
               />
               {#if !expired && !session.readOnly}
-                <FeedbackComposer {session} {presentationCount} {presentationSelection} {layout} />
+                <FeedbackComposer
+                  {session}
+                  {presentationCount}
+                  {presentationSelection}
+                  {layout}
+                  {visualSelection}
+                  onVisualSelectionChange={(selection) => (visualSelection = selection)}
+                />
               {/if}
             </Tabs.Content>
           </Tabs.Root>
@@ -337,6 +361,8 @@
             selection={presentationSelection}
             {layout}
             disabled={mutationsDisabled}
+            {visualSelection}
+            onVisualSelectionChange={(selection) => (visualSelection = selection)}
           />
           <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
         </Resizable.Pane>
@@ -360,7 +386,7 @@
       </Alert.Root>
     </div>
   {/if}
-  {#if study}
+  {#if study && shouldShowPhaseExpiredDialog(isAdmin, study.context)}
     <PhaseExpiredDialog open={expired} context={study.context} />
   {/if}
 </div>

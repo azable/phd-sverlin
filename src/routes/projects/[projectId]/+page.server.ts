@@ -21,7 +21,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
         title: flowPhase.phase.instructions.title,
         prompt: flowPhase.phase.instructions.prompt,
         expired: flowPhase.status === 'ready-to-continue',
-        layout: flowPhase.phase.condition.workspace.layout
+        layout: flowPhase.phase.condition.workspace.layout,
+        presentationBufferTarget: flowPhase.phase.condition.presentationBufferTarget
       };
       study =
         state.mode === 'preview'

@@ -19,6 +19,7 @@ describe('study definition', () => {
   it('resolves the recorded protocol version and keeps renderer layouts explicit', () => {
     expect(studyDefinition(pilotStudyV1.id, pilotStudyV1.version)).toBe(pilotStudyV1);
     expect(pilotStudyV1.conditions.sverlin.workspace.layout).toBe('comparison');
+    expect(pilotStudyV1.conditions.sverlin.presentationBufferTarget).toBe(4);
     expect(pilotStudyV1.conditions.html.workspace.layout).toBe('single');
     expect(pilotStudyV1.conditions.sverlin).not.toHaveProperty('candidatePool');
     expect(() => studyDefinition(pilotStudyV1.id, 999)).toThrow('Unknown study protocol');

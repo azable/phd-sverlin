@@ -79,19 +79,46 @@ describe('presentation commands', () => {
         : 'unexpected'
     ).toBeUndefined();
   });
+
+  it('records a preference for the initial view when a presentation has no checkpoints', async () => {
+    const repository = new MemoryProjectRepository();
+    const presentations = [randomUUID(), randomUUID()] as [string, string];
+    const document = comparisonDocument(randomUUID(), randomUUID(), presentations, []);
+    await repository.create(document, 'owner');
+    const projectService = {
+      repository,
+      compiler: {} as ProjectServiceDependencies['compiler'],
+      readDslRevision: vi.fn()
+    };
+
+    const result = await recordProjectPreference(
+      {
+        projectId: document.projectId,
+        expectedHead: document.events.length,
+        presentations,
+        preferred: presentations[0],
+        step: 0,
+        operationId: randomUUID()
+      },
+      { repository, projectService }
+    );
+
+    expect(result.appendedEvents[0]).toMatchObject({
+      type: 'visualization.preference-recorded',
+      payload: { presentations, preferred: presentations[0], step: 0 }
+    });
+  });
 });
 
 function comparisonDocument(
   projectId: string,
   displaySetId: string | [string, string],
-  presentationIds: [string, string]
+  presentationIds: [string, string],
+  steps: Array<{ label: string }> = [{ label: 'Only step' }]
 ): ProjectDocument {
   const operationId = randomUUID();
   const source = recordText('visualization source', 'text/x-sverlin');
-  const render = recordText(
-    JSON.stringify({ steps: [{ label: 'Only step' }] }),
-    'application/json'
-  );
+  const render = recordText(JSON.stringify({ steps }), 'application/json');
   const base = {
     format: 'sverlin-ir-v1' as const,
     stepSignature: 'shared-step-signature',

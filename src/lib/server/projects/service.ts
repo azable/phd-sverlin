@@ -30,6 +30,7 @@ import {
 } from '$lib/shared/projects/creation';
 import type { HtmlFramesManifest, SverlinPresentation } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import { visualizationService, type VisualizationGenerationResult } from '$lib/server/compiler';
 import { assistantIntroduction } from '$lib/server/chat-bots/registry';
 
@@ -259,6 +260,46 @@ export function renderProjectPresentations(
       dependencies,
       true
     );
+    return commandResult(before, document);
+  });
+}
+
+/** Fill the current committed source's configured buffer with fresh seeded presentations. */
+export function replenishProjectPresentations(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    target: number;
+    operationId: string;
+  },
+  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
+    let document = before;
+    for (;;) {
+      const state = presentationBufferState(document, options.target);
+      if (state.deficit === 0) break;
+      const count = Math.min(2, state.deficit) as 1 | 2;
+      const usedSeeds = document.events.flatMap((event) =>
+        event.type === 'visualization.presented' &&
+        event.payload.presentation.format === 'sverlin-ir-v1' &&
+        event.payload.presentation.source.sha256 === state.sourceSha256
+          ? [event.payload.presentation.seed]
+          : []
+      );
+      const next = await renderDocument(
+        document,
+        freshPresentationSeeds(count, usedSeeds),
+        'seed-change',
+        options.operationId,
+        dependencies,
+        true
+      );
+      const nextState = presentationBufferState(next, options.target);
+      document = next;
+      if (nextState.available.length <= state.available.length) break;
+    }
     return commandResult(before, document);
   });
 }
@@ -765,11 +806,12 @@ function artifactVersionEvent(options: {
 }
 
 /** Choose distinct positive seeds for one server-owned presentation generation. */
-export function freshPresentationSeeds(count: 1 | 2): number[] {
-  const seeds = [randomInt(minSeed, maxSeedExclusive)];
+export function freshPresentationSeeds(count: 1 | 2, excluded: readonly number[] = []): number[] {
+  const blocked = new Set(excluded);
+  const seeds: number[] = [];
   while (seeds.length < count) {
     const seed = randomInt(minSeed, maxSeedExclusive);
-    if (!seeds.includes(seed)) seeds.push(seed);
+    if (!blocked.has(seed) && !seeds.includes(seed)) seeds.push(seed);
   }
   return seeds;
 }

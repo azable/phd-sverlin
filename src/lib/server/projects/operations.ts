@@ -16,6 +16,7 @@ import { recoveryEventsForInterruptedOperations } from './recovery';
 import { projectRepository, type ProjectRepository } from './repository';
 import {
   renameProject,
+  replenishProjectPresentations,
   renderInitialProject,
   renderProject,
   restoreProjectArtifacts,
@@ -23,7 +24,11 @@ import {
 } from './service';
 
 export type InitialRenderCommand = { type: 'initial-render'; seed: number };
-export type ProjectOperationCommand = ProjectCommand | InitialRenderCommand;
+export type PresentationRefillCommand = { type: 'presentation-refill'; target: number };
+export type ProjectOperationCommand =
+  | ProjectCommand
+  | InitialRenderCommand
+  | PresentationRefillCommand;
 
 export type AcceptedProjectOperation = {
   projectId: string;
@@ -53,7 +58,15 @@ export class ProjectOperationCapacityError extends Error {
 
 /** Coordinates accepted Timeline operations with bounded process-owned execution. */
 export class ProjectOperationExecutor {
-  readonly #active = new Map<string, { promise: Promise<void>; controller: AbortController }>();
+  readonly #active = new Map<
+    string,
+    {
+      projectId: string;
+      kind: ProjectOperationKind;
+      promise: Promise<void>;
+      controller: AbortController;
+    }
+  >();
   #accepting = true;
   #recoveryTimer?: ReturnType<typeof setInterval>;
 
@@ -70,12 +83,31 @@ export class ProjectOperationExecutor {
     operationId: string;
     expectedHead: number;
     command: ProjectOperationCommand;
+    actor?: 'user' | 'system';
   }): Promise<AcceptedProjectOperation> {
-    if (!this.#accepting || this.#active.size >= this.capacity) {
+    if (!this.#accepting) {
       throw new ProjectOperationCapacityError();
     }
+    const kind = commandKind(options.command);
+    const expectedHead =
+      kind === 'presentation-refill'
+        ? options.expectedHead
+        : await this.preemptRefill(options.projectId, options.expectedHead);
+    if (kind !== 'presentation-refill' && this.#active.size >= this.capacity) {
+      await this.preemptAnyRefill();
+    }
+    if (this.#active.size >= this.capacity) throw new ProjectOperationCapacityError();
     const reserved = new AbortController();
-    this.#active.set(options.operationId, { promise: Promise.resolve(), controller: reserved });
+    let releaseReservation!: () => void;
+    const reservation = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    this.#active.set(options.operationId, {
+      projectId: options.projectId,
+      kind,
+      promise: reservation,
+      controller: reserved
+    });
     let lease: OperationLease | null = null;
     try {
       const document = await this.repository.load(options.projectId);
@@ -84,8 +116,13 @@ export class ProjectOperationExecutor {
       }
       lease = await this.lock.acquire(options.operationId);
       if (!lease) throw new Error('This operation is already running.');
-      const accepted = await this.repository.append(options.projectId, options.expectedHead, [
-        lifecycleEvent('operation.accepted', options.operationId, commandKind(options.command))
+      const accepted = await this.repository.append(options.projectId, expectedHead, [
+        lifecycleEvent(
+          'operation.accepted',
+          options.operationId,
+          kind,
+          options.actor ?? (kind === 'presentation-refill' ? 'system' : 'user')
+        )
       ]);
       const acceptedEventId = accepted.events[0].id;
       const promise = this.runAccepted(
@@ -93,10 +130,19 @@ export class ProjectOperationExecutor {
         reserved,
         lease
       );
-      this.#active.set(options.operationId, { promise, controller: reserved });
-      void promise.finally(() => this.#active.delete(options.operationId));
+      this.#active.set(options.operationId, {
+        projectId: options.projectId,
+        kind,
+        promise,
+        controller: reserved
+      });
+      void promise.finally(() => {
+        releaseReservation();
+        this.#active.delete(options.operationId);
+      });
       return { projectId: options.projectId, operationId: options.operationId, acceptedEventId };
     } catch (cause) {
+      releaseReservation();
       this.#active.delete(options.operationId);
       if (lease) await lease.release();
       throw cause;
@@ -161,6 +207,47 @@ export class ProjectOperationExecutor {
     return { accepting: this.#accepting, active: this.#active.size, capacity: this.capacity };
   }
 
+  private async preemptRefill(projectId: string, expectedHead: number): Promise<number> {
+    const refill = [...this.#active.entries()].find(
+      ([, active]) => active.projectId === projectId && active.kind === 'presentation-refill'
+    );
+    if (!refill) return expectedHead;
+    const [operationId, active] = refill;
+    await this.cancelRefill(operationId, active);
+    const document = await this.repository.load(projectId);
+    if (expectedHead > document.events.length) {
+      const conflict = new Error('The project changed before this operation was accepted.');
+      conflict.name = 'ProjectConflictError';
+      throw conflict;
+    }
+    const intervening = document.events.slice(expectedHead);
+    if (intervening.some((event) => event.operationId !== operationId)) {
+      const conflict = new Error('The project changed before this operation was accepted.');
+      conflict.name = 'ProjectConflictError';
+      throw conflict;
+    }
+    return document.events.length;
+  }
+
+  private async preemptAnyRefill(): Promise<void> {
+    const refill = [...this.#active.entries()].find(
+      ([, active]) => active.kind === 'presentation-refill'
+    );
+    if (refill) await this.cancelRefill(...refill);
+  }
+
+  private async cancelRefill(
+    operationId: string,
+    active: {
+      promise: Promise<void>;
+      controller: AbortController;
+    }
+  ): Promise<void> {
+    active.controller.abort(new Error('Superseded by participant activity.'));
+    await active.promise;
+    this.#active.delete(operationId);
+  }
+
   private async runAccepted(
     options: {
       projectId: string;
@@ -194,9 +281,7 @@ export class ProjectOperationExecutor {
         options.operationId,
         kind,
         controller.signal.aborted ? 'cancelled' : 'infrastructure',
-        controller.signal.aborted
-          ? 'The project operation was cancelled while the server was shutting down. Retry the operation.'
-          : messageFor(cause)
+        controller.signal.aborted ? cancellationMessage(controller.signal) : messageFor(cause)
       );
     } finally {
       await lease.release();
@@ -306,6 +391,8 @@ async function executeProjectCommand(options: {
       });
     case 'render':
       return renderProject({ ...common, seed: options.command.seed });
+    case 'presentation-refill':
+      return replenishProjectPresentations({ ...common, target: options.command.target });
     case 'prefer':
       return recordProjectPreference({
         ...common,
@@ -342,11 +429,12 @@ function commandKind(command: ProjectOperationCommand): ProjectOperationKind {
 function lifecycleEvent<Type extends 'operation.accepted' | 'operation.completed'>(
   type: Type,
   operationId: string,
-  kind: ProjectOperationKind
+  kind: ProjectOperationKind,
+  acceptedActor: 'user' | 'system' = 'user'
 ): NewProjectEvent<Type> {
   return {
     type,
-    actor: type === 'operation.accepted' ? { kind: 'user' } : { kind: 'system' },
+    actor: type === 'operation.accepted' ? { kind: acceptedActor } : { kind: 'system' },
     operationId,
     createdAt: new Date().toISOString(),
     payload: { kind }
@@ -409,6 +497,13 @@ function domainFailureMessage(event: ProjectEvent): string {
 
 function messageFor(cause: unknown): string {
   return (cause instanceof Error ? cause.message : String(cause)).slice(0, 4_000);
+}
+
+function cancellationMessage(signal: AbortSignal): string {
+  const reason = signal.reason;
+  return reason instanceof Error && reason.name !== 'AbortError'
+    ? reason.message
+    : 'The project operation was cancelled while the server was shutting down. Retry the operation.';
 }
 
 function delay(milliseconds: number): Promise<void> {

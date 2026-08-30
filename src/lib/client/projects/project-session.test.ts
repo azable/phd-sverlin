@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProjectEvent, ProjectEventOf } from '$lib/shared/projects/events';
+import type {
+  ProjectEvent,
+  ProjectEventOf,
+  ProjectOperationKind
+} from '$lib/shared/projects/events';
 import type {
   ProjectDocument,
   ProjectResource,
@@ -129,6 +133,31 @@ describe('ProjectSession', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/projects/project-test/events?after=1');
   });
 
+  it('requests the configured buffer deficit without sending a client-owned target', async () => {
+    const initial = bufferedProjectResource();
+    const accepted = operationAcceptedEvent(5, 'presentation-refill');
+    const acceptedResource = projectResource([...initial.document.events, accepted], 'Buffered');
+    fetchMock
+      .mockResolvedValueOnce(response(workspaceResource(initial)))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ projectId: 'project-test', operationId, acceptedEventId: 5 }),
+          { status: 202, headers: { 'content-type': 'application/json' } }
+        )
+      )
+      .mockResolvedValueOnce(response(workspaceResource(acceptedResource)));
+
+    const session = new ProjectSession('project-test', false, 'comparison', 4);
+    sessions.push(session);
+    await session.open();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+    const refillRequest = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(refillRequest[0]).toBe('/api/projects/project-test/presentation-refill');
+    expect(JSON.parse(String(refillRequest[1].body))).toEqual({ operationId, expectedHead: 4 });
+    expect(session.refillPending).toBe(true);
+  });
+
   it('creates a project from an explicit template and preserves Dev detail', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ projectId: 'dev-project', operationId }), {
@@ -225,6 +254,68 @@ function projectResource(events: ProjectEvent[], title: string): ProjectResource
   };
 }
 
+function bufferedProjectResource(): ProjectResource {
+  return projectResource(
+    [
+      createdEvent(),
+      {
+        id: 2,
+        type: 'artifact.version-created',
+        actor: { kind: 'user' },
+        operationId,
+        createdAt: '2026-01-01T00:00:02.000Z',
+        payload: {
+          origin: { kind: 'initial' },
+          changes: [
+            {
+              operation: 'upsert',
+              artifact: {
+                artifactId: 'dsl-main',
+                path: 'Main.sverlin',
+                language: 'sverlin',
+                content: {
+                  text: 'source',
+                  sha256: 'a'.repeat(64),
+                  mediaType: 'text/x-sverlin'
+                }
+              }
+            }
+          ]
+        }
+      },
+      presentedEvent(3, 0),
+      presentedEvent(4, 1)
+    ],
+    'Buffered'
+  );
+}
+
+function presentedEvent(id: number, slot: 0 | 1): ProjectEventOf<'visualization.presented'> {
+  return {
+    id,
+    type: 'visualization.presented',
+    actor: { kind: 'system' },
+    operationId,
+    createdAt: `2026-01-01T00:00:0${id}.000Z`,
+    payload: {
+      displaySetId: '12345678-1234-4123-8123-123456789abd',
+      slot,
+      presentation: {
+        presentationId: `12345678-1234-4123-8123-123456789ac${slot + 1}`,
+        format: 'sverlin-ir-v1',
+        stepSignature: 'shared',
+        seed: slot + 1,
+        source: { text: 'source', sha256: 'a'.repeat(64), mediaType: 'text/x-sverlin' },
+        render: {
+          text: JSON.stringify({ steps: [{ label: 'Overview' }] }),
+          sha256: String(slot + 1).repeat(64),
+          mediaType: 'application/json'
+        }
+      }
+    }
+  };
+}
+
 function createdEvent(): ProjectEventOf<'project.created'> {
   return {
     id: 1,
@@ -263,11 +354,14 @@ function assistantEvent(id: number): ProjectEventOf<'assistant.responded'> {
   };
 }
 
-function operationAcceptedEvent(id: number, kind: 'rename'): ProjectEventOf<'operation.accepted'> {
+function operationAcceptedEvent(
+  id: number,
+  kind: ProjectOperationKind
+): ProjectEventOf<'operation.accepted'> {
   return {
     id,
     type: 'operation.accepted',
-    actor: { kind: 'user' },
+    actor: { kind: kind === 'presentation-refill' ? 'system' : 'user' },
     operationId,
     createdAt: `2026-01-01T00:00:0${id}.000Z`,
     payload: { kind }
