@@ -122,6 +122,8 @@ Relate sourceSlot targetSlot relation
 Unrelate sourceSlot targetSlot
 ```
 
+TODO question: do Relate semantics offer anything over Slot semantics? double check this.
+
 ### Lifecycle
 
 ```haskell
@@ -145,6 +147,8 @@ checkpoint :: String -> Program ()
 (<$>) :: (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
 (<*>) :: OneUse (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
 ```
+
+TODO question: where is step? is API_plan.md covered properly here?
 
 **Open signatures:** `relate` consumes and reissues two matching `Slot`s and
 returns one new `Relation`; `unrelate` consumes that `Relation` plus the current
@@ -271,17 +275,17 @@ identities. `global` is the explicit string-named sharing escape hatch.
 
 ### Layout and box model
 
-| Cluster | Public API |
-| --- | --- |
-| Numeric domains | `Coord`, `Span`, `Offset`, `Scalar`, `VisualExpr role`, `Free`, `Unit`, `Angle` |
-| Containers | `Vec2(..)`, `vec2`, `Bounds(..)` |
-| Edge and centre overloads | `Left`, `left`, `Top`, `top`, `Right`, `right`, `Bottom`, `bottom`, `Width`, `width`, `Height`, `height`, `X`, `x`, `Y`, `y`, `Center(..)`, `center`, `size`, `bounds` |
-| Fixed values and conversions | `at`, `by`, `shift`, `num`, `asCoord`, `asSpan`, `asScalar` |
-| Affine arithmetic | `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, `(/)`, `(|+|)` |
-| Insets | `Insets`, `uniform`, `symmetric`, `edges`, `padding`, `margin` |
-| Child fitting | `Axis(..)` = `Horizontal \| Vertical \| Both`; `ContentFit(..)` = `Hug \| Contain`; `contentFit` |
-| Parent-relative layout | `Percent`, `percent`, `xAt`, `yAt`, `widthOf`, `heightOf` |
-| Canvas | `aspectRatio` |
+| Cluster                      | Public API                                                                                                                                                             |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- |
+| Numeric domains              | `Coord`, `Span`, `Offset`, `Scalar`, `VisualExpr role`, `Free`, `Unit`, `Angle`                                                                                        |
+| Containers                   | `Vec2(..)`, `vec2`, `Bounds(..)`                                                                                                                                       |
+| Edge and centre overloads    | `Left`, `left`, `Top`, `top`, `Right`, `right`, `Bottom`, `bottom`, `Width`, `width`, `Height`, `height`, `X`, `x`, `Y`, `y`, `Center(..)`, `center`, `size`, `bounds` |
+| Fixed values and conversions | `at`, `by`, `shift`, `num`, `asCoord`, `asSpan`, `asScalar`                                                                                                            |
+| Affine arithmetic            | `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, `(/)`, `(                                                                                                          | +   | )`  |
+| Insets                       | `Insets`, `uniform`, `symmetric`, `edges`, `padding`, `margin`                                                                                                         |
+| Child fitting                | `Axis(..)` = `Horizontal \| Vertical \| Both`; `ContentFit(..)` = `Hug \| Contain`; `contentFit`                                                                       |
+| Parent-relative layout       | `Percent`, `percent`, `xAt`, `yAt`, `widthOf`, `heightOf`                                                                                                              |
+| Canvas                       | `aspectRatio`                                                                                                                                                          |
 
 `Bounds a` exposes `Bounds top left width height`; `Vec2 a` exposes `Vec2 x y`.
 All solver-backed numeric values must have finite bounds by compile time.
@@ -302,17 +306,17 @@ styleFamily  :: String -> Render ()
 styleOf      :: ...
 ```
 
-| Cluster | Public API |
-| --- | --- |
-| Numeric fields | `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha` |
-| Paint fields | `Fill`, `Stroke` |
-| Border | `BorderStyle(..)` = `BorderNone \| BorderSolid \| BorderDashed \| BorderDotted \| BorderDouble` |
-| Font filter | `FontKind(..)` = `Monospace \| Proportional`; abstract `FontFilter`; `fontKind`; `fontChoice` |
-| Font family | `FontFamily(..)` = `FontInter \| FontSystem \| FontMono \| FontSerif \| FontSourceSans3 \| FontAtkinsonHyperlegibleNext \| FontSpaceGrotesk \| FontSourceSerif4 \| FontLiterata \| FontJetBrainsMonoNL \| FontIBMPlexMono` |
-| Font weight | `FontWeight(..)` = `FontWeightNormal \| FontWeightBold \| FontWeightBolder \| FontWeightLighter \| FontWeightNumber Int` |
-| Font style | `FontStyle(..)` = `FontStyleNormal \| FontStyleItalic \| FontStyleOblique` |
-| Text alignment | `TextAlign(..)` = `TextAlignLeft \| TextAlignCenter \| TextAlignRight \| TextAlignJustify` |
-| Colour | `Hsl(..)`, `hue`, `saturation`, `lightness`, `sat`, `Color` |
+| Cluster        | Public API                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Numeric fields | `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`                                                                                                                                                                    |
+| Paint fields   | `Fill`, `Stroke`                                                                                                                                                                                                           |
+| Border         | `BorderStyle(..)` = `BorderNone \| BorderSolid \| BorderDashed \| BorderDotted \| BorderDouble`                                                                                                                            |
+| Font filter    | `FontKind(..)` = `Monospace \| Proportional`; abstract `FontFilter`; `fontKind`; `fontChoice`                                                                                                                              |
+| Font family    | `FontFamily(..)` = `FontInter \| FontSystem \| FontMono \| FontSerif \| FontSourceSans3 \| FontAtkinsonHyperlegibleNext \| FontSpaceGrotesk \| FontSourceSerif4 \| FontLiterata \| FontJetBrainsMonoNL \| FontIBMPlexMono` |
+| Font weight    | `FontWeight(..)` = `FontWeightNormal \| FontWeightBold \| FontWeightBolder \| FontWeightLighter \| FontWeightNumber Int`                                                                                                   |
+| Font style     | `FontStyle(..)` = `FontStyleNormal \| FontStyleItalic \| FontStyleOblique`                                                                                                                                                 |
+| Text alignment | `TextAlign(..)` = `TextAlignLeft \| TextAlignCenter \| TextAlignRight \| TextAlignJustify`                                                                                                                                 |
+| Colour         | `Hsl(..)`, `hue`, `saturation`, `lightness`, `sat`, `Color`                                                                                                                                                                |
 
 ```haskell
 fontKind   :: FontKind -> FontFilter
@@ -372,6 +376,7 @@ optimization is still open.
 3. Program step vocabulary and the typed step reference used by text fragments.
 4. Exact `TextBuilder` input and fragment signatures.
 5. Whether three materialization operations remain separate.
-6. Connector and anchor APIs, graph-template APIs, and their sampling weights.
-7. Affine meanings for `encourage` and the symmetric bridge.
-8. Whether `BorderDouble` and `TextAlignJustify` remain public.
+6. The Render projection from a stable slot owner to its current occupant.
+7. Connector and anchor APIs, graph-template APIs, and their sampling weights.
+8. Affine meanings for `encourage` and the symmetric bridge.
+9. Whether `BorderDouble` and `TextAlignJustify` remain public.

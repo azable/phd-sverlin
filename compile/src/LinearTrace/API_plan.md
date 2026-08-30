@@ -2025,6 +2025,12 @@ layout problem.
   declarations available to Program and Render. The endpoint types and
   behavior specified above are settled even though this construction syntax is
   not.
+- Define how Render addresses the current occupant of a restored `Slot` from
+  its stable owner node. The owner-to-occupant association is settled trace
+  data, but the authored surface remains open: it may apply owner bounds to the
+  occupant automatically or expose a typed owner/occupant traversal. It must
+  let an array lay out `ElementCell` owners through `Adjacent` while rendering
+  each contained value, without restoring query bindings or integer joins.
 - Define the first bounded graph-template interface and how several candidate
   templates are weighted. Merely generating more equivalent templates must not
   increase one visual layout's sampling probability.
