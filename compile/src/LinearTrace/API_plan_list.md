@@ -370,19 +370,20 @@ will not perform that filtering.
 bindContent  :: Render (Bound ContentValue)
 variable     :: ... => Render (Variable value)
 variableFrom :: value -> Render (Variable value)
-choice       :: ChoiceDomain value => Render (Variable (Choice value))
+choice       :: forall value. ... => Render (Variable (Choice value))
 global       :: ... => String -> value
-
-class ChoiceDomain value where
-  choiceDomain :: [value]
-  choiceToken  :: value -> String
 
 data Choice value                  -- abstract finite decision
 newtype RandomSeed = RandomSeed Int
 ```
 
-Fresh `variable`, `choice`, and `fontChoice` calls receive compiler-owned
-identities. `global` is the explicit string-named sharing escape hatch.
+`choice @FontStyle` and similar calls are limited to finite domains declared by
+the library. The compiler owns their alternatives and stable serialization tokens;
+there is no public `ChoiceDomain` class. Fresh `variable`, `choice`, and
+`fontChoice` calls receive compiler-owned identities. `global` is the explicit
+string-named sharing escape hatch. Custom constraint alternatives use `oneOf`, and
+optional presence uses `sometimes`; add an explicit `choiceOf` operation later only
+if a concrete use case needs a reusable author-defined category.
 
 ### Layout and box model
 
@@ -448,7 +449,7 @@ encourage :: VisualConstraint -> Render ()
 
 alternative :: String -> [VisualConstraint] -> VisualAlternative
 oneOf      :: String -> VisualAlternative -> [VisualAlternative] -> Render ()
-caseOf     :: ChoiceDomain value => Choice value -> (value -> [VisualConstraint]) -> Render ()
+caseOf     :: Choice value -> (value -> [VisualConstraint]) -> Render ()
 
 separatedBy :: Span -> Selected first -> Selected second -> VisualConstraint
 
@@ -485,6 +486,8 @@ optimization is still open.
 - Internal payload-unpacking family: `LinearPayload`, `withPayload`,
   `buildPayload`, `applyLinear1`, `applyLinear1Into`, `applyLinear2`, and
   `applyLinear2Into`.
+- Solver choice-domain metadata: `ChoiceDomain`, `choiceDomain`, and
+  `choiceToken`. Built-in choice domains and tokens are compiler-owned.
 
 ## Still preventing a fully final facade
 

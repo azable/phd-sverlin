@@ -1197,13 +1197,30 @@ graph and reuse them across seeds. No baseline graph operation constructs the
 
 #### Reusable values and finite decisions
 
-Retain `bindContent`, `variable`, `variableFrom`, `choice`, `ChoiceDomain`,
-`Choice`, `RandomSeed`, and `global`. `bindContent` exposes the payload display
+Retain `bindContent`, `variable`, `variableFrom`, `choice`, `Choice`,
+`RandomSeed`, and `global`. `bindContent` exposes the payload display
 text of each block in the current typed selection; it no longer depends on a
 payload query binding. Variables and choices introduce
 solver-backed values; `variable` and `choice` create fresh compiler identities.
 `variableFrom` only wraps an existing DSL value for reuse and does not make a
 fixed value random.
+
+Remove `ChoiceDomain`, `choiceDomain`, and `choiceToken` from the authored facade.
+They are solver and serialization metadata, not custom choice logic. The compiler
+owns the alternatives and stable tokens for supported finite types, so authors can
+write `choice @FontStyle` without defining an instance. `Choice value` stores the
+resolved domain internally, allowing `caseOf` to avoid the public constraint:
+
+```haskell
+choice :: forall value. ... => Render (Variable (Choice value))
+caseOf :: Choice value -> (value -> [VisualConstraint]) -> Render ()
+```
+
+The baseline does not provide reusable author-defined categorical values. Use
+`oneOf` for custom constraint alternatives and `sometimes` for presence. If a
+concrete later use case needs one category to drive several APIs, add an explicit
+non-empty constructor such as `choiceOf first rest`; do not restore author-managed
+solver tokens.
 
 Remove `bindInt`. It currently creates a name-based query variable whose first
 matching integer fact supplies both a later join key and an optional layout
@@ -1218,16 +1235,14 @@ returned by the builder instead of managing a string name.
 
 ```haskell
 Variable fixedGap <- variableFrom (by 20)
-Variable alignment <- choice
+Variable slant <- choice @FontStyle
 let sharedScale = global "render.shared-scale" :: Scalar
 
 ensure (left second .==. right first + fixedGap)
 ensure (width current .==. by 80 * sharedScale)
 ensure (sharedScale .>=. num 0.8)
 ensure (sharedScale .<=. num 1.2)
-caseOf alignment $ \case
-  AlignLeft  -> [left current .==. left canvas]
-  AlignRight -> [right current .==. right canvas]
+node current $ style @FontStyle (VariableStyle slant)
 ```
 
 #### Layout, geometry, and box model
