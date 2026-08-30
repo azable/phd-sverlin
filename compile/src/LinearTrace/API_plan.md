@@ -14,7 +14,7 @@ generated DSL API index remains authoritative for exact inferred signatures;
 this plan records grouping, purpose, and intended composition.
 
 The authored API comprises exactly three conceptual parts, each with its own
-builder/monadic context:
+builder/section/monadic context:
 
 1. `Domain` declares semantic vocabulary and matching language.
 2. `Program` constructs the immutable linear trace.
@@ -28,23 +28,124 @@ disappear as a public API name; do not preserve it as the conceptual umbrella.
 ### Domain
 
 Add a new Domain module and builder context. Domain owns semantic declarations,
-fact construction, payload vocabulary, operator and relation vocabulary, and
-queries shared by Program and Render. Keep the declaration representation
-abstract so the facade can validate a complete domain before executing a
-program or compiling render rules. A relation kind supplies the semantic label
-for a slot-to-slot relation and defines whether endpoint order is meaningful;
-the exact declaration combinators remain open with the rest of Domain.
+typed classification, payload vocabulary, and operator and relation vocabulary
+shared by Program and Render. Keep the declaration representation abstract so
+the facade can validate a complete domain before executing a program or
+compiling render rules.
+
+#### `Kind`
+
+```haskell
+data Kind tag
+```
+
+`Kind tag` is a Domain-declared classification for a materialized `Block tag`.
+It distinguishes semantic roles that share a trace tag: for example,
+`valueKind` and `resultKind` may both have type `Kind Number`. The type prevents
+a kind declared for `Number` from being attached to or used to select a
+`Block SourceCode`. Each classified block has exactly one `Kind`; `commit`
+creates a deliberately unclassified block.
+
+Keep compound selection outside the baseline. Use a more specific kind such as
+`availableValueKind` when one exclusive role needs its own Render rule, and use
+a `RelationKind` for membership or association. If a concrete visualization
+later requires independent, overlapping classifications on the same block, add
+an explicit typed selector then rather than preserving the old general query
+language now.
+
+Kinds classify blocks; they do not store payload data or connect blocks. Use a
+typed payload for a number or string and a `RelationKind` for membership,
+ordering, or association. In particular, do not declare one kind per array
+index, address, or numeric value. If Render later needs to filter or constrain
+such data, add a typed entity-bound property interface for that concrete use
+case.
+
+The current `Fact`, `Facts`, and `Query` representations may remain temporarily
+as compiler internals while this API is migrated. `Kind` declarations, rather
+than free strings or overloaded labels, are the authored contract; fact
+construction, query conversion, and numeric query binding are not re-exported
+by `Sverlin`.
+
+#### `Payload` and `Traceable`
+
+```haskell
+type family Payload tag = payload | payload -> tag
+class Traceable tag
+```
+
+`tag` is the semantic trace type used by `Block tag`, such as `Number`.
+`Payload tag` is a type-level lookup for the linear value stored by that block;
+it is not a declaration value passed to Program or Render. For example:
+
+```haskell
+data Number
+type instance Payload Number = LInt Number
+```
+
+Here, `Number` identifies the trace type, `Payload Number` reduces to the
+carrier type `LInt Number`, and `LInt 7` is a concrete payload value.
+`Traceable Number` states that this mapping can participate in the trace and be
+persisted for rendering. A `Kind Number` classifies such blocks without changing
+their payload representation.
+
+This differs from `RelationKind`, which is a first-class Domain declaration
+such as `Adjacent` that authors pass to `relate` and `relationsOf`. The semantic
+parallel is between `Kind` and `RelationKind`; `Payload` describes stored data.
+Do not rename it to `PayloadKind`, which would imply another classification
+label. If the type family later needs a more explicit name, `PayloadOf tag` is
+the accurate alternative.
+
+#### `RelationKind`
+
+```haskell
+data RelationKind source target
+```
+
+`RelationKind` is an abstract semantic label for a relation between two
+persistent slot locations. `source` and `target` are the endpoint owner types,
+so `ProbeAt :: RelationKind Probe Cell` cannot be applied to two cells or to a
+probe and an array.
+
+Each relation declaration also records one of these endpoint meanings:
+
+- **Ordered endpoints:** the first and second endpoints have different roles,
+  so swapping them changes the relation. Examples are `Contains` (container,
+  member), `Next` or `Adjacent` (previous, next), `ParentOf` (parent, child),
+  `DependsOn` (dependent, prerequisite), and `ProbeAt` (probe, cell). Ordered
+  endpoints do not imply left-to-right, top-to-bottom, or any other visual
+  direction; Render chooses coordinates and connector appearance separately.
+- **Symmetric endpoints:** both endpoints have the same role, so
+  `ConnectedTo a b` and `ConnectedTo b a` mean the same relation. A symmetric
+  kind must use the same owner type at both endpoints. Program treats the
+  reversed pair as a duplicate. Render may emit the endpoints in a stable order
+  for deterministic output, but that order has no semantic meaning.
+
+This distinction belongs to Domain because it affects Program validation as
+well as Render traversal. Source grouping, sequences, trees, and DAGs require
+ordered endpoints; applying one of those operations to a symmetric relation is
+a source-level error. General graph traversal accepts either meaning.
+
+Endpoint meaning is declaration metadata rather than a public type parameter.
+The relation-facing target types are therefore `RelationKind source target`,
+Program's `Relation`, Render's `Relations source target`, and `Graph node`;
+authors do not carry `Directed` or `Undirected` through signatures. The exact
+declaration combinators that choose ordered or symmetric endpoints remain open
+with the rest of Domain.
 
 Move the following existing interfaces into Domain:
 
-- Facts and queries: `FactValue`, `Fact`, `Facts`, `emptyFacts`, `factAtom`,
-  `factSymbol`, `factInt`, `factsUnion`, `factsToList`, `PayloadView`,
-  `Traceable`, `Query`, `QueryInt`, `emptyQuery`, `queryAtom`, `queryInt`,
-  `queryFacts`, `payload`, `QueryField`, `(@:)`, `(<&>)`, and `fromLabel`.
-- Payload and operator vocabulary: `Payload`, `LUnit`, `LBool`, `LInt`,
-  `LDouble`, `LString`, `LOperator`, `CoreOperator`, `LinearPayload`,
-  `Applicable1`, `Applicable2`, `applyLinear1`, `applyLinear1Into`,
-  `applyLinear2`, and `applyLinear2Into`.
+- Classification: add `Kind tag` as defined above. Do not re-export
+  `FactValue`, `Fact`, `Facts`, `emptyFacts`,
+  `factAtom`, `factSymbol`, `factInt`, `factsUnion`, `factsToList`, `Query`,
+  `QueryInt`, `emptyQuery`, `queryAtom`, `queryInt`, `queryFacts`, `QueryField`,
+  `(@:)`, query conjunction `(<&>)`, or query `fromLabel` construction.
+- Relations: `RelationKind source target`; each Domain declares its concrete
+  relation kinds, including their ordered or symmetric endpoint meaning, and
+  shares them with Program and Render.
+- Payload and operator vocabulary: `PayloadView`, `Traceable`, `Payload`,
+  `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, `LOperator`, `CoreOperator`,
+  `LinearPayload`, `Applicable1`, `Applicable2`, `applyLinear1`,
+  `applyLinear1Into`, `applyLinear2`, and `applyLinear2Into`.
 
 Revise `CoreOperator` so that it retains only the semantics needed to preserve
 and apply an operator payload. It must not require `operatorPayloadText` or any
@@ -58,16 +159,25 @@ import internal Core modules.
 ```haskell
 domain :: Domain ()
 domain = do
-  -- Declare the payload tags, operators, and semantic vocabulary used by the
+  -- Declare payload types, kinds, operators, and relation kinds used by the
   -- program and render rules. Exact declaration combinators remain open.
-  declarePayload @Value
+  declarePayload @Number
+  declareKind valueKind
+  declareKind resultKind
   declareOperator Add
 ```
 
+Illustrative declared values are typed and shared by Program and Render:
+
 ```haskell
-let tag = queryAtom "value" <&> (#index @: 3)
-let facts = queryFacts tag
+valueKind :: Kind Number
+resultKind :: Kind Number
+availableValueKind :: Kind Number
 ```
+
+The exact declaration combinators and how declared values are packaged for the
+three builders remain open. They must provide stable names for diagnostics and
+serialization without requiring authors to repeat string keys at each use.
 
 ### Program
 
@@ -87,27 +197,31 @@ vacant/occupied typestate, `declareSlot`, `occupySlot`, `vacateSlot`, or
 `retireSlot` APIs into this restoration.
 
 - Program context: `Program` (replacing `Choreography`).
-- Linear resources: `Block`, `Slot`, `RelationHandle`, and `Pending`;
+- Linear resources: `Block`, `Slot`, `Relation`, and `Pending`;
   `Payload` and relation-kind vocabulary are defined by Domain and consumed
   here.
 - Lifecycle operations: `create`, `copy`, `use`, `apply1`, `apply2`, `replace`,
   `seal`, `unseal`, `relate`, `unrelate`, `materialize`,
-  `materializeWithTags`, `commit`, `destroy`, and `checkpoint`.
+  `materializeWithKind`, `commit`, `destroy`, and `checkpoint`.
 - Lifecycle results: `OneUse`, `Create`, `Observe`, `Use`, `Copy`, `Replace`,
   `Apply1`, `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `Unrelate`,
   `(<$>)`, and `(<*>)`.
 
 Restore the lowercase `seal` and `unseal` operations alongside the existing
 `Seal` and `Unseal` result types. Add `relate` and `unrelate` only for slot
-locations; do not overload them for blocks. `Slot` and `RelationHandle` remain
+locations; do not overload them for blocks. `Slot` and `Relation` remain
 linear values supplied by lifecycle operations: authors cannot construct them,
 inspect their internal identities, or extract a stored child except through the
 corresponding Program operation. Do not add declaration, read, write, variable,
 or other workflow helpers to Program; higher-level APIs and authored programs
 compose those behaviors from the general primitives.
 
-Q: What is RelationHandle? Is this a API public interface? Or is this a newly
-defined idea, based on the relate/unrelate operations? Maybe call it Relation?
+`Relation` is a new public but abstract linear Program value representing one
+active relation. `relate` creates it and `unrelate` consumes it, so removal
+identifies the exact active relation. Authors cannot inspect or construct it.
+This naming follows the existing `Block` and `Slot` convention: Domain uses
+`RelationKind` for the semantic declaration, Program uses `Relation` for one
+active lifecycle value, and Render uses `Relations` for a read-only collection.
 
 #### Lifecycle operations
 
@@ -134,7 +248,7 @@ use that lineage to stage the new visual instance from the source instance.
 
 ```haskell
 Copy original pendingCopy <- copy original
-duplicate <- materialize (queryAtom "copy") pendingCopy
+duplicate <- materialize copiedValueKind pendingCopy
 ```
 
 ##### Use
@@ -166,7 +280,7 @@ from payload text.
 
 ```haskell
 Apply1 pendingResult <- apply1 negateOperator argument
-result <- materialize (queryAtom "result") pendingResult
+result <- materialize resultKind pendingResult
 ```
 
 ##### Apply two
@@ -177,7 +291,7 @@ binary computation and its data flow.
 
 ```haskell
 Apply2 pendingSum <- apply2 addOperator leftOperand rightOperand
-sumBlock <- materialize (queryAtom "sum") pendingSum
+sumBlock <- materialize sumKind pendingSum
 ```
 
 ##### Replace
@@ -185,11 +299,11 @@ sumBlock <- materialize (queryAtom "sum") pendingSum
 `replace` consumes an existing block and a compatible pending value, producing
 a new pending value whose event records continuation from old identity to new
 identity. It describes an evolving trace entity. Render can keep the old visual
-instance continuous while updating its payload, facts, content, and geometry.
+instance continuous while updating its payload, kind, content, and geometry.
 
 ```haskell
 Replace pendingNext <- replace current pendingValue
-next <- materialize (queryAtom "current") pendingNext
+next <- materialize currentValueKind pendingNext
 ```
 
 Replacement is distinct from storing an independent live value in a slot:
@@ -238,7 +352,7 @@ Unseal owner value <- unseal owner slot
 
 `relate` creates a temporal semantic relation between two persistent slot
 locations. It consumes two `Slot`s, each containing its current child, and
-returns both slots unchanged together with a new linear `RelationHandle`.
+returns both slots unchanged together with a new linear `Relation`.
 Consuming and returning the slots threads their capabilities without giving the
 relation ownership of either child. The relation records the owner `BlockId`s
 that identify the two locations, not the `BlockId`s of their current occupants.
@@ -247,6 +361,13 @@ that identify the two locations, not the `BlockId`s of their current occupants.
 Relate sourceSlot1 targetSlot1 relation <-
   relate DependsOn sourceSlot0 targetSlot0
 ```
+
+At most one relation of the same kind may be active between the same endpoint
+locations. For a symmetric kind, reversing the arguments is the same pair.
+Rejecting duplicates makes `edgeCount` and structural graph checks operate on
+unique associations and prevents Render from applying the same edge rule twice
+to an indistinguishable pair. The same location may still relate to several
+neighbours or use several different relation kinds.
 
 The June baseline supports one slot per owner, so the owner `BlockId` is the
 complete location identity. Unsealing and resealing through that owner
@@ -257,11 +378,11 @@ authored facade by default.
 
 ##### Unrelate
 
-`unrelate` removes exactly the relation represented by a linear
-`RelationHandle`. It consumes that handle plus the current `Slot`s for both
-endpoints, verifies that their owner identities match the relation, and returns
-the two slots. Supplying the current slots makes endpoint identity explicit and
-ensures the operation composes with ordinary linear slot threading.
+`unrelate` removes exactly the relation represented by a linear `Relation`. It
+consumes that value plus the current `Slot`s for both endpoints, verifies that
+their owner identities match the relation, and returns the two slots. Supplying
+the current slots makes endpoint identity explicit and ensures the operation
+composes with ordinary linear slot threading.
 
 ```haskell
 Unrelate sourceSlot2 targetSlot2 <-
@@ -270,52 +391,63 @@ Unrelate sourceSlot2 targetSlot2 <-
 
 A slot may participate in several relations: thread the returned `Slot` through
 each `relate` or `unrelate` call while retaining one distinct linear
-`RelationHandle` per active edge. Every relation handle must eventually be
-consumed. An owner or slot cannot complete its lifecycle while a relation to
-that location remains active.
+`Relation` per active edge. Every `Relation` must eventually be consumed. An
+owner or slot cannot complete its lifecycle while a relation to that location
+remains active.
 
-Q: is a slot (using the restored design) a special case of a relation semantically?
+A `Slot` is not a special relation. It owns the right to recover or replace one
+stored child at a persistent location. A `Relation` represents one active
+association but owns neither endpoint nor occupant; removing it also requires
+the two matching slot capabilities.
 
 #### Materialization
 
 Materialization resolves the `Pending` obligations produced by lifecycle
 operations. It assigns a block identity, completes the pending trace event, and
-optionally attaches Domain facts used by Render selection.
+optionally attaches declared Domain kinds used by Render selection.
 
 ##### Materialize
 
-`materialize` resolves a `Pending` value into a live `Block` and attaches facts
-from a `Query`. It gives the value its stable block identity and completes the
-pending create/copy/apply/replace event so Domain queries and Render selections
-can address it.
+`materialize` resolves a `Pending` value into a live `Block` and attaches one
+declared `Kind` of the same trace type. It gives the value its stable block
+identity and completes the pending create/copy/apply/replace event so Render can
+select it.
 
 ```haskell
-block <- materialize (queryAtom "value" <&> (#index @: 3)) pending
+materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)
 ```
 
-##### Materialize with tags
+```haskell
+block <- materialize availableValueKind pending
+```
 
-`materializeWithTags` combines fixed query facts with facts derived from the
-payload being materialized. Use it when Render selection needs semantic
-properties computed from the concrete result rather than known before the
-operation runs.
+##### Materialize with a payload-derived kind
+
+`materializeWithKind` chooses one declared kind from the payload being
+materialized. The classifier may choose among predeclared finite
+classifications such as `negativeValueKind` and `nonNegativeValueKind`; it must
+not turn each numeric payload into a new kind.
 
 ```haskell
-tagged <- materializeWithTags (queryAtom "value") tagsFromPayload pendingTagged
+materializeWithKind
+  :: (Payload tag -> Kind tag)
+  -> Pending tag %1
+  -> Program (Block tag)
+```
+
+```haskell
+classified <- materializeWithKind classifySign pending
 ```
 
 ##### Commit
 
-`commit` materializes a pending value without attaching semantic facts. Use it
+`commit` materializes a pending value without attaching Domain kinds. Use it
 for traceable intermediate values that Render addresses only through operation
 lineage, or that should not participate in semantic selection.
 
 ```haskell
-untagged <- commit pendingUntagged
+unclassified <- commit pendingUnclassified
 ```
-
-Q: why are three interfaces needed for materialization? can we merge
-into 1?
 
 #### Timeline
 
@@ -380,7 +512,7 @@ operations to the general Program interface.
 program :: Program ()
 program = do
   Create pending <- create initialValue
-  value <- materialize (queryAtom "value") pending
+  value <- materialize valueKind pending
   checkpoint "created"
   Destroy <- destroy value
   checkpoint "removed"
@@ -399,14 +531,26 @@ Render terminology.
 
 The visualization interface declares reusable rules independently of program
 execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `NodeBinding`,
-`AnyPayload`, `GeneratedNode`, `CanvasNode`, `PayloadQuery`,
-`VisualizationBuilder` (to be replaced publicly by `Render`), `Select`,
-`select`, `visualize`, `Node`, `node`, `self`, and `canvas`.
+`GeneratedNode`, `CanvasNode`, `select`, `visualize`, `Node`, `node`, `self`,
+and `canvas`. Replace the query-based `Select`, `AnyPayload`, and
+`PayloadQuery` surface with typed kind selection:
+
+```haskell
+select :: Kind tag -> Render (NodeBinding (Selected tag))
+```
+
+The `Kind` determines the selected payload type, so `select` no longer needs a
+type application such as `select @Number`. It selects every live block at the
+checkpoint with that one declared kind. Compound classification, selection
+across unrelated payload types, and exact payload-value predicates are outside
+this baseline; declare separate typed rules, or add a typed selector or
+predicate API later when a concrete use case requires one.
 
 Retain the general content interfaces `ContentValue`, `text`, `content`, and
-`fitText`. Redefine `fitText` as allowing the solver to vary a single line's
-font size within explicit bounds so that the line fits its content box; it must
-not insert line breaks. Remove the specialized `codeContent`, `codeWrap`,
+`fitText`, and add the graph-derived `intText` documented below. Redefine
+`fitText` as allowing the solver to vary a single line's font size within
+explicit bounds so that the line fits its content box; it must not insert line
+breaks. Remove the specialized `codeContent`, `codeWrap`,
 `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode` interfaces. Code
 is not a distinct kind of visual content: it is one possible Render mapping of
 the Program.
@@ -494,7 +638,7 @@ render = do
 
 The `comparisonText` builder produces one shaped line,
 `if (A[i] == target) {`, plus compiler-owned source ranges. `A[i]` is associated
-with `ReadElement`, `target` with `ReadTarget`, and ` == ` with all three listed
+with `ReadElement`, `target` with `ReadTarget`, and `==` with all three listed
 step definitions. Authors do not
 calculate character offsets. During playback, the default interpretation is
 that a fragment is active while any associated step definition is active;
@@ -557,7 +701,7 @@ or Program.
 ```haskell
 render :: Render ()
 render = do
-  Selected values <- select (queryAtom "value")
+  Selected values <- select valueKind
   node $ do
     Selected group <- self
     padding (uniform (by 12))
@@ -568,23 +712,370 @@ render = do
   aspectRatio 4 3
 ```
 
+#### Relations and graph views
+
+Relations describe which persistent Program locations are associated. They do
+not prescribe coordinates, spacing, or connector routing. Render projects the
+relations active at one checkpoint and then applies ordinary visual
+constraints. The same relation data can therefore support a row, a freely
+placed linked list, a tree, or another layout without changing Program.
+
+The target Render vocabulary is:
+
+```haskell
+data Relations source target
+data Graph node
+data Sequence node
+data Tree node
+data Dag node
+data SiblingOrder node
+data FixedInt
+
+relationsOf
+  :: RelationKind source target
+  -> Render (Relations source target)
+
+forEachRelation
+  :: Relations source target
+  -> (Selected source -> Selected target -> Render ())
+  -> Render ()
+
+forEachSourceGroup
+  :: Relations source target
+  -> (Selected source -> Selected target -> Render ())
+  -> Render ()
+
+graphOf
+  :: Selected node
+  -> Relations node node
+  -> Render (Graph node)
+```
+
+`relationsOf kind` selects active relations of one declared kind.
+`forEachRelation` runs its rule once per relation and supplies the two stable
+owner nodes. For a kind with ordered endpoints they are source then target. For
+a symmetric kind, the callback receives a stable endpoint order only so output
+and generated choice IDs are repeatable; its rule must be symmetric or make any
+visual orientation an explicit Render choice.
+
+`forEachSourceGroup` runs once per distinct source and supplies one selection
+containing all of that source's distinct targets. It is the grouping operation
+needed for ordered relations such as
+`Contains :: RelationKind Array Cell`; it does not invent an order among the
+targets. Applying it to a symmetric relation is a source-level error because
+choosing either endpoint as the group owner would invent meaning. `graphOf
+nodes relations` includes every selected node, including nodes with no edge,
+and every active relation for which both endpoints are in `nodes`. Relations
+with neither endpoint selected are outside the graph. A relation with exactly
+one selected endpoint is instead a scope error; rejecting it catches an
+accidental adjacency between two arrays rather than silently dropping the
+edge. A source with no target does not produce a source group; render an empty
+collection through its ordinary node selection.
+
+A relation may connect different endpoint types without an integer join. For
+example, `ProbeAt` can directly constrain a probe against its target cell:
+
+```haskell
+probeLinks <- relationsOf ProbeAt
+
+forEachRelation probeLinks $ \probe cell -> do
+  ensure $ x probe .==. x cell
+  ensure $ bottom probe .<=. top cell - by 12
+```
+
+##### `GraphView`, nodes, and edges
+
+`GraphView graph node` is the common read-only interface implemented by
+`Graph node`, `Sequence node`, `Tree node`, and `Dag node`:
+
+```haskell
+class GraphView graph node | graph -> node where
+  forEachNode :: graph -> (Selected node -> Render ()) -> Render ()
+  forEachEdge :: graph -> (Selected node -> Selected node -> Render ()) -> Render ()
+  forEachNodePair :: graph -> (Selected node -> Selected node -> Render ()) -> Render ()
+  nodeCount :: graph -> FixedInt
+  edgeCount :: graph -> FixedInt
+```
+
+`forEachNode` expands a rule once for each node in the current graph;
+`forEachEdge` does the same for its edges. A graph made from an ordered relation
+supplies source then target. A graph made from a symmetric relation supplies a
+stable pair whose order has no semantic meaning.
+`forEachNodePair` runs once for each unordered pair of distinct nodes, whether
+or not an edge joins them. Its endpoint order is stable but has no semantic
+meaning. `nodeCount` and `edgeCount` are calculated from the checkpoint rather
+than sampled by the numeric solver.
+
+A variable, `oneOf` choice, or generated node declared inside one of these
+callbacks is local to that matched node, edge, pair, or source group. Declare it
+outside the callback to share it across all matches. The compiler includes the
+stable endpoint identities in generated choice IDs, so equal descriptive
+labels do not merge choices belonging to different matches.
+
+`FixedInt` is an exact integer calculated from the current relation graph before
+numeric solving. It may differ at another checkpoint, but it is fixed while the
+current Render rule is solved. Addition and subtraction by fixed integers remain
+exact. `asScalar :: FixedInt -> Scalar` makes it usable in affine layout
+expressions. Multiplying a solver-backed span by an `asScalar` result remains
+affine because the integer has already been fixed.
+`intText :: FixedInt -> ContentValue` formats the same value as deterministic
+base-10 text for an index, count, depth, or level label.
+
+##### `Sequence`
+
+`Sequence` represents one ordered chain. It covers arrays, ordinary lists, and
+linked lists whose nodes use a relation with ordered endpoints such as
+`Adjacent` or `Next`.
+
+```haskell
+requireSequence :: Graph node -> Render (Sequence node)
+positionOf :: Sequence node -> Selected node -> FixedInt
+```
+
+`requireSequence` accepts an empty graph, a single node with no edges, or one
+non-empty chain. A non-empty chain must have one start, one end, no cycle or
+fork, and every graph node must belong to it. `positionOf` returns the
+zero-based position `0, 1, 2, ...`; `nodeCount` gives the total number of items.
+The relation must have ordered endpoints; otherwise there is no defined first
+item or next item. Failure reports the relation kind and offending endpoints
+before numeric sampling begins.
+
+The following example assumes `Contains` relates each array to its cells and
+`Adjacent` points from each cell to the next. Each array is checked and laid out
+independently. A sampled centre-to-centre spacing is shared by all its cells:
+
+```haskell
+memberLinks <- relationsOf Contains
+adjacentLinks <- relationsOf Adjacent
+
+forEachSourceGroup memberLinks $ \array cells -> do
+  cellGraph <- graphOf cells adjacentLinks
+  orderedCells <- requireSequence cellGraph
+
+  Variable spacing <- variable @Span
+  ensure $ spacing .>=. by 64
+  ensure $ spacing .<=. by 96
+
+  forEachNode orderedCells $ \cell -> do
+    let position = positionOf orderedCells cell
+    ensure $ width cell .==. by 64
+    ensure $ x cell .==. left array + shift 32 + spacing * asScalar position
+    ensure $ y cell .==. y array
+
+    Selected indexLabel <- node $ fitText (intText position)
+    ensure $ x indexLabel .==. x cell
+    ensure $ top indexLabel .==. bottom cell + shift 8
+
+  let count = nodeCount orderedCells
+  ensure $ width array .>=. by 64 + spacing * asScalar (count - 1)
+```
+
+Inside the same `forEachSourceGroup` callback, when cell widths vary, replace
+the centre-spacing block with consecutive edge constraints:
+
+```haskell
+Variable gap <- variable @Span
+ensure $ gap .>=. by 8
+ensure $ gap .<=. by 24
+
+forEachEdge orderedCells $ \previous next -> do
+  ensure $ left next .==. right previous + gap
+  ensure $ y next .==. y previous
+```
+
+These are alternative layout rules. A linked-list view can use the same checked
+`Sequence` for traversal; `forEachEdge` supplies endpoint pairs to a connector
+helper once that visual interface is defined. Separate bounded constraints can
+place its nodes freely and prevent overlap. The relation does not force either
+layout.
+
+##### `Tree` and sibling order
+
+`Tree` is a graph whose relation has ordered parent-to-child endpoints and
+exactly one root. Every other node must have one parent, every node must be
+reachable from the root, and cycles are rejected.
+
+```haskell
+requireTree :: Graph node -> Render (Tree node)
+rootOf :: Tree node -> Selected node
+depthOf :: Tree node -> Selected node -> FixedInt
+childCountOf :: Tree node -> Selected node -> FixedInt
+subtreeSizeOf :: Tree node -> Selected node -> FixedInt
+```
+
+`depthOf` counts parent-to-child edges from the root. `childCountOf` counts
+immediate children. `subtreeSizeOf` counts the node and all of its descendants.
+These values are fixed graph data and can contribute constant coefficients to
+affine layout constraints:
+
+```haskell
+parentLinks <- relationsOf ParentOf
+treeGraph <- graphOf treeNodes parentLinks
+tree <- requireTree treeGraph
+
+Variable levelGap <- variable @Span
+ensure $ levelGap .>=. by 72
+ensure $ levelGap .<=. by 120
+
+forEachNode tree $ \current ->
+  ensure $ y current .==. at 60 + levelGap * asScalar (depthOf tree current)
+```
+
+A parent-to-child relation does not define the left-to-right order of siblings.
+When that order matters, use another relation with ordered endpoints, such as
+`Adjacent`:
+
+```haskell
+orderChildrenBy :: RelationKind node node -> Tree node -> Render (SiblingOrder node)
+
+forEachSiblingPair
+  :: SiblingOrder node
+  -> (Selected node -> Selected node -> Render ())
+  -> Render ()
+
+siblingPositionOf :: SiblingOrder node -> Selected node -> FixedInt
+```
+
+`orderChildrenBy` checks separately for every parent that its children form one
+sequence. Zero or one child needs no adjacency edge. An adjacency edge between
+children of different parents is an error. The supplied relation must have
+ordered endpoints; a symmetric relation cannot distinguish previous from next.
+Render does not invent a sibling order when this helper is omitted.
+
+```haskell
+siblingOrder <- orderChildrenBy Adjacent tree
+Variable siblingGap <- variable @Span
+ensure $ siblingGap .>=. by 16
+ensure $ siblingGap .<=. by 48
+
+forEachSiblingPair siblingOrder $ \previous next ->
+  ensure $ left next .==. right previous + siblingGap
+```
+
+##### `Dag`
+
+`Dag` is short for directed acyclic graph. Here, "directed" means the Domain
+relation has ordered source-to-target endpoints. Following those ordered edges
+can never return to the starting node. A DAG may have several roots, several
+leaves, and disconnected parts. Unlike a sequence, it does not have one correct
+position for every node because unrelated nodes can appear in either order.
+
+```haskell
+requireDag :: Graph node -> Render (Dag node)
+rootsOf :: Dag node -> Selected node
+leavesOf :: Dag node -> Selected node
+levelOf :: Dag node -> Selected node -> FixedInt
+```
+
+`rootsOf` selects nodes with no incoming edge; `leavesOf` selects nodes with no
+outgoing edge. `levelOf` is zero at a root and otherwise one plus the greatest
+level of its immediate predecessors. This is the length of the longest path
+from any root, not an arbitrary total ordering.
+
+```haskell
+dependencyLinks <- relationsOf DependsOn
+taskGraph <- graphOf tasks dependencyLinks
+dag <- requireDag taskGraph
+
+Variable levelGap <- variable @Span
+ensure $ levelGap .>=. by 72
+ensure $ levelGap .<=. by 128
+
+forEachNode dag $ \task ->
+  ensure $ y task .==. at 60 + levelGap * asScalar (levelOf dag task)
+```
+
+If a visualization requires one particular ordering of otherwise unrelated DAG
+nodes, that ordering must be an explicit relation or Render choice. The compiler
+must not silently choose one and remove other valid layouts.
+
+##### General graphs and layouts
+
+Use `Graph` directly when cycles, several connected parts, or no single
+hierarchy are valid. It supplies nodes, edges, and counts but no derived
+position, root, depth, or level. Relations with ordered or symmetric endpoints
+are both supported.
+
+An edge carries its relation kind and stable identity, not an arbitrary weight
+or label. Model a semantically weighted edge as its own typed Domain location
+with relations to its endpoints, or add a later typed relation-property API.
+Do not encode weight by creating duplicate edges; duplicate same-kind endpoint
+pairs are rejected.
+
+```haskell
+connectionLinks <- relationsOf ConnectedTo
+network <- graphOf vertices connectionLinks
+
+forEachNode network $ \vertex -> do
+  ensure $ left vertex .>=. left canvas + shift 24
+  ensure $ right vertex .<=. right canvas - by 24
+  ensure $ top vertex .>=. top canvas + shift 24
+  ensure $ bottom vertex .<=. bottom canvas - by 24
+
+forEachNodePair network $ \first second ->
+  ensure $ separatedBy (by 12) first second
+```
+
+This bounds every vertex and prevents overlap with an exact finite choice for
+each node pair. It still does not choose connector routes or rank the many valid
+placements; those require further explicit rules or prepared templates.
+
+Graph-layout helpers belong in a Render library and consume this same `Graph`;
+they are not another semantic relation system. A helper may emit bounded affine
+constraints directly or offer a finite set of prepared grid, layered, or other
+layout templates as explicit design choices. General force-directed placement,
+Euclidean distance objectives, and edge-crossing minimization are not affine
+constraints. They must not invoke a hidden nonlinear fallback. If later
+supported, they must be explicit preparation algorithms that return bounded
+candidate templates before affine sampling.
+
+The four cases created by each `separatedBy` constraint are affine once one is
+selected, but their combinations grow quickly with the number of node pairs.
+Connector routes add further choices. Large graphs should therefore normally
+use a bounded template generator rather than unrestricted pairwise branching.
+
+##### Validation over time
+
+Graph construction and all `require*` checks run for every exposed checkpoint
+where their Render rule matches. Program should checkpoint after completing a
+logical relation update. If an incomplete structure is intentionally shown,
+Render should use its raw `Graph` until it is complete instead of claiming that
+it is already a `Sequence`, `Tree`, or `Dag`. Structural failures are therefore
+source-level diagnostics, not unlucky random samples.
+
+Sequence, tree, and DAG checks visit each node and edge only a constant number
+of times. Calculate their `FixedInt` values once for each distinct checkpoint
+graph and reuse them across seeds. `forEachNodePair` is deliberately more
+expensive: a graph with `n` nodes produces `n * (n - 1) / 2` pair rules before
+any separation or routing cases are expanded.
+
 #### Reusable values and finite decisions
 
-Retain `bindInt`, `bindContent`, `variable`, `variableFrom`, `choice`,
-`ChoiceDomain`, `Choice`, `RandomSeed`, and `global`. Bound query values are
-reused within one matched rule; variables and choices introduce solver-backed
-values. `variable` and `choice` create fresh compiler identities. Use
-`global name` only when separately declared rules deliberately need the same
-stable solver value; ordinary reuse within one rule should reuse the value
+Retain `bindContent`, `variable`, `variableFrom`, `choice`, `ChoiceDomain`,
+`Choice`, `RandomSeed`, and `global`. `bindContent` exposes the payload display
+text of each block in the current typed selection; it no longer depends on a
+payload query binding. Variables and choices introduce
+solver-backed values; `variable` and `choice` create fresh compiler identities.
+`variableFrom` only wraps an existing DSL value for reuse and does not make a
+fixed value random.
+
+Remove `bindInt`. It currently creates a name-based query variable whose first
+matching integer fact supplies both a later join key and an optional layout
+coefficient. Use typed relations for membership, association, and ordering; use
+`positionOf`, `nodeCount`, and the other `FixedInt` graph values for structural
+layout. A future numeric payload or property accessor must be typed and tied to
+its selected entity rather than restoring free string-keyed facts or bindings.
+
+Use `global name` only when separately declared rules deliberately need the
+same stable solver value. Ordinary reuse within one rule should reuse the value
 returned by the builder instead of managing a string name.
 
 ```haskell
-Bound index <- bindInt
-Variable gap <- variableFrom (asScalar index)
+Variable fixedGap <- variableFrom (by 20)
 Variable alignment <- choice
 let sharedScale = global "render.shared-scale" :: Scalar
 
-ensure (x current .==. at 20 + shift 1 * gap)
+ensure (left second .==. right first + fixedGap)
 ensure (width current .==. by 80 * sharedScale)
 ensure (sharedScale .>=. num 0.8)
 ensure (sharedScale .<=. num 1.2)
@@ -665,8 +1156,9 @@ ensure $ extentOffset .<=. shift 240
 
 ##### `Scalar`
 
-`Scalar` is unitless. It scales a `Span` or `Offset` and represents captured
-integer values in numeric constraints. `asScalar` converts a bound `QueryInt`.
+`Scalar` is unitless. It scales a `Span` or `Offset`. `asScalar` converts a
+graph-derived `FixedInt` into a constant scalar expression; it does not turn the
+integer into a sampled solver variable.
 
 ```haskell
 Variable scale <- variable @Scalar
@@ -674,11 +1166,13 @@ ensure $ scale .>=. num 0.75
 ensure $ scale .<=. num 1.25
 node card $ width (by 160 * scale)
 
-Bound count <- bindInt
-ensure $ asScalar count .>=. num 1
+forEachNode orderedCells $ \cell -> do
+  let position = positionOf orderedCells cell
+  ensure $ x cell .==. at 40 + by 72 * asScalar position
 ```
 
-The example remains affine because one factor in `by 160 * scale` is constant.
+Both examples remain affine because one factor in each multiplication is
+constant when numeric solving begins.
 
 ##### `VisualExpr`
 
@@ -769,6 +1263,24 @@ node card $ bounds (Bounds (num 32) (num 48) (num 240) (num 120))
 
 Use the individual typed setters when components are solver variables; they
 make the coordinate/span distinction visible and give clearer diagnostics.
+
+##### `separatedBy`
+
+`separatedBy gap first second` is a symmetric hard constraint requiring the two
+axis-aligned node bounds to have at least `gap` between them on the left, right,
+above, or below:
+
+```haskell
+separatedBy :: Span -> Selected first -> Selected second -> VisualConstraint
+
+ensure $ separatedBy (by 12) first second
+```
+
+The compiler lowers this union to four exact affine cases. These are
+compiler-created geometric cases, not four equally weighted authored choices;
+their sampling follows the case-split rules in the proposed solver
+architecture. A bounded solver-backed `Span` is also valid because it appears
+linearly in every case.
 
 ##### Numeric literals and affine arithmetic
 
@@ -929,8 +1441,7 @@ node group $ do
 
 ##### `Percent`
 
-`Percent` is an abstract, validated parent-relative percentage from zero to
-100. Construct it with `percent`. `xAt` and `yAt` place the current node's centre
+`Percent` is an abstract, validated parent-relative percentage from zero to 100. Construct it with `percent`. `xAt` and `yAt` place the current node's centre
 within the parent content box; `widthOf` and `heightOf` size it relative to the
 parent content dimensions.
 
@@ -1282,8 +1793,9 @@ or solver-backed z-index.
 
 #### Constraints and alternatives
 
-Retain `ensure`, `encourage`, `VisualAlternative`, `alternative`, `oneOf`,
-`caseOf`, `(.<=.)`, `(.>=.)`, `(.==.)`, `(=|)`, `(=/)`, `(|=)`, and `(/=)`.
+Retain `ensure`, `encourage`, `VisualConstraint`, `VisualAlternative`,
+`alternative`, `oneOf`, `caseOf`, `separatedBy`, `(.<=.)`, `(.>=.)`,
+`(.==.)`, `(=|)`, `(=/)`, `(|=)`, and `(/=)`.
 
 ```haskell
 ensure (width item .>=. by 80)
@@ -1348,19 +1860,31 @@ Authored body source may import only `Sverlin`.
   apply, replace, use, and destroy events, while purely visual connections
   belong to Render.
 - `relate` consumes and returns two `Slot`s containing their children plus a
-  fresh linear `RelationHandle`. The relation handle contains stable endpoint
-  identities but no owner or child capability; it cannot expose, copy, replace,
-  or destroy either child.
+  fresh linear `Relation`. The relation contains stable endpoint identities but
+  no owner or child capability; it cannot expose, copy, replace, or destroy
+  either child.
 - A relation remains active when either slot is unsealed, temporarily empty,
   resealed, or given a replacement occupant. It follows neither old nor new
   occupant `BlockId`: its endpoints remain the same persistent locations, so no
   retarget event is produced by a write.
-- `unrelate` consumes the exact `RelationHandle` and the current `Slot`s for its
+- `unrelate` consumes the exact `Relation` and the current `Slot`s for its
   two endpoints, validates both owner identities, and returns those slots.
   Passing a slot reconstructed through another same-typed owner is an error.
 - Active relations must be removed before their endpoint locations or owners
   are destroyed. Relation creation and removal are checkpointed trace events;
   relation lifetime is independent of occupant lifetime.
+- Every relation kind fixes its source type, target type, and whether its
+  endpoints are ordered or symmetric. Program rejects endpoints of the wrong
+  owner type. Render preserves ordered source-to-target roles but gives no
+  semantic meaning to the stable iteration order of a symmetric pair.
+- Program rejects a second active relation of the same kind between the same
+  endpoint pair. For a symmetric kind, the reversed pair is the same pair; for
+  an ordered kind, the reversed pair is distinct.
+- `forEachSourceGroup`, `requireSequence`, `requireTree`, `requireDag`, and
+  `orderChildrenBy` reject symmetric relations before numeric solving.
+- Relation structure may determine membership, adjacency, sequence position,
+  tree depth, or DAG level. It must not be used to invent numeric properties
+  such as a sparse key, address, stored value, or edge weight.
 
 ## View and rendering
 
@@ -1375,15 +1899,127 @@ the same `relationId`. Render rules may choose how a declared relation kind is
 drawn, but they must not infer semantic relations from block lineage, solver
 variable names, or proximity.
 
+At each exposed checkpoint, the authored `Relations` projection resolves those
+stable endpoints into a scoped `Graph`. `requireSequence`, `requireTree`, and
+`requireDag` validate that graph and calculate their fixed structural values
+before layout constraints are lowered. The raw `Graph` remains available when
+no stronger shape is intended.
+
 ## Compiler and runtime boundary
 
 ## Migration and compatibility
 
+The classification and relation slices are intentionally breaking at the new
+`Sverlin` facade. Replace atom tags such as `#value` with typed Domain `Kind`
+declarations, attach them through `materialize` or `materializeWithKind`, and
+select them directly. Replace structural `#index @: value` joins with declared
+relations and derived graph values. Payload text needed for display is read
+through `bindContent`, not captured by a query.
+
+Remove `FactValue`, `Fact`, `Facts`, `emptyFacts`, `factAtom`, `factSymbol`,
+`factInt`, `factsUnion`, `factsToList`, `Query`, `QueryInt`, `QueryField`,
+`emptyQuery`, `queryAtom`, `queryInt`, `queryFacts`, `payload`, `PayloadQuery`,
+`AnyPayload`, the public query-based `Select` class, `(@:)`, query `(<&>)`,
+query `fromLabel`, and `bindInt` from `Sverlin`. Existing fact/query
+representations may remain temporarily behind the compiler boundary as a
+migration mechanism, but generated and handwritten Sverlin source cannot name
+them. Numeric payload filtering remains unavailable until a typed entity-bound
+predicate has a demonstrated use case.
+
 ## Examples and tests
+
+Add focused facade and compiler tests for:
+
+- one typed kind attached and selected across Program and Render, plus a
+  compile-time mismatch between a kind and a pending or selected payload type;
+- `materializeWithKind` choosing among predeclared classifications from a
+  payload without creating numeric or string-keyed facts;
+- heterogeneous relations such as `ProbeAt Probe Cell`, including endpoint
+  type errors, duplicate-edge rejection, and forward/reverse relation lifetime;
+- ordered `Next a b` remaining distinct from `Next b a`, symmetric
+  `ConnectedTo a b` rejecting `ConnectedTo b a` as a duplicate, and an ordered
+  graph helper rejecting a symmetric kind with a source-level diagnostic;
+- two arrays grouped by `Contains` and ordered independently by `Adjacent`,
+  including a one-cell array, a rejected cross-array adjacency, and sampled
+  centre-spacing and edge-gap layouts;
+- sequence diagnostics for a missing edge, fork, cycle, and disconnected node;
+- sequence positions and counts used through both `asScalar` and `intText`;
+- a linked list that uses `Next` for traversal while its node positions remain
+  independently constrained;
+- valid and invalid trees, sibling-order validation, tree depth, child count,
+  and subtree size;
+- DAG roots, leaves, longest-path levels, and rejection of a directed cycle;
+- a cyclic raw graph with pairwise `separatedBy` constraints that remains valid
+  as `Graph` but fails `requireDag`, with separation cases classified as
+  compiler-created rather than authored choices;
+- graph checks at successive checkpoints, including deliberate use of raw
+  `Graph` while a structure is incomplete; and
+- removal of the public fact/query surface and `bindInt`, including migration
+  of integer-variable joins to relations and confirmation that `Sverlin`
+  exports no string-keyed classification or numeric-query constructor.
 
 ## Implementation order
 
+For the classification and relation slices:
+
+1. Add `Kind`, typed materialization, and typed Render selection; lower them
+   through the existing internal fact representation temporarily if that makes
+   migration safer.
+2. Add typed `RelationKind` declarations and the `relate`/`unrelate` trace
+   events, including endpoint and lifetime validation.
+3. Project active relation endpoints to stable owner nodes at each checkpoint.
+4. Add `Relations`, raw `Graph`, iteration, grouping, and `FixedInt`.
+5. Add the sequence, tree, sibling-order, and DAG checks and their calculated
+   values.
+6. Migrate all examples and fixtures from query atoms and integer joins to
+   kinds and relations; then remove the complete public fact/query surface from
+   `Sverlin`.
+7. Add graph-layout template helpers only after the raw graph contract and
+   affine solver boundary are tested.
+
+The existing `containers` dependency in
+[compile.cabal](../../compile.cabal) is sufficient for the first implementation.
+Use `Data.Graph` for connected-component, cycle, and topological-order checks,
+with `Data.Map`/`Data.Set` for endpoint lookup. Sort stable owner identities
+before assigning internal graph vertices so results and diagnostics do not
+depend on map insertion order. Sequence and tree degree checks are small enough
+to keep local. Do not add another graph package until a concrete layout-template
+algorithm needs it; graph representation libraries do not themselves solve the
+layout problem.
+
 ## Open decisions
+
+### Remaining Domain classification and payload details
+
+- Choose the declaration syntax that constructs typed `Kind` values and makes
+  them available to Domain, Program, and Render with stable diagnostic and
+  serialization identities. Free string keys and overloaded-label fallback are
+  excluded regardless of the chosen syntax.
+- Decide whether fixed-kind `materialize`, payload-derived
+  `materializeWithKind`, and unclassified `commit` should remain three
+  operations or become one operation taking an explicit classification plan.
+  A combined operation must still distinguish one fixed `Kind`, a classifier
+  choosing one declared kind, and deliberately no kind; it must not reintroduce
+  facts or an untyped callback result.
+- Define a typed, entity-bound accessor for numeric payload or property values
+  when their magnitude must affect layout. It must remain distinct from
+  `FixedInt`, which contains compiler-calculated graph data, and must not
+  restore free name-based facts, predicates, or bindings. Add typed equality or
+  range filtering only when a concrete Render use case requires it.
+
+### Remaining relation details
+
+- Choose the Domain declaration syntax that creates typed `RelationKind`
+  values, records ordered or symmetric endpoint meaning, and makes the same
+  declarations available to Program and Render. The endpoint types and
+  behavior specified above are settled even though this construction syntax is
+  not.
+- Define the first bounded graph-template interface and how several candidate
+  templates are weighted. Merely generating more equivalent templates must not
+  increase one visual layout's sampling probability.
+- Define the visual connector and anchor interface that consumes endpoint pairs
+  from `forEachRelation` or `forEachEdge`. Relation traversal is settled here;
+  path shape, routing choices, and connector IR are not.
 
 ### Proposed solver architecture
 
@@ -1514,6 +2150,12 @@ data used by the sampler. It does not pin that configuration or reuse a previous
 layout. A new seed still selects a configuration and generates a new point. Cache only
 deterministic prepared data so the same source, configuration, and seed produce the same
 result regardless of cache warmth or batch order.
+
+Relation checks and values such as sequence position, item count, tree depth, and DAG
+level are also prepared before numeric solving. They are fixed consequences of the active
+trace graph, not random branches, so recalculating them for a checkpoint does not bias the
+layout distribution. Only explicit layout choices or exact geometric case splits add
+solver configurations.
 
 Enumeration should prepare every feasible configuration only while the estimated work
 is small. Large spaces should retain a compact guarded representation, prepare the
