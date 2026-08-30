@@ -420,8 +420,39 @@ shaped string plus validated range metadata. It must not shape each fragment as
 an independent text node, because doing so would lose the font renderer's
 whole-line kerning, bidirectional-text, and ligature behavior.
 
+Add an explicit catalog filter for font choices. The target vocabulary is
+`FontKind`, with `Monospace` and `Proportional` values, an abstract `FontFilter`,
+`fontKind`, and `fontChoice`:
+
+```haskell
+data FontKind = Monospace | Proportional
+
+fontKind :: FontKind -> FontFilter
+fontChoice :: FontFilter -> Render (Variable (Choice FontFamily))
+```
+
+Here `Proportional` means any catalogued non-monospace family. Font kind is
+catalog metadata, not a guess based on the family name. Like the existing
+builder-level `choice`, `fontChoice` creates an authored choice with a fresh
+compiler-generated identity and returns it through `Variable`; it reports a
+source-level diagnostic if the filter is empty. Reusing the returned `Choice`
+means that every use selects the same sampled family. Separate calls can
+therefore select one monospace family for code and one proportional family for
+explanation text without requiring authors to manage global choice names.
+Keep `FontFilter` abstract so later filters, such as serif classification or
+required script coverage, can compose without changing this interface.
+Filter results contain unique concrete catalog-family identities. Generic
+families such as a default monospace alias resolve to catalog entries but do not
+become additional randomly weighted alternatives to the same concrete family.
+The initial filter applies to a whole text node. A `fragment` does not switch
+font family: code and explanation text that require different font kinds use
+separate positioned nodes, as below. Mixed-font shaping within one line would
+need an explicit font-run API and remains outside this baseline.
+
 For example, a rendered comparison line can associate each semantic part of the
-displayed code with the Program steps that produce or use it:
+displayed code with the Program steps that produce or use it. The extended
+example renders an explanatory line and a code block with two indentation
+levels:
 
 ```haskell
 comparisonText :: TextBuilder ()
@@ -434,21 +465,71 @@ comparisonText = do
 
 render :: Render ()
 render = do
+  Variable codeFont <- fontChoice (fontKind Monospace)
+  Variable explanationFont <- fontChoice (fontKind Proportional)
+  let codeSize = global "render.font-size.code" :: Span
+
+  Selected explanationLine <- node $ do
+    fitText (text "Compare each element with the target; return its index when they match.")
+    style @FontFamily (VariableStyle explanationFont)
+
+  Selected loopLine <- node $ do
+    content (literal "for (int i = 0; i < n; ++i) {")
+    style @FontFamily (VariableStyle codeFont)
+    style @FontSize codeSize
+
   Selected comparisonLine <- node $ do
     content comparisonText
-    style @FontFamily (FixedStyle FontIBMPlexMono)
+    style @FontFamily (VariableStyle codeFont)
+    style @FontSize codeSize
 
-  ensure $ left comparisonLine .==. at 36
-  ensure $ top comparisonLine .==. at 120
+  Selected returnLine <- node $ do
+    content (literal "return i;")
+    style @FontFamily (VariableStyle codeFont)
+    style @FontSize codeSize
+
+  Selected innerCloseLine <- node $ do
+    content (literal "}")
+    style @FontFamily (VariableStyle codeFont)
+    style @FontSize codeSize
+
+  Selected outerCloseLine <- node $ do
+    content (literal "}")
+    style @FontFamily (VariableStyle codeFont)
+    style @FontSize codeSize
+
+  ensure $ codeSize .>=. by 14
+  ensure $ codeSize .<=. by 24
+  ensure $ left explanationLine .==. at 36
+  ensure $ top explanationLine .==. at 64
+  ensure $ left loopLine .==. left explanationLine
+  ensure $ top loopLine .==. bottom explanationLine + shift (num 16)
+  ensure $ left comparisonLine .==. left loopLine + shift (num 24)
+  ensure $ top comparisonLine .==. bottom loopLine + shift (num 4)
+  ensure $ left returnLine .==. left loopLine + shift (num 48)
+  ensure $ top returnLine .==. bottom comparisonLine + shift (num 4)
+  ensure $ left innerCloseLine .==. left comparisonLine
+  ensure $ top innerCloseLine .==. bottom returnLine + shift (num 4)
+  ensure $ left outerCloseLine .==. left loopLine
+  ensure $ top outerCloseLine .==. bottom innerCloseLine + shift (num 4)
 ```
 
-This produces one shaped line, `if (A[i] == target) {`, plus compiler-owned
-source ranges. `A[i]` is associated with `ReadElement`, `target` with
+The `comparisonText` builder produces one shaped line,
+`if (A[i] == target) {`, plus compiler-owned source ranges. `A[i]` is associated
+with `ReadElement`, `target` with
 `ReadTarget`, and ` == ` with all three listed step definitions. Authors do not
 calculate character offsets. During playback, the default interpretation is
 that a fragment is active while any associated step definition is active;
 `fragmentMany` therefore uses logical OR. A repeated Program step activates the
 same associated fragment for each runtime occurrence of that definition.
+
+The indentation is geometric: each deeper line has an affine horizontal offset
+from `loopLine`. It is not encoded as leading spaces, so changing the sampled
+font cannot change the block structure. All code lines reuse `codeFont` and
+`codeSize`, while `explanationLine` has an independently sampled proportional
+family. The shared size remains free between 14 and 24 units and every shaped
+code line contributes a fit constraint; the longest line therefore limits the
+feasible upper size without turning size into another discrete font branch.
 
 The compiler maps logical source ranges through bidirectional reordering and
 HarfBuzz glyph clusters after shaping. If one glyph cluster, such as a ligature
@@ -564,6 +645,8 @@ Retain `StyleChoice`, `style`, `withoutStyle`, `styleCase`, `styleFamily`,
 `Alpha`, `Fill`, `Stroke`, `BorderStyle`, `FontFamily`, `FontWeight`,
 `FontStyle`, `TextAlign`, `Hsl`, `Color`, and `sat`. Remove `WhiteSpace`: a text
 node contains one line, so there is no authored wrapping mode to select.
+Add `FontKind`, `FontFilter`, `fontKind`, and `fontChoice` for catalog-filtered,
+font-family choices as described under composed text.
 
 Also remove `ZIndex` and make this implicitly determined for now.
 
@@ -755,6 +838,20 @@ axis is not covered by this model because changing the axis can change the shape
 fix or discretize such axes before affine compilation. Missing glyphs or an unavailable
 font invalidate that branch, with a source-level diagnostic if no font branch remains.
 
+Resolve a `FontFilter` against explicit catalog metadata before generating these branches.
+`fontKind Monospace` retains only fixed-pitch families and `fontKind Proportional` retains
+only non-monospace families. A filtered font choice is still an authored random choice:
+eligible families receive the normal authored-choice weights, and feasibility may remove
+only families whose shaped text and affine constraints cannot work. Reusing the `Choice`
+returned by one `fontChoice` call across several lines makes the family assignment shared
+without sharing a sampled layout; each line still has its own geometry and shaping
+constants. The catalog must not infer kind from a family name, and all selectable faces
+exposed as one family must have a consistent kind. The current `FontFaceSpec` in
+[FontCatalog.hs](Visualization/FontCatalog.hs) has no such classification, so this target
+requires new catalog metadata rather than filtering the existing `FontFamily` constructor
+names. Resolve generic family aliases before deduplicating and weighting candidates; an
+alias and its concrete target must not give one font twice the sampling probability.
+
 Font feasibility must be tested with the shaped text constraints before selecting a
 branch. The compiler must not choose a font without considering its text, discover that
 the line cannot fit above the minimum size, and fail when another font would have worked.
@@ -826,6 +923,9 @@ The following choices remain open before implementation:
   geometric measure, explicit size bands, or a separately declared continuous prior.
 - Decide whether maximum-fit typography remains as an explicitly non-random policy or is
   removed in favour of bounded `fitText` and authored fixed sizes.
+- Define how bundled and future user-supplied fonts acquire validated `FontKind` metadata,
+  including whether the compiler verifies the declaration against font metrics and how it
+  diagnoses a family whose selectable faces disagree.
 - Set shaping-cache and eligible-font limits from text-heavy application benchmarks. The
   cache key must include every input that can change glyph metrics.
 - Replace the raw configuration-count enumeration cutoff with a benchmarked cost policy
