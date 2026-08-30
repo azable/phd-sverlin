@@ -520,7 +520,7 @@ line ::
   Choice FontFamily ->
   Span ->
   TextBuilder () ->
-  Render (NodeBinding (Selected GeneratedNode))
+  Render (SelectionBinding (Selected GeneratedNode))
 line codeFont codeSize textRecipe =
   node $ do
     width (by 500)
@@ -657,31 +657,29 @@ render = do
     styleFamily "index"
 
   Selected elementCells <- select elementCellKind
-  node elementCells $ do
-    width (by 80)
-    height (by 72)
-    styleFamily "element-cell"
-
-  adjacentRelations <- relationsOf adjacent
-  elementGraph <- graphOf elementCells adjacentRelations
-  orderedElements <- requireSequence elementGraph
+  Selected adjacentRelations <- select adjacent
+  orderedElements <- asSequence adjacentRelations elementCells
 
   Variable elementSpacing <- variable @Span
   ensure $ elementSpacing .>=. by 88
   ensure $ elementSpacing .<=. by 112
 
-  forEachNode orderedElements $ \cell -> do
-    let position = positionOf orderedElements cell
-    ensure $ x cell .==. at 600 + elementSpacing * asScalar position
-    ensure $ y cell .==. at 246
+  let orderedElementCells = nodesOf orderedElements
+  node orderedElementCells $ do
+    let position = positionOf orderedElements orderedElementCells
+    width (by 80)
+    height (by 72)
+    styleFamily "element-cell"
+    ensure $ x orderedElementCells .==. at 600 + elementSpacing * asScalar position
+    ensure $ y orderedElementCells .==. at 246
 
     Selected positionLabel <- node $ do
       fitText (intText position)
       width (by 48)
       height (by 24)
       styleFamily "array-index"
-    ensure $ x positionLabel .==. x cell
-    ensure $ top positionLabel .==. bottom cell + shift 8
+    ensure $ x positionLabel .==. x orderedElementCells
+    ensure $ top positionLabel .==. bottom orderedElementCells + shift 8
 
   -- The planned Slot projection keeps each current Number occupant at its
   -- ElementCell owner's stable bounds. The exact public projection helper, or
