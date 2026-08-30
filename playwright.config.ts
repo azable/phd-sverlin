@@ -52,7 +52,8 @@ export default defineConfig({
       BETTER_AUTH_URL: 'http://127.0.0.1:4173',
       SVERLIN_SCRATCH_DIR: path.join(outputRoot, 'compiler'),
       SVERLIN_STATE_DIR: path.join(outputRoot, 'state'),
-      SVERLIN_E2E_AUTH_BYPASS: 'true'
+      SVERLIN_E2E_AUTH_BYPASS: 'true',
+      SVERLIN_E2E_ASSISTANT_BYPASS: 'true'
     }
   }
 });

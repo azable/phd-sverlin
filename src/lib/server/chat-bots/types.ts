@@ -35,11 +35,14 @@ export const generatedMessageContentJsonSchema = {
   type: 'array',
   minItems: 1,
   items: {
-    oneOf: [
+    anyOf: [
       {
         type: 'object',
         additionalProperties: false,
-        properties: { type: { type: 'string', enum: ['markdown'] }, text: { type: 'string' } },
+        properties: {
+          type: { type: 'string', enum: ['markdown'] },
+          text: { type: 'string', minLength: 1 }
+        },
         required: ['type', 'text']
       },
       {

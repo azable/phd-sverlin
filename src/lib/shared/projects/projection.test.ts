@@ -124,6 +124,7 @@ function documentWithHistory(): ProjectDocument {
       event(1, 'project.created', {
         title: 'Test',
         entryArtifactId: 'dsl-main',
+        assistantId: 'sverlin-assistant',
         creation: { templateId: 'blank' }
       }),
       event(2, 'artifact.version-created', {

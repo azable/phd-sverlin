@@ -13,7 +13,6 @@ build
 dist
 coverage
 compile/vendor/**
-src/lib/server/chat-bots/ai-assistant/dsl-api-index.md
 
 # Installed Codex/shadcn skills are vendored documentation and metadata.
 .agents/skills/**

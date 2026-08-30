@@ -6,6 +6,7 @@
 
 import { randomInt, randomUUID } from 'node:crypto';
 
+import { defaultAssistantId } from '$lib/shared/assistants';
 import type {
   EventId,
   NewProjectEvent,
@@ -127,15 +128,16 @@ export async function createProjectSkeleton(
   const title = options.title?.trim() || template.title;
   const projectId = options.projectId ?? randomUUID();
   const operationId = options.operationId ?? randomUUID();
+  const renderer = projectCreationRenderer(creation);
+  const assistantId = defaultAssistantId(renderer);
   const root: ProjectEventOf<'project.created'> = {
     id: 1,
     type: 'project.created',
     actor: { kind: 'user' },
     operationId,
     createdAt: new Date().toISOString(),
-    payload: { title, entryArtifactId, creation }
+    payload: { title, entryArtifactId, assistantId, creation }
   };
-  const renderer = projectCreationRenderer(creation);
   const html = renderer === 'html';
   const content = recordText(
     html ? JSON.stringify(initialHtmlManifest) : template.source,
@@ -163,7 +165,7 @@ export async function createProjectSkeleton(
       }
     })
   };
-  const introduction = assistantIntroduction(renderer);
+  const introduction = assistantIntroduction(assistantId);
   const initialEvents: ProjectDocument['events'] = [root, artifact];
   if (creation.templateId === 'blank') {
     initialEvents.push({
@@ -277,7 +279,7 @@ export function replenishProjectPresentations(
     let document = before;
     for (;;) {
       const state = presentationBufferState(document, options.target);
-      if (state.deficit === 0) break;
+      if (!state.hasCurrentSourcePresentation || state.deficit === 0) break;
       const count = Math.min(2, state.deficit) as 1 | 2;
       const usedSeeds = document.events.flatMap((event) =>
         event.type === 'visualization.presented' &&

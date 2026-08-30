@@ -77,6 +77,7 @@ function rootDocument(): ProjectDocument {
         payload: {
           title: 'Resource test',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       }

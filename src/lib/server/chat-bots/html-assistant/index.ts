@@ -45,7 +45,7 @@ export default {
             type: 'object',
             additionalProperties: false,
             properties: {
-              label: { type: 'string' },
+              label: { type: 'string', minLength: 1, pattern: '\\S' },
               manifest: {
                 type: 'object',
                 additionalProperties: false,
@@ -58,7 +58,10 @@ export default {
                     items: {
                       type: 'object',
                       additionalProperties: false,
-                      properties: { label: { type: 'string' }, html: { type: 'string' } },
+                      properties: {
+                        label: { type: 'string', minLength: 1 },
+                        html: { type: 'string', minLength: 1 }
+                      },
                       required: ['label', 'html']
                     }
                   }

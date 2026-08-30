@@ -134,6 +134,20 @@ it.skipIf(!enabled)(
     expect(projects.study.enrollments).toEqual([
       expect.objectContaining({ userId: participantId, runId: participantRun.id })
     ]);
+
+    const activeOperationId = randomUUID();
+    await repository.append(ordinaryProjectId, 1, [
+      {
+        type: 'operation.accepted',
+        actor: { kind: 'user' },
+        operationId: activeOperationId,
+        createdAt: new Date().toISOString(),
+        payload: { kind: 'feedback' }
+      }
+    ]);
+    await expect(
+      source.collect({ type: 'projects', projectId: ordinaryProjectId })
+    ).rejects.toThrow('A project operation is currently running');
   }
 );
 
@@ -151,6 +165,7 @@ function document(projectId: string): ProjectDocument {
         payload: {
           title: projectId,
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       }

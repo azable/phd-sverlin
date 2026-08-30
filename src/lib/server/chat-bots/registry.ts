@@ -4,7 +4,9 @@
  * @packageDocumentation
  */
 
+import { e2eChatAdapter, e2eChatAdapterEnabled } from '$lib/server/chat-adapters/e2e';
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
+import { assistantMode, type AssistantId } from '$lib/shared/assistants';
 
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
 import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
@@ -12,7 +14,6 @@ import type { AiProjectContext } from './sverlin-assistant/project-context';
 import type { ChatBotConfig, Chatbot, ChatbotRequest, GeneratedMessageContent } from './types';
 import sverlinAssistantBot from './sverlin-assistant';
 import htmlAssistantBot, { type HtmlAssistantOutput } from './html-assistant';
-import type { VisualizationMode } from '$lib/shared/presentations';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
 export function createChatbot<Project, Output extends { reply: GeneratedMessageContent }>(
@@ -56,38 +57,44 @@ export function createChatbot<Project, Output extends { reply: GeneratedMessageC
   } satisfies Chatbot<Project, Output>;
 }
 
-const sverlinChatbot = createChatbot(sverlinAssistantBot, openAIAdapter);
-const configuredChatbots: Record<string, Chatbot<AiProjectContext>> = {
+const configuredAdapter = e2eChatAdapterEnabled() ? e2eChatAdapter : openAIAdapter;
+const sverlinChatbot = createChatbot(sverlinAssistantBot, configuredAdapter);
+const configuredChatbots: Partial<Record<AssistantId, Chatbot<AiProjectContext>>> = {
   [sverlinAssistantBot.id]: sverlinChatbot
 };
 
 const htmlChatbot: Chatbot<AiProjectContext, HtmlAssistantOutput> = createChatbot(
   htmlAssistantBot,
-  openAIAdapter
+  configuredAdapter
 );
 
-/** Return the chatbot selected by server configuration. */
-export function getChatbot(): Chatbot<AiProjectContext> {
-  const configured = process.env.CHATBOT_CONFIG?.trim() || sverlinAssistantBot.id;
-  const chatbot = configuredChatbots[configured];
+/** Return the Sverlin-source assistant recorded by a project. */
+export function getChatbot(assistantId: AssistantId): Chatbot<AiProjectContext> {
+  const chatbot =
+    assistantMode(assistantId) === 'sverlin' ? configuredChatbots[assistantId] : undefined;
 
   if (!chatbot) {
-    throw new Error(`Unknown chatbot configuration: ${configured}`);
+    throw new Error(`Unknown Sverlin assistant: ${assistantId}`);
   }
 
   return chatbot;
 }
 
-/** Return the direct-HTML visualization authoring bot. */
-export function getHtmlChatbot(): Chatbot<AiProjectContext, HtmlAssistantOutput> {
+/** Return the HTML assistant recorded by a project. */
+export function getHtmlChatbot(
+  assistantId: AssistantId
+): Chatbot<AiProjectContext, HtmlAssistantOutput> {
+  if (assistantId !== htmlAssistantBot.id || assistantMode(assistantId) !== 'html') {
+    throw new Error(`Unknown HTML assistant: ${assistantId}`);
+  }
   return htmlChatbot;
 }
 
-/** Return participant-facing identity and guidance owned by the selected assistant. */
-export function assistantIntroduction(mode: VisualizationMode): {
+/** Return participant-facing identity and guidance owned by the mode's recorded assistant. */
+export function assistantIntroduction(assistantId: AssistantId): {
   botId: string;
   text: string;
 } {
-  const config = mode === 'html' ? htmlAssistantBot : sverlinAssistantBot;
+  const config = assistantId === 'html-assistant' ? htmlAssistantBot : sverlinAssistantBot;
   return { botId: config.id, text: config.participantIntroduction };
 }

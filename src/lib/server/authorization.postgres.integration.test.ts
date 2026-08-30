@@ -89,6 +89,7 @@ function rootDocument(projectId: string): ProjectDocument {
         payload: {
           title: 'Access project',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       }

@@ -2,7 +2,6 @@
   import { fly } from 'svelte/transition';
 
   import { Spinner } from '$lib/client/components/ui/spinner';
-  import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import {
@@ -63,12 +62,6 @@
     selection.activate(presentation, session.events, layout, extend);
     if (reference.type === 'element-ref') onElementReferenceActivate(reference);
   }
-
-  function contextLabel(item: Extract<(typeof items)[number], { kind: 'message' }>) {
-    if (!item.context) return '';
-    const names = item.context.presentationIds.map(presentationDisplayId).join(' + ');
-    return `${item.context.type === 'comparing' ? 'Comparing' : 'Viewing'} · ${names}`;
-  }
 </script>
 
 {#each items as item (item.id)}
@@ -88,11 +81,6 @@
           <p class="text-sm font-medium">
             {item.actor === 'user' ? session.userAuthorLabel : 'Sverlin Assistant'}
           </p>
-          {#if item.context}
-            <Badge variant={item.actor === 'user' ? 'secondary' : 'outline'}>
-              {contextLabel(item)}
-            </Badge>
-          {/if}
         </div>
         <MessageContent content={item.content} onReferenceActivate={activateReference} />
       </article>
@@ -100,16 +88,18 @@
       {@const id = item.value.presentation.presentationId}
       {@const selected = selectedIds.includes(id)}
       <article
-        class="w-full rounded-2xl border bg-card px-4 py-3 shadow-sm transition-[border-color,background-color]"
+        class="relative w-full rounded-2xl border bg-card px-4 py-3 shadow-sm transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-primary/60"
         class:border-primary={selected}
         class:bg-muted={selected}
       >
         <button
           type="button"
-          class="block w-full text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          class="absolute inset-0 rounded-2xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          aria-label={`Visualization ${presentationDisplayId(id)}`}
           aria-pressed={selected}
           onclick={(event) => activatePresentation(item, event)}
-        >
+        ></button>
+        <div class="pointer-events-none relative">
           <span class="flex items-baseline gap-2 text-base font-medium">
             <span>Visualization</span>
             <span class="font-mono text-sm text-muted-foreground">
@@ -123,9 +113,9 @@
               ? ' · Shift-select a compatible visualization to compare'
               : ''}
           </span>
-        </button>
+        </div>
         {#if !session.readOnly}
-          <div class="mt-2 flex justify-end">
+          <div class="relative z-10 mt-2 flex justify-end">
             <Button size="xs" variant="outline" onclick={() => onReferenceRequest(item.value)}>
               Reference
             </Button>

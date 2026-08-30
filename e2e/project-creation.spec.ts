@@ -17,6 +17,7 @@ test.beforeAll(async ({ request }) => {
   console.info('[e2e setup] Creating and compiling the initial project fixture…');
   projectId = await createProject(request, 'blank');
   selectionProjectId = await createProject(request, 'linear-search');
+  await runProjectCommand(request, selectionProjectId, { type: 'render', seed: 2026 });
   console.info(
     `[e2e setup] Initial project compilation completed in ${Math.round(performance.now() - startedAt)} ms.`
   );
@@ -43,7 +44,7 @@ test('canvas element selection is included in submitted feedback', async ({ page
   await element.click();
   const referenceSelection = page.getByRole('button', { name: 'Reference selection' });
   await expect(referenceSelection).toBeVisible();
-  await referenceSelection.click();
+  await expect(page.getByTestId('automatic-feedback-context')).toContainText('1 element');
 
   const feedbackResponse = page.waitForResponse(
     (response) =>
@@ -54,6 +55,7 @@ test('canvas element selection is included in submitted feedback', async ({ page
   await page.getByLabel('Project feedback').press('Enter');
   const response = await feedbackResponse;
   expect(response.status()).toBe(202);
+  const accepted = (await response.json()) as { operationId: string };
   const payload = response.request().postDataJSON() as {
     content: Array<{
       type: string;
@@ -62,20 +64,19 @@ test('canvas element selection is included in submitted feedback', async ({ page
       instances?: number[];
     }>;
   };
-  expect(payload.content).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        type: 'element-ref',
-        presentationEvent: expect.any(Number),
-        step: 0,
-        instances: [expect.any(Number)]
-      })
-    ])
-  );
+  expect(payload.content[0]).toEqual({ type: 'markdown', text: 'Viewing ' });
+  expect(payload.content[1]).toMatchObject({
+    type: 'element-ref',
+    presentationEvent: expect.any(Number),
+    step: 0,
+    instances: [expect.any(Number)]
+  });
   expect(payload.content.at(-1)).toMatchObject({
     type: 'markdown',
-    text: 'Focus on this element'
+    text: '.\n\nFocus on this element'
   });
+  await waitForOperation(page.request, selectionProjectId, accepted.operationId);
+  await expect(page.getByText('Thanks, I have noted that feedback.')).toBeVisible();
   expect(browserFailures()).toEqual([]);
 });
 
@@ -124,10 +125,28 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   const browserFailures = observeBrowserFailures(page);
   await page.goto(`/projects/${selectionProjectId}`);
 
-  const visualization = page.getByRole('button', { name: /^Visualization/ }).first();
+  const visualization = page.getByRole('button', { name: /^Visualization/ }).last();
   await expect(visualization).toBeVisible();
   await expect(visualization).toHaveAttribute('aria-pressed', 'true');
+  const visualizationCard = visualization.locator('..');
+  const cardBounds = await visualizationCard.boundingBox();
+  expect(cardBounds).not.toBeNull();
+  await visualizationCard.click({ position: { x: 12, y: cardBounds!.height - 8 } });
+  await expect(visualization).toBeFocused();
+  await visualizationCard.hover();
+  await expect
+    .poll(() => visualizationCard.evaluate((card) => getComputedStyle(card).translate))
+    .not.toBe('none');
   await expect(page.getByText('Visualization updated', { exact: true })).toHaveCount(0);
+
+  await page.getByLabel('Presentation layout').selectOption('comparison');
+  const comparisonCards = page.getByRole('button', { name: /^Visualization/ });
+  await expect(comparisonCards).toHaveCount(2);
+  await comparisonCards.nth(0).click();
+  await comparisonCards.nth(1).click({ modifiers: ['Shift'] });
+  await expect(comparisonCards.nth(0)).toHaveAttribute('aria-pressed', 'true');
+  await expect(comparisonCards.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('automatic-feedback-context')).toContainText('Comparing');
 
   const devToggle = page.getByRole('switch', { name: 'Dev' });
   await expect(devToggle).not.toBeChecked();
@@ -174,18 +193,12 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
   await expect(page.getByText('Sverlin Assistant', { exact: true })).toBeVisible();
-  await expect(page.getByText('Generating more visualizations…', { exact: true })).toBeVisible();
   const candidates = page.getByRole('button', { name: /^Visualization/ });
-  await expect(candidates).toHaveCount(4, { timeout: 150_000 });
-  await candidates.nth(0).click();
-  await expect(candidates.nth(0)).toHaveAttribute('aria-pressed', 'true');
-  await expect(candidates.nth(1)).toHaveAttribute('aria-pressed', 'false');
-  await candidates.nth(2).click({ modifiers: ['Shift'] });
-  await expect(candidates.nth(0)).toHaveAttribute('aria-pressed', 'true');
-  await expect(candidates.nth(2)).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: 'Prefer top' }).click();
-  await expect(page.getByText('Preferred', { exact: true })).toBeVisible();
-  await expect(candidates).toHaveCount(6, { timeout: 150_000 });
+  await expect(candidates).toHaveCount(0);
+  await expect(
+    page.getByText('Your visualization will appear here.', { exact: true })
+  ).toBeVisible();
+  await expect(page.getByText('Preparing a visualization…', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Generating more visualizations…', { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Next phase' }).click();
@@ -350,6 +363,41 @@ async function createProject(request: APIRequestContext, templateId: string): Pr
     )
     .toBe('operation.completed');
   return created.projectId;
+}
+
+async function runProjectCommand(
+  request: APIRequestContext,
+  projectId: string,
+  command: { type: 'render'; seed: number }
+): Promise<void> {
+  const project = await request.get(`/api/projects/${projectId}`);
+  expect(project.ok()).toBe(true);
+  const resource = (await project.json()) as ProjectResourceView;
+  const operationId = crypto.randomUUID();
+  const response = await request.post(`/api/projects/${projectId}`, {
+    data: { ...command, operationId, expectedHead: resource.document.events.length }
+  });
+  expect(response.status()).toBe(202);
+  await waitForOperation(request, projectId, operationId);
+}
+
+async function waitForOperation(
+  request: APIRequestContext,
+  projectId: string,
+  operationId: string
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const project = await request.get(`/api/projects/${projectId}`);
+      if (!project.ok()) return `http-${project.status()}`;
+      const resource = (await project.json()) as ProjectResourceView;
+      return resource.document.events.findLast(
+        (event) =>
+          event.operationId === operationId &&
+          (event.type === 'operation.completed' || event.type === 'operation.failed')
+      )?.type;
+    })
+    .toBe('operation.completed');
 }
 
 async function delayNextAdminAction(page: Page, action: string): Promise<void> {

@@ -90,6 +90,7 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         payload: {
           title: 'Project export integration',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       }

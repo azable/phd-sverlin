@@ -18,18 +18,32 @@
   } from '$lib/shared/projects/events/message-content';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
 
+  import MessageContentView from './MessageContent.svelte';
+  import { automaticFeedbackContext, feedbackSubmissionContent } from './feedback-context';
+
   type ReferenceSegment = Exclude<MessageContentSegment, { type: 'markdown' }>;
 
   type Props = {
     session: ProjectSession;
     presentationCount: 1 | 2;
+    presentations: TimelinePresentation[];
+    visualSelection?: VisualSelection;
+    onSubmitted?: () => void;
   };
 
-  let { session, presentationCount }: Props = $props();
+  let {
+    session,
+    presentationCount,
+    presentations,
+    visualSelection,
+    onSubmitted = () => {}
+  }: Props = $props();
   let editor = $state<HTMLDivElement>();
   let savedRange: Range | undefined;
   let hasContent = $state(false);
+  let hasExplicitReferences = $state(false);
   let editorRevision = $state(0);
+  const automaticContext = $derived(automaticFeedbackContext(presentations, visualSelection));
 
   export function referencePresentation(presentation: TimelinePresentation): void {
     insertReference({
@@ -55,8 +69,9 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!editor || !session.atHead || session.pending || session.readOnly) return;
-    const content = serializeEditor();
-    if (content.length === 0) return;
+    const editorContent = serializeEditor();
+    if (editorContent.length === 0) return;
+    const content = feedbackSubmissionContent(editorContent, automaticContext);
     const succeeded = await session.runCommand({
       type: 'feedback',
       content,
@@ -66,8 +81,10 @@
     if (succeeded) {
       editorRevision += 1;
       hasContent = false;
+      hasExplicitReferences = false;
       savedRange = undefined;
       session.focusedEvents = [];
+      onSubmitted();
     }
   }
 
@@ -86,7 +103,9 @@
 
   function updateContentState() {
     rememberSelection();
-    hasContent = serializeEditor().length > 0;
+    const content = serializeEditor();
+    hasContent = content.length > 0;
+    hasExplicitReferences = content.some((segment) => segment.type !== 'markdown');
   }
 
   function insertReference(reference: ReferenceSegment) {
@@ -112,6 +131,7 @@
     selection?.addRange(range);
     savedRange = range.cloneRange();
     hasContent = true;
+    hasExplicitReferences = true;
   }
 
   function referenceChip(reference: ReferenceSegment): HTMLSpanElement {
@@ -209,6 +229,14 @@
       <div
         class="overflow-hidden rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring"
       >
+        {#if automaticContext.length > 0 && !hasExplicitReferences}
+          <div
+            class="border-b bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+            data-testid="automatic-feedback-context"
+          >
+            <MessageContentView content={automaticContext} interactive={false} />
+          </div>
+        {/if}
         {#key editorRevision}
           <div
             bind:this={editor}

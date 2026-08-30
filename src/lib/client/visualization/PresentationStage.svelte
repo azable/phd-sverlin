@@ -4,7 +4,10 @@
   import { fly } from 'svelte/transition';
 
   import { Button } from '$lib/client/components/ui/button';
+  import * as Empty from '$lib/client/components/ui/empty';
+  import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
+  import type { ProjectOperationKind } from '$lib/shared/projects/events';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
   import { presentationStepLabels, type PresentationLayout } from '$lib/shared/presentations';
 
@@ -34,7 +37,19 @@
     onReferenceSelection = (_selection: VisualSelection) => {}
   }: Props = $props();
 
+  const visualizationOperationKinds: readonly ProjectOperationKind[] = [
+    'initial-render',
+    'feedback',
+    'render',
+    'save',
+    'save-html',
+    'restore'
+  ];
   const visible = $derived(selection.selected(session.events, layout));
+  const preparing = $derived(
+    session.refillPending ||
+      (!!session.pending && visualizationOperationKinds.includes(session.pending.type))
+  );
   const selectionKey = $derived(
     visible.map(({ presentation }) => presentation.presentationId).join(':')
   );
@@ -192,9 +207,17 @@
       {#if index === 0}{@render controls()}{/if}
     {/each}
   {:else}
-    <div class="grid min-h-0 flex-1 place-items-center text-base text-muted-foreground">
-      Preparing a visualization…
+    <div class="flex min-h-0 flex-1 bg-muted/30 p-2">
+      <Empty.Root class="border-0" aria-live="polite">
+        <Empty.Header>
+          {#if preparing}
+            <Empty.Media><Spinner /></Empty.Media>
+            <Empty.Title>Preparing a visualization…</Empty.Title>
+          {:else}
+            <Empty.Title>Your visualization will appear here.</Empty.Title>
+          {/if}
+        </Empty.Header>
+      </Empty.Root>
     </div>
-    {@render controls()}
   {/if}
 </section>

@@ -264,15 +264,15 @@ export class ProjectOperationExecutor {
       const result = await runWithProjectOperationSignal(controller.signal, () =>
         this.execute({ ...options, signal: controller.signal })
       );
-      const domainFailure = domainFailureFor(kind, result.appendedEvents);
+      const terminalFailure = terminalFailureFor(kind, result.appendedEvents);
       const document = await this.repository.load(options.projectId);
       await this.repository.append(options.projectId, document.events.length, [
-        domainFailure
+        terminalFailure
           ? lifecycleFailure(
               options.operationId,
               kind,
-              'domain',
-              domainFailureMessage(domainFailure)
+              terminalFailure.failureKind,
+              terminalFailure.message
             )
           : lifecycleEvent('operation.completed', options.operationId, kind)
       ]);
@@ -460,10 +460,10 @@ function lifecycleFailure(
   };
 }
 
-function domainFailureFor(
+function terminalFailureFor(
   kind: ProjectOperationKind,
   events: readonly ProjectEvent[]
-): ProjectEvent | undefined {
+): { failureKind: 'domain' | 'infrastructure' | 'cancelled'; message: string } | undefined {
   if (
     kind === 'rename' ||
     kind === 'prefer' ||
@@ -483,21 +483,35 @@ function domainFailureFor(
     }
     return event.type === 'visualization.presented' || event.type === 'compilation.failed';
   });
-  return outcome &&
-    (outcome.type === 'ai.generation-failed' ||
-      outcome.type === 'compilation.failed' ||
-      (outcome.type === 'system.notified' && outcome.payload.severity === 'error'))
-    ? outcome
-    : undefined;
-}
-
-function domainFailureMessage(event: ProjectEvent): string {
-  if (event.type === 'compilation.failed') {
-    return event.payload.diagnostics[0]?.message ?? event.payload.error ?? 'Compilation failed.';
+  if (!outcome) return undefined;
+  const failure =
+    outcome.type === 'system.notified'
+      ? (events.findLast(
+          (event) => event.type === 'ai.generation-failed' || event.type === 'compilation.failed'
+        ) ?? outcome)
+      : outcome;
+  if (failure.type === 'ai.generation-failed') {
+    return {
+      failureKind: failure.payload.failureKind === 'cancelled' ? 'cancelled' : 'infrastructure',
+      message: failure.payload.message
+    };
   }
-  if (event.type === 'ai.generation-failed') return event.payload.message;
-  if (event.type === 'system.notified') return event.payload.message;
-  return 'Project operation failed.';
+  if (failure.type === 'compilation.failed') {
+    return {
+      failureKind:
+        failure.payload.failureKind === 'source'
+          ? 'domain'
+          : failure.payload.failureKind === 'cancelled'
+            ? 'cancelled'
+            : 'infrastructure',
+      message:
+        failure.payload.diagnostics[0]?.message ?? failure.payload.error ?? 'Compilation failed.'
+    };
+  }
+  if (failure.type === 'system.notified' && failure.payload.severity === 'error') {
+    return { failureKind: 'domain', message: failure.payload.message };
+  }
+  return undefined;
 }
 
 function messageFor(cause: unknown): string {

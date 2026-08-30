@@ -26,8 +26,7 @@ describe('participant Timeline projection', () => {
     });
     expect(items[1]).toMatchObject({
       kind: 'message',
-      actor: 'assistant',
-      context: { type: 'comparing', presentationIds: [...presentationIds] }
+      actor: 'assistant'
     });
     expect(items[4]).toMatchObject({
       kind: 'message',
@@ -68,7 +67,6 @@ describe('participant Timeline projection', () => {
     expect(participantTimeline(values).at(-1)).toMatchObject({
       kind: 'message',
       actor: 'user',
-      context: { type: 'comparing', presentationIds: [...presentationIds] },
       content: expect.arrayContaining([
         expect.objectContaining({ type: 'element-ref', instances: [0, 2] })
       ])

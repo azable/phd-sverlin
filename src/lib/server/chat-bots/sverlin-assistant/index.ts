@@ -86,7 +86,7 @@ export default {
         reply: generatedMessageContentJsonSchema,
         candidateAction: { type: 'string', enum: ['none', 'generate'] },
         sourceArtifactContent: {
-          anyOf: [{ type: 'string' }, { type: 'null' }]
+          anyOf: [{ type: 'string', minLength: 1, pattern: '\\S' }, { type: 'null' }]
         }
       },
       required: ['reply', 'candidateAction', 'sourceArtifactContent']
@@ -101,7 +101,8 @@ export default {
     if (
       (output?.candidateAction !== 'none' && output?.candidateAction !== 'generate') ||
       !('sourceArtifactContent' in output) ||
-      (output.sourceArtifactContent !== null && typeof output.sourceArtifactContent !== 'string')
+      (output.sourceArtifactContent !== null &&
+        (typeof output.sourceArtifactContent !== 'string' || !output.sourceArtifactContent.trim()))
     ) {
       throw new Error('The chatbot returned an invalid structured response.');
     }

@@ -6,6 +6,7 @@
 
 import type { EventId, ProjectEvent, ProjectEventOf, ProjectEventType } from './events';
 import type { ProjectDocument, ProjectSnapshot, ProjectSummary } from './model';
+import { defaultAssistantId } from '$lib/shared/assistants';
 import { defaultProjectCreation, projectCreationRenderer } from './creation';
 
 type SnapshotDraft = Omit<ProjectSnapshot, 'at'>;
@@ -20,6 +21,7 @@ const stateTransitions = {
   'project.created': (state, event) => {
     state.title = event.payload.title;
     state.entryArtifactId = event.payload.entryArtifactId;
+    state.assistantId = event.payload.assistantId;
     state.creation = event.payload.creation;
     state.renderer = projectCreationRenderer(state.creation);
   },
@@ -77,6 +79,7 @@ export function projectSnapshotAt(
   const state: SnapshotDraft = {
     title: '',
     entryArtifactId: '',
+    assistantId: defaultAssistantId('sverlin'),
     creation: defaultProjectCreation,
     renderer: 'sverlin',
     artifacts: {}

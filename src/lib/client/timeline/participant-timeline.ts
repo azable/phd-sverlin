@@ -8,18 +8,12 @@ import {
   type TimelinePresentation
 } from '$lib/client/visualization/presentation-history';
 
-export type MessageContext = {
-  type: 'viewing' | 'comparing';
-  presentationIds: string[];
-};
-
 export type ParticipantTimelineItem =
   | {
       id: string;
       kind: 'message';
       actor: 'user' | 'assistant';
       content: MessageContent;
-      context?: MessageContext;
       eventId: number;
     }
   | { id: string; kind: 'presentation'; value: TimelinePresentation }
@@ -88,19 +82,5 @@ function messageItem(
   content: MessageContent,
   eventId: number
 ): Extract<ParticipantTimelineItem, { kind: 'message' }> {
-  const context = messageContext(content);
-  return { id, kind: 'message', actor, content, ...(context ? { context } : {}), eventId };
-}
-
-function messageContext(content: MessageContent): MessageContext | undefined {
-  const presentationIds = [
-    ...new Set(
-      content.flatMap((segment) => (segment.type === 'markdown' ? [] : [segment.presentationId]))
-    )
-  ];
-  if (presentationIds.length === 0) return undefined;
-  return {
-    type: presentationIds.length > 1 ? 'comparing' : 'viewing',
-    presentationIds: presentationIds.slice(0, 2)
-  };
+  return { id, kind: 'message', actor, content, eventId };
 }

@@ -118,7 +118,7 @@ describe('AI project context projection', () => {
             padding: { top: 0, right: 0, bottom: 0, left: 0 },
             margin: { top: 0, right: 0, bottom: 0, left: 0 }
           },
-          children: [0],
+          children: [0, 1],
           style: {},
           styleVariables: []
         },
@@ -134,9 +134,30 @@ describe('AI project context projection', () => {
           content: { kind: 'legacyTextContent', textSource: 'hello' },
           style: {},
           styleVariables: []
+        },
+        {
+          id: 1,
+          role: 'Value',
+          box: {
+            bounds: { rectX: 0, rectY: 30, rectWidth: 100, rectHeight: 20 },
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+          },
+          children: [],
+          content: { kind: 'legacyTextContent', textSource: 'world' },
+          style: {},
+          styleVariables: []
         }
       ],
-      steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]
+      steps: [
+        {
+          label: 'show',
+          instances: [
+            { id: 0, elementId: 0 },
+            { id: 1, elementId: 1 }
+          ]
+        }
+      ]
     };
     document.events.push(
       event(4, 'visualization.presented', {
@@ -154,13 +175,20 @@ describe('AI project context projection', () => {
     );
     const presented = projectAiContext(document, {
       eventIds: [],
-      visualSelection: { presentationEvent: 4, step: 0, instances: [0] }
+      visualSelections: [
+        { presentationEvent: 4, step: 0, instances: [0] },
+        { presentationEvent: 4, step: 0, instances: [1] }
+      ]
     });
     expect(presented.activeVisualizationFindings).toHaveLength(1);
-    expect(presented.selected.visualization?.renderSummary).toMatchObject({ id: 4, seed: 2 });
-    expect(presented.selected.visualization?.elements[0]).toMatchObject({
+    expect(presented.selected.visualizations[0]?.renderSummary).toMatchObject({ id: 4, seed: 2 });
+    expect(presented.selected.visualizations[0]?.elements[0]).toMatchObject({
       instanceId: 0,
       findings: [{ findingCode: 'typography.size-reduced' }]
+    });
+    expect(presented.selected.visualizations[1]?.elements[0]).toMatchObject({
+      instanceId: 1,
+      findings: []
     });
   });
 });
@@ -173,6 +201,7 @@ function projectDocument(request: ProjectEventOf<'ai.generation-requested'>): Pr
       event(1, 'project.created', {
         title: 'Test',
         entryArtifactId: 'dsl-main',
+        assistantId: 'sverlin-assistant',
         creation: { templateId: 'blank' }
       }),
       event(2, 'artifact.version-created', {

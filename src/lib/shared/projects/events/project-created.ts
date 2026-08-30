@@ -2,6 +2,8 @@
 
 import * as v from 'valibot';
 
+import { assistantIdSchema } from '$lib/shared/assistants';
+
 import { projectCreationSchema } from '../creation';
 import { eventEnvelope, textSchema } from './values';
 
@@ -12,6 +14,7 @@ export const projectCreatedEventSchema = v.object({
   payload: v.object({
     title: v.string(),
     entryArtifactId: textSchema,
+    assistantId: assistantIdSchema,
     creation: projectCreationSchema
   })
 });

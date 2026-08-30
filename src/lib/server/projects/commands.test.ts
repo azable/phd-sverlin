@@ -18,8 +18,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/server/chat-bots/registry', () => ({
-  assistantIntroduction: (mode: string) => ({
-    botId: mode === 'html' ? 'html-assistant' : 'sverlin-assistant',
+  assistantIntroduction: (assistantId: string) => ({
+    botId: assistantId,
     text: 'Tell me what you would like to visualize.'
   }),
   getChatbot: () => ({
@@ -185,9 +185,11 @@ describe('createProject', () => {
       type: 'project.created',
       payload: {
         title: template.title,
+        assistantId: 'sverlin-assistant',
         creation: { templateId: template.id }
       }
     });
+    expect(snapshot.assistantId).toBe('sverlin-assistant');
     expect(snapshot.creation).toEqual({ templateId: template.id });
     expect(snapshot.artifacts[snapshot.entryArtifactId].content.text).toBe(template.source);
     expect(created.events.some(({ type }) => type === 'assistant.responded')).toBe(false);
@@ -210,6 +212,10 @@ describe('createProject', () => {
       serviceDependencies
     );
 
+    expect(created.events[0]).toMatchObject({
+      type: 'project.created',
+      payload: { assistantId: 'html-assistant' }
+    });
     expect(created.events[2]).toMatchObject({
       type: 'assistant.responded',
       actor: { kind: 'assistant', botId: 'html-assistant' },
@@ -220,6 +226,28 @@ describe('createProject', () => {
 });
 
 describe('presentation buffer refill', () => {
+  it('does not compile the untouched blank-project source', async () => {
+    const { createProject, replenishProjectPresentations } = await import('./service');
+    const created = await createProject(
+      { title: 'Untouched blank', creation: { templateId: 'blank' } },
+      serviceDependencies
+    );
+    mocks.generateBatch.mockClear();
+
+    const unchanged = await replenishProjectPresentations(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        target: 4,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      serviceDependencies
+    );
+
+    expect(unchanged.appendedEvents).toEqual([]);
+    expect(mocks.generateBatch).not.toHaveBeenCalled();
+  });
+
   it('fills the exact current-source deficit and becomes idempotent at the target', async () => {
     const { createProject, replenishProjectPresentations } = await import('./service');
     const created = await createProject(
@@ -580,6 +608,51 @@ describe('submitProjectFeedback', () => {
     }
     const details = JSON.parse(failed.payload.details.text);
     expect(details.providerResponse).toEqual(providerResponse);
+  });
+
+  it('records invalid candidate references as generation failures before success', async () => {
+    const providerResponse = { id: 'response-invalid-reference' };
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: [{ type: 'candidate-ref', slot: 0 }],
+      candidateAction: 'none',
+      prompt: {},
+      providerResponse,
+      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { title: 'Invalid candidate reference', creation: { templateId: 'linear-search' } },
+      serviceDependencies
+    );
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Explain it'),
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(result.appendedEvents.some(({ type }) => type === 'ai.generation-succeeded')).toBe(
+      false
+    );
+    const failed = result.appendedEvents.find(({ type }) => type === 'ai.generation-failed');
+    expect(failed).toMatchObject({
+      type: 'ai.generation-failed',
+      payload: {
+        failureKind: 'invalid-response',
+        message: 'The assistant referenced unavailable candidate slot 0.'
+      }
+    });
+    if (failed?.type !== 'ai.generation-failed' || !failed.payload.details) {
+      throw new Error('Expected invalid response details.');
+    }
+    expect(JSON.parse(failed.payload.details.text).providerResponse).toEqual(providerResponse);
   });
 
   it('resolves focused history into historical source and render context', async () => {

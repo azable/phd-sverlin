@@ -94,7 +94,7 @@ export type AiVisualSelection = VisualSelection & {
 export type AiContextSelection = {
   eventIds: readonly EventId[];
   presentationIds?: readonly string[];
-  visualSelection?: VisualSelection;
+  visualSelections?: readonly VisualSelection[];
 };
 
 /** Full retained presentation explicitly visible when the user submitted feedback. */
@@ -117,7 +117,7 @@ export type AiProjectContext = {
   selected: {
     events: AiEventDetail[];
     presentations: AiSelectedPresentation[];
-    visualization?: AiVisualSelection;
+    visualizations: AiVisualSelection[];
   };
 };
 
@@ -210,9 +210,10 @@ export function projectAiContext(
   selection: AiContextSelection = { eventIds: [] }
 ): AiProjectContext {
   const snapshot = projectSnapshotAt(document);
-  const visualization = selection.visualSelection
-    ? resolveVisualSelection(document, selection.visualSelection)
-    : undefined;
+  const visualizations = (selection.visualSelections ?? []).flatMap((visualSelection) => {
+    const resolved = resolveVisualSelection(document, visualSelection);
+    return resolved ? [resolved] : [];
+  });
 
   return {
     projectId: document.projectId,
@@ -233,7 +234,7 @@ export function projectAiContext(
       presentations: (selection.presentationIds ?? []).map((id) =>
         selectedPresentation(document, id)
       ),
-      ...(visualization ? { visualization } : {})
+      visualizations
     }
   };
 }

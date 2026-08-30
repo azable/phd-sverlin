@@ -458,11 +458,8 @@ export class ProjectSession {
     ) {
       return;
     }
-    if (
-      presentationBufferState(this.#resource.document, this.presentationBufferTarget).deficit === 0
-    ) {
-      return;
-    }
+    const buffer = presentationBufferState(this.#resource.document, this.presentationBufferTarget);
+    if (!buffer.hasCurrentSourcePresentation || buffer.deficit === 0) return;
     const request = new AbortController();
     this.#refillRequest = request;
     const operationId = crypto.randomUUID();

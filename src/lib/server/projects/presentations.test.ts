@@ -138,6 +138,7 @@ function comparisonDocument(
         payload: {
           title: 'Comparison',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank', renderer: 'sverlin' }
         }
       },

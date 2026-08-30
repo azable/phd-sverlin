@@ -19,6 +19,7 @@ import {
   type ProjectReader
 } from '$lib/server/projects/repository';
 import type { ProjectDocument } from '$lib/shared/projects/model';
+import { activeProjectOperation } from '$lib/shared/projects/operations';
 import type { VisualizationMode } from '$lib/shared/presentations';
 import type { StudyDefinition } from '$lib/shared/study/definition';
 import { projectStudyFlow, type StudyFlow } from '$lib/shared/study/projection';
@@ -282,6 +283,24 @@ export class PostgresExportDataSource implements ExportDataSource {
               )
           : [];
 
+        const projectDocuments = new Map(
+          projectRows.map((project) => {
+            const document: ProjectDocument = {
+              schemaVersion: 2,
+              projectId: project.id,
+              events: eventRows
+                .filter((row) => row.projectId === project.id)
+                .map(({ event }) => event)
+            };
+            if (activeProjectOperation(document)) {
+              throw new Error(
+                'A project operation is currently running. Wait for it to finish and try again.'
+              );
+            }
+            return [project.id, document] as const;
+          })
+        );
+
         let definitions = [
           ...new Map(
             runRows.map((run) => [
@@ -345,13 +364,7 @@ export class PostgresExportDataSource implements ExportDataSource {
             ...project,
             createdAt: project.createdAt.toISOString(),
             updatedAt: project.updatedAt.toISOString(),
-            document: {
-              schemaVersion: 2 as const,
-              projectId: project.id,
-              events: eventRows
-                .filter((row) => row.projectId === project.id)
-                .map(({ event }) => event)
-            },
+            document: requiredProjectDocument(projectDocuments, project.id),
             resources: resourceRows
               .filter((row) => row.projectId === project.id)
               .map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }))
@@ -376,6 +389,15 @@ export class PostgresExportDataSource implements ExportDataSource {
   readResource(projectId: string, resourceId: string): Promise<Uint8Array> {
     return this.repository.readResource(projectId, resourceId);
   }
+}
+
+function requiredProjectDocument(
+  documents: ReadonlyMap<string, ProjectDocument>,
+  projectId: string
+): ProjectDocument {
+  const document = documents.get(projectId);
+  if (!document) throw new Error(`Export snapshot is missing project ${projectId}.`);
+  return document;
 }
 
 /** Write one canonical tree regardless of scope or destination. */

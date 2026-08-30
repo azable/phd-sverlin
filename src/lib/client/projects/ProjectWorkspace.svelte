@@ -118,6 +118,7 @@
   const presentationCount = $derived<1 | 2>(
     session.loaded && session.snapshot.renderer === 'sverlin' && layout === 'comparison' ? 2 : 1
   );
+  const visiblePresentations = $derived(presentationSelection.selected(session.events, layout));
   const activeSeed = $derived.by(() => {
     const presentation = session.loaded
       ? session.snapshot.activePresentationSet?.presentations[0]
@@ -343,7 +344,17 @@
                 }}
               />
               {#if !expired && !session.readOnly}
-                <FeedbackComposer bind:this={feedbackComposer} {session} {presentationCount} />
+                <FeedbackComposer
+                  bind:this={feedbackComposer}
+                  {session}
+                  {presentationCount}
+                  presentations={visiblePresentations}
+                  {visualSelection}
+                  onSubmitted={() => {
+                    visualSelection = undefined;
+                    presentationSelection.returnToLatest();
+                  }}
+                />
               {/if}
             </Tabs.Content>
           </Tabs.Root>
@@ -357,6 +368,7 @@
               <span class="text-muted-foreground">Presentation layout</span>
               <select
                 class="h-7 rounded-md border bg-background px-2"
+                aria-label="Presentation layout"
                 bind:value={layout}
                 disabled={busy}
               >

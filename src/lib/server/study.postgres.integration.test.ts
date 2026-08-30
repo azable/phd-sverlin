@@ -228,6 +228,7 @@ function readyComparison(projectId: string): ProjectDocument {
         payload: {
           title: 'Prepared study project',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank', renderer: 'sverlin' }
         }
       },

@@ -21,6 +21,7 @@ describe('workspace projection', () => {
           payload: {
             title: 'Test',
             entryArtifactId: 'dsl-main',
+            assistantId: 'sverlin-assistant',
             creation: { templateId: 'blank' }
           }
         },

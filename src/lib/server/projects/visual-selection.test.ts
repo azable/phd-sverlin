@@ -85,6 +85,7 @@ function presentationDocument(): ProjectDocument {
         payload: {
           title: 'Test',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       },

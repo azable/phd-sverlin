@@ -70,4 +70,21 @@ describe('AI assistant DSL interface', () => {
     expect(guide).toContain('one exact managed font face and one text occupancy target');
     expect(guide).toContain('Do not make a numeric list');
   });
+
+  it('rejects empty source and reply text consistently with its provider schema', () => {
+    expect(() =>
+      aiAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: '' }],
+        candidateAction: 'none',
+        sourceArtifactContent: null
+      })
+    ).toThrow();
+    expect(() =>
+      aiAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'Update' }],
+        candidateAction: 'generate',
+        sourceArtifactContent: '   '
+      })
+    ).toThrow();
+  });
 });

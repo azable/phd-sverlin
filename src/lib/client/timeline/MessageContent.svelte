@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
   import { presentationDisplayId } from '$lib/client/visualization/presentation-history';
   import type {
@@ -11,10 +12,11 @@
   type ReferenceSegment = Exclude<MessageContentSegment, { type: 'markdown' }>;
   type Props = {
     content: MessageContent;
+    interactive?: boolean;
     onReferenceActivate?: (reference: ReferenceSegment, extend: boolean) => void;
   };
 
-  let { content, onReferenceActivate = () => {} }: Props = $props();
+  let { content, interactive = true, onReferenceActivate = () => {} }: Props = $props();
 
   function referenceLabel(reference: ReferenceSegment): string {
     const label = presentationDisplayId(reference.presentationId);
@@ -30,7 +32,7 @@
       <!-- renderSafeMarkdown applies the allowlist and URL policy before this HTML boundary. -->
       <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       <span class="message-markdown">{@html renderSafeMarkdown(segment.text)}</span>
-    {:else}
+    {:else if interactive}
       <Button
         type="button"
         size="xs"
@@ -40,6 +42,10 @@
       >
         {referenceLabel(segment)}
       </Button>
+    {:else}
+      <Badge variant="outline" class="mx-0.5 inline-flex align-baseline">
+        <span class="font-mono">{referenceLabel(segment)}</span>
+      </Badge>
     {/if}
   {/each}
 </div>

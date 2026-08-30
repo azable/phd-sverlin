@@ -158,6 +158,18 @@ describe('ProjectSession', () => {
     expect(session.refillPending).toBe(true);
   });
 
+  it('does not request a buffer refill before the current source has a presentation', async () => {
+    const initial = projectResource([createdEvent()], 'Untouched');
+    fetchMock.mockResolvedValueOnce(response(workspaceResource(initial)));
+
+    const session = new ProjectSession('project-test', false, 'comparison', 4);
+    sessions.push(session);
+    await session.open();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(session.refillPending).toBe(false);
+  });
+
   it('creates a project from an explicit template and preserves Dev detail', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ projectId: 'dev-project', operationId }), {
@@ -326,6 +338,7 @@ function createdEvent(): ProjectEventOf<'project.created'> {
     payload: {
       title: 'Initial',
       entryArtifactId: 'dsl-main',
+      assistantId: 'sverlin-assistant',
       creation: { templateId: 'blank' }
     }
   };

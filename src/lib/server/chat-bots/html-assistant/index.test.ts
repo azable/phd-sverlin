@@ -40,5 +40,19 @@ describe('HTML assistant contract', () => {
     expect(() =>
       htmlAssistant.parseOutput({ reply: 'Batch', candidates: [manifest, manifest] })
     ).toThrow();
+    expect(() =>
+      htmlAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'Batch' }],
+        candidates: [{ label: ' ', manifest }]
+      })
+    ).toThrow();
+    expect(() =>
+      htmlAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'Batch' }],
+        candidates: [
+          { label: 'Candidate', manifest: { ...manifest, frames: [{ label: '', html: '' }] } }
+        ]
+      })
+    ).toThrow();
   });
 });

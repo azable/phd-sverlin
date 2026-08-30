@@ -9,6 +9,7 @@
 
 import * as v from 'valibot';
 
+import type { AssistantId } from '$lib/shared/assistants';
 import {
   htmlFramesManifestSchema,
   presentationLayoutSchema,
@@ -123,6 +124,7 @@ export type ProjectSnapshot = {
   at: EventId;
   title: string;
   entryArtifactId: ArtifactId;
+  assistantId: AssistantId;
   creation: ProjectCreation;
   renderer: VisualizationMode;
   artifacts: Record<ArtifactId, ProjectArtifact>;

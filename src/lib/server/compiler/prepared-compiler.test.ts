@@ -90,23 +90,65 @@ describe('prepared compiler descriptor', () => {
 
     await expect(readPreparedCompiler(root)).resolves.toEqual(prepared);
   });
+
+  it('ignores files that are not inputs to the prepared compiler', async () => {
+    const root = await fixtureRoot();
+    const prepared = await prepareFixture(root);
+    const ignoredFiles = [
+      'compile/app/GenerateVisualizationTypes.hs',
+      'compile/fonts/OFL.txt',
+      'compile/src/LinearTrace/API_plan.md',
+      'compile/src/LinearTrace/example.sverlin',
+      'compile/vendor/MIP-0.2.0.1/samples/example.lp'
+    ];
+    for (const relativePath of ignoredFiles) {
+      const destination = path.join(root, relativePath);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await writeFile(destination, 'not a compiler input\n');
+    }
+
+    await expect(readPreparedCompiler(root)).resolves.toEqual(prepared);
+  });
+
+  it.each([
+    'compile/app/Sverlin/Interpreter.hs',
+    'compile/cbits/bridge.c',
+    'compile/fonts/font.ttf',
+    'compile/vendor/MIP-0.2.0.1/src/MIP.hs'
+  ])('tracks prepared compiler input %s', async (relativePath) => {
+    const root = await fixtureRoot();
+    await prepareFixture(root);
+    const destination = path.join(root, relativePath);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, 'compiler input\n');
+
+    await expect(readPreparedCompiler(root)).rejects.toThrow(
+      'Compiler inputs changed after the binary was prepared.'
+    );
+  });
 });
 
 async function fixtureRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'sverlin-compiler-test-'));
   roots.push(root);
   for (const directory of [
-    'compile/app',
+    'compile/app/Sverlin',
     'compile/cbits',
     'compile/fonts',
     'compile/src',
-    'compile/vendor'
+    'compile/vendor/MIP-0.2.0.1/src'
   ]) {
     await mkdir(path.join(root, directory), { recursive: true });
   }
   await writeFile(path.join(root, 'compile', 'compile.cabal'), 'name: compile\n');
   await writeFile(path.join(root, 'compile', 'stack.yaml'), 'resolver: lts-24.52\n');
   await writeFile(path.join(root, 'compile', 'stack.yaml.lock'), 'snapshots: []\n');
+  await writeFile(path.join(root, 'compile', 'app', 'Main.hs'), 'module Main where\n');
+  await writeFile(path.join(root, 'compile', 'vendor', 'MIP-0.2.0.1', 'MIP.cabal'), 'name: MIP\n');
+  await writeFile(
+    path.join(root, 'compile', 'vendor', 'MIP-0.2.0.1', 'Setup.hs'),
+    'import Distribution.Simple\nmain = defaultMain\n'
+  );
   await writeFile(path.join(root, 'compile', 'src', 'Fixture.hs'), 'module Fixture where\nx = 1\n');
   return root;
 }

@@ -100,6 +100,7 @@ function fixtureSnapshot(digest: string, byteLength: number): ExportSnapshot {
               payload: {
                 title: 'Project export fixture',
                 entryArtifactId: 'dsl-main',
+                assistantId: 'sverlin-assistant',
                 creation: { templateId: 'blank' }
               }
             }

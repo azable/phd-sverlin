@@ -13,6 +13,7 @@ export type AvailablePresentation = {
 /** Current state of a configured ahead-of-time presentation buffer. */
 export type PresentationBufferState = {
   sourceSha256?: string;
+  hasCurrentSourcePresentation: boolean;
   available: AvailablePresentation[];
   consumedPresentationIds: Set<string>;
   deficit: number;
@@ -33,13 +34,12 @@ export function presentationBufferState(
       return event.type === 'visualization.candidates-advanced' ? event.payload.presentations : [];
     })
   );
-  const available = events.flatMap<AvailablePresentation>((event) => {
+  const currentSourcePresentations = events.flatMap<AvailablePresentation>((event) => {
     if (event.type === 'visualization.presented') {
       const presentation = event.payload.presentation;
       if (
         presentation.format !== 'sverlin-ir-v1' ||
-        presentation.source.sha256 !== currentSourceSha256 ||
-        consumedPresentationIds.has(presentation.presentationId)
+        presentation.source.sha256 !== currentSourceSha256
       ) {
         return [];
       }
@@ -47,8 +47,12 @@ export function presentationBufferState(
     }
     return [];
   });
+  const available = currentSourcePresentations.filter(
+    ({ presentationId }) => !consumedPresentationIds.has(presentationId)
+  );
   return {
     sourceSha256: currentSourceSha256,
+    hasCurrentSourcePresentation: currentSourcePresentations.length > 0,
     available,
     consumedPresentationIds,
     deficit: Math.max(0, target - available.length)

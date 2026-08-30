@@ -12,13 +12,24 @@ export function compilerWorkspaceLockPath(root = repositoryRoot) {
   return path.join(root, '.cache', 'sverlin', 'compiler-workspace.lock');
 }
 
-const fingerprintFiles = ['compile/compile.cabal', 'compile/stack.yaml', 'compile/stack.yaml.lock'];
+// Keep this aligned with the compile-app component and its library inputs in
+// compile/compile.cabal. Design documents, authoring examples, other executables,
+// and vendored tests/samples do not affect the prepared compiler.
+const fingerprintFiles = [
+  'compile/compile.cabal',
+  'compile/stack.yaml',
+  'compile/stack.yaml.lock',
+  'compile/app/Main.hs',
+  'compile/vendor/MIP-0.2.0.1/MIP.cabal',
+  'compile/vendor/MIP-0.2.0.1/Setup.hs'
+];
+const haskellSourceExtensions = new Set(['.hs', '.lhs', '.hs-boot', '.hsc', '.chs']);
 const fingerprintDirectories = [
-  'compile/app',
-  'compile/cbits',
-  'compile/fonts',
-  'compile/src',
-  'compile/vendor'
+  { path: 'compile/app/Sverlin', extensions: haskellSourceExtensions },
+  { path: 'compile/cbits', extensions: new Set(['.c', '.h']) },
+  { path: 'compile/fonts', extensions: new Set(['.ttf']) },
+  { path: 'compile/src', extensions: haskellSourceExtensions },
+  { path: 'compile/vendor/MIP-0.2.0.1/src', extensions: haskellSourceExtensions }
 ];
 
 /** Raised when no direct compiler binary matches the current checkout. */
@@ -56,15 +67,13 @@ export function preparedCompilerEnvironment(prepared, root = repositoryRoot) {
 /** Hash every owned source, configuration, and bundled asset used by the compiler. */
 export async function compilerSourceFingerprint(root = repositoryRoot) {
   const relativePaths = [...fingerprintFiles];
-  for (const directory of fingerprintDirectories) {
-    relativePaths.push(...(await filesBelow(root, directory)));
+  for (const input of fingerprintDirectories) {
+    relativePaths.push(...(await filesBelow(root, input.path, input.extensions)));
   }
-  // Design notes do not affect the executable and must not invalidate a prepared build.
-  const compilerInputs = relativePaths.filter((relativePath) => !relativePath.endsWith('.md'));
-  compilerInputs.sort();
+  relativePaths.sort();
 
   const hash = createHash('sha256');
-  for (const relativePath of compilerInputs) {
+  for (const relativePath of relativePaths) {
     hash.update(relativePath);
     hash.update('\0');
     hash.update(await readFile(path.join(root, relativePath)));
@@ -225,17 +234,20 @@ export function isUnsupportedDirectorySyncError(error) {
 /**
  * @param {string} root
  * @param {string} relativeDirectory
+ * @param {ReadonlySet<string>} extensions
  * @returns {Promise<string[]>}
  */
-async function filesBelow(root, relativeDirectory) {
+async function filesBelow(root, relativeDirectory, extensions) {
   const directory = path.join(root, relativeDirectory);
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     const relativePath = path.join(relativeDirectory, entry.name);
     if (entry.isDirectory() && entry.name !== '.stack-work') {
-      files.push(...(await filesBelow(root, relativePath)));
-    } else if (entry.isFile()) files.push(relativePath);
+      files.push(...(await filesBelow(root, relativePath, extensions)));
+    } else if (entry.isFile() && extensions.has(path.extname(entry.name))) {
+      files.push(relativePath);
+    }
   }
   return files;
 }

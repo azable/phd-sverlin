@@ -86,6 +86,7 @@ function rootDocument(): ProjectDocument {
         payload: {
           title: 'Stream test',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       }

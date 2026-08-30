@@ -37,8 +37,19 @@ describe('presentation buffer projection', () => {
 
     const state = presentationBufferState(events, 4, sourceA);
 
+    expect(state.hasCurrentSourcePresentation).toBe(true);
     expect(state.available.map(({ presentationId }) => presentationId)).toEqual(ids.slice(2));
     expect(state.deficit).toBe(2);
+  });
+
+  it('keeps an untouched source ineligible for background refill', () => {
+    const state = presentationBufferState([], 4, sourceA);
+
+    expect(state).toMatchObject({
+      hasCurrentSourcePresentation: false,
+      available: [],
+      deficit: 4
+    });
   });
 
   it('excludes superseded-source candidates without deleting their history', () => {
@@ -89,6 +100,7 @@ describe('presentation buffer projection', () => {
       payload: { presentations: [ids[0], ids[1]], reason: 'next' }
     });
     expect(presentationBufferState(events, 2, sourceA)).toMatchObject({
+      hasCurrentSourcePresentation: true,
       available: [],
       deficit: 2
     });

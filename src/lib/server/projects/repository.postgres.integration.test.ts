@@ -86,6 +86,7 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         payload: {
           title: 'Repository test',
           entryArtifactId: 'dsl-main',
+          assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
       }

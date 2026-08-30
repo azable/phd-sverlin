@@ -90,7 +90,7 @@ The default destination is a new UTC-timestamped directory under
 directory. It reads PostgreSQL directly, so `DATABASE_URL` must identify the
 database to inspect.
 
-Set `OPENAI_API_KEY` in the root `.env` for AI-assisted editing and the HTML study condition. `OPENAI_MODEL` and `CHATBOT_CONFIG` are optional overrides. Rebuild or recreate the devcontainer after changing `.env` so Compose passes the values to the web process. Compiling already-authored Sverlin source does not require an OpenAI key.
+Set `OPENAI_API_KEY` in the root `.env` for AI-assisted editing and the HTML study condition. `OPENAI_MODEL` is an optional override. These provider values are passed into the devcontainer by Compose, so changing them requires recreating the devcontainer. Each visualization mode selects its compatible assistant implicitly, and the resolved assistant ID is copied into every project’s immutable creation event. Compiling already-authored Sverlin source does not require an OpenAI key.
 
 ### Health checks
 
@@ -240,7 +240,7 @@ After Haskell changes, run the relevant compile, Haskell tests, solver tests, an
 
 The web service runs checked-in migrations before each deploy and exposes `/api/health/ready` as its health check. Render generates the Better Auth secret. When a fresh database has no administrator, opening the generated `onrender.com` URL redirects to one-time passkey setup; complete it promptly because the first visitor can claim administrator access. Better Auth derives the public origin from Render's `RENDER_EXTERNAL_HOSTNAME`; set `BETTER_AUTH_URL` explicitly only when using a custom domain.
 
-The web service keeps the established 4 GiB ceiling because it owns compilation and the native solver. It accepts at most two project operations concurrently and serializes compiler invocations to bound peak memory for the expected couple of simultaneous users. Render allows at most 300 seconds for graceful shutdown, so application work is cancelled after 270 seconds, leaving 30 seconds to record failure boundaries and close PostgreSQL. An operation interrupted by an unexpected restart is marked cancelled and must be retried; already committed project events and resources remain durable. PostgreSQL stores resource bytes directly and each immutable resource is limited to 16 MiB. Add `OPENAI_API_KEY` to the web service when AI-assisted editing is required; `OPENAI_MODEL` and `CHATBOT_CONFIG` are optional overrides.
+The web service keeps the established 4 GiB ceiling because it owns compilation and the native solver. It accepts at most two project operations concurrently and serializes compiler invocations to bound peak memory for the expected couple of simultaneous users. Render allows at most 300 seconds for graceful shutdown, so application work is cancelled after 270 seconds, leaving 30 seconds to record failure boundaries and close PostgreSQL. An operation interrupted by an unexpected restart is marked cancelled and must be retried; already committed project events and resources remain durable. PostgreSQL stores resource bytes directly and each immutable resource is limited to 16 MiB. Add `OPENAI_API_KEY` to the web service when AI-assisted editing is required; `OPENAI_MODEL` is an optional provider override. Assistant selection is owned by the visualization mode and recorded in each project Timeline.
 
 ## Agent tooling
 

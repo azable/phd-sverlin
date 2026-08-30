@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
 import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
 import { markdownMessage, type MessageContent } from '$lib/shared/projects/events/message-content';
 import type {
@@ -98,14 +99,7 @@ async function submitProjectFeedbackUnlocked(
   const focus = validateFocus(before, options.focus);
   const content = await validateMessageContent(before, options.content);
   const presentations = referencedPresentations(content);
-  const elementReference = content.find((segment) => segment.type === 'element-ref');
-  const selection: VisualSelection | undefined = elementReference
-    ? {
-        presentationEvent: elementReference.presentationEvent,
-        step: elementReference.step,
-        instances: elementReference.instances
-      }
-    : undefined;
+  const visualSelections = referencedVisualSelections(content);
 
   let document = await appendProjectEvents(
     before,
@@ -127,7 +121,7 @@ async function submitProjectFeedbackUnlocked(
       {
         eventIds: focus,
         presentationIds: presentations,
-        ...(selection ? { visualSelection: selection } : {})
+        visualSelections
       },
       dependencies
     );
@@ -137,10 +131,16 @@ async function submitProjectFeedbackUnlocked(
   const contextSelection: AiContextSelection = {
     eventIds: focus,
     presentationIds: presentations,
-    ...(selection ? { visualSelection: selection } : {})
+    visualSelections
   };
   const first = await runSverlinGeneration(
-    { document, attempt: 1, operationId: options.operationId, contextSelection },
+    {
+      document,
+      attempt: 1,
+      operationId: options.operationId,
+      contextSelection,
+      presentationCount: options.presentationCount
+    },
     dependencies
   );
   document = first.document;
@@ -223,6 +223,7 @@ async function submitProjectFeedbackUnlocked(
       attempt: 2,
       operationId: options.operationId,
       contextSelection,
+      presentationCount: options.presentationCount,
       compilationFeedback: repairFeedback
     },
     dependencies
@@ -409,11 +410,12 @@ async function runSverlinGeneration(
     attempt: 1 | 2;
     operationId: string;
     contextSelection: AiContextSelection;
+    presentationCount: 1 | 2;
     compilationFeedback?: CompilationFeedback;
   },
   dependencies: ProjectCommandDependencies
 ) {
-  const chatbot = dependencies.getChatbot();
+  const chatbot = dependencies.getChatbot(projectSnapshotAt(options.document).assistantId);
   let prompt;
   try {
     prompt = await chatbot.preparePrompt({
@@ -432,6 +434,22 @@ async function runSverlinGeneration(
       prompt,
       dslRevision: await dependencies.readDslRevision(),
       generate: () => chatbot.generatePrepared(prompt),
+      validateResult: (result) => {
+        if (options.attempt === 2 && result.sourceArtifactContent === undefined) {
+          throw new InvalidChatbotResponseError(
+            'The repair response did not return corrected source.',
+            result.providerResponse
+          );
+        }
+        validateGeneratedReply(
+          options.document,
+          result.reply,
+          result.sourceArtifactContent !== undefined || result.candidateAction === 'generate'
+            ? options.presentationCount
+            : 0,
+          result.providerResponse
+        );
+      },
       fallbackResponse: (result) => ({
         reply: result.reply,
         candidateAction: result.candidateAction,
@@ -453,7 +471,7 @@ async function runHtmlGeneration(
   },
   dependencies: ProjectCommandDependencies
 ) {
-  const chatbot = dependencies.getHtmlChatbot();
+  const chatbot = dependencies.getHtmlChatbot(projectSnapshotAt(options.document).assistantId);
   let prompt;
   try {
     prompt = await chatbot.preparePrompt({
@@ -473,6 +491,13 @@ async function runHtmlGeneration(
       operationId: options.operationId,
       prompt,
       generate: () => chatbot.generatePrepared(prompt),
+      validateResult: (result) =>
+        validateGeneratedReply(
+          options.document,
+          result.reply,
+          result.candidates.length,
+          result.providerResponse
+        ),
       fallbackResponse: (result) => ({
         reply: result.reply,
         candidates: result.candidates,
@@ -484,15 +509,34 @@ async function runHtmlGeneration(
 }
 
 async function generationPreparationFailure(
-  options: { document: ProjectDocument; operationId: string },
+  options: { document: ProjectDocument; operationId: string; attempt: 1 | 2 },
   error: unknown,
   dependencies: ProjectCommandDependencies
 ) {
+  const details = generationErrorDetails(error);
+  const failed = draftEvent<'ai.generation-failed'>({
+    type: 'ai.generation-failed',
+    actor: { kind: 'system' },
+    operationId: options.operationId,
+    payload: {
+      attempt: options.attempt,
+      failureKind: generationFailureKind(error),
+      durationMs: 0,
+      message: safeErrorMessage(error),
+      details: recordText(details.value, details.mediaType)
+    }
+  });
+  const document = await appendProjectEvents(
+    options.document,
+    [failed],
+    [],
+    dependencies.projectService
+  );
   return {
     ok: false as const,
     document: await appendSystemFailure(
-      options.document,
-      safeErrorMessage(error),
+      document,
+      failed.payload.message,
       options.operationId,
       dependencies
     )
@@ -507,6 +551,7 @@ async function runPreparedGeneration<Output extends { reply: GeneratedMessageCon
     prompt: ChatbotPrompt;
     dslRevision?: DslRevision;
     generate: () => Promise<ChatbotResult<Output>>;
+    validateResult: (result: ChatbotResult<Output>) => void;
     fallbackResponse: (result: ChatbotResult<Output>) => unknown;
   },
   dependencies: ProjectCommandDependencies
@@ -534,6 +579,7 @@ async function runPreparedGeneration<Output extends { reply: GeneratedMessageCon
   const startedAt = performance.now();
   try {
     const result = await options.generate();
+    options.validateResult(result);
     const generationEvent = draftEvent<'ai.generation-succeeded'>({
       type: 'ai.generation-succeeded',
       actor: { kind: 'assistant', botId: result.generation.botId },
@@ -744,6 +790,32 @@ function resolveAssistantContent(
   return content;
 }
 
+function validateGeneratedReply(
+  document: ProjectDocument,
+  reply: GeneratedMessageContent,
+  candidateCount: number,
+  providerResponse?: unknown
+): void {
+  try {
+    validatePresentations(
+      document,
+      reply.flatMap((segment) =>
+        segment.type === 'presentation-ref' ? [segment.presentationId] : []
+      )
+    );
+    for (const segment of reply) {
+      if (segment.type === 'candidate-ref' && segment.slot >= candidateCount) {
+        throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
+      }
+    }
+  } catch (cause) {
+    throw new InvalidChatbotResponseError(
+      cause instanceof Error ? cause.message : 'The chatbot returned invalid references.',
+      providerResponse
+    );
+  }
+}
+
 function generatedReplyText(reply: GeneratedMessageContent): string {
   return reply
     .map((segment) => {
@@ -885,6 +957,23 @@ function referencedPresentations(content: MessageContent): string[] {
       content.flatMap((segment) => (segment.type === 'markdown' ? [] : [segment.presentationId]))
     )
   ];
+}
+
+function referencedVisualSelections(content: MessageContent): VisualSelection[] {
+  const selections = new Map<string, VisualSelection>();
+  for (const segment of content) {
+    if (segment.type !== 'element-ref') continue;
+    const selection = {
+      presentationEvent: segment.presentationEvent,
+      step: segment.step,
+      instances: segment.instances
+    } satisfies VisualSelection;
+    selections.set(
+      `${selection.presentationEvent}:${selection.step}:${selection.instances.join(',')}`,
+      selection
+    );
+  }
+  return [...selections.values()];
 }
 
 async function validateSelection(
