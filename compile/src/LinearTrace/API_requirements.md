@@ -40,3 +40,27 @@ Examples:
   its intrinsic bounds. Text fitting and parent containment should use those bounds
   directly rather than exposing a character count or asking the author to estimate
   width from an average glyph size.
+
+## Keep constraints stable within a linear lifetime
+
+The complete set of Render constraints for a linear trace object should be defined
+when that particular lifetime begins and remain unchanged while the object is live.
+Render must not add, remove, or replace geometric constraints for the same live
+object at a later checkpoint. Solver values may still be sampled within the
+original feasible region, and geometry-neutral presentation state may change; the
+constraint system itself remains fixed.
+
+Changing the constraint set requires a linear transition: Program consumes the old
+object and produces a successor. This consume-and-produce boundary is a "cut" in
+the trace. Constraints for the old lifetime end at the cut, and the successor's
+complete constraints are established when its new lifetime begins. The compiler
+should derive and validate these scopes from linear ownership rather than rely on
+authors to coordinate checkpoint-specific constraint mutations.
+
+Relations are one instance of this rule. A Program relation is semantic, but Render
+may map it to layout constraints or connector geometry. Once a slot location has
+been exposed, its incident relations must therefore remain fixed for that linear
+lifetime. Changing a slot's occupant does not change the location or its relations;
+rewiring requires an explicit linear transition of every affected location. For
+example, an array's adjacency is established before its cells are shown and remains
+stable while those cell locations exist, even when their stored values change.
