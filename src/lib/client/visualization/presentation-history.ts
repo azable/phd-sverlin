@@ -7,6 +7,76 @@ import {
   type RenderablePresentation
 } from '$lib/shared/presentations';
 
+const presentationAdjectives = [
+  'Amber',
+  'Arctic',
+  'Azure',
+  'Bold',
+  'Bright',
+  'Calm',
+  'Clear',
+  'Coral',
+  'Cosmic',
+  'Crisp',
+  'Dawn',
+  'Deep',
+  'Ember',
+  'Emerald',
+  'Gentle',
+  'Golden',
+  'Indigo',
+  'Keen',
+  'Lunar',
+  'Misty',
+  'Noble',
+  'Ocean',
+  'Olive',
+  'Quiet',
+  'Rapid',
+  'Silver',
+  'Solar',
+  'Swift',
+  'Teal',
+  'Vivid',
+  'Warm',
+  'Wild'
+] as const;
+
+const presentationNouns = [
+  'Badger',
+  'Comet',
+  'Crane',
+  'Dolphin',
+  'Falcon',
+  'Finch',
+  'Fox',
+  'Gecko',
+  'Heron',
+  'Koala',
+  'Lark',
+  'Lynx',
+  'Maple',
+  'Otter',
+  'Owl',
+  'Panda',
+  'Pebble',
+  'Pine',
+  'Raven',
+  'Reef',
+  'Robin',
+  'Seal',
+  'Sparrow',
+  'Star',
+  'Tiger',
+  'Turtle',
+  'Wattle',
+  'Whale',
+  'Willow',
+  'Wombat',
+  'Wren',
+  'Zebra'
+] as const;
+
 /** One render recorded in the Timeline, with its display-set context retained. */
 export type TimelinePresentation = {
   eventId: number;
@@ -15,6 +85,19 @@ export type TimelinePresentation = {
   slot: 0 | 1;
   presentation: RenderablePresentation;
 };
+
+/** Stable participant-friendly label derived from the retained presentation UUID. */
+export function presentationDisplayId(presentationId: string): string {
+  let hash = 2166136261;
+  for (const character of presentationId) {
+    hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  }
+  const value = hash >>> 0;
+  const adjective = presentationAdjectives[value & 31];
+  const noun = presentationNouns[(value >>> 5) & 31];
+  const number = String((value >>> 10) % 100).padStart(2, '0');
+  return `${adjective}-${noun}-${number}`;
+}
 
 /** Return every render in Timeline order. */
 export function timelinePresentations(events: readonly ProjectEvent[]): TimelinePresentation[] {

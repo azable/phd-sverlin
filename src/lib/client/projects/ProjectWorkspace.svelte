@@ -148,6 +148,13 @@
               <StudyTimer deadlineAt={study.deadlineAt} onExpire={() => (expired = true)} />
             </Badge>
           {/if}
+          {#if authEnabled}
+            <form method="POST" action={resolve('/logout')}>
+              <Button type="submit" size="icon-sm" variant="ghost" aria-label="Sign out"
+                ><LogOutIcon /></Button
+              >
+            </form>
+          {/if}
         </header>
       {/if}
 
@@ -221,40 +228,34 @@
         <Resizable.Handle withHandle />
 
         <Resizable.Pane defaultSize={68} minSize={50} class="flex min-w-0 flex-col">
-          {#if isAdmin || authEnabled}
+          {#if isAdmin}
             <div class="flex items-center gap-2 border-b px-3 py-1.5 text-sm">
-              {#if isAdmin}
-                <span class="text-muted-foreground">Presentation layout</span>
-                <select
-                  class="h-7 rounded-md border bg-background px-2"
-                  bind:value={layout}
-                  disabled={busy}
-                >
-                  <option value="single">Single</option>
-                  <option value="comparison">Comparison</option>
-                </select>
-              {/if}
+              <span class="text-muted-foreground">Presentation layout</span>
+              <select
+                class="h-7 rounded-md border bg-background px-2"
+                bind:value={layout}
+                disabled={busy}
+              >
+                <option value="single">Single</option>
+                <option value="comparison">Comparison</option>
+              </select>
               <div class="ml-auto flex items-center gap-1">
-                {#if isAdmin}
-                  <div class="flex items-center gap-1">
-                    <Switch
-                      id="dev-mode"
-                      size="sm"
-                      checked={developerView}
-                      onCheckedChange={toggleDevMode}
-                    />
-                    <Label for="dev-mode" class="text-sm">Dev</Label>
-                  </div>
-                {/if}
+                <div class="flex items-center gap-1">
+                  <Switch
+                    id="dev-mode"
+                    size="sm"
+                    checked={developerView}
+                    onCheckedChange={toggleDevMode}
+                  />
+                  <Label for="dev-mode" class="text-sm">Dev</Label>
+                </div>
                 {#if authEnabled}
-                  {#if isAdmin}
-                    <Button
-                      href={resolve('/admin')}
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="Administration"><SettingsIcon /></Button
-                    >
-                  {/if}
+                  <Button
+                    href={resolve('/admin')}
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Administration"><SettingsIcon /></Button
+                  >
                   <form method="POST" action={resolve('/logout')}>
                     <Button type="submit" size="icon-sm" variant="ghost" aria-label="Sign out"
                       ><LogOutIcon /></Button

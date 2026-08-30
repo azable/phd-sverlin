@@ -3,6 +3,7 @@
 
   import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
+  import { presentationDisplayId } from '$lib/client/visualization/presentation-history';
   import type { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
 
@@ -21,10 +22,6 @@
       .selected(session.events, layout)
       .map(({ presentation }) => presentation.presentationId)
   );
-
-  function presentationLabel(format: string, seed?: number): string {
-    return format === 'sverlin-ir-v1' && seed ? `Visualization · seed ${seed}` : 'Visualization';
-  }
 </script>
 
 {#each items as item (item.id)}
@@ -56,16 +53,18 @@
         aria-pressed={selected}
         onclick={(event) => selection.activate(item.value, session.events, layout, event.shiftKey)}
       >
-        <span class="block text-base font-medium">
-          {presentationLabel(
-            item.value.presentation.format,
-            item.value.presentation.format === 'sverlin-ir-v1'
-              ? item.value.presentation.seed
-              : undefined
-          )}
+        <span class="flex items-baseline gap-2 text-base font-medium">
+          <span>Visualization</span>
+          <span class="font-mono text-sm text-muted-foreground">
+            {presentationDisplayId(id)}
+          </span>
         </span>
         <span class="mt-1 block text-sm text-muted-foreground">
-          Select to view{layout === 'comparison' ? ' · Shift-select to build a comparison' : ''}
+          {item.value.presentation.format === 'sverlin-ir-v1'
+            ? `Seed ${item.value.presentation.seed} · `
+            : ''}Select to view{layout === 'comparison'
+            ? ' · Shift-select to build a comparison'
+            : ''}
         </span>
       </button>
     {:else}

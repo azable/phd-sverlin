@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { ProjectEvent, ProjectEventOf } from '$lib/shared/projects/events';
 
-import { latestPresentations, timelinePresentations } from './presentation-history';
+import {
+  latestPresentations,
+  presentationDisplayId,
+  timelinePresentations
+} from './presentation-history';
 import { PresentationSelection } from './presentation-selection.svelte';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
@@ -16,6 +20,14 @@ const presentationIds = [
 ];
 
 describe('presentation history', () => {
+  it('derives stable readable labels from retained presentation IDs', () => {
+    const label = presentationDisplayId(presentationIds[0]);
+
+    expect(label).toMatch(/^[A-Z][a-z]+-[A-Z][a-z]+-\d{2}$/);
+    expect(presentationDisplayId(presentationIds[0])).toBe(label);
+    expect(presentationDisplayId(presentationIds[1])).not.toBe(label);
+  });
+
   it('projects the latest generated comparison from retained events', () => {
     const events = comparisonEvents();
 
