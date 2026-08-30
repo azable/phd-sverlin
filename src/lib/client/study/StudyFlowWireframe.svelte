@@ -1,59 +1,42 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
 
-  import { Badge } from '$lib/client/components/ui/badge';
   import { cn } from '$lib/client/components/utils';
   import type { StudyFlow, StudyFlowPhase } from '$lib/shared/study/projection';
 
+  import StudyStatusBadge from './StudyStatusBadge.svelte';
   import StudyTimer from './StudyTimer.svelte';
+  import { studyStatusSurfaceClasses } from './study-status';
 
-  type Props = { flow: StudyFlow; linkProjects?: boolean };
-  let { flow, linkProjects = true }: Props = $props();
+  type Props = { flow: StudyFlow; linkProjects?: boolean; showHeader?: boolean };
+  let { flow, linkProjects = true, showHeader = true }: Props = $props();
 
   function phaseTitle(item: StudyFlowPhase): string {
     return item.phase.kind === 'task' ? item.phase.instructions.title : item.phase.title;
   }
-
-  function statusLabel(status: StudyFlowPhase['status']): string {
-    switch (status) {
-      case 'ready-to-continue':
-        return 'Ready';
-      case 'out-of-scope':
-        return 'Not previewed';
-      default:
-        return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
-    }
-  }
 </script>
 
 <section class="flex min-w-0 flex-col gap-3" aria-label={`${flow.studyName} flow`}>
-  <div class="flex flex-wrap items-center gap-2">
-    <p class="font-medium">
-      {flow.studyName} <span class="text-muted-foreground">v{flow.studyVersion}</span>
-    </p>
-    <Badge
-      variant={flow.status === 'completed'
-        ? 'default'
-        : flow.status === 'in-progress'
-          ? 'secondary'
-          : 'outline'}
-    >
-      {flow.status === 'not-started'
-        ? 'Not started'
-        : flow.status === 'in-progress'
-          ? 'In progress'
-          : 'Completed'}
-    </Badge>
-    <span class="text-xs text-muted-foreground">Arm: {flow.armId}</span>
-  </div>
+  {#if showHeader}
+    <div class="flex flex-wrap items-center gap-2">
+      <p class="font-medium">
+        {flow.studyName} <span class="text-muted-foreground">v{flow.studyVersion}</span>
+      </p>
+      <StudyStatusBadge status={flow.status} />
+      <span class="text-xs text-muted-foreground">Arm: {flow.armId}</span>
+    </div>
+  {/if}
   <ol class="grid gap-2 sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]">
     {#each flow.phases as item (item.phase.id)}
       <li
         class={cn(
           'flex min-w-0 flex-col gap-2 rounded-md border p-3',
-          item.status === 'completed' && 'bg-muted',
-          (item.status === 'active' || item.status === 'ready-to-continue') &&
-            'border-primary ring-1 ring-primary/30',
+          studyStatusSurfaceClasses[item.status],
+          item.status === 'active' &&
+            'border-status-info-foreground/30 ring-1 ring-status-info-foreground/20',
+          item.status === 'ready-to-continue' &&
+            'border-status-warning-foreground/30 ring-1 ring-status-warning-foreground/20',
+          item.status === 'completed' && 'border-status-success-foreground/20',
           item.status === 'out-of-scope' && 'opacity-50'
         )}
         aria-current={item.status === 'active' || item.status === 'ready-to-continue'
@@ -62,13 +45,7 @@
       >
         <div class="flex items-start justify-between gap-2">
           <span class="text-xs text-muted-foreground">{item.sequenceIndex + 1}</span>
-          <Badge
-            variant={item.status === 'completed'
-              ? 'default'
-              : item.status === 'ready-to-continue'
-                ? 'secondary'
-                : 'outline'}>{statusLabel(item.status)}</Badge
-          >
+          <StudyStatusBadge status={item.status} />
         </div>
         <div class="min-w-0">
           {#if item.projectId && linkProjects}

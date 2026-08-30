@@ -191,7 +191,7 @@
           {/if}
           {#if study.context === 'admin-preview'}
             <form method="POST" action="?/forcePreview">
-              <Button type="submit" size="sm" variant="outline">Force next phase</Button>
+              <Button type="submit" size="sm" variant="outline">Next phase</Button>
             </form>
             <Button href={resolve('/admin')} size="sm">Return to administration</Button>
           {:else}

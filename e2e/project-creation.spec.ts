@@ -152,11 +152,11 @@ test('administrator can run a timed study preview and configure a participant gi
   await previewDialog.getByRole('button', { name: 'Create preview' }).click({ noWaitAfter: true });
   await expect(page).toHaveURL(/\/admin\/previews\//);
   await expect(page.getByText('Welcome', { exact: true }).last()).toBeVisible();
-  await page.getByRole('button', { name: 'Force next phase' }).click({ noWaitAfter: true });
+  await page.getByRole('button', { name: 'Next phase' }).click({ noWaitAfter: true });
   await expect(page).toHaveURL(/\/projects\//, { timeout: 150_000 });
 
   await expect(page.getByText('Preview', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Force next phase' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next phase' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Return to administration' })).toBeVisible();
   await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
@@ -172,7 +172,7 @@ test('administrator can run a timed study preview and configure a participant gi
   await page.getByRole('button', { name: 'Prefer top' }).click();
   await expect(page.getByText(/^Preferred .+ over .+$/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Force next phase' }).click();
+  await page.getByRole('button', { name: 'Next phase' }).click();
   await expect(page).toHaveURL(/\/admin\/previews\//);
   await expect(page.getByText('First task complete', { exact: true }).last()).toBeVisible();
   await page.getByRole('link', { name: 'Return to administration' }).click();
@@ -183,12 +183,27 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(page.getByText(/Preview · Pilot study/).first()).toBeVisible();
 
   const participant = page.locator('[data-slot="card"]').filter({ hasText: 'E2E-GIFT' });
-  await expect(participant.getByText('Not started', { exact: true })).toBeVisible();
+  await expect(participant.locator('[data-slot="card-description"]')).toContainText(
+    /^Pilot study v1 · .+$/
+  );
+  await expect(participant.getByText('Not started', { exact: true })).toHaveAttribute(
+    'data-slot',
+    'badge'
+  );
   await participant.getByRole('button', { name: 'Add gift card' }).click();
   let giftCardDialog = page.getByRole('dialog', { name: 'Gift card for E2E-GIFT' });
   const giftCardInput = giftCardDialog.getByLabel('Gift-card URL');
   await giftCardInput.fill('http://gift.example/card/static');
+  await page.route(
+    /\/admin\?\/giftCard$/,
+    async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await route.continue();
+    },
+    { times: 1 }
+  );
   await giftCardDialog.getByRole('button', { name: 'Save gift card' }).click();
+  await expect(giftCardDialog.getByRole('button', { name: 'Saving gift card' })).toBeDisabled();
   await expect(giftCardDialog.getByText('Gift-card URLs must use HTTPS.')).toBeVisible();
   await giftCardInput.fill('https://gift.example/card/static');
   await giftCardInput.press('Enter');
@@ -205,9 +220,9 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(giftCardDialog.getByLabel('Gift-card URL')).toHaveValue(
     'https://gift.example/card/updated'
   );
-  await giftCardDialog.getByRole('button', { name: 'Clear' }).click();
+  await giftCardDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(giftCardDialog).toHaveCount(0);
-  await expect(participant.getByText('No gift card', { exact: true })).toBeVisible();
+  await expect(participant.getByText('Gift card assigned', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add participant' }).click();
   let participantDialog = page.getByRole('dialog', { name: 'Add participant' });
@@ -233,21 +248,19 @@ test('administrator can run a timed study preview and configure a participant gi
   await passwordDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(passwordDialog).toHaveCount(0);
 
-  await participant.getByRole('button', { name: 'Delete participant data' }).click();
+  await participant.getByRole('button', { name: 'Delete participant' }).click();
   let deleteDialog = page.getByRole('alertdialog', {
-    name: 'Delete data for E2E-GIFT?'
+    name: 'Delete participant E2E-GIFT?'
   });
   const confirmation = deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm');
   await confirmation.fill('DELETE E2E-GIFT');
   await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
-  await participant.getByRole('button', { name: 'Delete participant data' }).click();
-  deleteDialog = page.getByRole('alertdialog', { name: 'Delete data for E2E-GIFT?' });
+  await participant.getByRole('button', { name: 'Delete participant' }).click();
+  deleteDialog = page.getByRole('alertdialog', { name: 'Delete participant E2E-GIFT?' });
   await expect(deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm')).toHaveValue('');
-  await expect(
-    deleteDialog.getByRole('button', { name: 'Delete participant data' })
-  ).toBeDisabled();
+  await expect(deleteDialog.getByRole('button', { name: 'Delete participant' })).toBeDisabled();
   await deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm').fill('DELETE E2E-GIFT');
-  await expect(deleteDialog.getByRole('button', { name: 'Delete participant data' })).toBeEnabled();
+  await expect(deleteDialog.getByRole('button', { name: 'Delete participant' })).toBeEnabled();
   await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(deleteDialog).toHaveCount(0);
 

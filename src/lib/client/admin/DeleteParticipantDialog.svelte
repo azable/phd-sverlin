@@ -44,12 +44,12 @@
     class={buttonVariants({ variant: 'destructive' })}
     onclick={prepareConfirmation}
   >
-    Delete participant data
+    Delete participant
   </AlertDialog.Trigger>
   <AlertDialog.Content>
     <form method="POST" action="?/purgeParticipant" use:enhance={deleteParticipant}>
       <AlertDialog.Header>
-        <AlertDialog.Title>Delete data for {participant.participantId}?</AlertDialog.Title>
+        <AlertDialog.Title>Delete participant {participant.participantId}?</AlertDialog.Title>
         <AlertDialog.Description>
           This permanently deletes the participant account, projects, retained queue records, and
           private resources. Export first if the approved research protocol permits retaining this
@@ -84,7 +84,7 @@
           variant="destructive"
           disabled={confirmation !== expectedConfirmation}
         >
-          Delete participant data
+          Delete participant
         </Button>
       </AlertDialog.Footer>
     </form>

@@ -25,7 +25,7 @@
       {#if context === 'admin-preview'}
         <Button href={resolve('/admin')} variant="outline">Return to administration</Button>
         <form method="POST" action="?/forcePreview">
-          <Button type="submit">Advance preview</Button>
+          <Button type="submit">Next phase</Button>
         </form>
       {:else}
         <form method="POST" action={`${resolve('/study')}?/continue`}>

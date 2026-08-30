@@ -3,11 +3,11 @@
 
   import { actionFailureMessage } from '$lib/client/admin/action-result';
   import * as Alert from '$lib/client/components/ui/alert';
-  import { buttonVariants } from '$lib/client/components/ui/button';
-  import { Button } from '$lib/client/components/ui/button';
+  import { Button, buttonVariants } from '$lib/client/components/ui/button';
   import * as Dialog from '$lib/client/components/ui/dialog';
   import * as Field from '$lib/client/components/ui/field';
   import { Input } from '$lib/client/components/ui/input';
+  import { Spinner } from '$lib/client/components/ui/spinner';
 
   import type { SubmitFunction } from '@sveltejs/kit';
 
@@ -17,24 +17,35 @@
       participantId: string;
       giftCardUrl?: string;
     };
+    onSaved?: () => void | Promise<void>;
   };
 
-  let { participant }: Props = $props();
+  let { participant, onSaved }: Props = $props();
   let open = $state(false);
+  let submitting = $state(false);
   let submissionError = $state<string>();
   const formId = $derived(`gift-card-form-${participant.id}`);
 
   const submitGiftCard: SubmitFunction = () => {
+    submitting = true;
     submissionError = undefined;
     return async ({ result, update }) => {
       const failure = actionFailureMessage(result, 'Gift-card update failed.');
-      await update();
-      if (failure) submissionError = failure;
-      else open = false;
+      try {
+        await update();
+        if (failure) submissionError = failure;
+        else {
+          await onSaved?.();
+          open = false;
+        }
+      } finally {
+        submitting = false;
+      }
     };
   };
 
   function prepareGiftCard() {
+    submitting = false;
     submissionError = undefined;
   }
 </script>
@@ -69,19 +80,25 @@
             maxlength={2048}
             placeholder="https://…"
             autocomplete="off"
+            disabled={submitting}
             value={participant.giftCardUrl ?? ''}
           />
         </Field.Field>
       </Field.FieldGroup>
     </form>
     <Dialog.Footer>
-      {#if participant.giftCardUrl}
-        <form method="POST" action="?/giftCard" use:enhance={submitGiftCard}>
-          <input type="hidden" name="id" value={participant.id} />
-          <Button type="submit" name="clearGiftCard" value="true" variant="outline">Clear</Button>
-        </form>
-      {/if}
-      <Button type="submit" form={formId}>Save gift card</Button>
+      <Dialog.Close class={buttonVariants({ variant: 'outline' })} disabled={submitting}
+        >Cancel</Dialog.Close
+      >
+      <Button
+        type="submit"
+        form={formId}
+        disabled={submitting}
+        aria-busy={submitting}
+        aria-label={submitting ? 'Saving gift card' : undefined}
+      >
+        {#if submitting}<Spinner data-icon="inline-start" />Saving…{:else}Save gift card{/if}
+      </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

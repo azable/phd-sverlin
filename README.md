@@ -58,7 +58,7 @@ the passkey already registered in the persistent PostgreSQL volume.
 1. Sign in as the administrator and open `/admin`.
 2. Create a participant ID, select an open study version, copy its generated password, and assign its static HTTPS gift-card URL. The exact study/version and counterbalanced arm cannot be reassigned afterward.
 3. Confirm that the participant initially shows **Not started** with every configured phase unfilled. The same flow fills as the participant progresses and is marked **Completed** at the terminal phase.
-4. From a configured-study card, create either a durable full-flow preview or an isolated phase preview. Choose the arm explicitly; full-flow previews can be force-advanced without waiting for task timers, while isolated previews stop after their selected phase.
+4. From a configured-study card, create either a durable full-flow preview or an isolated phase preview. Choose the arm explicitly; full-flow previews can be advanced without waiting for task timers, while isolated previews stop after their selected phase.
 5. Open `/login` in a private/incognito window and enter the participant credentials.
 6. Continue from the welcome screen into the first timed task and confirm that its initial visualization appears.
 7. Verify that expiry locks the task and opens a blocking dialog whose Continue action advances to the counterbalanced second renderer. A task with `allowEarlyCompletion` enabled in its immutable study definition also offers a confirmed early-finish action that immediately locks it.

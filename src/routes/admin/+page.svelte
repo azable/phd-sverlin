@@ -15,8 +15,8 @@
   import * as Card from '$lib/client/components/ui/card';
   import * as Field from '$lib/client/components/ui/field';
   import { Input } from '$lib/client/components/ui/input';
-  import { Separator } from '$lib/client/components/ui/separator';
   import StudyFlowWireframe from '$lib/client/study/StudyFlowWireframe.svelte';
+  import StudyStatusBadge from '$lib/client/study/StudyStatusBadge.svelte';
 
   import type { ActionData, PageData } from './$types';
 
@@ -117,6 +117,29 @@
       ></Alert.Root
     >{/if}
 
+  <section class="flex flex-col gap-3">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h2 class="text-xl font-medium">Administrator projects and previews</h2>
+        <p class="text-sm text-muted-foreground">
+          Participant research projects are listed only in their assigned flow below.
+        </p>
+      </div>
+      <Button href={resolve('/admin/exports/analysis')} variant="outline"
+        >Download all project data</Button
+      >
+    </div>
+    <Card.Root class="shadow-sm">
+      <Card.Content>
+        <AdminProjectList
+          projects={data.allProjects}
+          emptyMessage="No administrator projects have been created."
+          showOwner
+        />
+      </Card.Content>
+    </Card.Root>
+  </section>
+
   <section class="flex flex-col gap-4">
     <div>
       <h2 class="text-xl font-medium">Configured studies</h2>
@@ -126,7 +149,7 @@
       </p>
     </div>
     {#each data.studies as study (`${study.definition.id}@${study.definition.version}`)}
-      <Card.Root>
+      <Card.Root class="shadow-sm">
         <Card.Header>
           <Card.Title class="flex flex-wrap items-center gap-2">
             {study.definition.name}
@@ -146,10 +169,10 @@
               <Badge variant="outline">{arm}: {total}</Badge>
             {/each}
           </div>
-          <StudyFlowWireframe flow={study.flow} linkProjects={false} />
+          <StudyFlowWireframe flow={study.flow} linkProjects={false} showHeader={false} />
           {#if study.previews.length}
             <div class="flex flex-col gap-2">
-              <h3 class="font-medium">Durable previews</h3>
+              <h3 class="font-medium">Previews</h3>
               <div class="flex flex-wrap gap-2">
                 {#each study.previews as preview (preview.runId)}
                   <Button href={previewHref(preview)} size="sm" variant="outline">
@@ -171,25 +194,6 @@
     {/each}
   </section>
 
-  <section class="flex flex-col gap-3">
-    <div class="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h2 class="text-xl font-medium">Administrator projects and previews</h2>
-        <p class="text-sm text-muted-foreground">
-          Participant research projects are listed only in their assigned flow below.
-        </p>
-      </div>
-      <Button href={resolve('/admin/exports/analysis')} variant="outline"
-        >Download analysis export</Button
-      >
-    </div>
-    <AdminProjectList
-      projects={data.allProjects}
-      emptyMessage="No administrator projects have been created."
-      showOwner
-    />
-  </section>
-
   <section class="flex min-w-0 flex-col gap-3">
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
@@ -201,7 +205,7 @@
       <div class="flex flex-wrap justify-end gap-2">
         <AddParticipantDialog studies={data.studies} />
         <Button href={resolve('/admin/exports/study')} variant="outline"
-          >Download all-study export</Button
+          >Download all study data</Button
         >
       </div>
     </div>
@@ -209,51 +213,49 @@
       <p class="text-muted-foreground">No participants have been provisioned.</p>
     {:else}
       {#each participants as participant (participant.id)}
-        <Card.Root>
+        <Card.Root class="shadow-sm">
           <Card.Header>
             <Card.Title class="flex flex-wrap items-center gap-2">
               <span class="font-mono">{participant.participantId}</span>
-              <Badge variant={participant.giftCardUrl ? 'default' : 'destructive'}>
-                {participant.giftCardUrl ? 'Gift card assigned' : 'No gift card'}
-              </Badge>
               <Badge variant={participant.enabled ? 'secondary' : 'outline'}>
                 {participant.enabled ? 'Enabled' : 'Disabled'}
               </Badge>
+              {#if participant.flow}
+                <StudyStatusBadge status={participant.flow.status} />
+              {/if}
+              <Badge variant={participant.giftCardUrl ? 'default' : 'destructive'}>
+                {participant.giftCardUrl ? 'Gift card assigned' : 'No gift card'}
+              </Badge>
             </Card.Title>
             <Card.Description>
-              {participant.studyId ?? 'No study assignment'}{participant.studyVersion
-                ? ` · v${participant.studyVersion}`
-                : ''}
+              {#if participant.flow}
+                {participant.flow.studyName} v{participant.flow.studyVersion} · {participant.flow
+                  .armId}
+              {:else}
+                No study assignment
+              {/if}
             </Card.Description>
           </Card.Header>
           <Card.Content class="flex flex-col gap-4">
             {#if participant.flow}
-              <StudyFlowWireframe flow={participant.flow} />
+              <StudyFlowWireframe flow={participant.flow} showHeader={false} />
             {:else}
               <Alert.Root variant="destructive"
                 ><Alert.Title>Missing study assignment</Alert.Title></Alert.Root
               >
             {/if}
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               {#if participant.enabled}<GeneratePasswordDialog {participant} />{/if}
               <Button
                 href={resolve('/admin/exports/participant/[userId]', { userId: participant.id })}
-                variant="outline">Download export</Button
+                variant="outline">Download data</Button
               >
-              <form method="POST" action="?/access" use:enhance>
-                <input type="hidden" name="id" value={participant.id} />
-                <input type="hidden" name="enabled" value={String(!participant.enabled)} />
-                <Button type="submit" variant={participant.enabled ? 'destructive' : 'secondary'}>
-                  {participant.enabled ? 'Disable' : 'Enable'}
-                </Button>
-              </form>
-              <GiftCardDialog {participant} />
+              <GiftCardDialog {participant} onSaved={refreshProgress} />
+              <div class="ml-auto flex flex-wrap gap-2">
+                <DeleteParticipantDialog {participant} />
+              </div>
             </div>
           </Card.Content>
-          <Card.Footer class="flex flex-col items-stretch gap-3">
-            <Separator />
-            <DeleteParticipantDialog {participant} />
-          </Card.Footer>
         </Card.Root>
       {/each}
     {/if}
