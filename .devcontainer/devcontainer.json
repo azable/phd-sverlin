@@ -10,6 +10,7 @@
   "containerEnv": {
     "STACK_ROOT": "/opt/sverlin-stack-seed",
     "XDG_CACHE_HOME": "${containerWorkspaceFolder}/.cache",
+    "XDG_DATA_HOME": "${containerWorkspaceFolder}/.local/share",
     "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state",
     "SVERLIN_SCRATCH_DIR": "/tmp/sverlin"
   },
