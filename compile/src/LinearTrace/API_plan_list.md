@@ -405,18 +405,21 @@ All solver-backed numeric values must have finite bounds by compile time.
 ### Styles and colour
 
 ```haskell
-data StyleChoice value
-  = FixedStyle value
-  | VariableStyle (Choice value)
-
 data NodeStyle                    -- abstract accumulated style
 
-style        :: ...
+style        :: forall field input. ... => input -> Render ()
 withoutStyle :: ...
 styleCase    :: ...
 styleFamily  :: String -> Render ()
 styleOf      :: ...
 ```
+
+`style @Field input` accepts a fixed field value, its matching solver `Choice`, or
+the field's symbolic numeric or colour expression. A choice assignment is always
+present and remains readable through `styleOf`. Unsupported field/input pairs are
+type errors. `styleCase` maps a choice to different values or to conditional
+absence. The input-conversion class and fixed-or-variable sum remain internal;
+there is no public wrapper or separate choice setter.
 
 | Cluster        | Public API                                                                                                                                                                                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -488,6 +491,9 @@ optimization is still open.
   `applyLinear2Into`.
 - Solver choice-domain metadata: `ChoiceDomain`, `choiceDomain`, and
   `choiceToken`. Built-in choice domains and tokens are compiler-owned.
+- Categorical style adapters and setters: `StyleChoice`, `FixedStyle`,
+  `VariableStyle`, `styleFrom`, and `styleChoice`. The overloaded `style` accepts
+  both fixed and solver-selected field values.
 
 ## Still preventing a fully final facade
 

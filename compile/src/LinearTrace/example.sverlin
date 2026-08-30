@@ -476,7 +476,7 @@ line codeFont codeSize textRecipe =
   node $ do
     width (by 500)
     height (by 28)
-    style @FontFamily (VariableStyle codeFont)
+    style @FontFamily codeFont
     style @FontSize codeSize
     fitText textRecipe
 

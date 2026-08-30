@@ -716,31 +716,31 @@ render = do
 
   Selected explanationLine <- node $ do
     fitText (text "Compare each element with the target; return its index when they match.")
-    style @FontFamily (VariableStyle explanationFont)
+    style @FontFamily explanationFont
 
   Selected loopLine <- node $ do
     fitText (literal "for (int i = 0; i < n; ++i) {")
-    style @FontFamily (VariableStyle codeFont)
+    style @FontFamily codeFont
     style @FontSize codeSize
 
   Selected comparisonLine <- node $ do
     fitText comparisonText
-    style @FontFamily (VariableStyle codeFont)
+    style @FontFamily codeFont
     style @FontSize codeSize
 
   Selected returnLine <- node $ do
     fitText (literal "return i;")
-    style @FontFamily (VariableStyle codeFont)
+    style @FontFamily codeFont
     style @FontSize codeSize
 
   Selected innerCloseLine <- node $ do
     fitText (literal "}")
-    style @FontFamily (VariableStyle codeFont)
+    style @FontFamily codeFont
     style @FontSize codeSize
 
   Selected outerCloseLine <- node $ do
     fitText (literal "}")
-    style @FontFamily (VariableStyle codeFont)
+    style @FontFamily codeFont
     style @FontSize codeSize
 
   ensure $ codeSize .>=. by 14
@@ -1242,7 +1242,7 @@ ensure (left second .==. right first + fixedGap)
 ensure (width current .==. by 80 * sharedScale)
 ensure (sharedScale .>=. num 0.8)
 ensure (sharedScale .<=. num 1.2)
-node current $ style @FontStyle (VariableStyle slant)
+node current $ style @FontStyle slant
 ```
 
 #### Layout, geometry, and box model
@@ -1631,36 +1631,38 @@ aspectRatio 16 9
 #### Style authoring and colour
 
 Styles use a type application to identify the field and a field-specific input
-type. Numeric and colour fields accept their symbolic values directly;
-categorical fields accept `StyleChoice`. The snippets below are independent
-`Render` fragments rather than declarations intended to be concatenated.
+type. The snippets below are independent `Render` fragments rather than
+declarations intended to be concatenated.
 
-##### `StyleChoice`
+##### `style`
 
-Retain the fixed-or-variable wrapper for categorical style fields:
-
-```haskell
-data StyleChoice value
-  = FixedStyle value
-  | VariableStyle (Choice value)
-```
-
-Use `FixedStyle` for an authored category and `VariableStyle` for a finite
-solver choice. Do not wrap numeric or colour fields in `StyleChoice`.
+`style @Field input` accepts a fixed field value, its matching solver `Choice`,
+or the field's symbolic numeric or colour expression:
 
 ```haskell
-node title $ style @FontStyle (FixedStyle FontStyleItalic)
+style :: forall field input. ... => input -> Render ()
+
+node title $ style @FontStyle FontStyleItalic
 
 Variable selectedStyle <- choice @FontStyle
-node explanation $ style @FontStyle (VariableStyle selectedStyle)
+node explanation $ style @FontStyle selectedStyle
 ```
+
+The compiler provides the supported field/input pairs; authors do not define the
+conversion class. Passing `Choice FontStyle` to `style @FontFamily`, for example,
+is a type error. A direct choice assignment makes the field always present, so
+`styleOf` can read and constrain it. `styleCase` remains distinct: it maps a choice
+to other field values and may omit the field in some branches. Keep the necessary
+fixed-or-variable sum inside the style compiler; remove the public `StyleChoice`,
+`FixedStyle`, `VariableStyle`, `styleFrom`, and `styleChoice` adapters.
 
 ##### `NodeStyle`
 
 `NodeStyle` remains the opaque accumulated style plan for a node. Authors do
 not construct it directly. Cluster its public operations as follows:
 
-- `style @Field value` requires or overrides one field.
+- `style @Field input` requires or overrides one field with a fixed value, matching
+  categorical choice, or supported symbolic expression.
 - `withoutStyle @Field` explicitly suppresses an inherited or automatically
   generated field.
 - `styleCase @Field choice mapping` conditionally supplies a field for each
@@ -1675,7 +1677,7 @@ not construct it directly. Cluster its public operations as follows:
 Variable slant <- choice @FontStyle
 node label $ do
   styleFamily "explanation"
-  style @FontStyle (VariableStyle slant)
+  style @FontStyle slant
   styleCase @Opacity slant $ \case
     FontStyleNormal  -> Just (num 1)
     FontStyleItalic  -> Just (num 0.90)
@@ -1742,7 +1744,7 @@ width when `BorderStyle` is not `BorderNone`.
 Variable borderWidth <- variable @Span
 node card $ do
   style @StrokeWidth borderWidth
-  style @BorderStyle (FixedStyle BorderSolid)
+  style @BorderStyle BorderSolid
 ensure $ borderWidth .>=. by 1
 ensure $ borderWidth .<=. by 4
 ```
@@ -1812,7 +1814,7 @@ ensure $ fillLightness .<=. num 0.65
 ```haskell
 node card $ do
   style @Stroke (Hsl (num 220) (num 0.55) (num 0.3))
-  style @BorderStyle (FixedStyle BorderSolid)
+  style @BorderStyle BorderSolid
 
 ensure $ sat (styleOf @Stroke card) .>=. num 0.4
 ```
@@ -1820,12 +1822,11 @@ ensure $ sat (styleOf @Stroke card) .>=. num 0.4
 ##### `BorderStyle`
 
 `BorderStyle` is categorical, with `BorderNone`, `BorderSolid`,
-`BorderDashed`, `BorderDotted`, and `BorderDouble`. A fixed or solver-selected
-value is wrapped in `StyleChoice`.
+`BorderDashed`, `BorderDotted`, and `BorderDouble`.
 
 ```haskell
 Variable borderStyle <- choice @BorderStyle
-node card $ style @BorderStyle (VariableStyle borderStyle)
+node card $ style @BorderStyle borderStyle
 ensure $ styleOf @BorderStyle card .==. borderStyle
 ```
 
@@ -1879,14 +1880,14 @@ independent authored decisions.
 Retain the current fixed values `FontInter`, `FontSystem`, `FontMono`,
 `FontSerif`, `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`,
 `FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`,
-`FontJetBrainsMonoNL`, and `FontIBMPlexMono`. A fixed family uses `FixedStyle`;
-a sampled family normally comes from `fontChoice` and uses `VariableStyle`.
+`FontJetBrainsMonoNL`, and `FontIBMPlexMono`. A sampled family normally comes
+from `fontChoice` and is passed directly to `style`.
 
 ```haskell
-node title $ style @FontFamily (FixedStyle FontLiterata)
+node title $ style @FontFamily FontLiterata
 
 Variable codeFont <- fontChoice (fontKind Monospace)
-node codeLine $ style @FontFamily (VariableStyle codeFont)
+node codeLine $ style @FontFamily codeFont
 ensure $ styleOf @FontFamily codeLine .==. codeFont
 ```
 
@@ -1902,7 +1903,7 @@ against the supported font face.
 
 ```haskell
 Variable weight <- choice @FontWeight
-node label $ style @FontWeight (VariableStyle weight)
+node label $ style @FontWeight weight
 ensure $ styleOf @FontWeight label .==. weight
 ```
 
@@ -1918,7 +1919,7 @@ It accepts either a fixed value or a finite choice.
 
 ```haskell
 Variable slant <- choice @FontStyle
-node explanation $ style @FontStyle (VariableStyle slant)
+node explanation $ style @FontStyle slant
 ensure $ styleOf @FontStyle explanation .==. slant
 ```
 
@@ -1933,7 +1934,7 @@ and right supply an affine offset after the line has been shaped.
 
 ```haskell
 Variable alignment <- choice @TextAlign
-node label $ style @TextAlign (VariableStyle alignment)
+node label $ style @TextAlign alignment
 ensure $ styleOf @TextAlign label .==. alignment
 ```
 
