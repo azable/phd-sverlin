@@ -664,22 +664,13 @@ render = do
   ensure $ elementSpacing .>=. by 88
   ensure $ elementSpacing .<=. by 112
 
-  let orderedElementCells = nodesOf orderedElements
-  node orderedElementCells $ do
-    let position = positionOf orderedElements orderedElementCells
+  node elementCells $ do
+    position <- positionOf orderedElements
     width (by 80)
     height (by 72)
     styleFamily "element-cell"
-    ensure $ x orderedElementCells .==. at 600 + elementSpacing * asScalar position
-    ensure $ y orderedElementCells .==. at 246
-
-    Selected positionLabel <- node $ do
-      fitText (intText position)
-      width (by 48)
-      height (by 24)
-      styleFamily "array-index"
-    ensure $ x positionLabel .==. x orderedElementCells
-    ensure $ top positionLabel .==. bottom orderedElementCells + shift 8
+    ensure $ x elementCells .==. at 600 + elementSpacing * asScalar position
+    ensure $ y elementCells .==. at 246
 
   -- The planned Slot projection keeps each current Number occupant at its
   -- ElementCell owner's stable bounds. The exact public projection helper, or

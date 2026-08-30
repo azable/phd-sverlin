@@ -35,7 +35,9 @@ render = do
   node values $ fitText (text "value")
 
   Selected adjacentLinks <- select adjacent
-  relation adjacentLinks $ \previous next ->
+  relation adjacentLinks $ do
+    previous <- first adjacentLinks
+    next <- second adjacentLinks
     ensure $ left next .==. right previous + shift 12
 ```
 
@@ -235,29 +237,23 @@ positioned, shaped line.
 data Relations source target
 data Graph node
 data Sequence node
-data Tree node
-data Dag node
+data Levels node
 data FixedInt
 
-relation :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
+relation :: Relations source target -> Render () -> Render ()
+first :: Relations source target -> Render (Selected source)
+second :: Relations source target -> Render (Selected target)
 asGraph :: Relations node node -> Selected node -> Render (Graph node)
 
 asSequence :: Relations node node -> Selected node -> Render (Sequence node)
-positionOf      :: Sequence node -> Selected node -> FixedInt
+positionOf :: Sequence node -> Render FixedInt
 
-asTree        :: Relations node node -> Selected node -> Render (Tree node)
-rootOf        :: Tree node -> Selected node
-depthOf       :: Tree node -> Selected node -> FixedInt
-childCountOf  :: Tree node -> Selected node -> FixedInt
-subtreeSizeOf :: Tree node -> Selected node -> FixedInt
+asTree :: Relations node node -> Selected node -> Render (Levels node)
 
-asDag      :: Relations node node -> Selected node -> Render (Dag node)
-rootsOf    :: Dag node -> Selected node
-leavesOf   :: Dag node -> Selected node
-levelOf    :: Dag node -> Selected node -> FixedInt
+asDag   :: Relations node node -> Selected node -> Render (Levels node)
+levelOf :: Levels node -> Render FixedInt
 
 asScalar :: FixedInt -> Scalar
-intText  :: FixedInt -> ContentValue
 ```
 
 `Relations` is the reusable result of `Selected links <- select relationKind`.
@@ -267,21 +263,29 @@ connector, anchor, and arrow vocabulary remains open.
 
 `node selectedBlocks` and `relation selectedRelations` are the corresponding
 Render mappings. `relation` creates one spatial scope per selected relation and
-supplies its endpoints; a connector inside that scope is optional.
+`first selectedRelations` and `second selectedRelations` retrieve that scope's
+statically typed endpoint nodes. The compiler rejects either lookup outside the
+matching relation scope, or when passed a different relation selection. For an
+ordered kind, `first` is its source and `second` its target. For a symmetric
+kind, the order is stable for reproducible output but carries no meaning. A
+connector inside the scope is optional.
 
 `asGraph`, `asSequence`, `asTree`, and `asDag` take the same selected relations
 and nodes. Every supplied relation must have both endpoints in the supplied node
 selection; none is silently filtered. The latter three operations also reject
 structures that do not have the requested shape. Authors keep using the same
 node selection with `node` and relation selection with `relation`; the checked
-views expose only their purpose-specific structural values. Here, `as` means
-"validate and expose as this view," not an unchecked cast. There are no
-generic projections of the complete input selections, aggregate graph counts,
-separate `forEach*` traversal helpers, or all-pairs API. Purpose-specific
-operations such as `rootsOf` may still derive meaningful subsets. If one
-relation kind later spans several independent structures, an explicit
-endpoint-based relation-selection operation must scope it before validation;
-the checked view will not perform that filtering.
+views expose only their purpose-specific structural values. The context-local
+`positionOf sequence` and `levelOf levels` operations read the current matched
+node inside `node`; the compiler rejects either operation outside its matching
+node scope. Both `asTree` and `asDag` return `Levels`, with root distance for a
+tree and longest-path level for a DAG. Here, `as` means "validate and expose as
+this view," not an unchecked cast. There are no generic projections of the
+complete input selections, aggregate graph counts, separate `forEach*`
+traversal helpers, or all-pairs API. If one relation kind later spans several
+independent structures, an explicit endpoint-based relation-selection
+operation must scope it before validation; the checked view will not perform
+that filtering.
 
 ### Reusable values and finite choices
 
