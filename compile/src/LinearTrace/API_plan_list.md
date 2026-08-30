@@ -19,7 +19,8 @@ render :: Render ()
 ```
 
 The shared flow is: Domain declares a typed `Kind`; Program attaches it to a
-materialized block; Render selects that kind.
+materialized block; Render selects that kind. A declared `RelationKind` uses the
+same `select` entry point for the relations active at each checkpoint.
 
 ```haskell
 program = do
@@ -32,6 +33,10 @@ program = do
 render = do
   Selected values <- select valueKind
   node values $ fitText (text "value")
+
+  Selected adjacentLinks <- select adjacent
+  relation adjacentLinks $ \previous next ->
+    ensure $ left next .==. right previous + shift 12
 ```
 
 ## Domain
@@ -181,18 +186,28 @@ data MatchSpec                    -- abstract compiled rules
 data Selected tag                 -- abstract selected node or node set
 data Variable a    = Variable a
 data Bound a       = Bound a
-data NodeBinding a = Selected a
+data SelectionBinding a = Selected a
 data GeneratedNode
 data CanvasNode
 
-select    :: Kind tag -> Render (NodeBinding (Selected tag))
-visualize :: Render () -> MatchSpec
+class Selectable selector result | selector -> result where
+  select :: selector -> Render (SelectionBinding result)
+
+instance Selectable (Kind tag) (Selected tag)
+instance Selectable (RelationKind source target) (Relations source target)
+
+visualize :: Render () -> MatchSpec  -- TODO is this public?
 
 class Node input result
 node   :: Node input result => input -> result
-self   :: Render (NodeBinding (Selected GeneratedNode))
+self   :: Render (SelectionBinding (Selected GeneratedNode))
 canvas :: Selected CanvasNode
 ```
+
+The two `Selectable` instances are library-provided: `select valueKind` binds
+live blocks, while `select Adjacent` binds active relations at the current
+checkpoint. Selecting relations does not draw them or make them acceptable to
+`node`.
 
 ### Text
 
@@ -225,10 +240,9 @@ data Dag node
 data SiblingOrder node
 data FixedInt
 
-relationsOf :: RelationKind source target -> Render (Relations source target)
-forEachRelation :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
+relation :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
 forEachSourceGroup :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
-graphOf :: Selected node -> Relations node node -> Render (Graph node)
+asGraph :: Relations node node -> Selected node -> Render (Graph node)
 
 class GraphView graph node | graph -> node where
   forEachNode     :: graph -> (Selected node -> Render ()) -> Render ()
@@ -237,20 +251,20 @@ class GraphView graph node | graph -> node where
   nodeCount       :: graph -> FixedInt
   edgeCount       :: graph -> FixedInt
 
-requireSequence :: Graph node -> Render (Sequence node)
+asSequence :: Relations node node -> Selected node -> Render (Sequence node)
 positionOf      :: Sequence node -> Selected node -> FixedInt
 
-requireTree   :: Graph node -> Render (Tree node)
+asTree        :: Relations node node -> Selected node -> Render (Tree node)
 rootOf        :: Tree node -> Selected node
 depthOf       :: Tree node -> Selected node -> FixedInt
 childCountOf  :: Tree node -> Selected node -> FixedInt
 subtreeSizeOf :: Tree node -> Selected node -> FixedInt
 
-orderChildrenBy    :: RelationKind node node -> Tree node -> Render (SiblingOrder node)
+asSiblingOrder     :: Relations node node -> Tree node -> Render (SiblingOrder node)
 forEachSiblingPair :: SiblingOrder node -> (Selected node -> Selected node -> Render ()) -> Render ()
 siblingPositionOf  :: SiblingOrder node -> Selected node -> FixedInt
 
-requireDag :: Graph node -> Render (Dag node)
+asDag      :: Relations node node -> Selected node -> Render (Dag node)
 rootsOf    :: Dag node -> Selected node
 leavesOf   :: Dag node -> Selected node
 levelOf    :: Dag node -> Selected node -> FixedInt
@@ -258,6 +272,22 @@ levelOf    :: Dag node -> Selected node -> FixedInt
 asScalar :: FixedInt -> Scalar
 intText  :: FixedInt -> ContentValue
 ```
+
+`Relations` is the reusable result of `Selected links <- select relationKind`.
+Its endpoints always support ordinary spatial constraints. A relation is drawn
+only when an optional connector is declared inside its spatial scope. The exact
+connector, anchor, and arrow vocabulary remains open.
+
+`node selectedBlocks` and `relation selectedRelations` are the corresponding
+Render mappings. `relation` creates one spatial scope per selected relation and
+supplies its endpoints; a connector inside that scope is optional.
+
+`asGraph`, `asSequence`, `asTree`, and `asDag` take the same selected relations
+and nodes. Each applies the endpoint-scope checks; the latter three also reject
+structures that do not have the requested shape. Here, `as` means "validate
+and expose as this view," not an unchecked cast.
+`asSiblingOrder` applies the same convention to each parent’s selected
+children in an existing `Tree`.
 
 ### Reusable values and finite choices
 
@@ -365,7 +395,9 @@ optimization is still open.
 - Free facts and queries: `FactValue`, `Fact`, `Facts`, all `fact*` and
   `query*` operations, `Query`, `QueryInt`, `QueryField`, `(@:)`, query
   `(<&>)`, query `fromLabel`, and `bindInt`.
-- Query-era selection: `AnyPayload`, `PayloadQuery`, `Select`, and `payload`.
+- Query-era selection and binding: `AnyPayload`, `PayloadQuery`, the old
+  query-based `Select` class, `payload`, and `NodeBinding` (replaced by
+  `SelectionBinding`).
 - Legacy payload metadata: `PayloadView` and `payloadKind`.
 - Specialized or wrapped code text: `codeContent`, `codeWrap`,
   `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode`.

@@ -98,7 +98,7 @@ wrapper that Core can preserve safely. A `Kind Number` classifies such blocks
 without changing their payload representation.
 
 This differs from `RelationKind`, which is a first-class Domain declaration
-such as `Adjacent` that authors pass to `relate` and `relationsOf`. The semantic
+such as `Adjacent` that authors pass to `relate` and `select`. The semantic
 parallel is between `Kind` and `RelationKind`; `Payload` describes stored data.
 Do not rename it to `PayloadKind`, which would imply another classification
 label. If the associated type later needs a more explicit name, `PayloadOf tag`
@@ -247,7 +247,8 @@ active relation. `relate` creates it and `unrelate` consumes it, so removal
 identifies the exact active relation. Authors cannot inspect or construct it.
 This naming follows the existing `Block` and `Slot` convention: Domain uses
 `RelationKind` for the semantic declaration, Program uses `Relation` for one
-active lifecycle value, and Render uses `Relations` for a read-only collection.
+active lifecycle value, and Render uses `Relations` for a selected read-only
+collection.
 
 #### Lifecycle operations
 
@@ -555,21 +556,42 @@ Render terminology.
 #### Rules, selection, and hierarchy
 
 The visualization interface declares reusable rules independently of program
-execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `NodeBinding`,
-`GeneratedNode`, `CanvasNode`, `select`, `visualize`, `Node`, `node`, `self`,
-and `canvas`. Replace the query-based `Select`, `AnyPayload`, and
-`PayloadQuery` surface with typed kind selection:
+execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `GeneratedNode`,
+`CanvasNode`, `select`, `visualize`, `Node`, `node`, `self`, and `canvas`.
+Generalize the node-specific `NodeBinding` wrapper to `SelectionBinding`, then
+replace the query-based `Select`, `AnyPayload`, and `PayloadQuery` surface with
+typed block-kind and relation-kind selection:
 
 ```haskell
-select :: Kind tag -> Render (NodeBinding (Selected tag))
+data SelectionBinding a = Selected a
+
+class Selectable selector result | selector -> result where
+  select :: selector -> Render (SelectionBinding result)
+
+instance Selectable (Kind tag) (Selected tag)
+instance Selectable (RelationKind source target) (Relations source target)
 ```
 
-The `Kind` determines the selected payload type, so `select` no longer needs a
-type application such as `select @Number`. It selects every live block at the
-checkpoint with that one declared kind. Compound classification, selection
-across unrelated payload types, and exact payload-value predicates are outside
-this baseline; declare separate typed rules, or add a typed selector or
-predicate API later when a concrete use case requires one.
+`Selectable` has only these library-provided cases in the target interface;
+authors declare `Kind` and `RelationKind` values rather than selection
+instances. A `Kind` determines the selected payload type, so block selection no
+longer needs a type application such as `select @Number`. It selects every live
+block at the checkpoint with that one declared kind. A `RelationKind` selects
+every active relation of that kind at the same checkpoint; the resulting
+`Relations` value is documented below. Both uses have the same author-facing
+binding form:
+
+```haskell
+Selected values <- select valueKind
+Selected adjacentLinks <- select Adjacent
+```
+
+`SelectionBinding` only supports the unrestricted `Selected` pattern used to
+name a selection. Selecting a relation does not make it a visual node, and
+`node` continues to accept only node selections. Compound classification,
+selection across unrelated payload types, and exact payload-value predicates
+are outside this baseline; declare separate typed rules, or add a typed selector
+or predicate API later when a concrete use case requires one.
 
 Retain the general content interfaces `ContentValue`, `text`, `content`, and
 `fitText`, and add the graph-derived `intText` documented below. Redefine
@@ -756,11 +778,7 @@ data Dag node
 data SiblingOrder node
 data FixedInt
 
-relationsOf
-  :: RelationKind source target
-  -> Render (Relations source target)
-
-forEachRelation
+relation
   :: Relations source target
   -> (Selected source -> Selected target -> Render ())
   -> Render ()
@@ -770,26 +788,37 @@ forEachSourceGroup
   -> (Selected source -> Selected target -> Render ())
   -> Render ()
 
-graphOf
-  :: Selected node
-  -> Relations node node
+asGraph
+  :: Relations node node
+  -> Selected node
   -> Render (Graph node)
 ```
 
-`relationsOf kind` selects active relations of one declared kind.
-`forEachRelation` runs its rule once per relation and supplies the two stable
-owner nodes. For a kind with ordered endpoints they are source then target. For
-a symmetric kind, the callback receives a stable endpoint order only so output
-and generated choice IDs are repeatable; its rule must be symmetric or make any
-visual orientation an explicit Render choice.
+`Selected links <- select kind` selects the relations of one declared kind that
+are active at the current checkpoint. `Relations` is the resulting reusable
+selection, parallel to the `Selected` node set returned when `select` receives a
+block `Kind`. It contains the stable identity and endpoints of every matched
+relation; authors cannot construct it or mutate its membership.
+
+`relation selectedRelations body` is the relation counterpart of
+`node selectedBlocks body`: it creates one spatial Render scope for every
+selected relation and supplies its two stable owner nodes to `body`. The exact
+relation identity remains in the compiler's match context even though the body
+only needs the endpoints. A variable, choice, or future connector created
+inside it therefore belongs to that exact relation lifetime, including when the
+same kind is later removed and recreated between the same endpoints. For a kind
+with ordered endpoints the arguments are source then target. For a symmetric
+kind, the body receives a stable endpoint order only so output and generated
+choice IDs are repeatable; its rule must be symmetric or make any visual
+orientation an explicit Render choice.
 
 `forEachSourceGroup` runs once per distinct source and supplies one selection
 containing all of that source's distinct targets. It is the grouping operation
 needed for ordered relations such as
 `Contains :: RelationKind Array Cell`; it does not invent an order among the
 targets. Applying it to a symmetric relation is a source-level error because
-choosing either endpoint as the group owner would invent meaning. `graphOf
-nodes relations` includes every selected node, including nodes with no edge,
+choosing either endpoint as the group owner would invent meaning. `asGraph
+relations nodes` includes every selected node, including nodes with no edge,
 and every active relation for which both endpoints are in `nodes`. Relations
 with neither endpoint selected are outside the graph. A relation with exactly
 one selected endpoint is instead a scope error; rejecting it catches an
@@ -797,16 +826,49 @@ accidental adjacency between two arrays rather than silently dropping the
 edge. A source with no target does not produce a source group; render an empty
 collection through its ordinary node selection.
 
-A relation may connect different endpoint types without an integer join. For
-example, `ProbeAt` can directly constrain a probe against its target cell:
+`asGraph`, `asSequence`, `asTree`, and `asDag` consistently take selected
+relations first and selected nodes second. Each applies these endpoint-scope
+checks; the latter three additionally validate the requested structure. In this
+family, `as` means "validate and expose as this view," not an unchecked cast.
+
+A selected relation is always available as a spatial relation: its endpoint
+nodes can participate in ordinary affine constraints even when no line or arrow
+is drawn. A relation may connect different endpoint types without an integer
+join. For example, `ProbeAt` can directly constrain a probe against its target
+cell:
 
 ```haskell
-probeLinks <- relationsOf ProbeAt
+Selected probeLinks <- select ProbeAt
 
-forEachRelation probeLinks $ \probe cell -> do
+relation probeLinks $ \probe cell -> do
   ensure $ x probe .==. x cell
   ensure $ bottom probe .<=. top cell - by 12
 ```
+
+Visual projection is optional. `relation` establishes the spatial scope but
+does not automatically draw a line. The intended connector interface will
+optionally create visual geometry inside that scope and resolve its anchors
+from the two endpoint nodes. For example, the eventual vocabulary should
+support the following shape; `connector`, `from`, `to`, and `markerEnd` remain
+illustrative rather than settled exports:
+
+```haskell
+Selected branches <- select ParentOf
+
+relation branches $ \parent child -> do
+  ensure $ top child .>=. bottom parent + shift 72
+  connector $ do
+    from (bottom parent)
+    to (top child)
+    markerEnd Arrow
+```
+
+Selecting `ParentOf` does not itself draw anything. Another Render rule may use
+the same relations only for layout, draw an unmarked line, or choose a different
+visual direction. In particular, ordered semantic endpoints do not silently
+choose an arrow direction, and a symmetric relation has no semantic direction
+at all. A generated connector must inherit the exact selected relation identity
+so forward and reverse playback follow its `relate` and `unrelate` events.
 
 ##### `GraphView`, nodes, and edges
 
@@ -825,17 +887,22 @@ class GraphView graph node | graph -> node where
 `forEachNode` expands a rule once for each node in the current graph;
 `forEachEdge` does the same for its edges. A graph made from an ordered relation
 supplies source then target. A graph made from a symmetric relation supplies a
-stable pair whose order has no semantic meaning.
+stable pair whose order has no semantic meaning. Each `forEachEdge` expansion
+also retains the exact selected relation identity in its match context, so a
+future visual connector can follow that edge's lifecycle rather than merely
+matching its endpoint coordinates.
 `forEachNodePair` runs once for each unordered pair of distinct nodes, whether
 or not an edge joins them. Its endpoint order is stable but has no semantic
 meaning. `nodeCount` and `edgeCount` are calculated from the checkpoint rather
 than sampled by the numeric solver.
 
 A variable, `oneOf` choice, or generated node declared inside one of these
-callbacks is local to that matched node, edge, pair, or source group. Declare it
-outside the callback to share it across all matches. The compiler includes the
-stable endpoint identities in generated choice IDs, so equal descriptive
-labels do not merge choices belonging to different matches.
+callbacks is local to that matched node, relation edge, pair, or source group.
+Declare it outside the callback to share it across all matches. For relation
+callbacks the compiler includes the exact relation identity, not merely its
+endpoint identities, in generated choice and visual IDs. Equal descriptive
+labels therefore do not merge choices belonging to different matches, and a
+removed then recreated relation receives a distinct visual lifetime.
 
 `FixedInt` is an exact integer calculated from the current relation graph before
 numeric solving. It may differ at another checkpoint, but it is fixed while the
@@ -853,29 +920,36 @@ linked lists whose nodes use a relation with ordered endpoints such as
 `Adjacent` or `Next`.
 
 ```haskell
-requireSequence :: Graph node -> Render (Sequence node)
+asSequence
+  :: Relations node node
+  -> Selected node
+  -> Render (Sequence node)
+
 positionOf :: Sequence node -> Selected node -> FixedInt
 ```
 
-`requireSequence` accepts an empty graph, a single node with no edges, or one
-non-empty chain. A non-empty chain must have one start, one end, no cycle or
-fork, and every graph node must belong to it. `positionOf` returns the
-zero-based position `0, 1, 2, ...`; `nodeCount` gives the total number of items.
-The relation must have ordered endpoints; otherwise there is no defined first
-item or next item. Failure reports the relation kind and offending endpoints
-before numeric sampling begins.
+`asSequence relations nodes` first applies the same scoping rules as
+`asGraph relations nodes`, then accepts an empty graph, a single node with no
+edges, or one non-empty chain. A non-empty chain must have one start, one end,
+no cycle or fork, and every selected node must belong to it. `positionOf`
+returns the zero-based position `0, 1, 2, ...`; `nodeCount` gives the total
+number of items. The selected relation kind must have ordered endpoints;
+otherwise there is no defined first item or next item. Failure reports the
+relation kind and offending endpoints before numeric sampling begins. Taking
+the selected relations and nodes directly avoids exposing a temporary `Graph`
+that authors would use only for this check; use `asGraph` when the raw graph is
+itself wanted.
 
 The following example assumes `Contains` relates each array to its cells and
 `Adjacent` points from each cell to the next. Each array is checked and laid out
 independently. A sampled centre-to-centre spacing is shared by all its cells:
 
 ```haskell
-memberLinks <- relationsOf Contains
-adjacentLinks <- relationsOf Adjacent
+Selected memberLinks <- select Contains
+Selected adjacentLinks <- select Adjacent
 
 forEachSourceGroup memberLinks $ \array cells -> do
-  cellGraph <- graphOf cells adjacentLinks
-  orderedCells <- requireSequence cellGraph
+  orderedCells <- asSequence adjacentLinks cells
 
   Variable spacing <- variable @Span
   ensure $ spacing .>=. by 64
@@ -921,7 +995,11 @@ exactly one root. Every other node must have one parent, every node must be
 reachable from the root, and cycles are rejected.
 
 ```haskell
-requireTree :: Graph node -> Render (Tree node)
+asTree
+  :: Relations node node
+  -> Selected node
+  -> Render (Tree node)
+
 rootOf :: Tree node -> Selected node
 depthOf :: Tree node -> Selected node -> FixedInt
 childCountOf :: Tree node -> Selected node -> FixedInt
@@ -934,9 +1012,8 @@ These values are fixed graph data and can contribute constant coefficients to
 affine layout constraints:
 
 ```haskell
-parentLinks <- relationsOf ParentOf
-treeGraph <- graphOf treeNodes parentLinks
-tree <- requireTree treeGraph
+Selected parentLinks <- select ParentOf
+tree <- asTree parentLinks treeNodes
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
@@ -951,7 +1028,7 @@ When that order matters, use another relation with ordered endpoints, such as
 `Adjacent`:
 
 ```haskell
-orderChildrenBy :: RelationKind node node -> Tree node -> Render (SiblingOrder node)
+asSiblingOrder :: Relations node node -> Tree node -> Render (SiblingOrder node)
 
 forEachSiblingPair
   :: SiblingOrder node
@@ -961,14 +1038,15 @@ forEachSiblingPair
 siblingPositionOf :: SiblingOrder node -> Selected node -> FixedInt
 ```
 
-`orderChildrenBy` checks separately for every parent that its children form one
+`asSiblingOrder` checks separately for every parent that its children form one
 sequence. Zero or one child needs no adjacency edge. An adjacency edge between
 children of different parents is an error. The supplied relation must have
 ordered endpoints; a symmetric relation cannot distinguish previous from next.
 Render does not invent a sibling order when this helper is omitted.
 
 ```haskell
-siblingOrder <- orderChildrenBy Adjacent tree
+Selected siblingLinks <- select Adjacent
+siblingOrder <- asSiblingOrder siblingLinks tree
 Variable siblingGap <- variable @Span
 ensure $ siblingGap .>=. by 16
 ensure $ siblingGap .<=. by 48
@@ -986,7 +1064,11 @@ leaves, and disconnected parts. Unlike a sequence, it does not have one correct
 position for every node because unrelated nodes can appear in either order.
 
 ```haskell
-requireDag :: Graph node -> Render (Dag node)
+asDag
+  :: Relations node node
+  -> Selected node
+  -> Render (Dag node)
+
 rootsOf :: Dag node -> Selected node
 leavesOf :: Dag node -> Selected node
 levelOf :: Dag node -> Selected node -> FixedInt
@@ -998,9 +1080,8 @@ level of its immediate predecessors. This is the length of the longest path
 from any root, not an arbitrary total ordering.
 
 ```haskell
-dependencyLinks <- relationsOf DependsOn
-taskGraph <- graphOf tasks dependencyLinks
-dag <- requireDag taskGraph
+Selected dependencyLinks <- select DependsOn
+dag <- asDag dependencyLinks tasks
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
@@ -1028,8 +1109,8 @@ Do not encode weight by creating duplicate edges; duplicate same-kind endpoint
 pairs are rejected.
 
 ```haskell
-connectionLinks <- relationsOf ConnectedTo
-network <- graphOf vertices connectionLinks
+Selected connectionLinks <- select ConnectedTo
+network <- asGraph connectionLinks vertices
 
 forEachNode network $ \vertex -> do
   ensure $ left vertex .>=. left canvas + shift 24
@@ -1905,8 +1986,8 @@ Authored body source may import only `Sverlin`.
 - Program rejects a second active relation of the same kind between the same
   endpoint pair. For a symmetric kind, the reversed pair is the same pair; for
   an ordered kind, the reversed pair is distinct.
-- `forEachSourceGroup`, `requireSequence`, `requireTree`, `requireDag`, and
-  `orderChildrenBy` reject symmetric relations before numeric solving.
+- `forEachSourceGroup`, `asSequence`, `asTree`, `asDag`, and
+  `asSiblingOrder` reject symmetric relations before numeric solving.
 - Relation structure may determine membership, adjacency, sequence position,
   tree depth, or DAG level. It must not be used to invent numeric properties
   such as a sparse key, address, stored value, or edge weight.
@@ -1924,11 +2005,12 @@ the same `relationId`. Render rules may choose how a declared relation kind is
 drawn, but they must not infer semantic relations from block lineage, solver
 variable names, or proximity.
 
-At each exposed checkpoint, the authored `Relations` projection resolves those
-stable endpoints into a scoped `Graph`. `requireSequence`, `requireTree`, and
-`requireDag` validate that graph and calculate their fixed structural values
-before layout constraints are lowered. The raw `Graph` remains available when
-no stronger shape is intended.
+At each exposed checkpoint, `select relationKind` projects the matching active
+relations and their stable endpoints into `Relations`. `asGraph` scopes that
+selection into a raw `Graph`; `asSequence`, `asTree`, and `asDag` perform the
+same scoping internally, validate the stronger shape, and calculate their fixed
+structural values before layout constraints are lowered. The raw `Graph`
+remains available when no stronger shape is intended.
 
 ## Compiler and runtime boundary
 
@@ -1944,23 +2026,27 @@ through `bindContent`, not captured by a query.
 Remove `FactValue`, `Fact`, `Facts`, `emptyFacts`, `factAtom`, `factSymbol`,
 `factInt`, `factsUnion`, `factsToList`, `Query`, `QueryInt`, `QueryField`,
 `emptyQuery`, `queryAtom`, `queryInt`, `queryFacts`, `payload`, `PayloadQuery`,
-`AnyPayload`, the public query-based `Select` class, `(@:)`, query `(<&>)`,
-query `fromLabel`, and `bindInt` from `Sverlin`. Existing fact/query
-representations may remain temporarily behind the compiler boundary as a
-migration mechanism, but generated and handwritten Sverlin source cannot name
-them. Numeric payload filtering remains unavailable until a typed entity-bound
-predicate has a demonstrated use case.
+`AnyPayload`, the public query-based `Select` class, `NodeBinding`, `(@:)`,
+query `(<&>)`, query `fromLabel`, and `bindInt` from `Sverlin`. Replace
+`NodeBinding` with the general `SelectionBinding`; the new purpose-specific
+`Selectable` class supports typed block and relation kinds in the baseline.
+Existing fact/query representations may remain temporarily behind the compiler
+boundary as a migration mechanism, but generated and handwritten Sverlin
+source cannot name them. Numeric payload filtering remains unavailable until a
+typed entity-bound predicate has a demonstrated use case.
 
 ## Examples and tests
 
 Add focused facade and compiler tests for:
 
-- one typed kind attached and selected across Program and Render, plus a
-  compile-time mismatch between a kind and a pending or selected payload type;
+- one typed block kind and one typed relation kind selected through the same
+  `select` vocabulary across Program and Render, plus compile-time mismatches
+  between kinds, pending values, node selections, and relation selections;
 - `materializeWithKind` choosing among predeclared classifications from a
   payload without creating numeric or string-keyed facts;
 - heterogeneous relations such as `ProbeAt Probe Cell`, including endpoint
-  type errors, duplicate-edge rejection, and forward/reverse relation lifetime;
+  type errors, duplicate-edge rejection, affine endpoint constraints, and
+  forward/reverse relation-selection lifetime;
 - ordered `Next a b` remaining distinct from `Next b a`, symmetric
   `ConnectedTo a b` rejecting `ConnectedTo b a` as a duplicate, and an ordered
   graph helper rejecting a symmetric kind with a source-level diagnostic;
@@ -1975,7 +2061,7 @@ Add focused facade and compiler tests for:
   and subtree size;
 - DAG roots, leaves, longest-path levels, and rejection of a directed cycle;
 - a cyclic raw graph with pairwise `separatedBy` constraints that remains valid
-  as `Graph` but fails `requireDag`, with separation cases classified as
+  as `Graph` but is rejected by `asDag`, with separation cases classified as
   compiler-created rather than authored choices;
 - graph checks at successive checkpoints, including deliberate use of raw
   `Graph` while a structure is incomplete; and
@@ -1987,13 +2073,15 @@ Add focused facade and compiler tests for:
 
 For the classification and relation slices:
 
-1. Add `Kind`, typed materialization, and typed Render selection; lower them
-   through the existing internal fact representation temporarily if that makes
-   migration safer.
+1. Add `Kind`, typed materialization, `SelectionBinding`, and typed block
+   selection; lower them through the existing internal fact representation
+   temporarily if that makes migration safer.
 2. Add typed `RelationKind` declarations and the `relate`/`unrelate` trace
    events, including endpoint and lifetime validation.
-3. Project active relation endpoints to stable owner nodes at each checkpoint.
-4. Add `Relations`, raw `Graph`, iteration, grouping, and `FixedInt`.
+3. Project active relation identities and endpoints to stable owner nodes at
+   each checkpoint, and add the `RelationKind` case of `select`.
+4. Add `Relations`, raw `Graph`, iteration, grouping, and `FixedInt`; make the
+   stronger graph checks consume selected relations and nodes directly.
 5. Add the sequence, tree, sibling-order, and DAG checks and their calculated
    values.
 6. Migrate all examples and fixtures from query atoms and integer joins to
@@ -2048,9 +2136,15 @@ layout problem.
 - Define the first bounded graph-template interface and how several candidate
   templates are weighted. Merely generating more equivalent templates must not
   increase one visual layout's sampling probability.
-- Define the visual connector and anchor interface that consumes endpoint pairs
-  from `forEachRelation` or `forEachEdge`. Relation traversal is settled here;
-  path shape, routing choices, and connector IR are not.
+- Define the visual connector and anchor interface available inside a
+  `relation` spatial scope or an edge traversal derived from it. The `relation`
+  mapping itself must remain valid with only affine endpoint constraints and no
+  visible connector. A connector created in that scope must inherit its exact
+  `relationId`, appear and disappear with that relation in forward and reverse
+  playback, and remain anchored to its stable owners while occupants change.
+  Ordered endpoints do not automatically choose arrow direction, and symmetric
+  endpoints have none. The names, path shapes, routing choices, marker styles,
+  and connector IR remain open.
 
 ### Proposed solver architecture
 
