@@ -242,12 +242,6 @@ data FixedInt
 relation :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
 asGraph :: Relations node node -> Selected node -> Render (Graph node)
 
-class GraphView graph node | graph -> node where
-  nodesOf   :: graph -> Selected node
-  edgesOf   :: graph -> Relations node node
-  nodeCount :: graph -> FixedInt
-  edgeCount :: graph -> FixedInt
-
 asSequence :: Relations node node -> Selected node -> Render (Sequence node)
 positionOf      :: Sequence node -> Selected node -> FixedInt
 
@@ -275,17 +269,19 @@ connector, anchor, and arrow vocabulary remains open.
 Render mappings. `relation` creates one spatial scope per selected relation and
 supplies its endpoints; a connector inside that scope is optional.
 
-`nodesOf view` recovers the view's scoped node selection for `node`.
-`edgesOf view` recovers its scoped relation selection for `relation`, preserving
-the exact relation identities and endpoint roles. There are no separate
-`forEach*` traversal helpers and no all-pairs API: unrelated node pairs receive
-constraints only when the author identifies them explicitly or a later bounded
-layout template does so for a concrete purpose.
-
 `asGraph`, `asSequence`, `asTree`, and `asDag` take the same selected relations
-and nodes. Each applies the endpoint-scope checks; the latter three also reject
-structures that do not have the requested shape. Here, `as` means "validate
-and expose as this view," not an unchecked cast.
+and nodes. Every supplied relation must have both endpoints in the supplied node
+selection; none is silently filtered. The latter three operations also reject
+structures that do not have the requested shape. Authors keep using the same
+node selection with `node` and relation selection with `relation`; the checked
+views expose only their purpose-specific structural values. Here, `as` means
+"validate and expose as this view," not an unchecked cast. There are no
+generic projections of the complete input selections, aggregate graph counts,
+separate `forEach*` traversal helpers, or all-pairs API. Purpose-specific
+operations such as `rootsOf` may still derive meaningful subsets. If one
+relation kind later spans several independent structures, an explicit
+endpoint-based relation-selection operation must scope it before validation;
+the checked view will not perform that filtering.
 
 ### Reusable values and finite choices
 

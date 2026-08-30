@@ -390,10 +390,10 @@ Relate sourceSlot1 targetSlot1 relation <-
 
 At most one relation of the same kind may be active between the same endpoint
 locations. For a symmetric kind, reversing the arguments is the same pair.
-Rejecting duplicates makes `edgeCount` and structural graph checks operate on
-unique associations and prevents Render from applying the same edge rule twice
-to an indistinguishable pair. The same location may still relate to several
-neighbours or use several different relation kinds.
+Rejecting duplicates makes structural graph checks operate on unique
+associations and prevents Render from applying the same edge rule twice to an
+indistinguishable pair. The same location may still relate to several neighbours
+or use several different relation kinds.
 
 The June baseline supports one slot per owner, so the owner `BlockId` is the
 complete location identity. Unsealing and resealing through that owner
@@ -807,10 +807,13 @@ choice IDs are repeatable; its rule must be symmetric or make any visual
 orientation an explicit Render choice.
 
 `asGraph relations nodes` includes every selected node, including nodes with no
-edge, and every active relation for which both endpoints are in `nodes`.
-Relations with neither endpoint selected are outside the graph. A relation with
-exactly one selected endpoint is instead a scope error; rejecting it catches an
-accidental cross-scope edge rather than silently dropping it.
+edge, and every supplied relation. Both endpoints of every relation must be in
+`nodes`; any relation outside that node selection is a scope error rather than
+being silently filtered. The author can therefore keep using the same `nodes`
+with `node` and `relations` with `relation` after validation. If several
+independent structures later share one relation kind, add an explicit
+relation-selection operation that scopes those relations before `asGraph`
+rather than returning replacement selections from the checked graph.
 
 `asGraph`, `asSequence`, `asTree`, and `asDag` consistently take selected
 relations first and selected nodes second. Each applies these endpoint-scope
@@ -856,34 +859,7 @@ choose an arrow direction, and a symmetric relation has no semantic direction
 at all. A generated connector must inherit the exact selected relation identity
 so forward and reverse playback follow its `relate` and `unrelate` events.
 
-##### `GraphView`, nodes, and edges
-
-`GraphView graph node` is the common read-only interface implemented by
-`Graph node`, `Sequence node`, `Tree node`, and `Dag node`:
-
-```haskell
-class GraphView graph node | graph -> node where
-  nodesOf :: graph -> Selected node
-  edgesOf :: graph -> Relations node node
-  nodeCount :: graph -> FixedInt
-  edgeCount :: graph -> FixedInt
-```
-
-`nodesOf` returns the view's scoped node selection for ordinary `node` mapping.
-`edgesOf` returns its scoped relation selection for ordinary `relation`
-mapping. A view made from an ordered relation preserves source then target; a
-view made from a symmetric relation preserves a stable pair whose order has no
-semantic meaning. `edgesOf` also preserves each exact selected relation
-identity, so a connector declared in its `relation` scope follows that edge's
-lifecycle rather than merely matching endpoint coordinates. `nodeCount` and
-`edgeCount` are calculated from the checkpoint rather than sampled by the
-numeric solver.
-
-The baseline deliberately has no operation that constructs or iterates every
-unordered node pair. Pairwise rules apply to declared relations or explicitly
-identified nodes. A later dynamic collision-avoidance helper must be
-purpose-specific, bounded, and introduced with a concrete layout use case; it
-must not hide quadratic pair generation behind a general graph traversal.
+##### Fixed structural values
 
 `FixedInt` is an exact integer calculated from the current relation graph before
 numeric solving. It may differ at another checkpoint, but it is fixed while the
@@ -913,25 +889,26 @@ positionOf :: Sequence node -> Selected node -> FixedInt
 `asGraph relations nodes`, then accepts an empty graph, a single node with no
 edges, or one non-empty chain. A non-empty chain must have one start, one end,
 no cycle or fork, and every selected node must belong to it. `positionOf`
-returns the zero-based position `0, 1, 2, ...`; `nodeCount` gives the total
-number of items. The selected relation kind must have ordered endpoints;
-otherwise there is no defined first item or next item. Failure reports the
-relation kind and offending endpoints before numeric sampling begins. Taking
-the selected relations and nodes directly avoids exposing a temporary `Graph`
-that authors would use only for this check; use `asGraph` when the raw graph is
-itself wanted.
+returns the zero-based position `0, 1, 2, ...`. The selected relation kind must
+have ordered endpoints; otherwise there is no defined first item or next item.
+Failure reports the relation kind and offending endpoints before numeric
+sampling begins. Taking the selected relations and nodes directly avoids
+exposing a temporary `Graph` that authors would use only for this check; use
+`asGraph` when the raw graph is itself wanted. The baseline exposes no sequence
+length: a visual parent's containment and padding derive its bounds from the
+positioned children without one.
 
-The following example assumes `cells` already selects one array's cells and
+The following example assumes `cells` selects one non-empty array's cells and
 `Adjacent` points from each cell to the next. The generated parent is the visual
 array box; no separate Program array owner or `Contains` relation is needed. A
-sampled centre-to-centre spacing is shared by the complete selection:
+sampled centre-to-centre spacing is shared by the complete selection, while the
+default hugging containment derives the parent width from its children and
+padding:
 
 ```haskell
 Selected cells <- select cellKind
 Selected adjacentLinks <- select Adjacent
 orderedCells <- asSequence adjacentLinks cells
-
-let orderedNodes = nodesOf orderedCells
 
 Variable spacing <- variable @Span
 ensure $ spacing .>=. by 64
@@ -941,40 +918,35 @@ node $ do
   Selected array <- self
   padding (uniform (by 16))
 
-  node orderedNodes $ do
-    let position = positionOf orderedCells orderedNodes
-    ensure $ width orderedNodes .==. by 64
-    ensure $ x orderedNodes .==. left array + shift 32 + spacing * asScalar position
-    ensure $ y orderedNodes .==. y array
-
-    Selected indexLabel <- node $ fitText (intText position)
-    ensure $ x indexLabel .==. x orderedNodes
-    ensure $ top indexLabel .==. bottom orderedNodes + shift 8
-
-  let count = nodeCount orderedCells
-  ensure $ width array .>=. by 64 + spacing * asScalar (count - 1)
+  node cells $ do
+    let position = positionOf orderedCells cells
+    ensure $ width cells .==. by 64
+    ensure $ height cells .==. by 48
+    ensure $ x cells .==. left array + shift 48 + spacing * asScalar position
+    ensure $ y cells .==. y array
 ```
 
 When cell widths vary, replace the centre-spacing rule with constraints over
-the checked sequence's scoped relations:
+the same supplied adjacency relations:
 
 ```haskell
 Variable gap <- variable @Span
 ensure $ gap .>=. by 8
 ensure $ gap .<=. by 24
 
-relation (edgesOf orderedCells) $ \previous next -> do
+relation adjacentLinks $ \previous next -> do
   ensure $ left next .==. right previous + gap
   ensure $ y next .==. y previous
 ```
 
 These are alternative layout rules. A linked-list view can use the same checked
-`Sequence` for traversal; `relation (edgesOf sequence)` supplies its endpoint
-pairs to a connector helper once that visual interface is defined. Separate
-bounded constraints or prepared templates can place its nodes without overlap.
-The relation does not force either layout. If several dynamic arrays later
-share one cell kind, add a relation-derived selection only with that concrete
-use case rather than adding a special grouping API now.
+`Sequence` for its structural positions while `relation nextLinks` supplies
+endpoint pairs to a connector helper once that visual interface is defined.
+Separate bounded constraints or prepared templates can place its nodes without
+overlap. The relation does not force either layout. If several dynamic arrays
+later share the same cell kind and relation kind, add a relation-selection
+operation only with that concrete use case rather than adding replacement
+projections or a special grouping API now.
 
 ##### `Tree`
 
@@ -1002,14 +974,13 @@ affine layout constraints:
 ```haskell
 Selected parentLinks <- select ParentOf
 tree <- asTree parentLinks treeNodes
-let nodesInTree = nodesOf tree
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 120
 
-node nodesInTree $ do
-  ensure $ y nodesInTree .==. at 60 + levelGap * asScalar (depthOf tree nodesInTree)
+node treeNodes $ do
+  ensure $ y treeNodes .==. at 60 + levelGap * asScalar (depthOf tree treeNodes)
 ```
 
 A parent-to-child relation does not define the left-to-right order of siblings.
@@ -1054,14 +1025,13 @@ from any root, not an arbitrary total ordering.
 ```haskell
 Selected dependencyLinks <- select DependsOn
 dag <- asDag dependencyLinks tasks
-let tasksInDag = nodesOf dag
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 128
 
-node tasksInDag $ do
-  ensure $ y tasksInDag .==. at 60 + levelGap * asScalar (levelOf dag tasksInDag)
+node tasks $ do
+  ensure $ y tasks .==. at 60 + levelGap * asScalar (levelOf dag tasks)
 ```
 
 If a visualization requires one particular ordering of otherwise unrelated DAG
@@ -1071,9 +1041,10 @@ must not silently choose one and remove other valid layouts.
 ##### General graphs and layouts
 
 Use `Graph` directly when cycles, several connected parts, or no single
-hierarchy are valid. It supplies nodes, edges, and counts but no derived
-position, root, depth, or level. Relations with ordered or symmetric endpoints
-are both supported.
+hierarchy are valid. It validates the supplied node and relation selections but
+adds no derived position, root, depth, or level. Authors continue to use those
+original selections with `node` and `relation`. Relations with ordered or
+symmetric endpoints are both supported.
 
 An edge carries its relation kind and stable identity, not an arbitrary weight
 or label. Model a semantically weighted edge as its own typed Domain location
@@ -1084,13 +1055,12 @@ pairs are rejected.
 ```haskell
 Selected connectionLinks <- select ConnectedTo
 network <- asGraph connectionLinks vertices
-let networkVertices = nodesOf network
 
-node networkVertices $ do
-  ensure $ left networkVertices .>=. left canvas + shift 24
-  ensure $ right networkVertices .<=. right canvas - by 24
-  ensure $ top networkVertices .>=. top canvas + shift 24
-  ensure $ bottom networkVertices .<=. bottom canvas - by 24
+node vertices $ do
+  ensure $ left vertices .>=. left canvas + shift 24
+  ensure $ right vertices .<=. right canvas - by 24
+  ensure $ top vertices .>=. top canvas + shift 24
+  ensure $ bottom vertices .<=. bottom canvas - by 24
 ```
 
 This bounds every vertex but deliberately does not generate constraints between
@@ -1140,9 +1110,10 @@ fixed value random.
 Remove `bindInt`. It currently creates a name-based query variable whose first
 matching integer fact supplies both a later join key and an optional layout
 coefficient. Use typed relations for membership, association, and ordering; use
-`positionOf`, `nodeCount`, and the other `FixedInt` graph values for structural
-layout. A future numeric payload or property accessor must be typed and tied to
-its selected entity rather than restoring free string-keyed facts or bindings.
+`positionOf` and the other purpose-specific `FixedInt` graph values for
+structural layout. A future numeric payload or property accessor must be typed
+and tied to its selected entity rather than restoring free string-keyed facts or
+bindings.
 
 Use `global name` only when separately declared rules deliberately need the
 same stable solver value. Ordinary reuse within one rule should reuse the value
@@ -1244,7 +1215,6 @@ ensure $ scale .>=. num 0.75
 ensure $ scale .<=. num 1.25
 node card $ width (by 160 * scale)
 
-let cells = nodesOf orderedCells
 node cells $ do
   let position = positionOf orderedCells cells
   ensure $ x cells .==. at 40 + by 72 * asScalar position
@@ -1979,11 +1949,14 @@ drawn, but they must not infer semantic relations from block lineage, solver
 variable names, or proximity.
 
 At each exposed checkpoint, `select relationKind` projects the matching active
-relations and their stable endpoints into `Relations`. `asGraph` scopes that
-selection into a raw `Graph`; `asSequence`, `asTree`, and `asDag` perform the
-same scoping internally, validate the stronger shape, and calculate their fixed
-structural values before layout constraints are lowered. The raw `Graph`
-remains available when no stronger shape is intended.
+relations and their stable endpoints into `Relations`. `asGraph` verifies that
+the supplied relation and node selections have the same scope;
+`asSequence`, `asTree`, and `asDag` perform that check and validate the stronger
+shape before calculating their fixed structural values. None replaces its
+complete input selections: Render continues to map the original nodes and
+relations, while purpose-specific operations such as `rootsOf` may derive
+meaningful subsets. The raw `Graph` remains available when no stronger shape is
+intended.
 
 ## Compiler and runtime boundary
 
@@ -2023,11 +1996,12 @@ Add focused facade and compiler tests for:
 - ordered `Next a b` remaining distinct from `Next b a`, symmetric
   `ConnectedTo a b` rejecting `ConnectedTo b a` as a duplicate, and an ordered
   graph helper rejecting a symmetric kind with a source-level diagnostic;
-- one array rendered as a generated group around one selected cell set,
-  including empty and one-cell selections, a rejected cross-scope adjacency,
-  and sampled centre-spacing and edge-gap layouts;
+- empty and one-cell sequence validation, plus one non-empty array rendered as
+  a hugging generated group with sampled centre-spacing and edge-gap layouts;
+- rejection of every supplied relation outside the checked node selection,
+  whether neither or only one endpoint is selected;
 - sequence diagnostics for a missing edge, fork, cycle, and disconnected node;
-- sequence positions and counts used through both `asScalar` and `intText`;
+- sequence positions used through both `asScalar` and `intText`;
 - a linked list that uses `Next` for traversal while its node positions remain
   independently constrained;
 - valid and invalid trees, tree depth, child count, and subtree size;
@@ -2035,9 +2009,9 @@ Add focused facade and compiler tests for:
 - a cyclic raw graph that remains valid as `Graph` but is rejected by `asDag`,
   with its nodes bounded through ordinary `node` mapping and no implicit
   all-pairs constraints;
-- `GraphView` exposing scoped nodes, scoped relations, and counts through
-  `nodesOf`, `edgesOf`, `nodeCount`, and `edgeCount`, with no callback traversal
-  helper separate from `node` or `relation`, and no general all-pairs generator;
+- reuse of the original node and relation selections after every `as*` check,
+  with no generic projections of those complete inputs, aggregate graph counts,
+  separate traversal callbacks, or general all-pairs generator;
 - graph checks at successive checkpoints, including deliberate use of raw
   `Graph` while a structure is incomplete; and
 - removal of the public fact/query surface and `bindInt`, including migration
@@ -2055,8 +2029,8 @@ For the classification and relation slices:
    events, including endpoint and lifetime validation.
 3. Project active relation identities and endpoints to stable owner nodes at
    each checkpoint, and add the `RelationKind` case of `select`.
-4. Add `Relations`, raw `Graph`, `nodesOf`, `edgesOf`, and `FixedInt`; make the
-   stronger graph checks consume selected relations and nodes directly.
+4. Add `Relations`, raw `Graph`, and `FixedInt`; make the stronger graph checks
+   consume already-scoped relation and node selections directly.
 5. Add the sequence, tree, and DAG checks and their calculated values.
 6. Migrate all examples and fixtures from query atoms and integer joins to
    kinds and relations; then remove the complete public fact/query surface from
@@ -2101,6 +2075,12 @@ layout problem.
   declarations available to Program and Render. The endpoint types and
   behavior specified above are settled even though this construction syntax is
   not.
+- If one relation kind later spans several independently rendered structures,
+  add an explicit endpoint-based relation-selection operation before the
+  `as*` check. It must preserve relation identity and endpoint roles; the check
+  itself must not filter relations or return replacement selections. Keep this
+  operation out of the baseline until a concrete multi-structure use case fixes
+  its required selection semantics.
 - Define how Render addresses the current occupant of a restored `Slot` from
   its stable owner node. The owner-to-occupant association is settled trace
   data, but the authored surface remains open: it may apply owner bounds to the
@@ -2111,12 +2091,11 @@ layout problem.
   templates are weighted. Merely generating more equivalent templates must not
   increase one visual layout's sampling probability.
 - Define the visual connector and anchor interface available inside a
-  `relation` spatial scope, including one created from `edgesOf view`. The
-  `relation` mapping itself must remain valid with only affine endpoint
-  constraints and no visible connector. A connector created in that scope must
-  inherit its exact `relationId`, appear and disappear with that relation in
-  forward and reverse playback, and remain anchored to its stable owners while
-  occupants change.
+  `relation` spatial scope. The `relation` mapping itself must remain valid with
+  only affine endpoint constraints and no visible connector. A connector
+  created in that scope must inherit its exact `relationId`, appear and
+  disappear with that relation in forward and reverse playback, and remain
+  anchored to its stable owners while occupants change.
   Ordered endpoints do not automatically choose arrow direction, and symmetric
   endpoints have none. The names, path shapes, routing choices, marker styles,
   and connector IR remain open.
@@ -2251,11 +2230,11 @@ layout. A new seed still selects a configuration and generates a new point. Cach
 deterministic prepared data so the same source, configuration, and seed produce the same
 result regardless of cache warmth or batch order.
 
-Relation checks and values such as sequence position, item count, tree depth, and DAG
-level are also prepared before numeric solving. They are fixed consequences of the active
-trace graph, not random branches, so recalculating them for a checkpoint does not bias the
-layout distribution. Only explicit layout choices or exact geometric case splits add
-solver configurations.
+Relation checks and values such as sequence position, tree depth, and DAG level are also
+prepared before numeric solving. They are fixed consequences of the active trace graph,
+not random branches, so recalculating them for a checkpoint does not bias the layout
+distribution. Only explicit layout choices or exact geometric case splits add solver
+configurations.
 
 Enumeration should prepare every feasible configuration only while the estimated work
 is small. Large spaces should retain a compact guarded representation, prepare the
