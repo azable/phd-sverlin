@@ -404,23 +404,32 @@ execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `NodeBinding`,
 `select`, `visualize`, `Node`, `node`, `self`, and `canvas`.
 
 Retain the general content interfaces `ContentValue`, `text`, `content`, and
-`fitText`. Remove the specialized `codeContent`, `codeWrap`, `highlightCode`,
-`CodeRange`, `codeRange`, and `emphasizeCode` interfaces. Code is not a distinct
-kind of visual content: it is one possible Render mapping of the Program.
+`fitText`. Redefine `fitText` as allowing the solver to vary a single line's
+font size within explicit bounds so that the line fits its content box; it must
+not insert line breaks. Remove the specialized `codeContent`, `codeWrap`,
+`highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode` interfaces. Code
+is not a distinct kind of visual content: it is one possible Render mapping of
+the Program.
 
 Add a general composed-text builder. The target vocabulary is `TextBuilder`,
 `literal`, `fragment`, and `fragmentMany`; exact supporting types may be refined
 during implementation. A fragment associates a typed step definition with a
 text range, while `fragmentMany` associates the same range with several step
-definitions. The builder must lower a complete text run to one shaped string
-plus validated range metadata. It must not shape each fragment as an independent
-text node, because doing so would lose the font renderer's whole-run kerning,
-wrapping, bidirectional-text, and ligature behavior.
+definitions. The builder must lower one independently positioned line to one
+shaped string plus validated range metadata. It must not shape each fragment as
+an independent text node, because doing so would lose the font renderer's
+whole-line kerning, bidirectional-text, and ligature behavior.
 
-Each line or other independently positioned text run is an ordinary generated
-node. Render uses the normal hierarchy, affine constraints, and style API to lay
-out those nodes. Typed fragment ranges permit step-sensitive styling and
-animation without making code syntax part of Domain or Program.
+A text node represents one independently positioned line. Automatic wrapping,
+soft wrapping, hyphenation, and compiler-inserted line breaks are outside the
+target API. Newline-containing content must be lowered to separate generated
+nodes; a visualization that needs two lines places two ordinary text nodes one
+above the other. Render uses the normal hierarchy, affine constraints, and
+style API to align and space those nodes. This adds variables and constraints
+roughly in proportion to the number of authored lines instead of creating a
+Cartesian product of possible wrap patterns. Typed fragment ranges permit
+step-sensitive styling and animation without making code syntax part of Domain
+or Program.
 
 ```haskell
 render :: Render ()
@@ -501,9 +510,10 @@ ensure (size second .==. size first)
 Retain `StyleChoice`, `style`, `withoutStyle`, `styleCase`, `styleFamily`,
 `styleOf`, `NodeStyle`, `Opacity`, `FontSize`, `Radius`, `StrokeWidth`,
 `Alpha`, `Fill`, `Stroke`, `BorderStyle`, `FontFamily`, `FontWeight`,
-`FontStyle`, `TextAlign`, `WhiteSpace`, `Hsl`, `Color`, and `sat`.
+`FontStyle`, `TextAlign`, `Hsl`, `Color`, and `sat`. Remove `WhiteSpace`: a text
+node contains one line, so there is no authored wrapping mode to select.
 
-TODO Remove `ZIndex` and make this implicitly determined for now.
+Also remove `ZIndex` and make this implicitly determined for now.
 
 ```haskell
 node selected $ do
@@ -621,7 +631,7 @@ variable names, or proximity.
 
 ## Open decisions
 
-Proposed new solver architecture:
+### Proposed solver architecture
 
 Render constraints compile into a bounded finite piecewise-affine design space. The
 compiler resolves explicit choices and exact algebraic case splits into affine
@@ -630,3 +640,143 @@ using a discrete feasibility solver. A seeded sampler then selects a configurati
 samples its convex affine region. Constraints that cannot be represented exactly in this
 model are rejected with a source-level diagnostic; they do not silently fall back to
 nonlinear optimization.
+
+The compiled representation must preserve why each discrete split exists:
+
+- An authored design choice, such as font, orientation, or connector routing, is part of
+  the intended random design distribution. Give its alternatives equal weight by default
+  and eventually permit explicit author weights.
+- A compiler-created algebraic split, such as the positive and negative cases of `abs`,
+  only partitions a numeric region. It must not become an extra equally weighted design
+  choice. Weight such cells by the relative size of their valid numeric regions, with
+  deterministic boundary ownership, so equivalent lowerings do not change the resulting
+  distribution.
+
+For example, if sans-serif text leaves nine times as much valid positioning space as
+serif text, equal authored font weights still select each font half of the time; numeric
+positions are then sampled inside the selected font's valid region. By contrast, splitting
+one font's numeric range into two compiler-generated cases must not double that font's
+probability.
+
+For each seed, the proposed sampling order is therefore:
+
+1. Select an assignment for the authored design choices according to their declared
+   weights after removing assignments made impossible by the hard constraints.
+2. Select among that assignment's compiler-created affine cells without introducing
+   probability merely because the compiler split an expression into more cases.
+3. Sample approximately uniformly inside the selected convex affine region.
+
+A font whose metrics affect text bounds is consequently a genuine design branch. For
+example, `horizontal + serif`, `horizontal + sans`, `vertical + serif`, and
+`vertical + sans` may be four configurations, and every seed may select any feasible
+one. If a discrete presentation choice does not affect solver geometry, sample it
+separately rather than multiplying the affine configurations.
+
+#### Typography branches and variable font size
+
+Typography shaping is compiler-owned preparation rather than numeric solver arithmetic.
+For a fixed font resource and face, weight, style, variation-axis values, shaping
+features, source line, and text direction, shape the line once at the font's units-per-em
+scale. Glyph advances, ink bounds, ascender, descender, and line height then become
+constant coefficients belonging to that branch. Font size remains a bounded continuous
+solver variable unless the author explicitly fixes it.
+
+For a sampled font size `s`, node width `w`, node height `h`, and affine padding and
+border expressions, a shaped line contributes constraints of the following form:
+
+```text
+minimumFontSize <= s <= maximumFontSize
+horizontalInsets + lineWidthEm * s <= w
+verticalInsets + lineHeightEm * s <= h
+```
+
+`lineWidthEm` and `lineHeightEm` are compiler-produced constants, so multiplication by
+`s` remains affine. Left, centre, and right alignment also remain affine; for example,
+centering uses `contentLeft + (contentWidth - lineWidthEm * s) / 2`. Several text nodes
+may share the same font-size variable, in which case every line adds another affine fit
+constraint and the tightest line limits the shared value.
+
+Font family, weight, style, and any metric-affecting variation axes are authored discrete
+choices. Each resolved choice supplies different shaping constants but leaves font size
+continuous inside its region. A continuously varying weight or automatic optical-size
+axis is not covered by this model because changing the axis can change the shaped metrics;
+fix or discretize such axes before affine compilation. Missing glyphs or an unavailable
+font invalidate that branch, with a source-level diagnostic if no font branch remains.
+
+Font feasibility must be tested with the shaped text constraints before selecting a
+branch. The compiler must not choose a font without considering its text, discover that
+the line cannot fit above the minimum size, and fail when another font would have worked.
+For small choice spaces, shape and certify every eligible font branch. For larger spaces,
+cache shaping results by font-resource hash, face and axis values, features, and source
+line, then expose the branch-specific affine constraints to the discrete feasibility
+solver. A selected font branch is therefore known to contain at least one valid
+combination of font size and geometry.
+
+There are no automatic wrapping branches. A long line must fit by varying its bounded
+font size or box geometry; otherwise compilation reports that the line must be shortened,
+given a larger box, or split into separate text nodes. Explicitly authored lines may still
+share font choices, font-size variables, alignment constraints, and vertical gap variables,
+all without leaving one convex affine region.
+
+The existing typography implementation already emits affine inequalities of this shape
+in [Typography.hs](Visualization/Typography.hs). Its current two-pass flow nevertheless
+selects a fitted size, replaces it with a numeric literal, and pins the initially sampled
+width, height, padding, and stroke before the final solve. The target flow must remove
+those pins: shaping supplies constants and constraints, while the final sampler jointly
+chooses font size and geometry. Final IR materialization scales the prepared glyph metrics
+by the sampled size and retains a small documented safety margin for output rounding.
+
+`fitText` means bounded size variation inside this feasible region; it does not mean
+"choose the largest possible size." Maximum-fit typography, if retained, is a separate
+explicit policy that solves a linear boundary objective and therefore does not provide
+font-size diversity. An authored fixed-size policy likewise creates a zero-dimensional
+font-size slice while leaving other geometry available for sampling.
+
+Uniform sampling over the complete region does not imply a uniform font-size marginal:
+smaller text may permit more box positions and dimensions, giving it more valid geometric
+space. If equal coverage of small, medium, and large text is desired, define explicit
+size-band choices or a separate font-size prior and record that non-uniform geometric
+policy in provenance.
+
+#### Preparation, feasibility, and reuse
+
+"Prepare a region once" means normalizing its constraints, reducing exact equalities,
+certifying that it is non-empty, finding a valid starting point, and caching the numeric
+data used by the sampler. It does not pin that configuration or reuse a previous sampled
+layout. A new seed still selects a configuration and generates a new point. Cache only
+deterministic prepared data so the same source, configuration, and seed produce the same
+result regardless of cache warmth or batch order.
+
+Enumeration should prepare every feasible configuration only while the estimated work
+is small. Large spaces should retain a compact guarded representation, prepare the
+discrete feasibility model once, and prepare individual affine regions lazily as they
+are selected. A randomized optimization objective may find varied feasible assignments,
+but it is not uniform sampling over them; the large-space strategy must either implement
+the declared distribution or expose and justify a documented approximation.
+
+Feasibility must be established by a dedicated deterministic feasibility phase rather
+than by whether one random sample succeeds. Unsupported expressions and proven-empty
+spaces fail immediately with source provenance. A feasible region that encounters a
+numeric sampling failure may use a small bounded set of derived-seed retries and then
+report a distinct numeric-backend diagnostic. A valid but visually unacceptable result
+may similarly use a bounded sample batch and select an acceptable or best-scoring result.
+Neither case permits open-ended retries or fallback to nonlinear optimization.
+
+The following choices remain open before implementation:
+
+- Define whether default equality applies independently at each authored choice or over
+  complete feasible choice assignments, especially for nested or conditional choices.
+- Choose a practical approximately uniform discrete sampler for large conditioned spaces;
+  randomized MIP optimization alone is insufficient.
+- Define how region sizes are compared when feasible affine cells have different numbers
+  of free numeric dimensions, and how overlapping boundaries are assigned exactly once.
+- Define the default font-size bounds and whether font-size diversity follows the joint
+  geometric measure, explicit size bands, or a separately declared continuous prior.
+- Decide whether maximum-fit typography remains as an explicitly non-random policy or is
+  removed in favour of bounded `fitText` and authored fixed sizes.
+- Set shaping-cache and eligible-font limits from text-heavy application benchmarks. The
+  cache key must include every input that can change glyph metrics.
+- Replace the raw configuration-count enumeration cutoff with a benchmarked cost policy
+  that accounts for variables, constraints, equality reduction, and feasibility work.
+- Set and justify construction, sampling, and retry budgets from optimized application-
+  shaped benchmarks, and preserve every attempted derived seed in solver provenance.
