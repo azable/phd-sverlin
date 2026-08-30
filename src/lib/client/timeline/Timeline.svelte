@@ -84,7 +84,7 @@
         {#if session.pending || session.refillPending}
           <li class="timeline-event relative pl-8" in:fly={{ y: 12, duration: 180 }}>
             <div
-              class="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-base text-muted-foreground"
+              class="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-base text-muted-foreground shadow-md"
               role="status"
             >
               <Spinner />

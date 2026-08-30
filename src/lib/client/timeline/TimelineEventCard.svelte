@@ -66,7 +66,7 @@
 </span>
 
 <article aria-current={session.snapshot.at === event.id ? 'step' : undefined}>
-  <Card.Root size="sm">
+  <Card.Root size="sm" class="shadow-md">
     <Card.Header>
       <Card.Title>
         <a class="hover:underline" href={historyHref()}>{presentation.title}</a>

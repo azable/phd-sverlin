@@ -77,6 +77,13 @@ test('canvas element selection is included in submitted feedback', async ({ page
   });
   await waitForOperation(page.request, selectionProjectId, accepted.operationId);
   await expect(page.getByText('Thanks, I have noted that feedback.')).toBeVisible();
+  const submittedFeedback = page
+    .locator('article')
+    .filter({ hasText: 'Focus on this element' })
+    .last();
+  const submittedReference = submittedFeedback.getByRole('button').first();
+  await expect(submittedReference).toBeVisible();
+  expect(await submittedReference.evaluate(elementContrastRatio)).toBeGreaterThanOrEqual(4.5);
   expect(browserFailures()).toEqual([]);
 });
 
@@ -125,9 +132,18 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   const browserFailures = observeBrowserFailures(page);
   await page.goto(`/projects/${selectionProjectId}`);
 
-  const visualization = page.getByRole('button', { name: /^Visualization/ }).last();
+  const visualization = page.getByRole('button', { name: /^Candidate/ }).last();
   await expect(visualization).toBeVisible();
   await expect(visualization).toHaveAttribute('aria-pressed', 'true');
+  const friendlyReference = page.getByRole('button', { name: /^Add .+ to feedback$/ }).last();
+  const friendlyName = (await friendlyReference.textContent())?.trim();
+  expect(friendlyName).toBeTruthy();
+  await friendlyReference.click();
+  await expect(page.getByLabel('Project feedback')).toContainText(friendlyName!);
+  await expect(visualization).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: `Remove reference ${friendlyName}` }).click();
+  await expect(page.getByLabel('Project feedback')).not.toContainText(friendlyName!);
+  await expect(page.getByRole('button', { name: 'Reference', exact: true })).toHaveCount(0);
   const visualizationCard = visualization.locator('..');
   const cardBounds = await visualizationCard.boundingBox();
   expect(cardBounds).not.toBeNull();
@@ -140,13 +156,18 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   await expect(page.getByText('Visualization updated', { exact: true })).toHaveCount(0);
 
   await page.getByLabel('Presentation layout').selectOption('comparison');
-  const comparisonCards = page.getByRole('button', { name: /^Visualization/ });
+  const comparisonCards = page.getByRole('button', { name: /^Candidate/ });
   await expect(comparisonCards).toHaveCount(2);
   await comparisonCards.nth(0).click();
   await comparisonCards.nth(1).click({ modifiers: ['Shift'] });
   await expect(comparisonCards.nth(0)).toHaveAttribute('aria-pressed', 'true');
   await expect(comparisonCards.nth(1)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('automatic-feedback-context')).toContainText('Comparing');
+  const comparisonContext = page.getByTestId('automatic-feedback-context');
+  await expect(comparisonContext).toContainText('Comparing');
+  await expect(comparisonContext.locator('[data-slot="badge"]').first()).toHaveCSS(
+    'overflow',
+    'visible'
+  );
 
   const devToggle = page.getByRole('switch', { name: 'Dev' });
   await expect(devToggle).not.toBeChecked();
@@ -192,8 +213,8 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(page.getByRole('link', { name: 'Return to administration' })).toBeVisible();
   await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
-  await expect(page.getByText('Sverlin Assistant', { exact: true })).toBeVisible();
-  const candidates = page.getByRole('button', { name: /^Visualization/ });
+  await expect(page.getByText('Assistant', { exact: true })).toBeVisible();
+  const candidates = page.getByRole('button', { name: /^Candidate/ });
   await expect(candidates).toHaveCount(0);
   await expect(
     page.getByText('Your visualization will appear here.', { exact: true })
@@ -430,6 +451,27 @@ function observeBrowserFailures(page: Page): () => string[] {
     failures.push(`request: ${request.method()} ${request.url()} ${request.failure()?.errorText}`);
   });
   return () => failures;
+}
+
+function elementContrastRatio(element: HTMLElement): number {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return 0;
+  const rgb = (color: string): [number, number, number] => {
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+    return [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] as [number, number, number];
+  };
+  const luminance = (color: string) =>
+    rgb(color)
+      .map((channel) => channel / 255)
+      .map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4))
+      .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  const style = getComputedStyle(element);
+  const foreground = luminance(style.color);
+  const background = luminance(style.backgroundColor);
+  return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
 }
 
 type ProjectResourceView = {

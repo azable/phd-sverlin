@@ -13,10 +13,16 @@
   type Props = {
     content: MessageContent;
     interactive?: boolean;
+    inverted?: boolean;
     onReferenceActivate?: (reference: ReferenceSegment, extend: boolean) => void;
   };
 
-  let { content, interactive = true, onReferenceActivate = () => {} }: Props = $props();
+  let {
+    content,
+    interactive = true,
+    inverted = false,
+    onReferenceActivate = () => {}
+  }: Props = $props();
 
   function referenceLabel(reference: ReferenceSegment): string {
     const label = presentationDisplayId(reference.presentationId);
@@ -36,15 +42,18 @@
       <Button
         type="button"
         size="xs"
-        variant="outline"
+        variant={inverted ? 'secondary' : 'outline'}
         class="mx-0.5 inline-flex align-baseline font-mono"
         onclick={(event) => onReferenceActivate(segment, event.shiftKey)}
       >
         {referenceLabel(segment)}
       </Button>
     {:else}
-      <Badge variant="outline" class="mx-0.5 inline-flex align-baseline">
-        <span class="font-mono">{referenceLabel(segment)}</span>
+      <Badge
+        variant={inverted ? 'secondary' : 'outline'}
+        class="mx-0.5 inline-flex overflow-visible align-baseline font-mono"
+      >
+        {referenceLabel(segment)}
       </Badge>
     {/if}
   {/each}
