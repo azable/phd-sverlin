@@ -596,3 +596,11 @@ variable names, or proximity.
 ## Implementation order
 
 ## Open decisions
+
+Proposed new solver architecture:
+
+- No fallback mode, just one process
+- Non-linear and branching/categorical constraints resolved
+- A finite but large number of possible affine configurations can be sampled
+- Sampling from the affine space gives visualisations
+  TODO expand with a little more architectural detail.
