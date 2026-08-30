@@ -148,8 +148,16 @@ Move the following existing interfaces into Domain:
   shares them with Program and Render.
 - Payload and operator vocabulary: `PayloadView`, `Traceable`, `Payload`,
   `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, `LOperator`, `CoreOperator`,
-  `LinearPayload`, `Applicable1`, `Applicable2`, `applyLinear1`,
-  `applyLinear1Into`, `applyLinear2`, and `applyLinear2Into`.
+  `Applicable1`, and `Applicable2`.
+
+Do not re-export `LinearPayload`, `withPayload`, `buildPayload`,
+`applyLinear1`, `applyLinear1Into`, `applyLinear2`, or `applyLinear2Into` from
+`Sverlin`. The helper functions all expose `LinearPayload` constraints, so
+hiding only the class would still leak the internal payload-unpacking
+abstraction through public signatures. Keep that family compiler-internal.
+Authors define operator behavior through `Applicable1` and `Applicable2`,
+pattern matching the public `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, or
+`LOperator` wrappers and constructing the result wrapper directly.
 
 Revise `CoreOperator` so that it retains only the semantics needed to preserve
 and apply an operator payload. It must not require `operatorPayloadText` or any

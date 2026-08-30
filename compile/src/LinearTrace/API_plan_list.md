@@ -67,20 +67,11 @@ data LString tag            = LString String
 data LOperator operator tag = LOperator operator
 ```
 
-### Payload and operator composition
+### Operators
 
 ```haskell
 class CoreOperator operator where
   persistOperatorPayload :: ...
-
-class LinearPayload payload value | payload -> value where
-  withPayload  :: payload %1 -> (value %1 -> result) %1 -> result
-  buildPayload :: value %1 -> payload
-
-applyLinear1     :: ...
-applyLinear1Into :: ...
-applyLinear2     :: ...
-applyLinear2Into :: ...
 
 class Applicable1 op arg where
   type Apply1Result op arg
@@ -370,6 +361,9 @@ optimization is still open.
 - Removed styles: `WhiteSpace(..)` and `ZIndex`.
 - Orphan observation API: `Observe` and `observe`.
 - Removed presentation method: `operatorPayloadText`.
+- Internal payload-unpacking family: `LinearPayload`, `withPayload`,
+  `buildPayload`, `applyLinear1`, `applyLinear1Into`, `applyLinear2`, and
+  `applyLinear2Into`.
 
 ## Still preventing a fully final facade
 
