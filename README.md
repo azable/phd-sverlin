@@ -47,11 +47,11 @@ Open <http://localhost:5173>. VS Code notifies when the port is available but do
 
 ### 3. Create the administrator
 
-For the default local Compose configuration, visit:
-
-<http://localhost:5173/setup?token=development-setup-token>
-
-Register an administrator passkey. Setup becomes unavailable after the administrator exists; if the route returns 404, sign in at `/login` with the passkey already registered in the persistent PostgreSQL volume.
+Open <http://localhost:5173>. When the database has no administrator, the app opens
+the one-time setup page automatically. Register an administrator passkey promptly:
+until one exists, the first visitor to the deployment can claim administrator access.
+Setup becomes unavailable after the administrator exists; sign in at `/login` with
+the passkey already registered in the persistent PostgreSQL volume.
 
 ### 4. Test participant access
 
@@ -230,7 +230,7 @@ After Haskell changes, run the relevant compile, Haskell tests, solver tests, an
 
 [`render.yaml`](render.yaml) is a Render [Blueprint](https://render.com/docs/infrastructure-as-code) for one 4 GiB web service and one managed PostgreSQL database in Singapore. Connect the repository as a new Blueprint in the Render dashboard; no deployment CLI is required. Automatic deploys are disabled so a study is not restarted by an unrelated commit; deploy deliberately from the Render dashboard outside active sessions.
 
-The web service runs checked-in migrations before each deploy and exposes `/api/health/ready` as its health check. Render generates the Better Auth and administrator-setup secrets. Read `SVERLIN_ADMIN_SETUP_TOKEN` from the web service environment, then open `/setup?token=<value>` on the generated `onrender.com` URL. Better Auth derives that public origin from Render's `RENDER_EXTERNAL_HOSTNAME`; set `BETTER_AUTH_URL` explicitly only when using a custom domain.
+The web service runs checked-in migrations before each deploy and exposes `/api/health/ready` as its health check. Render generates the Better Auth secret. When a fresh database has no administrator, opening the generated `onrender.com` URL redirects to one-time passkey setup; complete it promptly because the first visitor can claim administrator access. Better Auth derives the public origin from Render's `RENDER_EXTERNAL_HOSTNAME`; set `BETTER_AUTH_URL` explicitly only when using a custom domain.
 
 The web service keeps the established 4 GiB ceiling because it owns compilation and the native solver. It accepts at most two project operations concurrently and serializes compiler invocations to bound peak memory for the expected couple of simultaneous users. Render allows at most 300 seconds for graceful shutdown, so application work is cancelled after 270 seconds, leaving 30 seconds to record failure boundaries and close PostgreSQL. An operation interrupted by an unexpected restart is marked cancelled and must be retried; already committed project events and resources remain durable. PostgreSQL stores resource bytes directly and each immutable resource is limited to 16 MiB. Add `OPENAI_API_KEY` to the web service when AI-assisted editing is required; `OPENAI_MODEL` and `CHATBOT_CONFIG` are optional overrides.
 

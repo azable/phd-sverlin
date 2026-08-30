@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { inArray } from 'drizzle-orm';
 import { afterAll, expect, it } from 'vitest';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
@@ -10,8 +11,18 @@ import { PostgresProjectRepository } from '$lib/server/projects/repository';
 import { requireProjectAccess } from './authorization';
 
 const enabled = Boolean(process.env.DATABASE_URL) && process.env.SVERLIN_RUN_POSTGRES_TESTS === '1';
+const createdProjects: string[] = [];
+const createdUsers: string[] = [];
 
-afterAll(closeDatabase);
+afterAll(async () => {
+  if (createdProjects.length) {
+    await database().delete(schema.projects).where(inArray(schema.projects.id, createdProjects));
+  }
+  if (createdUsers.length) {
+    await database().delete(schema.user).where(inArray(schema.user.id, createdUsers));
+  }
+  await closeDatabase();
+});
 
 it.skipIf(!enabled)('enforces participant ownership while allowing administrators', async () => {
   const suffix = randomUUID();
@@ -19,6 +30,8 @@ it.skipIf(!enabled)('enforces participant ownership while allowing administrator
   const strangerId = `access-stranger-${suffix}`;
   const adminId = `access-admin-${suffix}`;
   const projectId = `access-project-${suffix}`;
+  createdUsers.push(ownerId, strangerId, adminId);
+  createdProjects.push(projectId);
   await database()
     .insert(schema.user)
     .values([user(ownerId, 'user'), user(strangerId, 'user'), user(adminId, 'admin')]);

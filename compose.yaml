@@ -14,7 +14,6 @@ services:
       BETTER_AUTH_URL: http://localhost:5173
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-development-only-secret-at-least-32-bytes}
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:5173
-      SVERLIN_ADMIN_SETUP_TOKEN: ${SVERLIN_ADMIN_SETUP_TOKEN:-development-setup-token}
       SVERLIN_SCRATCH_DIR: /tmp/sverlin
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}

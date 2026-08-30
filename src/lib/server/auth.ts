@@ -1,7 +1,5 @@
 /** Better Auth configuration and SvelteKit principal resolution. */
 
-import { timingSafeEqual } from 'node:crypto';
-
 import { getRequestEvent } from '$app/server';
 import { passkey } from '@better-auth/passkey';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -34,17 +32,6 @@ function trustedOrigins(): string[] {
   return [...new Set([configuredBaseUrl(), ...(configured ?? [])])];
 }
 
-function validBootstrapContext(context: string | null | undefined): boolean {
-  const expected = process.env.SVERLIN_ADMIN_SETUP_TOKEN?.trim();
-  if (!expected || !context) return false;
-  const expectedBytes = Buffer.from(expected);
-  const suppliedBytes = Buffer.from(context);
-  return (
-    expectedBytes.byteLength === suppliedBytes.byteLength &&
-    timingSafeEqual(expectedBytes, suppliedBytes)
-  );
-}
-
 async function adminExists(): Promise<boolean> {
   const result = await database()
     .select({ id: authSchema.user.id })
@@ -54,14 +41,14 @@ async function adminExists(): Promise<boolean> {
   return result.length > 0;
 }
 
-/** Whether the passkey-first bootstrap endpoint may accept this token. */
-export async function adminSetupAvailable(context: string | null | undefined): Promise<boolean> {
-  return validBootstrapContext(context) && !(await adminExists());
+/** Whether the passkey-first bootstrap endpoint may create the first administrator. */
+export async function adminSetupAvailable(): Promise<boolean> {
+  return !(await adminExists());
 }
 
-async function ensureBootstrapAdmin(context: string | null | undefined): Promise<string> {
-  if (!validBootstrapContext(context) || (await adminExists())) {
-    throw new Error('Admin setup is unavailable or the setup token is invalid.');
+async function ensureBootstrapAdmin(): Promise<string> {
+  if (await adminExists()) {
+    throw new Error('Admin setup is unavailable.');
   }
   const inserted = await database()
     .insert(authSchema.user)
@@ -127,18 +114,16 @@ export const auth = betterAuth({
       rpID: new URL(configuredBaseUrl()).hostname,
       registration: {
         requireSession: false,
-        resolveUser: async ({ context }) => {
-          if (!validBootstrapContext(context) || (await adminExists())) {
-            throw new Error('Admin setup is unavailable or invalid.');
-          }
+        resolveUser: async () => {
+          if (await adminExists()) throw new Error('Admin setup is unavailable.');
           return {
             id: bootstrapAdminId,
             name: 'admin@sverlin.invalid',
             displayName: 'Sverlin administrator'
           };
         },
-        afterVerification: async ({ context }) => ({
-          userId: await ensureBootstrapAdmin(context),
+        afterVerification: async () => ({
+          userId: await ensureBootstrapAdmin(),
           name: 'Primary administrator passkey'
         })
       }

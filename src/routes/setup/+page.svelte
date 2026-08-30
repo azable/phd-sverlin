@@ -7,9 +7,6 @@
   import * as Card from '$lib/client/components/ui/card';
   import { authClient } from '$lib/client/auth';
 
-  import type { PageProps } from './$types';
-
-  let { data }: PageProps = $props();
   let pending = $state(false);
   let message = $state<string | null>(null);
 
@@ -20,7 +17,6 @@
     try {
       const result = await authClient.passkey.addPasskey({
         name: 'Primary administrator passkey',
-        context: data.setupToken,
         createSession: true
       });
       if (result.error) {

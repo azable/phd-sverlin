@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import { inArray } from 'drizzle-orm';
 import { afterAll, expect, it } from 'vitest';
 
 import type { NewProjectEvent } from '$lib/shared/projects/events';
@@ -14,8 +15,18 @@ import {
 import { PostgresAnalysisDataSource } from './analysis-export';
 
 const enabled = Boolean(process.env.DATABASE_URL) && process.env.SVERLIN_RUN_POSTGRES_TESTS === '1';
+const createdProjects: string[] = [];
+const createdUsers: string[] = [];
 
-afterAll(closeDatabase);
+afterAll(async () => {
+  if (createdProjects.length) {
+    await database().delete(schema.projects).where(inArray(schema.projects.id, createdProjects));
+  }
+  if (createdUsers.length) {
+    await database().delete(schema.user).where(inArray(schema.user.id, createdUsers));
+  }
+  await closeDatabase();
+});
 
 it.skipIf(!enabled)(
   'collects active project analysis with minimal owner identity and resource metadata',
@@ -26,6 +37,8 @@ it.skipIf(!enabled)(
     const operationId = randomUUID();
     const repository = new PostgresProjectRepository();
     const resource = resourceBlob('analysis bytes');
+    createdUsers.push(ownerUserId);
+    createdProjects.push(projectId);
     await database()
       .insert(schema.user)
       .values({

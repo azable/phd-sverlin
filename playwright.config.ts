@@ -27,6 +27,7 @@ export default defineConfig({
     timeout: 180_000,
     env: {
       SVERLIN_SCRATCH_DIR: path.join(outputRoot, 'compiler'),
+      SVERLIN_STATE_DIR: path.join(outputRoot, 'state'),
       SVERLIN_E2E_AUTH_BYPASS: 'true'
     }
   }

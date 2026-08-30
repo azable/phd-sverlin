@@ -2,7 +2,12 @@ import { building } from '$app/environment';
 import { json, redirect, type Handle, type ServerInit } from '@sveltejs/kit';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
-import { auth, resolvePrincipal, validateAuthenticationConfiguration } from '$lib/server/auth';
+import {
+  adminSetupAvailable,
+  auth,
+  resolvePrincipal,
+  validateAuthenticationConfiguration
+} from '$lib/server/auth';
 import { initializeRuntime, shutdownRuntime } from '$lib/server/runtime-state';
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -54,6 +59,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     const next = safeMethods.has(event.request.method.toUpperCase())
       ? `${event.url.pathname}${event.url.search}`
       : '/';
+    if (await adminSetupAvailable()) redirect(303, '/setup');
     redirect(303, `/login?next=${encodeURIComponent(next)}`);
   }
 
