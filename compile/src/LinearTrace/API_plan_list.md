@@ -237,19 +237,16 @@ data Graph node
 data Sequence node
 data Tree node
 data Dag node
-data SiblingOrder node
 data FixedInt
 
 relation :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
-forEachSourceGroup :: Relations source target -> (Selected source -> Selected target -> Render ()) -> Render ()
 asGraph :: Relations node node -> Selected node -> Render (Graph node)
 
 class GraphView graph node | graph -> node where
-  forEachNode     :: graph -> (Selected node -> Render ()) -> Render ()
-  forEachEdge     :: graph -> (Selected node -> Selected node -> Render ()) -> Render ()
-  forEachNodePair :: graph -> (Selected node -> Selected node -> Render ()) -> Render ()
-  nodeCount       :: graph -> FixedInt
-  edgeCount       :: graph -> FixedInt
+  nodesOf   :: graph -> Selected node
+  edgesOf   :: graph -> Relations node node
+  nodeCount :: graph -> FixedInt
+  edgeCount :: graph -> FixedInt
 
 asSequence :: Relations node node -> Selected node -> Render (Sequence node)
 positionOf      :: Sequence node -> Selected node -> FixedInt
@@ -259,10 +256,6 @@ rootOf        :: Tree node -> Selected node
 depthOf       :: Tree node -> Selected node -> FixedInt
 childCountOf  :: Tree node -> Selected node -> FixedInt
 subtreeSizeOf :: Tree node -> Selected node -> FixedInt
-
-asSiblingOrder     :: Relations node node -> Tree node -> Render (SiblingOrder node)
-forEachSiblingPair :: SiblingOrder node -> (Selected node -> Selected node -> Render ()) -> Render ()
-siblingPositionOf  :: SiblingOrder node -> Selected node -> FixedInt
 
 asDag      :: Relations node node -> Selected node -> Render (Dag node)
 rootsOf    :: Dag node -> Selected node
@@ -282,12 +275,17 @@ connector, anchor, and arrow vocabulary remains open.
 Render mappings. `relation` creates one spatial scope per selected relation and
 supplies its endpoints; a connector inside that scope is optional.
 
+`nodesOf view` recovers the view's scoped node selection for `node`.
+`edgesOf view` recovers its scoped relation selection for `relation`, preserving
+the exact relation identities and endpoint roles. There are no separate
+`forEach*` traversal helpers and no all-pairs API: unrelated node pairs receive
+constraints only when the author identifies them explicitly or a later bounded
+layout template does so for a concrete purpose.
+
 `asGraph`, `asSequence`, `asTree`, and `asDag` take the same selected relations
 and nodes. Each applies the endpoint-scope checks; the latter three also reject
 structures that do not have the requested shape. Here, `as` means "validate
 and expose as this view," not an unchecked cast.
-`asSiblingOrder` applies the same convention to each parent’s selected
-children in an existing `Tree`.
 
 ### Reusable values and finite choices
 

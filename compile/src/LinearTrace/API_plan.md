@@ -130,9 +130,9 @@ Each relation declaration also records one of these endpoint meanings:
   for deterministic output, but that order has no semantic meaning.
 
 This distinction belongs to Domain because it affects Program validation as
-well as Render traversal. Source grouping, sequences, trees, and DAGs require
-ordered endpoints; applying one of those operations to a symmetric relation is
-a source-level error. General graph traversal accepts either meaning.
+well as Render traversal. Sequences, trees, and DAGs require ordered endpoints;
+applying one of those operations to a symmetric relation is a source-level
+error. General graph traversal accepts either meaning.
 
 Endpoint meaning is declaration metadata rather than a public type parameter.
 The relation-facing target types are therefore `RelationKind source target`,
@@ -775,15 +775,9 @@ data Graph node
 data Sequence node
 data Tree node
 data Dag node
-data SiblingOrder node
 data FixedInt
 
 relation
-  :: Relations source target
-  -> (Selected source -> Selected target -> Render ())
-  -> Render ()
-
-forEachSourceGroup
   :: Relations source target
   -> (Selected source -> Selected target -> Render ())
   -> Render ()
@@ -812,19 +806,11 @@ kind, the body receives a stable endpoint order only so output and generated
 choice IDs are repeatable; its rule must be symmetric or make any visual
 orientation an explicit Render choice.
 
-`forEachSourceGroup` runs once per distinct source and supplies one selection
-containing all of that source's distinct targets. It is the grouping operation
-needed for ordered relations such as
-`Contains :: RelationKind Array Cell`; it does not invent an order among the
-targets. Applying it to a symmetric relation is a source-level error because
-choosing either endpoint as the group owner would invent meaning. `asGraph
-relations nodes` includes every selected node, including nodes with no edge,
-and every active relation for which both endpoints are in `nodes`. Relations
-with neither endpoint selected are outside the graph. A relation with exactly
-one selected endpoint is instead a scope error; rejecting it catches an
-accidental adjacency between two arrays rather than silently dropping the
-edge. A source with no target does not produce a source group; render an empty
-collection through its ordinary node selection.
+`asGraph relations nodes` includes every selected node, including nodes with no
+edge, and every active relation for which both endpoints are in `nodes`.
+Relations with neither endpoint selected are outside the graph. A relation with
+exactly one selected endpoint is instead a scope error; rejecting it catches an
+accidental cross-scope edge rather than silently dropping it.
 
 `asGraph`, `asSequence`, `asTree`, and `asDag` consistently take selected
 relations first and selected nodes second. Each applies these endpoint-scope
@@ -877,32 +863,27 @@ so forward and reverse playback follow its `relate` and `unrelate` events.
 
 ```haskell
 class GraphView graph node | graph -> node where
-  forEachNode :: graph -> (Selected node -> Render ()) -> Render ()
-  forEachEdge :: graph -> (Selected node -> Selected node -> Render ()) -> Render ()
-  forEachNodePair :: graph -> (Selected node -> Selected node -> Render ()) -> Render ()
+  nodesOf :: graph -> Selected node
+  edgesOf :: graph -> Relations node node
   nodeCount :: graph -> FixedInt
   edgeCount :: graph -> FixedInt
 ```
 
-`forEachNode` expands a rule once for each node in the current graph;
-`forEachEdge` does the same for its edges. A graph made from an ordered relation
-supplies source then target. A graph made from a symmetric relation supplies a
-stable pair whose order has no semantic meaning. Each `forEachEdge` expansion
-also retains the exact selected relation identity in its match context, so a
-future visual connector can follow that edge's lifecycle rather than merely
-matching its endpoint coordinates.
-`forEachNodePair` runs once for each unordered pair of distinct nodes, whether
-or not an edge joins them. Its endpoint order is stable but has no semantic
-meaning. `nodeCount` and `edgeCount` are calculated from the checkpoint rather
-than sampled by the numeric solver.
+`nodesOf` returns the view's scoped node selection for ordinary `node` mapping.
+`edgesOf` returns its scoped relation selection for ordinary `relation`
+mapping. A view made from an ordered relation preserves source then target; a
+view made from a symmetric relation preserves a stable pair whose order has no
+semantic meaning. `edgesOf` also preserves each exact selected relation
+identity, so a connector declared in its `relation` scope follows that edge's
+lifecycle rather than merely matching endpoint coordinates. `nodeCount` and
+`edgeCount` are calculated from the checkpoint rather than sampled by the
+numeric solver.
 
-A variable, `oneOf` choice, or generated node declared inside one of these
-callbacks is local to that matched node, relation edge, pair, or source group.
-Declare it outside the callback to share it across all matches. For relation
-callbacks the compiler includes the exact relation identity, not merely its
-endpoint identities, in generated choice and visual IDs. Equal descriptive
-labels therefore do not merge choices belonging to different matches, and a
-removed then recreated relation receives a distinct visual lifetime.
+The baseline deliberately has no operation that constructs or iterates every
+unordered node pair. Pairwise rules apply to declared relations or explicitly
+identified nodes. A later dynamic collision-avoidance helper must be
+purpose-specific, bounded, and introduced with a concrete layout use case; it
+must not hide quadratic pair generation behind a general graph traversal.
 
 `FixedInt` is an exact integer calculated from the current relation graph before
 numeric solving. It may differ at another checkpoint, but it is fixed while the
@@ -940,55 +921,62 @@ the selected relations and nodes directly avoids exposing a temporary `Graph`
 that authors would use only for this check; use `asGraph` when the raw graph is
 itself wanted.
 
-The following example assumes `Contains` relates each array to its cells and
-`Adjacent` points from each cell to the next. Each array is checked and laid out
-independently. A sampled centre-to-centre spacing is shared by all its cells:
+The following example assumes `cells` already selects one array's cells and
+`Adjacent` points from each cell to the next. The generated parent is the visual
+array box; no separate Program array owner or `Contains` relation is needed. A
+sampled centre-to-centre spacing is shared by the complete selection:
 
 ```haskell
-Selected memberLinks <- select Contains
+Selected cells <- select cellKind
 Selected adjacentLinks <- select Adjacent
+orderedCells <- asSequence adjacentLinks cells
 
-forEachSourceGroup memberLinks $ \array cells -> do
-  orderedCells <- asSequence adjacentLinks cells
+let orderedNodes = nodesOf orderedCells
 
-  Variable spacing <- variable @Span
-  ensure $ spacing .>=. by 64
-  ensure $ spacing .<=. by 96
+Variable spacing <- variable @Span
+ensure $ spacing .>=. by 64
+ensure $ spacing .<=. by 96
 
-  forEachNode orderedCells $ \cell -> do
-    let position = positionOf orderedCells cell
-    ensure $ width cell .==. by 64
-    ensure $ x cell .==. left array + shift 32 + spacing * asScalar position
-    ensure $ y cell .==. y array
+node $ do
+  Selected array <- self
+  padding (uniform (by 16))
+
+  node orderedNodes $ do
+    let position = positionOf orderedCells orderedNodes
+    ensure $ width orderedNodes .==. by 64
+    ensure $ x orderedNodes .==. left array + shift 32 + spacing * asScalar position
+    ensure $ y orderedNodes .==. y array
 
     Selected indexLabel <- node $ fitText (intText position)
-    ensure $ x indexLabel .==. x cell
-    ensure $ top indexLabel .==. bottom cell + shift 8
+    ensure $ x indexLabel .==. x orderedNodes
+    ensure $ top indexLabel .==. bottom orderedNodes + shift 8
 
   let count = nodeCount orderedCells
   ensure $ width array .>=. by 64 + spacing * asScalar (count - 1)
 ```
 
-Inside the same `forEachSourceGroup` callback, when cell widths vary, replace
-the centre-spacing block with consecutive edge constraints:
+When cell widths vary, replace the centre-spacing rule with constraints over
+the checked sequence's scoped relations:
 
 ```haskell
 Variable gap <- variable @Span
 ensure $ gap .>=. by 8
 ensure $ gap .<=. by 24
 
-forEachEdge orderedCells $ \previous next -> do
+relation (edgesOf orderedCells) $ \previous next -> do
   ensure $ left next .==. right previous + gap
   ensure $ y next .==. y previous
 ```
 
 These are alternative layout rules. A linked-list view can use the same checked
-`Sequence` for traversal; `forEachEdge` supplies endpoint pairs to a connector
-helper once that visual interface is defined. Separate bounded constraints can
-place its nodes freely and prevent overlap. The relation does not force either
-layout.
+`Sequence` for traversal; `relation (edgesOf sequence)` supplies its endpoint
+pairs to a connector helper once that visual interface is defined. Separate
+bounded constraints or prepared templates can place its nodes without overlap.
+The relation does not force either layout. If several dynamic arrays later
+share one cell kind, add a relation-derived selection only with that concrete
+use case rather than adding a special grouping API now.
 
-##### `Tree` and sibling order
+##### `Tree`
 
 `Tree` is a graph whose relation has ordered parent-to-child endpoints and
 exactly one root. Every other node must have one parent, every node must be
@@ -1014,44 +1002,28 @@ affine layout constraints:
 ```haskell
 Selected parentLinks <- select ParentOf
 tree <- asTree parentLinks treeNodes
+let nodesInTree = nodesOf tree
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 120
 
-forEachNode tree $ \current ->
-  ensure $ y current .==. at 60 + levelGap * asScalar (depthOf tree current)
+node nodesInTree $ do
+  ensure $ y nodesInTree .==. at 60 + levelGap * asScalar (depthOf tree nodesInTree)
 ```
 
 A parent-to-child relation does not define the left-to-right order of siblings.
-When that order matters, use another relation with ordered endpoints, such as
-`Adjacent`:
-
-```haskell
-asSiblingOrder :: Relations node node -> Tree node -> Render (SiblingOrder node)
-
-forEachSiblingPair
-  :: SiblingOrder node
-  -> (Selected node -> Selected node -> Render ())
-  -> Render ()
-
-siblingPositionOf :: SiblingOrder node -> Selected node -> FixedInt
-```
-
-`asSiblingOrder` checks separately for every parent that its children form one
-sequence. Zero or one child needs no adjacency edge. An adjacency edge between
-children of different parents is an error. The supplied relation must have
-ordered endpoints; a symmetric relation cannot distinguish previous from next.
-Render does not invent a sibling order when this helper is omitted.
+When that order matters, declare it as another relation, such as `Adjacent`,
+and apply ordinary relation constraints. The baseline does not derive ordinal
+positions from those relations:
 
 ```haskell
 Selected siblingLinks <- select Adjacent
-siblingOrder <- asSiblingOrder siblingLinks tree
 Variable siblingGap <- variable @Span
 ensure $ siblingGap .>=. by 16
 ensure $ siblingGap .<=. by 48
 
-forEachSiblingPair siblingOrder $ \previous next ->
+relation siblingLinks $ \previous next ->
   ensure $ left next .==. right previous + siblingGap
 ```
 
@@ -1082,13 +1054,14 @@ from any root, not an arbitrary total ordering.
 ```haskell
 Selected dependencyLinks <- select DependsOn
 dag <- asDag dependencyLinks tasks
+let tasksInDag = nodesOf dag
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 128
 
-forEachNode dag $ \task ->
-  ensure $ y task .==. at 60 + levelGap * asScalar (levelOf dag task)
+node tasksInDag $ do
+  ensure $ y tasksInDag .==. at 60 + levelGap * asScalar (levelOf dag tasksInDag)
 ```
 
 If a visualization requires one particular ordering of otherwise unrelated DAG
@@ -1111,20 +1084,19 @@ pairs are rejected.
 ```haskell
 Selected connectionLinks <- select ConnectedTo
 network <- asGraph connectionLinks vertices
+let networkVertices = nodesOf network
 
-forEachNode network $ \vertex -> do
-  ensure $ left vertex .>=. left canvas + shift 24
-  ensure $ right vertex .<=. right canvas - by 24
-  ensure $ top vertex .>=. top canvas + shift 24
-  ensure $ bottom vertex .<=. bottom canvas - by 24
-
-forEachNodePair network $ \first second ->
-  ensure $ separatedBy (by 12) first second
+node networkVertices $ do
+  ensure $ left networkVertices .>=. left canvas + shift 24
+  ensure $ right networkVertices .<=. right canvas - by 24
+  ensure $ top networkVertices .>=. top canvas + shift 24
+  ensure $ bottom networkVertices .<=. bottom canvas - by 24
 ```
 
-This bounds every vertex and prevents overlap with an exact finite choice for
-each node pair. It still does not choose connector routes or rank the many valid
-placements; those require further explicit rules or prepared templates.
+This bounds every vertex but deliberately does not generate constraints between
+every unrelated pair. A visualization that must prevent overlap in a dynamic
+general graph should choose a bounded grid, layered, or other prepared layout
+template. `separatedBy` remains available for explicitly identified pairs.
 
 Graph-layout helpers belong in a Render library and consume this same `Graph`;
 they are not another semantic relation system. A helper may emit bounded affine
@@ -1135,14 +1107,15 @@ constraints. They must not invoke a hidden nonlinear fallback. If later
 supported, they must be explicit preparation algorithms that return bounded
 candidate templates before affine sampling.
 
-The four cases created by each `separatedBy` constraint are affine once one is
-selected, but their combinations grow quickly with the number of node pairs.
-Connector routes add further choices. Large graphs should therefore normally
-use a bounded template generator rather than unrestricted pairwise branching.
+The four cases created by an explicit `separatedBy` constraint are affine once
+one is selected, but applying it to every possible pair would grow
+quadratically and introduce many combinations. The public API does not generate
+those pairs. Connector routes add further choices, so large graphs should
+normally use a bounded template generator.
 
 ##### Validation over time
 
-Graph construction and all `require*` checks run for every exposed checkpoint
+Graph construction and all `as*` checks run for every exposed checkpoint
 where their Render rule matches. Program should checkpoint after completing a
 logical relation update. If an incomplete structure is intentionally shown,
 Render should use its raw `Graph` until it is complete instead of claiming that
@@ -1151,9 +1124,8 @@ source-level diagnostics, not unlucky random samples.
 
 Sequence, tree, and DAG checks visit each node and edge only a constant number
 of times. Calculate their `FixedInt` values once for each distinct checkpoint
-graph and reuse them across seeds. `forEachNodePair` is deliberately more
-expensive: a graph with `n` nodes produces `n * (n - 1) / 2` pair rules before
-any separation or routing cases are expanded.
+graph and reuse them across seeds. No baseline graph operation constructs the
+`n * (n - 1) / 2` unordered pairs of `n` nodes.
 
 #### Reusable values and finite decisions
 
@@ -1272,9 +1244,10 @@ ensure $ scale .>=. num 0.75
 ensure $ scale .<=. num 1.25
 node card $ width (by 160 * scale)
 
-forEachNode orderedCells $ \cell -> do
-  let position = positionOf orderedCells cell
-  ensure $ x cell .==. at 40 + by 72 * asScalar position
+let cells = nodesOf orderedCells
+node cells $ do
+  let position = positionOf orderedCells cells
+  ensure $ x cells .==. at 40 + by 72 * asScalar position
 ```
 
 Both examples remain affine because one factor in each multiplication is
@@ -1986,8 +1959,8 @@ Authored body source may import only `Sverlin`.
 - Program rejects a second active relation of the same kind between the same
   endpoint pair. For a symmetric kind, the reversed pair is the same pair; for
   an ordered kind, the reversed pair is distinct.
-- `forEachSourceGroup`, `asSequence`, `asTree`, `asDag`, and
-  `asSiblingOrder` reject symmetric relations before numeric solving.
+- `asSequence`, `asTree`, and `asDag` reject symmetric relations before numeric
+  solving.
 - Relation structure may determine membership, adjacency, sequence position,
   tree depth, or DAG level. It must not be used to invent numeric properties
   such as a sparse key, address, stored value, or edge weight.
@@ -2050,19 +2023,21 @@ Add focused facade and compiler tests for:
 - ordered `Next a b` remaining distinct from `Next b a`, symmetric
   `ConnectedTo a b` rejecting `ConnectedTo b a` as a duplicate, and an ordered
   graph helper rejecting a symmetric kind with a source-level diagnostic;
-- two arrays grouped by `Contains` and ordered independently by `Adjacent`,
-  including a one-cell array, a rejected cross-array adjacency, and sampled
-  centre-spacing and edge-gap layouts;
+- one array rendered as a generated group around one selected cell set,
+  including empty and one-cell selections, a rejected cross-scope adjacency,
+  and sampled centre-spacing and edge-gap layouts;
 - sequence diagnostics for a missing edge, fork, cycle, and disconnected node;
 - sequence positions and counts used through both `asScalar` and `intText`;
 - a linked list that uses `Next` for traversal while its node positions remain
   independently constrained;
-- valid and invalid trees, sibling-order validation, tree depth, child count,
-  and subtree size;
+- valid and invalid trees, tree depth, child count, and subtree size;
 - DAG roots, leaves, longest-path levels, and rejection of a directed cycle;
-- a cyclic raw graph with pairwise `separatedBy` constraints that remains valid
-  as `Graph` but is rejected by `asDag`, with separation cases classified as
-  compiler-created rather than authored choices;
+- a cyclic raw graph that remains valid as `Graph` but is rejected by `asDag`,
+  with its nodes bounded through ordinary `node` mapping and no implicit
+  all-pairs constraints;
+- `GraphView` exposing scoped nodes, scoped relations, and counts through
+  `nodesOf`, `edgesOf`, `nodeCount`, and `edgeCount`, with no callback traversal
+  helper separate from `node` or `relation`, and no general all-pairs generator;
 - graph checks at successive checkpoints, including deliberate use of raw
   `Graph` while a structure is incomplete; and
 - removal of the public fact/query surface and `bindInt`, including migration
@@ -2080,10 +2055,9 @@ For the classification and relation slices:
    events, including endpoint and lifetime validation.
 3. Project active relation identities and endpoints to stable owner nodes at
    each checkpoint, and add the `RelationKind` case of `select`.
-4. Add `Relations`, raw `Graph`, iteration, grouping, and `FixedInt`; make the
+4. Add `Relations`, raw `Graph`, `nodesOf`, `edgesOf`, and `FixedInt`; make the
    stronger graph checks consume selected relations and nodes directly.
-5. Add the sequence, tree, sibling-order, and DAG checks and their calculated
-   values.
+5. Add the sequence, tree, and DAG checks and their calculated values.
 6. Migrate all examples and fixtures from query atoms and integer joins to
    kinds and relations; then remove the complete public fact/query surface from
    `Sverlin`.
@@ -2137,11 +2111,12 @@ layout problem.
   templates are weighted. Merely generating more equivalent templates must not
   increase one visual layout's sampling probability.
 - Define the visual connector and anchor interface available inside a
-  `relation` spatial scope or an edge traversal derived from it. The `relation`
-  mapping itself must remain valid with only affine endpoint constraints and no
-  visible connector. A connector created in that scope must inherit its exact
-  `relationId`, appear and disappear with that relation in forward and reverse
-  playback, and remain anchored to its stable owners while occupants change.
+  `relation` spatial scope, including one created from `edgesOf view`. The
+  `relation` mapping itself must remain valid with only affine endpoint
+  constraints and no visible connector. A connector created in that scope must
+  inherit its exact `relationId`, appear and disappear with that relation in
+  forward and reverse playback, and remain anchored to its stable owners while
+  occupants change.
   Ordered endpoints do not automatically choose arrow direction, and symmetric
   endpoints have none. The names, path shapes, routing choices, marker styles,
   and connector IR remain open.
