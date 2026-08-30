@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: sverlin-web
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: node build
+    preDeployCommand: node build-migrate/index.js
+    healthCheckPath: /api/health/ready
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sverlin-postgres
+          property: connectionString
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: SVERLIN_ADMIN_SETUP_TOKEN
+        generateValue: true
+      - key: SVERLIN_PROJECT_STORE
+        value: postgres
+
+  - type: worker
+    name: sverlin-worker
+    runtime: docker
+    region: singapore
+    # GHC and the native solver keep the established 4 GiB production ceiling.
+    plan: 2c-4g
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: node build-worker/index.js
+    # Render's maximum shutdown delay is 300 seconds. Stop pg-boss after 270
+    # seconds so it can mark unfinished work for retry before forced shutdown.
+    maxShutdownDelaySeconds: 300
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sverlin-postgres
+          property: connectionString
+      - key: SVERLIN_PROJECT_STORE
+        value: postgres
+      - key: SVERLIN_WORKER_SHUTDOWN_SECONDS
+        value: '270'
+
+databases:
+  - name: sverlin-postgres
+    region: singapore
+    # Two users and process-local pools capped at five connections per service
+    # fit the smallest persistent plan; resize from dashboard metrics if needed.
+    plan: 0.1c-256mb
+    postgresMajorVersion: '17'
+    ipAllowList: []

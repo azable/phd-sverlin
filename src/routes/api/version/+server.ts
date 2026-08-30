@@ -15,7 +15,7 @@ export const GET: RequestHandler = async () => {
     {
       version: typeof packageFile.version === 'string' ? packageFile.version : 'unknown',
       buildSha:
-        process.env.RAILWAY_GIT_COMMIT_SHA?.trim() ||
+        process.env.RENDER_GIT_COMMIT?.trim() ||
         process.env.SVERLIN_BUILD_SHA?.trim() ||
         'development',
       compilerSourceSha256: readiness.compiler?.sourceSha256

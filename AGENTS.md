@@ -2,12 +2,12 @@
 
 ## Project Context
 
-This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines: local file mode uses `data/projects/`, while the Railway target uses PostgreSQL plus a private Bucket. PostgreSQL project commands enter a pg-boss queue and are completed by a separate worker running the Haskell executable; local file-mode commands execute synchronously. The Haskell application generates the data that the SvelteKit application displays.
+This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines: local file mode uses `data/projects/`, while the Render target stores events and immutable compiler resources in PostgreSQL. PostgreSQL project commands enter a pg-boss queue and are completed by a separate worker running the Haskell executable; local file-mode commands execute synchronously. The Haskell application generates the data that the SvelteKit application displays.
 
 ## Communication and Documentation
 
 - Write explanations for a developer with in-depth programming knowledge but only
-  basic DevOps and Railway knowledge. Be concise, but include the context needed to
+  basic DevOps and Render knowledge. Be concise, but include the context needed to
   understand why an operational step or constraint exists; do not assume familiarity
   with infrastructure-specific terminology.
 - Prefer plain language. Define an unavoidable specialist term at its first meaningful

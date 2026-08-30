@@ -30,12 +30,6 @@
       "sourceType": "github",
       "skillPath": "plugins/claude/svelte/skills/svelte-core-bestpractices/SKILL.md",
       "computedHash": "98b4ee346ac45e13740c9f3353b604d5c6e844c96cdc8867052fa961cbdb525d"
-    },
-    "use-railway": {
-      "source": "railwayapp/railway-skills",
-      "sourceType": "github",
-      "skillPath": "plugins/railway/skills/use-railway/SKILL.md",
-      "computedHash": "670ed631943a05391ebb1b83988a8fe54dd4d26e0d5ffe9d43064a9fc578385e"
     }
   }
 }

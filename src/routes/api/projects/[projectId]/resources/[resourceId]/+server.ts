@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { error, redirect } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 
 import { requireProjectAccess } from '$lib/server/authorization';
 
@@ -26,9 +26,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
       })
       .find(({ id }) => id === params.resourceId);
     if (!reference) error(404, 'Unknown project resource.');
-
-    const downloadUrl = await projectRepository.resourceDownloadUrl(params.projectId, reference.id);
-    if (downloadUrl) redirect(302, downloadUrl);
 
     const bytes = await projectRepository.readResource(params.projectId, reference.id);
     if (bytes.byteLength !== reference.byteLength) {

@@ -8,7 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { link, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { and, asc, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 
 import { summarizeProject } from '$lib/shared/projects/projection';
 import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
@@ -22,8 +22,6 @@ import {
 import { runtimeProjectDir } from '$lib/server/runtime-config';
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
-
-import { projectResourceStore, railwayBucketConfigured } from './resource-store';
 
 const maxProjectDocumentBytes = 64 * 1024 * 1024;
 const maxProjectResourceBytes = 16 * 1024 * 1024;
@@ -50,7 +48,6 @@ export interface ProjectRepository {
     resources?: readonly ProjectResourceBlob[]
   ): Promise<ProjectAppendResult>;
   readResource(projectId: ProjectId, resourceId: string): Promise<Uint8Array>;
-  resourceDownloadUrl(projectId: ProjectId, resourceId: string): Promise<string | null>;
   eventsAfter(projectId: ProjectId, after: number): Promise<ProjectEvent[]>;
   deleteAll(): Promise<void>;
 }
@@ -205,10 +202,6 @@ export class FileProjectRepository {
     }
   }
 
-  async resourceDownloadUrl(_projectId: ProjectId, _resourceId: string): Promise<null> {
-    return null;
-  }
-
   /** Return a stable suffix of the immutable Timeline. */
   async eventsAfter(projectId: ProjectId, after: number): Promise<ProjectEvent[]> {
     const document = await this.load(projectId);
@@ -325,7 +318,7 @@ export class FileProjectRepository {
   }
 }
 
-/** PostgreSQL event repository shared by Railway web and worker services. */
+/** PostgreSQL event and resource repository shared by the web and worker services. */
 export class PostgresProjectRepository implements ProjectRepository {
   async initialize(): Promise<void> {
     // Migrations own schema creation; application processes never mutate it implicitly.
@@ -405,10 +398,6 @@ export class PostgresProjectRepository implements ProjectRepository {
   ): Promise<ProjectAppendResult> {
     assertProjectId(projectId);
     resources.forEach(assertResource);
-    const pathnames = new Map<string, string>();
-    for (const resource of resources) {
-      pathnames.set(resource.id, await projectResourceStore.put(projectId, resource));
-    }
 
     return database().transaction(async (transaction) => {
       const locked = await transaction
@@ -453,7 +442,10 @@ export class PostgresProjectRepository implements ProjectRepository {
           .values({
             projectId,
             resourceId: resource.id,
-            pathname: pathnames.get(resource.id)!,
+            bytes: resource.bytes,
+            // Retained until the one-time provider migration has verified every
+            // legacy bucket object was copied into the bytes column.
+            pathname: `projects/${projectId}/${resource.id}`,
             sha256: resource.sha256,
             byteLength: resource.byteLength,
             mediaType: resource.mediaType
@@ -477,7 +469,11 @@ export class PostgresProjectRepository implements ProjectRepository {
     assertProjectId(projectId);
     assertResourceId(resourceId);
     const row = await database()
-      .select({ pathname: schema.projectResources.pathname })
+      .select({
+        bytes: schema.projectResources.bytes,
+        sha256: schema.projectResources.sha256,
+        byteLength: schema.projectResources.byteLength
+      })
       .from(schema.projectResources)
       .where(
         and(
@@ -487,25 +483,17 @@ export class PostgresProjectRepository implements ProjectRepository {
       )
       .limit(1);
     if (!row[0]) throw new ProjectResourceNotFoundError(resourceId);
-    return projectResourceStore.get(row[0].pathname);
-  }
-
-  async resourceDownloadUrl(projectId: ProjectId, resourceId: string): Promise<string | null> {
-    assertProjectId(projectId);
-    assertResourceId(resourceId);
-    const row = await database()
-      .select({ pathname: schema.projectResources.pathname })
-      .from(schema.projectResources)
-      .where(
-        and(
-          eq(schema.projectResources.projectId, projectId),
-          eq(schema.projectResources.resourceId, resourceId)
-        )
-      )
-      .limit(1);
-    if (!row[0]) throw new ProjectResourceNotFoundError(resourceId);
-    if (!railwayBucketConfigured) return null;
-    return projectResourceStore.downloadUrl(row[0].pathname);
+    if (!row[0].bytes) {
+      throw new Error(`Resource ${resourceId} has not been migrated into PostgreSQL.`);
+    }
+    const bytes = Uint8Array.from(row[0].bytes);
+    if (
+      bytes.byteLength !== row[0].byteLength ||
+      createHash('sha256').update(bytes).digest('hex') !== row[0].sha256
+    ) {
+      throw new Error(`Stored resource ${resourceId} failed integrity verification.`);
+    }
+    return bytes;
   }
 
   async eventsAfter(projectId: ProjectId, after: number): Promise<ProjectEvent[]> {
@@ -527,26 +515,12 @@ export class PostgresProjectRepository implements ProjectRepository {
   }
 
   async deleteAll(): Promise<void> {
-    const ids = await database().select({ id: schema.projects.id }).from(schema.projects);
-    // Delete external resources first. If the database commit then fails, an
-    // administrator can safely repeat the reset to finish metadata cleanup.
-    await Promise.all(ids.map(({ id }) => projectResourceStore.deleteProject(id)));
-    await database().transaction(async (transaction) => {
-      if (ids.length) {
-        await transaction.delete(schema.projects).where(
-          inArray(
-            schema.projects.id,
-            ids.map(({ id }) => id)
-          )
-        );
-      }
-    });
+    await database().delete(schema.projects);
   }
 }
 
 /** Default repository used by server routes and project operations. */
-export const usesPostgresProjectStore =
-  Boolean(process.env.RAILWAY_ENVIRONMENT_ID) || process.env.SVERLIN_PROJECT_STORE === 'postgres';
+export const usesPostgresProjectStore = process.env.SVERLIN_PROJECT_STORE === 'postgres';
 
 export const projectRepository: ProjectRepository = usesPostgresProjectStore
   ? new PostgresProjectRepository()

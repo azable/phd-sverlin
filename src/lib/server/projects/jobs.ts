@@ -83,7 +83,7 @@ export async function createProjectJob(
   return { id: existing.id, status: projectJobStatus(existing) };
 }
 
-/** Register the project command handler. Run this only in the Railway worker service. */
+/** Register the project command handler. Run this only in the production worker service. */
 export async function startProjectJobWorker(): Promise<PgBoss> {
   const boss = await projectJobBoss(true);
   await boss.work<ProjectJobData, ProjectJobOutput>(

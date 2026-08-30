@@ -2,7 +2,7 @@
 
 Sverlin is a SvelteKit research application for building and reviewing event-sourced visualizations. A Haskell compiler interprets the Sverlin DSL, solves the layout, and produces the visualization data displayed by the browser.
 
-Each project is an immutable Timeline. In the production-style path, SvelteKit queues project commands through pg-boss and a separate worker performs AI generation and compilation. PostgreSQL stores authentication, ownership, events, and jobs; a private Railway Bucket stores immutable compiler resources.
+Each project is an immutable Timeline. In the production-style path, SvelteKit queues project commands through pg-boss and a separate worker performs AI generation and compilation. PostgreSQL stores authentication, ownership, events, jobs, and immutable compiler resources.
 
 ## Local development
 
@@ -90,8 +90,7 @@ authenticated browser
   -> pg-boss stores and delivers the durable PostgreSQL job
   -> worker serializes commands for each project owner
   -> prepared Haskell compiler runs in isolated scratch space
-  -> PostgreSQL receives immutable Timeline events
-  -> Railway Bucket receives content-addressed resources
+  -> PostgreSQL receives immutable Timeline events and content-addressed resources
   -> browser polls the job and Timeline until complete
 ```
 
@@ -99,7 +98,7 @@ The root container files have distinct responsibilities:
 
 | File                                                                 | Responsibility                                                                               |
 | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [`Dockerfile`](Dockerfile)                                           | Shared development, build, verification, and Railway runtime image targets.                  |
+| [`Dockerfile`](Dockerfile)                                           | Shared development, build, verification, and Render runtime image targets.                   |
 | [`compose.yaml`](compose.yaml)                                       | Local workspace, PostgreSQL service, and persistent volumes.                                 |
 | [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) | Attaches the editor, installs development features including Docker, and runs project setup. |
 
@@ -116,15 +115,15 @@ libraries retain only their registered library artifacts.
 
 ## Project layout
 
-| Path                                 | Responsibility                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| [`src/lib/shared/`](src/lib/shared/) | Environment-neutral event schemas, projections, project contracts, and generated visualization types.  |
-| [`src/lib/client/`](src/lib/client/) | Svelte UI, project sessions, Timeline presentation, and visualization playback.                        |
-| [`src/lib/server/`](src/lib/server/) | Better Auth, authorization, PostgreSQL/Bucket persistence, jobs, AI providers, and compiler execution. |
-| [`src/routes/`](src/routes/)         | SvelteKit pages and authenticated APIs.                                                                |
-| [`compile/src/`](compile/src/)       | Reusable Haskell libraries and the public `Solver`/choreography APIs.                                  |
-| [`compile/app/`](compile/app/)       | Executable-only Sverlin loading, compilation, and generated-type tools.                                |
-| [`examples/`](examples/)             | Catalogued `.sverlin` examples and the minimal starting template.                                      |
+| Path                                 | Responsibility                                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| [`src/lib/shared/`](src/lib/shared/) | Environment-neutral event schemas, projections, project contracts, and generated visualization types. |
+| [`src/lib/client/`](src/lib/client/) | Svelte UI, project sessions, Timeline presentation, and visualization playback.                       |
+| [`src/lib/server/`](src/lib/server/) | Better Auth, authorization, PostgreSQL persistence, jobs, AI providers, and compiler execution.       |
+| [`src/routes/`](src/routes/)         | SvelteKit pages and authenticated APIs.                                                               |
+| [`compile/src/`](compile/src/)       | Reusable Haskell libraries and the public `Solver`/choreography APIs.                                 |
+| [`compile/app/`](compile/app/)       | Executable-only Sverlin loading, compilation, and generated-type tools.                               |
+| [`examples/`](examples/)             | Catalogued `.sverlin` examples and the minimal starting template.                                     |
 
 The TypeScript boundaries are one-way: `shared` may be used everywhere, `client` owns browser-only behavior, and `server` owns secrets and persistence. ESLint enforces this separation.
 
@@ -171,12 +170,10 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 ### Database, data, and operations
 
-| Command                | Purpose                                                         |
-| ---------------------- | --------------------------------------------------------------- |
-| `pnpm run db:generate` | Generate a Drizzle migration from the TypeScript schema.        |
-| `pnpm run db:migrate`  | Apply checked-in Drizzle migrations to `DATABASE_URL`.          |
-| `pnpm run infra:plan`  | Read Railway production state and preview infrastructure drift. |
-| `pnpm run infra:apply` | Review and confirm an infrastructure plan before applying it.   |
+| Command                | Purpose                                                  |
+| ---------------------- | -------------------------------------------------------- |
+| `pnpm run db:generate` | Generate a Drizzle migration from the TypeScript schema. |
+| `pnpm run db:migrate`  | Apply checked-in Drizzle migrations to `DATABASE_URL`.   |
 
 ### Checks, generation, and formatting
 
@@ -212,16 +209,12 @@ After Haskell changes, run the relevant compile, Haskell tests, solver tests, an
 
 ## Production deployment
 
-[`.railway/railway.ts`](.railway/railway.ts) defines one production web service, one worker, PostgreSQL, and a private Bucket. Railway's [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) is operated explicitly from a checkout linked to the production environment:
+[`render.yaml`](render.yaml) is a Render [Blueprint](https://render.com/docs/infrastructure-as-code) for one web service, one background worker, and one managed PostgreSQL database in Singapore. Connect the repository as a new Blueprint in the Render dashboard; no deployment CLI is required. Commits to `main` deploy automatically.
 
-```sh
-pnpm run infra:plan
-# Review every change, then:
-pnpm run infra:apply
-```
+The web service runs checked-in migrations before each deploy and exposes `/api/health/ready` as its health check. Render generates the Better Auth and administrator-setup secrets. Read `SVERLIN_ADMIN_SETUP_TOKEN` from the web service environment, then open `/setup?token=<value>` on the generated `onrender.com` URL. Better Auth derives that public origin from Render's `RENDER_EXTERNAL_HOSTNAME`; set `BETTER_AUTH_URL` explicitly only when using a custom domain.
 
-Infrastructure is never applied by the GitHub workflow. The web and worker use Railway's [GitHub autodeploy](https://docs.railway.com/deployments/github-autodeploys) from `main`; `checkSuites: true` makes deployments wait for the checked-in CI workflow. CI builds and tests the deployment image, then starts the final image as its non-root runtime user against PostgreSQL and checks `/api/health/ready`.
+The initial plans are a 512 MiB web service, a 4 GiB worker, and a persistent 256 MiB PostgreSQL instance. The worker keeps the established 4 GiB ceiling because it runs GHC and the native solver; project commands already run one at a time. Render allows at most 300 seconds for graceful shutdown, so the worker stops pg-boss after 270 seconds, leaving 30 seconds to mark unfinished work for its configured retry and close the compiler and database cleanly. PostgreSQL stores resource bytes directly; the application already limits each immutable resource to 16 MiB. Add `OPENAI_API_KEY`, `OPENAI_MODEL`, and `CHATBOT_CONFIG` to the worker only when AI-assisted editing is required.
 
 ## Agent tooling
 
-Repository-local skills under [`.agents/skills/`](.agents/skills/) provide Svelte 5, shadcn-svelte, and Railway guidance in trusted clones. [`AGENTS.md`](AGENTS.md) contains the complete engineering and verification rules.
+Repository-local skills under [`.agents/skills/`](.agents/skills/) provide authentication, Svelte 5, and shadcn-svelte guidance in trusted clones. [`AGENTS.md`](AGENTS.md) contains the complete engineering and verification rules.

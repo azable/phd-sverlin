@@ -1,0 +1,1 @@
+ALTER TABLE "project_resource" ADD COLUMN "bytes" "bytea";

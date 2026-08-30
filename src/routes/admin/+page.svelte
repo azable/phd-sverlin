@@ -37,7 +37,7 @@
     </section>
   {/if}
   {#if form?.participantPurged}
-    <p class="rounded-md border p-3">Deleted participant {form.participantPurged} from Railway.</p>
+    <p class="rounded-md border p-3">Deleted participant {form.participantPurged}.</p>
   {/if}
   {#if form?.studyPurged}
     <p class="rounded-md border p-3">

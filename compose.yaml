@@ -22,8 +22,6 @@ services:
       CHATBOT_CONFIG: ${CHATBOT_CONFIG:-}
     volumes:
       - .:/workspaces/phd-sverlin
-      # Preserve Railway CLI login and project-link state across container recreation.
-      - railway-state:/root/.railway
       # Mount generated package data at the paths used by Node and Stack.
       - node-modules:/workspaces/phd-sverlin/node_modules
       - stack-work:/workspaces/phd-sverlin/compile/.stack-work
@@ -54,6 +52,5 @@ volumes:
   mip-stack-work:
   node-modules:
   postgres-data:
-  railway-state:
   stack-root:
   stack-work:

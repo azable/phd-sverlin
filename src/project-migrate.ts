@@ -1,4 +1,4 @@
-/** Apply checked-in Drizzle migrations from the production Railway image. */
+/** Apply checked-in Drizzle migrations from the production image. */
 
 import path from 'node:path';
 

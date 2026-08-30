@@ -26,10 +26,7 @@ export async function requireProjectAccess(
   projectId: string
 ): Promise<Principal> {
   const principal = requirePrincipal(locals);
-  if (
-    principal.kind === 'admin' ||
-    (!process.env.RAILWAY_ENVIRONMENT_ID && process.env.SVERLIN_PROJECT_STORE !== 'postgres')
-  ) {
+  if (principal.kind === 'admin' || process.env.SVERLIN_PROJECT_STORE !== 'postgres') {
     return principal;
   }
   const row = await database()

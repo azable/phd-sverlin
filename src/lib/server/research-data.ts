@@ -21,7 +21,7 @@ import {
   listResearchProjectJobs,
   type ResearchProjectJob
 } from '$lib/server/projects/jobs';
-import { projectResourceStore } from '$lib/server/projects/resource-store';
+import { projectRepository } from '$lib/server/projects/repository';
 import { setParticipantEnabled } from '$lib/server/participants';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
@@ -49,7 +49,6 @@ type ProjectSnapshot = {
 type ResourceSnapshot = {
   projectId: string;
   resourceId: string;
-  pathname: string;
   sha256: string;
   byteLength: number;
   mediaType: string;
@@ -207,7 +206,14 @@ async function collectSnapshot(ownerUserId?: string): Promise<ResearchSnapshot> 
         : [];
       const resourceRows = projectIds.length
         ? await transaction
-            .select()
+            .select({
+              projectId: schema.projectResources.projectId,
+              resourceId: schema.projectResources.resourceId,
+              sha256: schema.projectResources.sha256,
+              byteLength: schema.projectResources.byteLength,
+              mediaType: schema.projectResources.mediaType,
+              createdAt: schema.projectResources.createdAt
+            })
             .from(schema.projectResources)
             .where(inArray(schema.projectResources.projectId, projectIds))
             .orderBy(
@@ -289,7 +295,7 @@ async function prepareArchive(
         });
         appendJson(zip, files, `${projectRoot}/resources.json`, project.resources);
         for (const resource of project.resources) {
-          const bytes = await projectResourceStore.get(resource.pathname);
+          const bytes = await projectRepository.readResource(project.id, resource.resourceId);
           verifyResearchResource(bytes, resource);
           appendBytes(
             zip,
@@ -310,9 +316,7 @@ async function prepareArchive(
       application: {
         version: process.env.npm_package_version ?? '0.0.1',
         buildSha:
-          process.env.RAILWAY_GIT_COMMIT_SHA?.trim() ||
-          process.env.SVERLIN_BUILD_SHA?.trim() ||
-          null
+          process.env.RENDER_GIT_COMMIT?.trim() || process.env.SVERLIN_BUILD_SHA?.trim() || null
       },
       participantCount: snapshot.participants.length,
       projectCount: snapshot.projects.length,
@@ -381,7 +385,6 @@ async function purgeParticipant(
   await assertNoActiveProjectJobs(participant.id);
 
   const projectIds = await participantProjectIds(participant.id);
-  for (const projectId of projectIds) await projectResourceStore.deleteProject(projectId);
   if (projectIds.length) {
     await database().delete(schema.projects).where(inArray(schema.projects.id, projectIds));
   }

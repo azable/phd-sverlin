@@ -4,6 +4,7 @@ import { relations } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -23,6 +24,10 @@ const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
 };
+
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => 'bytea'
+});
 
 // Better Auth core and plugin tables. Property names intentionally match its
 // Drizzle adapter model fields while SQL names remain conventional snake_case.
@@ -169,6 +174,7 @@ export const projectResources = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     resourceId: varchar('resource_id', { length: 80 }).notNull(),
+    bytes: bytea('bytes'),
     pathname: text('pathname').notNull(),
     sha256: varchar('sha256', { length: 64 }).notNull(),
     byteLength: integer('byte_length').notNull(),
