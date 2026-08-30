@@ -3,6 +3,12 @@
 import type { EventId, ProjectEvent, ProjectOperationKind } from './events';
 import type { ProjectDocument } from './model';
 
+/** One durable interaction waiting to be claimed by a background assistant turn. */
+export type PendingAssistantTurnRequest = Extract<
+  ProjectEvent,
+  { type: 'assistant.turn-requested' }
+>;
+
 /** Current state of one accepted project operation. */
 export type ProjectOperation = {
   operationId: string;
@@ -49,11 +55,39 @@ export function projectOperation(
   return projectOperations(value).find((operation) => operation.operationId === operationId);
 }
 
-/** Return the sole unfinished operation, if the project is currently busy. */
+/** Return the first unfinished operation, if the project is currently busy. */
 export function activeProjectOperation(
   value: ProjectDocument | readonly ProjectEvent[]
 ): ProjectOperation | undefined {
   return projectOperations(value).find(
     ({ status }) => status === 'accepted' || status === 'running'
+  );
+}
+
+/** Return assistant requests that no started turn has claimed. */
+export function pendingAssistantTurnRequests(
+  value: ProjectDocument | readonly ProjectEvent[]
+): PendingAssistantTurnRequest[] {
+  const events = 'events' in value ? value.events : value;
+  const claimed = new Set(
+    events.flatMap((event) =>
+      event.type === 'assistant.turn-started' ? event.payload.requestEventIds : []
+    )
+  );
+  return events.filter(
+    (event): event is PendingAssistantTurnRequest =>
+      event.type === 'assistant.turn-requested' && !claimed.has(event.id)
+  );
+}
+
+/** Find the durable claim associated with one assistant operation. */
+export function assistantTurnClaim(
+  value: ProjectDocument | readonly ProjectEvent[],
+  operationId: string
+): Extract<ProjectEvent, { type: 'assistant.turn-started' }> | undefined {
+  const events = 'events' in value ? value.events : value;
+  return events.find(
+    (event): event is Extract<ProjectEvent, { type: 'assistant.turn-started' }> =>
+      event.type === 'assistant.turn-started' && event.operationId === operationId
   );
 }

@@ -11,6 +11,7 @@ export const feedbackSubmittedEventSchema = v.object({
   type: v.literal('feedback.submitted'),
   payload: v.object({
     content: messageContentSchema,
-    focus: v.array(positiveSchema)
+    focus: v.array(positiveSchema),
+    presentationCount: v.optional(v.picklist([1, 2]))
   })
 });

@@ -19,7 +19,10 @@ import {
   type ProjectReader
 } from '$lib/server/projects/repository';
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { activeProjectOperation } from '$lib/shared/projects/operations';
+import {
+  activeProjectOperation,
+  pendingAssistantTurnRequests
+} from '$lib/shared/projects/operations';
 import type { VisualizationMode } from '$lib/shared/presentations';
 import type { StudyDefinition } from '$lib/shared/study/definition';
 import { projectStudyFlow, type StudyFlow } from '$lib/shared/study/projection';
@@ -292,7 +295,10 @@ export class PostgresExportDataSource implements ExportDataSource {
                 .filter((row) => row.projectId === project.id)
                 .map(({ event }) => event)
             };
-            if (activeProjectOperation(document)) {
+            if (
+              activeProjectOperation(document) ||
+              pendingAssistantTurnRequests(document).length > 0
+            ) {
               throw new Error(
                 'A project operation is currently running. Wait for it to finish and try again.'
               );

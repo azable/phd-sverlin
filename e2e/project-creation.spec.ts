@@ -4,6 +4,7 @@ import path from 'node:path';
 
 let projectId: string;
 let selectionProjectId: string;
+let comparisonProjectId: string;
 let createdProjectId: string;
 const templateCount = (
   JSON.parse(readFileSync(path.resolve('examples/catalog.json'), 'utf8')) as {
@@ -18,6 +19,8 @@ test.beforeAll(async ({ request }) => {
   projectId = await createProject(request, 'blank');
   selectionProjectId = await createProject(request, 'typed-addition');
   await runProjectCommand(request, selectionProjectId, { type: 'render', seed: 2026 });
+  comparisonProjectId = await createProject(request, 'typed-addition');
+  await runProjectCommand(request, comparisonProjectId, { type: 'render', seed: 2027 });
   console.info(
     `[e2e setup] Initial project compilation completed in ${Math.round(performance.now() - startedAt)} ms.`
   );
@@ -117,6 +120,61 @@ test('canvas element selection is included in submitted feedback', async ({ page
   await expect(viewport.locator('.selection-outline')).toHaveCount(1);
   await submittedReferences.nth(1).click({ modifiers: ['Shift'] });
   await expect(viewport.locator('.selection-outline')).toHaveCount(2);
+  expect(browserFailures()).toEqual([]);
+});
+
+test('comparison selections focus an immediate preference assistant turn', async ({ page }) => {
+  const browserFailures = observeBrowserFailures(page);
+  await page.goto(`/projects/${comparisonProjectId}`);
+  await page.getByLabel('Presentation layout').selectOption('comparison');
+  const candidates = page.getByRole('button', { name: /^Candidate/ });
+  expect(await candidates.count()).toBeGreaterThan(1);
+  await expect(candidates.first().locator('..')).toContainText('Click to view');
+  await expect(candidates.first().locator('..')).not.toContainText('Seed');
+  await expect(candidates.first().locator('..')).not.toContainText('Shift-click');
+  await candidates.nth(0).click();
+  await candidates.nth(1).click({ modifiers: ['Shift'] });
+
+  const top = page.getByRole('region', { name: 'Visualization 1' });
+  const bottom = page.getByRole('region', { name: 'Visualization 2' });
+  await expect(top).toBeVisible();
+  await expect(bottom).toBeVisible();
+  const topElement = top.locator('[data-instance-id][aria-label^="Value "] rect').first();
+  const bottomElement = bottom.locator('[data-instance-id][aria-label^="Value "] rect').first();
+  await topElement.click();
+  await bottomElement.click();
+  await expect(top.locator('.selection-outline')).toHaveCount(1);
+  await expect(bottom.locator('.selection-outline')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Reference selections' })).toBeVisible();
+  await expect(
+    page.getByTestId('automatic-feedback-context').locator('[data-slot="badge"]')
+  ).toHaveCount(2);
+
+  const preferenceResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/projects/${comparisonProjectId}`) &&
+      response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Prefer top' }).click();
+  await expect(page.getByText('Recording…', { exact: true })).toBeVisible();
+  const response = await preferenceResponse;
+  expect(response.status()).toBe(202);
+  const accepted = (await response.json()) as { operationId: string };
+  const payload = response.request().postDataJSON() as {
+    type: string;
+    visualSelections: Array<{ presentationEvent: number; step: number; instances: number[] }>;
+  };
+  expect(payload.type).toBe('prefer');
+  expect(payload.visualSelections).toHaveLength(2);
+  expect(
+    new Set(payload.visualSelections.map(({ presentationEvent }) => presentationEvent)).size
+  ).toBe(2);
+  await waitForOperation(page.request, comparisonProjectId, accepted.operationId);
+  await expect(
+    page.getByText(
+      'I noticed that preference. Another comparison will help me decide whether to adapt the visualization.'
+    )
+  ).toBeVisible();
   expect(browserFailures()).toEqual([]);
 });
 

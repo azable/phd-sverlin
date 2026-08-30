@@ -7,12 +7,12 @@ import { singletonReferenceSegments, type ReferenceSegment } from './reference-l
 /** Describe the currently visible visualization context with retained inline references. */
 export function automaticFeedbackContext(
   presentations: readonly TimelinePresentation[],
-  visualSelection?: VisualSelection
+  visualSelections: readonly VisualSelection[] = []
 ): MessageContent {
   const visible = presentations.slice(0, 2);
   if (visible.length === 0) return [];
   const references = visible.map((presentation) =>
-    automaticReference(presentation, visualSelection)
+    automaticReference(presentation, visualSelections)
   );
   if (references.length === 1) {
     return [
@@ -53,8 +53,11 @@ export function feedbackSubmissionContent(
 
 function automaticReference(
   presentation: TimelinePresentation,
-  visualSelection?: VisualSelection
+  visualSelections: readonly VisualSelection[]
 ): ReferenceSegment[] {
+  const visualSelection = visualSelections.find(
+    (selection) => selection.presentationEvent === presentation.eventId
+  );
   if (visualSelection?.presentationEvent === presentation.eventId) {
     return singletonReferenceSegments({
       type: 'element-ref',

@@ -170,6 +170,60 @@ describe('ProjectSession', () => {
     expect(session.refillPending).toBe(false);
   });
 
+  it('keeps background assistant work out of the foreground command lock', async () => {
+    const interactionId = '12345678-1234-4123-8123-123456789abe';
+    const assistantId = '12345678-1234-4123-8123-123456789abf';
+    const initial = projectResource(
+      [
+        createdEvent(),
+        {
+          id: 2,
+          type: 'feedback.submitted',
+          actor: { kind: 'user' },
+          operationId: interactionId,
+          createdAt: '2026-01-01T00:00:02.000Z',
+          payload: {
+            content: [{ type: 'markdown', text: 'Move the label.' }],
+            focus: [],
+            presentationCount: 2
+          }
+        },
+        {
+          id: 3,
+          type: 'assistant.turn-requested',
+          actor: { kind: 'system' },
+          operationId: interactionId,
+          createdAt: '2026-01-01T00:00:03.000Z',
+          payload: { interactionEventId: 2, presentationCount: 2 }
+        },
+        {
+          id: 4,
+          type: 'operation.accepted',
+          actor: { kind: 'system' },
+          operationId: assistantId,
+          createdAt: '2026-01-01T00:00:04.000Z',
+          payload: { kind: 'assistant-turn' }
+        },
+        {
+          id: 5,
+          type: 'assistant.turn-started',
+          actor: { kind: 'system' },
+          operationId: assistantId,
+          createdAt: '2026-01-01T00:00:05.000Z',
+          payload: { requestEventIds: [3], interactionEventIds: [2] }
+        }
+      ],
+      'Background assistant'
+    );
+    fetchMock.mockResolvedValueOnce(response(initial));
+
+    const session = createSession();
+    await session.open();
+
+    expect(session.pending).toBeNull();
+    expect(session.assistantActivity).toEqual({ status: 'considering', queuedCount: 0 });
+  });
+
   it('creates a project from an explicit template and preserves Dev detail', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ projectId: 'dev-project', operationId }), {

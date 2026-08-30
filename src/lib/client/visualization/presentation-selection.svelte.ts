@@ -63,6 +63,13 @@ export class PresentationSelection {
     this.notice = null;
   }
 
+  /** Keep one visible set stable while an operation evaluates it. */
+  pin(presentations: readonly TimelinePresentation[]): void {
+    this.setIds(presentations.map(({ presentation }) => presentation.presentationId));
+    this.followingLatest = false;
+    this.notice = null;
+  }
+
   private automatic(
     events: readonly ProjectEvent[],
     all: readonly TimelinePresentation[],

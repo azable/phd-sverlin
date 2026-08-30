@@ -128,7 +128,7 @@
               <Button
                 size="xs"
                 variant="outline"
-                class="pointer-events-auto relative z-10 font-mono"
+                class="pointer-events-auto relative z-10 ml-auto font-mono"
                 aria-label={`Add ${presentationDisplayId(id)} to feedback`}
                 onclick={(event) => {
                   event.stopPropagation();
@@ -143,13 +143,7 @@
               </span>
             {/if}
           </span>
-          <span class="mt-1 block text-sm text-muted-foreground">
-            {item.value.presentation.format === 'sverlin-ir-v1'
-              ? `Seed ${item.value.presentation.seed} · `
-              : ''}Click to view{layout === 'comparison'
-              ? ' · Shift-click another compatible candidate to compare'
-              : ''}
-          </span>
+          <span class="mt-1 block text-sm text-muted-foreground"> Click to view </span>
         </div>
       </article>
     {:else}
@@ -163,14 +157,34 @@
   </li>
 {/each}
 
-{#if session.pending}
+{#if session.assistantActivity}
   <li in:fly={{ y: 12, duration: 180 }}>
     <div
       class="flex max-w-[88%] items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-base text-muted-foreground shadow-md"
       role="status"
     >
       <Spinner />
-      <span>Assistant is working…</span>
+      <span>
+        {session.assistantActivity.status === 'queued'
+          ? 'Feedback queued…'
+          : session.assistantActivity.status === 'considering'
+            ? 'Considering your feedback…'
+            : session.assistantActivity.status === 'repairing'
+              ? 'Reworking the visualization…'
+              : 'Preparing new candidates…'}{session.assistantActivity.queuedCount > 0
+          ? ` · ${session.assistantActivity.queuedCount} newer ${session.assistantActivity.queuedCount === 1 ? 'message' : 'messages'} queued`
+          : ''}
+      </span>
+    </div>
+  </li>
+{:else if session.pending}
+  <li in:fly={{ y: 12, duration: 180 }}>
+    <div
+      class="flex max-w-[88%] items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-base text-muted-foreground shadow-md"
+      role="status"
+    >
+      <Spinner />
+      <span>Recording your update…</span>
     </div>
   </li>
 {:else if session.refillPending}

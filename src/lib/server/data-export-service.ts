@@ -18,7 +18,10 @@ import {
   assertProjectOperationsIdle
 } from '$lib/server/projects/operations';
 import { projectRepository } from '$lib/server/projects/repository';
-import { activeProjectOperation } from '$lib/shared/projects/operations';
+import {
+  activeProjectOperation,
+  pendingAssistantTurnRequests
+} from '$lib/shared/projects/operations';
 import { studyDefinition } from '$lib/shared/study/registry';
 
 export type DataExportSelection =
@@ -125,7 +128,7 @@ async function assertExportIdle(scope: ExportScope): Promise<void> {
   }
   if (scope.type === 'projects' && scope.projectId) {
     const document = await projectRepository.load(scope.projectId);
-    if (activeProjectOperation(document)) {
+    if (activeProjectOperation(document) || pendingAssistantTurnRequests(document).length > 0) {
       throw new Error(
         'A project operation is currently running. Wait for it to finish and try again.'
       );

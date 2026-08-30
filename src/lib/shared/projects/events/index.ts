@@ -14,6 +14,10 @@ import {
 import { artifactVersionCreatedEventSchema } from './artifact-version-created';
 import { assistantRespondedEventSchema } from './assistant-responded';
 import {
+  assistantTurnRequestedEventSchema,
+  assistantTurnStartedEventSchema
+} from './assistant-turn';
+import {
   compilationFailedEventSchema,
   compilationRequestedEventSchema,
   compilationSucceededEventSchema
@@ -41,6 +45,8 @@ export const projectEventSchema = v.variant('type', [
   operationFailedEventSchema,
   projectRenamedEventSchema,
   feedbackSubmittedEventSchema,
+  assistantTurnRequestedEventSchema,
+  assistantTurnStartedEventSchema,
   aiGenerationRequestedEventSchema,
   aiGenerationSucceededEventSchema,
   aiGenerationFailedEventSchema,

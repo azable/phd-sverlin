@@ -72,18 +72,24 @@ describe('AI assistant DSL interface', () => {
     expect(guide).toContain('Do not make a numeric list');
   });
 
+  it('lets preference evidence drive or defer a proactive source adaptation', () => {
+    expect(aiAssistant.initialPrompt).toContain('When preferences provide enough evidence');
+    expect(aiAssistant.initialPrompt).toContain('when several attributes could explain');
+    expect(aiAssistant.initialPrompt).toContain('without inventing a change');
+  });
+
   it('rejects empty source and reply text consistently with its provider schema', () => {
     expect(() =>
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: '' }],
-        candidateAction: 'none',
+        action: 'respond',
         sourceArtifactContent: null
       })
     ).toThrow();
     expect(() =>
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'Update' }],
-        candidateAction: 'generate',
+        action: 'revise',
         sourceArtifactContent: '   '
       })
     ).toThrow();
@@ -93,7 +99,7 @@ describe('AI assistant DSL interface', () => {
     expect(
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'Here is a simpler version.' }],
-        candidateAction: 'none',
+        action: 'revise',
         sourceArtifactContent: 'main = pure ()',
         recovery: {
           struggledWith: 'the dense animated layout',
@@ -106,5 +112,52 @@ describe('AI assistant DSL interface', () => {
         simplified: 'the layout while preserving the value flow'
       }
     });
+  });
+
+  it('enforces the respond, resample, and revise source contract', () => {
+    expect(() =>
+      aiAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'I will change it.' }],
+        action: 'respond',
+        sourceArtifactContent: 'main = pure ()',
+        recovery: null
+      })
+    ).toThrow(/action/i);
+    expect(() =>
+      aiAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'I am updating it.' }],
+        action: 'revise',
+        sourceArtifactContent: null,
+        recovery: null
+      })
+    ).toThrow(/action/i);
+    expect(
+      aiAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'I am preparing another pair.' }],
+        action: 'resample',
+        sourceArtifactContent: null,
+        recovery: null
+      })
+    ).toMatchObject({ action: 'resample' });
+  });
+
+  it('accepts exact retained-element references in assistant discussion', () => {
+    expect(
+      aiAssistant.parseOutput({
+        reply: [
+          {
+            type: 'element-ref',
+            presentationId: '12345678-1234-4123-8123-123456789abc',
+            presentationEvent: 4,
+            step: 1,
+            instances: [2]
+          },
+          { type: 'markdown', text: 'Do you prefer this element?' }
+        ],
+        action: 'respond',
+        sourceArtifactContent: null,
+        recovery: null
+      })
+    ).toMatchObject({ action: 'respond' });
   });
 });

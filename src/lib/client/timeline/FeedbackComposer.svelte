@@ -26,7 +26,7 @@
     session: ProjectSession;
     presentationCount: 1 | 2;
     presentations: TimelinePresentation[];
-    visualSelection?: VisualSelection;
+    visualSelections?: readonly VisualSelection[];
     onSubmitted?: () => void;
   };
 
@@ -34,7 +34,7 @@
     session,
     presentationCount,
     presentations,
-    visualSelection,
+    visualSelections = [],
     onSubmitted = () => {}
   }: Props = $props();
   let editor = $state<HTMLDivElement>();
@@ -42,7 +42,7 @@
   let hasContent = $state(false);
   let hasExplicitReferences = $state(false);
   let editorRevision = $state(0);
-  const automaticContext = $derived(automaticFeedbackContext(presentations, visualSelection));
+  const automaticContext = $derived(automaticFeedbackContext(presentations, visualSelections));
 
   export function referencePresentation(presentation: TimelinePresentation): void {
     insertReference({
@@ -52,19 +52,25 @@
   }
 
   export function referenceSelection(selection: VisualSelection): void {
+    insertReferences(selectionReferences(selection));
+  }
+
+  export function referenceSelections(selections: readonly VisualSelection[]): void {
+    insertReferences(selections.flatMap(selectionReferences));
+  }
+
+  function selectionReferences(selection: VisualSelection): ReferenceSegment[] {
     const presentation = timelinePresentations(session.events).find(
       ({ eventId }) => eventId === selection.presentationEvent
     );
-    if (!presentation) return;
-    insertReferences(
-      singletonReferenceSegments({
-        type: 'element-ref',
-        presentationId: presentation.presentation.presentationId,
-        presentationEvent: selection.presentationEvent,
-        step: selection.step,
-        instances: selection.instances
-      })
-    );
+    if (!presentation) return [];
+    return singletonReferenceSegments({
+      type: 'element-ref',
+      presentationId: presentation.presentation.presentationId,
+      presentationEvent: selection.presentationEvent,
+      step: selection.step,
+      instances: selection.instances
+    });
   }
 
   async function submit(event: SubmitEvent) {

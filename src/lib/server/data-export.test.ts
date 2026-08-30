@@ -56,6 +56,13 @@ describe('project data export traversal', () => {
       { id: 'owner-1', label: 'P001', role: 'user', enabled: true }
     ]);
     expect(Buffer.from(files.get('owners.json')!).toString()).not.toContain('@');
+    expect(
+      JSON.parse(Buffer.from(files.get('projects/project-test/project.json')!).toString()).document
+        .events[1].payload.visualSelections
+    ).toEqual([
+      { presentationEvent: 3, step: 0, instances: [0] },
+      { presentationEvent: 4, step: 0, instances: [1] }
+    ]);
     expect(source.collect).toHaveBeenCalledWith({
       type: 'projects',
       projectId: 'project-test'
@@ -102,6 +109,25 @@ function fixtureSnapshot(digest: string, byteLength: number): ExportSnapshot {
                 entryArtifactId: 'dsl-main',
                 assistantId: 'sverlin-assistant',
                 creation: { templateId: 'blank' }
+              }
+            },
+            {
+              id: 2,
+              type: 'visualization.preference-recorded',
+              actor: { kind: 'user' },
+              operationId: '12345678-1234-4123-8123-123456789abd',
+              createdAt: '2026-08-30T10:05:00.000Z',
+              payload: {
+                presentations: [
+                  '12345678-1234-4123-8123-123456789ac1',
+                  '12345678-1234-4123-8123-123456789ac2'
+                ],
+                preferred: '12345678-1234-4123-8123-123456789ac1',
+                step: 0,
+                visualSelections: [
+                  { presentationEvent: 3, step: 0, instances: [0] },
+                  { presentationEvent: 4, step: 0, instances: [1] }
+                ]
               }
             }
           ]

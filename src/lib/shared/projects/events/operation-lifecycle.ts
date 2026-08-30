@@ -9,6 +9,7 @@ export const projectOperationKindSchema = v.picklist([
   'initial-render',
   'rename',
   'feedback',
+  'assistant-turn',
   'advance-presentations',
   'render',
   'presentation-refill',

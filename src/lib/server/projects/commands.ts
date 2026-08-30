@@ -18,6 +18,7 @@ import type {
   RenderablePresentation
 } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import { assistantTurnClaim, projectOperation } from '$lib/shared/projects/operations';
 import { getChatbot, getHtmlChatbot } from '$lib/server/chat-bots/registry';
 import type { HtmlAssistantOutput } from '$lib/server/chat-bots/html-assistant';
 import {
@@ -40,12 +41,13 @@ import { createHtmlPresentation } from '$lib/server/visualization-modes';
 
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, recordText, sourceSha256 } from './fingerprints';
+import { appendProjectPreference } from './presentations';
 import {
   assertCurrentProjectOperationActive,
   currentProjectOperationDeadline,
   currentProjectOperationSignal
 } from './operation-context';
-import { projectRepository } from './repository';
+import { projectRepository, type ProjectRepository } from './repository';
 import {
   activateCompiledPresentations,
   appendProjectEvents,
@@ -75,6 +77,169 @@ export const defaultProjectCommandDependencies: ProjectCommandDependencies = {
   getHtmlChatbot,
   readDslRevision
 };
+
+/** Validate and durably queue participant feedback without waiting for the assistant. */
+export function queueProjectFeedback(
+  options: {
+    projectId: string;
+    operationId: string;
+    content: MessageContent;
+    focus: EventId[];
+    presentationCount: 1 | 2;
+    deadlineAt?: string;
+  },
+  dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    assertCurrentProjectOperationActive();
+    const before = await dependencies.repository.load(options.projectId);
+    assertAcceptedInteraction(before, options.operationId, 'feedback');
+    const focus = validateFocus(before, options.focus);
+    const content = await validateMessageContent(before, options.content);
+    const interactionEventId = projectHead(before).id + 1;
+    const document = await appendProjectEvents(
+      before,
+      [
+        draftEvent({
+          type: 'feedback.submitted',
+          actor: { kind: 'user' },
+          operationId: options.operationId,
+          payload: { content, focus, presentationCount: options.presentationCount }
+        }),
+        draftEvent({
+          type: 'assistant.turn-requested',
+          actor: { kind: 'system' },
+          operationId: options.operationId,
+          payload: {
+            interactionEventId,
+            presentationCount: options.presentationCount,
+            ...(options.deadlineAt ? { deadlineAt: options.deadlineAt } : {})
+          }
+        })
+      ],
+      [],
+      dependencies.projectService
+    );
+    return finishMutation(before, document);
+  });
+}
+
+/** Validate and durably queue one comparison preference without waiting for the assistant. */
+export function queueProjectPreference(
+  options: {
+    projectId: string;
+    operationId: string;
+    presentations: [string, string];
+    preferred: string;
+    step: number;
+    visualSelections: VisualSelection[];
+    deadlineAt?: string;
+  },
+  dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    assertCurrentProjectOperationActive();
+    const before = await dependencies.repository.load(options.projectId);
+    assertAcceptedInteraction(before, options.operationId, 'prefer');
+    let document = await appendProjectPreference(before, options, dependencies.projectService);
+    const preference = document.events.findLast(
+      (event) =>
+        event.operationId === options.operationId &&
+        event.type === 'visualization.preference-recorded'
+    );
+    if (preference?.type !== 'visualization.preference-recorded') {
+      throw new Error('The recorded preference event could not be resolved.');
+    }
+    document = await appendProjectEvents(
+      document,
+      [
+        draftEvent({
+          type: 'assistant.turn-requested',
+          actor: { kind: 'system' },
+          operationId: options.operationId,
+          payload: {
+            interactionEventId: preference.id,
+            presentationCount: 2,
+            ...(options.deadlineAt ? { deadlineAt: options.deadlineAt } : {})
+          }
+        })
+      ],
+      [],
+      dependencies.projectService
+    );
+    return finishMutation(before, document);
+  });
+}
+
+/** Process one durable claim while allowing new participant interactions to append concurrently. */
+export async function runQueuedSverlinAssistantTurn(
+  options: { projectId: string; operationId: string },
+  dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
+): Promise<ProjectCommandResult> {
+  const before = await dependencies.repository.load(options.projectId);
+  const claim = assistantTurnClaim(before, options.operationId);
+  if (!claim) throw new Error('The assistant operation has no durable turn claim.');
+  const requests = claim.payload.requestEventIds.map((id) => before.events[id - 1]);
+  if (requests.some((event) => event?.type !== 'assistant.turn-requested')) {
+    throw new Error('The assistant turn claim references an unknown request.');
+  }
+  const interactions = claim.payload.interactionEventIds.map((id) => before.events[id - 1]);
+  if (
+    interactions.some(
+      (event) =>
+        event?.type !== 'feedback.submitted' && event?.type !== 'visualization.preference-recorded'
+    )
+  ) {
+    throw new Error('The assistant turn claim references an unknown interaction.');
+  }
+  const feedback = interactions.filter(
+    (event): event is Extract<(typeof interactions)[number], { type: 'feedback.submitted' }> =>
+      event?.type === 'feedback.submitted'
+  );
+  const preferences = interactions.filter(
+    (
+      event
+    ): event is Extract<
+      (typeof interactions)[number],
+      { type: 'visualization.preference-recorded' }
+    > => event?.type === 'visualization.preference-recorded'
+  );
+  const content = feedback.flatMap((event) => event.payload.content);
+  const contextSelection: AiContextSelection = {
+    eventIds: [...new Set(feedback.flatMap((event) => event.payload.focus))],
+    presentationIds: [
+      ...new Set([
+        ...referencedPresentations(content),
+        ...preferences.flatMap((event) => event.payload.presentations)
+      ])
+    ],
+    visualSelections: deduplicateVisualSelections([
+      ...referencedVisualSelections(content),
+      ...preferences.flatMap((event) => event.payload.visualSelections ?? [])
+    ]),
+    interactionEventIds: claim.payload.interactionEventIds
+  };
+  const presentationCount = Math.max(
+    ...requests.map((event) =>
+      event?.type === 'assistant.turn-requested' ? event.payload.presentationCount : 1
+    )
+  ) as 1 | 2;
+  const concurrentDependencies = rebasingDependencies(dependencies);
+  const document = await runSverlinAssistantTurn(
+    before,
+    options.operationId,
+    contextSelection,
+    presentationCount,
+    concurrentDependencies,
+    claim.payload.interactionEventIds
+  );
+  return {
+    document,
+    appendedEvents: document.events.filter(
+      (event) => event.id > projectHead(before).id && event.operationId === options.operationId
+    )
+  };
+}
 
 /** Record user feedback and produce the mode's next visualization response. */
 export function submitProjectFeedback(
@@ -143,7 +308,7 @@ async function submitProjectFeedbackUnlocked(
     presentationIds: presentations,
     visualSelections
   };
-  document = await submitSverlinFeedback(
+  document = await runSverlinAssistantTurn(
     document,
     options.operationId,
     contextSelection,
@@ -153,12 +318,54 @@ async function submitProjectFeedbackUnlocked(
   return finishMutation(before, document);
 }
 
-async function submitSverlinFeedback(
+/** Record a pairwise preference and let the Sverlin assistant decide whether to adapt source. */
+export function submitProjectPreference(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    presentations: [string, string];
+    preferred: string;
+    step: number;
+    visualSelections: VisualSelection[];
+    operationId: string;
+  },
+  dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    const before = await dependencies.repository.load(options.projectId);
+    assertHead(before, options.expectedHead);
+    let document = await appendProjectPreference(before, options, dependencies.projectService);
+    const preference = document.events.findLast(
+      (event) =>
+        event.operationId === options.operationId &&
+        event.type === 'visualization.preference-recorded'
+    );
+    if (preference?.type !== 'visualization.preference-recorded') {
+      throw new Error('The recorded preference event could not be resolved.');
+    }
+    document = await runSverlinAssistantTurn(
+      document,
+      options.operationId,
+      {
+        eventIds: [],
+        presentationIds: options.presentations,
+        visualSelections: preference.payload.visualSelections ?? [],
+        interactionEventIds: [preference.id]
+      },
+      2,
+      dependencies
+    );
+    return finishMutation(before, document);
+  });
+}
+
+async function runSverlinAssistantTurn(
   document: ProjectDocument,
   operationId: string,
   contextSelection: AiContextSelection,
   presentationCount: 1 | 2,
-  dependencies: ProjectCommandDependencies
+  dependencies: ProjectCommandDependencies,
+  inReplyTo: readonly EventId[] = []
 ): Promise<ProjectDocument> {
   const chatbot = dependencies.getChatbot(projectSnapshotAt(document).assistantId);
   let seeds: readonly number[] | undefined;
@@ -186,11 +393,22 @@ async function submitSverlinFeedback(
       current = generation.document;
       if (!generation.ok) return { document: current, done: true };
 
+      if (attempt === 1) {
+        current = await appendAssistantResponse(
+          current,
+          resolveAssistantContent(current, generation.result.reply, []),
+          assistantBotId(generation.generationEvent),
+          operationId,
+          dependencies,
+          inReplyTo
+        );
+      }
+
       const candidate = generation.result.sourceArtifactContent;
       if (candidate === undefined) {
         if (attempt === 1) {
           const advanced =
-            generation.result.candidateAction === 'generate'
+            generation.result.action === 'resample'
               ? await advanceCandidatesForAgent(
                   current,
                   presentationCount,
@@ -199,16 +417,7 @@ async function submitSverlinFeedback(
                 )
               : { document: current, presentations: [] };
           current = advanced.document;
-          return {
-            document: await appendAssistantResponse(
-              current,
-              resolveAssistantContent(current, generation.result.reply, advanced.presentations),
-              assistantBotId(generation.generationEvent),
-              operationId,
-              dependencies
-            ),
-            done: true
-          };
+          return { document: advanced.document, done: true };
         }
         failureSummaries.push(`Attempt ${attempt} did not return corrected source.`);
         if (!compilationFeedback || attempt === chatbot.config.attemptProfiles.length) {
@@ -245,9 +454,11 @@ async function submitSverlinFeedback(
               document: current,
               recorded: compiled.recorded,
               generationEvent: generation.generationEvent,
-              reply: replyWithRecovery(generation.result.reply, generation.result.recovery),
               candidate,
-              operationId
+              operationId,
+              recovery: generation.result.recovery,
+              recoveryReply: generation.result.reply,
+              inReplyTo
             },
             dependencies
           ),
@@ -483,18 +694,23 @@ async function runSverlinGeneration(
         options.chatbot.generatePrepared(prompt, { signal: currentProjectOperationSignal() }),
       validateResult: (result) => {
         validateRecoveryExplanation(prompt, result.recovery, result.providerResponse);
-        validateGeneratedReply(
-          options.document,
-          result.reply,
-          result.sourceArtifactContent !== undefined || result.candidateAction === 'generate'
-            ? options.presentationCount
-            : 0,
-          result.providerResponse
-        );
+        if (
+          options.contextSelection.interactionEventIds?.some(
+            (id) => options.document.events[id - 1]?.type === 'visualization.preference-recorded'
+          ) &&
+          result.sourceArtifactContent === undefined &&
+          result.action === 'resample'
+        ) {
+          throw new InvalidChatbotResponseError(
+            'A deferred preference adaptation cannot advance candidates itself.',
+            result.providerResponse
+          );
+        }
+        validateGeneratedReply(options.document, result.reply, 0, result.providerResponse);
       },
       fallbackResponse: (result) => ({
         reply: result.reply,
-        candidateAction: result.candidateAction,
+        action: result.action,
         sourceArtifactContent: result.sourceArtifactContent ?? null,
         recovery: result.recovery ?? null,
         generation: result.generation
@@ -711,9 +927,11 @@ async function acceptSverlinCandidate(
     document: ProjectDocument;
     recorded: RecordedCompilationBatch;
     generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
-    reply: GeneratedMessageContent;
     candidate: string;
     operationId: string;
+    recovery?: RecoveryExplanation;
+    recoveryReply: GeneratedMessageContent;
+    inReplyTo: readonly EventId[];
   },
   dependencies: ProjectCommandDependencies
 ) {
@@ -742,16 +960,18 @@ async function acceptSverlinCandidate(
     dependencies.projectService,
     options.generationEvent.actor
   );
+  if (!options.recovery) return document;
   return appendAssistantResponse(
     document,
     resolveAssistantContent(
       document,
-      options.reply,
-      presentedByOperation(document, options.operationId).map(({ payload }) => payload.presentation)
+      replyWithRecovery(options.recoveryReply, options.recovery),
+      []
     ),
     assistantBotId(options.generationEvent),
     options.operationId,
-    dependencies
+    dependencies,
+    options.inReplyTo
   );
 }
 
@@ -762,6 +982,34 @@ async function advanceCandidatesForAgent(
   dependencies: ProjectCommandDependencies
 ): Promise<{ document: ProjectDocument; presentations: RenderablePresentation[] }> {
   const current = presentationBufferState(document, 0).available.slice(0, presentationCount);
+  let available = presentationBufferState(document, 0).available;
+  const remaining = available.slice(current.length);
+  if (remaining.length < presentationCount) {
+    const snapshot = projectSnapshotAt(document);
+    const artifact = snapshot.artifacts[snapshot.entryArtifactId];
+    if (!artifact || snapshot.renderer !== 'sverlin') {
+      throw new Error('Only Sverlin projects can generate buffered candidates from source.');
+    }
+    const recorded = await compileProjectSourceBatch(
+      {
+        document,
+        sourceContent: artifact.content.text,
+        source: artifact.content,
+        sourceLabel: artifact.path,
+        seeds: freshPresentationSeeds((presentationCount - remaining.length) as 1 | 2),
+        purpose: 'seed-change',
+        input: 'committed-artifact',
+        operationId
+      },
+      dependencies.projectService
+    );
+    document = recorded.document;
+    if (!batchSucceeded(recorded)) {
+      throw new Error('The next visualization candidates could not be compiled.');
+    }
+    document = await activateCompiledPresentations(recorded, dependencies.projectService);
+    available = presentationBufferState(document, 0).available;
+  }
   if (current.length > 0) {
     document = await appendProjectEvents(
       document,
@@ -779,32 +1027,6 @@ async function advanceCandidatesForAgent(
       [],
       dependencies.projectService
     );
-  }
-  let available = presentationBufferState(document, 0).available;
-  if (available.length < presentationCount) {
-    const snapshot = projectSnapshotAt(document);
-    const artifact = snapshot.artifacts[snapshot.entryArtifactId];
-    if (!artifact || snapshot.renderer !== 'sverlin') {
-      throw new Error('Only Sverlin projects can generate buffered candidates from source.');
-    }
-    const recorded = await compileProjectSourceBatch(
-      {
-        document,
-        sourceContent: artifact.content.text,
-        source: artifact.content,
-        sourceLabel: artifact.path,
-        seeds: freshPresentationSeeds((presentationCount - available.length) as 1 | 2),
-        purpose: 'seed-change',
-        input: 'committed-artifact',
-        operationId
-      },
-      dependencies.projectService
-    );
-    document = recorded.document;
-    if (!batchSucceeded(recorded)) {
-      throw new Error('The next visualization candidates could not be compiled.');
-    }
-    document = await activateCompiledPresentations(recorded, dependencies.projectService);
     available = presentationBufferState(document, 0).available;
   }
   const ids = new Set(
@@ -828,6 +1050,7 @@ function resolveAssistantContent(
   const content: MessageContent = reply.map((segment) => {
     if (segment.type === 'markdown') return segment;
     if (segment.type === 'presentation-ref') return segment;
+    if (segment.type === 'element-ref') return segment;
     const presentation = candidates[segment.slot];
     if (!presentation) {
       throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
@@ -852,6 +1075,16 @@ function validateGeneratedReply(
       )
     );
     for (const segment of reply) {
+      if (segment.type === 'element-ref') {
+        const resolved = resolveProjectVisualSelection(document, {
+          presentationEvent: segment.presentationEvent,
+          step: segment.step,
+          instances: segment.instances
+        });
+        if (resolved.event.payload.presentation.presentationId !== segment.presentationId) {
+          throw new Error('The assistant element reference does not match its presentation.');
+        }
+      }
       if (segment.type === 'candidate-ref' && segment.slot >= candidateCount) {
         throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
       }
@@ -888,21 +1121,12 @@ function generatedReplyText(reply: GeneratedMessageContent): string {
     .map((segment) => {
       if (segment.type === 'markdown') return segment.text;
       if (segment.type === 'presentation-ref') return `[Presentation ${segment.presentationId}]`;
+      if (segment.type === 'element-ref') {
+        return `[Elements ${segment.instances.join(', ')} in presentation ${segment.presentationId}, step ${segment.step + 1}]`;
+      }
       return `[Candidate ${segment.slot + 1}]`;
     })
     .join(' ');
-}
-
-function presentedByOperation(
-  document: ProjectDocument,
-  operationId: string
-): Array<NewProjectEvent<'visualization.presented'> & { id: number }> {
-  return document.events.filter(
-    (
-      event
-    ): event is Extract<ProjectDocument['events'][number], { type: 'visualization.presented' }> =>
-      event.operationId === operationId && event.type === 'visualization.presented'
-  );
 }
 
 function batchSucceeded(batch: RecordedCompilationBatch): boolean {
@@ -922,7 +1146,8 @@ function appendAssistantResponse(
   content: string | MessageContent,
   botId: string,
   operationId: string,
-  dependencies: ProjectCommandDependencies
+  dependencies: ProjectCommandDependencies,
+  inReplyTo: readonly EventId[] = []
 ) {
   return appendProjectEvents(
     document,
@@ -931,7 +1156,10 @@ function appendAssistantResponse(
         type: 'assistant.responded',
         actor: { kind: 'assistant', botId },
         operationId,
-        payload: { content: typeof content === 'string' ? markdownMessage(content) : content }
+        payload: {
+          content: typeof content === 'string' ? markdownMessage(content) : content,
+          ...(inReplyTo.length > 0 ? { inReplyTo: [...inReplyTo] } : {})
+        }
       })
     ],
     [],
@@ -1148,6 +1376,61 @@ async function validateSelection(
 
 function finishMutation(before: ProjectDocument, document: ProjectDocument): ProjectCommandResult {
   return { document, appendedEvents: document.events.slice(before.events.length) };
+}
+
+function assertAcceptedInteraction(
+  document: ProjectDocument,
+  operationId: string,
+  kind: 'feedback' | 'prefer'
+): void {
+  const operation = projectOperation(document, operationId);
+  if (
+    !operation ||
+    operation.kind !== kind ||
+    operation.status === 'completed' ||
+    operation.status === 'failed'
+  ) {
+    throw new Error(`The ${kind} operation is not active.`);
+  }
+}
+
+function deduplicateVisualSelections(selections: readonly VisualSelection[]): VisualSelection[] {
+  const unique = new Map<string, VisualSelection>();
+  for (const selection of selections) {
+    unique.set(
+      `${selection.presentationEvent}:${selection.step}:${selection.instances.join(',')}`,
+      selection
+    );
+  }
+  return [...unique.values()];
+}
+
+function rebasingDependencies(
+  dependencies: ProjectCommandDependencies
+): ProjectCommandDependencies {
+  const repository = rebasingRepository(dependencies.repository);
+  return {
+    ...dependencies,
+    repository,
+    projectService: { ...dependencies.projectService, repository }
+  };
+}
+
+function rebasingRepository(repository: ProjectRepository): ProjectRepository {
+  return {
+    initialize: () => repository.initialize(),
+    create: (document, ownerUserId) => repository.create(document, ownerUserId),
+    list: (ownerUserId) => repository.list(ownerUserId),
+    load: (projectId) => repository.load(projectId),
+    readResource: (projectId, resourceId) => repository.readResource(projectId, resourceId),
+    eventsAfter: (projectId, after) => repository.eventsAfter(projectId, after),
+    deleteAll: () => repository.deleteAll(),
+    append: (projectId, _expectedHead, events, resources) =>
+      runProjectCommand(projectId, async () => {
+        const current = await repository.load(projectId);
+        return repository.append(projectId, projectHead(current).id, events, resources);
+      })
+  };
 }
 
 function assertHead(document: ProjectDocument, expectedHead: EventId) {

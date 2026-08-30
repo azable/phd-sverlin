@@ -3,11 +3,14 @@
 import * as v from 'valibot';
 
 import { messageContentSchema } from './message-content';
-import { eventEnvelope } from './values';
+import { eventEnvelope, positiveSchema } from './values';
 
 /** Runtime schema for an assistant's user-facing response. */
 export const assistantRespondedEventSchema = v.object({
   ...eventEnvelope,
   type: v.literal('assistant.responded'),
-  payload: v.object({ content: messageContentSchema })
+  payload: v.object({
+    content: messageContentSchema,
+    inReplyTo: v.optional(v.array(positiveSchema))
+  })
 });

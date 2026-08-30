@@ -92,6 +92,8 @@ database to inspect.
 
 Set `OPENAI_API_KEY` in the root `.env` for AI-assisted editing and the HTML study condition. The visualization mode selects its compatible assistant implicitly, and the resolved assistant ID is copied into every project’s immutable creation event. Model choice belongs to that agent definition: generation starts with Luna at low reasoning, escalates through three Sol repair profiles, and may make one final Sol simplification pass. This follows [OpenAI's GPT-5.6 role guidance](https://developers.openai.com/api/docs/guides/upgrading-to-gpt-5p6-sol). Provider retries remain disabled, so every model call is an explicit, recorded Timeline attempt. Compiling already-authored Sverlin source does not require an OpenAI key.
 
+In Sverlin comparison mode, selections in the top and bottom candidates remain active together and become exact feedback context. Feedback and preferences are recorded immediately, then durably queued for one background assistant turn per project; interactions submitted while a turn is running are combined into the next turn. The participant can keep chatting, selecting, and comparing the current pair during generation. The assistant revises source when accumulated evidence supports a concrete change, may ask a more granular question with clickable element references, and otherwise records an observation without advancing candidates. Explicit requests for more alternatives resample the accepted source.
+
 `CHATBOT_REQUEST_TIMEOUT_MS` defaults to 180,000 ms (three minutes). A timed study operation may begin a subsequent repair or simplification only when that complete allowance remains, and in-flight AI or compiler work is cancelled at the phase deadline. This keeps the five-call ceiling inside the 15-minute task phase while allowing standalone administrator projects to use the normal per-request timeout. Compose passes these provider values into the devcontainer, so changing them requires recreating it.
 
 ### Health checks
@@ -111,7 +113,8 @@ authenticated browser
   -> SvelteKit authorizes and returns the participant's complete project Timeline
   -> study service resolves the centrally defined phase, renderer, layout, and deadline
   -> project command appends operation.accepted
-  -> bounded in-process executor runs the project operation asynchronously
+  -> feedback/preferences are recorded and queued without waiting for generation
+  -> bounded in-process executor claims queued interactions for a background assistant turn
   -> Sverlin prompts compile one or two fresh seeds; HTML prompts may return one safe manifest
   -> the resulting presentation set enters the Timeline directly
   -> PostgreSQL receives immutable Timeline events and content-addressed resources
@@ -242,7 +245,7 @@ After Haskell changes, run the relevant compile, Haskell tests, solver tests, an
 
 The web service runs checked-in migrations before each deploy and exposes `/api/health/ready` as its health check. Render generates the Better Auth secret. When a fresh database has no administrator, opening the generated `onrender.com` URL redirects to one-time passkey setup; complete it promptly because the first visitor can claim administrator access. Better Auth derives the public origin from Render's `RENDER_EXTERNAL_HOSTNAME`; set `BETTER_AUTH_URL` explicitly only when using a custom domain.
 
-The web service keeps the established 4 GiB ceiling because it owns compilation and the native solver. It accepts at most two project operations concurrently and serializes compiler invocations to bound peak memory for the expected couple of simultaneous users. Render allows at most 300 seconds for graceful shutdown, so application work is cancelled after 270 seconds, leaving 30 seconds to record failure boundaries and close PostgreSQL. An operation interrupted by an unexpected restart is marked cancelled and must be retried; already committed project events and resources remain durable. PostgreSQL stores resource bytes directly and each immutable resource is limited to 16 MiB. Add `OPENAI_API_KEY` to the web service when AI-assisted editing is required. Assistant and model-profile selection are owned by the visualization mode and recorded in each project Timeline.
+The web service keeps the established 4 GiB ceiling because it owns compilation and the native solver. It accepts at most two slow project operations concurrently, runs at most one assistant turn per project, and serializes compiler invocations to bound peak memory for the expected couple of simultaneous users. Short feedback and preference writes remain available during a turn. Render allows at most 300 seconds for graceful shutdown, so application work is cancelled after 270 seconds, leaving 30 seconds to record failure boundaries and close PostgreSQL. An interrupted claimed turn is marked cancelled rather than silently retried; unclaimed interactions remain durable and are scheduled after restart. PostgreSQL stores resource bytes directly and each immutable resource is limited to 16 MiB. Add `OPENAI_API_KEY` to the web service when AI-assisted editing is required. Assistant and model-profile selection are owned by the visualization mode and recorded in each project Timeline.
 
 ## Agent tooling
 

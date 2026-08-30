@@ -191,7 +191,127 @@ describe('AI project context projection', () => {
       findings: []
     });
   });
+
+  it('supplies a preferred pair and retains observations for later preference decisions', () => {
+    const request: ProjectEventOf<'ai.generation-requested'> = {
+      ...base(3),
+      type: 'ai.generation-requested',
+      payload: {
+        attempt: 1,
+        purpose: 'initial',
+        prompt: recorded('{}', 'application/json'),
+        promptTemplateSha256: '1'.repeat(64),
+        requestedModel: 'test-model',
+        parameters: {}
+      }
+    };
+    const document = projectDocument(request);
+    const presentationIds = [
+      '12345678-1234-4123-8123-123456789ac1',
+      '12345678-1234-4123-8123-123456789ac2'
+    ] as const;
+    for (const [slot, presentationId] of presentationIds.entries()) {
+      document.events.push(
+        event(4 + slot, 'visualization.presented', {
+          displaySetId: '12345678-1234-4123-8123-123456789abd',
+          slot: slot as 0 | 1,
+          presentation: {
+            presentationId,
+            format: 'sverlin-ir-v1',
+            stepSignature: 'show',
+            seed: slot + 1,
+            source: recorded('current source', 'text/x-sverlin'),
+            render: recorded(JSON.stringify(minimalVisualization(slot + 1)), 'application/json')
+          }
+        })
+      );
+    }
+    document.events.push(
+      event(6, 'visualization.preference-recorded', {
+        displaySetId: '12345678-1234-4123-8123-123456789abd',
+        presentations: [...presentationIds],
+        preferred: presentationIds[0],
+        step: 0,
+        visualSelections: []
+      }),
+      {
+        ...event(7, 'assistant.responded', {
+          content: [{ type: 'markdown', text: 'The preference suggests clearer spacing.' }]
+        }),
+        actor: { kind: 'assistant', botId: 'sverlin-assistant' }
+      }
+    );
+
+    const context = projectAiContext(document, {
+      eventIds: [],
+      presentationIds,
+      interactionEventIds: [6]
+    });
+
+    expect(context.interaction).toEqual({
+      kind: 'preference',
+      eventId: 6,
+      preferredPresentationId: presentationIds[0],
+      alternativePresentationId: presentationIds[1],
+      step: 0
+    });
+    expect(
+      context.selected.presentations.map(({ presentation }) => presentation.presentationId)
+    ).toEqual(presentationIds);
+    expect(projectConversationMessages(document.events)).toEqual([
+      {
+        role: 'user',
+        content: `I preferred presentation ${presentationIds[0]} over the alternative in display set 12345678-1234-4123-8123-123456789abd at step 0.`
+      },
+      { role: 'assistant', content: 'The preference suggests clearer spacing.' }
+    ]);
+  });
 });
+
+function minimalVisualization(seed: number) {
+  return {
+    irVersion: 1,
+    seed,
+    sourcePath: 'Main.sverlin',
+    coordinates: {
+      systemName: 'sverlin-logical-y-down',
+      systemOrigin: 'top-left',
+      systemYAxis: 'down'
+    },
+    root: -1,
+    resources: [],
+    findings: [],
+    variables: [],
+    elements: [
+      {
+        id: -1,
+        role: 'Canvas',
+        box: {
+          bounds: { rectX: 0, rectY: 0, rectWidth: 640, rectHeight: 360 },
+          padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        },
+        children: [0],
+        style: {},
+        styleVariables: []
+      },
+      {
+        id: 0,
+        role: 'Value',
+        box: {
+          bounds: { rectX: 20, rectY: 20, rectWidth: 120, rectHeight: 40 },
+          padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 }
+        },
+        children: [],
+        content: { kind: 'legacyTextContent', textSource: 'Value' },
+        style: {},
+        styleVariables: []
+      }
+    ],
+    steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]
+  };
+}
 
 function projectDocument(request: ProjectEventOf<'ai.generation-requested'>): ProjectDocument {
   return {

@@ -32,6 +32,8 @@ const stateTransitions = {
   'operation.completed': null,
   'operation.failed': null,
   'feedback.submitted': null,
+  'assistant.turn-requested': null,
+  'assistant.turn-started': null,
   'visualization.candidates-advanced': null,
   'ai.generation-requested': null,
   'ai.generation-succeeded': null,

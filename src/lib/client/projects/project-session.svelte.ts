@@ -24,7 +24,12 @@ import {
 } from '$lib/shared/projects/model';
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
-import { activeProjectOperation, projectOperation } from '$lib/shared/projects/operations';
+import {
+  activeProjectOperation,
+  pendingAssistantTurnRequests,
+  projectOperation,
+  projectOperations
+} from '$lib/shared/projects/operations';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
@@ -36,6 +41,11 @@ export type PendingProjectCommand = {
   type: ProjectOperationKind;
   operationId: string;
   startedAfter: EventId;
+};
+
+export type AssistantActivity = {
+  status: 'queued' | 'considering' | 'preparing' | 'repairing';
+  queuedCount: number;
 };
 
 /**
@@ -76,7 +86,12 @@ export class ProjectSession {
   get pending(): PendingProjectCommand | null {
     if (this.#submitting) return this.#submitting;
     const operation = this.#resource ? activeProjectOperation(this.#resource.document) : undefined;
-    if (!operation || operation.kind === 'presentation-refill') return null;
+    if (
+      !operation ||
+      operation.kind === 'presentation-refill' ||
+      operation.kind === 'assistant-turn'
+    )
+      return null;
     return {
       type: operation.kind === 'initial-render' ? 'render' : operation.kind,
       operationId: operation.operationId,
@@ -89,6 +104,33 @@ export class ProjectSession {
     return (
       activeProjectOperation(this.events)?.kind === 'presentation-refill' || !!this.#refillRequest
     );
+  }
+
+  /** Participant-facing state of durable queued and active assistant work. */
+  get assistantActivity(): AssistantActivity | null {
+    const queuedCount = pendingAssistantTurnRequests(this.events).length;
+    const operation = projectOperations(this.events).find(
+      ({ kind, status }) =>
+        kind === 'assistant-turn' && (status === 'accepted' || status === 'running')
+    );
+    if (!operation) return queuedCount > 0 ? { status: 'queued', queuedCount } : null;
+    const related = this.events.filter(
+      (event) => event.operationId === operation.operationId && event.id > operation.acceptedEventId
+    );
+    const latestRequest = related.findLast((event) => event.type === 'ai.generation-requested');
+    const compilationStarted = related.some((event) => event.type === 'compilation.requested');
+    const generationCompleted = related.some((event) => event.type === 'ai.generation-succeeded');
+    const repairStarted =
+      latestRequest?.type === 'ai.generation-requested' &&
+      latestRequest.payload.purpose !== 'initial';
+    return {
+      status: repairStarted
+        ? 'repairing'
+        : compilationStarted || generationCompleted
+          ? 'preparing'
+          : 'considering',
+      queuedCount
+    };
   }
 
   /** Complete project resource most recently received from the server. */

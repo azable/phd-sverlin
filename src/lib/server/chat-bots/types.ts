@@ -8,7 +8,7 @@ import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
 import * as v from 'valibot';
 
 import { presentationIdSchema } from '$lib/shared/presentations';
-import { textSchema } from '$lib/shared/projects/events/values';
+import { naturalSchema, positiveSchema, textSchema } from '$lib/shared/projects/events/values';
 
 /** User or assistant message retained as conversational context. */
 export type ConversationMessage = {
@@ -20,6 +20,13 @@ export type ConversationMessage = {
 export const generatedMessageSegmentSchema = v.variant('type', [
   v.strictObject({ type: v.literal('markdown'), text: textSchema }),
   v.strictObject({ type: v.literal('presentation-ref'), presentationId: presentationIdSchema }),
+  v.strictObject({
+    type: v.literal('element-ref'),
+    presentationId: presentationIdSchema,
+    presentationEvent: positiveSchema,
+    step: naturalSchema,
+    instances: v.pipe(v.array(naturalSchema), v.minLength(1))
+  }),
   v.strictObject({ type: v.literal('candidate-ref'), slot: v.picklist([0, 1]) })
 ]);
 
@@ -92,6 +99,18 @@ export const generatedMessageContentJsonSchema = {
         type: 'object',
         additionalProperties: false,
         properties: {
+          type: { type: 'string', enum: ['element-ref'] },
+          presentationId: { type: 'string', format: 'uuid' },
+          presentationEvent: { type: 'integer', minimum: 1 },
+          step: { type: 'integer', minimum: 0 },
+          instances: { type: 'array', minItems: 1, items: { type: 'integer', minimum: 0 } }
+        },
+        required: ['type', 'presentationId', 'presentationEvent', 'step', 'instances']
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
           type: { type: 'string', enum: ['candidate-ref'] },
           slot: { type: 'integer', enum: [0, 1] }
         },
@@ -99,6 +118,12 @@ export const generatedMessageContentJsonSchema = {
       }
     ]
   }
+} as const;
+
+/** Reply schema for background Sverlin observations, which can reference only retained output. */
+export const retainedMessageContentJsonSchema = {
+  ...generatedMessageContentJsonSchema,
+  items: { anyOf: generatedMessageContentJsonSchema.items.anyOf.slice(0, 3) }
 } as const;
 
 /** Failed generated source and diagnostics supplied to one repair attempt. */
@@ -153,12 +178,19 @@ export type ChatResponseFormat = {
 };
 
 /** Static behavior and context builder for one chatbot. */
-export type SourceArtifactChatOutput = {
-  reply: GeneratedMessageContent;
-  candidateAction: 'none' | 'generate';
-  sourceArtifactContent?: string;
-  recovery?: RecoveryExplanation;
-};
+export type SourceArtifactChatOutput =
+  | {
+      reply: GeneratedMessageContent;
+      action: 'respond' | 'resample';
+      sourceArtifactContent?: never;
+      recovery?: RecoveryExplanation;
+    }
+  | {
+      reply: GeneratedMessageContent;
+      action: 'revise';
+      sourceArtifactContent: string;
+      recovery?: RecoveryExplanation;
+    };
 
 export type ChatBotConfig<
   Project,

@@ -60,6 +60,20 @@ const presenters = {
       'message',
       'Feedback recorded…'
     ),
+  'assistant.turn-requested': (event) =>
+    details(
+      'Assistant turn queued',
+      `Interaction ${event.payload.interactionEventId}`,
+      'assistant',
+      'Feedback queued…'
+    ),
+  'assistant.turn-started': (event) =>
+    details(
+      'Assistant turn started',
+      `${event.payload.interactionEventIds.length} interaction(s)`,
+      'assistant',
+      'Considering your feedback…'
+    ),
   'visualization.candidates-advanced': (event) =>
     details(
       'Visualization candidates advanced',

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { projectOperation } from '$lib/shared/projects/operations';
+import { pendingAssistantTurnRequests, projectOperation } from '$lib/shared/projects/operations';
 
 import { MemoryProjectRepository } from './memory-repository.test-support';
 import { currentProjectOperationDeadline } from './operation-context';
@@ -45,6 +45,53 @@ describe('ProjectOperationExecutor', () => {
     expect(operation).toMatchObject({ kind: 'initial-render', status: 'completed' });
   });
 
+  it('does not rebase an assistant acceptance past a concurrent foreground acceptance', async () => {
+    const projectId = randomUUID();
+    const foregroundId = randomUUID();
+    const assistantId = randomUUID();
+    let loads = 0;
+    const repository = new (class extends MemoryProjectRepository {
+      override async load(id: string) {
+        const document = await super.load(id);
+        loads += 1;
+        if (loads === 2) {
+          await super.append(id, document.events.length, [
+            {
+              type: 'operation.accepted',
+              actor: { kind: 'user' },
+              operationId: foregroundId,
+              createdAt: new Date().toISOString(),
+              payload: { kind: 'initial-render' }
+            }
+          ]);
+        }
+        return document;
+      }
+    })();
+    await repository.create(rootDocument(projectId, randomUUID()), 'owner');
+    const executor = new ProjectOperationExecutor(
+      repository,
+      { acquire: async () => ({ release: async () => undefined }) },
+      async () => {
+        throw new Error('The assistant command should not start.');
+      }
+    );
+
+    await expect(
+      executor.accept({
+        projectId,
+        operationId: assistantId,
+        expectedHead: 1,
+        command: { type: 'assistant-turn', requestEventIds: [1] },
+        actor: 'system'
+      })
+    ).rejects.toMatchObject({ name: 'ProjectConflictError' });
+
+    const document = await repository.load(projectId);
+    expect(projectOperation(document, foregroundId)?.status).toBe('accepted');
+    expect(projectOperation(document, assistantId)).toBeUndefined();
+  });
+
   it('converts command-domain failures into a terminal operation failure', async () => {
     const repository = new MemoryProjectRepository();
     const projectId = randomUUID();
@@ -71,14 +118,7 @@ describe('ProjectOperationExecutor', () => {
       projectId,
       operationId,
       expectedHead: 1,
-      command: {
-        type: 'feedback',
-        operationId,
-        expectedHead: 1,
-        content: [{ type: 'markdown', text: 'Change it.' }],
-        focus: [],
-        presentationCount: 1
-      }
+      command: { type: 'assistant-turn', requestEventIds: [1] }
     });
     await terminal(repository, projectId, operationId);
 
@@ -93,11 +133,16 @@ describe('ProjectOperationExecutor', () => {
   it('classifies AI and compilation failures by their retained failure kind', async () => {
     const cases = [
       {
-        command: 'feedback' as const,
+        command: 'assistant-turn' as const,
         event: aiFailure('provider'),
         expected: 'infrastructure'
       },
-      { command: 'feedback' as const, event: aiFailure('cancelled'), expected: 'cancelled' },
+      { command: 'assistant-turn' as const, event: aiFailure('cancelled'), expected: 'cancelled' },
+      {
+        command: 'assistant-turn' as const,
+        event: aiFailure('provider'),
+        expected: 'infrastructure'
+      },
       {
         command: 'initial-render' as const,
         event: compilationFailure('source'),
@@ -140,17 +185,7 @@ describe('ProjectOperationExecutor', () => {
         projectId,
         operationId,
         expectedHead: 1,
-        command:
-          value.command === 'feedback'
-            ? {
-                type: 'feedback',
-                operationId,
-                expectedHead: 1,
-                content: [{ type: 'markdown', text: 'Change it.' }],
-                focus: [],
-                presentationCount: 1
-              }
-            : { type: 'initial-render', seed: 1 }
+        command: commandForFailureCase(value.command, operationId)
       });
       await terminal(repository, projectId, operationId);
       expect(
@@ -189,14 +224,7 @@ describe('ProjectOperationExecutor', () => {
       projectId,
       operationId,
       expectedHead: 1,
-      command: {
-        type: 'feedback',
-        operationId,
-        expectedHead: 1,
-        content: [{ type: 'markdown', text: 'Change it.' }],
-        focus: [],
-        presentationCount: 1
-      }
+      command: { type: 'assistant-turn', requestEventIds: [1] }
     });
     await terminal(repository, projectId, operationId);
 
@@ -361,7 +389,133 @@ describe('ProjectOperationExecutor', () => {
       }
     });
   });
+
+  it('records feedback during generation and combines it into the next assistant turn', async () => {
+    const repository = new MemoryProjectRepository();
+    const projectId = randomUUID();
+    await repository.create(rootDocument(projectId, randomUUID()), 'owner');
+    const assistantReleases: Array<() => void> = [];
+    let assistantStarts = 0;
+    const executor = new ProjectOperationExecutor(
+      repository,
+      { acquire: async () => ({ release: async () => undefined }) },
+      async ({ projectId: id, operationId, command }) => {
+        const document = await repository.load(id);
+        if (command.type === 'feedback') {
+          const interactionEventId = document.events.length + 1;
+          const appended = await repository.append(id, document.events.length, [
+            {
+              type: 'feedback.submitted',
+              actor: { kind: 'user' },
+              operationId,
+              createdAt: new Date().toISOString(),
+              payload: {
+                content: command.content,
+                focus: command.focus,
+                presentationCount: command.presentationCount
+              }
+            },
+            {
+              type: 'assistant.turn-requested',
+              actor: { kind: 'system' },
+              operationId,
+              createdAt: new Date().toISOString(),
+              payload: { interactionEventId, presentationCount: command.presentationCount }
+            }
+          ]);
+          return { document: appended.document, appendedEvents: appended.events };
+        }
+        if (command.type !== 'assistant-turn') {
+          return { document, appendedEvents: [] };
+        }
+        const requests = command.requestEventIds.map((eventId) => document.events[eventId - 1]);
+        const started = await repository.append(id, document.events.length, [
+          {
+            type: 'assistant.turn-started',
+            actor: { kind: 'system' },
+            operationId,
+            createdAt: new Date().toISOString(),
+            payload: {
+              requestEventIds: command.requestEventIds,
+              interactionEventIds: requests.map((event) =>
+                event?.type === 'assistant.turn-requested' ? event.payload.interactionEventId : 0
+              )
+            }
+          }
+        ]);
+        assistantStarts += 1;
+        await new Promise<void>((resolve) => assistantReleases.push(resolve));
+        const current = await repository.load(id);
+        const responded = await repository.append(id, current.events.length, [
+          {
+            type: 'assistant.responded',
+            actor: { kind: 'assistant', botId: 'sverlin-assistant' },
+            operationId,
+            createdAt: new Date().toISOString(),
+            payload: {
+              content: [{ type: 'markdown', text: 'Noted.' }],
+              inReplyTo:
+                started.events[0]?.type === 'assistant.turn-started'
+                  ? started.events[0].payload.interactionEventIds
+                  : []
+            }
+          }
+        ]);
+        return { document: responded.document, appendedEvents: responded.events };
+      }
+    );
+
+    const submit = (text: string) => {
+      const operationId = randomUUID();
+      return executor.accept({
+        projectId,
+        operationId,
+        expectedHead: 1,
+        command: {
+          type: 'feedback',
+          operationId,
+          expectedHead: 1,
+          content: [{ type: 'markdown', text }],
+          focus: [],
+          presentationCount: 2
+        }
+      });
+    };
+
+    await submit('First');
+    await eventually(() => assistantStarts === 1);
+    await submit('Second');
+    await submit('Third');
+    expect(pendingAssistantTurnRequests(await repository.load(projectId))).toHaveLength(2);
+
+    assistantReleases.shift()?.();
+    await eventually(() => assistantStarts === 2);
+    const claims = (await repository.load(projectId)).events.filter(
+      (event) => event.type === 'assistant.turn-started'
+    );
+    expect(claims.at(-1)?.payload.interactionEventIds).toHaveLength(2);
+    assistantReleases.shift()?.();
+    await eventually(() =>
+      repository
+        .load(projectId)
+        .then((document) => pendingAssistantTurnRequests(document).length === 0)
+    );
+    await executor.shutdown(1_000);
+  });
 });
+
+async function eventually(condition: () => boolean | Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('The expected asynchronous state was not reached.');
+}
+
+function commandForFailureCase(kind: 'assistant-turn' | 'initial-render', _operationId: string) {
+  if (kind === 'assistant-turn') return { type: 'assistant-turn' as const, requestEventIds: [1] };
+  return { type: 'initial-render' as const, seed: 1 };
+}
 
 function rootDocument(projectId: string, operationId: string): ProjectDocument {
   return {

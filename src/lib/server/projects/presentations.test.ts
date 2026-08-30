@@ -28,6 +28,7 @@ describe('presentation commands', () => {
         presentations,
         preferred: presentations[1],
         step: 0,
+        visualSelections: [],
         operationId: randomUUID()
       },
       { repository, projectService }
@@ -40,7 +41,8 @@ describe('presentation commands', () => {
           displaySetId,
           presentations,
           preferred: presentations[1],
-          step: 0
+          step: 0,
+          visualSelections: []
         }
       })
     ]);
@@ -64,6 +66,7 @@ describe('presentation commands', () => {
         presentations,
         preferred: presentations[0],
         step: 0,
+        visualSelections: [],
         operationId: randomUUID()
       },
       { repository, projectService }
@@ -71,7 +74,7 @@ describe('presentation commands', () => {
 
     expect(result.appendedEvents[0]).toMatchObject({
       type: 'visualization.preference-recorded',
-      payload: { presentations, preferred: presentations[0], step: 0 }
+      payload: { presentations, preferred: presentations[0], step: 0, visualSelections: [] }
     });
     expect(
       result.appendedEvents[0].type === 'visualization.preference-recorded'
@@ -98,6 +101,7 @@ describe('presentation commands', () => {
         presentations,
         preferred: presentations[0],
         step: 0,
+        visualSelections: [],
         operationId: randomUUID()
       },
       { repository, projectService }
@@ -105,8 +109,69 @@ describe('presentation commands', () => {
 
     expect(result.appendedEvents[0]).toMatchObject({
       type: 'visualization.preference-recorded',
-      payload: { presentations, preferred: presentations[0], step: 0 }
+      payload: { presentations, preferred: presentations[0], step: 0, visualSelections: [] }
     });
+  });
+
+  it('validates and retains focused elements from both compared presentations', async () => {
+    const repository = new MemoryProjectRepository();
+    const presentations = [randomUUID(), randomUUID()] as [string, string];
+    const document = comparisonDocument(randomUUID(), randomUUID(), presentations);
+    await repository.create(document, 'owner');
+    const projectService = {
+      repository,
+      compiler: {} as ProjectServiceDependencies['compiler'],
+      readDslRevision: vi.fn()
+    };
+    const visualSelections = [
+      { presentationEvent: 3, step: 0, instances: [0] },
+      { presentationEvent: 4, step: 0, instances: [0] }
+    ];
+
+    const result = await recordProjectPreference(
+      {
+        projectId: document.projectId,
+        expectedHead: document.events.length,
+        presentations,
+        preferred: presentations[0],
+        step: 0,
+        visualSelections,
+        operationId: randomUUID()
+      },
+      { repository, projectService }
+    );
+
+    expect(result.appendedEvents[0]).toMatchObject({
+      type: 'visualization.preference-recorded',
+      payload: { visualSelections }
+    });
+  });
+
+  it('rejects preference focus from a different visualization step', async () => {
+    const repository = new MemoryProjectRepository();
+    const presentations = [randomUUID(), randomUUID()] as [string, string];
+    const document = comparisonDocument(randomUUID(), randomUUID(), presentations);
+    await repository.create(document, 'owner');
+    const projectService = {
+      repository,
+      compiler: {} as ProjectServiceDependencies['compiler'],
+      readDslRevision: vi.fn()
+    };
+
+    await expect(
+      recordProjectPreference(
+        {
+          projectId: document.projectId,
+          expectedHead: document.events.length,
+          presentations,
+          preferred: presentations[0],
+          step: 0,
+          visualSelections: [{ presentationEvent: 3, step: 1, instances: [0] }],
+          operationId: randomUUID()
+        },
+        { repository, projectService }
+      )
+    ).rejects.toThrow('unknown visualization step');
   });
 });
 
@@ -118,7 +183,51 @@ function comparisonDocument(
 ): ProjectDocument {
   const operationId = randomUUID();
   const source = recordText('visualization source', 'text/x-sverlin');
-  const render = recordText(JSON.stringify({ steps }), 'application/json');
+  const render = recordText(
+    JSON.stringify({
+      irVersion: 1,
+      seed: 1,
+      sourcePath: 'Main.sverlin',
+      coordinates: {
+        systemName: 'sverlin-logical-y-down',
+        systemOrigin: 'top-left',
+        systemYAxis: 'down'
+      },
+      root: -1,
+      resources: [],
+      findings: [],
+      variables: [],
+      elements: [
+        {
+          id: -1,
+          role: 'Canvas',
+          box: {
+            bounds: { rectX: 0, rectY: 0, rectWidth: 640, rectHeight: 360 },
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+          },
+          children: [0],
+          style: {},
+          styleVariables: []
+        },
+        {
+          id: 0,
+          role: 'Value',
+          box: {
+            bounds: { rectX: 20, rectY: 20, rectWidth: 120, rectHeight: 40 },
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+          },
+          children: [],
+          content: { kind: 'legacyTextContent', textSource: 'Value' },
+          style: {},
+          styleVariables: []
+        }
+      ],
+      steps: steps.map(({ label }) => ({ label, instances: [{ id: 0, elementId: 0 }] }))
+    }),
+    'application/json'
+  );
   const base = {
     format: 'sverlin-ir-v1' as const,
     stepSignature: 'shared-step-signature',

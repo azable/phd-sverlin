@@ -16,12 +16,21 @@ export const e2eChatAdapter: ChatAdapter = {
     if (!e2eChatAdapterEnabled()) {
       throw new Error('The deterministic assistant is available only to the E2E test server.');
     }
-    const reply = [{ type: 'markdown', text: 'Thanks, I have noted that feedback.' }];
+    const project = request.context.project as { interaction?: { kind?: unknown } } | undefined;
+    const reply = [
+      {
+        type: 'markdown',
+        text:
+          project?.interaction?.kind === 'preference'
+            ? 'I noticed that preference. Another comparison will help me decide whether to adapt the visualization.'
+            : 'Thanks, I have noted that feedback.'
+      }
+    ];
     return {
       output:
         request.responseFormat.name === 'html_visualization_turn'
           ? { reply, candidates: [], recovery: null }
-          : { reply, candidateAction: 'none', sourceArtifactContent: null, recovery: null },
+          : { reply, action: 'respond', sourceArtifactContent: null, recovery: null },
       generation: { model: 'e2e-deterministic' }
     };
   },

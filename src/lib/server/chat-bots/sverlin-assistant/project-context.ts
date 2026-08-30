@@ -95,7 +95,29 @@ export type AiContextSelection = {
   eventIds: readonly EventId[];
   presentationIds?: readonly string[];
   visualSelections?: readonly VisualSelection[];
+  interactionEventIds?: readonly EventId[];
 };
+
+/** Why the current assistant turn was started. */
+export type AiInteraction =
+  | { kind: 'feedback'; eventIds: EventId[] }
+  | {
+      kind: 'preference';
+      eventId: EventId;
+      preferredPresentationId: string;
+      alternativePresentationId: string;
+      step: number;
+    }
+  | {
+      kind: 'batch';
+      eventIds: EventId[];
+      preferences: Array<{
+        eventId: EventId;
+        preferredPresentationId: string;
+        alternativePresentationId: string;
+        step: number;
+      }>;
+    };
 
 /** Full retained presentation explicitly visible when the user submitted feedback. */
 export type AiSelectedPresentation = {
@@ -113,6 +135,7 @@ export type AiProjectContext = {
   activePresentations: AiRenderSummary[];
   interfaceCapabilities: string[];
   activeVisualizationFindings: VisualizationFinding[];
+  interaction: AiInteraction;
   timeline: AiTimelineEntry[];
   selected: {
     events: AiEventDetail[];
@@ -131,6 +154,10 @@ const timelineCases = {
     `${event.payload.kind} operation failed (${event.payload.failureKind}): ${event.payload.message}`,
   'feedback.submitted': (event) =>
     `Submitted structured feedback with ${event.payload.content.length} segment(s)${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}.`,
+  'assistant.turn-requested': (event) =>
+    `Queued assistant consideration of interaction ${event.payload.interactionEventId}.`,
+  'assistant.turn-started': (event) =>
+    `Started assistant consideration of interactions ${event.payload.interactionEventIds.join(', ')}.`,
   'visualization.candidates-advanced': (event) =>
     `Advanced past presentations ${event.payload.presentations.join(', ')} (${event.payload.reason}).`,
   'ai.generation-requested': (event) =>
@@ -162,6 +189,8 @@ const conversationCases = {
   'operation.completed': () => [],
   'operation.failed': () => [],
   'feedback.submitted': (event) => [{ role: 'user', content: feedbackMessage(event) } as const],
+  'assistant.turn-requested': () => [],
+  'assistant.turn-started': () => [],
   'visualization.candidates-advanced': () => [],
   'ai.generation-requested': () => [],
   'ai.generation-succeeded': () => [],
@@ -178,7 +207,10 @@ const conversationCases = {
     } as const
   ],
   'assistant.responded': (event) => [
-    { role: 'assistant', content: plainMessageText(event.payload.content) } as const
+    {
+      role: 'assistant',
+      content: `${event.payload.inReplyTo?.length ? `[In reply to interaction events ${event.payload.inReplyTo.join(', ')}]\n` : ''}${plainMessageText(event.payload.content)}`
+    } as const
   ],
   'system.notified': () => []
 } satisfies ProjectEventCases<ConversationMessage[]>;
@@ -210,6 +242,7 @@ export function projectAiContext(
   selection: AiContextSelection = { eventIds: [] }
 ): AiProjectContext {
   const snapshot = projectSnapshotAt(document);
+  const interaction = assistantInteraction(document, selection.interactionEventIds ?? []);
   const visualizations = (selection.visualSelections ?? []).flatMap((visualSelection) => {
     const resolved = resolveVisualSelection(document, visualSelection);
     return resolved ? [resolved] : [];
@@ -222,9 +255,10 @@ export function projectAiContext(
     currentWorkspace: projectWorkspace(snapshot),
     activePresentations: activePresentationSummaries(snapshot),
     activeVisualizationFindings: activePresentationFindings(snapshot),
+    interaction,
     interfaceCapabilities: [
       'The application owns previous/next step playback controls; never draw replacement controls inside a visualization.',
-      'The participant can select a presentation from the Timeline and Shift-select a compatible Sverlin presentation to compare a pair.',
+      'The participant can select compatible retained Sverlin presentations to compare a pair.',
       'A visible pair has preference controls, and a participant can select exact canvas elements and reference presentations or elements inline in messages.',
       'Sverlin projects may keep another pair generated ahead of time; ordinary conversation does not advance the visible pair.'
     ],
@@ -237,6 +271,44 @@ export function projectAiContext(
       visualizations
     }
   };
+}
+
+function assistantInteraction(
+  document: ProjectDocument,
+  eventIds: readonly EventId[]
+): AiInteraction {
+  const interactions = eventIds.map((id) => {
+    const event = document.events[id - 1];
+    if (
+      event?.type !== 'feedback.submitted' &&
+      event?.type !== 'visualization.preference-recorded'
+    ) {
+      throw new Error('The assistant turn references an unknown interaction event.');
+    }
+    return event;
+  });
+  const preferences = interactions.flatMap((event) => {
+    if (event.type !== 'visualization.preference-recorded') return [];
+    const alternativePresentationId = event.payload.presentations.find(
+      (id) => id !== event.payload.preferred
+    );
+    if (!alternativePresentationId) {
+      throw new Error('The preference interaction has no alternative presentation.');
+    }
+    return [
+      {
+        eventId: event.id,
+        preferredPresentationId: event.payload.preferred,
+        alternativePresentationId,
+        step: event.payload.step
+      }
+    ];
+  });
+  if (interactions.length === 1 && preferences[0]) {
+    return { kind: 'preference', ...preferences[0] };
+  }
+  if (interactions.length <= 1) return { kind: 'feedback', eventIds: [...eventIds] };
+  return { kind: 'batch', eventIds: [...eventIds], preferences };
 }
 
 function selectedPresentation(document: ProjectDocument, id: string): AiSelectedPresentation {

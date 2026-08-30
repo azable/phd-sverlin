@@ -25,7 +25,7 @@ describe('automatic feedback context', () => {
     expect(
       automaticFeedbackContext(
         [presentation(4, presentationIds[0]), presentation(5, presentationIds[1])],
-        { presentationEvent: 4, step: 2, instances: [7, 2] }
+        [{ presentationEvent: 4, step: 2, instances: [7, 2] }]
       )
     ).toEqual([
       { type: 'markdown', text: 'Comparing ' },
@@ -45,6 +45,36 @@ describe('automatic feedback context', () => {
       },
       { type: 'markdown', text: ' with ' },
       { type: 'presentation-ref', presentationId: presentationIds[1] },
+      { type: 'markdown', text: '.' }
+    ]);
+  });
+
+  it('retains exact element references from both visible candidates', () => {
+    expect(
+      automaticFeedbackContext(
+        [presentation(4, presentationIds[0]), presentation(5, presentationIds[1])],
+        [
+          { presentationEvent: 4, step: 2, instances: [7] },
+          { presentationEvent: 5, step: 2, instances: [9] }
+        ]
+      )
+    ).toEqual([
+      { type: 'markdown', text: 'Comparing ' },
+      {
+        type: 'element-ref',
+        presentationId: presentationIds[0],
+        presentationEvent: 4,
+        step: 2,
+        instances: [7]
+      },
+      { type: 'markdown', text: ' with ' },
+      {
+        type: 'element-ref',
+        presentationId: presentationIds[1],
+        presentationEvent: 5,
+        step: 2,
+        instances: [9]
+      },
       { type: 'markdown', text: '.' }
     ]);
   });

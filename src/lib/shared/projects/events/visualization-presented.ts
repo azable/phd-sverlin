@@ -4,7 +4,7 @@ import * as v from 'valibot';
 
 import { presentationIdSchema, renderablePresentationSchema } from '$lib/shared/presentations';
 
-import { eventEnvelope, naturalSchema } from './values';
+import { eventEnvelope, naturalSchema, visualSelectionSchema } from './values';
 
 /** Runtime schema for one visualization becoming visible in a display set. */
 export const visualizationPresentedEventSchema = v.object({
@@ -25,6 +25,7 @@ export const visualizationPreferenceRecordedEventSchema = v.object({
     displaySetId: v.optional(v.pipe(v.string(), v.uuid())),
     presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
     preferred: presentationIdSchema,
-    step: naturalSchema
+    step: naturalSchema,
+    visualSelections: v.optional(v.pipe(v.array(visualSelectionSchema), v.maxLength(2)))
   })
 });

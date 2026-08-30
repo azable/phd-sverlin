@@ -87,6 +87,35 @@ describe('presentation history', () => {
     ).toEqual(presentationIds.slice(2));
   });
 
+  it('pins the evaluated pair while a preference operation is running', () => {
+    const events = comparisonEvents();
+    const entries = timelinePresentations(events);
+    const selection = new PresentationSelection(true);
+
+    selection.pin(entries.slice(0, 2));
+    events.push({
+      id: 5,
+      type: 'visualization.preference-recorded',
+      actor: { kind: 'user' },
+      operationId,
+      createdAt: '2026-08-30T00:00:05.000Z',
+      payload: {
+        displaySetId: setOne,
+        presentations: [presentationIds[0], presentationIds[1]],
+        preferred: presentationIds[0],
+        step: 0,
+        visualSelections: []
+      }
+    });
+
+    expect(selection.followingLatest).toBe(false);
+    expect(
+      selection
+        .selected(events, 'comparison')
+        .map(({ presentation }) => presentation.presentationId)
+    ).toEqual(presentationIds.slice(0, 2));
+  });
+
   it('keeps non-buffered workspaces on the latest generated display set', () => {
     expect(
       new PresentationSelection()

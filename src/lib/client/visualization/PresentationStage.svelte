@@ -25,9 +25,9 @@
     playback: PresentationPlayback;
     layout: PresentationLayout;
     disabled?: boolean;
-    visualSelection?: VisualSelection;
-    onVisualSelectionChange?: (selection?: VisualSelection) => void;
-    onReferenceSelection?: (selection: VisualSelection) => void;
+    visualSelections?: readonly VisualSelection[];
+    onVisualSelectionsChange?: (selections: VisualSelection[]) => void;
+    onReferenceSelections?: (selections: VisualSelection[]) => void;
   };
 
   let {
@@ -36,14 +36,16 @@
     playback,
     layout,
     disabled = false,
-    visualSelection,
-    onVisualSelectionChange = (_selection?: VisualSelection) => {},
-    onReferenceSelection = (_selection: VisualSelection) => {}
+    visualSelections = [],
+    onVisualSelectionsChange = (_selections: VisualSelection[]) => {},
+    onReferenceSelections = (_selections: VisualSelection[]) => {}
   }: Props = $props();
+  let preferencePending = $state<string>();
 
   const visualizationOperationKinds: readonly ProjectOperationKind[] = [
     'initial-render',
     'feedback',
+    'prefer',
     'render',
     'save',
     'save-html',
@@ -62,6 +64,13 @@
   const step = $derived(playback.stepFor(playbackContext));
   const stepCount = $derived(playbackContext.stepCount);
   const selectedIds = $derived(visible.map(({ presentation }) => presentation.presentationId));
+  const visibleSelections = $derived(
+    visible.flatMap((entry) =>
+      visualSelections.filter(
+        (selection) => selection.presentationEvent === entry.eventId && selection.step === step
+      )
+    )
+  );
   const preferred = $derived.by(() => {
     if (visible.length !== 2) return undefined;
     const preference = session.events.findLast(
@@ -77,20 +86,27 @@
 
   function seek(next: number) {
     playback.seek(playbackContext, next);
-    onVisualSelectionChange(undefined);
+    onVisualSelectionsChange([]);
   }
 
   async function prefer(preferred: string) {
     if (visible.length !== 2) return;
-    const succeeded = await session.runCommand({
-      type: 'prefer',
-      presentations: [selectedIds[0], selectedIds[1]],
-      preferred,
-      step
-    });
-    if (succeeded) {
-      onVisualSelectionChange(undefined);
-      selection.returnToLatest();
+    preferencePending = preferred;
+    selection.pin(visible);
+    try {
+      const succeeded = await session.runCommand({
+        type: 'prefer',
+        presentations: [selectedIds[0], selectedIds[1]],
+        preferred,
+        step,
+        visualSelections: visibleSelections
+      });
+      if (succeeded) {
+        onVisualSelectionsChange([]);
+        selection.returnToLatest();
+      }
+    } finally {
+      preferencePending = undefined;
     }
   }
 
@@ -101,24 +117,35 @@
       presentations: selectedIds
     });
     if (succeeded) {
-      onVisualSelectionChange(undefined);
+      onVisualSelectionsChange([]);
       selection.returnToLatest();
     }
   }
 
   function returnToCurrent() {
-    onVisualSelectionChange(undefined);
+    onVisualSelectionsChange([]);
     selection.returnToLatest();
   }
 
   function selectedInstances(entry: (typeof visible)[number]) {
-    if (!visualSelection || visualSelection.step !== step) return [];
-    return visualSelection.presentationEvent === entry.eventId ? visualSelection.instances : [];
+    return (
+      visualSelections.find(
+        (selection) => selection.presentationEvent === entry.eventId && selection.step === step
+      )?.instances ?? []
+    );
   }
 
   function selectInstances(entry: (typeof visible)[number], instances: number[]) {
-    onVisualSelectionChange(
-      instances.length ? { presentationEvent: entry.eventId, step, instances } : undefined
+    const retained = visualSelections.filter(
+      (selection) =>
+        selection.step === step &&
+        visible.some(({ eventId }) => eventId === selection.presentationEvent) &&
+        selection.presentationEvent !== entry.eventId
+    );
+    onVisualSelectionsChange(
+      instances.length
+        ? [...retained, { presentationEvent: entry.eventId, step, instances }]
+        : retained
     );
   }
 </script>
@@ -132,9 +159,9 @@
         size="sm"
         variant={preferred === selectedIds[0] ? 'default' : 'outline'}
         onclick={() => prefer(selectedIds[0])}
-        {disabled}
+        disabled={disabled || preferencePending !== undefined}
       >
-        Prefer top
+        {#if preferencePending === selectedIds[0]}<Spinner /> Recording…{:else}Prefer top{/if}
       </Button>
     {/if}
     <Button
@@ -159,27 +186,29 @@
         size="sm"
         variant={preferred === selectedIds[1] ? 'default' : 'outline'}
         onclick={() => prefer(selectedIds[1])}
-        {disabled}
+        disabled={disabled || preferencePending !== undefined}
       >
-        Prefer bottom
+        {#if preferencePending === selectedIds[1]}<Spinner /> Recording…{:else}Prefer bottom{/if}
       </Button>
     {/if}
     {#if !selection.followingLatest}
-      <Button size="sm" variant="ghost" onclick={returnToCurrent}>Return to current</Button>
+      <Button size="sm" variant="ghost" onclick={returnToCurrent} {disabled}
+        >Return to current</Button
+      >
     {/if}
     {#if selection.buffered && selection.followingLatest && visible.length}
       <Button size="sm" variant="outline" onclick={advancePresentations} {disabled}>
-        Next visualizations
+        Next pair
       </Button>
     {/if}
-    {#if visualSelection && visible.some(({ eventId }) => eventId === visualSelection?.presentationEvent)}
+    {#if visibleSelections.length}
       <Button
         size="sm"
         variant="outline"
-        onclick={() => onReferenceSelection(visualSelection)}
+        onclick={() => onReferenceSelections(visibleSelections)}
         {disabled}
       >
-        Reference selection
+        Reference {visibleSelections.length === 1 ? 'selection' : 'selections'}
       </Button>
     {/if}
   </div>

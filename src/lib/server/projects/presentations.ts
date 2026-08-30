@@ -3,7 +3,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
-import type { ProjectCommandResult } from '$lib/shared/projects/model';
+import type { VisualSelection } from '$lib/shared/projects/events/values';
+import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
 import type { HtmlFramesManifest } from '$lib/shared/presentations';
 import { presentationStepLabels } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
@@ -13,6 +14,7 @@ import { stepSignature } from '$lib/server/visualization-modes';
 import { runProjectCommand } from './command-lock';
 import { recordText } from './fingerprints';
 import { projectRepository } from './repository';
+import { resolveProjectVisualSelection } from './visual-selection';
 import {
   appendProjectEvents,
   defaultProjectServiceDependencies,
@@ -39,70 +41,101 @@ export function recordProjectPreference(
     presentations: [string, string];
     preferred: string;
     step: number;
+    visualSelections: VisualSelection[];
     operationId: string;
   },
   dependencies: PresentationCommandDependencies = defaultDependencies
 ): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const supplied = [...new Set(options.presentations)];
-    if (supplied.length !== 2 || !supplied.includes(options.preferred)) {
-      throw new Error('The preference must identify two distinct presentations and one winner.');
-    }
-    const presented = supplied.map((id) =>
-      before.events.find(
-        (event) =>
-          event.type === 'visualization.presented' &&
-          event.payload.presentation.presentationId === id
-      )
-    );
-    if (presented.some((event) => event?.type !== 'visualization.presented')) {
-      throw new Error('The preference references an unknown presentation.');
-    }
-    const [left, right] = presented;
-    if (left?.type !== 'visualization.presented' || right?.type !== 'visualization.presented') {
-      throw new Error('The preference references an unknown presentation.');
-    }
-    const leftPresentation = left.payload.presentation;
-    const rightPresentation = right.payload.presentation;
-    if (
-      leftPresentation.format !== 'sverlin-ir-v1' ||
-      rightPresentation.format !== 'sverlin-ir-v1' ||
-      leftPresentation.source.sha256 !== rightPresentation.source.sha256 ||
-      leftPresentation.stepSignature !== rightPresentation.stepSignature
-    ) {
-      throw new Error('Only compatible versions of the same visualization can be compared.');
-    }
-    if (
-      options.step >= presentationStepLabels(leftPresentation).length ||
-      options.step >= presentationStepLabels(rightPresentation).length
-    ) {
-      throw new Error('The preference references an unknown presentation step.');
-    }
-    const displaySetId =
-      left.payload.displaySetId === right.payload.displaySetId
-        ? left.payload.displaySetId
-        : undefined;
-    const document = await appendProjectEvents(
-      before,
-      [
-        draftEvent({
-          type: 'visualization.preference-recorded',
-          actor: { kind: 'user' },
-          operationId: options.operationId,
-          payload: {
-            ...(displaySetId ? { displaySetId } : {}),
-            presentations: options.presentations,
-            preferred: options.preferred,
-            step: options.step
-          }
-        })
-      ],
-      [],
-      dependencies.projectService
-    );
+    const document = await appendProjectPreference(before, options, dependencies.projectService);
     return { document, appendedEvents: document.events.slice(before.events.length) };
   });
+}
+
+/** Validate and append a preference inside a larger already-locked project command. */
+export async function appendProjectPreference(
+  document: ProjectDocument,
+  options: {
+    presentations: [string, string];
+    preferred: string;
+    step: number;
+    visualSelections: VisualSelection[];
+    operationId: string;
+  },
+  dependencies: ProjectServiceDependencies
+): Promise<ProjectDocument> {
+  const supplied = [...new Set(options.presentations)];
+  if (supplied.length !== 2 || !supplied.includes(options.preferred)) {
+    throw new Error('The preference must identify two distinct presentations and one winner.');
+  }
+  const presented = supplied.map((id) =>
+    document.events.find(
+      (event) =>
+        event.type === 'visualization.presented' && event.payload.presentation.presentationId === id
+    )
+  );
+  if (presented.some((event) => event?.type !== 'visualization.presented')) {
+    throw new Error('The preference references an unknown presentation.');
+  }
+  const [left, right] = presented;
+  if (left?.type !== 'visualization.presented' || right?.type !== 'visualization.presented') {
+    throw new Error('The preference references an unknown presentation.');
+  }
+  const leftPresentation = left.payload.presentation;
+  const rightPresentation = right.payload.presentation;
+  if (
+    leftPresentation.format !== 'sverlin-ir-v1' ||
+    rightPresentation.format !== 'sverlin-ir-v1' ||
+    leftPresentation.source.sha256 !== rightPresentation.source.sha256 ||
+    leftPresentation.stepSignature !== rightPresentation.stepSignature
+  ) {
+    throw new Error('Only compatible versions of the same visualization can be compared.');
+  }
+  if (
+    options.step >= presentationStepLabels(leftPresentation).length ||
+    options.step >= presentationStepLabels(rightPresentation).length
+  ) {
+    throw new Error('The preference references an unknown presentation step.');
+  }
+  const allowedEvents = new Set([left.id, right.id]);
+  const visualSelections = options.visualSelections.map((selection) => {
+    const resolved = resolveProjectVisualSelection(document, selection).selection;
+    if (!allowedEvents.has(resolved.presentationEvent) || resolved.step !== options.step) {
+      throw new Error('Preference focus must belong to the compared presentations and step.');
+    }
+    return resolved;
+  });
+  if (
+    visualSelections.length > 2 ||
+    new Set(visualSelections.map(({ presentationEvent }) => presentationEvent)).size !==
+      visualSelections.length
+  ) {
+    throw new Error('A preference may focus each compared presentation at most once.');
+  }
+  const displaySetId =
+    left.payload.displaySetId === right.payload.displaySetId
+      ? left.payload.displaySetId
+      : undefined;
+  return appendProjectEvents(
+    document,
+    [
+      draftEvent({
+        type: 'visualization.preference-recorded',
+        actor: { kind: 'user' },
+        operationId: options.operationId,
+        payload: {
+          ...(displaySetId ? { displaySetId } : {}),
+          presentations: options.presentations,
+          preferred: options.preferred,
+          step: options.step,
+          visualSelections
+        }
+      })
+    ],
+    [],
+    dependencies
+  );
 }
 
 /** Save and immediately present one complete editable HTML manifest. */

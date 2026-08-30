@@ -111,7 +111,7 @@
   // svelte-ignore state_referenced_locally
   let expired = $state(study?.expired ?? false);
   let studyAdvancing = $state(false);
-  let visualSelection = $state.raw<VisualSelection | undefined>(undefined);
+  let visualSelections = $state.raw<VisualSelection[]>([]);
 
   function toggleInstances(
     current: VisualSelection['instances'],
@@ -343,7 +343,7 @@
                 selection={presentationSelection}
                 {layout}
                 inspect={developerView}
-                onPresentationChange={() => (visualSelection = undefined)}
+                onPresentationChange={() => (visualSelections = [])}
                 onReferenceRequest={(presentation) =>
                   feedbackComposer?.referencePresentation(presentation)}
                 onElementReferenceActivate={(reference, extend) => {
@@ -351,6 +351,16 @@
                     presentationSelection.selected(session.events, layout)
                   );
                   const step = presentationPlayback.seek(context, reference.step);
+                  const visibleEventIds = new Set(
+                    presentationSelection
+                      .selected(session.events, layout)
+                      .map(({ eventId }) => eventId)
+                  );
+                  const visualSelection = visualSelections.find(
+                    (selection) =>
+                      selection.presentationEvent === reference.presentationEvent &&
+                      selection.step === step
+                  );
                   const sameSelection =
                     extend &&
                     visualSelection?.presentationEvent === reference.presentationEvent &&
@@ -359,13 +369,22 @@
                     sameSelection && visualSelection
                       ? toggleInstances(visualSelection.instances, reference.instances)
                       : reference.instances;
-                  visualSelection = instances.length
-                    ? {
-                        presentationEvent: reference.presentationEvent,
-                        step,
-                        instances
-                      }
-                    : undefined;
+                  const retained = visualSelections.filter(
+                    (selection) =>
+                      selection.step === step &&
+                      visibleEventIds.has(selection.presentationEvent) &&
+                      selection.presentationEvent !== reference.presentationEvent
+                  );
+                  visualSelections = instances.length
+                    ? [
+                        ...retained,
+                        {
+                          presentationEvent: reference.presentationEvent,
+                          step,
+                          instances
+                        }
+                      ]
+                    : retained;
                 }}
               />
               {#if !expired && !session.readOnly}
@@ -374,9 +393,9 @@
                   {session}
                   {presentationCount}
                   presentations={visiblePresentations}
-                  {visualSelection}
+                  {visualSelections}
                   onSubmitted={() => {
-                    visualSelection = undefined;
+                    visualSelections = [];
                     presentationSelection.returnToLatest();
                   }}
                 />
@@ -432,9 +451,10 @@
             playback={presentationPlayback}
             {layout}
             disabled={mutationsDisabled}
-            {visualSelection}
-            onVisualSelectionChange={(selection) => (visualSelection = selection)}
-            onReferenceSelection={(selection) => feedbackComposer?.referenceSelection(selection)}
+            {visualSelections}
+            onVisualSelectionsChange={(selections) => (visualSelections = selections)}
+            onReferenceSelections={(selections) =>
+              feedbackComposer?.referenceSelections(selections)}
           />
           <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
         </Resizable.Pane>
