@@ -132,14 +132,14 @@ Each relation declaration also records one of these endpoint meanings:
 This distinction belongs to Domain because it affects Program validation as
 well as Render traversal. Sequences, trees, and DAGs require ordered endpoints;
 applying one of those operations to a symmetric relation is a source-level
-error. General graph traversal accepts either meaning.
+error. General relation rendering accepts either meaning.
 
 Endpoint meaning is declaration metadata rather than a public type parameter.
 The relation-facing target types are therefore `RelationKind source target`,
-Program's `Relation`, Render's `Relations source target`, and `Graph node`;
-authors do not carry `Directed` or `Undirected` through signatures. The exact
-declaration combinators that choose ordered or symmetric endpoints remain open
-with the rest of Domain.
+Program's `Relation`, and Render's `Relations source target`; authors do not
+carry `Directed` or `Undirected` through signatures. The exact declaration
+combinators that choose ordered or symmetric endpoints remain open with the
+rest of Domain.
 
 Move the following existing interfaces into Domain:
 
@@ -594,10 +594,10 @@ are outside this baseline; declare separate typed rules, or add a typed selector
 or predicate API later when a concrete use case requires one.
 
 Retain the general content interfaces `ContentValue`, `text`, `content`, and
-`fitText`, and add the graph-derived `intText` documented below. Redefine
-`fitText` as allowing the solver to vary a single line's font size within
-explicit bounds so that the line fits its content box; it must not insert line
-breaks. Remove the specialized `codeContent`, `codeWrap`,
+`fitText`, and add the structural-value conversion `asText` documented below.
+Redefine `fitText` as allowing the solver to vary a single line's font size
+within explicit bounds so that the line fits its content box; it must not insert
+line breaks. Remove the specialized `codeContent`, `codeWrap`,
 `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode` interfaces. Code
 is not a distinct kind of visual content: it is one possible Render mapping of
 the Program.
@@ -759,7 +759,7 @@ render = do
   aspectRatio 4 3
 ```
 
-#### Relations and graph views
+#### Relations and structural rankings
 
 Relations describe which persistent Program locations are associated. They do
 not prescribe coordinates, spacing, or connector routing. Render projects the
@@ -771,9 +771,7 @@ The target Render vocabulary is:
 
 ```haskell
 data Relations source target
-data Graph node
-data Sequence node
-data Levels node
+data Ranking node
 data FixedInt
 
 relation
@@ -789,10 +787,24 @@ second
   :: Relations source target
   -> Render (Selected target)
 
-asGraph
+asSequence
   :: Relations node node
   -> Selected node
-  -> Render (Graph node)
+  -> Render (Ranking node)
+
+asTree
+  :: Relations node node
+  -> Selected node
+  -> Render (Ranking node)
+
+asDag
+  :: Relations node node
+  -> Selected node
+  -> Render (Ranking node)
+
+rankOf
+  :: Ranking node
+  -> Render FixedInt
 ```
 
 `Selected links <- select kind` selects the relations of one declared kind that
@@ -819,19 +831,15 @@ operations have a stable order only so output and generated choice IDs are
 repeatable; its rule must be symmetric or make any visual orientation an
 explicit Render choice.
 
-`asGraph relations nodes` includes every selected node, including nodes with no
-edge, and every supplied relation. Both endpoints of every relation must be in
-`nodes`; any relation outside that node selection is a scope error rather than
-being silently filtered. The author can therefore keep using the same `nodes`
-with `node` and `relations` with `relation` after validation. If several
-independent structures later share one relation kind, add an explicit
-relation-selection operation that scopes those relations before `asGraph`
-rather than returning replacement selections from the checked graph.
-
-`asGraph`, `asSequence`, `asTree`, and `asDag` consistently take selected
-relations first and selected nodes second. Each applies these endpoint-scope
-checks; the latter three additionally validate the requested structure. In this
-family, `as` means "validate and expose as this view," not an unchecked cast.
+`asSequence`, `asTree`, and `asDag` consistently take selected relations first
+and selected nodes second. Every supplied relation must have both endpoints in
+the supplied node selection; any relation outside it is a scope error rather
+than being silently filtered. Each operation also validates the requested
+structure and returns a `Ranking` for its nodes. Authors continue using the
+original node and relation selections for rendering. If several independent
+structures later share one relation kind, add an explicit relation-selection
+operation that scopes those relations before validation. In this family, `as`
+means "validate and expose as this view," not an unchecked cast.
 
 A selected relation is always available as a spatial relation: its endpoint
 nodes can participate in ordinary affine constraints even when no line or arrow
@@ -881,41 +889,37 @@ so forward and reverse playback follow its `relate` and `unrelate` events.
 `FixedInt` is an exact integer calculated from the current relation graph before
 numeric solving. It may differ at another checkpoint, but it is fixed while the
 current Render rule is solved. Addition and subtraction by fixed integers remain
-exact. `asScalar :: FixedInt -> Scalar` makes it usable in affine layout
-expressions. Multiplying a solver-backed span by an `asScalar` result remains
-affine because the integer has already been fixed.
-`intText :: FixedInt -> ContentValue` formats the same value as deterministic
-base-10 text for an index or level label.
-
-##### `Sequence`
-
-`Sequence` represents one ordered chain. It covers arrays, ordinary lists, and
-linked lists whose nodes use a relation with ordered endpoints such as
-`Adjacent` or `Next`.
+exact.
 
 ```haskell
-asSequence
-  :: Relations node node
-  -> Selected node
-  -> Render (Sequence node)
-
-positionOf :: Sequence node -> Render FixedInt
+asScalar :: FixedInt -> Scalar
+asText   :: FixedInt -> ContentValue
 ```
 
-`asSequence relations nodes` first applies the same scoping rules as
-`asGraph relations nodes`, then accepts an empty graph, a single node with no
-edges, or one non-empty chain. A non-empty chain must have one start, one end,
-no cycle or fork, and every selected node must belong to it. Inside a `node`
-scope matching one of those nodes, `positionOf sequence` returns its zero-based
-position `0, 1, 2, ...`. Calling it outside a matching node scope is a
-source-level error. The selected relation kind must have ordered endpoints;
+`asScalar` makes the integer usable in affine layout expressions. Multiplying a
+solver-backed span by an `asScalar` result remains affine because the integer
+has already been fixed. `asText` formats the same value as deterministic
+base-10 text for an index or level label.
+
+##### Sequence validation and ranking
+
+A sequence is one ordered chain. It covers arrays, ordinary lists, and linked
+lists whose nodes use a relation with ordered endpoints such as `Adjacent` or
+`Next`.
+
+`asSequence relations nodes` accepts an empty graph, a single node with no edge,
+or one non-empty chain. Every supplied relation must join two supplied nodes. A
+non-empty chain must have one start, one end, no cycle or fork, and every
+selected node must belong to it. Inside a `node`
+scope matching one of those nodes, `rankOf ranking` returns its zero-based
+position `0, 1, 2, ...`. Calling it outside the ranking's matching node scope
+is a source-level error. The selected relation kind must have ordered endpoints;
 otherwise there is no defined first item or next item. Failure reports the
 relation kind and offending endpoints before numeric sampling begins. Taking
-the selected relations and nodes directly avoids exposing a temporary `Graph`
-that authors would use only for this check; use `asGraph` when the raw graph is
-itself wanted. The baseline exposes no sequence length: a visual parent's
-containment and padding derive its bounds from the positioned children without
-one.
+the selected relations and nodes directly avoids exposing a graph handle that
+authors would use only for this check. The baseline exposes no sequence length:
+a visual parent's containment and padding derive its bounds from the positioned
+children without one.
 
 The following example assumes `cells` selects one non-empty array's cells and
 `Adjacent` points from each cell to the next. The generated parent is the visual
@@ -927,7 +931,7 @@ padding:
 ```haskell
 Selected cells <- select cellKind
 Selected adjacentLinks <- select Adjacent
-orderedCells <- asSequence adjacentLinks cells
+cellRanking <- asSequence adjacentLinks cells
 
 Variable spacing <- variable @Span
 ensure $ spacing .>=. by 64
@@ -938,7 +942,7 @@ node $ do
   padding (uniform (by 16))
 
   node cells $ do
-    position <- positionOf orderedCells
+    position <- rankOf cellRanking
     ensure $ width cells .==. by 64
     ensure $ height cells .==. by 48
     ensure $ x cells .==. left array + shift 48 + spacing * asScalar position
@@ -961,7 +965,7 @@ relation adjacentLinks $ do
 ```
 
 These are alternative layout rules. A linked-list view can use the same checked
-`Sequence` for its structural positions while `relation nextLinks` supplies
+ranking for its structural positions while `relation nextLinks` supplies
 endpoint pairs to a connector helper once that visual interface is defined.
 Separate bounded constraints or prepared templates can place its nodes without
 overlap. The relation does not force either layout. If several dynamic arrays
@@ -975,17 +979,8 @@ A tree is a graph whose relation has ordered parent-to-child endpoints and
 exactly one root. Every other node must have one parent, every node must be
 reachable from the root, and cycles are rejected.
 
-```haskell
-asTree
-  :: Relations node node
-  -> Selected node
-  -> Render (Levels node)
-
-levelOf :: Levels node -> Render FixedInt
-```
-
 The baseline does not expose the root, child count, or subtree size. For a tree,
-`levelOf` is the number of parent-to-child edges from the root. It is available
+`rankOf` is the number of parent-to-child edges from the root. It is available
 inside a `node` scope matching one of the nodes validated by `asTree`; any other
 scope is a source-level error.
 
@@ -995,7 +990,7 @@ tree level the same vertical gap:
 
 ```haskell
 Selected parentLinks <- select ParentOf
-treeLevels <- asTree parentLinks treeNodes
+treeRanking <- asTree parentLinks treeNodes
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
@@ -1012,7 +1007,7 @@ instead provide it locally:
 
 ```haskell
 node treeNodes $ do
-  level <- levelOf treeLevels
+  level <- rankOf treeRanking
   y (at 60 + levelGap * asScalar level)
 ```
 
@@ -1041,14 +1036,7 @@ can never return to the starting node. A DAG may have several roots, several
 leaves, and disconnected parts. Unlike a sequence, it does not have one correct
 position for every node because unrelated nodes can appear in either order.
 
-```haskell
-asDag
-  :: Relations node node
-  -> Selected node
-  -> Render (Levels node)
-```
-
-The baseline does not expose separate root or leaf selections. `levelOf` is zero
+The baseline does not expose separate root or leaf selections. `rankOf` is zero
 at a root and otherwise one plus the greatest level of its immediate
 predecessors. This is the length of the longest path from any root, not an
 arbitrary total ordering. It remains because exact shared DAG layers cannot in
@@ -1057,14 +1045,14 @@ different lengths.
 
 ```haskell
 Selected dependencyLinks <- select DependsOn
-dagLevels <- asDag dependencyLinks tasks
+dagRanking <- asDag dependencyLinks tasks
 
 Variable levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 128
 
 node tasks $ do
-  level <- levelOf dagLevels
+  level <- rankOf dagRanking
   y (at 60 + levelGap * asScalar level)
 ```
 
@@ -1074,11 +1062,9 @@ must not silently choose one and remove other valid layouts.
 
 ##### General graphs and layouts
 
-Use `Graph` directly when cycles, several connected parts, or no single
-hierarchy are valid. It validates the supplied node and relation selections but
-adds no derived position, root, depth, or level. Authors continue to use those
-original selections with `node` and `relation`. Relations with ordered or
-symmetric endpoints are both supported.
+When cycles, several connected parts, or no single hierarchy are valid, use the
+original node and relation selections directly. No validation handle is needed.
+Relations with ordered or symmetric endpoints are both supported.
 
 An edge carries its relation kind and stable identity, not an arbitrary weight
 or label. Model a semantically weighted edge as its own typed Domain location
@@ -1088,7 +1074,6 @@ pairs are rejected.
 
 ```haskell
 Selected connectionLinks <- select ConnectedTo
-network <- asGraph connectionLinks vertices
 
 node vertices $ do
   ensure $ left vertices .>=. left canvas + shift 24
@@ -1102,14 +1087,15 @@ every unrelated pair. A visualization that must prevent overlap in a dynamic
 general graph should choose a bounded grid, layered, or other prepared layout
 template. `separatedBy` remains available for explicitly identified pairs.
 
-Graph-layout helpers belong in a Render library and consume this same `Graph`;
-they are not another semantic relation system. A helper may emit bounded affine
-constraints directly or offer a finite set of prepared grid, layered, or other
-layout templates as explicit design choices. General force-directed placement,
-Euclidean distance objectives, and edge-crossing minimization are not affine
-constraints. They must not invoke a hidden nonlinear fallback. If later
-supported, they must be explicit preparation algorithms that return bounded
-candidate templates before affine sampling.
+Graph-layout helpers belong in a Render library and should consume the existing
+node and relation selections; they are not another semantic relation system. A
+helper may emit bounded affine constraints directly or offer a finite set of
+prepared grid, layered, or other layout templates as explicit design choices.
+General force-directed placement, Euclidean distance objectives, and
+edge-crossing minimization are not affine constraints. They must not invoke a
+hidden nonlinear fallback. If later supported, they must be explicit
+preparation algorithms that return bounded candidate templates before affine
+sampling.
 
 The four cases created by an explicit `separatedBy` constraint are affine once
 one is selected, but applying it to every possible pair would grow
@@ -1119,10 +1105,10 @@ normally use a bounded template generator.
 
 ##### Validation over time
 
-Graph construction and all `as*` checks run for every exposed checkpoint
-where their Render rule matches. Program should checkpoint after completing a
-logical relation update. If an incomplete structure is intentionally shown,
-Render should use its raw `Graph` until it is complete instead of applying
+All `as*` checks run for every exposed checkpoint where their Render rule
+matches. Program should checkpoint after completing a logical relation update.
+If an incomplete structure is intentionally shown, Render should use its node
+and relation selections directly until it is complete instead of applying
 `asSequence`, `asTree`, or `asDag`. Structural failures are therefore
 source-level diagnostics, not unlucky random samples.
 
@@ -1144,10 +1130,9 @@ fixed value random.
 Remove `bindInt`. It currently creates a name-based query variable whose first
 matching integer fact supplies both a later join key and an optional layout
 coefficient. Use typed relations for membership, association, and ordering; use
-`positionOf` and the other purpose-specific `FixedInt` graph values for
-structural layout. A future numeric payload or property accessor must be typed
-and tied to its selected entity rather than restoring free string-keyed facts or
-bindings.
+`rankOf` for structural layout. A future numeric payload or property accessor
+must be typed and tied to its selected entity rather than restoring free
+string-keyed facts or bindings.
 
 Use `global name` only when separately declared rules deliberately need the
 same stable solver value. Ordinary reuse within one rule should reuse the value
@@ -1250,7 +1235,7 @@ ensure $ scale .<=. num 1.25
 node card $ width (by 160 * scale)
 
 node cells $ do
-  position <- positionOf orderedCells
+  position <- rankOf cellRanking
   ensure $ x cells .==. at 40 + by 72 * asScalar position
 ```
 
@@ -1983,12 +1968,11 @@ drawn, but they must not infer semantic relations from block lineage, solver
 variable names, or proximity.
 
 At each exposed checkpoint, `select relationKind` projects the matching active
-relations and their stable endpoints into `Relations`. `asGraph` verifies that
-the supplied relation and node selections have the same scope;
-`asSequence`, `asTree`, and `asDag` perform that check and validate the stronger
-shape before calculating their fixed structural values. None replaces its
-complete input selections: Render continues to map the original nodes and
-relations. The raw `Graph` remains available when no stronger shape is intended.
+relations and their stable endpoints into `Relations`. `asSequence`, `asTree`,
+and `asDag` verify that the supplied relation and node selections have the same
+scope, validate the requested shape, and calculate its ranking. None replaces
+its complete input selections: Render continues to map the original nodes and
+relations. General graphs need no separate public handle.
 
 ## Compiler and runtime boundary
 
@@ -2034,23 +2018,23 @@ Add focused facade and compiler tests for:
 - rejection of every supplied relation outside the checked node selection,
   whether neither or only one endpoint is selected;
 - sequence diagnostics for a missing edge, fork, cycle, and disconnected node;
-- context-local sequence positions used through both `asScalar` and `intText`,
-  plus rejection outside the checked sequence's node scope;
+- context-local sequence ranks used through both `asScalar` and `asText`, plus
+  rejection outside the checked sequence's node scope;
 - a linked list that uses `Next` for traversal while its node positions remain
   independently constrained;
 - valid and invalid trees laid out through local parent-to-child constraints,
-  with tree levels available through context-local `levelOf`;
-- DAG longest-path levels through the same context-local `levelOf`, plus
+  with tree levels available through context-local `rankOf`;
+- DAG longest-path levels through the same context-local `rankOf`, plus
   rejection of a directed cycle and mismatched node scopes;
-- a cyclic raw graph that remains valid as `Graph` but is rejected by `asDag`,
-  with its nodes bounded through ordinary `node` mapping and no implicit
-  all-pairs constraints;
+- a cyclic relation selection rendered directly but rejected by `asDag`, with
+  its nodes bounded through ordinary `node` mapping and no implicit all-pairs
+  constraints;
 - reuse of the original node and relation selections after every `as*` check,
   with no generic projections of those complete inputs, aggregate graph counts,
   callback-based relation mapping, separate traversal helpers, or general
   all-pairs generator;
-- graph checks at successive checkpoints, including deliberate use of raw
-  `Graph` while a structure is incomplete; and
+- structural checks at successive checkpoints, including direct relation
+  rendering while a sequence, tree, or DAG is incomplete; and
 - removal of the public fact/query surface and `bindInt`, including migration
   of integer-variable joins to relations and confirmation that `Sverlin`
   exports no string-keyed classification or numeric-query constructor.
@@ -2066,16 +2050,15 @@ For the classification and relation slices:
    events, including endpoint and lifetime validation.
 3. Project active relation identities and endpoints to stable owner nodes at
    each checkpoint, and add the `RelationKind` case of `select`.
-4. Add `Relations`, context-local typed `first` and `second`, raw `Graph`, and
-   `FixedInt`; make the stronger graph checks consume already-scoped relation
-   and node selections directly.
-5. Add the sequence, tree, and DAG checks, context-local sequence positions,
-   and shared tree/DAG levels.
+4. Add `Relations`, context-local typed `first` and `second`, and `FixedInt`;
+   make the structural checks consume already-scoped relation and node
+   selections directly.
+5. Add the sequence, tree, and DAG checks and their context-local rankings.
 6. Migrate all examples and fixtures from query atoms and integer joins to
    kinds and relations; then remove the complete public fact/query surface from
    `Sverlin`.
-7. Add graph-layout template helpers only after the raw graph contract and
-   affine solver boundary are tested.
+7. Add graph-layout template helpers only after direct node/relation rendering
+   and the affine solver boundary are tested.
 
 The existing `containers` dependency in
 [compile.cabal](../../compile.cabal) is sufficient for the first implementation.

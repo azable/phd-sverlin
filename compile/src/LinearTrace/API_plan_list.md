@@ -223,7 +223,6 @@ data TextBuilder a
 literal      :: String -> TextBuilder ()
 fragment     :: ...               -- fragment @Step "text"
 fragmentMany :: ...               -- fragmentMany @'[StepA, StepB] "text"
-intText      :: FixedInt -> ContentValue
 ```
 
 **Open signatures:** `content` and `fitText` accept ordinary `ContentValue` and
@@ -231,29 +230,25 @@ composed `TextBuilder` input; the exact supporting overload and typed step
 representation are not settled. Every text node remains one independently
 positioned, shaped line.
 
-### Relations and graph views
+### Relations and structural rankings
 
 ```haskell
 data Relations source target
-data Graph node
-data Sequence node
-data Levels node
+data Ranking node
 data FixedInt
 
 relation :: Relations source target -> Render () -> Render ()
 first :: Relations source target -> Render (Selected source)
 second :: Relations source target -> Render (Selected target)
-asGraph :: Relations node node -> Selected node -> Render (Graph node)
 
-asSequence :: Relations node node -> Selected node -> Render (Sequence node)
-positionOf :: Sequence node -> Render FixedInt
+asSequence :: Relations node node -> Selected node -> Render (Ranking node)
+asTree     :: Relations node node -> Selected node -> Render (Ranking node)
+asDag      :: Relations node node -> Selected node -> Render (Ranking node)
 
-asTree :: Relations node node -> Selected node -> Render (Levels node)
-
-asDag   :: Relations node node -> Selected node -> Render (Levels node)
-levelOf :: Levels node -> Render FixedInt
+rankOf :: Ranking node -> Render FixedInt
 
 asScalar :: FixedInt -> Scalar
+asText   :: FixedInt -> ContentValue
 ```
 
 `Relations` is the reusable result of `Selected links <- select relationKind`.
@@ -270,22 +265,23 @@ ordered kind, `first` is its source and `second` its target. For a symmetric
 kind, the order is stable for reproducible output but carries no meaning. A
 connector inside the scope is optional.
 
-`asGraph`, `asSequence`, `asTree`, and `asDag` take the same selected relations
-and nodes. Every supplied relation must have both endpoints in the supplied node
-selection; none is silently filtered. The latter three operations also reject
-structures that do not have the requested shape. Authors keep using the same
-node selection with `node` and relation selection with `relation`; the checked
-views expose only their purpose-specific structural values. The context-local
-`positionOf sequence` and `levelOf levels` operations read the current matched
-node inside `node`; the compiler rejects either operation outside its matching
-node scope. Both `asTree` and `asDag` return `Levels`, with root distance for a
-tree and longest-path level for a DAG. Here, `as` means "validate and expose as
-this view," not an unchecked cast. There are no generic projections of the
+`asSequence`, `asTree`, and `asDag` take the same selected relations and nodes.
+Every supplied relation must have both endpoints in the supplied node selection;
+none is silently filtered. Each operation also rejects structures that do not
+have the requested shape. Authors keep using the same node selection with
+`node` and relation selection with `relation`; the checked views expose only
+their validated rankings. The context-local
+`rankOf ranking` operation reads the current matched node inside `node`; the
+compiler rejects it outside the ranking's matching node scope. A sequence rank
+is its zero-based position, a tree rank is its distance from the root, and a DAG
+rank is its longest-path level. Here, `as` means "validate and expose as this
+view," not an unchecked cast. There are no generic projections of the
 complete input selections, aggregate graph counts, separate `forEach*`
-traversal helpers, or all-pairs API. If one relation kind later spans several
-independent structures, an explicit endpoint-based relation-selection
-operation must scope it before validation; the checked view will not perform
-that filtering.
+traversal helpers, general graph handle, or all-pairs API. General graphs use
+their original node and relation selections directly. If one relation kind
+later spans several independent structures, an explicit endpoint-based
+relation-selection operation must scope it before validation; the checked view
+will not perform that filtering.
 
 ### Reusable values and finite choices
 
