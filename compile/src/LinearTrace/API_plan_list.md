@@ -426,7 +426,6 @@ finite bounds by compile time.
 ```haskell
 style        :: forall field input. ... => input -> Render ()
 withoutStyle :: ...
-styleFamily  :: String -> Render ()
 styleOf      :: ...
 ```
 
@@ -436,7 +435,10 @@ present and remains readable through `styleOf`. Unsupported field/input pairs ar
 type errors. General `caseOf` blocks express conditional style values or
 absence. The accumulated `NodeStyle`, input-conversion class, and
 fixed-or-variable sum remain internal; there is no public style-case wrapper or
-separate choice setter.
+separate choice setter. Reuse an ordinary Render helper to apply the same
+appearance in several places. Create shared choices before defining or invoking
+that helper; choices created inside it are fresh on each invocation. There is no
+string-named style-family grouping operation.
 
 | Cluster        | Public API                                                                                                                                                                                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -525,6 +527,8 @@ orientation is intentionally a random authored choice.
   `variable` creates a fresh solver value.
 - String-named solver identity: `global`. Reuse returned symbolic values
   lexically.
+- String-named automatic appearance grouping: `styleFamily`. Reuse an ordinary
+  Render helper and pass or capture shared choices lexically.
 - Raw or redundant numeric surface: `Free`, `Bounds`, `bounds`, `asCoord`,
   `asSpan`, and `(|+|)`. Use `Scalar`, the typed geometry setters, direct affine
   equations, and ordinary `(+)` respectively.

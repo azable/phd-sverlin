@@ -1768,16 +1768,12 @@ Cluster the public operations as follows:
 - `caseOf choice mapping` maps an existing categorical choice to complete
   Render blocks. Use ordinary `style` or `withoutStyle` operations in those
   blocks for conditional style behavior; there is no separate `styleCase`.
-- `styleFamily name` assigns the semantic cascade family used by automatic
-  styling of the node and descendants. This string is a style-family label,
-  not a solver-choice identity.
 - `styleOf @Field selected` reads the selected field as a symbolic expression
   for use in constraints.
 
 ```haskell
 slant <- choice @FontStyle
 node label $ do
-  styleFamily "explanation"
   style @FontStyle slant
   caseOf slant $ \case
     FontStyleNormal -> style @Opacity (num 1)
@@ -1786,6 +1782,32 @@ node label $ do
 
 ensure $ styleOf @FontStyle label .==. slant
 ```
+
+Remove `styleFamily`. Its free string is a hidden shared key for automatic
+style-profile choices, so it has the same collision and non-local coupling
+problems as `global`; its name is also easily confused with `FontFamily`.
+Ordinary Render helpers provide explicit, lexically scoped reuse. Create any
+random values outside the helper when several uses should share the same
+sampled appearance:
+
+```haskell
+readFont <- fontChoice (fontKind Proportional)
+readBorder <- choice @BorderStyle
+
+let readAppearance = do
+      style @FontFamily readFont
+      style @BorderStyle readBorder
+      style @StrokeWidth (by 2)
+      style @Radius (by 8)
+
+node targetReads readAppearance
+node elementReads readAppearance
+```
+
+Moving either choice into `readAppearance` would instead create a fresh choice
+each time the helper runs. Fixed styles need no captured value. Typed `Kind`
+selection and ordinary parent-to-child style inheritance remain available;
+neither requires a public string-named appearance family.
 
 `styleOf` requires that the requested field is present in every branch. It
 cannot read a field removed with `withoutStyle` in one `caseOf` branch;

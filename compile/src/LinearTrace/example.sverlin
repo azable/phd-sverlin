@@ -489,6 +489,13 @@ sameIndent reference lineNode = ensure $ left lineNode .==. left reference
 after :: Selected upper -> Selected lower -> Render ()
 after upper lower = ensure $ top lower .==. bottom upper + shift 4
 
+readAppearance :: Choice FontFamily -> Choice BorderStyle -> Render ()
+readAppearance readFont readBorder = do
+  style @FontFamily readFont
+  style @BorderStyle readBorder
+  style @StrokeWidth (by 2)
+  style @Radius (by 8)
+
 cSource :: Render ()
 cSource = do
   codeFont <- fontChoice (fontKind Monospace)
@@ -571,6 +578,11 @@ render = do
   height (by 640)
   contentFit Both Contain
 
+  -- These choices are created once and passed to a normal Render helper, so
+  -- both read-node groups share the sampled appearance.
+  readFont <- fontChoice (fontKind Proportional)
+  readBorder <- choice @BorderStyle
+
   -- The wrappers work for any Render-tracked component or returned handle.
   -- Here each repeated comparison occurrence independently has a seeded chance
   -- of becoming a frame; the other named steps are always exposed.
@@ -593,7 +605,6 @@ render = do
     top (at 72)
     width (by 120)
     height (by 88)
-    styleFamily "target"
 
   indices <- select indexKind
   node indices $ do
@@ -603,7 +614,6 @@ render = do
     top (at 72)
     width (by 120)
     height (by 88)
-    styleFamily "index"
 
   elementCells <- select elementCellKind
   adjacentRelations <- select adjacent
@@ -617,7 +627,6 @@ render = do
     position <- rankOf elementRanking
     width (by 80)
     height (by 72)
-    styleFamily "element-cell"
     ensure $ x elementCells .==. at 600 + elementSpacing * asScalar position
     ensure $ y elementCells .==. at 246
 
@@ -636,7 +645,6 @@ render = do
   node elements $ do
     elementLabel <- bindContent
     fitText elementLabel
-    styleFamily "element-value"
 
   targetReads <- select targetReadKind
   node targetReads $ do
@@ -646,7 +654,7 @@ render = do
     top (at 350)
     width (by 100)
     height (by 76)
-    styleFamily "read"
+    readAppearance readFont readBorder
 
   elementReads <- select elementReadKind
   node elementReads $ do
@@ -656,7 +664,7 @@ render = do
     top (at 350)
     width (by 100)
     height (by 76)
-    styleFamily "read"
+    readAppearance readFont readBorder
 
   comparisons <- select comparisonKind
   node comparisons $ do
@@ -666,4 +674,3 @@ render = do
     top (at 480)
     width (by 100)
     height (by 76)
-    styleFamily "comparison"
