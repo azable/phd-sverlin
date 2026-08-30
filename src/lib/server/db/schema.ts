@@ -174,8 +174,7 @@ export const projectResources = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
     resourceId: varchar('resource_id', { length: 80 }).notNull(),
-    bytes: bytea('bytes'),
-    pathname: text('pathname').notNull(),
+    bytes: bytea('bytes').notNull(),
     sha256: varchar('sha256', { length: 64 }).notNull(),
     byteLength: integer('byte_length').notNull(),
     mediaType: text('media_type').notNull(),

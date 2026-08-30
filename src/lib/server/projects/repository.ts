@@ -443,9 +443,6 @@ export class PostgresProjectRepository implements ProjectRepository {
             projectId,
             resourceId: resource.id,
             bytes: resource.bytes,
-            // Retained until the one-time provider migration has verified every
-            // legacy bucket object was copied into the bytes column.
-            pathname: `projects/${projectId}/${resource.id}`,
             sha256: resource.sha256,
             byteLength: resource.byteLength,
             mediaType: resource.mediaType
