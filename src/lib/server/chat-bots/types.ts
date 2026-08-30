@@ -54,6 +54,7 @@ export type SourceArtifactChatOutput = {
 
 export type ChatBotConfig<Project, Output extends { reply: string } = SourceArtifactChatOutput> = {
   id: string;
+  participantIntroduction: string;
   initialPrompt: string;
   buildContext: (input: ChatContextInput<Project>) => ChatContext | Promise<ChatContext>;
   parameters: ChatBotParameters;

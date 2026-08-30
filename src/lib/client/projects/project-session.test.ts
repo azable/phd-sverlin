@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProjectEvent, ProjectEventOf } from '$lib/shared/projects/events';
-import type { ProjectDocument, ProjectResource } from '$lib/shared/projects/model';
+import type {
+  ProjectDocument,
+  ProjectResource,
+  WorkspaceResource
+} from '$lib/shared/projects/model';
 
 import { ProjectSession } from './project-session.svelte';
 
@@ -106,6 +110,25 @@ describe('ProjectSession', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('loads a participant workspace once and then polls authorized Timeline deltas', async () => {
+    const initial = projectResource([createdEvent()], 'Initial');
+    fetchMock
+      .mockResolvedValueOnce(response(workspaceResource(initial)))
+      .mockResolvedValueOnce(eventResponse([assistantEvent(2)]));
+
+    const session = new ProjectSession('project-test', false, 'comparison');
+    sessions.push(session);
+    await session.open();
+    await pollEvents(session);
+
+    expect(session.events).toHaveLength(2);
+    expect(session.readOnly).toBe(false);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/projects/project-test/workspace?layout=comparison'
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/projects/project-test/events?after=1');
+  });
+
   it('creates a project from an explicit template and preserves Dev detail', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ projectId: 'dev-project', operationId }), {
@@ -149,10 +172,22 @@ function createSession(): ProjectSession {
   return session;
 }
 
-function response(resource: ProjectResource): Response {
+function response(resource: unknown): Response {
   return new Response(JSON.stringify(resource), {
     headers: { 'content-type': 'application/json' }
   });
+}
+
+function workspaceResource(resource: ProjectResource): WorkspaceResource {
+  return {
+    schemaVersion: 1,
+    projectId: resource.document.projectId,
+    document: resource.document,
+    projects: resource.projects,
+    view: 'participant',
+    layout: 'comparison',
+    readOnly: false
+  };
 }
 
 function eventResponse(events: ProjectEvent[]): Response {

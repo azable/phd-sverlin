@@ -31,12 +31,11 @@ const defaultDependencies: PresentationCommandDependencies = {
   projectService: defaultProjectServiceDependencies
 };
 
-/** Record a preference only when it identifies the active comparison presentations. */
+/** Record a preference between any two compatible retained Sverlin presentations. */
 export function recordProjectPreference(
   options: {
     projectId: string;
     expectedHead: EventId;
-    displaySetId: string;
     presentations: [string, string];
     preferred: string;
     step: number;
@@ -46,27 +45,44 @@ export function recordProjectPreference(
 ): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const active = projectSnapshotAt(before).activePresentationSet;
-    const presented = active?.presentations.filter(
-      (event) => event.type === 'visualization.presented'
+    const supplied = [...new Set(options.presentations)];
+    if (supplied.length !== 2 || !supplied.includes(options.preferred)) {
+      throw new Error('The preference must identify two distinct presentations and one winner.');
+    }
+    const presented = supplied.map((id) =>
+      before.events.find(
+        (event) =>
+          event.type === 'visualization.presented' &&
+          event.payload.presentation.presentationId === id
+      )
     );
-    const activeIds = presented
-      ?.map(({ payload }) => payload.presentation.presentationId)
-      .toSorted();
-    const supplied = [...options.presentations].toSorted();
+    if (presented.some((event) => event?.type !== 'visualization.presented')) {
+      throw new Error('The preference references an unknown presentation.');
+    }
+    const [left, right] = presented;
+    if (left?.type !== 'visualization.presented' || right?.type !== 'visualization.presented') {
+      throw new Error('The preference references an unknown presentation.');
+    }
+    const leftPresentation = left.payload.presentation;
+    const rightPresentation = right.payload.presentation;
     if (
-      active?.displaySetId !== options.displaySetId ||
-      activeIds?.length !== 2 ||
-      activeIds.some((id, index) => id !== supplied[index]) ||
-      !supplied.includes(options.preferred)
+      leftPresentation.format !== 'sverlin-ir-v1' ||
+      rightPresentation.format !== 'sverlin-ir-v1' ||
+      leftPresentation.source.sha256 !== rightPresentation.source.sha256 ||
+      leftPresentation.stepSignature !== rightPresentation.stepSignature
     ) {
-      throw new Error('The preference does not match the active comparison.');
+      throw new Error('Only compatible versions of the same visualization can be compared.');
     }
     if (
-      presented!.some(({ payload }) => !presentationStepLabels(payload.presentation)[options.step])
+      options.step >= presentationStepLabels(leftPresentation).length ||
+      options.step >= presentationStepLabels(rightPresentation).length
     ) {
       throw new Error('The preference references an unknown presentation step.');
     }
+    const displaySetId =
+      left.payload.displaySetId === right.payload.displaySetId
+        ? left.payload.displaySetId
+        : undefined;
     const document = await appendProjectEvents(
       before,
       [
@@ -75,7 +91,7 @@ export function recordProjectPreference(
           actor: { kind: 'user' },
           operationId: options.operationId,
           payload: {
-            displaySetId: options.displaySetId,
+            ...(displaySetId ? { displaySetId } : {}),
             presentations: options.presentations,
             preferred: options.preferred,
             step: options.step

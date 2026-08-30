@@ -78,7 +78,7 @@
                 class="h-auto max-w-full min-w-0 flex-col items-start overflow-hidden p-3 text-left whitespace-normal"
               >
                 <span class="w-full min-w-0 font-medium">{template.title}</span>
-                <span class="w-full min-w-0 text-xs font-normal text-muted-foreground">
+                <span class="w-full min-w-0 text-sm font-normal text-muted-foreground">
                   {template.summary}
                 </span>
                 <span class="flex w-full min-w-0 flex-wrap gap-1 pt-1">

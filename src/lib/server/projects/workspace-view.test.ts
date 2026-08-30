@@ -7,7 +7,7 @@ import { projectWorkspace } from './workspace-view';
 const operationId = '12345678-1234-4123-8123-123456789abc';
 
 describe('workspace projection', () => {
-  it('collapses request/response mechanics and omits raw events for participants', () => {
+  it('returns the complete authorized Timeline for client-side participant projection', () => {
     const document: ProjectDocument = {
       schemaVersion: 1,
       projectId: 'workspace-test',
@@ -44,9 +44,12 @@ describe('workspace projection', () => {
       view: 'participant',
       layout: 'single'
     });
-    expect(workspace.timeline).toHaveLength(1);
-    expect(workspace.timeline[0].detail).toContain('Make it clearer');
-    expect(workspace.timeline[0].detail).toContain('I simplified the labels.');
-    expect(workspace.timeline[0].rawEvent).toBeUndefined();
+    expect(workspace.document).toEqual(document);
+    expect(workspace.document.events.map(({ type }) => type)).toEqual([
+      'project.created',
+      'feedback.submitted',
+      'assistant.responded'
+    ]);
+    expect(workspace.readOnly).toBe(false);
   });
 });

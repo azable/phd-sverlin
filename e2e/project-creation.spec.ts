@@ -65,6 +65,17 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   const browserFailures = observeBrowserFailures(page);
   await page.goto(`/projects/${projectId}`);
 
+  await expect(page.getByText('Sverlin Assistant', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Tell me what algorithm or program you would like to visualize', {
+      exact: false
+    })
+  ).toBeVisible();
+  const visualization = page.getByRole('button', { name: /^Visualization/ }).first();
+  await expect(visualization).toBeVisible();
+  await expect(visualization).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('Visualization updated', { exact: true })).toHaveCount(0);
+
   const devToggle = page.getByRole('switch', { name: 'Dev' });
   await expect(devToggle).not.toBeChecked();
   await expect(page.getByText('Developer details', { exact: true })).toHaveCount(0);

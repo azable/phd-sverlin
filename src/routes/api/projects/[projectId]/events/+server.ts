@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 
-import { requireAdmin, requireProjectAccess } from '$lib/server/authorization';
+import { requireProjectAccess } from '$lib/server/authorization';
 import {
   projectRepository,
   ProjectConflictError,
@@ -11,7 +11,6 @@ import type { RequestHandler } from './$types';
 
 /** Return an immutable Timeline suffix for durable client polling. */
 export const GET: RequestHandler = async ({ params, locals, url }) => {
-  requireAdmin(locals);
   await requireProjectAccess(locals, params.projectId);
   const after = readAfter(url);
   try {

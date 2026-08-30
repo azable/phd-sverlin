@@ -3,11 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
-const mocks = vi.hoisted(() => ({ eventsAfter: vi.fn() }));
+const mocks = vi.hoisted(() => ({ eventsAfter: vi.fn(), requireProjectAccess: vi.fn() }));
 
 vi.mock('$lib/server/authorization', () => ({
-  requireAdmin: vi.fn(),
-  requireProjectAccess: vi.fn()
+  requireProjectAccess: mocks.requireProjectAccess
 }));
 vi.mock('$lib/server/projects/repository', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/projects/repository')>()),
@@ -18,6 +17,7 @@ const operationId = '12345678-1234-4123-8123-123456789abc';
 
 beforeEach(() => {
   mocks.eventsAfter.mockReset();
+  mocks.requireProjectAccess.mockReset();
 });
 
 describe('project event delta', () => {
@@ -52,6 +52,10 @@ describe('project event delta', () => {
       head: 3,
       events: [{ id: 3, payload: { title: 'B' } }]
     });
+    expect(mocks.requireProjectAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ principal: expect.objectContaining({ kind: 'participant' }) }),
+      'stream-test'
+    );
   });
 });
 

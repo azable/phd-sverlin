@@ -16,10 +16,12 @@
   import { Skeleton } from '$lib/client/components/ui/skeleton';
   import { Switch } from '$lib/client/components/ui/switch';
   import * as Tabs from '$lib/client/components/ui/tabs';
+  import PhaseExpiredDialog from '$lib/client/study/PhaseExpiredDialog.svelte';
   import StudyTimer from '$lib/client/study/StudyTimer.svelte';
   import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/client/timeline/Timeline.svelte';
   import PresentationStage from '$lib/client/visualization/PresentationStage.svelte';
+  import { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { EventId } from '$lib/shared/projects/events';
@@ -62,6 +64,7 @@
   // The route keys this component by project ID, so the session is intentionally instance-scoped.
   // svelte-ignore state_referenced_locally
   const session = new ProjectSession(projectId, isAdmin && devMode, study?.layout ?? 'single');
+  const presentationSelection = new PresentationSelection();
   let editMode = $state<ProjectArtifactEditMode>('readonly');
   let renaming = $state(false);
   let titleDraft = $state('');
@@ -137,15 +140,14 @@
       {#if study}
         <header class="flex items-center gap-3 border-b bg-card px-4 py-2">
           <div class="mr-auto min-w-0">
-            <p class="text-sm font-medium">{study.title}</p>
-            <p class="truncate text-xs text-muted-foreground">{study.prompt}</p>
+            <p class="text-base font-medium">{study.title}</p>
+            <p class="truncate text-sm text-muted-foreground">{study.prompt}</p>
           </div>
           {#if study.deadlineAt && !expired}
             <Badge variant="secondary">
               <StudyTimer deadlineAt={study.deadlineAt} onExpire={() => (expired = true)} />
             </Badge>
           {/if}
-          {#if expired}<Button href={resolve('/study')} size="sm">Continue study</Button>{/if}
         </header>
       {/if}
 
@@ -160,7 +162,7 @@
               {#if developerView}<Badge variant="secondary">Developer details</Badge>{/if}
               {#if isAdmin}
                 <select
-                  class="ml-auto h-8 max-w-40 rounded-md border bg-background px-2 text-xs"
+                  class="ml-auto h-8 max-w-40 rounded-md border bg-background px-2 text-sm"
                   value={projectId}
                   onchange={selectProject}
                   disabled={mutationsDisabled}
@@ -193,7 +195,7 @@
             </Tabs.List>
             <Tabs.Content value="timeline" class="flex min-h-0 flex-1 flex-col">
               {#if developerView}
-                <div class="flex items-center border-b bg-muted px-4 py-2 text-xs">
+                <div class="flex items-center border-b bg-muted px-4 py-2 text-sm">
                   <span class="mr-auto text-muted-foreground">Complete retained event details</span>
                   <Button
                     href={`/api/projects/${encodeURIComponent(projectId)}`}
@@ -202,9 +204,15 @@
                   >
                 </div>
               {/if}
-              <Timeline {session} seed={activeSeed} inspect={developerView} />
+              <Timeline
+                {session}
+                seed={activeSeed}
+                selection={presentationSelection}
+                {layout}
+                inspect={developerView}
+              />
               {#if !expired && !session.readOnly}
-                <FeedbackComposer {session} {presentationCount} />
+                <FeedbackComposer {session} {presentationCount} {presentationSelection} {layout} />
               {/if}
             </Tabs.Content>
           </Tabs.Root>
@@ -214,7 +222,7 @@
 
         <Resizable.Pane defaultSize={68} minSize={50} class="flex min-w-0 flex-col">
           {#if isAdmin || authEnabled}
-            <div class="flex items-center gap-2 border-b px-3 py-1.5 text-xs">
+            <div class="flex items-center gap-2 border-b px-3 py-1.5 text-sm">
               {#if isAdmin}
                 <span class="text-muted-foreground">Presentation layout</span>
                 <select
@@ -235,7 +243,7 @@
                       checked={developerView}
                       onCheckedChange={toggleDevMode}
                     />
-                    <Label for="dev-mode" class="text-xs">Dev</Label>
+                    <Label for="dev-mode" class="text-sm">Dev</Label>
                   </div>
                 {/if}
                 {#if authEnabled}
@@ -256,7 +264,12 @@
               </div>
             </div>
           {/if}
-          <PresentationStage {session} {layout} disabled={mutationsDisabled} />
+          <PresentationStage
+            {session}
+            selection={presentationSelection}
+            {layout}
+            disabled={mutationsDisabled}
+          />
           <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
         </Resizable.Pane>
       </Resizable.PaneGroup>
@@ -279,4 +292,5 @@
       </Alert.Root>
     </div>
   {/if}
+  {#if study}<PhaseExpiredDialog open={expired} />{/if}
 </div>

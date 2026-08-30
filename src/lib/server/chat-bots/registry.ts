@@ -12,6 +12,7 @@ import type { AiProjectContext } from './sverlin-assistant/project-context';
 import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
 import sverlinAssistantBot from './sverlin-assistant';
 import htmlAssistantBot, { type HtmlAssistantOutput } from './html-assistant';
+import type { VisualizationMode } from '$lib/shared/presentations';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
 export function createChatbot<Project, Output extends { reply: string }>(
@@ -82,4 +83,13 @@ export function getChatbot(): Chatbot<AiProjectContext> {
 /** Return the direct-HTML visualization authoring bot. */
 export function getHtmlChatbot(): Chatbot<AiProjectContext, HtmlAssistantOutput> {
   return htmlChatbot;
+}
+
+/** Return participant-facing identity and guidance owned by the selected assistant. */
+export function assistantIntroduction(mode: VisualizationMode): {
+  botId: string;
+  text: string;
+} {
+  const config = mode === 'html' ? htmlAssistantBot : sverlinAssistantBot;
+  return { botId: config.id, text: config.participantIntroduction };
 }

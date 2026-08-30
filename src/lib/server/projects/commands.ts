@@ -10,6 +10,7 @@ import type {
 } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
 import type { HtmlFramesPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
+import { legacyPresentationId } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { decodeVisualization } from '$lib/shared/visualization';
 import { getChatbot, getHtmlChatbot } from '$lib/server/chat-bots/registry';
@@ -66,6 +67,7 @@ export function submitProjectFeedback(
     text?: string;
     focus: EventId[];
     selection?: VisualSelection;
+    presentations?: string[];
     presentationCount: 1 | 2;
     operationId: string;
   },
@@ -83,6 +85,7 @@ async function submitProjectFeedbackUnlocked(
     text?: string;
     focus: EventId[];
     selection?: VisualSelection;
+    presentations?: string[];
     presentationCount: 1 | 2;
     operationId: string;
   },
@@ -94,6 +97,7 @@ async function submitProjectFeedbackUnlocked(
   const selection = options.selection
     ? await validateSelection(before, options.selection)
     : undefined;
+  const presentations = validatePresentations(before, options.presentations ?? []);
   const text = options.text?.trim();
   if (!text && focus.length === 0 && !selection) throw new Error('Feedback cannot be empty.');
 
@@ -104,19 +108,34 @@ async function submitProjectFeedbackUnlocked(
         type: 'feedback.submitted',
         actor: { kind: 'user' },
         operationId: options.operationId,
-        payload: { ...(text ? { text } : {}), focus, ...(selection ? { selection } : {}) }
+        payload: {
+          ...(text ? { text } : {}),
+          focus,
+          ...(selection ? { selection } : {}),
+          ...(presentations.length ? { presentations } : {})
+        }
       })
     ],
     [],
     dependencies.projectService
   );
   if (projectSnapshotAt(document).renderer === 'html') {
-    document = await submitHtmlFeedback(document, options.operationId, dependencies);
+    document = await submitHtmlFeedback(
+      document,
+      options.operationId,
+      {
+        eventIds: focus,
+        presentationIds: presentations,
+        ...(selection ? { visualSelection: selection } : {})
+      },
+      dependencies
+    );
     return finishMutation(before, document);
   }
 
   const contextSelection: AiContextSelection = {
     eventIds: focus,
+    presentationIds: presentations,
     ...(selection ? { visualSelection: selection } : {})
   };
   const first = await runSverlinGeneration(
@@ -248,9 +267,13 @@ async function submitProjectFeedbackUnlocked(
 async function submitHtmlFeedback(
   document: ProjectDocument,
   operationId: string,
+  contextSelection: AiContextSelection,
   dependencies: ProjectCommandDependencies
 ): Promise<ProjectDocument> {
-  const first = await runHtmlGeneration({ document, attempt: 1, operationId }, dependencies);
+  const first = await runHtmlGeneration(
+    { document, attempt: 1, operationId, contextSelection },
+    dependencies
+  );
   document = first.document;
   if (!first.ok) return document;
   if (!first.result.manifest) {
@@ -276,6 +299,7 @@ async function submitHtmlFeedback(
         document,
         attempt: 2,
         operationId,
+        contextSelection,
         correction: htmlCorrection(first.result.manifest, cause)
       },
       dependencies
@@ -407,6 +431,7 @@ async function runHtmlGeneration(
     document: ProjectDocument;
     attempt: 1 | 2;
     operationId: string;
+    contextSelection: AiContextSelection;
     correction?: string;
   },
   dependencies: ProjectCommandDependencies
@@ -419,7 +444,7 @@ async function runHtmlGeneration(
         ...projectConversationMessages(options.document.events),
         ...(options.correction ? [{ role: 'user' as const, content: options.correction }] : [])
       ],
-      project: projectAiContext(options.document)
+      project: projectAiContext(options.document, options.contextSelection)
     });
   } catch (error) {
     return generationPreparationFailure(options, error, dependencies);
@@ -681,6 +706,23 @@ function validateFocus(document: ProjectDocument, focus: EventId[]) {
   const unique = [...new Set(focus)];
   for (const id of unique) {
     if (document.events[id - 1]?.id !== id) throw new Error(`Unknown focused event ${id}.`);
+  }
+  return unique;
+}
+
+function validatePresentations(document: ProjectDocument, presentationIds: string[]): string[] {
+  const unique = [...new Set(presentationIds)];
+  if (unique.length > 2) throw new Error('Feedback can reference at most two presentations.');
+  const available = new Set(
+    document.events.flatMap((event) => {
+      if (event.type === 'visualization.presented') {
+        return [event.payload.presentation.presentationId];
+      }
+      return event.type === 'visualization.rendered' ? [legacyPresentationId(event.id)] : [];
+    })
+  );
+  for (const id of unique) {
+    if (!available.has(id)) throw new Error(`Unknown selected presentation ${id}.`);
   }
   return unique;
 }

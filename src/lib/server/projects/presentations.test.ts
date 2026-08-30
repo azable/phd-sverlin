@@ -25,7 +25,6 @@ describe('presentation commands', () => {
       {
         projectId: document.projectId,
         expectedHead: document.events.length,
-        displaySetId,
         presentations,
         preferred: presentations[1],
         step: 0,
@@ -46,27 +45,58 @@ describe('presentation commands', () => {
       })
     ]);
   });
+
+  it('records compatible historical comparisons without inventing a shared display set', async () => {
+    const repository = new MemoryProjectRepository();
+    const presentations = [randomUUID(), randomUUID()] as [string, string];
+    const document = comparisonDocument(randomUUID(), [randomUUID(), randomUUID()], presentations);
+    await repository.create(document, 'owner');
+    const projectService = {
+      repository,
+      compiler: {} as ProjectServiceDependencies['compiler'],
+      readDslRevision: vi.fn()
+    };
+
+    const result = await recordProjectPreference(
+      {
+        projectId: document.projectId,
+        expectedHead: document.events.length,
+        presentations,
+        preferred: presentations[0],
+        step: 0,
+        operationId: randomUUID()
+      },
+      { repository, projectService }
+    );
+
+    expect(result.appendedEvents[0]).toMatchObject({
+      type: 'visualization.preference-recorded',
+      payload: { presentations, preferred: presentations[0], step: 0 }
+    });
+    expect(
+      result.appendedEvents[0].type === 'visualization.preference-recorded'
+        ? result.appendedEvents[0].payload.displaySetId
+        : 'unexpected'
+    ).toBeUndefined();
+  });
 });
 
 function comparisonDocument(
   projectId: string,
-  displaySetId: string,
+  displaySetId: string | [string, string],
   presentationIds: [string, string]
 ): ProjectDocument {
   const operationId = randomUUID();
-  const authored = recordText(
-    JSON.stringify({
-      format: 'sverlin-html-frames',
-      version: 1,
-      frames: [{ label: 'Only step', html: '<p>Hello</p>' }]
-    }),
-    'application/vnd.sverlin.html-frames+json'
+  const source = recordText('visualization source', 'text/x-sverlin');
+  const render = recordText(
+    JSON.stringify({ steps: [{ label: 'Only step' }] }),
+    'application/json'
   );
   const base = {
-    format: 'html-frames-v1' as const,
+    format: 'sverlin-ir-v1' as const,
     stepSignature: 'shared-step-signature',
-    authored,
-    rendered: authored
+    source,
+    render
   };
   return {
     schemaVersion: 1,
@@ -80,8 +110,8 @@ function comparisonDocument(
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: 'Comparison',
-          entryArtifactId: 'html-main',
-          creation: { templateId: 'blank', renderer: 'html' }
+          entryArtifactId: 'dsl-main',
+          creation: { templateId: 'blank', renderer: 'sverlin' }
         }
       },
       {
@@ -96,10 +126,10 @@ function comparisonDocument(
             {
               operation: 'upsert',
               artifact: {
-                artifactId: 'html-main',
-                path: 'Visualization.html.json',
-                language: 'json',
-                content: authored
+                artifactId: 'dsl-main',
+                path: 'Main.sverlin',
+                language: 'sverlin',
+                content: source
               }
             }
           ]
@@ -112,9 +142,9 @@ function comparisonDocument(
         operationId,
         createdAt: `2026-08-30T00:00:0${slot + 2}.000Z`,
         payload: {
-          displaySetId,
+          displaySetId: Array.isArray(displaySetId) ? displaySetId[slot] : displaySetId,
           slot: slot as 0 | 1,
-          presentation: { ...base, presentationId }
+          presentation: { ...base, presentationId, seed: slot + 1 }
         }
       }))
     ]

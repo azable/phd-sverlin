@@ -22,6 +22,7 @@ import type {
   VisualSelection
 } from '$lib/shared/projects/events/values';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
+import { legacyPresentationId, type RenderablePresentation } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import {
   decodeVisualization,
@@ -89,7 +90,15 @@ export type AiVisualSelection = VisualSelection & {
 /** Explicit expansion request supplied by the feedback command. */
 export type AiContextSelection = {
   eventIds: readonly EventId[];
+  presentationIds?: readonly string[];
   visualSelection?: VisualSelection;
+};
+
+/** Full retained presentation explicitly visible when the user submitted feedback. */
+export type AiSelectedPresentation = {
+  eventId: EventId;
+  displaySetId?: string;
+  presentation: RenderablePresentation;
 };
 
 /** Strongly typed, consumer-specific context supplied to the AI assistant. */
@@ -103,6 +112,7 @@ export type AiProjectContext = {
   timeline: AiTimelineEntry[];
   selected: {
     events: AiEventDetail[];
+    presentations: AiSelectedPresentation[];
     visualization?: AiVisualSelection;
   };
 };
@@ -116,7 +126,7 @@ const timelineCases = {
   'operation.failed': (event) =>
     `${event.payload.kind} operation failed (${event.payload.failureKind}): ${event.payload.message}`,
   'feedback.submitted': (event) =>
-    `Submitted feedback${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}${event.payload.selection ? ' with a visual selection' : ''}.`,
+    `Submitted feedback${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}${event.payload.presentations?.length ? ` while viewing presentations ${event.payload.presentations.join(', ')}` : ''}${event.payload.selection ? ' with a visual selection' : ''}.`,
   'ai.generation-requested': (event) =>
     `Requested ${event.payload.purpose} generation attempt ${event.payload.attempt} from ${event.payload.requestedModel}; prompt ${shortHash(event.payload.prompt.sha256)}.`,
   'ai.generation-succeeded': (event) =>
@@ -160,7 +170,7 @@ const conversationCases = {
   'visualization.preference-recorded': (event) => [
     {
       role: 'user',
-      content: `I preferred presentation ${event.payload.preferred} over the alternative in display set ${event.payload.displaySetId} at step ${event.payload.step}.`
+      content: `I preferred presentation ${event.payload.preferred} over the alternative${event.payload.displaySetId ? ` in display set ${event.payload.displaySetId}` : ''} at step ${event.payload.step}.`
     } as const
   ],
   'assistant.responded': (event) => [{ role: 'assistant', content: event.payload.text } as const],
@@ -210,9 +220,44 @@ export function projectAiContext(
     timeline: document.events.map(projectAiTimelineEntry),
     selected: {
       events: selection.eventIds.map((id) => eventDetail(document, id)),
+      presentations: (selection.presentationIds ?? []).map((id) =>
+        selectedPresentation(document, id)
+      ),
       ...(visualization ? { visualization } : {})
     }
   };
+}
+
+function selectedPresentation(document: ProjectDocument, id: string): AiSelectedPresentation {
+  for (const event of document.events) {
+    if (
+      event.type === 'visualization.presented' &&
+      event.payload.presentation.presentationId === id
+    ) {
+      return {
+        eventId: event.id,
+        displaySetId: event.payload.displaySetId,
+        presentation: event.payload.presentation
+      };
+    }
+    if (event.type === 'visualization.rendered' && legacyPresentationId(event.id) === id) {
+      return {
+        eventId: event.id,
+        presentation: {
+          presentationId: id,
+          format: 'sverlin-ir-v1',
+          stepSignature: `legacy-${event.id}`,
+          seed: event.payload.seed,
+          source: event.payload.source,
+          render: event.payload.render,
+          resources: event.payload.resources,
+          provenance: event.payload.provenance,
+          targetDiagnostics: event.payload.targetDiagnostics
+        }
+      };
+    }
+  }
+  throw new Error(`Unknown selected presentation ${id}.`);
 }
 
 function eventDetail(document: ProjectDocument, id: EventId): AiEventDetail {
@@ -283,6 +328,11 @@ function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
     const selection = event.payload.selection;
     details.push(
       `Visual selection in render ${selection.render}, step ${selection.step}: instances ${selection.instances.join(', ')}`
+    );
+  }
+  if (event.payload.presentations?.length) {
+    details.push(
+      `Presentations visible during feedback: ${event.payload.presentations.join(', ')}`
     );
   }
   return details.filter(Boolean).join('\n\n');

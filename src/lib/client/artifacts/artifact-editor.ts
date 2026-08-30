@@ -73,7 +73,7 @@ export function artifactTheme(): Extension {
       height: '100%',
       backgroundColor: 'var(--card)',
       color: 'var(--card-foreground)',
-      fontSize: '0.75rem'
+      fontSize: '0.875rem'
     },
     '.cm-scroller': {
       overflow: 'auto',

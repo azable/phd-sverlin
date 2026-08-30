@@ -65,6 +65,7 @@ describe('AI project context projection', () => {
     expect(JSON.stringify(compact.timeline)).not.toContain('private prompt');
     expect(compact.currentWorkspace.artifacts[0].source).toBe('current source');
     expect(compact.selected.events).toEqual([]);
+    expect(compact.selected.presentations).toEqual([]);
 
     const expanded = projectAiContext(document, { eventIds: [request.id] });
     expect(expanded.selected.events[0].event).toEqual(request);

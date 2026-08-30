@@ -23,10 +23,15 @@ import type {
   ProjectDocument,
   ProjectResource
 } from '$lib/shared/projects/model';
-import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
+import {
+  defaultProjectCreation,
+  projectCreationRenderer,
+  type ProjectCreation
+} from '$lib/shared/projects/creation';
 import type { HtmlFramesManifest, SverlinPresentation } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { visualizationService, type VisualizationGenerationResult } from '$lib/server/compiler';
+import { assistantIntroduction } from '$lib/server/chat-bots/registry';
 
 import { runProjectCommand } from './command-lock';
 import { currentProjectOperationSignal } from './operation-context';
@@ -128,7 +133,8 @@ export async function createProjectSkeleton(
     createdAt: new Date().toISOString(),
     payload: { title, entryArtifactId, creation }
   };
-  const html = creation.renderer === 'html';
+  const renderer = projectCreationRenderer(creation);
+  const html = renderer === 'html';
   const content = recordText(
     html ? JSON.stringify(initialHtmlManifest) : template.source,
     html ? 'application/vnd.sverlin.html-frames+json' : 'text/x-sverlin'
@@ -155,8 +161,21 @@ export async function createProjectSkeleton(
       }
     })
   };
+  const introduction = assistantIntroduction(renderer);
+  const initialEvents: ProjectDocument['events'] = [root, artifact];
+  if (creation.templateId === 'blank') {
+    initialEvents.push({
+      id: 3,
+      ...draftEvent<'assistant.responded'>({
+        type: 'assistant.responded',
+        actor: { kind: 'assistant', botId: introduction.botId },
+        operationId,
+        payload: { text: introduction.text }
+      })
+    });
+  }
   const document = await dependencies.repository.create(
-    { schemaVersion: 1, projectId, events: [root, artifact] },
+    { schemaVersion: 1, projectId, events: initialEvents },
     options.ownerUserId
   );
   return { document, operationId };

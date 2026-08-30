@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import { legacyPresentationId } from '$lib/shared/presentations';
 
 import type { ProjectCommandDependencies } from './commands';
 import { MemoryProjectRepository } from './memory-repository.test-support';
@@ -14,6 +15,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/server/chat-bots/registry', () => ({
+  assistantIntroduction: (mode: string) => ({
+    botId: mode === 'html' ? 'html-assistant' : 'sverlin-assistant',
+    text: 'Tell me what you would like to visualize.'
+  }),
   getChatbot: () => ({
     preparePrompt: mocks.preparePrompt,
     generatePrepared: mocks.generatePrepared
@@ -182,6 +187,7 @@ describe('createProject', () => {
     });
     expect(snapshot.creation).toEqual({ templateId: template.id });
     expect(snapshot.artifacts[snapshot.entryArtifactId].content.text).toBe(template.source);
+    expect(created.events.some(({ type }) => type === 'assistant.responded')).toBe(false);
     expect(mocks.compileSource).toHaveBeenCalledWith(
       expect.objectContaining({
         source: expect.objectContaining({ content: template.source }),
@@ -191,6 +197,22 @@ describe('createProject', () => {
     const seed = mocks.compileSource.mock.calls[0][0].seed as number;
     expect(Number.isSafeInteger(seed)).toBe(true);
     expect(seed).toBeGreaterThan(0);
+  });
+
+  it('adds the selected assistant introduction to blank projects without a model request', async () => {
+    const { createProject } = await import('./service');
+
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html' } },
+      serviceDependencies
+    );
+
+    expect(created.events[2]).toMatchObject({
+      type: 'assistant.responded',
+      actor: { kind: 'assistant', botId: 'html-assistant' },
+      payload: { text: 'Tell me what you would like to visualize.' }
+    });
+    expect(mocks.generatePrepared).not.toHaveBeenCalled();
   });
 });
 
@@ -490,7 +512,7 @@ describe('submitProjectFeedback', () => {
     expect(mocks.preparePrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         project: expect.objectContaining({
-          selected: {
+          selected: expect.objectContaining({
             events: [
               expect.objectContaining({
                 event: expect.objectContaining({ id: render.id }),
@@ -504,7 +526,52 @@ describe('submitProjectFeedback', () => {
                 })
               })
             ]
-          }
+          })
+        })
+      })
+    );
+  });
+
+  it('retains and expands the presentations visible when feedback was submitted', async () => {
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: 'Noted.',
+      prompt: {},
+      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Presentation context' }, serviceDependencies);
+    const render = projectSnapshotAt(created).activeRender!;
+    const presentationId = legacyPresentationId(render.id);
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Use the version I am viewing',
+        focus: [],
+        presentations: [presentationId],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(result.appendedEvents[0]).toMatchObject({
+      type: 'feedback.submitted',
+      payload: { presentations: [presentationId] }
+    });
+    expect(mocks.preparePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: expect.objectContaining({
+          selected: expect.objectContaining({
+            presentations: [
+              expect.objectContaining({
+                eventId: render.id,
+                presentation: expect.objectContaining({ presentationId, seed: render.payload.seed })
+              })
+            ]
+          })
         })
       })
     );

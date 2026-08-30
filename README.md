@@ -59,8 +59,9 @@ the passkey already registered in the persistent PostgreSQL volume.
 2. Create a participant ID and copy its generated password.
 3. Open `/login` in a private/incognito window and enter those credentials.
 4. Continue from the welcome screen into the first timed task and confirm that its initial visualization appears.
-5. Verify that expiry locks the task and that Continue advances to the counterbalanced second renderer.
-6. Verify that normal participant views show the compact request/response Timeline, while only an administrator's Developer view exposes retained event details.
+5. Verify that expiry locks the task and opens a blocking dialog whose Continue action advances to the counterbalanced second renderer.
+6. Verify that the participant Timeline shows separate user, assistant, and visualization bubbles. Selecting a visualization should activate it; in comparison mode, Shift-select two compatible bubbles to compare them.
+7. Verify that only an administrator's Developer view exposes retained event details and source controls.
 
 Passwords can be rotated from `/admin`; rotation and disabling an account revoke its active sessions.
 The same page provides verified participant/study exports and explicitly
@@ -99,7 +100,7 @@ The authenticated `POST /api/health/compiler` endpoint performs a real minimal c
 
 ```text
 authenticated browser
-  -> SvelteKit returns a role-specific workspace projection
+  -> SvelteKit authorizes and returns the participant's complete project Timeline
   -> study service resolves the centrally defined phase, renderer, layout, and deadline
   -> project command appends operation.accepted
   -> bounded in-process executor runs the project operation asynchronously
@@ -107,7 +108,7 @@ authenticated browser
   -> the resulting presentation set enters the Timeline directly
   -> PostgreSQL receives immutable Timeline events and content-addressed resources
   -> operation.completed or operation.failed closes the Timeline boundary
-  -> browser polls its compact workspace; administrators may explicitly request Developer detail
+  -> browser polls Timeline deltas and locally derives participant conversation or Developer detail
 ```
 
 The root container files have distinct responsibilities:

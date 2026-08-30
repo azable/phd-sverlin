@@ -19,8 +19,7 @@ import {
   type ProjectResource,
   type ProjectSnapshot,
   type ProjectSummary,
-  type WorkspaceResource,
-  type WorkspaceTimelineEntry
+  type WorkspaceResource
 } from '$lib/shared/projects/model';
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
@@ -68,16 +67,6 @@ export class ProjectSession {
   /** Command currently accepted or running according to the durable Timeline. */
   get pending(): PendingProjectCommand | null {
     if (this.#submitting) return this.#submitting;
-    if (this.#workspace?.activeOperation) {
-      return {
-        type:
-          this.#workspace.activeOperation.kind === 'initial-render'
-            ? 'render'
-            : (this.#workspace.activeOperation.kind as PendingProjectCommand['type']),
-        operationId: this.#workspace.activeOperation.operationId,
-        startedAfter: this.#workspace.head
-      };
-    }
     const operation = this.#resource ? activeProjectOperation(this.#resource.document) : undefined;
     if (!operation) return null;
     return {
@@ -97,11 +86,6 @@ export class ProjectSession {
     return this.#resource !== null || this.#workspace !== null;
   }
 
-  /** Compact server-projected entries used outside developer view. */
-  get timeline(): WorkspaceTimelineEntry[] {
-    return this.#workspace?.timeline ?? [];
-  }
-
   /** Whether the server has locked this workspace. */
   get readOnly(): boolean {
     return this.#workspace?.readOnly ?? false;
@@ -109,7 +93,6 @@ export class ProjectSession {
 
   /** Project state reconstructed at the selected event position. */
   get snapshot(): ProjectSnapshot {
-    if (this.#workspace) return this.#workspace.snapshot;
     if (!this.#resource) throw new Error('The project has not loaded.');
     return projectSnapshotAt(this.#resource.document, this.#selectedAt);
   }
@@ -122,7 +105,7 @@ export class ProjectSession {
 
   /** Available projects ordered by the server. */
   get projects(): ProjectSummary[] {
-    return this.#resource?.projects ?? this.#workspace?.projects ?? [];
+    return this.#resource?.projects ?? [];
   }
 
   /** Immutable events in the loaded project document. */
@@ -132,7 +115,7 @@ export class ProjectSession {
 
   /** Stable event ID at the project head, or zero before loading. */
   get head(): number {
-    return this.#workspace?.head ?? this.events.length;
+    return this.events.length;
   }
 
   /** Whether the session is viewing the current project state. */
@@ -142,7 +125,6 @@ export class ProjectSession {
 
   /** Most recent streamed event belonging to the pending command. */
   get pendingEvent(): ProjectEvent | undefined {
-    if (this.#workspace) return undefined;
     const pending = this.pending;
     if (!pending) return undefined;
     return this.events.findLast(
@@ -290,17 +272,6 @@ export class ProjectSession {
 
   private async pollEvents(): Promise<void> {
     if (!this.loaded) return;
-    if (this.#workspace) {
-      try {
-        const response = await fetch(this.resourceUrl(), { cache: 'no-store' });
-        if (!response.ok) throw new Error(await responseError(response));
-        this.installResource(await response.json());
-        this.connection = 'open';
-      } catch {
-        this.connection = 'reconnecting';
-      }
-      return;
-    }
     try {
       const response = await fetch(
         `/api/projects/${encodeURIComponent(this.projectId)}/events?after=${this.head}`,
@@ -321,13 +292,6 @@ export class ProjectSession {
       const operation = this.#resource
         ? projectOperation(this.#resource.document, operationId)
         : undefined;
-      if (this.#workspace && !this.#workspace.activeOperation) {
-        const failure = this.#workspace.timeline.findLast(({ kind }) => kind === 'error');
-        if (failure?.operationId === operationId) {
-          throw new Error(failure.detail ?? 'The project operation failed.');
-        }
-        return;
-      }
       if (operation?.status === 'completed') return;
       if (operation?.status === 'failed') {
         throw new Error(
@@ -391,11 +355,18 @@ export class ProjectSession {
       return;
     }
     const workspace = value as WorkspaceResource;
-    if (workspace?.schemaVersion !== 1 || workspace.projectId !== this.projectId) {
+    if (
+      workspace?.schemaVersion !== 1 ||
+      workspace.projectId !== this.projectId ||
+      workspace.document?.projectId !== this.projectId
+    ) {
       throw new Error('The server returned an invalid project workspace.');
     }
     this.#workspace = workspace;
-    this.#resource = null;
+    this.#resource = normalizeProjectResourceV1({
+      document: workspace.document,
+      projects: workspace.projects
+    });
   }
 }
 

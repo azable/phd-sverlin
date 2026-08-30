@@ -83,12 +83,12 @@
     {#if inspect}
       <Card.Content>
         <details bind:open={detailsOpen} class="rounded-md border bg-muted/30">
-          <summary class="cursor-pointer px-3 py-2 text-xs font-medium">
+          <summary class="cursor-pointer px-3 py-2 text-sm font-medium">
             Event payload and retained diagnostics
           </summary>
           {#if detailsOpen}
             <pre
-              class="max-h-96 overflow-auto border-t p-3 text-[0.7rem] leading-relaxed break-words whitespace-pre-wrap"><code
+              class="max-h-96 overflow-auto border-t p-3 text-sm leading-relaxed break-words whitespace-pre-wrap"><code
                 >{eventJson}</code
               ></pre>
           {/if}
@@ -96,7 +96,7 @@
       </Card.Content>
     {/if}
     <Card.Footer class="flex-wrap gap-2">
-      <span class="mr-auto text-[0.7rem] text-muted-foreground">
+      <span class="mr-auto text-sm text-muted-foreground">
         {formatTime(event.createdAt)}
       </span>
       {#if event.id !== session.head}

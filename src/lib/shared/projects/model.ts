@@ -69,13 +69,15 @@ export const projectCommandSchema = v.variant('type', [
     text: v.optional(v.string()),
     focus: v.array(positiveSchema),
     selection: v.optional(visualSelectionSchema),
+    presentations: v.optional(
+      v.pipe(v.array(presentationIdSchema), v.minLength(1), v.maxLength(2))
+    ),
     presentationCount: v.picklist([1, 2])
   }),
   v.object({ ...commandBase, type: v.literal('render'), seed: positiveSchema }),
   v.object({
     ...commandBase,
     type: v.literal('prefer'),
-    displaySetId: v.pipe(v.string(), v.uuid()),
     presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
     preferred: presentationIdSchema,
     step: naturalSchema
@@ -132,29 +134,15 @@ export type ProjectSnapshot = {
   };
 };
 
-/** Server-projected Timeline entry safe for a selected workspace view. */
-export type WorkspaceTimelineEntry = {
-  id: string;
-  operationId: string;
-  kind: 'user' | 'assistant' | 'presentation' | 'action' | 'pending' | 'error' | 'developer';
-  title: string;
-  detail?: string;
-  sourceEventIds: EventId[];
-  rawEvent?: ProjectEvent;
-};
-
-/** Purpose-built workspace response; raw events appear only in developer views. */
+/** Authorized workspace response with the complete immutable project Timeline. */
 export type WorkspaceResource = {
   schemaVersion: 1;
   projectId: ProjectId;
-  head: EventId;
+  document: ProjectDocument;
   view: v.InferOutput<typeof workspaceViewSchema>;
   layout: v.InferOutput<typeof presentationLayoutSchema>;
   readOnly: boolean;
-  snapshot: ProjectSnapshot;
-  timeline: WorkspaceTimelineEntry[];
   projects: ProjectSummary[];
-  activeOperation?: { operationId: string; kind: string };
   study?: {
     phaseId: string;
     deadlineAt?: string;

@@ -17,12 +17,12 @@ export const visualizationPresentedEventSchema = v.object({
   })
 });
 
-/** Runtime schema for a preference between the two currently displayed presentations. */
+/** Runtime schema for a preference between two compatible presentations. */
 export const visualizationPreferenceRecordedEventSchema = v.object({
   ...eventEnvelope,
   type: v.literal('visualization.preference-recorded'),
   payload: v.object({
-    displaySetId: v.pipe(v.string(), v.uuid()),
+    displaySetId: v.optional(v.pipe(v.string(), v.uuid())),
     presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
     preferred: presentationIdSchema,
     step: naturalSchema

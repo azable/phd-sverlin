@@ -301,6 +301,7 @@ async function executeProjectCommand(options: {
         text: options.command.text,
         focus: options.command.focus,
         selection: options.command.selection,
+        presentations: options.command.presentations,
         presentationCount: options.command.presentationCount
       });
     case 'render':
@@ -308,7 +309,6 @@ async function executeProjectCommand(options: {
     case 'prefer':
       return recordProjectPreference({
         ...common,
-        displaySetId: options.command.displaySetId,
         presentations: options.command.presentations,
         preferred: options.command.preferred,
         step: options.command.step

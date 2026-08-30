@@ -7,34 +7,46 @@
   import * as InputGroup from '$lib/client/components/ui/input-group';
   import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
+  import type { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
+  import type { PresentationLayout } from '$lib/shared/presentations';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
 
   /** Public properties for composing project feedback. */
   type Props = {
     session: ProjectSession;
     presentationCount: 1 | 2;
-    selection?: VisualSelection;
+    presentationSelection: PresentationSelection;
+    layout: PresentationLayout;
+    visualSelection?: VisualSelection;
   };
 
-  let { session, presentationCount, selection }: Props = $props();
+  let { session, presentationCount, presentationSelection, layout, visualSelection }: Props =
+    $props();
 
   let text = $state('');
+  const selectedPresentationIds = $derived(
+    presentationSelection
+      .selected(session.events, layout)
+      .map(({ presentation }) => presentation.presentationId)
+  );
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!session.atHead || session.pending || session.readOnly) return;
     const message = text.trim();
-    if (!message && session.focusedEvents.length === 0 && !selection) return;
+    if (!message && session.focusedEvents.length === 0 && !visualSelection) return;
     const succeeded = await session.runCommand({
       type: 'feedback',
       text: message || undefined,
       focus: session.focusedEvents,
-      selection,
+      selection: visualSelection,
+      presentations: selectedPresentationIds.length ? selectedPresentationIds : undefined,
       presentationCount
     });
     if (succeeded) {
       text = '';
       session.focusedEvents = [];
+      presentationSelection.returnToLatest();
     }
   }
 
@@ -48,7 +60,7 @@
 <form class="border-t bg-background p-4" onsubmit={submit}>
   <Field.FieldGroup>
     <Field.Field>
-      {#if session.focusedEvents.length > 0 || selection}
+      {#if session.focusedEvents.length > 0 || visualSelection || selectedPresentationIds.length}
         <div class="flex flex-wrap gap-2">
           {#each session.focusedEvents as id (id)}
             <Badge variant="secondary">
@@ -62,13 +74,22 @@
               </button>
             </Badge>
           {/each}
-          {#if selection}
-            <Badge variant="outline">{selection.instances.length} selected element(s)</Badge>
+          {#if visualSelection}
+            <Badge variant="outline">{visualSelection.instances.length} selected element(s)</Badge>
+          {/if}
+          {#if selectedPresentationIds.length}
+            <Badge variant="outline">
+              Viewing {selectedPresentationIds.length} visualization{selectedPresentationIds.length ===
+              1
+                ? ''
+                : 's'}
+            </Badge>
           {/if}
         </div>
       {/if}
       <InputGroup.Root class="h-auto min-h-20">
         <InputGroup.Textarea
+          class="text-base"
           bind:value={text}
           aria-label="Project feedback"
           placeholder="Comment on the project or selected elements…"
@@ -77,7 +98,7 @@
           onkeydown={submitOnEnter}
         />
         <InputGroup.Addon align="block-end" class="justify-end border-t">
-          <span class="mr-auto text-xs text-muted-foreground">
+          <span class="mr-auto text-sm text-muted-foreground">
             {session.atHead
               ? 'Enter submits · Shift+Enter adds a line'
               : 'Return to present to respond'}
@@ -88,7 +109,7 @@
             disabled={!session.atHead ||
               !!session.pending ||
               session.readOnly ||
-              (!text.trim() && !selection && session.focusedEvents.length === 0)}
+              (!text.trim() && !visualSelection && session.focusedEvents.length === 0)}
           >
             {#if session.pending?.type === 'feedback'}
               <Spinner data-icon="inline-start" />Thinking

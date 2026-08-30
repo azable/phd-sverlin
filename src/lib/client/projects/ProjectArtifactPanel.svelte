@@ -101,8 +101,8 @@
       <header class="flex flex-wrap items-center gap-2 border-b px-4 py-3">
         <EditIcon class="size-4 shrink-0 text-muted-foreground" />
         <div class="mr-auto min-w-0">
-          <p class="truncate font-mono text-xs">{artifact.path}</p>
-          <p class="text-xs text-muted-foreground">
+          <p class="truncate font-mono text-sm">{artifact.path}</p>
+          <p class="text-sm text-muted-foreground">
             {session.atHead ? 'Current artifact' : `Artifact at event #${session.snapshot.at}`}
           </p>
         </div>
@@ -145,7 +145,7 @@
       </header>
 
       {#if expanded && !session.atHead}
-        <p class="border-b bg-muted px-4 py-2 text-xs text-muted-foreground">
+        <p class="border-b bg-muted px-4 py-2 text-sm text-muted-foreground">
           Historical source is read-only. Restore this event from the Timeline to make a new current
           version.
         </p>
@@ -167,7 +167,7 @@
       {/if}
     </div>
   {:else}
-    <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
+    <div class="flex h-full items-center justify-center text-base text-muted-foreground">
       This project state has no entry artifact.
     </div>
   {/if}
