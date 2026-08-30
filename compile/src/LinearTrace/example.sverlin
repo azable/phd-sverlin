@@ -1,5 +1,9 @@
 -- Illustrative body-only linear search for the target API in API_plan.md.
--- Unified typed steps and Render-controlled frames are proposed APIs.
+-- This planning source is not compiled by the current application.
+--
+-- Domain declaration/packaging, typed Program steps, Render frame selection,
+-- and the public Slot occupant-to-owner projection remain open API details.
+-- Their working spellings below are deliberately confined to this example.
 
 data Number
 
@@ -21,34 +25,47 @@ data ElementCell
 
 type instance Payload ElementCell = LUnit ElementCell
 
-data Add = Add
+data Add
 
 type instance Payload Add = LOperator Add Add
 
--- Proposed semantic-only operator contract: the current `CoreOperator` also
--- requires `operatorPayloadText`, but spelling an operator belongs to Render.
-instance CoreOperator Add where
-  persistOperatorPayload Add = Ur Add
-
 instance Applicable2 Add Number Number where
   type Apply2Result Add Number Number = Number
-  applyPayload2 (LOperator Add) = applyLinear2Into (Linear.+)
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LInt (leftValue Linear.+ rightValue)
 
-data Equal = Equal
+data Equal
 
 type instance Payload Equal = LOperator Equal Equal
 
-instance CoreOperator Equal where
-  persistOperatorPayload Equal = Ur Equal
-
 instance Applicable2 Equal Number Number where
   type Apply2Result Equal Number Number = Condition
-  applyPayload2 (LOperator Equal) = applyLinear2Into (Linear.==)
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LBool (leftValue Linear.== rightValue)
+
+--------------------------------------------------------------------------------
+-- Domain declarations
+--------------------------------------------------------------------------------
+
+-- These are Domain-provided values. Their construction and packaging syntax is
+-- still open; free strings and overloaded-label fallbacks are not alternatives.
+targetKind :: Kind Number
+indexKind :: Kind Number
+elementKind :: Kind Number
+indexReadKind :: Kind Number
+targetReadKind :: Kind Number
+elementReadKind :: Kind Number
+comparisonKind :: Kind Condition
+targetCellKind :: Kind TargetCell
+indexCellKind :: Kind IndexCell
+elementCellKind :: Kind ElementCell
+adjacent :: RelationKind ElementCell ElementCell
 
 type LinearSearch = "linear-search"
 type InitializeTarget = LinearSearch / "initialize-target"
 type InitializeElements = LinearSearch / "initialize-elements"
 type CreateElement = InitializeElements / "create-element"
+type RelateNextElement = InitializeElements / "relate-next"
 type InitializeIndex = LinearSearch / "initialize-index"
 type SearchIteration = LinearSearch / "search-iteration"
 type FinishSearch = LinearSearch / "finish"
@@ -77,21 +94,35 @@ type WriteIndex = IncrementIndex / "write"
 type DestroyTarget = FinishSearch / "destroy-target"
 type DestroyIndex = FinishSearch / "destroy-index"
 type DestroyElements = FinishSearch / "destroy-elements"
+type UnrelateNextElement = DestroyElements / "unrelate-next"
 type DestroyElement = DestroyElements / "destroy-element"
 
 domain :: Domain ()
 domain = do
+  -- Working declaration syntax; final constructors and packaging remain open.
   declarePayload @Number
   declarePayload @Condition
   declarePayload @TargetCell
   declarePayload @IndexCell
   declarePayload @ElementCell
-  declareOperator Add
-  declareOperator Equal
+  declareOperator @Add
+  declareOperator @Equal
+  declareKind targetKind
+  declareKind indexKind
+  declareKind elementKind
+  declareKind indexReadKind
+  declareKind targetReadKind
+  declareKind elementReadKind
+  declareKind comparisonKind
+  declareKind targetCellKind
+  declareKind indexCellKind
+  declareKind elementCellKind
+  declareRelation adjacent -- ordered previous-to-next endpoints
   declareBranches @'[InitializeTarget, InitializeIndex, CreateElement] @CreateStoredChildren
   declareSteps
     @'[ LinearSearch
       , InitializeElements
+      , RelateNextElement
       , SearchIteration
       , CheckRemainingElements
       , ReadTarget
@@ -111,8 +142,13 @@ domain = do
       , DestroyTarget
       , DestroyIndex
       , DestroyElements
+      , UnrelateNextElement
       , DestroyElement
       ]
+
+--------------------------------------------------------------------------------
+-- Linear storage and adjacency
+--------------------------------------------------------------------------------
 
 data Stored owner value where
   Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
@@ -120,13 +156,172 @@ data Stored owner value where
 data ReadStored owner value where
   ReadStored :: Stored owner value %1 -> Block value %1 -> ReadStored owner value
 
+data RelatedStored value where
+  RelatedStored ::
+    Stored ElementCell value %1 ->
+    Stored ElementCell value %1 ->
+    Relation %1 ->
+    RelatedStored value
+
+data UnrelatedStored value where
+  UnrelatedStored ::
+    Stored ElementCell value %1 ->
+    Stored ElementCell value %1 ->
+    UnrelatedStored value
+
+data NonEmptyStoredList value where
+  LastStoredValue :: Stored ElementCell value %1 -> NonEmptyStoredList value
+  MoreStoredValue ::
+    Stored ElementCell value %1 ->
+    Relation %1 ->
+    NonEmptyStoredList value %1 ->
+    NonEmptyStoredList value
+
 data StoredList value where
   NoStoredValues :: StoredList value
-  MoreStoredValue :: Int -> Stored ElementCell value %1 -> StoredList value %1 -> StoredList value
+  StoredValues :: NonEmptyStoredList value %1 -> StoredList value
+
+-- The list stores one linear Relation beside every adjacent pair. It stores no
+-- integer layout index; Render validates the chain and derives positions.
 
 data ListView value where
-  EmptyList :: ListView value
-  NextValue :: Int -> Stored ElementCell value %1 -> StoredList value %1 -> ListView value
+  LastValue :: Stored ElementCell value %1 -> ListView value
+  NextValue ::
+    Stored ElementCell value %1 ->
+    Relation %1 ->
+    NonEmptyStoredList value %1 ->
+    ListView value
+
+data UnlinkedHead value where
+  UnlinkedHead ::
+    Stored ElementCell value %1 ->
+    NonEmptyStoredList value %1 ->
+    UnlinkedHead value
+
+createStored ::
+  forall parent owner value.
+  (KnownSymbol parent, Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = step @parent $ do
+  value <- step @(CreateValue parent) $ do
+    Create pending <- create valuePayload
+    materialize valueKind pending
+
+  cell <- step @(CreateCell parent) $ do
+    Create pending <- create ownerPayload
+    materialize ownerKind pending
+
+  step @(AssignValue parent) $ do
+    Seal cell1 slot <- seal cell value
+    return (Stored cell1 slot)
+
+readStored ::
+  (Traceable owner, Traceable value) =>
+  Kind value ->
+  Stored owner value %1 ->
+  Program (ReadStored owner value)
+readStored readKind (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Copy value1 copyPending <- copy value
+  valueCopy <- materialize readKind copyPending
+  Seal owner2 slot1 <- seal owner1 value1
+  return (ReadStored (Stored owner2 slot1) valueCopy)
+
+writeStored ::
+  (Traceable owner, Traceable value) =>
+  Kind value ->
+  Stored owner value %1 ->
+  Pending value %1 ->
+  Program (Stored owner value)
+writeStored storedKind (Stored owner slot) replacement = do
+  Unseal owner1 oldValue <- unseal owner slot
+  Replace storedPending <- replace oldValue replacement
+  storedValue <- materialize storedKind storedPending
+  Seal owner2 slot1 <- seal owner1 storedValue
+  return (Stored owner2 slot1)
+
+destroyStored ::
+  (Traceable owner, Traceable value) =>
+  Stored owner value %1 ->
+  Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  return ()
+
+relateStored ::
+  RelationKind ElementCell ElementCell ->
+  Stored ElementCell value %1 ->
+  Stored ElementCell value %1 ->
+  Program (RelatedStored value)
+relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 relation <- relate relationKind leftSlot rightSlot
+  return
+    (RelatedStored
+       (Stored leftOwner leftSlot1)
+       (Stored rightOwner rightSlot1)
+       relation)
+
+unrelateStored ::
+  Relation %1 ->
+  Stored ElementCell value %1 ->
+  Stored ElementCell value %1 ->
+  Program (UnrelatedStored value)
+unrelateStored relation (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Unrelate leftSlot1 rightSlot1 <- unrelate relation leftSlot rightSlot
+  return
+    (UnrelatedStored
+       (Stored leftOwner leftSlot1)
+       (Stored rightOwner rightSlot1))
+
+prependStored ::
+  Stored ElementCell value %1 ->
+  NonEmptyStoredList value %1 ->
+  Program (NonEmptyStoredList value)
+prependStored current rest =
+  case rest of
+    LastStoredValue next -> do
+      RelatedStored current1 next1 relation <- relateStored adjacent current next
+      return (MoreStoredValue current1 relation (LastStoredValue next1))
+    MoreStoredValue next nextRelation remaining -> do
+      RelatedStored current1 next1 relation <- relateStored adjacent current next
+      return
+        (MoreStoredValue
+           current1
+           relation
+           (MoreStoredValue next1 nextRelation remaining))
+
+inspectElements :: NonEmptyStoredList value %1 -> Program (ListView value)
+inspectElements elements =
+  case elements of
+    LastStoredValue element -> return (LastValue element)
+    MoreStoredValue element relation rest -> return (NextValue element relation rest)
+
+unlinkHead ::
+  Relation %1 ->
+  Stored ElementCell value %1 ->
+  NonEmptyStoredList value %1 ->
+  Program (UnlinkedHead value)
+unlinkHead relation current rest =
+  case rest of
+    LastStoredValue next -> do
+      UnrelatedStored current1 next1 <- unrelateStored relation current next
+      return (UnlinkedHead current1 (LastStoredValue next1))
+    MoreStoredValue next nextRelation remaining -> do
+      UnrelatedStored current1 next1 <- unrelateStored relation current next
+      return
+        (UnlinkedHead
+           current1
+           (MoreStoredValue next1 nextRelation remaining))
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
 
 data SearchOutcome = FoundAt Int | NotFound
 
@@ -138,132 +333,168 @@ data SearchResult where
     StoredList Number %1 ->
     SearchResult
 
-createStored ::
-  forall parent owner value.
-  (KnownSymbol parent, Traceable owner, Traceable value) =>
-  Query ->
-  Payload owner %1 ->
-  Query ->
-  Payload value %1 ->
-  Program (Stored owner value)
-createStored ownerFacts ownerPayload valueFacts valuePayload = step @parent $ do
-  value <- step @(CreateValue parent) $ do
-    Create pending <- create valuePayload
-    materialize valueFacts pending
+data NonEmptySearchResult where
+  NonEmptySearchResult ::
+    SearchOutcome ->
+    Stored TargetCell Number %1 ->
+    Stored IndexCell Number %1 ->
+    NonEmptyStoredList Number %1 ->
+    NonEmptySearchResult
 
-  cell <- step @(CreateCell parent) $ do
-    Create pending <- create ownerPayload
-    materialize ownerFacts pending
-
-  step @(AssignValue parent) $ do
-    Seal cell1 slot <- seal cell value
-    return (Stored cell1 slot)
-
-readStored :: (Traceable owner, Traceable value) => Query -> Stored owner value %1 -> Program (ReadStored owner value)
-readStored query (Stored owner slot) = do
-  Unseal owner1 value <- unseal owner slot
-  Copy value1 copyPending <- copy value
-  valueCopy <- materialize query copyPending
-  Seal owner2 slot1 <- seal owner1 value1
-  return (ReadStored (Stored owner2 slot1) valueCopy)
-
-writeStored :: (Traceable owner, Traceable value) => Query -> Stored owner value %1 -> Pending value %1 -> Program (Stored owner value)
-writeStored query (Stored owner slot) replacement = do
-  Unseal owner1 oldValue <- unseal owner slot
-  Replace storedPending <- replace oldValue replacement
-  storedValue <- materialize query storedPending
-  Seal owner2 slot1 <- seal owner1 storedValue
-  return (Stored owner2 slot1)
-
-destroyStored :: (Traceable owner, Traceable value) => Stored owner value %1 -> Program ()
-destroyStored (Stored owner slot) = do
-  Unseal owner1 value <- unseal owner slot
-  Destroy <- destroy value
-  Destroy <- destroy owner1
-  return ()
+data ComparedElement where
+  ComparedElement ::
+    Stored TargetCell Number %1 ->
+    Stored ElementCell Number %1 ->
+    Bool ->
+    ComparedElement
 
 initializeTarget :: Int -> Program (Stored TargetCell Number)
-initializeTarget target = createStored @InitializeTarget #targetCell LUnit #target (LInt target)
+initializeTarget target =
+  createStored @InitializeTarget targetCellKind LUnit targetKind (LInt target)
 
 initializeIndex :: Program (Stored IndexCell Number)
-initializeIndex = createStored @InitializeIndex #indexCell LUnit #index (LInt 0)
+initializeIndex =
+  createStored @InitializeIndex indexCellKind LUnit indexKind (LInt 0)
 
 initializeElements :: [Int] -> Program (StoredList Number)
-initializeElements values = step @InitializeElements (go 0 values)
+initializeElements values = step @InitializeElements (go values)
   where
-    go :: Int -> [Int] -> Program (StoredList Number)
-    go _ [] = return NoStoredValues
-    go position (value : rest) = do
-      element <- createStored @CreateElement (#elementCell <&> #index @: position) LUnit (#element <&> #index @: position) (LInt value)
-      elements <- go (position + 1) rest
-      return (MoreStoredValue position element elements)
-
-inspectElements :: StoredList value %1 -> Program (ListView value)
-inspectElements elements = step @CheckRemainingElements $
-  case elements of
-    NoStoredValues -> return EmptyList
-    MoreStoredValue position element rest -> return (NextValue position element rest)
+    go :: [Int] -> Program (StoredList Number)
+    go [] = return NoStoredValues
+    go (value : rest) = do
+      current <-
+        createStored @CreateElement elementCellKind LUnit elementKind (LInt value)
+      remaining <- go rest
+      case remaining of
+        NoStoredValues -> return (StoredValues (LastStoredValue current))
+        StoredValues nonEmpty -> do
+          linked <- step @RelateNextElement (prependStored current nonEmpty)
+          return (StoredValues linked)
 
 compareTarget :: Block Number %1 -> Block Number %1 -> Program Bool
 compareTarget element target = step @CompareTarget $ do
   equal <- step @CreateEqualOperator $ do
-    Create pending <- create @Equal (LOperator Equal)
-    materialize #equalOperator pending
+    Create pending <- create @Equal LOperator
+    commit pending
 
   step @ApplyEquality $ do
     Apply2 conditionPending <- apply2 equal element target
-    condition <- materialize #comparison conditionPending
+    condition <- materialize comparisonKind conditionPending
     Use result <- use condition
     case result of
       OneUse (LBool matched) -> return matched
 
+compareElement ::
+  Stored TargetCell Number %1 ->
+  Stored ElementCell Number %1 ->
+  Program ComparedElement
+compareElement target element = do
+  ReadStored target1 targetProbe <- step @ReadTarget (readStored targetReadKind target)
+  ReadStored element1 elementProbe <- step @ReadElement (readStored elementReadKind element)
+  matched <- compareTarget elementProbe targetProbe
+  return (ComparedElement target1 element1 matched)
+
 incrementIndex :: Stored IndexCell Number %1 -> Program (Stored IndexCell Number)
 incrementIndex index = step @IncrementIndex $ do
-  ReadStored index1 indexProbe <- step @ReadIndexForIncrement (readStored #indexRead index)
+  ReadStored index1 indexProbe <-
+    step @ReadIndexForIncrement (readStored indexReadKind index)
 
   one <- step @CreateOne $ do
     Create pending <- create @Number (LInt 1)
-    materialize #increment pending
+    commit pending
 
   add <- step @CreateAddOperator $ do
-    Create pending <- create @Add (LOperator Add)
-    materialize #addOperator pending
+    Create pending <- create @Add LOperator
+    commit pending
 
   nextPending <- step @AddOneToIndex $ do
     Apply2 pending <- apply2 add indexProbe one
     return pending
 
-  step @WriteIndex (writeStored #index index1 nextPending)
+  step @WriteIndex (writeStored indexKind index1 nextPending)
+
+searchNonEmpty ::
+  Int ->
+  Stored TargetCell Number %1 ->
+  Stored IndexCell Number %1 ->
+  NonEmptyStoredList Number %1 ->
+  Program NonEmptySearchResult
+searchNonEmpty position target index elements = step @SearchIteration $ do
+  view <- step @CheckRemainingElements (inspectElements elements)
+  case view of
+    LastValue element -> do
+      ComparedElement target1 element1 matched <- compareElement target element
+      case matched of
+        True ->
+          step @ReturnFound $
+            return
+              (NonEmptySearchResult
+                 (FoundAt position)
+                 target1
+                 index
+                 (LastStoredValue element1))
+        False -> do
+          index1 <- incrementIndex index
+          step @ReturnNotFound $
+            return
+              (NonEmptySearchResult
+                 NotFound
+                 target1
+                 index1
+                 (LastStoredValue element1))
+    NextValue element relation rest -> do
+      ComparedElement target1 element1 matched <- compareElement target element
+      case matched of
+        True ->
+          step @ReturnFound $
+            return
+              (NonEmptySearchResult
+                 (FoundAt position)
+                 target1
+                 index
+                 (MoreStoredValue element1 relation rest))
+        False -> do
+          index1 <- incrementIndex index
+          NonEmptySearchResult outcome target2 index2 searchedRest <-
+            searchNonEmpty (position + 1) target1 index1 rest
+          return
+            (NonEmptySearchResult
+               outcome
+               target2
+               index2
+               (MoreStoredValue element1 relation searchedRest))
 
 searchLoop ::
   Stored TargetCell Number %1 ->
   Stored IndexCell Number %1 ->
   StoredList Number %1 ->
   Program SearchResult
-searchLoop target index elements = step @SearchIteration $ do
-  view <- inspectElements elements
-  case view of
-    EmptyList -> step @ReturnNotFound $ return (SearchResult NotFound target index NoStoredValues)
-    NextValue position element rest -> do
-      ReadStored target1 targetProbe <- step @ReadTarget (readStored #targetRead target)
-      ReadStored element1 elementProbe <- step @ReadElement (readStored (#elementRead <&> #index @: position) element)
-      matched <- compareTarget elementProbe targetProbe
-      case matched of
-        True ->
-          step @ReturnFound $
-            return (SearchResult (FoundAt position) target1 index (MoreStoredValue position element1 rest))
-        False -> do
-          index1 <- incrementIndex index
-          SearchResult outcome target2 index2 searchedRest <- searchLoop target1 index1 rest
-          return (SearchResult outcome target2 index2 (MoreStoredValue position element1 searchedRest))
+searchLoop target index elements =
+  case elements of
+    NoStoredValues ->
+      step @SearchIteration $
+        step @ReturnNotFound $
+          return (SearchResult NotFound target index NoStoredValues)
+    StoredValues nonEmpty -> do
+      NonEmptySearchResult outcome target1 index1 searched <-
+        searchNonEmpty 0 target index nonEmpty
+      return (SearchResult outcome target1 index1 (StoredValues searched))
+
+destroyNonEmpty :: NonEmptyStoredList Number %1 -> Program ()
+destroyNonEmpty elements =
+  case elements of
+    LastStoredValue element -> step @DestroyElement (destroyStored element)
+    MoreStoredValue element relation rest -> do
+      UnlinkedHead element1 rest1 <-
+        step @UnrelateNextElement (unlinkHead relation element rest)
+      step @DestroyElement (destroyStored element1)
+      destroyNonEmpty rest1
 
 destroyStoredList :: StoredList Number %1 -> Program ()
 destroyStoredList elements =
   case elements of
     NoStoredValues -> return ()
-    MoreStoredValue _ element rest -> do
-      step @DestroyElement (destroyStored element)
-      destroyStoredList rest
+    StoredValues nonEmpty -> destroyNonEmpty nonEmpty
 
 finishSearch :: SearchResult %1 -> Program ()
 finishSearch (SearchResult _ target index elements) = step @FinishSearch $ do
@@ -279,41 +510,43 @@ program = step @LinearSearch $ do
   result <- searchLoop target index elements
   finishSearch result
 
--- `TextBuilder`, `literal`, `fragment`, and `fragmentMany` are proposed general
--- text APIs. Current `ContentValue` holds only one literal or one binding, so it
--- cannot compose a completely shaped line from semantically mapped spans.
--- `Render` is the planned public rename of the current `VisualizationBuilder`.
-line :: TextBuilder () %1 -> Render (NodeBinding (Selected GeneratedNode))
-line textRecipe =
+--------------------------------------------------------------------------------
+-- Composed source text
+--------------------------------------------------------------------------------
+
+line ::
+  Choice FontFamily ->
+  Span ->
+  TextBuilder () ->
+  Render (NodeBinding (Selected GeneratedNode))
+line codeFont codeSize textRecipe =
   node $ do
     width (by 500)
     height (by 28)
-    style @FontFamily (FixedStyle FontIBMPlexMono)
-    style @WhiteSpace (FixedStyle WhiteSpacePre)
+    style @FontFamily (VariableStyle codeFont)
+    style @FontSize codeSize
+    fitText textRecipe
 
-    -- Proposed overload: current `content` accepts only `ContentValue`. This
-    -- overload lowers the spans to one source string plus typed source ranges,
-    -- then the existing typography pipeline shapes the complete line once.
-    content textRecipe
-
--- These helpers use only current affine geometry. Current node hierarchy adds
--- containment and style inheritance, but does not indent or vertically sequence
--- children automatically.
 indent :: Selected parent -> Selected child -> Render ()
-indent parent child = ensure $ left child .==. left parent + shift (num 24)
+indent parent child = ensure $ left child .==. left parent + shift 24
 
 sameIndent :: Selected reference -> Selected lineNode -> Render ()
 sameIndent reference lineNode = ensure $ left lineNode .==. left reference
 
 after :: Selected upper -> Selected lower -> Render ()
-after upper lower = ensure $ top lower .==. bottom upper + shift (num 4)
+after upper lower = ensure $ top lower .==. bottom upper + shift 4
 
 cSource :: Render ()
 cSource = do
-  Selected functionLine <- line $ do
+  Variable codeFont <- fontChoice (fontKind Monospace)
+  Variable codeSize <- variable @Span
+  ensure $ codeSize .>=. by 14
+  ensure $ codeSize .<=. by 20
+
+  Selected functionLine <- line codeFont codeSize $ do
     literal "int linear_search(int "
     fragmentMany
-      @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement]
+      @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement, RelateNextElement]
       "A[]"
     literal ", int "
     fragment @InitializeElements "n"
@@ -323,7 +556,7 @@ cSource = do
       "target"
     literal ") {"
 
-  Selected loopLine <- line $ do
+  Selected loopLine <- line codeFont codeSize $ do
     literal "for ("
     fragmentMany
       @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
@@ -336,31 +569,30 @@ cSource = do
       "i++"
     literal ") {"
 
-  Selected comparisonLine <- line $ do
+  Selected comparisonLine <- line codeFont codeSize $ do
     literal "if ("
     fragment @ReadElement "A[i]"
     fragmentMany @'[CompareTarget, CreateEqualOperator, ApplyEquality] " == "
     fragment @ReadTarget "target"
     literal ") {"
 
-  Selected foundLine <- line $ do
+  Selected foundLine <- line codeFont codeSize $ do
     literal "return "
     fragment @ReturnFound "i"
     literal ";"
 
-  Selected closeComparison <- line $ literal "}"
-  Selected closeLoop <- line $ literal "}"
+  Selected closeComparison <- line codeFont codeSize $ literal "}"
+  Selected closeLoop <- line codeFont codeSize $ literal "}"
 
-  Selected notFoundLine <- line $ do
+  Selected notFoundLine <- line codeFont codeSize $ do
     literal "return "
     fragment @ReturnNotFound "-1"
     literal ";"
 
-  Selected closeFunction <- line $ literal "}"
+  Selected closeFunction <- line codeFont codeSize $ literal "}"
 
   ensure $ left functionLine .==. at 36
   ensure $ top functionLine .==. at 32
-
   indent functionLine loopLine
   after functionLine loopLine
   indent loopLine comparisonLine
@@ -375,6 +607,10 @@ cSource = do
   after closeLoop notFoundLine
   sameIndent functionLine closeFunction
   after notFoundLine closeFunction
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
 
 type PresentationFrames =
   '[ InitializeTarget
@@ -394,27 +630,13 @@ render = do
   height (by 640)
   contentFit Both Contain
 
-  -- Proposed API: current animation boundaries are Program-owned String
-  -- checkpoints; Render cannot yet resolve frames from typed step definitions.
+  -- Working step/frame syntax; the exact step API remains open.
   framesAt @PresentationFrames
   cSource
 
-  Bound targetLabel <- bindContent
-  Selected targets <- select @Number (#target <&> payload targetLabel)
-  Bound indexLabel <- bindContent
-  Selected indices <- select @Number (#index <&> payload indexLabel)
-  Bound elementLabel <- bindContent
-  Bound elementIndex <- bindInt
-  Selected elements <- select @Number (#element <&> #index @: elementIndex <&> payload elementLabel)
-  Bound targetReadLabel <- bindContent
-  Selected targetReads <- select @Number (#targetRead <&> payload targetReadLabel)
-  Bound elementReadLabel <- bindContent
-  Bound elementReadIndex <- bindInt
-  Selected elementReads <- select @Number (#elementRead <&> #index @: elementReadIndex <&> payload elementReadLabel)
-  Bound comparisonLabel <- bindContent
-  Selected comparisons <- select @Condition (#comparison <&> payload comparisonLabel)
-
+  Selected targets <- select targetKind
   node targets $ do
+    Bound targetLabel <- bindContent
     fitText targetLabel
     left (at 580)
     top (at 72)
@@ -422,7 +644,9 @@ render = do
     height (by 88)
     styleFamily "target"
 
+  Selected indices <- select indexKind
   node indices $ do
+    Bound indexLabel <- bindContent
     fitText indexLabel
     left (at 780)
     top (at 72)
@@ -430,15 +654,45 @@ render = do
     height (by 88)
     styleFamily "index"
 
-  node elements $ do
-    fitText elementLabel
-    left (at 560 + shift (asScalar elementIndex * num 96))
-    top (at 210)
+  Selected elementCells <- select elementCellKind
+  node elementCells $ do
     width (by 80)
     height (by 72)
-    styleFamily "element"
+    styleFamily "element-cell"
 
+  adjacentRelations <- relationsOf adjacent
+  elementGraph <- graphOf elementCells adjacentRelations
+  orderedElements <- requireSequence elementGraph
+
+  Variable elementSpacing <- variable @Span
+  ensure $ elementSpacing .>=. by 88
+  ensure $ elementSpacing .<=. by 112
+
+  forEachNode orderedElements $ \cell -> do
+    let position = positionOf orderedElements cell
+    ensure $ x cell .==. at 600 + elementSpacing * asScalar position
+    ensure $ y cell .==. at 246
+
+    Selected positionLabel <- node $ do
+      fitText (intText position)
+      width (by 48)
+      height (by 24)
+      styleFamily "array-index"
+    ensure $ x positionLabel .==. x cell
+    ensure $ top positionLabel .==. bottom cell + shift 8
+
+  -- The planned Slot projection keeps each current Number occupant at its
+  -- ElementCell owner's stable bounds. The exact public projection helper, or
+  -- whether this alignment is automatic, remains to be named.
+  Selected elements <- select elementKind
+  node elements $ do
+    Bound elementLabel <- bindContent
+    fitText elementLabel
+    styleFamily "element-value"
+
+  Selected targetReads <- select targetReadKind
   node targetReads $ do
+    Bound targetReadLabel <- bindContent
     fitText targetReadLabel
     left (at 620)
     top (at 350)
@@ -446,7 +700,9 @@ render = do
     height (by 76)
     styleFamily "read"
 
+  Selected elementReads <- select elementReadKind
   node elementReads $ do
+    Bound elementReadLabel <- bindContent
     fitText elementReadLabel
     left (at 790)
     top (at 350)
@@ -454,7 +710,9 @@ render = do
     height (by 76)
     styleFamily "read"
 
+  Selected comparisons <- select comparisonKind
   node comparisons $ do
+    Bound comparisonLabel <- bindContent
     fitText comparisonLabel
     left (at 705)
     top (at 480)

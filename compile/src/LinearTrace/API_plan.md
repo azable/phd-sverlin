@@ -147,8 +147,8 @@ Move the following existing interfaces into Domain:
   relation kinds, including their ordered or symmetric endpoint meaning, and
   shares them with Program and Render.
 - Payload and operator vocabulary: `PayloadView`, `Traceable`, `Payload`,
-  `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, `LOperator`, `CoreOperator`,
-  `Applicable1`, and `Applicable2`.
+  `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, `LOperator`, `Applicable1`,
+  and `Applicable2`.
 
 Do not re-export `LinearPayload`, `withPayload`, `buildPayload`,
 `applyLinear1`, `applyLinear1Into`, `applyLinear2`, or `applyLinear2Into` from
@@ -159,10 +159,13 @@ Authors define operator behavior through `Applicable1` and `Applicable2`,
 pattern matching the public `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, or
 `LOperator` wrappers and constructing the result wrapper directly.
 
-Revise `CoreOperator` so that it retains only the semantics needed to preserve
-and apply an operator payload. It must not require `operatorPayloadText` or any
-other presentation value. Operator spellings such as `+`, `==`, or `equals`
-belong to the particular Render mapping.
+`LOperator` is a stateless marker: its operator type selects the corresponding
+`Applicable1` or `Applicable2` instance, but it carries no runtime value.
+Remove `CoreOperator`, `persistOperatorPayload`, and `operatorPayloadText` from
+the public API; Core persists the marker internally. Operator parameters are
+ordinary operands, so a scale factor such as `2.5` is a traceable `Number`
+input rather than hidden state inside a `Scale` operator. Operator spellings
+such as `+`, `==`, or `equals` belong to the particular Render mapping.
 
 The exact declaration combinators and concrete builder type name are still to
 be designed. They must support this separation without requiring authors to
@@ -176,7 +179,7 @@ domain = do
   declarePayload @Number
   declareKind valueKind
   declareKind resultKind
-  declareOperator Add
+  declareOperator @Add
 ```
 
 Illustrative declared values are typed and shared by Program and Render:

@@ -64,15 +64,12 @@ data LBool tag              = LBool Bool
 data LInt tag               = LInt Int
 data LDouble tag            = LDouble Double
 data LString tag            = LString String
-data LOperator operator tag = LOperator operator
+data LOperator operator tag = LOperator
 ```
 
 ### Operators
 
 ```haskell
-class CoreOperator operator where
-  persistOperatorPayload :: ...
-
 class Applicable1 op arg where
   type Apply1Result op arg
   applyPayload1 :: Payload op %1 -> Payload arg %1 -> Payload (Apply1Result op arg)
@@ -82,8 +79,10 @@ class Applicable2 op lhs rhs where
   applyPayload2 :: Payload op %1 -> Payload lhs %1 -> Payload rhs %1 -> Payload (Apply2Result op lhs rhs)
 ```
 
-`CoreOperator` has no presentation-text method; operator spelling belongs to
-Render.
+`LOperator` carries no runtime value. Its type selects the `Applicable1` or
+`Applicable2` instance; changing values such as a scale factor are ordinary
+operands. Core persists the marker internally, and operator spelling belongs
+to Render.
 
 ## Program
 
@@ -364,7 +363,8 @@ optimization is still open.
   `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode`.
 - Removed styles: `WhiteSpace(..)` and `ZIndex`.
 - Orphan observation API: `Observe` and `observe`.
-- Removed presentation method: `operatorPayloadText`.
+- Removed operator-persistence API: `CoreOperator`,
+  `persistOperatorPayload`, and `operatorPayloadText`.
 - Internal payload-unpacking family: `LinearPayload`, `withPayload`,
   `buildPayload`, `applyLinear1`, `applyLinear1Into`, `applyLinear2`, and
   `applyLinear2Into`.
