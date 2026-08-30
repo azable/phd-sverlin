@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   accept: vi.fn(),
-  inspection: vi.fn(),
   requireMutation: vi.fn()
 }));
 
@@ -10,7 +9,6 @@ vi.mock('$lib/server/projects/operations', () => ({
   projectOperationExecutor: { accept: mocks.accept }
 }));
 vi.mock('$lib/server/authorization', () => ({
-  projectInspectionContext: mocks.inspection,
   requireProjectMutationAccess: mocks.requireMutation
 }));
 
@@ -22,9 +20,11 @@ beforeEach(() => {
     operationId,
     acceptedEventId: 8
   });
-  mocks.requireMutation.mockReset().mockResolvedValue(undefined);
-  mocks.inspection.mockReset().mockResolvedValue({
-    study: { presentationBufferTarget: 4 }
+  mocks.requireMutation.mockReset().mockResolvedValue({
+    study: {
+      presentationBufferTarget: 4,
+      deadlineAt: '2026-08-30T12:15:00.000Z'
+    }
   });
 });
 
@@ -39,12 +39,13 @@ describe('presentation refill API', () => {
       operationId,
       expectedHead: 7,
       command: { type: 'presentation-refill', target: 4 },
-      actor: 'system'
+      actor: 'system',
+      deadlineAt: '2026-08-30T12:15:00.000Z'
     });
   });
 
   it('does not enable buffering for unconfigured projects', async () => {
-    mocks.inspection.mockResolvedValueOnce({});
+    mocks.requireMutation.mockResolvedValueOnce({});
     const { POST } = await import('./+server');
 
     const response = await POST(request());

@@ -6,6 +6,7 @@ import {
   dslRevisionSchema,
   eventEnvelope,
   naturalSchema,
+  positiveSchema,
   recordedTextSchema,
   sha256Schema,
   textSchema
@@ -16,8 +17,8 @@ export const aiGenerationRequestedEventSchema = v.object({
   ...eventEnvelope,
   type: v.literal('ai.generation-requested'),
   payload: v.object({
-    attempt: v.picklist([1, 2]),
-    purpose: v.picklist(['initial', 'repair']),
+    attempt: positiveSchema,
+    purpose: v.picklist(['initial', 'repair', 'fallback']),
     prompt: recordedTextSchema,
     promptTemplateSha256: sha256Schema,
     dslRevision: v.optional(dslRevisionSchema),
@@ -31,7 +32,7 @@ export const aiGenerationSucceededEventSchema = v.object({
   ...eventEnvelope,
   type: v.literal('ai.generation-succeeded'),
   payload: v.object({
-    attempt: v.picklist([1, 2]),
+    attempt: positiveSchema,
     adapterId: textSchema,
     requestedModel: textSchema,
     model: v.optional(textSchema),
@@ -47,7 +48,7 @@ export const aiGenerationFailedEventSchema = v.object({
   ...eventEnvelope,
   type: v.literal('ai.generation-failed'),
   payload: v.object({
-    attempt: v.picklist([1, 2]),
+    attempt: positiveSchema,
     failureKind: v.picklist([
       'configuration',
       'provider',

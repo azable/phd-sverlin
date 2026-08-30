@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   loadProjectResource: vi.fn(),
-  accept: vi.fn()
+  accept: vi.fn(),
+  requireMutation: vi.fn()
 }));
 
 vi.mock('$lib/server/projects/service', () => ({
@@ -13,7 +14,7 @@ vi.mock('$lib/server/projects/operations', () => ({
 }));
 vi.mock('$lib/server/authorization', () => ({
   requireProjectAccess: vi.fn(async (locals) => locals.principal),
-  requireProjectMutationAccess: vi.fn(async (locals) => locals.principal),
+  requireProjectMutationAccess: mocks.requireMutation,
   projectListOwner: vi.fn(() => 'user-test')
 }));
 
@@ -26,6 +27,7 @@ beforeEach(() => {
     operationId,
     acceptedEventId: 5
   });
+  mocks.requireMutation.mockResolvedValue({});
   mocks.loadProjectResource.mockResolvedValue({
     document: { schemaVersion: 2, projectId: 'project-test', events: [] },
     projects: []
@@ -77,6 +79,27 @@ describe('project JSON API', () => {
     );
     expect(stale.status).toBe(409);
     await expect(stale.json()).resolves.toEqual({ error: 'stale' });
+  });
+
+  it('passes the server-authoritative study deadline into asynchronous work', async () => {
+    mocks.requireMutation.mockResolvedValueOnce({
+      study: { deadlineAt: '2026-08-30T12:15:00.000Z' }
+    });
+    const { POST } = await import('./+server');
+
+    const response = await POST(
+      request('POST', {
+        type: 'rename',
+        operationId,
+        expectedHead: 4,
+        title: 'Renamed'
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.accept).toHaveBeenCalledWith(
+      expect.objectContaining({ deadlineAt: '2026-08-30T12:15:00.000Z' })
+    );
   });
 
   it('accepts zero-based instance IDs in inline element references', async () => {

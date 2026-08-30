@@ -16,7 +16,7 @@ services:
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:5173
       SVERLIN_SCRATCH_DIR: /tmp/sverlin
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      CHATBOT_REQUEST_TIMEOUT_MS: ${CHATBOT_REQUEST_TIMEOUT_MS:-180000}
     volumes:
       - .:/workspaces/phd-sverlin
       # Mount generated package data at the paths used by Node and Stack.

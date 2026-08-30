@@ -46,7 +46,7 @@ function readMaxContextChars() {
   return Number.isSafeInteger(configured) && configured > 0 ? configured : defaultMaxContextChars;
 }
 
-function readRequestTimeoutMs() {
+function readRequestTimeoutMs(): number {
   const configured = Number.parseInt(process.env.CHATBOT_REQUEST_TIMEOUT_MS ?? '', 10);
   return Number.isSafeInteger(configured) && configured > 0 ? configured : defaultRequestTimeoutMs;
 }
@@ -110,33 +110,35 @@ export async function generateOpenAIReply(request: ChatAdapterRequest): Promise<
     maxRetries: 0,
     timeout: readRequestTimeoutMs()
   });
-  const model = process.env.OPENAI_MODEL?.trim() || request.parameters.model;
   const context = serializeContext(request.context);
-  const response = await client.responses.create({
-    model,
-    // Keep the server's immutable project Timeline as the source of truth.
-    store: false,
-    input: [
-      {
-        role: 'developer',
-        content: `${request.initialPrompt}\n\nContext provided by this chat configuration:\n\n${context}`
-      },
-      ...request.messages
-    ],
-    max_output_tokens: request.parameters.maxOutputTokens,
-    reasoning: request.parameters.reasoningEffort
-      ? { effort: request.parameters.reasoningEffort }
-      : undefined,
-    temperature: request.parameters.temperature,
-    text: {
-      format: {
-        type: 'json_schema',
-        name: request.responseFormat.name,
-        strict: request.responseFormat.strict ?? true,
-        schema: request.responseFormat.schema
+  const response = await client.responses.create(
+    {
+      model: request.parameters.model,
+      // Keep the server's immutable project Timeline as the source of truth.
+      store: false,
+      input: [
+        {
+          role: 'developer',
+          content: `${request.initialPrompt}\n\nContext provided by this chat configuration:\n\n${context}`
+        },
+        ...request.messages
+      ],
+      max_output_tokens: request.parameters.maxOutputTokens,
+      reasoning: request.parameters.reasoningEffort
+        ? { effort: request.parameters.reasoningEffort }
+        : undefined,
+      temperature: request.parameters.temperature,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: request.responseFormat.name,
+          strict: request.responseFormat.strict ?? true,
+          schema: request.responseFormat.schema
+        }
       }
-    }
-  });
+    },
+    { signal: request.signal }
+  );
 
   return {
     ...parseResult(response.output_text, response),
@@ -160,5 +162,6 @@ export async function generateOpenAIReply(request: ChatAdapterRequest): Promise<
 /** Configured OpenAI implementation of the shared chat adapter contract. */
 export const openAIAdapter: ChatAdapter = {
   id: 'openai-responses',
-  generateReply: generateOpenAIReply
+  generateReply: generateOpenAIReply,
+  requestTimeoutMs: readRequestTimeoutMs
 };

@@ -79,3 +79,20 @@ Presence tracking applies only to abstract values whose provenance Render contro
 Passing an optional handle through an ordinary Haskell value that loses that
 provenance must be rejected. Omitting a geometry-neutral component does not create
 another affine solver branch; optional geometry does.
+
+## Preserve behavior while collapsing implementation layers
+
+The authored package boundary should expose only `Sverlin`; compiler assembly
+belongs to a narrow host boundary, while `Solver` and any deliberately stable IR
+contract remain separate. Historical Core, View, and Visualization modules are
+not public merely because the compiler currently imports them.
+
+Removing or merging an internal layer must preserve its behavior at a tested
+boundary before its module disappears. In particular, retain linear ownership and
+identity, slot-owner continuity, relation lifetimes, Render scope and presence
+provenance, hierarchy and style cascade, deterministic typography and resource
+resolution, source-level diagnostics, serialized IR invariants, transition
+identity, and seeded sampling semantics. Previous implementations are evidence for
+these edge cases, not APIs that must be restored wholesale. Do not retain empty
+forwarding layers solely for old import names once their behavior has a clear new
+owner.

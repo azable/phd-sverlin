@@ -19,22 +19,32 @@ import type {
 } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { getChatbot, getHtmlChatbot } from '$lib/server/chat-bots/registry';
+import type { HtmlAssistantOutput } from '$lib/server/chat-bots/html-assistant';
 import {
   projectAiContext,
   projectConversationMessages,
-  type AiContextSelection
+  type AiContextSelection,
+  type AiProjectContext
 } from '$lib/server/chat-bots/sverlin-assistant/project-context';
 import type {
+  Chatbot,
   ChatbotPrompt,
   ChatbotResult,
   CompilationFeedback,
-  GeneratedMessageContent
+  GeneratedMessageContent,
+  RecoveryExplanation,
+  SourceArtifactChatOutput
 } from '$lib/server/chat-bots/types';
 import { formatDiagnosticSummary } from '$lib/server/compiler';
 import { createHtmlPresentation } from '$lib/server/visualization-modes';
 
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, recordText, sourceSha256 } from './fingerprints';
+import {
+  assertCurrentProjectOperationActive,
+  currentProjectOperationDeadline,
+  currentProjectOperationSignal
+} from './operation-context';
 import { projectRepository } from './repository';
 import {
   activateCompiledPresentations,
@@ -133,147 +143,160 @@ async function submitProjectFeedbackUnlocked(
     presentationIds: presentations,
     visualSelections
   };
-  const first = await runSverlinGeneration(
-    {
-      document,
-      attempt: 1,
-      operationId: options.operationId,
-      contextSelection,
-      presentationCount: options.presentationCount
-    },
-    dependencies
-  );
-  document = first.document;
-  if (!first.ok) return finishMutation(before, document);
-  if (first.result.sourceArtifactContent === undefined) {
-    const advanced =
-      first.result.candidateAction === 'generate'
-        ? await advanceCandidatesForAgent(
-            document,
-            options.presentationCount,
-            options.operationId,
-            dependencies
-          )
-        : { document, presentations: [] };
-    document = advanced.document;
-    document = await appendAssistantResponse(
-      document,
-      resolveAssistantContent(document, first.result.reply, advanced.presentations),
-      assistantBotId(first.generationEvent),
-      options.operationId,
-      dependencies
-    );
-    return finishMutation(before, document);
-  }
-
-  const seeds = freshPresentationSeeds(options.presentationCount);
-  const firstCompile = await compileCandidateBatch(
-    {
-      document,
-      candidate: first.result.sourceArtifactContent,
-      seeds,
-      operationId: options.operationId,
-      attempt: 1
-    },
-    dependencies
-  );
-  document = firstCompile.document;
-  if (batchSucceeded(firstCompile.recorded)) {
-    document = await acceptSverlinCandidate(
-      {
-        document,
-        recorded: firstCompile.recorded,
-        generationEvent: first.generationEvent,
-        reply: first.result.reply,
-        candidate: first.result.sourceArtifactContent,
-        operationId: options.operationId
-      },
-      dependencies
-    );
-    return finishMutation(before, document);
-  }
-
-  const failed = firstFailure(firstCompile.recorded);
-  if (!failed || failed.compileEvent.type !== 'compilation.failed') {
-    throw new Error('A failed compilation batch had no failure event.');
-  }
-  if (!failed.compileEvent.payload.repairEligible) {
-    document = await appendSystemFailure(
-      document,
-      `The proposed source could not be compiled. ${formatDiagnosticSummary(failed.result.diagnostics)}`,
-      options.operationId,
-      dependencies
-    );
-    return finishMutation(before, document);
-  }
-
-  const repairFeedback: CompilationFeedback = {
-    attempt: 1,
-    compilationEventId:
-      document.events.findLast(
-        (event) => event.operationId === options.operationId && event.type === 'compilation.failed'
-      )?.id ?? projectHead(document).id,
-    failedSource: first.result.sourceArtifactContent,
-    assistantReply: generatedReplyText(first.result.reply),
-    diagnostics: failed.result.diagnostics
-  };
-  const repair = await runSverlinGeneration(
-    {
-      document,
-      attempt: 2,
-      operationId: options.operationId,
-      contextSelection,
-      presentationCount: options.presentationCount,
-      compilationFeedback: repairFeedback
-    },
-    dependencies
-  );
-  document = repair.document;
-  if (!repair.ok) return finishMutation(before, document);
-  if (repair.result.sourceArtifactContent === undefined) {
-    document = await appendSystemFailure(
-      document,
-      'The repair attempt did not return corrected source. The accepted artifact is unchanged.',
-      options.operationId,
-      dependencies
-    );
-    return finishMutation(before, document);
-  }
-
-  const repaired = await compileCandidateBatch(
-    {
-      document,
-      candidate: repair.result.sourceArtifactContent,
-      seeds,
-      operationId: options.operationId,
-      attempt: 2
-    },
-    dependencies
-  );
-  document = repaired.document;
-  const repairFailure = firstFailure(repaired.recorded);
-  if (repairFailure) {
-    document = await appendSystemFailure(
-      document,
-      `The corrected source still failed compilation. The accepted artifact is unchanged. ${formatDiagnosticSummary(repairFailure.result.diagnostics)}`,
-      options.operationId,
-      dependencies
-    );
-    return finishMutation(before, document);
-  }
-
-  document = await acceptSverlinCandidate(
-    {
-      document,
-      recorded: repaired.recorded,
-      generationEvent: repair.generationEvent,
-      reply: repair.result.reply,
-      candidate: repair.result.sourceArtifactContent,
-      operationId: options.operationId
-    },
+  document = await submitSverlinFeedback(
+    document,
+    options.operationId,
+    contextSelection,
+    options.presentationCount,
     dependencies
   );
   return finishMutation(before, document);
+}
+
+async function submitSverlinFeedback(
+  document: ProjectDocument,
+  operationId: string,
+  contextSelection: AiContextSelection,
+  presentationCount: 1 | 2,
+  dependencies: ProjectCommandDependencies
+): Promise<ProjectDocument> {
+  const chatbot = dependencies.getChatbot(projectSnapshotAt(document).assistantId);
+  let seeds: readonly number[] | undefined;
+  const failureSummaries: string[] = [];
+  let compilationFeedback: CompilationFeedback | undefined;
+
+  return runAttemptLadder(
+    document,
+    operationId,
+    chatbot,
+    dependencies,
+    async (current, attempt) => {
+      const generation = await runSverlinGeneration(
+        {
+          chatbot,
+          document: current,
+          attempt,
+          operationId,
+          contextSelection,
+          presentationCount,
+          ...(compilationFeedback ? { compilationFeedback } : {})
+        },
+        dependencies
+      );
+      current = generation.document;
+      if (!generation.ok) return { document: current, done: true };
+
+      const candidate = generation.result.sourceArtifactContent;
+      if (candidate === undefined) {
+        if (attempt === 1) {
+          const advanced =
+            generation.result.candidateAction === 'generate'
+              ? await advanceCandidatesForAgent(
+                  current,
+                  presentationCount,
+                  operationId,
+                  dependencies
+                )
+              : { document: current, presentations: [] };
+          current = advanced.document;
+          return {
+            document: await appendAssistantResponse(
+              current,
+              resolveAssistantContent(current, generation.result.reply, advanced.presentations),
+              assistantBotId(generation.generationEvent),
+              operationId,
+              dependencies
+            ),
+            done: true
+          };
+        }
+        failureSummaries.push(`Attempt ${attempt} did not return corrected source.`);
+        if (!compilationFeedback || attempt === chatbot.config.attemptProfiles.length) {
+          return {
+            document: await appendExhaustedSverlinFailure(
+              current,
+              operationId,
+              failureSummaries.at(-1),
+              dependencies
+            ),
+            done: true
+          };
+        }
+        compilationFeedback = {
+          ...compilationFeedback,
+          attempt,
+          assistantReply: generatedReplyText(generation.result.reply),
+          priorFailureSummaries: [...failureSummaries]
+        };
+        return { document: current, done: false };
+      }
+
+      seeds ??= freshPresentationSeeds(presentationCount);
+      const compiled = await compileCandidateBatch(
+        { document: current, candidate, seeds, operationId, attempt },
+        dependencies
+      );
+      current = compiled.document;
+      if (batchSucceeded(compiled.recorded)) {
+        assertCurrentProjectOperationActive();
+        return {
+          document: await acceptSverlinCandidate(
+            {
+              document: current,
+              recorded: compiled.recorded,
+              generationEvent: generation.generationEvent,
+              reply: replyWithRecovery(generation.result.reply, generation.result.recovery),
+              candidate,
+              operationId
+            },
+            dependencies
+          ),
+          done: true
+        };
+      }
+
+      const failed = firstFailure(compiled.recorded);
+      if (!failed || failed.compileEvent.type !== 'compilation.failed') {
+        throw new Error('A failed compilation batch had no failure event.');
+      }
+      const summary = formatDiagnosticSummary(failed.result.diagnostics);
+      failureSummaries.push(`Attempt ${attempt}: ${summary}`);
+      if (!failed.compileEvent.payload.repairEligible) {
+        return {
+          document: await appendSystemFailure(
+            current,
+            `The proposed visualization could not be checked safely, so I kept the last working visualization. The remaining difficulty was: ${plainFailureSummary(participantDiagnostic(failed.result.diagnostics))}`,
+            operationId,
+            dependencies
+          ),
+          done: true
+        };
+      }
+      if (attempt === chatbot.config.attemptProfiles.length) {
+        return {
+          document: await appendExhaustedSverlinFailure(
+            current,
+            operationId,
+            participantDiagnostic(failed.result.diagnostics),
+            dependencies
+          ),
+          done: true
+        };
+      }
+      compilationFeedback = {
+        attempt,
+        compilationEventId:
+          current.events.findLast(
+            (event) => event.operationId === operationId && event.type === 'compilation.failed'
+          )?.id ?? projectHead(current).id,
+        failedSource: candidate,
+        assistantReply: generatedReplyText(generation.result.reply),
+        diagnostics: failed.result.diagnostics,
+        priorFailureSummaries: [...failureSummaries]
+      };
+      return { document: current, done: false };
+    }
+  );
 }
 
 async function submitHtmlFeedback(
@@ -282,70 +305,92 @@ async function submitHtmlFeedback(
   contextSelection: AiContextSelection,
   dependencies: ProjectCommandDependencies
 ): Promise<ProjectDocument> {
-  const first = await runHtmlGeneration(
-    { document, attempt: 1, operationId, contextSelection },
-    dependencies
-  );
-  document = first.document;
-  if (!first.ok) return document;
-  if (first.result.candidates.length === 0) {
-    return appendAssistantResponse(
-      document,
-      resolveAssistantContent(document, first.result.reply, []),
-      assistantBotId(first.generationEvent),
-      operationId,
-      dependencies
-    );
-  }
+  const chatbot = dependencies.getHtmlChatbot(projectSnapshotAt(document).assistantId);
+  const failureSummaries: string[] = [];
+  let correction: string | undefined;
 
-  let accepted: AcceptedHtmlTurn;
-  try {
-    accepted = {
-      presentations: first.result.candidates.map(({ manifest }) =>
-        createHtmlPresentation(manifest, projectHead(document).id)
-      ),
-      reply: first.result.reply,
-      generationEvent: first.generationEvent
-    };
-  } catch (cause) {
-    const repair = await runHtmlGeneration(
-      {
-        document,
-        attempt: 2,
-        operationId,
-        contextSelection,
-        correction: htmlCorrection(first.result.candidates, cause)
-      },
-      dependencies
-    );
-    document = repair.document;
-    if (!repair.ok) return document;
-    if (repair.result.candidates.length === 0) {
-      return appendSystemFailure(
-        document,
-        'The HTML correction did not return a visualization. The accepted artifact is unchanged.',
-        operationId,
+  return runAttemptLadder(
+    document,
+    operationId,
+    chatbot,
+    dependencies,
+    async (current, attempt) => {
+      const generation = await runHtmlGeneration(
+        {
+          chatbot,
+          document: current,
+          attempt,
+          operationId,
+          contextSelection,
+          ...(correction ? { correction } : {})
+        },
         dependencies
       );
-    }
-    try {
-      accepted = {
-        presentations: repair.result.candidates.map(({ manifest }) =>
-          createHtmlPresentation(manifest, projectHead(document).id)
-        ),
-        reply: repair.result.reply,
-        generationEvent: repair.generationEvent
+      current = generation.document;
+      if (!generation.ok) return { document: current, done: true };
+      if (generation.result.candidates.length === 0) {
+        if (attempt === 1) {
+          return {
+            document: await appendAssistantResponse(
+              current,
+              resolveAssistantContent(current, generation.result.reply, []),
+              assistantBotId(generation.generationEvent),
+              operationId,
+              dependencies
+            ),
+            done: true
+          };
+        }
+        const summary = `Attempt ${attempt} did not return a visualization candidate.`;
+        failureSummaries.push(summary);
+        if (attempt === chatbot.config.attemptProfiles.length) {
+          return {
+            document: await appendExhaustedHtmlFailure(
+              current,
+              operationId,
+              'the generated HTML still did not pass the visualization safety checks',
+              dependencies
+            ),
+            done: true
+          };
+        }
+        correction = htmlCorrection([], summary, failureSummaries);
+        return { document: current, done: false };
+      }
+
+      let accepted: AcceptedHtmlTurn;
+      try {
+        accepted = {
+          presentations: generation.result.candidates.map(({ manifest }) =>
+            createHtmlPresentation(manifest, projectHead(current).id)
+          ),
+          reply: replyWithRecovery(generation.result.reply, generation.result.recovery),
+          generationEvent: generation.generationEvent
+        };
+      } catch (cause) {
+        const summary = errorMessage(cause);
+        failureSummaries.push(`Attempt ${attempt}: ${summary}`);
+        if (attempt === chatbot.config.attemptProfiles.length) {
+          return {
+            document: await appendExhaustedHtmlFailure(
+              current,
+              operationId,
+              'the generated HTML still did not pass the visualization safety checks',
+              dependencies
+            ),
+            done: true
+          };
+        }
+        correction = htmlCorrection(generation.result.candidates, cause, failureSummaries);
+        return { document: current, done: false };
+      }
+      assertCurrentProjectOperationActive();
+      return {
+        document: await acceptHtmlTurn(current, accepted, operationId, dependencies),
+        done: true
       };
-    } catch (repairCause) {
-      return appendSystemFailure(
-        document,
-        `The corrected HTML visualization was still unsafe or invalid. ${errorMessage(repairCause)}`,
-        operationId,
-        dependencies
-      );
     }
-  }
-  return acceptHtmlTurn(document, accepted, operationId, dependencies);
+  );
 }
 
 type AcceptedHtmlTurn = {
@@ -406,8 +451,9 @@ async function acceptHtmlTurn(
 
 async function runSverlinGeneration(
   options: {
+    chatbot: Chatbot<AiProjectContext, SourceArtifactChatOutput>;
     document: ProjectDocument;
-    attempt: 1 | 2;
+    attempt: number;
     operationId: string;
     contextSelection: AiContextSelection;
     presentationCount: 1 | 2;
@@ -415,12 +461,12 @@ async function runSverlinGeneration(
   },
   dependencies: ProjectCommandDependencies
 ) {
-  const chatbot = dependencies.getChatbot(projectSnapshotAt(options.document).assistantId);
   let prompt;
   try {
-    prompt = await chatbot.preparePrompt({
+    prompt = await options.chatbot.preparePrompt({
       messages: projectConversationMessages(options.document.events),
       project: projectAiContext(options.document, options.contextSelection),
+      attempt: options.attempt,
       ...(options.compilationFeedback ? { compilationFeedback: options.compilationFeedback } : {})
     });
   } catch (error) {
@@ -433,14 +479,10 @@ async function runSverlinGeneration(
       operationId: options.operationId,
       prompt,
       dslRevision: await dependencies.readDslRevision(),
-      generate: () => chatbot.generatePrepared(prompt),
+      generate: () =>
+        options.chatbot.generatePrepared(prompt, { signal: currentProjectOperationSignal() }),
       validateResult: (result) => {
-        if (options.attempt === 2 && result.sourceArtifactContent === undefined) {
-          throw new InvalidChatbotResponseError(
-            'The repair response did not return corrected source.',
-            result.providerResponse
-          );
-        }
+        validateRecoveryExplanation(prompt, result.recovery, result.providerResponse);
         validateGeneratedReply(
           options.document,
           result.reply,
@@ -454,6 +496,7 @@ async function runSverlinGeneration(
         reply: result.reply,
         candidateAction: result.candidateAction,
         sourceArtifactContent: result.sourceArtifactContent ?? null,
+        recovery: result.recovery ?? null,
         generation: result.generation
       })
     },
@@ -463,23 +506,24 @@ async function runSverlinGeneration(
 
 async function runHtmlGeneration(
   options: {
+    chatbot: Chatbot<AiProjectContext, HtmlAssistantOutput>;
     document: ProjectDocument;
-    attempt: 1 | 2;
+    attempt: number;
     operationId: string;
     contextSelection: AiContextSelection;
     correction?: string;
   },
   dependencies: ProjectCommandDependencies
 ) {
-  const chatbot = dependencies.getHtmlChatbot(projectSnapshotAt(options.document).assistantId);
   let prompt;
   try {
-    prompt = await chatbot.preparePrompt({
+    prompt = await options.chatbot.preparePrompt({
       messages: [
         ...projectConversationMessages(options.document.events),
         ...(options.correction ? [{ role: 'user' as const, content: options.correction }] : [])
       ],
-      project: projectAiContext(options.document, options.contextSelection)
+      project: projectAiContext(options.document, options.contextSelection),
+      attempt: options.attempt
     });
   } catch (error) {
     return generationPreparationFailure(options, error, dependencies);
@@ -490,17 +534,21 @@ async function runHtmlGeneration(
       attempt: options.attempt,
       operationId: options.operationId,
       prompt,
-      generate: () => chatbot.generatePrepared(prompt),
-      validateResult: (result) =>
+      generate: () =>
+        options.chatbot.generatePrepared(prompt, { signal: currentProjectOperationSignal() }),
+      validateResult: (result) => {
         validateGeneratedReply(
           options.document,
           result.reply,
           result.candidates.length,
           result.providerResponse
-        ),
+        );
+        validateRecoveryExplanation(prompt, result.recovery, result.providerResponse);
+      },
       fallbackResponse: (result) => ({
         reply: result.reply,
         candidates: result.candidates,
+        recovery: result.recovery ?? null,
         generation: result.generation
       })
     },
@@ -509,7 +557,7 @@ async function runHtmlGeneration(
 }
 
 async function generationPreparationFailure(
-  options: { document: ProjectDocument; operationId: string; attempt: 1 | 2 },
+  options: { document: ProjectDocument; operationId: string; attempt: number },
   error: unknown,
   dependencies: ProjectCommandDependencies
 ) {
@@ -546,7 +594,7 @@ async function generationPreparationFailure(
 async function runPreparedGeneration<Output extends { reply: GeneratedMessageContent }>(
   options: {
     document: ProjectDocument;
-    attempt: 1 | 2;
+    attempt: number;
     operationId: string;
     prompt: ChatbotPrompt;
     dslRevision?: DslRevision;
@@ -562,7 +610,7 @@ async function runPreparedGeneration<Output extends { reply: GeneratedMessageCon
     operationId: options.operationId,
     payload: {
       attempt: options.attempt,
-      purpose: options.attempt === 1 ? 'initial' : 'repair',
+      purpose: options.prompt.attempt.purpose,
       prompt: recordText(JSON.stringify(options.prompt), 'application/json'),
       promptTemplateSha256: sourceSha256(options.prompt.initialPrompt),
       ...(options.dslRevision ? { dslRevision: options.dslRevision } : {}),
@@ -636,7 +684,7 @@ async function compileCandidateBatch(
     candidate: string;
     seeds: readonly number[];
     operationId: string;
-    attempt: 1 | 2;
+    attempt: number;
   },
   dependencies: ProjectCommandDependencies
 ) {
@@ -816,6 +864,25 @@ function validateGeneratedReply(
   }
 }
 
+function validateRecoveryExplanation(
+  prompt: ChatbotPrompt,
+  recovery: RecoveryExplanation | undefined,
+  providerResponse?: unknown
+): void {
+  if (prompt.attempt.purpose === 'fallback' && !recovery) {
+    throw new InvalidChatbotResponseError(
+      'The fallback response did not explain what was simplified.',
+      providerResponse
+    );
+  }
+  if (prompt.attempt.purpose !== 'fallback' && recovery) {
+    throw new InvalidChatbotResponseError(
+      'A non-fallback response unexpectedly included a recovery explanation.',
+      providerResponse
+    );
+  }
+}
+
 function generatedReplyText(reply: GeneratedMessageContent): string {
   return reply
     .map((segment) => {
@@ -898,6 +965,102 @@ function appendSystemFailure(
     [],
     dependencies.projectService
   );
+}
+
+function appendAttemptDeadlineFailure(
+  document: ProjectDocument,
+  operationId: string,
+  dependencies: ProjectCommandDependencies
+) {
+  return appendSystemFailure(
+    document,
+    'This visualization needed another attempt, but there was not enough time left in the study phase to complete it safely. I kept the last working visualization.',
+    operationId,
+    dependencies
+  );
+}
+
+function appendExhaustedSverlinFailure(
+  document: ProjectDocument,
+  operationId: string,
+  finalDifficulty: string | undefined,
+  dependencies: ProjectCommandDependencies
+) {
+  return appendSystemFailure(
+    document,
+    `I could not make the requested visualization compile after several repairs and a simpler fallback, so I kept the last working visualization.${finalDifficulty ? ` The remaining difficulty was: ${plainFailureSummary(finalDifficulty)}` : ''}`,
+    operationId,
+    dependencies
+  );
+}
+
+function appendExhaustedHtmlFailure(
+  document: ProjectDocument,
+  operationId: string,
+  finalDifficulty: string,
+  dependencies: ProjectCommandDependencies
+) {
+  return appendSystemFailure(
+    document,
+    `I could not make the requested visualization pass the safety checks after several repairs and a simpler fallback, so I kept the last working visualization. The remaining difficulty was: ${plainFailureSummary(finalDifficulty)}`,
+    operationId,
+    dependencies
+  );
+}
+
+async function runAttemptLadder(
+  document: ProjectDocument,
+  operationId: string,
+  chatbot: {
+    config: { attemptProfiles: readonly unknown[] };
+    requestTimeoutMs(): number;
+  },
+  dependencies: ProjectCommandDependencies,
+  runAttempt: (
+    document: ProjectDocument,
+    attempt: number
+  ) => Promise<{ document: ProjectDocument; done: boolean }>
+): Promise<ProjectDocument> {
+  for (let attempt = 1; attempt <= chatbot.config.attemptProfiles.length; attempt += 1) {
+    if (attempt > 1 && !hasTimeForAnotherAttempt(chatbot)) {
+      return appendAttemptDeadlineFailure(document, operationId, dependencies);
+    }
+    const result = await runAttempt(document, attempt);
+    document = result.document;
+    if (result.done) return document;
+  }
+  throw new Error('The configured attempt ladder ended without a terminal result.');
+}
+
+function hasTimeForAnotherAttempt(chatbot: { requestTimeoutMs(): number }): boolean {
+  const deadline = currentProjectOperationDeadline();
+  return deadline === undefined || deadline - Date.now() >= chatbot.requestTimeoutMs();
+}
+
+function replyWithRecovery(
+  reply: GeneratedMessageContent,
+  recovery?: RecoveryExplanation
+): GeneratedMessageContent {
+  if (!recovery) return reply;
+  return [
+    {
+      type: 'markdown',
+      text: `I ran into a difficulty: ${plainFailureSummary(recovery.struggledWith)} To produce a working visualization, I simplified ${plainFailureSummary(recovery.simplified)}`
+    },
+    ...reply
+  ];
+}
+
+function participantDiagnostic(diagnostics: readonly { message: string }[]): string {
+  return diagnostics.length > 0
+    ? 'the generated program still did not satisfy the visualization language checks'
+    : 'the visualization compiler could not validate the generated program';
+}
+
+function plainFailureSummary(value: string): string {
+  const text = value.replace(/\s+/g, ' ').trim().slice(0, 500);
+  if (!text) return 'an unspecified validation problem.';
+  return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
 function validateFocus(document: ProjectDocument, focus: EventId[]) {
@@ -997,15 +1160,26 @@ function assertHead(document: ProjectDocument, expectedHead: EventId) {
 
 function htmlCorrection(
   candidates: Array<{ label: string; manifest: HtmlFramesManifest }>,
-  cause: unknown
+  cause: unknown,
+  failureSummaries: readonly string[]
 ): string {
-  return `The previous candidate batch failed static safety validation: ${errorMessage(cause)}. Return one complete corrected batch of up to two candidates. Previous candidates: ${JSON.stringify(candidates)}`;
+  return `The previous candidate batch failed static safety validation: ${errorMessage(cause)}. Return one complete corrected batch of up to two candidates. Previous candidates: ${JSON.stringify(candidates)}. Failure history: ${JSON.stringify(failureSummaries.map((summary) => summary.slice(0, 2_000)))}`;
 }
 
 function generationFailureKind(error: unknown) {
   if (error instanceof Error && error.name === 'OpenAIConfigurationError') return 'configuration';
-  if (error instanceof Error && error.name === 'APITimeoutError') return 'timeout';
-  if (error instanceof Error && error.name === 'AbortError') return 'cancelled';
+  if (
+    error instanceof Error &&
+    (error.name === 'APITimeoutError' || error.name === 'APIConnectionTimeoutError')
+  )
+    return 'timeout';
+  if (
+    error instanceof Error &&
+    (error.name === 'AbortError' ||
+      error.name === 'APIUserAbortError' ||
+      error.name === 'StudyPhaseDeadlineError')
+  )
+    return 'cancelled';
   if (error instanceof Error && error.name === 'InvalidChatbotResponseError') {
     return 'invalid-response';
   }
@@ -1015,8 +1189,22 @@ function generationFailureKind(error: unknown) {
 function safeErrorMessage(error: unknown) {
   if (error instanceof Error && error.name === 'OpenAIConfigurationError') return error.message;
   if (error instanceof Error && error.name === 'ChatContextOverflowError') return error.message;
-  if (error instanceof Error && error.name === 'APITimeoutError')
+  if (
+    error instanceof Error &&
+    (error.name === 'APITimeoutError' || error.name === 'APIConnectionTimeoutError')
+  )
     return 'The AI request timed out.';
+  if (
+    error instanceof Error &&
+    (error.name === 'AbortError' ||
+      error.name === 'APIUserAbortError' ||
+      error.name === 'StudyPhaseDeadlineError')
+  ) {
+    const reason = currentProjectOperationSignal()?.reason;
+    return reason instanceof Error
+      ? reason.message
+      : 'The AI request was cancelled before it could finish.';
+  }
   if (error instanceof Error && error.name === 'InvalidChatbotResponseError') return error.message;
   return 'The AI service could not complete this request.';
 }

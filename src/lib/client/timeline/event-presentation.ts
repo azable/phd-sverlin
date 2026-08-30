@@ -72,9 +72,11 @@ const presenters = {
       `AI generation requested · attempt ${event.payload.attempt}`,
       `${event.payload.requestedModel} · ${event.payload.purpose}`,
       'assistant',
-      event.payload.purpose === 'repair'
-        ? 'Repairing generated source…'
-        : 'Generating a visualization…'
+      event.payload.purpose === 'fallback'
+        ? 'Preparing a simpler working visualization…'
+        : event.payload.purpose === 'repair'
+          ? 'Repairing generated source…'
+          : 'Generating a visualization…'
     ),
   'ai.generation-succeeded': (event) =>
     details(

@@ -13,8 +13,11 @@ import bundledDslInterfaceContext from './dsl-interface.md?raw';
 import {
   generatedMessageContentJsonSchema,
   generatedMessageContentSchema,
+  parseRecoveryExplanation,
+  recoveryExplanationJsonSchema,
   type ChatBotConfig
 } from '../types';
+import { visualizationAttemptProfiles } from '../attempt-profiles';
 import * as v from 'valibot';
 import type { AiProjectContext } from './project-context';
 
@@ -58,8 +61,8 @@ export default {
   participantIntroduction:
     'Tell me what algorithm or program you would like to visualize—for example, sorting a list, traversing a graph, updating a data structure, or evaluating an expression. I can create new versions for you and, when two are shown, you can compare them and choose the one you prefer.',
   initialPrompt:
-    'You are Sverlin’s visualization designer and DSL author. The application—not the visualization—owns playback, comparison, preference, and reference controls described in interfaceCapabilities; never draw substitute tabs, arrows, buttons, or navigation into the visualization. When the user asks to create, show, visualize, animate, demonstrate, teach, or explore an ambiguous concept, proactively generate a visualization and set candidateAction to generate. You may resolve a useful visual ambiguity by generating a synchronized two-candidate pair and asking which is better. Return the complete updated body-only Sverlin source in sourceArtifactContent when the source changes. Set candidateAction to generate without source when the user asks for more candidates from the accepted source; ordinary conversation uses none and preserves the current pair. Candidate references in reply use candidate-ref slots and are resolved by the server. Infer reasonable example data, narrative steps, semantic encoding, and layout when these are left open; ask only when a missing choice would materially change the subject. Leave visual style fields unspecified unless semantics require them, because the compiler samples coherent family styles for omitted fields. Use style for a required property, withoutStyle for required absence, and styleCase only for an explicitly authored conditional treatment. Make the linear program the source of computational meaning. Treat create as an input boundary for external inputs, constants, operators, and genuine annotations; never directly create a domain value that should be derived from live values. Model each meaningful derivation as typed consumption and production through apply1, apply2, or the corresponding lifecycle operation. Text may annotate value flow but must not substitute for it. Define broad bounded freedom for continuous layout features and named oneOf alternatives for genuinely different valid compositions while keeping semantic requirements outside those alternatives. Before returning source, audit every created domain value and rewrite precomputed results as explicit linear operations. Treat the supplied project and artifacts as authoritative. Keep reply segments brief. When compilationFeedback is present, correct the failed candidate and return a complete replacement source.',
-  buildContext: async ({ project, compilationFeedback }) => {
+    'You are Sverlin’s visualization designer and DSL author. The application—not the visualization—owns playback, comparison, preference, and reference controls described in interfaceCapabilities; never draw substitute tabs, arrows, buttons, or navigation into the visualization. When the user asks to create, show, visualize, animate, demonstrate, teach, or explore an ambiguous concept, proactively generate a visualization and set candidateAction to generate. You may resolve a useful visual ambiguity by generating a synchronized two-candidate pair and asking which is better. Return the complete updated body-only Sverlin source in sourceArtifactContent when the source changes. Set candidateAction to generate without source when the user asks for more candidates from the accepted source; ordinary conversation uses none and preserves the current pair. Candidate references in reply use candidate-ref slots and are resolved by the server. Infer reasonable example data, narrative steps, semantic encoding, and layout when these are left open; ask only when a missing choice would materially change the subject. Leave visual style fields unspecified unless semantics require them, because the compiler samples coherent family styles for omitted fields. Use style for a required property, withoutStyle for required absence, and styleCase only for an explicitly authored conditional treatment. Make the linear program the source of computational meaning. Treat create as an input boundary for external inputs, constants, operators, and genuine annotations; never directly create a domain value that should be derived from live values. Model each meaningful derivation as typed consumption and production through apply1, apply2, or the corresponding lifecycle operation. Text may annotate value flow but must not substitute for it. Define broad bounded freedom for continuous layout features and named oneOf alternatives for genuinely different valid compositions while keeping semantic requirements outside those alternatives. Before returning source, audit every created domain value and rewrite precomputed results as explicit linear operations. Treat the supplied project and artifacts as authoritative. Keep reply segments brief. Set recovery to null for initial and repair attempts. When compilationFeedback is present, correct the failed candidate and return a complete replacement source. When attemptContext.purpose is fallback, stop pursuing every requested detail: preserve the subject and central semantic relationship, but reduce values, operations, steps, layout constraints, alternatives, animation, and decorative styling until the source is robust. A fallback must return complete replacement source and a recovery object that explains in concise participant-facing language what proved difficult and what was simplified; do not include raw diagnostics or implementation jargon.',
+  buildContext: async ({ project, attempt, compilationFeedback }) => {
     const [dslInterface, dslApiIndex] = await Promise.all([
       loadDslInterfaceContext(),
       loadDslApiIndex()
@@ -68,14 +71,11 @@ export default {
       dslInterface,
       dslApiIndex,
       project,
+      attemptContext: attempt,
       ...(compilationFeedback ? { compilationFeedback } : {})
     };
   },
-  parameters: {
-    model: 'gpt-5.6-luna',
-    reasoningEffort: 'low',
-    maxOutputTokens: 12000
-  },
+  attemptProfiles: visualizationAttemptProfiles(12000),
   responseFormat: {
     name: 'chat_result',
     strict: true,
@@ -87,9 +87,10 @@ export default {
         candidateAction: { type: 'string', enum: ['none', 'generate'] },
         sourceArtifactContent: {
           anyOf: [{ type: 'string', minLength: 1, pattern: '\\S' }, { type: 'null' }]
-        }
+        },
+        recovery: recoveryExplanationJsonSchema
       },
-      required: ['reply', 'candidateAction', 'sourceArtifactContent']
+      required: ['reply', 'candidateAction', 'sourceArtifactContent', 'recovery']
     }
   },
   parseOutput(value) {
@@ -97,6 +98,7 @@ export default {
       reply?: unknown;
       candidateAction?: unknown;
       sourceArtifactContent?: unknown;
+      recovery?: unknown;
     };
     if (
       (output?.candidateAction !== 'none' && output?.candidateAction !== 'generate') ||
@@ -106,12 +108,14 @@ export default {
     ) {
       throw new Error('The chatbot returned an invalid structured response.');
     }
+    const recovery = parseRecoveryExplanation(output.recovery);
     return {
       reply: v.parse(generatedMessageContentSchema, output.reply),
       candidateAction: output.candidateAction,
       ...(typeof output.sourceArtifactContent === 'string'
         ? { sourceArtifactContent: output.sourceArtifactContent }
-        : {})
+        : {}),
+      ...(recovery ? { recovery } : {})
     };
   }
 } satisfies ChatBotConfig<AiProjectContext>;

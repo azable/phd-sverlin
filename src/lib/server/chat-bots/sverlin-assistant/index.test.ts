@@ -42,7 +42,8 @@ describe('AI assistant DSL interface', () => {
 
     const context = await aiAssistant.buildContext({
       messages: [],
-      project: {} as never
+      project: {} as never,
+      attempt: { number: 1, purpose: 'initial' }
     });
     expect(context.dslApiIndex).toBe(index);
   });
@@ -86,5 +87,24 @@ describe('AI assistant DSL interface', () => {
         sourceArtifactContent: '   '
       })
     ).toThrow();
+  });
+
+  it('parses participant-facing fallback explanations', () => {
+    expect(
+      aiAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'Here is a simpler version.' }],
+        candidateAction: 'none',
+        sourceArtifactContent: 'main = pure ()',
+        recovery: {
+          struggledWith: 'the dense animated layout',
+          simplified: 'the layout while preserving the value flow'
+        }
+      })
+    ).toMatchObject({
+      recovery: {
+        struggledWith: 'the dense animated layout',
+        simplified: 'the layout while preserving the value flow'
+      }
+    });
   });
 });

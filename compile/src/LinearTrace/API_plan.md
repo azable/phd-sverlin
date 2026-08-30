@@ -1,8 +1,10 @@
 # LinearTrace API refactor plan
 
-This file records concise, agreed implementation instructions. Keep historical
-evidence and extended rationale in `API_refactoring.md`; update this plan as
-decisions are made.
+This file records concise, agreed implementation instructions. The retired
+`API_refactoring.md` remains available in Git history at revision `f5f88c5` for
+historical investigation; its relevant behavioral evidence and donor commits
+are summarized here rather than treated as a second live plan. Update this file
+as decisions are made.
 
 Keep the compact proposed-facade inventory in
 [API_plan_list.md](API_plan_list.md) synchronized whenever a public API is
@@ -170,13 +172,44 @@ Authors define operator behavior through `Applicable1` and `Applicable2`,
 pattern matching the public `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, or
 `LOperator` wrappers and constructing the result wrapper directly.
 
-`LOperator` is a stateless marker: its operator type selects the corresponding
-`Applicable1` or `Applicable2` instance, but it carries no runtime value.
+`LOperator tag` is a stateless marker: `tag` is the operator block type that
+selects the corresponding `Applicable1` or `Applicable2` instance. A separate
+operator parameter would carry no additional information now that the marker
+has no runtime value.
 Remove `CoreOperator`, `persistOperatorPayload`, and `operatorPayloadText` from
 the public API; Core persists the marker internally. Operator parameters are
 ordinary operands, so a scale factor such as `2.5` is a traceable `Number`
 input rather than hidden state inside a `Scale` operator. Operator spellings
 such as `+`, `==`, or `equals` belong to the particular Render mapping.
+
+Unary and binary operators, different result types, and one operator applied to
+several operand types all use the same one-parameter marker:
+
+```haskell
+data Negate
+instance Traceable Negate where
+  type Payload Negate = LOperator Negate
+
+data Add
+instance Traceable Add where
+  type Payload Add = LOperator Add
+
+instance Applicable1 Negate Number where
+  type Apply1Result Negate Number = Number
+  applyPayload1 LOperator (LInt value) = LInt (Linear.negate value)
+
+instance Applicable2 Add Number Number where
+  type Apply2Result Add Number Number = Number
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LInt (leftValue Linear.+ rightValue)
+```
+
+An `Applicable2 Add Vector Vector` instance can coexist with the numeric one;
+the operand types select between them. An equality operator can return
+`Condition` instead of its operand type through `Apply2Result`. A parameterized
+operation such as scaling uses a stateless `Scale` block plus an ordinary
+traceable factor operand. None of these cases requires a second `LOperator`
+parameter.
 
 The exact declaration combinators and concrete builder type name are still to
 be designed. `Traceable` instances are the payload declarations, so Domain does
@@ -539,14 +572,14 @@ and carries a hidden presence condition. Any later component that consumes it
 inherits that condition automatically:
 
 ```haskell
-Selected explanation <- sometimes $ node $ content (text "comparison failed")
+explanation <- sometimes $ node $ content (text "comparison failed")
 
-Selected detail <- node $ do
-  Selected current <- self
+detail <- node $ do
+  current <- self
   content (text "try the next element")
   ensure $ top current .==. bottom explanation + by 12
 
-Selected counter <- node $ content (text "iteration")
+counter <- node $ content (text "iteration")
 ```
 
 When a seed omits `explanation`, it also omits `detail` and the dependent
@@ -588,54 +621,44 @@ the affine layout space.
 #### Rules, selections, and nodes
 
 The visualization interface declares reusable rules independently of program
-execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `GeneratedNode`,
-`CanvasNode`, `select`, `visualize`, `Node`, `node`, `self`, and `canvas`.
-Generalize the node-specific `NodeBinding` wrapper to `SelectionBinding`, then
-replace the query-based `Select`, `AnyPayload`, and `PayloadQuery` surface with
-typed block-kind and relation-kind selection:
+execution. Retain `Selected`, `GeneratedNode`, `CanvasNode`, `select`, `node`,
+`self`, and `canvas`. Remove `MatchSpec` and `visualize`: authored source already
+supplies `render :: Render ()`, while compiling that declaration belongs to the
+private compiler/runner boundary. Replace the query-based `Select`,
+`AnyPayload`, and `PayloadQuery` surface with typed block-kind and relation-kind
+selection:
 
 ```haskell
-data SelectionBinding a = Selected a
-
-class Selectable selector result | selector -> result where
-  select :: selector -> Render (SelectionBinding result)
-
-instance Selectable (Kind tag) (Selected tag)
-instance Selectable (RelationKind source target) (Relations source target)
-
-class Node input result | input -> result where
-  node :: input -> result
-
-instance Node (Selected tag) (Render () -> Render ())
-instance Node (Render ()) (Render (SelectionBinding (Selected GeneratedNode)))
-
-self   :: Render (SelectionBinding (Selected GeneratedNode))
+select :: selector -> Render result
+node   :: input -> result
+self   :: Render (Selected GeneratedNode)
 canvas :: Selected CanvasNode
 ```
 
-`Selectable` has only these library-provided cases in the target interface;
-authors declare `Kind` and `RelationKind` values rather than selection
-instances. A `Kind` determines the selected payload type, so block selection no
-longer needs a type application such as `select @Number`. It selects every live
-block in the current exposed frame with that one declared kind. A `RelationKind`
-selects every active relation of that kind in the same frame; the resulting
-`Relations` value is documented below. Both uses have the same author-facing
-binding form:
+The private dispatch behind `select` supports exactly `Kind tag -> Selected tag`
+and `RelationKind source target -> Relations source target`. The private
+dispatch behind `node` supports exactly a selected-node mapping and generated
+node creation. These implementation classes are closed: authors define neither
+instances nor alternate selection or node meanings. `Kind` determines the
+selected payload type, so block selection no longer needs a type application
+such as `select @Number`. It selects every live block in the current exposed
+frame with that one declared kind. `RelationKind` selects every active relation
+of that kind in the same frame.
 
 ```haskell
-Selected values <- select valueKind
-Selected adjacentLinks <- select Adjacent
+values <- select valueKind
+adjacentLinks <- select Adjacent
 ```
 
-`SelectionBinding` only supports the unrestricted `Selected` pattern used to
-name a selection. Selecting a relation does not make it a visual node, and
-`node` accepts only node selections or a generated-node body. The two
-library-provided `Node` instances are the complete supported set; authors do not
-define more. `node selected body` applies the body once per matched node. A
-trace-selected node is terminal and cannot contain children. `node body`
-creates one generated node in the current Render scope and returns its handle
-through `SelectionBinding`; generated nodes may contain selected or nested
-nodes.
+Remove `SelectionBinding`, `Variable`, and `Bound`: each only wrapped a useful
+value that authors immediately unpacked. The returned `Selected`, symbolic
+value, `Choice`, or `ContentValue` carries its compiler identity and hidden
+presence provenance directly. Selecting a relation does not make it a visual
+node, and `node` accepts only node selections or a generated-node body.
+`node selected body` applies the body once per matched node. A trace-selected
+node is terminal and cannot contain children. `node body` creates one generated
+node in the current Render scope and returns `Selected GeneratedNode` directly;
+generated nodes may contain selected or nested nodes.
 
 `self` retrieves the current generated node's handle from inside `body`, before
 `node` returns it; using `self` at the root or inside a trace-selected node is a
@@ -657,15 +680,15 @@ theme-defined fit range. A fixed `FontSize` pins the size. `fitText` neither
 maximizes the size nor inserts line breaks.
 
 ```haskell
-Selected title <- node $ do
+title <- node $ do
   content (text "Search result")
   padding (uniform (by 8))
 
-Variable labelSize <- variable @Span
+labelSize <- variable @Span
 ensure $ labelSize .>=. by 14
 ensure $ labelSize .<=. by 28
 
-Selected label <- node $ do
+label <- node $ do
   fitText (text "Search result")
   style @FontSize labelSize
   width (by 160)
@@ -710,35 +733,35 @@ comparisonText = do
 
 render :: Render ()
 render = do
-  Variable codeFont <- fontChoice (fontKind Monospace)
-  Variable explanationFont <- fontChoice (fontKind Proportional)
-  Variable codeSize <- variable @Span
+  codeFont <- fontChoice (fontKind Monospace)
+  explanationFont <- fontChoice (fontKind Proportional)
+  codeSize <- variable @Span
 
-  Selected explanationLine <- node $ do
+  explanationLine <- node $ do
     fitText (text "Compare each element with the target; return its index when they match.")
     style @FontFamily explanationFont
 
-  Selected loopLine <- node $ do
+  loopLine <- node $ do
     fitText (literal "for (int i = 0; i < n; ++i) {")
     style @FontFamily codeFont
     style @FontSize codeSize
 
-  Selected comparisonLine <- node $ do
+  comparisonLine <- node $ do
     fitText comparisonText
     style @FontFamily codeFont
     style @FontSize codeSize
 
-  Selected returnLine <- node $ do
+  returnLine <- node $ do
     fitText (literal "return i;")
     style @FontFamily codeFont
     style @FontSize codeSize
 
-  Selected innerCloseLine <- node $ do
+  innerCloseLine <- node $ do
     fitText (literal "}")
     style @FontFamily codeFont
     style @FontSize codeSize
 
-  Selected outerCloseLine <- node $ do
+  outerCloseLine <- node $ do
     fitText (literal "}")
     style @FontFamily codeFont
     style @FontSize codeSize
@@ -824,9 +847,9 @@ or Program.
 ```haskell
 render :: Render ()
 render = do
-  Selected values <- select valueKind
+  values <- select valueKind
   node $ do
-    Selected currentGroup <- self
+    currentGroup <- self
     padding (uniform (by 12))
     node values $ do
       content (text "value")
@@ -883,7 +906,7 @@ rankOf
   -> Render FixedInt
 ```
 
-`Selected links <- select kind` selects the relations of one declared kind that
+`links <- select kind` selects the relations of one declared kind that
 are active in the current exposed frame. `Relations` is the resulting reusable
 selection, parallel to the `Selected` node set returned when `select` receives a
 block `Kind`. It contains the stable identity and endpoints of every matched
@@ -924,7 +947,7 @@ join. For example, `ProbeAt` can directly constrain a probe against its target
 cell:
 
 ```haskell
-Selected probeLinks <- select ProbeAt
+probeLinks <- select ProbeAt
 
 relation probeLinks $ do
   probe <- first probeLinks
@@ -939,7 +962,7 @@ can draw between those endpoints, but it is equally valid to use a relation
 only for layout:
 
 ```haskell
-Selected branches <- select ParentOf
+branches <- select ParentOf
 
 relation branches $ do
   parent <- first branches
@@ -1004,16 +1027,16 @@ default hugging containment derives the parent width from its children and
 padding:
 
 ```haskell
-Selected cells <- select cellKind
-Selected adjacentLinks <- select Adjacent
+cells <- select cellKind
+adjacentLinks <- select Adjacent
 cellRanking <- asSequence adjacentLinks cells
 
-Variable spacing <- variable @Span
+spacing <- variable @Span
 ensure $ spacing .>=. by 64
 ensure $ spacing .<=. by 96
 
 node $ do
-  Selected array <- self
+  array <- self
   padding (uniform (by 16))
 
   node cells $ do
@@ -1028,7 +1051,7 @@ When cell widths vary, replace the centre-spacing rule with constraints over
 the same supplied adjacency relations:
 
 ```haskell
-Variable gap <- variable @Span
+gap <- variable @Span
 ensure $ gap .>=. by 8
 ensure $ gap .<=. by 24
 
@@ -1064,10 +1087,10 @@ parent-to-child relations. For example, one shared local constraint gives every
 tree level the same vertical gap:
 
 ```haskell
-Selected parentLinks <- select ParentOf
+parentLinks <- select ParentOf
 treeRanking <- asTree parentLinks treeNodes
 
-Variable levelGap <- variable @Span
+levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 120
 
@@ -1092,8 +1115,8 @@ and apply ordinary relation constraints. The baseline does not derive ordinal
 positions from those relations:
 
 ```haskell
-Selected siblingLinks <- select Adjacent
-Variable siblingGap <- variable @Span
+siblingLinks <- select Adjacent
+siblingGap <- variable @Span
 ensure $ siblingGap .>=. by 16
 ensure $ siblingGap .<=. by 48
 
@@ -1119,10 +1142,10 @@ general be recovered from one equality constraint per edge when paths have
 different lengths.
 
 ```haskell
-Selected dependencyLinks <- select DependsOn
+dependencyLinks <- select DependsOn
 dagRanking <- asDag dependencyLinks tasks
 
-Variable levelGap <- variable @Span
+levelGap <- variable @Span
 ensure $ levelGap .>=. by 72
 ensure $ levelGap .<=. by 128
 
@@ -1148,7 +1171,7 @@ Do not encode weight by creating duplicate edges; duplicate same-kind endpoint
 pairs are rejected.
 
 ```haskell
-Selected connectionLinks <- select ConnectedTo
+connectionLinks <- select ConnectedTo
 
 node vertices $ do
   ensure $ left vertices .>=. left canvas + shift 24
@@ -1240,7 +1263,7 @@ their endpoint nodes by default, since the target facade has no public z-index.
 An ordered semantic relation can be drawn from its first endpoint to its second:
 
 ```haskell
-Selected dependencies <- select DependsOn
+dependencies <- select DependsOn
 
 relation dependencies $ do
   source <- first dependencies
@@ -1290,14 +1313,12 @@ solver.
 
 #### Reusable values and finite decisions
 
-Retain `bindContent`, `variable`, `choice`, `Choice`, and `global`. `bindContent`
-exposes the payload display
-text of each block in the current typed selection; it no longer depends on a
-payload query binding. Variables and choices introduce
-solver-backed values; `variable` and `choice` create fresh compiler identities.
-Remove `variableFrom`: it only placed an existing expression in the `Variable`
-result wrapper and created no solver value, identity, sharing, or constraint. Use
-an ordinary `let` for fixed and derived expressions.
+Retain `bindContent`, `variable`, `choice`, and `Choice`. `bindContent` exposes
+the payload display text of each block in the current typed selection; it no
+longer depends on a payload query binding. `variable` and `choice` return their
+symbolic values directly, and each call creates a fresh compiler identity.
+Remove `variableFrom`: it creates no solver value, identity, sharing, or
+constraint. Use an ordinary `let` for fixed and derived expressions.
 
 Remove `ChoiceDomain`, `choiceDomain`, and `choiceToken` from the authored facade.
 They are solver and serialization metadata, not custom choice logic. The compiler
@@ -1306,9 +1327,16 @@ write `choice @FontStyle` without defining an instance. `Choice value` stores th
 resolved domain internally, allowing `caseOf` to avoid the public constraint:
 
 ```haskell
-choice :: forall value. ... => Render (Variable (Choice value))
-caseOf :: Choice value -> (value -> [VisualConstraint]) -> Render ()
+bindContent :: Render ContentValue
+variable    :: ... => Render value
+choice      :: forall value. ... => Render (Choice value)
+caseOf      :: Choice value -> (value -> Render ()) -> Render ()
 ```
+
+`caseOf` is the exhaustive categorical map for an existing symbolic choice.
+Each category selects a complete Render block, which may contain styles, nodes,
+connectors, and any number of constraints; it is not limited to returning one
+constraint list.
 
 The baseline does not provide reusable author-defined categorical values. Use
 `oneOf` for custom constraint alternatives and `sometimes` for presence. If a
@@ -1330,14 +1358,14 @@ coefficient. Use typed relations for membership, association, and ordering; use
 must be typed and tied to its selected entity rather than restoring free
 string-keyed facts or bindings.
 
-Use `global name` only when separately declared rules deliberately need the
-same stable solver value. Ordinary reuse within one rule should reuse the value
-returned by the builder instead of managing a string name.
+Remove `global`. Its string-named solver identity bypasses lexical scope and can
+collide accidentally. Share a symbolic value by passing the value returned by
+`variable`, `choice`, or `fontChoice` into helper declarations.
 
 ```haskell
 let fixedGap = by 20
-Variable slant <- choice @FontStyle
-let sharedScale = global "render.shared-scale" :: Scalar
+slant <- choice @FontStyle
+sharedScale <- variable @Scalar
 
 ensure (left second .==. right first + fixedGap)
 ensure (width current .==. by 80 * sharedScale)
@@ -1355,6 +1383,11 @@ value of type `T`; a node setter consumes an authored value, while the same
 overloaded helper applied to a `Selected` handle returns a `VisualExpr` that can
 be related with `ensure`.
 
+The supporting geometry-overload classes are private and closed, like the
+dispatch behind `select` and `node`. Export the lowercase geometry operations,
+not `Left`, `Top`, `Right`, `Bottom`, `Width`, `Height`, `X`, `Y`, `Center`, or
+author-extensible instances.
+
 Every solver-backed numeric value must end up with finite lower and upper bounds
 after all node, canvas, and authored constraints are combined. Intrinsic domains
 supply some of these bounds (`Unit` supplies both; `Coord` and `Span` supply only
@@ -1367,7 +1400,7 @@ canvas units. Construct a fixed coordinate with `at`, or let the solver choose
 one with `variable @Coord` and bound it with constraints.
 
 ```haskell
-Variable columnX <- variable @Coord
+columnX <- variable @Coord
 node card $ left columnX
 ensure $ columnX .>=. at 24
 ensure $ columnX .<=. at 480
@@ -1382,14 +1415,14 @@ two coordinates produces an `Offset`.
 radii, stroke widths, padding, and margins. `by` constructs a fixed span.
 
 ```haskell
-Variable cardWidth <- variable @Span
+cardWidth <- variable @Span
 node card $ width cardWidth
 ensure $ cardWidth .>=. by 120
 ensure $ cardWidth .<=. by 280
 ```
 
-`Span + Span` and `Span |+| Span` both preserve the non-negative domain;
-subtracting spans produces a signed `Offset`.
+`Span + Span` preserves the non-negative domain; subtracting spans produces a
+signed `Offset`. The old `(|+|)` alias adds no behavior and is removed.
 
 ##### `Offset`
 
@@ -1397,23 +1430,19 @@ subtracting spans produces a signed `Offset`.
 `Coord` and `Span`, negative values are valid.
 
 ```haskell
-Variable gap <- variable @Offset
+gap <- variable @Offset
 ensure $ gap .>=. shift (-24)
 ensure $ gap .<=. shift 48
 ensure $ left second .==. right first + gap
 ```
 
-`asCoord` and `asSpan` reinterpret an offset and add the target domain's
-non-negativity requirement. They do not silently take an absolute value.
+Remove `asCoord` and `asSpan`. They allow a signed displacement to cross into
+an absolute-position or size domain and then repair the mismatch with an
+implicit non-negativity constraint. Declare a `Coord` or `Span` when that is the
+intended value, and relate derived geometry without reinterpreting its type:
 
 ```haskell
-Variable originOffset <- variable @Offset
-Variable extentOffset <- variable @Offset
-node card $ do
-  left (asCoord originOffset)
-  width (asSpan extentOffset)
-ensure $ originOffset .<=. shift 480
-ensure $ extentOffset .<=. shift 240
+ensure $ right box .==. left box + width box
 ```
 
 ##### `Scalar`
@@ -1423,7 +1452,7 @@ graph-derived `FixedInt` into a constant scalar expression; it does not turn the
 integer into a sampled solver variable.
 
 ```haskell
-Variable scale <- variable @Scalar
+scale <- variable @Scalar
 ensure $ scale .>=. num 0.75
 ensure $ scale .<=. num 1.25
 node card $ width (by 160 * scale)
@@ -1451,28 +1480,13 @@ ensure $ width label .<=. width card - by 24
 The role parameter preserves distinctions such as `Coord`, `Span`, and `Unit`
 while allowing expressions from several selected nodes to be combined.
 
-##### `Free`
-
-`Free` is an otherwise unbounded solver numeric domain. Because the target
-solver requires a bounded design space, every authored `Free` variable must
-receive finite lower and upper bounds before sampling.
-
-```haskell
-Variable score <- variable @Free
-ensure $ score .>=. num (-1)
-ensure $ score .<=. num 1
-```
-
-Prefer `Coord`, `Span`, `Unit`, or `Angle` when their intrinsic domain describes
-the value; `Free` is not a substitute for a signed layout `Offset`.
-
 ##### `Unit`
 
 `Unit` is a solver expression intrinsically bounded to the inclusive interval
 zero to one. It is used by opacity, alpha, saturation, and lightness.
 
 ```haskell
-Variable fade <- variable @Unit
+fade <- variable @Unit
 ensure $ fade .>=. num 0.35
 node label $ style @Opacity fade
 ```
@@ -1484,7 +1498,7 @@ materializer own canonical treatment of the equivalent zero- and 360-degree
 boundary.
 
 ```haskell
-Variable accentHue <- variable @Angle
+accentHue <- variable @Angle
 ensure $ accentHue .>=. num 180
 ensure $ accentHue .<=. num 260
 node card $ style @Fill (Hsl accentHue (num 0.65) (num 0.52))
@@ -1506,25 +1520,12 @@ Vector equality lowers component by component. Arithmetic is available only
 where the component types already support it.
 
 ```haskell
-Variable badgeX <- variable @Coord
-Variable badgeY <- variable @Coord
+badgeX <- variable @Coord
+badgeY <- variable @Coord
 node badge $ center (vec2 badgeX badgeY)
 ensure $ badgeX .<=. at 640
 ensure $ badgeY .<=. at 360
 ```
-
-##### `Bounds`
-
-`Bounds a` is the four-component container ordered as top, left, width, and
-height. The `bounds` setter pins all four properties of the current node at
-once.
-
-```haskell
-node card $ bounds (Bounds (num 32) (num 48) (num 240) (num 120))
-```
-
-Use the individual typed setters when components are solver variables; they
-make the coordinate/span distinction visible and give clearer diagnostics.
 
 ##### `separatedBy`
 
@@ -1546,8 +1547,8 @@ linearly in every case.
 
 ##### Numeric literals and affine arithmetic
 
-Retain `num`, `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, `(/)`, and
-`(|+|)`. `num` constructs a literal in the type inferred by its use;
+Retain `num`, `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, and `(/)`.
+`num` constructs a literal in the type inferred by its use;
 `fromInteger` and `fromRational` support ordinary overloaded numeric literals.
 Prefer `at`, `by`, and `shift` at layout boundaries because they make the
 intended domain explicit.
@@ -1555,7 +1556,7 @@ intended domain explicit.
 ```haskell
 ensure $ left label .==. at 20 + shift 8
 ensure $ width second .==. width first + by 12
-node card $ height ((by 96 |+| by 24) / num 2)
+node card $ height ((by 96 + by 24) / num 2)
 
 let fixedScale = 3 / 2 :: Scalar
 node badge $ width (by 80 * fixedScale)
@@ -1619,7 +1620,7 @@ ensure $ width label .<=. width card - by 32
 `Height` is the corresponding height setter and accessor.
 
 ```haskell
-Variable rowHeight <- variable @Span
+rowHeight <- variable @Span
 node row $ height rowHeight
 ensure $ rowHeight .>=. by 32
 ensure $ rowHeight .<=. by 96
@@ -1640,7 +1641,7 @@ ensure $ x badge .==. x card
 `Y` and `y` address the vertical centre coordinate.
 
 ```haskell
-Variable baselineY <- variable @Coord
+baselineY <- variable @Coord
 node label $ y baselineY
 ensure $ baselineY .<=. at 360
 ensure $ y icon .==. baselineY
@@ -1665,7 +1666,7 @@ children/content; `margin` contributes external spacing when a parent contains
 or hugs the node.
 
 ```haskell
-Variable gutter <- variable @Span
+gutter <- variable @Span
 ensure $ gutter .>=. by 8
 ensure $ gutter .<=. by 24
 node group $ do
@@ -1745,29 +1746,28 @@ style :: forall field input. ... => input -> Render ()
 
 node title $ style @FontStyle FontStyleItalic
 
-Variable selectedStyle <- choice @FontStyle
+selectedStyle <- choice @FontStyle
 node explanation $ style @FontStyle selectedStyle
 ```
 
 The compiler provides the supported field/input pairs; authors do not define the
 conversion class. Passing `Choice FontStyle` to `style @FontFamily`, for example,
 is a type error. A direct choice assignment makes the field always present, so
-`styleOf` can read and constrain it. `styleCase` remains distinct: it maps a choice
-to other field values and may omit the field in some branches. Keep the necessary
-fixed-or-variable sum inside the style compiler; remove the public `StyleChoice`,
-`FixedStyle`, `VariableStyle`, `styleFrom`, and `styleChoice` adapters.
+`styleOf` can read and constrain it. Keep the necessary fixed-or-variable sum
+and accumulated `NodeStyle` representation inside the style compiler; neither
+is an authored type.
 
-##### `NodeStyle`
+##### Style operations
 
-`NodeStyle` remains the opaque accumulated style plan for a node. Authors do
-not construct it directly. Cluster its public operations as follows:
+Cluster the public operations as follows:
 
 - `style @Field input` requires or overrides one field with a fixed value, matching
   categorical choice, or supported symbolic expression.
 - `withoutStyle @Field` explicitly suppresses an inherited or automatically
   generated field.
-- `styleCase @Field choice mapping` conditionally supplies a field for each
-  category; `Nothing` suppresses it in that branch.
+- `caseOf choice mapping` maps an existing categorical choice to complete
+  Render blocks. Use ordinary `style` or `withoutStyle` operations in those
+  blocks for conditional style behavior; there is no separate `styleCase`.
 - `styleFamily name` assigns the semantic cascade family used by automatic
   styling of the node and descendants. This string is a style-family label,
   not a solver-choice identity.
@@ -1775,21 +1775,20 @@ not construct it directly. Cluster its public operations as follows:
   for use in constraints.
 
 ```haskell
-Variable slant <- choice @FontStyle
+slant <- choice @FontStyle
 node label $ do
   styleFamily "explanation"
   style @FontStyle slant
-  styleCase @Opacity slant $ \case
-    FontStyleNormal  -> Just (num 1)
-    FontStyleItalic  -> Just (num 0.90)
-    FontStyleOblique -> Just (num 0.85)
+  caseOf slant $ \case
+    FontStyleNormal -> style @Opacity (num 1)
+    FontStyleItalic -> style @Opacity (num 0.90)
   withoutStyle @Stroke
 
 ensure $ styleOf @FontStyle label .==. slant
 ```
 
 `styleOf` requires that the requested field is present in every branch. It
-cannot read a field declared with `withoutStyle` or a conditional `styleCase`;
+cannot read a field removed with `withoutStyle` in one `caseOf` branch;
 constrain the driving choice instead when presence itself is conditional.
 
 ##### `Opacity`
@@ -1798,7 +1797,7 @@ constrain the driving choice instead when presence itself is conditional.
 shape and text content. `styleOf @Opacity` returns `VisualExpr Unit`.
 
 ```haskell
-Variable nodeOpacity <- variable @Unit
+nodeOpacity <- variable @Unit
 node label $ style @Opacity nodeOpacity
 ensure $ nodeOpacity .>=. num 0.4
 ensure $ styleOf @Opacity label .==. nodeOpacity
@@ -1812,7 +1811,7 @@ variable contributes its own fit constraints. Ordinary `content` uses a fixed
 authored or theme-default size.
 
 ```haskell
-Variable labelSize <- variable @Span
+labelSize <- variable @Span
 node label $ style @FontSize labelSize
 ensure $ labelSize .>=. by 14
 ensure $ labelSize .<=. by 28
@@ -1830,7 +1829,7 @@ theme-defined fit range.
 available through `styleOf @Radius` as `VisualExpr Span`.
 
 ```haskell
-Variable cornerRadius <- variable @Span
+cornerRadius <- variable @Span
 node card $ style @Radius cornerRadius
 ensure $ cornerRadius .>=. by 0
 ensure $ cornerRadius .<=. by 24
@@ -1842,7 +1841,7 @@ ensure $ cornerRadius .<=. by 24
 width when `BorderStyle` is not `BorderNone`.
 
 ```haskell
-Variable borderWidth <- variable @Span
+borderWidth <- variable @Span
 node card $ do
   style @StrokeWidth borderWidth
   style @BorderStyle BorderSolid
@@ -1856,7 +1855,7 @@ ensure $ borderWidth .<=. by 4
 distinct from `Opacity`, which fades the complete node as one rendered group.
 
 ```haskell
-Variable paintAlpha <- variable @Unit
+paintAlpha <- variable @Unit
 node card $ style @Alpha paintAlpha
 ensure $ paintAlpha .>=. num 0.5
 ensure $ paintAlpha .<=. num 1
@@ -1869,16 +1868,13 @@ constructor and its `hue`, `saturation`, and `lightness` record accessors. In a
 `Color`, hue is an `Angle` and the other components are `Unit` values.
 
 ```haskell
-Variable hueValue <- variable @Angle
-Variable saturationValue <- variable @Unit
+hueValue <- variable @Angle
+saturationValue <- variable @Unit
 let accent = Hsl hueValue saturationValue (num 0.52) :: Color
 ```
 
-`sat` remains the compact saturation accessor, particularly for a colour read
-from a selected style:
-
 ```haskell
-ensure $ sat (styleOf @Fill card) .>=. num 0.55
+ensure $ saturation (styleOf @Fill card) .>=. num 0.55
 ensure $ hue (styleOf @Fill card) .>=. num 180
 ensure $ lightness (styleOf @Fill card) .<=. num 0.7
 ```
@@ -1900,8 +1896,8 @@ node card $ style @Fill quietBlue
 components are selected `VisualExpr` values.
 
 ```haskell
-Variable fillHue <- variable @Angle
-Variable fillLightness <- variable @Unit
+fillHue <- variable @Angle
+fillLightness <- variable @Unit
 node card $ style @Fill (Hsl fillHue (num 0.7) fillLightness)
 ensure $ fillLightness .>=. num 0.35
 ensure $ fillLightness .<=. num 0.65
@@ -1917,7 +1913,7 @@ node card $ do
   style @Stroke (Hsl (num 220) (num 0.55) (num 0.3))
   style @BorderStyle BorderSolid
 
-ensure $ sat (styleOf @Stroke card) .>=. num 0.4
+ensure $ saturation (styleOf @Stroke card) .>=. num 0.4
 ```
 
 ##### `BorderStyle`
@@ -1926,7 +1922,7 @@ ensure $ sat (styleOf @Stroke card) .>=. num 0.4
 `BorderDashed`, `BorderDotted`, and `BorderDouble`.
 
 ```haskell
-Variable borderStyle <- choice @BorderStyle
+borderStyle <- choice @BorderStyle
 node card $ style @BorderStyle borderStyle
 ensure $ styleOf @BorderStyle card .==. borderStyle
 ```
@@ -1958,36 +1954,39 @@ shape of the existing `choice` interface:
 
 ```haskell
 fontKind :: FontKind -> FontFilter
-fontChoice :: FontFilter -> Render (Variable (Choice FontFamily))
+fontChoice :: FontFilter -> Render (Choice FontFamily)
 ```
 
 ```haskell
-Variable codeFont <- fontChoice (fontKind Monospace)
-Variable explanationFont <- fontChoice (fontKind Proportional)
+codeFont <- fontChoice (fontKind Monospace)
+explanationFont <- fontChoice (fontKind Proportional)
 ```
 
 An empty filter produces a source-level diagnostic. Keep `FontFilter` abstract
 so later constructors and composition helpers, such as serif classification or
 required script coverage, can be added without changing `fontChoice`.
 
-Filter results contain unique concrete catalog-family identities. Resolve
-generic aliases before weighting candidates so an alias and its concrete target
+Filter results contain unique concrete catalog-family identities. Generic CSS
+aliases are not public `FontFamily` values, so an alias and its concrete target
 cannot give one font twice the sampling probability. Reusing the returned
 `Choice` shares the sampled family; separate `fontChoice` calls remain
-independent authored decisions.
+independent authored decisions. `fontChoice` is the only operation that creates
+a font-family choice; generic `choice @FontFamily` is unsupported.
 
 ##### `FontFamily`
 
-Retain the current fixed values `FontInter`, `FontSystem`, `FontMono`,
-`FontSerif`, `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`,
-`FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`,
-`FontJetBrainsMonoNL`, and `FontIBMPlexMono`. A sampled family normally comes
-from `fontChoice` and is passed directly to `style`.
+Retain the unique concrete catalog values `FontInter`, `FontSourceSans3`,
+`FontAtkinsonHyperlegibleNext`, `FontSpaceGrotesk`, `FontSourceSerif4`,
+`FontLiterata`, `FontJetBrainsMonoNL`, and `FontIBMPlexMono`. Remove
+`FontSystem`, `FontMono`, and `FontSerif`; they currently resolve to concrete
+families already in this list and would otherwise create duplicate or
+misleading choices. A sampled family comes from `fontChoice` and is passed
+directly to `style`.
 
 ```haskell
 node title $ style @FontFamily FontLiterata
 
-Variable codeFont <- fontChoice (fontKind Monospace)
+codeFont <- fontChoice (fontKind Monospace)
 node codeLine $ style @FontFamily codeFont
 ensure $ styleOf @FontFamily codeLine .==. codeFont
 ```
@@ -2003,7 +2002,7 @@ uses 100 through 900 in steps of 100; fixed numeric inputs must be validated
 against the supported font face.
 
 ```haskell
-Variable weight <- choice @FontWeight
+weight <- choice @FontWeight
 node label $ style @FontWeight weight
 ensure $ styleOf @FontWeight label .==. weight
 ```
@@ -2015,11 +2014,13 @@ weight is known and before shaping the branch.
 
 ##### `FontStyle`
 
-`FontStyle` has `FontStyleNormal`, `FontStyleItalic`, and `FontStyleOblique`.
-It accepts either a fixed value or a finite choice.
+`FontStyle` has `FontStyleNormal` and `FontStyleItalic`. Remove
+`FontStyleOblique`: the current managed-font resolver maps it to an italic face,
+so it is not a distinct prepared typography branch. It accepts either a fixed
+value or a finite choice.
 
 ```haskell
-Variable slant <- choice @FontStyle
+slant <- choice @FontStyle
 node explanation $ style @FontStyle slant
 ensure $ styleOf @FontStyle explanation .==. slant
 ```
@@ -2034,7 +2035,7 @@ currently retained `TextAlignJustify`. Alignment is categorical; left, centre,
 and right supply an affine offset after the line has been shaped.
 
 ```haskell
-Variable alignment <- choice @TextAlign
+alignment <- choice @TextAlign
 node label $ style @TextAlign alignment
 ensure $ styleOf @TextAlign label .==. alignment
 ```
@@ -2067,13 +2068,25 @@ ensure (width item .>=. by 80)
 ensure (left second .==. right first + by 16)
 
 oneOf "flow"
-  (alternative "row" [right first .<=. left second])
-  [alternative "column" [bottom first .<=. top second]]
+  (alternative "row" $ ensure $ right first .<=. left second)
+  [alternative "column" $ do
+     ensure $ bottom first .<=. top second
+     style @TextAlign TextAlignLeft]
 
 oneOf "horizontal-order"
-  (alternative "first-before-second" [x second .==. x first + distance])
-  [alternative "second-before-first" [x first .==. x second + distance]]
+  (alternative "first-before-second" $ ensure $ x second .==. x first + distance)
+  [alternative "second-before-first" $ ensure $ x first .==. x second + distance]
 ```
+
+```haskell
+alternative :: String -> Render () -> VisualAlternative
+oneOf      :: String -> VisualAlternative -> [VisualAlternative] -> Render ()
+caseOf     :: Choice value -> (value -> Render ()) -> Render ()
+```
+
+`oneOf` creates a new named authored choice. `caseOf` maps an existing typed
+choice to exhaustive Render blocks. Both support alternatives containing any
+number of visual declarations rather than only lists of constraints.
 
 Remove `(=|) ... (|=)` and `(=/) ... (/=)` from the target facade. A directed
 gap is already an ordinary affine equality. If the author wants either scalar
@@ -2119,6 +2132,48 @@ that host API independently using Sverlin terminology; do not carry
 
 The generated footer and compiler executable may import the host module.
 Authored body source may import only `Sverlin`.
+
+The package boundary should likewise stop treating historical implementation
+layers as stable APIs. Keep only the authored `Sverlin` facade, the narrow host
+compiler/runner boundary, the intentionally stable top-level `Solver` facade,
+and an IR module only if it remains a deliberate external Haskell contract.
+`LinearTrace.Core` and implementation modules for view construction,
+typography, resources, targets, and materialization become internal rather than
+being re-exported because the compiler executable happens to use them.
+
+Reducing exposed modules does not authorize deleting their behavior. Before
+collapsing an old layer, trace its current callers and the relevant historical
+commits, then capture the behavior at the new boundary. At minimum preserve and
+test:
+
+- linear ownership, exactly-once `Pending` resolution, operation provenance,
+  and stable block identities;
+- stable slot-owner identity across unseal, reseal, occupant replacement, and
+  relation lifetimes;
+- Render match scope, deterministic visual identity, hidden presence
+  provenance, hierarchy, containment, and style cascade;
+- pinned font resolution, whole-line shaping, fragment-to-glyph mapping, and
+  typography-derived affine bounds;
+- source-level diagnostics for invalid lifecycle, matching, relation, font, and
+  constraint behavior;
+- deterministic IR ordering, resource hashes, forward and reverse transition
+  identity, seeded choice identity, and authored-versus-algebraic branch
+  weighting.
+
+The minimum historical audit set is `970907d` for stable slot-owner projection
+and read/write composition, `52f842b` and `a5084ba` for render identity and
+transitions, `9efb493` for typography/resource integration, `0ff53cc` for the
+template and API-index boundary, and `03c4e14` for the most complete archived
+slot, connector, and robust SVG-transition design. Treat these as behavioral
+donors; later experimental surface area is not presumed correct merely because
+it existed.
+
+Use characterization tests at the public facade, host service, and serialized
+IR boundaries before moving or deleting internals. The historical slot,
+connector, and transition implementations are evidence for edge cases, not
+APIs to restore wholesale. Collapse modules only after every retained behavior
+has one clear new owner; do not preserve empty forwarding layers merely to keep
+old module names importable.
 
 ## Semantics and invariants
 
@@ -2184,8 +2239,6 @@ scope, validate the requested shape, and calculate its ranking. None replaces
 its complete input selections: Render continues to map the original nodes and
 relations. General graphs need no separate public handle.
 
-## Compiler and runtime boundary
-
 ## Migration and compatibility
 
 The classification and relation slices are intentionally breaking at the new
@@ -2199,9 +2252,9 @@ Remove `FactValue`, `Fact`, `Facts`, `emptyFacts`, `factAtom`, `factSymbol`,
 `factInt`, `factsUnion`, `factsToList`, `Query`, `QueryInt`, `QueryField`,
 `emptyQuery`, `queryAtom`, `queryInt`, `queryFacts`, `payload`, `PayloadQuery`,
 `AnyPayload`, the public query-based `Select` class, `NodeBinding`, `(@:)`,
-query `(<&>)`, query `fromLabel`, and `bindInt` from `Sverlin`. Replace
-`NodeBinding` with the general `SelectionBinding`; the new purpose-specific
-`Selectable` class supports typed block and relation kinds in the baseline.
+query `(<&>)`, query `fromLabel`, and `bindInt` from `Sverlin`. Typed `select`
+returns `Selected` nodes or `Relations` directly through private closed
+dispatch; no public binding wrapper or selection class replaces `NodeBinding`.
 Existing fact/query representations may remain temporarily behind the compiler
 boundary as a migration mechanism, but generated and handwritten Sverlin
 source cannot name them. Numeric payload filtering remains unavailable until a
@@ -2271,8 +2324,8 @@ Add focused facade and compiler tests for:
 
 For the classification and relation slices:
 
-1. Add `Kind`, typed materialization, `SelectionBinding`, and typed block
-   selection; lower them through the existing internal fact representation
+1. Add `Kind` and typed block selection returning `Selected` directly; lower
+   them through the existing internal fact representation
    temporarily if that makes migration safer.
 2. Add typed `RelationKind` declarations and the `relate` trace event, including
    endpoint validation, slot-capability transitions, and automatic lifetime

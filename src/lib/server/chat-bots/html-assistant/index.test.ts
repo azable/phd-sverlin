@@ -55,4 +55,22 @@ describe('HTML assistant contract', () => {
       })
     ).toThrow();
   });
+
+  it('parses participant-facing fallback explanations', () => {
+    expect(
+      htmlAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'Here is a simpler version.' }],
+        candidates: [{ label: 'Candidate', manifest }],
+        recovery: {
+          struggledWith: 'the interactive behavior',
+          simplified: 'the interaction into static frames'
+        }
+      })
+    ).toMatchObject({
+      recovery: {
+        struggledWith: 'the interactive behavior',
+        simplified: 'the interaction into static frames'
+      }
+    });
+  });
 });

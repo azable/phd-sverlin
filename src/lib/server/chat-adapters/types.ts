@@ -18,6 +18,7 @@ export type ChatAdapterRequest = {
   context: ChatContext;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;
+  signal?: AbortSignal;
 };
 
 /** Provider-neutral result returned after structured response parsing. */
@@ -37,6 +38,8 @@ export interface ChatAdapter {
   readonly id: string;
   /** Submit a prepared request and normalize the provider response. */
   generateReply(request: ChatAdapterRequest): Promise<ChatAdapterResult>;
+  /** Current request ceiling, used by study orchestration before another attempt starts. */
+  requestTimeoutMs?(): number;
 }
 
 /** Raised when a provider response does not satisfy a bot's output contract. */

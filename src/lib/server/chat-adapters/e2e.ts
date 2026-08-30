@@ -20,9 +20,10 @@ export const e2eChatAdapter: ChatAdapter = {
     return {
       output:
         request.responseFormat.name === 'html_visualization_turn'
-          ? { reply, candidates: [] }
-          : { reply, candidateAction: 'none', sourceArtifactContent: null },
+          ? { reply, candidates: [], recovery: null }
+          : { reply, candidateAction: 'none', sourceArtifactContent: null, recovery: null },
       generation: { model: 'e2e-deterministic' }
     };
-  }
+  },
+  requestTimeoutMs: () => 0
 };

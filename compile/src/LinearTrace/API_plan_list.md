@@ -40,10 +40,10 @@ render = do
   always $ frame @Shown
   always $ frame @Removed
 
-  Selected values <- select valueKind
+  values <- select valueKind
   node values $ content (text "value")
 
-  Selected adjacentLinks <- select adjacent
+  adjacentLinks <- select adjacent
   relation adjacentLinks $ do
     previous <- first adjacentLinks
     next <- second adjacentLinks
@@ -81,7 +81,7 @@ data LBool tag              = LBool Bool
 data LInt tag               = LInt Int
 data LDouble tag            = LDouble Double
 data LString tag            = LString String
-data LOperator operator tag = LOperator
+data LOperator tag          = LOperator
 ```
 
 One instance declares both the trace type and its payload representation. Here,
@@ -106,10 +106,10 @@ class Applicable2 op lhs rhs where
   applyPayload2 :: Payload op %1 -> Payload lhs %1 -> Payload rhs %1 -> Payload (Apply2Result op lhs rhs)
 ```
 
-`LOperator` carries no runtime value. Its type selects the `Applicable1` or
-`Applicable2` instance; changing values such as a scale factor are ordinary
-operands. Core persists the marker internally, and operator spelling belongs
-to Render.
+`LOperator` carries no runtime value. Its one parameter is the operator block
+tag that selects the `Applicable1` or `Applicable2` instance; changing values
+such as a scale factor are ordinary operands. Core persists the marker
+internally, and operator spelling belongs to Render.
 
 ## Program
 
@@ -212,14 +212,14 @@ sometimes :: ... => Render a -> Render a
 The wrappers apply to values whose presence Render can track:
 
 ```haskell
-Selected explanation <- sometimes $ node $ content (text "comparison failed")
+explanation <- sometimes $ node $ content (text "comparison failed")
 
-Selected detail <- node $ do
-  Selected current <- self
+detail <- node $ do
+  current <- self
   content (text "try the next element")
   ensure $ top current .==. bottom explanation + by 12
 
-Selected counter <- node $ content (text "iteration")
+counter <- node $ content (text "iteration")
 ```
 
 If a seed omits `explanation`, Render also omits `detail` and its constraint
@@ -258,35 +258,24 @@ configurations.
 
 ```haskell
 data Render a
-data MatchSpec                    -- abstract compiled rules
 data Selected tag                 -- abstract selected node or node set
-data Variable a    = Variable a
-data Bound a       = Bound a
-data SelectionBinding a = Selected a
 data GeneratedNode
 data CanvasNode
 
-class Selectable selector result | selector -> result where
-  select :: selector -> Render (SelectionBinding result)
-
-instance Selectable (Kind tag) (Selected tag)
-instance Selectable (RelationKind source target) (Relations source target)
-
-visualize :: Render () -> MatchSpec  -- TODO is this public?
-
-class Node input result | input -> result where
-  node :: input -> result
-
-instance Node (Selected tag) (Render () -> Render ())
-instance Node (Render ()) (Render (SelectionBinding (Selected GeneratedNode)))
-
-self   :: Render (SelectionBinding (Selected GeneratedNode))
+select :: selector -> Render result
+node   :: input -> result
+self   :: Render (Selected GeneratedNode)
 canvas :: Selected CanvasNode
 ```
 
-The two `Selectable` instances are library-provided: `select valueKind` binds
-live blocks, while `select Adjacent` binds active relations in the current exposed
-frame. Selecting relations does not draw them or make them acceptable to `node`.
+Private closed dispatch gives `select` exactly two cases: a `Kind` selects live
+blocks and a `RelationKind` selects active relations. Private closed dispatch
+also gives `node` exactly selected-node mapping and generated-node creation.
+Authors cannot define instances for these operations or for the geometry
+overloads. Selecting relations does not draw them or make them acceptable to
+`node`. Returned selections and symbolic values carry their compiler identity
+and presence provenance directly; there are no `SelectionBinding`, `Variable`,
+or `Bound` result wrappers.
 
 ### Text
 
@@ -332,7 +321,7 @@ asScalar :: FixedInt -> Scalar
 asText   :: FixedInt -> ContentValue
 ```
 
-`Relations` is the reusable result of `Selected links <- select relationKind`.
+`Relations` is the reusable result of `links <- select relationKind`.
 Its endpoints always support ordinary spatial constraints. A relation is drawn
 only when an optional connector is declared inside its spatial scope.
 
@@ -397,10 +386,9 @@ remain later extensions.
 ### Reusable values and finite choices
 
 ```haskell
-bindContent  :: Render (Bound ContentValue)
-variable     :: ... => Render (Variable value)
-choice       :: forall value. ... => Render (Variable (Choice value))
-global       :: ... => String -> value
+bindContent :: Render ContentValue
+variable    :: ... => Render value
+choice      :: forall value. ... => Render (Choice value)
 
 data Choice value                  -- abstract finite decision
 ```
@@ -408,36 +396,36 @@ data Choice value                  -- abstract finite decision
 `choice @FontStyle` and similar calls are limited to finite domains declared by
 the library. The compiler owns their alternatives and stable serialization tokens;
 there is no public `ChoiceDomain` class. Fresh `variable`, `choice`, and
-`fontChoice` calls receive compiler-owned identities. `global` is the explicit
-string-named sharing escape hatch. Custom constraint alternatives use `oneOf`, and
-optional presence uses `sometimes`; add an explicit `choiceOf` operation later only
-if a concrete use case needs a reusable author-defined category.
+`fontChoice` calls receive compiler-owned identities and return their useful
+values directly. Reuse and pass those values lexically; there is no string-named
+`global` escape hatch. Custom constraint alternatives use `oneOf`, and optional
+presence uses `sometimes`; add an explicit `choiceOf` operation later only if a
+concrete use case needs a reusable author-defined category.
 
 ### Layout and box model
 
-| Cluster                      | Public API                                                                                                                                                             |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- |
-| Numeric domains              | `Coord`, `Span`, `Offset`, `Scalar`, `VisualExpr role`, `Free`, `Unit`, `Angle`                                                                                        |
-| Containers                   | `Vec2(..)`, `vec2`, `Bounds(..)`                                                                                                                                       |
-| Edge and centre overloads    | `Left`, `left`, `Top`, `top`, `Right`, `right`, `Bottom`, `bottom`, `Width`, `width`, `Height`, `height`, `X`, `x`, `Y`, `y`, `Center(..)`, `center`, `size`, `bounds` |
-| Fixed values and conversions | `at`, `by`, `shift`, `num`, `asCoord`, `asSpan`, `asScalar`                                                                                                            |
-| Affine arithmetic            | `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, `(/)`, `(                                                                                                          | +   | )`  |
-| Insets                       | `Insets`, `uniform`, `symmetric`, `edges`, `padding`, `margin`                                                                                                         |
-| Child fitting                | `Axis(..)` = `Horizontal \| Vertical \| Both`; `ContentFit(..)` = `Hug \| Contain`; `contentFit`                                                                       |
-| Parent-relative layout       | `Percent`, `percent`, `xAt`, `yAt`, `widthOf`, `heightOf`                                                                                                              |
-| Canvas                       | `aspectRatio`                                                                                                                                                          |
+| Cluster                      | Public API                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| Numeric domains              | `Coord`, `Span`, `Offset`, `Scalar`, `VisualExpr role`, `Unit`, `Angle`                          |
+| Two-dimensional values       | `Vec2(..)`, `vec2`                                                                               |
+| Geometry                     | `left`, `top`, `right`, `bottom`, `width`, `height`, `x`, `y`, `center`, `size`                  |
+| Fixed values and conversions | `at`, `by`, `shift`, `num`, `asScalar`                                                           |
+| Affine arithmetic            | `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, `(/)`                                       |
+| Insets                       | `Insets`, `uniform`, `symmetric`, `edges`, `padding`, `margin`                                   |
+| Child fitting                | `Axis(..)` = `Horizontal \| Vertical \| Both`; `ContentFit(..)` = `Hug \| Contain`; `contentFit` |
+| Parent-relative layout       | `Percent`, `percent`, `xAt`, `yAt`, `widthOf`, `heightOf`                                        |
+| Canvas                       | `aspectRatio`                                                                                    |
 
-`Bounds a` exposes `Bounds top left width height`; `Vec2 a` exposes `Vec2 x y`.
-All solver-backed numeric values must have finite bounds by compile time.
+The geometry operations use private closed dispatch for their supported read
+and setter forms; their implementation classes are not authored extension
+points. `Vec2 a` exposes `Vec2 x y`. All solver-backed numeric values must have
+finite bounds by compile time.
 
 ### Styles and colour
 
 ```haskell
-data NodeStyle                    -- abstract accumulated style
-
 style        :: forall field input. ... => input -> Render ()
 withoutStyle :: ...
-styleCase    :: ...
 styleFamily  :: String -> Render ()
 styleOf      :: ...
 ```
@@ -445,9 +433,10 @@ styleOf      :: ...
 `style @Field input` accepts a fixed field value, its matching solver `Choice`, or
 the field's symbolic numeric or colour expression. A choice assignment is always
 present and remains readable through `styleOf`. Unsupported field/input pairs are
-type errors. `styleCase` maps a choice to different values or to conditional
-absence. The input-conversion class and fixed-or-variable sum remain internal;
-there is no public wrapper or separate choice setter.
+type errors. General `caseOf` blocks express conditional style values or
+absence. The accumulated `NodeStyle`, input-conversion class, and
+fixed-or-variable sum remain internal; there is no public style-case wrapper or
+separate choice setter.
 
 | Cluster        | Public API                                                                                                                                                                                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -455,16 +444,19 @@ there is no public wrapper or separate choice setter.
 | Paint fields   | `Fill`, `Stroke`                                                                                                                                                                                                           |
 | Border         | `BorderStyle(..)` = `BorderNone \| BorderSolid \| BorderDashed \| BorderDotted \| BorderDouble`                                                                                                                            |
 | Font filter    | `FontKind(..)` = `Monospace \| Proportional`; abstract `FontFilter`; `fontKind`; `fontChoice`                                                                                                                              |
-| Font family    | `FontFamily(..)` = `FontInter \| FontSystem \| FontMono \| FontSerif \| FontSourceSans3 \| FontAtkinsonHyperlegibleNext \| FontSpaceGrotesk \| FontSourceSerif4 \| FontLiterata \| FontJetBrainsMonoNL \| FontIBMPlexMono` |
+| Font family    | `FontFamily(..)` = `FontInter \| FontSourceSans3 \| FontAtkinsonHyperlegibleNext \| FontSpaceGrotesk \| FontSourceSerif4 \| FontLiterata \| FontJetBrainsMonoNL \| FontIBMPlexMono` |
 | Font weight    | `FontWeight(..)` = `FontWeightNormal \| FontWeightBold \| FontWeightBolder \| FontWeightLighter \| FontWeightNumber Int`                                                                                                   |
-| Font style     | `FontStyle(..)` = `FontStyleNormal \| FontStyleItalic \| FontStyleOblique`                                                                                                                                                 |
+| Font style     | `FontStyle(..)` = `FontStyleNormal \| FontStyleItalic`                                                                                                                                                                      |
 | Text alignment | `TextAlign(..)` = `TextAlignLeft \| TextAlignCenter \| TextAlignRight \| TextAlignJustify`                                                                                                                                 |
-| Colour         | `Hsl(..)`, `hue`, `saturation`, `lightness`, `sat`, `Color`                                                                                                                                                                |
+| Colour         | `Hsl(..)`, `hue`, `saturation`, `lightness`, `Color`                                                                                                                                                                       |
 
 ```haskell
 fontKind   :: FontKind -> FontFilter
-fontChoice :: FontFilter -> Render (Variable (Choice FontFamily))
+fontChoice :: FontFilter -> Render (Choice FontFamily)
 ```
+
+`fontChoice` is the only font-family choice constructor and returns unique
+concrete catalog families. Generic aliases and `choice @FontFamily` are absent.
 
 `BorderDouble` rendering and single-line `TextAlignJustify` remain open
 decisions; neither may survive merely as a duplicate visual outcome.
@@ -477,9 +469,9 @@ data VisualAlternative             -- abstract
 
 ensure    :: VisualConstraint -> Render ()
 
-alternative :: String -> [VisualConstraint] -> VisualAlternative
+alternative :: String -> Render () -> VisualAlternative
 oneOf      :: String -> VisualAlternative -> [VisualAlternative] -> Render ()
-caseOf     :: Choice value -> (value -> [VisualConstraint]) -> Render ()
+caseOf     :: Choice value -> (value -> Render ()) -> Render ()
 
 separatedBy :: Span -> Selected first -> Selected second -> VisualConstraint
 
@@ -494,14 +486,22 @@ orientation is intentionally a random authored choice.
 - Old facade names and aliases: `Choreography`, `TraceBuilder`,
   `VisualizationBuilder`, and `SlotHandle`.
 - Compiler/runner machinery: `VisualTraceGraph`, `ViewGraph`,
-  `runChoreography*`, `buildViewGraph`, `solveViewGraph*`, and
-  `viewGraphStats`.
+  `MatchSpec`, `visualize`, `runChoreography*`, `buildViewGraph`,
+  `solveViewGraph*`, and `viewGraphStats`.
+- Legacy package layers: authored code cannot import `LinearTrace.Core` or
+  implementation modules for view construction, typography, resources,
+  targets, and materialization. Keep only deliberate `Sverlin`, host,
+  top-level `Solver`, and optional stable IR boundaries.
 - Free facts and queries: `FactValue`, `Fact`, `Facts`, all `fact*` and
   `query*` operations, `Query`, `QueryInt`, `QueryField`, `(@:)`, query
   `(<&>)`, query `fromLabel`, and `bindInt`.
 - Query-era selection and binding: `AnyPayload`, `PayloadQuery`, the old
-  query-based `Select` class, `payload`, and `NodeBinding` (replaced by
-  `SelectionBinding`).
+  query-based `Select` class, `payload`, and `NodeBinding`.
+- Mechanical result wrappers: `SelectionBinding`, `Variable`, and `Bound`.
+  Builder operations return the useful identity-bearing value directly.
+- Closed implementation dispatch: `Selectable`, `Node`, and the geometry
+  overload classes. Their functions remain public with only library-supported
+  cases; authors cannot add instances.
 - Mutable relation lifecycle: public `Relation`, `Unrelate`, and `unrelate`.
   Relations are compiler-owned and end with either stable endpoint owner.
 - Legacy payload metadata: `PayloadView` and `payloadKind`.
@@ -517,10 +517,21 @@ orientation is intentionally a random authored choice.
 - Solver choice-domain metadata: `ChoiceDomain`, `choiceDomain`, and
   `choiceToken`. Built-in choice domains and tokens are compiler-owned.
 - Categorical style adapters and setters: `StyleChoice`, `FixedStyle`,
-  `VariableStyle`, `styleFrom`, and `styleChoice`. The overloaded `style` accepts
-  both fixed and solver-selected field values.
+  `VariableStyle`, `styleFrom`, `styleChoice`, and `styleCase`. General `caseOf`
+  blocks cover conditional styles. The overloaded `style` accepts both fixed
+  and solver-selected field values.
+- Accumulated style representation: `NodeStyle`.
 - Fixed-expression binding helper: `variableFrom`. Use an ordinary `let`; only
   `variable` creates a fresh solver value.
+- String-named solver identity: `global`. Reuse returned symbolic values
+  lexically.
+- Raw or redundant numeric surface: `Free`, `Bounds`, `bounds`, `asCoord`,
+  `asSpan`, and `(|+|)`. Use `Scalar`, the typed geometry setters, direct affine
+  equations, and ordinary `(+)` respectively.
+- Redundant colour alias: `sat`. Use `saturation`.
+- Duplicate or unsupported font values: `FontSystem`, `FontMono`, `FontSerif`,
+  and `FontStyleOblique`. Font choices contain unique concrete catalog families
+  and distinct available styles.
 - Solver execution input: `RandomSeed`. The compiler service supplies seeds;
   authored Domain, Program, and Render code cannot inspect them.
 - Constraint bridge operators: `(=|)`, `(|=)`, `(=/)`, and `(/=)`. Write a

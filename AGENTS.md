@@ -105,7 +105,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
 - When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
 - `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.
-- AI-generated Sverlin source is compiled through the complete visualization pipeline for one or two fresh server-selected seeds before it can become the active artifact. A failed batch may be repaired by one explicit second generation using the same seeds; provider retries and open-ended orchestration loops are disabled. Generated source, prompts, responses, compiler output, failures, accepted artifacts, and successful presentations are stored inline in the complete project event log with hashes for provenance. Direct HTML turns similarly accept at most one safe manifest and one explicit correction.
+- AI-generated Sverlin source is compiled through the complete visualization pipeline for one or two fresh server-selected seeds before it can become the active artifact. Each operation has five explicit model calls at most: Luna/low initially; Sol/medium, Sol/high, and Sol/xhigh for repairs; then Sol/xhigh once more for a deliberately simpler fallback that must explain what proved difficult and what it reduced. Repairs reuse the initial seeds, batches activate atomically, provider retries and open-ended orchestration loops are disabled, and a study repair starts only when the full configured provider timeout remains before its phase deadline. The 180-second default request ceiling bounds each call within the 15-minute task phase; the operation deadline also cancels in-flight provider and compiler work. Generated source, prompts, responses, compiler output, failures, accepted artifacts, recovery explanations, and successful presentations are stored inline in the complete project event log with hashes for provenance. Direct HTML turns use the same bounded ladder and retain the last accepted visualization when every safe candidate fails.
 - The visualization path intentionally uses a tuned solver config rather than raw `defaultSolveConfig`; preserve this separation so direct solver tests stay conservative while regeneration avoids long L-BFGS-B tails.
 - Keep solver tests focused on the top-level `Solver` facade unless the behavior under test is deliberately internal. Add or update stable fixtures in `compile/test-support/Solver/TestFixtures.hs` when solver preprocessing, categorical choices, or backend optimization behavior needs repeatable coverage.
 
@@ -126,9 +126,9 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   generated `src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md` by hand.
 - `src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md` is the complementary
   human-readable composition and authoring guide for the primary `sverlin-assistant`
-  bot (currently configured as `gpt-5.6-luna`). It should explain cross-cutting
-  invariants, syntax hazards, and examples without duplicating the exhaustive API
-  index.
+  bot (starting with `gpt-5.6-luna`/low before its bounded Sol repair ladder). It
+  should explain cross-cutting invariants, syntax hazards, and examples without
+  duplicating the exhaustive API index.
 - The guide and generated index are read from disk for every model request during
   local development, so saved edits are picked up without restarting the
   SvelteKit server. The sibling `index.ts` keeps the short role prompt, model

@@ -30,6 +30,40 @@ export const generatedMessageContentSchema = v.pipe(
 
 export type GeneratedMessageContent = v.InferOutput<typeof generatedMessageContentSchema>;
 
+/** Plain-language account of a successful simplification fallback. */
+export type RecoveryExplanation = {
+  struggledWith: string;
+  simplified: string;
+};
+
+const recoveryExplanationSchema = v.strictObject({
+  struggledWith: textSchema,
+  simplified: textSchema
+});
+
+/** Parse the nullable recovery field shared by strict chatbot responses. */
+export function parseRecoveryExplanation(value: unknown): RecoveryExplanation | undefined {
+  return value === null || value === undefined
+    ? undefined
+    : v.parse(recoveryExplanationSchema, value);
+}
+
+/** JSON Schema shared by agent outputs that can report graceful degradation. */
+export const recoveryExplanationJsonSchema = {
+  anyOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        struggledWith: { type: 'string', minLength: 1, pattern: '\\S' },
+        simplified: { type: 'string', minLength: 1, pattern: '\\S' }
+      },
+      required: ['struggledWith', 'simplified']
+    },
+    { type: 'null' }
+  ]
+} as const;
+
 /** JSON Schema embedded in both assistant response contracts. */
 export const generatedMessageContentJsonSchema = {
   type: 'array',
@@ -74,12 +108,23 @@ export type CompilationFeedback = {
   failedSource: string;
   assistantReply: string;
   diagnostics: CompilerDiagnostic[];
+  priorFailureSummaries: string[];
+};
+
+/** Role of one bounded generation profile in an agent's attempt ladder. */
+export type ChatAttemptPurpose = 'initial' | 'repair' | 'fallback';
+
+/** Recordable identity of the profile selected for one generation request. */
+export type ChatAttempt = {
+  number: number;
+  purpose: ChatAttemptPurpose;
 };
 
 /** Inputs from which a bot definition builds provider context. */
 export type ChatContextInput<Project> = {
   messages: ConversationMessage[];
   project: Project;
+  attempt: ChatAttempt;
   compilationFeedback?: CompilationFeedback;
 };
 
@@ -94,6 +139,12 @@ export type ChatBotParameters = {
   temperature?: number;
 };
 
+/** One explicitly bounded model/reasoning stage owned by an agent definition. */
+export type ChatBotAttemptProfile = {
+  purpose: ChatAttemptPurpose;
+  parameters: ChatBotParameters;
+};
+
 /** JSON Schema response contract requested from a provider. */
 export type ChatResponseFormat = {
   name: string;
@@ -106,6 +157,7 @@ export type SourceArtifactChatOutput = {
   reply: GeneratedMessageContent;
   candidateAction: 'none' | 'generate';
   sourceArtifactContent?: string;
+  recovery?: RecoveryExplanation;
 };
 
 export type ChatBotConfig<
@@ -116,7 +168,7 @@ export type ChatBotConfig<
   participantIntroduction: string;
   initialPrompt: string;
   buildContext: (input: ChatContextInput<Project>) => ChatContext | Promise<ChatContext>;
-  parameters: ChatBotParameters;
+  attemptProfiles: readonly [ChatBotAttemptProfile, ...ChatBotAttemptProfile[]];
   responseFormat: ChatResponseFormat;
   parseOutput: (value: unknown) => Output;
 };
@@ -126,6 +178,7 @@ export type ChatbotPrompt = {
   initialPrompt: string;
   messages: ConversationMessage[];
   context: ChatContext;
+  attempt: ChatAttempt;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;
 };
@@ -134,6 +187,7 @@ export type ChatbotPrompt = {
 export type ChatbotRequest<Project> = {
   messages: ConversationMessage[];
   project: Project;
+  attempt: number;
   compilationFeedback?: CompilationFeedback;
 };
 
@@ -167,5 +221,10 @@ export interface Chatbot<
   /** Assemble a provider-neutral prompt from project inputs. */
   preparePrompt(request: ChatbotRequest<Project>): Promise<ChatbotPrompt>;
   /** Generate a response from an already prepared, recordable prompt. */
-  generatePrepared(prompt: ChatbotPrompt): Promise<ChatbotResult<Output>>;
+  generatePrepared(
+    prompt: ChatbotPrompt,
+    options?: { signal?: AbortSignal }
+  ): Promise<ChatbotResult<Output>>;
+  /** Provider request ceiling used to decide whether another study attempt can start. */
+  requestTimeoutMs(): number;
 }

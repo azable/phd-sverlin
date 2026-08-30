@@ -1,7 +1,7 @@
 import { isHttpError, json } from '@sveltejs/kit';
 import * as v from 'valibot';
 
-import { projectInspectionContext, requireProjectMutationAccess } from '$lib/server/authorization';
+import { requireProjectMutationAccess } from '$lib/server/authorization';
 import { projectOperationExecutor } from '$lib/server/projects/operations';
 import { ProjectConflictError, ProjectNotFoundError } from '$lib/server/projects/repository';
 import { operationIdSchema, positiveSchema } from '$lib/shared/projects/events/values';
@@ -13,8 +13,7 @@ const requestSchema = v.object({ operationId: operationIdSchema, expectedHead: p
 /** Reconcile the server-configured current-source presentation buffer. */
 export const POST: RequestHandler = async ({ params, request, locals }) => {
   try {
-    await requireProjectMutationAccess(locals, params.projectId);
-    const inspection = await projectInspectionContext(locals, params.projectId);
+    const inspection = await requireProjectMutationAccess(locals, params.projectId);
     const target = inspection.study?.presentationBufferTarget;
     if (!target)
       return json({ error: 'This project has no presentation buffer.' }, { status: 400 });
@@ -25,7 +24,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
       operationId: parsed.output.operationId,
       expectedHead: parsed.output.expectedHead,
       command: { type: 'presentation-refill', target },
-      actor: 'system'
+      actor: 'system',
+      ...(inspection.study?.deadlineAt ? { deadlineAt: inspection.study.deadlineAt } : {})
     });
     return json(accepted, { status: 202 });
   } catch (cause) {

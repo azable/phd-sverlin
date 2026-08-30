@@ -10,6 +10,7 @@ import {
   eventEnvelope,
   integerSchema,
   naturalSchema,
+  positiveSchema,
   recordedTextSchema,
   renderPurposeSchema,
   targetDiagnosticSchema,
@@ -26,7 +27,7 @@ export const compilationRequestedEventSchema = v.object({
     source: recordedTextSchema,
     sourceLabel: textSchema,
     seed: v.pipe(integerSchema, v.minValue(1)),
-    attempt: v.optional(v.picklist([1, 2])),
+    attempt: v.optional(positiveSchema),
     dslRevision: v.optional(dslRevisionSchema)
   })
 });

@@ -92,14 +92,14 @@ export async function projectInspectionContext(
 export async function requireProjectMutationAccess(
   locals: App.Locals,
   projectId: string
-): Promise<Principal> {
+): Promise<ProjectInspectionContext> {
   const context = await projectInspectionContext(locals, projectId);
   if (context.principal.kind === 'participant') {
     await assertParticipantStudyMutation(context.principal, projectId);
-    return context.principal;
+    return context;
   }
   if (context.readOnly) error(403, 'Participant research data is read-only for administrators.');
-  return context.principal;
+  return context;
 }
 
 /** Scope project lists to a participant; administrators receive every project. */

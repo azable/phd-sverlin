@@ -20,15 +20,26 @@ export function createChatbot<Project, Output extends { reply: GeneratedMessageC
   config: ChatBotConfig<Project, Output>,
   adapter: ChatAdapter
 ): Chatbot<Project, Output> {
-  const preparePrompt = async (request: ChatbotRequest<Project>) => ({
-    messages: request.messages,
-    initialPrompt: config.initialPrompt,
-    context: await config.buildContext(request),
-    parameters: config.parameters,
-    responseFormat: config.responseFormat
-  });
-  const generatePrepared = async (prompt: Awaited<ReturnType<typeof preparePrompt>>) => {
-    const result = await adapter.generateReply(prompt);
+  const preparePrompt = async (request: ChatbotRequest<Project>) => {
+    const profile = config.attemptProfiles[request.attempt - 1];
+    if (!Number.isSafeInteger(request.attempt) || request.attempt < 1 || !profile) {
+      throw new Error(`Chatbot attempt ${request.attempt} is outside the configured ladder.`);
+    }
+    const attempt = { number: request.attempt, purpose: profile.purpose };
+    return {
+      messages: request.messages,
+      initialPrompt: config.initialPrompt,
+      context: await config.buildContext({ ...request, attempt }),
+      attempt,
+      parameters: profile.parameters,
+      responseFormat: config.responseFormat
+    };
+  };
+  const generatePrepared = async (
+    prompt: Awaited<ReturnType<typeof preparePrompt>>,
+    options?: { signal?: AbortSignal }
+  ) => {
+    const result = await adapter.generateReply({ ...prompt, signal: options?.signal });
     let output: Output;
     try {
       output = config.parseOutput(result.output);
@@ -53,7 +64,8 @@ export function createChatbot<Project, Output extends { reply: GeneratedMessageC
     id: config.id,
     config,
     preparePrompt,
-    generatePrepared
+    generatePrepared,
+    requestTimeoutMs: () => adapter.requestTimeoutMs?.() ?? 0
   } satisfies Chatbot<Project, Output>;
 }
 

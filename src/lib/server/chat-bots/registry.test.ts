@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { assistantIntroduction, getChatbot, getHtmlChatbot } from './registry';
+import type { ChatBotConfig } from './types';
+import { assistantIntroduction, createChatbot, getChatbot, getHtmlChatbot } from './registry';
 
 describe('chatbot registry', () => {
   it('resolves only assistants compatible with the requested execution contract', () => {
@@ -13,5 +14,46 @@ describe('chatbot registry', () => {
   it('uses the resolved assistant identity for participant introductions', () => {
     expect(assistantIntroduction('sverlin-assistant').botId).toBe('sverlin-assistant');
     expect(assistantIntroduction('html-assistant').botId).toBe('html-assistant');
+  });
+
+  it('selects one exact configured profile and rejects attempts outside the ladder', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const config = {
+      id: 'test-agent',
+      participantIntroduction: 'Test',
+      initialPrompt: 'Test prompt',
+      attemptProfiles: [
+        { purpose: 'initial', parameters: { model: 'fast', reasoningEffort: 'low' } },
+        { purpose: 'fallback', parameters: { model: 'careful', reasoningEffort: 'xhigh' } }
+      ],
+      buildContext: ({ attempt }) => ({ attemptContext: attempt }),
+      responseFormat: { name: 'test', schema: {} },
+      parseOutput: () => ({
+        reply: [{ type: 'markdown', text: 'Done' }],
+        candidateAction: 'none'
+      })
+    } satisfies ChatBotConfig<Record<string, never>>;
+    const chatbot = createChatbot(config, {
+      id: 'test-adapter',
+      requestTimeoutMs: () => 123,
+      generateReply: async (request) => {
+        receivedSignal = request.signal;
+        return { output: {} };
+      }
+    });
+
+    const prompt = await chatbot.preparePrompt({ messages: [], project: {}, attempt: 2 });
+    expect(prompt).toMatchObject({
+      attempt: { number: 2, purpose: 'fallback' },
+      parameters: { model: 'careful', reasoningEffort: 'xhigh' },
+      context: { attemptContext: { number: 2, purpose: 'fallback' } }
+    });
+    const controller = new AbortController();
+    await chatbot.generatePrepared(prompt, { signal: controller.signal });
+    expect(receivedSignal).toBe(controller.signal);
+    await expect(chatbot.preparePrompt({ messages: [], project: {}, attempt: 3 })).rejects.toThrow(
+      'outside the configured ladder'
+    );
+    expect(chatbot.requestTimeoutMs()).toBe(123);
   });
 });

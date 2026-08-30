@@ -552,7 +552,7 @@ export async function compileProjectSourceBatch(
     purpose: RenderPurpose;
     input: 'committed-artifact' | 'assistant-candidate';
     operationId: string;
-    attempt?: 1 | 2;
+    attempt?: number;
   },
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<RecordedCompilationBatch> {
@@ -616,7 +616,7 @@ export async function compileProjectSource(
     purpose: RenderPurpose;
     input: 'committed-artifact' | 'assistant-candidate';
     operationId: string;
-    attempt?: 1 | 2;
+    attempt?: number;
   },
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<RecordedCompilation> {

@@ -8,9 +8,32 @@ import type { SverlinPresentation } from '$lib/shared/presentations';
 
 import type { ProjectCommandDependencies } from './commands';
 import { MemoryProjectRepository } from './memory-repository.test-support';
+import { runWithProjectOperationSignal } from './operation-context';
 import type { ProjectServiceDependencies } from './service';
 
 const mocks = vi.hoisted(() => ({
+  attemptProfiles: [
+    {
+      purpose: 'initial' as const,
+      parameters: { model: 'gpt-5.6-luna', reasoningEffort: 'low' as const }
+    },
+    {
+      purpose: 'repair' as const,
+      parameters: { model: 'gpt-5.6-sol', reasoningEffort: 'medium' as const }
+    },
+    {
+      purpose: 'repair' as const,
+      parameters: { model: 'gpt-5.6-sol', reasoningEffort: 'high' as const }
+    },
+    {
+      purpose: 'repair' as const,
+      parameters: { model: 'gpt-5.6-sol', reasoningEffort: 'xhigh' as const }
+    },
+    {
+      purpose: 'fallback' as const,
+      parameters: { model: 'gpt-5.6-sol', reasoningEffort: 'xhigh' as const }
+    }
+  ],
   compileSource: vi.fn(),
   generateBatch: vi.fn(),
   preparePrompt: vi.fn(),
@@ -23,12 +46,16 @@ vi.mock('$lib/server/chat-bots/registry', () => ({
     text: 'Tell me what you would like to visualize.'
   }),
   getChatbot: () => ({
+    config: { attemptProfiles: mocks.attemptProfiles },
     preparePrompt: mocks.preparePrompt,
-    generatePrepared: mocks.generatePrepared
+    generatePrepared: mocks.generatePrepared,
+    requestTimeoutMs: () => 180_000
   }),
   getHtmlChatbot: () => ({
+    config: { attemptProfiles: mocks.attemptProfiles },
     preparePrompt: mocks.preparePrompt,
-    generatePrepared: mocks.generatePrepared
+    generatePrepared: mocks.generatePrepared,
+    requestTimeoutMs: () => 180_000
   })
 }));
 vi.mock('./fingerprints', () => ({
@@ -119,17 +146,28 @@ beforeEach(() => {
       }
     };
   });
-  mocks.preparePrompt.mockReset().mockResolvedValue({
-    initialPrompt: 'test prompt',
-    messages: [],
-    context: {},
-    parameters: { model: 'test-model' },
-    responseFormat: { name: 'test', schema: {} }
+  mocks.preparePrompt.mockReset().mockImplementation(async ({ attempt = 1 }) => {
+    const profile = mocks.attemptProfiles[attempt - 1];
+    return {
+      initialPrompt: 'test prompt',
+      messages: [],
+      context: {},
+      attempt: { number: attempt, purpose: profile?.purpose ?? 'repair' },
+      parameters: profile?.parameters ?? { model: 'test-model' },
+      responseFormat: { name: 'test', schema: {} }
+    };
   });
   mocks.generatePrepared
     .mockReset()
-    .mockResolvedValueOnce(generation('broken first', 'First candidate'))
-    .mockResolvedValueOnce(generation('broken repair', 'Repair candidate'));
+    .mockImplementation(async (prompt) =>
+      generation(
+        `broken attempt ${prompt.attempt.number}`,
+        `Candidate ${prompt.attempt.number}`,
+        prompt.attempt.purpose === 'fallback'
+          ? { struggledWith: 'the requested layout', simplified: 'the layout and animation' }
+          : undefined
+      )
+    );
   mocks.generateBatch
     .mockReset()
     .mockImplementation(async ({ source, seeds, signal }) =>
@@ -157,13 +195,17 @@ beforeEach(() => {
     projectService: serviceDependencies,
     getChatbot: () =>
       ({
+        config: { attemptProfiles: mocks.attemptProfiles },
         preparePrompt: mocks.preparePrompt,
-        generatePrepared: mocks.generatePrepared
+        generatePrepared: mocks.generatePrepared,
+        requestTimeoutMs: () => 180_000
       }) as unknown as ReturnType<ProjectCommandDependencies['getChatbot']>,
     getHtmlChatbot: () =>
       ({
+        config: { attemptProfiles: mocks.attemptProfiles },
         preparePrompt: mocks.preparePrompt,
-        generatePrepared: mocks.generatePrepared
+        generatePrepared: mocks.generatePrepared,
+        requestTimeoutMs: () => 180_000
       }) as unknown as ReturnType<ProjectCommandDependencies['getHtmlChatbot']>,
     readDslRevision: serviceDependencies.readDslRevision
   };
@@ -415,6 +457,79 @@ describe('submitProjectFeedback', () => {
     ).toHaveLength(2);
   });
 
+  it('uses the fifth attempt for a simpler working fallback and explains it', async () => {
+    mocks.generatePrepared.mockReset().mockImplementation(async (prompt) =>
+      prompt.attempt.purpose === 'fallback'
+        ? generation('valid simplified source', 'Here is the working version.', {
+            struggledWith: 'combining every requested animation',
+            simplified: 'the animation sequence while preserving the algorithm'
+          })
+        : generation(`broken attempt ${prompt.attempt.number}`, 'Trying the full design')
+    );
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Graceful fallback' }, serviceDependencies);
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Make an elaborate animated visualization'),
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    const requests = result.appendedEvents.filter(
+      (event) => event.type === 'ai.generation-requested'
+    );
+    expect(requests.map(({ payload }) => payload.purpose)).toEqual([
+      'initial',
+      'repair',
+      'repair',
+      'repair',
+      'fallback'
+    ]);
+    expect(requests.map(({ payload }) => payload.parameters.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'xhigh'
+    ]);
+    expect(mocks.preparePrompt.mock.calls[4][0].compilationFeedback).toMatchObject({
+      attempt: 4,
+      priorFailureSummaries: expect.arrayContaining([
+        expect.stringContaining('Attempt 1'),
+        expect.stringContaining('Attempt 4')
+      ])
+    });
+    expect(
+      mocks.generateBatch.mock.calls.every(
+        ([request]) =>
+          JSON.stringify(request.seeds) ===
+          JSON.stringify(mocks.generateBatch.mock.calls[0][0].seeds)
+      )
+    ).toBe(true);
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: {
+        content: [
+          expect.objectContaining({
+            type: 'markdown',
+            text: expect.stringContaining('combining every requested animation')
+          }),
+          { type: 'markdown', text: 'Here is the working version.' }
+        ]
+      }
+    });
+    expect(result.appendedEvents.some(({ type }) => type === 'artifact.version-created')).toBe(
+      true
+    );
+  });
+
   it('accepts one safe HTML manifest and links it to its generation event', async () => {
     mocks.generatePrepared
       .mockReset()
@@ -514,7 +629,50 @@ describe('submitProjectFeedback', () => {
     expect(result.appendedEvents.some(({ type }) => type === 'visualization.presented')).toBe(true);
   });
 
-  it('records both failed candidates and stops after one explicit repair', async () => {
+  it('uses the shared fifth-attempt fallback for repeatedly unsafe HTML', async () => {
+    mocks.generatePrepared.mockReset().mockImplementation(async (prompt) =>
+      prompt.attempt.purpose === 'fallback'
+        ? htmlGeneration(manifest('<main>Simple and safe</main>'), 'Simplified result', {
+            struggledWith: 'the interactive controls',
+            simplified: 'the interaction into static explanatory frames'
+          })
+        : htmlGeneration(manifest('<script>alert(1)</script>'), 'Unsafe attempt')
+    );
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html' } },
+      serviceDependencies
+    );
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Create an interactive explanation'),
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(mocks.generatePrepared).toHaveBeenCalledTimes(5);
+    expect(
+      result.appendedEvents.filter(({ type }) => type === 'ai.generation-requested').at(-1)
+    ).toMatchObject({ payload: { purpose: 'fallback', attempt: 5 } });
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: {
+        content: [
+          expect.objectContaining({ type: 'markdown', text: expect.stringContaining('controls') }),
+          { type: 'markdown', text: 'Simplified result' }
+        ]
+      }
+    });
+  });
+
+  it('records four failed repairs and one failed simplification before stopping', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject({ title: 'Finite repair' }, serviceDependencies);
@@ -532,12 +690,12 @@ describe('submitProjectFeedback', () => {
       commandDependencies
     );
 
-    expect(mocks.generatePrepared).toHaveBeenCalledTimes(2);
+    expect(mocks.generatePrepared).toHaveBeenCalledTimes(5);
     expect(
       result.appendedEvents.filter(({ type }) => type === 'ai.generation-requested')
-    ).toHaveLength(2);
+    ).toHaveLength(5);
     expect(result.appendedEvents.filter(({ type }) => type === 'compilation.failed')).toHaveLength(
-      2
+      5
     );
     expect(result.appendedEvents.at(-1)).toMatchObject({
       type: 'system.notified',
@@ -547,7 +705,7 @@ describe('submitProjectFeedback', () => {
     const revisionEvents = result.appendedEvents.filter(
       (event) => event.type === 'ai.generation-requested' || event.type === 'compilation.requested'
     );
-    expect(revisionEvents).toHaveLength(4);
+    expect(revisionEvents).toHaveLength(10);
     expect(
       revisionEvents.every(
         (event) =>
@@ -562,6 +720,36 @@ describe('submitProjectFeedback', () => {
     expect(
       result.document.events.filter(({ type }) => type === 'visualization.presented')
     ).toHaveLength(0);
+  });
+
+  it('does not start a repair without one complete provider timeout before the deadline', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Deadline repair' }, serviceDependencies);
+    const controller = new AbortController();
+
+    const result = await runWithProjectOperationSignal(
+      controller.signal,
+      () =>
+        submitProjectFeedback(
+          {
+            projectId: created.projectId,
+            expectedHead: projectHead(created).id,
+            content: markdownMessage('Change the visualization'),
+            focus: [],
+            presentationCount: 1,
+            operationId: '12345678-1234-4123-8123-123456789abc'
+          },
+          commandDependencies
+        ),
+      Date.now() + 179_000
+    );
+
+    expect(mocks.generatePrepared).toHaveBeenCalledTimes(1);
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'system.notified',
+      payload: { message: expect.stringContaining('not enough time left') }
+    });
   });
 
   it('stores the raw provider response when structured output is incomplete', async () => {
@@ -799,11 +987,16 @@ describe('submitProjectFeedback', () => {
   });
 });
 
-function generation(sourceArtifactContent: string, reply: string) {
+function generation(
+  sourceArtifactContent: string,
+  reply: string,
+  recovery?: { struggledWith: string; simplified: string }
+) {
   return {
     reply: markdownMessage(reply),
     candidateAction: 'none' as const,
     sourceArtifactContent,
+    ...(recovery ? { recovery } : {}),
     prompt: {
       initialPrompt: 'test prompt',
       messages: [],
@@ -827,10 +1020,15 @@ function manifest(html: string) {
   };
 }
 
-function htmlGeneration(value: ReturnType<typeof manifest> | undefined, reply: string) {
+function htmlGeneration(
+  value: ReturnType<typeof manifest> | undefined,
+  reply: string,
+  recovery?: { struggledWith: string; simplified: string }
+) {
   return {
     reply: markdownMessage(reply),
     candidates: value ? [{ label: 'Candidate', manifest: value }] : [],
+    ...(recovery ? { recovery } : {}),
     prompt: {
       initialPrompt: 'html test prompt',
       messages: [],

@@ -11,7 +11,7 @@ import { sqlClient } from '$lib/server/db';
 
 import { submitProjectFeedback } from './commands';
 import { recordProjectPreference, saveHtmlProjectArtifact } from './presentations';
-import { runWithProjectOperationSignal } from './operation-context';
+import { projectOperationDeadlineError, runWithProjectOperationSignal } from './operation-context';
 import { recoveryEventsForInterruptedOperations } from './recovery';
 import { projectRepository, type ProjectRepository } from './repository';
 import {
@@ -85,10 +85,12 @@ export class ProjectOperationExecutor {
     expectedHead: number;
     command: ProjectOperationCommand;
     actor?: 'user' | 'system';
+    deadlineAt?: string;
   }): Promise<AcceptedProjectOperation> {
     if (!this.#accepting) {
       throw new ProjectOperationCapacityError();
     }
+    const deadlineAt = parseDeadline(options.deadlineAt);
     const kind = commandKind(options.command);
     const expectedHead =
       kind === 'presentation-refill'
@@ -127,7 +129,13 @@ export class ProjectOperationExecutor {
       ]);
       const acceptedEventId = accepted.events[0].id;
       const promise = this.runAccepted(
-        { ...options, expectedHead: acceptedEventId },
+        {
+          projectId: options.projectId,
+          operationId: options.operationId,
+          command: options.command,
+          expectedHead: acceptedEventId,
+          ...(deadlineAt === undefined ? {} : { deadlineAt })
+        },
         reserved,
         lease
       );
@@ -255,14 +263,26 @@ export class ProjectOperationExecutor {
       operationId: string;
       expectedHead: number;
       command: ProjectOperationCommand;
+      deadlineAt?: number;
     },
     controller: AbortController,
     lease: OperationLease
   ): Promise<void> {
     const kind = commandKind(options.command);
+    const deadlineAt = options.deadlineAt;
+    const deadlineTimer =
+      deadlineAt !== undefined
+        ? setTimeout(
+            () => controller.abort(projectOperationDeadlineError()),
+            Math.max(0, deadlineAt - Date.now())
+          )
+        : undefined;
+    deadlineTimer?.unref();
     try {
-      const result = await runWithProjectOperationSignal(controller.signal, () =>
-        this.execute({ ...options, signal: controller.signal })
+      const result = await runWithProjectOperationSignal(
+        controller.signal,
+        () => this.execute({ ...options, signal: controller.signal }),
+        deadlineAt
       );
       const terminalFailure = terminalFailureFor(kind, result.appendedEvents);
       const document = await this.repository.load(options.projectId);
@@ -277,14 +297,18 @@ export class ProjectOperationExecutor {
           : lifecycleEvent('operation.completed', options.operationId, kind)
       ]);
     } catch (cause) {
+      const cancelled =
+        controller.signal.aborted ||
+        (cause instanceof Error && cause.name === 'StudyPhaseDeadlineError');
       await this.closeFailedOperation(
         options.projectId,
         options.operationId,
         kind,
-        controller.signal.aborted ? 'cancelled' : 'infrastructure',
+        cancelled ? 'cancelled' : 'infrastructure',
         controller.signal.aborted ? cancellationMessage(controller.signal) : messageFor(cause)
       );
     } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
       await lease.release();
     }
   }
@@ -484,6 +508,10 @@ function terminalFailureFor(
     return event.type === 'visualization.presented' || event.type === 'compilation.failed';
   });
   if (!outcome) return undefined;
+  const noticeMessage =
+    outcome.type === 'system.notified' && outcome.payload.severity === 'error'
+      ? outcome.payload.message
+      : undefined;
   const failure =
     outcome.type === 'system.notified'
       ? (events.findLast(
@@ -493,7 +521,7 @@ function terminalFailureFor(
   if (failure.type === 'ai.generation-failed') {
     return {
       failureKind: failure.payload.failureKind === 'cancelled' ? 'cancelled' : 'infrastructure',
-      message: failure.payload.message
+      message: noticeMessage ?? failure.payload.message
     };
   }
   if (failure.type === 'compilation.failed') {
@@ -505,7 +533,10 @@ function terminalFailureFor(
             ? 'cancelled'
             : 'infrastructure',
       message:
-        failure.payload.diagnostics[0]?.message ?? failure.payload.error ?? 'Compilation failed.'
+        noticeMessage ??
+        failure.payload.diagnostics[0]?.message ??
+        failure.payload.error ??
+        'Compilation failed.'
     };
   }
   if (failure.type === 'system.notified' && failure.payload.severity === 'error') {
@@ -523,6 +554,13 @@ function cancellationMessage(signal: AbortSignal): string {
   return reason instanceof Error && reason.name !== 'AbortError'
     ? reason.message
     : 'The project operation was cancelled while the server was shutting down. Retry the operation.';
+}
+
+function parseDeadline(value?: string): number | undefined {
+  if (!value) return undefined;
+  const deadline = Date.parse(value);
+  if (!Number.isFinite(deadline)) throw new Error('The project operation deadline is invalid.');
+  return deadline;
 }
 
 function delay(milliseconds: number): Promise<void> {

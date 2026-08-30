@@ -33,7 +33,7 @@ instance Traceable ElementCell where
 data Add
 
 instance Traceable Add where
-  type Payload Add = LOperator Add Add
+  type Payload Add = LOperator Add
 
 instance Applicable2 Add Number Number where
   type Apply2Result Add Number Number = Number
@@ -43,7 +43,7 @@ instance Applicable2 Add Number Number where
 data Equal
 
 instance Traceable Equal where
-  type Payload Equal = LOperator Equal Equal
+  type Payload Equal = LOperator Equal
 
 instance Applicable2 Equal Number Number where
   type Apply2Result Equal Number Number = Condition
@@ -471,7 +471,7 @@ line ::
   Choice FontFamily ->
   Span ->
   TextBuilder () ->
-  Render (SelectionBinding (Selected GeneratedNode))
+  Render (Selected GeneratedNode)
 line codeFont codeSize textRecipe =
   node $ do
     width (by 500)
@@ -491,12 +491,12 @@ after upper lower = ensure $ top lower .==. bottom upper + shift 4
 
 cSource :: Render ()
 cSource = do
-  Variable codeFont <- fontChoice (fontKind Monospace)
-  Variable codeSize <- variable @Span
+  codeFont <- fontChoice (fontKind Monospace)
+  codeSize <- variable @Span
   ensure $ codeSize .>=. by 14
   ensure $ codeSize .<=. by 20
 
-  Selected functionLine <- line codeFont codeSize $ do
+  functionLine <- line codeFont codeSize $ do
     literal "int linear_search(int "
     fragmentMany
       @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement, RelateNextElement]
@@ -509,7 +509,7 @@ cSource = do
       "target"
     literal ") {"
 
-  Selected loopLine <- line codeFont codeSize $ do
+  loopLine <- line codeFont codeSize $ do
     literal "for ("
     fragmentMany
       @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
@@ -522,27 +522,27 @@ cSource = do
       "i++"
     literal ") {"
 
-  Selected comparisonLine <- line codeFont codeSize $ do
+  comparisonLine <- line codeFont codeSize $ do
     literal "if ("
     fragment @ReadElement "A[i]"
     fragmentMany @'[CompareTarget, CreateEqualOperator, ApplyEquality] " == "
     fragment @ReadTarget "target"
     literal ") {"
 
-  Selected foundLine <- line codeFont codeSize $ do
+  foundLine <- line codeFont codeSize $ do
     literal "return "
     fragment @ReturnFound "i"
     literal ";"
 
-  Selected closeComparison <- line codeFont codeSize $ literal "}"
-  Selected closeLoop <- line codeFont codeSize $ literal "}"
+  closeComparison <- line codeFont codeSize $ literal "}"
+  closeLoop <- line codeFont codeSize $ literal "}"
 
-  Selected notFoundLine <- line codeFont codeSize $ do
+  notFoundLine <- line codeFont codeSize $ do
     literal "return "
     fragment @ReturnNotFound "-1"
     literal ";"
 
-  Selected closeFunction <- line codeFont codeSize $ literal "}"
+  closeFunction <- line codeFont codeSize $ literal "}"
 
   ensure $ left functionLine .==. at 36
   ensure $ top functionLine .==. at 32
@@ -585,9 +585,9 @@ render = do
   always $ frame @FinishSearch
   cSource
 
-  Selected targets <- select targetKind
+  targets <- select targetKind
   node targets $ do
-    Bound targetLabel <- bindContent
+    targetLabel <- bindContent
     fitText targetLabel
     left (at 580)
     top (at 72)
@@ -595,9 +595,9 @@ render = do
     height (by 88)
     styleFamily "target"
 
-  Selected indices <- select indexKind
+  indices <- select indexKind
   node indices $ do
-    Bound indexLabel <- bindContent
+    indexLabel <- bindContent
     fitText indexLabel
     left (at 780)
     top (at 72)
@@ -605,11 +605,11 @@ render = do
     height (by 88)
     styleFamily "index"
 
-  Selected elementCells <- select elementCellKind
-  Selected adjacentRelations <- select adjacent
+  elementCells <- select elementCellKind
+  adjacentRelations <- select adjacent
   elementRanking <- asSequence adjacentRelations elementCells
 
-  Variable elementSpacing <- variable @Span
+  elementSpacing <- variable @Span
   ensure $ elementSpacing .>=. by 88
   ensure $ elementSpacing .<=. by 112
 
@@ -621,18 +621,26 @@ render = do
     ensure $ x elementCells .==. at 600 + elementSpacing * asScalar position
     ensure $ y elementCells .==. at 246
 
+  relation adjacentRelations $ do
+    previous <- first adjacentRelations
+    next <- second adjacentRelations
+    connector (anchor AtRight previous) (anchor AtLeft next) $ do
+      style @Stroke (Hsl (num 215) (num 0.45) (num 0.48))
+      style @StrokeWidth (by 2)
+      endMarker ArrowMarker
+
   -- The planned Slot projection keeps each current Number occupant at its
   -- ElementCell owner's stable bounds. The exact public projection helper, or
   -- whether this alignment is automatic, remains to be named.
-  Selected elements <- select elementKind
+  elements <- select elementKind
   node elements $ do
-    Bound elementLabel <- bindContent
+    elementLabel <- bindContent
     fitText elementLabel
     styleFamily "element-value"
 
-  Selected targetReads <- select targetReadKind
+  targetReads <- select targetReadKind
   node targetReads $ do
-    Bound targetReadLabel <- bindContent
+    targetReadLabel <- bindContent
     fitText targetReadLabel
     left (at 620)
     top (at 350)
@@ -640,9 +648,9 @@ render = do
     height (by 76)
     styleFamily "read"
 
-  Selected elementReads <- select elementReadKind
+  elementReads <- select elementReadKind
   node elementReads $ do
-    Bound elementReadLabel <- bindContent
+    elementReadLabel <- bindContent
     fitText elementReadLabel
     left (at 790)
     top (at 350)
@@ -650,9 +658,9 @@ render = do
     height (by 76)
     styleFamily "read"
 
-  Selected comparisons <- select comparisonKind
+  comparisons <- select comparisonKind
   node comparisons $ do
-    Bound comparisonLabel <- bindContent
+    comparisonLabel <- bindContent
     fitText comparisonLabel
     left (at 705)
     top (at 480)

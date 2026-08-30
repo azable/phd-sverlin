@@ -48,6 +48,7 @@ export type StudyProjectContext = {
   isCurrent: boolean;
   active: boolean;
   expired: boolean;
+  deadlineAt?: string;
   presentationBufferTarget?: number;
   layout?: string;
   view?: string;
@@ -301,6 +302,7 @@ export async function studyProjectContext(
     isCurrent: row.sequenceIndex === row.currentPhaseIndex,
     active: row.status === 'active' && !row.completedAt,
     expired,
+    ...(row.deadlineAt ? { deadlineAt: row.deadlineAt.toISOString() } : {}),
     ...(phase?.kind === 'task' && phase.condition.presentationBufferTarget
       ? { presentationBufferTarget: phase.condition.presentationBufferTarget }
       : {}),

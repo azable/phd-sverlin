@@ -6,6 +6,7 @@ import type { ProjectDocument } from '$lib/shared/projects/model';
 import { projectOperation } from '$lib/shared/projects/operations';
 
 import { MemoryProjectRepository } from './memory-repository.test-support';
+import { currentProjectOperationDeadline } from './operation-context';
 import { ProjectOperationExecutor } from './operations';
 
 describe('ProjectOperationExecutor', () => {
@@ -158,6 +159,57 @@ describe('ProjectOperationExecutor', () => {
     }
   });
 
+  it('uses the sanitized system notice for a recorded compiler failure', async () => {
+    const repository = new MemoryProjectRepository();
+    const projectId = randomUUID();
+    const operationId = randomUUID();
+    await repository.create(rootDocument(projectId, randomUUID()), 'owner');
+    const executor = new ProjectOperationExecutor(
+      repository,
+      { acquire: async () => ({ release: async () => undefined }) },
+      async ({ projectId: id, expectedHead, operationId: correlation }) => {
+        const appended = await repository.append(id, expectedHead, [
+          { ...compilationFailure('source'), operationId: correlation },
+          {
+            type: 'system.notified',
+            actor: { kind: 'system' },
+            operationId: correlation,
+            createdAt: new Date().toISOString(),
+            payload: {
+              severity: 'error',
+              message: 'I kept the last working visualization after simplifying it.'
+            }
+          }
+        ]);
+        return { document: appended.document, appendedEvents: appended.events };
+      }
+    );
+
+    await executor.accept({
+      projectId,
+      operationId,
+      expectedHead: 1,
+      command: {
+        type: 'feedback',
+        operationId,
+        expectedHead: 1,
+        content: [{ type: 'markdown', text: 'Change it.' }],
+        focus: [],
+        presentationCount: 1
+      }
+    });
+    await terminal(repository, projectId, operationId);
+
+    expect(
+      projectOperation(await repository.load(projectId), operationId)?.terminalEvent
+    ).toMatchObject({
+      payload: {
+        failureKind: 'domain',
+        message: 'I kept the last working visualization after simplifying it.'
+      }
+    });
+  });
+
   it('cancels and safely rebases over a background refill before accepting participant work', async () => {
     const repository = new MemoryProjectRepository();
     const projectId = randomUUID();
@@ -266,6 +318,48 @@ describe('ProjectOperationExecutor', () => {
     expect(
       projectOperation(await repository.load(participantProjectId), participantId)?.status
     ).toBe('completed');
+  });
+
+  it('propagates and enforces a study deadline for accepted asynchronous work', async () => {
+    const repository = new MemoryProjectRepository();
+    const projectId = randomUUID();
+    const operationId = randomUUID();
+    await repository.create(rootDocument(projectId, randomUUID()), 'owner');
+    let observedDeadline: number | undefined;
+    const executor = new ProjectOperationExecutor(
+      repository,
+      { acquire: async () => ({ release: async () => undefined }) },
+      async ({ signal }) => {
+        observedDeadline = currentProjectOperationDeadline();
+        if (signal.aborted) throw signal.reason;
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+        throw new Error('unreachable');
+      }
+    );
+    const deadlineAt = new Date(Date.now() + 20).toISOString();
+
+    await executor.accept({
+      projectId,
+      operationId,
+      expectedHead: 1,
+      command: { type: 'initial-render', seed: 1 },
+      deadlineAt
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await terminal(repository, projectId, operationId);
+
+    expect(observedDeadline).toBe(Date.parse(deadlineAt));
+    expect(projectOperation(await repository.load(projectId), operationId)).toMatchObject({
+      status: 'failed',
+      terminalEvent: {
+        payload: {
+          failureKind: 'cancelled',
+          message: expect.stringContaining('study phase ended')
+        }
+      }
+    });
   });
 });
 

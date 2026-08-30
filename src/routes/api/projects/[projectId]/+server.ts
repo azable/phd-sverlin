@@ -28,13 +28,14 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 /** Validate and execute one optimistic-concurrency project command. */
 export const POST: RequestHandler = async ({ params, request, locals }) => {
   try {
-    await requireProjectMutationAccess(locals, params.projectId);
+    const inspection = await requireProjectMutationAccess(locals, params.projectId);
     const command = parseProjectCommand(await request.json());
     const accepted = await projectOperationExecutor.accept({
       projectId: params.projectId,
       operationId: command.operationId,
       expectedHead: command.expectedHead,
-      command
+      command,
+      ...(inspection.study?.deadlineAt ? { deadlineAt: inspection.study.deadlineAt } : {})
     });
     return json(accepted, { status: 202 });
   } catch (cause) {
