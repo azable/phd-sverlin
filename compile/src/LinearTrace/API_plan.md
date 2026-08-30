@@ -475,9 +475,11 @@ ensure (size second .==. size first)
 #### Style authoring and colour
 
 Retain `StyleChoice`, `style`, `withoutStyle`, `styleCase`, `styleFamily`,
-`styleOf`, `NodeStyle`, `Opacity`, `ZIndex`, `FontSize`, `Radius`, `StrokeWidth`,
+`styleOf`, `NodeStyle`, `Opacity`, `FontSize`, `Radius`, `StrokeWidth`,
 `Alpha`, `Fill`, `Stroke`, `BorderStyle`, `FontFamily`, `FontWeight`,
 `FontStyle`, `TextAlign`, `WhiteSpace`, `Hsl`, `Color`, and `sat`.
+
+TODO Remove `ZIndex` and make this implicitly determined for now.
 
 ```haskell
 node selected $ do

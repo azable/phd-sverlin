@@ -1,0 +1,361 @@
+-- Illustrative body-only source for the target API in API_plan.md.
+-- Unified typed steps, text trees, and Render-controlled frames are proposed APIs.
+
+data Number
+
+type instance Payload Number = LInt Number
+
+data Condition
+
+type instance Payload Condition = LBool Condition
+
+data IndexCell
+
+type instance Payload IndexCell = LUnit IndexCell
+
+data LimitCell
+
+type instance Payload LimitCell = LUnit LimitCell
+
+data Add = Add
+
+type instance Payload Add = LOperator Add Add
+
+instance CoreOperator Add where
+  operatorPayloadText Add = "+"
+  persistOperatorPayload Add = Ur Add
+
+instance Applicable2 Add Number Number where
+  type Apply2Result Add Number Number = Number
+  applyPayload2 (LOperator Add) = applyLinear2Into (Linear.+)
+
+data LessThan = LessThan
+
+type instance Payload LessThan = LOperator LessThan LessThan
+
+instance CoreOperator LessThan where
+  operatorPayloadText LessThan = "<"
+  persistOperatorPayload LessThan = Ur LessThan
+
+instance Applicable2 LessThan Number Number where
+  type Apply2Result LessThan Number Number = Condition
+  applyPayload2 (LOperator LessThan) = applyLinear2Into (Linear.<)
+
+type CountTo = "count-to"
+type BindLimit = "count-to/bind-limit"
+type InitializeIndex = "count-to/initialize-index"
+type TestLoopBound = "count-to/test-loop-bound"
+type IncrementIndex = "count-to/increment-index"
+type FinishProgram = "count-to/finish"
+
+type CreateLimitValue = "count-to/bind-limit/create-value"
+type CreateLimitCell = "count-to/bind-limit/create-cell"
+type AssignLimit = "count-to/bind-limit/assign"
+
+type CreateZero = "count-to/initialize-index/create-zero"
+type CreateIndexCell = "count-to/initialize-index/create-cell"
+type AssignIndex = "count-to/initialize-index/assign"
+
+type ReadIndexForBound = "count-to/test-loop-bound/read-index"
+type ReadLimitForBound = "count-to/test-loop-bound/read-limit"
+type CreateLessThanOperator = "count-to/test-loop-bound/create-operator"
+type CompareIndexToLimit = "count-to/test-loop-bound/compare"
+
+type ReadIndexForIncrement = "count-to/increment-index/read-index"
+type CreateOne = "count-to/increment-index/create-one"
+type CreateAddOperator = "count-to/increment-index/create-operator"
+type AddOneToIndex = "count-to/increment-index/add"
+type WriteIndex = "count-to/increment-index/write"
+
+type DestroyIndexStorage = "count-to/finish/destroy-index"
+type DestroyLimitStorage = "count-to/finish/destroy-limit"
+
+domain :: Domain ()
+domain = do
+  declarePayload @Number
+  declarePayload @Condition
+  declarePayload @IndexCell
+  declarePayload @LimitCell
+  declareOperator Add
+  declareOperator LessThan
+  declareSteps
+    @'[ CountTo
+      , BindLimit
+      , InitializeIndex
+      , TestLoopBound
+      , IncrementIndex
+      , FinishProgram
+      , CreateLimitValue
+      , CreateLimitCell
+      , AssignLimit
+      , CreateZero
+      , CreateIndexCell
+      , AssignIndex
+      , ReadIndexForBound
+      , ReadLimitForBound
+      , CreateLessThanOperator
+      , CompareIndexToLimit
+      , ReadIndexForIncrement
+      , CreateOne
+      , CreateAddOperator
+      , AddOneToIndex
+      , WriteIndex
+      , DestroyIndexStorage
+      , DestroyLimitStorage
+      ]
+
+data Stored owner where
+  Stored :: Block owner %1 -> Slot owner Number %1 -> Stored owner
+
+data ReadStored owner where
+  ReadStored :: Stored owner %1 -> Block Number %1 -> ReadStored owner
+
+data LoopTest where
+  ContinueLoop :: Stored IndexCell %1 -> Stored LimitCell %1 -> LoopTest
+  ExitLoop :: Stored IndexCell %1 -> Stored LimitCell %1 -> LoopTest
+
+readStored :: Traceable owner => Query -> Stored owner %1 -> Program (ReadStored owner)
+readStored query (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Copy value1 copyPending <- copy value
+  valueCopy <- materialize query copyPending
+  Seal owner2 slot1 <- seal owner1 value1
+  return (ReadStored (Stored owner2 slot1) valueCopy)
+
+writeStored :: Traceable owner => Query -> Stored owner %1 -> Pending Number %1 -> Program (Stored owner)
+writeStored query (Stored owner slot) replacement = do
+  Unseal owner1 oldValue <- unseal owner slot
+  Replace storedPending <- replace oldValue replacement
+  storedValue <- materialize query storedPending
+  Seal owner2 slot1 <- seal owner1 storedValue
+  return (Stored owner2 slot1)
+
+destroyStored :: Traceable owner => Stored owner %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  return ()
+
+bindLimit :: Int -> Program (Stored LimitCell)
+bindLimit limitValue = step @BindLimit $ do
+  limit <- step @CreateLimitValue $ do
+    Create pending <- create @Number (LInt limitValue)
+    materialize #limit pending
+
+  limitCell <- step @CreateLimitCell $ do
+    Create pending <- create @LimitCell LUnit
+    materialize #limitCell pending
+
+  step @AssignLimit $ do
+    Seal limitCell1 limitSlot <- seal limitCell limit
+    return (Stored limitCell1 limitSlot)
+
+initializeIndex :: Program (Stored IndexCell)
+initializeIndex = step @InitializeIndex $ do
+  zero <- step @CreateZero $ do
+    Create pending <- create @Number (LInt 0)
+    materialize #index pending
+
+  indexCell <- step @CreateIndexCell $ do
+    Create pending <- create @IndexCell LUnit
+    materialize #indexCell pending
+
+  step @AssignIndex $ do
+    Seal indexCell1 indexSlot <- seal indexCell zero
+    return (Stored indexCell1 indexSlot)
+
+testLoopBound :: Stored IndexCell %1 -> Stored LimitCell %1 -> Program LoopTest
+testLoopBound index limit = step @TestLoopBound $ do
+  ReadStored index1 indexProbe <- step @ReadIndexForBound (readStored #indexRead index)
+  ReadStored limit1 limitProbe <- step @ReadLimitForBound (readStored #limitRead limit)
+
+  lessThan <- step @CreateLessThanOperator $ do
+    Create pending <- create @LessThan (LOperator LessThan)
+    materialize #lessThanOperator pending
+
+  continue <- step @CompareIndexToLimit $ do
+    Apply2 conditionPending <- apply2 lessThan indexProbe limitProbe
+    condition <- materialize #loopCondition conditionPending
+    Use result <- use condition
+    case result of
+      OneUse (LBool answer) -> return answer
+
+  case continue of
+    True -> return (ContinueLoop index1 limit1)
+    False -> return (ExitLoop index1 limit1)
+
+incrementIndex :: Stored IndexCell %1 -> Program (Stored IndexCell)
+incrementIndex index = step @IncrementIndex $ do
+  ReadStored index1 indexProbe <- step @ReadIndexForIncrement (readStored #indexRead index)
+
+  one <- step @CreateOne $ do
+    Create pending <- create @Number (LInt 1)
+    materialize #increment pending
+
+  add <- step @CreateAddOperator $ do
+    Create pending <- create @Add (LOperator Add)
+    materialize #addOperator pending
+
+  nextPending <- step @AddOneToIndex $ do
+    Apply2 pending <- apply2 add indexProbe one
+    return pending
+
+  step @WriteIndex (writeStored #index index1 nextPending)
+
+finishProgram :: Stored IndexCell %1 -> Stored LimitCell %1 -> Program ()
+finishProgram index limit = step @FinishProgram $ do
+  step @DestroyIndexStorage (destroyStored index)
+  step @DestroyLimitStorage (destroyStored limit)
+
+countLoop :: Stored IndexCell %1 -> Stored LimitCell %1 -> Program ()
+countLoop index limit = do
+  result <- testLoopBound index limit
+  case result of
+    ContinueLoop index1 limit1 -> do
+      index2 <- incrementIndex index1
+      countLoop index2 limit1
+    ExitLoop index1 limit1 -> finishProgram index1 limit1
+
+program :: Program ()
+program = step @CountTo $ do
+  limit <- bindLimit 4
+  index <- initializeIndex
+  countLoop index limit
+
+pseudocode :: TextTree
+pseudocode =
+  block @CountTo
+    (do
+      literal "count to "
+      fragmentMany @'[BindLimit, CreateLimitValue, CreateLimitCell, AssignLimit] "limit"
+      literal ":")
+    $ do
+      line @InitializeIndex $ do
+        fragmentMany @'[CreateIndexCell, AssignIndex] "set counter to "
+        fragment @CreateZero "zero"
+
+      block @TestLoopBound
+        (do
+          literal "while "
+          fragment @ReadIndexForBound "counter"
+          fragmentMany @'[CreateLessThanOperator, CompareIndexToLimit] " is below "
+          fragment @ReadLimitForBound "limit"
+          literal ":")
+        $ do
+          line @IncrementIndex $ do
+            fragmentMany
+              @'[ReadIndexForIncrement, CreateAddOperator, AddOneToIndex, WriteIndex]
+              "increase counter by "
+            fragment @CreateOne "one"
+
+      line @FinishProgram $ fragmentMany @'[DestroyIndexStorage, DestroyLimitStorage] "finish"
+
+cSource :: TextTree
+cSource =
+  delimitedBlock @CountTo
+    (do
+      literal "void count_to(int "
+      fragmentMany @'[BindLimit, CreateLimitValue, CreateLimitCell, AssignLimit] "limit"
+      literal ") {")
+    (literal "}")
+    $ do
+      line @InitializeIndex $ do
+        fragment @CreateIndexCell "int i"
+        fragment @AssignIndex " = "
+        fragment @CreateZero "0"
+        literal ";"
+
+      delimitedBlock @TestLoopBound
+        (do
+          literal "while ("
+          fragment @ReadIndexForBound "i"
+          fragmentMany @'[CreateLessThanOperator, CompareIndexToLimit] " < "
+          fragment @ReadLimitForBound "limit"
+          literal ") {")
+        (literal "}")
+        $ do
+          line @IncrementIndex $
+            fragmentMany
+              @'[ReadIndexForIncrement, CreateOne, CreateAddOperator, AddOneToIndex, WriteIndex]
+              "i++;"
+
+      line @FinishProgram $ do
+        fragmentMany @'[DestroyIndexStorage, DestroyLimitStorage] "return"
+        literal ";"
+
+type PresentationFrames = '[BindLimit, InitializeIndex, TestLoopBound, IncrementIndex, FinishProgram]
+
+render :: Render ()
+render = do
+  width (by 960)
+  height (by 600)
+  contentFit Both Contain
+  framesAt @PresentationFrames
+
+  source <- textNodes pseudocode
+
+  node source $ do
+    left (at 36)
+    top (at 32)
+    width (by 500)
+    height (by 520)
+    style @FontFamily (FixedStyle FontIBMPlexMono)
+    style @WhiteSpace (FixedStyle WhiteSpacePre)
+
+  Bound indexLabel <- bindContent
+  Selected indices <- select @Number (#index <&> payload indexLabel)
+  Bound limitLabel <- bindContent
+  Selected limits <- select @Number (#limit <&> payload limitLabel)
+  Bound indexReadLabel <- bindContent
+  Selected indexReads <- select @Number (#indexRead <&> payload indexReadLabel)
+  Bound limitReadLabel <- bindContent
+  Selected limitReads <- select @Number (#limitRead <&> payload limitReadLabel)
+  Bound conditionLabel <- bindContent
+  Selected conditions <- select @Condition (#loopCondition <&> payload conditionLabel)
+
+  node indices $ do
+    fitText indexLabel
+    left (at 620)
+    top (at 120)
+    width (by 120)
+    height (by 88)
+    styleFamily "index"
+
+  node limits $ do
+    fitText limitLabel
+    left (at 790)
+    top (at 120)
+    width (by 120)
+    height (by 88)
+    styleFamily "limit"
+
+  node indexReads $ do
+    fitText indexReadLabel
+    left (at 620)
+    top (at 270)
+    width (by 110)
+    height (by 80)
+    styleFamily "read"
+
+  node limitReads $ do
+    fitText limitReadLabel
+    left (at 800)
+    top (at 270)
+    width (by 110)
+    height (by 80)
+    styleFamily "read"
+
+  node conditions $ do
+    fitText conditionLabel
+    left (at 710)
+    top (at 410)
+    width (by 110)
+    height (by 80)
+    styleFamily "condition"
+
+  during @TestLoopBound $ mappedFragments @TestLoopBound source $ do
+    style @FontWeight (FixedStyle FontWeightBold)
+
+  during @IncrementIndex $ mappedFragments @IncrementIndex source $ do
+    style @FontWeight (FixedStyle FontWeightBold)
