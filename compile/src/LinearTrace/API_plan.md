@@ -1197,8 +1197,8 @@ graph and reuse them across seeds. No baseline graph operation constructs the
 
 #### Reusable values and finite decisions
 
-Retain `bindContent`, `variable`, `choice`, `Choice`, `RandomSeed`, and `global`.
-`bindContent` exposes the payload display
+Retain `bindContent`, `variable`, `choice`, `Choice`, and `global`. `bindContent`
+exposes the payload display
 text of each block in the current typed selection; it no longer depends on a
 payload query binding. Variables and choices introduce
 solver-backed values; `variable` and `choice` create fresh compiler identities.
@@ -1222,6 +1222,13 @@ The baseline does not provide reusable author-defined categorical values. Use
 concrete later use case needs one category to drive several APIs, add an explicit
 non-empty constructor such as `choiceOf first rest`; do not restore author-managed
 solver tokens.
+
+Remove `RandomSeed` from the authored facade. It belongs to solver and compiler
+entry points: the compiler service receives integer seeds and converts them
+internally. Domain, Program, and Render code use seeded operations such as `choice`,
+`variable`, `sometimes`, and `fontChoice` without inspecting or branching directly
+on the seed. Keep `RandomSeed` in the lower-level `Solver` API used by compiler code,
+tests, and benchmarks.
 
 Remove `bindInt`. It currently creates a name-based query variable whose first
 matching integer fact supplies both a later join key and an optional layout

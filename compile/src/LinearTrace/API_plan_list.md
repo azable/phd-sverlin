@@ -373,7 +373,6 @@ choice       :: forall value. ... => Render (Variable (Choice value))
 global       :: ... => String -> value
 
 data Choice value                  -- abstract finite decision
-newtype RandomSeed = RandomSeed Int
 ```
 
 `choice @FontStyle` and similar calls are limited to finite domains declared by
@@ -495,6 +494,8 @@ optimization is still open.
   both fixed and solver-selected field values.
 - Fixed-expression binding helper: `variableFrom`. Use an ordinary `let`; only
   `variable` creates a fresh solver value.
+- Solver execution input: `RandomSeed`. The compiler service supplies seeds;
+  authored Domain, Program, and Render code cannot inspect them.
 
 ## Still preventing a fully final facade
 
