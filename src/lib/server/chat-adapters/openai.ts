@@ -6,7 +6,12 @@
 
 import OpenAI from 'openai';
 
-import type { ChatAdapter, ChatAdapterRequest, ChatAdapterResult } from './types';
+import {
+  InvalidChatbotResponseError,
+  type ChatAdapter,
+  type ChatAdapterRequest,
+  type ChatAdapterResult
+} from './types';
 
 const defaultMaxContextChars = 500_000;
 const defaultRequestTimeoutMs = 180_000;
@@ -24,21 +29,6 @@ export class ChatContextOverflowError extends Error {
   constructor() {
     super('The complete project history is too large for the configured chat context.');
     this.name = 'ChatContextOverflowError';
-  }
-}
-
-/** Raised when the provider does not return the required structured chatbot result. */
-export class InvalidChatbotResponseError extends Error {
-  /** Raw provider response retained for diagnostics when available. */
-  readonly providerResponse?: unknown;
-
-  constructor(
-    message = 'The chatbot returned an invalid structured response.',
-    providerResponse?: unknown
-  ) {
-    super(message);
-    this.name = 'InvalidChatbotResponseError';
-    this.providerResponse = providerResponse;
   }
 }
 
@@ -72,24 +62,7 @@ function serializeContext(context: ChatAdapterRequest['context']) {
 /** Parse and validate the structured text returned by the provider. */
 export function parseResult(outputText: string, providerResponse?: unknown): ChatAdapterResult {
   try {
-    const parsed = JSON.parse(outputText) as {
-      reply?: unknown;
-      sourceArtifactContent?: unknown;
-    };
-
-    if (
-      typeof parsed.reply !== 'string' ||
-      !('sourceArtifactContent' in parsed) ||
-      (parsed.sourceArtifactContent !== null && typeof parsed.sourceArtifactContent !== 'string')
-    ) {
-      throw invalidResponse(providerResponse);
-    }
-
-    return {
-      reply: parsed.reply,
-      sourceArtifactContent:
-        typeof parsed.sourceArtifactContent === 'string' ? parsed.sourceArtifactContent : undefined
-    };
+    return { output: JSON.parse(outputText) };
   } catch (error) {
     if (error instanceof InvalidChatbotResponseError) throw error;
     throw invalidResponse(providerResponse);

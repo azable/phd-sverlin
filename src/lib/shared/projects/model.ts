@@ -10,6 +10,15 @@
 import * as v from 'valibot';
 
 import {
+  htmlFramesManifestSchema,
+  presentationLayoutSchema,
+  presentationIdSchema,
+  visualizationModeSchema,
+  workspaceViewSchema,
+  type VisualizationMode
+} from '$lib/shared/presentations';
+
+import {
   InvalidProjectDocumentError,
   projectEventSchema,
   type EventId,
@@ -39,7 +48,8 @@ export const projectSummarySchema = v.object({
   title: v.string(),
   updatedAt: v.pipe(v.string(), v.isoTimestamp()),
   eventCount: naturalSchema,
-  templateId: projectTemplateIdSchema
+  templateId: projectTemplateIdSchema,
+  renderer: v.optional(visualizationModeSchema)
 });
 
 /** Runtime schema for the complete project API resource. */
@@ -59,15 +69,29 @@ export const projectCommandSchema = v.variant('type', [
     text: v.optional(v.string()),
     focus: v.array(positiveSchema),
     selection: v.optional(visualSelectionSchema),
-    seed: positiveSchema
+    presentationCount: v.picklist([1, 2])
   }),
   v.object({ ...commandBase, type: v.literal('render'), seed: positiveSchema }),
+  v.object({
+    ...commandBase,
+    type: v.literal('prefer'),
+    displaySetId: v.pipe(v.string(), v.uuid()),
+    presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
+    preferred: presentationIdSchema,
+    step: naturalSchema
+  }),
   v.object({
     ...commandBase,
     type: v.literal('save'),
     artifactId: textSchema,
     source: v.string(),
-    seed: positiveSchema
+    presentationCount: v.picklist([1, 2])
+  }),
+  v.object({
+    ...commandBase,
+    type: v.literal('save-html'),
+    artifactId: textSchema,
+    manifest: htmlFramesManifestSchema
   }),
   v.object({
     ...commandBase,
@@ -97,8 +121,45 @@ export type ProjectSnapshot = {
   title: string;
   entryArtifactId: ArtifactId;
   creation: ProjectCreation;
+  renderer: VisualizationMode;
   artifacts: Record<ArtifactId, ProjectArtifact>;
   activeRender?: ProjectEventOf<'visualization.rendered'>;
+  activePresentationSet?: {
+    displaySetId: string;
+    presentations: Array<
+      ProjectEventOf<'visualization.rendered'> | ProjectEventOf<'visualization.presented'>
+    >;
+  };
+};
+
+/** Server-projected Timeline entry safe for a selected workspace view. */
+export type WorkspaceTimelineEntry = {
+  id: string;
+  operationId: string;
+  kind: 'user' | 'assistant' | 'presentation' | 'action' | 'pending' | 'error' | 'developer';
+  title: string;
+  detail?: string;
+  sourceEventIds: EventId[];
+  rawEvent?: ProjectEvent;
+};
+
+/** Purpose-built workspace response; raw events appear only in developer views. */
+export type WorkspaceResource = {
+  schemaVersion: 1;
+  projectId: ProjectId;
+  head: EventId;
+  view: v.InferOutput<typeof workspaceViewSchema>;
+  layout: v.InferOutput<typeof presentationLayoutSchema>;
+  readOnly: boolean;
+  snapshot: ProjectSnapshot;
+  timeline: WorkspaceTimelineEntry[];
+  projects: ProjectSummary[];
+  activeOperation?: { operationId: string; kind: string };
+  study?: {
+    phaseId: string;
+    deadlineAt?: string;
+    status: 'instructions' | 'active' | 'expired' | 'complete';
+  };
 };
 
 /** Complete lossless project resource returned across the network boundary. */

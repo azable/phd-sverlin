@@ -19,10 +19,14 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     const document = await projectRepository.load(params.projectId);
     const reference = document.events
       .flatMap((event) => {
-        if (event.type !== 'compilation.succeeded' && event.type !== 'visualization.rendered') {
-          return [];
+        if (event.type === 'visualization.presented') {
+          return event.payload.presentation.format === 'sverlin-ir-v1'
+            ? (event.payload.presentation.resources ?? [])
+            : [];
         }
-        return event.payload.resources ?? [];
+        return event.type === 'compilation.succeeded' || event.type === 'visualization.rendered'
+          ? (event.payload.resources ?? [])
+          : [];
       })
       .find(({ id }) => id === params.resourceId);
     if (!reference) error(404, 'Unknown project resource.');

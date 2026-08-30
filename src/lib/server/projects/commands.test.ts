@@ -8,12 +8,17 @@ import type { ProjectServiceDependencies } from './service';
 
 const mocks = vi.hoisted(() => ({
   compileSource: vi.fn(),
+  generateBatch: vi.fn(),
   preparePrompt: vi.fn(),
   generatePrepared: vi.fn()
 }));
 
 vi.mock('$lib/server/chat-bots/registry', () => ({
   getChatbot: () => ({
+    preparePrompt: mocks.preparePrompt,
+    generatePrepared: mocks.generatePrepared
+  }),
+  getHtmlChatbot: () => ({
     preparePrompt: mocks.preparePrompt,
     generatePrepared: mocks.generatePrepared
   })
@@ -117,13 +122,18 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValueOnce(generation('broken first', 'First candidate'))
     .mockResolvedValueOnce(generation('broken repair', 'Repair candidate'));
+  mocks.generateBatch
+    .mockReset()
+    .mockImplementation(async ({ source, seeds, signal }) =>
+      Promise.all(seeds.map((seed: number) => mocks.compileSource({ source, seed, signal })))
+    );
 
   const repository = new MemoryProjectRepository();
   serviceDependencies = {
     repository,
     compiler: {
       generate: mocks.compileSource,
-      generateBatch: vi.fn(),
+      generateBatch: mocks.generateBatch,
       readiness: vi.fn(),
       status: vi.fn(),
       shutdown: vi.fn()
@@ -142,6 +152,11 @@ beforeEach(() => {
         preparePrompt: mocks.preparePrompt,
         generatePrepared: mocks.generatePrepared
       }) as unknown as ReturnType<ProjectCommandDependencies['getChatbot']>,
+    getHtmlChatbot: () =>
+      ({
+        preparePrompt: mocks.preparePrompt,
+        generatePrepared: mocks.generatePrepared
+      }) as unknown as ReturnType<ProjectCommandDependencies['getHtmlChatbot']>,
     readDslRevision: serviceDependencies.readDslRevision
   };
 });
@@ -180,6 +195,179 @@ describe('createProject', () => {
 });
 
 describe('submitProjectFeedback', () => {
+  it('compiles a synchronized comparison directly from two distinct fresh seeds', async () => {
+    mocks.generatePrepared.mockReset().mockResolvedValue(generation('valid source', 'Ready'));
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Comparison' }, serviceDependencies);
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Show two alternatives',
+        focus: [],
+        presentationCount: 2,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    const request = mocks.generateBatch.mock.calls[0][0] as { seeds: number[] };
+    expect(request.seeds).toHaveLength(2);
+    expect(new Set(request.seeds).size).toBe(2);
+    const presented = result.appendedEvents.filter(
+      (event) => event.type === 'visualization.presented'
+    );
+    expect(presented).toHaveLength(2);
+    expect(new Set(presented.map(({ payload }) => payload.displaySetId)).size).toBe(1);
+    expect(new Set(presented.map(({ payload }) => payload.presentation.presentationId)).size).toBe(
+      2
+    );
+  });
+
+  it('repairs a partial batch once using the same two seeds', async () => {
+    mocks.generatePrepared
+      .mockReset()
+      .mockResolvedValueOnce(generation('first source', 'First'))
+      .mockResolvedValueOnce(generation('repaired source', 'Repaired'));
+    mocks.generateBatch
+      .mockReset()
+      .mockImplementationOnce(async ({ source, seeds, signal }) => [
+        await mocks.compileSource({ source, seed: seeds[0], signal }),
+        await mocks.compileSource({
+          source: { ...source, content: 'broken partial' },
+          seed: seeds[1],
+          signal
+        })
+      ])
+      .mockImplementationOnce(async ({ source, seeds, signal }) =>
+        Promise.all(seeds.map((seed: number) => mocks.compileSource({ source, seed, signal })))
+      );
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Partial batch' }, serviceDependencies);
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Refine this',
+        focus: [],
+        presentationCount: 2,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(mocks.generateBatch).toHaveBeenCalledTimes(2);
+    expect(mocks.generateBatch.mock.calls[1][0].seeds).toEqual(
+      mocks.generateBatch.mock.calls[0][0].seeds
+    );
+    expect(
+      result.appendedEvents.filter((event) => event.type === 'visualization.presented')
+    ).toHaveLength(2);
+  });
+
+  it('accepts one safe HTML manifest and links it to its generation event', async () => {
+    mocks.generatePrepared
+      .mockReset()
+      .mockResolvedValue(htmlGeneration(manifest('<main><h1>Safe</h1></main>'), 'Created it'));
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html' } },
+      serviceDependencies
+    );
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Create an HTML visualization',
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    const generation = result.appendedEvents.find(
+      (event) => event.type === 'ai.generation-succeeded'
+    );
+    const presented = result.appendedEvents.find(
+      (event) => event.type === 'visualization.presented'
+    );
+    expect(presented).toMatchObject({
+      type: 'visualization.presented',
+      payload: { presentation: { format: 'html-frames-v1', generationEventId: generation?.id } }
+    });
+    expect(
+      result.appendedEvents.filter(({ type }) => type === 'artifact.version-created')
+    ).toHaveLength(1);
+  });
+
+  it('keeps a conversational HTML reply without forcing a visualization change', async () => {
+    mocks.generatePrepared.mockReset().mockResolvedValue(htmlGeneration(undefined, 'No change'));
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html' } },
+      serviceDependencies
+    );
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Explain the current design',
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: { text: 'No change' }
+    });
+    expect(result.appendedEvents.some(({ type }) => type === 'visualization.presented')).toBe(
+      false
+    );
+  });
+
+  it('allows one correction for an unsafe HTML manifest', async () => {
+    mocks.generatePrepared
+      .mockReset()
+      .mockResolvedValueOnce(htmlGeneration(manifest('<script>alert(1)</script>'), 'First'))
+      .mockResolvedValueOnce(htmlGeneration(manifest('<main>Corrected</main>'), 'Corrected'));
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html' } },
+      serviceDependencies
+    );
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Create it',
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(mocks.generatePrepared).toHaveBeenCalledTimes(2);
+    expect(
+      result.appendedEvents.filter(({ type }) => type === 'ai.generation-requested')
+    ).toHaveLength(2);
+    expect(result.appendedEvents.some(({ type }) => type === 'visualization.presented')).toBe(true);
+  });
+
   it('records both failed candidates and stops after one explicit repair', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
@@ -192,7 +380,7 @@ describe('submitProjectFeedback', () => {
         expectedHead: projectHead(created).id,
         text: 'Change the visualization',
         focus: [],
-        seed: 7,
+        presentationCount: 1,
         operationId
       },
       commandDependencies
@@ -253,7 +441,7 @@ describe('submitProjectFeedback', () => {
         expectedHead: projectHead(created).id,
         text: 'Create a visualization',
         focus: [],
-        seed: 7,
+        presentationCount: 1,
         operationId: '12345678-1234-4123-8123-123456789abc'
       },
       commandDependencies
@@ -280,7 +468,7 @@ describe('submitProjectFeedback', () => {
     mocks.generatePrepared.mockReset().mockResolvedValue({
       reply: 'No source change needed.',
       prompt: {},
-      generation: { botId: 'ai-assistant', adapterId: 'test-adapter', model: 'test-model' }
+      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
     });
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
@@ -293,7 +481,7 @@ describe('submitProjectFeedback', () => {
         expectedHead: projectHead(created).id,
         text: 'Use this as context',
         focus: [render.id],
-        seed: 7,
+        presentationCount: 1,
         operationId: '12345678-1234-4123-8123-123456789abc'
       },
       commandDependencies
@@ -339,7 +527,7 @@ describe('submitProjectFeedback', () => {
             step: 99,
             instances: [1]
           },
-          seed: 7,
+          presentationCount: 1,
           operationId: '12345678-1234-4123-8123-123456789abc'
         },
         commandDependencies
@@ -361,7 +549,34 @@ function generation(sourceArtifactContent: string, reply: string) {
       responseFormat: { name: 'test', schema: {} }
     },
     generation: {
-      botId: 'ai-assistant',
+      botId: 'sverlin-assistant',
+      adapterId: 'test-adapter',
+      model: 'test-model'
+    }
+  };
+}
+
+function manifest(html: string) {
+  return {
+    format: 'sverlin-html-frames' as const,
+    version: 1 as const,
+    frames: [{ label: 'Overview', html }]
+  };
+}
+
+function htmlGeneration(value: ReturnType<typeof manifest> | undefined, reply: string) {
+  return {
+    reply,
+    ...(value ? { manifest: value } : {}),
+    prompt: {
+      initialPrompt: 'html test prompt',
+      messages: [],
+      context: {},
+      parameters: { model: 'test-model' },
+      responseFormat: { name: 'html-test', schema: {} }
+    },
+    generation: {
+      botId: 'html-assistant',
       adapterId: 'test-adapter',
       model: 'test-model'
     }

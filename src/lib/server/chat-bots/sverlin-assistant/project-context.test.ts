@@ -35,7 +35,7 @@ describe('AI project context projection', () => {
     const response: ProjectEventOf<'assistant.responded'> = {
       ...base(3),
       type: 'assistant.responded',
-      actor: { kind: 'assistant', botId: 'ai-assistant' },
+      actor: { kind: 'assistant', botId: 'sverlin-assistant' },
       payload: { text: 'Updated' }
     };
 

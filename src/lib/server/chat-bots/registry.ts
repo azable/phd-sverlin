@@ -7,15 +7,17 @@
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
-import type { AiProjectContext } from './ai-assistant/project-context';
+import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
+import type { AiProjectContext } from './sverlin-assistant/project-context';
 import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
-import aiAssistantBot from './ai-assistant';
+import sverlinAssistantBot from './sverlin-assistant';
+import htmlAssistantBot, { type HtmlAssistantOutput } from './html-assistant';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
-export function createChatbot<Project>(
-  config: ChatBotConfig<Project>,
+export function createChatbot<Project, Output extends { reply: string }>(
+  config: ChatBotConfig<Project, Output>,
   adapter: ChatAdapter
-): Chatbot<Project> {
+): Chatbot<Project, Output> {
   const preparePrompt = async (request: ChatbotRequest<Project>) => ({
     messages: request.messages,
     initialPrompt: config.initialPrompt,
@@ -25,8 +27,18 @@ export function createChatbot<Project>(
   });
   const generatePrepared = async (prompt: Awaited<ReturnType<typeof preparePrompt>>) => {
     const result = await adapter.generateReply(prompt);
+    let output: Output;
+    try {
+      output = config.parseOutput(result.output);
+    } catch (cause) {
+      throw new InvalidChatbotResponseError(
+        cause instanceof Error ? cause.message : 'The chatbot returned an invalid response.',
+        result.providerResponse
+      );
+    }
     return {
-      ...result,
+      ...output,
+      providerResponse: result.providerResponse,
       prompt,
       generation: {
         botId: config.id,
@@ -40,16 +52,24 @@ export function createChatbot<Project>(
     config,
     preparePrompt,
     generatePrepared
-  } satisfies Chatbot<Project>;
+  } satisfies Chatbot<Project, Output>;
 }
 
+const sverlinChatbot = createChatbot(sverlinAssistantBot, openAIAdapter);
 const configuredChatbots: Record<string, Chatbot<AiProjectContext>> = {
-  [aiAssistantBot.id]: createChatbot(aiAssistantBot, openAIAdapter)
+  [sverlinAssistantBot.id]: sverlinChatbot,
+  // Keep existing ignored deployment/local environments working during the rename.
+  'ai-assistant': sverlinChatbot
 };
+
+const htmlChatbot: Chatbot<AiProjectContext, HtmlAssistantOutput> = createChatbot(
+  htmlAssistantBot,
+  openAIAdapter
+);
 
 /** Return the chatbot selected by server configuration. */
 export function getChatbot(): Chatbot<AiProjectContext> {
-  const configured = process.env.CHATBOT_CONFIG?.trim() || aiAssistantBot.id;
+  const configured = process.env.CHATBOT_CONFIG?.trim() || sverlinAssistantBot.id;
   const chatbot = configuredChatbots[configured];
 
   if (!chatbot) {
@@ -57,4 +77,9 @@ export function getChatbot(): Chatbot<AiProjectContext> {
   }
 
   return chatbot;
+}
+
+/** Return the direct-HTML visualization authoring bot. */
+export function getHtmlChatbot(): Chatbot<AiProjectContext, HtmlAssistantOutput> {
+  return htmlChatbot;
 }

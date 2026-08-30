@@ -12,17 +12,17 @@
   /** Public properties for composing project feedback. */
   type Props = {
     session: ProjectSession;
-    seed: number;
+    presentationCount: 1 | 2;
     selection?: VisualSelection;
   };
 
-  let { session, seed, selection }: Props = $props();
+  let { session, presentationCount, selection }: Props = $props();
 
   let text = $state('');
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!session.atHead || session.pending) return;
+    if (!session.atHead || session.pending || session.readOnly) return;
     const message = text.trim();
     if (!message && session.focusedEvents.length === 0 && !selection) return;
     const succeeded = await session.runCommand({
@@ -30,7 +30,7 @@
       text: message || undefined,
       focus: session.focusedEvents,
       selection,
-      seed
+      presentationCount
     });
     if (succeeded) {
       text = '';
@@ -72,7 +72,7 @@
           bind:value={text}
           aria-label="Project feedback"
           placeholder="Comment on the project or selected elements…"
-          disabled={!session.atHead || !!session.pending}
+          disabled={!session.atHead || !!session.pending || session.readOnly}
           rows={2}
           onkeydown={submitOnEnter}
         />
@@ -87,6 +87,7 @@
             size="sm"
             disabled={!session.atHead ||
               !!session.pending ||
+              session.readOnly ||
               (!text.trim() && !selection && session.focusedEvents.length === 0)}
           >
             {#if session.pending?.type === 'feedback'}

@@ -5,7 +5,10 @@ import type { ProjectDocument } from '$lib/shared/projects/model';
 
 const mocks = vi.hoisted(() => ({ eventsAfter: vi.fn() }));
 
-vi.mock('$lib/server/authorization', () => ({ requireProjectAccess: vi.fn() }));
+vi.mock('$lib/server/authorization', () => ({
+  requireAdmin: vi.fn(),
+  requireProjectAccess: vi.fn()
+}));
 vi.mock('$lib/server/projects/repository', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/projects/repository')>()),
   projectRepository: { eventsAfter: mocks.eventsAfter }

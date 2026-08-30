@@ -14,6 +14,7 @@
     return Number.isSafeInteger(id) && id > 0 ? id : undefined;
   });
   const devMode = $derived.by(() => {
+    if (!data.isAdmin) return false;
     const value = page.url.searchParams.get('dev');
     if (value === '1') return true;
     if (value === '0') return false;
@@ -21,7 +22,7 @@
   });
 </script>
 
-{#key page.params.projectId}
+{#key `${page.params.projectId}-${devMode}`}
   <ProjectWorkspace
     projectId={page.params.projectId!}
     templates={data.templates}
@@ -29,5 +30,6 @@
     isAdmin={data.isAdmin}
     {at}
     {devMode}
+    study={data.study}
   />
 {/key}

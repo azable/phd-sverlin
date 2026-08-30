@@ -220,7 +220,7 @@ function assistantEvent(id: number): ProjectEventOf<'assistant.responded'> {
   return {
     id,
     type: 'assistant.responded',
-    actor: { kind: 'assistant', botId: 'ai-assistant' },
+    actor: { kind: 'assistant', botId: 'sverlin-assistant' },
     operationId,
     createdAt: `2026-01-01T00:00:0${id}.000Z`,
     payload: { text: 'Done' }

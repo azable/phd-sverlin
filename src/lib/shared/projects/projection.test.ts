@@ -42,7 +42,7 @@ describe('project model and projection', () => {
         text: 'Prefer these',
         focus: [2],
         selection: { render: 3, step: 0, instances: [1] },
-        seed: 9
+        presentationCount: 2
       })
     ).toMatchObject({ type: 'feedback', focus: [2] });
   });
@@ -103,7 +103,10 @@ describe('project model and projection', () => {
 
   it('normalizes missing and legacy mode metadata to template selections', () => {
     const document = documentWithHistory();
-    expect(projectSnapshotAt(document).creation).toEqual({ templateId: 'blank' });
+    expect(projectSnapshotAt(document).creation).toEqual({
+      templateId: 'blank',
+      renderer: 'sverlin'
+    });
     expect(summarizeProject(document).templateId).toBe('blank');
 
     const devDocument = {

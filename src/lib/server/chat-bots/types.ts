@@ -47,12 +47,18 @@ export type ChatResponseFormat = {
 };
 
 /** Static behavior and context builder for one chatbot. */
-export type ChatBotConfig<Project> = {
+export type SourceArtifactChatOutput = {
+  reply: string;
+  sourceArtifactContent?: string;
+};
+
+export type ChatBotConfig<Project, Output extends { reply: string } = SourceArtifactChatOutput> = {
   id: string;
   initialPrompt: string;
   buildContext: (input: ChatContextInput<Project>) => ChatContext | Promise<ChatContext>;
   parameters: ChatBotParameters;
   responseFormat: ChatResponseFormat;
+  parseOutput: (value: unknown) => Output;
 };
 
 /** Complete provider-neutral prompt prepared for an adapter. */
@@ -72,9 +78,7 @@ export type ChatbotRequest<Project> = {
 };
 
 /** Parsed chatbot output enriched with prompt and generation provenance. */
-export type ChatbotResult = {
-  reply: string;
-  sourceArtifactContent?: string;
+export type ChatbotResult<Output extends { reply: string } = SourceArtifactChatOutput> = Output & {
   providerResponse?: unknown;
   prompt: ChatbotPrompt;
   generation: {
@@ -90,13 +94,13 @@ export type ChatbotResult = {
 export type { ChatAdapter, ChatAdapterResult } from '$lib/server/chat-adapters/types';
 
 /** Executable chatbot assembled from a bot configuration and provider adapter. */
-export interface Chatbot<Project> {
+export interface Chatbot<Project, Output extends { reply: string } = SourceArtifactChatOutput> {
   /** Stable bot identifier recorded in project events. */
   readonly id: string;
   /** Static configuration used by this bot. */
-  readonly config: ChatBotConfig<Project>;
+  readonly config: ChatBotConfig<Project, Output>;
   /** Assemble a provider-neutral prompt from project inputs. */
   preparePrompt(request: ChatbotRequest<Project>): Promise<ChatbotPrompt>;
   /** Generate a response from an already prepared, recordable prompt. */
-  generatePrepared(prompt: ChatbotPrompt): Promise<ChatbotResult>;
+  generatePrepared(prompt: ChatbotPrompt): Promise<ChatbotResult<Output>>;
 }

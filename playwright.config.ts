@@ -8,13 +8,18 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
   workers: 1,
-  timeout: 180_000,
+  // Compiler preparation and the initial compiled fixture have separate allowances below;
+  // ordinary browser behavior should complete promptly once that fixture exists.
+  timeout: 30_000,
   expect: { timeout: 20_000 },
   outputDir: path.join(outputRoot, 'test-results'),
   reporter: [['line'], ['html', { outputFolder: path.join(outputRoot, 'report'), open: 'never' }]],
   use: {
     ...devices['Desktop Chrome'],
     baseURL: 'http://127.0.0.1:4173',
+    // Real compiler-backed flows may need the 180-second test budget, but a missing
+    // control is a UI failure and should not consume that entire allowance.
+    actionTimeout: 20_000,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
     video: 'retain-on-failure'

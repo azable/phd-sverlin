@@ -24,6 +24,7 @@ import type {
   ProjectResource
 } from '$lib/shared/projects/model';
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
+import type { HtmlFramesManifest, SverlinPresentation } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { visualizationService, type VisualizationGenerationResult } from '$lib/server/compiler';
 
@@ -32,10 +33,21 @@ import { currentProjectOperationSignal } from './operation-context';
 import { readDslRevision, recordText } from './fingerprints';
 import { projectRepository, type ProjectResourceBlob } from './repository';
 import { resolveProjectTemplate } from './starter-catalog';
+import { createHtmlPresentation, stepSignature } from '$lib/server/visualization-modes';
 
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
 const entryArtifactId = 'dsl-main';
+const initialHtmlManifest: HtmlFramesManifest = {
+  format: 'sverlin-html-frames',
+  version: 1,
+  frames: [
+    {
+      label: 'Start',
+      html: '<main><h1>Start your visualization</h1><p>Describe what you would like to create in the timeline.</p></main>'
+    }
+  ]
+};
 
 type RecordedCompilationBase = {
   document: ProjectDocument;
@@ -66,6 +78,7 @@ type CreateProjectOptions = {
   ownerUserId?: string;
   projectId?: string;
   operationId?: string;
+  presentationCount?: 1 | 2;
 };
 
 /** Replaceable project-side effects used by database-free domain tests. */
@@ -87,8 +100,14 @@ export async function createProject(
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<ProjectDocument> {
   const { document, operationId } = await createProjectSkeleton(options, dependencies);
-  const seed = randomInt(minSeed, maxSeedExclusive);
-  return renderDocument(document, seed, 'initial', operationId, dependencies);
+  return renderDocument(
+    document,
+    freshPresentationSeeds(options.presentationCount ?? 1),
+    'initial',
+    operationId,
+    dependencies,
+    options.presentationCount === 2
+  );
 }
 
 /** Persist the cheap event-sourced project skeleton before asynchronous compilation. */
@@ -109,36 +128,36 @@ export async function createProjectSkeleton(
     createdAt: new Date().toISOString(),
     payload: { title, entryArtifactId, creation }
   };
-  let document = await dependencies.repository.create(
-    { schemaVersion: 1, projectId, events: [root] },
-    options.ownerUserId
+  const html = creation.renderer === 'html';
+  const content = recordText(
+    html ? JSON.stringify(initialHtmlManifest) : template.source,
+    html ? 'application/vnd.sverlin.html-frames+json' : 'text/x-sverlin'
   );
-  const content = recordText(template.source, 'text/x-sverlin');
-  document = await appendProjectEvents(
-    document,
-    [
-      draftEvent({
-        type: 'artifact.version-created',
-        actor: { kind: 'system' },
-        operationId,
-        payload: {
-          origin: { kind: 'initial' },
-          changes: [
-            {
-              operation: 'upsert',
-              artifact: {
-                artifactId: entryArtifactId,
-                path: 'Main.sverlin',
-                language: 'sverlin',
-                content
-              }
+  const artifact: ProjectEventOf<'artifact.version-created'> = {
+    id: 2,
+    ...draftEvent<'artifact.version-created'>({
+      type: 'artifact.version-created',
+      actor: { kind: 'system' },
+      operationId,
+      payload: {
+        origin: { kind: 'initial' },
+        changes: [
+          {
+            operation: 'upsert',
+            artifact: {
+              artifactId: entryArtifactId,
+              path: html ? 'Visualization.html.json' : 'Main.sverlin',
+              language: html ? 'json' : 'sverlin',
+              content
             }
-          ]
-        }
-      })
-    ],
-    [],
-    dependencies
+          }
+        ]
+      }
+    })
+  };
+  const document = await dependencies.repository.create(
+    { schemaVersion: 1, projectId, events: [root, artifact] },
+    options.ownerUserId
   );
   return { document, operationId };
 }
@@ -157,10 +176,11 @@ export async function renderInitialProject(
     const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
     const document = await renderDocument(
       before,
-      options.seed,
+      [options.seed],
       'initial',
       options.operationId,
-      dependencies
+      dependencies,
+      false
     );
     return commandResult(before, document);
   });
@@ -190,10 +210,35 @@ export function renderProject(
     const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
     const document = await renderDocument(
       before,
-      options.seed,
+      [options.seed],
       'seed-change',
       options.operationId,
-      dependencies
+      dependencies,
+      false
+    );
+    return commandResult(before, document);
+  });
+}
+
+/** Generate one or two fresh presentations from the currently accepted artifact. */
+export function renderProjectPresentations(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    presentationCount: 1 | 2;
+    operationId: string;
+  },
+  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
+    const document = await renderDocument(
+      before,
+      freshPresentationSeeds(options.presentationCount),
+      'seed-change',
+      options.operationId,
+      dependencies,
+      true
     );
     return commandResult(before, document);
   });
@@ -239,7 +284,7 @@ export function updateProjectArtifact(
     expectedHead: EventId;
     artifactId: string;
     source: string;
-    seed: number;
+    presentationCount: 1 | 2;
     operationId: string;
   },
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
@@ -263,10 +308,11 @@ export function updateProjectArtifact(
     );
     document = await renderDocument(
       document,
-      options.seed,
+      freshPresentationSeeds(options.presentationCount),
       'manual-edit',
       options.operationId,
-      dependencies
+      dependencies,
+      options.presentationCount === 2
     );
     return commandResult(before, document);
   });
@@ -309,10 +355,11 @@ export function restoreProjectArtifacts(
     );
     document = await renderDocument(
       document,
-      options.seed,
+      [options.seed],
       'restore',
       options.operationId,
-      dependencies
+      dependencies,
+      false
     );
     return commandResult(before, document);
   });
@@ -344,21 +391,63 @@ export function draftEvent<Type extends ProjectEventType>(
 
 async function renderDocument(
   document: ProjectDocument,
-  seed: number,
+  seeds: readonly number[],
   purpose: RenderPurpose,
   operationId: string,
-  dependencies: ProjectServiceDependencies
+  dependencies: ProjectServiceDependencies,
+  presentDirectly: boolean
 ) {
   const snapshot = projectSnapshotAt(document);
   const artifact = snapshot.artifacts[snapshot.entryArtifactId];
   if (!artifact) throw new Error('The project has no entry artifact.');
+  if (snapshot.renderer === 'html') {
+    const presentation = createHtmlPresentation(
+      JSON.parse(artifact.content.text) as HtmlFramesManifest
+    );
+    return appendProjectEvents(
+      document,
+      [
+        draftEvent({
+          type: 'visualization.presented',
+          actor: { kind: 'system' },
+          operationId,
+          payload: {
+            displaySetId: randomUUID(),
+            slot: 0,
+            presentation
+          }
+        })
+      ],
+      [],
+      dependencies
+    );
+  }
+  if (seeds.length === 0) throw new Error('At least one seed is required.');
+  if (presentDirectly || seeds.length > 1) {
+    const recorded = await compileProjectSourceBatch(
+      {
+        document,
+        sourceContent: artifact.content.text,
+        source: artifact.content,
+        sourceLabel: artifact.path,
+        seeds,
+        purpose,
+        input: 'committed-artifact',
+        operationId
+      },
+      dependencies
+    );
+    return recorded.compilations.every(({ result }) => result.ok)
+      ? activateCompiledPresentations(recorded, dependencies)
+      : recorded.document;
+  }
   const recorded = await compileProjectSource(
     {
       document,
       sourceContent: artifact.content.text,
       source: artifact.content,
       sourceLabel: artifact.path,
-      seed,
+      seed: seeds[0],
       purpose,
       input: 'committed-artifact',
       operationId
@@ -366,6 +455,75 @@ async function renderDocument(
     dependencies
   );
   return recorded.result.ok ? activateCompiledRender(recorded, dependencies) : recorded.document;
+}
+
+export type RecordedCompilationBatch = {
+  document: ProjectDocument;
+  compilations: RecordedCompilation[];
+};
+
+/** Compile one source for several seeds through the public batch service and record each result. */
+export async function compileProjectSourceBatch(
+  options: {
+    document: ProjectDocument;
+    sourceContent: string;
+    source: RecordedText;
+    sourceLabel: string;
+    seeds: readonly number[];
+    purpose: RenderPurpose;
+    input: 'committed-artifact' | 'assistant-candidate';
+    operationId: string;
+    attempt?: 1 | 2;
+  },
+  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
+): Promise<RecordedCompilationBatch> {
+  if (options.seeds.length === 0) throw new Error('At least one seed is required.');
+  const dslRevision = await dependencies.readDslRevision();
+  const requests = options.seeds.map((seed) =>
+    draftEvent<'compilation.requested'>({
+      type: 'compilation.requested',
+      actor: { kind: 'system' },
+      operationId: options.operationId,
+      payload: {
+        purpose: options.purpose,
+        input: options.input,
+        source: options.source,
+        sourceLabel: options.sourceLabel,
+        seed,
+        ...(options.attempt ? { attempt: options.attempt } : {}),
+        ...(dslRevision ? { dslRevision } : {})
+      }
+    })
+  );
+  let document = await appendProjectEvents(options.document, requests, [], dependencies);
+  const results = await dependencies.compiler.generateBatch({
+    source: { name: logicalSourceName(options.sourceLabel), content: options.sourceContent },
+    seeds: options.seeds,
+    signal: currentProjectOperationSignal()
+  });
+  if (results.length !== options.seeds.length) {
+    throw new Error('The visualization service returned an incomplete batch.');
+  }
+  if (results.some((result, index) => result.seed !== options.seeds[index])) {
+    throw new Error('The visualization service returned an incorrectly correlated batch.');
+  }
+  const compilations: RecordedCompilation[] = [];
+  for (const [index, result] of results.entries()) {
+    const recorded = await recordCompileResult(
+      {
+        document,
+        result,
+        source: options.source,
+        sourceLabel: options.sourceLabel,
+        seed: options.seeds[index],
+        operationId: options.operationId
+      },
+      dependencies
+    );
+    document = recorded.document;
+    compilations.push(recorded);
+  }
+  return { document, compilations };
 }
 
 /** Compile source and immutably record the request, diagnostics, and output blobs. */
@@ -483,6 +641,54 @@ async function recordCompileResult(
   };
 }
 
+/** Promote a complete successful batch to one synchronized active display set. */
+export async function activateCompiledPresentations(
+  recorded: RecordedCompilationBatch,
+  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies,
+  actor: NewProjectEvent<'visualization.presented'>['actor'] = { kind: 'system' }
+): Promise<ProjectDocument> {
+  if (recorded.compilations.length === 0 || recorded.compilations.some((item) => !item.result.ok)) {
+    throw new Error('Only a complete successful compilation batch can be presented.');
+  }
+  if (recorded.compilations.length > 2) {
+    throw new Error('A display set supports at most two presentations.');
+  }
+  const presentations = recorded.compilations.map((item): SverlinPresentation => {
+    if (!item.result.ok || !('render' in item)) {
+      throw new Error('A failed compilation cannot become a presentation.');
+    }
+    return {
+      presentationId: randomUUID(),
+      format: 'sverlin-ir-v1',
+      stepSignature: stepSignature(item.result.visualization.steps.map(({ label }) => label)),
+      seed: item.seed,
+      source: item.source,
+      render: item.render,
+      resources: item.result.resources.map(({ bytes: _bytes, ...resource }) => resource),
+      provenance: item.result.provenance,
+      targetDiagnostics: item.result.targetDiagnostics
+    };
+  });
+  if (new Set(presentations.map(({ stepSignature: signature }) => signature)).size !== 1) {
+    throw new Error('Synchronized presentations must expose the same ordered steps.');
+  }
+  const displaySetId = randomUUID();
+  const operationId = recorded.compilations[0].operationId;
+  return appendProjectEvents(
+    recorded.document,
+    presentations.map((presentation, slot) =>
+      draftEvent({
+        type: 'visualization.presented',
+        actor,
+        operationId,
+        payload: { displaySetId, slot: slot as 0 | 1, presentation }
+      })
+    ),
+    [],
+    dependencies
+  );
+}
+
 /** Promote a successful recorded compilation to the project's active visualization. */
 export async function activateCompiledRender(
   recorded: RecordedCompilation,
@@ -532,11 +738,21 @@ function artifactVersionEvent(options: {
     type: 'artifact.version-created',
     actor:
       options.origin.kind === 'assistant-edit'
-        ? { kind: 'assistant', botId: 'ai-assistant' }
+        ? { kind: 'assistant', botId: 'sverlin-assistant' }
         : { kind: 'user' },
     operationId: options.operationId,
     payload: { origin: options.origin, changes: options.changes }
   });
+}
+
+/** Choose distinct positive seeds for one server-owned presentation generation. */
+export function freshPresentationSeeds(count: 1 | 2): number[] {
+  const seeds = [randomInt(minSeed, maxSeedExclusive)];
+  while (seeds.length < count) {
+    const seed = randomInt(minSeed, maxSeedExclusive);
+    if (!seeds.includes(seed)) seeds.push(seed);
+  }
+  return seeds;
 }
 
 function commandResult(before: ProjectDocument, document: ProjectDocument): ProjectCommandResult {

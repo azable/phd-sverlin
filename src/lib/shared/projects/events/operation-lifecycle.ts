@@ -10,7 +10,9 @@ export const projectOperationKindSchema = v.picklist([
   'rename',
   'feedback',
   'render',
+  'prefer',
   'save',
+  'save-html',
   'restore'
 ]);
 

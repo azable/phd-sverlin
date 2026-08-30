@@ -8,7 +8,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const facadePath = path.join(repositoryRoot, 'compile/src/LinearTrace/Choreography.hs');
 const indexPath = path.join(
   repositoryRoot,
-  'src/lib/server/chat-bots/ai-assistant/dsl-api-index.md'
+  'src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md'
 );
 const sourceLabel = 'compile/src/LinearTrace/Choreography.hs';
 const ghciMarker = '__DSL_API_ENTRY_';

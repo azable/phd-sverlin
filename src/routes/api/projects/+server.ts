@@ -9,7 +9,7 @@ import {
 } from '$lib/shared/projects/creation';
 import { projectOperationExecutor } from '$lib/server/projects/operations';
 import { createProjectSkeleton } from '$lib/server/projects/service';
-import { requirePrincipal } from '$lib/server/authorization';
+import { requireAdmin } from '$lib/server/authorization';
 import { UnknownProjectTemplateError } from '$lib/server/projects/starter-catalog';
 
 import type { RequestHandler } from './$types';
@@ -17,7 +17,7 @@ import type { RequestHandler } from './$types';
 /** Create a project and return its stable identifier. */
 export const POST: RequestHandler = async ({ request, locals }) => {
   try {
-    const principal = requirePrincipal(locals);
+    const principal = requireAdmin(locals);
     const body = await request.text();
     const creation = body.trim() ? parseProjectCreation(JSON.parse(body)) : defaultProjectCreation;
     const operationId = randomUUID();

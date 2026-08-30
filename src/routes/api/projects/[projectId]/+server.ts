@@ -1,18 +1,20 @@
-import { json } from '@sveltejs/kit';
+import { isHttpError, json } from '@sveltejs/kit';
 
 import { InvalidProjectDocumentError } from '$lib/shared/projects/events';
 import { parseProjectCommand } from '$lib/shared/projects/model';
-import { projectListOwner, requireProjectAccess } from '$lib/server/authorization';
+import { projectListOwner, requireAdmin, requireProjectAccess } from '$lib/server/authorization';
 import { projectOperationExecutor } from '$lib/server/projects/operations';
 import { ProjectConflictError, ProjectNotFoundError } from '$lib/server/projects/repository';
 import { loadProjectResource } from '$lib/server/projects/service';
+import { assertParticipantStudyMutation } from '$lib/server/study';
 
 import type { RequestHandler } from './$types';
 
 /** Load the complete project resource; historical views are projected by consumers. */
 export const GET: RequestHandler = async ({ params, locals }) => {
   try {
-    const principal = await requireProjectAccess(locals, params.projectId);
+    const principal = requireAdmin(locals);
+    await requireProjectAccess(locals, params.projectId);
     return json(await loadProjectResource(params.projectId, projectListOwner(principal)));
   } catch (cause) {
     return projectError(cause);
@@ -22,7 +24,10 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 /** Validate and execute one optimistic-concurrency project command. */
 export const POST: RequestHandler = async ({ params, request, locals }) => {
   try {
-    await requireProjectAccess(locals, params.projectId);
+    const principal = await requireProjectAccess(locals, params.projectId);
+    if (principal.kind === 'participant') {
+      await assertParticipantStudyMutation(principal, params.projectId);
+    }
     const command = parseProjectCommand(await request.json());
     const accepted = await projectOperationExecutor.accept({
       projectId: params.projectId,
@@ -37,6 +42,9 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 };
 
 function projectError(cause: unknown) {
+  if (isHttpError(cause)) {
+    return json({ error: cause.body.message }, { status: cause.status });
+  }
   if (cause instanceof ProjectNotFoundError) return json({ error: cause.message }, { status: 404 });
   if (
     cause instanceof ProjectConflictError ||

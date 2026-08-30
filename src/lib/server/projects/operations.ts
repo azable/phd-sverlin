@@ -10,6 +10,7 @@ import { activeProjectOperation, projectOperation } from '$lib/shared/projects/o
 import { sqlClient } from '$lib/server/db';
 
 import { submitProjectFeedback } from './commands';
+import { recordProjectPreference, saveHtmlProjectArtifact } from './presentations';
 import { runWithProjectOperationSignal } from './operation-context';
 import { recoveryEventsForInterruptedOperations } from './recovery';
 import { projectRepository, type ProjectRepository } from './repository';
@@ -300,16 +301,30 @@ async function executeProjectCommand(options: {
         text: options.command.text,
         focus: options.command.focus,
         selection: options.command.selection,
-        seed: options.command.seed
+        presentationCount: options.command.presentationCount
       });
     case 'render':
       return renderProject({ ...common, seed: options.command.seed });
+    case 'prefer':
+      return recordProjectPreference({
+        ...common,
+        displaySetId: options.command.displaySetId,
+        presentations: options.command.presentations,
+        preferred: options.command.preferred,
+        step: options.command.step
+      });
     case 'save':
       return updateProjectArtifact({
         ...common,
         artifactId: options.command.artifactId,
         source: options.command.source,
-        seed: options.command.seed
+        presentationCount: options.command.presentationCount
+      });
+    case 'save-html':
+      return saveHtmlProjectArtifact({
+        ...common,
+        artifactId: options.command.artifactId,
+        manifest: options.command.manifest
       });
     case 'restore':
       return restoreProjectArtifacts({
@@ -357,18 +372,23 @@ function domainFailureFor(
   kind: ProjectOperationKind,
   events: readonly ProjectEvent[]
 ): ProjectEvent | undefined {
-  if (kind === 'rename') return undefined;
+  if (kind === 'rename' || kind === 'prefer' || kind === 'save-html') return undefined;
   const outcome = events.findLast((event) => {
     if (kind === 'feedback') {
       return (
         event.type === 'assistant.responded' ||
         event.type === 'visualization.rendered' ||
+        event.type === 'visualization.presented' ||
         event.type === 'ai.generation-failed' ||
         event.type === 'compilation.failed' ||
         (event.type === 'system.notified' && event.payload.severity === 'error')
       );
     }
-    return event.type === 'visualization.rendered' || event.type === 'compilation.failed';
+    return (
+      event.type === 'visualization.rendered' ||
+      event.type === 'visualization.presented' ||
+      event.type === 'compilation.failed'
+    );
   });
   return outcome &&
     (outcome.type === 'ai.generation-failed' ||

@@ -21,9 +21,12 @@ import {
 import { projectRepository } from '$lib/server/projects/repository';
 import { setParticipantEnabled } from '$lib/server/participants';
 import type { ProjectDocument } from '$lib/shared/projects/model';
+import type { VisualizationMode } from '$lib/shared/presentations';
+import type { StudyDefinition } from '$lib/shared/study/definition';
+import { studyDefinition } from '$lib/shared/study/registry';
 
 const exportFormat = 'sverlin-research-export';
-const exportVersion = 2;
+const exportVersion = 3;
 
 type ParticipantSnapshot = {
   id: string;
@@ -37,6 +40,7 @@ type ProjectSnapshot = {
   ownerUserId: string;
   title: string;
   templateId: string;
+  renderer: VisualizationMode;
   createdAt: string;
   updatedAt: string;
   document: ProjectDocument;
@@ -55,6 +59,11 @@ type ResourceSnapshot = {
 type ResearchSnapshot = {
   participants: ParticipantSnapshot[];
   projects: ProjectSnapshot[];
+  study: {
+    definitions: StudyDefinition[];
+    enrollments: Array<Record<string, unknown>>;
+    phases: Array<Record<string, unknown>>;
+  };
 };
 
 export type ResearchExportManifest = {
@@ -134,6 +143,20 @@ export function participantPurgeConfirmation(participantId: string): string {
   return `DELETE ${participantId}`;
 }
 
+/** Resolve each protocol version represented by exported enrollments exactly once. */
+export function studyDefinitionsForEnrollments(
+  enrollments: readonly { studyId: string; studyVersion: number }[]
+): StudyDefinition[] {
+  return [
+    ...new Map(
+      enrollments.map((row) => {
+        const definition = studyDefinition(row.studyId, row.studyVersion);
+        return [`${row.studyId}:${row.studyVersion}`, definition] as const;
+      })
+    ).values()
+  ];
+}
+
 /** Verify bytes against immutable resource metadata before adding them to an archive. */
 export function verifyResearchResource(
   bytes: Uint8Array,
@@ -170,6 +193,20 @@ async function collectSnapshot(ownerUserId?: string): Promise<ResearchSnapshot> 
         .where(participantCondition)
         .orderBy(asc(schema.user.createdAt));
       const participantIds = participantRows.map(({ id }) => id);
+      const enrollmentRows = participantIds.length
+        ? await transaction
+            .select()
+            .from(schema.studyEnrollments)
+            .where(inArray(schema.studyEnrollments.userId, participantIds))
+            .orderBy(asc(schema.studyEnrollments.enrolledAt))
+        : [];
+      const phaseRows = participantIds.length
+        ? await transaction
+            .select()
+            .from(schema.studyPhaseRuns)
+            .where(inArray(schema.studyPhaseRuns.userId, participantIds))
+            .orderBy(asc(schema.studyPhaseRuns.userId), asc(schema.studyPhaseRuns.sequenceIndex))
+        : [];
       const projectRows = participantIds.length
         ? await transaction
             .select({
@@ -177,6 +214,7 @@ async function collectSnapshot(ownerUserId?: string): Promise<ResearchSnapshot> 
               ownerUserId: schema.projects.ownerUserId,
               title: schema.projects.title,
               templateId: schema.projects.templateId,
+              renderer: schema.projects.renderer,
               createdAt: schema.projects.createdAt,
               updatedAt: schema.projects.updatedAt
             })
@@ -219,6 +257,11 @@ async function collectSnapshot(ownerUserId?: string): Promise<ResearchSnapshot> 
         : [];
 
       return {
+        study: {
+          definitions: studyDefinitionsForEnrollments(enrollmentRows),
+          enrollments: enrollmentRows.map((row) => serializeDates(row)),
+          phases: phaseRows.map((row) => serializeDates(row))
+        },
         participants: participantRows.map((row) => ({
           id: row.id,
           participantId: row.participantId || row.username || row.id,
@@ -262,6 +305,7 @@ async function prepareArchive(
   zip.pipe(output);
   try {
     appendJson(zip, files, 'participants.json', snapshot.participants);
+    appendJson(zip, files, 'study.json', snapshot.study);
     for (const participant of snapshot.participants) {
       const participantRoot = `participants/${safePathSegment(participant.participantId)}-${safePathSegment(participant.id)}`;
       appendJson(zip, files, `${participantRoot}/participant.json`, participant);
@@ -274,6 +318,7 @@ async function prepareArchive(
           id: project.id,
           title: project.title,
           templateId: project.templateId,
+          renderer: project.renderer,
           createdAt: project.createdAt,
           updatedAt: project.updatedAt,
           document: project.document
@@ -399,6 +444,15 @@ function appendBytes(
 
 function jsonBytes(value: unknown): Buffer {
   return Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function serializeDates(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      item instanceof Date ? item.toISOString() : item
+    ])
+  );
 }
 
 function sha256(bytes: Uint8Array): string {

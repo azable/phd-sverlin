@@ -7,6 +7,7 @@ import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { auth } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { projects, user } from '$lib/server/db/schema';
+import { enrollParticipant } from '$lib/server/study';
 
 export type IssuedParticipantCredentials = {
   userId: string;
@@ -66,6 +67,13 @@ export async function createParticipant(
       data: { username: code }
     }
   });
+
+  try {
+    await enrollParticipant(result.user.id);
+  } catch (cause) {
+    await auth.api.removeUser({ headers, body: { userId: result.user.id } }).catch(() => undefined);
+    throw cause;
+  }
 
   return { userId: result.user.id, participantId: code, password };
 }

@@ -79,7 +79,7 @@ export const targetDiagnosticSchema = v.object({
 export const projectArtifactSchema = v.object({
   artifactId: textSchema,
   path: textSchema,
-  language: v.literal('sverlin'),
+  language: v.picklist(['sverlin', 'json']),
   content: recordedTextSchema
 });
 

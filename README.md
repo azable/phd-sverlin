@@ -1,6 +1,6 @@
 # Sverlin
 
-Sverlin is a SvelteKit research application for building and reviewing event-sourced visualizations. A Haskell compiler interprets the Sverlin DSL, solves the layout, and produces the visualization data displayed by the browser.
+Sverlin is a SvelteKit research application for building and reviewing event-sourced visualizations. Its renderer-neutral service accepts authoring input and produces one or more steppable presentations; projects can use either compiled Sverlin source or script-free HTML frames.
 
 Each project is an immutable Timeline stored in PostgreSQL together with authentication, ownership, and content-addressed compiler resources. The SvelteKit server accepts a project operation into that Timeline, executes it asynchronously in the same process, and records a terminal success or failure event. Queue mechanics and compiler implementation details are not part of the browser API.
 
@@ -37,7 +37,7 @@ Start the application:
 pnpm run dev
 ```
 
-The first run prepares project-owned compiler source, then starts the SvelteKit server. The server owns both HTTP handling and the bounded asynchronous operation executor. To skip preparation when the compiler is already current, run:
+Each run applies pending database migrations, prepares project-owned compiler source, then starts the SvelteKit server. Applied migrations are recorded in PostgreSQL, so subsequent starts only check for new ones. The server owns both HTTP handling and the bounded asynchronous operation executor. To skip migration and compiler preparation when both are already current, run:
 
 ```sh
 pnpm run dev:web
@@ -58,13 +58,15 @@ the passkey already registered in the persistent PostgreSQL volume.
 1. Sign in as the administrator and open `/admin`.
 2. Create a participant ID and copy its generated password.
 3. Open `/login` in a private/incognito window and enter those credentials.
-4. Create a project and confirm that its Timeline reaches `operation.completed`.
-5. Verify that the participant sees only their projects while the administrator can see all projects.
+4. Continue from the welcome screen into the first timed task and confirm that its initial visualization appears.
+5. Verify that expiry locks the task and that Continue advances to the counterbalanced second renderer.
+6. Verify that normal participant views show the compact request/response Timeline, while only an administrator's Developer view exposes retained event details.
 
 Passwords can be rotated from `/admin`; rotation and disabling an account revoke its active sessions.
 The same page provides verified participant/study exports and explicitly
 confirmed research-data deletion. Exports omit authentication secrets and
-verify every immutable resource before download.
+verify every immutable resource before download. Study exports include the exact
+registered protocol ID and version used by each included enrollment.
 
 For debugging, administrators can also download an analysis export containing
 all active projects, their safe owner labels, complete Timelines, and verified
@@ -81,10 +83,7 @@ The default destination is a new UTC-timestamped directory under
 directory. It reads PostgreSQL directly, so `DATABASE_URL` must identify the
 database to inspect.
 
-AI feedback is optional. Set `OPENAI_API_KEY`, `OPENAI_MODEL`, and
-`CHATBOT_CONFIG` in the root `.env`, then rebuild or recreate the devcontainer so
-Compose passes them to the web process. Normal project compilation
-does not require an OpenAI key.
+Set `OPENAI_API_KEY` in the root `.env` for AI-assisted editing and the HTML study condition. `OPENAI_MODEL` and `CHATBOT_CONFIG` are optional overrides. Rebuild or recreate the devcontainer after changing `.env` so Compose passes the values to the web process. Compiling already-authored Sverlin source does not require an OpenAI key.
 
 ### Health checks
 
@@ -100,13 +99,15 @@ The authenticated `POST /api/health/compiler` endpoint performs a real minimal c
 
 ```text
 authenticated browser
-  -> SvelteKit validates ownership and appends operation.accepted
+  -> SvelteKit returns a role-specific workspace projection
+  -> study service resolves the centrally defined phase, renderer, layout, and deadline
+  -> project command appends operation.accepted
   -> bounded in-process executor runs the project operation asynchronously
-  -> public compiler service receives .sverlin content and seed(s)
-  -> private compiler implementation runs in isolated scratch space
+  -> Sverlin prompts compile one or two fresh seeds; HTML prompts may return one safe manifest
+  -> the resulting presentation set enters the Timeline directly
   -> PostgreSQL receives immutable Timeline events and content-addressed resources
   -> operation.completed or operation.failed closes the Timeline boundary
-  -> browser polls only the Timeline until complete
+  -> browser polls its compact workspace; administrators may explicitly request Developer detail
 ```
 
 The root container files have distinct responsibilities:
@@ -140,7 +141,7 @@ libraries retain only their registered library artifacts.
 | [`compile/app/`](compile/app/)       | Executable-only Sverlin loading, compilation, and generated-type tools.                               |
 | [`examples/`](examples/)             | Catalogued `.sverlin` examples and the minimal starting template.                                     |
 
-The TypeScript boundaries are one-way: `shared` may be used everywhere, `client` owns browser-only behavior, and `server` owns secrets and persistence. ESLint enforces this separation.
+The TypeScript boundaries are one-way: `shared` may be used everywhere, `client` owns browser-only behavior, and `server` owns secrets and persistence. ESLint enforces this separation. Study protocols are registered by ID and version in [`src/lib/shared/study/registry.ts`](src/lib/shared/study/registry.ts); the active protocol in [`src/lib/shared/study/pilot-v1.ts`](src/lib/shared/study/pilot-v1.ts) centrally defines timing, counterbalance order, renderer, and workspace layout.
 
 ## Compile from the command line
 
@@ -171,8 +172,8 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 | Command                      | Purpose                                                            |
 | ---------------------------- | ------------------------------------------------------------------ |
-| `pnpm run dev`               | Prepare the compiler, then run the complete SvelteKit service.     |
-| `pnpm run dev:web`           | Run the SvelteKit service without preparing the compiler first.    |
+| `pnpm run dev`               | Apply migrations, prepare the compiler, then run the service.      |
+| `pnpm run dev:web`           | Run the service without migrating or preparing the compiler first. |
 | `pnpm run preview`           | Prepare the compiler and preview the production frontend locally.  |
 | `pnpm run start`             | Start the built adapter-node web service.                          |
 | `pnpm run build`             | Prepare the compiler and build the web and migration bundles.      |
@@ -224,7 +225,7 @@ PostgreSQL database, migrate it, and force-drop only that validated test databas
 afterward. The end-to-end authentication bypass seeds its matching administrator
 row because project ownership remains enforced.
 
-After Haskell changes, run the relevant compile, Haskell tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the facade Haddock descriptions and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/ai-assistant/dsl-api-index.md) by hand; cross-cutting guidance lives in [`dsl-interface.md`](src/lib/server/chat-bots/ai-assistant/dsl-interface.md).
+After Haskell changes, run the relevant compile, Haskell tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the facade Haddock descriptions and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md) by hand; cross-cutting guidance lives in [`dsl-interface.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md).
 
 ## Production deployment
 

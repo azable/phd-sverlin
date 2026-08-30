@@ -5,8 +5,7 @@ import { parseResult } from './openai';
 describe('parseResult', () => {
   it('accepts the strict source-or-null response shape', () => {
     expect(parseResult('{"reply":"Done","sourceArtifactContent":null}')).toEqual({
-      reply: 'Done',
-      sourceArtifactContent: undefined
+      output: { reply: 'Done', sourceArtifactContent: null }
     });
   });
 

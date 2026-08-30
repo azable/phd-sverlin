@@ -19,6 +19,7 @@ import {
 
 import type { ProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectSummary } from '$lib/shared/projects/model';
+import type { VisualizationMode } from '$lib/shared/presentations';
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -140,6 +141,7 @@ export const projects = pgTable(
     head: integer('head').notNull(),
     title: text('title').notNull(),
     templateId: text('template_id').notNull(),
+    renderer: text('renderer').$type<VisualizationMode>().default('sverlin').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true })
@@ -147,6 +149,54 @@ export const projects = pgTable(
   (table) => [
     index('project_owner_updated_idx').on(table.ownerUserId, table.updatedAt),
     index('project_updated_idx').on(table.updatedAt)
+  ]
+);
+
+/** Counterbalanced study assignment retained independently from authentication state. */
+export const studyEnrollments = pgTable(
+  'study_enrollment',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    studyId: text('study_id').notNull(),
+    studyVersion: integer('study_version').notNull(),
+    armId: text('arm_id').notNull(),
+    currentPhaseIndex: integer('current_phase_index').default(0).notNull(),
+    enrolledAt: timestamp('enrolled_at', { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true })
+  },
+  (table) => [
+    index('study_enrollment_protocol_arm_idx').on(table.studyId, table.studyVersion, table.armId)
+  ]
+);
+
+/** Durable execution record for each phase in one participant's resolved sequence. */
+export const studyPhaseRuns = pgTable(
+  'study_phase_run',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    phaseId: text('phase_id').notNull(),
+    sequenceIndex: integer('sequence_index').notNull(),
+    kind: text('kind').notNull(),
+    conditionId: text('condition_id'),
+    renderer: text('renderer').$type<VisualizationMode>(),
+    layout: text('layout'),
+    view: text('view'),
+    projectId: varchar('project_id', { length: 128 }).references(() => projects.id, {
+      onDelete: 'set null'
+    }),
+    status: text('status').default('ready').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    deadlineAt: timestamp('deadline_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true })
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.phaseId] }),
+    uniqueIndex('study_phase_run_user_sequence_unique').on(table.userId, table.sequenceIndex),
+    uniqueIndex('study_phase_run_project_unique').on(table.projectId)
   ]
 );
 

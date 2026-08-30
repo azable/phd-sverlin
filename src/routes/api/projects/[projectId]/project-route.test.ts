@@ -15,6 +15,7 @@ vi.mock('$lib/server/authorization', () => ({
   requireProjectAccess: vi.fn(async (locals) => locals.principal),
   projectListOwner: vi.fn(() => 'user-test')
 }));
+vi.mock('$lib/server/study', () => ({ assertParticipantStudyMutation: vi.fn() }));
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 
@@ -88,7 +89,7 @@ describe('project JSON API', () => {
         text: 'Make this clearer',
         focus: [],
         selection: { render: 3, step: 0, instances: [0] },
-        seed: 1
+        presentationCount: 1
       })
     );
 

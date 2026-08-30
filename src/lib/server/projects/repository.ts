@@ -83,7 +83,8 @@ export class PostgresProjectRepository implements ProjectRepository {
         title: schema.projects.title,
         updatedAt: schema.projects.updatedAt,
         eventCount: schema.projects.head,
-        templateId: schema.projects.templateId
+        templateId: schema.projects.templateId,
+        renderer: schema.projects.renderer
       })
       .from(schema.projects)
       .where(condition)
@@ -103,6 +104,7 @@ export class PostgresProjectRepository implements ProjectRepository {
         head: summary.eventCount,
         title: summary.title,
         templateId: summary.templateId,
+        renderer: summary.renderer ?? 'sverlin',
         createdAt: new Date(normalized.events[0].createdAt),
         updatedAt: new Date(summary.updatedAt)
       });
@@ -204,6 +206,7 @@ export class PostgresProjectRepository implements ProjectRepository {
           head: summary.eventCount,
           title: summary.title,
           templateId: summary.templateId,
+          renderer: summary.renderer ?? 'sverlin',
           updatedAt: new Date(summary.updatedAt)
         })
         .where(eq(schema.projects.id, projectId));

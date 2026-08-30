@@ -45,7 +45,7 @@ export type AiTimelineEntry = {
 export type AiArtifact = {
   artifactId: string;
   path: string;
-  language: 'sverlin';
+  language: 'sverlin' | 'json';
   source: string;
   sha256: string;
 };
@@ -133,6 +133,10 @@ const timelineCases = {
     `Created ${event.payload.origin.kind} artifact version with ${event.payload.changes.length} change(s).`,
   'visualization.rendered': (event) =>
     `Activated seed ${event.payload.seed}; render ${shortHash(event.payload.render.sha256)}.`,
+  'visualization.presented': (event) =>
+    `Presented ${event.payload.presentation.format} visualization ${event.payload.presentation.presentationId} in display set ${event.payload.displaySetId}.`,
+  'visualization.preference-recorded': (event) =>
+    `Preferred presentation ${event.payload.preferred} over ${event.payload.presentations.find((id) => id !== event.payload.preferred) ?? 'the alternative'} at step ${event.payload.step}.`,
   'assistant.responded': () => 'Assistant responded to the user.',
   'system.notified': (event) => `System ${event.payload.severity}: ${event.payload.message}`
 } satisfies ProjectEventCases<string>;
@@ -152,6 +156,13 @@ const conversationCases = {
   'compilation.failed': () => [],
   'artifact.version-created': () => [],
   'visualization.rendered': () => [],
+  'visualization.presented': () => [],
+  'visualization.preference-recorded': (event) => [
+    {
+      role: 'user',
+      content: `I preferred presentation ${event.payload.preferred} over the alternative in display set ${event.payload.displaySetId} at step ${event.payload.step}.`
+    } as const
+  ],
   'assistant.responded': (event) => [{ role: 'assistant', content: event.payload.text } as const],
   'system.notified': () => []
 } satisfies ProjectEventCases<ConversationMessage[]>;

@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "pnpm run prepare:compiler && pnpm run dev:web",
+    "dev": "pnpm run db:migrate && pnpm run prepare:compiler && pnpm run dev:web",
     "dev:web": "node scripts/run-with-state-lock.mjs node node_modules/vite/bin/vite.js dev --configLoader native",
     "build": "pnpm run prepare:compiler && pnpm exec svelte-kit sync && pnpm exec vite build && pnpm run build:migrate",
     "build:migrate": "esbuild src/project-migrate.ts --bundle --platform=node --format=esm --packages=external --outfile=build-migrate/index.js",
@@ -51,6 +51,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.18",
     "@types/node": "^24",
+    "@types/sanitize-html": "^2.16.1",
     "bits-ui": "^2.18.1",
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.2",
@@ -86,6 +87,7 @@
     "drizzle-orm": "^0.45.2",
     "openai": "^7.5.0",
     "postgres": "^3.4.9",
+    "sanitize-html": "^2.17.7",
     "tailwind-merge": "^3.6.0",
     "valibot": "^1.4.2"
   }

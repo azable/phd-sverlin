@@ -12,6 +12,7 @@ import { type Archiver, ZipArchive } from 'archiver';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
+import type { VisualizationMode } from '$lib/shared/presentations';
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import {
@@ -44,6 +45,7 @@ export type AnalysisProject = {
   ownerUserId: string;
   title: string;
   templateId: string;
+  renderer?: VisualizationMode;
   createdAt: string;
   updatedAt: string;
   document: ProjectDocument;
@@ -96,6 +98,7 @@ export class PostgresAnalysisDataSource implements AnalysisDataSource {
             ownerUserId: schema.projects.ownerUserId,
             title: schema.projects.title,
             templateId: schema.projects.templateId,
+            renderer: schema.projects.renderer,
             createdAt: schema.projects.createdAt,
             updatedAt: schema.projects.updatedAt
           })
@@ -204,6 +207,7 @@ export async function writeAnalysisExport(
       ownerUserId: project.ownerUserId,
       title: project.title,
       templateId: project.templateId,
+      renderer: project.renderer ?? 'sverlin',
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       document: project.document

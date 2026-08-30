@@ -8,6 +8,9 @@ vi.mock('$lib/server/projects/service', () => ({
 vi.mock('$lib/server/projects/operations', () => ({
   projectOperationExecutor: { accept: mocks.accept }
 }));
+vi.mock('$lib/server/authorization', () => ({
+  requireAdmin: vi.fn((locals) => locals.principal)
+}));
 
 beforeEach(() => {
   mocks.createProjectSkeleton.mockReset().mockResolvedValue({
@@ -54,7 +57,7 @@ describe('project creation API', () => {
     expect(response.status).toBe(202);
     expect(mocks.createProjectSkeleton).toHaveBeenCalledWith(
       expect.objectContaining({
-        creation: { templateId: 'blank' },
+        creation: { templateId: 'blank', renderer: 'sverlin' },
         ownerUserId: 'user-test'
       })
     );

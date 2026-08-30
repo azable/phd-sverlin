@@ -18,7 +18,9 @@ import {
   type ProjectId,
   type ProjectResource,
   type ProjectSnapshot,
-  type ProjectSummary
+  type ProjectSummary,
+  type WorkspaceResource,
+  type WorkspaceTimelineEntry
 } from '$lib/shared/projects/model';
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
@@ -50,17 +52,32 @@ export class ProjectSession {
   /** Timeline events explicitly selected as feedback context. */
   focusedEvents = $state.raw<EventId[]>([]);
   #resource = $state.raw<ProjectResource | null>(null);
+  #workspace = $state.raw<WorkspaceResource | null>(null);
   #selectedAt = $state<EventId | undefined>(undefined);
   #eventTimer?: ReturnType<typeof setInterval>;
   #request?: AbortController;
   #commandRequest?: AbortController;
   #loadVersion = 0;
 
-  constructor(readonly projectId: ProjectId) {}
+  constructor(
+    readonly projectId: ProjectId,
+    readonly developerView = true,
+    readonly layout: 'single' | 'comparison' = 'single'
+  ) {}
 
   /** Command currently accepted or running according to the durable Timeline. */
   get pending(): PendingProjectCommand | null {
     if (this.#submitting) return this.#submitting;
+    if (this.#workspace?.activeOperation) {
+      return {
+        type:
+          this.#workspace.activeOperation.kind === 'initial-render'
+            ? 'render'
+            : (this.#workspace.activeOperation.kind as PendingProjectCommand['type']),
+        operationId: this.#workspace.activeOperation.operationId,
+        startedAfter: this.#workspace.head
+      };
+    }
     const operation = this.#resource ? activeProjectOperation(this.#resource.document) : undefined;
     if (!operation) return null;
     return {
@@ -75,21 +92,37 @@ export class ProjectSession {
     return this.#resource;
   }
 
+  /** Whether either authorized workspace representation has loaded. */
+  get loaded(): boolean {
+    return this.#resource !== null || this.#workspace !== null;
+  }
+
+  /** Compact server-projected entries used outside developer view. */
+  get timeline(): WorkspaceTimelineEntry[] {
+    return this.#workspace?.timeline ?? [];
+  }
+
+  /** Whether the server has locked this workspace. */
+  get readOnly(): boolean {
+    return this.#workspace?.readOnly ?? false;
+  }
+
   /** Project state reconstructed at the selected event position. */
   get snapshot(): ProjectSnapshot {
+    if (this.#workspace) return this.#workspace.snapshot;
     if (!this.#resource) throw new Error('The project has not loaded.');
     return projectSnapshotAt(this.#resource.document, this.#selectedAt);
   }
 
   /** Visualization decoded from the render active at the selected position. */
   get visualization(): Visualization | undefined {
-    const render = this.#resource ? this.snapshot.activeRender : undefined;
+    const render = this.loaded ? this.snapshot.activeRender : undefined;
     return render ? decodeVisualization(render.payload.render.text) : undefined;
   }
 
   /** Available projects ordered by the server. */
   get projects(): ProjectSummary[] {
-    return this.#resource?.projects ?? [];
+    return this.#resource?.projects ?? this.#workspace?.projects ?? [];
   }
 
   /** Immutable events in the loaded project document. */
@@ -99,16 +132,17 @@ export class ProjectSession {
 
   /** Stable event ID at the project head, or zero before loading. */
   get head(): number {
-    return this.events.length;
+    return this.#workspace?.head ?? this.events.length;
   }
 
   /** Whether the session is viewing the current project state. */
   get atHead(): boolean {
-    return this.#resource !== null && this.#selectedAt === undefined;
+    return this.loaded && this.#selectedAt === undefined;
   }
 
   /** Most recent streamed event belonging to the pending command. */
   get pendingEvent(): ProjectEvent | undefined {
+    if (this.#workspace) return undefined;
     const pending = this.pending;
     if (!pending) return undefined;
     return this.events.findLast(
@@ -136,14 +170,13 @@ export class ProjectSession {
     this.connection = 'connecting';
 
     try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
+      const response = await fetch(this.resourceUrl(), {
         cache: 'no-store',
         signal: request.signal
       });
       if (!response.ok) throw new Error(await responseError(response));
-      const resource = parseProjectResource(await response.json());
       if (version !== this.#loadVersion) return;
-      this.#resource = resource;
+      this.installResource(await response.json());
       this.select(this.#selectedAt);
       this.connect();
     } catch (cause) {
@@ -208,7 +241,7 @@ export class ProjectSession {
 
   /** Submit a command and install the server's authoritative complete resource. */
   async runCommand(input: ProjectCommandInput): Promise<boolean> {
-    if (this.pending || !this.#resource || !this.atHead) return false;
+    if (this.pending || !this.loaded || !this.atHead || this.readOnly) return false;
     const operationId = crypto.randomUUID();
     const request = new AbortController();
     this.#commandRequest?.abort();
@@ -245,7 +278,7 @@ export class ProjectSession {
   }
 
   private connect(): void {
-    if (!this.#resource) return;
+    if (!this.loaded) return;
     this.connection = 'open';
     this.#eventTimer = setInterval(() => void this.pollEvents(), 1_000);
   }
@@ -256,7 +289,18 @@ export class ProjectSession {
   }
 
   private async pollEvents(): Promise<void> {
-    if (!this.#resource) return;
+    if (!this.loaded) return;
+    if (this.#workspace) {
+      try {
+        const response = await fetch(this.resourceUrl(), { cache: 'no-store' });
+        if (!response.ok) throw new Error(await responseError(response));
+        this.installResource(await response.json());
+        this.connection = 'open';
+      } catch {
+        this.connection = 'reconnecting';
+      }
+      return;
+    }
     try {
       const response = await fetch(
         `/api/projects/${encodeURIComponent(this.projectId)}/events?after=${this.head}`,
@@ -277,6 +321,13 @@ export class ProjectSession {
       const operation = this.#resource
         ? projectOperation(this.#resource.document, operationId)
         : undefined;
+      if (this.#workspace && !this.#workspace.activeOperation) {
+        const failure = this.#workspace.timeline.findLast(({ kind }) => kind === 'error');
+        if (failure?.operationId === operationId) {
+          throw new Error(failure.detail ?? 'The project operation failed.');
+        }
+        return;
+      }
       if (operation?.status === 'completed') return;
       if (operation?.status === 'failed') {
         throw new Error(
@@ -290,12 +341,12 @@ export class ProjectSession {
   }
 
   private async reloadResource(signal: AbortSignal): Promise<void> {
-    const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
+    const response = await fetch(this.resourceUrl(), {
       cache: 'no-store',
       signal
     });
     if (!response.ok) throw new Error(await responseError(response));
-    this.#resource = parseProjectResource(await response.json());
+    this.installResource(await response.json());
   }
 
   private ingest(event: ProjectEvent): void {
@@ -325,6 +376,26 @@ export class ProjectSession {
   private async recover(): Promise<void> {
     this.connection = 'reconnecting';
     await this.open();
+  }
+
+  private resourceUrl(): string {
+    const encoded = encodeURIComponent(this.projectId);
+    if (this.developerView) return `/api/projects/${encoded}`;
+    return `/api/projects/${encoded}/workspace?layout=${this.layout}`;
+  }
+
+  private installResource(value: unknown): void {
+    if (this.developerView) {
+      this.#resource = parseProjectResource(value);
+      this.#workspace = null;
+      return;
+    }
+    const workspace = value as WorkspaceResource;
+    if (workspace?.schemaVersion !== 1 || workspace.projectId !== this.projectId) {
+      throw new Error('The server returned an invalid project workspace.');
+    }
+    this.#workspace = workspace;
+    this.#resource = null;
   }
 }
 

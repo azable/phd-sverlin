@@ -130,6 +130,21 @@ const presenters = {
       'Loading the visualization…',
       true
     ),
+  'visualization.presented': (event) =>
+    details(
+      `Visualization presented · ${event.payload.presentation.format === 'sverlin-ir-v1' ? `seed ${event.payload.presentation.seed}` : 'HTML'}`,
+      event.payload.presentation.stepSignature,
+      'visualization',
+      'Loading the visualization…',
+      true
+    ),
+  'visualization.preference-recorded': (event) =>
+    details(
+      'Visualization preference recorded',
+      `Preferred presentation ${event.payload.preferred} at step ${event.payload.step + 1}`,
+      'visualization',
+      'Recording the preference…'
+    ),
   'assistant.responded': (event) =>
     details('Assistant responded', event.payload.text, 'assistant', 'Finishing…'),
   'system.notified': (event) =>

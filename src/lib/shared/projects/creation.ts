@@ -2,12 +2,15 @@
 
 import * as v from 'valibot';
 
+import { visualizationModeSchema, type VisualizationMode } from '$lib/shared/presentations';
+
 /** Runtime contract for a server-catalogued project template identifier. */
 export const projectTemplateIdSchema = v.pipe(v.string(), v.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 
 /** Runtime contract for the template selected when creating a project. */
 export const projectCreationSchema = v.strictObject({
-  templateId: projectTemplateIdSchema
+  templateId: projectTemplateIdSchema,
+  renderer: v.optional(visualizationModeSchema)
 });
 
 const legacyProjectCreationSchema = v.variant('mode', [
@@ -34,7 +37,12 @@ export type ProjectTemplateSummary = {
 };
 
 /** Default template for an empty creation request or a legacy project. */
-export const defaultProjectCreation: ProjectCreation = { templateId: 'blank' };
+export const defaultProjectCreation: ProjectCreation = { templateId: 'blank', renderer: 'sverlin' };
+
+/** Renderer selected by a new or historical project creation record. */
+export function projectCreationRenderer(creation: ProjectCreation): VisualizationMode {
+  return creation.renderer ?? 'sverlin';
+}
 
 /** Parse an external project-creation request. */
 export function parseProjectCreation(value: unknown): ProjectCreation {

@@ -22,8 +22,7 @@ export type ChatAdapterRequest = {
 
 /** Provider-neutral result returned after structured response parsing. */
 export type ChatAdapterResult = {
-  reply: string;
-  sourceArtifactContent?: string;
+  output: unknown;
   providerResponse?: unknown;
   generation?: {
     model?: string;
@@ -38,4 +37,18 @@ export interface ChatAdapter {
   readonly id: string;
   /** Submit a prepared request and normalize the provider response. */
   generateReply(request: ChatAdapterRequest): Promise<ChatAdapterResult>;
+}
+
+/** Raised when a provider response does not satisfy a bot's output contract. */
+export class InvalidChatbotResponseError extends Error {
+  readonly providerResponse?: unknown;
+
+  constructor(
+    message = 'The chatbot returned an invalid structured response.',
+    providerResponse?: unknown
+  ) {
+    super(message);
+    this.name = 'InvalidChatbotResponseError';
+    this.providerResponse = providerResponse;
+  }
 }

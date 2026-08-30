@@ -1,5 +1,5 @@
 -- Illustrative body-only linear search for the target API in API_plan.md.
--- Unified typed steps, text trees, and Render-controlled frames are proposed APIs.
+-- Unified typed steps and Render-controlled frames are proposed APIs.
 
 data Number
 
@@ -25,8 +25,9 @@ data Add = Add
 
 type instance Payload Add = LOperator Add Add
 
+-- Proposed semantic-only operator contract: the current `CoreOperator` also
+-- requires `operatorPayloadText`, but spelling an operator belongs to Render.
 instance CoreOperator Add where
-  operatorPayloadText Add = "+"
   persistOperatorPayload Add = Ur Add
 
 instance Applicable2 Add Number Number where
@@ -38,7 +39,6 @@ data Equal = Equal
 type instance Payload Equal = LOperator Equal Equal
 
 instance CoreOperator Equal where
-  operatorPayloadText Equal = "=="
   persistOperatorPayload Equal = Ur Equal
 
 instance Applicable2 Equal Number Number where
@@ -279,98 +279,102 @@ program = step @LinearSearch $ do
   result <- searchLoop target index elements
   finishSearch result
 
-pseudocode :: TextTree
-pseudocode =
-  block @LinearSearch
-    (do
-      literal "find "
-      fragmentMany
-        @'[InitializeTarget, CreateValue InitializeTarget, CreateCell InitializeTarget, AssignValue InitializeTarget]
-        "target"
-      literal " in "
-      fragmentMany
-        @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement]
-        "values"
-      literal ":")
-    $ do
-      line @InitializeIndex $
-        fragmentMany
-          @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
-          "set index to zero"
+-- `TextBuilder`, `literal`, `fragment`, and `fragmentMany` are proposed general
+-- text APIs. Current `ContentValue` holds only one literal or one binding, so it
+-- cannot compose a completely shaped line from semantically mapped spans.
+-- `Render` is the planned public rename of the current `VisualizationBuilder`.
+line :: TextBuilder () %1 -> Render (NodeBinding (Selected GeneratedNode))
+line textRecipe =
+  node $ do
+    width (by 500)
+    height (by 28)
+    style @FontFamily (FixedStyle FontIBMPlexMono)
+    style @WhiteSpace (FixedStyle WhiteSpacePre)
 
-      block @SearchIteration
-        (do
-          literal "while "
-          fragment @CheckRemainingElements "values remain"
-          literal ":")
-        $ do
-          block @CompareTarget
-            (do
-              literal "if "
-              fragment @ReadElement "current value"
-              fragmentMany @'[CreateEqualOperator, ApplyEquality] " equals "
-              fragment @ReadTarget "target"
-              literal ":")
-            $ do
-              line @ReturnFound $ fragment @ReturnFound "return index"
+    -- Proposed overload: current `content` accepts only `ContentValue`. This
+    -- overload lowers the spans to one source string plus typed source ranges,
+    -- then the existing typography pipeline shapes the complete line once.
+    content textRecipe
 
-          line @IncrementIndex $
-            fragmentMany
-              @'[ReadIndexForIncrement, CreateOne, CreateAddOperator, AddOneToIndex, WriteIndex]
-              "increase index by one"
+-- These helpers use only current affine geometry. Current node hierarchy adds
+-- containment and style inheritance, but does not indent or vertically sequence
+-- children automatically.
+indent :: Selected parent -> Selected child -> Render ()
+indent parent child = ensure $ left child .==. left parent + shift (num 24)
 
-      line @ReturnNotFound $ fragment @ReturnNotFound "return not found"
+sameIndent :: Selected reference -> Selected lineNode -> Render ()
+sameIndent reference lineNode = ensure $ left lineNode .==. left reference
 
-cSource :: TextTree
-cSource =
-  delimitedBlock @LinearSearch
-    (do
-      literal "int linear_search(int "
-      fragmentMany
-        @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement]
-        "A[]"
-      literal ", int "
-      fragment @InitializeElements "n"
-      literal ", int "
-      fragmentMany
-        @'[InitializeTarget, CreateValue InitializeTarget, CreateCell InitializeTarget, AssignValue InitializeTarget]
-        "target"
-      literal ") {")
-    (literal "}")
-    $ do
-      delimitedBlock @SearchIteration
-        (do
-          literal "for ("
-          fragmentMany
-            @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
-            "int i = 0"
-          literal "; "
-          fragment @CheckRemainingElements "i < n"
-          literal "; "
-          fragmentMany
-            @'[IncrementIndex, ReadIndexForIncrement, CreateOne, CreateAddOperator, AddOneToIndex, WriteIndex]
-            "i++"
-          literal ") {")
-        (literal "}")
-        $ do
-          delimitedBlock @CompareTarget
-            (do
-              literal "if ("
-              fragment @ReadElement "A[i]"
-              fragmentMany @'[CreateEqualOperator, ApplyEquality] " == "
-              fragment @ReadTarget "target"
-              literal ") {")
-            (literal "}")
-            $ do
-              line @ReturnFound $ do
-                literal "return "
-                fragment @ReturnFound "i"
-                literal ";"
+after :: Selected upper -> Selected lower -> Render ()
+after upper lower = ensure $ top lower .==. bottom upper + shift (num 4)
 
-      line @ReturnNotFound $ do
-        literal "return "
-        fragment @ReturnNotFound "-1"
-        literal ";"
+cSource :: Render ()
+cSource = do
+  Selected functionLine <- line $ do
+    literal "int linear_search(int "
+    fragmentMany
+      @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement]
+      "A[]"
+    literal ", int "
+    fragment @InitializeElements "n"
+    literal ", int "
+    fragmentMany
+      @'[InitializeTarget, CreateValue InitializeTarget, CreateCell InitializeTarget, AssignValue InitializeTarget]
+      "target"
+    literal ") {"
+
+  Selected loopLine <- line $ do
+    literal "for ("
+    fragmentMany
+      @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
+      "int i = 0"
+    literal "; "
+    fragment @CheckRemainingElements "i < n"
+    literal "; "
+    fragmentMany
+      @'[IncrementIndex, ReadIndexForIncrement, CreateOne, CreateAddOperator, AddOneToIndex, WriteIndex]
+      "i++"
+    literal ") {"
+
+  Selected comparisonLine <- line $ do
+    literal "if ("
+    fragment @ReadElement "A[i]"
+    fragmentMany @'[CompareTarget, CreateEqualOperator, ApplyEquality] " == "
+    fragment @ReadTarget "target"
+    literal ") {"
+
+  Selected foundLine <- line $ do
+    literal "return "
+    fragment @ReturnFound "i"
+    literal ";"
+
+  Selected closeComparison <- line $ literal "}"
+  Selected closeLoop <- line $ literal "}"
+
+  Selected notFoundLine <- line $ do
+    literal "return "
+    fragment @ReturnNotFound "-1"
+    literal ";"
+
+  Selected closeFunction <- line $ literal "}"
+
+  ensure $ left functionLine .==. at 36
+  ensure $ top functionLine .==. at 32
+
+  indent functionLine loopLine
+  after functionLine loopLine
+  indent loopLine comparisonLine
+  after loopLine comparisonLine
+  indent comparisonLine foundLine
+  after comparisonLine foundLine
+  sameIndent comparisonLine closeComparison
+  after foundLine closeComparison
+  sameIndent loopLine closeLoop
+  after closeComparison closeLoop
+  sameIndent loopLine notFoundLine
+  after closeLoop notFoundLine
+  sameIndent functionLine closeFunction
+  after notFoundLine closeFunction
 
 type PresentationFrames =
   '[ InitializeTarget
@@ -389,17 +393,11 @@ render = do
   width (by 1000)
   height (by 640)
   contentFit Both Contain
+
+  -- Proposed API: current animation boundaries are Program-owned String
+  -- checkpoints; Render cannot yet resolve frames from typed step definitions.
   framesAt @PresentationFrames
-
-  source <- textNodes cSource
-
-  node source $ do
-    left (at 36)
-    top (at 32)
-    width (by 500)
-    height (by 560)
-    style @FontFamily (FixedStyle FontIBMPlexMono)
-    style @WhiteSpace (FixedStyle WhiteSpacePre)
+  cSource
 
   Bound targetLabel <- bindContent
   Selected targets <- select @Number (#target <&> payload targetLabel)
@@ -463,9 +461,3 @@ render = do
     width (by 100)
     height (by 76)
     styleFamily "comparison"
-
-  during @CompareTarget $ mappedFragments @CompareTarget source $ do
-    style @FontWeight (FixedStyle FontWeightBold)
-
-  during @IncrementIndex $ mappedFragments @IncrementIndex source $ do
-    style @FontWeight (FixedStyle FontWeightBold)

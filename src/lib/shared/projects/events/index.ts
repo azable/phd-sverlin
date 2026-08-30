@@ -28,6 +28,10 @@ import { projectCreatedEventSchema } from './project-created';
 import { projectRenamedEventSchema } from './project-renamed';
 import { systemNotifiedEventSchema } from './system-notified';
 import { visualizationRenderedEventSchema } from './visualization-rendered';
+import {
+  visualizationPreferenceRecordedEventSchema,
+  visualizationPresentedEventSchema
+} from './visualization-presented';
 
 /** Runtime discriminated union for every immutable project event. */
 export const projectEventSchema = v.variant('type', [
@@ -45,6 +49,8 @@ export const projectEventSchema = v.variant('type', [
   compilationFailedEventSchema,
   artifactVersionCreatedEventSchema,
   visualizationRenderedEventSchema,
+  visualizationPresentedEventSchema,
+  visualizationPreferenceRecordedEventSchema,
   assistantRespondedEventSchema,
   systemNotifiedEventSchema
 ]);

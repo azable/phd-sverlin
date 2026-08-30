@@ -76,7 +76,7 @@ describe('ProjectOperationExecutor', () => {
         expectedHead: 1,
         text: 'Change it.',
         focus: [],
-        seed: 1
+        presentationCount: 1
       }
     });
     await terminal(repository, projectId, operationId);

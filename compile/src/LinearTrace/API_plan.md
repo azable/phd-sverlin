@@ -46,6 +46,11 @@ Move the following existing interfaces into Domain:
   `Applicable1`, `Applicable2`, `applyLinear1`, `applyLinear1Into`,
   `applyLinear2`, and `applyLinear2Into`.
 
+Revise `CoreOperator` so that it retains only the semantics needed to preserve
+and apply an operator payload. It must not require `operatorPayloadText` or any
+other presentation value. Operator spellings such as `+`, `==`, or `equals`
+belong to the particular Render mapping.
+
 The exact declaration combinators and concrete builder type name are still to
 be designed. They must support this separation without requiring authors to
 import internal Core modules.
@@ -398,9 +403,24 @@ execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `NodeBinding`,
 `VisualizationBuilder` (to be replaced publicly by `Render`), `Select`,
 `select`, `visualize`, `Node`, `node`, `self`, and `canvas`.
 
-Content interfaces are `ContentValue`, `text`, `content`, `fitText`,
-`codeContent`, `codeWrap`, `highlightCode`, `CodeRange`, `codeRange`, and
-`emphasizeCode`.
+Retain the general content interfaces `ContentValue`, `text`, `content`, and
+`fitText`. Remove the specialized `codeContent`, `codeWrap`, `highlightCode`,
+`CodeRange`, `codeRange`, and `emphasizeCode` interfaces. Code is not a distinct
+kind of visual content: it is one possible Render mapping of the Program.
+
+Add a general composed-text builder. The target vocabulary is `TextBuilder`,
+`literal`, `fragment`, and `fragmentMany`; exact supporting types may be refined
+during implementation. A fragment associates a typed step definition with a
+text range, while `fragmentMany` associates the same range with several step
+definitions. The builder must lower a complete text run to one shaped string
+plus validated range metadata. It must not shape each fragment as an independent
+text node, because doing so would lose the font renderer's whole-run kerning,
+wrapping, bidirectional-text, and ligature behavior.
+
+Each line or other independently positioned text run is an ordinary generated
+node. Render uses the normal hierarchy, affine constraints, and style API to lay
+out those nodes. Typed fragment ranges permit step-sensitive styling and
+animation without making code syntax part of Domain or Program.
 
 ```haskell
 render :: Render ()
@@ -417,11 +437,15 @@ render = do
 ```
 
 ```haskell
-node sourceSelection $ do
-  codeWrap $
-    highlightCode "haskell" $
-      emphasizeCode "step" [codeRange 0 12] $
-        codeContent (text "x = x + 1")
+Selected returnLine <- node $ do
+  content $ do
+    literal "return "
+    fragment @ReturnFound "i"
+    literal ";"
+  style @FontFamily (FixedStyle FontIBMPlexMono)
+
+ensure $ left returnLine .==. left comparisonLine + shift (num 24)
+ensure $ top returnLine .==. bottom comparisonLine + shift (num 4)
 ```
 
 #### Reusable values and finite decisions
