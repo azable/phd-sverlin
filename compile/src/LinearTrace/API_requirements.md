@@ -43,24 +43,25 @@ Examples:
 
 ## Keep constraints stable within a linear lifetime
 
-The complete set of Render constraints for a linear trace object should be defined
-when that particular lifetime begins and remain unchanged while the object is live.
-Render must not add, remove, or replace geometric constraints for the same live
-object at a later checkpoint. Solver values may still be sampled within the
-original feasible region, and geometry-neutral presentation state may change; the
-constraint system itself remains fixed.
+The compiler sees the complete trace before it solves any layout. It should collect
+all Render constraints that refer to a linear object's lifetime and solve them as one
+fixed system, even when the fact that contributes a constraint is declared after an
+earlier checkpoint. This is not a checkpoint-time mutation: the later declaration
+becomes part of the constraints used for that whole lifetime. Solver values may
+still be sampled within the resulting feasible region, and geometry-neutral
+presentation state may change.
 
-Changing the constraint set requires a linear transition: Program consumes the old
-object and produces a successor. This consume-and-produce boundary is a "cut" in
-the trace. Constraints for the old lifetime end at the cut, and the successor's
-complete constraints are established when its new lifetime begins. The compiler
-should derive and validate these scopes from linear ownership rather than rely on
-authors to coordinate checkpoint-specific constraint mutations.
+When Program consumes an object and produces a successor, that linear transition is
+a "cut" between lifetimes. Constraints attached to the old identity do not silently
+retarget to the successor. The compiler should derive these scopes from linear
+ownership rather than rely on authors to coordinate checkpoint-specific changes.
 
-Relations are one instance of this rule. A Program relation is semantic, but Render
-may map it to layout constraints or connector geometry. Once a slot location has
-been exposed, its incident relations must therefore remain fixed for that linear
-lifetime. Changing a slot's occupant does not change the location or its relations;
-rewiring requires an explicit linear transition of every affected location. For
-example, an array's adjacency is established before its cells are shown and remains
-stable while those cell locations exist, even when their stored values change.
+Relations are one instance of this rule. `relate` may occur after either location has
+already appeared. If Render maps that relation to layout constraints, those
+constraints join the fixed system over the overlapping lifetimes of its stable slot
+owners; only the relation's semantic visibility begins at the `relate` event.
+Unsealing, replacing an occupant, and resealing may change occupant block identity
+without recreating the relation or its constraints. If later relation rules conflict
+with constraints already collected for those lifetimes, compilation must report an
+infeasible design with the relevant source locations; repeated sampling cannot make
+an inconsistent system feasible.

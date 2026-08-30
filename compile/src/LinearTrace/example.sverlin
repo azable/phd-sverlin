@@ -101,7 +101,6 @@ type WriteIndex = IncrementIndex / "write"
 type DestroyTarget = FinishSearch / "destroy-target"
 type DestroyIndex = FinishSearch / "destroy-index"
 type DestroyElements = FinishSearch / "destroy-elements"
-type UnrelateNextElement = DestroyElements / "unrelate-next"
 type DestroyElement = DestroyElements / "destroy-element"
 
 domain :: Domain ()
@@ -144,7 +143,6 @@ domain = do
       , DestroyTarget
       , DestroyIndex
       , DestroyElements
-      , UnrelateNextElement
       , DestroyElement
       ]
 
@@ -162,20 +160,12 @@ data RelatedStored value where
   RelatedStored ::
     Stored ElementCell value %1 ->
     Stored ElementCell value %1 ->
-    Relation %1 ->
     RelatedStored value
-
-data UnrelatedStored value where
-  UnrelatedStored ::
-    Stored ElementCell value %1 ->
-    Stored ElementCell value %1 ->
-    UnrelatedStored value
 
 data NonEmptyStoredList value where
   LastStoredValue :: Stored ElementCell value %1 -> NonEmptyStoredList value
   MoreStoredValue ::
     Stored ElementCell value %1 ->
-    Relation %1 ->
     NonEmptyStoredList value %1 ->
     NonEmptyStoredList value
 
@@ -183,22 +173,16 @@ data StoredList value where
   NoStoredValues :: StoredList value
   StoredValues :: NonEmptyStoredList value %1 -> StoredList value
 
--- The list stores one linear Relation beside every adjacent pair. It stores no
--- integer layout index; Render validates the chain and derives positions.
+-- Adjacency belongs to the stable ElementCell owners. The list stores no
+-- relation tokens or integer layout indices; Render validates the chain and
+-- derives positions.
 
 data ListView value where
   LastValue :: Stored ElementCell value %1 -> ListView value
   NextValue ::
     Stored ElementCell value %1 ->
-    Relation %1 ->
     NonEmptyStoredList value %1 ->
     ListView value
-
-data UnlinkedHead value where
-  UnlinkedHead ::
-    Stored ElementCell value %1 ->
-    NonEmptyStoredList value %1 ->
-    UnlinkedHead value
 
 createStored ::
   forall parent owner value.
@@ -262,22 +246,9 @@ relateStored ::
   Stored ElementCell value %1 ->
   Program (RelatedStored value)
 relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
-  Relate leftSlot1 rightSlot1 relation <- relate relationKind leftSlot rightSlot
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
   return
     (RelatedStored
-       (Stored leftOwner leftSlot1)
-       (Stored rightOwner rightSlot1)
-       relation)
-
-unrelateStored ::
-  Relation %1 ->
-  Stored ElementCell value %1 ->
-  Stored ElementCell value %1 ->
-  Program (UnrelatedStored value)
-unrelateStored relation (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
-  Unrelate leftSlot1 rightSlot1 <- unrelate relation leftSlot rightSlot
-  return
-    (UnrelatedStored
        (Stored leftOwner leftSlot1)
        (Stored rightOwner rightSlot1))
 
@@ -288,38 +259,20 @@ prependStored ::
 prependStored current rest =
   case rest of
     LastStoredValue next -> do
-      RelatedStored current1 next1 relation <- relateStored adjacent current next
-      return (MoreStoredValue current1 relation (LastStoredValue next1))
-    MoreStoredValue next nextRelation remaining -> do
-      RelatedStored current1 next1 relation <- relateStored adjacent current next
+      RelatedStored current1 next1 <- relateStored adjacent current next
+      return (MoreStoredValue current1 (LastStoredValue next1))
+    MoreStoredValue next remaining -> do
+      RelatedStored current1 next1 <- relateStored adjacent current next
       return
         (MoreStoredValue
            current1
-           relation
-           (MoreStoredValue next1 nextRelation remaining))
+           (MoreStoredValue next1 remaining))
 
 inspectElements :: NonEmptyStoredList value %1 -> Program (ListView value)
 inspectElements elements =
   case elements of
     LastStoredValue element -> return (LastValue element)
-    MoreStoredValue element relation rest -> return (NextValue element relation rest)
-
-unlinkHead ::
-  Relation %1 ->
-  Stored ElementCell value %1 ->
-  NonEmptyStoredList value %1 ->
-  Program (UnlinkedHead value)
-unlinkHead relation current rest =
-  case rest of
-    LastStoredValue next -> do
-      UnrelatedStored current1 next1 <- unrelateStored relation current next
-      return (UnlinkedHead current1 (LastStoredValue next1))
-    MoreStoredValue next nextRelation remaining -> do
-      UnrelatedStored current1 next1 <- unrelateStored relation current next
-      return
-        (UnlinkedHead
-           current1
-           (MoreStoredValue next1 nextRelation remaining))
+    MoreStoredValue element rest -> return (NextValue element rest)
 
 --------------------------------------------------------------------------------
 -- Program
@@ -444,7 +397,7 @@ searchNonEmpty position target index elements = step @SearchIteration $ do
                  target1
                  index1
                  (LastStoredValue element1))
-    NextValue element relation rest -> do
+    NextValue element rest -> do
       ComparedElement target1 element1 matched <- compareElement target element
       case matched of
         True ->
@@ -454,7 +407,7 @@ searchNonEmpty position target index elements = step @SearchIteration $ do
                  (FoundAt position)
                  target1
                  index
-                 (MoreStoredValue element1 relation rest))
+                 (MoreStoredValue element1 rest))
         False -> do
           index1 <- incrementIndex index
           NonEmptySearchResult outcome target2 index2 searchedRest <-
@@ -464,7 +417,7 @@ searchNonEmpty position target index elements = step @SearchIteration $ do
                outcome
                target2
                index2
-               (MoreStoredValue element1 relation searchedRest))
+               (MoreStoredValue element1 searchedRest))
 
 searchLoop ::
   Stored TargetCell Number %1 ->
@@ -486,11 +439,9 @@ destroyNonEmpty :: NonEmptyStoredList Number %1 -> Program ()
 destroyNonEmpty elements =
   case elements of
     LastStoredValue element -> step @DestroyElement (destroyStored element)
-    MoreStoredValue element relation rest -> do
-      UnlinkedHead element1 rest1 <-
-        step @UnrelateNextElement (unlinkHead relation element rest)
-      step @DestroyElement (destroyStored element1)
-      destroyNonEmpty rest1
+    MoreStoredValue element rest -> do
+      step @DestroyElement (destroyStored element)
+      destroyNonEmpty rest
 
 destroyStoredList :: StoredList Number %1 -> Program ()
 destroyStoredList elements =

@@ -112,7 +112,6 @@ signatures show how every resource is consumed and returned.
 data Program a
 data Block tag                  -- abstract live value
 data Slot owner tag             -- abstract stored value at an owner location
-data Relation                   -- abstract active relation; type parameters open
 data Pending tag                -- abstract unfinished lifecycle result
 
 data OneUse a       = OneUse a
@@ -125,17 +124,15 @@ data Apply2 op l r  = Apply2 (Pending (Apply2Result op l r))
 data Destroy tag    = Destroy
 data Seal owner tag = Seal (Block owner) (Slot owner tag)
 data Unseal owner tag = Unseal (Block owner) (Block tag)
+data Relate ... = Relate sourceSlot targetSlot
 ```
 
-`Relate` and `Unrelate` are public result wrappers. Their exact type parameters
-remain **open**; their pattern shapes are settled:
+`Relate` is a public result wrapper. Its exact type parameters remain **open**;
+its pattern shape is settled:
 
 ```haskell
-Relate sourceSlot targetSlot relation
-Unrelate sourceSlot targetSlot
+Relate sourceSlot targetSlot
 ```
-
-TODO question: do Relate semantics offer anything over Slot semantics? double check this.
 
 ### Lifecycle
 
@@ -163,13 +160,17 @@ checkpoint :: String -> Program ()
 
 TODO question: where is step? is API_plan.md covered properly here?
 
-**Open signatures:** `relate` consumes and reissues two matching `Slot`s and
-returns one new `Relation`; `unrelate` consumes that `Relation` plus the current
-two slots and reissues the slots.
+**Open signature:** `relate` consumes and reissues two matching `Slot`s. The
+compiler records a relation between their stable owners but returns no relation
+token. It may occur after an earlier checkpoint. Relation-derived geometry joins
+the fixed constraints over the stable owners' overlapping lifetimes, while the
+relation itself is visible only after this Program event. Unsealing or resealing a
+slot does not change existing relations, which end automatically when either owner
+is destroyed. Conflicting accumulated constraints are a compile-time error, not a
+reason to keep sampling.
 
 ```haskell
-relate   :: RelationKind source target -> ... -> Program (Relate ...)
-unrelate :: Relation ... %1 -> ... -> Program (Unrelate ...)
+relate :: RelationKind source target -> ... -> Program (Relate ...)
 ```
 
 **Open vocabulary:** reusable named Program steps and their typed identities.
@@ -400,6 +401,8 @@ optimization is still open.
 - Query-era selection and binding: `AnyPayload`, `PayloadQuery`, the old
   query-based `Select` class, `payload`, and `NodeBinding` (replaced by
   `SelectionBinding`).
+- Mutable relation lifecycle: public `Relation`, `Unrelate`, and `unrelate`.
+  Relations are compiler-owned and end with either stable endpoint owner.
 - Legacy payload metadata: `PayloadView` and `payloadKind`.
 - Specialized or wrapped code text: `codeContent`, `codeWrap`,
   `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode`.
@@ -414,7 +417,7 @@ optimization is still open.
 ## Still preventing a fully final facade
 
 1. Domain declaration names and packaging.
-2. Exact `Relation`/`Relate`/`Unrelate` type parameters and operation signatures.
+2. Exact `Relate` type parameters and operation signature.
 3. Program step vocabulary and the typed step reference used by text fragments.
 4. Exact `TextBuilder` input and fragment signatures.
 5. Whether three materialization operations remain separate.

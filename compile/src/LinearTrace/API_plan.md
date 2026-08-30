@@ -136,10 +136,10 @@ error. General relation rendering accepts either meaning.
 
 Endpoint meaning is declaration metadata rather than a public type parameter.
 The relation-facing target types are therefore `RelationKind source target`,
-Program's `Relation`, and Render's `Relations source target`; authors do not
-carry `Directed` or `Undirected` through signatures. The exact declaration
-combinators that choose ordered or symmetric endpoints remain open with the
-rest of Domain.
+and Render's `Relations source target`; Program records relations through
+`relate` but exposes no relation handle. Authors do not carry `Directed` or
+`Undirected` through signatures. The exact declaration combinators that choose
+ordered or symmetric endpoints remain open with the rest of Domain.
 
 Move the following existing interfaces into Domain:
 
@@ -223,32 +223,23 @@ vacant/occupied typestate, `declareSlot`, `occupySlot`, `vacateSlot`, or
 `retireSlot` APIs into this restoration.
 
 - Program context: `Program` (replacing `Choreography`).
-- Linear resources: `Block`, `Slot`, `Relation`, and `Pending`;
-  `Payload` and relation-kind vocabulary are defined by Domain and consumed
-  here.
+- Linear resources: `Block`, `Slot`, and `Pending`; `Payload` and relation-kind
+  vocabulary are defined by Domain and consumed here.
 - Lifecycle operations: `create`, `copy`, `use`, `apply1`, `apply2`, `replace`,
-  `seal`, `unseal`, `relate`, `unrelate`, `materialize`,
-  `materializeWithKind`, `commit`, `destroy`, and `checkpoint`.
+  `seal`, `unseal`, `relate`, `materialize`, `materializeWithKind`, `commit`,
+  `destroy`, and `checkpoint`.
 - Lifecycle results: `OneUse`, `Create`, `Use`, `Copy`, `Replace`, `Apply1`,
-  `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `Unrelate`,
-  `(<$>)`, and `(<*>)`.
+  `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `(<$>)`, and `(<*>)`.
 
 Restore the lowercase `seal` and `unseal` operations alongside the existing
-`Seal` and `Unseal` result types. Add `relate` and `unrelate` only for slot
-locations; do not overload them for blocks. `Slot` and `Relation` remain
-linear values supplied by lifecycle operations: authors cannot construct them,
-inspect their internal identities, or extract a stored child except through the
-corresponding Program operation. Do not add declaration, read, write, variable,
-or other workflow helpers to Program; higher-level APIs and authored programs
-compose those behaviors from the general primitives.
-
-`Relation` is a new public but abstract linear Program value representing one
-active relation. `relate` creates it and `unrelate` consumes it, so removal
-identifies the exact active relation. Authors cannot inspect or construct it.
-This naming follows the existing `Block` and `Slot` convention: Domain uses
-`RelationKind` for the semantic declaration, Program uses `Relation` for one
-active lifecycle value, and Render uses `Relations` for a selected read-only
-collection.
+`Seal` and `Unseal` result types. Add `relate` only for slot locations; do not
+overload it for blocks. `Slot` remains a linear value supplied by lifecycle
+operations: authors cannot construct it, inspect its internal identity, or
+extract a stored child except through the corresponding Program operation. A
+relation is compiler-owned trace state rather than another public linear token.
+Do not add declaration, read, write, variable, or other workflow helpers to
+Program; higher-level APIs and authored programs compose those behaviors from
+the general primitives.
 
 #### Lifecycle operations
 
@@ -378,15 +369,31 @@ Unseal owner value <- unseal owner slot
 
 `relate` creates a temporal semantic relation between two persistent slot
 locations. It consumes two `Slot`s, each containing its current child, and
-returns both slots unchanged together with a new linear `Relation`.
-Consuming and returning the slots threads their capabilities without giving the
-relation ownership of either child. The relation records the owner `BlockId`s
-that identify the two locations, not the `BlockId`s of their current occupants.
+returns both slots unchanged. Consuming and returning the slots lets the
+compiler read their stable owner identities without giving the relation
+ownership of either child. The compiler records the relation against the owner
+`BlockId`s that identify the two locations, not the `BlockId`s of their current
+occupants. No public relation token is returned.
 
 ```haskell
-Relate sourceSlot1 targetSlot1 relation <-
+Relate sourceSlot1 targetSlot1 <-
   relate DependsOn sourceSlot0 targetSlot0
 ```
+
+The consume-and-reissue step is the Program event at which the semantic relation
+begins. `relate` may occur after either location has appeared at an earlier
+checkpoint: it does not mutate either input `Slot` in place, but returns successor
+capabilities for the same persistent locations. Once created, the relation is
+anchored to the stable owners rather than to those particular `Slot` values.
+
+Render constraints derived from the relation are not added to the solver only from
+that checkpoint onward. The compiler sees the whole trace and includes them in the
+single constraint system over the overlapping lifetimes of the two stable owners.
+The relation itself, including an optional connector, is visible only while the
+semantic relation is active. A rule discovered later can therefore affect an
+earlier layout without showing the relation there. If it contradicts another rule
+over either lifetime, compilation reports the incompatible source constraints;
+trying another random sample cannot repair an empty feasible region.
 
 At most one relation of the same kind may be active between the same endpoint
 locations. For a symmetric kind, reversing the arguments is the same pair.
@@ -397,34 +404,24 @@ or use several different relation kinds.
 
 The June baseline supports one slot per owner, so the owner `BlockId` is the
 complete location identity. Unsealing and resealing through that owner
-reconstructs a `Slot` for the same location and does not create a new relation
-endpoint. Multiple slots per owner are outside this restoration and require a
-separate design discussion; they must not cause `SlotId` to leak into the
-authored facade by default.
+reconstructs a `Slot` for the same location. Its relations and their Render
+constraints remain attached to that stable owner while the slot is unsealed,
+temporarily has no stored occupant, or is resealed with a replacement. Multiple
+slots per owner are outside this restoration and require a separate design
+discussion; they must not cause `SlotId` to leak into the authored facade by
+default.
 
-##### Unrelate
-
-`unrelate` removes exactly the relation represented by a linear `Relation`. It
-consumes that value plus the current `Slot`s for both endpoints, verifies that
-their owner identities match the relation, and returns the two slots. Supplying
-the current slots makes endpoint identity explicit and ensures the operation
-composes with ordinary linear slot threading.
-
-```haskell
-Unrelate sourceSlot2 targetSlot2 <-
-  unrelate relation sourceSlot1 targetSlot1
-```
-
-A slot may participate in several relations: thread the returned `Slot` through
-each `relate` or `unrelate` call while retaining one distinct linear
-`Relation` per active edge. Every `Relation` must eventually be consumed. An
-owner or slot cannot complete its lifecycle while a relation to that location
-remains active.
+A relation remains active while both endpoint owners are live and ends
+automatically when either owner is destroyed. The relation's visible lifetime ends
+there; its geometry was already part of the fixed constraint system for the owners'
+overlapping lifetimes. There is no public relation token or removal operation. A
+slot may participate in several relations by threading each successor through later
+`relate` calls.
 
 A `Slot` is not a special relation. It owns the right to recover or replace one
-stored child at a persistent location. A `Relation` represents one active
-association but owns neither endpoint nor occupant; removing it also requires
-the two matching slot capabilities.
+stored child at a persistent location. A relation is compiler-owned semantic
+state attached to two stable owner locations and owns neither endpoint nor
+occupant.
 
 #### Materialization
 
@@ -868,12 +865,12 @@ error.
 
 The exact relation identity remains in the compiler's match context. A
 variable, choice, or future connector created inside the body therefore belongs
-to that exact relation lifetime, including when the same kind is later removed
-and recreated between the same endpoints. For a kind with ordered endpoints,
-`first` is the source and `second` is the target. For a symmetric kind, the two
-operations have a stable order only so output and generated choice IDs are
-repeatable; its rule must be symmetric or make any visual orientation an
-explicit Render choice.
+to that exact relation lifetime, from its initialization until either stable
+owner is destroyed. The relation cannot be removed or recreated while both
+owners remain live. For a kind with ordered endpoints, `first` is the source and
+`second` is the target. For a symmetric kind, the two operations have a stable
+order only so output and generated choice IDs are repeatable; its rule must be
+symmetric or make any visual orientation an explicit Render choice.
 
 `asSequence`, `asTree`, and `asDag` consistently take selected relations first
 and selected nodes second. Every supplied relation must have both endpoints in
@@ -926,7 +923,8 @@ the same relations only for layout, draw an unmarked line, or choose a different
 visual direction. In particular, ordered semantic endpoints do not silently
 choose an arrow direction, and a symmetric relation has no semantic direction
 at all. A generated connector must inherit the exact selected relation identity
-so forward and reverse playback follow its `relate` and `unrelate` events.
+so forward and reverse playback follow its creation and the lifetimes of its
+stable owners.
 
 ##### Fixed structural values
 
@@ -1970,24 +1968,26 @@ Authored body source may import only `Sverlin`.
   represents the stable storage location while occupants may change.
 - Do not encode declaration, read, or write semantics in these primitives.
   Copy-and-reseal and replace-and-reseal are author-level compositions.
-- `relate` and `unrelate` operate only on slot locations. There is no general
-  block relation: exact-block provenance remains represented by create, copy,
-  apply, replace, use, and destroy events, while purely visual connections
-  belong to Render.
-- `relate` consumes and returns two `Slot`s containing their children plus a
-  fresh linear `Relation`. The relation contains stable endpoint identities but
-  no owner or child capability; it cannot expose, copy, replace, or destroy
-  either child.
+- `relate` operates only on slot locations. There is no general block relation:
+  exact-block provenance remains represented by create, copy, apply, replace,
+  use, and destroy events, while purely visual connections belong to Render.
+- `relate` consumes and returns two `Slot`s containing their children. It
+  records a compiler-owned relation between their stable owner identities and
+  returns no public relation token or endpoint capability.
+- `relate` is the Program event at which a new semantic association begins: it
+  consumes the current endpoint slots and returns successor capabilities for the
+  same persistent locations. It may occur after an earlier checkpoint and does not
+  mutate a live `Slot` value in place.
+- Render constraints derived from that association join the one fixed constraint
+  system over the endpoint owners' overlapping lifetimes. They may therefore affect
+  earlier checkpoint geometry even though the relation is not yet visible there.
 - A relation remains active when either slot is unsealed, temporarily empty,
   resealed, or given a replacement occupant. It follows neither old nor new
   occupant `BlockId`: its endpoints remain the same persistent locations, so no
   retarget event is produced by a write.
-- `unrelate` consumes the exact `Relation` and the current `Slot`s for its
-  two endpoints, validates both owner identities, and returns those slots.
-  Passing a slot reconstructed through another same-typed owner is an error.
-- Active relations must be removed before their endpoint locations or owners
-  are destroyed. Relation creation and removal are checkpointed trace events;
-  relation lifetime is independent of occupant lifetime.
+- A relation ends automatically when either endpoint owner is destroyed. There is
+  no public removal operation; its already-collected geometry remains scoped by the
+  endpoint-owner lifetimes.
 - Every relation kind fixes its source type, target type, and whether its
   endpoints are ordered or symmetric. Program rejects endpoints of the wrong
   owner type. Render preserves ordered source-to-target roles but gives no
@@ -2003,16 +2003,15 @@ Authored body source may import only `Sverlin`.
 
 ## View and rendering
 
-Project `relate` and `unrelate` as explicit `TraceRelate relationId kind
-leftOwnerId rightOwnerId` and `TraceUnrelate relationId` events. Render resolves
-each endpoint against the stable owner geometry rather than the current
-occupant element. Consequently a rendered connector stays anchored while an
-occupant exits, enters, or changes identity, and it may remain visible when a
-slot is deliberately empty at a checkpoint. Forward playback introduces and
-removes the relation at its events; reverse playback performs the inverse using
-the same `relationId`. Render rules may choose how a declared relation kind is
-drawn, but they must not infer semantic relations from block lineage, solver
-variable names, or proximity.
+Project `relate` as `TraceRelate relationId kind leftOwnerId rightOwnerId`.
+Derive its end from the first endpoint-owner destruction rather than recording a
+public removal event. Render resolves each endpoint against the stable owner
+geometry rather than the current occupant element. Consequently a rendered
+connector stays anchored while an occupant exits, enters, or changes identity,
+and it may remain visible while a slot is unsealed. Forward and reverse playback
+derive the same interval from relation creation and endpoint lifetimes. Render
+rules may choose how a declared relation kind is drawn, but they must not infer
+semantic relations from block lineage, solver variable names, or proximity.
 
 At each exposed checkpoint, `select relationKind` projects the matching active
 relations and their stable endpoints into `Relations`. `asSequence`, `asTree`,
@@ -2063,7 +2062,12 @@ Add focused facade and compiler tests for:
 - heterogeneous relations such as `ProbeAt Probe Cell`, including endpoint
   type errors, duplicate-edge rejection, typed context-local `first` and
   `second`, rejection outside their matching relation scope, affine endpoint
-  constraints, and forward/reverse relation-selection lifetime;
+  constraints, creation after an earlier checkpoint, constraints applying across
+  the owners' overlapping lifetimes without earlier relation visibility,
+  persistence through unseal/reseal and occupant replacement, automatic end at
+  owner destruction, and the same derived lifetime in reverse playback;
+- rejection with source locations when relation-derived geometry conflicts with
+  other constraints collected for an endpoint-owner lifetime;
 - ordered `Next a b` remaining distinct from `Next b a`, symmetric
   `ConnectedTo a b` rejecting `ConnectedTo b a` as a duplicate, and an ordered
   graph helper rejecting a symmetric kind with a source-level diagnostic;
@@ -2100,8 +2104,9 @@ For the classification and relation slices:
 1. Add `Kind`, typed materialization, `SelectionBinding`, and typed block
    selection; lower them through the existing internal fact representation
    temporarily if that makes migration safer.
-2. Add typed `RelationKind` declarations and the `relate`/`unrelate` trace
-   events, including endpoint and lifetime validation.
+2. Add typed `RelationKind` declarations and the `relate` trace event, including
+   endpoint validation, slot-capability transitions, and automatic lifetime
+   derivation from endpoint owners.
 3. Project active relation identities and endpoints to stable owner nodes at
    each checkpoint, and add the `RelationKind` case of `select`.
 4. Add `Relations`, context-local typed `first` and `second`, and `FixedInt`;
@@ -2169,9 +2174,10 @@ layout problem.
 - Define the visual connector and anchor interface available inside a
   `relation` spatial scope. The `relation` mapping itself must remain valid with
   only affine endpoint constraints and no visible connector. A connector
-  created in that scope must inherit its exact `relationId`, appear and
-  disappear with that relation in forward and reverse playback, and remain
-  anchored to its stable owners while occupants change.
+  created in that scope must inherit its exact `relationId`, appear from
+  relation initialization until either owner is destroyed in forward and
+  reverse playback, and remain anchored to its stable owners while occupants
+  change.
   Ordered endpoints do not automatically choose arrow direction, and symmetric
   endpoints have none. The names, path shapes, routing choices, marker styles,
   and connector IR remain open.
