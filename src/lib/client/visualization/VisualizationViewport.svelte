@@ -43,6 +43,7 @@
     onFontLoadFailure = (_resourceId: string, _message: string) => {},
     onRuntimeObservation = (_observation: TextRuntimeObservation) => {}
   }: Props = $props();
+  const viewportId = $props.id();
 
   let svg = $state<SVGSVGElement | null>(null);
   let zoom = $state(1);
@@ -112,6 +113,10 @@
     zoom = 1;
     panX = 0;
     panY = 0;
+  }
+
+  function clipPathId(instanceId: RenderInstanceId): string {
+    return `${viewportId}-visual-clip-${instanceId}`;
   }
 
   function onWheel(event: WheelEvent) {
@@ -390,7 +395,7 @@
       />
       <defs>
         {#each orderedElements as element (element.instanceId)}
-          <clipPath id={`visual-clip-${element.instanceId}`}>
+          <clipPath id={clipPathId(element.instanceId)}>
             <rect
               x={element.box.bounds.rectX}
               y={element.box.bounds.rectY}
@@ -433,7 +438,7 @@
             <g
               class:font-ready={fontStates[font.instanceResourceId] === 'ready'}
               class="compiler-text"
-              clip-path={`url(#visual-clip-${element.instanceId})`}
+              clip-path={`url(#${clipPathId(element.instanceId)})`}
               aria-label={layout.layoutSource}
             >
               {#each layout.layoutLines as line, lineIndex (lineIndex)}
@@ -470,7 +475,7 @@
             <g
               class:font-ready={fontStates[font.instanceResourceId] === 'ready'}
               class="compiler-text"
-              clip-path={`url(#visual-clip-${element.instanceId})`}
+              clip-path={`url(#${clipPathId(element.instanceId)})`}
               aria-label={layout.layoutSource}
             >
               {#each layout.layoutLines as line, lineIndex (lineIndex)}
@@ -518,7 +523,7 @@
               font-weight={style.fontWeight}
               text-anchor={legacyTextAnchor(element)}
               dominant-baseline="middle"
-              clip-path={`url(#visual-clip-${element.instanceId})`}
+              clip-path={`url(#${clipPathId(element.instanceId)})`}
               >{element.content.textSource}</text
             >
           {/if}

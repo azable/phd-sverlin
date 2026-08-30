@@ -216,6 +216,33 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   await comparisonCards.nth(1).click({ modifiers: ['Shift'] });
   await expect(comparisonCards.nth(0)).toHaveAttribute('aria-pressed', 'true');
   await expect(comparisonCards.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  const visualizationClipPaths = await page
+    .getByRole('region', { name: /^Visualization [12]$/ })
+    .evaluateAll((viewports) =>
+      viewports.map((viewport) => {
+        const ids = Array.from(viewport.querySelectorAll('clipPath[id]'), (clipPath) =>
+          clipPath.getAttribute('id')
+        ).filter((id): id is string => id !== null);
+        const referencedIds = Array.from(
+          viewport.querySelectorAll('[clip-path]'),
+          (element) => element.getAttribute('clip-path')?.match(/^url\(#(.+)\)$/)?.[1]
+        ).filter((id): id is string => id !== undefined);
+        const ownedIds = new Set(ids);
+        return {
+          ids,
+          referencedIds,
+          unresolvedIds: referencedIds.filter((id) => !ownedIds.has(id))
+        };
+      })
+    );
+  expect(visualizationClipPaths).toHaveLength(2);
+  for (const viewport of visualizationClipPaths) {
+    expect(viewport.ids.length).toBeGreaterThan(0);
+    expect(viewport.referencedIds.length).toBeGreaterThan(0);
+    expect(viewport.unresolvedIds).toEqual([]);
+  }
+  const allClipPathIds = visualizationClipPaths.flatMap((viewport) => viewport.ids);
+  expect(new Set(allClipPathIds).size).toBe(allClipPathIds.length);
   const comparisonContext = page.getByTestId('automatic-feedback-context');
   await expect(comparisonContext).toContainText('Comparing');
   await expect(comparisonContext.locator('[data-slot="badge"]').first()).toHaveCSS(
