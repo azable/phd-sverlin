@@ -48,13 +48,10 @@ type TestLoopBound = "count-to/test-loop-bound"
 type IncrementIndex = "count-to/increment-index"
 type FinishProgram = "count-to/finish"
 
-type CreateLimitValue = "count-to/bind-limit/create-value"
-type CreateLimitCell = "count-to/bind-limit/create-cell"
-type AssignLimit = "count-to/bind-limit/assign"
-
-type CreateZero = "count-to/initialize-index/create-zero"
-type CreateIndexCell = "count-to/initialize-index/create-cell"
-type AssignIndex = "count-to/initialize-index/assign"
+type CreateValue parent = parent / "create-value"
+type CreateCell parent = parent / "create-cell"
+type AssignValue parent = parent / "assign"
+type CreateStoredChildren = '["create-value", "create-cell", "assign"]
 
 type ReadIndexForBound = "count-to/test-loop-bound/read-index"
 type ReadLimitForBound = "count-to/test-loop-bound/read-limit"
@@ -78,19 +75,12 @@ domain = do
   declarePayload @LimitCell
   declareOperator Add
   declareOperator LessThan
+  declareBranches @'[BindLimit, InitializeIndex] @CreateStoredChildren
   declareSteps
     @'[ CountTo
-      , BindLimit
-      , InitializeIndex
       , TestLoopBound
       , IncrementIndex
       , FinishProgram
-      , CreateLimitValue
-      , CreateLimitCell
-      , AssignLimit
-      , CreateZero
-      , CreateIndexCell
-      , AssignIndex
       , ReadIndexForBound
       , ReadLimitForBound
       , CreateLessThanOperator
@@ -104,17 +94,38 @@ domain = do
       , DestroyLimitStorage
       ]
 
-data Stored owner where
-  Stored :: Block owner %1 -> Slot owner Number %1 -> Stored owner
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
 
-data ReadStored owner where
-  ReadStored :: Stored owner %1 -> Block Number %1 -> ReadStored owner
+data ReadStored owner value where
+  ReadStored :: Stored owner value %1 -> Block value %1 -> ReadStored owner value
 
 data LoopTest where
-  ContinueLoop :: Stored IndexCell %1 -> Stored LimitCell %1 -> LoopTest
-  ExitLoop :: Stored IndexCell %1 -> Stored LimitCell %1 -> LoopTest
+  ContinueLoop :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> LoopTest
+  ExitLoop :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> LoopTest
 
-readStored :: Traceable owner => Query -> Stored owner %1 -> Program (ReadStored owner)
+createStored ::
+  forall parent owner value.
+  (KnownSymbol parent, Traceable owner, Traceable value) =>
+  Query ->
+  Payload owner %1 ->
+  Query ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerFacts ownerPayload valueFacts valuePayload = step @parent $ do
+  value <- step @(CreateValue parent) $ do
+    Create pending <- create valuePayload
+    materialize valueFacts pending
+
+  cell <- step @(CreateCell parent) $ do
+    Create pending <- create ownerPayload
+    materialize ownerFacts pending
+
+  step @(AssignValue parent) $ do
+    Seal cell1 slot <- seal cell value
+    return (Stored cell1 slot)
+
+readStored :: (Traceable owner, Traceable value) => Query -> Stored owner value %1 -> Program (ReadStored owner value)
 readStored query (Stored owner slot) = do
   Unseal owner1 value <- unseal owner slot
   Copy value1 copyPending <- copy value
@@ -122,7 +133,7 @@ readStored query (Stored owner slot) = do
   Seal owner2 slot1 <- seal owner1 value1
   return (ReadStored (Stored owner2 slot1) valueCopy)
 
-writeStored :: Traceable owner => Query -> Stored owner %1 -> Pending Number %1 -> Program (Stored owner)
+writeStored :: (Traceable owner, Traceable value) => Query -> Stored owner value %1 -> Pending value %1 -> Program (Stored owner value)
 writeStored query (Stored owner slot) replacement = do
   Unseal owner1 oldValue <- unseal owner slot
   Replace storedPending <- replace oldValue replacement
@@ -130,42 +141,20 @@ writeStored query (Stored owner slot) replacement = do
   Seal owner2 slot1 <- seal owner1 storedValue
   return (Stored owner2 slot1)
 
-destroyStored :: Traceable owner => Stored owner %1 -> Program ()
+destroyStored :: (Traceable owner, Traceable value) => Stored owner value %1 -> Program ()
 destroyStored (Stored owner slot) = do
   Unseal owner1 value <- unseal owner slot
   Destroy <- destroy value
   Destroy <- destroy owner1
   return ()
 
-bindLimit :: Int -> Program (Stored LimitCell)
-bindLimit limitValue = step @BindLimit $ do
-  limit <- step @CreateLimitValue $ do
-    Create pending <- create @Number (LInt limitValue)
-    materialize #limit pending
+bindLimit :: Int -> Program (Stored LimitCell Number)
+bindLimit limitValue = createStored @BindLimit #limitCell LUnit #limit (LInt limitValue)
 
-  limitCell <- step @CreateLimitCell $ do
-    Create pending <- create @LimitCell LUnit
-    materialize #limitCell pending
+initializeIndex :: Program (Stored IndexCell Number)
+initializeIndex = createStored @InitializeIndex #indexCell LUnit #index (LInt 0)
 
-  step @AssignLimit $ do
-    Seal limitCell1 limitSlot <- seal limitCell limit
-    return (Stored limitCell1 limitSlot)
-
-initializeIndex :: Program (Stored IndexCell)
-initializeIndex = step @InitializeIndex $ do
-  zero <- step @CreateZero $ do
-    Create pending <- create @Number (LInt 0)
-    materialize #index pending
-
-  indexCell <- step @CreateIndexCell $ do
-    Create pending <- create @IndexCell LUnit
-    materialize #indexCell pending
-
-  step @AssignIndex $ do
-    Seal indexCell1 indexSlot <- seal indexCell zero
-    return (Stored indexCell1 indexSlot)
-
-testLoopBound :: Stored IndexCell %1 -> Stored LimitCell %1 -> Program LoopTest
+testLoopBound :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> Program LoopTest
 testLoopBound index limit = step @TestLoopBound $ do
   ReadStored index1 indexProbe <- step @ReadIndexForBound (readStored #indexRead index)
   ReadStored limit1 limitProbe <- step @ReadLimitForBound (readStored #limitRead limit)
@@ -185,7 +174,7 @@ testLoopBound index limit = step @TestLoopBound $ do
     True -> return (ContinueLoop index1 limit1)
     False -> return (ExitLoop index1 limit1)
 
-incrementIndex :: Stored IndexCell %1 -> Program (Stored IndexCell)
+incrementIndex :: Stored IndexCell Number %1 -> Program (Stored IndexCell Number)
 incrementIndex index = step @IncrementIndex $ do
   ReadStored index1 indexProbe <- step @ReadIndexForIncrement (readStored #indexRead index)
 
@@ -203,12 +192,12 @@ incrementIndex index = step @IncrementIndex $ do
 
   step @WriteIndex (writeStored #index index1 nextPending)
 
-finishProgram :: Stored IndexCell %1 -> Stored LimitCell %1 -> Program ()
+finishProgram :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> Program ()
 finishProgram index limit = step @FinishProgram $ do
   step @DestroyIndexStorage (destroyStored index)
   step @DestroyLimitStorage (destroyStored limit)
 
-countLoop :: Stored IndexCell %1 -> Stored LimitCell %1 -> Program ()
+countLoop :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> Program ()
 countLoop index limit = do
   result <- testLoopBound index limit
   case result of
@@ -228,12 +217,12 @@ pseudocode =
   block @CountTo
     (do
       literal "count to "
-      fragmentMany @'[BindLimit, CreateLimitValue, CreateLimitCell, AssignLimit] "limit"
+      fragmentMany @'[BindLimit, CreateValue BindLimit, CreateCell BindLimit, AssignValue BindLimit] "limit"
       literal ":")
     $ do
       line @InitializeIndex $ do
-        fragmentMany @'[CreateIndexCell, AssignIndex] "set counter to "
-        fragment @CreateZero "zero"
+        fragmentMany @'[CreateCell InitializeIndex, AssignValue InitializeIndex] "set counter to "
+        fragment @(CreateValue InitializeIndex) "zero"
 
       block @TestLoopBound
         (do
@@ -256,14 +245,14 @@ cSource =
   delimitedBlock @CountTo
     (do
       literal "void count_to(int "
-      fragmentMany @'[BindLimit, CreateLimitValue, CreateLimitCell, AssignLimit] "limit"
+      fragmentMany @'[BindLimit, CreateValue BindLimit, CreateCell BindLimit, AssignValue BindLimit] "limit"
       literal ") {")
     (literal "}")
     $ do
       line @InitializeIndex $ do
-        fragment @CreateIndexCell "int i"
-        fragment @AssignIndex " = "
-        fragment @CreateZero "0"
+        fragment @(CreateCell InitializeIndex) "int i"
+        fragment @(AssignValue InitializeIndex) " = "
+        fragment @(CreateValue InitializeIndex) "0"
         literal ";"
 
       delimitedBlock @TestLoopBound
