@@ -118,7 +118,7 @@
       disabled={disabled || step === 0}><ChevronLeftIcon /></Button
     >
     <span class="min-w-32 text-center text-sm text-muted-foreground">
-      {labels[step] ?? 'No steps'}{labels.length ? ` · ${step + 1}/${labels.length}` : ''}
+      {labels.length ? `Step ${step + 1} of ${labels.length}` : 'No steps'}
     </span>
     <Button
       size="icon-sm"

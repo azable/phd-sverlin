@@ -88,7 +88,7 @@
   // svelte-ignore state_referenced_locally
   const session = new ProjectSession(
     projectId,
-    isAdmin && study?.context !== 'admin-preview' && devMode,
+    isAdmin && study?.context !== 'admin-preview' && !readOnly && devMode,
     study?.layout ?? 'single',
     study?.expired || readOnly ? undefined : study?.presentationBufferTarget,
     readOnly
@@ -108,8 +108,8 @@
   let visualSelection = $state.raw<VisualSelection | undefined>(undefined);
 
   const adminPreview = $derived(study?.context === 'admin-preview');
-  const showAdminControls = $derived(isAdmin && !adminPreview);
-  const developerView = $derived(isAdmin && !adminPreview && devMode);
+  const showAdminControls = $derived(isAdmin && !adminPreview && !session.readOnly);
+  const developerView = $derived(isAdmin && !adminPreview && !session.readOnly && devMode);
   const busy = $derived(!!session.pending || session.creating);
   const mutationsDisabled = $derived(busy || expired || session.readOnly || editMode === 'editing');
   const presentationCount = $derived<1 | 2>(
@@ -183,6 +183,9 @@
             <div class="flex items-center gap-2">
               <p class="text-base font-medium">{study.title}</p>
               {#if study.context === 'admin-preview'}<Badge variant="secondary">Preview</Badge>{/if}
+              {#if isAdmin && session.readOnly}
+                <Badge variant="outline">Participant data · read-only</Badge>
+              {/if}
             </div>
             <p class="truncate text-sm text-muted-foreground">{study.prompt}</p>
           </div>
@@ -258,15 +261,6 @@
             {/if}
           {/if}
         </header>
-      {/if}
-
-      {#if isAdmin && session.readOnly}
-        <Alert.Root class="m-3">
-          <Alert.Title>Read-only participant data</Alert.Title>
-          <Alert.Description>
-            Administrators can inspect this project and its complete Timeline but cannot change it.
-          </Alert.Description>
-        </Alert.Root>
       {/if}
 
       <Resizable.PaneGroup direction="horizontal" class="min-h-0 flex-1">

@@ -39,6 +39,7 @@ test('canvas element selection is included in submitted feedback', async ({ page
   const viewport = page.getByRole('region', { name: 'Visualization 1' });
   const element = viewport.locator('[data-instance-id]').first();
   await expect(element).toBeVisible();
+  await expect(page.getByText(/^Step 1 of \d+$/)).toBeVisible();
   await element.click();
   await expect(page.getByText('1 selected element(s)', { exact: true })).toBeVisible();
 
