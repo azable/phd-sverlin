@@ -4,6 +4,10 @@ This file records concise, agreed implementation instructions. Keep historical
 evidence and extended rationale in `API_refactoring.md`; update this plan as
 decisions are made.
 
+Keep the compact proposed-facade inventory in
+[API_plan_list.md](API_plan_list.md) synchronized whenever a public API is
+added, removed, renamed, or resolved here.
+
 ## Goals
 
 ## Public API
@@ -203,8 +207,8 @@ vacant/occupied typestate, `declareSlot`, `occupySlot`, `vacateSlot`, or
 - Lifecycle operations: `create`, `copy`, `use`, `apply1`, `apply2`, `replace`,
   `seal`, `unseal`, `relate`, `unrelate`, `materialize`,
   `materializeWithKind`, `commit`, `destroy`, and `checkpoint`.
-- Lifecycle results: `OneUse`, `Create`, `Observe`, `Use`, `Copy`, `Replace`,
-  `Apply1`, `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `Unrelate`,
+- Lifecycle results: `OneUse`, `Create`, `Use`, `Copy`, `Replace`, `Apply1`,
+  `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `Unrelate`,
   `(<$>)`, and `(<*>)`.
 
 Restore the lowercase `seal` and `unseal` operations alongside the existing
@@ -263,11 +267,10 @@ Use oneValue <- use value
 let displayed = toDisplay <$> oneValue
 ```
 
-`Observe` currently has a public result wrapper but no public `observe`
-operation. Decide separately whether a non-consuming trace observation has a
-clear renderable meaning; otherwise remove the orphan wrapper from Sverlin.
+Remove the orphan `Observe` result wrapper from `Sverlin`; there is no public
+`observe` operation and no distinct authored lifecycle behavior to accompany
+it.
 
-TODO remove Observe entirely
 TODO consider how Use should be used, or if it should be removed. does it
 confer semantics other lifecycle ops don't already permit?
 
