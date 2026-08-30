@@ -64,6 +64,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
 - To run the SvelteKit application, use `pnpm run dev` from the root directory. It applies pending database migrations, prepares the compiler, and starts the development server with hot-reloading.
 - `pnpm run dev:web` skips migration and compiler preparation but still includes asynchronous project-operation execution; there is no separate worker process.
+- To inspect complete project Timelines or retained operation failures, use the canonical data export command (`pnpm run export:data -- --scope projects`, optionally with `--project PROJECT_ID` and `--output PATH`) rather than issuing direct PostgreSQL queries. This is the same export pipeline used by the administrator interface.
 
 ## Engineering Rules
 
