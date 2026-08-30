@@ -54,7 +54,7 @@
     </Dialog.Header>
 
     <form class="flex min-h-0 min-w-0 flex-col gap-4" onsubmit={create}>
-      <Field.FieldSet class="min-w-0" disabled={session.creating || session.maintenanceLocked}>
+      <Field.FieldSet class="min-w-0" disabled={session.creating}>
         <Field.FieldLegend>Starting template</Field.FieldLegend>
         <Field.FieldDescription>
           Templates only determine the initial source; they do not restrict later editing.
@@ -100,10 +100,7 @@
             </Button>
           {/snippet}
         </Dialog.Close>
-        <Button
-          type="submit"
-          disabled={!selectedTemplate || session.creating || session.maintenanceLocked}
-        >
+        <Button type="submit" disabled={!selectedTemplate || session.creating}>
           {#if session.creating}
             <Spinner data-icon="inline-start" />Creating project
           {:else}

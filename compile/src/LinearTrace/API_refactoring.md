@@ -810,19 +810,3 @@ than facts recoverable from Git:
 Each stage that changes the public DSL must update facade Haddocks,
 `dsl-interface.md`, the generated API index, body-only examples, Haskell tests,
 and the real source-to-TypeScript integration in the same change.
-
-## Resume checklist
-
-After the container restart:
-
-1. Read this file and the current top-level `AGENTS_LOG.md` before editing.
-2. Inspect `git status` and preserve the unrelated deployment/devcontainer work
-   and user-authored TODOs already in the tree.
-3. Check whether the app lock is held before any Svelte behavior edit; acquire
-   it with `pnpm run app:lock -- "restore visualization transitions"` (or the
-   actual implementation reason) before changing the app.
-4. Select one implementation stage above instead of attempting the entire
-   refactor in a single change.
-5. Reinspect the named historical commit/file pairs with `git show` while
-   implementing; this note records conclusions, not a substitute for adapting
-   code to the current types.

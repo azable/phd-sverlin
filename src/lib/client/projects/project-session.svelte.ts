@@ -7,7 +7,6 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
-import { unlockedMaintenanceStatus, type MaintenanceStatus } from '$lib/shared/maintenance';
 import {
   normalizeProjectEventV1,
   type EventId,
@@ -50,15 +49,11 @@ export class ProjectSession {
   error = $state<string | null>(null);
   /** Timeline events explicitly selected as feedback context. */
   focusedEvents = $state.raw<EventId[]>([]);
-  /** Whether the server has temporarily disabled project mutations. */
-  maintenance = $state.raw<MaintenanceStatus>(unlockedMaintenanceStatus);
-
   #resource = $state.raw<ProjectResource | null>(null);
   #selectedAt = $state<EventId | undefined>(undefined);
   #eventTimer?: ReturnType<typeof setInterval>;
   #request?: AbortController;
   #commandRequest?: AbortController;
-  #maintenanceTimer?: ReturnType<typeof setInterval>;
   #loadVersion = 0;
 
   constructor(readonly projectId: ProjectId) {}
@@ -100,11 +95,6 @@ export class ProjectSession {
     return this.#resource !== null && this.#selectedAt === undefined;
   }
 
-  /** Whether create, edit, feedback, and render commands are currently blocked. */
-  get maintenanceLocked(): boolean {
-    return this.maintenance.locked;
-  }
-
   /** Most recent streamed event belonging to the pending command. */
   get pendingEvent(): ProjectEvent | undefined {
     const pending = this.pending;
@@ -132,9 +122,6 @@ export class ProjectSession {
     const request = new AbortController();
     this.#request = request;
     this.connection = 'connecting';
-    await this.refreshMaintenance();
-    if (version !== this.#loadVersion) return;
-    this.startMaintenancePolling();
 
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
@@ -160,27 +147,6 @@ export class ProjectSession {
     this.#request?.abort();
     this.#commandRequest?.abort();
     this.disconnect();
-    if (this.#maintenanceTimer) clearInterval(this.#maintenanceTimer);
-    this.#maintenanceTimer = undefined;
-  }
-
-  /** Refresh the server-owned read-only state without disturbing project loading. */
-  async refreshMaintenance(): Promise<void> {
-    try {
-      const response = await fetch('/api/maintenance', { cache: 'no-store' });
-      if (!response.ok) return;
-      const value = (await response.json()) as Partial<MaintenanceStatus>;
-      if (value.locked === false) this.maintenance = { locked: false };
-      else if (value.locked === true && typeof value.lockedAt === 'string') {
-        this.maintenance = {
-          locked: true,
-          lockedAt: value.lockedAt,
-          ...(typeof value.reason === 'string' ? { reason: value.reason } : {})
-        };
-      }
-    } catch {
-      // The server remains authoritative; retain the most recent known state.
-    }
   }
 
   /** Toggle an event's inclusion in future feedback context. */
@@ -200,7 +166,7 @@ export class ProjectSession {
     creation: ProjectCreation = defaultProjectCreation,
     devMode = false
   ): Promise<boolean> {
-    if (this.pending || this.creating || this.maintenanceLocked) return false;
+    if (this.pending || this.creating) return false;
     this.creating = true;
     this.error = null;
 
@@ -211,7 +177,6 @@ export class ProjectSession {
         body: JSON.stringify(creation)
       });
       if (!response.ok) {
-        if (response.status === 423) await this.refreshMaintenance();
         throw new Error(await responseError(response));
       }
       const { projectId, jobId } = (await response.json()) as {
@@ -239,7 +204,7 @@ export class ProjectSession {
 
   /** Submit a command and install the server's authoritative complete resource. */
   async runCommand(input: ProjectCommandInput): Promise<boolean> {
-    if (this.pending || !this.#resource || !this.atHead || this.maintenanceLocked) return false;
+    if (this.pending || !this.#resource || !this.atHead) return false;
     const operationId = crypto.randomUUID();
     const request = new AbortController();
     this.#commandRequest?.abort();
@@ -255,7 +220,6 @@ export class ProjectSession {
         signal: request.signal
       });
       if (!response.ok) {
-        if (response.status === 423) await this.refreshMaintenance();
         throw new Error(await responseError(response));
       }
       if (response.status === 202) {
@@ -318,11 +282,6 @@ export class ProjectSession {
     if (!this.#resource) return;
     this.connection = 'open';
     this.#eventTimer = setInterval(() => void this.pollEvents(), 1_000);
-  }
-
-  private startMaintenancePolling(): void {
-    if (this.#maintenanceTimer) return;
-    this.#maintenanceTimer = setInterval(() => void this.refreshMaintenance(), 2_000);
   }
 
   private disconnect(): void {

@@ -1,14 +1,26 @@
-import { bucket, defineRailway, github, group, postgres, project, ref, service } from 'railway/iac';
+import {
+  bucket,
+  defineRailway,
+  github,
+  postgres,
+  preserve,
+  project,
+  ref,
+  service
+} from 'railway/iac';
 
 const applicationRegion = 'asia-southeast1-eqsg3a';
+// pg-boss expires a project command after 30 minutes by default (jobs.ts). Give a
+// running worker one additional minute to finish its shutdown before Railway stops it.
 const workerJobExpirySeconds = 30 * 60;
 const workerShutdownMarginSeconds = 60;
 
-export default defineRailway((ctx) => {
-  // Both environments build main commits after GitHub checks pass. Railway automatically
-  // deploys staging; production auto-deploys are disabled in the dashboard.
+export default defineRailway(() => {
+  // Railway's GitHub source deploys main only after the required CI check succeeds.
   const source = github('azable/phd-sverlin', { branch: 'main', checkSuites: true });
-  const database = postgres('postgres', { region: applicationRegion });
+  // The production database already owns a persistent volume in Amsterdam. Leaving
+  // its region unmanaged avoids an unsafe cross-region volume move.
+  const database = postgres('postgres');
   const resources = bucket('project-resources', { region: 'sin' });
   const sharedRuntime = {
     DATABASE_URL: database.env.DATABASE_URL,
@@ -16,7 +28,8 @@ export default defineRailway((ctx) => {
     ENDPOINT: ref(resources, 'ENDPOINT'),
     ACCESS_KEY_ID: ref(resources, 'ACCESS_KEY_ID'),
     SECRET_ACCESS_KEY: ref(resources, 'SECRET_ACCESS_KEY'),
-    REGION: ref(resources, 'REGION')
+    REGION: ref(resources, 'REGION'),
+    SVERLIN_PROJECT_STORE: 'postgres'
   };
 
   const web = service('web', {
@@ -28,16 +41,17 @@ export default defineRailway((ctx) => {
     healthcheckTimeout: 300,
     replicas: { [applicationRegion]: 1 },
     deploy: {
+      // Match adapter-node's 30-second SHUTDOWN_TIMEOUT in the Dockerfile.
       drainingSeconds: 30,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 10
     },
     env: {
       ...sharedRuntime,
-      BETTER_AUTH_SECRET: ctx.shared.BETTER_AUTH_SECRET,
-      BETTER_AUTH_URL: ctx.shared.BETTER_AUTH_URL,
-      BETTER_AUTH_TRUSTED_ORIGINS: ctx.shared.BETTER_AUTH_URL,
-      SVERLIN_ADMIN_SETUP_TOKEN: ctx.shared.SVERLIN_ADMIN_SETUP_TOKEN
+      BETTER_AUTH_SECRET: preserve(),
+      BETTER_AUTH_URL: preserve(),
+      BETTER_AUTH_TRUSTED_ORIGINS: preserve(),
+      SVERLIN_ADMIN_SETUP_TOKEN: preserve()
     }
   });
 
@@ -50,20 +64,16 @@ export default defineRailway((ctx) => {
       drainingSeconds: workerJobExpirySeconds + workerShutdownMarginSeconds,
       restartPolicyType: 'ON_FAILURE',
       restartPolicyMaxRetries: 10,
+      // The worker runs GHC plus the native solver; retain the existing 4 GiB ceiling.
       limitOverride: { containers: { memoryBytes: 4 * 1024 * 1024 * 1024 } }
     },
     env: {
       ...sharedRuntime,
-      OPENAI_API_KEY: ctx.shared.OPENAI_API_KEY,
-      OPENAI_MODEL: ctx.shared.OPENAI_MODEL,
-      CHATBOT_CONFIG: ctx.shared.CHATBOT_CONFIG
+      OPENAI_API_KEY: preserve(),
+      OPENAI_MODEL: preserve(),
+      CHATBOT_CONFIG: preserve()
     }
   });
 
-  return project('phd-sverlin', {
-    resources: [
-      ...group('Application', [web, worker], { color: '#7c3aed' }),
-      ...group('Data', [database, resources], { color: '#0891b2' })
-    ]
-  });
+  return project('phd-sverlin', { resources: [web, worker, database, resources] });
 });

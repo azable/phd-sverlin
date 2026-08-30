@@ -22,7 +22,7 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (!session.atHead || session.pending || session.maintenanceLocked) return;
+    if (!session.atHead || session.pending) return;
     const message = text.trim();
     if (!message && session.focusedEvents.length === 0 && !selection) return;
     const succeeded = await session.runCommand({
@@ -72,24 +72,21 @@
           bind:value={text}
           aria-label="Project feedback"
           placeholder="Comment on the project or selected elements…"
-          disabled={!session.atHead || !!session.pending || session.maintenanceLocked}
+          disabled={!session.atHead || !!session.pending}
           rows={2}
           onkeydown={submitOnEnter}
         />
         <InputGroup.Addon align="block-end" class="justify-end border-t">
           <span class="mr-auto text-xs text-muted-foreground">
-            {session.maintenanceLocked
-              ? 'Read-only during maintenance'
-              : session.atHead
-                ? 'Enter submits · Shift+Enter adds a line'
-                : 'Return to present to respond'}
+            {session.atHead
+              ? 'Enter submits · Shift+Enter adds a line'
+              : 'Return to present to respond'}
           </span>
           <InputGroup.Button
             type="submit"
             size="sm"
             disabled={!session.atHead ||
               !!session.pending ||
-              session.maintenanceLocked ||
               (!text.trim() && !selection && session.focusedEvents.length === 0)}
           >
             {#if session.pending?.type === 'feedback'}

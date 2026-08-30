@@ -8,9 +8,11 @@ import { fileURLToPath } from 'node:url';
 import {
   compilerWorkspaceLockPath,
   compilerSourceFingerprint,
+  repositoryRoot,
   writePreparedCompiler
 } from '../src/lib/server/compiler/prepared-compiler.js';
-import { compileRoot, stackEnvironment } from './stack-environment.mjs';
+
+const compileRoot = path.join(repositoryRoot, 'compile');
 
 if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_LOCK_HELD !== '1') {
   const lockPath = compilerWorkspaceLockPath();
@@ -54,7 +56,7 @@ function run(command, args, options) {
     const child = spawn(command, args, {
       cwd: options.cwd ?? compileRoot,
       detached: process.platform !== 'win32',
-      env: options.env ?? stackEnvironment,
+      env: options.env ?? process.env,
       stdio: ['ignore', options.captureStdout ? 'pipe' : 'inherit', 'inherit']
     });
     let stdout = '';

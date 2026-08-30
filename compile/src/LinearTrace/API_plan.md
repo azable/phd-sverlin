@@ -101,6 +101,9 @@ corresponding Program operation. Do not add declaration, read, write, variable,
 or other workflow helpers to Program; higher-level APIs and authored programs
 compose those behaviors from the general primitives.
 
+Q: What is RelationHandle? Is this a API public interface? Or is this a newly
+defined idea, based on the relate/unrelate operations? Maybe call it Relation?
+
 #### Lifecycle operations
 
 Lifecycle operations create, transform, expose, associate, or consume linear
@@ -144,6 +147,10 @@ let displayed = toDisplay <$> oneValue
 `Observe` currently has a public result wrapper but no public `observe`
 operation. Decide separately whether a non-consuming trace observation has a
 clear renderable meaning; otherwise remove the orphan wrapper from Sverlin.
+
+TODO remove Observe entirely
+TODO consider how Use should be used, or if it should be removed. does it
+confer semantics other lifecycle ops don't already permit?
 
 ##### Apply one
 
@@ -262,6 +269,8 @@ each `relate` or `unrelate` call while retaining one distinct linear
 consumed. An owner or slot cannot complete its lifecycle while a relation to
 that location remains active.
 
+Q: is a slot (using the restored design) a special case of a relation semantically?
+
 #### Materialization
 
 Materialization resolves the `Pending` obligations produced by lifecycle
@@ -300,6 +309,9 @@ lineage, or that should not participate in semantic selection.
 untagged <- commit pendingUntagged
 ```
 
+Q: why are three interfaces needed for materialization? can we merge
+into 1?
+
 #### Timeline
 
 ##### Checkpoint
@@ -315,6 +327,21 @@ checkpoint "value stored"
 Use checkpoints after complete logical operations. In particular, ordinary
 slot workflows should unseal and reseal before checkpointing unless an empty
 storage location is deliberately part of the trace.
+
+#### Proposed new "step" interface
+
+a program is made up of named steps, which can be composed together
+in a reusable way. a
+step has an associated code fragment to allow for mapping to source
+code visualisations.
+
+TODO expand on this with an insertion sort example below
+
+```haskell
+program :: Program ()
+program = do
+  --TODO
+```
 
 #### Complete Program
 

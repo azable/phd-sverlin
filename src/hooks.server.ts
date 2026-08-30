@@ -3,7 +3,6 @@ import { json, redirect, type Handle, type ServerInit } from '@sveltejs/kit';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
 import { auth, resolvePrincipal, validateAuthenticationConfiguration } from '$lib/server/auth';
-import { readMaintenanceStatus } from '$lib/server/maintenance-lock.js';
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const publicPaths = new Set([
@@ -54,30 +53,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     redirect(303, `/login?next=${encodeURIComponent(next)}`);
   }
 
-  if (
-    isProjectMutation(event.request.method, event.url.pathname) &&
-    !process.env.RAILWAY_ENVIRONMENT_ID
-  ) {
-    const maintenance = await readMaintenanceStatus();
-    if (maintenance.locked) {
-      return json(
-        {
-          code: 'app_locked',
-          error: maintenance.reason || 'The application is temporarily read-only for maintenance.'
-        },
-        { status: 423, headers: { 'cache-control': 'private, no-store' } }
-      );
-    }
-  }
-
   return testPrincipal ? resolve(event) : svelteKitHandler({ event, resolve, auth, building });
 };
-
-export function isProjectMutation(method: string, pathname: string): boolean {
-  return (
-    !safeMethods.has(method.toUpperCase()) && /^\/api\/(?:projects|admin)(?:\/|$)/.test(pathname)
-  );
-}
 
 function isPublicPath(pathname: string) {
   return (

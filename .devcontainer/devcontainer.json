@@ -8,11 +8,10 @@
   "remoteUser": "root",
 
   "containerEnv": {
-    "STACK_ROOT": "/opt/sverlin-dev/stack-root",
+    "STACK_ROOT": "/opt/sverlin-stack-seed",
     "XDG_CACHE_HOME": "${containerWorkspaceFolder}/.cache",
     "XDG_STATE_HOME": "${containerWorkspaceFolder}/.local/state",
-    "SVERLIN_SCRATCH_DIR": "/tmp/sverlin",
-    "SVERLIN_STATE_DIR": "/var/data"
+    "SVERLIN_SCRATCH_DIR": "/tmp/sverlin"
   },
 
   "remoteEnv": {
@@ -80,5 +79,5 @@
     }
   },
 
-  "postCreateCommand": "node .devcontainer/link-workspace-storage.mjs && pnpm install --frozen-lockfile && mkdir -p outputs /tmp/sverlin && if [ -z \"$(find /opt/sverlin-dev/stack-root -mindepth 1 -print -quit)\" ]; then cp -a /opt/sverlin-stack-seed/. /opt/sverlin-dev/stack-root/; fi && pnpm run db:migrate"
+  "postCreateCommand": "pnpm install --frozen-lockfile && pnpm run db:migrate"
 }

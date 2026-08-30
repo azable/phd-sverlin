@@ -29,7 +29,6 @@ export default defineConfig({
     env: {
       SVERLIN_STATE_DIR: path.join(outputRoot, 'state'),
       SVERLIN_SCRATCH_DIR: path.join(outputRoot, 'compiler'),
-      SVERLIN_APP_LOCK_PATH: path.join(outputRoot, 'app-lock.json'),
       SVERLIN_E2E_AUTH_BYPASS: 'true',
       SVERLIN_PROJECT_STORE: 'file'
     }

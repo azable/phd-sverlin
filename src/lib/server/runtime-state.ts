@@ -12,7 +12,7 @@ import { sqlClient } from '$lib/server/db';
 import { projectRepository, usesPostgresProjectStore } from '$lib/server/projects/repository';
 import { recoveryEventsForInterruptedOperations } from '$lib/server/projects/recovery';
 
-import { runtimeProjectDir, runtimeScratchDir, runtimeStateDir } from './runtime-config';
+import { runtimeProjectDir, runtimeScratchDir } from './runtime-config';
 
 type PreparedCompilerSummary = {
   sourceSha256: string;
@@ -115,9 +115,8 @@ async function initializeRuntimeOnce() {
   try {
     validateAuthenticationConfiguration();
     await Promise.all([
-      assertWritableDirectory(runtimeStateDir()),
-      assertWritableDirectory(runtimeProjectDir()),
       assertWritableDirectory(runtimeScratchDir()),
+      ...(!usesPostgresProjectStore ? [assertWritableDirectory(runtimeProjectDir())] : []),
       ...(usesPostgresProjectStore ? [assertDatabaseReady()] : [])
     ]);
     await projectRepository.initialize();

@@ -30,10 +30,7 @@ describe('ProjectSession', () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, operationId, 'Initial', 'Renamed');
     const resulting = projectResource([...initial.document.events, renamed], 'Renamed');
-    fetchMock
-      .mockResolvedValueOnce(maintenanceResponse(false))
-      .mockResolvedValueOnce(response(initial))
-      .mockResolvedValueOnce(response(resulting));
+    fetchMock.mockResolvedValueOnce(response(initial)).mockResolvedValueOnce(response(resulting));
 
     const session = createSession();
     await session.open();
@@ -43,7 +40,7 @@ describe('ProjectSession', () => {
     expect(session.snapshot.title).toBe('Renamed');
     expect(session.head).toBe(2);
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(navigation.goto).not.toHaveBeenCalled();
   });
 
@@ -51,7 +48,6 @@ describe('ProjectSession', () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const responseEvent = assistantEvent(2);
     fetchMock
-      .mockResolvedValueOnce(maintenanceResponse(false))
       .mockResolvedValueOnce(response(initial))
       .mockResolvedValueOnce(eventResponse([responseEvent]));
 
@@ -76,14 +72,13 @@ describe('ProjectSession', () => {
     expect(session.snapshot.at).toBe(1);
     expect(session.snapshot.title).toBe('Initial');
     expect(session.atHead).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('projects external state-changing events without hydration fetches', async () => {
     const initial = projectResource([createdEvent()], 'Initial');
     const renamed = renamedEvent(2, externalOperationId, 'Initial', 'External');
     fetchMock
-      .mockResolvedValueOnce(maintenanceResponse(false))
       .mockResolvedValueOnce(response(initial))
       .mockResolvedValueOnce(eventResponse([renamed]));
 
@@ -93,7 +88,7 @@ describe('ProjectSession', () => {
 
     expect(session.snapshot.title).toBe('External');
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('creates a project from an explicit template and preserves Dev detail', async () => {
@@ -131,21 +126,6 @@ describe('ProjectSession', () => {
     expect(session.error).toBe('Compiler unavailable.');
     expect(navigation.goto).not.toHaveBeenCalled();
   });
-
-  it('blocks project creation and commands locally while maintenance is locked', async () => {
-    const initial = projectResource([createdEvent()], 'Initial');
-    fetchMock
-      .mockResolvedValueOnce(maintenanceResponse(true))
-      .mockResolvedValueOnce(response(initial));
-    const session = createSession();
-    await session.open();
-
-    expect(session.maintenanceLocked).toBe(true);
-    await expect(session.createProject({ templateId: 'blank' })).resolves.toBe(false);
-    await expect(session.runCommand({ type: 'rename', title: 'Blocked' })).resolves.toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(session.snapshot.title).toBe('Initial');
-  });
 });
 
 function createSession(): ProjectSession {
@@ -158,17 +138,6 @@ function response(resource: ProjectResource): Response {
   return new Response(JSON.stringify(resource), {
     headers: { 'content-type': 'application/json' }
   });
-}
-
-function maintenanceResponse(locked: boolean): Response {
-  return new Response(
-    JSON.stringify(
-      locked
-        ? { locked: true, lockedAt: '2026-01-01T00:00:00.000Z', reason: 'Test maintenance' }
-        : { locked: false }
-    ),
-    { headers: { 'content-type': 'application/json' } }
-  );
 }
 
 function eventResponse(events: ProjectEvent[]): Response {

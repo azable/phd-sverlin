@@ -19,6 +19,7 @@ function MDHmr(): Plugin {
 }
 
 export default defineConfig({
+  cacheDir: '.cache/vite',
   plugins: [tailwindcss(), sveltekit(), MDHmr()],
   server: {
     host: true,

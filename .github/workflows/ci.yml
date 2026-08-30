@@ -28,3 +28,55 @@ jobs:
         run: |
           docker build --target verification --tag "sverlin-verification:${GITHUB_SHA}" .
           docker build --target runtime --tag "sverlin-runtime:${GITHUB_SHA}" .
+
+      - name: Check PostgreSQL readiness as the runtime user
+        run: |
+          network="sverlin-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          database="sverlin-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          web="sverlin-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm --force "$web" "$database" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker network create "$network"
+          docker run --detach --name "$database" --network "$network" \
+            --env POSTGRES_DB=sverlin \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=postgres \
+            postgres:17-bookworm
+
+          for attempt in $(seq 1 30); do
+            if docker exec "$database" pg_isready --username postgres --dbname sverlin; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs "$database"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          database_url="postgres://postgres:postgres@${database}:5432/sverlin"
+          docker run --rm --network "$network" \
+            --env DATABASE_URL="$database_url" \
+            "sverlin-runtime:${GITHUB_SHA}" node build-migrate/index.js
+
+          docker run --detach --name "$web" --network "$network" \
+            --publish 127.0.0.1:3000:3000 \
+            --env DATABASE_URL="$database_url" \
+            --env BETTER_AUTH_URL=http://localhost:3000 \
+            --env BETTER_AUTH_SECRET=ci-readiness-secret-at-least-32-bytes \
+            "sverlin-runtime:${GITHUB_SHA}"
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/health/ready >/dev/null; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker logs "$web"
+              exit 1
+            fi
+            sleep 1
+          done

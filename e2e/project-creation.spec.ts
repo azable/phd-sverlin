@@ -2,11 +2,8 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { clearMaintenanceLock, writeMaintenanceLock } from '../src/lib/server/maintenance-lock.js';
-
 let projectId: string;
 let createdProjectId: string;
-const maintenancePath = path.resolve('outputs/playwright/app-lock.json');
 const templateCount = (
   JSON.parse(readFileSync(path.resolve('examples/catalog.json'), 'utf8')) as {
     templates: unknown[];
@@ -15,10 +12,6 @@ const templateCount = (
 
 test.beforeAll(async ({ request }) => {
   projectId = await createProject(request, 'blank');
-});
-
-test.afterEach(async () => {
-  await clearMaintenanceLock(maintenancePath);
 });
 
 test('new project combines template selection with the current Dev-detail preference', async ({
@@ -83,32 +76,6 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   expect(projectResponse.ok()).toBe(true);
   const resource = (await projectResponse.json()) as ProjectResourceView;
   expect(resource.document.events[0].payload.creation).toEqual({ templateId: 'blank' });
-  expect(browserFailures()).toEqual([]);
-});
-
-test('maintenance lock keeps reads and playback available while rejecting mutations', async ({
-  page
-}) => {
-  const browserFailures = observeBrowserFailures(page);
-  await page.goto(`/projects/${projectId}`);
-  await expect(page.getByRole('button', { name: 'Reset', exact: true })).toBeEnabled();
-
-  await writeMaintenanceLock('Compiler boundary maintenance.', maintenancePath);
-  await expect(page.getByText('Read-only maintenance mode', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'New project' })).toBeDisabled();
-  await expect(page.getByRole('textbox', { name: 'Project feedback' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Regenerate' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Reset', exact: true })).toBeEnabled();
-
-  const blocked = await page.request.post('/api/projects', {
-    data: { templateId: 'blank' }
-  });
-  expect(blocked.status()).toBe(423);
-  await expect(blocked.json()).resolves.toMatchObject({ code: 'app_locked' });
-
-  await clearMaintenanceLock(maintenancePath);
-  await expect(page.getByText('Read-only maintenance mode', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'New project' })).toBeEnabled();
   expect(browserFailures()).toEqual([]);
 });
 

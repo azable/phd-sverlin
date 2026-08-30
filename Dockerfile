@@ -196,7 +196,7 @@ ENV SVERLIN_PROJECT_STORE=file
 
 RUN pnpm run check \
     && pnpm run lint \
-    && pnpm run test:unit -- --run \
+    && pnpm run test:unit \
     && pnpm run test:examples
 
 FROM toolchain AS production-dependencies

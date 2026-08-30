@@ -40,7 +40,7 @@
   );
 
   function startEditing() {
-    if (!artifact || !session.atHead || session.pending || session.maintenanceLocked) return;
+    if (!artifact || !session.atHead || session.pending) return;
     draft = artifact.content.text;
     editMode = 'editing';
     void tick().then(() => editor?.focus());
@@ -61,8 +61,7 @@
   }
 
   async function saveDraft() {
-    if (!artifact || !dirty || session.pending || !session.atHead || session.maintenanceLocked)
-      return;
+    if (!artifact || !dirty || session.pending || !session.atHead) return;
     const succeeded = await session.runCommand({
       type: 'save',
       artifactId: artifact.artifactId,
@@ -96,7 +95,7 @@
             size="sm"
             variant="outline"
             onclick={startEditing}
-            disabled={!session.atHead || !!session.pending || session.maintenanceLocked}
+            disabled={!session.atHead || !!session.pending}
           >
             <EditIcon data-icon="inline-start" />Edit
           </Button>
@@ -105,11 +104,7 @@
           <Button size="sm" variant="ghost" onclick={cancelEditing} disabled={!!session.pending}>
             <XIcon data-icon="inline-start" />Cancel
           </Button>
-          <Button
-            size="sm"
-            onclick={saveDraft}
-            disabled={!dirty || !!session.pending || session.maintenanceLocked}
-          >
+          <Button size="sm" onclick={saveDraft} disabled={!dirty || !!session.pending}>
             {#if session.pending?.type === 'save'}
               <Spinner data-icon="inline-start" />Compiling
             {:else}
@@ -130,10 +125,7 @@
         <CodeMirrorEditor
           bind:this={editor}
           value={displayedSource}
-          editable={editMode === 'editing' &&
-            session.atHead &&
-            !session.pending &&
-            !session.maintenanceLocked}
+          editable={editMode === 'editing' && session.atHead && !session.pending}
           ariaLabel="Sverlin project source"
           onChange={updateDraft}
         />

@@ -109,12 +109,7 @@
         </Button>
       {/if}
       {#if presentation.restorable && event.id !== session.head}
-        <Button
-          size="xs"
-          variant="ghost"
-          onclick={restore}
-          disabled={!!session.pending || session.maintenanceLocked}
-        >
+        <Button size="xs" variant="ghost" onclick={restore} disabled={!!session.pending}>
           <RotateCcwIcon data-icon="inline-start" />Restore
         </Button>
       {/if}

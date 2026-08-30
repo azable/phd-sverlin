@@ -11,9 +11,11 @@ import {
   compilerWorkspaceLockPath,
   CompilerNotReadyError,
   preparedCompilerEnvironment,
-  readPreparedCompiler
+  readPreparedCompiler,
+  repositoryRoot
 } from '../src/lib/server/compiler/prepared-compiler.js';
-import { compileRoot, repositoryRoot as repoRoot } from './stack-environment.mjs';
+
+const compileRoot = path.join(repositoryRoot, 'compile');
 
 if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_SHARED_LOCK_HELD !== '1') {
   const lockPath = compilerWorkspaceLockPath();
@@ -28,7 +30,7 @@ if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_SHARED_LOCK_HEL
       fileURLToPath(import.meta.url),
       ...process.argv.slice(2)
     ],
-    repoRoot,
+    repositoryRoot,
     { ...process.env, SVERLIN_COMPILER_SHARED_LOCK_HELD: '1' }
   );
   process.exit(locked.exitCode ?? signalExitCode(locked.signal));
@@ -52,7 +54,7 @@ if (authoredSourcePath && readFlagValue(userArgs, '--source-label') === null) {
 }
 
 for (const flag of ['--source', '--output', '--emit-haskell']) {
-  userArgs = resolvePathFlag(userArgs, flag, repoRoot);
+  userArgs = resolvePathFlag(userArgs, flag, repositoryRoot);
 }
 
 try {
@@ -139,8 +141,9 @@ function runCompile(command, args, cwd, env) {
       stdio: 'inherit'
     });
 
-    /** @type {{ signal: NodeJS.Signals, handler: () => void }[]} */
-    const forwardedSignals = ['SIGINT', 'SIGTERM'].map((signal) => ({
+    /** @type {NodeJS.Signals[]} */
+    const signalNames = ['SIGINT', 'SIGTERM'];
+    const forwardedSignals = signalNames.map((signal) => ({
       signal,
       handler: () => {
         terminateCompile(child.pid, signal);

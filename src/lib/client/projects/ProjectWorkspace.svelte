@@ -69,12 +69,9 @@
 
   const sourceEditing = $derived(editMode === 'editing');
   const busy = $derived(!!session.pending || session.creating);
-  const mutationsDisabled = $derived(busy || session.maintenanceLocked);
-  const maintenanceReason = $derived(
-    session.maintenance.locked ? session.maintenance.reason : undefined
-  );
+  const mutationsDisabled = $derived(busy);
   const playbackDisabled = $derived(sourceEditing || busy);
-  const renderDisabled = $derived(playbackDisabled || !session.atHead || session.maintenanceLocked);
+  const renderDisabled = $derived(playbackDisabled || !session.atHead);
   const activeSeed = $derived(
     readSeed(seedText, session.resource ? (session.snapshot.activeRender?.payload.seed ?? 1) : 1)
   );
@@ -176,15 +173,6 @@
 
 <div class="dark h-screen overflow-hidden bg-background text-foreground">
   {#if session.resource}
-    {#if session.maintenanceLocked}
-      <Alert.Root class="fixed inset-x-6 top-4 z-50 mx-auto max-w-3xl">
-        <Alert.Title>Read-only maintenance mode</Alert.Title>
-        <Alert.Description>
-          {maintenanceReason ??
-            'Project viewing and playback remain available; changes are temporarily disabled.'}
-        </Alert.Description>
-      </Alert.Root>
-    {/if}
     <main class="h-full min-w-0 overflow-x-auto" inert={busy}>
       <Resizable.PaneGroup direction="horizontal" class="min-h-full min-w-[72rem]">
         <Resizable.Pane defaultSize={35} minSize={25} class="min-w-0">

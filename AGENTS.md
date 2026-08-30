@@ -36,10 +36,12 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   in command output before giving the next step. Classify it as blocking, actionable,
   or harmless; follow any applicable skill remediation; and verify the resulting
   external state with a read-only check where possible.
-- Watch for repeated, contradictory, or stale documentation. Keep the root `README.md`
-  as the concise project entry point, and keep detailed subject-specific documentation
-  in the relevant files under `docs/`. When consolidation would help, identify the
-  conflicting material and ask before moving, deleting, or substantially rewriting it.
+- Keep human-facing project documentation in the root `README.md`; do not add a
+  `docs/` directory or separate project guides without developer approval. Keep
+  the README concise, current, and free of duplicated source-level detail.
+  Machine-consumed prompt/index files, installed skill instructions, licenses,
+  source-adjacent provenance, and a temporary `HANDOVER.md` are not project
+  guides. Identify conflicting or stale material before consolidating it.
 - Document the rationale and source for operational constants, limits, timeouts, retry
   counts, and other non-obvious numeric choices.
 
@@ -56,16 +58,23 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.
 - To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
 - To run the SvelteKit application, use `pnpm run dev` from the root directory. This will start the development server, with hot-reloading.
-- With the PostgreSQL project store, run `pnpm run worker:dev` in a second terminal so queued project commands can progress.
+- With the PostgreSQL project store, run `pnpm run dev:worker` in a second terminal so queued project commands can progress.
 
 ## Engineering Rules
 
-- Before an agent modifies Svelte application behavior, announce it and run `pnpm run app:lock -- "reason"`. The persistent ignored lock makes an already-open app read-only without disabling inspection or playback and survives a killed agent. Check it with `pnpm run app:lock:status`; unlock explicitly with `pnpm run app:unlock` only after static checks and focused tests pass. Taking the shared dev server offline remains appropriate for server-boundary changes, but never stop unrelated processes or modify project data to establish the lock.
-- At the end of every completed task, update the top-level `AGENTS_LOG.md` as a replaceable snapshot of the current uncommitted working-tree changes authored by agents. It is not a chronological diary. Its two purposes are to let a developer quickly understand the implementation and to let an agent safely resume after a devcontainer or conversation restart without reconstructing the work from chat history. Base it on `git status` and the relevant diffs, include staged, unstaged, and untracked agent-authored files until they are committed, and exclude changes known to belong to the user or another concurrent worker.
-- Start `AGENTS_LOG.md` with a short scope statement followed immediately by a table of the important added, modified, moved, or deleted files. Use relative Markdown links to live files; for a moved or deleted file, link its replacement or containing directory when the old path no longer exists. Group closely related files where that makes the implementation easier to understand, and prioritize architectural entry points over exhaustive low-value listings. Follow the table with a plain-language architecture and behavior summary, representative small code snippets, verification performed, limitations, and any known changes deliberately excluded from the summary.
-- If `AGENTS_LOG.md` is already modified or untracked when a task begins, revise that same file in place so it continues to summarize **all** current uncommitted agent-authored changes. Do not discard earlier uncommitted work, reduce the log to only the latest task, append a dated diary entry, or create a second work-log file. Once the existing log and the changes it describes have been committed, replace its contents for the next task's new working-tree snapshot.
-- Keep a concise resume section near the top of `AGENTS_LOG.md`. State whether implementation is complete or mid-flight, the next safe action, remaining work or blockers, validations already run and their outcomes, and any relevant operational state such as an intentionally held app lock. Record durable facts and commands rather than transient process IDs. The log must be self-contained enough to resume safely without relying on the conversation transcript.
-- On the first turn after a devcontainer rebuild or agent restart, read `AGENTS.md` and `AGENTS_LOG.md` completely, inspect `git status` and the relevant diffs, and check any operational state named in the resume section before changing files. Continue from the recorded next safe action, re-run only checks invalidated by the rebuild, preserve user and concurrent-worker changes, and update the same log when the resumed task completes.
+- If completing an active task requires a devcontainer rebuild or Codex restart,
+  create or update a temporary root `HANDOVER.md` before stopping. Record the
+  task objective, completed work, current working-tree changes and their
+  ownership, the next safe action, remaining work or blockers, validations
+  already run, and relevant operational state. Do not create a handover for
+  completed work or use it as a chronological log.
+- On the first turn after a devcontainer rebuild or Codex restart, read
+  `HANDOVER.md` completely when it exists, inspect `git status` and the relevant
+  diffs, and verify any recorded operational state before changing files.
+  Continue from the recorded next safe action, rerun only checks invalidated by
+  the restart, and preserve user and concurrent-worker changes. Delete
+  `HANDOVER.md` once the resumed task is complete so stale instructions cannot
+  affect later work.
 - Repository-local skills are available under `.agents/skills/`; their `SKILL.md`
   files describe when and how to use them. Review the available skills for work that
   matches their scope, follow every applicable skill, and consider whether a suitable
@@ -80,9 +89,9 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout.
 - When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
 - When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
-- `pnpm run test:unit -- --run` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. Run `pnpm run test:e2e` after Svelte behavior changes.
+- `pnpm run test:unit` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. Run `pnpm run test:e2e` after Svelte behavior changes.
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
-- When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Use `pnpm run bench:compile` as an additional end-to-end check when the compile server path or generated JSON pipeline can be affected. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
+- When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
 - `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.
 - AI-generated source is compiled through the complete visualization pipeline for the submitted UI seed before it can become the active artifact. One failed candidate may be repaired by one explicit second generation; provider retries and open-ended orchestration loops are disabled. Candidates, prompts, responses, compiler output, failures, accepted artifacts, and successful renders are stored inline in the complete project event log with hashes for provenance.
 - The visualization path intentionally uses a tuned solver config rather than raw `defaultSolveConfig`; preserve this separation so direct solver tests stay conservative while regeneration avoids long L-BFGS-B tails.
@@ -155,4 +164,4 @@ Before finishing:
 - For solver or view-solver changes, run `pnpm run test:solver`.
 - Use `hlint compile/src compile/app compile/test compile/bench compile/test-support` to check for any Haskell code style issues.
 - After any Haskell source change, run the same formatter pipeline as VSCode on project-owned Haskell source directories (`compile/app compile/src compile/test compile/bench compile/test-support`): first `hindent`, then `stylish-haskell -i`. Run this full formatting pipeline exactly once per task, at the very end after the implementation, lint-driven fixes, and other source changes are complete. Do not run it speculatively or repeatedly during development. The `stylish-haskell -i` pass should be the final source-modifying step; afterward, perform only non-modifying verification unless a necessary source correction requires another final formatting pass.
-- For performance-sensitive solver changes, also run `pnpm run bench:solver`; use `pnpm run bench:compile` for end-to-end compile performance.
+- For performance-sensitive solver changes, also run `pnpm run bench:solver`.

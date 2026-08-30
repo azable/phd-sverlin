@@ -16,7 +16,6 @@ services:
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:5173
       SVERLIN_ADMIN_SETUP_TOKEN: ${SVERLIN_ADMIN_SETUP_TOKEN:-development-setup-token}
       SVERLIN_PROJECT_STORE: postgres
-      SVERLIN_STATE_DIR: /var/data
       SVERLIN_SCRATCH_DIR: /tmp/sverlin
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
@@ -25,13 +24,11 @@ services:
       - .:/workspaces/phd-sverlin
       # Preserve Railway CLI login and project-link state across container recreation.
       - railway-state:/root/.railway
-      # Keep generated data outside the workspace bind. The devcontainer
-      # post-create step links the ignored workspace paths to these volumes.
-      - node-modules:/opt/sverlin-dev/node_modules
-      - mip-stack-work:/opt/sverlin-dev/mip-stack-work
-      - stack-root:/opt/sverlin-dev/stack-root
-      - stack-work:/opt/sverlin-dev/stack-work
-      - sverlin-state:/var/data
+      # Mount generated package data at the paths used by Node and Stack.
+      - node-modules:/workspaces/phd-sverlin/node_modules
+      - stack-work:/workspaces/phd-sverlin/compile/.stack-work
+      - mip-stack-work:/workspaces/phd-sverlin/compile/vendor/MIP-0.2.0.1/.stack-work
+      - stack-root:/opt/sverlin-stack-seed
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,6 +55,5 @@ volumes:
   node-modules:
   postgres-data:
   railway-state:
-  sverlin-state:
   stack-root:
   stack-work:

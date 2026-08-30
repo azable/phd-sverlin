@@ -79,8 +79,8 @@ importers:
         specifier: 1.58.0
         version: 1.58.0
       '@railway/cli':
-        specifier: ^5.45.7
-        version: 5.45.7
+        specifier: 5.45.10
+        version: 5.45.10
       '@sveltejs/adapter-auto':
         specifier: ^7.0.0
         version: 7.0.0(@sveltejs/kit@2.50.1(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.48.5)(vite@7.3.1(@types/node@24.10.9)(jiti@2.7.0)(lightningcss@1.30.2)(tsx@4.23.12)))(svelte@5.48.5)(typescript@5.9.3)(vite@7.3.1(@types/node@24.10.9)(jiti@2.7.0)(lightningcss@1.30.2)(tsx@4.23.12)))
@@ -142,7 +142,7 @@ importers:
         specifier: ^0.7.2
         version: 0.7.2(prettier-plugin-svelte@3.4.1(prettier@3.8.1)(svelte@5.48.5))(prettier@3.8.1)
       railway:
-        specifier: ^3.11.0
+        specifier: 3.11.0
         version: 3.11.0
       svelte:
         specifier: ^5.48.2
@@ -1238,8 +1238,8 @@ packages:
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
 
-  '@railway/cli@5.45.7':
-    resolution: {integrity: sha512-EsnK5YskqbW+qtL9911fql+J9Q3dW/ULSAL9UEVEJOTox2NG/Dn9kRUiY4ylx4Lk9Tq3pIung4KvJPiEiV/jzw==}
+  '@railway/cli@5.45.10':
+    resolution: {integrity: sha512-bpejtmRBxX98fVHc7SsxxO9IgcSX8rccMlryQsNLm69RHFLyy7az/7j34mY23bT3jBJ2B3c84Ysb2ry5OAJIPA==}
     engines: {node: '>=16.0.0'}
     hasBin: true
 
@@ -4476,7 +4476,7 @@ snapshots:
 
   '@polka/url@1.0.0-next.29': {}
 
-  '@railway/cli@5.45.7':
+  '@railway/cli@5.45.10':
     dependencies:
       node-fetch: 3.3.2
       tar: 6.2.1
