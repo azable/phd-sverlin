@@ -334,8 +334,7 @@ asText   :: FixedInt -> ContentValue
 
 `Relations` is the reusable result of `Selected links <- select relationKind`.
 Its endpoints always support ordinary spatial constraints. A relation is drawn
-only when an optional connector is declared inside its spatial scope. The exact
-connector, anchor, and arrow vocabulary remains open.
+only when an optional connector is declared inside its spatial scope.
 
 `node selectedBlocks` and `relation selectedRelations` are the corresponding
 Render mappings. `relation` creates one spatial scope per selected relation and
@@ -363,6 +362,37 @@ their original node and relation selections directly. If one relation kind
 later spans several independent structures, an explicit endpoint-based
 relation-selection operation must scope it before validation; the checked view
 will not perform that filtering.
+
+### Connectors
+
+```haskell
+data ConnectorAnchor              -- abstract
+
+data AnchorPlacement
+  = AtCenter | AtBoundary | AtTop | AtRight | AtBottom | AtLeft
+
+data Marker
+  = NoMarker | ArrowMarker | CircleMarker | DiamondMarker
+
+anchor      :: AnchorPlacement -> Selected node -> ConnectorAnchor
+connector   :: ConnectorAnchor -> ConnectorAnchor -> Render () -> Render ()
+startMarker :: Marker -> Render ()
+endMarker   :: Marker -> Render ()
+```
+
+A connector is an optional straight visual connection; an arrow is a connector
+with an arrow marker. Its body accepts connector `Stroke`, `StrokeWidth`, and
+`Opacity` styles plus endpoint markers. It derives its path from solved node
+geometry and adds no layout constraint. `AtBoundary` clips the centre-to-centre
+line to each rectangular node boundary; the side placements use edge centres.
+
+Inside `relation`, a connector inherits the exact relation identity and stable
+owner lifetime. Outside it, the connector may join any two context-local node
+handles and exists where both are present. It automatically inherits
+`sometimes` absence. A connector creates no Program relation, and neither a
+relation nor an affine constraint draws one automatically. Both markers default
+to `NoMarker`; curved, right-angled, obstacle-avoiding, and labelled connectors
+remain later extensions.
 
 ### Reusable values and finite choices
 
@@ -510,5 +540,5 @@ orientation is intentionally a random authored choice.
 5. Exact `TextBuilder` input and fragment signatures.
 6. Whether three materialization operations remain separate.
 7. The Render projection from a stable slot owner to its current occupant.
-8. Connector and anchor APIs, graph-template APIs, and their sampling weights.
+8. Graph-template APIs and their sampling weights.
 9. Whether `BorderDouble` and `TextAlignJustify` remain public.

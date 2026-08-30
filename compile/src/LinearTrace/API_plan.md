@@ -899,7 +899,7 @@ types without a callback. Calling either operation outside the matching
 error.
 
 The exact relation identity remains in the compiler's match context. A
-variable, choice, or future connector created inside the body therefore belongs
+variable, choice, or connector created inside the body therefore belongs
 to that exact relation lifetime, from its initialization until either stable
 owner is destroyed. The relation cannot be removed or recreated while both
 owners remain live. For a kind with ordered endpoints, `first` is the source and
@@ -934,11 +934,9 @@ relation probeLinks $ do
 ```
 
 Visual projection is optional. `relation` establishes the spatial scope but
-does not automatically draw a line. The intended connector interface will
-optionally create visual geometry inside that scope and resolve its anchors
-from the two endpoint nodes. For example, the eventual vocabulary should
-support the following shape; `connector`, `from`, `to`, and `markerEnd` remain
-illustrative rather than settled exports:
+does not automatically draw a line. The connector interface documented below
+can draw between those endpoints, but it is equally valid to use a relation
+only for layout:
 
 ```haskell
 Selected branches <- select ParentOf
@@ -947,19 +945,19 @@ relation branches $ do
   parent <- first branches
   child <- second branches
   ensure $ top child .>=. bottom parent + shift 72
-  connector $ do
-    from (bottom parent)
-    to (top child)
-    markerEnd Arrow
+  connector (anchor AtBottom parent) (anchor AtTop child) $ do
+    style @Stroke branchColour
+    endMarker ArrowMarker
 ```
 
 Selecting `ParentOf` does not itself draw anything. Another Render rule may use
 the same relations only for layout, draw an unmarked line, or choose a different
 visual direction. In particular, ordered semantic endpoints do not silently
 choose an arrow direction, and a symmetric relation has no semantic direction
-at all. A generated connector must inherit the exact selected relation identity
-so forward and reverse playback follow its creation and the lifetimes of its
-stable owners.
+at all. A generated connector inherits the exact selected relation identity so
+forward and reverse playback follow its creation and the lifetimes of its stable
+owners. The same connector operation can also join ordinary context-local node
+handles without declaring a Program relation.
 
 ##### Fixed structural values
 
@@ -1043,7 +1041,7 @@ relation adjacentLinks $ do
 
 These are alternative layout rules. A linked-list view can use the same checked
 ranking for its structural positions while `relation nextLinks` supplies
-endpoint pairs to a connector helper once that visual interface is defined.
+endpoint pairs to `connector`.
 Separate bounded constraints or prepared templates can place its nodes without
 overlap. The relation does not force either layout. If several dynamic arrays
 later share the same cell kind and relation kind, add a relation-selection
@@ -1194,6 +1192,101 @@ Sequence, tree, and DAG checks visit each node and edge only a constant number
 of times. Calculate their `FixedInt` values once for each distinct exposed-frame
 graph and reuse them across seeds. No baseline graph operation constructs the
 `n * (n - 1) / 2` unordered pairs of `n` nodes.
+
+#### Connectors
+
+A connector is optional visual geometry between two node anchors. An arrow is
+a connector with an arrow marker at one or both ends; connectors also cover
+plain lines, graph edges, dependency links, and annotations. They are not
+restricted to Program relations.
+
+```haskell
+data ConnectorAnchor              -- abstract
+
+data AnchorPlacement
+  = AtCenter
+  | AtBoundary
+  | AtTop
+  | AtRight
+  | AtBottom
+  | AtLeft
+
+data Marker
+  = NoMarker
+  | ArrowMarker
+  | CircleMarker
+  | DiamondMarker
+
+anchor      :: AnchorPlacement -> Selected node -> ConnectorAnchor
+connector   :: ConnectorAnchor -> ConnectorAnchor -> Render () -> Render ()
+startMarker :: Marker -> Render ()
+endMarker   :: Marker -> Render ()
+```
+
+Both markers default to `NoMarker`. The initial connector path is straight;
+there is no public routing operation in the baseline. `AtTop`, `AtRight`,
+`AtBottom`, and `AtLeft` use the centre of that box edge. `AtCenter` uses the
+node centre. `AtBoundary` clips the straight centre-to-centre line to the
+solved rectangular boundary. These anchor points and the path are derived after
+the endpoint boxes are solved, so a connector adds no layout constraint or
+solver variable by itself.
+
+The connector body is a styling scope. Initially it accepts `style @Stroke`,
+`style @StrokeWidth`, `style @Opacity`, `startMarker`, and `endMarker`; node
+content, hierarchy, and box-layout operations are rejected there. Markers use
+the connector stroke and follow the path direction. Connectors render behind
+their endpoint nodes by default, since the target facade has no public z-index.
+
+An ordered semantic relation can be drawn from its first endpoint to its second:
+
+```haskell
+Selected dependencies <- select DependsOn
+
+relation dependencies $ do
+  source <- first dependencies
+  target <- second dependencies
+
+  connector (anchor AtBoundary source) (anchor AtBoundary target) $ do
+    style @Stroke dependencyColour
+    style @StrokeWidth (by 2)
+    endMarker ArrowMarker
+```
+
+This direction is authored Render behavior, not an implication of
+`RelationKind`: an ordered relation may be drawn in reverse or without markers,
+and a symmetric relation has no semantic arrow direction. Selecting or
+constraining a relation never draws it automatically.
+
+The same operation can connect ordinary node handles:
+
+```haskell
+connector
+  (anchor AtBottom explanation)
+  (anchor AtTop highlightedValue)
+  $ do
+      style @Stroke annotationColour
+      endMarker ArrowMarker
+```
+
+Each endpoint must identify one node in the current Render match scope; the
+compiler rejects an ambiguous unscoped node set rather than drawing a Cartesian
+product. A connector is present only where both endpoint handles are present.
+It therefore inherits absence through `sometimes` without `Maybe`, and the
+whole operation can itself be wrapped in `sometimes`.
+
+Inside `relation`, the connector additionally inherits that exact relation's
+identity and visible lifetime. It appears from relation creation until either
+stable endpoint owner is destroyed, remains attached to the stable owners while
+slot occupants change, and behaves identically under forward and reverse
+playback. Outside a relation scope, its lifetime is the overlap of its two
+ordinary endpoint presences. A connector creates no Program relation, and an
+affine constraint between two nodes creates no connector.
+
+Curved paths, right-angled routing, obstacle avoidance, connector labels, and
+author-selected routing alternatives remain later extensions. They should be
+added only with deterministic derivation and explicit sampling semantics; the
+straight connector does not invoke nonlinear optimization or a graph-layout
+solver.
 
 #### Reusable values and finite decisions
 
@@ -2248,16 +2341,6 @@ layout problem.
 - Define the first bounded graph-template interface and how several candidate
   templates are weighted. Merely generating more equivalent templates must not
   increase one visual layout's sampling probability.
-- Define the visual connector and anchor interface available inside a
-  `relation` spatial scope. The `relation` mapping itself must remain valid with
-  only affine endpoint constraints and no visible connector. A connector
-  created in that scope must inherit its exact `relationId`, appear from
-  relation initialization until either owner is destroyed in forward and
-  reverse playback, and remain anchored to its stable owners while occupants
-  change.
-  Ordered endpoints do not automatically choose arrow direction, and symmetric
-  endpoints have none. The names, path shapes, routing choices, marker styles,
-  and connector IR remain open.
 
 ### Proposed solver architecture
 
