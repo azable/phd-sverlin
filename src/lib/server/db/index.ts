@@ -1,4 +1,4 @@
-/** Lazy process-local Postgres/Drizzle client shared by the web and worker processes. */
+/** Lazy process-local Postgres/Drizzle client owned by the SvelteKit service. */
 
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';

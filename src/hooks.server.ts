@@ -3,6 +3,7 @@ import { json, redirect, type Handle, type ServerInit } from '@sveltejs/kit';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
 import { auth, resolvePrincipal, validateAuthenticationConfiguration } from '$lib/server/auth';
+import { initializeRuntime, shutdownRuntime } from '$lib/server/runtime-state';
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 const publicPaths = new Set([
@@ -16,7 +17,10 @@ const operationalPaths = new Set(['/api/health/live', '/api/health/ready', '/api
 
 /** Validate cloud configuration without starting process-owned runtime state. */
 export const init: ServerInit = async () => {
-  if (!building) validateAuthenticationConfiguration();
+  if (building) return;
+  validateAuthenticationConfiguration();
+  await initializeRuntime();
+  process.once('sveltekit:shutdown', () => void shutdownRuntime());
 };
 
 /** Populate Better Auth locals, enforce access, then mount its SvelteKit handler. */

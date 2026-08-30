@@ -1,12 +1,6 @@
-/**
- * Durable filesystem storage for complete immutable project documents.
- *
- * @packageDocumentation
- */
+/** PostgreSQL persistence for immutable project Timelines and compiler resources. */
 
-import { createHash, randomUUID } from 'node:crypto';
-import { link, mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 
@@ -19,11 +13,9 @@ import {
   type ProjectId,
   type ProjectSummary
 } from '$lib/shared/projects/model';
-import { runtimeProjectDir } from '$lib/server/runtime-config';
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 
-const maxProjectDocumentBytes = 64 * 1024 * 1024;
 const maxProjectResourceBytes = 16 * 1024 * 1024;
 
 /** Validated document and stable events produced by one atomic append. */
@@ -35,38 +27,31 @@ export type ProjectAppendResult = {
 /** Verified compiler resource bytes committed alongside referencing events. */
 export type ProjectResourceBlob = CompilationResource & { bytes: Uint8Array };
 
-/** Storage contract shared by the local filesystem and PostgreSQL backends. */
-export interface ProjectRepository {
-  initialize(): Promise<void>;
+/** Read-only project access used by HTTP delivery and analysis code. */
+export interface ProjectReader {
   list(ownerUserId?: string): Promise<ProjectSummary[]>;
-  create(document: ProjectDocument, ownerUserId?: string): Promise<ProjectDocument>;
   load(projectId: ProjectId): Promise<ProjectDocument>;
+  readResource(projectId: ProjectId, resourceId: string): Promise<Uint8Array>;
+  eventsAfter(projectId: ProjectId, after: number): Promise<ProjectEvent[]>;
+}
+
+/** Project mutations used by command orchestration and administrative deletion. */
+export interface ProjectWriter {
+  initialize(): Promise<void>;
+  create(document: ProjectDocument, ownerUserId?: string): Promise<ProjectDocument>;
   append(
     projectId: ProjectId,
     expectedHead: number,
     pendingEvents: NewProjectEvent[],
     resources?: readonly ProjectResourceBlob[]
   ): Promise<ProjectAppendResult>;
-  readResource(projectId: ProjectId, resourceId: string): Promise<Uint8Array>;
-  eventsAfter(projectId: ProjectId, after: number): Promise<ProjectEvent[]>;
   deleteAll(): Promise<void>;
 }
 
-type RepositoryCoordination = {
-  writeTails: Map<ProjectId, Promise<void>>;
-  subscribers: Map<ProjectId, Set<(events: ProjectEvent[]) => void>>;
-};
+/** Complete persistence contract; production has exactly one PostgreSQL implementation. */
+export interface ProjectRepository extends ProjectReader, ProjectWriter {}
 
-const repositoryCoordinationKey = Symbol.for('sverlin.project-repository-coordination');
-const sharedRepositoryState = globalThis as typeof globalThis & {
-  [repositoryCoordinationKey]?: RepositoryCoordination;
-};
-const sharedRepositoryCoordination = (sharedRepositoryState[repositoryCoordinationKey] ??= {
-  writeTails: new Map(),
-  subscribers: new Map()
-});
-
-/** Raised when a requested project directory does not exist. */
+/** Raised when a requested active project does not exist. */
 export class ProjectNotFoundError extends Error {
   constructor(projectId: string) {
     super(`Unknown project ${projectId}.`);
@@ -82,243 +67,7 @@ export class ProjectConflictError extends Error {
   }
 }
 
-/** Filesystem-backed project repository with atomic appends and live subscribers. */
-export class FileProjectRepository {
-  /** Absolute storage root containing project directories. */
-  readonly root: string;
-  readonly #writeTails: Map<ProjectId, Promise<void>>;
-  readonly #subscribers: Map<ProjectId, Set<(events: ProjectEvent[]) => void>>;
-
-  /** Create a repository rooted at the configured project directory. */
-  constructor(root = projectStorageRoot(), shareProcessCoordination = false) {
-    this.root = root;
-    const coordination = shareProcessCoordination
-      ? sharedRepositoryCoordination
-      : { writeTails: new Map(), subscribers: new Map() };
-    this.#writeTails = coordination.writeTails;
-    this.#subscribers = coordination.subscribers;
-  }
-
-  /** Prepare the durable root and remove only unmistakable abandoned staging entries. */
-  async initialize(): Promise<void> {
-    await mkdir(this.root, { recursive: true });
-    const entries = await readdir(this.root, { withFileTypes: true });
-    await Promise.all(
-      entries
-        .filter((entry) => entry.name.startsWith('.') && entry.name.endsWith('.tmp'))
-        .map((entry) => rm(path.join(this.root, entry.name), { recursive: true, force: true }))
-    );
-  }
-
-  /** List project summaries ordered from most recently updated. */
-  async list(_ownerUserId?: string): Promise<ProjectSummary[]> {
-    await mkdir(this.root, { recursive: true });
-    const entries = await readdir(this.root, { withFileTypes: true });
-    const summaries = await Promise.allSettled(
-      entries
-        .filter((entry) => entry.isDirectory() && isProjectId(entry.name))
-        .map(async (entry) => summarizeProject(await this.load(entry.name)))
-    );
-    return summaries
-      .filter(
-        (result): result is PromiseFulfilledResult<ProjectSummary> => result.status === 'fulfilled'
-      )
-      .map(({ value }) => value)
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  }
-
-  /** Persist a new validated project document. */
-  async create(document: ProjectDocument, _ownerUserId?: string): Promise<ProjectDocument> {
-    assertProjectId(document.projectId);
-    normalizeProjectV1(document);
-    const directory = this.projectDirectory(document.projectId);
-    const staging = path.join(this.root, `.${document.projectId}.${randomUUID()}.tmp`);
-    await mkdir(this.root, { recursive: true });
-    await mkdir(staging, { recursive: false });
-    try {
-      await writeDurableFile(path.join(staging, 'project.json'), encodeDocument(document));
-      await syncDirectory(staging);
-      await rename(staging, directory);
-      await syncDirectory(this.root);
-    } finally {
-      await rm(staging, { recursive: true, force: true });
-    }
-    return structuredClone(document);
-  }
-
-  /** Load and validate a project document from disk. */
-  async load(projectId: ProjectId): Promise<ProjectDocument> {
-    assertProjectId(projectId);
-    try {
-      const source = await readBoundedFile(
-        this.documentPath(projectId),
-        maxProjectDocumentBytes,
-        'Project document'
-      );
-      return normalizeProjectV1(JSON.parse(source.toString('utf8')));
-    } catch (error) {
-      if (isMissing(error)) throw new ProjectNotFoundError(projectId);
-      throw error;
-    }
-  }
-
-  /** Atomically append events if the supplied project head is still current. */
-  async append(
-    projectId: ProjectId,
-    expectedHead: number,
-    pendingEvents: NewProjectEvent[],
-    resources: readonly ProjectResourceBlob[] = []
-  ): Promise<ProjectAppendResult> {
-    return this.withWriteLock(projectId, async () => {
-      const document = await this.load(projectId);
-      const head = document.events.at(-1)!;
-      if (head.id !== expectedHead) throw new ProjectConflictError();
-
-      const events = pendingEvents.map(
-        (pending, index): ProjectEvent => ({ ...pending, id: head.id + index + 1 }) as ProjectEvent
-      );
-
-      const next = normalizeProjectV1({ ...document, events: [...document.events, ...events] });
-      await Promise.all(resources.map((resource) => this.writeResource(projectId, resource)));
-      await this.writeDocument(next);
-      this.publish(projectId, events);
-      return { document: structuredClone(next), events: structuredClone(events) };
-    });
-  }
-
-  /** Read one immutable content-addressed resource belonging to a project. */
-  async readResource(projectId: ProjectId, resourceId: string): Promise<Uint8Array> {
-    assertProjectId(projectId);
-    assertResourceId(resourceId);
-    try {
-      return await readBoundedFile(
-        this.resourcePath(projectId, resourceId),
-        maxProjectResourceBytes,
-        'Project resource'
-      );
-    } catch (error) {
-      if (isMissing(error)) throw new ProjectResourceNotFoundError(resourceId);
-      throw error;
-    }
-  }
-
-  /** Return a stable suffix of the immutable Timeline. */
-  async eventsAfter(projectId: ProjectId, after: number): Promise<ProjectEvent[]> {
-    const document = await this.load(projectId);
-    return document.events.filter(({ id }) => id > after);
-  }
-
-  /** Remove all local projects; intended only for explicit administrative reset. */
-  async deleteAll(): Promise<void> {
-    await rm(this.root, { recursive: true, force: true });
-    await mkdir(this.root, { recursive: true });
-  }
-
-  /** Subscribe to events after they have been durably appended. */
-  subscribe(projectId: ProjectId, listener: (events: ProjectEvent[]) => void): () => void {
-    assertProjectId(projectId);
-    const subscribers = this.#subscribers.get(projectId) ?? new Set();
-    subscribers.add(listener);
-    this.#subscribers.set(projectId, subscribers);
-
-    return () => {
-      subscribers.delete(listener);
-      if (subscribers.size === 0) this.#subscribers.delete(projectId);
-    };
-  }
-
-  private async writeDocument(document: ProjectDocument) {
-    const destination = this.documentPath(document.projectId);
-    const temporary = `${destination}.${randomUUID()}.tmp`;
-    await mkdir(path.dirname(destination), { recursive: true });
-    try {
-      await writeDurableFile(temporary, encodeDocument(document));
-      await rename(temporary, destination);
-      await syncDirectory(path.dirname(destination));
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  }
-
-  private async writeResource(projectId: ProjectId, resource: ProjectResourceBlob) {
-    assertResource(resource);
-    const destination = this.resourcePath(projectId, resource.id);
-    const temporary = `${destination}.${randomUUID()}.tmp`;
-    await mkdir(path.dirname(destination), { recursive: true });
-
-    try {
-      const existing = await readBoundedFile(
-        destination,
-        maxProjectResourceBytes,
-        `Stored resource ${resource.id}`
-      );
-      assertMatchingResource(existing, resource);
-      return;
-    } catch (error) {
-      if (!isMissing(error)) throw error;
-    }
-
-    try {
-      await writeDurableFile(temporary, resource.bytes);
-      try {
-        await link(temporary, destination);
-        await syncDirectory(path.dirname(destination));
-      } catch (error) {
-        if (!isAlreadyExists(error)) throw error;
-        const existing = await readBoundedFile(
-          destination,
-          maxProjectResourceBytes,
-          `Stored resource ${resource.id}`
-        );
-        assertMatchingResource(existing, resource);
-      }
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  }
-
-  private async withWriteLock<T>(projectId: ProjectId, operation: () => Promise<T>) {
-    const previous = this.#writeTails.get(projectId) ?? Promise.resolve();
-    let release!: () => void;
-    const tail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const chain = previous.then(() => tail);
-    this.#writeTails.set(projectId, chain);
-
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-      if (this.#writeTails.get(projectId) === chain) this.#writeTails.delete(projectId);
-    }
-  }
-
-  private publish(projectId: ProjectId, events: ProjectEvent[]) {
-    for (const listener of this.#subscribers.get(projectId) ?? []) {
-      try {
-        listener(structuredClone(events));
-      } catch {
-        // A live delivery failure cannot undo or fail a durable append.
-      }
-    }
-  }
-
-  private projectDirectory(projectId: ProjectId) {
-    return path.join(this.root, projectId);
-  }
-
-  private documentPath(projectId: ProjectId) {
-    return path.join(this.projectDirectory(projectId), 'project.json');
-  }
-
-  private resourcePath(projectId: ProjectId, resourceId: string) {
-    return path.join(this.projectDirectory(projectId), 'resources', resourceId);
-  }
-}
-
-/** PostgreSQL event and resource repository shared by the web and worker services. */
+/** PostgreSQL event and resource repository used by the application service. */
 export class PostgresProjectRepository implements ProjectRepository {
   async initialize(): Promise<void> {
     // Migrations own schema creation; application processes never mutate it implicitly.
@@ -480,9 +229,6 @@ export class PostgresProjectRepository implements ProjectRepository {
       )
       .limit(1);
     if (!row[0]) throw new ProjectResourceNotFoundError(resourceId);
-    if (!row[0].bytes) {
-      throw new Error(`Resource ${resourceId} has not been migrated into PostgreSQL.`);
-    }
     const bytes = Uint8Array.from(row[0].bytes);
     if (
       bytes.byteLength !== row[0].byteLength ||
@@ -517,15 +263,7 @@ export class PostgresProjectRepository implements ProjectRepository {
 }
 
 /** Default repository used by server routes and project operations. */
-export const usesPostgresProjectStore = process.env.SVERLIN_PROJECT_STORE === 'postgres';
-
-export const projectRepository: ProjectRepository = usesPostgresProjectStore
-  ? new PostgresProjectRepository()
-  : new FileProjectRepository(projectStorageRoot(), true);
-
-function projectStorageRoot() {
-  return runtimeProjectDir();
-}
+export const projectRepository: ProjectRepository = new PostgresProjectRepository();
 
 function assertProjectId(projectId: string) {
   if (!isProjectId(projectId)) {
@@ -535,66 +273,6 @@ function assertProjectId(projectId: string) {
 
 function isProjectId(projectId: string) {
   return /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(projectId);
-}
-
-function encodeDocument(document: ProjectDocument) {
-  const bytes = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
-  if (bytes.byteLength > maxProjectDocumentBytes) {
-    throw new Error(`Project document exceeds the ${maxProjectDocumentBytes} byte limit.`);
-  }
-  return bytes;
-}
-
-async function writeDurableFile(destination: string, bytes: Uint8Array) {
-  const handle = await open(destination, 'wx');
-  try {
-    await handle.writeFile(bytes);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function readBoundedFile(destination: string, maximum: number, label: string) {
-  const details = await stat(destination);
-  if (!details.isFile()) throw new Error(`${label} is not a regular file.`);
-  if (details.size > maximum) throw new Error(`${label} exceeds the ${maximum} byte limit.`);
-  const bytes = await readFile(destination);
-  if (bytes.byteLength > maximum) throw new Error(`${label} exceeds the ${maximum} byte limit.`);
-  return bytes;
-}
-
-function assertMatchingResource(existing: Uint8Array, resource: ProjectResourceBlob) {
-  if (!Buffer.from(existing).equals(Buffer.from(resource.bytes))) {
-    throw new Error(`Stored resource ${resource.id} does not match its content address.`);
-  }
-}
-
-async function syncDirectory(directory: string) {
-  if (process.platform === 'win32') return;
-  let handle;
-  try {
-    handle = await open(directory, 'r');
-  } catch (error) {
-    if (isUnsupportedDirectorySync(error)) return;
-    throw error;
-  }
-  try {
-    try {
-      await handle.sync();
-    } catch (error) {
-      if (!isUnsupportedDirectorySync(error)) throw error;
-    }
-  } finally {
-    await handle.close();
-  }
-}
-
-function isUnsupportedDirectorySync(error: unknown) {
-  return (
-    isNodeError(error) &&
-    (error.code === 'EINVAL' || error.code === 'ENOTSUP' || error.code === 'EBADF')
-  );
 }
 
 function assertResource(resource: ProjectResourceBlob) {
@@ -623,16 +301,4 @@ export class ProjectResourceNotFoundError extends Error {
     super(`Unknown project resource ${resourceId}.`);
     this.name = 'ProjectResourceNotFoundError';
   }
-}
-
-function isMissing(error: unknown) {
-  return isNodeError(error) && error.code === 'ENOENT';
-}
-
-function isAlreadyExists(error: unknown) {
-  return isNodeError(error) && error.code === 'EEXIST';
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
 }

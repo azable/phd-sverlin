@@ -1,32 +1,29 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
+const mocks = vi.hoisted(() => ({ eventsAfter: vi.fn() }));
+
+vi.mock('$lib/server/authorization', () => ({ requireProjectAccess: vi.fn() }));
+vi.mock('$lib/server/projects/repository', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/projects/repository')>()),
+  projectRepository: { eventsAfter: mocks.eventsAfter }
+}));
+
 const operationId = '12345678-1234-4123-8123-123456789abc';
-let projectRoot: string;
 
-beforeEach(async () => {
-  vi.resetModules();
-  projectRoot = await mkdtemp(path.join(tmpdir(), 'sverlin-event-route-test-'));
-  process.env.SVERLIN_PROJECT_DIR = projectRoot;
-});
-
-afterEach(async () => {
-  delete process.env.SVERLIN_PROJECT_DIR;
-  await rm(projectRoot, { recursive: true, force: true });
+beforeEach(() => {
+  mocks.eventsAfter.mockReset();
 });
 
 describe('project event delta', () => {
   it('resumes from a durable event position without duplicates', async () => {
-    const { projectRepository } = await import('$lib/server/projects/repository');
     const { GET } = await import('./+server');
-    await projectRepository.create(rootDocument());
-    await projectRepository.append('stream-test', 1, [renameEvent('A')]);
+    mocks.eventsAfter.mockResolvedValueOnce([
+      rootDocument().events[0],
+      { ...renameEvent('A'), id: 2 }
+    ]);
 
     const url = new URL('http://localhost/api/projects/stream-test/events?after=0');
     const response = await GET({
@@ -40,7 +37,7 @@ describe('project event delta', () => {
       events: [{ id: 1 }, { id: 2, payload: { title: 'A' } }]
     });
 
-    await projectRepository.append('stream-test', 2, [renameEvent('B')]);
+    mocks.eventsAfter.mockResolvedValueOnce([{ ...renameEvent('B'), id: 3 }]);
     const nextUrl = new URL('http://localhost/api/projects/stream-test/events?after=2');
     const next = await GET({
       locals: testLocals(),

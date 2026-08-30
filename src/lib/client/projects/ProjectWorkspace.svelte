@@ -40,7 +40,6 @@
     templates: ProjectTemplateSummary[];
     authEnabled?: boolean;
     isAdmin?: boolean;
-    initialJobId?: string;
     at?: EventId;
     devMode?: boolean;
   };
@@ -50,7 +49,6 @@
     templates,
     authEnabled = false,
     isAdmin = false,
-    initialJobId,
     at,
     devMode = false
   }: Props = $props();
@@ -95,9 +93,13 @@
   });
 
   onMount(() => {
-    void session.open().then(() => (initialJobId ? session.resumeJob(initialJobId) : undefined));
+    void openProject();
     return () => session.dispose();
   });
+
+  async function openProject() {
+    await session.open();
+  }
 
   $effect(() => {
     const selectedAt = at;

@@ -1,17 +1,13 @@
 /** Bounded, process-wide admission for memory-heavy compiler children. */
 
-export type CompilePriority = 'foreground' | 'prefetch';
-
 /** Non-sensitive compiler admission state exposed by readiness diagnostics. */
 export type CompileSchedulerStatus = {
   accepting: boolean;
-  active: CompilePriority | undefined;
-  queuedForeground: number;
-  queuedPrefetch: number;
+  active: boolean;
+  queued: number;
 };
 
 type QueueEntry<T> = {
-  priority: CompilePriority;
   controller: AbortController;
   signal?: AbortSignal;
   run: (signal: AbortSignal) => Promise<T>;
@@ -36,7 +32,7 @@ export class CompilerShuttingDownError extends Error {
   }
 }
 
-/** One-worker scheduler that gives foreground requests priority over disposable prefetch. */
+/** One-process scheduler that serializes memory-heavy visualization generation. */
 export class CompileScheduler {
   readonly #maxQueuedForeground: number;
   readonly #queue: QueueEntry<unknown>[] = [];
@@ -47,38 +43,17 @@ export class CompileScheduler {
     this.#maxQueuedForeground = maxQueuedForeground;
   }
 
-  /** Queue compiler work, cancelling active speculative work for foreground demand. */
-  run<T>(
-    priority: CompilePriority,
-    task: (signal: AbortSignal) => Promise<T>,
-    signal?: AbortSignal
-  ): Promise<T> {
+  /** Queue compiler work within a small, explicit admission bound. */
+  run<T>(task: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (!this.#accepting) return Promise.reject(new CompilerShuttingDownError());
     if (signal?.aborted) return Promise.reject(abortError());
 
-    if (priority === 'foreground' && this.#active) {
-      const queuedForeground = this.#queue.filter(
-        (entry) => entry.priority === 'foreground'
-      ).length;
-      const waitingLimit =
-        this.#active.priority === 'prefetch'
-          ? Math.max(1, this.#maxQueuedForeground)
-          : this.#maxQueuedForeground;
-      if (queuedForeground >= waitingLimit) {
-        return Promise.reject(new CompileQueueFullError());
-      }
-    }
-    if (
-      priority === 'prefetch' &&
-      (this.#active?.priority === 'prefetch' ||
-        this.#queue.some((entry) => entry.priority === 'prefetch'))
-    ) {
+    if (this.#active && this.#queue.length >= this.#maxQueuedForeground) {
       return Promise.reject(new CompileQueueFullError());
     }
 
     return new Promise<T>((resolve, reject) => {
       const entry: QueueEntry<T> = {
-        priority,
         controller: new AbortController(),
         signal,
         run: task,
@@ -100,37 +75,27 @@ export class CompileScheduler {
         entry.detachAbort = () => signal.removeEventListener('abort', abort);
       }
 
-      const insertion = this.#queue.findIndex((queued) => queued.priority === 'prefetch');
-      if (priority === 'foreground' && insertion >= 0) {
-        this.#queue.splice(insertion, 0, queuedEntry);
-      } else {
-        this.#queue.push(queuedEntry);
-      }
-
-      if (priority === 'foreground' && this.#active?.priority === 'prefetch') {
-        this.#active.controller.abort();
-      }
+      this.#queue.push(queuedEntry);
       this.#pump();
     });
   }
 
-  /** Stop admission and cancel queued/speculative work for graceful shutdown. */
+  /** Stop admission and cancel queued or active work for graceful shutdown. */
   shutdown(): void {
     this.#accepting = false;
     for (const entry of this.#queue.splice(0)) {
       entry.detachAbort?.();
       entry.reject(new CompilerShuttingDownError());
     }
-    if (this.#active?.priority === 'prefetch') this.#active.controller.abort();
+    this.#active?.controller.abort();
   }
 
   /** Current non-sensitive scheduler state for readiness and diagnostics. */
   status(): CompileSchedulerStatus {
     return {
       accepting: this.#accepting,
-      active: this.#active?.priority,
-      queuedForeground: this.#queue.filter(({ priority }) => priority === 'foreground').length,
-      queuedPrefetch: this.#queue.filter(({ priority }) => priority === 'prefetch').length
+      active: Boolean(this.#active),
+      queued: this.#queue.length
     };
   }
 

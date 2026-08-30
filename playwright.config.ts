@@ -20,17 +20,14 @@ export default defineConfig({
     video: 'retain-on-failure'
   },
   webServer: {
-    command:
-      'pnpm run prepare:compiler && node scripts/run-with-state-lock.mjs node node_modules/vite/bin/vite.js dev --host 127.0.0.1 --port 4173 --strictPort',
-    url: 'http://127.0.0.1:4173/projects/__ready__',
+    command: 'node scripts/run-with-test-database.mjs --seed-admin node scripts/start-e2e.mjs',
+    url: 'http://127.0.0.1:4173/api/health/ready',
     gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     reuseExistingServer: false,
     timeout: 180_000,
     env: {
-      SVERLIN_STATE_DIR: path.join(outputRoot, 'state'),
       SVERLIN_SCRATCH_DIR: path.join(outputRoot, 'compiler'),
-      SVERLIN_E2E_AUTH_BYPASS: 'true',
-      SVERLIN_PROJECT_STORE: 'file'
+      SVERLIN_E2E_AUTH_BYPASS: 'true'
     }
   }
 });

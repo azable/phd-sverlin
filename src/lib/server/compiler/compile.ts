@@ -26,7 +26,7 @@ import {
   preparedCompilerEnvironment,
   readPreparedCompiler
 } from './prepared-compiler.js';
-import { compilerScheduler, type CompilePriority } from './scheduler';
+import { compilerScheduler } from './scheduler';
 import { createCompileOutput } from './workspace-output.js';
 
 /** Process and diagnostic metadata captured for one compiler invocation. */
@@ -41,7 +41,6 @@ export type CompileDebug = {
   exitCode: number | null;
   stdout: string;
   stderr: string;
-  prefetched?: boolean;
   error?: string;
 };
 
@@ -86,7 +85,6 @@ export type CompileSourceOptions = {
   sourceLabel: string;
   seed: number;
   owner: string;
-  priority?: CompilePriority;
   signal?: AbortSignal;
 };
 
@@ -149,7 +147,7 @@ const compileManifestSchema = v.strictObject({
 export async function compileSource(
   options: CompileSourceOptions
 ): Promise<CompileVisualizationResult> {
-  const { sourceContent, sourceLabel, seed, owner, priority = 'foreground', signal } = options;
+  const { sourceContent, sourceLabel, seed, owner, signal } = options;
   const cwd = process.cwd();
   if (Buffer.byteLength(sourceContent, 'utf8') > maxCompileSourceBytes) {
     const error = `Compile source exceeds the ${maxCompileSourceBytes} byte limit.`;
@@ -227,7 +225,6 @@ export async function compileSource(
   let debug: CompileRun;
   try {
     debug = await compilerScheduler.run(
-      priority,
       (scheduledSignal) =>
         runCompile(command, args, cwd, timeoutMs, {
           signal: scheduledSignal,

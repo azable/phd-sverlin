@@ -1,5 +1,5 @@
 {
-  "id": "d12c66ab-f901-4b39-9251-c57ea1f841f0",
+  "id": "4ab18faf-55d8-4233-8b9f-d35657e92d18",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -359,9 +359,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "pathname": {
-          "name": "pathname",
-          "type": "text",
+        "bytes": {
+          "name": "bytes",
+          "type": "bytea",
           "primaryKey": false,
           "notNull": true
         },

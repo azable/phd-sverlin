@@ -90,6 +90,7 @@ export default defineConfig(
   },
   {
     files: ['src/lib/server/**/*.{ts,js}'],
+    ignores: ['src/lib/server/compiler/**'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -98,6 +99,10 @@ export default defineConfig(
             {
               group: ['$lib/client/**'],
               message: 'Server modules cannot depend on browser-only code.'
+            },
+            {
+              group: ['$lib/server/compiler/*', '$lib/server/compiler/**'],
+              message: 'Use the public $lib/server/compiler service boundary.'
             }
           ]
         }

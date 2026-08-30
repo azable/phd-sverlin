@@ -1,30 +1,15 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
-import {
-  FileProjectRepository,
-  ProjectConflictError,
-  type ProjectResourceBlob
-} from './repository';
+import { MemoryProjectRepository } from './memory-repository.test-support';
+import { ProjectConflictError, type ProjectResourceBlob } from './repository';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
-const temporaryRoots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
-  );
-});
-
-describe('FileProjectRepository', () => {
-  it('persists and lists validated self-contained documents', async () => {
-    const repository = await temporaryRepository();
+describe('MemoryProjectRepository test fake', () => {
+  it('stores, loads, and owner-scopes validated documents', async () => {
+    const repository = new MemoryProjectRepository();
     await repository.create(rootDocument());
 
     expect(await repository.load('repository-test')).toEqual(rootDocument());
@@ -34,27 +19,9 @@ describe('FileProjectRepository', () => {
     });
   });
 
-  it('cleans abandoned staging directories and skips incomplete project entries', async () => {
-    const repository = await temporaryRepository();
-    const root = temporaryRoots.at(-1)!;
-    await mkdir(path.join(root, '.abandoned.tmp'));
-    await mkdir(path.join(root, 'incomplete-project'));
-    await writeFile(path.join(root, 'incomplete-project', 'project.json'), '{not-json');
-
-    await repository.initialize();
+  it('assigns numeric IDs and rejects a concurrent stale head', async () => {
+    const repository = new MemoryProjectRepository();
     await repository.create(rootDocument());
-
-    expect(await repository.list()).toHaveLength(1);
-    await expect(pathExists(path.join(root, '.abandoned.tmp'))).resolves.toBe(false);
-  });
-
-  it('assigns numeric IDs, publishes only durable appends, and rejects a stale head', async () => {
-    const repository = await temporaryRepository();
-    await repository.create(rootDocument());
-    const published: number[][] = [];
-    const unsubscribe = repository.subscribe('repository-test', (events) => {
-      published.push(events.map(({ id }) => id));
-    });
 
     const results = await Promise.allSettled([
       repository.append('repository-test', 1, [renameEvent('A')]),
@@ -66,15 +33,10 @@ describe('FileProjectRepository', () => {
       reason: expect.any(ProjectConflictError)
     });
     expect((await repository.load('repository-test')).events.map(({ id }) => id)).toEqual([1, 2]);
-    expect(published).toEqual([[2]]);
-
-    unsubscribe();
-    await repository.append('repository-test', 2, [renameEvent('C')]);
-    expect(published).toEqual([[2]]);
   });
 
   it('verifies, deduplicates, and serves immutable content-addressed resources', async () => {
-    const repository = await temporaryRepository();
+    const repository = new MemoryProjectRepository();
     await repository.create(rootDocument());
     const resource = resourceBlob('font bytes');
 
@@ -93,22 +55,6 @@ describe('FileProjectRepository', () => {
     ).rejects.toThrow('unexpected byte length');
   });
 });
-
-async function pathExists(destination: string) {
-  try {
-    await readdir(destination);
-    return true;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
-    throw error;
-  }
-}
-
-async function temporaryRepository() {
-  const root = await mkdtemp(path.join(tmpdir(), 'sverlin-project-repository-'));
-  temporaryRoots.push(root);
-  return new FileProjectRepository(root);
-}
 
 function rootDocument(): ProjectDocument {
   return {

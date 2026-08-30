@@ -22,15 +22,12 @@
       });
       const value = (await response.json()) as {
         projectId?: string;
-        jobId?: string;
         error?: string;
       };
       if (!response.ok || !value.projectId)
         throw new Error(value.error || 'Project creation failed.');
       const path = resolve('/projects/[projectId]', { projectId: value.projectId });
-      // The route is resolved above; the optional query resumes durable work.
-      // eslint-disable-next-line svelte/no-navigation-without-resolve
-      await goto(value.jobId ? `${path}?job=${encodeURIComponent(value.jobId)}` : path);
+      await goto(path);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Project creation failed.';
     } finally {

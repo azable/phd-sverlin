@@ -1,11 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ createProject: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createProjectSkeleton: vi.fn(), accept: vi.fn() }));
 
-vi.mock('$lib/server/projects/service', () => ({ createProject: mocks.createProject }));
+vi.mock('$lib/server/projects/service', () => ({
+  createProjectSkeleton: mocks.createProjectSkeleton
+}));
+vi.mock('$lib/server/projects/operations', () => ({
+  projectOperationExecutor: { accept: mocks.accept }
+}));
 
 beforeEach(() => {
-  mocks.createProject.mockReset().mockResolvedValue({ projectId: 'project-created' });
+  mocks.createProjectSkeleton.mockReset().mockResolvedValue({
+    document: { projectId: 'project-created', events: [{}, {}] }
+  });
+  mocks.accept.mockReset().mockResolvedValue({
+    projectId: 'project-created',
+    operationId: '12345678-1234-4123-8123-123456789abc',
+    acceptedEventId: 3
+  });
 });
 
 describe('project creation API', () => {
@@ -13,23 +25,39 @@ describe('project creation API', () => {
     const { POST } = await import('./+server');
     const response = await POST(request({ templateId: 'linear-search' }));
 
-    expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toEqual({ projectId: 'project-created' });
-    expect(mocks.createProject).toHaveBeenCalledWith({
-      creation: { templateId: 'linear-search' },
-      ownerUserId: 'user-test'
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({
+      projectId: 'project-created',
+      operationId: '12345678-1234-4123-8123-123456789abc',
+      acceptedEventId: 3
     });
+    expect(mocks.createProjectSkeleton).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creation: { templateId: 'linear-search' },
+        ownerUserId: 'user-test',
+        operationId: expect.any(String)
+      })
+    );
+    expect(mocks.accept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-created',
+        expectedHead: 2,
+        command: { type: 'initial-render', seed: expect.any(Number) }
+      })
+    );
   });
 
   it('uses the blank template for an empty request', async () => {
     const { POST } = await import('./+server');
     const response = await POST(request());
 
-    expect(response.status).toBe(201);
-    expect(mocks.createProject).toHaveBeenCalledWith({
-      creation: { templateId: 'blank' },
-      ownerUserId: 'user-test'
-    });
+    expect(response.status).toBe(202);
+    expect(mocks.createProjectSkeleton).toHaveBeenCalledWith(
+      expect.objectContaining({
+        creation: { templateId: 'blank' },
+        ownerUserId: 'user-test'
+      })
+    );
   });
 
   it('rejects malformed and legacy mode requests before project creation', async () => {
@@ -39,12 +67,14 @@ describe('project creation API', () => {
 
     expect(malformed.status).toBe(400);
     expect(unknownTemplate.status).toBe(400);
-    expect(mocks.createProject).not.toHaveBeenCalled();
+    expect(mocks.createProjectSkeleton).not.toHaveBeenCalled();
   });
 
   it('reports a syntactically valid template that is absent from the catalog', async () => {
     const { UnknownProjectTemplateError } = await import('$lib/server/projects/starter-catalog');
-    mocks.createProject.mockRejectedValueOnce(new UnknownProjectTemplateError('missing-template'));
+    mocks.createProjectSkeleton.mockRejectedValueOnce(
+      new UnknownProjectTemplateError('missing-template')
+    );
     const { POST } = await import('./+server');
 
     const response = await POST(request({ templateId: 'missing-template' }));

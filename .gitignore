@@ -13,6 +13,7 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+/build-analysis
 /build-migrate
 /build-worker
 

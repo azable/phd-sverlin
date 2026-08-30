@@ -17,6 +17,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('crypto', { randomUUID: () => operationId });
   navigation.goto.mockReset();
 });
 
@@ -26,11 +27,25 @@ afterEach(() => {
 });
 
 describe('ProjectSession', () => {
-  it('installs a synchronous command resource without navigating or reconnecting', async () => {
+  it('waits for the Timeline operation terminal without navigating', async () => {
     const initial = projectResource([createdEvent()], 'Initial');
-    const renamed = renamedEvent(2, operationId, 'Initial', 'Renamed');
-    const resulting = projectResource([...initial.document.events, renamed], 'Renamed');
-    fetchMock.mockResolvedValueOnce(response(initial)).mockResolvedValueOnce(response(resulting));
+    const accepted = operationAcceptedEvent(2, 'rename');
+    const acceptedResource = projectResource([...initial.document.events, accepted], 'Initial');
+    const renamed = renamedEvent(3, operationId, 'Initial', 'Renamed');
+    const completed = operationCompletedEvent(4, 'rename');
+    fetchMock
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ projectId: 'project-test', operationId, acceptedEventId: 2 }),
+          {
+            status: 202,
+            headers: { 'content-type': 'application/json' }
+          }
+        )
+      )
+      .mockResolvedValueOnce(response(acceptedResource))
+      .mockResolvedValueOnce(eventResponse([renamed, completed]));
 
     const session = createSession();
     await session.open();
@@ -38,9 +53,9 @@ describe('ProjectSession', () => {
     await expect(session.runCommand({ type: 'rename', title: 'Renamed' })).resolves.toBe(true);
 
     expect(session.snapshot.title).toBe('Renamed');
-    expect(session.head).toBe(2);
+    expect(session.head).toBe(4);
     expect(session.atHead).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(navigation.goto).not.toHaveBeenCalled();
   });
 
@@ -93,7 +108,7 @@ describe('ProjectSession', () => {
 
   it('creates a project from an explicit template and preserves Dev detail', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ projectId: 'dev-project', jobId: 'initial-job' }), {
+      new Response(JSON.stringify({ projectId: 'dev-project', operationId }), {
         status: 202,
         headers: { 'content-type': 'application/json' }
       })
@@ -107,7 +122,7 @@ describe('ProjectSession', () => {
     expect(JSON.parse(String(request[1].body))).toEqual({
       templateId: 'linear-search'
     });
-    expect(navigation.goto).toHaveBeenCalledWith('/projects/dev-project?dev=1&job=initial-job');
+    expect(navigation.goto).toHaveBeenCalledWith('/projects/dev-project?dev=1');
     expect(session.creating).toBe(false);
   });
 
@@ -209,5 +224,30 @@ function assistantEvent(id: number): ProjectEventOf<'assistant.responded'> {
     operationId,
     createdAt: `2026-01-01T00:00:0${id}.000Z`,
     payload: { text: 'Done' }
+  };
+}
+
+function operationAcceptedEvent(id: number, kind: 'rename'): ProjectEventOf<'operation.accepted'> {
+  return {
+    id,
+    type: 'operation.accepted',
+    actor: { kind: 'user' },
+    operationId,
+    createdAt: `2026-01-01T00:00:0${id}.000Z`,
+    payload: { kind }
+  };
+}
+
+function operationCompletedEvent(
+  id: number,
+  kind: 'rename'
+): ProjectEventOf<'operation.completed'> {
+  return {
+    id,
+    type: 'operation.completed',
+    actor: { kind: 'system' },
+    operationId,
+    createdAt: `2026-01-01T00:00:0${id}.000Z`,
+    payload: { kind }
   };
 }

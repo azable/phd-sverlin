@@ -34,6 +34,24 @@ const presenters = {
     details('Project created', event.payload.title, 'default', 'Creating the project…'),
   'project.renamed': (event) =>
     details('Project renamed', event.payload.title, 'default', 'Updating the project…'),
+  'operation.accepted': (event) =>
+    details(
+      'Operation accepted',
+      operationLabel(event.payload.kind),
+      'default',
+      `${operationLabel(event.payload.kind)}…`
+    ),
+  'operation.completed': (event) =>
+    details('Operation completed', operationLabel(event.payload.kind), 'default', 'Finishing…'),
+  'operation.failed': (event) =>
+    details(
+      'Operation failed',
+      event.payload.message,
+      'failure',
+      'Finishing with an error…',
+      false,
+      'destructive'
+    ),
   'feedback.submitted': (event) =>
     details(
       'Feedback submitted',
@@ -139,4 +157,8 @@ function details(
   tone: TimelineEventPresentation['tone'] = 'default'
 ): TimelineEventPresentation {
   return { title, detail, icon, progress, restorable, tone };
+}
+
+function operationLabel(kind: string): string {
+  return kind.replaceAll('-', ' ');
 }

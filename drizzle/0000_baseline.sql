@@ -1,3 +1,12 @@
+-- This repository deliberately restarted from one PostgreSQL baseline. Applying
+-- it once removes the superseded application and pg-boss schemas, including all
+-- prior auth/project data; Drizzle records the baseline so later deploys skip it.
+DROP SCHEMA IF EXISTS "pgboss" CASCADE;
+--> statement-breakpoint
+DROP SCHEMA IF EXISTS "public" CASCADE;
+--> statement-breakpoint
+CREATE SCHEMA "public";
+--> statement-breakpoint
 CREATE TABLE "auth_account" (
 	"id" text PRIMARY KEY NOT NULL,
 	"issuer" text NOT NULL,
@@ -42,7 +51,7 @@ CREATE TABLE "project_event" (
 CREATE TABLE "project_resource" (
 	"project_id" varchar(128) NOT NULL,
 	"resource_id" varchar(80) NOT NULL,
-	"pathname" text NOT NULL,
+	"bytes" "bytea" NOT NULL,
 	"sha256" varchar(64) NOT NULL,
 	"byte_length" integer NOT NULL,
 	"media_type" text NOT NULL,

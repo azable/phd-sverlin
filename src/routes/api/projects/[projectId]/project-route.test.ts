@@ -2,22 +2,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   loadProjectResource: vi.fn(),
-  renameProject: vi.fn(),
-  renderProject: vi.fn(),
-  restoreProjectArtifacts: vi.fn(),
-  updateProjectArtifact: vi.fn(),
-  submitProjectFeedback: vi.fn()
+  accept: vi.fn()
 }));
 
-vi.mock('$lib/server/projects/service', () => mocks);
-vi.mock('$lib/server/projects/commands', () => ({
-  submitProjectFeedback: mocks.submitProjectFeedback
+vi.mock('$lib/server/projects/service', () => ({
+  loadProjectResource: mocks.loadProjectResource
+}));
+vi.mock('$lib/server/projects/operations', () => ({
+  projectOperationExecutor: { accept: mocks.accept }
+}));
+vi.mock('$lib/server/authorization', () => ({
+  requireProjectAccess: vi.fn(async (locals) => locals.principal),
+  projectListOwner: vi.fn(() => 'user-test')
 }));
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 
 beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset().mockResolvedValue(undefined));
+  mocks.accept.mockResolvedValue({
+    projectId: 'project-test',
+    operationId,
+    acceptedEventId: 5
+  });
   mocks.loadProjectResource.mockResolvedValue({
     document: { schemaVersion: 1, projectId: 'project-test', events: [] },
     projects: []
@@ -25,7 +32,7 @@ beforeEach(() => {
 });
 
 describe('project JSON API', () => {
-  it('dispatches a validated command and returns the authoritative project resource', async () => {
+  it('accepts a validated command and returns its Timeline operation', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
@@ -36,17 +43,23 @@ describe('project JSON API', () => {
       })
     );
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      document: { projectId: 'project-test' }
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({
+      projectId: 'project-test',
+      operationId,
+      acceptedEventId: 5
     });
-    expect(mocks.renameProject).toHaveBeenCalledWith({
+    expect(mocks.accept).toHaveBeenCalledWith({
       projectId: 'project-test',
       operationId,
       expectedHead: 4,
-      title: 'Renamed'
+      command: {
+        type: 'rename',
+        operationId,
+        expectedHead: 4,
+        title: 'Renamed'
+      }
     });
-    expect(mocks.loadProjectResource).toHaveBeenCalledWith('project-test', 'user-test');
   });
 
   it('returns structured client and conflict errors', async () => {
@@ -57,7 +70,7 @@ describe('project JSON API', () => {
 
     const conflict = new Error('stale');
     conflict.name = 'ProjectConflictError';
-    mocks.renderProject.mockRejectedValueOnce(conflict);
+    mocks.accept.mockRejectedValueOnce(conflict);
     const stale = await POST(
       request('POST', { type: 'render', operationId, expectedHead: 2, seed: 1 })
     );
@@ -79,9 +92,13 @@ describe('project JSON API', () => {
       })
     );
 
-    expect(response.status).toBe(200);
-    expect(mocks.submitProjectFeedback).toHaveBeenCalledWith(
-      expect.objectContaining({ selection: { render: 3, step: 0, instances: [0] } })
+    expect(response.status).toBe(202);
+    expect(mocks.accept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.objectContaining({
+          selection: { render: 3, step: 0, instances: [0] }
+        })
+      })
     );
   });
 });

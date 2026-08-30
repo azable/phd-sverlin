@@ -40,7 +40,7 @@ test('new project combines template selection with the current Dev-detail prefer
     .click({ noWaitAfter: true });
 
   const created = await creationResponse;
-  expect(created.status()).toBe(201);
+  expect(created.status()).toBe(202);
   expect(created.request().postDataJSON()).toEqual({ templateId: 'blank' });
   createdProjectId = ((await created.json()) as { projectId: string }).projectId;
   expect(createdProjectId).not.toBe(projectId);
@@ -81,8 +81,21 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
 
 async function createProject(request: APIRequestContext, templateId: string): Promise<string> {
   const response = await request.post('/api/projects', { data: { templateId } });
-  expect(response.status()).toBe(201);
-  return ((await response.json()) as { projectId: string }).projectId;
+  expect(response.status()).toBe(202);
+  const created = (await response.json()) as { projectId: string; operationId: string };
+  await expect
+    .poll(async () => {
+      const project = await request.get(`/api/projects/${created.projectId}`);
+      if (!project.ok()) return `http-${project.status()}: ${await project.text()}`;
+      const resource = (await project.json()) as ProjectResourceView;
+      return resource.document.events.findLast(
+        (event) =>
+          event.operationId === created.operationId &&
+          (event.type === 'operation.completed' || event.type === 'operation.failed')
+      )?.type;
+    })
+    .toBe('operation.completed');
+  return created.projectId;
 }
 
 function observeBrowserFailures(page: Page): () => string[] {
@@ -110,6 +123,8 @@ type ProjectResourceView = {
   document: {
     projectId: string;
     events: Array<{
+      type: string;
+      operationId: string;
       payload: { creation?: { templateId: string }; [key: string]: unknown };
     }>;
   };

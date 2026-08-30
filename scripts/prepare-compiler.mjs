@@ -78,7 +78,7 @@ async function stackGhcEnvironment() {
   const [snapshotDb, localDb, packages] = await Promise.all([
     run('stack', ['path', '--snapshot-pkg-db'], { captureStdout: true }),
     run('stack', ['path', '--local-pkg-db'], { captureStdout: true }),
-    run('stack', ['exec', '--', 'ghc-pkg', 'field', '*', 'id', '--simple-output'], {
+    run('stack', ['exec', '--', 'ghc-pkg', 'field', 'compile', 'id,depends'], {
       captureStdout: true
     })
   ]);
@@ -90,12 +90,21 @@ async function stackGhcEnvironment() {
     'global-package-db',
     `package-db ${snapshotDb.stdout.trim()}`,
     `package-db ${localDb.stdout.trim()}`,
-    ...packages.stdout
-      .trim()
-      .split(/\s+/)
-      .map((packageId) => `package-id ${packageId}`),
+    ...localPackageClosure(packages.stdout).map((packageId) => `package-id ${packageId}`),
     ''
   ].join('\n');
+}
+
+function localPackageClosure(fields) {
+  const packageIds = fields
+    .replace(/^id:\s*/m, '')
+    .replace(/^depends:\s*/m, '')
+    .trim()
+    .split(/\s+/);
+  if (!packageIds.some((packageId) => packageId.startsWith('compile-'))) {
+    throw new Error('The prepared GHC environment is missing the local compile package.');
+  }
+  return packageIds;
 }
 
 function signalExitCode(signal) {

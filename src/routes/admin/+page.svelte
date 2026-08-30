@@ -76,8 +76,14 @@
           Exports contain research data and verified resources, not authentication secrets.
         </p>
       </div>
-      <Button href={resolve('/admin/exports/study')} variant="outline">Download study export</Button
-      >
+      <div class="flex flex-wrap justify-end gap-2">
+        <Button href={resolve('/admin/exports/analysis')} variant="outline">
+          Download analysis export
+        </Button>
+        <Button href={resolve('/admin/exports/study')} variant="outline">
+          Download study export
+        </Button>
+      </div>
     </div>
     {#if data.participants.length === 0}
       <p class="text-muted-foreground">No participants have been provisioned.</p>

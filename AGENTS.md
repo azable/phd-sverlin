@@ -2,7 +2,7 @@
 
 ## Project Context
 
-This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines: local file mode uses `data/projects/`, while the Render target stores events and immutable compiler resources in PostgreSQL. PostgreSQL project commands enter a pg-boss queue and are completed by a separate worker running the Haskell executable; local file-mode commands execute synchronously. The Haskell application generates the data that the SvelteKit application displays.
+This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines in PostgreSQL. The web process accepts asynchronous operations into those Timelines and executes them through a bounded in-process executor; interrupted work is explicitly failed and retried by the user. The compiler is exposed to server code only as a service that accepts `.sverlin` content and one or more seeds. The Haskell application generates the data that the SvelteKit application displays, but that implementation detail does not cross the compiler service boundary.
 
 ## Communication and Documentation
 
@@ -58,7 +58,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.
 - To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
 - To run the SvelteKit application, use `pnpm run dev` from the root directory. This will start the development server, with hot-reloading.
-- With the PostgreSQL project store, run `pnpm run dev:worker` in a second terminal so queued project commands can progress.
+- `pnpm run dev` prepares the compiler and starts the complete SvelteKit service. `pnpm run dev:web` skips compiler preparation but still includes asynchronous project-operation execution; there is no separate worker process.
 
 ## Engineering Rules
 

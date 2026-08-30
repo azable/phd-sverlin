@@ -1,30 +1,26 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
+const mocks = vi.hoisted(() => ({ load: vi.fn(), readResource: vi.fn() }));
+
+vi.mock('$lib/server/authorization', () => ({ requireProjectAccess: vi.fn() }));
+vi.mock('$lib/server/projects/repository', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/projects/repository')>()),
+  projectRepository: { load: mocks.load, readResource: mocks.readResource }
+}));
+
 const operationId = '12345678-1234-4123-8123-123456789abc';
-let projectRoot: string;
 
-beforeEach(async () => {
-  vi.resetModules();
-  projectRoot = await mkdtemp(path.join(tmpdir(), 'sverlin-resource-route-test-'));
-  process.env.SVERLIN_PROJECT_DIR = projectRoot;
-});
-
-afterEach(async () => {
-  delete process.env.SVERLIN_PROJECT_DIR;
-  await rm(projectRoot, { recursive: true, force: true });
+beforeEach(() => {
+  mocks.load.mockReset();
+  mocks.readResource.mockReset();
 });
 
 describe('project compiler resources', () => {
   it('serves only referenced immutable bytes with their exact media type', async () => {
-    const { projectRepository } = await import('$lib/server/projects/repository');
     const { GET } = await import('./+server');
     const bytes = new TextEncoder().encode('font bytes');
     const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -36,8 +32,11 @@ describe('project compiler resources', () => {
       byteLength: bytes.byteLength,
       bytes
     };
-    await projectRepository.create(rootDocument());
-    await projectRepository.append('resource-test', 1, [compilationEvent(resource)], [resource]);
+    mocks.load.mockResolvedValue({
+      ...rootDocument(),
+      events: [...rootDocument().events, { ...compilationEvent(resource), id: 2 }]
+    });
+    mocks.readResource.mockResolvedValue(bytes);
 
     const response = await GET({
       locals: testLocals(),

@@ -15,18 +15,15 @@ import { auth } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import {
-  assertNoActiveProjectJobs,
-  assertProjectQueueIdle,
-  deleteParticipantProjectJobs,
-  listResearchProjectJobs,
-  type ResearchProjectJob
-} from '$lib/server/projects/jobs';
+  assertNoActiveProjectOperations,
+  assertProjectOperationsIdle
+} from '$lib/server/projects/operations';
 import { projectRepository } from '$lib/server/projects/repository';
 import { setParticipantEnabled } from '$lib/server/participants';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
 const exportFormat = 'sverlin-research-export';
-const exportVersion = 1;
+const exportVersion = 2;
 
 type ParticipantSnapshot = {
   id: string;
@@ -58,7 +55,6 @@ type ResourceSnapshot = {
 type ResearchSnapshot = {
   participants: ParticipantSnapshot[];
   projects: ProjectSnapshot[];
-  jobs: ResearchProjectJob[];
 };
 
 export type ResearchExportManifest = {
@@ -82,7 +78,7 @@ export type PreparedResearchExport = {
 export async function prepareParticipantResearchExport(
   userId: string
 ): Promise<PreparedResearchExport> {
-  await assertNoActiveProjectJobs(userId);
+  await assertNoActiveProjectOperations(userId);
   const snapshot = await collectSnapshot(userId);
   const participant = snapshot.participants[0];
   if (!participant) throw new Error('Participant not found.');
@@ -95,7 +91,7 @@ export async function prepareParticipantResearchExport(
 
 /** Build a verified whole-study checkpoint only when no project work is pending. */
 export async function prepareStudyResearchExport(): Promise<PreparedResearchExport> {
-  await assertProjectQueueIdle();
+  await assertProjectOperationsIdle();
   return prepareArchive(await collectSnapshot(), { type: 'study' });
 }
 
@@ -116,7 +112,7 @@ export async function purgeParticipantResearchData(
 
 /** Delete every participant and their live research data while preserving administrators. */
 export async function purgeStudyResearchData(headers: Headers): Promise<number> {
-  await assertProjectQueueIdle();
+  await assertProjectOperationsIdle();
   const participants = await database()
     .select({ id: schema.user.id, name: schema.user.name, username: schema.user.username })
     .from(schema.user)
@@ -249,10 +245,7 @@ async function collectSnapshot(ownerUserId?: string): Promise<ResearchSnapshot> 
     { isolationLevel: 'repeatable read', accessMode: 'read only' }
   );
 
-  const jobs = ownerUserId
-    ? await listResearchProjectJobs(ownerUserId)
-    : await listResearchProjectJobs();
-  return { ...snapshot, jobs };
+  return snapshot;
 }
 
 async function prepareArchive(
@@ -275,14 +268,6 @@ async function prepareArchive(
       const projects = snapshot.projects.filter(
         ({ ownerUserId }) => ownerUserId === participant.id
       );
-      const projectIds = new Set(projects.map(({ id }) => id));
-      appendJson(
-        zip,
-        files,
-        `${participantRoot}/jobs.json`,
-        snapshot.jobs.filter(({ projectId }) => projectIds.has(projectId))
-      );
-
       for (const project of projects) {
         const projectRoot = `${participantRoot}/projects/${safePathSegment(project.id)}`;
         appendJson(zip, files, `${projectRoot}/project.json`, {
@@ -382,13 +367,12 @@ async function purgeParticipant(
   headers: Headers
 ): Promise<void> {
   await setParticipantEnabled(participant.id, false, headers);
-  await assertNoActiveProjectJobs(participant.id);
+  await assertNoActiveProjectOperations(participant.id);
 
   const projectIds = await participantProjectIds(participant.id);
   if (projectIds.length) {
     await database().delete(schema.projects).where(inArray(schema.projects.id, projectIds));
   }
-  await deleteParticipantProjectJobs(participant.id);
   await auth.api.removeUser({ headers, body: { userId: participant.id } });
 }
 

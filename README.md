@@ -2,7 +2,7 @@
 
 Sverlin is a SvelteKit research application for building and reviewing event-sourced visualizations. A Haskell compiler interprets the Sverlin DSL, solves the layout, and produces the visualization data displayed by the browser.
 
-Each project is an immutable Timeline. In the production-style path, SvelteKit queues project commands through pg-boss and a separate worker performs AI generation and compilation. PostgreSQL stores authentication, ownership, events, jobs, and immutable compiler resources.
+Each project is an immutable Timeline stored in PostgreSQL together with authentication, ownership, and content-addressed compiler resources. The SvelteKit server accepts a project operation into that Timeline, executes it asynchronously in the same process, and records a terminal success or failure event. Queue mechanics and compiler implementation details are not part of the browser API.
 
 ## Local development
 
@@ -31,20 +31,19 @@ pnpm run db:migrate
 
 ### 2. Start the application
 
-Start the web app and durable project worker together:
+Start the application:
 
 ```sh
 pnpm run dev
 ```
 
-The first run prepares project-owned compiler source, then pnpm prefixes the web and worker logs in one terminal. To run them separately instead:
+The first run prepares project-owned compiler source, then starts the SvelteKit server. The server owns both HTTP handling and the bounded asynchronous operation executor. To skip preparation when the compiler is already current, run:
 
 ```sh
 pnpm run dev:web
-pnpm run dev:worker
 ```
 
-Open <http://localhost:5173>. VS Code notifies when the port is available but does not open browser windows automatically. Project mutations remain queued if only `dev:web` is running.
+Open <http://localhost:5173>. VS Code notifies when the port is available but does not open browser windows automatically.
 
 ### 3. Create the administrator
 
@@ -59,7 +58,7 @@ Register an administrator passkey. Setup becomes unavailable after the administr
 1. Sign in as the administrator and open `/admin`.
 2. Create a participant ID and copy its generated password.
 3. Open `/login` in a private/incognito window and enter those credentials.
-4. Create a project and confirm that the worker logs its job.
+4. Create a project and confirm that its Timeline reaches `operation.completed`.
 5. Verify that the participant sees only their projects while the administrator can see all projects.
 
 Passwords can be rotated from `/admin`; rotation and disabling an account revoke its active sessions.
@@ -67,9 +66,24 @@ The same page provides verified participant/study exports and explicitly
 confirmed research-data deletion. Exports omit authentication secrets and
 verify every immutable resource before download.
 
+For debugging, administrators can also download an analysis export containing
+all active projects, their safe owner labels, complete Timelines, and verified
+resources. Operation outcomes are already contained in each Timeline. The equivalent local command writes the same
+logical file tree as a readable directory:
+
+```sh
+pnpm run export:analysis
+pnpm run export:analysis -- --project PROJECT_ID --output outputs/my-analysis
+```
+
+The default destination is a new UTC-timestamped directory under
+`outputs/project-analysis/`. The command refuses to overwrite an existing
+directory. It reads PostgreSQL directly, so `DATABASE_URL` must identify the
+database to inspect.
+
 AI feedback is optional. Set `OPENAI_API_KEY`, `OPENAI_MODEL`, and
 `CHATBOT_CONFIG` in the root `.env`, then rebuild or recreate the devcontainer so
-Compose passes them to the web and worker processes. Normal project compilation
+Compose passes them to the web process. Normal project compilation
 does not require an OpenAI key.
 
 ### Health checks
@@ -86,12 +100,13 @@ The authenticated `POST /api/health/compiler` endpoint performs a real minimal c
 
 ```text
 authenticated browser
-  -> SvelteKit validates ownership and queues a command
-  -> pg-boss stores and delivers the durable PostgreSQL job
-  -> worker serializes commands for each project owner
-  -> prepared Haskell compiler runs in isolated scratch space
+  -> SvelteKit validates ownership and appends operation.accepted
+  -> bounded in-process executor runs the project operation asynchronously
+  -> public compiler service receives .sverlin content and seed(s)
+  -> private compiler implementation runs in isolated scratch space
   -> PostgreSQL receives immutable Timeline events and content-addressed resources
-  -> browser polls the job and Timeline until complete
+  -> operation.completed or operation.failed closes the Timeline boundary
+  -> browser polls only the Timeline until complete
 ```
 
 The root container files have distinct responsibilities:
@@ -119,7 +134,7 @@ libraries retain only their registered library artifacts.
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | [`src/lib/shared/`](src/lib/shared/) | Environment-neutral event schemas, projections, project contracts, and generated visualization types. |
 | [`src/lib/client/`](src/lib/client/) | Svelte UI, project sessions, Timeline presentation, and visualization playback.                       |
-| [`src/lib/server/`](src/lib/server/) | Better Auth, authorization, PostgreSQL persistence, jobs, AI providers, and compiler execution.       |
+| [`src/lib/server/`](src/lib/server/) | Better Auth, authorization, PostgreSQL persistence, operations, AI providers, and compiler execution. |
 | [`src/routes/`](src/routes/)         | SvelteKit pages and authenticated APIs.                                                               |
 | [`compile/src/`](compile/src/)       | Reusable Haskell libraries and the public `Solver`/choreography APIs.                                 |
 | [`compile/app/`](compile/app/)       | Executable-only Sverlin loading, compilation, and generated-type tools.                               |
@@ -154,26 +169,26 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 ### Development and runtime
 
-| Command                      | Purpose                                                                    |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `pnpm run dev`               | Prepare the compiler, then run the web app and PostgreSQL worker together. |
-| `pnpm run dev:web`           | Run only the single-instance Vite development server.                      |
-| `pnpm run dev:worker`        | Run only the PostgreSQL project worker directly with TypeScript.           |
-| `pnpm run preview`           | Prepare the compiler and preview the production frontend locally.          |
-| `pnpm run start`             | Start the built adapter-node web service.                                  |
-| `pnpm run build`             | Prepare the compiler and build the web, worker, and migration bundles.     |
-| `pnpm run build:worker`      | Build only `build-worker/index.js`.                                        |
-| `pnpm run build:migrate`     | Build only `build-migrate/index.js`.                                       |
-| `pnpm run prepare`           | Internal package lifecycle hook that synchronizes SvelteKit types.         |
-| `pnpm run prepare:compiler`  | Build and fingerprint the direct Haskell compiler executable.              |
-| `pnpm run compile -- <args>` | Compile a `.sverlin` source through the prepared executable.               |
+| Command                      | Purpose                                                            |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `pnpm run dev`               | Prepare the compiler, then run the complete SvelteKit service.     |
+| `pnpm run dev:web`           | Run the SvelteKit service without preparing the compiler first.    |
+| `pnpm run preview`           | Prepare the compiler and preview the production frontend locally.  |
+| `pnpm run start`             | Start the built adapter-node web service.                          |
+| `pnpm run build`             | Prepare the compiler and build the web and migration bundles.      |
+| `pnpm run build:analysis`    | Build the local PostgreSQL analysis-export command.                |
+| `pnpm run build:migrate`     | Build only `build-migrate/index.js`.                               |
+| `pnpm run prepare`           | Internal package lifecycle hook that synchronizes SvelteKit types. |
+| `pnpm run prepare:compiler`  | Build and fingerprint the direct Haskell compiler executable.      |
+| `pnpm run compile -- <args>` | Compile a `.sverlin` source through the prepared executable.       |
 
 ### Database, data, and operations
 
-| Command                | Purpose                                                  |
-| ---------------------- | -------------------------------------------------------- |
-| `pnpm run db:generate` | Generate a Drizzle migration from the TypeScript schema. |
-| `pnpm run db:migrate`  | Apply checked-in Drizzle migrations to `DATABASE_URL`.   |
+| Command                              | Purpose                                                  |
+| ------------------------------------ | -------------------------------------------------------- |
+| `pnpm run db:generate`               | Generate a Drizzle migration from the TypeScript schema. |
+| `pnpm run db:migrate`                | Apply checked-in Drizzle migrations to `DATABASE_URL`.   |
+| `pnpm run export:analysis -- <args>` | Export active projects for local analysis.               |
 
 ### Checks, generation, and formatting
 
@@ -192,28 +207,32 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 ### Tests and benchmarks
 
-| Command                        | Purpose                                                            |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `pnpm run test:unit`           | Run the fast TypeScript suite once.                                |
-| `pnpm run test:postgres`       | Run the opt-in real PostgreSQL/pg-boss durability test.            |
-| `pnpm run test`                | Run unit tests and compile every catalogued example.               |
-| `pnpm run test:examples`       | Compile every catalogued example through the production boundary.  |
-| `pnpm run test:e2e`            | Run Playwright against an isolated file-backed application server. |
-| `pnpm run test:sverlin-source` | Run the Haskell source/elaboration tests.                          |
-| `pnpm run test:solver`         | Run direct solver tests against stable fixtures.                   |
-| `pnpm run bench:solver`        | Benchmark solver lowering and execution on stable fixtures.        |
+| Command                        | Purpose                                                                |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `pnpm run test:unit`           | Run the fast TypeScript suite once.                                    |
+| `pnpm run test:postgres`       | Run focused persistence tests in a temporary database.                 |
+| `pnpm run test`                | Run unit, PostgreSQL, and catalogued compiler-example tests.           |
+| `pnpm run test:examples`       | Compile every catalogued example through the production boundary.      |
+| `pnpm run test:e2e`            | Run Playwright against temporary PostgreSQL and the SvelteKit service. |
+| `pnpm run test:sverlin-source` | Run the Haskell source/elaboration tests.                              |
+| `pnpm run test:solver`         | Run direct solver tests against stable fixtures.                       |
+| `pnpm run bench:solver`        | Benchmark solver lowering and execution on stable fixtures.            |
 
-The Playwright suite does not exercise PostgreSQL authentication or the durable worker. Use the two-terminal administrator/participant walkthrough above for that path.
+Unit tests replace the narrow persistence, compiler, and chatbot interfaces with
+in-memory fakes. Focused integration and Playwright tests create a uniquely named
+PostgreSQL database, migrate it, and force-drop only that validated test database
+afterward. The end-to-end authentication bypass seeds its matching administrator
+row because project ownership remains enforced.
 
 After Haskell changes, run the relevant compile, Haskell tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the facade Haddock descriptions and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/ai-assistant/dsl-api-index.md) by hand; cross-cutting guidance lives in [`dsl-interface.md`](src/lib/server/chat-bots/ai-assistant/dsl-interface.md).
 
 ## Production deployment
 
-[`render.yaml`](render.yaml) is a Render [Blueprint](https://render.com/docs/infrastructure-as-code) for one web service, one background worker, and one managed PostgreSQL database in Singapore. Connect the repository as a new Blueprint in the Render dashboard; no deployment CLI is required. Commits to `main` deploy automatically.
+[`render.yaml`](render.yaml) is a Render [Blueprint](https://render.com/docs/infrastructure-as-code) for one 4 GiB web service and one managed PostgreSQL database in Singapore. Connect the repository as a new Blueprint in the Render dashboard; no deployment CLI is required. Automatic deploys are disabled so a study is not restarted by an unrelated commit; deploy deliberately from the Render dashboard outside active sessions.
 
 The web service runs checked-in migrations before each deploy and exposes `/api/health/ready` as its health check. Render generates the Better Auth and administrator-setup secrets. Read `SVERLIN_ADMIN_SETUP_TOKEN` from the web service environment, then open `/setup?token=<value>` on the generated `onrender.com` URL. Better Auth derives that public origin from Render's `RENDER_EXTERNAL_HOSTNAME`; set `BETTER_AUTH_URL` explicitly only when using a custom domain.
 
-The initial plans are a 512 MiB web service, a 4 GiB worker, and a persistent 256 MiB PostgreSQL instance. The worker keeps the established 4 GiB ceiling because it runs GHC and the native solver; project commands already run one at a time. Render allows at most 300 seconds for graceful shutdown, so the worker stops pg-boss after 270 seconds, leaving 30 seconds to mark unfinished work for its configured retry and close the compiler and database cleanly. PostgreSQL stores resource bytes directly; the application already limits each immutable resource to 16 MiB. Add `OPENAI_API_KEY`, `OPENAI_MODEL`, and `CHATBOT_CONFIG` to the worker only when AI-assisted editing is required.
+The web service keeps the established 4 GiB ceiling because it owns compilation and the native solver. It accepts at most two project operations concurrently and serializes compiler invocations to bound peak memory for the expected couple of simultaneous users. Render allows at most 300 seconds for graceful shutdown, so application work is cancelled after 270 seconds, leaving 30 seconds to record failure boundaries and close PostgreSQL. An operation interrupted by an unexpected restart is marked cancelled and must be retried; already committed project events and resources remain durable. PostgreSQL stores resource bytes directly and each immutable resource is limited to 16 MiB. Add `OPENAI_API_KEY` to the web service when AI-assisted editing is required; `OPENAI_MODEL` and `CHATBOT_CONFIG` are optional overrides.
 
 ## Agent tooling
 

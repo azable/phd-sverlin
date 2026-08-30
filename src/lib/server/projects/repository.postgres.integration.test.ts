@@ -49,6 +49,14 @@ it.skipIf(!postgresTestsEnabled)(
         .where(eq(schema.projectResources.projectId, projectId));
       expect(Buffer.from(stored?.bytes ?? [])).toEqual(Buffer.from(resource.bytes));
 
+      const concurrent = await Promise.allSettled([
+        repository.append(projectId, 2, [renameEvent(randomUUID(), 'Concurrent A')]),
+        repository.append(projectId, 2, [renameEvent(randomUUID(), 'Concurrent B')])
+      ]);
+      expect(concurrent.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      expect(concurrent.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+      expect((await repository.load(projectId)).events).toHaveLength(3);
+
       await database()
         .update(schema.projectResources)
         .set({ bytes: new TextEncoder().encode('font bytez') })
@@ -81,13 +89,16 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
   };
 }
 
-function renameEvent(operationId: string): NewProjectEvent<'project.renamed'> {
+function renameEvent(
+  operationId: string,
+  title = 'Stored in PostgreSQL'
+): NewProjectEvent<'project.renamed'> {
   return {
     type: 'project.renamed',
     actor: { kind: 'user' },
     operationId,
     createdAt: '2026-01-01T00:00:01.000Z',
-    payload: { previousTitle: 'Repository test', title: 'Stored in PostgreSQL' }
+    payload: { previousTitle: 'Repository test', title }
   };
 }
 

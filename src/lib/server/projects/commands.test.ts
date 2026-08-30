@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+
+import type { ProjectCommandDependencies } from './commands';
+import { MemoryProjectRepository } from './memory-repository.test-support';
+import type { ProjectServiceDependencies } from './service';
 
 const mocks = vi.hoisted(() => ({
   compileSource: vi.fn(),
@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   generatePrepared: vi.fn()
 }));
 
-vi.mock('$lib/server/compiler/compile', () => ({ compileSource: mocks.compileSource }));
 vi.mock('$lib/server/chat-bots/registry', () => ({
   getChatbot: () => ({
     preparePrompt: mocks.preparePrompt,
@@ -33,26 +32,24 @@ vi.mock('./fingerprints', () => ({
   })
 }));
 
-let projectRoot: string;
+let serviceDependencies: ProjectServiceDependencies;
+let commandDependencies: ProjectCommandDependencies;
 
-beforeEach(async () => {
-  vi.resetModules();
-  mocks.compileSource.mockReset().mockImplementation(async ({ seed, sourceContent }) => {
-    const debug = {
-      command: 'test-compiler',
-      args: [],
-      cwd: process.cwd(),
+beforeEach(() => {
+  mocks.compileSource.mockReset().mockImplementation(async ({ seed, source }) => {
+    const execution = {
       durationMs: 5,
-      exitCode: sourceContent.startsWith('broken') ? 1 : 0,
+      exitCode: source.content.startsWith('broken') ? 1 : 0,
       stdout: '',
-      stderr: sourceContent.startsWith('broken') ? 'Main.sverlin:1:1: error: broken' : ''
+      stderr: source.content.startsWith('broken') ? 'Main.sverlin:1:1: error: broken' : '',
+      timedOut: false
     };
-    if (sourceContent.startsWith('broken')) {
+    if (source.content.startsWith('broken')) {
       return {
         ok: false,
+        seed,
         error: 'Compile backend exited with code 1.',
-        debug,
-        status: 500,
+        execution,
         failureKind: 'source',
         diagnostics: [
           {
@@ -68,7 +65,8 @@ beforeEach(async () => {
     }
     return {
       ok: true,
-      debug,
+      seed,
+      execution,
       resources: [],
       targetDiagnostics: [],
       provenance: {
@@ -120,13 +118,32 @@ beforeEach(async () => {
     .mockResolvedValueOnce(generation('broken first', 'First candidate'))
     .mockResolvedValueOnce(generation('broken repair', 'Repair candidate'));
 
-  projectRoot = await mkdtemp(path.join(tmpdir(), 'sverlin-command-test-'));
-  process.env.SVERLIN_PROJECT_DIR = projectRoot;
-});
-
-afterEach(async () => {
-  delete process.env.SVERLIN_PROJECT_DIR;
-  await rm(projectRoot, { recursive: true, force: true });
+  const repository = new MemoryProjectRepository();
+  serviceDependencies = {
+    repository,
+    compiler: {
+      generate: mocks.compileSource,
+      generateBatch: vi.fn(),
+      readiness: vi.fn(),
+      status: vi.fn(),
+      shutdown: vi.fn()
+    },
+    readDslRevision: vi.fn(async () => ({
+      contentSha256: 'f'.repeat(64),
+      repositoryCommit: 'a'.repeat(40),
+      workingTree: 'clean' as const
+    }))
+  };
+  commandDependencies = {
+    repository,
+    projectService: serviceDependencies,
+    getChatbot: () =>
+      ({
+        preparePrompt: mocks.preparePrompt,
+        generatePrepared: mocks.generatePrepared
+      }) as unknown as ReturnType<ProjectCommandDependencies['getChatbot']>,
+    readDslRevision: serviceDependencies.readDslRevision
+  };
 });
 
 describe('createProject', () => {
@@ -135,9 +152,10 @@ describe('createProject', () => {
     const { createProject } = await import('./service');
     const template = getProjectTemplate('linear-search');
 
-    const created = await createProject({
-      creation: { templateId: template.id }
-    });
+    const created = await createProject(
+      { creation: { templateId: template.id } },
+      serviceDependencies
+    );
     const snapshot = projectSnapshotAt(created);
 
     expect(created.events[0]).toMatchObject({
@@ -150,7 +168,10 @@ describe('createProject', () => {
     expect(snapshot.creation).toEqual({ templateId: template.id });
     expect(snapshot.artifacts[snapshot.entryArtifactId].content.text).toBe(template.source);
     expect(mocks.compileSource).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceContent: template.source, seed: expect.any(Number) })
+      expect.objectContaining({
+        source: expect.objectContaining({ content: template.source }),
+        seed: expect.any(Number)
+      })
     );
     const seed = mocks.compileSource.mock.calls[0][0].seed as number;
     expect(Number.isSafeInteger(seed)).toBe(true);
@@ -162,17 +183,20 @@ describe('submitProjectFeedback', () => {
   it('records both failed candidates and stops after one explicit repair', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject({ title: 'Finite repair' });
+    const created = await createProject({ title: 'Finite repair' }, serviceDependencies);
     const operationId = '12345678-1234-4123-8123-123456789abc';
 
-    const result = await submitProjectFeedback({
-      projectId: created.projectId,
-      expectedHead: projectHead(created).id,
-      text: 'Change the visualization',
-      focus: [],
-      seed: 7,
-      operationId
-    });
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Change the visualization',
+        focus: [],
+        seed: 7,
+        operationId
+      },
+      commandDependencies
+    );
 
     expect(mocks.generatePrepared).toHaveBeenCalledTimes(2);
     expect(
@@ -221,16 +245,19 @@ describe('submitProjectFeedback', () => {
     );
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject({ title: 'Provider audit' });
+    const created = await createProject({ title: 'Provider audit' }, serviceDependencies);
 
-    const result = await submitProjectFeedback({
-      projectId: created.projectId,
-      expectedHead: projectHead(created).id,
-      text: 'Create a visualization',
-      focus: [],
-      seed: 7,
-      operationId: '12345678-1234-4123-8123-123456789abc'
-    });
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Create a visualization',
+        focus: [],
+        seed: 7,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
     const failed = result.appendedEvents.find((event) => event.type === 'ai.generation-failed');
 
     expect(mocks.generatePrepared).toHaveBeenCalledTimes(1);
@@ -257,17 +284,20 @@ describe('submitProjectFeedback', () => {
     });
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject({ title: 'Focused history' });
+    const created = await createProject({ title: 'Focused history' }, serviceDependencies);
     const render = projectSnapshotAt(created).activeRender!;
 
-    await submitProjectFeedback({
-      projectId: created.projectId,
-      expectedHead: projectHead(created).id,
-      text: 'Use this as context',
-      focus: [render.id],
-      seed: 7,
-      operationId: '12345678-1234-4123-8123-123456789abc'
-    });
+    await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        text: 'Use this as context',
+        focus: [render.id],
+        seed: 7,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
 
     expect(mocks.preparePrompt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -295,22 +325,25 @@ describe('submitProjectFeedback', () => {
   it('rejects a compact visual selection that does not exist in the render', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject({ title: 'Selection validation' });
+    const created = await createProject({ title: 'Selection validation' }, serviceDependencies);
     const render = projectSnapshotAt(created).activeRender!;
 
     await expect(
-      submitProjectFeedback({
-        projectId: created.projectId,
-        expectedHead: projectHead(created).id,
-        focus: [],
-        selection: {
-          render: render.id,
-          step: 99,
-          instances: [1]
+      submitProjectFeedback(
+        {
+          projectId: created.projectId,
+          expectedHead: projectHead(created).id,
+          focus: [],
+          selection: {
+            render: render.id,
+            step: 99,
+            instances: [1]
+          },
+          seed: 7,
+          operationId: '12345678-1234-4123-8123-123456789abc'
         },
-        seed: 7,
-        operationId: '12345678-1234-4123-8123-123456789abc'
-      })
+        commandDependencies
+      )
     ).rejects.toThrow('unknown visualization step');
     expect(mocks.generatePrepared).not.toHaveBeenCalled();
   });

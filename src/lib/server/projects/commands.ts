@@ -16,7 +16,7 @@ import {
   type AiContextSelection
 } from '$lib/server/chat-bots/ai-assistant/project-context';
 import type { CompilationFeedback } from '$lib/server/chat-bots/types';
-import { formatDiagnosticSummary } from '$lib/server/compiler/diagnostics';
+import { formatDiagnosticSummary } from '$lib/server/compiler';
 
 import { runProjectCommand } from './command-lock';
 import { readDslRevision, recordText, sourceSha256 } from './fingerprints';
@@ -25,33 +25,58 @@ import {
   activateCompiledRender,
   appendProjectEvents,
   compileProjectSource,
+  defaultProjectServiceDependencies,
   draftEvent,
+  type ProjectServiceDependencies,
   type RecordedCompilation
 } from './service';
 
+/** Replaceable AI and persistence boundaries used by command unit tests. */
+export type ProjectCommandDependencies = {
+  repository: typeof projectRepository;
+  projectService: ProjectServiceDependencies;
+  getChatbot: typeof getChatbot;
+  readDslRevision: typeof readDslRevision;
+};
+
+export const defaultProjectCommandDependencies: ProjectCommandDependencies = {
+  repository: projectRepository,
+  projectService: defaultProjectServiceDependencies,
+  getChatbot,
+  readDslRevision
+};
+
 /** Record user feedback, run AI generation, and accept at most one compiled candidate. */
-export function submitProjectFeedback(options: {
-  projectId: string;
-  expectedHead: EventId;
-  text?: string;
-  focus: EventId[];
-  selection?: VisualSelection;
-  seed: number;
-  operationId: string;
-}): Promise<ProjectCommandResult> {
-  return runProjectCommand(options.projectId, () => submitProjectFeedbackUnlocked(options));
+export function submitProjectFeedback(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    text?: string;
+    focus: EventId[];
+    selection?: VisualSelection;
+    seed: number;
+    operationId: string;
+  },
+  dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, () =>
+    submitProjectFeedbackUnlocked(options, dependencies)
+  );
 }
 
-async function submitProjectFeedbackUnlocked(options: {
-  projectId: string;
-  expectedHead: EventId;
-  text?: string;
-  focus: EventId[];
-  selection?: VisualSelection;
-  seed: number;
-  operationId: string;
-}): Promise<ProjectCommandResult> {
-  const before = await projectRepository.load(options.projectId);
+async function submitProjectFeedbackUnlocked(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    text?: string;
+    focus: EventId[];
+    selection?: VisualSelection;
+    seed: number;
+    operationId: string;
+  },
+  dependencies: ProjectCommandDependencies
+): Promise<ProjectCommandResult> {
+  const before = await dependencies.repository.load(options.projectId);
   assertHead(before, options.expectedHead);
   const focus = validateFocus(before, options.focus);
   const selection = options.selection
@@ -66,18 +91,21 @@ async function submitProjectFeedbackUnlocked(options: {
     operationId: options.operationId,
     payload: { ...(text ? { text } : {}), focus, ...(selection ? { selection } : {}) }
   });
-  let document = await appendProjectEvents(before, [feedback]);
+  let document = await appendProjectEvents(before, [feedback], [], dependencies.projectService);
   const contextSelection: AiContextSelection = {
     eventIds: focus,
     ...(selection ? { visualSelection: selection } : {})
   };
 
-  const first = await runGeneration({
-    document,
-    attempt: 1,
-    operationId: options.operationId,
-    contextSelection
-  });
+  const first = await runGeneration(
+    {
+      document,
+      attempt: 1,
+      operationId: options.operationId,
+      contextSelection
+    },
+    dependencies
+  );
   document = first.document;
   if (!first.ok) return finishMutation(before, document);
   if (first.result.sourceArtifactContent === undefined) {
@@ -85,29 +113,36 @@ async function submitProjectFeedbackUnlocked(options: {
       document,
       first.result.reply,
       assistantBotId(first.generationEvent),
-      options.operationId
+      options.operationId,
+      dependencies
     );
     return finishMutation(before, document);
   }
 
-  const firstCompile = await compileCandidate({
-    document,
-    generationEvent: first.generationEvent,
-    candidate: first.result.sourceArtifactContent,
-    seed: options.seed,
-    operationId: options.operationId,
-    attempt: 1
-  });
+  const firstCompile = await compileCandidate(
+    {
+      document,
+      generationEvent: first.generationEvent,
+      candidate: first.result.sourceArtifactContent,
+      seed: options.seed,
+      operationId: options.operationId,
+      attempt: 1
+    },
+    dependencies
+  );
   document = firstCompile.document;
   if (firstCompile.recorded.result.ok) {
-    document = await acceptCandidate({
-      document,
-      recorded: firstCompile.recorded,
-      generationEvent: first.generationEvent,
-      reply: first.result.reply,
-      candidate: first.result.sourceArtifactContent,
-      operationId: options.operationId
-    });
+    document = await acceptCandidate(
+      {
+        document,
+        recorded: firstCompile.recorded,
+        generationEvent: first.generationEvent,
+        reply: first.result.reply,
+        candidate: first.result.sourceArtifactContent,
+        operationId: options.operationId
+      },
+      dependencies
+    );
     return finishMutation(before, document);
   }
 
@@ -120,7 +155,8 @@ async function submitProjectFeedbackUnlocked(options: {
     document = await appendSystemFailure(
       document,
       `The proposed source could not be compiled. ${formatDiagnosticSummary(failed.result.diagnostics)}`,
-      options.operationId
+      options.operationId,
+      dependencies
     );
     return finishMutation(before, document);
   }
@@ -132,61 +168,75 @@ async function submitProjectFeedbackUnlocked(options: {
     assistantReply: first.result.reply,
     diagnostics: failed.result.diagnostics
   };
-  const repair = await runGeneration({
-    document,
-    attempt: 2,
-    operationId: options.operationId,
-    contextSelection,
-    compilationFeedback: repairFeedback
-  });
+  const repair = await runGeneration(
+    {
+      document,
+      attempt: 2,
+      operationId: options.operationId,
+      contextSelection,
+      compilationFeedback: repairFeedback
+    },
+    dependencies
+  );
   document = repair.document;
   if (!repair.ok) return finishMutation(before, document);
   if (repair.result.sourceArtifactContent === undefined) {
     document = await appendSystemFailure(
       document,
       'The repair attempt did not return corrected source. The accepted artifact is unchanged.',
-      options.operationId
+      options.operationId,
+      dependencies
     );
     return finishMutation(before, document);
   }
 
-  const repairCompile = await compileCandidate({
-    document,
-    generationEvent: repair.generationEvent,
-    candidate: repair.result.sourceArtifactContent,
-    seed: options.seed,
-    operationId: options.operationId,
-    attempt: 2
-  });
+  const repairCompile = await compileCandidate(
+    {
+      document,
+      generationEvent: repair.generationEvent,
+      candidate: repair.result.sourceArtifactContent,
+      seed: options.seed,
+      operationId: options.operationId,
+      attempt: 2
+    },
+    dependencies
+  );
   document = repairCompile.document;
   if (!repairCompile.recorded.result.ok) {
     document = await appendSystemFailure(
       document,
       `The corrected source still failed compilation. The accepted artifact is unchanged. ${formatDiagnosticSummary(repairCompile.recorded.result.diagnostics)}`,
-      options.operationId
+      options.operationId,
+      dependencies
     );
     return finishMutation(before, document);
   }
 
-  document = await acceptCandidate({
-    document,
-    recorded: repairCompile.recorded,
-    generationEvent: repair.generationEvent,
-    reply: repair.result.reply,
-    candidate: repair.result.sourceArtifactContent,
-    operationId: options.operationId
-  });
+  document = await acceptCandidate(
+    {
+      document,
+      recorded: repairCompile.recorded,
+      generationEvent: repair.generationEvent,
+      reply: repair.result.reply,
+      candidate: repair.result.sourceArtifactContent,
+      operationId: options.operationId
+    },
+    dependencies
+  );
   return finishMutation(before, document);
 }
 
-async function runGeneration(options: {
-  document: ProjectDocument;
-  attempt: 1 | 2;
-  operationId: string;
-  contextSelection: AiContextSelection;
-  compilationFeedback?: CompilationFeedback;
-}) {
-  const chatbot = getChatbot();
+async function runGeneration(
+  options: {
+    document: ProjectDocument;
+    attempt: 1 | 2;
+    operationId: string;
+    contextSelection: AiContextSelection;
+    compilationFeedback?: CompilationFeedback;
+  },
+  dependencies: ProjectCommandDependencies
+) {
+  const chatbot = dependencies.getChatbot();
   let prompt;
   try {
     prompt = await chatbot.preparePrompt({
@@ -200,13 +250,14 @@ async function runGeneration(options: {
       document: await appendSystemFailure(
         options.document,
         safeErrorMessage(error),
-        options.operationId
+        options.operationId,
+        dependencies
       )
     };
   }
 
   const promptRecord = recordText(JSON.stringify(prompt), 'application/json');
-  const dslRevision = await readDslRevision();
+  const dslRevision = await dependencies.readDslRevision();
   const request = draftEvent<'ai.generation-requested'>({
     type: 'ai.generation-requested',
     actor: { kind: 'system' },
@@ -221,7 +272,12 @@ async function runGeneration(options: {
       parameters: { ...prompt.parameters }
     }
   });
-  let document = await appendProjectEvents(options.document, [request]);
+  let document = await appendProjectEvents(
+    options.document,
+    [request],
+    [],
+    dependencies.projectService
+  );
   const startedAt = performance.now();
 
   try {
@@ -251,7 +307,12 @@ async function runGeneration(options: {
         response
       }
     });
-    document = await appendProjectEvents(document, [generationEvent]);
+    document = await appendProjectEvents(
+      document,
+      [generationEvent],
+      [],
+      dependencies.projectService
+    );
     return { ok: true as const, document, result, generationEvent };
   } catch (error) {
     const errorDetails = generationErrorDetails(error);
@@ -268,43 +329,57 @@ async function runGeneration(options: {
         details
       }
     });
-    document = await appendProjectEvents(document, [failed]);
-    document = await appendSystemFailure(document, failed.payload.message, options.operationId);
+    document = await appendProjectEvents(document, [failed], [], dependencies.projectService);
+    document = await appendSystemFailure(
+      document,
+      failed.payload.message,
+      options.operationId,
+      dependencies
+    );
     return { ok: false as const, document };
   }
 }
 
-async function compileCandidate(options: {
-  document: ProjectDocument;
-  generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
-  candidate: string;
-  seed: number;
-  operationId: string;
-  attempt: 1 | 2;
-}) {
+async function compileCandidate(
+  options: {
+    document: ProjectDocument;
+    generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
+    candidate: string;
+    seed: number;
+    operationId: string;
+    attempt: 1 | 2;
+  },
+  dependencies: ProjectCommandDependencies
+) {
   const source = recordText(options.candidate, 'text/x-sverlin');
-  const recorded = await compileProjectSource({
-    document: options.document,
-    sourceContent: options.candidate,
-    source,
-    sourceLabel: 'Main.sverlin',
-    seed: options.seed,
-    purpose: 'assistant-edit',
-    input: 'assistant-candidate',
-    operationId: options.operationId,
-    attempt: options.attempt
-  });
+  const recorded = await compileProjectSource(
+    {
+      document: options.document,
+      sourceContent: options.candidate,
+      source,
+      sourceLabel: 'Main.sverlin',
+      seed: options.seed,
+      purpose: 'assistant-edit',
+      input: 'assistant-candidate',
+      operationId: options.operationId,
+      attempt: options.attempt
+    },
+    dependencies.projectService
+  );
   return { document: recorded.document, recorded };
 }
 
-async function acceptCandidate(options: {
-  document: ProjectDocument;
-  recorded: RecordedCompilation;
-  generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
-  reply: string;
-  candidate: string;
-  operationId: string;
-}) {
+async function acceptCandidate(
+  options: {
+    document: ProjectDocument;
+    recorded: RecordedCompilation;
+    generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
+    reply: string;
+    candidate: string;
+    operationId: string;
+  },
+  dependencies: ProjectCommandDependencies
+) {
   const snapshot = projectSnapshotAt(options.document);
   const current = snapshot.artifacts[snapshot.entryArtifactId];
   if (!current) throw new Error('The project has no entry artifact.');
@@ -313,20 +388,29 @@ async function acceptCandidate(options: {
     operation: 'upsert',
     artifact: { ...current, content }
   };
-  let document = await appendProjectEvents(options.document, [
-    draftEvent({
-      type: 'artifact.version-created',
-      actor: options.generationEvent.actor,
-      operationId: options.operationId,
-      payload: { origin: { kind: 'assistant-edit' }, changes: [change] }
-    })
-  ]);
-  document = await activateCompiledRender({ ...options.recorded, document });
+  let document = await appendProjectEvents(
+    options.document,
+    [
+      draftEvent({
+        type: 'artifact.version-created',
+        actor: options.generationEvent.actor,
+        operationId: options.operationId,
+        payload: { origin: { kind: 'assistant-edit' }, changes: [change] }
+      })
+    ],
+    [],
+    dependencies.projectService
+  );
+  document = await activateCompiledRender(
+    { ...options.recorded, document },
+    dependencies.projectService
+  );
   return appendAssistantResponse(
     document,
     options.reply,
     assistantBotId(options.generationEvent),
-    options.operationId
+    options.operationId,
+    dependencies
   );
 }
 
@@ -334,16 +418,22 @@ function appendAssistantResponse(
   document: ProjectDocument,
   text: string,
   botId: string,
-  operationId: string
+  operationId: string,
+  dependencies: ProjectCommandDependencies
 ) {
-  return appendProjectEvents(document, [
-    draftEvent({
-      type: 'assistant.responded',
-      actor: { kind: 'assistant', botId },
-      operationId,
-      payload: { text }
-    })
-  ]);
+  return appendProjectEvents(
+    document,
+    [
+      draftEvent({
+        type: 'assistant.responded',
+        actor: { kind: 'assistant', botId },
+        operationId,
+        payload: { text }
+      })
+    ],
+    [],
+    dependencies.projectService
+  );
 }
 
 function assistantBotId(event: NewProjectEvent<'ai.generation-succeeded'>): string {
@@ -353,15 +443,25 @@ function assistantBotId(event: NewProjectEvent<'ai.generation-succeeded'>): stri
   return event.actor.botId;
 }
 
-function appendSystemFailure(document: ProjectDocument, message: string, operationId: string) {
-  return appendProjectEvents(document, [
-    draftEvent({
-      type: 'system.notified',
-      actor: { kind: 'system' },
-      operationId,
-      payload: { severity: 'error', message }
-    })
-  ]);
+function appendSystemFailure(
+  document: ProjectDocument,
+  message: string,
+  operationId: string,
+  dependencies: ProjectCommandDependencies
+) {
+  return appendProjectEvents(
+    document,
+    [
+      draftEvent({
+        type: 'system.notified',
+        actor: { kind: 'system' },
+        operationId,
+        payload: { severity: 'error', message }
+      })
+    ],
+    [],
+    dependencies.projectService
+  );
 }
 
 function validateFocus(document: ProjectDocument, focus: EventId[]) {

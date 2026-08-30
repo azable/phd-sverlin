@@ -22,6 +22,7 @@ import {
 } from '$lib/shared/projects/model';
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
+import { activeProjectOperation, projectOperation } from '$lib/shared/projects/operations';
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
 /** Browser-visible state of the project's durable event polling connection. */
@@ -39,8 +40,7 @@ export type PendingProjectCommand = {
  * only synchronized state; snapshots and visualizations are local projections.
  */
 export class ProjectSession {
-  /** Command currently running for this project. */
-  pending = $state.raw<PendingProjectCommand | null>(null);
+  #submitting = $state.raw<PendingProjectCommand | null>(null);
   /** Whether a new template-backed project is currently being created. */
   creating = $state(false);
   /** Current state of the live event connection. */
@@ -57,6 +57,18 @@ export class ProjectSession {
   #loadVersion = 0;
 
   constructor(readonly projectId: ProjectId) {}
+
+  /** Command currently accepted or running according to the durable Timeline. */
+  get pending(): PendingProjectCommand | null {
+    if (this.#submitting) return this.#submitting;
+    const operation = this.#resource ? activeProjectOperation(this.#resource.document) : undefined;
+    if (!operation) return null;
+    return {
+      type: operation.kind === 'initial-render' ? 'render' : operation.kind,
+      operationId: operation.operationId,
+      startedAfter: operation.acceptedEventId - 1
+    };
+  }
 
   /** Complete project resource most recently received from the server. */
   get resource(): ProjectResource | null {
@@ -179,17 +191,9 @@ export class ProjectSession {
       if (!response.ok) {
         throw new Error(await responseError(response));
       }
-      const { projectId, jobId } = (await response.json()) as {
-        projectId: string;
-        jobId?: string;
-      };
+      const { projectId } = (await response.json()) as { projectId: string };
       const path = resolve('/projects/[projectId]', { projectId });
-      const parameters = [
-        devMode ? 'dev=1' : null,
-        jobId ? `job=${encodeURIComponent(jobId)}` : null
-      ]
-        .filter(Boolean)
-        .join('&');
+      const parameters = devMode ? 'dev=1' : '';
       // The route is resolved above; the optional query controls browser-only detail.
       // eslint-disable-next-line svelte/no-navigation-without-resolve
       await goto(parameters ? `${path}?${parameters}` : path);
@@ -209,7 +213,7 @@ export class ProjectSession {
     const request = new AbortController();
     this.#commandRequest?.abort();
     this.#commandRequest = request;
-    this.pending = { type: input.type, operationId, startedAfter: this.head };
+    this.#submitting = { type: input.type, operationId, startedAfter: this.head };
     this.error = null;
 
     try {
@@ -222,13 +226,10 @@ export class ProjectSession {
       if (!response.ok) {
         throw new Error(await responseError(response));
       }
-      if (response.status === 202) {
-        const accepted = (await response.json()) as { jobId: string };
-        await this.waitForJob(accepted.jobId, request.signal);
-        await this.reloadResource(request.signal);
-      } else {
-        this.#resource = parseProjectResource(await response.json());
-      }
+      const accepted = (await response.json()) as { operationId: string };
+      await this.reloadResource(request.signal);
+      this.#submitting = null;
+      await this.waitForOperation(accepted.operationId, request.signal);
       return true;
     } catch (cause) {
       if (request.signal.aborted) return false;
@@ -238,42 +239,7 @@ export class ProjectSession {
     } finally {
       if (this.#commandRequest === request) {
         this.#commandRequest = undefined;
-        this.pending = null;
-      }
-    }
-  }
-
-  /** Resume the initial job carried by a newly created project URL. */
-  async resumeJob(jobId: string): Promise<void> {
-    if (this.pending || !this.#resource) return;
-    const request = new AbortController();
-    this.#commandRequest?.abort();
-    this.#commandRequest = request;
-    try {
-      const job = await this.readJob(jobId, request.signal);
-      if (job.projectId !== this.projectId) {
-        throw new Error('The project job does not match this project.');
-      }
-      this.pending = {
-        type: 'render',
-        operationId: job.operationId,
-        startedAfter: this.head
-      };
-      if (job.status !== 'succeeded') {
-        if (job.status === 'failed' || job.status === 'cancelled') {
-          throw new Error(job.error || 'Initial project compilation failed.');
-        }
-        await this.waitForJob(jobId, request.signal);
-      }
-      await this.reloadResource(request.signal);
-    } catch (cause) {
-      if (!request.signal.aborted) {
-        this.error = cause instanceof Error ? cause.message : 'Initial project compilation failed.';
-      }
-    } finally {
-      if (this.#commandRequest === request) {
-        this.#commandRequest = undefined;
-        this.pending = null;
+        this.#submitting = null;
       }
     }
   }
@@ -305,24 +271,22 @@ export class ProjectSession {
     }
   }
 
-  private async waitForJob(jobId: string, signal: AbortSignal): Promise<void> {
+  private async waitForOperation(operationId: string, signal: AbortSignal): Promise<void> {
     for (;;) {
-      const job = await this.readJob(jobId, signal);
-      if (job.status === 'succeeded') return;
-      if (job.status === 'failed' || job.status === 'cancelled') {
-        throw new Error(job.error || 'The project operation failed.');
+      await this.pollEvents();
+      const operation = this.#resource
+        ? projectOperation(this.#resource.document, operationId)
+        : undefined;
+      if (operation?.status === 'completed') return;
+      if (operation?.status === 'failed') {
+        throw new Error(
+          operation.terminalEvent?.type === 'operation.failed'
+            ? operation.terminalEvent.payload.message
+            : 'The project operation failed.'
+        );
       }
       await delay(1_000, signal);
     }
-  }
-
-  private async readJob(jobId: string, signal: AbortSignal): Promise<ProjectJobState> {
-    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
-      cache: 'no-store',
-      signal
-    });
-    if (!response.ok) throw new Error(await responseError(response));
-    return (await response.json()) as ProjectJobState;
   }
 
   private async reloadResource(signal: AbortSignal): Promise<void> {
@@ -377,13 +341,6 @@ async function responseError(response: Response): Promise<string> {
   }
   return `Project request failed (${response.status}).`;
 }
-
-type ProjectJobState = {
-  projectId: string;
-  operationId: string;
-  status: string;
-  error?: string | null;
-};
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolveDelay, reject) => {

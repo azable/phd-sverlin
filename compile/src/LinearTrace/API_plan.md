@@ -343,6 +343,27 @@ program = do
   --TODO
 ```
 
+```
+int linear_search(int A[], int n, int target) {
+  for (int i = 0; i < n; i++) {
+    if (A[i] == target) {
+      return i;
+    }
+  }
+  return -1;
+}
+```
+
+fragment tag: linear operation/s
+i-init: create (literal 0)
+i-var: create (integer variable)
+i-var-assign: = (seal) -> slot
+i-read: unseal -> copy -> seal
+n-read: unseal -> copy -> seal
+i-lt-n: < apply2
+
+etc
+
 #### Complete Program
 
 Every linear resource and pending obligation must be consumed by the completed

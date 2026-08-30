@@ -19,6 +19,11 @@ import {
   compilationSucceededEventSchema
 } from './compilation';
 import { feedbackSubmittedEventSchema } from './feedback-submitted';
+import {
+  operationAcceptedEventSchema,
+  operationCompletedEventSchema,
+  operationFailedEventSchema
+} from './operation-lifecycle';
 import { projectCreatedEventSchema } from './project-created';
 import { projectRenamedEventSchema } from './project-renamed';
 import { systemNotifiedEventSchema } from './system-notified';
@@ -27,6 +32,9 @@ import { visualizationRenderedEventSchema } from './visualization-rendered';
 /** Runtime discriminated union for every immutable project event. */
 export const projectEventSchema = v.variant('type', [
   projectCreatedEventSchema,
+  operationAcceptedEventSchema,
+  operationCompletedEventSchema,
+  operationFailedEventSchema,
   projectRenamedEventSchema,
   feedbackSubmittedEventSchema,
   aiGenerationRequestedEventSchema,
@@ -40,6 +48,8 @@ export const projectEventSchema = v.variant('type', [
   assistantRespondedEventSchema,
   systemNotifiedEventSchema
 ]);
+
+export type { ProjectOperationKind } from './operation-lifecycle';
 
 /** Any validated immutable event in a project Timeline. */
 export type ProjectEvent = v.InferOutput<typeof projectEventSchema>;

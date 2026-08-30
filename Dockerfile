@@ -192,8 +192,6 @@ RUN prepared_binary="$(node -e "const fs=require('fs'); process.stdout.write(JSO
 
 FROM build AS verification
 
-ENV SVERLIN_PROJECT_STORE=file
-
 RUN pnpm run check \
     && pnpm run lint \
     && pnpm run test:unit \
@@ -240,11 +238,10 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     BODY_SIZE_LIMIT=20M \
-    SHUTDOWN_TIMEOUT=30 \
+    SHUTDOWN_TIMEOUT=300 \
     PROTOCOL_HEADER=x-forwarded-proto \
     HOST_HEADER=x-forwarded-host \
-    SVERLIN_PROJECT_STORE=postgres \
-    SVERLIN_DISABLE_PREFETCH=true \
+    SVERLIN_SHUTDOWN_TIMEOUT_SECONDS=270 \
     SVERLIN_SCRATCH_DIR=/tmp/sverlin
 
 WORKDIR /workspaces/phd-sverlin
@@ -256,7 +253,6 @@ RUN useradd --create-home --uid 10001 sverlin \
 COPY --from=production-dependencies --chown=sverlin:sverlin /workspaces/phd-sverlin/node_modules ./node_modules
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build ./build
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-migrate ./build-migrate
-COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/build-worker ./build-worker
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/examples ./examples
 COPY --from=build --chown=sverlin:sverlin /workspaces/phd-sverlin/drizzle ./drizzle
 COPY --from=build /tmp/sverlin-compile /usr/local/bin/sverlin-compile

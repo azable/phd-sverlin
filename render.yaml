@@ -3,14 +3,18 @@ services:
     name: sverlin-web
     runtime: docker
     region: singapore
-    plan: 0.5c-512mb
+    # Compilation and the web process share one service, so the established
+    # compiler ceiling belongs here rather than on a separate worker.
+    plan: 2c-4g
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: node build
     preDeployCommand: node build-migrate/index.js
     healthCheckPath: /api/health/ready
-    maxShutdownDelaySeconds: 30
-    autoDeployTrigger: commit
+    # Render allows 300 seconds. Application work is cancelled after 270 seconds,
+    # leaving time to persist terminal Timeline events and close PostgreSQL.
+    maxShutdownDelaySeconds: 300
+    autoDeployTrigger: off
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -20,31 +24,10 @@ services:
         generateValue: true
       - key: SVERLIN_ADMIN_SETUP_TOKEN
         generateValue: true
-      - key: SVERLIN_PROJECT_STORE
-        value: postgres
-
-  - type: worker
-    name: sverlin-worker
-    runtime: docker
-    region: singapore
-    # GHC and the native solver keep the established 4 GiB production ceiling.
-    plan: 2c-4g
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    dockerCommand: node build-worker/index.js
-    # Render's maximum shutdown delay is 300 seconds. Stop pg-boss after 270
-    # seconds so it can mark unfinished work for retry before forced shutdown.
-    maxShutdownDelaySeconds: 300
-    autoDeployTrigger: commit
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: sverlin-postgres
-          property: connectionString
-      - key: SVERLIN_PROJECT_STORE
-        value: postgres
-      - key: SVERLIN_WORKER_SHUTDOWN_SECONDS
+      - key: SVERLIN_SHUTDOWN_TIMEOUT_SECONDS
         value: '270'
+      - key: OPENAI_API_KEY
+        sync: false
 
 databases:
   - name: sverlin-postgres

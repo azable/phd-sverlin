@@ -111,6 +111,10 @@ const timelineCases = {
   'project.created': (event) => `Created project “${event.payload.title}”.`,
   'project.renamed': (event) =>
     `Renamed project from “${event.payload.previousTitle}” to “${event.payload.title}”.`,
+  'operation.accepted': (event) => `Accepted ${event.payload.kind} operation.`,
+  'operation.completed': (event) => `Completed ${event.payload.kind} operation.`,
+  'operation.failed': (event) =>
+    `${event.payload.kind} operation failed (${event.payload.failureKind}): ${event.payload.message}`,
   'feedback.submitted': (event) =>
     `Submitted feedback${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}${event.payload.selection ? ' with a visual selection' : ''}.`,
   'ai.generation-requested': (event) =>
@@ -136,6 +140,9 @@ const timelineCases = {
 const conversationCases = {
   'project.created': () => [],
   'project.renamed': () => [],
+  'operation.accepted': () => [],
+  'operation.completed': () => [],
+  'operation.failed': () => [],
   'feedback.submitted': (event) => [{ role: 'user', content: feedbackMessage(event) } as const],
   'ai.generation-requested': () => [],
   'ai.generation-succeeded': () => [],

@@ -19,7 +19,6 @@
     if (value === '0') return false;
     return page.url.searchParams.get('inspect') === '1';
   });
-  const initialJobId = $derived(page.url.searchParams.get('job') ?? undefined);
 </script>
 
 {#key page.params.projectId}
@@ -28,7 +27,6 @@
     templates={data.templates}
     authEnabled={data.authEnabled}
     isAdmin={data.isAdmin}
-    {initialJobId}
     {at}
     {devMode}
   />

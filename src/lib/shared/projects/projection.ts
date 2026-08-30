@@ -25,6 +25,9 @@ const stateTransitions = {
   'project.renamed': (state, event) => {
     state.title = event.payload.title;
   },
+  'operation.accepted': null,
+  'operation.completed': null,
+  'operation.failed': null,
   'feedback.submitted': null,
   'ai.generation-requested': null,
   'ai.generation-succeeded': null,

@@ -5,14 +5,12 @@ import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { validateAuthenticationConfiguration } from '$lib/server/auth';
-import { clearPrefetches } from '$lib/server/compiler/prefetch';
-import { readPreparedCompiler } from '$lib/server/compiler/prepared-compiler.js';
-import { compilerScheduler, type CompileSchedulerStatus } from '$lib/server/compiler/scheduler';
-import { sqlClient } from '$lib/server/db';
-import { projectRepository, usesPostgresProjectStore } from '$lib/server/projects/repository';
-import { recoveryEventsForInterruptedOperations } from '$lib/server/projects/recovery';
+import { visualizationService } from '$lib/server/compiler';
+import { closeDatabase, sqlClient } from '$lib/server/db';
+import { projectOperationExecutor } from '$lib/server/projects/operations';
+import { projectRepository } from '$lib/server/projects/repository';
 
-import { runtimeProjectDir, runtimeScratchDir } from './runtime-config';
+import { runtimeScratchDir } from './runtime-config';
 
 type PreparedCompilerSummary = {
   sourceSha256: string;
@@ -43,7 +41,8 @@ export type RuntimeReadiness = {
   warnings: string[];
   recoveredOperations: number;
   compiler: PreparedCompilerSummary | undefined;
-  scheduler: CompileSchedulerStatus;
+  compilerQueue: ReturnType<typeof visualizationService.status>;
+  operations: ReturnType<typeof projectOperationExecutor.status>;
 };
 
 const runtimeStateKey = Symbol.for('sverlin.runtime-state');
@@ -73,11 +72,12 @@ export function initializeRuntime(): Promise<void> {
   return sharedRuntime.initialization;
 }
 
-/** Stop speculative work and reject new compiles after HTTP request draining begins. */
-export function shutdownRuntime(): void {
+/** Stop admission, cancel active work, and close process-owned resources. */
+export async function shutdownRuntime(): Promise<void> {
   lifecycle.draining = true;
-  clearPrefetches();
-  compilerScheduler.shutdown();
+  await projectOperationExecutor.shutdown(shutdownTimeoutMs());
+  visualizationService.shutdown();
+  await closeDatabase();
 }
 
 /** Return a fresh, non-sensitive readiness snapshot. */
@@ -96,7 +96,7 @@ export async function runtimeReadiness(forceCompilerCheck = false): Promise<Runt
   ) {
     await checkPreparedCompiler();
   }
-  const databaseError = usesPostgresProjectStore ? await databaseReadinessError() : undefined;
+  const databaseError = await databaseReadinessError();
   const activeError = lifecycle.error ?? databaseError;
   const ready = lifecycle.initialized && !lifecycle.draining && !activeError;
   return {
@@ -107,26 +107,20 @@ export async function runtimeReadiness(forceCompilerCheck = false): Promise<Runt
     warnings: [...lifecycle.warnings],
     recoveredOperations: lifecycle.recoveredOperations,
     compiler: lifecycle.compiler,
-    scheduler: compilerScheduler.status()
+    compilerQueue: visualizationService.status(),
+    operations: projectOperationExecutor.status()
   };
 }
 
 async function initializeRuntimeOnce() {
   try {
     validateAuthenticationConfiguration();
-    await Promise.all([
-      assertWritableDirectory(runtimeScratchDir()),
-      ...(!usesPostgresProjectStore ? [assertWritableDirectory(runtimeProjectDir())] : []),
-      ...(usesPostgresProjectStore ? [assertDatabaseReady()] : [])
-    ]);
+    await Promise.all([assertWritableDirectory(runtimeScratchDir()), assertDatabaseReady()]);
     await projectRepository.initialize();
     await cleanupAbandonedCompilerOutputs();
     await checkPreparedCompiler();
-    // PostgreSQL jobs survive web and worker process restarts and own their own
-    // lease recovery. File-backed development remains process-local.
-    lifecycle.recoveredOperations = usesPostgresProjectStore
-      ? 0
-      : await recoverInterruptedOperations();
+    lifecycle.recoveredOperations = await projectOperationExecutor.recoverInterrupted();
+    projectOperationExecutor.startRecovery();
     delete lifecycle.error;
     lifecycle.initialized = true;
   } catch (error) {
@@ -150,7 +144,7 @@ async function databaseReadinessError() {
 
 async function checkPreparedCompiler() {
   try {
-    const prepared = await readPreparedCompiler();
+    const prepared = await visualizationService.readiness();
     lifecycle.compiler = {
       sourceSha256: prepared.sourceSha256,
       preparedAt: prepared.preparedAt
@@ -191,42 +185,18 @@ async function cleanupAbandonedCompilerOutputs() {
     const entries = await readdir(seedDirectory, { withFileTypes: true });
     await Promise.all(
       entries
-        .filter(
-          (entry) =>
-            entry.isDirectory() &&
-            (entry.name.startsWith('project-') || entry.name.startsWith('prefetch-'))
-        )
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith('visualization-service-'))
         .map((entry) => rm(path.join(seedDirectory, entry.name), { recursive: true, force: true }))
     );
   }
 }
 
-async function recoverInterruptedOperations() {
-  const summaries = await projectRepository.list();
-  let recovered = 0;
-  for (const summary of summaries) {
-    try {
-      const document = await projectRepository.load(summary.projectId);
-      const recoveryEvents = recoveryEventsForInterruptedOperations(document.events);
-      if (recoveryEvents.length === 0) continue;
-      await projectRepository.append(
-        document.projectId,
-        document.events.at(-1)?.id ?? 0,
-        recoveryEvents
-      );
-      recovered += recoveryEvents.length;
-    } catch (error) {
-      lifecycle.warnings.push(
-        `Could not recover project ${summary.projectId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
-  return recovered;
-}
-
 function compilerCheckIntervalMs() {
   const configured = Number(process.env.SVERLIN_COMPILER_HEALTH_INTERVAL_MS ?? '30000');
   return Number.isSafeInteger(configured) && configured >= 1_000 ? configured : 30_000;
+}
+
+function shutdownTimeoutMs(): number {
+  const seconds = Number(process.env.SVERLIN_SHUTDOWN_TIMEOUT_SECONDS ?? '270');
+  return (Number.isSafeInteger(seconds) && seconds >= 1 ? seconds : 270) * 1_000;
 }

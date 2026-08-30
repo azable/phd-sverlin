@@ -59,10 +59,12 @@ export async function compilerSourceFingerprint(root = repositoryRoot) {
   for (const directory of fingerprintDirectories) {
     relativePaths.push(...(await filesBelow(root, directory)));
   }
-  relativePaths.sort();
+  // Design notes do not affect the executable and must not invalidate a prepared build.
+  const compilerInputs = relativePaths.filter((relativePath) => !relativePath.endsWith('.md'));
+  compilerInputs.sort();
 
   const hash = createHash('sha256');
-  for (const relativePath of relativePaths) {
+  for (const relativePath of compilerInputs) {
     hash.update(relativePath);
     hash.update('\0');
     hash.update(await readFile(path.join(root, relativePath)));
