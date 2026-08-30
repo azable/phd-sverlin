@@ -157,24 +157,14 @@
   </li>
 {/each}
 
-{#if session.assistantActivity}
+{#if session.assistantResponding}
   <li in:fly={{ y: 12, duration: 180 }}>
     <div
       class="flex max-w-[88%] items-center gap-2 rounded-2xl border bg-card px-4 py-3 text-base text-muted-foreground shadow-md"
       role="status"
     >
       <Spinner />
-      <span>
-        {session.assistantActivity.status === 'queued'
-          ? 'Feedback queued…'
-          : session.assistantActivity.status === 'considering'
-            ? 'Considering your feedback…'
-            : session.assistantActivity.status === 'repairing'
-              ? 'Reworking the visualization…'
-              : 'Preparing new candidates…'}{session.assistantActivity.queuedCount > 0
-          ? ` · ${session.assistantActivity.queuedCount} newer ${session.assistantActivity.queuedCount === 1 ? 'message' : 'messages'} queued`
-          : ''}
-      </span>
+      <span>Assistant is responding…</span>
     </div>
   </li>
 {:else if session.pending}

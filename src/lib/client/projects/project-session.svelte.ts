@@ -43,11 +43,6 @@ export type PendingProjectCommand = {
   startedAfter: EventId;
 };
 
-export type AssistantActivity = {
-  status: 'queued' | 'considering' | 'preparing' | 'repairing';
-  queuedCount: number;
-};
-
 /**
  * Owns one project's reactive browser session. The complete document is the
  * only synchronized state; snapshots and visualizations are local projections.
@@ -106,31 +101,15 @@ export class ProjectSession {
     );
   }
 
-  /** Participant-facing state of durable queued and active assistant work. */
-  get assistantActivity(): AssistantActivity | null {
-    const queuedCount = pendingAssistantTurnRequests(this.events).length;
-    const operation = projectOperations(this.events).find(
-      ({ kind, status }) =>
-        kind === 'assistant-turn' && (status === 'accepted' || status === 'running')
+  /** Whether durable queued or active assistant work should keep the response indicator visible. */
+  get assistantResponding(): boolean {
+    return (
+      pendingAssistantTurnRequests(this.events).length > 0 ||
+      projectOperations(this.events).some(
+        ({ kind, status }) =>
+          kind === 'assistant-turn' && (status === 'accepted' || status === 'running')
+      )
     );
-    if (!operation) return queuedCount > 0 ? { status: 'queued', queuedCount } : null;
-    const related = this.events.filter(
-      (event) => event.operationId === operation.operationId && event.id > operation.acceptedEventId
-    );
-    const latestRequest = related.findLast((event) => event.type === 'ai.generation-requested');
-    const compilationStarted = related.some((event) => event.type === 'compilation.requested');
-    const generationCompleted = related.some((event) => event.type === 'ai.generation-succeeded');
-    const repairStarted =
-      latestRequest?.type === 'ai.generation-requested' &&
-      latestRequest.payload.purpose !== 'initial';
-    return {
-      status: repairStarted
-        ? 'repairing'
-        : compilationStarted || generationCompleted
-          ? 'preparing'
-          : 'considering',
-      queuedCount
-    };
   }
 
   /** Complete project resource most recently received from the server. */

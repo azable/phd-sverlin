@@ -38,7 +38,8 @@ export const pilotStudyV1 = defineStudy({
       title: 'Welcome',
       paragraphs: [
         'You will complete two visualization tasks.',
-        'Each task lasts 15 minutes and uses a different visualization system.'
+        'Each task lasts 15 minutes and uses a different visualization system.',
+        'Please notify the researcher before starting this task.'
       ],
       continueLabel: 'Begin first task'
     },
@@ -48,7 +49,7 @@ export const pilotStudyV1 = defineStudy({
       conditionSlot: 'first',
       instructions: {
         title: 'Visualization task',
-        prompt: 'Create and refine a visualization for the supplied task.'
+        prompt: 'Create and refine an algorithm visualization of your choice.'
       }
     },
     {
@@ -57,7 +58,7 @@ export const pilotStudyV1 = defineStudy({
       title: 'First task complete',
       paragraphs: [
         'The next task uses a different visualization system.',
-        'Your first project is now locked.'
+        'Please notify the researcher before starting this task.'
       ],
       continueLabel: 'Begin second task'
     },
@@ -67,7 +68,7 @@ export const pilotStudyV1 = defineStudy({
       conditionSlot: 'second',
       instructions: {
         title: 'Visualization task',
-        prompt: 'Create and refine a visualization for the supplied task.'
+        prompt: 'Create and refine an algorithm visualization of your choice.'
       }
     },
     {

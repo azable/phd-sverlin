@@ -82,7 +82,7 @@
             <TimelineEventCard {event} {seed} {session} {inspect} />
           </li>
         {/each}
-        {#if session.pending || session.assistantActivity || session.refillPending}
+        {#if session.pending || session.assistantResponding || session.refillPending}
           <li class="timeline-event relative pl-8" in:fly={{ y: 12, duration: 180 }}>
             <div
               class="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-base text-muted-foreground shadow-md"
@@ -90,16 +90,10 @@
             >
               <Spinner />
               <span
-                >{session.pending
-                  ? 'Recording the update…'
-                  : session.assistantActivity
-                    ? session.assistantActivity.status === 'queued'
-                      ? 'Feedback queued…'
-                      : session.assistantActivity.status === 'considering'
-                        ? 'Considering feedback…'
-                        : session.assistantActivity.status === 'repairing'
-                          ? 'Reworking the visualization…'
-                          : 'Preparing new candidates…'
+                >{session.assistantResponding
+                  ? 'Assistant is responding…'
+                  : session.pending
+                    ? 'Recording the update…'
                     : 'Generating more visualizations…'}</span
               >
             </div>

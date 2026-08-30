@@ -221,7 +221,7 @@ describe('ProjectSession', () => {
     await session.open();
 
     expect(session.pending).toBeNull();
-    expect(session.assistantActivity).toEqual({ status: 'considering', queuedCount: 0 });
+    expect(session.assistantResponding).toBe(true);
   });
 
   it('creates a project from an explicit template and preserves Dev detail', async () => {
