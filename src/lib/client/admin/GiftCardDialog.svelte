@@ -17,10 +17,9 @@
       participantId: string;
       giftCardUrl?: string;
     };
-    onSaved?: () => void | Promise<void>;
   };
 
-  let { participant, onSaved }: Props = $props();
+  let { participant }: Props = $props();
   let open = $state(false);
   let submitting = $state(false);
   let submissionError = $state<string>();
@@ -34,10 +33,7 @@
       try {
         await update();
         if (failure) submissionError = failure;
-        else {
-          await onSaved?.();
-          open = false;
-        }
+        else open = false;
       } finally {
         submitting = false;
       }
@@ -54,7 +50,7 @@
   <Dialog.Trigger class={buttonVariants({ variant: 'outline' })} onclick={prepareGiftCard}>
     {participant.giftCardUrl ? 'Edit gift card' : 'Add gift card'}
   </Dialog.Trigger>
-  <Dialog.Content>
+  <Dialog.Content showCloseButton={!submitting}>
     <form id={formId} method="POST" action="?/giftCard" use:enhance={submitGiftCard}>
       <Dialog.Header>
         <Dialog.Title>Gift card for {participant.participantId}</Dialog.Title>

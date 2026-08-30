@@ -24,4 +24,5 @@
   data-slot="alert-dialog-cancel"
   class={cn(buttonVariants({ variant, size }), 'cn-alert-dialog-cancel', className)}
   {...restProps}
+  type="button"
 />

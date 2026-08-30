@@ -4,6 +4,8 @@ import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { pilotStudyV1 } from '$lib/shared/study/pilot-v1';
 
+import { e2eSessionExpiresAt, e2eSessionToken } from './e2e-auth';
+
 try {
   await database()
     .insert(schema.user)
@@ -24,6 +26,12 @@ try {
         role: 'user'
       }
     ]);
+  await database().insert(schema.session).values({
+    id: 'sverlin-e2e-session',
+    expiresAt: e2eSessionExpiresAt(),
+    token: e2eSessionToken,
+    userId: 'sverlin-e2e-admin'
+  });
   const [run] = await database()
     .insert(schema.studyRuns)
     .values({

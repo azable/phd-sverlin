@@ -25,6 +25,7 @@
     armId = definition.assignment.tieBreakOrder[0] ?? '';
     phaseId = definition.flow[0]?.id ?? '';
     mode = 'full';
+    preparing = false;
     submissionError = undefined;
   }
 
@@ -41,9 +42,12 @@
     submissionError = undefined;
     return async ({ result, update }) => {
       const failure = actionFailureMessage(result, 'Study preview creation failed.');
-      await update();
-      if (failure) submissionError = failure;
-      preparing = false;
+      try {
+        await update();
+        if (failure) submissionError = failure;
+      } finally {
+        preparing = false;
+      }
     };
   };
 </script>
@@ -52,7 +56,7 @@
   <Dialog.Trigger class={buttonVariants({ variant: 'outline' })} onclick={initializePreview}>
     Create preview
   </Dialog.Trigger>
-  <Dialog.Content>
+  <Dialog.Content showCloseButton={!preparing}>
     <form method="POST" action="?/createPreview" use:enhance={preparePreview}>
       <Dialog.Header>
         <Dialog.Title>Preview {definition.name} v{definition.version}</Dialog.Title>
@@ -102,6 +106,7 @@
             <select
               id={`preview-phase-${definition.id}-${definition.version}`}
               class="h-9 rounded-md border bg-background px-3 text-sm"
+              disabled={preparing}
               bind:value={phaseId}
             >
               {#each definition.flow as phase (phase.id)}
@@ -118,9 +123,16 @@
         <input type="hidden" name="phaseId" value={mode === 'phase' ? phaseId : ''} />
       </Field.FieldGroup>
       <Dialog.Footer>
-        <Dialog.Close class={buttonVariants({ variant: 'outline' })}>Cancel</Dialog.Close>
-        <Button type="submit" disabled={preparing || !armId || (mode === 'phase' && !phaseId)}>
-          {#if preparing}<Spinner data-icon="inline-start" />Preparing{:else}Create preview{/if}
+        <Dialog.Close class={buttonVariants({ variant: 'outline' })} disabled={preparing}
+          >Cancel</Dialog.Close
+        >
+        <Button
+          type="submit"
+          disabled={preparing || !armId || (mode === 'phase' && !phaseId)}
+          aria-busy={preparing}
+          aria-label={preparing ? 'Creating preview' : undefined}
+        >
+          {#if preparing}<Spinner data-icon="inline-start" />Creating…{:else}Create preview{/if}
         </Button>
       </Dialog.Footer>
     </form>

@@ -8,6 +8,11 @@
   import DeleteParticipantDialog from '$lib/client/admin/DeleteParticipantDialog.svelte';
   import GeneratePasswordDialog from '$lib/client/admin/GeneratePasswordDialog.svelte';
   import GiftCardDialog from '$lib/client/admin/GiftCardDialog.svelte';
+  import {
+    completePollSnapshot,
+    selectPollSnapshot,
+    type PollSnapshot
+  } from '$lib/client/admin/poll-snapshot';
   import StudyPreviewDialog from '$lib/client/admin/StudyPreviewDialog.svelte';
   import * as Alert from '$lib/client/components/ui/alert';
   import { Badge } from '$lib/client/components/ui/badge';
@@ -15,26 +20,33 @@
   import * as Card from '$lib/client/components/ui/card';
   import * as Field from '$lib/client/components/ui/field';
   import { Input } from '$lib/client/components/ui/input';
+  import { Spinner } from '$lib/client/components/ui/spinner';
   import StudyFlowWireframe from '$lib/client/study/StudyFlowWireframe.svelte';
   import StudyStatusBadge from '$lib/client/study/StudyStatusBadge.svelte';
 
+  import type { SubmitFunction } from '@sveltejs/kit';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-  let polledParticipants = $state.raw<PageData['participants']>();
-  const participants = $derived(polledParticipants ?? data.participants);
+  let polledParticipants = $state.raw<PollSnapshot<PageData['participants']>>();
+  const participants = $derived(selectPollSnapshot(data.participants, polledParticipants));
   let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let purgingStudy = $state(false);
 
   // Five seconds keeps researcher-visible progress near-live without a persistent connection or
   // issuing a database query for every countdown tick.
   const progressPollMilliseconds = 5_000;
 
   async function refreshProgress() {
+    const base = data.participants;
     try {
       const response = await fetch(resolve('/admin/status'), { cache: 'no-store' });
       if (!response.ok) return;
       const payload = (await response.json()) as { participants: PageData['participants'] };
-      polledParticipants = payload.participants;
+      // An action invalidation is authoritative; never let a poll started against older page data
+      // overwrite its add, update, or delete result.
+      const snapshot = completePollSnapshot(base, data.participants, payload.participants);
+      if (snapshot) polledParticipants = snapshot;
     } catch {
       // The next visibility change or interval retries without disrupting admin operations.
     }
@@ -67,6 +79,17 @@
     return `${resolve('/admin/exports/study')}?${parameters}`;
   }
 
+  const purgeStudy: SubmitFunction = () => {
+    purgingStudy = true;
+    return async ({ update }) => {
+      try {
+        await update();
+      } finally {
+        purgingStudy = false;
+      }
+    };
+  };
+
   onMount(() => {
     startPolling();
     return stopPolling;
@@ -90,15 +113,6 @@
     </div>
   </header>
 
-  {#if form?.participantPassword}
-    <Alert.Root>
-      <Alert.Title>Credentials for {form.participantId}</Alert.Title>
-      <Alert.Description>
-        Copy this password now. It is shown once and cannot be recovered.
-        <Input class="mt-3 font-mono text-sm" readonly value={form.participantPassword} />
-      </Alert.Description>
-    </Alert.Root>
-  {/if}
   {#if form?.participantPurged}<Alert.Root
       ><Alert.Title>Participant deleted</Alert.Title><Alert.Description
         >Deleted participant {form.participantPurged}.</Alert.Description
@@ -217,9 +231,6 @@
           <Card.Header>
             <Card.Title class="flex flex-wrap items-center gap-2">
               <span class="font-mono">{participant.participantId}</span>
-              <Badge variant={participant.enabled ? 'secondary' : 'outline'}>
-                {participant.enabled ? 'Enabled' : 'Disabled'}
-              </Badge>
               {#if participant.flow}
                 <StudyStatusBadge status={participant.flow.status} />
               {/if}
@@ -250,7 +261,7 @@
                 href={resolve('/admin/exports/participant/[userId]', { userId: participant.id })}
                 variant="outline">Download data</Button
               >
-              <GiftCardDialog {participant} onSaved={refreshProgress} />
+              <GiftCardDialog {participant} />
               <div class="ml-auto flex flex-wrap gap-2">
                 <DeleteParticipantDialog {participant} />
               </div>
@@ -269,12 +280,31 @@
         and linked research data.
       </p>
     </div>
-    <form method="POST" action="?/purgeStudy" use:enhance class="flex max-w-xl items-end gap-3">
+    <form
+      method="POST"
+      action="?/purgeStudy"
+      use:enhance={purgeStudy}
+      class="flex max-w-xl items-end gap-3"
+    >
       <Field.Field class="flex-1">
         <Field.FieldLabel for="study-confirmation">Enter DELETE STUDY DATA</Field.FieldLabel>
-        <Input id="study-confirmation" name="confirmation" required autocomplete="off" />
+        <Input
+          id="study-confirmation"
+          name="confirmation"
+          required
+          autocomplete="off"
+          disabled={purgingStudy}
+        />
       </Field.Field>
-      <Button type="submit" variant="destructive">Delete study data</Button>
+      <Button
+        type="submit"
+        variant="destructive"
+        disabled={purgingStudy}
+        aria-busy={purgingStudy}
+        aria-label={purgingStudy ? 'Deleting study data' : undefined}
+      >
+        {#if purgingStudy}<Spinner data-icon="inline-start" />Deleting…{:else}Delete study data{/if}
+      </Button>
     </form>
   </section>
 </main>

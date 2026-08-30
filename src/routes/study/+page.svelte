@@ -5,12 +5,14 @@
 
   import { Button } from '$lib/client/components/ui/button';
   import * as Card from '$lib/client/components/ui/card';
+  import { Spinner } from '$lib/client/components/ui/spinner';
 
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const phase = $derived(data.state.phase);
   const title = $derived(phase.kind === 'task' ? phase.instructions.title : phase.title);
+  let continuing = $state(false);
 </script>
 
 <svelte:head><title>{title} · Sverlin study</title></svelte:head>
@@ -58,9 +60,22 @@
     </Card.Content>
     <Card.Footer class="flex justify-between gap-3">
       {#if phase.kind !== 'completion'}
-        <form method="POST" action={`${resolve('/study')}?/continue`}>
-          <Button type="submit">
-            {phase.kind === 'instruction' ? phase.continueLabel : 'Continue'}
+        <form
+          method="POST"
+          action={`${resolve('/study')}?/continue`}
+          onsubmit={() => (continuing = true)}
+        >
+          <Button
+            type="submit"
+            disabled={continuing}
+            aria-busy={continuing}
+            aria-label={continuing ? 'Continuing study' : undefined}
+          >
+            {#if continuing}
+              <Spinner data-icon="inline-start" />Continuing…
+            {:else}
+              {phase.kind === 'instruction' ? phase.continueLabel : 'Continue'}
+            {/if}
           </Button>
         </form>
       {/if}

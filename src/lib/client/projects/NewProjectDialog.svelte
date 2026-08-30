@@ -100,7 +100,12 @@
             </Button>
           {/snippet}
         </Dialog.Close>
-        <Button type="submit" disabled={!selectedTemplate || session.creating}>
+        <Button
+          type="submit"
+          disabled={!selectedTemplate || session.creating}
+          aria-busy={session.creating}
+          aria-label={session.creating ? 'Creating project' : undefined}
+        >
           {#if session.creating}
             <Spinner data-icon="inline-start" />Creating project
           {:else}

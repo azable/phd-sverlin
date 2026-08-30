@@ -149,7 +149,9 @@ test('administrator can run a timed study preview and configure a participant gi
   await page.getByRole('button', { name: 'Create preview' }).first().click();
   const previewDialog = page.getByRole('dialog', { name: /Preview Pilot study/ });
   await expect(previewDialog.getByText('Full flow', { exact: true })).toBeVisible();
+  await delayNextAdminAction(page, 'createPreview');
   await previewDialog.getByRole('button', { name: 'Create preview' }).click({ noWaitAfter: true });
+  await expect(previewDialog.getByRole('button', { name: 'Creating preview' })).toBeDisabled();
   await expect(page).toHaveURL(/\/admin\/previews\//);
   await expect(page.getByText('Welcome', { exact: true }).last()).toBeVisible();
   await page.getByRole('button', { name: 'Next phase' }).click({ noWaitAfter: true });
@@ -194,14 +196,7 @@ test('administrator can run a timed study preview and configure a participant gi
   let giftCardDialog = page.getByRole('dialog', { name: 'Gift card for E2E-GIFT' });
   const giftCardInput = giftCardDialog.getByLabel('Gift-card URL');
   await giftCardInput.fill('http://gift.example/card/static');
-  await page.route(
-    /\/admin\?\/giftCard$/,
-    async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      await route.continue();
-    },
-    { times: 1 }
-  );
+  await delayNextAdminAction(page, 'giftCard');
   await giftCardDialog.getByRole('button', { name: 'Save gift card' }).click();
   await expect(giftCardDialog.getByRole('button', { name: 'Saving gift card' })).toBeDisabled();
   await expect(giftCardDialog.getByText('Gift-card URLs must use HTTPS.')).toBeVisible();
@@ -232,7 +227,11 @@ test('administrator can run a timed study preview and configure a participant gi
   participantDialog = page.getByRole('dialog', { name: 'Add participant' });
   await expect(participantDialog.getByLabel('Participant ID')).toHaveValue('');
   await participantDialog.getByLabel('Participant ID').fill('invalid participant ID');
+  await delayNextAdminAction(page, 'create');
   await participantDialog.getByRole('button', { name: 'Create participant' }).click();
+  await expect(
+    participantDialog.getByRole('button', { name: 'Creating participant' })
+  ).toBeDisabled();
   await expect(
     participantDialog.getByText(
       'Participant ID must use 1–128 letters, numbers, hyphens, or underscores.'
@@ -241,12 +240,40 @@ test('administrator can run a timed study preview and configure a participant gi
   await participantDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(participantDialog).toHaveCount(0);
 
+  await page.getByRole('button', { name: 'Add participant' }).click();
+  participantDialog = page.getByRole('dialog', { name: 'Add participant' });
+  await participantDialog.getByLabel('Participant ID').fill('E2E-CREATED');
+  await delayNextAdminAction(page, 'create');
+  await participantDialog.getByRole('button', { name: 'Create participant' }).click();
+  await expect(
+    participantDialog.getByRole('button', { name: 'Creating participant' })
+  ).toBeDisabled();
+  const createdDialog = page.getByRole('dialog', { name: 'Participant created' });
+  await expect(createdDialog.getByLabel('Participant ID')).toHaveValue('E2E-CREATED');
+  await expect(createdDialog.getByLabel('One-time password')).not.toHaveValue('');
+  await createdDialog.getByRole('button', { name: 'Done' }).click();
+  await expect(page.locator('[data-slot="card"]').filter({ hasText: 'E2E-CREATED' })).toBeVisible();
+
   await participant.getByRole('button', { name: 'Generate new password' }).click();
-  const passwordDialog = page.getByRole('alertdialog', {
+  let passwordDialog = page.getByRole('alertdialog', {
     name: 'Generate a new password for E2E-GIFT?'
   });
   await passwordDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(passwordDialog).toHaveCount(0);
+  await participant.getByRole('button', { name: 'Generate new password' }).click();
+  passwordDialog = page.getByRole('alertdialog', {
+    name: 'Generate a new password for E2E-GIFT?'
+  });
+  await delayNextAdminAction(page, 'password');
+  await passwordDialog.getByRole('button', { name: 'Generate new password' }).click();
+  await expect(
+    passwordDialog.getByRole('button', { name: 'Generating new password' })
+  ).toBeDisabled();
+  const generatedPasswordDialog = page.getByRole('alertdialog', {
+    name: 'New password for E2E-GIFT'
+  });
+  await expect(generatedPasswordDialog.getByLabel('One-time password')).not.toHaveValue('');
+  await generatedPasswordDialog.getByRole('button', { name: 'Done' }).click();
 
   await participant.getByRole('button', { name: 'Delete participant' }).click();
   let deleteDialog = page.getByRole('alertdialog', {
@@ -263,6 +290,14 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(deleteDialog.getByRole('button', { name: 'Delete participant' })).toBeEnabled();
   await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(deleteDialog).toHaveCount(0);
+
+  await participant.getByRole('button', { name: 'Delete participant' }).click();
+  deleteDialog = page.getByRole('alertdialog', { name: 'Delete participant E2E-GIFT?' });
+  await deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm').fill('DELETE E2E-GIFT');
+  await delayNextAdminAction(page, 'purgeParticipant');
+  await deleteDialog.getByRole('button', { name: 'Delete participant' }).click();
+  await expect(deleteDialog.getByRole('button', { name: 'Deleting participant' })).toBeDisabled();
+  await expect(participant).toHaveCount(0);
 
   expect(browserFailures()).toEqual([]);
 });
@@ -298,6 +333,17 @@ async function createProject(request: APIRequestContext, templateId: string): Pr
     )
     .toBe('operation.completed');
   return created.projectId;
+}
+
+async function delayNextAdminAction(page: Page, action: string): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/admin' && url.search === `?/${action}`,
+    async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await route.continue();
+    },
+    { times: 1 }
+  );
 }
 
 function observeBrowserFailures(page: Page): () => string[] {

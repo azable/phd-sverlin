@@ -3,12 +3,14 @@
 
   import * as AlertDialog from '$lib/client/components/ui/alert-dialog';
   import { Button } from '$lib/client/components/ui/button';
+  import { Spinner } from '$lib/client/components/ui/spinner';
 
   type Props = {
     open: boolean;
     context?: 'participant' | 'admin-preview';
   };
   let { open, context = 'participant' }: Props = $props();
+  let advancing = $state(false);
 </script>
 
 <AlertDialog.Root {open}>
@@ -24,12 +26,30 @@
     <AlertDialog.Footer>
       {#if context === 'admin-preview'}
         <Button href={resolve('/admin')} variant="outline">Return to administration</Button>
-        <form method="POST" action="?/forcePreview">
-          <Button type="submit">Next phase</Button>
+        <form method="POST" action="?/forcePreview" onsubmit={() => (advancing = true)}>
+          <Button
+            type="submit"
+            disabled={advancing}
+            aria-busy={advancing}
+            aria-label={advancing ? 'Advancing preview' : undefined}
+          >
+            {#if advancing}<Spinner data-icon="inline-start" />Advancing…{:else}Next phase{/if}
+          </Button>
         </form>
       {:else}
-        <form method="POST" action={`${resolve('/study')}?/continue`}>
-          <Button type="submit">Continue study</Button>
+        <form
+          method="POST"
+          action={`${resolve('/study')}?/continue`}
+          onsubmit={() => (advancing = true)}
+        >
+          <Button
+            type="submit"
+            disabled={advancing}
+            aria-busy={advancing}
+            aria-label={advancing ? 'Continuing study' : undefined}
+          >
+            {#if advancing}<Spinner data-icon="inline-start" />Continuing…{:else}Continue study{/if}
+          </Button>
         </form>
       {/if}
     </AlertDialog.Footer>

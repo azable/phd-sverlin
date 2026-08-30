@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { actionFailureMessage } from './action-result';
+import { actionFailureMessage, participantCredentials } from './action-result';
 
 describe('actionFailureMessage', () => {
   it('keeps a specific action failure message', () => {
@@ -33,6 +33,27 @@ describe('actionFailureMessage', () => {
         { type: 'redirect', status: 303, location: '/admin' },
         'The action failed.'
       )
+    ).toBeUndefined();
+  });
+});
+
+describe('participantCredentials', () => {
+  it('reads one-time credentials from a successful participant action', () => {
+    expect(
+      participantCredentials({
+        type: 'success',
+        status: 200,
+        data: { participantId: 'P-101', participantPassword: 'one-time-secret' }
+      })
+    ).toEqual({ participantId: 'P-101', password: 'one-time-secret' });
+  });
+
+  it('rejects incomplete or unsuccessful action data', () => {
+    expect(
+      participantCredentials({ type: 'success', status: 200, data: { participantId: 'P-101' } })
+    ).toBeUndefined();
+    expect(
+      participantCredentials({ type: 'failure', status: 400, data: { error: 'Failed.' } })
     ).toBeUndefined();
   });
 });

@@ -15,6 +15,7 @@
   import { Label } from '$lib/client/components/ui/label';
   import * as Resizable from '$lib/client/components/ui/resizable';
   import { Skeleton } from '$lib/client/components/ui/skeleton';
+  import { Spinner } from '$lib/client/components/ui/spinner';
   import { Switch } from '$lib/client/components/ui/switch';
   import * as Tabs from '$lib/client/components/ui/tabs';
   import PhaseExpiredDialog from '$lib/client/study/PhaseExpiredDialog.svelte';
@@ -103,6 +104,7 @@
   let layout = $state<PresentationLayout>(study?.layout ?? 'single');
   // svelte-ignore state_referenced_locally
   let expired = $state(study?.expired ?? false);
+  let studyAdvancing = $state(false);
   let visualSelection = $state.raw<VisualSelection | undefined>(undefined);
 
   const adminPreview = $derived(study?.context === 'admin-preview');
@@ -190,8 +192,21 @@
             </Badge>
           {/if}
           {#if study.context === 'admin-preview'}
-            <form method="POST" action="?/forcePreview">
-              <Button type="submit" size="sm" variant="outline">Next phase</Button>
+            <form method="POST" action="?/forcePreview" onsubmit={() => (studyAdvancing = true)}>
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                disabled={studyAdvancing}
+                aria-busy={studyAdvancing}
+                aria-label={studyAdvancing ? 'Advancing preview' : undefined}
+              >
+                {#if studyAdvancing}
+                  <Spinner data-icon="inline-start" />Advancing…
+                {:else}
+                  Next phase
+                {/if}
+              </Button>
             </form>
             <Button href={resolve('/admin')} size="sm">Return to administration</Button>
           {:else}
@@ -208,9 +223,24 @@
                     </AlertDialog.Description>
                   </AlertDialog.Header>
                   <AlertDialog.Footer>
-                    <AlertDialog.Cancel>Keep working</AlertDialog.Cancel>
-                    <form method="POST" action={`${resolve('/study')}?/early`}>
-                      <Button type="submit">Finish and continue</Button>
+                    <AlertDialog.Cancel disabled={studyAdvancing}>Keep working</AlertDialog.Cancel>
+                    <form
+                      method="POST"
+                      action={`${resolve('/study')}?/early`}
+                      onsubmit={() => (studyAdvancing = true)}
+                    >
+                      <Button
+                        type="submit"
+                        disabled={studyAdvancing}
+                        aria-busy={studyAdvancing}
+                        aria-label={studyAdvancing ? 'Finishing task' : undefined}
+                      >
+                        {#if studyAdvancing}
+                          <Spinner data-icon="inline-start" />Finishing…
+                        {:else}
+                          Finish and continue
+                        {/if}
+                      </Button>
                     </form>
                   </AlertDialog.Footer>
                 </AlertDialog.Content>

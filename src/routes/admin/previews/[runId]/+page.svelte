@@ -3,6 +3,7 @@
 
   import { Button } from '$lib/client/components/ui/button';
   import * as Card from '$lib/client/components/ui/card';
+  import { Spinner } from '$lib/client/components/ui/spinner';
   import StudyFlowWireframe from '$lib/client/study/StudyFlowWireframe.svelte';
 
   import type { ActionData, PageData } from './$types';
@@ -10,6 +11,7 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const phase = $derived(data.state.phase);
   const title = $derived(phase.kind === 'task' ? phase.instructions.title : phase.title);
+  let advancing = $state(false);
 </script>
 
 <svelte:head><title>{title} · Study preview</title></svelte:head>
@@ -32,7 +34,16 @@
       <Card.Footer class="flex justify-between gap-3">
         <Button href={resolve('/admin')} variant="outline">Return to administration</Button>
         {#if !data.state.completed}
-          <form method="POST"><Button type="submit">Next phase</Button></form>
+          <form method="POST" onsubmit={() => (advancing = true)}>
+            <Button
+              type="submit"
+              disabled={advancing}
+              aria-busy={advancing}
+              aria-label={advancing ? 'Advancing preview' : undefined}
+            >
+              {#if advancing}<Spinner data-icon="inline-start" />Advancing…{:else}Next phase{/if}
+            </Button>
+          </form>
         {/if}
       </Card.Footer>
     </Card.Root>

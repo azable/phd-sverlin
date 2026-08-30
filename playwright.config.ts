@@ -2,6 +2,8 @@ import path from 'node:path';
 
 import { defineConfig, devices } from '@playwright/test';
 
+import { e2eAuthSecret, e2eSessionCookieValue, e2eSessionExpiresAt } from './scripts/e2e-auth';
+
 const outputRoot = path.resolve('outputs/playwright');
 
 export default defineConfig({
@@ -22,7 +24,22 @@ export default defineConfig({
     actionTimeout: 20_000,
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
-    video: 'retain-on-failure'
+    video: 'retain-on-failure',
+    storageState: {
+      cookies: [
+        {
+          name: 'sverlin.session_token',
+          value: e2eSessionCookieValue(),
+          domain: '127.0.0.1',
+          path: '/',
+          expires: Math.floor(e2eSessionExpiresAt().getTime() / 1_000),
+          httpOnly: true,
+          secure: false,
+          sameSite: 'Lax'
+        }
+      ],
+      origins: []
+    }
   },
   webServer: {
     command: 'node scripts/run-with-test-database.mjs --seed-admin node scripts/start-e2e.mjs',
@@ -31,6 +48,8 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 180_000,
     env: {
+      BETTER_AUTH_SECRET: e2eAuthSecret,
+      BETTER_AUTH_URL: 'http://127.0.0.1:4173',
       SVERLIN_SCRATCH_DIR: path.join(outputRoot, 'compiler'),
       SVERLIN_STATE_DIR: path.join(outputRoot, 'state'),
       SVERLIN_E2E_AUTH_BYPASS: 'true'

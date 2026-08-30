@@ -7,6 +7,7 @@
   import { Button, buttonVariants } from '$lib/client/components/ui/button';
   import * as Field from '$lib/client/components/ui/field';
   import { Input } from '$lib/client/components/ui/input';
+  import { Spinner } from '$lib/client/components/ui/spinner';
 
   import type { SubmitFunction } from '@sveltejs/kit';
 
@@ -20,21 +21,28 @@
   let { participant }: Props = $props();
   let open = $state(false);
   let confirmation = $state('');
+  let submitting = $state(false);
   let submissionError = $state<string>();
   const expectedConfirmation = $derived(`DELETE ${participant.participantId}`);
 
   const deleteParticipant: SubmitFunction = () => {
+    submitting = true;
     submissionError = undefined;
     return async ({ result, update }) => {
       const failure = actionFailureMessage(result, 'Participant deletion failed.');
-      await update();
-      if (failure) submissionError = failure;
-      else open = false;
+      try {
+        await update();
+        if (failure) submissionError = failure;
+        else open = false;
+      } finally {
+        submitting = false;
+      }
     };
   };
 
   function prepareConfirmation() {
     confirmation = '';
+    submitting = false;
     submissionError = undefined;
   }
 </script>
@@ -73,18 +81,25 @@
             name="confirmation"
             required
             autocomplete="off"
+            disabled={submitting}
             bind:value={confirmation}
           />
         </Field.Field>
       </Field.FieldGroup>
       <AlertDialog.Footer>
-        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Cancel disabled={submitting}>Cancel</AlertDialog.Cancel>
         <Button
           type="submit"
           variant="destructive"
-          disabled={confirmation !== expectedConfirmation}
+          disabled={submitting || confirmation !== expectedConfirmation}
+          aria-busy={submitting}
+          aria-label={submitting ? 'Deleting participant' : undefined}
         >
-          Delete participant
+          {#if submitting}
+            <Spinner data-icon="inline-start" />Deleting…
+          {:else}
+            Delete participant
+          {/if}
         </Button>
       </AlertDialog.Footer>
     </form>
