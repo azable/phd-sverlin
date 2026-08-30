@@ -64,6 +64,17 @@ export async function participantStudyState(userId: string): Promise<Participant
   return loadParticipantStudyState(userId);
 }
 
+/** Reveal the participant's configured gift card only after the study is complete. */
+export async function participantCompletionGiftCardUrl(
+  userId: string
+): Promise<string | undefined> {
+  const enrollment = await loadEnrollment(userId);
+  const definition = studyDefinition(enrollment.studyId, enrollment.studyVersion);
+  const phases = resolveStudyArm(definition, enrollment.armId);
+  const phase = phases[enrollment.currentPhaseIndex] ?? phases.at(-1);
+  return phase?.kind === 'completion' ? (enrollment.giftCardUrl ?? undefined) : undefined;
+}
+
 /** Complete the current screen without exposing a half-created or untimed task project. */
 export function continueParticipantStudy(userId: string): Promise<ParticipantStudyState> {
   return withParticipantStudyLock(userId, async () => {

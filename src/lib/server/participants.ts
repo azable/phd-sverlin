@@ -6,7 +6,7 @@ import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 
 import { auth } from '$lib/server/auth';
 import { database } from '$lib/server/db';
-import { projects, user } from '$lib/server/db/schema';
+import { projects, studyEnrollments, user } from '$lib/server/db/schema';
 import { enrollParticipant } from '$lib/server/study';
 
 export type IssuedParticipantCredentials = {
@@ -20,6 +20,7 @@ export type ParticipantListItem = {
   participantId: string;
   enabled: boolean;
   projectCount: number;
+  giftCardUrl?: string;
   createdAt: Date;
 };
 
@@ -32,12 +33,14 @@ export async function listParticipants(): Promise<ParticipantListItem[]> {
       username: user.username,
       banned: user.banned,
       projectCount: count(projects.id),
+      giftCardUrl: studyEnrollments.giftCardUrl,
       createdAt: user.createdAt
     })
     .from(user)
     .leftJoin(projects, and(eq(projects.ownerUserId, user.id), isNull(projects.deletedAt)))
+    .leftJoin(studyEnrollments, eq(studyEnrollments.userId, user.id))
     .where(and(eq(user.role, 'user'), isNotNull(user.username)))
-    .groupBy(user.id)
+    .groupBy(user.id, studyEnrollments.giftCardUrl)
     .orderBy(desc(user.createdAt));
 
   return rows.map((row) => ({
@@ -45,8 +48,39 @@ export async function listParticipants(): Promise<ParticipantListItem[]> {
     participantId: row.participantId || row.username || row.id,
     enabled: !row.banned,
     projectCount: row.projectCount,
+    ...(row.giftCardUrl ? { giftCardUrl: row.giftCardUrl } : {}),
     createdAt: row.createdAt
   }));
+}
+
+/** Assign or clear the static gift-card URL revealed after study completion. */
+export async function setParticipantGiftCardUrl(userId: string, value: string): Promise<void> {
+  await findParticipant(userId);
+  const giftCardUrl = normalizeGiftCardUrl(value);
+  const updated = await database()
+    .update(studyEnrollments)
+    .set({ giftCardUrl: giftCardUrl ?? null })
+    .where(eq(studyEnrollments.userId, userId))
+    .returning({ userId: studyEnrollments.userId });
+  if (!updated[0]) throw new Error('The participant is not enrolled in the study.');
+}
+
+/** Normalize an optional HTTPS gift-card URL without fetching third-party content. */
+export function normalizeGiftCardUrl(value: string): string | undefined {
+  const candidate = value.trim();
+  if (!candidate) return undefined;
+  if (candidate.length > 2_048) throw new Error('Gift-card URLs cannot exceed 2048 characters.');
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error('Enter a valid gift-card URL.');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('Gift-card URLs must use HTTPS.');
+  if (parsed.username || parsed.password) {
+    throw new Error('Gift-card URLs cannot contain embedded credentials.');
+  }
+  return parsed.toString();
 }
 
 /** Create a participant and return the generated password exactly once. */

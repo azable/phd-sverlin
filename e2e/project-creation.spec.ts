@@ -96,6 +96,111 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   expect(browserFailures()).toEqual([]);
 });
 
+test('administrator can run a timed study preview and configure a participant gift card', async ({
+  page
+}) => {
+  test.setTimeout(180_000);
+  const browserFailures = observeBrowserFailures(page);
+  await page.goto('/admin');
+
+  await expect(page.getByRole('heading', { name: 'Study preview' })).toBeVisible();
+  const createPreview = page.getByRole('button', { name: 'Create Sverlin preview' });
+  await expect(createPreview).toBeVisible();
+  await createPreview.click({ noWaitAfter: true });
+  await expect(page).toHaveURL(/studyPreview=/, { timeout: 150_000 });
+
+  await expect(page.getByText('Preview', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Restart preview' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Return to administration' })).toBeVisible();
+  await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Visualization/ })).toHaveCount(2);
+
+  const expiredUrl = new URL(page.url());
+  expiredUrl.searchParams.set('previewStartedAt', '1');
+  await page.goto(expiredUrl.toString());
+  const expiryDialog = page.getByRole('alertdialog');
+  await expect(expiryDialog.getByRole('heading', { name: 'Time is up' })).toBeVisible();
+  await expiryDialog.getByRole('button', { name: 'Restart preview' }).click();
+  await expect(expiryDialog).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).searchParams.get('previewStartedAt')).not.toBe('1');
+
+  await page.getByRole('link', { name: 'Return to administration' }).click();
+  await expect(page).toHaveURL('/admin');
+  await expect(page.getByRole('heading', { name: 'All projects' })).toBeVisible();
+  await expect(page.getByText('Preview · Sverlin', { exact: true })).toBeVisible();
+
+  const participant = page.locator('article').filter({ hasText: 'E2E-GIFT' });
+  await participant.getByRole('button', { name: 'Add gift card' }).click();
+  let giftCardDialog = page.getByRole('dialog', { name: 'Gift card for E2E-GIFT' });
+  const giftCardInput = giftCardDialog.getByLabel('Gift-card URL');
+  await giftCardInput.fill('http://gift.example/card/static');
+  await giftCardDialog.getByRole('button', { name: 'Save gift card' }).click();
+  await expect(giftCardDialog.getByText('Gift-card URLs must use HTTPS.')).toBeVisible();
+  await giftCardInput.fill('https://gift.example/card/static');
+  await giftCardInput.press('Enter');
+  await expect(giftCardDialog).toHaveCount(0);
+  await expect(participant.getByText('Gift card assigned', { exact: true })).toBeVisible();
+
+  await participant.getByRole('button', { name: 'Edit gift card' }).click();
+  giftCardDialog = page.getByRole('dialog', { name: 'Gift card for E2E-GIFT' });
+  await giftCardDialog.getByLabel('Gift-card URL').fill('https://gift.example/card/updated');
+  await giftCardDialog.getByLabel('Gift-card URL').press('Enter');
+  await expect(giftCardDialog).toHaveCount(0);
+  await participant.getByRole('button', { name: 'Edit gift card' }).click();
+  giftCardDialog = page.getByRole('dialog', { name: 'Gift card for E2E-GIFT' });
+  await expect(giftCardDialog.getByLabel('Gift-card URL')).toHaveValue(
+    'https://gift.example/card/updated'
+  );
+  await giftCardDialog.getByRole('button', { name: 'Clear' }).click();
+  await expect(giftCardDialog).toHaveCount(0);
+  await expect(participant.getByText('No gift card', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add participant' }).click();
+  let participantDialog = page.getByRole('dialog', { name: 'Add participant' });
+  await participantDialog.getByLabel('Participant ID').fill('discarded');
+  await participantDialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Add participant' }).click();
+  participantDialog = page.getByRole('dialog', { name: 'Add participant' });
+  await expect(participantDialog.getByLabel('Participant ID')).toHaveValue('');
+  await participantDialog.getByLabel('Participant ID').fill('invalid participant ID');
+  await participantDialog.getByRole('button', { name: 'Create participant' }).click();
+  await expect(
+    participantDialog.getByText(
+      'Participant ID must use 1–128 letters, numbers, hyphens, or underscores.'
+    )
+  ).toBeVisible();
+  await participantDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(participantDialog).toHaveCount(0);
+
+  await participant.getByRole('button', { name: 'Generate new password' }).click();
+  const passwordDialog = page.getByRole('alertdialog', {
+    name: 'Generate a new password for E2E-GIFT?'
+  });
+  await passwordDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(passwordDialog).toHaveCount(0);
+
+  await participant.getByRole('button', { name: 'Delete participant data' }).click();
+  let deleteDialog = page.getByRole('alertdialog', {
+    name: 'Delete data for E2E-GIFT?'
+  });
+  const confirmation = deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm');
+  await confirmation.fill('DELETE E2E-GIFT');
+  await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+  await participant.getByRole('button', { name: 'Delete participant data' }).click();
+  deleteDialog = page.getByRole('alertdialog', { name: 'Delete data for E2E-GIFT?' });
+  await expect(deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm')).toHaveValue('');
+  await expect(
+    deleteDialog.getByRole('button', { name: 'Delete participant data' })
+  ).toBeDisabled();
+  await deleteDialog.getByLabel('Enter DELETE E2E-GIFT to confirm').fill('DELETE E2E-GIFT');
+  await expect(deleteDialog.getByRole('button', { name: 'Delete participant data' })).toBeEnabled();
+  await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(deleteDialog).toHaveCount(0);
+
+  expect(browserFailures()).toEqual([]);
+});
+
 async function createProject(request: APIRequestContext, templateId: string): Promise<string> {
   const response = await request.post('/api/projects', { data: { templateId } });
   expect(response.status()).toBe(202);

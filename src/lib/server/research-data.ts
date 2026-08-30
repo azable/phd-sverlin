@@ -195,7 +195,15 @@ async function collectSnapshot(ownerUserId?: string): Promise<ResearchSnapshot> 
       const participantIds = participantRows.map(({ id }) => id);
       const enrollmentRows = participantIds.length
         ? await transaction
-            .select()
+            .select({
+              userId: schema.studyEnrollments.userId,
+              studyId: schema.studyEnrollments.studyId,
+              studyVersion: schema.studyEnrollments.studyVersion,
+              armId: schema.studyEnrollments.armId,
+              currentPhaseIndex: schema.studyEnrollments.currentPhaseIndex,
+              enrolledAt: schema.studyEnrollments.enrolledAt,
+              completedAt: schema.studyEnrollments.completedAt
+            })
             .from(schema.studyEnrollments)
             .where(inArray(schema.studyEnrollments.userId, participantIds))
             .orderBy(asc(schema.studyEnrollments.enrolledAt))

@@ -163,6 +163,7 @@ export const studyEnrollments = pgTable(
     studyVersion: integer('study_version').notNull(),
     armId: text('arm_id').notNull(),
     currentPhaseIndex: integer('current_phase_index').default(0).notNull(),
+    giftCardUrl: text('gift_card_url'),
     enrolledAt: timestamp('enrolled_at', { withTimezone: true }).defaultNow().notNull(),
     completedAt: timestamp('completed_at', { withTimezone: true })
   },

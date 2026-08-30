@@ -2,13 +2,41 @@
   import { enhance } from '$app/forms';
   import { resolve } from '$app/paths';
 
+  import AddParticipantDialog from '$lib/client/admin/AddParticipantDialog.svelte';
+  import AdminProjectList from '$lib/client/admin/AdminProjectList.svelte';
+  import DeleteParticipantDialog from '$lib/client/admin/DeleteParticipantDialog.svelte';
+  import GeneratePasswordDialog from '$lib/client/admin/GeneratePasswordDialog.svelte';
+  import GiftCardDialog from '$lib/client/admin/GiftCardDialog.svelte';
+  import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
   import * as Field from '$lib/client/components/ui/field';
   import { Input } from '$lib/client/components/ui/input';
+  import { Separator } from '$lib/client/components/ui/separator';
+  import { Spinner } from '$lib/client/components/ui/spinner';
+  import * as ToggleGroup from '$lib/client/components/ui/toggle-group';
+
+  import type { SubmitFunction } from '@sveltejs/kit';
 
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  let preparingPreview = $state(false);
+  let selectedPreviewKey = $derived(data.previewOptions[0]?.key ?? '');
+  const selectedPreview = $derived(
+    data.previewOptions.find(({ key }) => key === selectedPreviewKey)
+  );
+
+  function selectPreview(value: string | string[]) {
+    if (typeof value === 'string' && value) selectedPreviewKey = value;
+  }
+
+  const preparePreview: SubmitFunction = () => {
+    preparingPreview = true;
+    return async ({ update }) => {
+      await update();
+      preparingPreview = false;
+    };
+  };
 </script>
 
 <svelte:head><title>Sverlin administration</title></svelte:head>
@@ -47,29 +75,76 @@
         : 's'}.
     </p>
   {/if}
+  {#if form?.giftCardUpdated}
+    <p class="rounded-md border p-3">Updated the participant gift-card link.</p>
+  {/if}
   {#if form?.error}<p class="rounded-md border border-destructive p-3 text-destructive">
       {form.error}
     </p>{/if}
 
   <section class="flex flex-col gap-4 rounded-lg border p-5">
-    <h2 class="text-xl font-medium">Add participant</h2>
-    <form method="POST" action="?/create" use:enhance class="flex max-w-xl items-end gap-3">
-      <Field.Field class="flex-1">
-        <Field.FieldLabel for="participant-id">Participant ID</Field.FieldLabel>
-        <Input
-          id="participant-id"
-          name="participantId"
-          required
-          maxlength={128}
-          autocomplete="off"
-        />
-      </Field.Field>
-      <Button type="submit">Create participant</Button>
+    <div>
+      <h2 class="text-xl font-medium">Study preview</h2>
+      <p class="text-sm text-muted-foreground">
+        Create a fresh administrator project using one active study condition. Its configured timer
+        starts after the initial visualization is ready.
+      </p>
+    </div>
+    <form method="POST" action="?/createPreview" use:enhance={preparePreview}>
+      <Field.FieldSet disabled={preparingPreview}>
+        <Field.FieldLegend>Condition</Field.FieldLegend>
+        <Field.FieldDescription>
+          Preview projects are retained in the project directory for later inspection.
+        </Field.FieldDescription>
+        <input type="hidden" name="previewKey" value={selectedPreviewKey} />
+        <ToggleGroup.Root
+          type="single"
+          value={selectedPreviewKey}
+          onValueChange={selectPreview}
+          spacing={2}
+          variant="outline"
+          class="flex-wrap justify-start"
+          aria-label="Study condition to preview"
+        >
+          {#each data.previewOptions as option (option.key)}
+            <ToggleGroup.Item value={option.key} class="h-auto min-w-44 flex-col items-start p-3">
+              <span class="font-medium">{option.name}</span>
+              <span class="text-xs font-normal text-muted-foreground">{option.label}</span>
+            </ToggleGroup.Item>
+          {/each}
+        </ToggleGroup.Root>
+        <Button type="submit" disabled={!selectedPreview || preparingPreview}>
+          {#if preparingPreview}
+            <Spinner data-icon="inline-start" />Preparing preview
+          {:else}
+            Create {selectedPreview?.name ?? 'study'} preview
+          {/if}
+        </Button>
+      </Field.FieldSet>
     </form>
   </section>
 
   <section class="flex flex-col gap-3">
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h2 class="text-xl font-medium">All projects</h2>
+        <p class="text-sm text-muted-foreground">
+          Administrator and participant projects, most recently updated first.
+        </p>
+      </div>
+      <Button href={resolve('/admin/exports/analysis')} variant="outline">
+        Download analysis export
+      </Button>
+    </div>
+    <AdminProjectList
+      projects={data.allProjects}
+      emptyMessage="No projects have been created."
+      showOwner
+    />
+  </section>
+
+  <section class="flex min-w-0 flex-col gap-3">
+    <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h2 class="text-xl font-medium">Participants</h2>
         <p class="text-sm text-muted-foreground">
@@ -77,9 +152,7 @@
         </p>
       </div>
       <div class="flex flex-wrap justify-end gap-2">
-        <Button href={resolve('/admin/exports/analysis')} variant="outline">
-          Download analysis export
-        </Button>
+        <AddParticipantDialog />
         <Button href={resolve('/admin/exports/study')} variant="outline">
           Download study export
         </Button>
@@ -91,17 +164,19 @@
       {#each data.participants as participant (participant.id)}
         <article class="flex flex-wrap items-center gap-4 rounded-lg border p-4">
           <div class="mr-auto">
-            <h3 class="font-mono font-medium">{participant.participantId}</h3>
+            <div class="flex items-center gap-2">
+              <h3 class="font-mono font-medium">{participant.participantId}</h3>
+              <Badge variant={participant.giftCardUrl ? 'default' : 'destructive'}>
+                {participant.giftCardUrl ? 'Gift card assigned' : 'No gift card'}
+              </Badge>
+            </div>
             <p class="text-sm text-muted-foreground">
               {participant.projectCount} project{participant.projectCount === 1 ? '' : 's'} ·
               {participant.enabled ? 'enabled' : 'disabled'}
             </p>
           </div>
           {#if participant.enabled}
-            <form method="POST" action="?/password" use:enhance>
-              <input type="hidden" name="id" value={participant.id} />
-              <Button type="submit" variant="outline">Generate new password</Button>
-            </form>
+            <GeneratePasswordDialog {participant} />
           {/if}
           <Button
             href={resolve('/admin/exports/participant/[userId]', { userId: participant.id })}
@@ -114,29 +189,19 @@
               {participant.enabled ? 'Disable' : 'Enable'}
             </Button>
           </form>
-          <form
-            method="POST"
-            action="?/purgeParticipant"
-            use:enhance
-            class="flex basis-full items-end gap-3 border-t pt-4"
-          >
-            <input type="hidden" name="id" value={participant.id} />
-            <Field.Field class="max-w-md flex-1">
-              <Field.FieldLabel for={`purge-${participant.id}`}>
-                Enter DELETE {participant.participantId}
-              </Field.FieldLabel>
-              <Input
-                id={`purge-${participant.id}`}
-                name="confirmation"
-                required
-                autocomplete="off"
-              />
-              <Field.FieldDescription>
-                Export first if the approved research protocol permits retaining this data.
-              </Field.FieldDescription>
-            </Field.Field>
-            <Button type="submit" variant="destructive">Delete participant data</Button>
-          </form>
+
+          <GiftCardDialog {participant} />
+
+          <div class="flex basis-full flex-col gap-2">
+            <h4 class="font-medium">Projects</h4>
+            <AdminProjectList
+              projects={participant.projects}
+              emptyMessage="This participant has no projects yet."
+            />
+          </div>
+
+          <Separator class="basis-full" />
+          <DeleteParticipantDialog {participant} />
         </article>
       {/each}
     {/if}

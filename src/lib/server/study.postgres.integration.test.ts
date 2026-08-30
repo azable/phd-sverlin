@@ -9,7 +9,12 @@ import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
 
-import { continueParticipantStudy, studyTaskProjectId } from './study';
+import { setParticipantGiftCardUrl } from './participants';
+import {
+  continueParticipantStudy,
+  participantCompletionGiftCardUrl,
+  studyTaskProjectId
+} from './study';
 
 const enabled = Boolean(process.env.DATABASE_URL) && process.env.SVERLIN_RUN_POSTGRES_TESTS === '1';
 const users: string[] = [];
@@ -77,6 +82,39 @@ it.skipIf(!enabled)(
   },
   30_000
 );
+
+it.skipIf(!enabled)('reveals a configured gift card only at completion', async () => {
+  const userId = `gift-user-${randomUUID()}`;
+  users.push(userId);
+  await database()
+    .insert(schema.user)
+    .values({
+      id: userId,
+      name: userId,
+      email: `${userId}@sverlin.invalid`,
+      emailVerified: true,
+      username: userId,
+      role: 'user'
+    });
+  await database().insert(schema.studyEnrollments).values({
+    userId,
+    studyId: activeStudyDefinition.id,
+    studyVersion: activeStudyDefinition.version,
+    armId: 'sverlin-first'
+  });
+
+  await setParticipantGiftCardUrl(userId, 'https://gift.example/card/static');
+  expect(await participantCompletionGiftCardUrl(userId)).toBeUndefined();
+
+  await database()
+    .update(schema.studyEnrollments)
+    .set({ currentPhaseIndex: activeStudyDefinition.flow.length - 1 })
+    .where(eq(schema.studyEnrollments.userId, userId));
+  expect(await participantCompletionGiftCardUrl(userId)).toBe('https://gift.example/card/static');
+
+  await setParticipantGiftCardUrl(userId, '');
+  expect(await participantCompletionGiftCardUrl(userId)).toBeUndefined();
+});
 
 function readyComparison(projectId: string): ProjectDocument {
   const operationId = randomUUID();

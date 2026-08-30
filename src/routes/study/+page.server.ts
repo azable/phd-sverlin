@@ -1,7 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit';
 
 import { requirePrincipal } from '$lib/server/authorization';
-import { continueParticipantStudy, participantStudyState } from '$lib/server/study';
+import {
+  continueParticipantStudy,
+  participantCompletionGiftCardUrl,
+  participantStudyState
+} from '$lib/server/study';
 
 import type { Actions, PageServerLoad } from './$types';
 
@@ -12,7 +16,13 @@ export const load: PageServerLoad = async ({ locals }) => {
   if (state.phase.kind === 'task' && state.projectId && !state.expired) {
     redirect(303, `/projects/${state.projectId}`);
   }
-  return { state };
+  return {
+    state,
+    giftCardUrl:
+      state.phase.kind === 'completion'
+        ? await participantCompletionGiftCardUrl(principal.user.id)
+        : undefined
+  };
 };
 
 export const actions: Actions = {

@@ -27,7 +27,11 @@ let child;
 try {
   await admin.unsafe(`create database "${databaseName}"`);
   await run('pnpm', ['run', 'db:migrate'], { DATABASE_URL: testUrl.toString() });
-  if (seedAdmin) await seedTestAdministrator(testUrl.toString());
+  if (seedAdmin) {
+    await run('pnpm', ['exec', 'tsx', 'scripts/seed-e2e.ts'], {
+      DATABASE_URL: testUrl.toString()
+    });
+  }
   child = spawn(arguments_[0], arguments_.slice(1), {
     stdio: 'inherit',
     env: { ...process.env, DATABASE_URL: testUrl.toString() }
@@ -48,24 +52,6 @@ try {
   `.catch(() => undefined);
   await admin.unsafe(`drop database if exists "${databaseName}" with (force)`);
   await admin.end({ timeout: 5 });
-}
-
-async function seedTestAdministrator(databaseUrl) {
-  const sql = postgres(databaseUrl, { max: 1, prepare: false });
-  try {
-    await sql`
-      insert into auth_user (id, name, email, email_verified, role)
-      values (
-        'sverlin-e2e-admin',
-        'Sverlin E2E administrator',
-        'e2e-admin@sverlin.invalid',
-        true,
-        'admin'
-      )
-    `;
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
 }
 
 async function run(command, arguments_, environment) {

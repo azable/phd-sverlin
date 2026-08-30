@@ -32,14 +32,26 @@
   } from './ProjectArtifactPanel.svelte';
   import { ProjectSession } from './project-session.svelte';
 
-  type StudyTask = {
-    phaseId: string;
-    title: string;
-    prompt: string;
-    deadlineAt?: string;
-    expired: boolean;
-    layout: PresentationLayout;
-  };
+  type StudyTask =
+    | {
+        context: 'participant';
+        phaseId: string;
+        title: string;
+        prompt: string;
+        deadlineAt?: string;
+        expired: boolean;
+        layout: PresentationLayout;
+      }
+    | {
+        context: 'admin-preview';
+        previewKey: string;
+        phaseId: string;
+        title: string;
+        prompt: string;
+        deadlineAt: string;
+        expired: boolean;
+        layout: PresentationLayout;
+      };
 
   type Props = {
     projectId: string;
@@ -63,7 +75,11 @@
 
   // The route keys this component by project ID, so the session is intentionally instance-scoped.
   // svelte-ignore state_referenced_locally
-  const session = new ProjectSession(projectId, isAdmin && devMode, study?.layout ?? 'single');
+  const session = new ProjectSession(
+    projectId,
+    isAdmin && study?.context !== 'admin-preview' && devMode,
+    study?.layout ?? 'single'
+  );
   const presentationSelection = new PresentationSelection();
   let editMode = $state<ProjectArtifactEditMode>('readonly');
   let renaming = $state(false);
@@ -74,7 +90,9 @@
   // svelte-ignore state_referenced_locally
   let expired = $state(study?.expired ?? false);
 
-  const developerView = $derived(isAdmin && devMode);
+  const adminPreview = $derived(study?.context === 'admin-preview');
+  const showAdminControls = $derived(isAdmin && !adminPreview);
+  const developerView = $derived(showAdminControls && devMode);
   const busy = $derived(!!session.pending || session.creating);
   const mutationsDisabled = $derived(busy || expired || session.readOnly || editMode === 'editing');
   const presentationCount = $derived<1 | 2>(
@@ -140,7 +158,10 @@
       {#if study}
         <header class="flex items-center gap-3 border-b bg-card px-4 py-2">
           <div class="mr-auto min-w-0">
-            <p class="text-base font-medium">{study.title}</p>
+            <div class="flex items-center gap-2">
+              <p class="text-base font-medium">{study.title}</p>
+              {#if study.context === 'admin-preview'}<Badge variant="secondary">Preview</Badge>{/if}
+            </div>
             <p class="truncate text-sm text-muted-foreground">{study.prompt}</p>
           </div>
           {#if study.deadlineAt && !expired}
@@ -148,7 +169,13 @@
               <StudyTimer deadlineAt={study.deadlineAt} onExpire={() => (expired = true)} />
             </Badge>
           {/if}
-          {#if authEnabled}
+          {#if study.context === 'admin-preview'}
+            <form method="POST" action="?/restartPreview">
+              <input type="hidden" name="previewKey" value={study.previewKey} />
+              <Button type="submit" size="sm" variant="outline">Restart preview</Button>
+            </form>
+            <Button href={resolve('/admin')} size="sm">Return to administration</Button>
+          {:else if authEnabled}
             <form method="POST" action={resolve('/logout')}>
               <Button type="submit" size="icon-sm" variant="ghost" aria-label="Sign out"
                 ><LogOutIcon /></Button
@@ -167,7 +194,7 @@
             >
               <Tabs.Trigger value="timeline">Timeline</Tabs.Trigger>
               {#if developerView}<Badge variant="secondary">Developer details</Badge>{/if}
-              {#if isAdmin}
+              {#if showAdminControls}
                 <select
                   class="ml-auto h-8 max-w-40 rounded-md border bg-background px-2 text-sm"
                   value={projectId}
@@ -228,7 +255,7 @@
         <Resizable.Handle withHandle />
 
         <Resizable.Pane defaultSize={68} minSize={50} class="flex min-w-0 flex-col">
-          {#if isAdmin}
+          {#if showAdminControls}
             <div class="flex items-center gap-2 border-b px-3 py-1.5 text-sm">
               <span class="text-muted-foreground">Presentation layout</span>
               <select
@@ -293,5 +320,11 @@
       </Alert.Root>
     </div>
   {/if}
-  {#if study}<PhaseExpiredDialog open={expired} />{/if}
+  {#if study}
+    <PhaseExpiredDialog
+      open={expired}
+      context={study.context}
+      previewKey={study.context === 'admin-preview' ? study.previewKey : undefined}
+    />
+  {/if}
 </div>

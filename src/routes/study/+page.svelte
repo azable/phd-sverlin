@@ -1,6 +1,8 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
 
+  import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+
   import { Button } from '$lib/client/components/ui/button';
   import * as Card from '$lib/client/components/ui/card';
 
@@ -21,7 +23,7 @@
         <Card.Description>Your time for this task has ended.</Card.Description>
       {/if}
     </Card.Header>
-    <Card.Content class="space-y-3 text-sm text-muted-foreground">
+    <Card.Content class="flex flex-col gap-3 text-sm text-muted-foreground">
       {#if form?.error}
         <p
           class="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-destructive"
@@ -36,16 +38,37 @@
         {#each phase.paragraphs as paragraph (paragraph)}
           <p>{paragraph}</p>
         {/each}
+        {#if phase.kind === 'completion'}
+          {#if data.giftCardUrl}
+            <div>
+              <Button
+                href={data.giftCardUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                referrerpolicy="no-referrer"
+              >
+                Open your gift card<ExternalLinkIcon data-icon="inline-end" />
+              </Button>
+            </div>
+          {:else}
+            <p>No gift card has been assigned. Please contact the researcher.</p>
+          {/if}
+        {/if}
       {/if}
     </Card.Content>
-    {#if phase.kind !== 'completion'}
-      <Card.Footer>
+    <Card.Footer class="flex justify-between gap-3">
+      {#if phase.kind !== 'completion'}
         <form method="POST" action={resolve('/study')}>
           <Button type="submit">
             {phase.kind === 'instruction' ? phase.continueLabel : 'Continue'}
           </Button>
         </form>
-      </Card.Footer>
-    {/if}
+      {/if}
+      <form method="POST" action={resolve('/logout')} class="ml-auto">
+        <Button type="submit" variant={phase.kind === 'completion' ? 'default' : 'outline'}>
+          Sign out
+        </Button>
+      </form>
+    </Card.Footer>
   </Card.Root>
 </main>

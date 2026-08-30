@@ -2,7 +2,7 @@ import { eq, getTableColumns } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
 import { database } from './index';
-import { account, session } from './schema';
+import { account, session, studyEnrollments } from './schema';
 
 describe('PostgreSQL relations', () => {
   it('constructs Better Auth joined session queries', () => {
@@ -19,5 +19,10 @@ describe('PostgreSQL relations', () => {
 
     expect(columns).toHaveProperty('issuer');
     expect(account.issuer.notNull).toBe(true);
+  });
+
+  it('stores a participant gift-card URL outside project Timelines', () => {
+    expect(getTableColumns(studyEnrollments)).toHaveProperty('giftCardUrl');
+    expect(studyEnrollments.giftCardUrl.notNull).toBe(false);
   });
 });
