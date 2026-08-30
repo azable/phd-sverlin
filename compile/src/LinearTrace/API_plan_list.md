@@ -20,17 +20,25 @@ render :: Render ()
 
 The shared flow is: Domain declares a typed `Kind`; Program attaches it to a
 materialized block; Render selects that kind. A declared `RelationKind` uses the
-same `select` entry point for the relations active at each checkpoint.
+same `select` entry point for the relations active in each exposed frame. Typed,
+nestable Program steps replace free-form checkpoint labels; Render chooses which
+steps become frames.
 
 ```haskell
+type Shown = "shown"
+type Removed = "removed"
+
 program = do
-  Create pending <- create (LInt 3)
-  value <- materialize valueKind pending
-  checkpoint "shown"
-  Destroy <- destroy value
-  checkpoint "removed"
+  value <- step @Shown $ do
+    Create pending <- create (LInt 3)
+    materialize valueKind pending
+  step @Removed $ do
+    Destroy <- destroy value
+    pure ()
 
 render = do
+  framesAt @'[Shown, Removed]
+
   Selected values <- select valueKind
   node values $ content (text "value")
 
@@ -56,6 +64,10 @@ data RelationKind source target      -- abstract location relation
 **Open:** final declaration operations for kinds, operators, and ordered or
 symmetric relation kinds. Names such as `declareKind`, `declareOperator`, and
 `declareRelation` in examples are placeholders, not settled exports.
+
+**Open declaration shape:** Domain also declares the finite set of typed step
+identities used by Program and Render. `declareSteps @'[Shown, Removed]` is the
+working spelling; the declaration name and packaging remain open.
 
 ### Payloads
 
@@ -152,17 +164,13 @@ materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)
 materializeWithKind :: (Payload tag -> Kind tag) -> Pending tag %1 -> Program (Block tag)
 commit :: Pending tag %1 -> Program (Block tag)
 
-checkpoint :: String -> Program ()
-
 (<$>) :: (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
 (<*>) :: OneUse (a %1 -> b) %1 -> OneUse a %1 -> OneUse b
 ```
 
-TODO question: where is step? is API_plan.md covered properly here?
-
 **Open signature:** `relate` consumes and reissues two matching `Slot`s. The
 compiler records a relation between their stable owners but returns no relation
-token. It may occur after an earlier checkpoint. Relation-derived geometry joins
+token. It may occur after an earlier exposed frame. Relation-derived geometry joins
 the fixed constraints over the stable owners' overlapping lifetimes, while the
 relation itself is visible only after this Program event. Unsealing or resealing a
 slot does not change existing relations, which end automatically when either owner
@@ -173,8 +181,20 @@ reason to keep sampling.
 relate :: RelationKind source target -> ... -> Program (Relate ...)
 ```
 
-**Open vocabulary:** reusable named Program steps and their typed identities.
-No step name is a proposed export yet.
+### Named steps
+
+```haskell
+step :: forall name a. ... => Program a %1 -> Program a
+```
+
+`step @Name action` gives a reusable Program action a typed identity. Steps may
+nest, and the result of the wrapped action is returned unchanged. The same identity
+is used by `framesAt`, `fragment`, and `fragmentMany`; there is no public
+`checkpoint :: String -> Program ()` in the target API.
+
+**Open signature:** the constraints connecting `name` to the Domain declaration
+remain unsettled. The `step` name, type application, nesting behavior, and
+result-preserving shape are settled.
 
 ## Render
 
@@ -209,12 +229,17 @@ instance Node (Render ()) (Render (SelectionBinding (Selected GeneratedNode)))
 
 self   :: Render (SelectionBinding (Selected GeneratedNode))
 canvas :: Selected CanvasNode
+
+framesAt :: forall names. ... => Render ()
 ```
 
 The two `Selectable` instances are library-provided: `select valueKind` binds
-live blocks, while `select Adjacent` binds active relations at the current
-checkpoint. Selecting relations does not draw them or make them acceptable to
-`node`.
+live blocks, while `select Adjacent` binds active relations in the current exposed
+frame. Selecting relations does not draw them or make them acceptable to `node`.
+`framesAt @'[StepA, StepB]` exposes those typed Program steps as presentation
+frames whenever they occur; execution order, including repeated steps, determines
+frame order. Nested steps that are not listed still retain their identities for
+source-fragment highlighting and composition.
 
 ### Text
 
@@ -418,7 +443,7 @@ optimization is still open.
 
 1. Domain declaration names and packaging.
 2. Exact `Relate` type parameters and operation signature.
-3. Program step vocabulary and the typed step reference used by text fragments.
+3. Exact Domain declaration and type-class constraints for typed step identities.
 4. Exact `TextBuilder` input and fragment signatures.
 5. Whether three materialization operations remain separate.
 6. The Render projection from a stable slot owner to its current occupant.
