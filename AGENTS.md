@@ -44,6 +44,11 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   guides. Identify conflicting or stale material before consolidating it.
 - Document the rationale and source for operational constants, limits, timeouts, retry
   counts, and other non-obvious numeric choices.
+- In response code examples, keep expressions on one line when they remain readable;
+  do not mechanically split ordinary function applications across several lines. For
+  example, prefer `Selected limits <- select @Number (#limit <&> payload limitLabel)`
+  over a vertically expanded equivalent. Use multiple lines when the expression's
+  length or structure makes that materially clearer.
 
 ## How To Navigate
 
@@ -57,11 +62,17 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 - Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.
 - To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
-- To run the SvelteKit application, use `pnpm run dev` from the root directory. This will start the development server, with hot-reloading.
-- `pnpm run dev` prepares the compiler and starts the complete SvelteKit service. `pnpm run dev:web` skips compiler preparation but still includes asynchronous project-operation execution; there is no separate worker process.
+- To run the SvelteKit application, use `pnpm run dev` from the root directory. It applies pending database migrations, prepares the compiler, and starts the development server with hot-reloading.
+- `pnpm run dev:web` skips migration and compiler preparation but still includes asynchronous project-operation execution; there is no separate worker process.
 
 ## Engineering Rules
 
+- Before starting a local development server or a check that starts or connects to
+  one, test whether `.local/state/sverlin/.server.lock` is currently held. If it is,
+  tell the developer that their existing server must be stopped with Ctrl+C and wait
+  for confirmation before continuing. Do not bypass the guard, remove the lock file,
+  or start with another `SVERLIN_STATE_DIR` unless the developer explicitly confirms
+  that the previous server has stopped and asks for that recovery action.
 - If completing an active task requires a devcontainer rebuild or Codex restart,
   create or update a temporary root `HANDOVER.md` before stopping. Record the
   task objective, completed work, current working-tree changes and their
@@ -93,7 +104,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
 - When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
 - `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.
-- AI-generated source is compiled through the complete visualization pipeline for the submitted UI seed before it can become the active artifact. One failed candidate may be repaired by one explicit second generation; provider retries and open-ended orchestration loops are disabled. Candidates, prompts, responses, compiler output, failures, accepted artifacts, and successful renders are stored inline in the complete project event log with hashes for provenance.
+- AI-generated Sverlin source is compiled through the complete visualization pipeline for one or two fresh server-selected seeds before it can become the active artifact. A failed batch may be repaired by one explicit second generation using the same seeds; provider retries and open-ended orchestration loops are disabled. Generated source, prompts, responses, compiler output, failures, accepted artifacts, and successful presentations are stored inline in the complete project event log with hashes for provenance. Direct HTML turns similarly accept at most one safe manifest and one explicit correction.
 - The visualization path intentionally uses a tuned solver config rather than raw `defaultSolveConfig`; preserve this separation so direct solver tests stay conservative while regeneration avoids long L-BFGS-B tails.
 - Keep solver tests focused on the top-level `Solver` facade unless the behavior under test is deliberately internal. Add or update stable fixtures in `compile/test-support/Solver/TestFixtures.hs` when solver preprocessing, categorical choices, or backend optimization behavior needs repeatable coverage.
 
@@ -111,9 +122,9 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   facade export. `scripts/dsl-api-index.mjs` validates and indexes those comments
   together with GHC-inferred public signatures; run
   `pnpm run generate:dsl-api-index` after changing them. Never edit the
-  generated `src/lib/server/chat-bots/ai-assistant/dsl-api-index.md` by hand.
-- `src/lib/server/chat-bots/ai-assistant/dsl-interface.md` is the complementary
-  human-readable composition and authoring guide for the primary `ai-assistant`
+  generated `src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md` by hand.
+- `src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md` is the complementary
+  human-readable composition and authoring guide for the primary `sverlin-assistant`
   bot (currently configured as `gpt-5.6-luna`). It should explain cross-cutting
   invariants, syntax hazards, and examples without duplicating the exhaustive API
   index.
