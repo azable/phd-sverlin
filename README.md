@@ -58,35 +58,35 @@ the passkey already registered in the persistent PostgreSQL volume.
 1. Sign in as the administrator and open `/admin`.
 2. Create a participant ID, select an open study version, copy its generated password, and assign its static HTTPS gift-card URL. The exact study/version and counterbalanced arm cannot be reassigned afterward.
 3. Confirm that the participant initially shows **Not started** with every configured phase unfilled. The same flow fills as the participant progresses and is marked **Completed** at the terminal phase.
-4. From a configured-study card, create either a durable full-flow preview or an isolated phase preview. Choose the arm explicitly; full-flow previews can be advanced without waiting for task timers, while isolated previews stop after their selected phase.
+4. From a configured-study card, create either a full-flow preview or an isolated phase preview. Choose the arm explicitly; full-flow previews can be advanced without waiting for task timers, while isolated previews stop after their selected phase.
 5. Open `/login` in a private/incognito window and enter the participant credentials.
-6. Continue from the welcome screen into the first timed task and confirm that its initial visualization appears.
+6. Continue from the welcome screen into the first timed task, request a visualization, and confirm that its generated candidate bubbles appear.
 7. Verify that expiry locks the task and opens a blocking dialog whose Continue action advances to the counterbalanced second renderer. A task with `allowEarlyCompletion` enabled in its immutable study definition also offers a confirmed early-finish action that immediately locks it.
 8. Verify that the participant Timeline shows separate user, assistant, and visualization bubbles. Selecting a visualization should activate it; in comparison mode, Shift-select two compatible bubbles to compare them.
 9. Open a participant task from its admin flow. The project must be read-only, and participant-authored messages must use the participant ID rather than “You”. Only password/access changes, gift-card management, exports, and explicitly confirmed purges are administrative mutations.
 
 Passwords can be rotated from `/admin`; rotation and disabling an account revoke its active sessions.
-The same page provides verified participant, exact-version study, all-study, and
-analysis exports alongside explicitly confirmed research-data deletion. Every delivery
-path uses the same snapshot, manifest, path-safety, and immutable-resource verification
-pipeline. Research exports select projects through study phase links, include the exact
-registered definitions plus complete projected flows, and exclude administrator previews
-and unrelated participant-owned projects.
-Gift-card URLs are operational participant data and are omitted from research and
-analysis exports.
+The same page provides verified participant, exact-version study, all-study, and all-project
+downloads alongside explicitly confirmed participant-data deletion. Every delivery path uses
+the same snapshot, manifest, path-safety, and immutable-resource verification pipeline. Study
+and participant downloads select projects through study phase links, include the registered
+definitions plus complete projected flows, and exclude administrator previews and unrelated
+participant-owned projects. The all-project download includes active administrator projects and
+previews. Gift-card URLs are operational data and are omitted from every data download.
 
-For debugging, administrators can also download an analysis export containing
-all active projects, their safe owner labels, complete Timelines, and verified
-resources. Operation outcomes are already contained in each Timeline. The equivalent local command writes the same
-logical file tree as a readable directory:
+The local command mirrors those administrator downloads, including scope resolution, operation
+guards, snapshots, filenames, and verification, but writes a readable directory:
 
 ```sh
-pnpm run export:analysis
-pnpm run export:analysis -- --project PROJECT_ID --output outputs/my-analysis
+pnpm run export:data -- --scope projects
+pnpm run export:data -- --scope projects --project PROJECT_ID --output outputs/my-project
+pnpm run export:data -- --scope participant --participant PARTICIPANT_ID
+pnpm run export:data -- --scope study --study pilot-study --version 1
+pnpm run export:data -- --scope study
 ```
 
 The default destination is a new UTC-timestamped directory under
-`outputs/project-analysis/`. The command refuses to overwrite an existing
+`outputs/data-export/`. The command refuses to overwrite an existing
 directory. It reads PostgreSQL directly, so `DATABASE_URL` must identify the
 database to inspect.
 
@@ -184,7 +184,7 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 | `pnpm run preview`           | Prepare the compiler and preview the production frontend locally.  |
 | `pnpm run start`             | Start the built adapter-node web service.                          |
 | `pnpm run build`             | Prepare the compiler and build the web and migration bundles.      |
-| `pnpm run build:analysis`    | Build the local PostgreSQL analysis-export command.                |
+| `pnpm run build:data`        | Build the canonical local PostgreSQL data-export command.          |
 | `pnpm run build:migrate`     | Build only `build-migrate/index.js`.                               |
 | `pnpm run prepare`           | Internal package lifecycle hook that synchronizes SvelteKit types. |
 | `pnpm run prepare:compiler`  | Build and fingerprint the direct Haskell compiler executable.      |
@@ -192,11 +192,11 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 ### Database, data, and operations
 
-| Command                              | Purpose                                                  |
-| ------------------------------------ | -------------------------------------------------------- |
-| `pnpm run db:generate`               | Generate a Drizzle migration from the TypeScript schema. |
-| `pnpm run db:migrate`                | Apply checked-in Drizzle migrations to `DATABASE_URL`.   |
-| `pnpm run export:analysis -- <args>` | Export active projects for local analysis.               |
+| Command                          | Purpose                                                  |
+| -------------------------------- | -------------------------------------------------------- |
+| `pnpm run db:generate`           | Generate a Drizzle migration from the TypeScript schema. |
+| `pnpm run db:migrate`            | Apply checked-in Drizzle migrations to `DATABASE_URL`.   |
+| `pnpm run export:data -- <args>` | Export project, participant, or study data.              |
 
 ### Checks, generation, and formatting
 

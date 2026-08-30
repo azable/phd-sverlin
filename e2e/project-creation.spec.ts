@@ -41,24 +41,40 @@ test('canvas element selection is included in submitted feedback', async ({ page
   await expect(element).toBeVisible();
   await expect(page.getByText(/^Step 1 of \d+$/)).toBeVisible();
   await element.click();
-  await expect(page.getByText('1 selected element(s)', { exact: true })).toBeVisible();
+  const referenceSelection = page.getByRole('button', { name: 'Reference selection' });
+  await expect(referenceSelection).toBeVisible();
+  await referenceSelection.click();
 
   const feedbackResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/api/projects/${selectionProjectId}`) &&
       response.request().method() === 'POST'
   );
-  await page.getByLabel('Project feedback').fill('Focus on this element');
+  await page.getByLabel('Project feedback').pressSequentially('Focus on this element');
   await page.getByLabel('Project feedback').press('Enter');
   const response = await feedbackResponse;
   expect(response.status()).toBe(202);
   const payload = response.request().postDataJSON() as {
-    selection?: { render?: number; step: number; instances: number[] };
+    content: Array<{
+      type: string;
+      presentationEvent?: number;
+      step?: number;
+      instances?: number[];
+    }>;
   };
-  expect(payload.selection).toMatchObject({
-    render: expect.any(Number),
-    step: 0,
-    instances: [expect.any(Number)]
+  expect(payload.content).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: 'element-ref',
+        presentationEvent: expect.any(Number),
+        step: 0,
+        instances: [expect.any(Number)]
+      })
+    ])
+  );
+  expect(payload.content.at(-1)).toMatchObject({
+    type: 'markdown',
+    text: 'Focus on this element'
   });
   expect(browserFailures()).toEqual([]);
 });
@@ -89,7 +105,7 @@ test('new project combines template selection with the current Dev-detail prefer
     .click({ noWaitAfter: true });
 
   const created = await creationResponse;
-  expect(created.status()).toBe(202);
+  expect(created.status()).toBe(201);
   expect(created.request().postDataJSON()).toEqual({ templateId: 'blank' });
   createdProjectId = ((await created.json()) as { projectId: string }).projectId;
   expect(createdProjectId).not.toBe(projectId);
@@ -106,14 +122,8 @@ test('new project combines template selection with the current Dev-detail prefer
 
 test('Dev mode is reversible frontend state, not a project type', async ({ page }) => {
   const browserFailures = observeBrowserFailures(page);
-  await page.goto(`/projects/${projectId}`);
+  await page.goto(`/projects/${selectionProjectId}`);
 
-  await expect(page.getByText('Sverlin Assistant', { exact: true })).toBeVisible();
-  await expect(
-    page.getByText('Tell me what algorithm or program you would like to visualize', {
-      exact: false
-    })
-  ).toBeVisible();
   const visualization = page.getByRole('button', { name: /^Visualization/ }).first();
   await expect(visualization).toBeVisible();
   await expect(visualization).toHaveAttribute('aria-pressed', 'true');
@@ -129,13 +139,13 @@ test('Dev mode is reversible frontend state, not a project type', async ({ page 
   await expect(page.getByRole('link', { name: 'Raw JSON' })).toBeVisible();
 
   await devToggle.click();
-  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${selectionProjectId}$`));
   await expect(page.getByText('Developer details', { exact: true })).toHaveCount(0);
 
-  const projectResponse = await page.request.get(`/api/projects/${projectId}`);
+  const projectResponse = await page.request.get(`/api/projects/${selectionProjectId}`);
   expect(projectResponse.ok()).toBe(true);
   const resource = (await projectResponse.json()) as ProjectResourceView;
-  expect(resource.document.events[0].payload.creation).toEqual({ templateId: 'blank' });
+  expect(resource.document.events[0].payload.creation).toEqual({ templateId: 'linear-search' });
   expect(browserFailures()).toEqual([]);
 });
 
@@ -163,6 +173,7 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(page.getByRole('link', { name: 'Return to administration' })).toBeVisible();
   await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
+  await expect(page.getByText('Sverlin Assistant', { exact: true })).toBeVisible();
   await expect(page.getByText('Generating more visualizations…', { exact: true })).toBeVisible();
   const candidates = page.getByRole('button', { name: /^Visualization/ });
   await expect(candidates).toHaveCount(4, { timeout: 150_000 });
@@ -173,7 +184,9 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(candidates.nth(0)).toHaveAttribute('aria-pressed', 'true');
   await expect(candidates.nth(2)).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Prefer top' }).click();
-  await expect(page.getByText(/^Preferred .+ over .+$/)).toBeVisible();
+  await expect(page.getByText('Preferred', { exact: true })).toBeVisible();
+  await expect(candidates).toHaveCount(6, { timeout: 150_000 });
+  await expect(page.getByText('Generating more visualizations…', { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Next phase' }).click();
   await expect(page).toHaveURL(/\/admin\/previews\//);
@@ -305,11 +318,14 @@ test('administrator can run a timed study preview and configure a participant gi
 
 async function createProject(request: APIRequestContext, templateId: string): Promise<string> {
   const response = await request.post('/api/projects', { data: { templateId } });
-  expect(response.status()).toBe(202);
-  const created = (await response.json()) as { projectId: string; operationId: string };
+  expect(response.status()).toBe(templateId === 'blank' ? 201 : 202);
+  const created = (await response.json()) as { projectId: string; operationId?: string };
+  if (templateId === 'blank') return created.projectId;
+  expect(created.operationId).toBeTruthy();
+  const operationId = created.operationId as string;
   const observedMilestones = new Set<string>();
   console.info(
-    `[e2e compile] Initial-render operation ${created.operationId} accepted for project ${created.projectId}; waiting for its real compile Timeline.`
+    `[e2e compile] Initial-render operation ${operationId} accepted for project ${created.projectId}; waiting for its real compile Timeline.`
   );
   await expect
     .poll(
@@ -318,15 +334,15 @@ async function createProject(request: APIRequestContext, templateId: string): Pr
         if (!project.ok()) return `http-${project.status()}: ${await project.text()}`;
         const resource = (await project.json()) as ProjectResourceView;
         for (const event of resource.document.events.filter(
-          ({ operationId }) => operationId === created.operationId
+          (event) => event.operationId === operationId
         )) {
           if (observedMilestones.has(event.type)) continue;
           observedMilestones.add(event.type);
-          console.info(`[e2e compile] ${created.operationId}: ${event.type}`);
+          console.info(`[e2e compile] ${operationId}: ${event.type}`);
         }
         return resource.document.events.findLast(
           (event) =>
-            event.operationId === created.operationId &&
+            event.operationId === operationId &&
             (event.type === 'operation.completed' || event.type === 'operation.failed')
         )?.type;
       },

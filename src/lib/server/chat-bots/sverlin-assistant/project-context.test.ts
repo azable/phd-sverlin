@@ -18,7 +18,7 @@ describe('AI project context projection', () => {
       ...base(1),
       type: 'feedback.submitted',
       actor: { kind: 'user' },
-      payload: { text: 'Make this clearer', focus: [] }
+      payload: { content: [{ type: 'markdown', text: 'Make this clearer' }], focus: [] }
     };
     const compilation: ProjectEventOf<'compilation.requested'> = {
       ...base(2),
@@ -36,7 +36,7 @@ describe('AI project context projection', () => {
       ...base(3),
       type: 'assistant.responded',
       actor: { kind: 'assistant', botId: 'sverlin-assistant' },
-      payload: { text: 'Updated' }
+      payload: { content: [{ type: 'markdown', text: 'Updated' }] }
     };
 
     expect(projectConversationMessages([feedback, compilation, response])).toEqual([
@@ -139,26 +139,7 @@ describe('AI project context projection', () => {
       steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]
     };
     document.events.push(
-      event(4, 'visualization.rendered', {
-        seed: 1,
-        source: recorded('current source', 'text/x-sverlin'),
-        render: recorded(JSON.stringify(visualization), 'application/json')
-      })
-    );
-
-    const context = projectAiContext(document, {
-      eventIds: [],
-      visualSelection: { render: 4, step: 0, instances: [0] }
-    });
-
-    expect(context.activeVisualizationFindings).toHaveLength(1);
-    expect(context.selected.visualization?.elements[0]).toMatchObject({
-      instanceId: 0,
-      findings: [{ findingCode: 'typography.size-reduced' }]
-    });
-
-    document.events.push(
-      event(5, 'visualization.presented', {
+      event(4, 'visualization.presented', {
         displaySetId: '12345678-1234-4123-8123-123456789abd',
         slot: 0,
         presentation: {
@@ -173,19 +154,27 @@ describe('AI project context projection', () => {
     );
     const presented = projectAiContext(document, {
       eventIds: [],
-      visualSelection: { presentationEvent: 5, step: 0, instances: [0] }
+      visualSelection: { presentationEvent: 4, step: 0, instances: [0] }
     });
-    expect(presented.selected.visualization?.renderSummary).toMatchObject({ id: 5, seed: 2 });
-    expect(presented.selected.visualization?.elements[0]).toMatchObject({ instanceId: 0 });
+    expect(presented.activeVisualizationFindings).toHaveLength(1);
+    expect(presented.selected.visualization?.renderSummary).toMatchObject({ id: 4, seed: 2 });
+    expect(presented.selected.visualization?.elements[0]).toMatchObject({
+      instanceId: 0,
+      findings: [{ findingCode: 'typography.size-reduced' }]
+    });
   });
 });
 
 function projectDocument(request: ProjectEventOf<'ai.generation-requested'>): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: 'project-test',
     events: [
-      event(1, 'project.created', { title: 'Test', entryArtifactId: 'dsl-main' }),
+      event(1, 'project.created', {
+        title: 'Test',
+        entryArtifactId: 'dsl-main',
+        creation: { templateId: 'blank' }
+      }),
       event(2, 'artifact.version-created', {
         origin: { kind: 'initial' },
         changes: [

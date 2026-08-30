@@ -9,7 +9,7 @@ const operationId = '12345678-1234-4123-8123-123456789abc';
 describe('workspace projection', () => {
   it('returns the complete authorized Timeline for client-side participant projection', () => {
     const document: ProjectDocument = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       projectId: 'workspace-test',
       events: [
         {
@@ -18,7 +18,11 @@ describe('workspace projection', () => {
           actor: { kind: 'user' },
           operationId,
           createdAt: '2026-01-01T00:00:00.000Z',
-          payload: { title: 'Test', entryArtifactId: 'dsl-main' }
+          payload: {
+            title: 'Test',
+            entryArtifactId: 'dsl-main',
+            creation: { templateId: 'blank' }
+          }
         },
         {
           id: 2,
@@ -26,7 +30,7 @@ describe('workspace projection', () => {
           actor: { kind: 'user' },
           operationId,
           createdAt: '2026-01-01T00:00:01.000Z',
-          payload: { text: 'Make it clearer', focus: [] }
+          payload: { content: [{ type: 'markdown', text: 'Make it clearer' }], focus: [] }
         },
         {
           id: 3,
@@ -34,7 +38,7 @@ describe('workspace projection', () => {
           actor: { kind: 'assistant', botId: 'sverlin-assistant' },
           operationId,
           createdAt: '2026-01-01T00:00:02.000Z',
-          payload: { text: 'I simplified the labels.' }
+          payload: { content: [{ type: 'markdown', text: 'I simplified the labels.' }] }
         }
       ]
     };

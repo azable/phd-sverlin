@@ -9,7 +9,7 @@ describe('authorization boundaries', () => {
     expect(projectListOwner(participant.principal!)).toBe('participant-one');
   });
 
-  it('allows administrators to request unscoped project analysis', () => {
+  it('allows administrators to request unscoped project data', () => {
     const admin = locals('admin', 'admin-one');
     expect(requireAdmin(admin)).toMatchObject({ kind: 'admin', user: { id: 'admin-one' } });
     expect(projectListOwner(admin.principal!)).toBeUndefined();

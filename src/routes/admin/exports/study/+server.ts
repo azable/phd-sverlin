@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 
 import { requireAdmin } from '$lib/server/authorization';
-import { prepareStudyResearchExport } from '$lib/server/research-data';
+import { prepareSelectedDataExport } from '$lib/server/data-export-service';
 
 import type { RequestHandler } from './$types';
 
@@ -15,9 +15,10 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     error(400, 'Study version must be a positive integer.');
   }
   try {
-    const prepared = await prepareStudyResearchExport(
-      studyId && version !== undefined ? { id: studyId, version } : undefined
-    );
+    const prepared = await prepareSelectedDataExport({
+      type: 'study',
+      ...(studyId && version !== undefined ? { studyId, studyVersion: version } : {})
+    });
     return await prepared.response();
   } catch (cause) {
     error(409, cause instanceof Error ? cause.message : 'Study export failed.');

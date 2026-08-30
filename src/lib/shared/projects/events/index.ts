@@ -27,7 +27,7 @@ import {
 import { projectCreatedEventSchema } from './project-created';
 import { projectRenamedEventSchema } from './project-renamed';
 import { systemNotifiedEventSchema } from './system-notified';
-import { visualizationRenderedEventSchema } from './visualization-rendered';
+import { visualizationCandidatesAdvancedEventSchema } from './visualization-candidates-advanced';
 import {
   visualizationPreferenceRecordedEventSchema,
   visualizationPresentedEventSchema
@@ -48,9 +48,9 @@ export const projectEventSchema = v.variant('type', [
   compilationSucceededEventSchema,
   compilationFailedEventSchema,
   artifactVersionCreatedEventSchema,
-  visualizationRenderedEventSchema,
   visualizationPresentedEventSchema,
   visualizationPreferenceRecordedEventSchema,
+  visualizationCandidatesAdvancedEventSchema,
   assistantRespondedEventSchema,
   systemNotifiedEventSchema
 ]);
@@ -94,8 +94,8 @@ export class InvalidProjectDocumentError extends Error {
   }
 }
 
-/** Parse and validate one version-one project event. */
-export function normalizeProjectEventV1(value: unknown): ProjectEvent {
+/** Parse and validate one version-two project event. */
+export function normalizeProjectEventV2(value: unknown): ProjectEvent {
   const parsed = v.safeParse(projectEventSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   return parsed.output;

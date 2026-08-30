@@ -74,7 +74,7 @@ describe('ProjectOperationExecutor', () => {
         type: 'feedback',
         operationId,
         expectedHead: 1,
-        text: 'Change it.',
+        content: [{ type: 'markdown', text: 'Change it.' }],
         focus: [],
         presentationCount: 1
       }
@@ -202,7 +202,7 @@ describe('ProjectOperationExecutor', () => {
 
 function rootDocument(projectId: string, operationId: string): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     events: [
       {
@@ -211,7 +211,11 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         actor: { kind: 'user' },
         operationId,
         createdAt: '2026-08-30T00:00:00.000Z',
-        payload: { title: 'Initial', entryArtifactId: 'dsl-main' }
+        payload: {
+          title: 'Initial',
+          entryArtifactId: 'dsl-main',
+          creation: { templateId: 'blank' }
+        }
       }
     ]
   };

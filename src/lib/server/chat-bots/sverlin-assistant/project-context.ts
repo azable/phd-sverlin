@@ -21,8 +21,9 @@ import type {
   TargetDiagnostic,
   VisualSelection
 } from '$lib/shared/projects/events/values';
+import type { MessageContent } from '$lib/shared/projects/events/message-content';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
-import { legacyPresentationId, type RenderablePresentation } from '$lib/shared/presentations';
+import type { RenderablePresentation } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import {
   decodeVisualization,
@@ -61,6 +62,7 @@ export type AiWorkspace = {
 /** Compact identity of one activated visualization. */
 export type AiRenderSummary = {
   id: EventId;
+  presentationId: string;
   seed: number;
   sourceSha256: string;
   renderSha256: string;
@@ -72,7 +74,7 @@ export type AiRenderSummary = {
 export type AiEventDetail = {
   event: ProjectEvent;
   workspace: AiWorkspace;
-  activeRender?: AiRenderSummary;
+  activePresentations: AiRenderSummary[];
 };
 
 /** One selected rendered element paired with its instance identity. */
@@ -108,7 +110,8 @@ export type AiProjectContext = {
   title: string;
   headEventId: EventId;
   currentWorkspace: AiWorkspace;
-  activeRender?: AiRenderSummary;
+  activePresentations: AiRenderSummary[];
+  interfaceCapabilities: string[];
   activeVisualizationFindings: VisualizationFinding[];
   timeline: AiTimelineEntry[];
   selected: {
@@ -127,7 +130,9 @@ const timelineCases = {
   'operation.failed': (event) =>
     `${event.payload.kind} operation failed (${event.payload.failureKind}): ${event.payload.message}`,
   'feedback.submitted': (event) =>
-    `Submitted feedback${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}${event.payload.presentations?.length ? ` while viewing presentations ${event.payload.presentations.join(', ')}` : ''}${event.payload.selection ? ' with a visual selection' : ''}.`,
+    `Submitted structured feedback with ${event.payload.content.length} segment(s)${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}.`,
+  'visualization.candidates-advanced': (event) =>
+    `Advanced past presentations ${event.payload.presentations.join(', ')} (${event.payload.reason}).`,
   'ai.generation-requested': (event) =>
     `Requested ${event.payload.purpose} generation attempt ${event.payload.attempt} from ${event.payload.requestedModel}; prompt ${shortHash(event.payload.prompt.sha256)}.`,
   'ai.generation-succeeded': (event) =>
@@ -142,8 +147,6 @@ const timelineCases = {
     `Compilation failed (${event.payload.failureKind}) with ${event.payload.diagnostics.length} diagnostic(s).`,
   'artifact.version-created': (event) =>
     `Created ${event.payload.origin.kind} artifact version with ${event.payload.changes.length} change(s).`,
-  'visualization.rendered': (event) =>
-    `Activated seed ${event.payload.seed}; render ${shortHash(event.payload.render.sha256)}.`,
   'visualization.presented': (event) =>
     `Presented ${event.payload.presentation.format} visualization ${event.payload.presentation.presentationId} in display set ${event.payload.displaySetId}.`,
   'visualization.preference-recorded': (event) =>
@@ -159,6 +162,7 @@ const conversationCases = {
   'operation.completed': () => [],
   'operation.failed': () => [],
   'feedback.submitted': (event) => [{ role: 'user', content: feedbackMessage(event) } as const],
+  'visualization.candidates-advanced': () => [],
   'ai.generation-requested': () => [],
   'ai.generation-succeeded': () => [],
   'ai.generation-failed': () => [],
@@ -166,7 +170,6 @@ const conversationCases = {
   'compilation.succeeded': () => [],
   'compilation.failed': () => [],
   'artifact.version-created': () => [],
-  'visualization.rendered': () => [],
   'visualization.presented': () => [],
   'visualization.preference-recorded': (event) => [
     {
@@ -174,7 +177,9 @@ const conversationCases = {
       content: `I preferred presentation ${event.payload.preferred} over the alternative${event.payload.displaySetId ? ` in display set ${event.payload.displaySetId}` : ''} at step ${event.payload.step}.`
     } as const
   ],
-  'assistant.responded': (event) => [{ role: 'assistant', content: event.payload.text } as const],
+  'assistant.responded': (event) => [
+    { role: 'assistant', content: messageContentText(event.payload.content) } as const
+  ],
   'system.notified': () => []
 } satisfies ProjectEventCases<ConversationMessage[]>;
 
@@ -214,10 +219,14 @@ export function projectAiContext(
     title: snapshot.title,
     headEventId: projectHead(document).id,
     currentWorkspace: projectWorkspace(snapshot),
-    ...(snapshot.activeRender ? { activeRender: renderSummary(snapshot.activeRender) } : {}),
-    activeVisualizationFindings: snapshot.activeRender
-      ? decodeVisualization(snapshot.activeRender.payload.render.text).findings
-      : [],
+    activePresentations: activePresentationSummaries(snapshot),
+    activeVisualizationFindings: activePresentationFindings(snapshot),
+    interfaceCapabilities: [
+      'The application owns previous/next step playback controls; never draw replacement controls inside a visualization.',
+      'The participant can select a presentation from the Timeline and Shift-select a compatible Sverlin presentation to compare a pair.',
+      'A visible pair has preference controls, and a participant can select exact canvas elements and reference presentations or elements inline in messages.',
+      'Sverlin projects may keep another pair generated ahead of time; ordinary conversation does not advance the visible pair.'
+    ],
     timeline: document.events.map(projectAiTimelineEntry),
     selected: {
       events: selection.eventIds.map((id) => eventDetail(document, id)),
@@ -241,22 +250,6 @@ function selectedPresentation(document: ProjectDocument, id: string): AiSelected
         presentation: event.payload.presentation
       };
     }
-    if (event.type === 'visualization.rendered' && legacyPresentationId(event.id) === id) {
-      return {
-        eventId: event.id,
-        presentation: {
-          presentationId: id,
-          format: 'sverlin-ir-v1',
-          stepSignature: `legacy-${event.id}`,
-          seed: event.payload.seed,
-          source: event.payload.source,
-          render: event.payload.render,
-          resources: event.payload.resources,
-          provenance: event.payload.provenance,
-          targetDiagnostics: event.payload.targetDiagnostics
-        }
-      };
-    }
   }
   throw new Error(`Unknown selected presentation ${id}.`);
 }
@@ -268,7 +261,7 @@ function eventDetail(document: ProjectDocument, id: EventId): AiEventDetail {
   return {
     event,
     workspace: projectWorkspace(snapshot),
-    ...(snapshot.activeRender ? { activeRender: renderSummary(snapshot.activeRender) } : {})
+    activePresentations: activePresentationSummaries(snapshot)
   };
 }
 
@@ -301,6 +294,7 @@ function resolveVisualSelection(
     stepLabel: step.label,
     renderSummary: {
       id: resolved.event.id,
+      presentationId: resolved.event.payload.presentation.presentationId,
       seed: resolved.seed,
       sourceSha256: resolved.sourceSha256,
       renderSha256: resolved.renderSha256,
@@ -325,37 +319,56 @@ function projectWorkspace(snapshot: ProjectSnapshot): AiWorkspace {
 }
 
 function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
-  const details = [event.payload.text];
+  const details = [messageContentText(event.payload.content)];
   if (event.payload.focus.length > 0) {
     details.push(`Focused timeline events: ${event.payload.focus.join(', ')}`);
-  }
-  if (event.payload.selection) {
-    const selection = event.payload.selection;
-    const eventId =
-      'presentationEvent' in selection ? selection.presentationEvent : selection.render;
-    details.push(
-      `Visual selection in presentation event ${eventId}, step ${selection.step}: instances ${selection.instances.join(', ')}`
-    );
-  }
-  if (event.payload.presentations?.length) {
-    details.push(
-      `Presentations visible during feedback: ${event.payload.presentations.join(', ')}`
-    );
   }
   return details.filter(Boolean).join('\n\n');
 }
 
-function renderSummary(event: ProjectEventOf<'visualization.rendered'>): AiRenderSummary {
+function renderSummary(
+  event: ProjectEventOf<'visualization.presented'>
+): AiRenderSummary | undefined {
+  const presentation = event.payload.presentation;
+  if (presentation.format !== 'sverlin-ir-v1') return undefined;
   return {
     id: event.id,
-    seed: event.payload.seed,
-    sourceSha256: event.payload.source.sha256,
-    renderSha256: event.payload.render.sha256,
-    ...(event.payload.provenance ? { provenance: event.payload.provenance } : {}),
-    ...(event.payload.targetDiagnostics
-      ? { targetDiagnostics: event.payload.targetDiagnostics }
-      : {})
+    presentationId: presentation.presentationId,
+    seed: presentation.seed,
+    sourceSha256: presentation.source.sha256,
+    renderSha256: presentation.render.sha256,
+    ...(presentation.provenance ? { provenance: presentation.provenance } : {}),
+    ...(presentation.targetDiagnostics ? { targetDiagnostics: presentation.targetDiagnostics } : {})
   };
+}
+
+function activePresentationSummaries(snapshot: ProjectSnapshot): AiRenderSummary[] {
+  return (snapshot.activePresentationSet?.presentations ?? []).flatMap((event) => {
+    const summary = renderSummary(event);
+    return summary ? [summary] : [];
+  });
+}
+
+function activePresentationFindings(snapshot: ProjectSnapshot): VisualizationFinding[] {
+  return (snapshot.activePresentationSet?.presentations ?? []).flatMap((event) => {
+    const presentation = event.payload.presentation;
+    return presentation.format === 'sverlin-ir-v1'
+      ? decodeVisualization(presentation.render.text).findings
+      : [];
+  });
+}
+
+function messageContentText(content: MessageContent): string {
+  return content
+    .map((segment) => {
+      if (segment.type === 'markdown') return segment.text;
+      if (segment.type === 'presentation-ref') {
+        return `[Presentation ${segment.presentationId}]`;
+      }
+      return `[Elements ${segment.instances.join(', ')} in presentation ${segment.presentationId}, step ${segment.step + 1}]`;
+    })
+    .join(' ')
+    .trim();
 }
 
 function shortHash(sha256: string): string {

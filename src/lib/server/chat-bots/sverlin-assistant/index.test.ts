@@ -61,7 +61,7 @@ describe('AI assistant DSL interface', () => {
 
   it('delegates unspecified presentation to conditional family profiles', async () => {
     expect(aiAssistant.initialPrompt).toContain(
-      'Leave visual style fields unspecified unless the user or the visualization’s semantics require them'
+      'Leave visual style fields unspecified unless semantics require them'
     );
     const guide = await loadDslInterfaceContext();
     expect(guide).toContain('`style @Field value` is a hard authoring requirement');

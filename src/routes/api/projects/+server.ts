@@ -26,6 +26,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
       ownerUserId: principal.user.id,
       operationId
     });
+    if (creation.templateId === 'blank') {
+      return json({ projectId: document.projectId }, { status: 201 });
+    }
     const accepted = await projectOperationExecutor.accept({
       projectId: document.projectId,
       operationId,

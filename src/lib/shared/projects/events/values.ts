@@ -97,16 +97,12 @@ export const artifactChangeSchema = v.variant('operation', [
   v.object({ operation: v.literal('delete'), artifactId: textSchema })
 ]);
 
-const visualSelectionPosition = {
+/** Runtime schema for feedback attached to concrete visualization instances. */
+export const visualSelectionSchema = v.object({
+  presentationEvent: positiveSchema,
   step: naturalSchema,
   instances: v.pipe(v.array(naturalSchema), v.minLength(1))
-};
-
-/** Runtime schema for feedback attached to concrete visualization instances. */
-export const visualSelectionSchema = v.union([
-  v.object({ presentationEvent: positiveSchema, ...visualSelectionPosition }),
-  v.object({ render: positiveSchema, ...visualSelectionPosition })
-]);
+});
 
 /** Runtime schema identifying the exact DSL implementation used for a compilation. */
 export const dslRevisionSchema = v.object({

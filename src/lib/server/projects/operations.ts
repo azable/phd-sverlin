@@ -16,6 +16,7 @@ import { recoveryEventsForInterruptedOperations } from './recovery';
 import { projectRepository, type ProjectRepository } from './repository';
 import {
   renameProject,
+  advanceProjectPresentations,
   replenishProjectPresentations,
   renderInitialProject,
   renderProject,
@@ -383,11 +384,14 @@ async function executeProjectCommand(options: {
     case 'feedback':
       return submitProjectFeedback({
         ...common,
-        text: options.command.text,
+        content: options.command.content,
         focus: options.command.focus,
-        selection: options.command.selection,
-        presentations: options.command.presentations,
         presentationCount: options.command.presentationCount
+      });
+    case 'advance-presentations':
+      return advanceProjectPresentations({
+        ...common,
+        presentations: options.command.presentations
       });
     case 'render':
       return renderProject({ ...common, seed: options.command.seed });
@@ -460,23 +464,24 @@ function domainFailureFor(
   kind: ProjectOperationKind,
   events: readonly ProjectEvent[]
 ): ProjectEvent | undefined {
-  if (kind === 'rename' || kind === 'prefer' || kind === 'save-html') return undefined;
+  if (
+    kind === 'rename' ||
+    kind === 'prefer' ||
+    kind === 'save-html' ||
+    kind === 'advance-presentations'
+  )
+    return undefined;
   const outcome = events.findLast((event) => {
     if (kind === 'feedback') {
       return (
         event.type === 'assistant.responded' ||
-        event.type === 'visualization.rendered' ||
         event.type === 'visualization.presented' ||
         event.type === 'ai.generation-failed' ||
         event.type === 'compilation.failed' ||
         (event.type === 'system.notified' && event.payload.severity === 'error')
       );
     }
-    return (
-      event.type === 'visualization.rendered' ||
-      event.type === 'visualization.presented' ||
-      event.type === 'compilation.failed'
-    );
+    return event.type === 'visualization.presented' || event.type === 'compilation.failed';
   });
   return outcome &&
     (outcome.type === 'ai.generation-failed' ||

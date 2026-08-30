@@ -8,13 +8,13 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
 import {
-  normalizeProjectEventV1,
+  normalizeProjectEventV2,
   type EventId,
   type ProjectEvent,
   type ProjectOperationKind
 } from '$lib/shared/projects/events';
 import {
-  normalizeProjectResourceV1,
+  normalizeProjectResourceV2,
   type ProjectCommandInput,
   type ProjectId,
   type ProjectResource,
@@ -119,8 +119,12 @@ export class ProjectSession {
 
   /** Visualization decoded from the render active at the selected position. */
   get visualization(): Visualization | undefined {
-    const render = this.loaded ? this.snapshot.activeRender : undefined;
-    return render ? decodeVisualization(render.payload.render.text) : undefined;
+    const presentation = this.loaded
+      ? this.snapshot.activePresentationSet?.presentations[0]?.payload.presentation
+      : undefined;
+    return presentation?.format === 'sverlin-ir-v1'
+      ? decodeVisualization(presentation.render.text)
+      : undefined;
   }
 
   /** Available projects ordered by the server. */
@@ -313,7 +317,7 @@ export class ProjectSession {
       );
       if (!response.ok) throw new Error(await responseError(response));
       const value = (await response.json()) as { events?: unknown[] };
-      for (const event of value.events ?? []) this.ingest(normalizeProjectEventV1(event));
+      for (const event of value.events ?? []) this.ingest(normalizeProjectEventV2(event));
       this.connection = 'open';
     } catch {
       this.connection = 'reconnecting';
@@ -405,14 +409,14 @@ export class ProjectSession {
     }
     const workspace = value as WorkspaceResource;
     if (
-      workspace?.schemaVersion !== 1 ||
+      workspace?.schemaVersion !== 2 ||
       workspace.projectId !== this.projectId ||
       workspace.document?.projectId !== this.projectId
     ) {
       throw new Error('The server returned an invalid project workspace.');
     }
     this.#workspace = workspace;
-    this.#resource = normalizeProjectResourceV1({
+    this.#resource = normalizeProjectResourceV2({
       document: workspace.document,
       projects: workspace.projects
     });
@@ -485,7 +489,7 @@ export class ProjectSession {
 }
 
 function parseProjectResource(value: unknown): ProjectResource {
-  return normalizeProjectResourceV1(value);
+  return normalizeProjectResourceV2(value);
 }
 
 async function responseError(response: Response): Promise<string> {

@@ -9,6 +9,7 @@ import {
   type ProjectEvent,
   type ProjectEventCases
 } from '$lib/shared/projects/events';
+import { plainMessageText } from '$lib/shared/projects/events/message-content';
 
 /** Icon families available to Timeline event cards. */
 export type TimelineEventIcon =
@@ -55,10 +56,16 @@ const presenters = {
   'feedback.submitted': (event) =>
     details(
       'Feedback submitted',
-      event.payload.text ??
-        `${event.payload.focus.length + Number(!!event.payload.selection)} focused item(s)`,
+      plainMessageText(event.payload.content),
       'message',
       'Feedback recorded…'
+    ),
+  'visualization.candidates-advanced': (event) =>
+    details(
+      'Visualization candidates advanced',
+      `${event.payload.presentations.length} presentation(s) · ${event.payload.reason}`,
+      'visualization',
+      'Loading the next visualizations…'
     ),
   'ai.generation-requested': (event) =>
     details(
@@ -122,14 +129,6 @@ const presenters = {
       'Loading the updated artifact…',
       true
     ),
-  'visualization.rendered': (event) =>
-    details(
-      `Visualization rendered · seed ${event.payload.seed}`,
-      event.payload.render.sha256.slice(0, 8),
-      'visualization',
-      'Loading the visualization…',
-      true
-    ),
   'visualization.presented': (event) =>
     details(
       `Visualization presented · ${event.payload.presentation.format === 'sverlin-ir-v1' ? `seed ${event.payload.presentation.seed}` : 'HTML'}`,
@@ -146,7 +145,12 @@ const presenters = {
       'Recording the preference…'
     ),
   'assistant.responded': (event) =>
-    details('Assistant responded', event.payload.text, 'assistant', 'Finishing…'),
+    details(
+      'Assistant responded',
+      plainMessageText(event.payload.content),
+      'assistant',
+      'Finishing…'
+    ),
   'system.notified': (event) =>
     details(
       'System notice',

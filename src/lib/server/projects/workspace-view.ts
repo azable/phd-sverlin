@@ -17,7 +17,7 @@ export function projectWorkspace(options: {
   at?: number;
 }): WorkspaceResource {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: options.document.projectId,
     document: options.document,
     view: options.view,

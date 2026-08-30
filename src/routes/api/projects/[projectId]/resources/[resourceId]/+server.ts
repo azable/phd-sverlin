@@ -24,9 +24,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
             ? (event.payload.presentation.resources ?? [])
             : [];
         }
-        return event.type === 'compilation.succeeded' || event.type === 'visualization.rendered'
-          ? (event.payload.resources ?? [])
-          : [];
+        return event.type === 'compilation.succeeded' ? (event.payload.resources ?? []) : [];
       })
       .find(({ id }) => id === params.resourceId);
     if (!reference) error(404, 'Unknown project resource.');

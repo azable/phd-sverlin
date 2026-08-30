@@ -16,7 +16,7 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
   try {
     const events = await projectRepository.eventsAfter(params.projectId, after);
     return json(
-      { schemaVersion: 1, projectId: params.projectId, after, head: after + events.length, events },
+      { schemaVersion: 2, projectId: params.projectId, after, head: after + events.length, events },
       { headers: { 'cache-control': 'private, no-store' } }
     );
   } catch (cause) {

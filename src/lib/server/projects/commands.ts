@@ -3,14 +3,19 @@
 import { randomUUID } from 'node:crypto';
 
 import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
+import { markdownMessage, type MessageContent } from '$lib/shared/projects/events/message-content';
 import type {
   ArtifactChange,
   DslRevision,
   VisualSelection
 } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
-import type { HtmlFramesPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
-import { legacyPresentationId } from '$lib/shared/presentations';
+import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
+import type {
+  HtmlFramesPresentation,
+  HtmlFramesManifest,
+  RenderablePresentation
+} from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { getChatbot, getHtmlChatbot } from '$lib/server/chat-bots/registry';
 import {
@@ -21,7 +26,8 @@ import {
 import type {
   ChatbotPrompt,
   ChatbotResult,
-  CompilationFeedback
+  CompilationFeedback,
+  GeneratedMessageContent
 } from '$lib/server/chat-bots/types';
 import { formatDiagnosticSummary } from '$lib/server/compiler';
 import { createHtmlPresentation } from '$lib/server/visualization-modes';
@@ -64,10 +70,8 @@ export function submitProjectFeedback(
   options: {
     projectId: string;
     expectedHead: EventId;
-    text?: string;
+    content: MessageContent;
     focus: EventId[];
-    selection?: VisualSelection;
-    presentations?: string[];
     presentationCount: 1 | 2;
     operationId: string;
   },
@@ -82,10 +86,8 @@ async function submitProjectFeedbackUnlocked(
   options: {
     projectId: string;
     expectedHead: EventId;
-    text?: string;
+    content: MessageContent;
     focus: EventId[];
-    selection?: VisualSelection;
-    presentations?: string[];
     presentationCount: 1 | 2;
     operationId: string;
   },
@@ -94,12 +96,16 @@ async function submitProjectFeedbackUnlocked(
   const before = await dependencies.repository.load(options.projectId);
   assertHead(before, options.expectedHead);
   const focus = validateFocus(before, options.focus);
-  const selection = options.selection
-    ? await validateSelection(before, options.selection)
+  const content = await validateMessageContent(before, options.content);
+  const presentations = referencedPresentations(content);
+  const elementReference = content.find((segment) => segment.type === 'element-ref');
+  const selection: VisualSelection | undefined = elementReference
+    ? {
+        presentationEvent: elementReference.presentationEvent,
+        step: elementReference.step,
+        instances: elementReference.instances
+      }
     : undefined;
-  const presentations = validatePresentations(before, options.presentations ?? []);
-  const text = options.text?.trim();
-  if (!text && focus.length === 0 && !selection) throw new Error('Feedback cannot be empty.');
 
   let document = await appendProjectEvents(
     before,
@@ -108,12 +114,7 @@ async function submitProjectFeedbackUnlocked(
         type: 'feedback.submitted',
         actor: { kind: 'user' },
         operationId: options.operationId,
-        payload: {
-          ...(text ? { text } : {}),
-          focus,
-          ...(selection ? { selection } : {}),
-          ...(presentations.length ? { presentations } : {})
-        }
+        payload: { content, focus }
       })
     ],
     [],
@@ -145,9 +146,19 @@ async function submitProjectFeedbackUnlocked(
   document = first.document;
   if (!first.ok) return finishMutation(before, document);
   if (first.result.sourceArtifactContent === undefined) {
+    const advanced =
+      first.result.candidateAction === 'generate'
+        ? await advanceCandidatesForAgent(
+            document,
+            options.presentationCount,
+            options.operationId,
+            dependencies
+          )
+        : { document, presentations: [] };
+    document = advanced.document;
     document = await appendAssistantResponse(
       document,
-      first.result.reply,
+      resolveAssistantContent(document, first.result.reply, advanced.presentations),
       assistantBotId(first.generationEvent),
       options.operationId,
       dependencies
@@ -203,7 +214,7 @@ async function submitProjectFeedbackUnlocked(
         (event) => event.operationId === options.operationId && event.type === 'compilation.failed'
       )?.id ?? projectHead(document).id,
     failedSource: first.result.sourceArtifactContent,
-    assistantReply: first.result.reply,
+    assistantReply: generatedReplyText(first.result.reply),
     diagnostics: failed.result.diagnostics
   };
   const repair = await runSverlinGeneration(
@@ -276,10 +287,10 @@ async function submitHtmlFeedback(
   );
   document = first.document;
   if (!first.ok) return document;
-  if (!first.result.manifest) {
+  if (first.result.candidates.length === 0) {
     return appendAssistantResponse(
       document,
-      first.result.reply,
+      resolveAssistantContent(document, first.result.reply, []),
       assistantBotId(first.generationEvent),
       operationId,
       dependencies
@@ -289,7 +300,9 @@ async function submitHtmlFeedback(
   let accepted: AcceptedHtmlTurn;
   try {
     accepted = {
-      presentation: createHtmlPresentation(first.result.manifest, projectHead(document).id),
+      presentations: first.result.candidates.map(({ manifest }) =>
+        createHtmlPresentation(manifest, projectHead(document).id)
+      ),
       reply: first.result.reply,
       generationEvent: first.generationEvent
     };
@@ -300,13 +313,13 @@ async function submitHtmlFeedback(
         attempt: 2,
         operationId,
         contextSelection,
-        correction: htmlCorrection(first.result.manifest, cause)
+        correction: htmlCorrection(first.result.candidates, cause)
       },
       dependencies
     );
     document = repair.document;
     if (!repair.ok) return document;
-    if (!repair.result.manifest) {
+    if (repair.result.candidates.length === 0) {
       return appendSystemFailure(
         document,
         'The HTML correction did not return a visualization. The accepted artifact is unchanged.',
@@ -316,7 +329,9 @@ async function submitHtmlFeedback(
     }
     try {
       accepted = {
-        presentation: createHtmlPresentation(repair.result.manifest, projectHead(document).id),
+        presentations: repair.result.candidates.map(({ manifest }) =>
+          createHtmlPresentation(manifest, projectHead(document).id)
+        ),
         reply: repair.result.reply,
         generationEvent: repair.generationEvent
       };
@@ -333,8 +348,8 @@ async function submitHtmlFeedback(
 }
 
 type AcceptedHtmlTurn = {
-  presentation: HtmlFramesPresentation;
-  reply: string;
+  presentations: HtmlFramesPresentation[];
+  reply: GeneratedMessageContent;
   generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
 };
 
@@ -347,6 +362,9 @@ async function acceptHtmlTurn(
   const snapshot = projectSnapshotAt(document);
   const current = snapshot.artifacts[snapshot.entryArtifactId];
   if (!current) throw new Error('The project has no entry artifact.');
+  const first = accepted.presentations[0];
+  if (!first) throw new Error('An accepted HTML turn needs at least one presentation.');
+  const displaySetId = randomUUID();
   document = await appendProjectEvents(
     document,
     [
@@ -359,28 +377,26 @@ async function acceptHtmlTurn(
           changes: [
             {
               operation: 'upsert',
-              artifact: { ...current, language: 'json', content: accepted.presentation.authored }
+              artifact: { ...current, language: 'json', content: first.authored }
             }
           ]
         }
       }),
-      draftEvent({
-        type: 'visualization.presented',
-        actor: accepted.generationEvent.actor,
-        operationId,
-        payload: {
-          displaySetId: randomUUID(),
-          slot: 0,
-          presentation: accepted.presentation
-        }
-      })
+      ...accepted.presentations.map((presentation, slot) =>
+        draftEvent({
+          type: 'visualization.presented',
+          actor: accepted.generationEvent.actor,
+          operationId,
+          payload: { displaySetId, slot: slot as 0 | 1, presentation }
+        })
+      )
     ],
     [],
     dependencies.projectService
   );
   return appendAssistantResponse(
     document,
-    accepted.reply,
+    resolveAssistantContent(document, accepted.reply, accepted.presentations),
     assistantBotId(accepted.generationEvent),
     operationId,
     dependencies
@@ -418,6 +434,7 @@ async function runSverlinGeneration(
       generate: () => chatbot.generatePrepared(prompt),
       fallbackResponse: (result) => ({
         reply: result.reply,
+        candidateAction: result.candidateAction,
         sourceArtifactContent: result.sourceArtifactContent ?? null,
         generation: result.generation
       })
@@ -458,7 +475,7 @@ async function runHtmlGeneration(
       generate: () => chatbot.generatePrepared(prompt),
       fallbackResponse: (result) => ({
         reply: result.reply,
-        manifest: result.manifest ?? null,
+        candidates: result.candidates,
         generation: result.generation
       })
     },
@@ -482,7 +499,7 @@ async function generationPreparationFailure(
   };
 }
 
-async function runPreparedGeneration<Output extends { reply: string }>(
+async function runPreparedGeneration<Output extends { reply: GeneratedMessageContent }>(
   options: {
     document: ProjectDocument;
     attempt: 1 | 2;
@@ -600,7 +617,7 @@ async function acceptSverlinCandidate(
     document: ProjectDocument;
     recorded: RecordedCompilationBatch;
     generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
-    reply: string;
+    reply: GeneratedMessageContent;
     candidate: string;
     operationId: string;
   },
@@ -633,10 +650,119 @@ async function acceptSverlinCandidate(
   );
   return appendAssistantResponse(
     document,
-    options.reply,
+    resolveAssistantContent(
+      document,
+      options.reply,
+      presentedByOperation(document, options.operationId).map(({ payload }) => payload.presentation)
+    ),
     assistantBotId(options.generationEvent),
     options.operationId,
     dependencies
+  );
+}
+
+async function advanceCandidatesForAgent(
+  document: ProjectDocument,
+  presentationCount: 1 | 2,
+  operationId: string,
+  dependencies: ProjectCommandDependencies
+): Promise<{ document: ProjectDocument; presentations: RenderablePresentation[] }> {
+  const current = presentationBufferState(document, 0).available.slice(0, presentationCount);
+  if (current.length > 0) {
+    document = await appendProjectEvents(
+      document,
+      [
+        draftEvent({
+          type: 'visualization.candidates-advanced',
+          actor: { kind: 'system' },
+          operationId,
+          payload: {
+            presentations: current.map(({ presentationId }) => presentationId),
+            reason: 'agent-request'
+          }
+        })
+      ],
+      [],
+      dependencies.projectService
+    );
+  }
+  let available = presentationBufferState(document, 0).available;
+  if (available.length < presentationCount) {
+    const snapshot = projectSnapshotAt(document);
+    const artifact = snapshot.artifacts[snapshot.entryArtifactId];
+    if (!artifact || snapshot.renderer !== 'sverlin') {
+      throw new Error('Only Sverlin projects can generate buffered candidates from source.');
+    }
+    const recorded = await compileProjectSourceBatch(
+      {
+        document,
+        sourceContent: artifact.content.text,
+        source: artifact.content,
+        sourceLabel: artifact.path,
+        seeds: freshPresentationSeeds((presentationCount - available.length) as 1 | 2),
+        purpose: 'seed-change',
+        input: 'committed-artifact',
+        operationId
+      },
+      dependencies.projectService
+    );
+    document = recorded.document;
+    if (!batchSucceeded(recorded)) {
+      throw new Error('The next visualization candidates could not be compiled.');
+    }
+    document = await activateCompiledPresentations(recorded, dependencies.projectService);
+    available = presentationBufferState(document, 0).available;
+  }
+  const ids = new Set(
+    available.slice(0, presentationCount).map(({ presentationId }) => presentationId)
+  );
+  return {
+    document,
+    presentations: document.events.flatMap((event) =>
+      event.type === 'visualization.presented' && ids.has(event.payload.presentation.presentationId)
+        ? [event.payload.presentation]
+        : []
+    )
+  };
+}
+
+function resolveAssistantContent(
+  document: ProjectDocument,
+  reply: GeneratedMessageContent,
+  candidates: readonly RenderablePresentation[]
+): MessageContent {
+  const content: MessageContent = reply.map((segment) => {
+    if (segment.type === 'markdown') return segment;
+    if (segment.type === 'presentation-ref') return segment;
+    const presentation = candidates[segment.slot];
+    if (!presentation) {
+      throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
+    }
+    return { type: 'presentation-ref', presentationId: presentation.presentationId };
+  });
+  validatePresentations(document, referencedPresentations(content));
+  return content;
+}
+
+function generatedReplyText(reply: GeneratedMessageContent): string {
+  return reply
+    .map((segment) => {
+      if (segment.type === 'markdown') return segment.text;
+      if (segment.type === 'presentation-ref') return `[Presentation ${segment.presentationId}]`;
+      return `[Candidate ${segment.slot + 1}]`;
+    })
+    .join(' ');
+}
+
+function presentedByOperation(
+  document: ProjectDocument,
+  operationId: string
+): Array<NewProjectEvent<'visualization.presented'> & { id: number }> {
+  return document.events.filter(
+    (
+      event
+    ): event is Extract<ProjectDocument['events'][number], { type: 'visualization.presented' }> =>
+      event.operationId === operationId && event.type === 'visualization.presented'
   );
 }
 
@@ -654,7 +780,7 @@ function firstFailure(
 
 function appendAssistantResponse(
   document: ProjectDocument,
-  text: string,
+  content: string | MessageContent,
   botId: string,
   operationId: string,
   dependencies: ProjectCommandDependencies
@@ -666,7 +792,7 @@ function appendAssistantResponse(
         type: 'assistant.responded',
         actor: { kind: 'assistant', botId },
         operationId,
-        payload: { text }
+        payload: { content: typeof content === 'string' ? markdownMessage(content) : content }
       })
     ],
     [],
@@ -714,17 +840,51 @@ function validatePresentations(document: ProjectDocument, presentationIds: strin
   const unique = [...new Set(presentationIds)];
   if (unique.length > 2) throw new Error('Feedback can reference at most two presentations.');
   const available = new Set(
-    document.events.flatMap((event) => {
-      if (event.type === 'visualization.presented') {
-        return [event.payload.presentation.presentationId];
-      }
-      return event.type === 'visualization.rendered' ? [legacyPresentationId(event.id)] : [];
-    })
+    document.events.flatMap((event) =>
+      event.type === 'visualization.presented' ? [event.payload.presentation.presentationId] : []
+    )
   );
   for (const id of unique) {
     if (!available.has(id)) throw new Error(`Unknown selected presentation ${id}.`);
   }
   return unique;
+}
+
+async function validateMessageContent(
+  document: ProjectDocument,
+  content: MessageContent
+): Promise<MessageContent> {
+  const presentations = validatePresentations(document, referencedPresentations(content));
+  const known = new Set(presentations);
+  for (const segment of content) {
+    if (segment.type === 'markdown') continue;
+    if (!known.has(segment.presentationId)) {
+      throw new Error(`Unknown referenced presentation ${segment.presentationId}.`);
+    }
+    if (segment.type === 'element-ref') {
+      const resolved = await validateSelection(document, {
+        presentationEvent: segment.presentationEvent,
+        step: segment.step,
+        instances: segment.instances
+      });
+      const event = document.events[resolved.presentationEvent - 1];
+      if (
+        event?.type !== 'visualization.presented' ||
+        event.payload.presentation.presentationId !== segment.presentationId
+      ) {
+        throw new Error('The element reference does not match its presentation.');
+      }
+    }
+  }
+  return content;
+}
+
+function referencedPresentations(content: MessageContent): string[] {
+  return [
+    ...new Set(
+      content.flatMap((segment) => (segment.type === 'markdown' ? [] : [segment.presentationId]))
+    )
+  ];
 }
 
 async function validateSelection(
@@ -746,8 +906,11 @@ function assertHead(document: ProjectDocument, expectedHead: EventId) {
   }
 }
 
-function htmlCorrection(manifest: HtmlFramesManifest, cause: unknown): string {
-  return `The previous manifest failed static safety validation: ${errorMessage(cause)}. Return one complete corrected manifest. Previous manifest: ${JSON.stringify(manifest)}`;
+function htmlCorrection(
+  candidates: Array<{ label: string; manifest: HtmlFramesManifest }>,
+  cause: unknown
+): string {
+  return `The previous candidate batch failed static safety validation: ${errorMessage(cause)}. Return one complete corrected batch of up to two candidates. Previous candidates: ${JSON.stringify(candidates)}`;
 }
 
 function generationFailureKind(error: unknown) {

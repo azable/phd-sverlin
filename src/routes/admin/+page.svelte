@@ -139,7 +139,7 @@
           Participant research projects are listed only in their assigned flow below.
         </p>
       </div>
-      <Button href={resolve('/admin/exports/analysis')} variant="outline"
+      <Button href={resolve('/admin/exports/projects')} variant="outline"
         >Download all project data</Button
       >
     </div>

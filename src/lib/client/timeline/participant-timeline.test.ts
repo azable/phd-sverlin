@@ -4,10 +4,14 @@ import type { ProjectEvent } from '$lib/shared/projects/events';
 
 import { participantTimeline } from './participant-timeline';
 
-describe('participant Timeline projection', () => {
-  it('keeps messages, preference actions, and individual presentations', () => {
-    const items = participantTimeline(events());
+const presentationIds = [
+  '12345678-1234-4123-8123-123456789ac1',
+  '12345678-1234-4123-8123-123456789ac2'
+] as const;
 
+describe('participant Timeline projection', () => {
+  it('keeps structured messages, preference actions, and individual presentations', () => {
+    const items = participantTimeline(events());
     expect(items.map(({ kind }) => kind)).toEqual([
       'message',
       'message',
@@ -15,21 +19,28 @@ describe('participant Timeline projection', () => {
       'presentation',
       'message'
     ]);
-    expect(items[0]).toMatchObject({ kind: 'message', actor: 'user', text: 'Show addition' });
+    expect(items[0]).toMatchObject({
+      kind: 'message',
+      actor: 'user',
+      content: [{ type: 'markdown', text: 'Show addition' }]
+    });
     expect(items[1]).toMatchObject({
       kind: 'message',
       actor: 'assistant',
-      text: 'Here are two versions.'
+      context: { type: 'comparing', presentationIds: [...presentationIds] }
     });
     expect(items[4]).toMatchObject({
       kind: 'message',
       actor: 'user',
-      text: expect.stringMatching(/^Preferred .+ over .+$/),
-      details: ['Step 1']
+      content: expect.arrayContaining([
+        { type: 'markdown', text: 'Preferred' },
+        { type: 'presentation-ref', presentationId: presentationIds[0] },
+        { type: 'presentation-ref', presentationId: presentationIds[1] }
+      ])
     });
   });
 
-  it('retains comparison and canvas context on textless feedback bubbles', () => {
+  it('retains exact comparison and canvas references inline', () => {
     const values = events().slice(1, 5);
     values.push({
       id: 6,
@@ -39,19 +50,28 @@ describe('participant Timeline projection', () => {
       createdAt: '2026-08-30T00:00:06.000Z',
       payload: {
         focus: [],
-        presentations: [
-          '12345678-1234-4123-8123-123456789ac1',
-          '12345678-1234-4123-8123-123456789ac2'
-        ],
-        selection: { presentationEvent: 3, step: 0, instances: [0, 2] }
+        content: [
+          { type: 'markdown', text: 'Compare' },
+          { type: 'presentation-ref', presentationId: presentationIds[0] },
+          { type: 'markdown', text: 'with' },
+          { type: 'presentation-ref', presentationId: presentationIds[1] },
+          {
+            type: 'element-ref',
+            presentationId: presentationIds[0],
+            presentationEvent: 3,
+            step: 0,
+            instances: [0, 2]
+          }
+        ]
       }
     });
-
     expect(participantTimeline(values).at(-1)).toMatchObject({
       kind: 'message',
       actor: 'user',
-      text: 'Submitted visual feedback',
-      details: [expect.stringMatching(/^Compared /), expect.stringContaining('2 selected elements')]
+      context: { type: 'comparing', presentationIds: [...presentationIds] },
+      content: expect.arrayContaining([
+        expect.objectContaining({ type: 'element-ref', instances: [0, 2] })
+      ])
     });
   });
 });
@@ -59,10 +79,6 @@ describe('participant Timeline projection', () => {
 function events(): ProjectEvent[] {
   const operationId = '12345678-1234-4123-8123-123456789abc';
   const displaySetId = '12345678-1234-4123-8123-123456789abd';
-  const presentationIds = [
-    '12345678-1234-4123-8123-123456789ac1',
-    '12345678-1234-4123-8123-123456789ac2'
-  ] as const;
   const base = {
     format: 'sverlin-ir-v1' as const,
     stepSignature: 'shared',
@@ -80,7 +96,7 @@ function events(): ProjectEvent[] {
       actor: { kind: 'user' },
       operationId,
       createdAt: '2026-08-30T00:00:01.000Z',
-      payload: { text: 'Show addition', focus: [] }
+      payload: { content: [{ type: 'markdown', text: 'Show addition' }], focus: [] }
     },
     {
       id: 2,
@@ -88,7 +104,14 @@ function events(): ProjectEvent[] {
       actor: { kind: 'assistant', botId: 'sverlin-assistant' },
       operationId,
       createdAt: '2026-08-30T00:00:02.000Z',
-      payload: { text: 'Here are two versions.' }
+      payload: {
+        content: [
+          { type: 'markdown', text: 'Here are' },
+          { type: 'presentation-ref', presentationId: presentationIds[0] },
+          { type: 'markdown', text: 'and' },
+          { type: 'presentation-ref', presentationId: presentationIds[1] }
+        ]
+      }
     },
     ...presentationIds.map(
       (presentationId, slot): ProjectEvent => ({

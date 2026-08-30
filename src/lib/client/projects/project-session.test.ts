@@ -209,7 +209,7 @@ function response(resource: unknown): Response {
 
 function workspaceResource(resource: ProjectResource): WorkspaceResource {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     userAuthorLabel: 'You',
     projectId: resource.document.projectId,
     document: resource.document,
@@ -236,7 +236,7 @@ function pollEvents(session: ProjectSession): Promise<void> {
 
 function projectResource(events: ProjectEvent[], title: string): ProjectResource {
   const document: ProjectDocument = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: 'project-test',
     events
   };
@@ -323,7 +323,11 @@ function createdEvent(): ProjectEventOf<'project.created'> {
     actor: { kind: 'user' },
     operationId,
     createdAt: '2026-01-01T00:00:01.000Z',
-    payload: { title: 'Initial', entryArtifactId: 'dsl-main' }
+    payload: {
+      title: 'Initial',
+      entryArtifactId: 'dsl-main',
+      creation: { templateId: 'blank' }
+    }
   };
 }
 
@@ -350,7 +354,7 @@ function assistantEvent(id: number): ProjectEventOf<'assistant.responded'> {
     actor: { kind: 'assistant', botId: 'sverlin-assistant' },
     operationId,
     createdAt: `2026-01-01T00:00:0${id}.000Z`,
-    payload: { text: 'Done' }
+    payload: { content: [{ type: 'markdown', text: 'Done' }] }
   };
 }
 

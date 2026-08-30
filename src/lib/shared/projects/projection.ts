@@ -6,11 +6,7 @@
 
 import type { EventId, ProjectEvent, ProjectEventOf, ProjectEventType } from './events';
 import type { ProjectDocument, ProjectSnapshot, ProjectSummary } from './model';
-import {
-  defaultProjectCreation,
-  normalizeRecordedProjectCreation,
-  projectCreationRenderer
-} from './creation';
+import { defaultProjectCreation, projectCreationRenderer } from './creation';
 
 type SnapshotDraft = Omit<ProjectSnapshot, 'at'>;
 type StateTransition<Type extends ProjectEventType> =
@@ -24,7 +20,7 @@ const stateTransitions = {
   'project.created': (state, event) => {
     state.title = event.payload.title;
     state.entryArtifactId = event.payload.entryArtifactId;
-    state.creation = normalizeRecordedProjectCreation(event.payload.creation);
+    state.creation = event.payload.creation;
     state.renderer = projectCreationRenderer(state.creation);
   },
   'project.renamed': (state, event) => {
@@ -34,6 +30,7 @@ const stateTransitions = {
   'operation.completed': null,
   'operation.failed': null,
   'feedback.submitted': null,
+  'visualization.candidates-advanced': null,
   'ai.generation-requested': null,
   'ai.generation-succeeded': null,
   'ai.generation-failed': null,
@@ -41,39 +38,22 @@ const stateTransitions = {
   'compilation.succeeded': null,
   'compilation.failed': null,
   'artifact.version-created': (state, event) => {
-    state.activeRender = undefined;
     state.activePresentationSet = undefined;
     for (const change of event.payload.changes) {
       if (change.operation === 'delete') delete state.artifacts[change.artifactId];
       else state.artifacts[change.artifact.artifactId] = change.artifact;
     }
   },
-  'visualization.rendered': (state, event) => {
-    state.activeRender = event;
-    state.activePresentationSet = {
-      displaySetId: `legacy-${event.id}`,
-      presentations: [event]
-    };
-  },
   'visualization.presented': (state, event) => {
-    state.activeRender = undefined;
     const current = state.activePresentationSet;
     state.activePresentationSet =
       current?.displaySetId === event.payload.displaySetId
         ? {
             displaySetId: current.displaySetId,
             presentations: [
-              ...current.presentations.filter(
-                (value) =>
-                  value.type === 'visualization.presented' &&
-                  value.payload.slot !== event.payload.slot
-              ),
+              ...current.presentations.filter((value) => value.payload.slot !== event.payload.slot),
               event
-            ].toSorted((left, right) =>
-              left.type === 'visualization.presented' && right.type === 'visualization.presented'
-                ? left.payload.slot - right.payload.slot
-                : left.id - right.id
-            )
+            ].toSorted((left, right) => left.payload.slot - right.payload.slot)
           }
         : { displaySetId: event.payload.displaySetId, presentations: [event] };
   },

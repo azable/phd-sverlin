@@ -1,12 +1,10 @@
 /** Pure presentation-buffer projections over the immutable project Timeline. */
 
-import { legacyPresentationId } from '$lib/shared/presentations';
-
 import type { ProjectEvent } from './events';
 import type { ProjectDocument } from './model';
 import { projectSnapshotAt } from './projection';
 
-/** One current-source presentation that has not been consumed by a committed participant action. */
+/** One current-source presentation that has not been consumed by an explicit advance action. */
 export type AvailablePresentation = {
   eventId: number;
   presentationId: string;
@@ -32,7 +30,7 @@ export function presentationBufferState(
   const consumedPresentationIds = new Set(
     events.flatMap((event) => {
       if (event.type === 'visualization.preference-recorded') return event.payload.presentations;
-      return event.type === 'feedback.submitted' ? (event.payload.presentations ?? []) : [];
+      return event.type === 'visualization.candidates-advanced' ? event.payload.presentations : [];
     })
   );
   const available = events.flatMap<AvailablePresentation>((event) => {
@@ -47,16 +45,7 @@ export function presentationBufferState(
       }
       return [{ eventId: event.id, presentationId: presentation.presentationId }];
     }
-    if (
-      event.type !== 'visualization.rendered' ||
-      event.payload.source.sha256 !== currentSourceSha256
-    ) {
-      return [];
-    }
-    const presentationId = legacyPresentationId(event.id);
-    return consumedPresentationIds.has(presentationId)
-      ? []
-      : [{ eventId: event.id, presentationId }];
+    return [];
   });
   return {
     sourceSha256: currentSourceSha256,

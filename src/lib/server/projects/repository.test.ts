@@ -58,7 +58,7 @@ describe('MemoryProjectRepository test fake', () => {
 
 function rootDocument(): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: 'repository-test',
     events: [
       {
@@ -67,7 +67,11 @@ function rootDocument(): ProjectDocument {
         actor: { kind: 'user' },
         operationId,
         createdAt: '2026-01-01T00:00:00.000Z',
-        payload: { title: 'Repository test', entryArtifactId: 'dsl-main' }
+        payload: {
+          title: 'Repository test',
+          entryArtifactId: 'dsl-main',
+          creation: { templateId: 'blank' }
+        }
       }
     ]
   };

@@ -73,7 +73,7 @@ function presentationDocument(): ProjectDocument {
     steps: [{ label: 'Overview', instances: [{ id: 0, elementId: 0 }] }]
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: 'project-test',
     events: [
       {
@@ -82,7 +82,11 @@ function presentationDocument(): ProjectDocument {
         actor: { kind: 'user' },
         operationId: '12345678-1234-4123-8123-123456789abc',
         createdAt: '2026-08-30T00:00:01.000Z',
-        payload: { title: 'Test', entryArtifactId: 'dsl-main' }
+        payload: {
+          title: 'Test',
+          entryArtifactId: 'dsl-main',
+          creation: { templateId: 'blank' }
+        }
       },
       {
         id: 2,

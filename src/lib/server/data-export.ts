@@ -1,4 +1,4 @@
-/** One verified export pipeline for analysis, study-version, and participant scopes. */
+/** One verified export pipeline for project, study-version, and participant scopes. */
 
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -28,7 +28,7 @@ const exportFormat = 'sverlin-data-export';
 const exportVersion = 1;
 
 export type ExportScope =
-  | { type: 'analysis'; projectId?: string }
+  | { type: 'projects'; projectId?: string }
   | { type: 'study'; studyId?: string; studyVersion?: number }
   | { type: 'participant'; userId: string };
 
@@ -117,7 +117,7 @@ export class PostgresExportDataSource implements ExportDataSource {
         let runRows: Array<typeof schema.studyRuns.$inferSelect> = [];
         let phaseRows: Array<typeof schema.studyPhaseRuns.$inferSelect> = [];
 
-        if (scope.type !== 'analysis') {
+        if (scope.type !== 'projects') {
           const conditions = [eq(schema.studyRuns.mode, 'participant')];
           if (scope.type === 'participant') conditions.push(eq(schema.user.id, scope.userId));
           if (scope.type === 'study' && scope.studyId) {
@@ -178,7 +178,7 @@ export class PostgresExportDataSource implements ExportDataSource {
           })
           .from(schema.projects)
           .where(
-            scope.type === 'analysis'
+            scope.type === 'projects'
               ? scope.projectId
                 ? and(eq(schema.projects.id, scope.projectId), isNull(schema.projects.deletedAt))
                 : isNull(schema.projects.deletedAt)
@@ -190,12 +190,12 @@ export class PostgresExportDataSource implements ExportDataSource {
                 : eq(schema.projects.id, '__no_research_projects__')
           )
           .orderBy(asc(schema.projects.createdAt), asc(schema.projects.id));
-        if (scope.type === 'analysis' && scope.projectId && !projectRows.length) {
+        if (scope.type === 'projects' && scope.projectId && !projectRows.length) {
           throw new ProjectNotFoundError(scope.projectId);
         }
 
         const projectIds = projectRows.map(({ id }) => id);
-        if (scope.type === 'analysis' && projectIds.length) {
+        if (scope.type === 'projects' && projectIds.length) {
           const associatedPhases = await transaction
             .select()
             .from(schema.studyPhaseRuns)
@@ -346,7 +346,7 @@ export class PostgresExportDataSource implements ExportDataSource {
             createdAt: project.createdAt.toISOString(),
             updatedAt: project.updatedAt.toISOString(),
             document: {
-              schemaVersion: 1 as const,
+              schemaVersion: 2 as const,
               projectId: project.id,
               events: eventRows
                 .filter((row) => row.projectId === project.id)
@@ -441,7 +441,8 @@ export async function writeDataExport(
 export async function writeDataDirectory(
   outputDirectory: string,
   scope: ExportScope,
-  source: ExportDataSource = new PostgresExportDataSource()
+  source: ExportDataSource = new PostgresExportDataSource(),
+  exportedAt?: string
 ): Promise<DataExportManifest> {
   const destination = path.resolve(outputDirectory);
   await mkdir(path.dirname(destination), { recursive: true });
@@ -456,7 +457,8 @@ export async function writeDataDirectory(
           await writeFile(target, bytes, { flag: 'wx' });
         }
       },
-      scope
+      scope,
+      exportedAt
     );
   } catch (cause) {
     await rm(destination, { recursive: true, force: true });
@@ -467,7 +469,8 @@ export async function writeDataDirectory(
 export async function prepareDataExport(
   scope: ExportScope,
   filenameLabel: string,
-  source: ExportDataSource = new PostgresExportDataSource()
+  source: ExportDataSource = new PostgresExportDataSource(),
+  exportedAt = new Date().toISOString()
 ): Promise<PreparedDataExport> {
   const root = await mkdtemp(path.join(tmpdir(), 'sverlin-data-export-'));
   const archivePath = path.join(root, 'export.zip');
@@ -475,7 +478,7 @@ export async function prepareDataExport(
   const zip = new ZipArchive({ zlib: { level: 9 } });
   zip.pipe(output);
   try {
-    await writeDataExport(source, zipSink(zip), scope);
+    await writeDataExport(source, zipSink(zip), scope, exportedAt);
     await zip.finalize();
     await finished(output);
   } catch (cause) {
@@ -484,7 +487,7 @@ export async function prepareDataExport(
     await rm(root, { recursive: true, force: true });
     throw cause;
   }
-  const filename = `sverlin-${safePathSegment(filenameLabel)}-${new Date().toISOString().slice(0, 10)}.zip`;
+  const filename = `sverlin-${safePathSegment(filenameLabel)}-${exportedAt.slice(0, 10)}.zip`;
   return {
     filename,
     async response() {

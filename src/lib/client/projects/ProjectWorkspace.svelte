@@ -23,6 +23,7 @@
   import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/client/timeline/Timeline.svelte';
   import PresentationStage from '$lib/client/visualization/PresentationStage.svelte';
+  import { PresentationPlayback } from '$lib/client/visualization/presentation-playback.svelte';
   import { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
@@ -96,6 +97,8 @@
   const presentationSelection = new PresentationSelection(
     untrack(() => !!study?.presentationBufferTarget)
   );
+  const presentationPlayback = new PresentationPlayback();
+  let feedbackComposer = $state<FeedbackComposer>();
   let editMode = $state<ProjectArtifactEditMode>('readonly');
   let renaming = $state(false);
   let titleDraft = $state('');
@@ -119,7 +122,6 @@
     const presentation = session.loaded
       ? session.snapshot.activePresentationSet?.presentations[0]
       : undefined;
-    if (presentation?.type === 'visualization.rendered') return presentation.payload.seed;
     if (
       presentation?.type === 'visualization.presented' &&
       presentation.payload.presentation.format === 'sverlin-ir-v1'
@@ -325,16 +327,23 @@
                 {layout}
                 inspect={developerView}
                 onPresentationChange={() => (visualSelection = undefined)}
+                onReferenceRequest={(presentation) =>
+                  feedbackComposer?.referencePresentation(presentation)}
+                onElementReferenceActivate={(reference) => {
+                  const selectionKey = presentationSelection
+                    .selected(session.events, layout)
+                    .map(({ presentation }) => presentation.presentationId)
+                    .join(':');
+                  presentationPlayback.seek(selectionKey, reference.step);
+                  visualSelection = {
+                    presentationEvent: reference.presentationEvent,
+                    step: reference.step,
+                    instances: reference.instances
+                  };
+                }}
               />
               {#if !expired && !session.readOnly}
-                <FeedbackComposer
-                  {session}
-                  {presentationCount}
-                  {presentationSelection}
-                  {layout}
-                  {visualSelection}
-                  onVisualSelectionChange={(selection) => (visualSelection = selection)}
-                />
+                <FeedbackComposer bind:this={feedbackComposer} {session} {presentationCount} />
               {/if}
             </Tabs.Content>
           </Tabs.Root>
@@ -383,10 +392,12 @@
           <PresentationStage
             {session}
             selection={presentationSelection}
+            playback={presentationPlayback}
             {layout}
             disabled={mutationsDisabled}
             {visualSelection}
             onVisualSelectionChange={(selection) => (visualSelection = selection)}
+            onReferenceSelection={(selection) => feedbackComposer?.referenceSelection(selection)}
           />
           <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
         </Resizable.Pane>

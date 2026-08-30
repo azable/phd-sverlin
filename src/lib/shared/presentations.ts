@@ -88,11 +88,6 @@ export function presentationStepLabels(presentation: RenderablePresentation): st
   return labels.length ? labels : ['Initial view'];
 }
 
-/** Stable presentation identity for legacy single-render Timeline events. */
-export function legacyPresentationId(eventId: number): string {
-  return `00000000-0000-4000-8000-${String(eventId).padStart(12, '0')}`;
-}
-
 /** Wrap a validated static fragment in the single iframe isolation policy used by every client. */
 export function staticHtmlFrameDocument(html: string): string {
   const policy = [

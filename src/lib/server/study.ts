@@ -571,13 +571,17 @@ async function ensureTaskProject(options: {
       },
       presentationCount
     });
+    if (options.phase.condition.project.templateId === 'blank') return projectId;
     if (!hasReadyPresentation(document, presentationCount)) {
       throw new Error('The task visualization could not be prepared. Retry to continue.');
     }
     return projectId;
   }
 
-  if (!hasReadyPresentation(document, presentationCount)) {
+  if (
+    options.phase.condition.project.templateId !== 'blank' &&
+    !hasReadyPresentation(document, presentationCount)
+  ) {
     const rendered = await renderProjectPresentations({
       projectId,
       expectedHead: document.events.length,
@@ -586,7 +590,10 @@ async function ensureTaskProject(options: {
     });
     document = rendered.document;
   }
-  if (!hasReadyPresentation(document, presentationCount)) {
+  if (
+    options.phase.condition.project.templateId !== 'blank' &&
+    !hasReadyPresentation(document, presentationCount)
+  ) {
     throw new Error('The task visualization could not be prepared. Retry to continue.');
   }
   return projectId;

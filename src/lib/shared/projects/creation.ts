@@ -13,21 +13,8 @@ export const projectCreationSchema = v.strictObject({
   renderer: v.optional(visualizationModeSchema)
 });
 
-const legacyProjectCreationSchema = v.variant('mode', [
-  v.strictObject({ mode: v.literal('ai') }),
-  v.strictObject({ mode: v.literal('dev'), exampleId: projectTemplateIdSchema })
-]);
-
-/** Persisted creation records, including the short-lived mode-based format. */
-export const recordedProjectCreationSchema = v.union([
-  projectCreationSchema,
-  legacyProjectCreationSchema
-]);
-
 /** Immutable template selection used for all new projects. */
 export type ProjectCreation = v.InferOutput<typeof projectCreationSchema>;
-/** Creation value accepted when replaying existing project timelines. */
-export type RecordedProjectCreation = v.InferOutput<typeof recordedProjectCreationSchema>;
 /** Serializable metadata shown when choosing a project template. */
 export type ProjectTemplateSummary = {
   id: string;
@@ -36,7 +23,7 @@ export type ProjectTemplateSummary = {
   features: string[];
 };
 
-/** Default template for an empty creation request or a legacy project. */
+/** Default template for an empty creation request. */
 export const defaultProjectCreation: ProjectCreation = { templateId: 'blank', renderer: 'sverlin' };
 
 /** Renderer selected by a new or historical project creation record. */
@@ -49,13 +36,6 @@ export function parseProjectCreation(value: unknown): ProjectCreation {
   const parsed = v.safeParse(projectCreationSchema, value);
   if (!parsed.success) throw new InvalidProjectCreationError(v.summarize(parsed.issues));
   return parsed.output;
-}
-
-/** Convert persisted legacy mode metadata into the canonical template selection. */
-export function normalizeRecordedProjectCreation(value?: RecordedProjectCreation): ProjectCreation {
-  if (!value) return defaultProjectCreation;
-  if ('templateId' in value) return value;
-  return value.mode === 'dev' ? { templateId: value.exampleId } : defaultProjectCreation;
 }
 
 /** Raised when an incoming template selection is malformed. */

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 
 import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
 import {
-  normalizeProjectV1,
+  normalizeProjectV2,
   type ProjectDocument,
   type ProjectId,
   type ProjectSummary
@@ -37,7 +37,7 @@ export class MemoryProjectRepository implements ProjectRepository {
   }
 
   async create(document: ProjectDocument, ownerUserId?: string): Promise<ProjectDocument> {
-    const normalized = normalizeProjectV1(document);
+    const normalized = normalizeProjectV2(document);
     if (this.#projects.has(normalized.projectId)) throw new Error('Project already exists.');
     this.#projects.set(normalized.projectId, {
       document: structuredClone(normalized),
@@ -68,7 +68,7 @@ export class MemoryProjectRepository implements ProjectRepository {
       const events = pendingEvents.map(
         (event, index): ProjectEvent => ({ ...event, id: head + index + 1 }) as ProjectEvent
       );
-      const document = normalizeProjectV1({
+      const document = normalizeProjectV2({
         ...stored.document,
         events: [...stored.document.events, ...events]
       });

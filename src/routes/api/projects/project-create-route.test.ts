@@ -54,13 +54,15 @@ describe('project creation API', () => {
     const { POST } = await import('./+server');
     const response = await POST(request());
 
-    expect(response.status).toBe(202);
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({ projectId: 'project-created' });
     expect(mocks.createProjectSkeleton).toHaveBeenCalledWith(
       expect.objectContaining({
         creation: { templateId: 'blank', renderer: 'sverlin' },
         ownerUserId: 'user-test'
       })
     );
+    expect(mocks.accept).not.toHaveBeenCalled();
   });
 
   it('rejects malformed and legacy mode requests before project creation', async () => {

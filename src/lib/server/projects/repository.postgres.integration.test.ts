@@ -74,7 +74,7 @@ it.skipIf(!postgresTestsEnabled)(
 
 function rootDocument(projectId: string, operationId: string): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     events: [
       {
@@ -83,7 +83,11 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         actor: { kind: 'user' },
         operationId,
         createdAt: '2026-01-01T00:00:00.000Z',
-        payload: { title: 'Repository test', entryArtifactId: 'dsl-main' }
+        payload: {
+          title: 'Repository test',
+          entryArtifactId: 'dsl-main',
+          creation: { templateId: 'blank' }
+        }
       }
     ]
   };

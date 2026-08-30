@@ -9,19 +9,36 @@ const manifest = {
 };
 
 describe('HTML assistant contract', () => {
-  it('accepts one optional manifest per conversational turn', () => {
-    expect(htmlAssistant.parseOutput({ reply: 'No change', manifest: null })).toEqual({
-      reply: 'No change'
+  it('accepts zero to two labelled candidates per conversational turn', () => {
+    expect(
+      htmlAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'No change' }],
+        candidates: []
+      })
+    ).toEqual({
+      reply: [{ type: 'markdown', text: 'No change' }],
+      candidates: []
     });
-    expect(htmlAssistant.parseOutput({ reply: 'Updated', manifest })).toEqual({
-      reply: 'Updated',
-      manifest
+    expect(
+      htmlAssistant.parseOutput({
+        reply: [{ type: 'candidate-ref', slot: 0 }],
+        candidates: [
+          { label: 'First', manifest },
+          { label: 'Second', manifest }
+        ]
+      })
+    ).toEqual({
+      reply: [{ type: 'candidate-ref', slot: 0 }],
+      candidates: [
+        { label: 'First', manifest },
+        { label: 'Second', manifest }
+      ]
     });
   });
 
-  it('rejects the former candidate-array response shape', () => {
+  it('rejects the former string reply and unlabelled candidate shape', () => {
     expect(() =>
       htmlAssistant.parseOutput({ reply: 'Batch', candidates: [manifest, manifest] })
-    ).toThrow('invalid structured response');
+    ).toThrow();
   });
 });

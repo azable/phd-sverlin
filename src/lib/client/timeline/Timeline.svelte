@@ -9,6 +9,8 @@
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import type { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
+  import type { MessageContentSegment } from '$lib/shared/projects/events/message-content';
+  import type { TimelinePresentation } from '$lib/client/visualization/presentation-history';
 
   import ParticipantTimeline from './ParticipantTimeline.svelte';
   import TimelineEventCard from './TimelineEventCard.svelte';
@@ -21,6 +23,10 @@
     layout: PresentationLayout;
     inspect?: boolean;
     onPresentationChange?: () => void;
+    onReferenceRequest?: (presentation: TimelinePresentation) => void;
+    onElementReferenceActivate?: (
+      reference: Extract<MessageContentSegment, { type: 'element-ref' }>
+    ) => void;
   };
 
   let {
@@ -29,7 +35,9 @@
     selection,
     layout,
     inspect = false,
-    onPresentationChange = () => {}
+    onPresentationChange = () => {},
+    onReferenceRequest = () => {},
+    onElementReferenceActivate = () => {}
   }: Props = $props();
   let viewport = $state<HTMLElement | null>(null);
   let timelineEnd = $state<HTMLElement | null>(null);
@@ -89,7 +97,14 @@
           </li>
         {/if}
       {:else}
-        <ParticipantTimeline {session} {selection} {layout} {onPresentationChange} />
+        <ParticipantTimeline
+          {session}
+          {selection}
+          {layout}
+          {onPresentationChange}
+          {onReferenceRequest}
+          {onElementReferenceActivate}
+        />
       {/if}
       <li class="h-px" aria-hidden="true"><span bind:this={timelineEnd}></span></li>
     </ol>

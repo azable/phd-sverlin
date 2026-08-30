@@ -23,6 +23,7 @@ import type {
   ProjectDocument,
   ProjectResource
 } from '$lib/shared/projects/model';
+import { markdownMessage } from '$lib/shared/projects/events/message-content';
 import {
   defaultProjectCreation,
   projectCreationRenderer,
@@ -100,19 +101,19 @@ export const defaultProjectServiceDependencies: ProjectServiceDependencies = {
   readDslRevision
 };
 
-/** Create a project from its validated template and render the initial visualization. */
+/** Create a project, leaving blank conversational templates unrendered until first use. */
 export async function createProject(
   options: CreateProjectOptions = {},
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<ProjectDocument> {
   const { document, operationId } = await createProjectSkeleton(options, dependencies);
+  if (projectSnapshotAt(document).creation.templateId === 'blank') return document;
   return renderDocument(
     document,
     freshPresentationSeeds(options.presentationCount ?? 1),
     'initial',
     operationId,
-    dependencies,
-    options.presentationCount === 2
+    dependencies
   );
 }
 
@@ -171,12 +172,12 @@ export async function createProjectSkeleton(
         type: 'assistant.responded',
         actor: { kind: 'assistant', botId: introduction.botId },
         operationId,
-        payload: { text: introduction.text }
+        payload: { content: markdownMessage(introduction.text) }
       })
     });
   }
   const document = await dependencies.repository.create(
-    { schemaVersion: 1, projectId, events: initialEvents },
+    { schemaVersion: 2, projectId, events: initialEvents },
     options.ownerUserId
   );
   return { document, operationId };
@@ -199,8 +200,7 @@ export async function renderInitialProject(
       [options.seed],
       'initial',
       options.operationId,
-      dependencies,
-      false
+      dependencies
     );
     return commandResult(before, document);
   });
@@ -233,8 +233,7 @@ export function renderProject(
       [options.seed],
       'seed-change',
       options.operationId,
-      dependencies,
-      false
+      dependencies
     );
     return commandResult(before, document);
   });
@@ -257,8 +256,7 @@ export function renderProjectPresentations(
       freshPresentationSeeds(options.presentationCount),
       'seed-change',
       options.operationId,
-      dependencies,
-      true
+      dependencies
     );
     return commandResult(before, document);
   });
@@ -293,13 +291,51 @@ export function replenishProjectPresentations(
         freshPresentationSeeds(count, usedSeeds),
         'seed-change',
         options.operationId,
-        dependencies,
-        true
+        dependencies
       );
       const nextState = presentationBufferState(next, options.target);
       document = next;
       if (nextState.available.length <= state.available.length) break;
     }
+    return commandResult(before, document);
+  });
+}
+
+/** Consume the currently visible buffered candidates only after an explicit participant action. */
+export function advanceProjectPresentations(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    presentations: string[];
+    operationId: string;
+  },
+  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
+    const available = new Set(
+      presentationBufferState(before, 0).available.map(({ presentationId }) => presentationId)
+    );
+    if (
+      options.presentations.length === 0 ||
+      options.presentations.length > 2 ||
+      options.presentations.some((id) => !available.has(id))
+    ) {
+      throw new Error('Only currently available presentations can be advanced.');
+    }
+    const document = await appendProjectEvents(
+      before,
+      [
+        draftEvent({
+          type: 'visualization.candidates-advanced',
+          actor: { kind: 'user' },
+          operationId: options.operationId,
+          payload: { presentations: options.presentations, reason: 'next' }
+        })
+      ],
+      [],
+      dependencies
+    );
     return commandResult(before, document);
   });
 }
@@ -371,8 +407,7 @@ export function updateProjectArtifact(
       freshPresentationSeeds(options.presentationCount),
       'manual-edit',
       options.operationId,
-      dependencies,
-      options.presentationCount === 2
+      dependencies
     );
     return commandResult(before, document);
   });
@@ -418,8 +453,7 @@ export function restoreProjectArtifacts(
       [options.seed],
       'restore',
       options.operationId,
-      dependencies,
-      false
+      dependencies
     );
     return commandResult(before, document);
   });
@@ -454,8 +488,7 @@ async function renderDocument(
   seeds: readonly number[],
   purpose: RenderPurpose,
   operationId: string,
-  dependencies: ProjectServiceDependencies,
-  presentDirectly: boolean
+  dependencies: ProjectServiceDependencies
 ) {
   const snapshot = projectSnapshotAt(document);
   const artifact = snapshot.artifacts[snapshot.entryArtifactId];
@@ -483,38 +516,22 @@ async function renderDocument(
     );
   }
   if (seeds.length === 0) throw new Error('At least one seed is required.');
-  if (presentDirectly || seeds.length > 1) {
-    const recorded = await compileProjectSourceBatch(
-      {
-        document,
-        sourceContent: artifact.content.text,
-        source: artifact.content,
-        sourceLabel: artifact.path,
-        seeds,
-        purpose,
-        input: 'committed-artifact',
-        operationId
-      },
-      dependencies
-    );
-    return recorded.compilations.every(({ result }) => result.ok)
-      ? activateCompiledPresentations(recorded, dependencies)
-      : recorded.document;
-  }
-  const recorded = await compileProjectSource(
+  const recorded = await compileProjectSourceBatch(
     {
       document,
       sourceContent: artifact.content.text,
       source: artifact.content,
       sourceLabel: artifact.path,
-      seed: seeds[0],
+      seeds,
       purpose,
       input: 'committed-artifact',
       operationId
     },
     dependencies
   );
-  return recorded.result.ok ? activateCompiledRender(recorded, dependencies) : recorded.document;
+  return recorded.compilations.every(({ result }) => result.ok)
+    ? activateCompiledPresentations(recorded, dependencies)
+    : recorded.document;
 }
 
 export type RecordedCompilationBatch = {
@@ -747,41 +764,6 @@ export async function activateCompiledPresentations(
     [],
     dependencies
   );
-}
-
-/** Promote a successful recorded compilation to the project's active visualization. */
-export async function activateCompiledRender(
-  recorded: RecordedCompilation,
-  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
-): Promise<ProjectDocument> {
-  if (!('render' in recorded)) return recorded.document;
-  const document = await appendProjectEvents(
-    recorded.document,
-    [
-      draftEvent({
-        type: 'visualization.rendered',
-        actor: { kind: 'system' },
-        operationId: recorded.operationId,
-        payload: {
-          seed: recorded.seed,
-          source: recorded.source,
-          render: recorded.render,
-          resources: recorded.result.ok
-            ? recorded.result.resources.map(({ bytes: _bytes, ...resource }) => resource)
-            : [],
-          ...(recorded.result.ok
-            ? {
-                provenance: recorded.result.provenance,
-                targetDiagnostics: recorded.result.targetDiagnostics
-              }
-            : {})
-        }
-      })
-    ],
-    [],
-    dependencies
-  );
-  return document;
 }
 
 function logicalSourceName(sourceLabel: string): string {

@@ -9,36 +9,38 @@
   import { presentationStepLabels, type PresentationLayout } from '$lib/shared/presentations';
 
   import type { PresentationSelection } from './presentation-selection.svelte';
+  import type { PresentationPlayback } from './presentation-playback.svelte';
   import PresentationViewport from './PresentationViewport.svelte';
 
   type Props = {
     session: ProjectSession;
     selection: PresentationSelection;
+    playback: PresentationPlayback;
     layout: PresentationLayout;
     disabled?: boolean;
     visualSelection?: VisualSelection;
     onVisualSelectionChange?: (selection?: VisualSelection) => void;
+    onReferenceSelection?: (selection: VisualSelection) => void;
   };
 
   let {
     session,
     selection,
+    playback,
     layout,
     disabled = false,
     visualSelection,
-    onVisualSelectionChange = (_selection?: VisualSelection) => {}
+    onVisualSelectionChange = (_selection?: VisualSelection) => {},
+    onReferenceSelection = (_selection: VisualSelection) => {}
   }: Props = $props();
-  let playback = $state<{ selectionKey: string; step: number }>({ selectionKey: '', step: 0 });
 
   const visible = $derived(selection.selected(session.events, layout));
   const selectionKey = $derived(
     visible.map(({ presentation }) => presentation.presentationId).join(':')
   );
-  const step = $derived(playback.selectionKey === selectionKey ? playback.step : 0);
+  const step = $derived(playback.stepFor(selectionKey));
   const labels = $derived(visible[0] ? presentationStepLabels(visible[0].presentation) : []);
-  const selectedIds = $derived(
-    visible.map(({ presentation }) => presentation.presentationId) as [string, string]
-  );
+  const selectedIds = $derived(visible.map(({ presentation }) => presentation.presentationId));
   const preferred = $derived.by(() => {
     if (visible.length !== 2) return undefined;
     const preference = session.events.findLast(
@@ -53,7 +55,7 @@
   });
 
   function seek(next: number) {
-    playback = { selectionKey, step: next };
+    playback.seek(selectionKey, next);
     onVisualSelectionChange(undefined);
   }
 
@@ -61,9 +63,21 @@
     if (visible.length !== 2) return;
     const succeeded = await session.runCommand({
       type: 'prefer',
-      presentations: selectedIds,
+      presentations: [selectedIds[0], selectedIds[1]],
       preferred,
       step
+    });
+    if (succeeded) {
+      onVisualSelectionChange(undefined);
+      selection.returnToLatest();
+    }
+  }
+
+  async function advancePresentations() {
+    if (!visible.length) return;
+    const succeeded = await session.runCommand({
+      type: 'advance-presentations',
+      presentations: selectedIds
     });
     if (succeeded) {
       onVisualSelectionChange(undefined);
@@ -78,20 +92,12 @@
 
   function selectedInstances(entry: (typeof visible)[number]) {
     if (!visualSelection || visualSelection.step !== step) return [];
-    const selectedEvent =
-      'presentationEvent' in visualSelection
-        ? visualSelection.presentationEvent
-        : visualSelection.render;
-    return selectedEvent === entry.eventId ? visualSelection.instances : [];
+    return visualSelection.presentationEvent === entry.eventId ? visualSelection.instances : [];
   }
 
   function selectInstances(entry: (typeof visible)[number], instances: number[]) {
     onVisualSelectionChange(
-      instances.length
-        ? entry.eventType === 'visualization.presented'
-          ? { presentationEvent: entry.eventId, step, instances }
-          : { render: entry.eventId, step, instances }
-        : undefined
+      instances.length ? { presentationEvent: entry.eventId, step, instances } : undefined
     );
   }
 </script>
@@ -139,6 +145,21 @@
     {/if}
     {#if !selection.followingLatest}
       <Button size="sm" variant="ghost" onclick={returnToCurrent}>Return to current</Button>
+    {/if}
+    {#if selection.buffered && selection.followingLatest && visible.length}
+      <Button size="sm" variant="outline" onclick={advancePresentations} {disabled}>
+        Next visualizations
+      </Button>
+    {/if}
+    {#if visualSelection && visible.some(({ eventId }) => eventId === visualSelection?.presentationEvent)}
+      <Button
+        size="sm"
+        variant="outline"
+        onclick={() => onReferenceSelection(visualSelection)}
+        {disabled}
+      >
+        Reference selection
+      </Button>
     {/if}
   </div>
   {#if selection.notice}

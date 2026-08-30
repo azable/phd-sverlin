@@ -2,11 +2,7 @@
 
 import type { ProjectEvent } from '$lib/shared/projects/events';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
-import {
-  legacyPresentationId,
-  type PresentationLayout,
-  type RenderablePresentation
-} from '$lib/shared/presentations';
+import { type PresentationLayout, type RenderablePresentation } from '$lib/shared/presentations';
 
 const presentationAdjectives = [
   'Amber',
@@ -81,7 +77,7 @@ const presentationNouns = [
 /** One render recorded in the Timeline, with its display-set context retained. */
 export type TimelinePresentation = {
   eventId: number;
-  eventType: 'visualization.rendered' | 'visualization.presented';
+  eventType: 'visualization.presented';
   operationId: string;
   displaySetId?: string;
   slot: 0 | 1;
@@ -116,27 +112,7 @@ export function timelinePresentations(events: readonly ProjectEvent[]): Timeline
         }
       ];
     }
-    if (event.type !== 'visualization.rendered') return [];
-    const presentationId = legacyPresentationId(event.id);
-    return [
-      {
-        eventId: event.id,
-        eventType: 'visualization.rendered',
-        operationId: event.operationId,
-        slot: 0 as const,
-        presentation: {
-          presentationId,
-          format: 'sverlin-ir-v1' as const,
-          stepSignature: `legacy-${event.id}`,
-          seed: event.payload.seed,
-          source: event.payload.source,
-          render: event.payload.render,
-          resources: event.payload.resources,
-          provenance: event.payload.provenance,
-          targetDiagnostics: event.payload.targetDiagnostics
-        }
-      }
-    ];
+    return [];
   });
 }
 
@@ -147,6 +123,12 @@ export function latestPresentations(
 ): TimelinePresentation[] {
   const latest = presentations.at(-1);
   if (!latest) return [];
+  if (latest.presentation.format === 'html-frames-v1' && latest.displaySetId) {
+    return presentations
+      .filter(({ displaySetId }) => displaySetId === latest.displaySetId)
+      .toSorted((left, right) => left.slot - right.slot)
+      .slice(0, 1);
+  }
   return presentationGroup(presentations, latest, layout);
 }
 

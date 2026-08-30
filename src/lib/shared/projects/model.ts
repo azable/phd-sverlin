@@ -30,14 +30,14 @@ import {
   operationIdSchema,
   positiveSchema,
   textSchema,
-  visualSelectionSchema,
   type ProjectArtifact
 } from './events/values';
+import { messageContentSchema } from './events/message-content';
 import { projectTemplateIdSchema, type ProjectCreation } from './creation';
 
 /** Runtime schema for a complete persisted project document. */
 export const projectDocumentSchema = v.object({
-  schemaVersion: v.literal(1),
+  schemaVersion: v.literal(2),
   projectId: textSchema,
   events: v.pipe(v.array(projectEventSchema), v.minLength(1))
 });
@@ -62,40 +62,41 @@ const commandBase = { operationId: operationIdSchema, expectedHead: positiveSche
 
 /** Runtime discriminated union for commands accepted by the project API. */
 export const projectCommandSchema = v.variant('type', [
-  v.object({ ...commandBase, type: v.literal('rename'), title: textSchema }),
-  v.object({
+  v.strictObject({ ...commandBase, type: v.literal('rename'), title: textSchema }),
+  v.strictObject({
     ...commandBase,
     type: v.literal('feedback'),
-    text: v.optional(v.string()),
+    content: messageContentSchema,
     focus: v.array(positiveSchema),
-    selection: v.optional(visualSelectionSchema),
-    presentations: v.optional(
-      v.pipe(v.array(presentationIdSchema), v.minLength(1), v.maxLength(2))
-    ),
     presentationCount: v.picklist([1, 2])
   }),
-  v.object({ ...commandBase, type: v.literal('render'), seed: positiveSchema }),
-  v.object({
+  v.strictObject({
+    ...commandBase,
+    type: v.literal('advance-presentations'),
+    presentations: v.pipe(v.array(presentationIdSchema), v.minLength(1), v.maxLength(2))
+  }),
+  v.strictObject({ ...commandBase, type: v.literal('render'), seed: positiveSchema }),
+  v.strictObject({
     ...commandBase,
     type: v.literal('prefer'),
     presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
     preferred: presentationIdSchema,
     step: naturalSchema
   }),
-  v.object({
+  v.strictObject({
     ...commandBase,
     type: v.literal('save'),
     artifactId: textSchema,
     source: v.string(),
     presentationCount: v.picklist([1, 2])
   }),
-  v.object({
+  v.strictObject({
     ...commandBase,
     type: v.literal('save-html'),
     artifactId: textSchema,
     manifest: htmlFramesManifestSchema
   }),
-  v.object({
+  v.strictObject({
     ...commandBase,
     type: v.literal('restore'),
     from: positiveSchema,
@@ -125,18 +126,15 @@ export type ProjectSnapshot = {
   creation: ProjectCreation;
   renderer: VisualizationMode;
   artifacts: Record<ArtifactId, ProjectArtifact>;
-  activeRender?: ProjectEventOf<'visualization.rendered'>;
   activePresentationSet?: {
     displaySetId: string;
-    presentations: Array<
-      ProjectEventOf<'visualization.rendered'> | ProjectEventOf<'visualization.presented'>
-    >;
+    presentations: Array<ProjectEventOf<'visualization.presented'>>;
   };
 };
 
 /** Authorized workspace response with the complete immutable project Timeline. */
 export type WorkspaceResource = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   projectId: ProjectId;
   document: ProjectDocument;
   view: v.InferOutput<typeof workspaceViewSchema>;
@@ -163,8 +161,8 @@ export type ProjectCommandResult = {
   appendedEvents: ProjectEvent[];
 };
 
-/** Parse and validate a complete version-one project document. */
-export function normalizeProjectV1(value: unknown): ProjectDocument {
+/** Parse and validate a complete version-two project document. */
+export function normalizeProjectV2(value: unknown): ProjectDocument {
   const parsed = v.safeParse(projectDocumentSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   validateEventIds(parsed.output);
@@ -172,7 +170,7 @@ export function normalizeProjectV1(value: unknown): ProjectDocument {
 }
 
 /** Parse and validate a complete project transport resource. */
-export function normalizeProjectResourceV1(value: unknown): ProjectResource {
+export function normalizeProjectResourceV2(value: unknown): ProjectResource {
   const parsed = v.safeParse(projectResourceSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   validateEventIds(parsed.output.document);

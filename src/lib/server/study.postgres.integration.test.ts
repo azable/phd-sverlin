@@ -216,7 +216,7 @@ function readyComparison(projectId: string): ProjectDocument {
   const render = recorded(JSON.stringify({ steps: [{ label: 'Only step' }] }), 'application/json');
   const displaySetId = randomUUID();
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     events: [
       {

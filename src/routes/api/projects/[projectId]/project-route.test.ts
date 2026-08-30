@@ -27,7 +27,7 @@ beforeEach(() => {
     acceptedEventId: 5
   });
   mocks.loadProjectResource.mockResolvedValue({
-    document: { schemaVersion: 1, projectId: 'project-test', events: [] },
+    document: { schemaVersion: 2, projectId: 'project-test', events: [] },
     projects: []
   });
 });
@@ -79,16 +79,24 @@ describe('project JSON API', () => {
     await expect(stale.json()).resolves.toEqual({ error: 'stale' });
   });
 
-  it('accepts zero-based render instance IDs in visual selections', async () => {
+  it('accepts zero-based instance IDs in inline element references', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
         type: 'feedback',
         operationId,
         expectedHead: 4,
-        text: 'Make this clearer',
         focus: [],
-        selection: { render: 3, step: 0, instances: [0] },
+        content: [
+          { type: 'markdown', text: 'Make this clearer' },
+          {
+            type: 'element-ref',
+            presentationId: '12345678-1234-4123-8123-123456789ac1',
+            presentationEvent: 3,
+            step: 0,
+            instances: [0]
+          }
+        ],
         presentationCount: 1
       })
     );
@@ -97,13 +105,19 @@ describe('project JSON API', () => {
     expect(mocks.accept).toHaveBeenCalledWith(
       expect.objectContaining({
         command: expect.objectContaining({
-          selection: { render: 3, step: 0, instances: [0] }
+          content: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'element-ref',
+              presentationEvent: 3,
+              instances: [0]
+            })
+          ])
         })
       })
     );
   });
 
-  it('accepts current presentation-event visual selections', async () => {
+  it('rejects the former top-level visual-selection shape', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
@@ -112,18 +126,13 @@ describe('project JSON API', () => {
         expectedHead: 4,
         focus: [],
         selection: { presentationEvent: 3, step: 0, instances: [0] },
+        content: [{ type: 'markdown', text: 'Legacy selection' }],
         presentationCount: 2
       })
     );
 
-    expect(response.status).toBe(202);
-    expect(mocks.accept).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({
-          selection: { presentationEvent: 3, step: 0, instances: [0] }
-        })
-      })
-    );
+    expect(response.status).toBe(400);
+    expect(mocks.accept).not.toHaveBeenCalled();
   });
 });
 

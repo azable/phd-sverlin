@@ -12,7 +12,7 @@ import {
   type ProjectResourceBlob
 } from '$lib/server/projects/repository';
 
-import { PostgresAnalysisDataSource } from './analysis-export';
+import { PostgresExportDataSource } from './data-export';
 
 const enabled = Boolean(process.env.DATABASE_URL) && process.env.SVERLIN_RUN_POSTGRES_TESTS === '1';
 const createdProjects: string[] = [];
@@ -29,21 +29,21 @@ afterAll(async () => {
 });
 
 it.skipIf(!enabled)(
-  'collects active project analysis with minimal owner identity and resource metadata',
+  'collects active project data with minimal owner identity and resource metadata',
   async () => {
     const suffix = randomUUID();
-    const ownerUserId = `analysis-owner-${suffix}`;
-    const projectId = `analysis-project-${suffix}`;
+    const ownerUserId = `project-owner-${suffix}`;
+    const projectId = `project-export-${suffix}`;
     const operationId = randomUUID();
     const repository = new PostgresProjectRepository();
-    const resource = resourceBlob('analysis bytes');
+    const resource = resourceBlob('project bytes');
     createdUsers.push(ownerUserId);
     createdProjects.push(projectId);
     await database()
       .insert(schema.user)
       .values({
         id: ownerUserId,
-        name: 'Analysis administrator',
+        name: 'Project administrator',
         email: `${ownerUserId}@sverlin.invalid`,
         emailVerified: true,
         role: 'admin'
@@ -51,13 +51,13 @@ it.skipIf(!enabled)(
     await repository.create(rootDocument(projectId, operationId), ownerUserId);
     await repository.append(projectId, 1, [renameEvent(operationId)], [resource]);
 
-    const source = new PostgresAnalysisDataSource(repository);
-    const snapshot = await source.collect(projectId);
+    const source = new PostgresExportDataSource(repository);
+    const snapshot = await source.collect({ type: 'projects', projectId });
 
     expect(snapshot.owners).toEqual([
       {
         id: ownerUserId,
-        label: 'Analysis administrator',
+        label: 'Project administrator',
         role: 'admin',
         enabled: true
       }
@@ -78,7 +78,7 @@ it.skipIf(!enabled)(
 
 function rootDocument(projectId: string, operationId: string): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     events: [
       {
@@ -88,7 +88,7 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         operationId,
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
-          title: 'Analysis integration',
+          title: 'Project export integration',
           entryArtifactId: 'dsl-main',
           creation: { templateId: 'blank' }
         }
@@ -103,7 +103,7 @@ function renameEvent(operationId: string): NewProjectEvent<'project.renamed'> {
     actor: { kind: 'user' },
     operationId,
     createdAt: '2026-08-30T00:00:01.000Z',
-    payload: { previousTitle: 'Analysis integration', title: 'Ready to inspect' }
+    payload: { previousTitle: 'Project export integration', title: 'Ready to inspect' }
   };
 }
 

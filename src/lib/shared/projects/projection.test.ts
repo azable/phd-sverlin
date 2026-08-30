@@ -2,47 +2,56 @@ import { describe, expect, it } from 'vitest';
 
 import {
   InvalidProjectDocumentError,
-  normalizeProjectEventV1,
+  normalizeProjectEventV2,
   type ProjectEvent,
   type ProjectEventOf
 } from './events';
-import { normalizeProjectV1, parseProjectCommand, type ProjectDocument } from './model';
+import { normalizeProjectV2, parseProjectCommand, type ProjectDocument } from './model';
 import { projectSnapshotAt, summarizeProject } from './projection';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
+const displaySetId = '22345678-1234-4234-8234-123456789abc';
+const presentationId = '32345678-1234-4234-8234-123456789abc';
 const hash = '0'.repeat(64);
 const recorded = { text: '{}', sha256: hash, mediaType: 'application/json' };
 
 describe('project model and projection', () => {
-  it('uses each event 1-based array position as its stable ID', () => {
+  it('accepts only version-two documents with stable 1-based event IDs', () => {
     const document = documentWithHistory();
-    expect(normalizeProjectV1(document)).toEqual(document);
-
+    expect(normalizeProjectV2(document)).toEqual(document);
+    expect(() => normalizeProjectV2({ ...document, schemaVersion: 1 })).toThrow(
+      InvalidProjectDocumentError
+    );
     expect(() =>
-      normalizeProjectV1({
+      normalizeProjectV2({
         ...document,
         events: document.events.map((event, index) => (index === 2 ? { ...event, id: 4 } : event))
       })
     ).toThrow(InvalidProjectDocumentError);
-    expect(() => normalizeProjectV1({ ...document, events: document.events.slice(1) })).toThrow(
-      InvalidProjectDocumentError
-    );
   });
 
-  it('validates operation UUIDs, command focus, and compact visual references', () => {
+  it('validates structured message references and compact visual selections', () => {
     expect(() =>
-      normalizeProjectEventV1({ ...documentWithHistory().events[0], operationId: 'not-a-uuid' })
+      normalizeProjectEventV2({ ...documentWithHistory().events[0], operationId: 'not-a-uuid' })
     ).toThrow(InvalidProjectDocumentError);
 
     expect(
       parseProjectCommand({
         type: 'feedback',
         operationId,
-        expectedHead: 4,
-        text: 'Prefer these',
+        expectedHead: 5,
+        content: [
+          { type: 'markdown', text: 'Prefer this element' },
+          {
+            type: 'element-ref',
+            presentationId,
+            presentationEvent: 5,
+            step: 0,
+            instances: [0]
+          }
+        ],
         focus: [2],
-        selection: { render: 3, step: 0, instances: [1] },
-        presentationCount: 2
+        presentationCount: 1
       })
     ).toMatchObject({ type: 'feedback', focus: [2] });
   });
@@ -67,10 +76,9 @@ describe('project model and projection', () => {
         }
       }
     };
-
-    expect(normalizeProjectEventV1(request)).toEqual(request);
+    expect(normalizeProjectEventV2(request)).toEqual(request);
     expect(() =>
-      normalizeProjectEventV1({
+      normalizeProjectEventV2({
         ...request,
         payload: {
           ...request.payload,
@@ -80,60 +88,44 @@ describe('project model and projection', () => {
     ).toThrow(InvalidProjectDocumentError);
   });
 
-  it('replays historical source and clears stale renders after an artifact edit', () => {
+  it('replays historical source and clears stale presentations after an artifact edit', () => {
     const document = documentWithHistory();
-
-    expect(projectSnapshotAt(document, 3).activeRender?.id).toBe(3);
-    expect(projectSnapshotAt(document, 4).activeRender).toBeUndefined();
+    expect(projectSnapshotAt(document, 3).activePresentationSet?.presentations[0].id).toBe(3);
+    expect(projectSnapshotAt(document, 4).activePresentationSet).toBeUndefined();
     expect(projectSnapshotAt(document, 2).artifacts['dsl-main']?.content.sha256).toBe(hash);
-    expect(projectSnapshotAt(document).activeRender).toMatchObject({
+    expect(projectSnapshotAt(document).activePresentationSet?.presentations[0]).toMatchObject({
       id: 5,
-      payload: { source: { sha256: '1'.repeat(64) } }
-    });
-  });
-
-  it('ignores lifecycle-only events when reconstructing state', () => {
-    const document = documentWithHistory();
-    const withResponse = {
-      ...document,
-      events: [...document.events, event(6, 'assistant.responded', { text: 'Done' })]
-    };
-    expect(projectSnapshotAt(withResponse)).toEqual({ ...projectSnapshotAt(document), at: 6 });
-  });
-
-  it('normalizes missing and legacy mode metadata to template selections', () => {
-    const document = documentWithHistory();
-    expect(projectSnapshotAt(document).creation).toEqual({
-      templateId: 'blank',
-      renderer: 'sverlin'
+      payload: { presentation: { source: { sha256: '1'.repeat(64) } } }
     });
     expect(summarizeProject(document).templateId).toBe('blank');
+  });
 
-    const devDocument = {
+  it('ignores message-only events when reconstructing state', () => {
+    const document = documentWithHistory();
+    const withResponse: ProjectDocument = {
       ...document,
-      events: document.events.map((projectEvent, index) =>
-        index === 0 && projectEvent.type === 'project.created'
-          ? {
-              ...projectEvent,
-              payload: {
-                ...projectEvent.payload,
-                creation: { mode: 'dev' as const, exampleId: 'linear-search' }
-              }
-            }
-          : projectEvent
-      )
-    } as ProjectDocument;
-    expect(projectSnapshotAt(devDocument).creation).toEqual({ templateId: 'linear-search' });
-    expect(summarizeProject(devDocument).templateId).toBe('linear-search');
+      events: [
+        ...document.events,
+        event(6, 'assistant.responded', {
+          content: [{ type: 'markdown', text: 'Done' }]
+        })
+      ]
+    };
+    expect(projectSnapshotAt(withResponse)).toEqual({ ...projectSnapshotAt(document), at: 6 });
   });
 });
 
 function documentWithHistory(): ProjectDocument {
+  const edited = { ...recorded, text: 'edited', sha256: '1'.repeat(64) };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: 'project-test',
     events: [
-      event(1, 'project.created', { title: 'Test', entryArtifactId: 'dsl-main' }),
+      event(1, 'project.created', {
+        title: 'Test',
+        entryArtifactId: 'dsl-main',
+        creation: { templateId: 'blank' }
+      }),
       event(2, 'artifact.version-created', {
         origin: { kind: 'initial' },
         changes: [
@@ -148,7 +140,7 @@ function documentWithHistory(): ProjectDocument {
           }
         ]
       }),
-      event(3, 'visualization.rendered', { seed: 1, source: recorded, render: recorded }),
+      presented(3, recorded, '42345678-1234-4234-8234-123456789abc'),
       event(4, 'artifact.version-created', {
         origin: { kind: 'manual-edit' },
         changes: [
@@ -158,36 +150,46 @@ function documentWithHistory(): ProjectDocument {
               artifactId: 'dsl-main',
               path: 'Main.sverlin',
               language: 'sverlin',
-              content: {
-                ...recorded,
-                text: 'edited',
-                sha256: '1'.repeat(64),
-                mediaType: 'text/x-sverlin'
-              }
+              content: { ...edited, mediaType: 'text/x-sverlin' }
             }
           }
         ]
       }),
-      event(5, 'visualization.rendered', {
-        seed: 2,
-        source: { ...recorded, text: 'edited', sha256: '1'.repeat(64) },
-        render: { ...recorded, text: '{"seed":2}', sha256: '2'.repeat(64) }
-      })
+      presented(5, edited, presentationId)
     ]
-  } as ProjectDocument;
+  };
+}
+
+function presented(
+  id: number,
+  source: typeof recorded,
+  idValue: string
+): ProjectEventOf<'visualization.presented'> {
+  return event(id, 'visualization.presented', {
+    displaySetId,
+    slot: 0,
+    presentation: {
+      presentationId: idValue,
+      format: 'sverlin-ir-v1',
+      stepSignature: 'one-step',
+      seed: id,
+      source,
+      render: recorded
+    }
+  });
 }
 
 function event<Type extends ProjectEvent['type']>(
   id: number,
   type: Type,
   payload: ProjectEventOf<Type>['payload']
-) {
+): ProjectEventOf<Type> {
   return {
     id,
     type,
-    actor: { kind: 'system' as const },
     operationId,
-    createdAt: `2026-01-01T00:00:0${id}.000Z`,
+    actor: { kind: 'system' },
+    createdAt: `2026-01-01T00:00:${String(id).padStart(2, '0')}.000Z`,
     payload
   } as ProjectEventOf<Type>;
 }

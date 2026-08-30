@@ -5,12 +5,64 @@
  */
 
 import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
+import * as v from 'valibot';
+
+import { presentationIdSchema } from '$lib/shared/presentations';
+import { textSchema } from '$lib/shared/projects/events/values';
 
 /** User or assistant message retained as conversational context. */
 export type ConversationMessage = {
   role: 'user' | 'assistant';
   content: string;
 };
+
+/** Model-authored reply segment before generated candidate slots have stable IDs. */
+export const generatedMessageSegmentSchema = v.variant('type', [
+  v.strictObject({ type: v.literal('markdown'), text: textSchema }),
+  v.strictObject({ type: v.literal('presentation-ref'), presentationId: presentationIdSchema }),
+  v.strictObject({ type: v.literal('candidate-ref'), slot: v.picklist([0, 1]) })
+]);
+
+export const generatedMessageContentSchema = v.pipe(
+  v.array(generatedMessageSegmentSchema),
+  v.minLength(1)
+);
+
+export type GeneratedMessageContent = v.InferOutput<typeof generatedMessageContentSchema>;
+
+/** JSON Schema embedded in both assistant response contracts. */
+export const generatedMessageContentJsonSchema = {
+  type: 'array',
+  minItems: 1,
+  items: {
+    oneOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: { type: { type: 'string', enum: ['markdown'] }, text: { type: 'string' } },
+        required: ['type', 'text']
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          type: { type: 'string', enum: ['presentation-ref'] },
+          presentationId: { type: 'string', format: 'uuid' }
+        },
+        required: ['type', 'presentationId']
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          type: { type: 'string', enum: ['candidate-ref'] },
+          slot: { type: 'integer', enum: [0, 1] }
+        },
+        required: ['type', 'slot']
+      }
+    ]
+  }
+} as const;
 
 /** Failed generated source and diagnostics supplied to one repair attempt. */
 export type CompilationFeedback = {
@@ -48,11 +100,15 @@ export type ChatResponseFormat = {
 
 /** Static behavior and context builder for one chatbot. */
 export type SourceArtifactChatOutput = {
-  reply: string;
+  reply: GeneratedMessageContent;
+  candidateAction: 'none' | 'generate';
   sourceArtifactContent?: string;
 };
 
-export type ChatBotConfig<Project, Output extends { reply: string } = SourceArtifactChatOutput> = {
+export type ChatBotConfig<
+  Project,
+  Output extends { reply: GeneratedMessageContent } = SourceArtifactChatOutput
+> = {
   id: string;
   participantIntroduction: string;
   initialPrompt: string;
@@ -79,7 +135,9 @@ export type ChatbotRequest<Project> = {
 };
 
 /** Parsed chatbot output enriched with prompt and generation provenance. */
-export type ChatbotResult<Output extends { reply: string } = SourceArtifactChatOutput> = Output & {
+export type ChatbotResult<
+  Output extends { reply: GeneratedMessageContent } = SourceArtifactChatOutput
+> = Output & {
   providerResponse?: unknown;
   prompt: ChatbotPrompt;
   generation: {
@@ -95,7 +153,10 @@ export type ChatbotResult<Output extends { reply: string } = SourceArtifactChatO
 export type { ChatAdapter, ChatAdapterResult } from '$lib/server/chat-adapters/types';
 
 /** Executable chatbot assembled from a bot configuration and provider adapter. */
-export interface Chatbot<Project, Output extends { reply: string } = SourceArtifactChatOutput> {
+export interface Chatbot<
+  Project,
+  Output extends { reply: GeneratedMessageContent } = SourceArtifactChatOutput
+> {
   /** Stable bot identifier recorded in project events. */
   readonly id: string;
   /** Static configuration used by this bot. */

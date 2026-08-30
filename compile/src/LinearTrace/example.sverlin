@@ -7,27 +7,33 @@
 
 data Number
 
-type instance Payload Number = LInt Number
+instance Traceable Number where
+  type Payload Number = LInt Number
 
 data Condition
 
-type instance Payload Condition = LBool Condition
+instance Traceable Condition where
+  type Payload Condition = LBool Condition
 
 data TargetCell
 
-type instance Payload TargetCell = LUnit TargetCell
+instance Traceable TargetCell where
+  type Payload TargetCell = LUnit TargetCell
 
 data IndexCell
 
-type instance Payload IndexCell = LUnit IndexCell
+instance Traceable IndexCell where
+  type Payload IndexCell = LUnit IndexCell
 
 data ElementCell
 
-type instance Payload ElementCell = LUnit ElementCell
+instance Traceable ElementCell where
+  type Payload ElementCell = LUnit ElementCell
 
 data Add
 
-type instance Payload Add = LOperator Add Add
+instance Traceable Add where
+  type Payload Add = LOperator Add Add
 
 instance Applicable2 Add Number Number where
   type Apply2Result Add Number Number = Number
@@ -36,7 +42,8 @@ instance Applicable2 Add Number Number where
 
 data Equal
 
-type instance Payload Equal = LOperator Equal Equal
+instance Traceable Equal where
+  type Payload Equal = LOperator Equal Equal
 
 instance Applicable2 Equal Number Number where
   type Apply2Result Equal Number Number = Condition
@@ -100,11 +107,6 @@ type DestroyElement = DestroyElements / "destroy-element"
 domain :: Domain ()
 domain = do
   -- Working declaration syntax; final constructors and packaging remain open.
-  declarePayload @Number
-  declarePayload @Condition
-  declarePayload @TargetCell
-  declarePayload @IndexCell
-  declarePayload @ElementCell
   declareOperator @Add
   declareOperator @Equal
   declareKind targetKind

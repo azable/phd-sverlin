@@ -1,0 +1,37 @@
+/** Safe, deliberately small Markdown rendering policy for retained chat messages. */
+
+import { marked } from 'marked';
+import sanitizeHtml from 'sanitize-html';
+
+const allowedTags = [
+  'p',
+  'br',
+  'strong',
+  'em',
+  'del',
+  'code',
+  'pre',
+  'blockquote',
+  'ul',
+  'ol',
+  'li',
+  'a'
+];
+
+/** Render GitHub-flavoured Markdown while stripping raw HTML and unsafe URLs. */
+export function renderSafeMarkdown(source: string): string {
+  const rendered = marked.parse(source, { async: false, breaks: true, gfm: true });
+  return sanitizeHtml(rendered, {
+    allowedTags,
+    allowedAttributes: { a: ['href', 'title', 'rel'] },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowProtocolRelative: false,
+    disallowedTagsMode: 'discard',
+    transformTags: {
+      a: (_tagName, attributes) => ({
+        tagName: 'a',
+        attribs: { ...attributes, rel: 'nofollow noreferrer' }
+      })
+    }
+  });
+}

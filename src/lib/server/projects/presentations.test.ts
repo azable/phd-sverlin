@@ -126,7 +126,7 @@ function comparisonDocument(
     render
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     events: [
       {

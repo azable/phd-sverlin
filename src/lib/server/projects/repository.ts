@@ -8,7 +8,7 @@ import { summarizeProject } from '$lib/shared/projects/projection';
 import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
 import type { CompilationResource } from '$lib/shared/projects/events/values';
 import {
-  normalizeProjectV1,
+  normalizeProjectV2,
   type ProjectDocument,
   type ProjectId,
   type ProjectSummary
@@ -94,7 +94,7 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async create(document: ProjectDocument, ownerUserId?: string): Promise<ProjectDocument> {
     assertProjectId(document.projectId);
-    const normalized = normalizeProjectV1(document);
+    const normalized = normalizeProjectV2(document);
     if (!ownerUserId) throw new Error('A project owner is required for PostgreSQL storage.');
     const summary = summarizeProject(normalized);
     await database().transaction(async (transaction) => {
@@ -134,8 +134,8 @@ export class PostgresProjectRepository implements ProjectRepository {
       .from(schema.projectEvents)
       .where(eq(schema.projectEvents.projectId, projectId))
       .orderBy(asc(schema.projectEvents.eventId));
-    return normalizeProjectV1({
-      schemaVersion: 1,
+    return normalizeProjectV2({
+      schemaVersion: 2,
       projectId,
       events: rows.map(({ event }) => event)
     });
@@ -169,8 +169,8 @@ export class PostgresProjectRepository implements ProjectRepository {
         .from(schema.projectEvents)
         .where(eq(schema.projectEvents.projectId, projectId))
         .orderBy(asc(schema.projectEvents.eventId));
-      const document = normalizeProjectV1({
-        schemaVersion: 1,
+      const document = normalizeProjectV2({
+        schemaVersion: 2,
         projectId,
         events: [...rows.map(({ event }) => event), ...events]
       });

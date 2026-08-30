@@ -26,7 +26,7 @@ afterAll(async () => {
 });
 
 it.skipIf(!enabled)(
-  'scopes research by participant phase links while analysis retains previews',
+  'scopes study data by participant phase links while project data retains previews',
   async () => {
     const suffix = randomUUID();
     const participantId = `export-participant-${suffix}`;
@@ -121,17 +121,17 @@ it.skipIf(!enabled)(
     expect(research.study.flows[0]).toMatchObject({ mode: 'participant' });
     expect(JSON.stringify(research)).not.toContain('giftCardUrl');
 
-    const analysis = await source.collect({ type: 'analysis' });
-    expect(analysis.projects.map(({ id }) => id)).toEqual(
+    const projects = await source.collect({ type: 'projects' });
+    expect(projects.projects.map(({ id }) => id)).toEqual(
       expect.arrayContaining([studyProjectId, ordinaryProjectId, previewProjectId])
     );
-    expect(analysis.study.runs).toEqual(
+    expect(projects.study.runs).toEqual(
       expect.arrayContaining([expect.objectContaining({ mode: 'preview' })])
     );
-    expect(analysis.participants).toEqual([
+    expect(projects.participants).toEqual([
       expect.objectContaining({ id: participantId, participantId: 'P-Export' })
     ]);
-    expect(analysis.study.enrollments).toEqual([
+    expect(projects.study.enrollments).toEqual([
       expect.objectContaining({ userId: participantId, runId: participantRun.id })
     ]);
   }
@@ -139,7 +139,7 @@ it.skipIf(!enabled)(
 
 function document(projectId: string): ProjectDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     events: [
       {

@@ -3,33 +3,35 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  verifyAnalysisResource,
-  writeAnalysisExport,
-  type AnalysisDataSource,
-  type AnalysisExportSink,
-  type AnalysisSnapshot
-} from './analysis-export';
+  verifyExportResource,
+  writeDataExport,
+  type ExportDataSource,
+  type ExportSink,
+  type ExportSnapshot
+} from './data-export';
 
-describe('analysis export traversal', () => {
+describe('project data export traversal', () => {
   it('writes one canonical, resource-verified tree without authentication data', async () => {
-    const bytes = Buffer.from('analysis resource');
+    const bytes = Buffer.from('project resource');
     const digest = createHash('sha256').update(bytes).digest('hex');
     const snapshot = fixtureSnapshot(digest, bytes.byteLength);
     const files = new Map<string, Uint8Array>();
-    const sink: AnalysisExportSink = {
+    const sink: ExportSink = {
       write(pathname, value) {
         files.set(pathname, Uint8Array.from(value));
       }
     };
-    const source: AnalysisDataSource = {
+    const source: ExportDataSource = {
       collect: vi.fn(async () => snapshot),
       readResource: vi.fn(async () => bytes)
     };
 
-    const manifest = await writeAnalysisExport(source, sink, {
-      projectId: 'analysis-project',
-      exportedAt: '2026-08-30T12:00:00.000Z'
-    });
+    const manifest = await writeDataExport(
+      source,
+      sink,
+      { type: 'projects', projectId: 'project-test' },
+      '2026-08-30T12:00:00.000Z'
+    );
 
     expect([...files.keys()]).toEqual([
       'owners.json',
@@ -39,13 +41,13 @@ describe('analysis export traversal', () => {
       'study/runs.json',
       'study/phases.json',
       'study/flows.json',
-      'projects/analysis-project/project.json',
-      'projects/analysis-project/resources.json',
-      `projects/analysis-project/resources/sha256-${digest}`,
+      'projects/project-test/project.json',
+      'projects/project-test/resources.json',
+      `projects/project-test/resources/sha256-${digest}`,
       'manifest.json'
     ]);
     expect(manifest).toMatchObject({
-      scope: { type: 'analysis', projectId: 'analysis-project' },
+      scope: { type: 'projects', projectId: 'project-test' },
       ownerCount: 1,
       projectCount: 1
     });
@@ -54,14 +56,17 @@ describe('analysis export traversal', () => {
       { id: 'owner-1', label: 'P001', role: 'user', enabled: true }
     ]);
     expect(Buffer.from(files.get('owners.json')!).toString()).not.toContain('@');
-    expect(source.collect).toHaveBeenCalledWith('analysis-project');
-    expect(source.readResource).toHaveBeenCalledWith('analysis-project', `sha256-${digest}`);
+    expect(source.collect).toHaveBeenCalledWith({
+      type: 'projects',
+      projectId: 'project-test'
+    });
+    expect(source.readResource).toHaveBeenCalledWith('project-test', `sha256-${digest}`);
   });
 
   it('rejects substituted resource bytes before completing an export', () => {
     const digest = createHash('sha256').update('expected').digest('hex');
     expect(() =>
-      verifyAnalysisResource(Buffer.from('wrong'), {
+      verifyExportResource(Buffer.from('wrong'), {
         resourceId: `sha256-${digest}`,
         sha256: digest,
         byteLength: Buffer.byteLength('expected')
@@ -70,21 +75,21 @@ describe('analysis export traversal', () => {
   });
 });
 
-function fixtureSnapshot(digest: string, byteLength: number): AnalysisSnapshot {
+function fixtureSnapshot(digest: string, byteLength: number): ExportSnapshot {
   return {
     owners: [{ id: 'owner-1', label: 'P001', role: 'user', enabled: true }],
     projects: [
       {
-        id: 'analysis-project',
+        id: 'project-test',
         ownerUserId: 'owner-1',
-        title: 'Analysis project',
+        title: 'Project export fixture',
         templateId: 'blank',
         renderer: 'sverlin',
         createdAt: '2026-08-30T10:00:00.000Z',
         updatedAt: '2026-08-30T11:00:00.000Z',
         document: {
-          schemaVersion: 1,
-          projectId: 'analysis-project',
+          schemaVersion: 2,
+          projectId: 'project-test',
           events: [
             {
               id: 1,
@@ -92,13 +97,17 @@ function fixtureSnapshot(digest: string, byteLength: number): AnalysisSnapshot {
               actor: { kind: 'user' },
               operationId: '12345678-1234-4123-8123-123456789abc',
               createdAt: '2026-08-30T10:00:00.000Z',
-              payload: { title: 'Analysis project', entryArtifactId: 'dsl-main' }
+              payload: {
+                title: 'Project export fixture',
+                entryArtifactId: 'dsl-main',
+                creation: { templateId: 'blank' }
+              }
             }
           ]
         },
         resources: [
           {
-            projectId: 'analysis-project',
+            projectId: 'project-test',
             resourceId: `sha256-${digest}`,
             sha256: digest,
             byteLength,

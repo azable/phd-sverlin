@@ -9,13 +9,13 @@ import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
 import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
 import type { AiProjectContext } from './sverlin-assistant/project-context';
-import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
+import type { ChatBotConfig, Chatbot, ChatbotRequest, GeneratedMessageContent } from './types';
 import sverlinAssistantBot from './sverlin-assistant';
 import htmlAssistantBot, { type HtmlAssistantOutput } from './html-assistant';
 import type { VisualizationMode } from '$lib/shared/presentations';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
-export function createChatbot<Project, Output extends { reply: string }>(
+export function createChatbot<Project, Output extends { reply: GeneratedMessageContent }>(
   config: ChatBotConfig<Project, Output>,
   adapter: ChatAdapter
 ): Chatbot<Project, Output> {
@@ -58,9 +58,7 @@ export function createChatbot<Project, Output extends { reply: string }>(
 
 const sverlinChatbot = createChatbot(sverlinAssistantBot, openAIAdapter);
 const configuredChatbots: Record<string, Chatbot<AiProjectContext>> = {
-  [sverlinAssistantBot.id]: sverlinChatbot,
-  // Keep existing ignored deployment/local environments working during the rename.
-  'ai-assistant': sverlinChatbot
+  [sverlinAssistantBot.id]: sverlinChatbot
 };
 
 const htmlChatbot: Chatbot<AiProjectContext, HtmlAssistantOutput> = createChatbot(

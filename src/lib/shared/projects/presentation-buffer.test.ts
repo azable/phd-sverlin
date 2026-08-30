@@ -56,6 +56,43 @@ describe('presentation buffer projection', () => {
     ).toEqual(ids.slice(2));
     expect(events).toHaveLength(4);
   });
+
+  it('consumes candidates only for explicit advance actions, not ordinary feedback', () => {
+    const events: ProjectEvent[] = [
+      presented(1, ids[0], sourceA, 0),
+      presented(2, ids[1], sourceA, 1),
+      {
+        id: 3,
+        type: 'feedback.submitted',
+        actor: { kind: 'user' },
+        operationId,
+        createdAt: '2026-08-30T00:00:03.000Z',
+        payload: {
+          content: [{ type: 'presentation-ref', presentationId: ids[0] }],
+          focus: []
+        }
+      }
+    ];
+
+    expect(
+      presentationBufferState(events, 2, sourceA).available.map(
+        ({ presentationId }) => presentationId
+      )
+    ).toEqual(ids.slice(0, 2));
+
+    events.push({
+      id: 4,
+      type: 'visualization.candidates-advanced',
+      actor: { kind: 'user' },
+      operationId,
+      createdAt: '2026-08-30T00:00:04.000Z',
+      payload: { presentations: [ids[0], ids[1]], reason: 'next' }
+    });
+    expect(presentationBufferState(events, 2, sourceA)).toMatchObject({
+      available: [],
+      deficit: 2
+    });
+  });
 });
 
 function presented(
