@@ -420,34 +420,12 @@ shaped string plus validated range metadata. It must not shape each fragment as
 an independent text node, because doing so would lose the font renderer's
 whole-line kerning, bidirectional-text, and ligature behavior.
 
-Add an explicit catalog filter for font choices. The target vocabulary is
-`FontKind`, with `Monospace` and `Proportional` values, an abstract `FontFilter`,
-`fontKind`, and `fontChoice`:
-
-```haskell
-data FontKind = Monospace | Proportional
-
-fontKind :: FontKind -> FontFilter
-fontChoice :: FontFilter -> Render (Variable (Choice FontFamily))
-```
-
-Here `Proportional` means any catalogued non-monospace family. Font kind is
-catalog metadata, not a guess based on the family name. Like the existing
-builder-level `choice`, `fontChoice` creates an authored choice with a fresh
-compiler-generated identity and returns it through `Variable`; it reports a
-source-level diagnostic if the filter is empty. Reusing the returned `Choice`
-means that every use selects the same sampled family. Separate calls can
-therefore select one monospace family for code and one proportional family for
-explanation text without requiring authors to manage global choice names.
-Keep `FontFilter` abstract so later filters, such as serif classification or
-required script coverage, can compose without changing this interface.
-Filter results contain unique concrete catalog-family identities. Generic
-families such as a default monospace alias resolve to catalog entries but do not
-become additional randomly weighted alternatives to the same concrete family.
-The initial filter applies to a whole text node. A `fragment` does not switch
-font family: code and explanation text that require different font kinds use
-separate positioned nodes, as below. Mixed-font shaping within one line would
-need an explicit font-run API and remains outside this baseline.
+Font selection applies to the complete shaped line. The catalog-filtered
+`FontFamily`, `FontKind`, and `FontFilter` interfaces are documented together
+under style authoring below. A `fragment` does not switch font family: code and
+explanation text that require different font kinds use separate positioned
+nodes, as below. Mixed-font shaping within one line would need an explicit
+font-run API and remains outside this baseline.
 
 For example, a rendered comparison line can associate each semantic part of the
 displayed code with the Program steps that produce or use it. The extended
@@ -467,7 +445,7 @@ render :: Render ()
 render = do
   Variable codeFont <- fontChoice (fontKind Monospace)
   Variable explanationFont <- fontChoice (fontKind Proportional)
-  let codeSize = global "render.font-size.code" :: Span
+  Variable codeSize <- variable @Span
 
   Selected explanationLine <- node $ do
     fitText (text "Compare each element with the target; return its index when they match.")
@@ -503,21 +481,21 @@ render = do
   ensure $ left explanationLine .==. at 36
   ensure $ top explanationLine .==. at 64
   ensure $ left loopLine .==. left explanationLine
-  ensure $ top loopLine .==. bottom explanationLine + shift (num 16)
-  ensure $ left comparisonLine .==. left loopLine + shift (num 24)
-  ensure $ top comparisonLine .==. bottom loopLine + shift (num 4)
-  ensure $ left returnLine .==. left loopLine + shift (num 48)
-  ensure $ top returnLine .==. bottom comparisonLine + shift (num 4)
+  ensure $ top loopLine .==. bottom explanationLine + shift 16
+  ensure $ left comparisonLine .==. left loopLine + shift 24
+  ensure $ top comparisonLine .==. bottom loopLine + shift 4
+  ensure $ left returnLine .==. left loopLine + shift 48
+  ensure $ top returnLine .==. bottom comparisonLine + shift 4
   ensure $ left innerCloseLine .==. left comparisonLine
-  ensure $ top innerCloseLine .==. bottom returnLine + shift (num 4)
+  ensure $ top innerCloseLine .==. bottom returnLine + shift 4
   ensure $ left outerCloseLine .==. left loopLine
-  ensure $ top outerCloseLine .==. bottom innerCloseLine + shift (num 4)
+  ensure $ top outerCloseLine .==. bottom innerCloseLine + shift 4
 ```
 
 The `comparisonText` builder produces one shaped line,
 `if (A[i] == target) {`, plus compiler-owned source ranges. `A[i]` is associated
-with `ReadElement`, `target` with
-`ReadTarget`, and ` == ` with all three listed step definitions. Authors do not
+with `ReadElement`, `target` with `ReadTarget`, and ` == ` with all three listed
+step definitions. Authors do not
 calculate character offsets. During playback, the default interpretation is
 that a fragment is active while any associated step definition is active;
 `fragmentMany` therefore uses logical OR. A repeated Program step activates the
@@ -579,29 +557,37 @@ or Program.
 ```haskell
 render :: Render ()
 render = do
-  NodeBinding values <- select (queryAtom "value")
+  Selected values <- select (queryAtom "value")
   node $ do
-    NodeBinding group <- self
+    Selected group <- self
     padding (uniform (by 12))
     node values $ do
       fitText (text "value")
       ensure (width group .>=. width values)
 
-  node canvas $ aspectRatio 4 3
+  aspectRatio 4 3
 ```
 
 #### Reusable values and finite decisions
 
 Retain `bindInt`, `bindContent`, `variable`, `variableFrom`, `choice`,
-`ChoiceDomain`, `Choice`, and `RandomSeed`. Bound query values are reused within
-one matched rule; variables and choices introduce solver-backed values.
+`ChoiceDomain`, `Choice`, `RandomSeed`, and `global`. Bound query values are
+reused within one matched rule; variables and choices introduce solver-backed
+values. `variable` and `choice` create fresh compiler identities. Use
+`global name` only when separately declared rules deliberately need the same
+stable solver value; ordinary reuse within one rule should reuse the value
+returned by the builder instead of managing a string name.
 
 ```haskell
 Bound index <- bindInt
 Variable gap <- variableFrom (asScalar index)
 Variable alignment <- choice
+let sharedScale = global "render.shared-scale" :: Scalar
 
-ensure (x current .==. at 20 + shift gap)
+ensure (x current .==. at 20 + shift 1 * gap)
+ensure (width current .==. by 80 * sharedScale)
+ensure (sharedScale .>=. num 0.8)
+ensure (sharedScale .<=. num 1.2)
 caseOf alignment $ \case
   AlignLeft  -> [left current .==. left canvas]
   AlignRight -> [right current .==. right canvas]
@@ -609,62 +595,695 @@ caseOf alignment $ \case
 
 #### Layout, geometry, and box model
 
-Retain the typed numeric domains `Coord`, `Span`, `Offset`, `Scalar`,
-`VisualExpr`, `Vec2`, `Bounds`, `Free`, `Unit`, and `Angle`. Retain geometry
-classes and accessors `Left`, `Top`, `Right`, `Bottom`, `Width`, `Height`, `X`,
-`Y`, `Center`, `left`, `top`, `right`, `bottom`, `width`, `height`, `x`, `y`,
-`center`, `size`, and `bounds`.
+Retain the following typed interfaces. Unless a snippet says otherwise, it is a
+fragment inside one `Render` declaration and names such as `card` and `label`
+are already selected node handles. `variable @T` creates a fresh solver-backed
+value of type `T`; a node setter consumes an authored value, while the same
+overloaded helper applied to a `Selected` handle returns a `VisualExpr` that can
+be related with `ensure`.
 
-Retain constructors and arithmetic `vec2`, `at`, `by`, `shift`, `asScalar`,
-`asCoord`, `asSpan`, `num`, `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`,
-`(/)`, and `(|+|)`.
+Every solver-backed numeric value must end up with finite lower and upper bounds
+after all node, canvas, and authored constraints are combined. Intrinsic domains
+supply some of these bounds (`Unit` supplies both; `Coord` and `Span` supply only
+zero as a lower bound), but the compiler rejects a final unbounded region.
 
-Retain the hierarchical box model `Insets`, `uniform`, `symmetric`, `edges`,
-`padding`, `margin`, `Axis`, `ContentFit`, `contentFit`, `aspectRatio`, `Percent`,
-`percent`, `xAt`, `yAt`, `widthOf`, and `heightOf`.
+##### `Coord`
+
+`Coord` is a non-negative absolute horizontal or vertical position in scalable
+canvas units. Construct a fixed coordinate with `at`, or let the solver choose
+one with `variable @Coord` and bound it with constraints.
 
 ```haskell
-node selected $ do
-  center (vec2 (at 200) (at 120))
-  width (by 160)
-  height (by 80)
-  padding (symmetric (by 8) (by 12))
-  margin (edges (by 4) (by 8) (by 4) (by 8))
-  contentFit Both Hug
-  xAt (percent 50)
-  widthOf (percent 40)
+Variable columnX <- variable @Coord
+node card $ left columnX
+ensure $ columnX .>=. at 24
+ensure $ columnX .<=. at 480
+```
 
-ensure (left second =| by 24 |= right first)
-ensure (size second .==. size first)
+Adding a `Span` or `Offset` to a `Coord` produces another `Coord`; subtracting
+two coordinates produces an `Offset`.
+
+##### `Span`
+
+`Span` is a non-negative length used for widths, heights, gaps, font sizes,
+radii, stroke widths, padding, and margins. `by` constructs a fixed span.
+
+```haskell
+Variable cardWidth <- variable @Span
+node card $ width cardWidth
+ensure $ cardWidth .>=. by 120
+ensure $ cardWidth .<=. by 280
+```
+
+`Span + Span` and `Span |+| Span` both preserve the non-negative domain;
+subtracting spans produces a signed `Offset`.
+
+##### `Offset`
+
+`Offset` is a signed displacement. Construct a fixed value with `shift`; unlike
+`Coord` and `Span`, negative values are valid.
+
+```haskell
+Variable gap <- variable @Offset
+ensure $ gap .>=. shift (-24)
+ensure $ gap .<=. shift 48
+ensure $ left second .==. right first + gap
+```
+
+`asCoord` and `asSpan` reinterpret an offset and add the target domain's
+non-negativity requirement. They do not silently take an absolute value.
+
+```haskell
+Variable originOffset <- variable @Offset
+Variable extentOffset <- variable @Offset
+node card $ do
+  left (asCoord originOffset)
+  width (asSpan extentOffset)
+ensure $ originOffset .<=. shift 480
+ensure $ extentOffset .<=. shift 240
+```
+
+##### `Scalar`
+
+`Scalar` is unitless. It scales a `Span` or `Offset` and represents captured
+integer values in numeric constraints. `asScalar` converts a bound `QueryInt`.
+
+```haskell
+Variable scale <- variable @Scalar
+ensure $ scale .>=. num 0.75
+ensure $ scale .<=. num 1.25
+node card $ width (by 160 * scale)
+
+Bound count <- bindInt
+ensure $ asScalar count .>=. num 1
+```
+
+The example remains affine because one factor in `by 160 * scale` is constant.
+
+##### `VisualExpr`
+
+`VisualExpr role` is a read-only affine expression obtained from selected node
+geometry or styles. Authors do not construct it directly and cannot use it as a
+declaration pin; they relate it to fixed values, solver variables, or other
+selected expressions.
+
+```haskell
+ensure $ left label .==. right card + shift 12
+ensure $ width label .<=. width card - by 24
+```
+
+The role parameter preserves distinctions such as `Coord`, `Span`, and `Unit`
+while allowing expressions from several selected nodes to be combined.
+
+##### `Free`
+
+`Free` is an otherwise unbounded solver numeric domain. Because the target
+solver requires a bounded design space, every authored `Free` variable must
+receive finite lower and upper bounds before sampling.
+
+```haskell
+Variable score <- variable @Free
+ensure $ score .>=. num (-1)
+ensure $ score .<=. num 1
+```
+
+Prefer `Coord`, `Span`, `Unit`, or `Angle` when their intrinsic domain describes
+the value; `Free` is not a substitute for a signed layout `Offset`.
+
+##### `Unit`
+
+`Unit` is a solver expression intrinsically bounded to the inclusive interval
+zero to one. It is used by opacity, alpha, saturation, and lightness.
+
+```haskell
+Variable fade <- variable @Unit
+ensure $ fade .>=. num 0.35
+node label $ style @Opacity fade
+```
+
+##### `Angle`
+
+`Angle` is the bounded angular domain used for an HSL hue. The solver and
+materializer own canonical treatment of the equivalent zero- and 360-degree
+boundary.
+
+```haskell
+Variable accentHue <- variable @Angle
+ensure $ accentHue .>=. num 180
+ensure $ accentHue .<=. num 260
+node card $ style @Fill (Hsl accentHue (num 0.65) (num 0.52))
+```
+
+##### `Vec2`
+
+`Vec2 a` groups horizontal and vertical values of the same type. Construct one
+with `vec2`; `center` reads or sets a `Vec2` of coordinates, and `size` reads a
+selected node's width and height as a `Vec2` of spans.
+
+```haskell
+node badge $ center (vec2 (at 180) (at 96))
+ensure $ center badge .==. center card
+ensure $ size badge .==. vec2 (by 120) (by 48)
+```
+
+Vector equality lowers component by component. Arithmetic is available only
+where the component types already support it.
+
+```haskell
+Variable badgeX <- variable @Coord
+Variable badgeY <- variable @Coord
+node badge $ center (vec2 badgeX badgeY)
+ensure $ badgeX .<=. at 640
+ensure $ badgeY .<=. at 360
+```
+
+##### `Bounds`
+
+`Bounds a` is the four-component container ordered as top, left, width, and
+height. The `bounds` setter pins all four properties of the current node at
+once.
+
+```haskell
+node card $ bounds (Bounds (num 32) (num 48) (num 240) (num 120))
+```
+
+Use the individual typed setters when components are solver variables; they
+make the coordinate/span distinction visible and give clearer diagnostics.
+
+##### Numeric literals and affine arithmetic
+
+Retain `num`, `fromInteger`, `fromRational`, `(+)`, `(-)`, `(*)`, `(/)`, and
+`(|+|)`. `num` constructs a literal in the type inferred by its use;
+`fromInteger` and `fromRational` support ordinary overloaded numeric literals.
+Prefer `at`, `by`, and `shift` at layout boundaries because they make the
+intended domain explicit.
+
+```haskell
+ensure $ left label .==. at 20 + shift 8
+ensure $ width second .==. width first + by 12
+node card $ height ((by 96 |+| by 24) / num 2)
+
+let fixedScale = 3 / 2 :: Scalar
+node badge $ width (by 80 * fixedScale)
+```
+
+Only the type-correct combinations are available. The target affine compiler
+also rejects a product of two solver-variable values or division by a
+solver-variable denominator even if the Haskell expression is otherwise typed.
+
+##### `Left` and `left`
+
+`Left` is the overload class for `left`. Applied to a `Coord`, `left` pins the
+current node; applied to a selected node, it returns `VisualExpr Coord`.
+
+```haskell
+node first $ left (at 24)
+ensure $ left second .==. right first + shift 16
+```
+
+##### `Top` and `top`
+
+`Top` provides the corresponding top-edge setter and selected-node accessor.
+
+```haskell
+node first $ top (at 32)
+ensure $ top second .==. bottom first + shift 12
+```
+
+##### `Right` and `right`
+
+`Right` pins or reads the right edge. Setting both horizontal edges lets the
+solver derive width, subject to any additional width constraints.
+
+```haskell
+node card $ right (at 520)
+ensure $ right label .<=. right card - by 16
+```
+
+##### `Bottom` and `bottom`
+
+`Bottom` pins or reads the bottom edge. Setting both vertical edges similarly
+determines height.
+
+```haskell
+node card $ bottom (at 320)
+ensure $ bottom label .<=. bottom card - by 12
+```
+
+##### `Width` and `width`
+
+`Width` accepts a `Span` as a declaration setter and returns `VisualExpr Span`
+from a selected node.
+
+```haskell
+node card $ width (by 240)
+ensure $ width label .<=. width card - by 32
+```
+
+##### `Height` and `height`
+
+`Height` is the corresponding height setter and accessor.
+
+```haskell
+Variable rowHeight <- variable @Span
+node row $ height rowHeight
+ensure $ rowHeight .>=. by 32
+ensure $ rowHeight .<=. by 96
+ensure $ height label .<=. rowHeight
+```
+
+##### `X` and `x`
+
+`X` and `x` address the horizontal centre coordinate.
+
+```haskell
+node badge $ x (at 200)
+ensure $ x badge .==. x card
+```
+
+##### `Y` and `y`
+
+`Y` and `y` address the vertical centre coordinate.
+
+```haskell
+Variable baselineY <- variable @Coord
+node label $ y baselineY
+ensure $ baselineY .<=. at 360
+ensure $ y icon .==. baselineY
+```
+
+##### `Center` and `center`
+
+`Center` combines the `X` and `Y` behavior. A `Vec2 Coord` sets both centre
+pins; a selected node returns `Vec2 (VisualExpr Coord)`.
+
+```haskell
+node badge $ center (vec2 (at 200) (at 120))
+ensure $ center badge .==. center card
+```
+
+##### `Insets`
+
+`Insets` stores non-negative top, right, bottom, and left spans. `uniform`
+sets every edge, `symmetric` accepts vertical then horizontal spans, and `edges`
+accepts top, right, bottom, then left. `padding` sets internal spacing around
+children/content; `margin` contributes external spacing when a parent contains
+or hugs the node.
+
+```haskell
+Variable gutter <- variable @Span
+ensure $ gutter .>=. by 8
+ensure $ gutter .<=. by 24
+node group $ do
+  padding (symmetric (by 12) gutter)
+  margin (edges (by 4) (by 8) (by 4) (by 8))
+node badge $ padding (uniform (by 8))
+```
+
+##### `Axis`
+
+`Axis` has `Horizontal`, `Vertical`, and `Both`. It selects which dimension a
+`contentFit` declaration changes. It is a fixed declaration parameter, not a
+solver-backed choice.
+
+```haskell
+node group $ contentFit Horizontal Contain
+```
+
+##### `ContentFit`
+
+`ContentFit` has `Contain` and `Hug`. Both require children, including their
+margins, to remain inside the parent's padded content box. `Hug` additionally
+makes an ordinary generated parent's relevant edges touch extremal children;
+`Contain` leaves extra space available. Retain the current default of `Hug` on
+both axes. The retained `contentFit` setter accepts a fixed policy; a
+solver-selected policy would require an explicit structural-alternative API.
+
+```haskell
+node group $ do
+  contentFit Horizontal Contain
+  contentFit Vertical Hug
+```
+
+`contentFit Both Hug` is the compact form when both axes use the same policy.
+
+##### `Percent`
+
+`Percent` is an abstract, validated parent-relative percentage from zero to
+100. Construct it with `percent`. `xAt` and `yAt` place the current node's centre
+within the parent content box; `widthOf` and `heightOf` size it relative to the
+parent content dimensions.
+
+```haskell
+node card $ do
+  xAt (percent 50)
+  yAt (percent 40)
+  widthOf (percent 60)
+  heightOf (percent 30)
+```
+
+Percentages are fixed author inputs in the retained API, not solver variables.
+Use a bounded `Coord` or `Span` variable when the result must vary. Multiplying
+a variable percentage by a variable parent dimension would be bilinear and is
+therefore outside the affine target.
+
+##### `aspectRatio`
+
+`aspectRatio horizontal vertical` constrains the root canvas to a finite,
+positive ratio. It is canvas-only and both arguments are fixed `Double` values.
+
+```haskell
+aspectRatio 16 9
 ```
 
 #### Style authoring and colour
 
-Retain `StyleChoice`, `style`, `withoutStyle`, `styleCase`, `styleFamily`,
-`styleOf`, `NodeStyle`, `Opacity`, `FontSize`, `Radius`, `StrokeWidth`,
-`Alpha`, `Fill`, `Stroke`, `BorderStyle`, `FontFamily`, `FontWeight`,
-`FontStyle`, `TextAlign`, `Hsl`, `Color`, and `sat`. Remove `WhiteSpace`: a text
-node contains one line, so there is no authored wrapping mode to select.
-Add `FontKind`, `FontFilter`, `fontKind`, and `fontChoice` for catalog-filtered,
-font-family choices as described under composed text.
+Styles use a type application to identify the field and a field-specific input
+type. Numeric and colour fields accept their symbolic values directly;
+categorical fields accept `StyleChoice`. The snippets below are independent
+`Render` fragments rather than declarations intended to be concatenated.
 
-Also remove `ZIndex` and make this implicitly determined for now.
+##### `StyleChoice`
+
+Retain the fixed-or-variable wrapper for categorical style fields:
 
 ```haskell
-node selected $ do
-  styleFamily "value"
-  style (FixedStyle (Hsl (num 220) (num 0.6) (num 0.5)) :: StyleChoice Fill)
-  style (FixedStyle FontWeightBold)
+data StyleChoice value
+  = FixedStyle value
+  | VariableStyle (Choice value)
+```
+
+Use `FixedStyle` for an authored category and `VariableStyle` for a finite
+solver choice. Do not wrap numeric or colour fields in `StyleChoice`.
+
+```haskell
+node title $ style @FontStyle (FixedStyle FontStyleItalic)
+
+Variable selectedStyle <- choice @FontStyle
+node explanation $ style @FontStyle (VariableStyle selectedStyle)
+```
+
+##### `NodeStyle`
+
+`NodeStyle` remains the opaque accumulated style plan for a node. Authors do
+not construct it directly. Cluster its public operations as follows:
+
+- `style @Field value` requires or overrides one field.
+- `withoutStyle @Field` explicitly suppresses an inherited or automatically
+  generated field.
+- `styleCase @Field choice mapping` conditionally supplies a field for each
+  category; `Nothing` suppresses it in that branch.
+- `styleFamily name` assigns the semantic cascade family used by automatic
+  styling of the node and descendants. This string is a style-family label,
+  not a solver-choice identity.
+- `styleOf @Field selected` reads the selected field as a symbolic expression
+  for use in constraints.
+
+```haskell
+Variable slant <- choice @FontStyle
+node label $ do
+  styleFamily "explanation"
+  style @FontStyle (VariableStyle slant)
+  styleCase @Opacity slant $ \case
+    FontStyleNormal  -> Just (num 1)
+    FontStyleItalic  -> Just (num 0.90)
+    FontStyleOblique -> Just (num 0.85)
   withoutStyle @Stroke
 
-ensure (sat (styleOf @Fill selected) .>=. num 0.4)
+ensure $ styleOf @FontStyle label .==. slant
 ```
+
+`styleOf` requires that the requested field is present in every branch. It
+cannot read a field declared with `withoutStyle` or a conditional `styleCase`;
+constrain the driving choice instead when presence itself is conditional.
+
+##### `Opacity`
+
+`Opacity` accepts `Unit` and affects the complete rendered node, including its
+shape and text content. `styleOf @Opacity` returns `VisualExpr Unit`.
+
+```haskell
+Variable nodeOpacity <- variable @Unit
+node label $ style @Opacity nodeOpacity
+ensure $ nodeOpacity .>=. num 0.4
+ensure $ styleOf @Opacity label .==. nodeOpacity
+```
+
+##### `FontSize`
+
+`FontSize` accepts a `Span`. A fixed span pins the size; a bounded variable lets
+the affine sampler vary it. Every shaped line using that variable contributes
+its own fit constraints.
+
+```haskell
+Variable labelSize <- variable @Span
+node label $ style @FontSize labelSize
+ensure $ labelSize .>=. by 14
+ensure $ labelSize .<=. by 28
+ensure $ styleOf @FontSize label .==. labelSize
+```
+
+With `fitText`, these authored bounds delimit feasible single-line size
+variation; they do not request automatic wrapping or maximum-size optimization.
+
+##### `Radius`
+
+`Radius` accepts a non-negative `Span` for a node's corner radius and is
+available through `styleOf @Radius` as `VisualExpr Span`.
+
+```haskell
+Variable cornerRadius <- variable @Span
+node card $ style @Radius cornerRadius
+ensure $ cornerRadius .>=. by 0
+ensure $ cornerRadius .<=. by 24
+```
+
+##### `StrokeWidth`
+
+`StrokeWidth` accepts a non-negative `Span`. It controls the rendered border
+width when `BorderStyle` is not `BorderNone`.
+
+```haskell
+Variable borderWidth <- variable @Span
+node card $ do
+  style @StrokeWidth borderWidth
+  style @BorderStyle (FixedStyle BorderSolid)
+ensure $ borderWidth .>=. by 1
+ensure $ borderWidth .<=. by 4
+```
+
+##### `Alpha`
+
+`Alpha` accepts `Unit` and applies to the node's fill and stroke paints. It is
+distinct from `Opacity`, which fades the complete node as one rendered group.
+
+```haskell
+Variable paintAlpha <- variable @Unit
+node card $ style @Alpha paintAlpha
+ensure $ paintAlpha .>=. num 0.5
+ensure $ paintAlpha .<=. num 1
+```
+
+##### `Hsl`
+
+`Hsl hue unit` stores hue, saturation, and lightness. Retain the `Hsl`
+constructor and its `hue`, `saturation`, and `lightness` record accessors. In a
+`Color`, hue is an `Angle` and the other components are `Unit` values.
+
+```haskell
+Variable hueValue <- variable @Angle
+Variable saturationValue <- variable @Unit
+let accent = Hsl hueValue saturationValue (num 0.52) :: Color
+```
+
+`sat` remains the compact saturation accessor, particularly for a colour read
+from a selected style:
+
+```haskell
+ensure $ sat (styleOf @Fill card) .>=. num 0.55
+ensure $ hue (styleOf @Fill card) .>=. num 180
+ensure $ lightness (styleOf @Fill card) .<=. num 0.7
+```
+
+##### `Color`
+
+`Color` remains the alias `Hsl Angle Unit`. It intentionally has no embedded
+alpha component; use the separate `Alpha` style field for paint transparency.
+Colour components may be fixed, solver-backed, or a mixture of both.
+
+```haskell
+let quietBlue = Hsl (num 215) (num 0.35) (num 0.62) :: Color
+node card $ style @Fill quietBlue
+```
+
+##### `Fill`
+
+`Fill` accepts `Color` directly. `styleOf @Fill` returns an `Hsl` whose
+components are selected `VisualExpr` values.
+
+```haskell
+Variable fillHue <- variable @Angle
+Variable fillLightness <- variable @Unit
+node card $ style @Fill (Hsl fillHue (num 0.7) fillLightness)
+ensure $ fillLightness .>=. num 0.35
+ensure $ fillLightness .<=. num 0.65
+```
+
+##### `Stroke`
+
+`Stroke` also accepts `Color` directly. It may be set, constrained through
+`styleOf @Stroke`, or explicitly suppressed with `withoutStyle @Stroke`.
+
+```haskell
+node card $ do
+  style @Stroke (Hsl (num 220) (num 0.55) (num 0.3))
+  style @BorderStyle (FixedStyle BorderSolid)
+
+ensure $ sat (styleOf @Stroke card) .>=. num 0.4
+```
+
+##### `BorderStyle`
+
+`BorderStyle` is categorical, with `BorderNone`, `BorderSolid`,
+`BorderDashed`, `BorderDotted`, and `BorderDouble`. A fixed or solver-selected
+value is wrapped in `StyleChoice`.
+
+```haskell
+Variable borderStyle <- choice @BorderStyle
+node card $ style @BorderStyle (VariableStyle borderStyle)
+ensure $ styleOf @BorderStyle card .==. borderStyle
+```
+
+`BorderNone` disables visible stroke rendering even if stroke colour and width
+are otherwise available in the cascade. The current presentation renderer in
+[VisualizationViewport.svelte](../../../src/lib/client/visualization/VisualizationViewport.svelte)
+does not render `BorderDouble` differently from a solid border, so distinct
+double-line rendering or removal remains an open target decision. Leaving both
+as separately weighted authored choices while they render identically would
+silently double the probability of the solid appearance.
+
+##### `FontKind`
+
+Add the catalog classification used to restrict font-family choices:
+
+```haskell
+data FontKind = Monospace | Proportional
+```
+
+`Proportional` means a catalogued non-monospace family. Kind is explicit catalog
+metadata, not a guess based on the family name.
+
+##### `FontFilter`
+
+`FontFilter` is abstract. Initially `fontKind` constructs a kind filter and
+`fontChoice` creates a fresh filtered authored choice, matching the builder
+shape of the existing `choice` interface:
+
+```haskell
+fontKind :: FontKind -> FontFilter
+fontChoice :: FontFilter -> Render (Variable (Choice FontFamily))
+```
+
+```haskell
+Variable codeFont <- fontChoice (fontKind Monospace)
+Variable explanationFont <- fontChoice (fontKind Proportional)
+```
+
+An empty filter produces a source-level diagnostic. Keep `FontFilter` abstract
+so later constructors and composition helpers, such as serif classification or
+required script coverage, can be added without changing `fontChoice`.
+
+Filter results contain unique concrete catalog-family identities. Resolve
+generic aliases before weighting candidates so an alias and its concrete target
+cannot give one font twice the sampling probability. Reusing the returned
+`Choice` shares the sampled family; separate `fontChoice` calls remain
+independent authored decisions.
+
+##### `FontFamily`
+
+Retain the current fixed values `FontInter`, `FontSystem`, `FontMono`,
+`FontSerif`, `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`,
+`FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`,
+`FontJetBrainsMonoNL`, and `FontIBMPlexMono`. A fixed family uses `FixedStyle`;
+a sampled family normally comes from `fontChoice` and uses `VariableStyle`.
+
+```haskell
+node title $ style @FontFamily (FixedStyle FontLiterata)
+
+Variable codeFont <- fontChoice (fontKind Monospace)
+node codeLine $ style @FontFamily (VariableStyle codeFont)
+ensure $ styleOf @FontFamily codeLine .==. codeFont
+```
+
+The initial filtered interface applies one family to a complete shaped text
+node. It does not change fonts at fragment boundaries.
+
+##### `FontWeight`
+
+`FontWeight` has `FontWeightNormal`, `FontWeightBold`, `FontWeightBolder`,
+`FontWeightLighter`, and `FontWeightNumber n`. The selectable numeric catalogue
+uses 100 through 900 in steps of 100; fixed numeric inputs must be validated
+against the supported font face.
+
+```haskell
+Variable weight <- choice @FontWeight
+node label $ style @FontWeight (VariableStyle weight)
+ensure $ styleOf @FontWeight label .==. weight
+```
+
+Each metric-affecting weight remains a discrete typography branch rather than a
+continuously varying affine value. Resolve `FontWeightBolder` and
+`FontWeightLighter` to concrete supported weights after the inherited parent
+weight is known and before shaping the branch.
+
+##### `FontStyle`
+
+`FontStyle` has `FontStyleNormal`, `FontStyleItalic`, and `FontStyleOblique`.
+It accepts either a fixed value or a finite choice.
+
+```haskell
+Variable slant <- choice @FontStyle
+node explanation $ style @FontStyle (VariableStyle slant)
+ensure $ styleOf @FontStyle explanation .==. slant
+```
+
+A style unavailable for the selected font invalidates that combined typography
+branch; it must not silently synthesize a different face.
+
+##### `TextAlign`
+
+`TextAlign` has `TextAlignLeft`, `TextAlignCenter`, `TextAlignRight`, and the
+currently retained `TextAlignJustify`. Alignment is categorical; left, centre,
+and right supply an affine offset after the line has been shaped.
+
+```haskell
+Variable alignment <- choice @TextAlign
+node label $ style @TextAlign (VariableStyle alignment)
+ensure $ styleOf @TextAlign label .==. alignment
+```
+
+The current materializer in [Typography.hs](Visualization/Typography.hs) treats
+every value other than left or right as centre, so `TextAlignJustify` is not
+currently distinct. Its meaning without automatic wrapping remains an open
+decision below. It must not remain as a separately weighted alias for centre,
+because that would bias the authored alignment distribution.
+
+##### `WhiteSpace` (removed)
+
+Remove `WhiteSpace`, `WhiteSpaceNormal`, `WhiteSpaceNoWrap`, `WhiteSpacePre`,
+and `WhiteSpacePreWrap` from the target facade. Every text node is one authored
+line, so wrapping and whitespace policy are not selectable style branches.
+
+##### `ZIndex` (removed)
+
+Remove `ZIndex` from the target facade. Render order is derived implicitly from
+the node hierarchy and declaration order for now, so authors cannot set a fixed
+or solver-backed z-index.
 
 #### Constraints and alternatives
 
 Retain `ensure`, `encourage`, `VisualAlternative`, `alternative`, `oneOf`,
 `caseOf`, `(.<=.)`, `(.>=.)`, `(.==.)`, `(=|)`, `(=/)`, `(|=)`, and `(/=)`.
-Retain `global` for stable named solver values.
 
 ```haskell
 ensure (width item .>=. by 80)
@@ -923,6 +1542,10 @@ The following choices remain open before implementation:
   geometric measure, explicit size bands, or a separately declared continuous prior.
 - Decide whether maximum-fit typography remains as an explicitly non-random policy or is
   removed in favour of bounded `fitText` and authored fixed sizes.
+- Decide whether `TextAlignJustify` is rejected or given explicit single-line semantics;
+  automatic wrapping no longer supplies multi-line text for conventional justification.
+- Decide whether `BorderDouble` gains distinct double-line rendering or is removed; the
+  current presentation path renders it like `BorderSolid`.
 - Define how bundled and future user-supplied fonts acquire validated `FontKind` metadata,
   including whether the compiler verifies the declaration against font metrics and how it
   diagnoses a family whose selectable faces disagree.
