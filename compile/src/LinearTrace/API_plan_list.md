@@ -369,7 +369,6 @@ will not perform that filtering.
 ```haskell
 bindContent  :: Render (Bound ContentValue)
 variable     :: ... => Render (Variable value)
-variableFrom :: value -> Render (Variable value)
 choice       :: forall value. ... => Render (Variable (Choice value))
 global       :: ... => String -> value
 
@@ -494,6 +493,8 @@ optimization is still open.
 - Categorical style adapters and setters: `StyleChoice`, `FixedStyle`,
   `VariableStyle`, `styleFrom`, and `styleChoice`. The overloaded `style` accepts
   both fixed and solver-selected field values.
+- Fixed-expression binding helper: `variableFrom`. Use an ordinary `let`; only
+  `variable` creates a fresh solver value.
 
 ## Still preventing a fully final facade
 

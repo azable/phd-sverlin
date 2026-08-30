@@ -1197,13 +1197,14 @@ graph and reuse them across seeds. No baseline graph operation constructs the
 
 #### Reusable values and finite decisions
 
-Retain `bindContent`, `variable`, `variableFrom`, `choice`, `Choice`,
-`RandomSeed`, and `global`. `bindContent` exposes the payload display
+Retain `bindContent`, `variable`, `choice`, `Choice`, `RandomSeed`, and `global`.
+`bindContent` exposes the payload display
 text of each block in the current typed selection; it no longer depends on a
 payload query binding. Variables and choices introduce
 solver-backed values; `variable` and `choice` create fresh compiler identities.
-`variableFrom` only wraps an existing DSL value for reuse and does not make a
-fixed value random.
+Remove `variableFrom`: it only placed an existing expression in the `Variable`
+result wrapper and created no solver value, identity, sharing, or constraint. Use
+an ordinary `let` for fixed and derived expressions.
 
 Remove `ChoiceDomain`, `choiceDomain`, and `choiceToken` from the authored facade.
 They are solver and serialization metadata, not custom choice logic. The compiler
@@ -1234,7 +1235,7 @@ same stable solver value. Ordinary reuse within one rule should reuse the value
 returned by the builder instead of managing a string name.
 
 ```haskell
-Variable fixedGap <- variableFrom (by 20)
+let fixedGap = by 20
 Variable slant <- choice @FontStyle
 let sharedScale = global "render.shared-scale" :: Scalar
 
