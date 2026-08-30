@@ -420,6 +420,70 @@ shaped string plus validated range metadata. It must not shape each fragment as
 an independent text node, because doing so would lose the font renderer's
 whole-line kerning, bidirectional-text, and ligature behavior.
 
+For example, a rendered comparison line can associate each semantic part of the
+displayed code with the Program steps that produce or use it:
+
+```haskell
+comparisonText :: TextBuilder ()
+comparisonText = do
+  literal "if ("
+  fragment @ReadElement "A[i]"
+  fragmentMany @'[CompareTarget, CreateEqualOperator, ApplyEquality] " == "
+  fragment @ReadTarget "target"
+  literal ") {"
+
+render :: Render ()
+render = do
+  Selected comparisonLine <- node $ do
+    content comparisonText
+    style @FontFamily (FixedStyle FontIBMPlexMono)
+
+  ensure $ left comparisonLine .==. at 36
+  ensure $ top comparisonLine .==. at 120
+```
+
+This produces one shaped line, `if (A[i] == target) {`, plus compiler-owned
+source ranges. `A[i]` is associated with `ReadElement`, `target` with
+`ReadTarget`, and ` == ` with all three listed step definitions. Authors do not
+calculate character offsets. During playback, the default interpretation is
+that a fragment is active while any associated step definition is active;
+`fragmentMany` therefore uses logical OR. A repeated Program step activates the
+same associated fragment for each runtime occurrence of that definition.
+
+The compiler maps logical source ranges through bidirectional reordering and
+HarfBuzz glyph clusters after shaping. If one glyph cluster, such as a ligature
+or base character plus combining mark, crosses a fragment boundary, associate
+the complete cluster with the union of the overlapping fragment step
+definitions. Do not split the glyph or reshape the fragments independently.
+
+There are three reasonable highlighting surfaces:
+
+1. **Implicit active-fragment emphasis (recommended baseline).** `fragment` and
+   `fragmentMany` need no additional appearance arguments. The compiled IR
+   records stable step-definition identities and glyph-cluster ranges, and the
+   presentation theme applies one standard active-fragment treatment. This is
+   the smallest API and gives generated source a reliable default.
+2. **Named fragment roles.** A possible later `fragmentAs` variant could attach
+   a general role such as `PrimaryEmphasis` or `SecondaryEmphasis`, for example
+   `fragmentAs @ReadElement PrimaryEmphasis "A[i]"`. The theme would map the
+   role and active state to presentation without embedding colours in Program
+   semantics. This supports a small number of intentional emphasis levels while
+   preserving automatic step activation.
+3. **Returned fragment handles.** `fragment` could instead return a typed
+   `FragmentRef`, followed by a general Render rule such as
+   `whenFragmentActive elementFragment activePaint`. This permits independent
+   styling, overlapping rules, and instance-specific behavior, but adds handle
+   lifetime, precedence, and composition questions. Defer this surface until a
+   concrete visualization cannot be expressed by the baseline or named roles.
+
+Active-fragment treatments must be geometry-neutral: text fill, opacity,
+underline, or a background derived from the prepared glyph bounds are valid.
+Changing font family, weight, size, shaping features, or content would alter
+the affine text measurements and requires another prepared design branch rather
+than a playback-only highlight. Step-linked highlighting is general text-range
+emphasis, not language-specific syntax highlighting; it therefore does not
+restore `highlightCode`, `CodeRange`, or manual offset APIs.
+
 A text node represents one independently positioned line. Automatic wrapping,
 soft wrapping, hyphenation, and compiler-inserted line breaks are outside the
 target API. Newline-containing content must be lowered to separate generated
@@ -443,18 +507,6 @@ render = do
       ensure (width group .>=. width values)
 
   node canvas $ aspectRatio 4 3
-```
-
-```haskell
-Selected returnLine <- node $ do
-  content $ do
-    literal "return "
-    fragment @ReturnFound "i"
-    literal ";"
-  style @FontFamily (FixedStyle FontIBMPlexMono)
-
-ensure $ left returnLine .==. left comparisonLine + shift (num 24)
-ensure $ top returnLine .==. bottom comparisonLine + shift (num 4)
 ```
 
 #### Reusable values and finite decisions
