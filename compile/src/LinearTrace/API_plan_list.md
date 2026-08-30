@@ -32,7 +32,7 @@ program = do
 
 render = do
   Selected values <- select valueKind
-  node values $ fitText (text "value")
+  node values $ content (text "value")
 
   Selected adjacentLinks <- select adjacent
   relation adjacentLinks $ do
@@ -216,8 +216,8 @@ checkpoint. Selecting relations does not draw them or make them acceptable to
 ```haskell
 data ContentValue                 -- abstract fixed or bound text
 text    :: String -> ContentValue
-content :: ... -> Render ()
-fitText :: ... -> Render ()       -- one line; font size may vary within bounds
+content :: ... -> Render ()       -- fixed/default size; the node hugs the line
+fitText :: ... -> Render ()       -- bounded size variation; never maximizes or wraps
 
 data TextBuilder a
 literal      :: String -> TextBuilder ()
@@ -227,8 +227,12 @@ fragmentMany :: ...               -- fragmentMany @'[StepA, StepB] "text"
 
 **Open signatures:** `content` and `fitText` accept ordinary `ContentValue` and
 composed `TextBuilder` input; the exact supporting overload and typed step
-representation are not settled. Every text node remains one independently
-positioned, shaped line.
+representation are not settled. `content` uses an authored or theme-default
+fixed size and normal `Hug` sizing derives the node from the shaped line.
+`fitText` uses an explicit bounded `FontSize` variable or creates one in the
+theme-defined fit range. It permits any feasible size rather than choosing the
+largest. Every text node remains one independently positioned, shaped line;
+neither operation wraps it.
 
 ### Relations and structural rankings
 

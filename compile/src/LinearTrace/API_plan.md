@@ -595,9 +595,33 @@ or predicate API later when a concrete use case requires one.
 
 Retain the general content interfaces `ContentValue`, `text`, `content`, and
 `fitText`, and add the structural-value conversion `asText` documented below.
-Redefine `fitText` as allowing the solver to vary a single line's font size
-within explicit bounds so that the line fits its content box; it must not insert
-line breaks. Remove the specialized `codeContent`, `codeWrap`,
+`content` shapes one line at its authored or theme-default fixed font size. The
+node's normal `Hug` sizing makes the box follow that shaped line and its padding,
+so text does not grow merely because a larger box is available.
+`fitText` instead opts into bounded font-size variation and requires the line to
+remain inside its content box. It uses an explicitly styled bounded `FontSize`
+variable when supplied; otherwise it creates a fresh size within the
+theme-defined fit range. A fixed `FontSize` pins the size. `fitText` neither
+maximizes the size nor inserts line breaks.
+
+```haskell
+Selected title <- node $ do
+  content (text "Search result")
+  padding (uniform (by 8))
+
+Variable labelSize <- variable @Span
+ensure $ labelSize .>=. by 14
+ensure $ labelSize .<=. by 28
+
+Selected label <- node $ do
+  fitText (text "Search result")
+  style @FontSize labelSize
+  width (by 160)
+  height (by 40)
+```
+
+The first node hugs fixed-size text. The second samples any size from 14 to 28
+that fits; it is not forced to 28. Remove the specialized `codeContent`, `codeWrap`,
 `highlightCode`, `CodeRange`, `codeRange`, and `emphasizeCode` interfaces. Code
 is not a distinct kind of visual content: it is one possible Render mapping of
 the Program.
@@ -643,27 +667,27 @@ render = do
     style @FontFamily (VariableStyle explanationFont)
 
   Selected loopLine <- node $ do
-    content (literal "for (int i = 0; i < n; ++i) {")
+    fitText (literal "for (int i = 0; i < n; ++i) {")
     style @FontFamily (VariableStyle codeFont)
     style @FontSize codeSize
 
   Selected comparisonLine <- node $ do
-    content comparisonText
+    fitText comparisonText
     style @FontFamily (VariableStyle codeFont)
     style @FontSize codeSize
 
   Selected returnLine <- node $ do
-    content (literal "return i;")
+    fitText (literal "return i;")
     style @FontFamily (VariableStyle codeFont)
     style @FontSize codeSize
 
   Selected innerCloseLine <- node $ do
-    content (literal "}")
+    fitText (literal "}")
     style @FontFamily (VariableStyle codeFont)
     style @FontSize codeSize
 
   Selected outerCloseLine <- node $ do
-    content (literal "}")
+    fitText (literal "}")
     style @FontFamily (VariableStyle codeFont)
     style @FontSize codeSize
 
@@ -753,7 +777,7 @@ render = do
     Selected group <- self
     padding (uniform (by 12))
     node values $ do
-      fitText (text "value")
+      content (text "value")
       ensure (width group .>=. width values)
 
   aspectRatio 4 3
@@ -1611,8 +1635,9 @@ ensure $ styleOf @Opacity label .==. nodeOpacity
 ##### `FontSize`
 
 `FontSize` accepts a `Span`. A fixed span pins the size; a bounded variable lets
-the affine sampler vary it. Every shaped line using that variable contributes
-its own fit constraints.
+the affine sampler vary it when used by `fitText`. Every fitted line using that
+variable contributes its own fit constraints. Ordinary `content` uses a fixed
+authored or theme-default size.
 
 ```haskell
 Variable labelSize <- variable @Span
@@ -1624,6 +1649,8 @@ ensure $ styleOf @FontSize label .==. labelSize
 
 With `fitText`, these authored bounds delimit feasible single-line size
 variation; they do not request automatic wrapping or maximum-size optimization.
+If no `FontSize` is supplied, `fitText` creates a fresh variable using the
+theme-defined fit range.
 
 ##### `Radius`
 
@@ -2001,6 +2028,11 @@ typed entity-bound predicate has a demonstrated use case.
 
 Add focused facade and compiler tests for:
 
+- fixed-size `content` retaining its size in a larger box and deriving a hugging
+  box when dimensions are otherwise free;
+- `fitText` sampling across its complete feasible bounded size range rather
+  than choosing the maximum, shared size variables obeying every line's fit
+  constraint, and a source diagnostic when no permitted size or font fits;
 - one typed block kind and one typed relation kind selected through the same
   `select` vocabulary across Program and Render, plus compile-time mismatches
   between kinds, pending values, node selections, and relation selections;
@@ -2169,11 +2201,12 @@ Typography shaping is compiler-owned preparation rather than numeric solver arit
 For a fixed font resource and face, weight, style, variation-axis values, shaping
 features, source line, and text direction, shape the line once at the font's units-per-em
 scale. Glyph advances, ink bounds, ascender, descender, and line height then become
-constant coefficients belonging to that branch. Font size remains a bounded continuous
-solver variable unless the author explicitly fixes it.
+constant coefficients belonging to that branch. With `fitText`, font size is a bounded
+continuous solver variable unless the author explicitly fixes it. Ordinary `content`
+uses an authored or theme-default fixed size.
 
 For a sampled font size `s`, node width `w`, node height `h`, and affine padding and
-border expressions, a shaped line contributes constraints of the following form:
+border expressions, a fitted line contributes constraints of the following form:
 
 ```text
 minimumFontSize <= s <= maximumFontSize
@@ -2208,20 +2241,23 @@ requires new catalog metadata rather than filtering the existing `FontFamily` co
 names. Resolve generic family aliases before deduplicating and weighting candidates; an
 alias and its concrete target must not give one font twice the sampling probability.
 
-Font feasibility must be tested with the shaped text constraints before selecting a
-branch. The compiler must not choose a font without considering its text, discover that
-the line cannot fit above the minimum size, and fail when another font would have worked.
+Font feasibility for `fitText` must be tested with the shaped text constraints before
+selecting a branch. The compiler must not choose a font without considering its text,
+discover that the line cannot fit above the minimum size, and fail when another font
+would have worked.
 For small choice spaces, shape and certify every eligible font branch. For larger spaces,
 cache shaping results by font-resource hash, face and axis values, features, and source
 line, then expose the branch-specific affine constraints to the discrete feasibility
 solver. A selected font branch is therefore known to contain at least one valid
 combination of font size and geometry.
 
-There are no automatic wrapping branches. A long line must fit by varying its bounded
-font size or box geometry; otherwise compilation reports that the line must be shortened,
-given a larger box, or split into separate text nodes. Explicitly authored lines may still
-share font choices, font-size variables, alignment constraints, and vertical gap variables,
-all without leaving one convex affine region.
+There are no automatic wrapping branches. Ordinary `content` keeps its fixed size and a
+normally hugging node grows around it. When external constraints impose a smaller box,
+compilation reports that the line must be shortened, given a larger box, changed to
+`fitText`, or split into separate text nodes. `fitText` may instead vary its bounded font
+size or box geometry. Explicitly authored lines may still share font choices, font-size
+variables, alignment constraints, and vertical gap variables, all without leaving one
+convex affine region.
 
 The existing typography implementation already emits affine inequalities of this shape
 in [Typography.hs](Visualization/Typography.hs). Its current two-pass flow nevertheless
@@ -2232,10 +2268,11 @@ chooses font size and geometry. Final IR materialization scales the prepared gly
 by the sampled size and retains a small documented safety margin for output rounding.
 
 `fitText` means bounded size variation inside this feasible region; it does not mean
-"choose the largest possible size." Maximum-fit typography, if retained, is a separate
-explicit policy that solves a linear boundary objective and therefore does not provide
-font-size diversity. An authored fixed-size policy likewise creates a zero-dimensional
-font-size slice while leaving other geometry available for sampling.
+"choose the largest possible size." Maximum-fit typography is outside the baseline. It
+could be added later as an explicit non-random policy that solves a linear boundary
+objective, but it would not provide font-size diversity. An authored fixed-size policy
+likewise creates a zero-dimensional font-size slice while leaving other geometry
+available for sampling.
 
 Uniform sampling over the complete region does not imply a uniform font-size marginal:
 smaller text may permit more box positions and dimensions, giving it more valid geometric
@@ -2280,10 +2317,9 @@ The following choices remain open before implementation:
   randomized MIP optimization alone is insufficient.
 - Define how region sizes are compared when feasible affine cells have different numbers
   of free numeric dimensions, and how overlapping boundaries are assigned exactly once.
-- Define the default font-size bounds and whether font-size diversity follows the joint
-  geometric measure, explicit size bands, or a separately declared continuous prior.
-- Decide whether maximum-fit typography remains as an explicitly non-random policy or is
-  removed in favour of bounded `fitText` and authored fixed sizes.
+- Define the theme's default `fitText` font-size bounds and whether font-size diversity
+  follows the joint geometric measure, explicit size bands, or a separately declared
+  continuous prior.
 - Decide whether `TextAlignJustify` is rejected or given explicit single-line semantics;
   automatic wrapping no longer supplies multi-line text for conventional justification.
 - Decide whether `BorderDouble` gains distinct double-line rendering or is removed; the
