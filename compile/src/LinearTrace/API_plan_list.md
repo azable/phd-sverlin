@@ -200,8 +200,12 @@ instance Selectable (RelationKind source target) (Relations source target)
 
 visualize :: Render () -> MatchSpec  -- TODO is this public?
 
-class Node input result
-node   :: Node input result => input -> result
+class Node input result | input -> result where
+  node :: input -> result
+
+instance Node (Selected tag) (Render () -> Render ())
+instance Node (Render ()) (Render (SelectionBinding (Selected GeneratedNode)))
+
 self   :: Render (SelectionBinding (Selected GeneratedNode))
 canvas :: Selected CanvasNode
 ```

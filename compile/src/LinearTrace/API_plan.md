@@ -570,6 +570,15 @@ class Selectable selector result | selector -> result where
 
 instance Selectable (Kind tag) (Selected tag)
 instance Selectable (RelationKind source target) (Relations source target)
+
+class Node input result | input -> result where
+  node :: input -> result
+
+instance Node (Selected tag) (Render () -> Render ())
+instance Node (Render ()) (Render (SelectionBinding (Selected GeneratedNode)))
+
+self   :: Render (SelectionBinding (Selected GeneratedNode))
+canvas :: Selected CanvasNode
 ```
 
 `Selectable` has only these library-provided cases in the target interface;
@@ -588,7 +597,18 @@ Selected adjacentLinks <- select Adjacent
 
 `SelectionBinding` only supports the unrestricted `Selected` pattern used to
 name a selection. Selecting a relation does not make it a visual node, and
-`node` continues to accept only node selections. Compound classification,
+`node` accepts only node selections or a generated-node body. The two
+library-provided `Node` instances are the complete supported set; authors do not
+define more. `node selected body` applies the body once per matched node. A
+trace-selected node is terminal and cannot contain children. `node body`
+creates one generated node in the current Render scope and returns its handle
+through `SelectionBinding`; generated nodes may contain selected or nested
+nodes.
+
+`self` retrieves the current generated node's handle from inside `body`, before
+`node` returns it; using `self` at the root or inside a trace-selected node is a
+source-level error. `canvas` is the persistent root handle for geometry
+expressions and is not emitted as a child node. Compound classification,
 selection across unrelated payload types, and exact payload-value predicates
 are outside this baseline; declare separate typed rules, or add a typed selector
 or predicate API later when a concrete use case requires one.
@@ -774,11 +794,11 @@ render :: Render ()
 render = do
   Selected values <- select valueKind
   node $ do
-    Selected group <- self
+    Selected currentGroup <- self
     padding (uniform (by 12))
     node values $ do
       content (text "value")
-      ensure (width group .>=. width values)
+      ensure (width currentGroup .>=. width values)
 
   aspectRatio 4 3
 ```
@@ -934,9 +954,9 @@ lists whose nodes use a relation with ordered endpoints such as `Adjacent` or
 `asSequence relations nodes` accepts an empty graph, a single node with no edge,
 or one non-empty chain. Every supplied relation must join two supplied nodes. A
 non-empty chain must have one start, one end, no cycle or fork, and every
-selected node must belong to it. Inside a `node`
-scope matching one of those nodes, `rankOf ranking` returns its zero-based
-position `0, 1, 2, ...`. Calling it outside the ranking's matching node scope
+selected node must belong to it. Inside a `node` scope for one of those nodes,
+`rankOf ranking` returns its zero-based position `0, 1, 2, ...`. Calling it
+outside the ranking's matching node scope
 is a source-level error. The selected relation kind must have ordered endpoints;
 otherwise there is no defined first item or next item. Failure reports the
 relation kind and offending endpoints before numeric sampling begins. Taking
@@ -2036,6 +2056,8 @@ Add focused facade and compiler tests for:
 - one typed block kind and one typed relation kind selected through the same
   `select` vocabulary across Program and Render, plus compile-time mismatches
   between kinds, pending values, node selections, and relation selections;
+- the two library-provided `Node` forms, rejection of relation selections, and
+  `self` remaining valid only inside a generated node body;
 - `materializeWithKind` choosing among predeclared classifications from a
   payload without creating numeric or string-keyed facts;
 - heterogeneous relations such as `ProbeAt Probe Cell`, including endpoint
@@ -2089,8 +2111,8 @@ For the classification and relation slices:
 6. Migrate all examples and fixtures from query atoms and integer joins to
    kinds and relations; then remove the complete public fact/query surface from
    `Sverlin`.
-7. Add graph-layout template helpers only after direct node/relation rendering
-   and the affine solver boundary are tested.
+7. Add graph-layout template helpers only after direct `node`/`relation`
+   rendering and the affine solver boundary are tested.
 
 The existing `containers` dependency in
 [compile.cabal](../../compile.cabal) is sufficient for the first implementation.
