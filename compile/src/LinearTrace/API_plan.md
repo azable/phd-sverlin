@@ -191,6 +191,7 @@ domain = do
   declareKind valueKind
   declareKind resultKind
   declareOperator @Add
+  declareSteps @'[Shown, Removed]
 ```
 
 Illustrative declared values are typed and shared by Program and Render:
@@ -202,8 +203,10 @@ availableValueKind :: Kind Number
 ```
 
 The exact declaration combinators and how declared values are packaged for the
-three builders remain open. They must provide stable names for diagnostics and
-serialization without requiring authors to repeat string keys at each use.
+three builders remain open. This includes the working `declareSteps` spelling for
+the finite set of typed step identities. Declarations must provide stable names for
+diagnostics and serialization without requiring authors to repeat string keys at
+each use.
 
 ### Program
 
@@ -227,7 +230,8 @@ vacant/occupied typestate, `declareSlot`, `occupySlot`, `vacateSlot`, or
   vocabulary are defined by Domain and consumed here.
 - Lifecycle operations: `create`, `copy`, `use`, `apply1`, `apply2`, `replace`,
   `seal`, `unseal`, `relate`, `materialize`, `materializeWithKind`, `commit`,
-  `destroy`, and `checkpoint`.
+  and `destroy`.
+- Named Program composition: typed, nestable `step`.
 - Lifecycle results: `OneUse`, `Create`, `Use`, `Copy`, `Replace`, `Apply1`,
   `Apply2`, `Destroy`, `Seal`, `Unseal`, `Relate`, `(<$>)`, and `(<*>)`.
 
@@ -331,7 +335,7 @@ location and may adopt a different occupant lineage.
 
 `destroy` consumes a live block without producing a successor. It records the
 end of that value's lifetime, allowing Render to remove or animate the exiting
-visual instance at the corresponding checkpoint.
+visual instance in the corresponding exposed frame.
 
 ```haskell
 Destroy <- destroy obsolete
@@ -381,13 +385,13 @@ Relate sourceSlot1 targetSlot1 <-
 ```
 
 The consume-and-reissue step is the Program event at which the semantic relation
-begins. `relate` may occur after either location has appeared at an earlier
-checkpoint: it does not mutate either input `Slot` in place, but returns successor
+begins. `relate` may occur after either location has appeared in an earlier exposed
+frame: it does not mutate either input `Slot` in place, but returns successor
 capabilities for the same persistent locations. Once created, the relation is
 anchored to the stable owners rather than to those particular `Slot` values.
 
 Render constraints derived from the relation are not added to the solver only from
-that checkpoint onward. The compiler sees the whole trace and includes them in the
+that frame onward. The compiler sees the whole trace and includes them in the
 single constraint system over the overlapping lifetimes of the two stable owners.
 The relation itself, including an optional connector, is visible only while the
 semantic relation is active. A rule discovered later can therefore affect an
@@ -472,57 +476,25 @@ lineage, or that should not participate in semantic selection.
 unclassified <- commit pendingUnclassified
 ```
 
-#### Timeline
+#### Named steps
 
-##### Checkpoint
-
-`checkpoint` commits the pending trace-event batch under a stable label. It
-defines the temporal states that Render and the visualization player expose;
-operations before the checkpoint appear together as one program step.
-
-```haskell
-checkpoint "value stored"
-```
-
-Use checkpoints after complete logical operations. In particular, ordinary
-slot workflows should unseal and reseal before checkpointing unless an empty
-storage location is deliberately part of the trace.
-
-#### Proposed new "step" interface
-
-a program is made up of named steps, which can be composed together
-in a reusable way. a
-step has an associated code fragment to allow for mapping to source
-code visualisations.
-
-TODO expand on this with an insertion sort example below
+A Program is composed from typed, reusable steps. `step @Name action` records the
+identity and event span of the action, returns its result unchanged, and may nest
+inside another step. The exact declaration constraint remains open, but the target
+shape is:
 
 ```haskell
-program :: Program ()
-program = do
-  --TODO
+step :: forall name a. ... => Program a %1 -> Program a
 ```
 
-```
-int linear_search(int A[], int n, int target) {
-  for (int i = 0; i < n; i++) {
-    if (A[i] == target) {
-      return i;
-    }
-  }
-  return -1;
-}
-```
+Step identities are shared with Render. `frame @Name` can expose an occurrence as a
+presentation frame, while `fragment @Name` can highlight the corresponding source
+range. Program itself does not decide which steps become frames, and the target API
+has no public `checkpoint :: String -> Program ()`.
 
-fragment tag: linear operation/s
-i-init: create (literal 0)
-i-var: create (integer variable)
-i-var-assign: = (seal) -> slot
-i-read: unseal -> copy -> seal
-n-read: unseal -> copy -> seal
-i-lt-n: < apply2
-
-etc
+Complete logical operations should normally be steps. In particular, an ordinary
+slot workflow should unseal and reseal within one step unless an empty storage
+location is deliberately part of the trace.
 
 #### Complete Program
 
@@ -534,12 +506,12 @@ operations to the general Program interface.
 ```haskell
 program :: Program ()
 program = do
-  Create pending <- create initialValue
-  value <- materialize valueKind pending
-  checkpoint "created"
-  Destroy <- destroy value
-  checkpoint "removed"
-  pure ()
+  value <- step @Created $ do
+    Create pending <- create initialValue
+    materialize valueKind pending
+  step @Removed $ do
+    Destroy <- destroy value
+    pure ()
 ```
 
 ### Render
@@ -550,7 +522,70 @@ layout, style, and visual constraints. Rename the author-facing
 may remain internally, but authored signatures and documentation must use
 Render terminology.
 
-#### Rules, selection, and hierarchy
+#### Conditional composition
+
+Render decides which tracked view components are required or optional:
+
+```haskell
+always    :: ... => Render a -> Render a
+sometimes :: ... => Render a -> Render a
+```
+
+`always` includes the wrapped component without creating a choice. `sometimes`
+creates an equal-weighted seeded include/omit choice at the component's current
+match scope. These wrappers are general over values whose presence Render can
+track. A value returned by `sometimes` remains a symbolic handle at authoring time
+and carries a hidden presence condition. Any later component that consumes it
+inherits that condition automatically:
+
+```haskell
+Selected explanation <- sometimes $ node $ content (text "comparison failed")
+
+Selected detail <- node $ do
+  Selected current <- self
+  content (text "try the next element")
+  ensure $ top current .==. bottom explanation + by 12
+
+Selected counter <- node $ content (text "iteration")
+```
+
+When a seed omits `explanation`, it also omits `detail` and the dependent
+constraint; `counter` remains. A component consuming several conditional values is
+guarded by all of their presence conditions. A `Render ()` body groups all effects
+it emits under the wrapper's one condition. Authors do not handle `Maybe` or repeat
+guards. The compiler keeps the presence metadata on abstract Render values and
+diagnoses an attempt to pass an optional value through an ordinary Haskell value
+that cannot retain it. The exact private type-class constraint on `a` remains open;
+it must not become another authored vocabulary.
+
+`always` preserves any condition inherited from an enclosing optional component;
+it cannot force an absent dependency to exist. Geometry-neutral choices such as
+frame inclusion are sampled separately from the affine layout space. When an
+optional component contributes geometry, its include and omit cases are explicit
+authored design branches, and an infeasible include case may be removed without
+changing the omit case.
+
+#### Frames
+
+```haskell
+frame :: forall name. ... => Render ()
+```
+
+`frame @Name` makes each occurrence of that typed Program step a candidate
+presentation frame. Execution order, including repeated steps, determines frame
+order. Wrapping it in `always` includes every occurrence; wrapping it in
+`sometimes` gives each occurrence an independent seeded include/omit choice:
+
+```haskell
+always $ frame @InitializeTarget
+sometimes $ frame @CompareTarget
+always $ frame @FinishSearch
+```
+
+Frame inclusion is geometry-neutral, so these choices are sampled separately from
+the affine layout space.
+
+#### Rules, selections, and nodes
 
 The visualization interface declares reusable rules independently of program
 execution. Retain `MatchSpec`, `Selected`, `Variable`, `Bound`, `GeneratedNode`,
@@ -582,8 +617,8 @@ canvas :: Selected CanvasNode
 authors declare `Kind` and `RelationKind` values rather than selection
 instances. A `Kind` determines the selected payload type, so block selection no
 longer needs a type application such as `select @Number`. It selects every live
-block at the checkpoint with that one declared kind. A `RelationKind` selects
-every active relation of that kind at the same checkpoint; the resulting
+block in the current exposed frame with that one declared kind. A `RelationKind`
+selects every active relation of that kind in the same frame; the resulting
 `Relations` value is documented below. Both uses have the same author-facing
 binding form:
 
@@ -804,7 +839,7 @@ render = do
 
 Relations describe which persistent Program locations are associated. They do
 not prescribe coordinates, spacing, or connector routing. Render projects the
-relations active at one checkpoint and then applies ordinary visual
+relations active in one exposed frame and then applies ordinary visual
 constraints. The same relation data can therefore support a row, a freely
 placed linked list, a tree, or another layout without changing Program.
 
@@ -849,7 +884,7 @@ rankOf
 ```
 
 `Selected links <- select kind` selects the relations of one declared kind that
-are active at the current checkpoint. `Relations` is the resulting reusable
+are active in the current exposed frame. `Relations` is the resulting reusable
 selection, parallel to the `Selected` node set returned when `select` receives a
 block `Kind`. It contains the stable identity and endpoints of every matched
 relation; authors cannot construct it or mutate its membership.
@@ -929,7 +964,7 @@ stable owners.
 ##### Fixed structural values
 
 `FixedInt` is an exact integer calculated from the current relation graph before
-numeric solving. It may differ at another checkpoint, but it is fixed while the
+numeric solving. It may differ in another frame, but it is fixed while the
 current Render rule is solved. Addition and subtraction by fixed integers remain
 exact.
 
@@ -1147,15 +1182,16 @@ normally use a bounded template generator.
 
 ##### Validation over time
 
-All `as*` checks run for every exposed checkpoint where their Render rule
-matches. Program should checkpoint after completing a logical relation update.
+All `as*` checks run for every exposed frame where their Render rule matches.
+Apply them only to frames whose matching Program step has completed a logical
+relation update.
 If an incomplete structure is intentionally shown, Render should use its node
 and relation selections directly until it is complete instead of applying
 `asSequence`, `asTree`, or `asDag`. Structural failures are therefore
 source-level diagnostics, not unlucky random samples.
 
 Sequence, tree, and DAG checks visit each node and edge only a constant number
-of times. Calculate their `FixedInt` values once for each distinct checkpoint
+of times. Calculate their `FixedInt` values once for each distinct exposed-frame
 graph and reuse them across seeds. No baseline graph operation constructs the
 `n * (n - 1) / 2` unordered pairs of `n` nodes.
 
@@ -1976,11 +2012,11 @@ Authored body source may import only `Sverlin`.
   returns no public relation token or endpoint capability.
 - `relate` is the Program event at which a new semantic association begins: it
   consumes the current endpoint slots and returns successor capabilities for the
-  same persistent locations. It may occur after an earlier checkpoint and does not
+  same persistent locations. It may occur after an earlier exposed frame and does not
   mutate a live `Slot` value in place.
 - Render constraints derived from that association join the one fixed constraint
   system over the endpoint owners' overlapping lifetimes. They may therefore affect
-  earlier checkpoint geometry even though the relation is not yet visible there.
+  earlier-frame geometry even though the relation is not yet visible there.
 - A relation remains active when either slot is unsealed, temporarily empty,
   resealed, or given a replacement occupant. It follows neither old nor new
   occupant `BlockId`: its endpoints remain the same persistent locations, so no
@@ -2013,7 +2049,7 @@ derive the same interval from relation creation and endpoint lifetimes. Render
 rules may choose how a declared relation kind is drawn, but they must not infer
 semantic relations from block lineage, solver variable names, or proximity.
 
-At each exposed checkpoint, `select relationKind` projects the matching active
+In each exposed frame, `select relationKind` projects the matching active
 relations and their stable endpoints into `Relations`. `asSequence`, `asTree`,
 and `asDag` verify that the supplied relation and node selections have the same
 scope, validate the requested shape, and calculate its ranking. None replaces
@@ -2057,12 +2093,18 @@ Add focused facade and compiler tests for:
   between kinds, pending values, node selections, and relation selections;
 - the two library-provided `Node` forms, rejection of relation selections, and
   `self` remaining valid only inside a generated node body;
+- `always` preserving inherited presence, `sometimes` returning ordinary symbolic
+  handles with hidden presence provenance, transitive exclusion of dependent
+  components, conjunction of several optional dependencies, and preservation of an
+  unrelated component;
+- independent seeded inclusion of repeated `sometimes $ frame @Step` occurrences,
+  with frame choices kept outside the affine configuration count;
 - `materializeWithKind` choosing among predeclared classifications from a
   payload without creating numeric or string-keyed facts;
 - heterogeneous relations such as `ProbeAt Probe Cell`, including endpoint
   type errors, duplicate-edge rejection, typed context-local `first` and
   `second`, rejection outside their matching relation scope, affine endpoint
-  constraints, creation after an earlier checkpoint, constraints applying across
+  constraints, creation after an earlier exposed frame, constraints applying across
   the owners' overlapping lifetimes without earlier relation visibility,
   persistence through unseal/reseal and occupant replacement, automatic end at
   owner destruction, and the same derived lifetime in reverse playback;
@@ -2091,7 +2133,7 @@ Add focused facade and compiler tests for:
   with no generic projections of those complete inputs, aggregate graph counts,
   callback-based relation mapping, separate traversal helpers, or general
   all-pairs generator;
-- structural checks at successive checkpoints, including direct relation
+- structural checks in successive exposed frames, including direct relation
   rendering while a sequence, tree, or DAG is incomplete; and
 - removal of the public fact/query surface and `bindInt`, including migration
   of integer-variable joins to relations and confirmation that `Sverlin`
@@ -2107,8 +2149,8 @@ For the classification and relation slices:
 2. Add typed `RelationKind` declarations and the `relate` trace event, including
    endpoint validation, slot-capability transitions, and automatic lifetime
    derivation from endpoint owners.
-3. Project active relation identities and endpoints to stable owner nodes at
-   each checkpoint, and add the `RelationKind` case of `select`.
+3. Project active relation identities and endpoints to stable owner nodes in
+   each exposed frame, and add the `RelationKind` case of `select`.
 4. Add `Relations`, context-local typed `first` and `second`, and `FixedInt`;
    make the structural checks consume already-scoped relation and node
    selections directly.
@@ -2319,7 +2361,7 @@ result regardless of cache warmth or batch order.
 
 Relation checks, sequence positions, and tree or DAG levels are also prepared before
 numeric solving. They are fixed consequences of the active trace graph, not random
-branches, so recalculating them for a checkpoint does not bias the layout distribution.
+branches, so recalculating them for a frame does not bias the layout distribution.
 Only explicit layout choices or exact geometric case splits add solver configurations.
 
 Enumeration should prepare every feasible configuration only while the estimated work

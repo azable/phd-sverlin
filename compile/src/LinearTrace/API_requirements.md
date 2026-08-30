@@ -46,7 +46,7 @@ Examples:
 The compiler sees the complete trace before it solves any layout. It should collect
 all Render constraints that refer to a linear object's lifetime and solve them as one
 fixed system, even when the fact that contributes a constraint is declared after an
-earlier checkpoint. This is not a checkpoint-time mutation: the later declaration
+earlier exposed frame. This is not a frame-time mutation: the later declaration
 becomes part of the constraints used for that whole lifetime. Solver values may
 still be sampled within the resulting feasible region, and geometry-neutral
 presentation state may change.
@@ -54,7 +54,7 @@ presentation state may change.
 When Program consumes an object and produces a successor, that linear transition is
 a "cut" between lifetimes. Constraints attached to the old identity do not silently
 retarget to the successor. The compiler should derive these scopes from linear
-ownership rather than rely on authors to coordinate checkpoint-specific changes.
+ownership rather than rely on authors to coordinate frame-specific changes.
 
 Relations are one instance of this rule. `relate` may occur after either location has
 already appeared. If Render maps that relation to layout constraints, those
@@ -65,3 +65,17 @@ without recreating the relation or its constraints. If later relation rules conf
 with constraints already collected for those lifetimes, compilation must report an
 infeasible design with the relevant source locations; repeated sampling cannot make
 an inconsistent system feasible.
+
+## Propagate optional view presence through dependencies
+
+Render should allow any tracked view component, not only a frame, to be included or
+omitted by a seeded choice. An optional component still returns its normal symbolic
+handle. Components and constraints that consume that handle automatically inherit
+its presence condition; independent components remain present. Combining optional
+inputs requires all of them to exist. This keeps conditional composition inside the
+Render builder without exposing `Maybe` or requiring authors to repeat guards.
+
+Presence tracking applies only to abstract values whose provenance Render controls.
+Passing an optional handle through an ordinary Haskell value that loses that
+provenance must be rejected. Omitting a geometry-neutral component does not create
+another affine solver branch; optional geometry does.

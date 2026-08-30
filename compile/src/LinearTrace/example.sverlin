@@ -565,26 +565,24 @@ cSource = do
 -- Render
 --------------------------------------------------------------------------------
 
-type PresentationFrames =
-  '[ InitializeTarget
-   , InitializeElements
-   , InitializeIndex
-   , CheckRemainingElements
-   , CompareTarget
-   , IncrementIndex
-   , ReturnFound
-   , ReturnNotFound
-   , FinishSearch
-   ]
-
 render :: Render ()
 render = do
   width (by 1000)
   height (by 640)
   contentFit Both Contain
 
-  -- Working step/frame syntax; the exact step API remains open.
-  framesAt @PresentationFrames
+  -- The wrappers work for any Render-tracked component or returned handle.
+  -- Here each repeated comparison occurrence independently has a seeded chance
+  -- of becoming a frame; the other named steps are always exposed.
+  always $ frame @InitializeTarget
+  always $ frame @InitializeElements
+  always $ frame @InitializeIndex
+  always $ frame @CheckRemainingElements
+  sometimes $ frame @CompareTarget
+  always $ frame @IncrementIndex
+  always $ frame @ReturnFound
+  always $ frame @ReturnNotFound
+  always $ frame @FinishSearch
   cSource
 
   Selected targets <- select targetKind

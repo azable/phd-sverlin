@@ -21,8 +21,8 @@ render :: Render ()
 The shared flow is: Domain declares a typed `Kind`; Program attaches it to a
 materialized block; Render selects that kind. A declared `RelationKind` uses the
 same `select` entry point for the relations active in each exposed frame. Typed,
-nestable Program steps replace free-form checkpoint labels; Render chooses which
-steps become frames.
+nestable Program steps replace free-form checkpoint labels; Render uses general
+`always` and `sometimes` wrappers to choose which step occurrences become frames.
 
 ```haskell
 type Shown = "shown"
@@ -37,7 +37,8 @@ program = do
     pure ()
 
 render = do
-  framesAt @'[Shown, Removed]
+  always $ frame @Shown
+  always $ frame @Removed
 
   Selected values <- select valueKind
   node values $ content (text "value")
@@ -189,7 +190,7 @@ step :: forall name a. ... => Program a %1 -> Program a
 
 `step @Name action` gives a reusable Program action a typed identity. Steps may
 nest, and the result of the wrapped action is returned unchanged. The same identity
-is used by `framesAt`, `fragment`, and `fragmentMany`; there is no public
+is used by `frame`, `fragment`, and `fragmentMany`; there is no public
 `checkpoint :: String -> Program ()` in the target API.
 
 **Open signature:** the constraints connecting `name` to the Domain declaration
@@ -200,6 +201,58 @@ result-preserving shape are settled.
 
 Render declares selections, nodes, text, relations, layout, style, and visual
 constraints independently of Program execution.
+
+### Conditional composition
+
+```haskell
+always    :: ... => Render a -> Render a
+sometimes :: ... => Render a -> Render a
+```
+
+The wrappers apply to values whose presence Render can track:
+
+```haskell
+Selected explanation <- sometimes $ node $ content (text "comparison failed")
+
+Selected detail <- node $ do
+  Selected current <- self
+  content (text "try the next element")
+  ensure $ top current .==. bottom explanation + by 12
+
+Selected counter <- node $ content (text "iteration")
+```
+
+If a seed omits `explanation`, Render also omits `detail` and its constraint
+because they consume the optional handle; the independent `counter` remains.
+Presence conditions remain internal, so authors do not handle `Maybe` or repeat
+guards. Several optional inputs must all be present, and `Render ()` groups its
+effects under one condition. Arbitrary plain Haskell values do not acquire this
+tracking; the exact private constraint on `a` remains open.
+
+The choice is created at the current match scope, such as one matched node or
+relation lifetime. `always` adds no choice and cannot override an inherited absent
+dependency. Optional geometry creates include and omit design branches;
+geometry-neutral choices are sampled separately from affine layout.
+
+### Frames
+
+```haskell
+frame :: forall name. ... => Render ()
+```
+
+`frame @StepA` turns each occurrence of that typed Program step into a candidate
+frame. Execution order, including repeated steps, determines frame order:
+
+```haskell
+always $ frame @InitializeTarget
+sometimes $ frame @CompareTarget
+always $ frame @FinishSearch
+```
+
+An `always` frame is required. A `sometimes` frame receives an independent,
+equal-weighted include/omit choice for each executed step occurrence. Frame
+inclusion is geometry-neutral and therefore does not multiply affine solver
+configurations.
 
 ### Rules, selections, and nodes
 
@@ -229,17 +282,11 @@ instance Node (Render ()) (Render (SelectionBinding (Selected GeneratedNode)))
 
 self   :: Render (SelectionBinding (Selected GeneratedNode))
 canvas :: Selected CanvasNode
-
-framesAt :: forall names. ... => Render ()
 ```
 
 The two `Selectable` instances are library-provided: `select valueKind` binds
 live blocks, while `select Adjacent` binds active relations in the current exposed
 frame. Selecting relations does not draw them or make them acceptable to `node`.
-`framesAt @'[StepA, StepB]` exposes those typed Program steps as presentation
-frames whenever they occur; execution order, including repeated steps, determines
-frame order. Nested steps that are not listed still retain their identities for
-source-fragment highlighting and composition.
 
 ### Text
 
@@ -444,9 +491,11 @@ optimization is still open.
 1. Domain declaration names and packaging.
 2. Exact `Relate` type parameters and operation signature.
 3. Exact Domain declaration and type-class constraints for typed step identities.
-4. Exact `TextBuilder` input and fragment signatures.
-5. Whether three materialization operations remain separate.
-6. The Render projection from a stable slot owner to its current occupant.
-7. Connector and anchor APIs, graph-template APIs, and their sampling weights.
-8. Affine meanings for `encourage` and the symmetric bridge.
-9. Whether `BorderDouble` and `TextAlignJustify` remain public.
+4. Internal provenance representation and supporting constraint for values returned
+   by `sometimes`.
+5. Exact `TextBuilder` input and fragment signatures.
+6. Whether three materialization operations remain separate.
+7. The Render projection from a stable slot owner to its current occupant.
+8. Connector and anchor APIs, graph-template APIs, and their sampling weights.
+9. Affine meanings for `encourage` and the symmetric bridge.
+10. Whether `BorderDouble` and `TextAlignJustify` remain public.
