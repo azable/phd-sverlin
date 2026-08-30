@@ -1,4 +1,4 @@
--- Illustrative body-only source for the target API in API_plan.md.
+-- Illustrative body-only linear search for the target API in API_plan.md.
 -- Unified typed steps, text trees, and Render-controlled frames are proposed APIs.
 
 data Number
@@ -9,13 +9,17 @@ data Condition
 
 type instance Payload Condition = LBool Condition
 
+data TargetCell
+
+type instance Payload TargetCell = LUnit TargetCell
+
 data IndexCell
 
 type instance Payload IndexCell = LUnit IndexCell
 
-data LimitCell
+data ElementCell
 
-type instance Payload LimitCell = LUnit LimitCell
+type instance Payload ElementCell = LUnit ElementCell
 
 data Add = Add
 
@@ -29,69 +33,85 @@ instance Applicable2 Add Number Number where
   type Apply2Result Add Number Number = Number
   applyPayload2 (LOperator Add) = applyLinear2Into (Linear.+)
 
-data LessThan = LessThan
+data Equal = Equal
 
-type instance Payload LessThan = LOperator LessThan LessThan
+type instance Payload Equal = LOperator Equal Equal
 
-instance CoreOperator LessThan where
-  operatorPayloadText LessThan = "<"
-  persistOperatorPayload LessThan = Ur LessThan
+instance CoreOperator Equal where
+  operatorPayloadText Equal = "=="
+  persistOperatorPayload Equal = Ur Equal
 
-instance Applicable2 LessThan Number Number where
-  type Apply2Result LessThan Number Number = Condition
-  applyPayload2 (LOperator LessThan) = applyLinear2Into (Linear.<)
+instance Applicable2 Equal Number Number where
+  type Apply2Result Equal Number Number = Condition
+  applyPayload2 (LOperator Equal) = applyLinear2Into (Linear.==)
 
-type CountTo = "count-to"
-type BindLimit = "count-to/bind-limit"
-type InitializeIndex = "count-to/initialize-index"
-type TestLoopBound = "count-to/test-loop-bound"
-type IncrementIndex = "count-to/increment-index"
-type FinishProgram = "count-to/finish"
+type LinearSearch = "linear-search"
+type InitializeTarget = LinearSearch / "initialize-target"
+type InitializeElements = LinearSearch / "initialize-elements"
+type CreateElement = InitializeElements / "create-element"
+type InitializeIndex = LinearSearch / "initialize-index"
+type SearchIteration = LinearSearch / "search-iteration"
+type FinishSearch = LinearSearch / "finish"
 
 type CreateValue parent = parent / "create-value"
 type CreateCell parent = parent / "create-cell"
 type AssignValue parent = parent / "assign"
 type CreateStoredChildren = '["create-value", "create-cell", "assign"]
 
-type ReadIndexForBound = "count-to/test-loop-bound/read-index"
-type ReadLimitForBound = "count-to/test-loop-bound/read-limit"
-type CreateLessThanOperator = "count-to/test-loop-bound/create-operator"
-type CompareIndexToLimit = "count-to/test-loop-bound/compare"
+type CheckRemainingElements = SearchIteration / "check-remaining-elements"
+type ReadTarget = SearchIteration / "read-target"
+type ReadElement = SearchIteration / "read-element"
+type CompareTarget = SearchIteration / "compare-target"
+type CreateEqualOperator = CompareTarget / "create-operator"
+type ApplyEquality = CompareTarget / "apply-equality"
+type ReturnFound = SearchIteration / "return-found"
+type ReturnNotFound = SearchIteration / "return-not-found"
 
-type ReadIndexForIncrement = "count-to/increment-index/read-index"
-type CreateOne = "count-to/increment-index/create-one"
-type CreateAddOperator = "count-to/increment-index/create-operator"
-type AddOneToIndex = "count-to/increment-index/add"
-type WriteIndex = "count-to/increment-index/write"
+type IncrementIndex = SearchIteration / "increment-index"
+type ReadIndexForIncrement = IncrementIndex / "read-index"
+type CreateOne = IncrementIndex / "create-one"
+type CreateAddOperator = IncrementIndex / "create-operator"
+type AddOneToIndex = IncrementIndex / "add"
+type WriteIndex = IncrementIndex / "write"
 
-type DestroyIndexStorage = "count-to/finish/destroy-index"
-type DestroyLimitStorage = "count-to/finish/destroy-limit"
+type DestroyTarget = FinishSearch / "destroy-target"
+type DestroyIndex = FinishSearch / "destroy-index"
+type DestroyElements = FinishSearch / "destroy-elements"
+type DestroyElement = DestroyElements / "destroy-element"
 
 domain :: Domain ()
 domain = do
   declarePayload @Number
   declarePayload @Condition
+  declarePayload @TargetCell
   declarePayload @IndexCell
-  declarePayload @LimitCell
+  declarePayload @ElementCell
   declareOperator Add
-  declareOperator LessThan
-  declareBranches @'[BindLimit, InitializeIndex] @CreateStoredChildren
+  declareOperator Equal
+  declareBranches @'[InitializeTarget, InitializeIndex, CreateElement] @CreateStoredChildren
   declareSteps
-    @'[ CountTo
-      , TestLoopBound
+    @'[ LinearSearch
+      , InitializeElements
+      , SearchIteration
+      , CheckRemainingElements
+      , ReadTarget
+      , ReadElement
+      , CompareTarget
+      , CreateEqualOperator
+      , ApplyEquality
+      , ReturnFound
+      , ReturnNotFound
       , IncrementIndex
-      , FinishProgram
-      , ReadIndexForBound
-      , ReadLimitForBound
-      , CreateLessThanOperator
-      , CompareIndexToLimit
       , ReadIndexForIncrement
       , CreateOne
       , CreateAddOperator
       , AddOneToIndex
       , WriteIndex
-      , DestroyIndexStorage
-      , DestroyLimitStorage
+      , FinishSearch
+      , DestroyTarget
+      , DestroyIndex
+      , DestroyElements
+      , DestroyElement
       ]
 
 data Stored owner value where
@@ -100,9 +120,23 @@ data Stored owner value where
 data ReadStored owner value where
   ReadStored :: Stored owner value %1 -> Block value %1 -> ReadStored owner value
 
-data LoopTest where
-  ContinueLoop :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> LoopTest
-  ExitLoop :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> LoopTest
+data StoredList value where
+  NoStoredValues :: StoredList value
+  MoreStoredValue :: Int -> Stored ElementCell value %1 -> StoredList value %1 -> StoredList value
+
+data ListView value where
+  EmptyList :: ListView value
+  NextValue :: Int -> Stored ElementCell value %1 -> StoredList value %1 -> ListView value
+
+data SearchOutcome = FoundAt Int | NotFound
+
+data SearchResult where
+  SearchResult ::
+    SearchOutcome ->
+    Stored TargetCell Number %1 ->
+    Stored IndexCell Number %1 ->
+    StoredList Number %1 ->
+    SearchResult
 
 createStored ::
   forall parent owner value.
@@ -148,31 +182,40 @@ destroyStored (Stored owner slot) = do
   Destroy <- destroy owner1
   return ()
 
-bindLimit :: Int -> Program (Stored LimitCell Number)
-bindLimit limitValue = createStored @BindLimit #limitCell LUnit #limit (LInt limitValue)
+initializeTarget :: Int -> Program (Stored TargetCell Number)
+initializeTarget target = createStored @InitializeTarget #targetCell LUnit #target (LInt target)
 
 initializeIndex :: Program (Stored IndexCell Number)
 initializeIndex = createStored @InitializeIndex #indexCell LUnit #index (LInt 0)
 
-testLoopBound :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> Program LoopTest
-testLoopBound index limit = step @TestLoopBound $ do
-  ReadStored index1 indexProbe <- step @ReadIndexForBound (readStored #indexRead index)
-  ReadStored limit1 limitProbe <- step @ReadLimitForBound (readStored #limitRead limit)
+initializeElements :: [Int] -> Program (StoredList Number)
+initializeElements values = step @InitializeElements (go 0 values)
+  where
+    go :: Int -> [Int] -> Program (StoredList Number)
+    go _ [] = return NoStoredValues
+    go position (value : rest) = do
+      element <- createStored @CreateElement (#elementCell <&> #index @: position) LUnit (#element <&> #index @: position) (LInt value)
+      elements <- go (position + 1) rest
+      return (MoreStoredValue position element elements)
 
-  lessThan <- step @CreateLessThanOperator $ do
-    Create pending <- create @LessThan (LOperator LessThan)
-    materialize #lessThanOperator pending
+inspectElements :: StoredList value %1 -> Program (ListView value)
+inspectElements elements = step @CheckRemainingElements $
+  case elements of
+    NoStoredValues -> return EmptyList
+    MoreStoredValue position element rest -> return (NextValue position element rest)
 
-  continue <- step @CompareIndexToLimit $ do
-    Apply2 conditionPending <- apply2 lessThan indexProbe limitProbe
-    condition <- materialize #loopCondition conditionPending
+compareTarget :: Block Number %1 -> Block Number %1 -> Program Bool
+compareTarget element target = step @CompareTarget $ do
+  equal <- step @CreateEqualOperator $ do
+    Create pending <- create @Equal (LOperator Equal)
+    materialize #equalOperator pending
+
+  step @ApplyEquality $ do
+    Apply2 conditionPending <- apply2 equal element target
+    condition <- materialize #comparison conditionPending
     Use result <- use condition
     case result of
-      OneUse (LBool answer) -> return answer
-
-  case continue of
-    True -> return (ContinueLoop index1 limit1)
-    False -> return (ExitLoop index1 limit1)
+      OneUse (LBool matched) -> return matched
 
 incrementIndex :: Stored IndexCell Number %1 -> Program (Stored IndexCell Number)
 incrementIndex index = step @IncrementIndex $ do
@@ -192,158 +235,236 @@ incrementIndex index = step @IncrementIndex $ do
 
   step @WriteIndex (writeStored #index index1 nextPending)
 
-finishProgram :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> Program ()
-finishProgram index limit = step @FinishProgram $ do
-  step @DestroyIndexStorage (destroyStored index)
-  step @DestroyLimitStorage (destroyStored limit)
+searchLoop ::
+  Stored TargetCell Number %1 ->
+  Stored IndexCell Number %1 ->
+  StoredList Number %1 ->
+  Program SearchResult
+searchLoop target index elements = step @SearchIteration $ do
+  view <- inspectElements elements
+  case view of
+    EmptyList -> step @ReturnNotFound $ return (SearchResult NotFound target index NoStoredValues)
+    NextValue position element rest -> do
+      ReadStored target1 targetProbe <- step @ReadTarget (readStored #targetRead target)
+      ReadStored element1 elementProbe <- step @ReadElement (readStored (#elementRead <&> #index @: position) element)
+      matched <- compareTarget elementProbe targetProbe
+      case matched of
+        True ->
+          step @ReturnFound $
+            return (SearchResult (FoundAt position) target1 index (MoreStoredValue position element1 rest))
+        False -> do
+          index1 <- incrementIndex index
+          SearchResult outcome target2 index2 searchedRest <- searchLoop target1 index1 rest
+          return (SearchResult outcome target2 index2 (MoreStoredValue position element1 searchedRest))
 
-countLoop :: Stored IndexCell Number %1 -> Stored LimitCell Number %1 -> Program ()
-countLoop index limit = do
-  result <- testLoopBound index limit
-  case result of
-    ContinueLoop index1 limit1 -> do
-      index2 <- incrementIndex index1
-      countLoop index2 limit1
-    ExitLoop index1 limit1 -> finishProgram index1 limit1
+destroyStoredList :: StoredList Number %1 -> Program ()
+destroyStoredList elements =
+  case elements of
+    NoStoredValues -> return ()
+    MoreStoredValue _ element rest -> do
+      step @DestroyElement (destroyStored element)
+      destroyStoredList rest
+
+finishSearch :: SearchResult %1 -> Program ()
+finishSearch (SearchResult _ target index elements) = step @FinishSearch $ do
+  step @DestroyTarget (destroyStored target)
+  step @DestroyIndex (destroyStored index)
+  step @DestroyElements (destroyStoredList elements)
 
 program :: Program ()
-program = step @CountTo $ do
-  limit <- bindLimit 4
+program = step @LinearSearch $ do
+  target <- initializeTarget 7
+  elements <- initializeElements [4, 9, 2, 7]
   index <- initializeIndex
-  countLoop index limit
+  result <- searchLoop target index elements
+  finishSearch result
 
 pseudocode :: TextTree
 pseudocode =
-  block @CountTo
+  block @LinearSearch
     (do
-      literal "count to "
-      fragmentMany @'[BindLimit, CreateValue BindLimit, CreateCell BindLimit, AssignValue BindLimit] "limit"
+      literal "find "
+      fragmentMany
+        @'[InitializeTarget, CreateValue InitializeTarget, CreateCell InitializeTarget, AssignValue InitializeTarget]
+        "target"
+      literal " in "
+      fragmentMany
+        @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement]
+        "values"
       literal ":")
     $ do
-      line @InitializeIndex $ do
-        fragmentMany @'[CreateCell InitializeIndex, AssignValue InitializeIndex] "set counter to "
-        fragment @(CreateValue InitializeIndex) "zero"
+      line @InitializeIndex $
+        fragmentMany
+          @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
+          "set index to zero"
 
-      block @TestLoopBound
+      block @SearchIteration
         (do
           literal "while "
-          fragment @ReadIndexForBound "counter"
-          fragmentMany @'[CreateLessThanOperator, CompareIndexToLimit] " is below "
-          fragment @ReadLimitForBound "limit"
+          fragment @CheckRemainingElements "values remain"
           literal ":")
         $ do
-          line @IncrementIndex $ do
-            fragmentMany
-              @'[ReadIndexForIncrement, CreateAddOperator, AddOneToIndex, WriteIndex]
-              "increase counter by "
-            fragment @CreateOne "one"
+          block @CompareTarget
+            (do
+              literal "if "
+              fragment @ReadElement "current value"
+              fragmentMany @'[CreateEqualOperator, ApplyEquality] " equals "
+              fragment @ReadTarget "target"
+              literal ":")
+            $ do
+              line @ReturnFound $ fragment @ReturnFound "return index"
 
-      line @FinishProgram $ fragmentMany @'[DestroyIndexStorage, DestroyLimitStorage] "finish"
-
-cSource :: TextTree
-cSource =
-  delimitedBlock @CountTo
-    (do
-      literal "void count_to(int "
-      fragmentMany @'[BindLimit, CreateValue BindLimit, CreateCell BindLimit, AssignValue BindLimit] "limit"
-      literal ") {")
-    (literal "}")
-    $ do
-      line @InitializeIndex $ do
-        fragment @(CreateCell InitializeIndex) "int i"
-        fragment @(AssignValue InitializeIndex) " = "
-        fragment @(CreateValue InitializeIndex) "0"
-        literal ";"
-
-      delimitedBlock @TestLoopBound
-        (do
-          literal "while ("
-          fragment @ReadIndexForBound "i"
-          fragmentMany @'[CreateLessThanOperator, CompareIndexToLimit] " < "
-          fragment @ReadLimitForBound "limit"
-          literal ") {")
-        (literal "}")
-        $ do
           line @IncrementIndex $
             fragmentMany
               @'[ReadIndexForIncrement, CreateOne, CreateAddOperator, AddOneToIndex, WriteIndex]
-              "i++;"
+              "increase index by one"
 
-      line @FinishProgram $ do
-        fragmentMany @'[DestroyIndexStorage, DestroyLimitStorage] "return"
+      line @ReturnNotFound $ fragment @ReturnNotFound "return not found"
+
+cSource :: TextTree
+cSource =
+  delimitedBlock @LinearSearch
+    (do
+      literal "int linear_search(int "
+      fragmentMany
+        @'[InitializeElements, CreateElement, CreateValue CreateElement, CreateCell CreateElement, AssignValue CreateElement]
+        "A[]"
+      literal ", int "
+      fragment @InitializeElements "n"
+      literal ", int "
+      fragmentMany
+        @'[InitializeTarget, CreateValue InitializeTarget, CreateCell InitializeTarget, AssignValue InitializeTarget]
+        "target"
+      literal ") {")
+    (literal "}")
+    $ do
+      delimitedBlock @SearchIteration
+        (do
+          literal "for ("
+          fragmentMany
+            @'[InitializeIndex, CreateValue InitializeIndex, CreateCell InitializeIndex, AssignValue InitializeIndex]
+            "int i = 0"
+          literal "; "
+          fragment @CheckRemainingElements "i < n"
+          literal "; "
+          fragmentMany
+            @'[IncrementIndex, ReadIndexForIncrement, CreateOne, CreateAddOperator, AddOneToIndex, WriteIndex]
+            "i++"
+          literal ") {")
+        (literal "}")
+        $ do
+          delimitedBlock @CompareTarget
+            (do
+              literal "if ("
+              fragment @ReadElement "A[i]"
+              fragmentMany @'[CreateEqualOperator, ApplyEquality] " == "
+              fragment @ReadTarget "target"
+              literal ") {")
+            (literal "}")
+            $ do
+              line @ReturnFound $ do
+                literal "return "
+                fragment @ReturnFound "i"
+                literal ";"
+
+      line @ReturnNotFound $ do
+        literal "return "
+        fragment @ReturnNotFound "-1"
         literal ";"
 
-type PresentationFrames = '[BindLimit, InitializeIndex, TestLoopBound, IncrementIndex, FinishProgram]
+type PresentationFrames =
+  '[ InitializeTarget
+   , InitializeElements
+   , InitializeIndex
+   , CheckRemainingElements
+   , CompareTarget
+   , IncrementIndex
+   , ReturnFound
+   , ReturnNotFound
+   , FinishSearch
+   ]
 
 render :: Render ()
 render = do
-  width (by 960)
-  height (by 600)
+  width (by 1000)
+  height (by 640)
   contentFit Both Contain
   framesAt @PresentationFrames
 
-  source <- textNodes pseudocode
+  source <- textNodes cSource
 
   node source $ do
     left (at 36)
     top (at 32)
     width (by 500)
-    height (by 520)
+    height (by 560)
     style @FontFamily (FixedStyle FontIBMPlexMono)
     style @WhiteSpace (FixedStyle WhiteSpacePre)
 
+  Bound targetLabel <- bindContent
+  Selected targets <- select @Number (#target <&> payload targetLabel)
   Bound indexLabel <- bindContent
   Selected indices <- select @Number (#index <&> payload indexLabel)
-  Bound limitLabel <- bindContent
-  Selected limits <- select @Number (#limit <&> payload limitLabel)
-  Bound indexReadLabel <- bindContent
-  Selected indexReads <- select @Number (#indexRead <&> payload indexReadLabel)
-  Bound limitReadLabel <- bindContent
-  Selected limitReads <- select @Number (#limitRead <&> payload limitReadLabel)
-  Bound conditionLabel <- bindContent
-  Selected conditions <- select @Condition (#loopCondition <&> payload conditionLabel)
+  Bound elementLabel <- bindContent
+  Bound elementIndex <- bindInt
+  Selected elements <- select @Number (#element <&> #index @: elementIndex <&> payload elementLabel)
+  Bound targetReadLabel <- bindContent
+  Selected targetReads <- select @Number (#targetRead <&> payload targetReadLabel)
+  Bound elementReadLabel <- bindContent
+  Bound elementReadIndex <- bindInt
+  Selected elementReads <- select @Number (#elementRead <&> #index @: elementReadIndex <&> payload elementReadLabel)
+  Bound comparisonLabel <- bindContent
+  Selected comparisons <- select @Condition (#comparison <&> payload comparisonLabel)
+
+  node targets $ do
+    fitText targetLabel
+    left (at 580)
+    top (at 72)
+    width (by 120)
+    height (by 88)
+    styleFamily "target"
 
   node indices $ do
     fitText indexLabel
-    left (at 620)
-    top (at 120)
+    left (at 780)
+    top (at 72)
     width (by 120)
     height (by 88)
     styleFamily "index"
 
-  node limits $ do
-    fitText limitLabel
-    left (at 790)
-    top (at 120)
-    width (by 120)
-    height (by 88)
-    styleFamily "limit"
+  node elements $ do
+    fitText elementLabel
+    left (at 560 + shift (asScalar elementIndex * num 96))
+    top (at 210)
+    width (by 80)
+    height (by 72)
+    styleFamily "element"
 
-  node indexReads $ do
-    fitText indexReadLabel
+  node targetReads $ do
+    fitText targetReadLabel
     left (at 620)
-    top (at 270)
-    width (by 110)
-    height (by 80)
+    top (at 350)
+    width (by 100)
+    height (by 76)
     styleFamily "read"
 
-  node limitReads $ do
-    fitText limitReadLabel
-    left (at 800)
-    top (at 270)
-    width (by 110)
-    height (by 80)
+  node elementReads $ do
+    fitText elementReadLabel
+    left (at 790)
+    top (at 350)
+    width (by 100)
+    height (by 76)
     styleFamily "read"
 
-  node conditions $ do
-    fitText conditionLabel
-    left (at 710)
-    top (at 410)
-    width (by 110)
-    height (by 80)
-    styleFamily "condition"
+  node comparisons $ do
+    fitText comparisonLabel
+    left (at 705)
+    top (at 480)
+    width (by 100)
+    height (by 76)
+    styleFamily "comparison"
 
-  during @TestLoopBound $ mappedFragments @TestLoopBound source $ do
+  during @CompareTarget $ mappedFragments @CompareTarget source $ do
     style @FontWeight (FixedStyle FontWeightBold)
 
   during @IncrementIndex $ mappedFragments @IncrementIndex source $ do
