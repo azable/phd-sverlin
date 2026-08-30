@@ -648,21 +648,102 @@ value that authors immediately unpacked. The returned `Selected`, symbolic
 value, `Choice`, or `ContentValue` carries its compiler identity and hidden
 presence provenance directly. Selecting a relation does not make it a visual
 node, and `node` accepts only node selections or a generated-node body.
-`node selected body` applies the body once per matched node. A trace-selected
-node is terminal and cannot contain children. `node body` creates one generated
-node in the current Render scope and returns `Selected GeneratedNode` directly;
-generated nodes may contain selected or nested nodes.
+`node selected body` creates one node per match and evaluates its body in that
+particular match's scope. Both selected and generated nodes may contain child
+nodes. A generated child is consequently instantiated once for every outer
+match and inherits that match's lifetime, payload bindings, and presence
+condition. `node body` creates one generated node in the current Render scope
+and returns `Selected GeneratedNode` directly.
+
+Nesting a selected mapping beneath another selected mapping is a structural
+match, not a Cartesian product. In the baseline, the compiler can derive this
+match from direct Slot ownership: a selection nested beneath a slot owner maps
+only the currently stored occupant when its `Kind` matches. An unrelated or
+ambiguous nested selection is rejected with the two source locations. Put
+unrelated selections beneath a common generated parent instead.
 
 `self` retrieves the current generated node's handle from inside `body`, before
-`node` returns it; using `self` at the root or inside a trace-selected node is a
-source-level error. `canvas` is the persistent root handle for geometry
-expressions and is not emitted as a child node. Compound classification,
-selection across unrelated payload types, and exact payload-value predicates
-are outside this baseline; declare separate typed rules, or add a typed selector
-or predicate API later when a concrete use case requires one.
+`node` returns it. A selected parent is instead addressed through its captured
+`Selected` value, which resolves to the current match inside its body; `self`
+remains a source-level error at the root or directly inside a selected node.
+`canvas` is the persistent root handle for geometry expressions and is not
+emitted as a child node. Compound classification, selection across unrelated
+payload types, and exact payload-value predicates are outside this baseline;
+declare separate typed rules, or add a typed selector or predicate API later
+when a concrete use case requires one.
+
+For example, this produces one stable group per `ElementCell`. Its current
+`Number` occupant is a rounded value box, with an optional `A[index]` sibling
+below it. The row and cell groups hug their children, adjacent cells constrain
+one another directly, and only the completed row is positioned relative to the
+canvas. No index is converted into an absolute coordinate:
+
+```haskell
+cells <- select elementCellKind
+elements <- select elementKind
+adjacentLinks <- select adjacent
+ordering <- asSequence adjacentLinks cells
+
+gap <- variable @Span
+ensure $ gap .>=. by 8
+ensure $ gap .<=. by 20
+
+row <- node $ do
+  contentFit Both Hug
+
+  node cells $ do
+    position <- rankOf ordering
+    contentFit Both Hug
+
+    node elements $ do
+      value <- bindContent
+      fitText value
+      width (by 80)
+      height (by 72)
+      padding (uniform (by 8))
+      style @Fill (Hsl (num 210) (num 0.30) (num 0.94))
+      style @Stroke (Hsl (num 210) (num 0.45) (num 0.45))
+      style @BorderStyle BorderSolid
+      style @StrokeWidth (by 2)
+      style @Radius (by 12)
+
+    indexLabel <- sometimes $ node $ do
+      content (text "A[" <> asText position <> text "]")
+
+    ensure $ x indexLabel .==. x elements
+    ensure $ top indexLabel .==. bottom elements + shift 6
+
+  relation adjacentLinks $ do
+    previous <- first adjacentLinks
+    next <- second adjacentLinks
+    ensure $ left next .==. right previous + gap
+    ensure $ top next .==. top previous
+
+ensure $ center row .==. center canvas
+```
+
+The `elements` handle resolves to the current cell's structurally matched
+occupant throughout that cell body, so the generated label can be positioned
+relative to its rounded box. `sometimes` is evaluated separately for every
+cell; omitting a label also omits its two constraints. Mapping `elements` again
+elsewhere creates an independently positioned visual representation of the
+same Program blocks and requires neither `copy` nor a visual-proxy API.
 
 Retain the general content interfaces `ContentValue`, `text`, `content`, and
 `fitText`, and add the structural-value conversion `asText` documented below.
+Give `ContentValue` a `Semigroup` instance: `(<>)` concatenates fixed and bound
+pieces without inserting whitespace. It unions their hidden dependencies and
+lowers the result as one logical string, so `content` or `fitText` shapes the
+complete line rather than one node per piece:
+
+```haskell
+instance Semigroup ContentValue
+
+content (text "A[" <> asText position <> text "]")
+```
+
+Here `asText position` is the deterministic decimal representation of a
+compiler-derived `FixedInt`. The resulting line is, for example, `A[3]`.
 `content` shapes one line at its authored or theme-default fixed font size. The
 node's normal `Hug` sizing makes the box follow that shaped line and its padding,
 so text does not grow merely because a larger box is available.
@@ -2284,20 +2365,29 @@ Add focused facade and compiler tests for:
 
 - fixed-size `content` retaining its size in a larger box and deriving a hugging
   box when dimensions are otherwise free;
+- `ContentValue` concatenating fixed text, bound payload text, and `asText`
+  output without whitespace, preserving every hidden dependency, and shaping
+  the resolved result as one line;
 - `fitText` sampling across its complete feasible bounded size range rather
   than choosing the maximum, shared size variables obeying every line's fit
   constraint, and a source diagnostic when no permitted size or font fits;
 - one typed block kind and one typed relation kind selected through the same
   `select` vocabulary across Program and Render, plus compile-time mismatches
   between kinds, pending values, node selections, and relation selections;
-- the two library-provided `Node` forms, rejection of relation selections, and
-  `self` remaining valid only inside a generated node body;
+- the two library-provided `Node` forms, rejection of relation selections,
+  generated children instantiated independently for every selected parent,
+  inherited payload and presence bindings, and `self` remaining valid only
+  inside a generated node body;
 - `always` preserving inherited presence, `sometimes` returning ordinary symbolic
   handles with hidden presence provenance, transitive exclusion of dependent
   components, conjunction of several optional dependencies, and preservation of an
   unrelated component;
 - independent seeded inclusion of repeated `sometimes $ frame @Step` occurrences,
   with frame choices kept outside the affine configuration count;
+- a selected array-cell parent mapping only its current Slot occupant as a
+  child, independent per-cell `sometimes` labels, rejection of unrelated or
+  ambiguous nested selections, and a second root mapping of the same occupants
+  remaining independently positioned;
 - every materialized block receiving exactly one compatible `Kind`, including
   temporary values and operators, without creating a visual node until Render
   maps that kind, plus fixed and `sometimes` mappings of the same operator kind;
@@ -2398,12 +2488,6 @@ layout problem.
   itself must not filter relations or return replacement selections. Keep this
   operation out of the baseline until a concrete multi-structure use case fixes
   its required selection semantics.
-- Define how Render addresses the current occupant of a restored `Slot` from
-  its stable owner node. The owner-to-occupant association is settled trace
-  data, but the authored surface remains open: it may apply owner bounds to the
-  occupant automatically or expose a typed owner/occupant traversal. It must
-  let an array lay out `ElementCell` owners through `Adjacent` while rendering
-  each contained value, without restoring query bindings or integer joins.
 - Define the first bounded graph-template interface and how several candidate
   templates are weighted. Merely generating more equivalent templates must not
   increase one visual layout's sampling probability.

@@ -31,6 +31,17 @@ its width from its children's bounds and padding, not from a node count multipli
 by their spacing. Add a count or absolute-extent accessor only when that value must
 itself be visualized or cannot be derived from existing constraints.
 
+Node hierarchy is evaluated in the current selected match. A selected node may
+therefore contain generated children, with one copy of that subtree per matched
+Program block. When a selected Slot owner contains a selected occupant mapping,
+the compiler uses the recorded Slot association to choose that owner's current
+occupant rather than forming every possible parent-child pair. This supports a
+cell group containing a rounded occupant box and an optional index label through
+ordinary `node` and `sometimes` composition; it does not require an
+occupant-traversal, visual-proxy, or Program-copy API. The row should derive its
+extent from these child groups and direct adjacent-pair constraints rather than
+converting each index into an absolute coordinate.
+
 Examples:
 
 - In an array row, constrain each declared adjacent pair to share an axis and have

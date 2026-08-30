@@ -1,8 +1,8 @@
 -- Illustrative body-only linear search for the target API in API_plan.md.
 -- This planning source is not compiled by the current application.
 --
--- Domain declaration/packaging, typed Program steps, Render frame selection,
--- and the public Slot occupant-to-owner projection remain open API details.
+-- Domain declaration/packaging, typed Program steps, and Render frame selection
+-- remain open API details.
 -- Their working spellings below are deliberately confined to this example.
 
 data Number
@@ -622,35 +622,54 @@ render = do
     height (by 88)
 
   elementCells <- select elementCellKind
+  elements <- select elementKind
   adjacentRelations <- select adjacent
   elementRanking <- asSequence adjacentRelations elementCells
 
-  elementSpacing <- variable @Span
-  ensure $ elementSpacing .>=. by 88
-  ensure $ elementSpacing .<=. by 112
+  elementGap <- variable @Span
+  ensure $ elementGap .>=. by 8
+  ensure $ elementGap .<=. by 20
 
-  node elementCells $ do
-    position <- rankOf elementRanking
-    width (by 80)
-    height (by 72)
-    ensure $ x elementCells .==. at 600 + elementSpacing * asScalar position
-    ensure $ y elementCells .==. at 246
+  arrayRow <- node $ do
+    contentFit Both Hug
 
-  relation adjacentRelations $ do
-    previous <- first adjacentRelations
-    next <- second adjacentRelations
-    connector (anchor AtRight previous) (anchor AtLeft next) $ do
-      style @Stroke (Hsl (num 215) (num 0.45) (num 0.48))
-      style @StrokeWidth (by 2)
-      endMarker ArrowMarker
+    node elementCells $ do
+      position <- rankOf elementRanking
+      contentFit Both Hug
 
-  -- The planned Slot projection keeps each current Number occupant at its
-  -- ElementCell owner's stable bounds. The exact public projection helper, or
-  -- whether this alignment is automatic, remains to be named.
-  elements <- select elementKind
-  node elements $ do
-    elementLabel <- bindContent
-    fitText elementLabel
+      -- The structurally matched occupant is the rounded value box.
+      node elements $ do
+        elementValue <- bindContent
+        fitText elementValue
+        width (by 80)
+        height (by 72)
+        padding (uniform (by 8))
+        style @Fill (Hsl (num 210) (num 0.30) (num 0.94))
+        style @Stroke (Hsl (num 210) (num 0.45) (num 0.45))
+        style @BorderStyle BorderSolid
+        style @StrokeWidth (by 2)
+        style @Radius (by 12)
+
+      -- Each cell independently includes or omits its generated A[index]
+      -- sibling. ContentValue concatenation still shapes one complete line.
+      arrayLabel <- sometimes $ node $ do
+        content (text "A[" <> asText position <> text "]")
+
+      ensure $ x arrayLabel .==. x elements
+      ensure $ top arrayLabel .==. bottom elements + shift 6
+
+    relation adjacentRelations $ do
+      previous <- first adjacentRelations
+      next <- second adjacentRelations
+      ensure $ left next .==. right previous + elementGap
+      ensure $ top next .==. top previous
+      connector (anchor AtRight previous) (anchor AtLeft next) $ do
+        style @Stroke (Hsl (num 215) (num 0.45) (num 0.48))
+        style @StrokeWidth (by 2)
+        endMarker ArrowMarker
+
+  ensure $ x arrayRow .==. x canvas
+  ensure $ top arrayRow .==. bottom targets + shift 40
 
   targetReads <- select targetReadKind
   node targetReads $ do

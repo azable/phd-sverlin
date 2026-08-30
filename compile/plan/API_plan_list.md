@@ -281,6 +281,58 @@ overloads. Selecting relations does not draw them or make them acceptable to
 and presence provenance directly; there are no `SelectionBinding`, `Variable`,
 or `Bound` result wrappers.
 
+Both node forms may contain children. `node selected body` creates one parent
+per selected match; generated descendants inherit that match's payload and
+presence. A selected child nested under a selected Slot owner maps only that
+owner's current matching occupant, rather than every selected child. This
+example derives the complete row from containment and adjacent pairs:
+
+```haskell
+cells <- select elementCellKind
+elements <- select elementKind
+adjacentLinks <- select adjacent
+ordering <- asSequence adjacentLinks cells
+
+gap <- variable @Span
+ensure $ gap .>=. by 8
+ensure $ gap .<=. by 20
+
+row <- node $ do
+  contentFit Both Hug
+
+  node cells $ do
+    position <- rankOf ordering
+    contentFit Both Hug
+
+    node elements $ do
+      value <- bindContent
+      fitText value
+      width (by 80)
+      height (by 72)
+      style @BorderStyle BorderSolid
+      style @Radius (by 12)
+
+    indexLabel <- sometimes $ node $ do
+      content (text "A[" <> asText position <> text "]")
+
+    ensure $ x indexLabel .==. x elements
+    ensure $ top indexLabel .==. bottom elements + shift 6
+
+  relation adjacentLinks $ do
+    previous <- first adjacentLinks
+    next <- second adjacentLinks
+    ensure $ left next .==. right previous + gap
+    ensure $ top next .==. top previous
+
+ensure $ center row .==. center canvas
+```
+
+The label choice is independent for each cell. Mapping `elements` again at
+another scope creates an independently positioned visual representation
+without copying the Program block. Nested selections without one unambiguous
+structural association are rejected; the baseline association is direct Slot
+ownership.
+
 ### Text
 
 ```haskell
@@ -288,6 +340,8 @@ data ContentValue                 -- abstract fixed or bound text
 text    :: String -> ContentValue
 content :: ... -> Render ()       -- fixed/default size; the node hugs the line
 fitText :: ... -> Render ()       -- bounded size variation; never maximizes or wraps
+
+instance Semigroup ContentValue   -- `(<>)` joins fixed and bound text
 
 data TextBuilder a
 literal      :: String -> TextBuilder ()
@@ -303,6 +357,11 @@ fixed size and normal `Hug` sizing derives the node from the shaped line.
 theme-defined fit range. It permits any feasible size rather than choosing the
 largest. Every text node remains one independently positioned, shaped line;
 neither operation wraps it.
+
+`ContentValue` concatenation inserts no whitespace, preserves the dependencies
+of every input, and shapes the resolved result as one line. For example,
+`text "A[" <> asText position <> text "]"` produces an index label such as
+`A[3]`; it does not create three text nodes.
 
 ### Relations and structural rankings
 
@@ -562,6 +621,5 @@ orientation is intentionally a random authored choice.
 4. Internal provenance representation and supporting constraint for values returned
    by `sometimes`.
 5. Exact `TextBuilder` input and fragment signatures.
-6. The Render projection from a stable slot owner to its current occupant.
-7. Graph-template APIs and their sampling weights.
-8. Whether `BorderDouble` and `TextAlignJustify` remain public.
+6. Graph-template APIs and their sampling weights.
+7. Whether `BorderDouble` and `TextAlignJustify` remain public.
