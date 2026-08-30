@@ -142,6 +142,7 @@ export type WorkspaceResource = {
   view: v.InferOutput<typeof workspaceViewSchema>;
   layout: v.InferOutput<typeof presentationLayoutSchema>;
   readOnly: boolean;
+  userAuthorLabel: string;
   projects: ProjectSummary[];
   study?: {
     phaseId: string;

@@ -41,5 +41,20 @@ export const actions: Actions = {
       redirect(303, `/projects/${state.projectId}`);
     }
     return { continued: true };
+  },
+  early: async ({ locals }) => {
+    const principal = requirePrincipal(locals);
+    if (principal.kind === 'admin') redirect(303, '/');
+    let destination: string;
+    try {
+      const state = await continueParticipantStudy(principal.user.id, { early: true });
+      destination =
+        state.phase.kind === 'task' && state.projectId ? `/projects/${state.projectId}` : '/study';
+    } catch (cause) {
+      return fail(409, {
+        error: cause instanceof Error ? cause.message : 'The task could not finish early.'
+      });
+    }
+    redirect(303, destination);
   }
 };

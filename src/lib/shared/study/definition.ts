@@ -32,6 +32,7 @@ export type StudyPhase =
       id: string;
       kind: 'task';
       conditionSlot: string;
+      allowEarlyCompletion?: boolean;
       instructions: { title: string; prompt: string };
     }
   | { id: string; kind: 'completion'; title: string; paragraphs: string[] };
@@ -39,6 +40,8 @@ export type StudyPhase =
 export type StudyDefinition = {
   id: string;
   version: number;
+  name: string;
+  description: string;
   assignment: { strategy: 'balanced'; tieBreakOrder: string[] };
   conditions: Record<string, StudyCondition>;
   arms: Record<string, { slots: Record<string, string> }>;
@@ -62,11 +65,24 @@ export function minutes(value: number): number {
 export function defineStudy<const Definition extends StudyDefinition>(
   definition: Definition
 ): Readonly<Definition> {
+  if (!definition.flow.length) throw new Error('Study protocols need at least one phase.');
+  if (definition.flow[0]?.kind !== 'instruction') {
+    throw new Error('Study protocols must begin with an instruction phase.');
+  }
+  if (definition.flow.at(-1)?.kind !== 'completion') {
+    throw new Error('Study protocols must end with a completion phase.');
+  }
+  if (definition.flow.slice(0, -1).some(({ kind }) => kind === 'completion')) {
+    throw new Error('Study completion must be the final phase.');
+  }
   const phaseIds = definition.flow.map(({ id }) => id);
   if (new Set(phaseIds).size !== phaseIds.length)
     throw new Error('Study phase IDs must be unique.');
   if (!Number.isSafeInteger(definition.version) || definition.version <= 0) {
     throw new Error('Study versions must be positive integers.');
+  }
+  if (!definition.assignment.tieBreakOrder.length) {
+    throw new Error('Study protocols need at least one assignment arm.');
   }
   for (const [id, condition] of Object.entries(definition.conditions)) {
     if (!Number.isSafeInteger(condition.durationSeconds) || condition.durationSeconds <= 0) {

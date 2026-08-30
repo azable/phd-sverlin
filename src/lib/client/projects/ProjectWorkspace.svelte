@@ -8,8 +8,9 @@
   import SettingsIcon from '@lucide/svelte/icons/settings';
 
   import * as Alert from '$lib/client/components/ui/alert';
+  import * as AlertDialog from '$lib/client/components/ui/alert-dialog';
   import { Badge } from '$lib/client/components/ui/badge';
-  import { Button } from '$lib/client/components/ui/button';
+  import { Button, buttonVariants } from '$lib/client/components/ui/button';
   import { Input } from '$lib/client/components/ui/input';
   import { Label } from '$lib/client/components/ui/label';
   import * as Resizable from '$lib/client/components/ui/resizable';
@@ -35,22 +36,25 @@
   type StudyTask =
     | {
         context: 'participant';
+        runId: string;
         phaseId: string;
         title: string;
         prompt: string;
         deadlineAt?: string;
         expired: boolean;
         layout: PresentationLayout;
+        allowEarlyCompletion: boolean;
       }
     | {
         context: 'admin-preview';
-        previewKey: string;
+        runId: string;
         phaseId: string;
         title: string;
         prompt: string;
         deadlineAt: string;
         expired: boolean;
         layout: PresentationLayout;
+        allowEarlyCompletion: false;
       };
 
   type Props = {
@@ -92,7 +96,7 @@
 
   const adminPreview = $derived(study?.context === 'admin-preview');
   const showAdminControls = $derived(isAdmin && !adminPreview);
-  const developerView = $derived(showAdminControls && devMode);
+  const developerView = $derived(isAdmin && !adminPreview && devMode);
   const busy = $derived(!!session.pending || session.creating);
   const mutationsDisabled = $derived(busy || expired || session.readOnly || editMode === 'editing');
   const presentationCount = $derived<1 | 2>(
@@ -170,19 +174,53 @@
             </Badge>
           {/if}
           {#if study.context === 'admin-preview'}
-            <form method="POST" action="?/restartPreview">
-              <input type="hidden" name="previewKey" value={study.previewKey} />
-              <Button type="submit" size="sm" variant="outline">Restart preview</Button>
+            <form method="POST" action="?/forcePreview">
+              <Button type="submit" size="sm" variant="outline">Force next phase</Button>
             </form>
             <Button href={resolve('/admin')} size="sm">Return to administration</Button>
-          {:else if authEnabled}
-            <form method="POST" action={resolve('/logout')}>
-              <Button type="submit" size="icon-sm" variant="ghost" aria-label="Sign out"
-                ><LogOutIcon /></Button
-              >
-            </form>
+          {:else}
+            {#if study.allowEarlyCompletion && !expired && !session.readOnly}
+              <AlertDialog.Root>
+                <AlertDialog.Trigger class={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                  Finish task early
+                </AlertDialog.Trigger>
+                <AlertDialog.Content>
+                  <AlertDialog.Header>
+                    <AlertDialog.Title>Finish this task early?</AlertDialog.Title>
+                    <AlertDialog.Description>
+                      The project will be locked immediately and you will advance to the next phase.
+                    </AlertDialog.Description>
+                  </AlertDialog.Header>
+                  <AlertDialog.Footer>
+                    <AlertDialog.Cancel>Keep working</AlertDialog.Cancel>
+                    <form method="POST" action={`${resolve('/study')}?/early`}>
+                      <Button type="submit">Finish and continue</Button>
+                    </form>
+                  </AlertDialog.Footer>
+                </AlertDialog.Content>
+              </AlertDialog.Root>
+            {/if}
+            {#if isAdmin}
+              <Button href={resolve('/admin')} size="sm">Return to administration</Button>
+            {/if}
+            {#if authEnabled}
+              <form method="POST" action={resolve('/logout')}>
+                <Button type="submit" size="icon-sm" variant="ghost" aria-label="Sign out"
+                  ><LogOutIcon /></Button
+                >
+              </form>
+            {/if}
           {/if}
         </header>
+      {/if}
+
+      {#if isAdmin && session.readOnly}
+        <Alert.Root class="m-3">
+          <Alert.Title>Read-only participant data</Alert.Title>
+          <Alert.Description>
+            Administrators can inspect this project and its complete Timeline but cannot change it.
+          </Alert.Description>
+        </Alert.Root>
       {/if}
 
       <Resizable.PaneGroup direction="horizontal" class="min-h-0 flex-1">
@@ -199,32 +237,34 @@
                   class="ml-auto h-8 max-w-40 rounded-md border bg-background px-2 text-sm"
                   value={projectId}
                   onchange={selectProject}
-                  disabled={mutationsDisabled}
+                  disabled={busy || editMode === 'editing'}
                   aria-label="Open project"
                 >
                   {#each session.projects as project (project.projectId)}
                     <option value={project.projectId}>{project.title}</option>
                   {/each}
                 </select>
-                {#if renaming}
-                  <form class="flex items-center gap-1" onsubmit={rename}>
-                    <Input class="h-8 w-32" bind:value={titleDraft} aria-label="Project title" />
-                    <Button type="submit" size="sm">Save</Button>
-                  </form>
-                {:else}
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    onclick={startRenaming}
-                    aria-label="Rename project"><PencilIcon /></Button
-                  >
+                {#if !session.readOnly}
+                  {#if renaming}
+                    <form class="flex items-center gap-1" onsubmit={rename}>
+                      <Input class="h-8 w-32" bind:value={titleDraft} aria-label="Project title" />
+                      <Button type="submit" size="sm">Save</Button>
+                    </form>
+                  {:else}
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onclick={startRenaming}
+                      aria-label="Rename project"><PencilIcon /></Button
+                    >
+                  {/if}
+                  <NewProjectDialog
+                    {session}
+                    {templates}
+                    devMode={developerView}
+                    disabled={mutationsDisabled}
+                  />
                 {/if}
-                <NewProjectDialog
-                  {session}
-                  {templates}
-                  devMode={developerView}
-                  disabled={mutationsDisabled}
-                />
               {/if}
             </Tabs.List>
             <Tabs.Content value="timeline" class="flex min-h-0 flex-1 flex-col">
@@ -321,10 +361,6 @@
     </div>
   {/if}
   {#if study}
-    <PhaseExpiredDialog
-      open={expired}
-      context={study.context}
-      previewKey={study.context === 'admin-preview' ? study.previewKey : undefined}
-    />
+    <PhaseExpiredDialog open={expired} context={study.context} />
   {/if}
 </div>

@@ -38,7 +38,7 @@
         class:bg-card={item.actor === 'assistant'}
       >
         <p class="mb-1 text-sm font-medium">
-          {item.actor === 'user' ? 'You' : 'Sverlin Assistant'}
+          {item.actor === 'user' ? session.userAuthorLabel : 'Sverlin Assistant'}
         </p>
         <p class="text-base whitespace-pre-wrap">{item.text}</p>
       </article>

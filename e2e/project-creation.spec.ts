@@ -103,34 +103,35 @@ test('administrator can run a timed study preview and configure a participant gi
   const browserFailures = observeBrowserFailures(page);
   await page.goto('/admin');
 
-  await expect(page.getByRole('heading', { name: 'Study preview' })).toBeVisible();
-  const createPreview = page.getByRole('button', { name: 'Create Sverlin preview' });
-  await expect(createPreview).toBeVisible();
-  await createPreview.click({ noWaitAfter: true });
-  await expect(page).toHaveURL(/studyPreview=/, { timeout: 150_000 });
+  await expect(page.getByRole('heading', { name: 'Configured studies' })).toBeVisible();
+  await page.getByRole('button', { name: 'Create preview' }).first().click();
+  const previewDialog = page.getByRole('dialog', { name: /Preview Pilot study/ });
+  await expect(previewDialog.getByText('Full flow', { exact: true })).toBeVisible();
+  await previewDialog.getByRole('button', { name: 'Create preview' }).click({ noWaitAfter: true });
+  await expect(page).toHaveURL(/\/admin\/previews\//);
+  await expect(page.getByText('Welcome', { exact: true }).last()).toBeVisible();
+  await page.getByRole('button', { name: 'Force next phase' }).click({ noWaitAfter: true });
+  await expect(page).toHaveURL(/\/projects\//, { timeout: 150_000 });
 
   await expect(page.getByText('Preview', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Restart preview' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Force next phase' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Return to administration' })).toBeVisible();
   await expect(page.getByText('Presentation layout', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Dev' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Visualization/ })).toHaveCount(2);
 
-  const expiredUrl = new URL(page.url());
-  expiredUrl.searchParams.set('previewStartedAt', '1');
-  await page.goto(expiredUrl.toString());
-  const expiryDialog = page.getByRole('alertdialog');
-  await expect(expiryDialog.getByRole('heading', { name: 'Time is up' })).toBeVisible();
-  await expiryDialog.getByRole('button', { name: 'Restart preview' }).click();
-  await expect(expiryDialog).toHaveCount(0);
-  await expect.poll(() => new URL(page.url()).searchParams.get('previewStartedAt')).not.toBe('1');
-
+  await page.getByRole('button', { name: 'Force next phase' }).click();
+  await expect(page).toHaveURL(/\/admin\/previews\//);
+  await expect(page.getByText('First task complete', { exact: true }).last()).toBeVisible();
   await page.getByRole('link', { name: 'Return to administration' }).click();
   await expect(page).toHaveURL('/admin');
-  await expect(page.getByRole('heading', { name: 'All projects' })).toBeVisible();
-  await expect(page.getByText('Preview · Sverlin', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Administrator projects and previews' })
+  ).toBeVisible();
+  await expect(page.getByText(/Preview · Pilot study/).first()).toBeVisible();
 
-  const participant = page.locator('article').filter({ hasText: 'E2E-GIFT' });
+  const participant = page.locator('[data-slot="card"]').filter({ hasText: 'E2E-GIFT' });
+  await expect(participant.getByText('Not started', { exact: true })).toBeVisible();
   await participant.getByRole('button', { name: 'Add gift card' }).click();
   let giftCardDialog = page.getByRole('dialog', { name: 'Gift card for E2E-GIFT' });
   const giftCardInput = giftCardDialog.getByLabel('Gift-card URL');

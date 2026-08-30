@@ -4,14 +4,18 @@ import { eq } from 'drizzle-orm';
 import { afterAll, expect, it } from 'vitest';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { activeStudyDefinition } from '$lib/shared/study/registry';
+import { pilotStudyV1 } from '$lib/shared/study/pilot-v1';
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
 
 import { setParticipantGiftCardUrl } from './participants';
 import {
+  adminStudyPreviewState,
   continueParticipantStudy,
+  createStudyPreview,
+  enrollParticipant,
+  forceStudyPreview,
   participantCompletionGiftCardUrl,
   studyTaskProjectId
 } from './study';
@@ -30,18 +34,39 @@ afterAll(async () => {
   await closeDatabase();
 });
 
+it.skipIf(!enabled)('makes concurrent enrollment idempotent for one participant', async () => {
+  const userId = `enrollment-user-${randomUUID()}`;
+  users.push(userId);
+  await database()
+    .insert(schema.user)
+    .values({
+      id: userId,
+      name: userId,
+      email: `${userId}@sverlin.invalid`,
+      emailVerified: true,
+      username: userId,
+      role: 'user'
+    });
+
+  const ref = { id: pilotStudyV1.id, version: pilotStudyV1.version };
+  const runIds = await Promise.all([
+    enrollParticipant(userId, ref),
+    enrollParticipant(userId, ref)
+  ]);
+  const enrollments = await database()
+    .select()
+    .from(schema.studyEnrollments)
+    .where(eq(schema.studyEnrollments.userId, userId));
+
+  expect(new Set(runIds).size).toBe(1);
+  expect(enrollments).toHaveLength(1);
+});
+
 it.skipIf(!enabled)(
   'serializes repeated progression and reuses the deterministic ready task project',
   async () => {
     const userId = `study-user-${randomUUID()}`;
-    const projectId = studyTaskProjectId(
-      activeStudyDefinition.id,
-      activeStudyDefinition.version,
-      userId,
-      'task-one'
-    );
     users.push(userId);
-    projects.push(projectId);
     await database()
       .insert(schema.user)
       .values({
@@ -52,12 +77,20 @@ it.skipIf(!enabled)(
         username: userId,
         role: 'user'
       });
-    await database().insert(schema.studyEnrollments).values({
-      userId,
-      studyId: activeStudyDefinition.id,
-      studyVersion: activeStudyDefinition.version,
-      armId: 'sverlin-first'
-    });
+    const [run] = await database()
+      .insert(schema.studyRuns)
+      .values({
+        mode: 'participant',
+        ownerUserId: userId,
+        studyId: pilotStudyV1.id,
+        studyVersion: pilotStudyV1.version,
+        armId: 'sverlin-first'
+      })
+      .returning({ id: schema.studyRuns.id });
+    if (!run) throw new Error('Test study run was not created.');
+    await database().insert(schema.studyEnrollments).values({ userId, runId: run.id });
+    const projectId = studyTaskProjectId(run.id, 'task-one');
+    projects.push(projectId);
     await new PostgresProjectRepository().create(readyComparison(projectId), userId);
 
     const [first, retry] = await Promise.all([
@@ -67,20 +100,72 @@ it.skipIf(!enabled)(
     const runs = await database()
       .select()
       .from(schema.studyPhaseRuns)
-      .where(eq(schema.studyPhaseRuns.userId, userId));
-    const [enrollment] = await database()
+      .where(eq(schema.studyPhaseRuns.runId, run.id));
+    const [storedRun] = await database()
       .select()
-      .from(schema.studyEnrollments)
-      .where(eq(schema.studyEnrollments.userId, userId));
+      .from(schema.studyRuns)
+      .where(eq(schema.studyRuns.id, run.id));
 
     expect(first.projectId).toBe(projectId);
     expect(retry.projectId).toBe(projectId);
     expect(first.deadlineAt).toBe(retry.deadlineAt);
-    expect(enrollment?.currentPhaseIndex).toBe(1);
+    expect(storedRun?.currentPhaseIndex).toBe(1);
     expect(runs.filter(({ phaseId }) => phaseId === 'task-one')).toHaveLength(1);
     expect(runs).toHaveLength(2);
+    await expect(continueParticipantStudy(userId, { early: true })).rejects.toThrow('read-only');
   },
   30_000
+);
+
+it.skipIf(!enabled)(
+  'persists full and isolated previews while allowing forced advancement',
+  async () => {
+    const adminId = `preview-admin-${randomUUID()}`;
+    users.push(adminId);
+    await database()
+      .insert(schema.user)
+      .values({
+        id: adminId,
+        name: adminId,
+        email: `${adminId}@sverlin.invalid`,
+        emailVerified: true,
+        role: 'admin'
+      });
+
+    const initial = await createStudyPreview({
+      ownerUserId: adminId,
+      ref: { id: pilotStudyV1.id, version: pilotStudyV1.version },
+      armId: 'sverlin-first'
+    });
+    expect(initial).toMatchObject({ mode: 'preview', phase: { id: 'welcome' }, completed: false });
+    const taskProjectId = studyTaskProjectId(initial.runId, 'task-one');
+    projects.push(taskProjectId);
+    await new PostgresProjectRepository().create(readyComparison(taskProjectId), adminId);
+
+    const task = await forceStudyPreview(initial.runId, adminId);
+    expect(task).toMatchObject({ phase: { id: 'task-one' }, projectId: taskProjectId });
+    const between = await forceStudyPreview(initial.runId, adminId);
+    expect(between).toMatchObject({ phase: { id: 'between-tasks' }, completed: false });
+    expect(await adminStudyPreviewState(initial.runId, adminId)).toMatchObject({
+      phase: { id: 'between-tasks' }
+    });
+
+    const isolated = await createStudyPreview({
+      ownerUserId: adminId,
+      ref: { id: pilotStudyV1.id, version: pilotStudyV1.version },
+      armId: 'html-first',
+      phaseId: 'between-tasks'
+    });
+    const completed = await forceStudyPreview(isolated.runId, adminId);
+    expect(completed.completed).toBe(true);
+    expect(completed.flow.phases.map(({ status }) => status)).toEqual([
+      'out-of-scope',
+      'out-of-scope',
+      'completed',
+      'out-of-scope',
+      'out-of-scope'
+    ]);
+  }
 );
 
 it.skipIf(!enabled)('reveals a configured gift card only at completion', async () => {
@@ -96,20 +181,29 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
       username: userId,
       role: 'user'
     });
-  await database().insert(schema.studyEnrollments).values({
-    userId,
-    studyId: activeStudyDefinition.id,
-    studyVersion: activeStudyDefinition.version,
-    armId: 'sverlin-first'
-  });
+  const [run] = await database()
+    .insert(schema.studyRuns)
+    .values({
+      mode: 'participant',
+      ownerUserId: userId,
+      studyId: pilotStudyV1.id,
+      studyVersion: pilotStudyV1.version,
+      armId: 'sverlin-first'
+    })
+    .returning({ id: schema.studyRuns.id });
+  if (!run) throw new Error('Test study run was not created.');
+  await database().insert(schema.studyEnrollments).values({ userId, runId: run.id });
 
   await setParticipantGiftCardUrl(userId, 'https://gift.example/card/static');
   expect(await participantCompletionGiftCardUrl(userId)).toBeUndefined();
 
   await database()
-    .update(schema.studyEnrollments)
-    .set({ currentPhaseIndex: activeStudyDefinition.flow.length - 1 })
-    .where(eq(schema.studyEnrollments.userId, userId));
+    .update(schema.studyRuns)
+    .set({
+      currentPhaseIndex: pilotStudyV1.flow.length - 1,
+      completedAt: new Date()
+    })
+    .where(eq(schema.studyRuns.id, run.id));
   expect(await participantCompletionGiftCardUrl(userId)).toBe('https://gift.example/card/static');
 
   await setParticipantGiftCardUrl(userId, '');

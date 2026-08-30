@@ -2,12 +2,15 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 
-import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 
 import { auth } from '$lib/server/auth';
 import { database } from '$lib/server/db';
-import { projects, studyEnrollments, user } from '$lib/server/db/schema';
-import { enrollParticipant } from '$lib/server/study';
+import { projects, studyEnrollments, studyPhaseRuns, studyRuns, user } from '$lib/server/db/schema';
+import { enrollParticipant, studyRunStates } from '$lib/server/study';
+import type { ProjectSummary } from '$lib/shared/projects/model';
+import type { StudyFlow } from '$lib/shared/study/projection';
+import type { StudyRef } from '$lib/shared/study/registry';
 
 export type IssuedParticipantCredentials = {
   userId: string;
@@ -20,8 +23,14 @@ export type ParticipantListItem = {
   participantId: string;
   enabled: boolean;
   projectCount: number;
+  projects: ProjectSummary[];
+  runId?: string;
+  studyId?: string;
+  studyVersion?: number;
+  armId?: string;
+  flow?: StudyFlow;
   giftCardUrl?: string;
-  createdAt: Date;
+  createdAt: string;
 };
 
 /** List participant accounts with project counts, never credential secrets. */
@@ -32,24 +41,65 @@ export async function listParticipants(): Promise<ParticipantListItem[]> {
       participantId: user.name,
       username: user.username,
       banned: user.banned,
-      projectCount: count(projects.id),
       giftCardUrl: studyEnrollments.giftCardUrl,
+      runId: studyRuns.id,
+      studyId: studyRuns.studyId,
+      studyVersion: studyRuns.studyVersion,
+      armId: studyRuns.armId,
       createdAt: user.createdAt
     })
     .from(user)
-    .leftJoin(projects, and(eq(projects.ownerUserId, user.id), isNull(projects.deletedAt)))
     .leftJoin(studyEnrollments, eq(studyEnrollments.userId, user.id))
+    .leftJoin(studyRuns, eq(studyRuns.id, studyEnrollments.runId))
     .where(and(eq(user.role, 'user'), isNotNull(user.username)))
-    .groupBy(user.id, studyEnrollments.giftCardUrl)
     .orderBy(desc(user.createdAt));
 
+  const runIds = rows.flatMap(({ runId }) => (runId ? [runId] : []));
+  const [states, projectRows] = await Promise.all([
+    studyRunStates(runIds),
+    runIds.length
+      ? database()
+          .select({
+            runId: studyPhaseRuns.runId,
+            projectId: projects.id,
+            title: projects.title,
+            updatedAt: projects.updatedAt,
+            eventCount: projects.head,
+            templateId: projects.templateId,
+            renderer: projects.renderer
+          })
+          .from(studyPhaseRuns)
+          .innerJoin(projects, eq(projects.id, studyPhaseRuns.projectId))
+          .where(and(inArray(studyPhaseRuns.runId, runIds), isNull(projects.deletedAt)))
+          .orderBy(desc(projects.updatedAt))
+      : []
+  ]);
+  const stateByRunId = new Map(states.map((state) => [state.runId, state]));
+
   return rows.map((row) => ({
+    ...(() => {
+      const projectSummaries = projectRows
+        .filter(({ runId }) => runId === row.runId)
+        .map(({ runId: _runId, updatedAt, ...project }) => ({
+          ...project,
+          updatedAt: updatedAt.toISOString()
+        }));
+      const state = row.runId ? stateByRunId.get(row.runId) : undefined;
+      return {
+        projectCount: projectSummaries.length,
+        projects: projectSummaries,
+        ...(row.runId ? { runId: row.runId } : {}),
+        ...(row.studyId ? { studyId: row.studyId } : {}),
+        ...(row.studyVersion === null ? {} : { studyVersion: row.studyVersion }),
+        ...(row.armId ? { armId: row.armId } : {}),
+        ...(state ? { flow: state.flow } : {})
+      };
+    })(),
     id: row.id,
     participantId: row.participantId || row.username || row.id,
     enabled: !row.banned,
-    projectCount: row.projectCount,
     ...(row.giftCardUrl ? { giftCardUrl: row.giftCardUrl } : {}),
-    createdAt: row.createdAt
+    createdAt: row.createdAt.toISOString()
   }));
 }
 
@@ -86,6 +136,7 @@ export function normalizeGiftCardUrl(value: string): string | undefined {
 /** Create a participant and return the generated password exactly once. */
 export async function createParticipant(
   participantId: string,
+  study: StudyRef,
   headers: Headers
 ): Promise<IssuedParticipantCredentials> {
   const code = normalizeParticipantId(participantId);
@@ -103,7 +154,7 @@ export async function createParticipant(
   });
 
   try {
-    await enrollParticipant(result.user.id);
+    await enrollParticipant(result.user.id, study);
   } catch (cause) {
     await auth.api.removeUser({ headers, body: { userId: result.user.id } }).catch(() => undefined);
     throw cause;

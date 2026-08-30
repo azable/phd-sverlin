@@ -1,9 +1,10 @@
 /** PostgreSQL schema for Better Auth, projects, events, and resource metadata. */
 
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  check,
   customType,
   index,
   integer,
@@ -152,6 +153,43 @@ export const projects = pgTable(
   ]
 );
 
+/** One durable execution of an exact study protocol, for a participant or an administrator preview. */
+export const studyRuns = pgTable(
+  'study_run',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    mode: text('mode').$type<'participant' | 'preview'>().notNull(),
+    ownerUserId: text('owner_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    studyId: text('study_id').notNull(),
+    studyVersion: integer('study_version').notNull(),
+    armId: text('arm_id').notNull(),
+    currentPhaseIndex: integer('current_phase_index').default(0).notNull(),
+    startPhaseIndex: integer('start_phase_index').default(0).notNull(),
+    stopAfterPhaseIndex: integer('stop_after_phase_index'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    check('study_run_mode_check', sql`${table.mode} in ('participant', 'preview')`),
+    check('study_run_current_phase_check', sql`${table.currentPhaseIndex} >= 0`),
+    check('study_run_start_phase_check', sql`${table.startPhaseIndex} >= 0`),
+    check(
+      'study_run_stop_phase_check',
+      sql`${table.stopAfterPhaseIndex} is null or ${table.stopAfterPhaseIndex} >= ${table.startPhaseIndex}`
+    ),
+    index('study_run_protocol_arm_idx').on(
+      table.mode,
+      table.studyId,
+      table.studyVersion,
+      table.armId
+    ),
+    index('study_run_owner_created_idx').on(table.ownerUserId, table.createdAt)
+  ]
+);
+
 /** Counterbalanced study assignment retained independently from authentication state. */
 export const studyEnrollments = pgTable(
   'study_enrollment',
@@ -159,26 +197,23 @@ export const studyEnrollments = pgTable(
     userId: text('user_id')
       .primaryKey()
       .references(() => user.id, { onDelete: 'cascade' }),
-    studyId: text('study_id').notNull(),
-    studyVersion: integer('study_version').notNull(),
-    armId: text('arm_id').notNull(),
-    currentPhaseIndex: integer('current_phase_index').default(0).notNull(),
+    runId: uuid('run_id')
+      .notNull()
+      .unique()
+      .references(() => studyRuns.id, { onDelete: 'cascade' }),
     giftCardUrl: text('gift_card_url'),
-    enrolledAt: timestamp('enrolled_at', { withTimezone: true }).defaultNow().notNull(),
-    completedAt: timestamp('completed_at', { withTimezone: true })
+    enrolledAt: timestamp('enrolled_at', { withTimezone: true }).defaultNow().notNull()
   },
-  (table) => [
-    index('study_enrollment_protocol_arm_idx').on(table.studyId, table.studyVersion, table.armId)
-  ]
+  (table) => [index('study_enrollment_run_idx').on(table.runId)]
 );
 
 /** Durable execution record for each phase in one participant's resolved sequence. */
 export const studyPhaseRuns = pgTable(
   'study_phase_run',
   {
-    userId: text('user_id')
+    runId: uuid('run_id')
       .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+      .references(() => studyRuns.id, { onDelete: 'cascade' }),
     phaseId: text('phase_id').notNull(),
     sequenceIndex: integer('sequence_index').notNull(),
     kind: text('kind').notNull(),
@@ -189,14 +224,17 @@ export const studyPhaseRuns = pgTable(
     projectId: varchar('project_id', { length: 128 }).references(() => projects.id, {
       onDelete: 'set null'
     }),
-    status: text('status').default('ready').notNull(),
+    status: text('status').$type<'active' | 'completed'>().default('active').notNull(),
     startedAt: timestamp('started_at', { withTimezone: true }),
     deadlineAt: timestamp('deadline_at', { withTimezone: true }),
-    endedAt: timestamp('ended_at', { withTimezone: true })
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endReason: text('end_reason').$type<
+      'continued' | 'deadline' | 'participant-early' | 'admin-forced' | 'flow-complete'
+    >()
   },
   (table) => [
-    primaryKey({ columns: [table.userId, table.phaseId] }),
-    uniqueIndex('study_phase_run_user_sequence_unique').on(table.userId, table.sequenceIndex),
+    primaryKey({ columns: [table.runId, table.phaseId] }),
+    uniqueIndex('study_phase_run_sequence_unique').on(table.runId, table.sequenceIndex),
     uniqueIndex('study_phase_run_project_unique').on(table.projectId)
   ]
 );

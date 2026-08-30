@@ -623,8 +623,10 @@ variable names, or proximity.
 
 Proposed new solver architecture:
 
-- No fallback mode, just one process
-- Non-linear and branching/categorical constraints resolved
-- A finite but large number of possible affine configurations can be sampled
-- Sampling from the affine space gives visualisations
-  TODO expand with a little more architectural detail.
+Render constraints compile into a bounded finite piecewise-affine design space. The
+compiler resolves explicit choices and exact algebraic case splits into affine
+configurations. Small decision spaces may be enumerated; large spaces are conditioned
+using a discrete feasibility solver. A seeded sampler then selects a configuration and
+samples its convex affine region. Constraints that cannot be represented exactly in this
+model are rejected with a source-level diagnostic; they do not silently fall back to
+nonlinear optimization.

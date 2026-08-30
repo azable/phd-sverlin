@@ -12,6 +12,7 @@ export function projectWorkspace(options: {
   view: WorkspaceView;
   layout: PresentationLayout;
   readOnly?: boolean;
+  userAuthorLabel?: string;
   study?: WorkspaceResource['study'];
   at?: number;
 }): WorkspaceResource {
@@ -22,6 +23,7 @@ export function projectWorkspace(options: {
     view: options.view,
     layout: options.layout,
     readOnly: options.readOnly ?? options.at !== undefined,
+    userAuthorLabel: options.userAuthorLabel ?? 'You',
     projects: options.projects,
     ...(options.study ? { study: options.study } : {})
   };

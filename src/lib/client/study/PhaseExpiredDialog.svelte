@@ -7,9 +7,8 @@
   type Props = {
     open: boolean;
     context?: 'participant' | 'admin-preview';
-    previewKey?: string;
   };
-  let { open, context = 'participant', previewKey }: Props = $props();
+  let { open, context = 'participant' }: Props = $props();
 </script>
 
 <AlertDialog.Root {open}>
@@ -18,16 +17,15 @@
       <AlertDialog.Title>Time is up</AlertDialog.Title>
       <AlertDialog.Description>
         {context === 'admin-preview'
-          ? 'This preview has reached its configured time limit. Restart its timer or return to administration.'
+          ? 'This preview has reached its configured time limit. Advance it or return to administration.'
           : 'This phase has ended. Your work has been saved and this project is now read-only.'}
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>
-      {#if context === 'admin-preview' && previewKey}
+      {#if context === 'admin-preview'}
         <Button href={resolve('/admin')} variant="outline">Return to administration</Button>
-        <form method="POST" action="?/restartPreview">
-          <input type="hidden" name="previewKey" value={previewKey} />
-          <Button type="submit">Restart preview</Button>
+        <form method="POST" action="?/forcePreview">
+          <Button type="submit">Advance preview</Button>
         </form>
       {:else}
         <form method="POST" action={resolve('/study')}>

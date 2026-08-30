@@ -2,13 +2,10 @@ import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { activeStudyDefinition } from '$lib/shared/study/registry';
+import { pilotStudyV1 } from '$lib/shared/study/pilot-v1';
 
-import {
-  participantPurgeConfirmation,
-  studyDefinitionsForEnrollments,
-  verifyResearchResource
-} from './research-data';
+import { studyDefinitionsForEnrollments, verifyResearchResource } from './research-data';
+import { participantPurgeConfirmation } from './research-data-lifecycle';
 
 describe('research data verification', () => {
   it('requires an exact participant-specific purge confirmation', () => {
@@ -40,9 +37,9 @@ describe('research data verification', () => {
 
   it('exports the exact registered protocol version used by enrollments once', () => {
     const enrollments = [
-      { studyId: activeStudyDefinition.id, studyVersion: activeStudyDefinition.version },
-      { studyId: activeStudyDefinition.id, studyVersion: activeStudyDefinition.version }
+      { studyId: pilotStudyV1.id, studyVersion: pilotStudyV1.version },
+      { studyId: pilotStudyV1.id, studyVersion: pilotStudyV1.version }
     ];
-    expect(studyDefinitionsForEnrollments(enrollments)).toEqual([activeStudyDefinition]);
+    expect(studyDefinitionsForEnrollments(enrollments)).toEqual([pilotStudyV1]);
   });
 });

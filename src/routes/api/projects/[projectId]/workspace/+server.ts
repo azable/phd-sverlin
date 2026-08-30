@@ -1,33 +1,36 @@
 import { json } from '@sveltejs/kit';
 
-import { projectListOwner, requireProjectAccess } from '$lib/server/authorization';
+import { projectInspectionContext, projectListOwner } from '$lib/server/authorization';
 import { projectWorkspace } from '$lib/server/projects/workspace-view';
 import { loadProjectResource } from '$lib/server/projects/service';
-import { participantStudyState } from '$lib/server/study';
+import { studyRunState } from '$lib/server/study';
 import type { PresentationLayout } from '$lib/shared/presentations';
 
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ locals, params, url }) => {
-  const principal = await requireProjectAccess(locals, params.projectId);
+  const inspection = await projectInspectionContext(locals, params.projectId);
+  const { principal } = inspection;
   const developerRequested = url.searchParams.get('view') === 'developer';
   const view = principal.kind === 'admin' && developerRequested ? 'developer' : 'participant';
   const requestedLayout = url.searchParams.get('layout');
   let layout: PresentationLayout = requestedLayout === 'comparison' ? 'comparison' : 'single';
   let study;
-  let readOnly = false;
-  if (principal.kind === 'participant') {
-    const state = await participantStudyState(principal.user.id);
-    if (state.phase.kind === 'task' && state.projectId === params.projectId) {
-      layout = state.phase.condition.workspace.layout;
-      readOnly = state.expired;
+  if (inspection.study) {
+    const state = await studyRunState(inspection.study.runId);
+    const flowPhase = state.flow.phases.find(({ phase }) => phase.id === inspection.study?.phaseId);
+    if (flowPhase?.phase.kind === 'task') {
+      layout = flowPhase.phase.condition.workspace.layout;
       study = {
-        phaseId: state.phase.id,
-        deadlineAt: state.deadlineAt,
-        status: state.expired ? ('expired' as const) : ('active' as const)
+        phaseId: flowPhase.phase.id,
+        deadlineAt: flowPhase.deadlineAt,
+        status:
+          flowPhase.status === 'ready-to-continue'
+            ? ('expired' as const)
+            : flowPhase.status === 'completed'
+              ? ('complete' as const)
+              : ('active' as const)
       };
-    } else {
-      readOnly = true;
     }
   }
   const resource = await loadProjectResource(params.projectId, projectListOwner(principal));
@@ -37,7 +40,8 @@ export const GET: RequestHandler = async ({ locals, params, url }) => {
       projects: resource.projects,
       view,
       layout,
-      readOnly,
+      readOnly: inspection.readOnly,
+      userAuthorLabel: principal.kind === 'admin' ? (inspection.participantLabel ?? 'You') : 'You',
       ...(study ? { study } : {})
     })
   );

@@ -5,6 +5,8 @@ import { defineStudy, minutes } from './definition';
 export const pilotStudyV1 = defineStudy({
   id: 'pilot-study',
   version: 1,
+  name: 'Pilot study',
+  description: 'Counterbalanced comparison of Sverlin and HTML visualization workflows.',
   assignment: {
     strategy: 'balanced',
     tieBreakOrder: ['sverlin-first', 'html-first']

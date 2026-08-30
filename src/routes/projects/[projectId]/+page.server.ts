@@ -1,69 +1,70 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 
-import { requireAdmin, requireProjectAccess } from '$lib/server/authorization';
-import { projectRepository } from '$lib/server/projects/repository';
+import { projectInspectionContext, requireAdmin } from '$lib/server/authorization';
 import { listProjectTemplates } from '$lib/server/projects/starter-catalog';
-import { participantStudyState } from '$lib/server/study';
-import {
-  adminPreviewTask,
-  InvalidStudyPreviewError,
-  studyPreviewOption,
-  studyPreviewProjectUrl
-} from '$lib/server/study-preview';
+import { forceStudyPreview, studyRunState } from '$lib/server/study';
 
 import type { Actions, PageServerLoad } from './$types';
 
-/** Supply immutable project-template metadata to the creation dialog. */
-export const load: PageServerLoad = async ({ locals, params, url }) => {
-  const principal = await requireProjectAccess(locals, params.projectId);
-  const previewKey = url.searchParams.get('studyPreview');
-  const previewStartedAt = url.searchParams.get('previewStartedAt');
-  if ((previewKey || previewStartedAt) && principal.kind !== 'admin') {
-    error(403, 'Study previews require administrator access.');
-  }
-  let preview;
-  if (previewKey || previewStartedAt) {
-    if (!previewKey || !previewStartedAt) error(400, 'Incomplete study preview URL.');
-    try {
-      preview = adminPreviewTask(previewKey, previewStartedAt);
-    } catch (cause) {
-      if (cause instanceof InvalidStudyPreviewError) error(400, cause.message);
-      throw cause;
+/** Supply authorized study context and immutable project-template metadata. */
+export const load: PageServerLoad = async ({ locals, params }) => {
+  const inspection = await projectInspectionContext(locals, params.projectId);
+  const { principal } = inspection;
+  let study;
+  if (inspection.study) {
+    const state = await studyRunState(inspection.study.runId);
+    const flowPhase = state.flow.phases.find(({ phase }) => phase.id === inspection.study?.phaseId);
+    if (flowPhase?.phase.kind === 'task') {
+      const task = {
+        runId: state.runId,
+        phaseId: flowPhase.phase.id,
+        title: flowPhase.phase.instructions.title,
+        prompt: flowPhase.phase.instructions.prompt,
+        expired: flowPhase.status === 'ready-to-continue',
+        layout: flowPhase.phase.condition.workspace.layout
+      };
+      study =
+        state.mode === 'preview'
+          ? {
+              ...task,
+              context: 'admin-preview' as const,
+              deadlineAt: flowPhase.deadlineAt!,
+              allowEarlyCompletion: false as const
+            }
+          : {
+              ...task,
+              context: 'participant' as const,
+              deadlineAt: flowPhase.deadlineAt,
+              allowEarlyCompletion: !!flowPhase.phase.allowEarlyCompletion
+            };
     }
   }
-  const participantStudy =
-    principal.kind === 'participant' ? await participantStudyState(principal.user.id) : undefined;
   return {
     authEnabled: true,
     isAdmin: principal.kind === 'admin',
-    templates: principal.kind === 'admin' ? listProjectTemplates() : [],
-    study:
-      preview ??
-      (participantStudy?.phase.kind === 'task' && participantStudy.projectId === params.projectId
-        ? {
-            context: 'participant' as const,
-            phaseId: participantStudy.phase.id,
-            title: participantStudy.phase.instructions.title,
-            prompt: participantStudy.phase.instructions.prompt,
-            deadlineAt: participantStudy.deadlineAt,
-            expired: participantStudy.expired,
-            layout: participantStudy.phase.condition.workspace.layout
-          }
-        : undefined)
+    readOnly: inspection.readOnly,
+    templates: principal.kind === 'admin' && !inspection.readOnly ? listProjectTemplates() : [],
+    study
   };
 };
 
 export const actions: Actions = {
-  restartPreview: async ({ locals, params, request }) => {
-    requireAdmin(locals);
+  forcePreview: async ({ locals, params }) => {
+    const principal = requireAdmin(locals);
+    const inspection = await projectInspectionContext(locals, params.projectId);
+    if (inspection.study?.mode !== 'preview') error(404, 'Preview run not found.');
+    let destination: string;
     try {
-      await projectRepository.load(params.projectId);
-      const form = await request.formData();
-      const option = studyPreviewOption(String(form.get('previewKey') ?? ''));
-      redirect(303, studyPreviewProjectUrl(params.projectId, option.key, Date.now()));
+      const state = await forceStudyPreview(inspection.study.runId, principal.user.id);
+      destination =
+        !state.completed && state.phase.kind === 'task' && state.projectId
+          ? `/projects/${encodeURIComponent(state.projectId)}`
+          : `/admin/previews/${state.runId}`;
     } catch (cause) {
-      if (cause instanceof InvalidStudyPreviewError) return fail(400, { error: cause.message });
-      throw cause;
+      return fail(409, {
+        error: cause instanceof Error ? cause.message : 'The preview could not advance.'
+      });
     }
+    redirect(303, destination);
   }
 };

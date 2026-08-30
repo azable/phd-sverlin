@@ -1,8 +1,8 @@
-/** Seed the principals required by browser tests from the active study definition. */
+/** Seed the principals and exact participant study run required by browser tests. */
 
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
-import { activeStudyDefinition } from '$lib/shared/study/registry';
+import { pilotStudyV1 } from '$lib/shared/study/pilot-v1';
 
 try {
   await database()
@@ -24,11 +24,20 @@ try {
         role: 'user'
       }
     ]);
+  const [run] = await database()
+    .insert(schema.studyRuns)
+    .values({
+      mode: 'participant',
+      ownerUserId: 'sverlin-e2e-participant',
+      studyId: pilotStudyV1.id,
+      studyVersion: pilotStudyV1.version,
+      armId: pilotStudyV1.assignment.tieBreakOrder[0]!
+    })
+    .returning({ id: schema.studyRuns.id });
+  if (!run) throw new Error('The E2E participant study run could not be created.');
   await database().insert(schema.studyEnrollments).values({
     userId: 'sverlin-e2e-participant',
-    studyId: activeStudyDefinition.id,
-    studyVersion: activeStudyDefinition.version,
-    armId: activeStudyDefinition.assignment.tieBreakOrder[0]
+    runId: run.id
   });
 } finally {
   await closeDatabase();

@@ -1,6 +1,9 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { and, inArray, isNull } from 'drizzle-orm';
 
 import { requireAdmin } from '$lib/server/authorization';
+import { database } from '$lib/server/db';
+import * as schema from '$lib/server/db/schema';
 import {
   createParticipant,
   listParticipants,
@@ -9,74 +12,108 @@ import {
   setParticipantEnabled
 } from '$lib/server/participants';
 import { projectRepository } from '$lib/server/projects/repository';
-import { createProject } from '$lib/server/projects/service';
-import { purgeParticipantResearchData, purgeStudyResearchData } from '$lib/server/research-data';
 import {
-  InvalidStudyPreviewError,
-  studyPreviewOptions,
-  studyPreviewOption,
-  studyPreviewProjectUrl
-} from '$lib/server/study-preview';
+  purgeParticipantResearchData,
+  purgeStudyResearchData
+} from '$lib/server/research-data-lifecycle';
+import { createStudyPreview, listStudyPreviews } from '$lib/server/study';
+import { registeredStudies } from '$lib/shared/study/registry';
+import { projectStudyFlow } from '$lib/shared/study/projection';
 
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
   const principal = requireAdmin(locals);
-  const participants = await listParticipants();
-  const [allProjects, ...participantProjects] = await Promise.all([
+  const [participants, allProjects, previews] = await Promise.all([
+    listParticipants(),
     projectRepository.list(),
-    ...participants.map((participant) => projectRepository.list(participant.id))
+    listStudyPreviews(principal.user.id)
   ]);
-  const ownerByProjectId = new Map(
-    participantProjects.flatMap((projects, index) =>
-      projects.map((project) => [project.projectId, participants[index].participantId] as const)
-    )
-  );
+  const participantProjectRows = participants.length
+    ? await database()
+        .select({ id: schema.projects.id })
+        .from(schema.projects)
+        .where(
+          and(
+            inArray(
+              schema.projects.ownerUserId,
+              participants.map(({ id }) => id)
+            ),
+            isNull(schema.projects.deletedAt)
+          )
+        )
+    : [];
+  const participantProjectIds = new Set(participantProjectRows.map(({ id }) => id));
   return {
-    previewOptions: studyPreviewOptions().map(
-      ({ key, name, label, renderer, layout, durationSeconds }) => ({
-        key,
-        name,
-        label,
-        renderer,
-        layout,
-        durationSeconds
-      })
-    ),
-    allProjects: allProjects.map((project) => ({
-      ...project,
-      ownerLabel: ownerByProjectId.get(project.projectId) ?? principal.user.name ?? 'Administrator'
-    })),
-    participants: participants.map((participant, index) => ({
-      ...participant,
-      projectCount: participantProjects[index].length,
-      projects: participantProjects[index]
-    }))
+    studies: registeredStudies().map(({ definition, enrollment }) => {
+      const enrolled = participants.filter(
+        ({ studyId, studyVersion }) =>
+          studyId === definition.id && studyVersion === definition.version
+      );
+      return {
+        definition,
+        enrollment,
+        flow: projectStudyFlow(
+          definition,
+          {
+            id: `configured:${definition.id}:${definition.version}`,
+            mode: 'participant',
+            studyId: definition.id,
+            studyVersion: definition.version,
+            armId: definition.assignment.tieBreakOrder[0]!,
+            currentPhaseIndex: 0,
+            startPhaseIndex: 0
+          },
+          []
+        ),
+        participantCount: enrolled.length,
+        armCounts: Object.fromEntries(
+          Object.keys(definition.arms).map((armId) => [
+            armId,
+            enrolled.filter((participant) => participant.armId === armId).length
+          ])
+        ),
+        previews: previews.filter(
+          ({ studyId, studyVersion }) =>
+            studyId === definition.id && studyVersion === definition.version
+        )
+      };
+    }),
+    allProjects: allProjects
+      .filter(({ projectId }) => !participantProjectIds.has(projectId))
+      .map((project) => ({
+        ...project,
+        ownerLabel: principal.user.name ?? 'Administrator'
+      })),
+    participants
   };
 };
 
 export const actions: Actions = {
   createPreview: async ({ locals, request }) => {
     const principal = requireAdmin(locals);
-    let projectId: string;
-    let previewKey: string;
+    let destination: string;
     try {
       const form = await request.formData();
-      const option = studyPreviewOption(String(form.get('previewKey') ?? ''));
-      previewKey = option.key;
-      const document = await createProject({
+      const studyId = String(form.get('studyId') ?? '');
+      const studyVersion = Number(form.get('studyVersion'));
+      const phaseId = String(form.get('phaseId') ?? '').trim() || undefined;
+      const state = await createStudyPreview({
         ownerUserId: principal.user.id,
-        title: `Preview · ${option.name}`,
-        creation: { templateId: option.templateId, renderer: option.renderer },
-        presentationCount: option.presentationCount
+        ref: { id: studyId, version: studyVersion },
+        armId: String(form.get('armId') ?? ''),
+        ...(phaseId ? { phaseId } : {})
       });
-      projectId = document.projectId;
+      destination =
+        state.phase.kind === 'task' && state.projectId
+          ? `/projects/${encodeURIComponent(state.projectId)}`
+          : `/admin/previews/${state.runId}`;
     } catch (cause) {
-      return fail(cause instanceof InvalidStudyPreviewError ? 400 : 500, {
+      return fail(400, {
         error: cause instanceof Error ? cause.message : 'Study preview creation failed.'
       });
     }
-    redirect(303, studyPreviewProjectUrl(projectId, previewKey, Date.now()));
+    redirect(303, destination);
   },
   create: async ({ locals, request }) => {
     requireAdmin(locals);
@@ -84,6 +121,10 @@ export const actions: Actions = {
       const form = await request.formData();
       const credentials = await createParticipant(
         String(form.get('participantId') ?? ''),
+        {
+          id: String(form.get('studyId') ?? ''),
+          version: Number(form.get('studyVersion'))
+        },
         request.headers
       );
       return {

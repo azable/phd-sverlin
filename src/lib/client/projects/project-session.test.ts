@@ -181,6 +181,7 @@ function response(resource: unknown): Response {
 function workspaceResource(resource: ProjectResource): WorkspaceResource {
   return {
     schemaVersion: 1,
+    userAuthorLabel: 'You',
     projectId: resource.document.projectId,
     document: resource.document,
     projects: resource.projects,

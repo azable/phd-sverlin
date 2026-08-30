@@ -2,11 +2,15 @@ import { isHttpError, json } from '@sveltejs/kit';
 
 import { InvalidProjectDocumentError } from '$lib/shared/projects/events';
 import { parseProjectCommand } from '$lib/shared/projects/model';
-import { projectListOwner, requireAdmin, requireProjectAccess } from '$lib/server/authorization';
+import {
+  projectListOwner,
+  requireAdmin,
+  requireProjectAccess,
+  requireProjectMutationAccess
+} from '$lib/server/authorization';
 import { projectOperationExecutor } from '$lib/server/projects/operations';
 import { ProjectConflictError, ProjectNotFoundError } from '$lib/server/projects/repository';
 import { loadProjectResource } from '$lib/server/projects/service';
-import { assertParticipantStudyMutation } from '$lib/server/study';
 
 import type { RequestHandler } from './$types';
 
@@ -24,10 +28,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 /** Validate and execute one optimistic-concurrency project command. */
 export const POST: RequestHandler = async ({ params, request, locals }) => {
   try {
-    const principal = await requireProjectAccess(locals, params.projectId);
-    if (principal.kind === 'participant') {
-      await assertParticipantStudyMutation(principal, params.projectId);
-    }
+    await requireProjectMutationAccess(locals, params.projectId);
     const command = parseProjectCommand(await request.json());
     const accepted = await projectOperationExecutor.accept({
       projectId: params.projectId,

@@ -33,17 +33,23 @@ describe('analysis export traversal', () => {
 
     expect([...files.keys()]).toEqual([
       'owners.json',
+      'participants.json',
+      'study/definitions.json',
+      'study/enrollments.json',
+      'study/runs.json',
+      'study/phases.json',
+      'study/flows.json',
       'projects/analysis-project/project.json',
       'projects/analysis-project/resources.json',
       `projects/analysis-project/resources/sha256-${digest}`,
       'manifest.json'
     ]);
     expect(manifest).toMatchObject({
-      scope: { type: 'project', projectId: 'analysis-project' },
+      scope: { type: 'analysis', projectId: 'analysis-project' },
       ownerCount: 1,
       projectCount: 1
     });
-    expect(manifest.files).toHaveLength(4);
+    expect(manifest.files).toHaveLength(10);
     expect(JSON.parse(Buffer.from(files.get('owners.json')!).toString())).toEqual([
       { id: 'owner-1', label: 'P001', role: 'user', enabled: true }
     ]);
@@ -73,6 +79,7 @@ function fixtureSnapshot(digest: string, byteLength: number): AnalysisSnapshot {
         ownerUserId: 'owner-1',
         title: 'Analysis project',
         templateId: 'blank',
+        renderer: 'sverlin',
         createdAt: '2026-08-30T10:00:00.000Z',
         updatedAt: '2026-08-30T11:00:00.000Z',
         document: {
@@ -100,6 +107,8 @@ function fixtureSnapshot(digest: string, byteLength: number): AnalysisSnapshot {
           }
         ]
       }
-    ]
+    ],
+    participants: [],
+    study: { definitions: [], enrollments: [], runs: [], phases: [], flows: [] }
   };
 }

@@ -8,7 +8,7 @@ import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
 
-import { requireProjectAccess } from './authorization';
+import { requireProjectAccess, requireProjectMutationAccess } from './authorization';
 
 const enabled = Boolean(process.env.DATABASE_URL) && process.env.SVERLIN_RUN_POSTGRES_TESTS === '1';
 const createdProjects: string[] = [];
@@ -46,6 +46,12 @@ it.skipIf(!enabled)('enforces participant ownership while allowing administrator
   await expect(requireProjectAccess(locals('admin', adminId), projectId)).resolves.toMatchObject({
     user: { id: adminId }
   });
+  await expect(
+    requireProjectMutationAccess(locals('admin', adminId), projectId)
+  ).rejects.toMatchObject({ status: 403 });
+  await expect(
+    requireProjectMutationAccess(locals('participant', ownerId), projectId)
+  ).rejects.toThrow('read-only');
 });
 
 function user(id: string, role: 'user' | 'admin') {

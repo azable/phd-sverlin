@@ -51,5 +51,16 @@ describe('workspace projection', () => {
       'assistant.responded'
     ]);
     expect(workspace.readOnly).toBe(false);
+    expect(workspace.userAuthorLabel).toBe('You');
+    expect(
+      projectWorkspace({
+        document,
+        projects: [],
+        view: 'participant',
+        layout: 'single',
+        readOnly: true,
+        userAuthorLabel: 'P-104'
+      })
+    ).toMatchObject({ readOnly: true, userAuthorLabel: 'P-104' });
   });
 });

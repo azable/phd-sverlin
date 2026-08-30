@@ -56,19 +56,22 @@ the passkey already registered in the persistent PostgreSQL volume.
 ### 4. Test participant access
 
 1. Sign in as the administrator and open `/admin`.
-2. Create a participant ID, copy its generated password, and assign its static HTTPS gift-card URL.
-3. Use **Study preview** to check either active condition without creating participant study records. Preview projects remain in the global project list, while participant projects also appear under their participant.
-4. Open `/login` in a private/incognito window and enter the participant credentials.
-5. Continue from the welcome screen into the first timed task and confirm that its initial visualization appears.
-6. Verify that expiry locks the task and opens a blocking dialog whose Continue action advances to the counterbalanced second renderer.
-7. Verify that the participant Timeline shows separate user, assistant, and visualization bubbles. Selecting a visualization should activate it; in comparison mode, Shift-select two compatible bubbles to compare them.
-8. Verify that only an administrator's Developer view exposes retained event details and source controls, and that completion shows the assigned gift card and a Sign out action.
+2. Create a participant ID, select an open study version, copy its generated password, and assign its static HTTPS gift-card URL. The exact study/version and counterbalanced arm cannot be reassigned afterward.
+3. Confirm that the participant initially shows **Not started** with every configured phase unfilled. The same flow fills as the participant progresses and is marked **Completed** at the terminal phase.
+4. From a configured-study card, create either a durable full-flow preview or an isolated phase preview. Choose the arm explicitly; full-flow previews can be force-advanced without waiting for task timers, while isolated previews stop after their selected phase.
+5. Open `/login` in a private/incognito window and enter the participant credentials.
+6. Continue from the welcome screen into the first timed task and confirm that its initial visualization appears.
+7. Verify that expiry locks the task and opens a blocking dialog whose Continue action advances to the counterbalanced second renderer. A task with `allowEarlyCompletion` enabled in its immutable study definition also offers a confirmed early-finish action that immediately locks it.
+8. Verify that the participant Timeline shows separate user, assistant, and visualization bubbles. Selecting a visualization should activate it; in comparison mode, Shift-select two compatible bubbles to compare them.
+9. Open a participant task from its admin flow. The project must be read-only, and participant-authored messages must use the participant ID rather than “You”. Only password/access changes, gift-card management, exports, and explicitly confirmed purges are administrative mutations.
 
 Passwords can be rotated from `/admin`; rotation and disabling an account revoke its active sessions.
-The same page provides verified participant/study exports and explicitly
-confirmed research-data deletion. Exports omit authentication secrets and
-verify every immutable resource before download. Study exports include the exact
-registered protocol ID and version used by each included enrollment.
+The same page provides verified participant, exact-version study, all-study, and
+analysis exports alongside explicitly confirmed research-data deletion. Every delivery
+path uses the same snapshot, manifest, path-safety, and immutable-resource verification
+pipeline. Research exports select projects through study phase links, include the exact
+registered definitions plus complete projected flows, and exclude administrator previews
+and unrelated participant-owned projects.
 Gift-card URLs are operational participant data and are omitted from research and
 analysis exports.
 

@@ -91,6 +91,11 @@ export class ProjectSession {
     return this.#workspace?.readOnly ?? false;
   }
 
+  /** Label used for retained user-authored messages in the current inspection context. */
+  get userAuthorLabel(): string {
+    return this.#workspace?.userAuthorLabel ?? 'You';
+  }
+
   /** Project state reconstructed at the selected event position. */
   get snapshot(): ProjectSnapshot {
     if (!this.#resource) throw new Error('The project has not loaded.');
