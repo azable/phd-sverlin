@@ -1,0 +1,512 @@
+-- Breadth-first search written against the proposed API in API_plan_final.md.
+-- This is a planning example: the current compiler does not yet provide this API.
+--
+-- The Domain generator always makes a connected cyclic graph. Program then
+-- records its graph, the BFS discovery tree, a changing frontier, and one
+-- persistent visit marker per discovered vertex. Render is free to show the
+-- semantic graph, the traversal tree, or both without changing Program.
+
+data Vertex
+instance Traceable Vertex where
+  type Payload Vertex = LUnit Vertex
+
+data VertexLabel
+instance Traceable VertexLabel where
+  type Payload VertexLabel = LString VertexLabel
+
+data Visit
+instance Traceable Visit where
+  type Payload Visit = LUnit Visit
+
+data VisitLabel
+instance Traceable VisitLabel where
+  type Payload VisitLabel = LString VisitLabel
+
+data Frontier
+instance Traceable Frontier where
+  type Payload Frontier = LString Frontier
+
+data VertexRole
+data VertexLabelRole
+data VisitRole
+data VisitLabelRole
+data FrontierRole
+data ConnectedRole
+data DiscoveredFromRole
+data VisitAtRole
+data BfsScenarioRole
+
+vertexKind :: Kind Vertex
+vertexKind = kind @VertexRole
+
+vertexLabelKind :: Kind VertexLabel
+vertexLabelKind = kind @VertexLabelRole
+
+visitKind :: Kind Visit
+visitKind = kind @VisitRole
+
+visitLabelKind :: Kind VisitLabel
+visitLabelKind = kind @VisitLabelRole
+
+frontierKind :: Kind Frontier
+frontierKind = kind @FrontierRole
+
+connected :: RelationKind Vertex Vertex
+connected = symmetricRelation @ConnectedRole
+
+discoveredFrom :: RelationKind Vertex Vertex
+discoveredFrom = orderedRelation @DiscoveredFromRole
+
+visitAt :: RelationKind Visit Vertex
+visitAt = orderedRelation @VisitAtRole
+
+bfsScenario :: Input BfsInput
+bfsScenario = input @BfsScenarioRole
+
+data BreadthFirstSearch
+data BuildGraph
+data BuildTraversalTree
+data InitializeFrontier
+data VisitVertex
+data UpdateFrontier
+data FinishBreadthFirstSearch
+
+data BfsInput = BfsInput
+  { bfsLabels :: [String]
+  , bfsEdges :: [(Int, Int)]
+  , bfsStart :: Int
+  }
+
+-- A ring supplies connectivity and a cycle. Skip edges add variation without
+-- filtering or retrying generated values.
+bfsGenerator :: Generator BfsInput
+bfsGenerator = do
+  vertexCount <- between 5 9
+  names <- shuffle (take vertexCount ["A", "B", "C", "D", "E", "F", "G", "H", "I"])
+  skip <- elementOf 2 [3]
+  let ring = [(index, index + 1) | index <- [0 .. vertexCount - 2]] <> [(0, vertexCount - 1)]
+  let chords = [(index, index + skip) | index <- [0 .. vertexCount - skip - 1]]
+  pure (BfsInput names (ring <> chords) 0)
+
+domain :: Domain ()
+domain = do
+  declareKind vertexKind
+  declareKind vertexLabelKind
+  declareKind visitKind
+  declareKind visitLabelKind
+  declareKind frontierKind
+  declareRelation connected
+  declareRelation discoveredFrom
+  declareRelation visitAt
+  variable bfsScenario bfsGenerator
+  declareSteps
+    @'[ BreadthFirstSearch
+      , BuildGraph
+      , BuildTraversalTree
+      , InitializeFrontier
+      , VisitVertex
+      , UpdateFrontier
+      , FinishBreadthFirstSearch
+      ]
+
+--------------------------------------------------------------------------------
+-- Ordinary author-side linear containers
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data StoredList owner value where
+  StoredNil :: StoredList owner value
+  StoredCons :: Stored owner value %1 -> StoredList owner value %1 -> StoredList owner value
+
+data RelatedStored source sourceValue target targetValue where
+  RelatedStored ::
+    Stored source sourceValue %1 ->
+    Stored target targetValue %1 ->
+    RelatedStored source sourceValue target targetValue
+
+data RelatedExternal source sourceValue target targetValue where
+  RelatedExternal ::
+    Stored source sourceValue %1 ->
+    StoredList target targetValue %1 ->
+    RelatedExternal source sourceValue target targetValue
+
+data RelatedTail owner value where
+  RelatedTail :: Stored owner value %1 -> StoredList owner value %1 -> RelatedTail owner value
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = do
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+relateStored ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Program (RelatedStored source sourceValue target targetValue)
+relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
+-- This helper seeks one location while preserving every unrelated linear
+-- value. It is ordinary Program composition, not a public graph API.
+relateExternalAt ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Int ->
+  StoredList target targetValue %1 ->
+  Program (RelatedExternal source sourceValue target targetValue)
+relateExternalAt relationKind source targetIndex targets =
+  case (targetIndex, targets) of
+    (0, StoredCons target rest) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedExternal source1 (StoredCons target1 rest))
+    (index, StoredCons target rest) -> do
+      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
+      pure (RelatedExternal source1 (StoredCons target remaining))
+    (_, StoredNil) -> error "BFS generator produced an invalid vertex index"
+
+relateSourceToLater ::
+  RelationKind owner owner ->
+  Stored owner value %1 ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (RelatedTail owner value)
+relateSourceToLater relationKind source distance rest =
+  case (distance, rest) of
+    (0, StoredCons target tailValues) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedTail source1 (StoredCons target1 tailValues))
+    (offset, StoredCons current tailValues) -> do
+      RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset - 1) tailValues
+      pure (RelatedTail source1 (StoredCons current remaining))
+    (_, StoredNil) -> error "BFS generator produced an invalid edge"
+
+relateLaterSourceToTarget ::
+  RelationKind owner owner ->
+  Stored owner value %1 ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (RelatedTail owner value)
+relateLaterSourceToTarget relationKind target distance rest =
+  case (distance, rest) of
+    (0, StoredCons source tailValues) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedTail target1 (StoredCons source1 tailValues))
+    (offset, StoredCons current tailValues) -> do
+      RelatedTail target1 remaining <- relateLaterSourceToTarget relationKind target (offset - 1) tailValues
+      pure (RelatedTail target1 (StoredCons current remaining))
+    (_, StoredNil) -> error "BFS generator produced an invalid edge"
+
+relateAt ::
+  RelationKind owner owner ->
+  Int ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAt relationKind sourceIndex targetIndex values
+  | sourceIndex == targetIndex = error "a relation cannot join a location to itself"
+  | sourceIndex < targetIndex = seekSource sourceIndex values
+  | otherwise = seekTarget targetIndex values
+  where
+    seekSource 0 (StoredCons source rest) = do
+      RelatedTail source1 rest1 <- relateSourceToLater relationKind source (targetIndex - sourceIndex - 1) rest
+      pure (StoredCons source1 rest1)
+    seekSource index (StoredCons current rest) = do
+      rest1 <- seekSource (index - 1) rest
+      pure (StoredCons current rest1)
+    seekSource _ StoredNil = error "BFS generator produced an invalid source"
+
+    seekTarget 0 (StoredCons target rest) = do
+      RelatedTail target1 rest1 <- relateLaterSourceToTarget relationKind target (sourceIndex - targetIndex - 1) rest
+      pure (StoredCons target1 rest1)
+    seekTarget index (StoredCons current rest) = do
+      rest1 <- seekTarget (index - 1) rest
+      pure (StoredCons current rest1)
+    seekTarget _ StoredNil = error "BFS generator produced an invalid target"
+
+relateAll ::
+  RelationKind owner owner ->
+  [(Int, Int)] ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAll _ [] values = pure values
+relateAll relationKind ((source, target) : rest) values = do
+  values1 <- relateAt relationKind source target values
+  relateAll relationKind rest values1
+
+destroyStored :: Stored owner value %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  pure ()
+
+destroyStoredList :: StoredList owner value %1 -> Program ()
+destroyStoredList StoredNil = pure ()
+destroyStoredList (StoredCons current rest) = do
+  destroyStored current
+  destroyStoredList rest
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+buildVertices :: [String] -> Program (StoredList Vertex VertexLabel)
+buildVertices [] = pure StoredNil
+buildVertices (label : rest) = do
+  vertex <- createStored vertexKind LUnit vertexLabelKind (LString label)
+  vertices <- buildVertices rest
+  pure (StoredCons vertex vertices)
+
+memberInt :: Int -> [Int] -> Bool
+memberInt _ [] = False
+memberInt wanted (value : rest) = wanted == value || memberInt wanted rest
+
+neighbours :: [(Int, Int)] -> Int -> [Int]
+neighbours edges vertex =
+  [right | (left, right) <- edges, left == vertex]
+    <> [left | (left, right) <- edges, right == vertex]
+
+data BfsMoment = BfsMoment
+  { momentVertex :: Int
+  , momentParent :: Maybe Int
+  , momentFrontier :: [Int]
+  }
+
+-- Queue membership is checked constructively. The generated graph is finite,
+-- so this recursion always terminates without a retry limit.
+bfsMoments :: [(Int, Int)] -> Int -> [BfsMoment]
+bfsMoments edges start = go [] [(start, Nothing)]
+  where
+    go _ [] = []
+    go visited ((current, parent) : queue) =
+      let seenOrQueued candidate = memberInt candidate visited || memberInt candidate (map fst queue)
+          fresh = [(candidate, Just current) | candidate <- neighbours edges current, not (seenOrQueued candidate)]
+          nextQueue = queue <> fresh
+       in BfsMoment current parent (map fst nextQueue) : go (current : visited) nextQueue
+
+treeEdges :: [BfsMoment] -> [(Int, Int)]
+treeEdges [] = []
+treeEdges (moment : rest) =
+  case momentParent moment of
+    Nothing -> treeEdges rest
+    Just parent -> (parent, momentVertex moment) : treeEdges rest
+
+frontierText :: [String] -> [Int] -> String
+frontierText labels indices = "frontier: [" <> joinWith ", " [labels !! index | index <- indices] <> "]"
+
+joinWith :: String -> [String] -> String
+joinWith _ [] = ""
+joinWith _ [value] = value
+joinWith separator (value : rest) = value <> separator <> joinWith separator rest
+
+data TraversalState where
+  TraversalState ::
+    Block Frontier %1 ->
+    StoredList Visit VisitLabel %1 ->
+    StoredList Vertex VertexLabel %1 ->
+    TraversalState
+
+runTraversal ::
+  [String] ->
+  [BfsMoment] ->
+  Block Frontier %1 ->
+  StoredList Visit VisitLabel %1 ->
+  StoredList Vertex VertexLabel %1 ->
+  Program TraversalState
+runTraversal _ [] frontier visits vertices = pure (TraversalState frontier visits vertices)
+runTraversal labels (moment : rest) frontier visits vertices = do
+  marker <- step @VisitVertex $
+    createStored visitKind LUnit visitLabelKind (LString (labels !! momentVertex moment))
+  RelatedExternal marker1 vertices1 <- relateExternalAt visitAt marker (momentVertex moment) vertices
+
+  frontier1 <- step @UpdateFrontier $ do
+    Create nextText <- create (LString (frontierText labels (momentFrontier moment)))
+    Replace nextFrontier <- replace frontier nextText
+    materialize frontierKind nextFrontier
+
+  runTraversal labels rest frontier1 (StoredCons marker1 visits) vertices1
+
+program :: Program ()
+program = step @BreadthFirstSearch $ do
+  inputValue <- resolveInput bfsScenario
+  let moments = bfsMoments (bfsEdges inputValue) (bfsStart inputValue)
+
+  vertices0 <- step @BuildGraph $ do
+    created <- buildVertices (bfsLabels inputValue)
+    relateAll connected (bfsEdges inputValue) created
+
+  vertices1 <- step @BuildTraversalTree $
+    relateAll discoveredFrom (treeEdges moments) vertices0
+
+  frontier0 <- step @InitializeFrontier $ do
+    Create pending <- create (LString (frontierText (bfsLabels inputValue) [bfsStart inputValue]))
+    materialize frontierKind pending
+
+  TraversalState frontier1 visits vertices2 <-
+    runTraversal (bfsLabels inputValue) moments frontier0 StoredNil vertices1
+
+  step @FinishBreadthFirstSearch $ do
+    Destroy <- destroy frontier1
+    destroyStoredList visits
+    destroyStoredList vertices2
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1080
+  width canvasWidth
+  height canvasHeight
+  aspectRatio 16 9
+  padding (uniform (by 28))
+  contentFit Both Contain
+
+  always $ frame @InitializeFrontier
+  always $ frame @VisitVertex
+  sometimes $ frame @UpdateFrontier
+
+  horizontalGap <- variable @Span
+  verticalGap <- variable @Span
+  panelGap <- variable @Span
+  nodeSize <- variable @Span
+  ensure $ horizontalGap .>=. by 72
+  ensure $ horizontalGap .<=. by 132
+  ensure $ verticalGap .>=. by 64
+  ensure $ verticalGap .<=. by 116
+  ensure $ panelGap .>=. by 20
+  ensure $ panelGap .<=. by 52
+  ensure $ nodeSize .>=. by 48
+  ensure $ nodeSize .<=. by 76
+
+  vertices <- select vertexKind
+  labels <- select vertexLabelKind
+  graphLinks <- select connected
+  treeLinks <- select discoveredFrom
+  visits <- select visitKind
+  visitLabels <- select visitLabelKind
+  visitLinks <- select visitAt
+
+  graphView <- node $ do
+    padding (uniform (by 20))
+    contentFit Both Hug
+
+    oneOf "graph-arrangement"
+      (alternative "radial" $ arrange (ArrangeRadial graphLinks (vec2 horizontalGap verticalGap)) vertices)
+      [alternative "bounded-grid" $ arrange (ArrangeGrid 3 (vec2 horizontalGap verticalGap)) vertices]
+
+    node vertices $ do
+      width nodeSize
+      height nodeSize
+      padding (uniform (by 8))
+      contentFit Both Contain
+      style @Fill (Hsl (num 212) (num 0.34) (num 0.92))
+      style @Stroke (Hsl (num 212) (num 0.56) (num 0.40))
+      style @BorderStyle BorderSolid
+      style @StrokeWidth (by 2)
+      style @Radius (by 18)
+
+      -- The nested label is the occupant of this stable vertex location.
+      node labels $ do
+        label <- bindContent
+        fitText label
+
+    relation graphLinks $ do
+      leftVertex <- first graphLinks
+      rightVertex <- second graphLinks
+      connector (anchor AtBoundary leftVertex) (anchor AtBoundary rightVertex) $ do
+        style @Stroke (Hsl (num 214) (num 0.22) (num 0.52))
+        style @StrokeWidth (by 2)
+
+    -- Visit markers are independent nodes tied to vertices by VisitAt. Keeping
+    -- this rule inside graphView selects the graph mapping when vertices also
+    -- have an optional second mapping in traversalTree.
+    node visits $ do
+      width (nodeSize .+. by 14)
+      height (nodeSize .+. by 14)
+      contentFit Both Contain
+      withoutStyle @Fill
+      style @Stroke (Hsl (num 20) (num 0.78) (num 0.50))
+      style @BorderStyle BorderSolid
+      style @StrokeWidth (by 4)
+      style @Radius (by 22)
+      sometimes $ node visitLabels $ do
+        value <- bindContent
+        fitText (text "visited " <> value)
+
+    relation visitLinks $ do
+      marker <- first visitLinks
+      vertex <- second visitLinks
+      ensure $ center marker .==. center vertex
+
+  traversalTree <- sometimes $ node $ do
+    padding (uniform (by 20))
+    contentFit Both Hug
+    _ <- asTree treeLinks vertices
+    arrange (ArrangeTree treeLinks (vec2 horizontalGap verticalGap)) vertices
+
+    node vertices $ do
+      width nodeSize
+      height nodeSize
+      padding (uniform (by 8))
+      contentFit Both Contain
+      style @Fill (Hsl (num 146) (num 0.30) (num 0.90))
+      style @Stroke (Hsl (num 146) (num 0.48) (num 0.36))
+      style @BorderStyle BorderSolid
+      style @StrokeWidth (by 2)
+      style @Radius (by 18)
+      node labels $ bindContent >>= fitText
+
+    relation treeLinks $ do
+      parent <- first treeLinks
+      child <- second treeLinks
+      connector (anchor AtBoundary parent) (anchor AtBoundary child) $ do
+        style @Stroke (Hsl (num 146) (num 0.42) (num 0.38))
+        style @StrokeWidth (by 2)
+        endMarker ArrowMarker
+
+  frontier <- select frontierKind
+  frontierPanel <- node $ do
+    padding (uniform (by 16))
+    style @Fill (Hsl (num 42) (num 0.45) (num 0.92))
+    style @Stroke (Hsl (num 42) (num 0.62) (num 0.42))
+    style @BorderStyle BorderSolid
+    style @StrokeWidth (by 2)
+    style @Radius (by 12)
+    node frontier $ bindContent >>= fitText
+
+  -- Major panels have a seeded row/column composition. Both alternatives use
+  -- local relationships; neither computes an absolute canvas coordinate.
+  oneOf "panel-flow"
+    (alternative "row" $ do
+      ensure $ left frontierPanel .==. right graphView .+. panelGap
+      ensure $ y frontierPanel .==. y graphView
+      ensure $ top traversalTree .==. bottom graphView .+. panelGap
+      ensure $ x traversalTree .==. x graphView)
+    [alternative "column" $ do
+      ensure $ top frontierPanel .==. bottom graphView .+. panelGap
+      ensure $ x frontierPanel .==. x graphView
+      ensure $ left traversalTree .==. right graphView .+. panelGap
+      ensure $ y traversalTree .==. y graphView]
+
+  ensure $ separatedBy panelGap graphView frontierPanel
+  ensure $ x graphView .==. x canvas

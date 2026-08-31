@@ -1,0 +1,480 @@
+-- Linear search written against the proposed API in API_plan_final.md.
+--
+-- This is a body-only planning example. The current compiler does not implement
+-- this API yet. It is nevertheless a complete Domain/Program/Render design:
+-- Domain creates one bounded input from the scenario seed, Program consumes all
+-- linear resources, and Render lets the solver choose values within finite
+-- ranges while relative rules keep the result readable.
+
+--------------------------------------------------------------------------------
+-- Trace vocabulary
+--------------------------------------------------------------------------------
+
+data Number
+instance Traceable Number where
+  type Payload Number = LInt Number
+
+data Condition
+instance Traceable Condition where
+  type Payload Condition = LBool Condition
+
+data ElementCell
+instance Traceable ElementCell where
+  type Payload ElementCell = LUnit ElementCell
+
+data TargetCell
+instance Traceable TargetCell where
+  type Payload TargetCell = LUnit TargetCell
+
+data Equal
+instance Traceable Equal where
+  type Payload Equal = LOperator Equal
+
+instance Applicable2 Equal Number Number where
+  type Apply2Result Equal Number Number = Condition
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LBool (leftValue Linear.== rightValue)
+
+-- Marker types give declarations stable, collision-free identities. They carry
+-- no runtime value and therefore need no string keys.
+data ElementValueRole
+data TargetValueRole
+data TargetReadRole
+data ElementReadRole
+data ComparisonRole
+data ResultRole
+data ElementCellRole
+data TargetCellRole
+data EqualOperatorRole
+data AdjacentRole
+data LinearSearchCase
+
+elementValueKind :: Kind Number
+elementValueKind = kind @ElementValueRole
+
+targetValueKind :: Kind Number
+targetValueKind = kind @TargetValueRole
+
+targetReadKind :: Kind Number
+targetReadKind = kind @TargetReadRole
+
+elementReadKind :: Kind Number
+elementReadKind = kind @ElementReadRole
+
+comparisonKind :: Kind Condition
+comparisonKind = kind @ComparisonRole
+
+resultKind :: Kind Number
+resultKind = kind @ResultRole
+
+elementCellKind :: Kind ElementCell
+elementCellKind = kind @ElementCellRole
+
+targetCellKind :: Kind TargetCell
+targetCellKind = kind @TargetCellRole
+
+equalOperatorKind :: Kind Equal
+equalOperatorKind = kind @EqualOperatorRole
+
+adjacent :: RelationKind ElementCell ElementCell
+adjacent = orderedRelation @AdjacentRole
+
+searchCase :: Input (NonEmptyValues, Int)
+searchCase = input @LinearSearchCase
+
+-- The non-empty constructor makes the array invariant visible to Program. It
+-- avoids an impossible empty-list branch later.
+data NonEmptyValues = NonEmptyValues Int [Int]
+
+searchCases :: Generator (NonEmptyValues, Int)
+searchCases = do
+  tailLength <- between 3 9
+  firstValue <- between 0 49
+  remaining <- listOf tailLength tailLength (between 0 49)
+  -- Half the cases contain the target. The other half draw it from a disjoint
+  -- range, so every generated case is valid without retrying a seed.
+  target <- weighted (1, elementOf firstValue remaining) [(1, between 50 99)]
+  return (NonEmptyValues firstValue remaining, target)
+
+--------------------------------------------------------------------------------
+-- Named steps
+--------------------------------------------------------------------------------
+
+data LinearSearch
+data InitializeTarget
+data InitializeArray
+data CreateStored
+data LinkCells
+data SearchIteration
+data ReadTarget
+data ReadElement
+data CompareTarget
+data DecideComparison
+data PublishResult
+data SearchComplete
+data CleanUp
+
+domain :: Domain ()
+domain = do
+  declareKind elementValueKind
+  declareKind targetValueKind
+  declareKind targetReadKind
+  declareKind elementReadKind
+  declareKind comparisonKind
+  declareKind resultKind
+  declareKind elementCellKind
+  declareKind targetCellKind
+  declareKind equalOperatorKind
+  declareRelation adjacent
+  declareSteps
+    @'[ LinearSearch
+      , InitializeTarget
+      , InitializeArray
+      , CreateStored
+      , LinkCells
+      , SearchIteration
+      , ReadTarget
+      , ReadElement
+      , CompareTarget
+      , DecideComparison
+      , PublishResult
+      , SearchComplete
+      , CleanUp
+      ]
+  variable searchCase searchCases
+
+--------------------------------------------------------------------------------
+-- Small linear storage library local to this example
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data ReadStored owner value where
+  ReadStored :: Stored owner value %1 -> Block value %1 -> ReadStored owner value
+
+data Related leftOwner leftValue rightOwner rightValue where
+  Related ::
+    Stored leftOwner leftValue %1 ->
+    Stored rightOwner rightValue %1 ->
+    Related leftOwner leftValue rightOwner rightValue
+
+data Chain value where
+  Last :: Stored ElementCell value %1 -> Chain value
+  More :: Stored ElementCell value %1 -> Chain value %1 -> Chain value
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = step @CreateStored $ do
+  Create pendingOwner <- create ownerPayload
+  owner <- materialize ownerKind pendingOwner
+  Create pendingValue <- create valuePayload
+  value <- materialize valueKind pendingValue
+  Seal owner1 slot <- seal owner value
+  return (Stored owner1 slot)
+
+readStored ::
+  (Traceable owner, Traceable value) =>
+  Kind value ->
+  Stored owner value %1 ->
+  Program (ReadStored owner value)
+readStored readKind (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Copy value1 pendingRead <- copy value
+  readValue <- materialize readKind pendingRead
+  Seal owner2 slot1 <- seal owner1 value1
+  return (ReadStored (Stored owner2 slot1) readValue)
+
+relateStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Program (Related leftOwner leftValue rightOwner rightValue)
+relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  return (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
+destroyStored ::
+  (Traceable owner, Traceable value) =>
+  Stored owner value %1 ->
+  Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  return ()
+
+destroyChain :: Chain Number %1 -> Program ()
+destroyChain (Last cell) = destroyStored cell
+destroyChain (More cell rest) = do
+  destroyStored cell
+  destroyChain rest
+
+-- Adjacency belongs to persistent cell owners, so it survives reads and other
+-- occupant identity changes without a public relation token.
+buildChain :: Int -> [Int] -> Program (Chain Number)
+buildChain value [] = do
+  cell <- createStored elementCellKind LUnit elementValueKind (LInt value)
+  return (Last cell)
+buildChain value (nextValue : remaining) = do
+  current <- createStored elementCellKind LUnit elementValueKind (LInt value)
+  rest <- buildChain nextValue remaining
+  case rest of
+    Last next -> step @LinkCells $ do
+      Related current1 next1 <- relateStored adjacent current next
+      return (More current1 (Last next1))
+    More next tailValues -> step @LinkCells $ do
+      Related current1 next1 <- relateStored adjacent current next
+      return (More current1 (More next1 tailValues))
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+data Examined where
+  Examined ::
+    Stored TargetCell Number %1 ->
+    Stored ElementCell Number %1 ->
+    Bool ->
+    Examined
+
+data SearchState where
+  SearchState :: Maybe Int -> Stored TargetCell Number %1 -> Chain Number %1 -> SearchState
+
+data CompletedSearch where
+  CompletedSearch ::
+    Block Number %1 ->
+    Stored TargetCell Number %1 ->
+    Chain Number %1 ->
+    CompletedSearch
+
+examine ::
+  Stored TargetCell Number %1 ->
+  Stored ElementCell Number %1 ->
+  Program Examined
+examine target cell = do
+  ReadStored target1 targetRead <- step @ReadTarget (readStored targetReadKind target)
+  ReadStored cell1 elementRead <- step @ReadElement (readStored elementReadKind cell)
+
+  condition <- step @CompareTarget $ do
+    Create pendingEqual <- create @Equal LOperator
+    equal <- materialize equalOperatorKind pendingEqual
+    Apply2 pendingCondition <- apply2 equal elementRead targetRead
+    materialize comparisonKind pendingCondition
+
+  Use (LBool matched) <- step @DecideComparison (use condition)
+  return (Examined target1 cell1 matched)
+
+searchFrom ::
+  Int ->
+  Stored TargetCell Number %1 ->
+  Chain Number %1 ->
+  Program SearchState
+searchFrom position target (Last cell) = step @SearchIteration $ do
+  Examined target1 cell1 matched <- examine target cell
+  return (SearchState (if matched then Just position else Nothing) target1 (Last cell1))
+searchFrom position target (More cell rest) = do
+  Examined target1 cell1 matched <- step @SearchIteration (examine target cell)
+  if matched
+    then return (SearchState (Just position) target1 (More cell1 rest))
+    else do
+      SearchState outcome target2 searchedRest <- searchFrom (position + 1) target1 rest
+      return (SearchState outcome target2 (More cell1 searchedRest))
+
+publishResult :: SearchState %1 -> Program CompletedSearch
+publishResult (SearchState outcome target cells) = step @PublishResult $ do
+  let resultValue = maybe (-1) id outcome
+  Create pendingResult <- create (LInt resultValue)
+  result <- materialize resultKind pendingResult
+  return (CompletedSearch result target cells)
+
+cleanUp :: CompletedSearch %1 -> Program ()
+cleanUp (CompletedSearch result target cells) = step @CleanUp $ do
+  Destroy <- destroy result
+  destroyStored target
+  destroyChain cells
+
+program :: Program ()
+program = step @LinearSearch $ do
+  (NonEmptyValues firstValue remaining, targetValue) <- resolveInput searchCase
+  target <- step @InitializeTarget $ createStored targetCellKind LUnit targetValueKind (LInt targetValue)
+  cells <- step @InitializeArray $ buildChain firstValue remaining
+  searched <- searchFrom 0 target cells
+  completed <- publishResult searched
+  completed1 <- step @SearchComplete (return completed)
+  cleanUp completed1
+
+--------------------------------------------------------------------------------
+-- Render helpers
+--------------------------------------------------------------------------------
+
+boundedSpan :: Span -> Span -> Render Span
+boundedSpan lower upper = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  ensure $ value .<=. upper
+  return value
+
+sourceLine :: TextBuilder ()
+sourceLine = do
+  literal "for each i: if "
+  fragment @ReadElement "A[i]"
+  fragment @CompareTarget " == "
+  fragment @ReadTarget "target"
+  literal ", return i"
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- boundedSpan (by 760) (by 1280)
+  canvasHeight <- boundedSpan (by 520) (by 860)
+  outerInset <- boundedSpan (by 20) (by 48)
+  sectionGap <- boundedSpan (by 18) (by 44)
+  cellWidth <- boundedSpan (by 56) (by 92)
+  cellHeight <- boundedSpan (by 48) (by 82)
+  cellGap <- boundedSpan (by 8) (by 24)
+  textSize <- boundedSpan (by 14) (by 24)
+  codeFont <- fontChoice (fontKind Monospace)
+  bodyFont <- fontChoice (fontKind Proportional)
+
+  width canvasWidth
+  height canvasHeight
+  contentFit Both Contain
+
+  always $ frame @InitializeTarget
+  always $ frame @InitializeArray
+  sometimes $ frame @ReadElement
+  always $ frame @CompareTarget
+  always $ frame @PublishResult
+  always $ frame @SearchComplete
+
+  targetCells <- select targetCellKind
+  targetValues <- select targetValueKind
+  cells <- select elementCellKind
+  values <- select elementValueKind
+  comparisons <- select comparisonKind
+  results <- select resultKind
+  adjacentLinks <- select adjacent
+  ordering <- asSequence adjacentLinks cells
+
+  page <- node $ do
+    padding (uniform outerInset)
+    contentFit Both Hug
+
+    title <- node $ do
+      content (text "Linear search")
+      style @FontFamily bodyFont
+      style @FontSize textSize
+      style @FontWeight FontWeightBold
+
+    stage <- node $ do
+      padding (uniform sectionGap)
+      contentFit Both Hug
+
+      node targetCells $ do
+        padding (uniform (by 8))
+        style @BorderStyle BorderDashed
+        style @Radius (by 10)
+        node targetValues $ do
+          targetText <- bindContent
+          fitText (text "target = " <> targetText)
+          style @FontFamily bodyFont
+          style @FontSize textSize
+
+      arrayView <- node $ do
+        padding (uniform (by 8))
+        contentFit Both Hug
+
+        node cells $ do
+          position <- rankOf ordering
+          contentFit Both Hug
+
+          node values $ do
+            valueText <- bindContent
+            fitText valueText
+            width cellWidth
+            height cellHeight
+            padding (uniform (by 6))
+            style @FontFamily bodyFont
+            style @FontSize textSize
+            style @Fill (Hsl (num 212) (num 0.34) (num 0.91))
+            style @Stroke (Hsl (num 214) (num 0.48) (num 0.39))
+            style @BorderStyle BorderSolid
+            style @StrokeWidth (by 2)
+            style @Radius (by 12)
+
+          indexLabel <- sometimes $ node $ do
+            content (text "A[" <> asText position <> text "]")
+            style @FontFamily codeFont
+            style @FontSize textSize
+
+          ensure $ x indexLabel .==. x values
+          ensure $ top indexLabel .==. bottom values .+. shift 6
+
+        -- One authored choice changes the complete chain, rather than giving
+        -- every pair an independent orientation.
+        oneOf "array-flow"
+          (alternative "row" $ relation adjacentLinks $ do
+            previous <- first adjacentLinks
+            next <- second adjacentLinks
+            ensure $ left next .==. right previous .+. cellGap
+            ensure $ top next .==. top previous)
+          [alternative "column" $ relation adjacentLinks $ do
+            previous <- first adjacentLinks
+            next <- second adjacentLinks
+            ensure $ top next .==. bottom previous .+. cellGap
+            ensure $ x next .==. x previous]
+
+      node comparisons $ do
+        comparisonText <- bindContent
+        fitText (text "equal: " <> comparisonText)
+        padding (uniform (by 8))
+        style @FontFamily bodyFont
+        style @FontSize textSize
+        style @BorderStyle BorderDotted
+        style @Radius (by 8)
+
+      node results $ do
+        resultText <- bindContent
+        fitText (text "result index = " <> resultText)
+        padding (uniform (by 8))
+        style @FontFamily bodyFont
+        style @FontSize textSize
+        style @FontWeight FontWeightBold
+
+      ensure $ x targetCells .==. x arrayView
+      ensure $ top arrayView .==. bottom targetCells .+. sectionGap
+      -- Comparison and result blocks never overlap in Program time, so the
+      -- same relative display position can serve both without an absolute pin.
+      ensure $ x comparisons .==. x arrayView
+      ensure $ top comparisons .==. bottom arrayView .+. sectionGap
+      ensure $ x results .==. x arrayView
+      ensure $ top results .==. bottom arrayView .+. sectionGap
+
+    code <- sometimes $ node $ do
+      fitText sourceLine
+      padding (uniform (by 10))
+      style @FontFamily codeFont
+      style @FontSize textSize
+      style @BorderStyle BorderSolid
+      style @Radius (by 8)
+
+    ensure $ x stage .==. x title
+    ensure $ top stage .==. bottom title .+. sectionGap
+    -- The sampler may place the optional code panel on any free side. This
+    -- keeps all four exact non-overlap cases available.
+    ensure $ separatedBy sectionGap stage code
+
+  ensure $ center page .==. center canvas
+  ensure $ left page .>=. left canvas .+. outerInset
+  ensure $ right page .<=. right canvas .-. outerInset
+  ensure $ top page .>=. top canvas .+. outerInset
+  ensure $ bottom page .<=. bottom canvas .-. outerInset

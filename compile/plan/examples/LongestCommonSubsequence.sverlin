@@ -1,0 +1,592 @@
+-- Longest common subsequence (LCS) for the proposed API.
+-- This planning source is intentionally not compiled by the current compiler.
+--
+-- Every DP row owns a semantic set of cells through InRow. The same Cell kind
+-- and RightOf relation kind are reused by every row. Render uses `within` to
+-- restrict those selections to the current row before validating a sequence.
+
+data Row
+instance Traceable Row where
+  type Payload Row = LUnit Row
+
+data RowLabel
+instance Traceable RowLabel where
+  type Payload RowLabel = LString RowLabel
+
+data Cell
+instance Traceable Cell where
+  type Payload Cell = LUnit Cell
+
+data CellValue
+instance Traceable CellValue where
+  type Payload CellValue = LInt CellValue
+
+data InputLine
+instance Traceable InputLine where
+  type Payload InputLine = LString InputLine
+
+data ResultLine
+instance Traceable ResultLine where
+  type Payload ResultLine = LString ResultLine
+
+data RowRole
+data RowLabelRole
+data CellRole
+data CellValueRole
+data LeftInputRole
+data RightInputRole
+data ResultRole
+data InRowRole
+data NextRowRole
+data RightOfRole
+data CellDependencyRole
+data ResultNextRole
+data LcsScenarioRole
+
+rowKind :: Kind Row
+rowKind = kind @RowRole
+
+rowLabelKind :: Kind RowLabel
+rowLabelKind = kind @RowLabelRole
+
+cellKind :: Kind Cell
+cellKind = kind @CellRole
+
+cellValueKind :: Kind CellValue
+cellValueKind = kind @CellValueRole
+
+leftInputKind :: Kind InputLine
+leftInputKind = kind @LeftInputRole
+
+rightInputKind :: Kind InputLine
+rightInputKind = kind @RightInputRole
+
+resultKind :: Kind ResultLine
+resultKind = kind @ResultRole
+
+inRow :: RelationKind Row Cell
+inRow = orderedRelation @InRowRole
+
+nextRow :: RelationKind Row Row
+nextRow = orderedRelation @NextRowRole
+
+rightOf :: RelationKind Cell Cell
+rightOf = orderedRelation @RightOfRole
+
+cellDependency :: RelationKind Cell Cell
+cellDependency = orderedRelation @CellDependencyRole
+
+resultNext :: RelationKind Cell Cell
+resultNext = orderedRelation @ResultNextRole
+
+lcsScenario :: Input LcsInput
+lcsScenario = input @LcsScenarioRole
+
+data LongestCommonSubsequence
+data InitializeStrings
+data BuildRows
+data FillCell
+data BuildDependencies
+data TraceResult
+data FinishLcs
+
+data LcsInput = LcsInput
+  { leftString :: String
+  , rightString :: String
+  }
+
+lcsGenerator :: Generator LcsInput
+lcsGenerator = do
+  leftLength <- between 3 7
+  rightLength <- between 3 7
+  leftChars <- listOf leftLength leftLength (elementOf 'A' ['B', 'C', 'D'])
+  rightChars <- listOf rightLength rightLength (elementOf 'A' ['B', 'C', 'D'])
+  pure (LcsInput leftChars rightChars)
+
+domain :: Domain ()
+domain = do
+  declareKind rowKind
+  declareKind rowLabelKind
+  declareKind cellKind
+  declareKind cellValueKind
+  declareKind leftInputKind
+  declareKind rightInputKind
+  declareKind resultKind
+  declareRelation inRow
+  declareRelation nextRow
+  declareRelation rightOf
+  declareRelation cellDependency
+  declareRelation resultNext
+  variable lcsScenario lcsGenerator
+  declareSteps
+    @'[ LongestCommonSubsequence
+      , InitializeStrings
+      , BuildRows
+      , FillCell
+      , BuildDependencies
+      , TraceResult
+      , FinishLcs
+      ]
+
+--------------------------------------------------------------------------------
+-- Linear storage helpers
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data StoredList owner value where
+  StoredNil :: StoredList owner value
+  StoredCons :: Stored owner value %1 -> StoredList owner value %1 -> StoredList owner value
+
+data InputBlocks where
+  InputBlocks :: Block InputLine %1 -> Block InputLine %1 -> InputBlocks
+
+data ResultState where
+  ResultState :: StoredList Cell CellValue %1 -> Block ResultLine %1 -> ResultState
+
+data RelatedStored source sourceValue target targetValue where
+  RelatedStored ::
+    Stored source sourceValue %1 ->
+    Stored target targetValue %1 ->
+    RelatedStored source sourceValue target targetValue
+
+data RelatedExternal source sourceValue target targetValue where
+  RelatedExternal ::
+    Stored source sourceValue %1 ->
+    StoredList target targetValue %1 ->
+    RelatedExternal source sourceValue target targetValue
+
+data RelatedLists source sourceValue target targetValue where
+  RelatedLists ::
+    StoredList source sourceValue %1 ->
+    StoredList target targetValue %1 ->
+    RelatedLists source sourceValue target targetValue
+
+data RelatedTail owner value where
+  RelatedTail :: Stored owner value %1 -> StoredList owner value %1 -> RelatedTail owner value
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = do
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+relateStored ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Program (RelatedStored source sourceValue target targetValue)
+relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
+relateExternalAt ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Int ->
+  StoredList target targetValue %1 ->
+  Program (RelatedExternal source sourceValue target targetValue)
+relateExternalAt relationKind source targetIndex targets =
+  case (targetIndex, targets) of
+    (0, StoredCons target rest) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedExternal source1 (StoredCons target1 rest))
+    (index, StoredCons target rest) -> do
+      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
+      pure (RelatedExternal source1 (StoredCons target remaining))
+    (_, StoredNil) -> error "LCS generator produced an invalid relation index"
+
+relateListsAt ::
+  RelationKind source target ->
+  Int ->
+  Int ->
+  StoredList source sourceValue %1 ->
+  StoredList target targetValue %1 ->
+  Program (RelatedLists source sourceValue target targetValue)
+relateListsAt relationKind sourceIndex targetIndex sources targets = seek sourceIndex sources targets
+  where
+    seek 0 (StoredCons source rest) targetValues = do
+      RelatedExternal source1 targetValues1 <- relateExternalAt relationKind source targetIndex targetValues
+      pure (RelatedLists (StoredCons source1 rest) targetValues1)
+    seek index (StoredCons current rest) targetValues = do
+      RelatedLists rest1 targetValues1 <- seek (index - 1) rest targetValues
+      pure (RelatedLists (StoredCons current rest1) targetValues1)
+    seek _ StoredNil _ = error "LCS generator produced an invalid relation index"
+
+relateSourceToLater ::
+  RelationKind owner owner ->
+  Stored owner value %1 ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (RelatedTail owner value)
+relateSourceToLater relationKind source distance rest =
+  case (distance, rest) of
+    (0, StoredCons target tailValues) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedTail source1 (StoredCons target1 tailValues))
+    (offset, StoredCons current tailValues) -> do
+      RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset - 1) tailValues
+      pure (RelatedTail source1 (StoredCons current remaining))
+    (_, StoredNil) -> error "LCS generator produced an invalid cell edge"
+
+relateAt ::
+  RelationKind owner owner ->
+  Int ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAt relationKind sourceIndex targetIndex = seek sourceIndex
+  where
+    seek 0 (StoredCons source rest) = do
+      RelatedTail source1 rest1 <- relateSourceToLater relationKind source (targetIndex - sourceIndex - 1) rest
+      pure (StoredCons source1 rest1)
+    seek index (StoredCons current rest) = do
+      rest1 <- seek (index - 1) rest
+      pure (StoredCons current rest1)
+    seek _ StoredNil = error "LCS generator produced an invalid cell edge"
+
+relateAll ::
+  RelationKind owner owner ->
+  [(Int, Int)] ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAll _ [] values = pure values
+relateAll relationKind ((source, target) : rest) values = do
+  values1 <- relateAt relationKind source target values
+  relateAll relationKind rest values1
+
+relateAllMemberships ::
+  RelationKind source target ->
+  [(Int, Int)] ->
+  StoredList source sourceValue %1 ->
+  StoredList target targetValue %1 ->
+  Program (RelatedLists source sourceValue target targetValue)
+relateAllMemberships _ [] sources targets = pure (RelatedLists sources targets)
+relateAllMemberships relationKind ((source, target) : rest) sources targets = do
+  RelatedLists sources1 targets1 <- relateListsAt relationKind source target sources targets
+  relateAllMemberships relationKind rest sources1 targets1
+
+destroyStored :: Stored owner value %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  pure ()
+
+destroyStoredList :: StoredList owner value %1 -> Program ()
+destroyStoredList StoredNil = pure ()
+destroyStoredList (StoredCons current rest) = do
+  destroyStored current
+  destroyStoredList rest
+
+--------------------------------------------------------------------------------
+-- Pure finite DP preparation
+--------------------------------------------------------------------------------
+
+lcsTable :: String -> String -> [[Int]]
+lcsTable leftValue rightValue = table
+  where
+    rowCount = length leftValue + 1
+    columnCount = length rightValue + 1
+    table = [[entry row column | column <- [0 .. columnCount - 1]] | row <- [0 .. rowCount - 1]]
+    entry 0 _ = 0
+    entry _ 0 = 0
+    entry row column
+      | leftValue !! (row - 1) == rightValue !! (column - 1) = table !! (row - 1) !! (column - 1) + 1
+      | otherwise = max (table !! (row - 1) !! column) (table !! row !! (column - 1))
+
+cellIndex :: Int -> Int -> Int -> Int
+cellIndex columnCount row column = row * columnCount + column
+
+rightEdges :: Int -> Int -> [(Int, Int)]
+rightEdges rowCount columnCount =
+  [ (cellIndex columnCount row column, cellIndex columnCount row (column + 1))
+  | row <- [0 .. rowCount - 1]
+  , column <- [0 .. columnCount - 2]
+  ]
+
+dependencyEdges :: String -> String -> [(Int, Int)]
+dependencyEdges leftValue rightValue = concat
+  [ dependencies row column
+  | row <- [1 .. length leftValue]
+  , column <- [1 .. length rightValue]
+  ]
+  where
+    columnCount = length rightValue + 1
+    current row column = cellIndex columnCount row column
+    dependencies row column
+      | leftValue !! (row - 1) == rightValue !! (column - 1) =
+          [(current (row - 1) (column - 1), current row column)]
+      | otherwise =
+          [ (current (row - 1) column, current row column)
+          , (current row (column - 1), current row column)
+          ]
+
+resultCells :: String -> String -> [[Int]] -> [Int]
+resultCells leftValue rightValue table = reverse (go (length leftValue) (length rightValue))
+  where
+    columnCount = length rightValue + 1
+    go 0 _ = []
+    go _ 0 = []
+    go row column
+      | leftValue !! (row - 1) == rightValue !! (column - 1) =
+          cellIndex columnCount row column : go (row - 1) (column - 1)
+      | table !! (row - 1) !! column >= table !! row !! (column - 1) = go (row - 1) column
+      | otherwise = go row (column - 1)
+
+pairwise :: [a] -> [(a, a)]
+pairwise (firstValue : secondValue : rest) = (firstValue, secondValue) : pairwise (secondValue : rest)
+pairwise _ = []
+
+lcsText :: String -> String -> [[Int]] -> String
+lcsText leftValue rightValue table = reverse (go (length leftValue) (length rightValue))
+  where
+    go 0 _ = []
+    go _ 0 = []
+    go row column
+      | leftValue !! (row - 1) == rightValue !! (column - 1) =
+          leftValue !! (row - 1) : go (row - 1) (column - 1)
+      | table !! (row - 1) !! column >= table !! row !! (column - 1) = go (row - 1) column
+      | otherwise = go row (column - 1)
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+buildRows :: [String] -> Program (StoredList Row RowLabel)
+buildRows [] = pure StoredNil
+buildRows (label : rest) = do
+  row <- createStored rowKind LUnit rowLabelKind (LString label)
+  rows <- buildRows rest
+  pure (StoredCons row rows)
+
+buildCells :: [Int] -> Program (StoredList Cell CellValue)
+buildCells [] = pure StoredNil
+buildCells (value : rest) = do
+  cell <- createStored cellKind LUnit cellValueKind (LInt value)
+  cells <- buildCells rest
+  pure (StoredCons cell cells)
+
+writeCellAt :: Int -> Int -> StoredList Cell CellValue %1 -> Program (StoredList Cell CellValue)
+writeCellAt 0 nextValue (StoredCons (Stored owner slot) rest) = do
+  Unseal owner1 oldValue <- unseal owner slot
+  Create rawPending <- create (LInt nextValue)
+  Replace nextPending <- replace oldValue rawPending
+  nextBlock <- materialize cellValueKind nextPending
+  Seal owner2 slot1 <- seal owner1 nextBlock
+  pure (StoredCons (Stored owner2 slot1) rest)
+writeCellAt index nextValue (StoredCons current rest) = do
+  rest1 <- writeCellAt (index - 1) nextValue rest
+  pure (StoredCons current rest1)
+writeCellAt _ _ StoredNil = error "LCS generator produced an invalid cell index"
+
+fillCells :: [Int] -> Int -> StoredList Cell CellValue %1 -> Program (StoredList Cell CellValue)
+fillCells [] _ cells = pure cells
+fillCells (value : rest) index cells = do
+  cells1 <- step @FillCell (writeCellAt index value cells)
+  fillCells rest (index + 1) cells1
+
+program :: Program ()
+program = step @LongestCommonSubsequence $ do
+  inputValue <- resolveInput lcsScenario
+  let leftValue = leftString inputValue
+  let rightValue = rightString inputValue
+  let table = lcsTable leftValue rightValue
+  let rowCount = length leftValue + 1
+  let columnCount = length rightValue + 1
+
+  InputBlocks leftBlock rightBlock <- step @InitializeStrings $ do
+    Create leftPending <- create (LString leftValue)
+    leftBlock <- materialize leftInputKind leftPending
+    Create rightPending <- create (LString rightValue)
+    rightBlock <- materialize rightInputKind rightPending
+    pure (InputBlocks leftBlock rightBlock)
+
+  rows0 <- step @BuildRows (buildRows ("∅" : map (: []) leftValue))
+  rows1 <- relateAll nextRow [(row, row + 1) | row <- [0 .. rowCount - 2]] rows0
+  -- Locations and recurrence relations exist before values change. Each FillCell
+  -- replaces one occupant while its stable Cell owner keeps every relation.
+  cells0 <- buildCells (replicate (rowCount * columnCount) 0)
+
+  let memberships =
+        [(row, cellIndex columnCount row column) | row <- [0 .. rowCount - 1], column <- [0 .. columnCount - 1]]
+  RelatedLists rows2 cells1 <- relateAllMemberships inRow memberships rows1 cells0
+  cells2 <- relateAll rightOf (rightEdges rowCount columnCount) cells1
+  cells3 <- step @BuildDependencies (relateAll cellDependency (dependencyEdges leftValue rightValue) cells2)
+  cellsFilled <- fillCells (concat table) 0 cells3
+
+  let path = resultCells leftValue rightValue table
+  ResultState cells4 result <- step @TraceResult $ do
+    linkedCells <- relateAll resultNext (pairwise path) cellsFilled
+    Create resultPending <- create (LString (lcsText leftValue rightValue table))
+    resultBlock <- materialize resultKind resultPending
+    pure (ResultState linkedCells resultBlock)
+
+  step @FinishLcs $ do
+    Destroy <- destroy leftBlock
+    Destroy <- destroy rightBlock
+    Destroy <- destroy result
+    destroyStoredList cells4
+    destroyStoredList rows2
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1080
+  width canvasWidth
+  height canvasHeight
+  aspectRatio 16 9
+  padding (uniform (by 28))
+  contentFit Both Contain
+
+  always $ frame @BuildDependencies
+  always $ frame @TraceResult
+  sometimes $ frame @FillCell
+  cellSize <- variable @Span
+  columnGap <- variable @Span
+  rowGap <- variable @Span
+  panelGap <- variable @Span
+  ensure $ cellSize .>=. by 42
+  ensure $ cellSize .<=. by 68
+  ensure $ columnGap .>=. by 6
+  ensure $ columnGap .<=. by 18
+  ensure $ rowGap .>=. by 8
+  ensure $ rowGap .<=. by 22
+  ensure $ panelGap .>=. by 20
+  ensure $ panelGap .<=. by 44
+
+  rows <- select rowKind
+  rowLabels <- select rowLabelKind
+  rowLinks <- select nextRow
+  rowOrder <- asSequence rowLinks rows
+  membershipLinks <- select inRow
+
+  grid <- node $ do
+    padding (uniform (by 20))
+    contentFit Both Hug
+
+    node rows $ do
+      rowPosition <- rankOf rowOrder
+      padding (uniform (by 6))
+      contentFit Both Hug
+
+      node rowLabels $ do
+        label <- bindContent
+        fitText label
+        width cellSize
+        height cellSize
+        contentFit Both Contain
+        style @Fill (Hsl (num 220) (num 0.18) (num 0.94))
+        style @Radius (by 8)
+
+      -- The lexical scope contains exactly this row's cells and induced
+      -- RightOf edges. Other rows using the same kinds are not silently mixed.
+      within membershipLinks rows $ do
+        rowCells <- select cellKind
+        rowValues <- select cellValueKind
+        horizontalLinks <- select rightOf
+        columnOrder <- asSequence horizontalLinks rowCells
+
+        node rowCells $ do
+          columnPosition <- rankOf columnOrder
+          ensure $ left rowCells .==. right rowLabels .+. columnGap .+. (cellSize .+. columnGap) .*. asScalar columnPosition
+          ensure $ y rowCells .==. y rowLabels
+          width cellSize
+          height cellSize
+          padding (uniform (by 6))
+          contentFit Both Contain
+          style @Fill (Hsl (num 202) (num 0.30) (num 0.92))
+          style @Stroke (Hsl (num 202) (num 0.50) (num 0.40))
+          style @BorderStyle BorderSolid
+          style @StrokeWidth (by 2)
+          style @Radius (by 9)
+
+          node rowValues $ do
+            score <- payloadScalar rowValues
+            scoreText <- bindContent
+            fitText scoreText
+            contentFit Both Contain
+            ensure $ height rowValues .>=. by 24 .+. by 2 .*. score
+
+          coordinateLabel <- sometimes $ node $
+            content (text "(" <> asText rowPosition <> text "," <> asText columnPosition <> text ")")
+          ensure $ top coordinateLabel .==. bottom rowValues .+. by 4
+          ensure $ x coordinateLabel .==. x rowValues
+
+    relation rowLinks $ do
+      previous <- first rowLinks
+      next <- second rowLinks
+      ensure $ top next .==. bottom previous .+. rowGap
+      ensure $ x next .==. x previous
+
+  leftInputs <- select leftInputKind
+  rightInputs <- select rightInputKind
+  inputs <- node $ do
+    padding (uniform (by 12))
+    node leftInputs $ do
+      value <- bindContent
+      fitText (text "left:  " <> value)
+    node rightInputs $ do
+      value <- bindContent
+      fitText (text "right: " <> value)
+      ensure $ top rightInputs .==. bottom leftInputs .+. by 8
+      ensure $ left rightInputs .==. left leftInputs
+
+  dependencies <- select cellDependency
+  oneOf "dependency-detail"
+    (alternative "table-only" $ pure ())
+    [alternative "show-dependencies" $
+      relation dependencies $ do
+        source <- first dependencies
+        target <- second dependencies
+        connector (anchor AtBoundary source) (anchor AtBoundary target) $ do
+          style @Stroke (Hsl (num 270) (num 0.42) (num 0.54))
+          style @Opacity (num 0.55)
+          style @StrokeWidth (by 1)
+          endMarker ArrowMarker]
+
+  resultLinks <- select resultNext
+  relation resultLinks $ do
+    previous <- first resultLinks
+    next <- second resultLinks
+    connector (anchor AtBoundary previous) (anchor AtBoundary next) $ do
+      style @Stroke (Hsl (num 18) (num 0.76) (num 0.48))
+      style @StrokeWidth (by 4)
+      endMarker ArrowMarker
+
+  results <- select resultKind
+  node results $ do
+    value <- bindContent
+    fitText (text "LCS: " <> value)
+    padding (uniform (by 14))
+    style @Fill (Hsl (num 145) (num 0.34) (num 0.90))
+    style @Stroke (Hsl (num 145) (num 0.52) (num 0.38))
+    style @BorderStyle BorderSolid
+    style @StrokeWidth (by 2)
+    style @Radius (by 12)
+    ensure $ top results .==. bottom grid .+. panelGap
+    ensure $ x results .==. x grid
+    ensure $ separatedBy panelGap grid results
+
+  ensure $ top grid .==. bottom inputs .+. panelGap
+  ensure $ x grid .==. x inputs
+  ensure $ separatedBy panelGap inputs grid
+  ensure $ x grid .==. x canvas

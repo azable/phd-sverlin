@@ -1,0 +1,404 @@
+-- Heap sort written against the proposed Sverlin API.
+--
+-- This body-only planning example maps the same semantic cells as an array, a
+-- tree, or both.  One three-way `oneOf` guarantees that at least one useful
+-- representation is present; two unrelated `sometimes` wrappers could omit
+-- both and would therefore be the wrong model.
+
+data Number
+
+instance Traceable Number where
+  type Payload Number = LInt Number
+
+data ElementCell
+
+instance Traceable ElementCell where
+  type Payload ElementCell = LUnit ElementCell
+
+--------------------------------------------------------------------------------
+-- Domain
+--------------------------------------------------------------------------------
+
+data HeapValues
+data HeapNumber
+data HeapCell
+data ArrayNext
+data HeapParent
+
+valuesInput :: Input [Int]
+valuesInput = input @HeapValues
+
+numberKind :: Kind Number
+numberKind = kind @HeapNumber
+
+cellKind :: Kind ElementCell
+cellKind = kind @HeapCell
+
+arrayNext :: RelationKind ElementCell ElementCell
+arrayNext = orderedRelation @ArrayNext
+
+heapParent :: RelationKind ElementCell ElementCell
+heapParent = orderedRelation @HeapParent
+
+data HeapSort
+data InitializeHeap
+data BuildHeap
+data SiftDown
+data ExtractMaximum
+data WriteHeapState
+data SortedHeap
+data FinishHeapSort
+
+domain :: Domain ()
+domain = do
+  declareKind numberKind
+  declareKind cellKind
+  declareRelation arrayNext
+  declareRelation heapParent
+  declareSteps
+    @'[ HeapSort
+      , InitializeHeap
+      , BuildHeap
+      , SiftDown
+      , ExtractMaximum
+      , WriteHeapState
+      , SortedHeap
+      , FinishHeapSort
+      ]
+
+  -- Fifteen is the largest complete four-level binary heap.  The explicit
+  -- bound also keeps the prepared tree-layout decision space small.
+  variable valuesInput (listOf 7 15 (between 1 99))
+
+--------------------------------------------------------------------------------
+-- Program storage and relation helpers
+--------------------------------------------------------------------------------
+
+data Stored where
+  Stored :: Block ElementCell %1 -> Slot ElementCell Number %1 -> Stored
+
+data StoredList where
+  StoredNil :: StoredList
+  StoredCons :: Stored %1 -> StoredList %1 -> StoredList
+
+data Related where
+  Related :: Stored %1 -> Stored %1 -> Related
+
+data Taken where
+  Taken :: StoredList %1 -> Stored %1 -> StoredList %1 -> Taken
+
+createStored :: Int -> Program Stored
+createStored value = do
+  Create valuePending <- create (LInt value)
+  valueBlock <- materialize numberKind valuePending
+  Create cellPending <- create LUnit
+  cell <- materialize cellKind cellPending
+  Seal cell1 slot <- seal cell valueBlock
+  pure (Stored cell1 slot)
+
+createCells :: [Int] -> Program StoredList
+createCells [] = pure StoredNil
+createCells (value : values) = do
+  current <- createStored value
+  rest <- createCells values
+  pure (StoredCons current rest)
+
+relateStored :: RelationKind ElementCell ElementCell -> Stored %1 -> Stored %1 -> Program Related
+relateStored relationKind (Stored left leftSlot) (Stored right rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  pure (Related (Stored left leftSlot1) (Stored right rightSlot1))
+
+appendStored :: StoredList %1 -> StoredList %1 -> StoredList
+appendStored StoredNil right = right
+appendStored (StoredCons current rest) right = StoredCons current (appendStored rest right)
+
+takeAt :: Int -> StoredList %1 -> Taken
+takeAt 0 (StoredCons current rest) = Taken StoredNil current rest
+takeAt index (StoredCons current rest) =
+  case takeAt (index - 1) rest of
+    Taken before focus after -> Taken (StoredCons current before) focus after
+
+-- This small linear zipper is enough to construct arbitrary bounded graph
+-- edges without adding index-based mutation to the public Program API.
+relateAt ::
+  RelationKind ElementCell ElementCell ->
+  Int ->
+  Int ->
+  StoredList %1 ->
+  Program StoredList
+relateAt relationKind leftIndex rightIndex cells =
+  case takeAt leftIndex cells of
+    Taken beforeLeft left afterLeft ->
+      case takeAt (rightIndex - leftIndex - 1) afterLeft of
+        Taken between right afterRight -> do
+          Related left1 right1 <- relateStored relationKind left right
+          pure
+            (appendStored
+               beforeLeft
+               (StoredCons left1 (appendStored between (StoredCons right1 afterRight))))
+
+relatePairs ::
+  RelationKind ElementCell ElementCell ->
+  [(Int, Int)] ->
+  StoredList %1 ->
+  Program StoredList
+relatePairs _ [] cells = pure cells
+relatePairs relationKind ((left, right) : pairs) cells = do
+  cells1 <- relateAt relationKind left right cells
+  relatePairs relationKind pairs cells1
+
+adjacentPairs :: Int -> [(Int, Int)]
+adjacentPairs count = [(index, index + 1) | index <- [0 .. count - 2]]
+
+heapPairs :: Int -> [(Int, Int)]
+heapPairs count =
+  [ (parent, child)
+  | parent <- [0 .. count - 1]
+  , child <- [2 * parent + 1, 2 * parent + 2]
+  , child < count
+  ]
+
+rewriteStored :: Int -> Stored %1 -> Program Stored
+rewriteStored value (Stored cell slot) = do
+  Unseal cell1 oldValue <- unseal cell slot
+  Create replacementValue <- create (LInt value)
+  Replace nextValue <- replace oldValue replacementValue
+  value1 <- materialize numberKind nextValue
+  Seal cell2 slot1 <- seal cell1 value1
+  pure (Stored cell2 slot1)
+
+rewriteCells :: [Int] -> StoredList %1 -> Program StoredList
+rewriteCells [] StoredNil = pure StoredNil
+rewriteCells (value : values) (StoredCons current rest) = do
+  current1 <- rewriteStored value current
+  rest1 <- rewriteCells values rest
+  pure (StoredCons current1 rest1)
+
+--------------------------------------------------------------------------------
+-- Pure heap-state calculation
+--------------------------------------------------------------------------------
+
+replaceAt :: Int -> a -> [a] -> [a]
+replaceAt index value values = take index values ++ value : drop (index + 1) values
+
+swapAt :: Int -> Int -> [a] -> [a]
+swapAt left right values =
+  let leftValue = values !! left
+      rightValue = values !! right
+   in replaceAt right leftValue (replaceAt left rightValue values)
+
+siftStates :: Int -> Int -> [Int] -> ([[Int]], [Int])
+siftStates heapSize root values =
+  let left = 2 * root + 1
+      right = left + 1
+      largerLeft = if left < heapSize && values !! left > values !! root then left else root
+      largest = if right < heapSize && values !! right > values !! largerLeft then right else largerLeft
+   in if largest == root
+        then ([], values)
+        else
+          let swapped = swapAt root largest values
+              (later, result) = siftStates heapSize largest swapped
+           in (swapped : later, result)
+
+buildHeapStates :: Int -> [Int] -> ([[Int]], [Int])
+buildHeapStates root values
+  | root < 0 = ([], values)
+  | otherwise =
+      let (current, heap) = siftStates (length values) root values
+          (earlier, result) = buildHeapStates (root - 1) heap
+       in (current ++ earlier, result)
+
+extractStates :: Int -> [Int] -> ([[Int]], [Int])
+extractStates heapSize values
+  | heapSize <= 1 = ([], values)
+  | otherwise =
+      let moved = swapAt 0 (heapSize - 1) values
+          (sifted, heap) = siftStates (heapSize - 1) 0 moved
+          (later, result) = extractStates (heapSize - 1) heap
+       in (moved : sifted ++ later, result)
+
+heapSortStates :: [Int] -> ([[Int]], [[Int]])
+heapSortStates values =
+  let (building, heap) = buildHeapStates (length values `div` 2 - 1) values
+      (extracting, _) = extractStates (length values) heap
+   in (building, extracting)
+
+writeBuildStates :: [[Int]] -> StoredList %1 -> Program StoredList
+writeBuildStates [] cells = pure cells
+writeBuildStates (state : states) cells = do
+  cells1 <- step @SiftDown (step @WriteHeapState (rewriteCells state cells))
+  writeBuildStates states cells1
+
+writeExtractionStates :: [[Int]] -> StoredList %1 -> Program StoredList
+writeExtractionStates [] cells = pure cells
+writeExtractionStates (state : states) cells = do
+  cells1 <- step @ExtractMaximum (step @WriteHeapState (rewriteCells state cells))
+  writeExtractionStates states cells1
+
+destroyStored :: Stored %1 -> Program ()
+destroyStored (Stored cell slot) = do
+  Unseal cell1 value <- unseal cell slot
+  Destroy <- destroy value
+  Destroy <- destroy cell1
+  pure ()
+
+destroyCells :: StoredList %1 -> Program ()
+destroyCells StoredNil = pure ()
+destroyCells (StoredCons current rest) = do
+  destroyStored current
+  destroyCells rest
+
+program :: Program ()
+program = step @HeapSort $ do
+  values <- resolveInput valuesInput
+  heapLinked <- step @InitializeHeap $ do
+    cells <- createCells values
+    arrayLinked <- relatePairs arrayNext (adjacentPairs (length values)) cells
+    relatePairs heapParent (heapPairs (length values)) arrayLinked
+  let (building, extracting) = heapSortStates values
+  heap <- step @BuildHeap (writeBuildStates building heapLinked)
+  sorted <- writeExtractionStates extracting heap
+  final <- step @SortedHeap (pure sorted)
+  step @FinishHeapSort (destroyCells final)
+
+--------------------------------------------------------------------------------
+-- Render helpers
+--------------------------------------------------------------------------------
+
+valueNode :: Selected Number -> Span -> Span -> Bool -> Render ()
+valueNode values cellWidth baseHeight varyHeight = node values $ do
+  label <- bindContent
+  magnitude <- payloadScalar values
+  fitText label
+  width cellWidth
+  case varyHeight of
+    False -> height baseHeight
+    True -> height (baseHeight .+. by 1 .*. magnitude .*. num 0.35)
+  padding (uniform (by 6))
+  style @Fill (Hsl (num 42) (num 0.72) (num 0.86))
+  style @Stroke (Hsl (num 34) (num 0.64) (num 0.34))
+  style @BorderStyle BorderSolid
+  style @Radius (by 9)
+
+arrayView ::
+  Selected ElementCell ->
+  Selected Number ->
+  Relations ElementCell ElementCell ->
+  Ranking ElementCell ->
+  Span ->
+  Span ->
+  Span ->
+  Render (Selected GeneratedNode)
+arrayView cells values links ordering gap cellWidth cellHeight = node $ do
+  contentFit Both Hug
+  padding (uniform (by 8))
+
+  -- This is one mapping of the semantic cells.
+  node cells $ do
+    position <- rankOf ordering
+    contentFit Both Hug
+    valueNode values cellWidth cellHeight True
+    sometimes $ node $ do
+      labelNode <- self
+      content (text "H[" <> asText position <> text "]")
+      ensure $ x labelNode .==. x values
+      ensure $ top labelNode .==. (bottom values .+. shift 4)
+
+  relation links $ do
+    previous <- first links
+    following <- second links
+    ensure $ left following .==. (right previous .+. gap)
+    ensure $ bottom following .==. bottom previous
+
+treeView ::
+  Selected ElementCell ->
+  Selected Number ->
+  Relations ElementCell ElementCell ->
+  Span ->
+  Span ->
+  Span ->
+  Span ->
+  Render (Selected GeneratedNode)
+treeView cells values links levelGap siblingGap cellWidth cellHeight = node $ do
+  contentFit Both Hug
+  padding (uniform (by 10))
+
+  -- This second mapping has independent geometry but represents the same
+  -- Program cells and current occupants as the array mapping above.
+  node cells $ valueNode values cellWidth cellHeight False
+  arrange (ArrangeTree links (vec2 siblingGap levelGap)) cells
+
+  relation links $ do
+    parent <- first links
+    child <- second links
+    ensure $ separatedBy levelGap parent child
+    connector (anchor AtBoundary parent) (anchor AtBoundary child) $ do
+      style @Stroke (Hsl (num 215) (num 0.38) (num 0.42))
+      style @StrokeWidth (by 2)
+      endMarker ArrowMarker
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1200
+  width canvasWidth
+  height canvasHeight
+  contentFit Both Contain
+
+  always $ frame @InitializeHeap
+  sometimes $ frame @SiftDown
+  always $ frame @ExtractMaximum
+  always $ frame @SortedHeap
+
+  cells <- select cellKind
+  values <- select numberKind
+  nextLinks <- select arrayNext
+  parentLinks <- select heapParent
+  arrayOrder <- asSequence nextLinks cells
+  _heapLevels <- asTree parentLinks cells
+
+  gap <- variable @Span
+  levelGap <- variable @Span
+  siblingGap <- variable @Span
+  cellWidth <- variable @Span
+  cellHeight <- variable @Span
+  representationGap <- variable @Span
+  ensure $ gap .>=. by 6
+  ensure $ gap .<=. by 18
+  ensure $ levelGap .>=. by 30
+  ensure $ levelGap .<=. by 72
+  ensure $ siblingGap .>=. by 16
+  ensure $ siblingGap .<=. by 52
+  ensure $ cellWidth .>=. by 42
+  ensure $ cellWidth .<=. by 72
+  ensure $ cellHeight .>=. by 34
+  ensure $ cellHeight .<=. by 58
+  ensure $ representationGap .>=. by 28
+  ensure $ representationGap .<=. by 68
+
+  oneOf
+    "heap representation"
+    (alternative "array" $ do
+      array <- arrayView cells values nextLinks arrayOrder gap cellWidth cellHeight
+      ensure $ center array .==. center canvas)
+    [ alternative "tree" $ do
+        tree <- treeView cells values parentLinks levelGap siblingGap cellWidth cellHeight
+        ensure $ center tree .==. center canvas
+    , alternative "array and tree" $ do
+        combined <- node $ do
+          contentFit Both Hug
+          array <- arrayView cells values nextLinks arrayOrder gap cellWidth cellHeight
+          tree <- treeView cells values parentLinks levelGap siblingGap cellWidth cellHeight
+          ensure $ x array .==. x tree
+          ensure $ top tree .==. (bottom array .+. representationGap)
+          ensure $ separatedBy representationGap array tree
+        ensure $ center combined .==. center canvas
+    ]

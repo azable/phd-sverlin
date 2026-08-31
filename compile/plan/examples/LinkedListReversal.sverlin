@@ -1,0 +1,460 @@
+-- In-place linked-list reversal written against the proposed Sverlin API.
+--
+-- Relations cannot be removed or retargeted during an endpoint owner's life.
+-- Reversing `next` therefore creates a deliberate linear cut: each snapshot
+-- replaces the old location owners before relating the successor snapshot.
+-- Every successor owner receives its complete set of constraints once.  This
+-- is more honest than silently changing the same Slot relation mid-lifetime.
+
+data Number
+
+instance Traceable Number where
+  type Payload Number = LInt Number
+
+data CursorLabel
+
+instance Traceable CursorLabel where
+  type Payload CursorLabel = LString CursorLabel
+
+data ListCell
+
+instance Traceable ListCell where
+  type Payload ListCell = LUnit ListCell
+
+data CursorCell
+
+instance Traceable CursorCell where
+  type Payload CursorCell = LUnit CursorCell
+
+--------------------------------------------------------------------------------
+-- Domain
+--------------------------------------------------------------------------------
+
+data ReversalValues
+data ListNumber
+data ListLocation
+data CursorText
+data CursorLocation
+data SourceOrder
+data NextPointer
+data CursorAt
+
+valuesInput :: Input [Int]
+valuesInput = input @ReversalValues
+
+numberKind :: Kind Number
+numberKind = kind @ListNumber
+
+cellKind :: Kind ListCell
+cellKind = kind @ListLocation
+
+cursorLabelKind :: Kind CursorLabel
+cursorLabelKind = kind @CursorText
+
+cursorCellKind :: Kind CursorCell
+cursorCellKind = kind @CursorLocation
+
+sourceOrder :: RelationKind ListCell ListCell
+sourceOrder = orderedRelation @SourceOrder
+
+nextPointer :: RelationKind ListCell ListCell
+nextPointer = orderedRelation @NextPointer
+
+cursorAt :: RelationKind CursorCell ListCell
+cursorAt = orderedRelation @CursorAt
+
+reversalGenerator :: Generator [Int]
+reversalGenerator = do
+  values <- listOf 4 9 (between 0 99)
+  shuffle values
+
+data ReverseList
+data InitializeList
+data ReverseOneLink
+data CutOldLocations
+data CreateNewLocations
+data Finished
+data RemoveList
+
+domain :: Domain ()
+domain = do
+  declareKind numberKind
+  declareKind cellKind
+  declareKind cursorLabelKind
+  declareKind cursorCellKind
+  declareRelation sourceOrder
+  declareRelation nextPointer
+  declareRelation cursorAt
+  declareSteps
+    @'[ ReverseList
+      , InitializeList
+      , ReverseOneLink
+      , CutOldLocations
+      , CreateNewLocations
+      , Finished
+      , RemoveList
+      ]
+
+  -- Shuffling is part of finite Domain generation, not an authored read of the
+  -- random seed.  Four to nine values keeps every relation set bounded.
+  variable valuesInput reversalGenerator
+
+--------------------------------------------------------------------------------
+-- Program storage helpers
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data StoredList owner value where
+  StoredNil :: StoredList owner value
+  StoredCons :: Stored owner value %1 -> StoredList owner value %1 -> StoredList owner value
+
+data Related leftOwner leftValue rightOwner rightValue where
+  Related ::
+    Stored leftOwner leftValue %1 ->
+    Stored rightOwner rightValue %1 ->
+    Related leftOwner leftValue rightOwner rightValue
+
+data Taken owner value where
+  Taken ::
+    StoredList owner value %1 ->
+    Stored owner value %1 ->
+    StoredList owner value %1 ->
+    Taken owner value
+
+data AttachedCursor where
+  AttachedCursor ::
+    StoredList ListCell Number %1 ->
+    Stored CursorCell CursorLabel %1 ->
+    AttachedCursor
+
+data Snapshot where
+  Snapshot ::
+    StoredList ListCell Number %1 ->
+    StoredList CursorCell CursorLabel %1 ->
+    Snapshot
+
+createStored ::
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = do
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+createCells :: [Int] -> Program (StoredList ListCell Number)
+createCells [] = pure StoredNil
+createCells (value : values) = do
+  current <- createStored cellKind LUnit numberKind (LInt value)
+  rest <- createCells values
+  pure (StoredCons current rest)
+
+relateStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Program (Related leftOwner leftValue rightOwner rightValue)
+relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  pure (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
+appendStored :: StoredList owner value %1 -> StoredList owner value %1 -> StoredList owner value
+appendStored StoredNil right = right
+appendStored (StoredCons current rest) right = StoredCons current (appendStored rest right)
+
+takeAt :: Int -> StoredList owner value %1 -> Taken owner value
+takeAt 0 (StoredCons current rest) = Taken StoredNil current rest
+takeAt index (StoredCons current rest) =
+  case takeAt (index - 1) rest of
+    Taken before focus after -> Taken (StoredCons current before) focus after
+
+relateAt ::
+  RelationKind ListCell ListCell ->
+  Int ->
+  Int ->
+  StoredList ListCell Number %1 ->
+  Program (StoredList ListCell Number)
+relateAt relationKind leftIndex rightIndex cells
+  | leftIndex < rightIndex =
+      case takeAt leftIndex cells of
+        Taken beforeLeft left afterLeft ->
+          case takeAt (rightIndex - leftIndex - 1) afterLeft of
+            Taken between right afterRight -> do
+              Related left1 right1 <- relateStored relationKind left right
+              pure
+                (appendStored
+                   beforeLeft
+                   (StoredCons left1 (appendStored between (StoredCons right1 afterRight))))
+  | otherwise = do
+      -- `relate` preserves its authored endpoint order.  The zipper extracts
+      -- locations in ascending storage order, then passes them in reverse.
+      case takeAt rightIndex cells of
+        Taken beforeRight right afterRight ->
+          case takeAt (leftIndex - rightIndex - 1) afterRight of
+            Taken between left afterLeft -> do
+              Related left1 right1 <- relateStored relationKind left right
+              pure
+                (appendStored
+                   beforeRight
+                   (StoredCons right1 (appendStored between (StoredCons left1 afterLeft))))
+
+relatePairs ::
+  RelationKind ListCell ListCell ->
+  [(Int, Int)] ->
+  StoredList ListCell Number %1 ->
+  Program (StoredList ListCell Number)
+relatePairs _ [] cells = pure cells
+relatePairs relationKind ((left, right) : pairs) cells = do
+  cells1 <- relateAt relationKind left right cells
+  relatePairs relationKind pairs cells1
+
+attachCursor ::
+  String ->
+  Int ->
+  StoredList ListCell Number %1 ->
+  Program AttachedCursor
+attachCursor label index cells =
+  case takeAt index cells of
+    Taken before target after -> do
+      cursor <- createStored cursorCellKind LUnit cursorLabelKind (LString label)
+      Related cursor1 target1 <- relateStored cursorAt cursor target
+      pure (AttachedCursor (appendStored before (StoredCons target1 after)) cursor1)
+
+--------------------------------------------------------------------------------
+-- Snapshot construction and linear cuts
+--------------------------------------------------------------------------------
+
+data PointerState = PointerState
+  { previousIndex :: Maybe Int
+  , currentIndex :: Maybe Int
+  , nextPairs :: [(Int, Int)]
+  }
+
+sourcePairs :: Int -> [(Int, Int)]
+sourcePairs count = [(index, index + 1) | index <- [0 .. count - 2]]
+
+pointerState :: Int -> Int -> PointerState
+pointerState count reversedCount =
+  PointerState
+    { previousIndex = if reversedCount == 0 then Nothing else Just (reversedCount - 1)
+    , currentIndex = if reversedCount == count then Nothing else Just reversedCount
+    , nextPairs =
+        [(index, index - 1) | index <- [1 .. reversedCount - 1]]
+          ++ [(index, index + 1) | index <- [reversedCount .. count - 2]]
+    }
+
+addCursor ::
+  String ->
+  Maybe Int ->
+  StoredList ListCell Number %1 ->
+  StoredList CursorCell CursorLabel %1 ->
+  Program Snapshot
+addCursor _ Nothing cells cursors = pure (Snapshot cells cursors)
+addCursor label (Just index) cells cursors = do
+  AttachedCursor cells1 cursor <- attachCursor label index cells
+  pure (Snapshot cells1 (StoredCons cursor cursors))
+
+finishSnapshot :: Int -> PointerState -> StoredList ListCell Number %1 -> Program Snapshot
+finishSnapshot valueCount state cells = step @CreateNewLocations $ do
+  orderedCells <- relatePairs sourceOrder (sourcePairs valueCount) cells
+  linkedCells <- relatePairs nextPointer (nextPairs state) orderedCells
+  Snapshot cells1 cursors1 <- addCursor "current" (currentIndex state) linkedCells StoredNil
+  addCursor "previous" (previousIndex state) cells1 cursors1
+
+createSnapshot :: [Int] -> PointerState -> Program Snapshot
+createSnapshot values state = do
+  cells <- createCells values
+  finishSnapshot (length values) state cells
+
+-- Replacing a location owner is the linear cut.  The old owner's relations
+-- end, the Number occupant keeps its identity, and replacement lineage lets
+-- Render animate the old location into its successor.
+cutCellOwner :: Stored ListCell Number %1 -> Program (Stored ListCell Number)
+cutCellOwner (Stored oldOwner oldSlot) = do
+  Unseal oldOwner1 value <- unseal oldOwner oldSlot
+  Create successorOrigin <- create LUnit
+  Replace successorPending <- replace oldOwner1 successorOrigin
+  successorOwner <- materialize cellKind successorPending
+  Seal successorOwner1 successorSlot <- seal successorOwner value
+  pure (Stored successorOwner1 successorSlot)
+
+cutCellOwners ::
+  StoredList ListCell Number %1 ->
+  Program (StoredList ListCell Number)
+cutCellOwners StoredNil = pure StoredNil
+cutCellOwners (StoredCons current rest) = do
+  current1 <- cutCellOwner current
+  rest1 <- cutCellOwners rest
+  pure (StoredCons current1 rest1)
+
+destroyStored :: Stored owner value %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  pure ()
+
+destroyStoredList :: StoredList owner value %1 -> Program ()
+destroyStoredList StoredNil = pure ()
+destroyStoredList (StoredCons current rest) = do
+  destroyStored current
+  destroyStoredList rest
+
+destroySnapshot :: Snapshot %1 -> Program ()
+destroySnapshot (Snapshot cells cursors) = do
+  destroyStoredList cursors
+  destroyStoredList cells
+
+cutSnapshot :: Snapshot %1 -> Program (StoredList ListCell Number)
+cutSnapshot (Snapshot cells cursors) = do
+  -- Cursor owners are annotations for one state, so they need no successor.
+  destroyStoredList cursors
+  cutCellOwners cells
+
+advanceSnapshots :: [Int] -> Int -> Snapshot %1 -> Program Snapshot
+advanceSnapshots values reversedCount old
+  | reversedCount > length values = pure old
+  | otherwise = do
+      next <- step @ReverseOneLink $ do
+        -- Replacing the old owners ends both their semantic relations and the
+        -- fixed visual constraints associated with those owner lifetimes.
+        successorCells <- step @CutOldLocations (cutSnapshot old)
+        finishSnapshot
+          (length values)
+          (pointerState (length values) reversedCount)
+          successorCells
+      advanceSnapshots values (reversedCount + 1) next
+
+program :: Program ()
+program = step @ReverseList $ do
+  values <- resolveInput valuesInput
+  initial <- step @InitializeList (createSnapshot values (pointerState (length values) 0))
+  reversed <- advanceSnapshots values 1 initial
+  final <- step @Finished (pure reversed)
+  step @RemoveList (destroySnapshot final)
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1200
+  width canvasWidth
+  height canvasHeight
+  contentFit Both Contain
+
+  always $ frame @InitializeList
+  sometimes $ frame @ReverseOneLink
+  always $ frame @Finished
+  always $ frame @RemoveList
+
+  cells <- select cellKind
+  values <- select numberKind
+  cursors <- select cursorCellKind
+  cursorLabels <- select cursorLabelKind
+  orderLinks <- select sourceOrder
+  pointerLinks <- select nextPointer
+  cursorLinks <- select cursorAt
+  ordering <- asSequence orderLinks cells
+
+  gap <- variable @Span
+  cursorGap <- variable @Span
+  cellWidth <- variable @Span
+  cellHeight <- variable @Span
+  ensure $ gap .>=. by 14
+  ensure $ gap .<=. by 38
+  ensure $ cursorGap .>=. by 10
+  ensure $ cursorGap .<=. by 28
+  ensure $ cellWidth .>=. by 54
+  ensure $ cellWidth .<=. by 86
+  ensure $ cellHeight .>=. by 42
+  ensure $ cellHeight .<=. by 68
+
+  listView <- node $ do
+    contentFit Both Hug
+    padding (uniform (by 14))
+
+    node cells $ do
+      position <- rankOf ordering
+      contentFit Both Hug
+
+      node values $ do
+        label <- bindContent
+        fitText label
+        width cellWidth
+        height cellHeight
+        padding (uniform (by 7))
+        style @Fill (Hsl (num 155) (num 0.38) (num 0.88))
+        style @Stroke (Hsl (num 160) (num 0.52) (num 0.32))
+        style @BorderStyle BorderSolid
+        style @StrokeWidth (by 2)
+        style @Radius (by 12)
+
+      sometimes $ node $ do
+        indexNode <- self
+        content (text "node[" <> asText position <> text "]")
+        ensure $ x indexNode .==. x values
+        ensure $ top indexNode .==. (bottom values .+. shift 5)
+
+    -- Source order is stable within one snapshot and is used only to lay out
+    -- the locations.  NextPointer below remains the algorithmic linked list.
+    oneOf
+      "list direction"
+      (alternative "left to right" $
+        relation orderLinks $ do
+          leftCell <- first orderLinks
+          rightCell <- second orderLinks
+          ensure $ left rightCell .==. (right leftCell .+. gap)
+          ensure $ y rightCell .==. y leftCell
+          ensure $ separatedBy gap leftCell rightCell)
+      [ alternative "top to bottom" $
+          relation orderLinks $ do
+            upperCell <- first orderLinks
+            lowerCell <- second orderLinks
+            ensure $ top lowerCell .==. (bottom upperCell .+. gap)
+            ensure $ x lowerCell .==. x upperCell
+            ensure $ separatedBy gap upperCell lowerCell
+      ]
+
+    relation pointerLinks $ do
+      source <- first pointerLinks
+      target <- second pointerLinks
+      connector (anchor AtBoundary source) (anchor AtBoundary target) $ do
+        style @Stroke (Hsl (num 220) (num 0.62) (num 0.42))
+        style @StrokeWidth (by 3)
+        endMarker ArrowMarker
+
+    node cursors $ do
+      contentFit Both Hug
+      node cursorLabels $ do
+        label <- bindContent
+        content label
+        padding (symmetric (by 5) (by 9))
+        style @Fill (Hsl (num 48) (num 0.78) (num 0.86))
+        style @BorderStyle BorderSolid
+        style @Radius (by 8)
+
+    relation cursorLinks $ do
+      cursor <- first cursorLinks
+      target <- second cursorLinks
+      ensure $ x cursor .==. x target
+      ensure $ bottom cursor .==. (top target .-. cursorGap)
+      connector (anchor AtBottom cursor) (anchor AtTop target) $ do
+        style @Stroke (Hsl (num 28) (num 0.72) (num 0.42))
+        style @StrokeWidth (by 2)
+        endMarker ArrowMarker
+
+  ensure $ center listView .==. center canvas

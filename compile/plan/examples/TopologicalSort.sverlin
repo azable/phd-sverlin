@@ -1,0 +1,446 @@
+-- Topological sorting for the proposed API.
+-- This planning source is intentionally ahead of the current compiler.
+--
+-- The input generator constructs a DAG directly: every edge points from a
+-- lower location number to a higher one. Program still runs Kahn's algorithm
+-- rather than relying on that construction order. Render can show the DAG,
+-- its output sequence, or both as one explicit three-way design choice.
+
+data Task
+instance Traceable Task where
+  type Payload Task = LUnit Task
+
+data TaskLabel
+instance Traceable TaskLabel where
+  type Payload TaskLabel = LString TaskLabel
+
+data OutputCell
+instance Traceable OutputCell where
+  type Payload OutputCell = LUnit OutputCell
+
+data OutputLabel
+instance Traceable OutputLabel where
+  type Payload OutputLabel = LString OutputLabel
+
+data TaskRole
+data TaskLabelRole
+data OutputCellRole
+data OutputLabelRole
+data PrecedesRole
+data NextOutputRole
+data OutputForRole
+data TopologicalScenarioRole
+
+taskKind :: Kind Task
+taskKind = kind @TaskRole
+
+taskLabelKind :: Kind TaskLabel
+taskLabelKind = kind @TaskLabelRole
+
+outputCellKind :: Kind OutputCell
+outputCellKind = kind @OutputCellRole
+
+outputLabelKind :: Kind OutputLabel
+outputLabelKind = kind @OutputLabelRole
+
+precedes :: RelationKind Task Task
+precedes = orderedRelation @PrecedesRole
+
+nextOutput :: RelationKind OutputCell OutputCell
+nextOutput = orderedRelation @NextOutputRole
+
+outputFor :: RelationKind OutputCell Task
+outputFor = orderedRelation @OutputForRole
+
+topologicalScenario :: Input TopologicalInput
+topologicalScenario = input @TopologicalScenarioRole
+
+data TopologicalSort
+data BuildDag
+data FindReadyTasks
+data EmitTask
+data FinishTopologicalSort
+
+data TopologicalInput = TopologicalInput
+  { taskLabels :: [String]
+  , dependencyEdges :: [(Int, Int)]
+  }
+
+topologicalGenerator :: Generator TopologicalInput
+topologicalGenerator = do
+  taskCount <- between 6 10
+  labels <- shuffle (take taskCount ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"])
+  stride <- elementOf 2 [3]
+  let spine = [(index, index + 1) | index <- [0 .. taskCount - 2]]
+  let shortcuts = [(index, index + stride) | index <- [0 .. taskCount - stride - 1]]
+  pure (TopologicalInput labels (spine <> shortcuts))
+
+domain :: Domain ()
+domain = do
+  declareKind taskKind
+  declareKind taskLabelKind
+  declareKind outputCellKind
+  declareKind outputLabelKind
+  declareRelation precedes
+  declareRelation nextOutput
+  declareRelation outputFor
+  variable topologicalScenario topologicalGenerator
+  declareSteps
+    @'[ TopologicalSort
+      , BuildDag
+      , FindReadyTasks
+      , EmitTask
+      , FinishTopologicalSort
+      ]
+
+--------------------------------------------------------------------------------
+-- Linear locations and relation threading
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data StoredList owner value where
+  StoredNil :: StoredList owner value
+  StoredCons :: Stored owner value %1 -> StoredList owner value %1 -> StoredList owner value
+
+data RelatedStored source sourceValue target targetValue where
+  RelatedStored ::
+    Stored source sourceValue %1 ->
+    Stored target targetValue %1 ->
+    RelatedStored source sourceValue target targetValue
+
+data RelatedExternal source sourceValue target targetValue where
+  RelatedExternal ::
+    Stored source sourceValue %1 ->
+    StoredList target targetValue %1 ->
+    RelatedExternal source sourceValue target targetValue
+
+data RelatedTail owner value where
+  RelatedTail :: Stored owner value %1 -> StoredList owner value %1 -> RelatedTail owner value
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = do
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+relateStored ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Program (RelatedStored source sourceValue target targetValue)
+relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
+relateExternalAt ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Int ->
+  StoredList target targetValue %1 ->
+  Program (RelatedExternal source sourceValue target targetValue)
+relateExternalAt relationKind source targetIndex targets =
+  case (targetIndex, targets) of
+    (0, StoredCons target rest) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedExternal source1 (StoredCons target1 rest))
+    (index, StoredCons target rest) -> do
+      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
+      pure (RelatedExternal source1 (StoredCons target remaining))
+    (_, StoredNil) -> error "topological generator produced an invalid task index"
+
+relateSourceToLater ::
+  RelationKind owner owner ->
+  Stored owner value %1 ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (RelatedTail owner value)
+relateSourceToLater relationKind source distance rest =
+  case (distance, rest) of
+    (0, StoredCons target tailValues) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedTail source1 (StoredCons target1 tailValues))
+    (offset, StoredCons current tailValues) -> do
+      RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset - 1) tailValues
+      pure (RelatedTail source1 (StoredCons current remaining))
+    (_, StoredNil) -> error "topological generator produced an invalid dependency"
+
+relateAt ::
+  RelationKind owner owner ->
+  Int ->
+  Int ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAt relationKind sourceIndex targetIndex = seek sourceIndex
+  where
+    seek 0 (StoredCons source rest) = do
+      RelatedTail source1 rest1 <- relateSourceToLater relationKind source (targetIndex - sourceIndex - 1) rest
+      pure (StoredCons source1 rest1)
+    seek index (StoredCons current rest) = do
+      rest1 <- seek (index - 1) rest
+      pure (StoredCons current rest1)
+    seek _ StoredNil = error "topological generator produced an invalid dependency"
+
+relateAll ::
+  RelationKind owner owner ->
+  [(Int, Int)] ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAll _ [] values = pure values
+relateAll relationKind ((source, target) : rest) values = do
+  values1 <- relateAt relationKind source target values
+  relateAll relationKind rest values1
+
+destroyStored :: Stored owner value %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  pure ()
+
+destroyStoredList :: StoredList owner value %1 -> Program ()
+destroyStoredList StoredNil = pure ()
+destroyStoredList (StoredCons current rest) = do
+  destroyStored current
+  destroyStoredList rest
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+buildTasks :: [String] -> Program (StoredList Task TaskLabel)
+buildTasks [] = pure StoredNil
+buildTasks (label : rest) = do
+  task <- createStored taskKind LUnit taskLabelKind (LString label)
+  tasks <- buildTasks rest
+  pure (StoredCons task tasks)
+
+memberInt :: Int -> [Int] -> Bool
+memberInt _ [] = False
+memberInt wanted (value : rest) = wanted == value || memberInt wanted rest
+
+indegree :: [(Int, Int)] -> Int -> Int
+indegree edges task = length [() | (_, target) <- edges, target == task]
+
+removeOutgoing :: Int -> [(Int, Int)] -> [(Int, Int)]
+removeOutgoing task = filter (\(source, _) -> source /= task)
+
+-- Kahn's algorithm repeatedly emits one zero-indegree task. Sorting the ready
+-- set makes the trace deterministic for one generated input; view randomness
+-- remains independent in Render.
+topologicalOrder :: Int -> [(Int, Int)] -> [Int]
+topologicalOrder taskCount initialEdges = go [] initialEdges
+  where
+    go emitted edges
+      | length emitted == taskCount = emitted
+      | otherwise =
+          let ready = [task | task <- [0 .. taskCount - 1], not (memberInt task emitted), indegree edges task == 0]
+              chosen = head ready
+           in go (emitted <> [chosen]) (removeOutgoing chosen edges)
+
+data OutputState where
+  OutputState ::
+    StoredList OutputCell OutputLabel %1 ->
+    StoredList Task TaskLabel %1 ->
+    OutputState
+
+emitOutput ::
+  [String] ->
+  [Int] ->
+  StoredList OutputCell OutputLabel %1 ->
+  StoredList Task TaskLabel %1 ->
+  Program OutputState
+emitOutput _ [] output tasks = pure (OutputState output tasks)
+emitOutput labels (taskIndex : rest) output tasks = do
+  OutputState output1 tasks1 <- step @FindReadyTasks $
+    step @EmitTask $ do
+      cell <- createStored outputCellKind LUnit outputLabelKind (LString (labels !! taskIndex))
+      RelatedExternal cell1 tasks2 <- relateExternalAt outputFor cell taskIndex tasks
+
+      output2 <-
+        case output of
+          StoredNil -> pure (StoredCons cell1 StoredNil)
+          StoredCons previous remaining -> do
+            RelatedStored previous1 cell2 <- relateStored nextOutput previous cell1
+            pure (StoredCons cell2 (StoredCons previous1 remaining))
+
+      pure (OutputState output2 tasks2)
+
+  emitOutput labels rest output1 tasks1
+
+program :: Program ()
+program = step @TopologicalSort $ do
+  inputValue <- resolveInput topologicalScenario
+  tasks0 <- buildTasks (taskLabels inputValue)
+  tasks1 <- step @BuildDag (relateAll precedes (dependencyEdges inputValue) tasks0)
+
+  let order = topologicalOrder (length (taskLabels inputValue)) (dependencyEdges inputValue)
+  OutputState output tasks2 <- emitOutput (taskLabels inputValue) order StoredNil tasks1
+
+  step @FinishTopologicalSort $ do
+    destroyStoredList output
+    destroyStoredList tasks2
+
+--------------------------------------------------------------------------------
+-- Render helpers
+--------------------------------------------------------------------------------
+
+dagView ::
+  Selected Task ->
+  Selected TaskLabel ->
+  Relations Task Task ->
+  Ranking Task ->
+  Span ->
+  Span ->
+  Span ->
+  Span ->
+  Render (Selected GeneratedNode)
+dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth nodeHeight = node $ do
+  padding (uniform (by 20))
+  contentFit Both Hug
+  arrange (ArrangeLayered dependencyLinks (vec2 horizontalGap verticalGap)) tasks
+
+  node tasks $ do
+    level <- rankOf levels
+    width nodeWidth
+    height nodeHeight
+    padding (uniform (by 8))
+    contentFit Both Contain
+    style @Fill (Hsl (num 222) (num 0.32) (num 0.92))
+    style @Stroke (Hsl (num 222) (num 0.54) (num 0.40))
+    style @BorderStyle BorderSolid
+    style @StrokeWidth (by 2)
+    style @Radius (by 12)
+    node labels $ bindContent >>= fitText
+    levelLabel <- sometimes $ node $ content (text "level " <> asText level)
+    ensure $ top levelLabel .==. bottom labels .+. by 4
+    ensure $ x levelLabel .==. x labels
+
+  relation dependencyLinks $ do
+    prerequisite <- first dependencyLinks
+    dependent <- second dependencyLinks
+    connector (anchor AtBoundary prerequisite) (anchor AtBoundary dependent) $ do
+      style @Stroke (Hsl (num 222) (num 0.36) (num 0.44))
+      style @StrokeWidth (by 2)
+      endMarker ArrowMarker
+
+outputView ::
+  Selected OutputCell ->
+  Selected OutputLabel ->
+  Relations OutputCell OutputCell ->
+  Ranking OutputCell ->
+  Span ->
+  Span ->
+  Span ->
+  Render (Selected GeneratedNode)
+outputView cells labels links order gap nodeWidth nodeHeight = node $ do
+  padding (uniform (by 16))
+  contentFit Both Hug
+
+  node cells $ do
+    position <- rankOf order
+    width nodeWidth
+    height nodeHeight
+    padding (uniform (by 8))
+    contentFit Both Contain
+    style @Fill (Hsl (num 145) (num 0.30) (num 0.90))
+    style @Stroke (Hsl (num 145) (num 0.48) (num 0.38))
+    style @BorderStyle BorderSolid
+    style @StrokeWidth (by 2)
+    style @Radius (by 10)
+    node labels $ bindContent >>= fitText
+    positionLabel <- sometimes $ node $ content (text "#" <> asText position)
+    ensure $ top positionLabel .==. bottom labels .+. by 4
+    ensure $ x positionLabel .==. x labels
+
+  relation links $ do
+    previous <- first links
+    next <- second links
+    ensure $ left next .==. right previous .+. gap
+    ensure $ y next .==. y previous
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1080
+  width canvasWidth
+  height canvasHeight
+  aspectRatio 16 9
+  padding (uniform (by 28))
+  contentFit Both Contain
+
+  always $ frame @EmitTask
+  sometimes $ frame @FindReadyTasks
+
+  horizontalGap <- variable @Span
+  verticalGap <- variable @Span
+  outputGap <- variable @Span
+  panelGap <- variable @Span
+  nodeWidth <- variable @Span
+  nodeHeight <- variable @Span
+  ensure $ horizontalGap .>=. by 80
+  ensure $ horizontalGap .<=. by 132
+  ensure $ verticalGap .>=. by 72
+  ensure $ verticalGap .<=. by 124
+  ensure $ outputGap .>=. by 10
+  ensure $ outputGap .<=. by 28
+  ensure $ panelGap .>=. by 24
+  ensure $ panelGap .<=. by 52
+  ensure $ nodeWidth .>=. by 56
+  ensure $ nodeWidth .<=. by 84
+  ensure $ nodeHeight .>=. by 46
+  ensure $ nodeHeight .<=. by 68
+
+  tasks <- select taskKind
+  labels <- select taskLabelKind
+  dependencyLinks <- select precedes
+  levels <- asDag dependencyLinks tasks
+
+  outputCells <- select outputCellKind
+  outputLabels <- select outputLabelKind
+  outputLinks <- select nextOutput
+  outputAssociations <- select outputFor
+  outputOrder <- asSequence outputLinks outputCells
+
+  -- `oneOf` has three alternatives rather than two independent `sometimes`
+  -- wrappers, so every sampled design contains at least one representation.
+  oneOf "representation"
+    (alternative "dag" $ do
+      graph <- dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth nodeHeight
+      ensure $ center graph .==. center canvas)
+    [ alternative "order" $ do
+        sequenceView <- outputView outputCells outputLabels outputLinks outputOrder outputGap nodeWidth nodeHeight
+        ensure $ center sequenceView .==. center canvas
+    , alternative "both" $ do
+        graph <- dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth nodeHeight
+        sequenceView <- outputView outputCells outputLabels outputLinks outputOrder outputGap nodeWidth nodeHeight
+        ensure $ top sequenceView .==. bottom graph .+. panelGap
+        ensure $ x sequenceView .==. x graph
+        ensure $ separatedBy panelGap graph sequenceView
+        ensure $ x graph .==. x canvas
+        sometimes $ relation outputAssociations $ do
+          emittedCell <- first outputAssociations
+          sourceTask <- second outputAssociations
+          connector (anchor AtBoundary emittedCell) (anchor AtBoundary sourceTask) $ do
+            style @Stroke (Hsl (num 42) (num 0.62) (num 0.48))
+            style @StrokeWidth (by 1)
+            endMarker CircleMarker
+    ]

@@ -1,0 +1,600 @@
+-- Binary search written against the proposed API in API_plan_final.md.
+--
+-- The input generator constructs a sorted, distinct array directly. Program
+-- creates short-lived low, middle, and high owners for each iteration. Their
+-- relations to stable array cells tell Render exactly which cell each label
+-- belongs beside, without matching on an integer index or changing a relation.
+
+--------------------------------------------------------------------------------
+-- Trace vocabulary and Domain declarations
+--------------------------------------------------------------------------------
+
+data Number
+instance Traceable Number where
+  type Payload Number = LInt Number
+
+data ElementCell
+instance Traceable ElementCell where
+  type Payload ElementCell = LUnit ElementCell
+
+data TargetCell
+instance Traceable TargetCell where
+  type Payload TargetCell = LUnit TargetCell
+
+data MarkerToken
+instance Traceable MarkerToken where
+  type Payload MarkerToken = LUnit MarkerToken
+
+data LowMarker
+instance Traceable LowMarker where
+  type Payload LowMarker = LUnit LowMarker
+
+data MiddleMarker
+instance Traceable MiddleMarker where
+  type Payload MiddleMarker = LUnit MiddleMarker
+
+data HighMarker
+instance Traceable HighMarker where
+  type Payload HighMarker = LUnit HighMarker
+
+data ElementValueRole
+data TargetValueRole
+data MiddleReadRole
+data TargetReadRole
+data ResultRole
+data ElementCellRole
+data TargetCellRole
+data MarkerTokenRole
+data LowMarkerRole
+data MiddleMarkerRole
+data HighMarkerRole
+data AdjacentRole
+data LowAtRole
+data MiddleAtRole
+data HighAtRole
+data BinarySearchCase
+
+elementValueKind :: Kind Number
+elementValueKind = kind @ElementValueRole
+
+targetValueKind :: Kind Number
+targetValueKind = kind @TargetValueRole
+
+middleReadKind :: Kind Number
+middleReadKind = kind @MiddleReadRole
+
+targetReadKind :: Kind Number
+targetReadKind = kind @TargetReadRole
+
+resultKind :: Kind Number
+resultKind = kind @ResultRole
+
+elementCellKind :: Kind ElementCell
+elementCellKind = kind @ElementCellRole
+
+targetCellKind :: Kind TargetCell
+targetCellKind = kind @TargetCellRole
+
+markerTokenKind :: Kind MarkerToken
+markerTokenKind = kind @MarkerTokenRole
+
+lowMarkerKind :: Kind LowMarker
+lowMarkerKind = kind @LowMarkerRole
+
+middleMarkerKind :: Kind MiddleMarker
+middleMarkerKind = kind @MiddleMarkerRole
+
+highMarkerKind :: Kind HighMarker
+highMarkerKind = kind @HighMarkerRole
+
+adjacent :: RelationKind ElementCell ElementCell
+adjacent = orderedRelation @AdjacentRole
+
+lowAt :: RelationKind LowMarker ElementCell
+lowAt = orderedRelation @LowAtRole
+
+middleAt :: RelationKind MiddleMarker ElementCell
+middleAt = orderedRelation @MiddleAtRole
+
+highAt :: RelationKind HighMarker ElementCell
+highAt = orderedRelation @HighAtRole
+
+data SortedValues = SortedValues Int [Int]
+
+binarySearchCase :: Input (SortedValues, Int)
+binarySearchCase = input @BinarySearchCase
+
+binarySearchCases :: Generator (SortedValues, Int)
+binarySearchCases = do
+  tailLength <- between 6 14
+  firstValue <- between 4 24
+  positiveGaps <- listOf tailLength tailLength (between 1 6)
+  let values = scanl (+) firstValue positiveGaps
+  -- Missing targets sit immediately outside the constructed range. Equal
+  -- weights balance successful and unsuccessful searches without rejection.
+  target <-
+    weighted
+      (1, elementOf firstValue (tail values))
+      [(1, elementOf (firstValue - 1) [last values + 1])]
+  return (SortedValues firstValue (tail values), target)
+
+data BinarySearch
+data InitializeTarget
+data InitializeArray
+data CreateStored
+data LinkCells
+data ProbeRange
+data ReadMiddle
+data ReadTarget
+data ChooseHalf
+data RetireMarkers
+data PublishResult
+data SearchComplete
+data CleanUp
+
+domain :: Domain ()
+domain = do
+  declareKind elementValueKind
+  declareKind targetValueKind
+  declareKind middleReadKind
+  declareKind targetReadKind
+  declareKind resultKind
+  declareKind elementCellKind
+  declareKind targetCellKind
+  declareKind markerTokenKind
+  declareKind lowMarkerKind
+  declareKind middleMarkerKind
+  declareKind highMarkerKind
+  declareRelation adjacent
+  declareRelation lowAt
+  declareRelation middleAt
+  declareRelation highAt
+  declareSteps
+    @'[ BinarySearch
+      , InitializeTarget
+      , InitializeArray
+      , CreateStored
+      , LinkCells
+      , ProbeRange
+      , ReadMiddle
+      , ReadTarget
+      , ChooseHalf
+      , RetireMarkers
+      , PublishResult
+      , SearchComplete
+      , CleanUp
+      ]
+  variable binarySearchCase binarySearchCases
+
+--------------------------------------------------------------------------------
+-- Stable cells, temporary markers, and indexed access
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data ReadStored owner value where
+  ReadStored :: Stored owner value %1 -> Block value %1 -> ReadStored owner value
+
+data Related leftOwner leftValue rightOwner rightValue where
+  Related ::
+    Stored leftOwner leftValue %1 ->
+    Stored rightOwner rightValue %1 ->
+    Related leftOwner leftValue rightOwner rightValue
+
+data Chain value where
+  Last :: Stored ElementCell value %1 -> Chain value
+  More :: Stored ElementCell value %1 -> Chain value %1 -> Chain value
+
+data ReadAt where
+  ReadAt :: Chain Number %1 -> Block Number %1 -> ReadAt
+
+data Marked marker where
+  Marked :: Stored marker MarkerToken %1 -> Chain Number %1 -> Marked marker
+
+data RangeMarkers where
+  RangeMarkers ::
+    Stored LowMarker MarkerToken %1 ->
+    Stored MiddleMarker MarkerToken %1 ->
+    Stored HighMarker MarkerToken %1 ->
+    RangeMarkers
+
+data PlacedMarkers where
+  PlacedMarkers :: RangeMarkers %1 -> Chain Number %1 -> PlacedMarkers
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = step @CreateStored $ do
+  Create pendingOwner <- create ownerPayload
+  owner <- materialize ownerKind pendingOwner
+  Create pendingValue <- create valuePayload
+  value <- materialize valueKind pendingValue
+  Seal owner1 slot <- seal owner value
+  return (Stored owner1 slot)
+
+readStored ::
+  (Traceable owner, Traceable value) =>
+  Kind value ->
+  Stored owner value %1 ->
+  Program (ReadStored owner value)
+readStored readKind (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Copy value1 pendingRead <- copy value
+  readValue <- materialize readKind pendingRead
+  Seal owner2 slot1 <- seal owner1 value1
+  return (ReadStored (Stored owner2 slot1) readValue)
+
+relateStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Program (Related leftOwner leftValue rightOwner rightValue)
+relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  return (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
+destroyStored ::
+  (Traceable owner, Traceable value) =>
+  Stored owner value %1 ->
+  Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  return ()
+
+destroyChain :: Chain Number %1 -> Program ()
+destroyChain (Last cell) = destroyStored cell
+destroyChain (More cell rest) = do
+  destroyStored cell
+  destroyChain rest
+
+buildChain :: Int -> [Int] -> Program (Chain Number)
+buildChain value [] = do
+  cell <- createStored elementCellKind LUnit elementValueKind (LInt value)
+  return (Last cell)
+buildChain value (nextValue : remaining) = do
+  current <- createStored elementCellKind LUnit elementValueKind (LInt value)
+  rest <- buildChain nextValue remaining
+  case rest of
+    Last next -> step @LinkCells $ do
+      Related current1 next1 <- relateStored adjacent current next
+      return (More current1 (Last next1))
+    More next tailValues -> step @LinkCells $ do
+      Related current1 next1 <- relateStored adjacent current next
+      return (More current1 (More next1 tailValues))
+
+-- The Domain generator proves every requested position is in range. These
+-- helpers therefore keep their surface small instead of adding a general
+-- failure protocol that none of the examples needs.
+readAt :: Int -> Chain Number %1 -> Program ReadAt
+readAt 0 (Last cell) = do
+  ReadStored cell1 value <- readStored middleReadKind cell
+  return (ReadAt (Last cell1) value)
+readAt 0 (More cell rest) = do
+  ReadStored cell1 value <- readStored middleReadKind cell
+  return (ReadAt (More cell1 rest) value)
+readAt position (More cell rest) = do
+  ReadAt rest1 value <- readAt (position - 1) rest
+  return (ReadAt (More cell rest1) value)
+readAt _ (Last cell) = do
+  ReadStored cell1 value <- readStored middleReadKind cell
+  return (ReadAt (Last cell1) value)
+
+markAt ::
+  Int ->
+  RelationKind marker ElementCell ->
+  Stored marker MarkerToken %1 ->
+  Chain Number %1 ->
+  Program (Marked marker)
+markAt 0 relationKind marker (Last cell) = do
+  Related marker1 cell1 <- relateStored relationKind marker cell
+  return (Marked marker1 (Last cell1))
+markAt 0 relationKind marker (More cell rest) = do
+  Related marker1 cell1 <- relateStored relationKind marker cell
+  return (Marked marker1 (More cell1 rest))
+markAt position relationKind marker (More cell rest) = do
+  Marked marker1 rest1 <- markAt (position - 1) relationKind marker rest
+  return (Marked marker1 (More cell rest1))
+markAt _ relationKind marker (Last cell) = do
+  Related marker1 cell1 <- relateStored relationKind marker cell
+  return (Marked marker1 (Last cell1))
+
+createMarkers :: Program RangeMarkers
+createMarkers = do
+  low <- createStored lowMarkerKind LUnit markerTokenKind LUnit
+  middle <- createStored middleMarkerKind LUnit markerTokenKind LUnit
+  high <- createStored highMarkerKind LUnit markerTokenKind LUnit
+  return (RangeMarkers low middle high)
+
+placeMarkers ::
+  Int ->
+  Int ->
+  Int ->
+  RangeMarkers %1 ->
+  Chain Number %1 ->
+  Program PlacedMarkers
+placeMarkers lowIndex middleIndex highIndex (RangeMarkers low middle high) cells = do
+  Marked low1 cells1 <- markAt lowIndex lowAt low cells
+  Marked middle1 cells2 <- markAt middleIndex middleAt middle cells1
+  Marked high1 cells3 <- markAt highIndex highAt high cells2
+  return (PlacedMarkers (RangeMarkers low1 middle1 high1) cells3)
+
+destroyMarkers :: RangeMarkers %1 -> Program ()
+destroyMarkers (RangeMarkers low middle high) = do
+  destroyStored low
+  destroyStored middle
+  destroyStored high
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+data SearchState where
+  SearchState :: Maybe Int -> Stored TargetCell Number %1 -> Chain Number %1 -> SearchState
+
+data CompletedSearch where
+  CompletedSearch ::
+    Block Number %1 ->
+    Stored TargetCell Number %1 ->
+    Chain Number %1 ->
+    CompletedSearch
+
+searchRange ::
+  Int ->
+  Int ->
+  Stored TargetCell Number %1 ->
+  Chain Number %1 ->
+  Program SearchState
+searchRange lowIndex highIndex target cells
+  | lowIndex > highIndex = return (SearchState Nothing target cells)
+  | otherwise = do
+      let middleIndex = lowIndex + (highIndex - lowIndex) `div` 2
+      markers0 <- createMarkers
+      PlacedMarkers markers cells1 <- step @ProbeRange $
+        placeMarkers lowIndex middleIndex highIndex markers0 cells
+
+      ReadAt cells2 middleRead <- step @ReadMiddle (readAt middleIndex cells1)
+      ReadStored target1 targetRead <- step @ReadTarget (readStored targetReadKind target)
+
+      (middleValue, targetValue) <- step @ChooseHalf $ do
+        Use (LInt current) <- use middleRead
+        Use (LInt wanted) <- use targetRead
+        return (current, wanted)
+
+      step @RetireMarkers (destroyMarkers markers)
+
+      case compare middleValue targetValue of
+        EQ -> return (SearchState (Just middleIndex) target1 cells2)
+        LT -> searchRange (middleIndex + 1) highIndex target1 cells2
+        GT -> searchRange lowIndex (middleIndex - 1) target1 cells2
+
+publishResult :: SearchState %1 -> Program CompletedSearch
+publishResult (SearchState outcome target cells) = step @PublishResult $ do
+  Create pendingResult <- create (LInt (maybe (-1) id outcome))
+  result <- materialize resultKind pendingResult
+  return (CompletedSearch result target cells)
+
+cleanUp :: CompletedSearch %1 -> Program ()
+cleanUp (CompletedSearch result target cells) = step @CleanUp $ do
+  Destroy <- destroy result
+  destroyStored target
+  destroyChain cells
+
+program :: Program ()
+program = step @BinarySearch $ do
+  (SortedValues firstValue remaining, targetValue) <- resolveInput binarySearchCase
+  target <- step @InitializeTarget $ createStored targetCellKind LUnit targetValueKind (LInt targetValue)
+  cells <- step @InitializeArray $ buildChain firstValue remaining
+  searched <- searchRange 0 (length remaining) target cells
+  completed <- publishResult searched
+  completed1 <- step @SearchComplete (return completed)
+  cleanUp completed1
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+boundedSpan :: Span -> Span -> Render Span
+boundedSpan lower upper = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  ensure $ value .<=. upper
+  return value
+
+binarySearchLine :: TextBuilder ()
+binarySearchLine = do
+  literal "while low <= high: compare target with "
+  fragment @ReadMiddle "A[mid]"
+  literal "; "
+  fragment @ChooseHalf "keep one half"
+
+render :: Render ()
+render = do
+  canvasWidth <- boundedSpan (by 820) (by 1360)
+  canvasHeight <- boundedSpan (by 500) (by 820)
+  outerInset <- boundedSpan (by 20) (by 48)
+  sectionGap <- boundedSpan (by 16) (by 38)
+  cellWidth <- boundedSpan (by 46) (by 76)
+  cellHeight <- boundedSpan (by 42) (by 68)
+  cellGap <- boundedSpan (by 6) (by 18)
+  markerGap <- boundedSpan (by 10) (by 26)
+  fontSize <- boundedSpan (by 13) (by 22)
+  bodyFont <- fontChoice (fontKind Proportional)
+  codeFont <- fontChoice (fontKind Monospace)
+
+  width canvasWidth
+  height canvasHeight
+  contentFit Both Contain
+
+  always $ frame @InitializeArray
+  always $ frame @ProbeRange
+  sometimes $ frame @ReadMiddle
+  always $ frame @ChooseHalf
+  always $ frame @PublishResult
+  always $ frame @SearchComplete
+
+  cells <- select elementCellKind
+  values <- select elementValueKind
+  targetCells <- select targetCellKind
+  targetValues <- select targetValueKind
+  middleReads <- select middleReadKind
+  results <- select resultKind
+  lowMarkers <- select lowMarkerKind
+  middleMarkers <- select middleMarkerKind
+  highMarkers <- select highMarkerKind
+  adjacentLinks <- select adjacent
+  lowLinks <- select lowAt
+  middleLinks <- select middleAt
+  highLinks <- select highAt
+  ordering <- asSequence adjacentLinks cells
+
+  page <- node $ do
+    padding (uniform outerInset)
+
+    title <- node $ do
+      content (text "Binary search")
+      style @FontFamily bodyFont
+      style @FontSize fontSize
+      style @FontWeight FontWeightBold
+
+    stage <- node $ do
+      padding (uniform sectionGap)
+
+      node targetCells $ do
+        padding (uniform (by 8))
+        style @BorderStyle BorderDashed
+        style @Radius (by 8)
+        node targetValues $ do
+          targetText <- bindContent
+          fitText (text "target = " <> targetText)
+          style @FontFamily bodyFont
+          style @FontSize fontSize
+
+      arrayView <- node $ do
+        padding (uniform markerGap)
+
+        node lowMarkers $ do
+          content (text "low")
+          padding (uniform (by 5))
+          style @FontFamily codeFont
+          style @FontSize fontSize
+          style @Radius (by 6)
+
+        node middleMarkers $ do
+          content (text "mid")
+          padding (uniform (by 5))
+          style @FontFamily codeFont
+          style @FontSize fontSize
+          style @Radius (by 6)
+
+        node highMarkers $ do
+          content (text "high")
+          padding (uniform (by 5))
+          style @FontFamily codeFont
+          style @FontSize fontSize
+          style @Radius (by 6)
+
+        node cells $ do
+          position <- rankOf ordering
+          node values $ do
+            valueText <- bindContent
+            fitText valueText
+            width cellWidth
+            height cellHeight
+            padding (uniform (by 6))
+            style @FontFamily bodyFont
+            style @FontSize fontSize
+            style @Fill (Hsl (num 202) (num 0.31) (num 0.90))
+            style @Stroke (Hsl (num 205) (num 0.48) (num 0.36))
+            style @BorderStyle BorderSolid
+            style @StrokeWidth (by 2)
+            style @Radius (by 9)
+
+          label <- node $ do
+            content (text "A[" <> asText position <> text "]")
+            style @FontFamily codeFont
+            style @FontSize fontSize
+          ensure $ x label .==. x values
+          ensure $ top label .==. bottom values .+. shift 4
+
+        relation adjacentLinks $ do
+          previous <- first adjacentLinks
+          next <- second adjacentLinks
+          ensure $ left next .==. right previous .+. cellGap
+          ensure $ top next .==. top previous
+
+        -- Low, middle, and high use different sides of a cell. They therefore
+        -- remain distinct even when all three indices name the same cell.
+        relation lowLinks $ do
+          marker <- first lowLinks
+          cell <- second lowLinks
+          ensure $ right marker .==. left cell .-. markerGap
+          ensure $ y marker .==. y cell
+          sometimes $ connector (anchor AtRight marker) (anchor AtLeft cell) $ do
+            style @StrokeWidth (by 2)
+
+        relation middleLinks $ do
+          marker <- first middleLinks
+          cell <- second middleLinks
+          ensure $ top marker .==. bottom cell .+. markerGap
+          ensure $ x marker .==. x cell
+          sometimes $ connector (anchor AtTop marker) (anchor AtBottom cell) $ do
+            style @StrokeWidth (by 2)
+
+        relation highLinks $ do
+          marker <- first highLinks
+          cell <- second highLinks
+          ensure $ left marker .==. right cell .+. markerGap
+          ensure $ y marker .==. y cell
+          sometimes $ connector (anchor AtLeft marker) (anchor AtRight cell) $ do
+            style @StrokeWidth (by 2)
+
+        node middleReads $ do
+          readText <- bindContent
+          fitText (text "A[mid] = " <> readText)
+          padding (uniform (by 7))
+          style @FontFamily bodyFont
+          style @FontSize fontSize
+          style @BorderStyle BorderDotted
+          style @Radius (by 7)
+        ensure $ x middleReads .==. x middleMarkers
+        ensure $ top middleReads .==. bottom middleMarkers .+. markerGap
+
+      node results $ do
+        resultText <- bindContent
+        fitText (text "result index = " <> resultText)
+        padding (uniform (by 8))
+        style @FontFamily bodyFont
+        style @FontSize fontSize
+        style @FontWeight FontWeightBold
+      ensure $ x results .==. x arrayView
+      ensure $ top results .==. bottom arrayView .+. sectionGap
+
+      -- Target placement is deliberately not prescribed. Containment plus
+      -- exact non-overlap preserves several valid compositions for sampling.
+      ensure $ separatedBy sectionGap targetCells arrayView
+      ensure $ separatedBy sectionGap targetCells results
+
+    code <- sometimes $ node $ do
+      fitText binarySearchLine
+      padding (uniform (by 9))
+      style @FontFamily codeFont
+      style @FontSize fontSize
+      style @BorderStyle BorderSolid
+      style @Radius (by 7)
+
+    ensure $ x stage .==. x title
+    ensure $ top stage .==. bottom title .+. sectionGap
+    ensure $ separatedBy sectionGap stage code
+
+  ensure $ center page .==. center canvas
+  ensure $ left page .>=. left canvas .+. outerInset
+  ensure $ right page .<=. right canvas .-. outerInset
+  ensure $ top page .>=. top canvas .+. outerInset
+  ensure $ bottom page .<=. bottom canvas .-. outerInset

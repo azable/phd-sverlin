@@ -1,0 +1,408 @@
+-- Merge sort written against the proposed Sverlin API.
+--
+-- This is a body-only planning example, not source for the current compiler.
+-- It deliberately creates every recursive run with the same Kind and every
+-- in-run link with the same RelationKind.  Render therefore has to scope the
+-- shared selections to one run before validating that run as a sequence.
+
+data Number
+
+instance Traceable Number where
+  type Payload Number = LInt Number
+
+data RunToken
+
+instance Traceable RunToken where
+  type Payload RunToken = LUnit RunToken
+
+data ElementCell
+
+instance Traceable ElementCell where
+  type Payload ElementCell = LUnit ElementCell
+
+data RunCell
+
+instance Traceable RunCell where
+  type Payload RunCell = LUnit RunCell
+
+--------------------------------------------------------------------------------
+-- Domain
+--------------------------------------------------------------------------------
+
+data MergeValues
+data NumberValue
+data StoredElement
+data MergeRun
+data StoredRunToken
+data InRun
+data NextElement
+data ChildRun
+
+valuesInput :: Input [Int]
+valuesInput = input @MergeValues
+
+numberKind :: Kind Number
+numberKind = kind @NumberValue
+
+elementCellKind :: Kind ElementCell
+elementCellKind = kind @StoredElement
+
+runKind :: Kind RunCell
+runKind = kind @MergeRun
+
+runTokenKind :: Kind RunToken
+runTokenKind = kind @StoredRunToken
+
+inRun :: RelationKind RunCell ElementCell
+inRun = orderedRelation @InRun
+
+nextElement :: RelationKind ElementCell ElementCell
+nextElement = orderedRelation @NextElement
+
+childRun :: RelationKind RunCell RunCell
+childRun = orderedRelation @ChildRun
+
+data MergeSort
+data BuildLeaf
+data SplitRun
+data MergeRuns
+data RelateMember
+data RelateAdjacent
+data RelateChild
+data BuiltMergeTree
+data FinishMergeSort
+
+domain :: Domain ()
+domain = do
+  declareKind numberKind
+  declareKind elementCellKind
+  declareKind runKind
+  declareKind runTokenKind
+  declareRelation inRun
+  declareRelation nextElement
+  declareRelation childRun
+  declareSteps
+    @'[ MergeSort
+      , BuildLeaf
+      , SplitRun
+      , MergeRuns
+      , RelateMember
+      , RelateAdjacent
+      , RelateChild
+      , BuiltMergeTree
+      , FinishMergeSort
+      ]
+
+  -- The generated list is finite and valid by construction.  Domain owns the
+  -- random choice; Program sees only the resolved list and cannot inspect the
+  -- compiler seed.
+  variable valuesInput (listOf 6 12 (between 0 99))
+
+--------------------------------------------------------------------------------
+-- Program storage helpers
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data StoredList owner value where
+  StoredNil :: StoredList owner value
+  StoredCons :: Stored owner value %1 -> StoredList owner value %1 -> StoredList owner value
+
+data Related leftOwner leftValue rightOwner rightValue where
+  Related ::
+    Stored leftOwner leftValue %1 ->
+    Stored rightOwner rightValue %1 ->
+    Related leftOwner leftValue rightOwner rightValue
+
+data Run where
+  Run :: Stored RunCell RunToken %1 -> StoredList ElementCell Number %1 -> Run
+
+data MergeTree where
+  Leaf :: Run %1 -> MergeTree
+  Branch :: Run %1 -> MergeTree %1 -> MergeTree %1 -> MergeTree
+
+createStored ::
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = do
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+relateStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Program (Related leftOwner leftValue rightOwner rightValue)
+relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  pure (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
+createElements :: [Int] -> Program (StoredList ElementCell Number)
+createElements [] = pure StoredNil
+createElements (value : values) = do
+  current <- createStored elementCellKind LUnit numberKind (LInt value)
+  rest <- createElements values
+  pure (StoredCons current rest)
+
+-- Relating neighbours consumes and reissues both Slot capabilities.  The list
+-- is rebuilt with those successors; no public relation handle is retained.
+relateNeighbours :: StoredList ElementCell Number %1 -> Program (StoredList ElementCell Number)
+relateNeighbours StoredNil = pure StoredNil
+relateNeighbours (StoredCons current StoredNil) = pure (StoredCons current StoredNil)
+relateNeighbours (StoredCons current (StoredCons following rest)) = step @RelateAdjacent $ do
+  Related current1 following1 <- relateStored nextElement current following
+  linkedRest <- relateNeighbours (StoredCons following1 rest)
+  pure (StoredCons current1 linkedRest)
+
+relateMembers ::
+  Stored RunCell RunToken %1 ->
+  StoredList ElementCell Number %1 ->
+  Program Run
+relateMembers run StoredNil = pure (Run run StoredNil)
+relateMembers run (StoredCons cell rest) = step @RelateMember $ do
+  Related run1 cell1 <- relateStored inRun run cell
+  Run run2 rest1 <- relateMembers run1 rest
+  pure (Run run2 (StoredCons cell1 rest1))
+
+createRun :: [Int] -> Program Run
+createRun values = do
+  run <- createStored runKind LUnit runTokenKind LUnit
+  cells <- createElements values
+  linkedCells <- relateNeighbours cells
+  relateMembers run linkedCells
+
+data RelatedRuns where
+  RelatedRuns :: Run %1 -> Run %1 -> RelatedRuns
+
+relateRunPair :: Run %1 -> Run %1 -> Program RelatedRuns
+relateRunPair (Run leftRun leftCells) (Run rightRun rightCells) = step @RelateChild $ do
+  Related leftRun1 rightRun1 <- relateStored childRun leftRun rightRun
+  pure (RelatedRuns (Run leftRun1 leftCells) (Run rightRun1 rightCells))
+
+attachChildren :: Run %1 -> MergeTree %1 -> MergeTree %1 -> Program MergeTree
+attachChildren parent leftTree rightTree = do
+  -- `takeRoot` and `putRoot` are ordinary local linear tree decompositions;
+  -- they do not add facade operations.
+  TakenRoot leftRun leftRemainder <- takeRoot leftTree
+  RelatedRuns parent1 leftRun1 <- relateRunPair parent leftRun
+  TakenRoot rightRun rightRemainder <- takeRoot rightTree
+  RelatedRuns parent2 rightRun1 <- relateRunPair parent1 rightRun
+  pure
+    (Branch
+       parent2
+       (putRoot leftRun1 leftRemainder)
+       (putRoot rightRun1 rightRemainder))
+
+data TakenRoot where
+  TakenRoot :: Run %1 -> RootRemainder %1 -> TakenRoot
+
+data RootRemainder where
+  LeafRemainder :: RootRemainder
+  BranchRemainder :: MergeTree %1 -> MergeTree %1 -> RootRemainder
+
+takeRoot :: MergeTree %1 -> Program TakenRoot
+takeRoot (Leaf run) = pure (TakenRoot run LeafRemainder)
+takeRoot (Branch run left right) = pure (TakenRoot run (BranchRemainder left right))
+
+putRoot :: Run %1 -> RootRemainder %1 -> MergeTree
+putRoot run LeafRemainder = Leaf run
+putRoot run (BranchRemainder left right) = Branch run left right
+
+-- The pure list calculation decides which trace operations to build.  Values
+-- still become typed Program blocks, and every recursive run has a complete
+-- lifecycle.  No layout decision leaks into the algorithm.
+mergeValues :: [Int] -> [Int] -> [Int]
+mergeValues [] right = right
+mergeValues left [] = left
+mergeValues (left : leftRest) (right : rightRest)
+  | left <= right = left : mergeValues leftRest (right : rightRest)
+  | otherwise = right : mergeValues (left : leftRest) rightRest
+
+mergeSortValues :: [Int] -> [Int]
+mergeSortValues [] = []
+mergeSortValues [value] = [value]
+mergeSortValues values =
+  let (left, right) = splitAt (length values `div` 2) values
+   in mergeValues (mergeSortValues left) (mergeSortValues right)
+
+buildTree :: [Int] -> Program MergeTree
+buildTree [value] = step @BuildLeaf $ do
+  run <- createRun [value]
+  pure (Leaf run)
+buildTree values = step @SplitRun $ do
+  let (leftValues, rightValues) = splitAt (length values `div` 2) values
+  leftTree <- buildTree leftValues
+  rightTree <- buildTree rightValues
+  parent <- step @MergeRuns (createRun (mergeValues (mergeSortValues leftValues) (mergeSortValues rightValues)))
+  attachChildren parent leftTree rightTree
+
+destroyStored :: Stored owner value %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  pure ()
+
+destroyStoredList :: StoredList owner value %1 -> Program ()
+destroyStoredList StoredNil = pure ()
+destroyStoredList (StoredCons current rest) = do
+  destroyStored current
+  destroyStoredList rest
+
+destroyRun :: Run %1 -> Program ()
+destroyRun (Run run cells) = do
+  destroyStoredList cells
+  destroyStored run
+
+destroyTree :: MergeTree %1 -> Program ()
+destroyTree (Leaf run) = destroyRun run
+destroyTree (Branch run left right) = do
+  destroyRun run
+  destroyTree left
+  destroyTree right
+
+program :: Program ()
+program = step @MergeSort $ do
+  values <- resolveInput valuesInput
+  tree <- buildTree values
+  final <- step @BuiltMergeTree (pure tree)
+  step @FinishMergeSort (destroyTree final)
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+mergeTreeView ::
+  Selected RunCell ->
+  Selected Number ->
+  Relations RunCell ElementCell ->
+  Relations RunCell RunCell ->
+  Span ->
+  Span ->
+  Span ->
+  Span ->
+  Span ->
+  Scalar ->
+  Render (Selected GeneratedNode)
+mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight valueScale = node $ do
+  contentFit Both Hug
+
+  -- During construction the live runs form a forest; a completed-tree
+  -- arrangement would reject those intermediate frames.  The layered DAG
+  -- template handles both that forest and the final tree without weakening
+  -- ArrangeTree's one-root contract.
+  arrange (ArrangeLayered childLinks (vec2 siblingGap levelGap)) runs
+
+  node runs $ do
+    contentFit Both Hug
+    padding (uniform (by 8))
+    style @BorderStyle BorderSolid
+    style @StrokeWidth (by 1)
+    style @Radius (by 10)
+
+    -- `within` restricts every selection in its body to members of this run.
+    -- It also induces NextElement links whose two endpoints are both members,
+    -- so one scope handles nodes and relations without another public form.
+    within memberships runs $ do
+      runCells <- select elementCellKind
+      runNext <- select nextElement
+      runOrder <- asSequence runNext runCells
+
+      node runCells $ do
+        position <- rankOf runOrder
+        contentFit Both Hug
+
+        node allValues $ do
+          label <- bindContent
+          magnitude <- payloadScalar allValues
+          fitText label
+          width cellWidth
+          height (cellHeight .+. by 1 .*. magnitude .*. valueScale)
+          padding (uniform (by 5))
+          style @Fill (Hsl (num 205) (num 0.42) (num 0.92))
+          style @Stroke (Hsl (num 205) (num 0.48) (num 0.38))
+          style @BorderStyle BorderSolid
+          style @Radius (by 7)
+
+        sometimes $ node $ do
+          labelNode <- self
+          content (text "run[" <> asText position <> text "]")
+          ensure $ x labelNode .==. x allValues
+          ensure $ top labelNode .==. (bottom allValues .+. shift 4)
+
+      oneOf
+        "run orientation"
+        (alternative "horizontal" $
+          relation runNext $ do
+            previous <- first runNext
+            following <- second runNext
+            ensure $ left following .==. (right previous .+. cellGap)
+            ensure $ y following .==. y previous)
+        [ alternative "vertical" $
+            relation runNext $ do
+              previous <- first runNext
+              following <- second runNext
+              ensure $ top following .==. (bottom previous .+. cellGap)
+              ensure $ x following .==. x previous
+        ]
+
+  relation childLinks $ do
+    parent <- first childLinks
+    child <- second childLinks
+    ensure $ separatedBy levelGap parent child
+    connector (anchor AtBoundary parent) (anchor AtBoundary child) $ do
+      style @Stroke (Hsl (num 220) (num 0.30) (num 0.45))
+      style @StrokeWidth (by 2)
+      endMarker ArrowMarker
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1200
+  width canvasWidth
+  height canvasHeight
+  contentFit Both Contain
+
+  always $ frame @BuildLeaf
+  sometimes $ frame @SplitRun
+  always $ frame @MergeRuns
+  always $ frame @BuiltMergeTree
+
+  runs <- select runKind
+  allValues <- select numberKind
+  memberships <- select inRun
+  childLinks <- select childRun
+
+  levelGap <- variable @Span
+  siblingGap <- variable @Span
+  cellGap <- variable @Span
+  cellWidth <- variable @Span
+  cellHeight <- variable @Span
+  valueScale <- variable @Scalar
+  ensure $ levelGap .>=. by 28
+  ensure $ levelGap .<=. by 64
+  ensure $ siblingGap .>=. by 18
+  ensure $ siblingGap .<=. by 48
+  ensure $ cellGap .>=. by 4
+  ensure $ cellGap .<=. by 14
+  ensure $ cellWidth .>=. by 36
+  ensure $ cellWidth .<=. by 64
+  ensure $ cellHeight .>=. by 30
+  ensure $ cellHeight .<=. by 52
+  ensure $ valueScale .>=. num 0.15
+  ensure $ valueScale .<=. num 0.45
+
+  tree <- mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight valueScale
+  ensure $ center tree .==. center canvas

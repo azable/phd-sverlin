@@ -1,0 +1,486 @@
+-- Bubble sort written against the proposed API in API_plan_final.md.
+--
+-- Array cells are stable Slot owners. Swapping unseals two cells and reseals
+-- their existing occupants in the opposite locations; it does not destroy and
+-- recreate either value. Render can therefore offer a rounded-box view or a
+-- value-height bar view of the same trace.
+
+--------------------------------------------------------------------------------
+-- Trace vocabulary and Domain
+--------------------------------------------------------------------------------
+
+data Number
+instance Traceable Number where
+  type Payload Number = LInt Number
+
+data Condition
+instance Traceable Condition where
+  type Payload Condition = LBool Condition
+
+data ElementCell
+instance Traceable ElementCell where
+  type Payload ElementCell = LUnit ElementCell
+
+data Greater
+instance Traceable Greater where
+  type Payload Greater = LOperator Greater
+
+instance Applicable2 Greater Number Number where
+  type Apply2Result Greater Number Number = Condition
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LBool (leftValue Linear.> rightValue)
+
+data ElementValueRole
+data LeftReadRole
+data RightReadRole
+data ComparisonRole
+data ElementCellRole
+data GreaterOperatorRole
+data AdjacentRole
+data BubbleSortInput
+
+elementValueKind :: Kind Number
+elementValueKind = kind @ElementValueRole
+
+leftReadKind :: Kind Number
+leftReadKind = kind @LeftReadRole
+
+rightReadKind :: Kind Number
+rightReadKind = kind @RightReadRole
+
+comparisonKind :: Kind Condition
+comparisonKind = kind @ComparisonRole
+
+elementCellKind :: Kind ElementCell
+elementCellKind = kind @ElementCellRole
+
+greaterOperatorKind :: Kind Greater
+greaterOperatorKind = kind @GreaterOperatorRole
+
+adjacent :: RelationKind ElementCell ElementCell
+adjacent = orderedRelation @AdjacentRole
+
+data BubbleValues = BubbleValues Int [Int]
+
+bubbleValues :: Input BubbleValues
+bubbleValues = input @BubbleSortInput
+
+bubbleCases :: Generator BubbleValues
+bubbleCases = do
+  tailLength <- between 4 9
+  start <- between 1 12
+  shuffled <- shuffle [start .. start + tailLength]
+  case shuffled of
+    first : rest -> return (BubbleValues first rest)
+    [] -> return (BubbleValues start []) -- the constructed range is never empty
+
+data BubbleSort
+data InitializeArray
+data CreateStored
+data LinkCells
+data ReadLeft
+data ReadRight
+data ComparePair
+data DecideSwap
+data SwapValues
+data FinishPass
+data Sorted
+data CleanUp
+
+domain :: Domain ()
+domain = do
+  declareKind elementValueKind
+  declareKind leftReadKind
+  declareKind rightReadKind
+  declareKind comparisonKind
+  declareKind elementCellKind
+  declareKind greaterOperatorKind
+  declareRelation adjacent
+  declareSteps
+    @'[ BubbleSort
+      , InitializeArray
+      , CreateStored
+      , LinkCells
+      , ReadLeft
+      , ReadRight
+      , ComparePair
+      , DecideSwap
+      , SwapValues
+      , FinishPass
+      , Sorted
+      , CleanUp
+      ]
+  variable bubbleValues bubbleCases
+
+--------------------------------------------------------------------------------
+-- Stable array storage
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data ReadStored owner value where
+  ReadStored :: Stored owner value %1 -> Block value %1 -> ReadStored owner value
+
+data Related leftOwner leftValue rightOwner rightValue where
+  Related ::
+    Stored leftOwner leftValue %1 ->
+    Stored rightOwner rightValue %1 ->
+    Related leftOwner leftValue rightOwner rightValue
+
+data Pair where
+  Pair :: Stored ElementCell Number %1 -> Stored ElementCell Number %1 -> Pair
+
+data ComparedPair where
+  ComparedPair ::
+    Stored ElementCell Number %1 ->
+    Stored ElementCell Number %1 ->
+    Bool ->
+    ComparedPair
+
+data Chain value where
+  Last :: Stored ElementCell value %1 -> Chain value
+  More :: Stored ElementCell value %1 -> Chain value %1 -> Chain value
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = step @CreateStored $ do
+  Create pendingOwner <- create ownerPayload
+  owner <- materialize ownerKind pendingOwner
+  Create pendingValue <- create valuePayload
+  value <- materialize valueKind pendingValue
+  Seal owner1 slot <- seal owner value
+  return (Stored owner1 slot)
+
+readStored ::
+  (Traceable owner, Traceable value) =>
+  Kind value ->
+  Stored owner value %1 ->
+  Program (ReadStored owner value)
+readStored readKind (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Copy value1 pendingRead <- copy value
+  readValue <- materialize readKind pendingRead
+  Seal owner2 slot1 <- seal owner1 value1
+  return (ReadStored (Stored owner2 slot1) readValue)
+
+relateStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Program (Related leftOwner leftValue rightOwner rightValue)
+relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  return (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
+destroyStored ::
+  (Traceable owner, Traceable value) =>
+  Stored owner value %1 ->
+  Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  return ()
+
+destroyChain :: Chain Number %1 -> Program ()
+destroyChain (Last cell) = destroyStored cell
+destroyChain (More cell rest) = do
+  destroyStored cell
+  destroyChain rest
+
+buildChain :: Int -> [Int] -> Program (Chain Number)
+buildChain value [] = do
+  cell <- createStored elementCellKind LUnit elementValueKind (LInt value)
+  return (Last cell)
+buildChain value (nextValue : remaining) = do
+  current <- createStored elementCellKind LUnit elementValueKind (LInt value)
+  rest <- buildChain nextValue remaining
+  case rest of
+    Last next -> step @LinkCells $ do
+      Related current1 next1 <- relateStored adjacent current next
+      return (More current1 (Last next1))
+    More next tailValues -> step @LinkCells $ do
+      Related current1 next1 <- relateStored adjacent current next
+      return (More current1 (More next1 tailValues))
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+comparePair ::
+  Stored ElementCell Number %1 ->
+  Stored ElementCell Number %1 ->
+  Program ComparedPair
+comparePair leftCell rightCell = do
+  ReadStored leftCell1 leftRead <- step @ReadLeft (readStored leftReadKind leftCell)
+  ReadStored rightCell1 rightRead <- step @ReadRight (readStored rightReadKind rightCell)
+
+  condition <- step @ComparePair $ do
+    Create pendingGreater <- create @Greater LOperator
+    greater <- materialize greaterOperatorKind pendingGreater
+    Apply2 pendingCondition <- apply2 greater leftRead rightRead
+    materialize comparisonKind pendingCondition
+
+  Use (LBool shouldSwap) <- step @DecideSwap (use condition)
+  return (ComparedPair leftCell1 rightCell1 shouldSwap)
+
+swapPair ::
+  Stored ElementCell Number %1 ->
+  Stored ElementCell Number %1 ->
+  Program Pair
+swapPair (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = step @SwapValues $ do
+  Unseal leftOwner1 leftValue <- unseal leftOwner leftSlot
+  Unseal rightOwner1 rightValue <- unseal rightOwner rightSlot
+  Seal leftOwner2 leftSlot1 <- seal leftOwner1 rightValue
+  Seal rightOwner2 rightSlot1 <- seal rightOwner1 leftValue
+  return (Pair (Stored leftOwner2 leftSlot1) (Stored rightOwner2 rightSlot1))
+
+compareAndSwap ::
+  Stored ElementCell Number %1 ->
+  Stored ElementCell Number %1 ->
+  Program Pair
+compareAndSwap leftCell rightCell = do
+  ComparedPair leftCell1 rightCell1 shouldSwap <- comparePair leftCell rightCell
+  if shouldSwap
+    then swapPair leftCell1 rightCell1
+    else return (Pair leftCell1 rightCell1)
+
+-- After comparing the first pair, the larger occupant is in the right cell.
+-- Recursing from that right cell carries the pass's maximum towards the end.
+bubblePass :: Chain Number %1 -> Program (Chain Number)
+bubblePass (Last cell) = return (Last cell)
+bubblePass (More leftCell rest) =
+  case rest of
+    Last rightCell -> do
+      Pair leftCell1 rightCell1 <- compareAndSwap leftCell rightCell
+      return (More leftCell1 (Last rightCell1))
+    More rightCell remaining -> do
+      Pair leftCell1 rightCell1 <- compareAndSwap leftCell rightCell
+      sortedRest <- bubblePass (More rightCell1 remaining)
+      return (More leftCell1 sortedRest)
+
+runPasses :: Int -> Chain Number %1 -> Program (Chain Number)
+runPasses 0 cells = return cells
+runPasses remaining cells = do
+  cells1 <- bubblePass cells
+  cells2 <- step @FinishPass (return cells1)
+  runPasses (remaining - 1) cells2
+
+program :: Program ()
+program = step @BubbleSort $ do
+  BubbleValues firstValue remaining <- resolveInput bubbleValues
+  cells <- step @InitializeArray $ buildChain firstValue remaining
+  sorted <- runPasses (length remaining) cells
+  sorted1 <- step @Sorted (return sorted)
+  step @CleanUp (destroyChain sorted1)
+
+--------------------------------------------------------------------------------
+-- Render helpers
+--------------------------------------------------------------------------------
+
+boundedSpan :: Span -> Span -> Render Span
+boundedSpan lower upper = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  ensure $ value .<=. upper
+  return value
+
+bubbleLine :: TextBuilder ()
+bubbleLine = do
+  literal "compare "
+  fragment @ReadLeft "A[i]"
+  literal " and "
+  fragment @ReadRight "A[i + 1]"
+  literal "; "
+  fragment @SwapValues "swap when out of order"
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- boundedSpan (by 760) (by 1320)
+  canvasHeight <- boundedSpan (by 520) (by 880)
+  outerInset <- boundedSpan (by 20) (by 48)
+  sectionGap <- boundedSpan (by 16) (by 38)
+  cellGap <- boundedSpan (by 7) (by 22)
+  cellWidth <- boundedSpan (by 48) (by 82)
+  cellHeight <- boundedSpan (by 46) (by 76)
+  barWidth <- boundedSpan (by 30) (by 62)
+  barBase <- boundedSpan (by 20) (by 38)
+  barUnit <- boundedSpan (by 5) (by 12)
+  fontSize <- boundedSpan (by 13) (by 23)
+  bodyFont <- fontChoice (fontKind Proportional)
+  codeFont <- fontChoice (fontKind Monospace)
+
+  width canvasWidth
+  height canvasHeight
+  contentFit Both Contain
+
+  always $ frame @InitializeArray
+  sometimes $ frame @ReadRight
+  always $ frame @ComparePair
+  always $ frame @SwapValues
+  sometimes $ frame @FinishPass
+  always $ frame @Sorted
+
+  cells <- select elementCellKind
+  values <- select elementValueKind
+  leftReads <- select leftReadKind
+  rightReads <- select rightReadKind
+  comparisons <- select comparisonKind
+  adjacentLinks <- select adjacent
+  ordering <- asSequence adjacentLinks cells
+
+  page <- node $ do
+    padding (uniform outerInset)
+
+    title <- node $ do
+      content (text "Bubble sort")
+      style @FontFamily bodyFont
+      style @FontSize fontSize
+      style @FontWeight FontWeightBold
+
+    comparisonPanel <- node $ do
+      padding (uniform (by 8))
+
+      panelTitle <- node $ do
+        content (text "current comparison")
+        style @FontFamily bodyFont
+        style @FontSize fontSize
+
+      node leftReads $ do
+        valueText <- bindContent
+        fitText (text "left: " <> valueText)
+        padding (uniform (by 7))
+        style @FontFamily bodyFont
+        style @FontSize fontSize
+        style @BorderStyle BorderDotted
+        style @Radius (by 7)
+
+      node rightReads $ do
+        valueText <- bindContent
+        fitText (text "right: " <> valueText)
+        padding (uniform (by 7))
+        style @FontFamily bodyFont
+        style @FontSize fontSize
+        style @BorderStyle BorderDotted
+        style @Radius (by 7)
+
+      sometimes $ node comparisons $ do
+        resultText <- bindContent
+        fitText (text "left > right: " <> resultText)
+        padding (uniform (by 7))
+        style @FontFamily bodyFont
+        style @FontSize fontSize
+        style @FontWeight FontWeightBold
+        -- These constraints inherit the same optional mapping. Keeping them
+        -- here avoids referring to a node in the branch where it is omitted.
+        ensure $ x comparisons .==. x panelTitle
+        ensure $ top comparisons .==. bottom panelTitle .+. sectionGap
+
+      ensure $ top leftReads .==. bottom panelTitle .+. sectionGap
+      ensure $ left rightReads .==. right leftReads .+. sectionGap
+      ensure $ y rightReads .==. y leftReads
+
+    code <- sometimes $ node $ do
+      fitText bubbleLine
+      padding (uniform (by 9))
+      style @FontFamily codeFont
+      style @FontSize fontSize
+      style @BorderStyle BorderSolid
+      style @Radius (by 7)
+
+    oneOf "value-encoding"
+      (alternative "rounded boxes" $ do
+        arrayView <- node $ do
+          padding (uniform (by 8))
+
+          node cells $ do
+            position <- rankOf ordering
+            node values $ do
+              valueText <- bindContent
+              fitText valueText
+              width cellWidth
+              height cellHeight
+              padding (uniform (by 6))
+              style @FontFamily bodyFont
+              style @FontSize fontSize
+              style @Fill (Hsl (num 32) (num 0.70) (num 0.83))
+              style @Stroke (Hsl (num 28) (num 0.62) (num 0.38))
+              style @BorderStyle BorderSolid
+              style @StrokeWidth (by 2)
+              style @Radius (by 12)
+
+            indexLabel <- sometimes $ node $ do
+              content (text "A[" <> asText position <> text "]")
+              style @FontFamily codeFont
+              style @FontSize fontSize
+            ensure $ x indexLabel .==. x values
+            ensure $ top indexLabel .==. bottom values .+. shift 5
+
+          relation adjacentLinks $ do
+            previous <- first adjacentLinks
+            next <- second adjacentLinks
+            ensure $ left next .==. right previous .+. cellGap
+            ensure $ top next .==. top previous
+
+        ensure $ x arrayView .==. x title
+        ensure $ top arrayView .==. bottom title .+. sectionGap
+        ensure $ separatedBy sectionGap arrayView comparisonPanel
+        ensure $ separatedBy sectionGap arrayView code)
+      [alternative "value-height bars" $ do
+        arrayView <- node $ do
+          padding (uniform (by 8))
+
+          node cells $ do
+            position <- rankOf ordering
+            node values $ do
+              amount <- payloadScalar values
+              valueText <- bindContent
+              fitText valueText
+              width barWidth
+              height (barBase .+. barUnit .*. amount)
+              padding (uniform (by 5))
+              style @FontFamily bodyFont
+              style @FontSize fontSize
+              style @Fill (Hsl (num 188) (num 0.66) (num 0.55))
+              style @Stroke (Hsl (num 192) (num 0.58) (num 0.30))
+              style @BorderStyle BorderSolid
+              style @StrokeWidth (by 2)
+              style @Radius (by 7)
+
+            indexLabel <- sometimes $ node $ do
+              content (text "A[" <> asText position <> text "]")
+              style @FontFamily codeFont
+              style @FontSize fontSize
+            ensure $ x indexLabel .==. x values
+            ensure $ bottom indexLabel .==. top values .-. by 5
+
+          relation adjacentLinks $ do
+            previous <- first adjacentLinks
+            next <- second adjacentLinks
+            ensure $ left next .==. right previous .+. cellGap
+            ensure $ bottom next .==. bottom previous
+
+        ensure $ x arrayView .==. x title
+        ensure $ top arrayView .==. bottom title .+. sectionGap
+        ensure $ separatedBy sectionGap arrayView comparisonPanel
+        ensure $ separatedBy sectionGap arrayView code]
+
+    ensure $ separatedBy sectionGap title comparisonPanel
+    ensure $ separatedBy sectionGap title code
+    ensure $ separatedBy sectionGap comparisonPanel code
+
+  ensure $ center page .==. center canvas
+  ensure $ left page .>=. left canvas .+. outerInset
+  ensure $ right page .<=. right canvas .-. outerInset
+  ensure $ top page .>=. top canvas .+. outerInset
+  ensure $ bottom page .<=. bottom canvas .-. outerInset

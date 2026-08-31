@@ -1,0 +1,526 @@
+-- Dijkstra's shortest-path algorithm for the proposed API.
+-- This planning source is intentionally not compiled by the current compiler.
+--
+-- A weighted edge is a real typed location containing a numeric weight. Two
+-- ordered relations connect that edge to its source and target vertices. This
+-- keeps weight data out of RelationKind while still giving Render one exact
+-- source/weight/target scope for every arrow.
+
+data Vertex
+instance Traceable Vertex where
+  type Payload Vertex = LUnit Vertex
+
+data VertexLabel
+instance Traceable VertexLabel where
+  type Payload VertexLabel = LString VertexLabel
+
+data Edge
+instance Traceable Edge where
+  type Payload Edge = LUnit Edge
+
+data EdgeWeight
+instance Traceable EdgeWeight where
+  type Payload EdgeWeight = LInt EdgeWeight
+
+data DistanceCell
+instance Traceable DistanceCell where
+  type Payload DistanceCell = LUnit DistanceCell
+
+data DistanceText
+instance Traceable DistanceText where
+  type Payload DistanceText = LString DistanceText
+
+data Status
+instance Traceable Status where
+  type Payload Status = LString Status
+
+data VertexRole
+data VertexLabelRole
+data EdgeRole
+data EdgeWeightRole
+data DistanceCellRole
+data DistanceTextRole
+data StatusRole
+data SourceOfRole
+data TargetOfRole
+data DistanceForRole
+data NextDistanceRole
+data DijkstraScenarioRole
+
+vertexKind :: Kind Vertex
+vertexKind = kind @VertexRole
+
+vertexLabelKind :: Kind VertexLabel
+vertexLabelKind = kind @VertexLabelRole
+
+edgeKind :: Kind Edge
+edgeKind = kind @EdgeRole
+
+edgeWeightKind :: Kind EdgeWeight
+edgeWeightKind = kind @EdgeWeightRole
+
+distanceCellKind :: Kind DistanceCell
+distanceCellKind = kind @DistanceCellRole
+
+distanceTextKind :: Kind DistanceText
+distanceTextKind = kind @DistanceTextRole
+
+statusKind :: Kind Status
+statusKind = kind @StatusRole
+
+sourceOf :: RelationKind Edge Vertex
+sourceOf = orderedRelation @SourceOfRole
+
+targetOf :: RelationKind Edge Vertex
+targetOf = orderedRelation @TargetOfRole
+
+distanceFor :: RelationKind DistanceCell Vertex
+distanceFor = orderedRelation @DistanceForRole
+
+nextDistance :: RelationKind DistanceCell DistanceCell
+nextDistance = orderedRelation @NextDistanceRole
+
+dijkstraScenario :: Input DijkstraInput
+dijkstraScenario = input @DijkstraScenarioRole
+
+data Dijkstra
+data BuildWeightedGraph
+data InitializeDistances
+data ChooseNearest
+data RelaxOutgoingEdges
+data RecordDistance
+data FinishDijkstra
+
+data EdgeSpec = EdgeSpec
+  { edgeSource :: Int
+  , edgeTarget :: Int
+  , edgeWeight :: Int
+  }
+
+data DijkstraInput = DijkstraInput
+  { dijkstraLabels :: [String]
+  , dijkstraEdges :: [EdgeSpec]
+  , dijkstraStart :: Int
+  }
+
+dijkstraGenerator :: Generator DijkstraInput
+dijkstraGenerator = do
+  vertexCount <- between 5 8
+  labels <- shuffle (take vertexCount ["A", "B", "C", "D", "E", "F", "G", "H"])
+  start <- between 0 (vertexCount - 1)
+  let pairs = [(index, (index + 1) `mod` vertexCount) | index <- [0 .. vertexCount - 1]]
+        <> [(index, index + 2) | index <- [0 .. vertexCount - 3]]
+  weights <- listOf (length pairs) (length pairs) (between 1 20)
+  pure (DijkstraInput labels (zipWith (uncurry EdgeSpec) pairs weights) start)
+
+domain :: Domain ()
+domain = do
+  declareKind vertexKind
+  declareKind vertexLabelKind
+  declareKind edgeKind
+  declareKind edgeWeightKind
+  declareKind distanceCellKind
+  declareKind distanceTextKind
+  declareKind statusKind
+  declareRelation sourceOf
+  declareRelation targetOf
+  declareRelation distanceFor
+  declareRelation nextDistance
+  variable dijkstraScenario dijkstraGenerator
+  declareSteps
+    @'[ Dijkstra
+      , BuildWeightedGraph
+      , InitializeDistances
+      , ChooseNearest
+      , RelaxOutgoingEdges
+      , RecordDistance
+      , FinishDijkstra
+      ]
+
+--------------------------------------------------------------------------------
+-- Linear storage helpers
+--------------------------------------------------------------------------------
+
+data Stored owner value where
+  Stored :: Block owner %1 -> Slot owner value %1 -> Stored owner value
+
+data StoredList owner value where
+  StoredNil :: StoredList owner value
+  StoredCons :: Stored owner value %1 -> StoredList owner value %1 -> StoredList owner value
+
+data RelatedStored source sourceValue target targetValue where
+  RelatedStored ::
+    Stored source sourceValue %1 ->
+    Stored target targetValue %1 ->
+    RelatedStored source sourceValue target targetValue
+
+data RelatedExternal source sourceValue target targetValue where
+  RelatedExternal ::
+    Stored source sourceValue %1 ->
+    StoredList target targetValue %1 ->
+    RelatedExternal source sourceValue target targetValue
+
+createStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Program (Stored owner value)
+createStored ownerKind ownerPayload valueKind valuePayload = do
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+relateStored ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Program (RelatedStored source sourceValue target targetValue)
+relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
+relateExternalAt ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Int ->
+  StoredList target targetValue %1 ->
+  Program (RelatedExternal source sourceValue target targetValue)
+relateExternalAt relationKind source targetIndex targets =
+  case (targetIndex, targets) of
+    (0, StoredCons target rest) -> do
+      RelatedStored source1 target1 <- relateStored relationKind source target
+      pure (RelatedExternal source1 (StoredCons target1 rest))
+    (index, StoredCons target rest) -> do
+      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
+      pure (RelatedExternal source1 (StoredCons target remaining))
+    (_, StoredNil) -> error "Dijkstra generator produced an invalid vertex index"
+
+destroyStored :: Stored owner value %1 -> Program ()
+destroyStored (Stored owner slot) = do
+  Unseal owner1 value <- unseal owner slot
+  Destroy <- destroy value
+  Destroy <- destroy owner1
+  pure ()
+
+destroyStoredList :: StoredList owner value %1 -> Program ()
+destroyStoredList StoredNil = pure ()
+destroyStoredList (StoredCons current rest) = do
+  destroyStored current
+  destroyStoredList rest
+
+--------------------------------------------------------------------------------
+-- Program
+--------------------------------------------------------------------------------
+
+buildVertices :: [String] -> Program (StoredList Vertex VertexLabel)
+buildVertices [] = pure StoredNil
+buildVertices (label : rest) = do
+  vertex <- createStored vertexKind LUnit vertexLabelKind (LString label)
+  vertices <- buildVertices rest
+  pure (StoredCons vertex vertices)
+
+data WeightedGraph where
+  WeightedGraph ::
+    StoredList Edge EdgeWeight %1 ->
+    StoredList Vertex VertexLabel %1 ->
+    WeightedGraph
+
+buildEdges ::
+  [EdgeSpec] ->
+  StoredList Vertex VertexLabel %1 ->
+  Program WeightedGraph
+buildEdges [] vertices = pure (WeightedGraph StoredNil vertices)
+buildEdges (spec : rest) vertices = do
+  edge <- createStored edgeKind LUnit edgeWeightKind (LInt (edgeWeight spec))
+  RelatedExternal edge1 vertices1 <- relateExternalAt sourceOf edge (edgeSource spec) vertices
+  RelatedExternal edge2 vertices2 <- relateExternalAt targetOf edge1 (edgeTarget spec) vertices1
+  WeightedGraph remaining vertices3 <- buildEdges rest vertices2
+  pure (WeightedGraph (StoredCons edge2 remaining) vertices3)
+
+infinity :: Int
+-- A shortest positive path visits at most seven edges in the generated
+-- eight-vertex graph, so this value is strictly above every reachable result.
+infinity = 1 + 8 * 20
+
+lookupDistance :: Int -> [(Int, Int)] -> Int
+lookupDistance _ [] = infinity
+lookupDistance wanted ((vertex, distance) : rest)
+  | wanted == vertex = distance
+  | otherwise = lookupDistance wanted rest
+
+setDistance :: Int -> Int -> [(Int, Int)] -> [(Int, Int)]
+setDistance vertex distance [] = [(vertex, distance)]
+setDistance vertex distance ((current, oldDistance) : rest)
+  | vertex == current = (current, distance) : rest
+  | otherwise = (current, oldDistance) : setDistance vertex distance rest
+
+removeInt :: Int -> [Int] -> [Int]
+removeInt _ [] = []
+removeInt wanted (value : rest)
+  | wanted == value = rest
+  | otherwise = value : removeInt wanted rest
+
+nearest :: [(Int, Int)] -> [Int] -> Int
+nearest distances (firstVertex : rest) = go firstVertex rest
+  where
+    go best [] = best
+    go best (candidate : candidates)
+      | lookupDistance candidate distances < lookupDistance best distances = go candidate candidates
+      | otherwise = go best candidates
+nearest _ [] = error "nearest requires one unsettled vertex"
+
+relaxFrom :: [EdgeSpec] -> Int -> [(Int, Int)] -> [(Int, Int)]
+relaxFrom edges source distances = foldl relax distances edges
+  where
+    relax current spec
+      | edgeSource spec /= source = current
+      | otherwise =
+          let candidate = lookupDistance source current + edgeWeight spec
+              target = edgeTarget spec
+           in if candidate < lookupDistance target current
+                then setDistance target candidate current
+                else current
+
+data DijkstraMoment = DijkstraMoment
+  { settledVertex :: Int
+  , settledDistance :: Int
+  }
+
+dijkstraMoments :: Int -> [EdgeSpec] -> Int -> [DijkstraMoment]
+dijkstraMoments vertexCount edges start = go initialDistances [0 .. vertexCount - 1]
+  where
+    initialDistances = [(vertex, if vertex == start then 0 else infinity) | vertex <- [0 .. vertexCount - 1]]
+    go _ [] = []
+    go distances unsettled =
+      let current = nearest distances unsettled
+          distance = lookupDistance current distances
+          distances1 = relaxFrom edges current distances
+       in DijkstraMoment current distance : go distances1 (removeInt current unsettled)
+
+distanceLine :: [String] -> DijkstraMoment -> String
+distanceLine labels moment = (labels !! settledVertex moment) <> " = " <> show (settledDistance moment)
+
+data DistanceRows where
+  DistanceRows ::
+    Block Status %1 ->
+    StoredList DistanceCell DistanceText %1 ->
+    StoredList Vertex VertexLabel %1 ->
+    DistanceRows
+
+addDistanceRow ::
+  [String] ->
+  DijkstraMoment ->
+  Block Status %1 ->
+  StoredList DistanceCell DistanceText %1 ->
+  StoredList Vertex VertexLabel %1 ->
+  Program DistanceRows
+addDistanceRow labels moment status rows vertices = step @RecordDistance $ do
+  row <- createStored distanceCellKind LUnit distanceTextKind (LString (distanceLine labels moment))
+  RelatedExternal row1 vertices1 <- relateExternalAt distanceFor row (settledVertex moment) vertices
+
+  rows1 <-
+    case rows of
+      StoredNil -> pure (StoredCons row1 StoredNil)
+      StoredCons previous rest -> do
+        RelatedStored previous1 row2 <- relateStored nextDistance previous row1
+        pure (StoredCons row2 (StoredCons previous1 rest))
+
+  Create nextStatus <- create (LString ("settled " <> labels !! settledVertex moment))
+  Replace statusPending <- replace status nextStatus
+  status1 <- materialize statusKind statusPending
+  pure (DistanceRows status1 rows1 vertices1)
+
+runDijkstra ::
+  [String] ->
+  [DijkstraMoment] ->
+  Block Status %1 ->
+  StoredList DistanceCell DistanceText %1 ->
+  StoredList Vertex VertexLabel %1 ->
+  Program DistanceRows
+runDijkstra _ [] status rows vertices = pure (DistanceRows status rows vertices)
+runDijkstra labels (moment : rest) status rows vertices = do
+  DistanceRows status1 rows1 vertices1 <-
+    step @ChooseNearest (addDistanceRow labels moment status rows vertices)
+  DistanceRows status2 rows2 vertices2 <-
+    step @RelaxOutgoingEdges (pure (DistanceRows status1 rows1 vertices1))
+  runDijkstra labels rest status2 rows2 vertices2
+
+program :: Program ()
+program = step @Dijkstra $ do
+  inputValue <- resolveInput dijkstraScenario
+  vertices0 <- buildVertices (dijkstraLabels inputValue)
+  WeightedGraph edges vertices1 <- step @BuildWeightedGraph (buildEdges (dijkstraEdges inputValue) vertices0)
+
+  status0 <- step @InitializeDistances $ do
+    Create pending <- create (LString ("start at " <> dijkstraLabels inputValue !! dijkstraStart inputValue))
+    materialize statusKind pending
+
+  let moments = dijkstraMoments (length (dijkstraLabels inputValue)) (dijkstraEdges inputValue) (dijkstraStart inputValue)
+  DistanceRows status1 rows vertices2 <- runDijkstra (dijkstraLabels inputValue) moments status0 StoredNil vertices1
+
+  step @FinishDijkstra $ do
+    Destroy <- destroy status1
+    destroyStoredList rows
+    destroyStoredList edges
+    destroyStoredList vertices2
+
+--------------------------------------------------------------------------------
+-- Render
+--------------------------------------------------------------------------------
+
+render :: Render ()
+render = do
+  canvasWidth <- variable @Span
+  canvasHeight <- variable @Span
+  ensure $ canvasWidth .>=. by 960
+  ensure $ canvasWidth .<=. by 1920
+  ensure $ canvasHeight .>=. by 540
+  ensure $ canvasHeight .<=. by 1080
+  width canvasWidth
+  height canvasHeight
+  aspectRatio 16 9
+  padding (uniform (by 28))
+  contentFit Both Contain
+
+  always $ frame @InitializeDistances
+  always $ frame @ChooseNearest
+  sometimes $ frame @RelaxOutgoingEdges
+  always $ frame @RecordDistance
+
+  horizontalGap <- variable @Span
+  verticalGap <- variable @Span
+  panelGap <- variable @Span
+  vertexSize <- variable @Span
+  ensure $ horizontalGap .>=. by 76
+  ensure $ horizontalGap .<=. by 126
+  ensure $ verticalGap .>=. by 70
+  ensure $ verticalGap .<=. by 118
+  ensure $ panelGap .>=. by 24
+  ensure $ panelGap .<=. by 52
+  ensure $ vertexSize .>=. by 50
+  ensure $ vertexSize .<=. by 76
+
+  vertices <- select vertexKind
+  labels <- select vertexLabelKind
+  edges <- select edgeKind
+  weights <- select edgeWeightKind
+  sourceLinks <- select sourceOf
+  targetLinks <- select targetOf
+
+  graphView <- node $ do
+    padding (uniform (by 24))
+    contentFit Both Hug
+
+    oneOf "graph-grid"
+      (alternative "two-columns" $ arrange (ArrangeGrid 2 (vec2 horizontalGap verticalGap)) vertices)
+      [alternative "three-columns" $ arrange (ArrangeGrid 3 (vec2 horizontalGap verticalGap)) vertices]
+
+    node vertices $ do
+      width vertexSize
+      height vertexSize
+      padding (uniform (by 8))
+      contentFit Both Contain
+      style @Fill (Hsl (num 218) (num 0.32) (num 0.92))
+      style @Stroke (Hsl (num 218) (num 0.56) (num 0.38))
+      style @BorderStyle BorderSolid
+      style @StrokeWidth (by 2)
+      style @Radius (by 18)
+      node labels $ bindContent >>= fitText
+
+    -- `within` gives this exact edge its one SourceOf and TargetOf vertex.
+    -- It does not copy either vertex or infer a join from the label text.
+    node edges $ do
+      sourceVertex <- within sourceLinks edges (select vertexKind)
+      targetVertex <- within targetLinks edges (select vertexKind)
+
+      ensure $ x edges .==. x sourceVertex .+. (x targetVertex .-. x sourceVertex) ./. num 2
+      ensure $ y edges .==. y sourceVertex .+. (y targetVertex .-. y sourceVertex) ./. num 2
+
+      node weights $ do
+        numericWeight <- payloadScalar weights
+        weightText <- bindContent
+        fitText weightText
+        contentFit Both Contain
+        ensure $ width weights .>=. by 28 .+. by 1 .*. numericWeight
+        ensure $ height weights .>=. by 28
+        padding (uniform (by 6))
+        style @Fill (Hsl (num 42) (num 0.48) (num 0.93))
+        style @Stroke (Hsl (num 42) (num 0.65) (num 0.40))
+        style @BorderStyle BorderSolid
+        style @StrokeWidth (by 2)
+        style @Radius (by 8)
+
+      connector (anchor AtBoundary sourceVertex) (anchor AtBoundary targetVertex) $ do
+        style @Stroke (Hsl (num 218) (num 0.34) (num 0.42))
+        style @StrokeWidth (by 2)
+        endMarker ArrowMarker
+
+  distanceCells <- select distanceCellKind
+  distanceTexts <- select distanceTextKind
+  distanceLinks <- select nextDistance
+  rowOrder <- asSequence distanceLinks distanceCells
+
+  distanceTable <- node $ do
+    padding (uniform (by 16))
+    contentFit Both Hug
+    node distanceCells $ do
+      position <- rankOf rowOrder
+      padding (uniform (by 10))
+      style @Fill (Hsl (num 148) (num 0.28) (num 0.92))
+      style @Stroke (Hsl (num 148) (num 0.46) (num 0.40))
+      style @BorderStyle BorderSolid
+      style @StrokeWidth (by 2)
+      style @Radius (by 10)
+      node distanceTexts $ bindContent >>= fitText
+      positionLabel <- sometimes $ node $ content (text "settled #" <> asText position)
+      ensure $ top positionLabel .==. bottom distanceTexts .+. by 4
+      ensure $ x positionLabel .==. x distanceTexts
+
+    relation distanceLinks $ do
+      previous <- first distanceLinks
+      next <- second distanceLinks
+      ensure $ top next .==. bottom previous .+. shift 10
+      ensure $ x next .==. x previous
+
+  -- The table is still empty in the initialization frame, so explicit finite
+  -- bounds keep that valid state prepared without assigning it a fixed size.
+  ensure $ width distanceTable .>=. by 120
+  ensure $ width distanceTable .<=. by 280
+  ensure $ height distanceTable .>=. by 44
+  ensure $ height distanceTable .<=. by 620
+
+  status <- select statusKind
+  statusPanel <- node $ do
+    padding (uniform (by 12))
+    style @Fill (Hsl (num 20) (num 0.45) (num 0.92))
+    style @Radius (by 10)
+    node status $ do
+      value <- bindContent
+      fitText value
+
+  settledLinks <- select distanceFor
+  relation settledLinks $ do
+    row <- first settledLinks
+    vertex <- second settledLinks
+    sometimes $ connector (anchor AtLeft row) (anchor AtBoundary vertex) $ do
+      style @Stroke (Hsl (num 20) (num 0.62) (num 0.48))
+      style @StrokeWidth (by 2)
+      endMarker CircleMarker
+
+  oneOf "major-layout"
+    (alternative "graph-and-table" $ do
+      ensure $ left distanceTable .==. right graphView .+. panelGap
+      ensure $ top distanceTable .==. top graphView)
+    [alternative "table-below" $ do
+      ensure $ top distanceTable .==. bottom graphView .+. panelGap
+      ensure $ x distanceTable .==. x graphView]
+
+  ensure $ separatedBy panelGap graphView distanceTable
+  ensure $ top statusPanel .==. bottom distanceTable .+. panelGap
+  ensure $ x statusPanel .==. x distanceTable
+  ensure $ x graphView .==. x canvas
