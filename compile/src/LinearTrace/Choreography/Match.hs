@@ -621,8 +621,9 @@ applyConstraintStrength ::
      ConstraintStrength -> [S.Constraint] -> [S.Constraint]
 applyConstraintStrength strength constraints =
   case strength of
-    EnsureConstraint    -> constraints
-    EncourageConstraint -> P.map S.soften constraints
+    EnsureConstraint -> constraints
+    EncourageConstraint ->
+      P.error "encourage constraints are no longer supported"
 
 data CategoryEndpointMatch value =
   CategoryEndpointMatch (S.ChoiceValue value) C.QueryBindings

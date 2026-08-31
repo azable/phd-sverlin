@@ -1,68 +1,115 @@
 data Value
+instance Traceable Value where
+  type Payload Value = LInt Value
 
-type instance Payload Value = LInt Value
+data OriginalRole
+data ForkRole
+data SelectedRole
+data ContinuedRole
+data Original
+data Forked
+data SelectedBranch
+data SelectionCleared
+data Complete
 
-program :: Choreography ()
-program = do
-  Create pending <- create @Value (LInt 7)
-  original <- materialize #original pending
-  checkpoint "Original"
+originalKind :: Kind Value
+originalKind = kind @OriginalRole
 
-  Copy originalAfterFork forkPending <- copy original
-  forked <- materialize #forked forkPending
-  checkpoint "Forked"
+forkKind :: Kind Value
+forkKind = kind @ForkRole
 
-  Copy originalBeforeReplace replacementPending <- copy originalAfterFork
-  Replace continuedPending <- replace originalBeforeReplace replacementPending
-  selected <- materialize #selected continuedPending
-  checkpoint "Selected"
+selectedKind :: Kind Value
+selectedKind = kind @SelectedRole
 
-  Copy selectedBeforeReplace ordinaryPending <- copy selected
-  Replace ordinaryContinued <- replace selectedBeforeReplace ordinaryPending
-  continued <- materialize #continued ordinaryContinued
-  checkpoint "Selection cleared"
+continuedKind :: Kind Value
+continuedKind = kind @ContinuedRole
 
-  Destroy <- destroy forked
-  Destroy <- destroy continued
-  checkpoint "Complete"
+data Initial where
+  Initial :: Block Value %1 -> Initial
 
-valueNode :: ContentValue -> VisualizationBuilder ()
+data Pair where
+  Pair :: Block Value %1 -> Block Value %1 -> Pair
+
+domain :: Domain Initial
+domain = do
+  declareKind originalKind
+  declareKind forkKind
+  declareKind selectedKind
+  declareKind continuedKind
+  declareSteps @'[Original, Forked, SelectedBranch, SelectionCleared, Complete]
+  Create pending <- create (LInt 7)
+  value <- materialize originalKind pending
+  pure (Initial value)
+
+program :: Initial %1 -> Program ()
+program (Initial original) = do
+  original1 <- step @Original (pure original)
+
+  Copy original2 forkPending <- copy original1
+  forked <- materialize forkKind forkPending
+  Pair original3 forked1 <- step @Forked (pure (Pair original2 forked))
+
+  Copy original4 selectedPending <- copy original3
+  Replace selectedPending1 <- replace original4 selectedPending
+  selected <- materialize selectedKind selectedPending1
+  Pair selected1 forked2 <- step @SelectedBranch (pure (Pair selected forked1))
+
+  Copy selected2 continuedPending <- copy selected1
+  Replace continuedPending1 <- replace selected2 continuedPending
+  continued <- materialize continuedKind continuedPending1
+  Pair continued1 forked3 <-
+    step @SelectionCleared (pure (Pair continued forked2))
+
+  step @Complete $ do
+    Destroy <- destroy forked3
+    Destroy <- destroy continued1
+    pure ()
+
+valueNode :: ContentValue -> Render ()
 valueNode label = do
   fitText label
   width (by 180)
   height (by 112)
 
-visualization :: VisualizationBuilder ()
-visualization = do
+render :: Render ()
+render = do
+  always $ frame @Original
+  always $ frame @Forked
+  always $ frame @SelectedBranch
+  always $ frame @SelectionCleared
+  always $ frame @Complete
   width (by 800)
   height (by 450)
   contentFit Both Contain
 
-  Bound originalLabel <- bindContent
-  Selected original <- select @Value (#original <&> payload originalLabel)
-  Bound forkedLabel <- bindContent
-  Selected forked <- select @Value (#forked <&> payload forkedLabel)
-  Bound selectedLabel <- bindContent
-  Selected selected <- select @Value (#selected <&> payload selectedLabel)
-  Bound continuedLabel <- bindContent
-  Selected continued <- select @Value (#continued <&> payload continuedLabel)
+  originals <- select originalKind
+  forks <- select forkKind
+  selectedValues <- select selectedKind
+  continuedValues <- select continuedKind
 
-  node original $ do
-    valueNode originalLabel
+  node originals $ do
+    label <- bindContent
+    valueNode label
     x (at 260)
     y (at 200)
-  node forked $ do
-    valueNode forkedLabel
+
+  node forks $ do
+    label <- bindContent
+    valueNode label
     x (at 540)
     y (at 200)
-  node selected $ do
-    valueNode selectedLabel
+
+  node selectedValues $ do
+    label <- bindContent
+    valueNode label
     x (at 260)
     y (at 200)
     style @StrokeWidth (by 6)
-    style @Stroke (Hsl (216 :: Angle) (0.72 :: Unit) (0.42 :: Unit))
-    style @BorderStyle (FixedStyle BorderSolid)
-  node continued $ do
-    valueNode continuedLabel
+    style @Stroke (Hsl (num 216) (num 0.72) (num 0.42))
+    style @BorderStyle BorderSolid
+
+  node continuedValues $ do
+    label <- bindContent
+    valueNode label
     x (at 260)
     y (at 200)

@@ -135,10 +135,10 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - `relation links body` evaluates the body once for each active relation. Inside it, `first links` and `second links` return the typed endpoint selections for that exact relation occurrence.
 - Ordered endpoints preserve source and target meaning. Symmetric endpoints have a stable output order but no semantic direction.
 - Relations pair nodes and may support constraints, connectors, or both; selecting a relation draws nothing automatically.
-- `asSequence links nodes`, `asTree links nodes`, and `asDag links nodes` validate the complete selected structure. They do not replace the original selections.
+- `asSequence links nodes`, `asTree links nodes`, and `asDag links nodes` validate the complete selected structure and require an ordered relation; symmetric relations are rejected. They do not replace the original selections.
 - Inside the matching node body, `rankOf ranking` returns sequence position, tree depth, or longest-path DAG level as a compiler-fixed integer. Use `asScalar` in affine formulas or `asText` in a label.
 - `payloadScalar selection` similarly exposes the current `LInt` or `LDouble` payload as a fixed affine coefficient. It is not a fresh variable or Program value.
-- `arrange` applies a deterministic relative template: `ArrangeGrid`, `ArrangeLayered`, `ArrangeRadial`, or `ArrangeTree`. Put alternative templates in an explicit `oneOf`; arrangements make no hidden random choice.
+- `arrange` applies a deterministic relative template: `ArrangeGrid`, `ArrangeLayered`, `ArrangeRadial`, or `ArrangeTree`. `ArrangeLayered` and `ArrangeTree` require an ordered relation; symmetric relations are rejected. Put alternative templates in an explicit `oneOf`; arrangements make no hidden random choice.
 
 ## Whole-line text and typed fragments
 
@@ -162,7 +162,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 ## Connectors
 
 - `connector start end body` draws one straight connector from two `anchor` values. `AtBoundary` is useful for graph edges; explicit edge-center placements are `AtTop`, `AtRight`, `AtBottom`, and `AtLeft`.
-- `startMarker` and `endMarker` select `NoMarker`, `ArrowMarker`, `CircleMarker`, or `DiamondMarker`. Connector bodies accept connector-relevant style fields such as `Stroke`, `StrokeWidth`, and `Opacity`.
+- `startMarker` and `endMarker` select `NoMarker`, `ArrowMarker`, `CircleMarker`, or `DiamondMarker`. Connector bodies accept only `Stroke`, `StrokeWidth`, and `Opacity` styles; node-only styles are rejected.
 - A connector adds no layout constraint. Pair it with explicit geometry rules when its endpoints must be separated or ordered.
 - Inside `relation`, a connector inherits that semantic relation's identity and lifetime. Outside, it joins the two context-local node mappings. Endpoint and surrounding presence conditions propagate automatically, so `sometimes` works for arrows, guides, labels, and other visual components, not only frames.
 
@@ -212,7 +212,8 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - `style @Field value` requires one field; `withoutStyle @Field` removes an inherited field; omission leaves the theme/default free. Do not invent style fields or private helper classes.
 - Numeric style fields are `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, and paint `Alpha`. Paint uses `Hsl hue saturation lightness` as `Color`, with `Angle` hue and `Unit` components.
 - Paint fields are `Fill` and `Stroke`. Categorical fields are `BorderStyle`, `FontFamily`, `FontWeight`, `FontStyle`, and `TextAlign`. Use only the constructors in the API index.
-- `styleOf @Field selected` reads a mapped final style value for an exact relation. It requires that field to exist in every reached branch.
+- Font weight and style choices must name a real managed face. Unsupported combinations are removed from the design space rather than synthesized or mapped to a nearby face; `FontWeightBolder` and `FontWeightLighter` resolve from the inherited weight.
+- `styleOf @Field selected` reads a mapped final style value from the exact context-local node mapping. It requires that field to exist in every reached branch.
 - A requested border needs a positive `StrokeWidth`, a `Stroke`, and a non-empty `BorderStyle`; changing only one does not establish a complete border.
 - Prefer one semantic accent channel plus at most one or two supporting changes. Leave unrelated fields unspecified so the compiler can produce coherent seeded variation.
 

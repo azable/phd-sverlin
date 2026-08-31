@@ -1,5 +1,16 @@
-program :: Choreography ()
-program = return ()
+data Empty
 
-visualization :: VisualizationBuilder ()
-visualization = return ()
+domain :: Domain ()
+domain = do
+  declareSteps @'[Empty]
+  pure ()
+
+program :: () %1 -> Program ()
+program () = step @Empty (pure ())
+
+render :: Render ()
+render = do
+  always $ frame @Empty
+  width (by 800)
+  height (by 450)
+  contentFit Both Contain

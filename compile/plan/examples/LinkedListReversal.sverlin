@@ -64,8 +64,19 @@ cursorAt = orderedRelation @CursorAt
 
 data EdgePlan where
   NoEdges :: EdgePlan
-  ForwardEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
-  BackwardEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
+  ForwardEdge :: LinearIndex %1 -> LinearIndex %1 -> EdgePlan %1 -> EdgePlan
+  BackwardEdge :: LinearIndex %1 -> LinearIndex %1 -> EdgePlan %1 -> EdgePlan
+
+-- Generator turns numeric positions into paths before linear tracing starts.
+-- Program can then consume the path structurally without duplicating or
+-- inspecting a linear Int.
+data LinearIndex where
+  AtHead :: LinearIndex
+  InTail :: LinearIndex %1 -> LinearIndex
+
+linearIndex :: Int -> LinearIndex
+linearIndex 0 = AtHead
+linearIndex index = InTail (linearIndex (index - 1))
 
 data ValuePlan where
   NoValues :: ValuePlan
@@ -73,7 +84,7 @@ data ValuePlan where
 
 data OptionalIndex where
   NoIndex :: OptionalIndex
-  AtIndex :: Int %1 -> OptionalIndex
+  AtIndex :: LinearIndex %1 -> OptionalIndex
 
 data PointerPlan where
   PointerPlan ::
@@ -229,16 +240,16 @@ appendStored :: StoredList owner value %1 -> StoredList owner value %1 -> Stored
 appendStored StoredNil right = right
 appendStored (StoredCons current rest) right = StoredCons current (appendStored rest right)
 
-takeAt :: Int %1 -> StoredList owner value %1 -> Taken owner value
-takeAt 0 (StoredCons current rest) = Taken StoredNil current rest
-takeAt index (StoredCons current rest) =
-  case takeAt (index Linear.- 1) rest of
+takeAt :: LinearIndex %1 -> StoredList owner value %1 -> Taken owner value
+takeAt AtHead (StoredCons current rest) = Taken StoredNil current rest
+takeAt (InTail index) (StoredCons current rest) =
+  case takeAt index rest of
     Taken before focus after -> Taken (StoredCons current before) focus after
 
 relateForwardAt ::
   RelationKind ListCell ListCell ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList ListCell Number %1 ->
   Program (StoredList ListCell Number)
 relateForwardAt relationKind leftIndex distance cells =
@@ -254,8 +265,8 @@ relateForwardAt relationKind leftIndex distance cells =
 
 relateBackwardAt ::
   RelationKind ListCell ListCell ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList ListCell Number %1 ->
   Program (StoredList ListCell Number)
 relateBackwardAt relationKind rightIndex distance cells = do
@@ -286,7 +297,7 @@ relatePairs relationKind (BackwardEdge right distance rest) cells = do
 
 attachCursor ::
   String ->
-  Int %1 ->
+  LinearIndex %1 ->
   StoredList ListCell Number %1 ->
   Program AttachedCursor
 attachCursor label index cells =
@@ -298,8 +309,8 @@ attachCursor label index cells =
 
 relateInitialForwardAt ::
   RelationKind ListCell ListCell ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList ListCell Number %1 ->
   Domain (StoredList ListCell Number)
 relateInitialForwardAt relationKind leftIndex distance cells =
@@ -315,8 +326,8 @@ relateInitialForwardAt relationKind leftIndex distance cells =
 
 relateInitialBackwardAt ::
   RelationKind ListCell ListCell ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList ListCell Number %1 ->
   Domain (StoredList ListCell Number)
 relateInitialBackwardAt relationKind rightIndex distance cells =
@@ -345,7 +356,7 @@ relateInitialPairs relationKind (BackwardEdge right distance rest) cells = do
 
 attachInitialCursor ::
   String ->
-  Int %1 ->
+  LinearIndex %1 ->
   StoredList ListCell Number %1 ->
   Domain AttachedCursor
 attachInitialCursor label index cells =
@@ -365,8 +376,16 @@ sourcePairs count = [(index, index + 1) | index <- [0 .. count - 2]]
 edgePlan :: [(Int, Int)] -> EdgePlan
 edgePlan [] = NoEdges
 edgePlan ((left, right) : rest)
-  | left < right = ForwardEdge left (right - left - 1) (edgePlan rest)
-  | otherwise = BackwardEdge right (left - right - 1) (edgePlan rest)
+  | left < right =
+      ForwardEdge
+        (linearIndex left)
+        (linearIndex (right - left - 1))
+        (edgePlan rest)
+  | otherwise =
+      BackwardEdge
+        (linearIndex right)
+        (linearIndex (left - right - 1))
+        (edgePlan rest)
 
 valuePlan :: [Int] -> ValuePlan
 valuePlan [] = NoValues
@@ -379,8 +398,8 @@ pointerPlan count reversedCount =
     (edgePlan
        ([(index, index - 1) | index <- [1 .. reversedCount - 1]]
           ++ [(index, index + 1) | index <- [reversedCount .. count - 2]]))
-    (if reversedCount == count then NoIndex else AtIndex reversedCount)
-    (if reversedCount == 0 then NoIndex else AtIndex (reversedCount - 1))
+    (if reversedCount == count then NoIndex else AtIndex (linearIndex reversedCount))
+    (if reversedCount == 0 then NoIndex else AtIndex (linearIndex (reversedCount - 1)))
 
 reversalPlan :: Int -> Int -> ReversalPlan
 reversalPlan count reversedCount
@@ -557,6 +576,7 @@ render = do
         content (text "node[" <> asText position <> text "]")
         ensure $ x indexNode .==. x values
         ensure $ top indexNode .==. (bottom values .+. shift 5)
+      pure ()
 
     -- Source order is stable within one snapshot and is used only to lay out
     -- the locations.  NextPointer below remains the algorithmic linked list.

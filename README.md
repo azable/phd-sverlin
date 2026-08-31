@@ -81,7 +81,7 @@ guards, snapshots, filenames, and verification, but writes a readable directory:
 pnpm run export:data -- --scope projects
 pnpm run export:data -- --scope projects --project PROJECT_ID --output outputs/my-project
 pnpm run export:data -- --scope participant --participant PARTICIPANT_ID
-pnpm run export:data -- --scope study --study pilot-study --version 1
+pnpm run export:data -- --scope study --study main-study --version 1
 pnpm run export:data -- --scope study
 ```
 
@@ -117,7 +117,7 @@ authenticated browser
   -> project command appends operation.accepted
   -> feedback/preferences are recorded and queued without waiting for generation
   -> bounded in-process executor claims queued interactions for a background assistant turn
-  -> Sverlin prompts compile one or two fresh seeds; HTML prompts may return one safe manifest
+  -> Sverlin prompts compile one scenario with one or two fresh view seeds in one process; HTML prompts may return one safe manifest
   -> the resulting presentation set enters the Timeline directly
   -> PostgreSQL receives immutable Timeline events and content-addressed resources
   -> operation.completed or operation.failed closes the Timeline boundary
@@ -145,17 +145,20 @@ libraries retain only their registered library artifacts.
 
 ## Project layout
 
-| Path                                 | Responsibility                                                                                        |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| [`src/lib/shared/`](src/lib/shared/) | Environment-neutral event schemas, projections, project contracts, and generated visualization types. |
-| [`src/lib/client/`](src/lib/client/) | Svelte UI, project sessions, Timeline presentation, and visualization playback.                       |
-| [`src/lib/server/`](src/lib/server/) | Better Auth, authorization, PostgreSQL persistence, operations, AI providers, and compiler execution. |
-| [`src/routes/`](src/routes/)         | SvelteKit pages and authenticated APIs.                                                               |
-| [`compile/src/`](compile/src/)       | Reusable Haskell libraries and the public `Solver`/choreography APIs.                                 |
-| [`compile/app/`](compile/app/)       | Executable-only Sverlin loading, compilation, and generated-type tools.                               |
-| [`examples/`](examples/)             | Catalogued `.sverlin` examples and the minimal starting template.                                     |
+| Path                                                   | Responsibility                                                                                        |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| [`src/lib/shared/`](src/lib/shared/)                   | Environment-neutral event schemas, projections, project contracts, and generated visualization types. |
+| [`src/lib/client/`](src/lib/client/)                   | Svelte UI, project sessions, Timeline presentation, and visualization playback.                       |
+| [`src/lib/server/`](src/lib/server/)                   | Better Auth, authorization, PostgreSQL persistence, operations, AI providers, and compiler execution. |
+| [`src/routes/`](src/routes/)                           | SvelteKit pages and authenticated APIs.                                                               |
+| [`compile/src/Sverlin.hs`](compile/src/Sverlin.hs)     | Sole public facade imported by authored `.sverlin` source.                                            |
+| [`compile/src/Sverlin/`](compile/src/Sverlin/)         | Compiler-owned Domain, Program, Render, generated-source host, and linear Prelude support.            |
+| [`compile/src/Solver.hs`](compile/src/Solver.hs)       | Stable solver facade; sibling `Solver/` modules are its private implementation.                       |
+| [`compile/src/LinearTrace/`](compile/src/LinearTrace/) | Internal visualization IR, resource, typography, and retained implementation support.                 |
+| [`compile/app/`](compile/app/)                         | Executable-only source elaboration, interpretation, compilation, and generated-type tools.            |
+| [`examples/`](examples/)                               | Catalogued `.sverlin` examples and the minimal starting template.                                     |
 
-The TypeScript boundaries are one-way: `shared` may be used everywhere, `client` owns browser-only behavior, and `server` owns secrets and persistence. ESLint enforces this separation. Study protocols are registered by ID and version in [`src/lib/shared/study/registry.ts`](src/lib/shared/study/registry.ts); the active protocol in [`src/lib/shared/study/pilot-v1.ts`](src/lib/shared/study/pilot-v1.ts) centrally defines timing, counterbalance order, renderer, and workspace layout.
+The TypeScript boundaries are one-way: `shared` may be used everywhere, `client` owns browser-only behavior, and `server` owns secrets and persistence. ESLint enforces this separation. Study protocols are registered by ID and version in [`src/lib/shared/study/registry.ts`](src/lib/shared/study/registry.ts); the active protocol in [`src/lib/shared/study/main-v1.ts`](src/lib/shared/study/main-v1.ts) centrally defines timing, counterbalance order, renderer, and workspace layout.
 
 ## Compile from the command line
 
@@ -165,18 +168,19 @@ Compile the minimal example with a deterministic seed:
 pnpm run compile -- --source examples/Minimal.sverlin --seed 1
 ```
 
-Seeded commands write beneath `outputs/seed-<seed>/`. Use `--output FILE` for an explicit destination or when omitting `--seed`; add `--details` for phase timings or `--count N` to sample multiple consecutive seeds from one prepared design space.
+Seeded commands write beneath `outputs/seed-<seed>/`. The `--seed` value selects the scenario and its first view. Repeat `--view-seed INT` to sample additional presentations of that same input and trace in the same compiler process. `--count N` is the convenience form for consecutive view seeds beginning at `--seed`; it cannot be combined with explicit `--view-seed` values. A batch reuses prepared affine regions but samples a fresh layout for every view. Use `--output FILE` for an explicit destination or when omitting `--seed`, and add `--details` for phase timings.
 
 ```sh
 pnpm run compile -- \
-  --source examples/Search.sverlin \
+  --source examples/LinearSearch.sverlin \
   --seed 42 \
+  --view-seed 91 \
   --details
 ```
 
 Run `pnpm run prepare:compiler` after changing compiler inputs. Preparation and execution use coordinated locks, so an executable cannot be rebuilt underneath an active compile. Source input is trusted Haskell-based authoring input, not a hostile-code sandbox.
 
-See [`examples/README.md`](examples/README.md) for the example catalogue.
+Project templates are registered in [`examples/catalog.json`](examples/catalog.json). To add one, add its `.sverlin` source, one unique catalog entry, and a focused assertion when it introduces new behavior. Catalog validation rejects missing, duplicate, and unregistered sources so the creation menu and compiler-example suite stay aligned.
 
 ## Command reference
 
@@ -239,7 +243,7 @@ PostgreSQL database, migrate it, and force-drop only that validated test databas
 afterward. The end-to-end authentication bypass seeds its matching administrator
 row because project ownership remains enforced.
 
-After Haskell changes, run the relevant compile, Haskell tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the facade Haddock descriptions and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md) by hand; cross-cutting guidance lives in [`dsl-interface.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md).
+After Haskell changes, run the relevant compile, Haskell tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the Haddock descriptions in the authored [`Sverlin` facade](compile/src/Sverlin.hs) and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md) by hand; cross-cutting guidance lives in [`dsl-interface.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md).
 
 ## Production deployment
 

@@ -48,7 +48,6 @@ data BenchRun = BenchRun
   , benchEnergy                 :: Double
   , benchVariables              :: Int
   , benchNativeBounds           :: Int
-  , benchEnergyTerms            :: Int
   , benchRawTerms               :: Int
   , benchCanonical              :: Int
   , benchEliminated             :: Int
@@ -61,10 +60,6 @@ data BenchRun = BenchRun
   , benchBurnInSteps            :: Int
   , benchAffineEqualities       :: Int
   , benchAffineInequalities     :: Int
-  , benchIgnoredSoftConstraints :: Int
-  , benchIterations             :: Int
-  , benchFuncEvals              :: Int
-  , benchGradEvals              :: Int
   , benchFailures               :: [String]
   }
 
@@ -110,7 +105,7 @@ timeFixtureSolve iteration fixture seed = do
   let failures = validateFixtureSolution fixture solution
       compileMs = durationMs start compiledAt
       solveMs = durationMs compiledAt end
-      (backendName, reducedDimension, burnInSteps, iterations, functionEvaluations, gradientEvaluations) =
+      (backendName, reducedDimension, burnInSteps) =
         backendMeasurements solution
   pure
     BenchRun
@@ -124,7 +119,6 @@ timeFixtureSolve iteration fixture seed = do
       , benchEnergy = solutionEnergy solution
       , benchVariables = inspectedVariableCount inspection
       , benchNativeBounds = inspectedNativeBoundCount inspection
-      , benchEnergyTerms = inspectedEnergyTermCount inspection
       , benchRawTerms = inspectedRawCount inspection
       , benchCanonical = inspectedCanonicalCount inspection
       , benchEliminated = inspectedEliminatedCount inspection
@@ -138,37 +132,21 @@ timeFixtureSolve iteration fixture seed = do
       , benchBurnInSteps = burnInSteps
       , benchAffineEqualities = inspectedAffineEqualityCount inspection
       , benchAffineInequalities = inspectedAffineInequalityCount inspection
-      , benchIgnoredSoftConstraints =
-          inspectedIgnoredSoftConstraintCount inspection
-      , benchIterations = iterations
-      , benchFuncEvals = functionEvaluations
-      , benchGradEvals = gradientEvaluations
       , benchFailures = failures
       }
 
-backendMeasurements :: Solution -> (String, Maybe Int, Int, Int, Int, Int)
+backendMeasurements :: Solution -> (String, Maybe Int, Int)
 backendMeasurements solution =
   case solutionBackendStatistics solution of
     AffineSamplingStatistics statistics ->
       ( "affine-sampler"
       , Just (samplingReducedDimension statistics)
-      , samplingBurnInSteps statistics
-      , 0
-      , 0
-      , 0)
-    PenaltyOptimizationStatistics statistics ->
-      ( "penalty-optimizer"
-      , Nothing
-      , 0
-      , optimizationIterations statistics
-      , optimizationFunctionEvaluations statistics
-      , optimizationGradientEvaluations statistics)
+      , samplingBurnInSteps statistics)
 
 forceInspection :: ProblemInspection -> ()
 forceInspection inspection =
   inspectedVariableCount inspection
     `seq` inspectedNativeBoundCount inspection
-    `seq` inspectedEnergyTermCount inspection
     `seq` inspectedFlattenedCount inspection
     `seq` inspectedRawCount inspection
     `seq` inspectedCanonicalCount inspection
@@ -178,10 +156,8 @@ forceInspection inspection =
     `seq` inspectedChoiceComponentCount inspection
     `seq` inspectedLargestChoiceComponentBranches inspection
     `seq` inspectedBackend inspection
-    `seq` inspectedFallbackReason inspection
     `seq` inspectedAffineEqualityCount inspection
     `seq` inspectedAffineInequalityCount inspection
-    `seq` inspectedIgnoredSoftConstraintCount inspection
     `seq` length (inspectedNativeBoundNames inspection)
     `seq` ()
 
@@ -293,11 +269,6 @@ summaryJson runs =
     , "compileMs" .= statsJson (map benchCompileMs runs)
     , "solveMs" .= statsJson (map benchSolveMs runs)
     , "durationMs" .= statsJson (map benchDurationMs runs)
-    , "iterations" .= statsJson (map (fromIntegral . benchIterations) runs)
-    , "functionEvaluations"
-        .= statsJson (map (fromIntegral . benchFuncEvals) runs)
-    , "gradientEvaluations"
-        .= statsJson (map (fromIntegral . benchGradEvals) runs)
     ]
 
 statsJson :: [Double] -> Aeson.Value
@@ -324,7 +295,6 @@ runJson run =
     , "energy" .= benchEnergy run
     , "variables" .= benchVariables run
     , "nativeBounds" .= benchNativeBounds run
-    , "energyTerms" .= benchEnergyTerms run
     , "rawTerms" .= benchRawTerms run
     , "canonicalTerms" .= benchCanonical run
     , "eliminatedTerms" .= benchEliminated run
@@ -337,10 +307,6 @@ runJson run =
     , "burnInSteps" .= benchBurnInSteps run
     , "affineEqualities" .= benchAffineEqualities run
     , "affineInequalities" .= benchAffineInequalities run
-    , "ignoredSoftConstraints" .= benchIgnoredSoftConstraints run
-    , "iterations" .= benchIterations run
-    , "functionEvaluations" .= benchFuncEvals run
-    , "gradientEvaluations" .= benchGradEvals run
     , "ok" .= null (benchFailures run)
     , "failures" .= benchFailures run
     ]
@@ -366,7 +332,6 @@ printTextBenchmark fixtures runs = do
          , "energy=" ++ printf "%.6g" (benchEnergy run)
          , "vars=" ++ show (benchVariables run)
          , "bounds=" ++ show (benchNativeBounds run)
-         , "terms=" ++ show (benchEnergyTerms run)
          , "raw=" ++ show (benchRawTerms run)
          , "canon=" ++ show (benchCanonical run)
          , "elim=" ++ show (benchEliminated run)
@@ -374,8 +339,6 @@ printTextBenchmark fixtures runs = do
          , "backend=" ++ benchBackend run
          , "dim=" ++ maybe "n/a" show (benchReducedDimension run)
          , "burn=" ++ show (benchBurnInSteps run)
-         , "iters=" ++ show (benchIterations run)
-         , "evals=" ++ show (benchFuncEvals run)
          ])
   let compileSummary = stats (map benchCompileMs runs)
       solveSummary = stats (map benchSolveMs runs)

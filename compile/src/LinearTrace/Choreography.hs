@@ -4,15 +4,16 @@
 
 -- |
 -- Module      : LinearTrace.Choreography
--- Description : Complete public contract for the Sverlin choreography DSL.
+-- Description : Legacy compatibility facade for compiler migration and fixtures.
 -- Stability   : experimental
 -- Portability : GHC with linear types
 --
--- This facade is the only supported import for authored Sverlin programs. It
--- deliberately combines the linear trace language, semantic queries, visual
--- node hierarchy, styles, layout expressions, and constraints into one public
--- vocabulary. Modules beneath @LinearTrace.Choreography@ are implementation
--- details unless this module re-exports their names.
+-- This legacy/internal facade is retained while compiler code migrates and old
+-- fixtures remain in use. Authored body-only Sverlin sources import @Sverlin@,
+-- not this module. This compatibility surface combines the former linear trace
+-- language, semantic queries, visual node hierarchy, styles, layout
+-- expressions, and constraints. Modules beneath @LinearTrace.Choreography@ are
+-- implementation details unless this module re-exports their names.
 --
 -- = Execution and ownership model
 --
@@ -50,12 +51,11 @@
 --
 -- = Documentation contract
 --
--- Every explicit export below carries its canonical behavioral summary. The
--- repository's @scripts/dsl-api-index.mjs@ validates this invariant and combines
--- the descriptions with GHC-inferred signatures in the machine-readable/Markdown
--- API index supplied to the AI authoring system.
--- Add or change an export and its description together; never document private
--- implementation names as public DSL affordances.
+-- Every explicit export below carries the behavioral summary for this
+-- compatibility facade. The authored API index supplied to the AI authoring
+-- system is generated from @compile/src/Sverlin.hs@, not this module. Add or
+-- change a compatibility export and its description together; never present
+-- private implementation names as authored DSL affordances.
 module LinearTrace.Choreography
   ( -- * Program and graph execution #execution#
     -- | Linear program builder that records semantic trace events.

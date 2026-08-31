@@ -67,8 +67,6 @@ common app-dependencies
                       random,
                       mtl,
                       linear-base,
-                      numeric-optimization,
-                      numeric-optimization-ad,
                       aeson,
                       aeson-pretty,
                       bytestring,
@@ -76,10 +74,12 @@ common app-dependencies
 
     default-language: GHC2024
 
-library
+library sverlin-internal
     -- Import common warning flags.
     import:           warnings
     import:           app-dependencies
+
+    visibility:       private
 
     build-depends:    hmatrix >=0.20.2 && <0.21,
                       MIP >=0.2.0.1 && <0.3,
@@ -95,6 +95,9 @@ library
     pkgconfig-depends: harfbuzz >=3.3
 
     exposed-modules:
+        Sverlin
+        Sverlin.Compiler
+        Sverlin.Linear
         LinearTrace.Choreography
         LinearTrace.Core
         Solver
@@ -104,6 +107,13 @@ library
         LinearTrace.Visualization.Resource
         LinearTrace.Visualization.Target
         LinearTrace.Visualization.Typography
+        Sverlin.Internal.Semantic
+        Sverlin.Internal.Semantic.Generator
+        Sverlin.Internal.Compiler
+        Sverlin.Internal.Render
+        Sverlin.Internal.Render.Compile
+        Sverlin.Internal.Render.Typography
+        Sverlin.Syntax
 
     other-modules:
         LinearTrace.Choreography.Constraint
@@ -136,16 +146,29 @@ library
         Solver.DesignSpace
         Solver.Expr
         Solver.Highs
-        Solver.Optimize
         Solver.Problem
         Solver.Random
         Solver.Sample
-
     hs-source-dirs:   src
 
     c-sources:        cbits/sverlin_harfbuzz.c
 
     include-dirs:     cbits
+
+library
+    import:             warnings
+
+    build-depends:      base >=4.18.3.0 && <4.23,
+                        compile:sverlin-internal,
+                        linear-base
+
+    reexported-modules:
+        Sverlin,
+        Sverlin.Compiler,
+        Sverlin.Linear,
+        Solver
+
+    default-language:   GHC2024
 
 executable compile-app
     -- Import common warning flags.
@@ -160,6 +183,7 @@ executable compile-app
         Sverlin.Source
 
     build-depends:    compile,
+                      compile:sverlin-internal,
                       directory,
                       filepath,
                       hint >=0.9.0.9 && <0.10,
@@ -180,6 +204,7 @@ executable visualization-types
         GenerateVisualizationTypes.TypeScript
 
     build-depends:      compile,
+                        compile:sverlin-internal,
                         template-haskell
 
     hs-source-dirs:     app
@@ -212,7 +237,7 @@ test-suite solver-test
 
     build-depends:    base >=4.18.3.0 && <4.23,
                       containers,
-                      compile,
+                      compile:sverlin-internal,
                       linear-base,
                       tasty,
                       tasty-hunit
@@ -241,5 +266,29 @@ test-suite sverlin-source-test
 
     other-modules:
         Sverlin.Source
+
+    default-language: GHC2024
+
+test-suite semantic-test
+    import:           warnings
+
+    type:             exitcode-stdio-1.0
+    main-is:          SemanticTestMain.hs
+
+    build-depends:    base >=4.18.3.0 && <4.23,
+                      bytestring,
+                      compile:sverlin-internal,
+                      containers,
+                      linear-base,
+                      random,
+                      tasty,
+                      tasty-hunit
+
+    hs-source-dirs:   test
+
+    other-modules:
+        RenderGuardTest
+        SemanticTest
+        TypographyTest
 
     default-language: GHC2024

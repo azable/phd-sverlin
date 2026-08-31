@@ -1,21 +1,42 @@
 data Value
+instance Traceable Value where
+  type Payload Value = LInt Value
 
-type instance Payload Value = LInt Value
+data ValueRole
+data ValueLive
+data ValueDestroyed
 
-program :: Choreography ()
-program = do
-  Create pending <- create @Value (LInt 7)
-  value <- materialize #value pending
-  checkpoint "Value is live"
-  Destroy <- destroy value
-  checkpoint "Value is destroyed"
+valueKind :: Kind Value
+valueKind = kind @ValueRole
 
-visualization :: VisualizationBuilder ()
-visualization = do
-  aspectRatio 16 9
-  Bound label <- bindContent
-  Selected value <- select @Value (#value <&> payload label)
-  node value $ do
+data Initial where
+  Initial :: Block Value %1 -> Initial
+
+domain :: Domain Initial
+domain = do
+  declareKind valueKind
+  declareSteps @'[ValueLive, ValueDestroyed]
+  Create pending <- create (LInt 7)
+  value <- materialize valueKind pending
+  pure (Initial value)
+
+program :: Initial %1 -> Program ()
+program (Initial value) = do
+  value1 <- step @ValueLive (pure value)
+  step @ValueDestroyed $ do
+    Destroy <- destroy value1
+    pure ()
+
+render :: Render ()
+render = do
+  always $ frame @ValueLive
+  always $ frame @ValueDestroyed
+  width (by 800)
+  height (by 450)
+  contentFit Both Contain
+  values <- select valueKind
+  node values $ do
+    label <- bindContent
     fitText label
     width (by 180)
     height (by 120)

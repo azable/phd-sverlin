@@ -27,7 +27,7 @@ instance SymbolicType FixtureLayout where
   symbolicDomain _ = realDomain "fixture-layout"
 
 instance SymbolicType FixtureAngle where
-  symbolicDomain _ = cyclicDomain "fixture-angle" 360
+  symbolicDomain _ = boundedDomain "fixture-angle" (Range 0 360)
 
 instance SymbolicType FixtureUnit where
   symbolicDomain _ = realDomain "fixture-unit"
@@ -39,8 +39,7 @@ data SolverFixture = SolverFixture
   }
 
 availableFixtures :: [SolverFixture]
-availableFixtures =
-  [boundedRowFixture, cyclicHueFixture, appShapedFixture, nestedExtremaFixture]
+availableFixtures = [boundedRowFixture, cyclicHueFixture, appShapedFixture]
 
 defaultBenchmarkSeeds :: [RandomSeed]
 defaultBenchmarkSeeds =
@@ -59,20 +58,18 @@ solveFixture fixture seed =
 validateFixtureSolution :: SolverFixture -> Solution -> [String]
 validateFixtureSolution fixture solution =
   case fixtureName fixture of
-    "bounded-row"    -> validateBoundedRow solution
-    "cyclic-hue"     -> validateCyclicHue solution
-    "app-shaped"     -> validateAppShaped solution
-    "nested-extrema" -> validateNestedExtrema solution
-    _                -> []
+    "bounded-row" -> validateBoundedRow solution
+    "cyclic-hue"  -> validateCyclicHue solution
+    "app-shaped"  -> validateAppShaped solution
+    _             -> []
 
 boundedRowFixture :: SolverFixture
 boundedRowFixture =
   SolverFixture
     { fixtureName = "bounded-row"
     , fixtureDescription =
-        "A fixed row of layout boxes with native bounds, bridge equalities, and soft size preferences."
-    , fixtureConstraints =
-        nativeBoundsConstraints ++ rowConstraints ++ sizePreferenceConstraints
+        "A fixed row of layout boxes with finite bounds and affine adjacency equalities."
+    , fixtureConstraints = nativeBoundsConstraints ++ rowConstraints
     }
 
 rowItemCount :: Int
@@ -122,11 +119,6 @@ rowConstraints =
          , let next = i + 1
          ]
     ++ [rowHeight i @==@ rowWidth i | i <- rowIndices]
-
-sizePreferenceConstraints :: [Constraint]
-sizePreferenceConstraints =
-  [soften (rowWidth i @==@ num 34) | i <- rowIndices]
-    ++ [soften (rowGap i @==@ num 10) | i <- rowGapIndices]
 
 validateBoundedRow :: Solution -> [String]
 validateBoundedRow solution =
@@ -222,11 +214,8 @@ appShapedFixture =
   SolverFixture
     { fixtureName = "app-shaped"
     , fixtureDescription =
-        "A visualization-like grid with layout, colour variables, native bounds, bridge equalities, and soft style preferences."
-    , fixtureConstraints =
-        appNativeBoundsConstraints
-          ++ appGridConstraints
-          ++ appStylePreferenceConstraints
+        "A visualization-like grid with bounded layout and colour variables plus affine adjacency equalities."
+    , fixtureConstraints = appNativeBoundsConstraints ++ appGridConstraints
     }
 
 appColumns :: Int
@@ -335,19 +324,6 @@ appNextRowConstraints row =
     currentFirst = appIndex row 0
     nextFirst = appIndex (row + 1) 0
 
-appStylePreferenceConstraints :: [Constraint]
-appStylePreferenceConstraints =
-  [soften (appWidth i @==@ num 48) | i <- appIndices]
-    ++ [ soften (appHue i @==@ num (fromIntegral ((i * 23 + 20) `mod` 360)))
-       | i <- appIndices
-       ]
-    ++ [soften (appSaturation i @==@ num 0.58) | i <- appIndices]
-    ++ [soften (appLightness i @==@ num 0.52) | i <- appIndices]
-    ++ [ soften (appHorizontalGap row col @==@ num 14)
-       | (row, col) <- appHorizontalGapIndices
-       ]
-    ++ [soften (appVerticalGap row @==@ num 20) | row <- appVerticalGapIndices]
-
 validateAppShaped :: Solution -> [String]
 validateAppShaped solution =
   catMaybes
@@ -409,65 +385,3 @@ validateAppShaped solution =
           | otherwise ->
             [label ++ " mismatch: " ++ show lhsValue ++ " vs " ++ show rhsValue]
         _ -> ["missing " ++ label]
-
-nestedExtremaFixture :: SolverFixture
-nestedExtremaFixture =
-  SolverFixture
-    { fixtureName = "nested-extrema"
-    , fixtureDescription =
-        "Deeply nested minimum and maximum expressions that guard against duplicated backend evaluation."
-    , fixtureConstraints =
-        [ within value (Range 0 (fromIntegral nestedExtremaCount + 1))
-        | value <- nestedExtremaValues
-        ]
-          ++ [ nestedMinimum @==@ num 1
-             , nestedMaximum @==@ num (fromIntegral nestedExtremaCount)
-             ]
-    }
-
-nestedExtremaCount :: Int
-nestedExtremaCount = 18
-
-nestedExtremaValues :: [Expr FixtureLayout]
-nestedExtremaValues =
-  [var ("fixture.extrema." ++ show index) | index <- [1 .. nestedExtremaCount]]
-
-nestedMinimum :: Expr FixtureLayout
-nestedMinimum = foldNestedExtrema minExpr
-
-nestedMaximum :: Expr FixtureLayout
-nestedMaximum = foldNestedExtrema maxExpr
-
-foldNestedExtrema ::
-     (Expr FixtureLayout -> Expr FixtureLayout -> Expr FixtureLayout)
-  -> Expr FixtureLayout
-foldNestedExtrema combine =
-  case nestedExtremaValues of
-    []         -> error "nested extrema fixture requires at least one value"
-    value:rest -> foldl combine value rest
-
-validateNestedExtrema :: Solution -> [String]
-validateNestedExtrema solution =
-  catMaybes
-    [ if solutionEnergy solution < 1e-4
-        then Nothing
-        else Just
-               ("expected nested extrema hard energy < 1e-4, got "
-                  ++ show (solutionEnergy solution))
-    , expectNear "minimum" 1 nestedMinimum
-    , expectNear "maximum" (fromIntegral nestedExtremaCount) nestedMaximum
-    ]
-  where
-    expectNear label expected expr =
-      case evalExpr solution expr of
-        Nothing -> Just ("missing nested extrema " ++ label)
-        Just value
-          | abs (value - expected) <= 1e-3 -> Nothing
-          | otherwise ->
-            Just
-              ("nested extrema "
-                 ++ label
-                 ++ " expected "
-                 ++ show expected
-                 ++ ", got "
-                 ++ show value)

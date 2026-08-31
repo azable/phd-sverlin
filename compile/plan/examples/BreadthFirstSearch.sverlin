@@ -1,5 +1,4 @@
 -- Breadth-first search written against the proposed API in API_plan_final.md.
--- This is a planning example: the current compiler does not yet provide this API.
 --
 -- Generator precomputes one BFS plan for a connected cyclic graph, Domain
 -- materializes that graph and its discovery tree, and Program consumes the
@@ -488,13 +487,9 @@ program (InitialState frontier vertices plan) = step @BreadthFirstSearch $ do
 render :: Render ()
 render = do
   canvasWidth <- variable @Span
-  canvasHeight <- variable @Span
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
-  ensure $ canvasHeight .>=. by 540
-  ensure $ canvasHeight .<=. by 1080
   width canvasWidth
-  height canvasHeight
   aspectRatio 16 9
   padding (uniform (by 28))
   contentFit Both Contain

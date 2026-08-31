@@ -1,6 +1,7 @@
-# Final Sverlin API and implementation plan
+# Final Sverlin API contract and implementation notes
 
-This document is the target contract for the Sverlin overhaul. The older
+This document is the implemented authored-source contract for the Sverlin
+overhaul. The older
 [`API_plan.md`](API_plan.md), [`API_plan_list.md`](API_plan_list.md),
 [`API_requirements.md`](API_requirements.md), and
 [`example.sverlin`](example.sverlin) are retained unchanged as design history.
@@ -8,7 +9,8 @@ They are useful for rationale, but this document is the authority when they
 disagree with it.
 
 The examples in [`examples/`](examples/) are complete body-only sources for this
-target API. The current compiler does not yet accept them.
+API. They remain contract and verification fixtures; this document does not by
+itself assert that the end-to-end verification gates below have passed.
 
 The semantics and safety rules below are firmer than the exact Haskell
 encoding. If implementation reveals a substantially simpler signature,
@@ -117,7 +119,26 @@ while constructing the initial resources. This is ordinary
 pass. The dispatch class and its instances are fixed compiler support, not
 authored APIs.
 
-The target profile supplies at least `DataKinds`, `GADTs`, `LinearTypes`,
+The public builder spellings have these concrete call shapes. Here `B` means
+either builder named in the comment; it is not a public type or class:
+
+```haskell
+-- B is Domain or Program.
+(>>=)  :: B a %1 -> (a %1 -> B b) %1 -> B b
+(>>)   :: B () %1 -> B b %1 -> B b
+pure   :: a %1 -> B a
+return :: a %1 -> B a
+fail   :: String -> B a
+
+-- B is Generator, Render, or TextBuilder.
+(>>=)  :: B a -> (a -> B b) -> B b
+(>>)   :: B a -> B b -> B b
+pure   :: a -> B a
+return :: a -> B a
+fail   :: String -> B a
+```
+
+The authored profile supplies at least `DataKinds`, `GADTs`, `LinearTypes`,
 `MultiParamTypeClasses`, `NoImplicitPrelude`, `OverloadedStrings`,
 `RebindableSyntax`, `TypeApplications`, `TypeFamilies`, and
 `TypeFamilyDependencies`, plus only the instance-related extensions needed by
@@ -128,30 +149,68 @@ authored body contract.
 
 ## Public facade at a glance
 
-This is the complete intended `Sverlin` export inventory. Constraints used only
+This is the complete public `Sverlin` export inventory. Constraints used only
 to implement closed overloads are deliberately absent.
 
-| Area | Public names |
-|---|---|
-| Builders | `Domain`, `Program`, `Render` |
-| Domain identities | `Kind`, `kind`, `declareKind`, `RelationKind`, `orderedRelation`, `symmetricRelation`, `declareRelation`, `declareSteps` |
-| Input generation | `Generator`, Domain-form `variable`, `between`, `elementOf`, `weighted`, `listOf`, `shuffle` |
-| Payloads | `Traceable(Payload)`, `LUnit(..)`, `LBool(..)`, `LInt(..)`, `LDouble(..)`, `LString(..)`, `LOperator(..)` |
-| Operators | `Applicable1(Apply1Result, applyPayload1)`, `Applicable2(Apply2Result, applyPayload2)` |
-| Linear resources | `Block`, `Pending`, `Slot`, `Create(..)`, `Use(..)`, `Copy(..)`, `Replace(..)`, `Apply1(..)`, `Apply2(..)`, `Destroy(..)`, `Seal(..)`, `Unseal(..)`, `Relate(..)` |
-| Domain and Program construction | `create`, `materialize`, `seal`, `relate` |
-| Program-only lifecycle | `copy`, `use`, `apply1`, `apply2`, `replace`, `destroy`, `unseal`, `step` |
-| Presence and frames | `always`, `sometimes`, `frame` |
-| Selection and hierarchy | `Selected`, `Relations`, `GeneratedNode`, `CanvasNode`, `select`, `node`, `self`, `canvas`, `within`, `relation`, `first`, `second` |
-| Structure | `Ranking`, `FixedInt`, `asSequence`, `asTree`, `asDag`, `rankOf`, `asScalar`, `asText`, `payloadScalar`, `Arrangement(..)`, `arrange` |
-| Text | `TextBuilder`, `ContentValue`, `text`, `literal`, `fragment`, `fragmentMany`, `bindContent`, `content`, `fitText` |
-| Connectors | `ConnectorAnchor`, `AnchorPlacement(..)`, `anchor`, `Marker(..)`, `connector`, `startMarker`, `endMarker` |
-| Numeric values | Render-form `variable`, `Coord`, `at`, `Span`, `by`, `Offset`, `shift`, `Scalar`, `num`, `VisualExpr`, `Unit`, `Angle`, `Vec2(..)`, `vec2`, `(.+.)`, `(.-.)`, `(.*.)`, `(./.)` |
-| Geometry | `left`, `top`, `right`, `bottom`, `width`, `height`, `x`, `y`, `center`, `size`, `Insets`, `uniform`, `symmetric`, `edges`, `padding`, `margin`, `Axis(..)`, `ContentFit(..)`, `contentFit`, `Percent`, `percent`, `xAt`, `yAt`, `widthOf`, `heightOf`, `aspectRatio`, `separatedBy` |
-| Choices and constraints | `Choice`, `choice`, `caseOf`, `VisualConstraint`, `ensure`, `(.<=.)`, `(.>=.)`, `(.==.)`, `VisualAlternative`, `alternative`, `oneOf` |
-| Style operations | `style`, `withoutStyle`, `styleOf` |
-| Numeric and paint fields | `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Hsl(..)`, `Color`, `Fill`, `Stroke` |
-| Categorical fields | `BorderStyle(..)`, `FontKind(..)`, `FontFilter`, `fontKind`, `fontChoice`, `FontFamily(..)`, `FontWeight(..)`, `FontStyle(..)`, `TextAlign(..)` |
+| Area                            | Public names                                                                                                                                                                                                                                                                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Builders                        | `Domain`, `Program`, `Render`, `(>>=)`, `(>>)`, `pure`, `return`, `fail`                                                                                                                                                                                                             |
+| Domain identities               | `Kind`, `kind`, `declareKind`, `RelationKind`, `orderedRelation`, `symmetricRelation`, `declareRelation`, `declareSteps`                                                                                                                                                             |
+| Input generation                | `Generator`, Domain-form `variable`, `between`, `elementOf`, `weighted`, `listOf`, `shuffle`                                                                                                                                                                                         |
+| Payloads                        | `Traceable(Payload)`, `LUnit(..)`, `LBool(..)`, `LInt(..)`, `LDouble(..)`, `LString(..)`, `LOperator(..)`                                                                                                                                                                            |
+| Operators                       | `Applicable1(Apply1Result, applyPayload1)`, `Applicable2(Apply2Result, applyPayload2)`                                                                                                                                                                                               |
+| Linear resources                | `Block`, `Pending`, `Slot`, `Create(..)`, `Use(..)`, `Copy(..)`, `Replace(..)`, `Apply1(..)`, `Apply2(..)`, `Destroy(..)`, `Seal(..)`, `Unseal(..)`, `Relate(..)`                                                                                                                    |
+| Domain and Program construction | `create`, `materialize`, `seal`, `relate`                                                                                                                                                                                                                                            |
+| Program-only lifecycle          | `copy`, `use`, `apply1`, `apply2`, `replace`, `destroy`, `unseal`, `step`                                                                                                                                                                                                            |
+| Presence and frames             | `always`, `sometimes`, `frame`                                                                                                                                                                                                                                                       |
+| Selection and hierarchy         | `Selected`, `Relations`, `GeneratedNode`, `CanvasNode`, `select`, `node`, `self`, `canvas`, `within`, `relation`, `first`, `second`                                                                                                                                                  |
+| Structure                       | `Ranking`, `FixedInt`, `asSequence`, `asTree`, `asDag`, `rankOf`, `asScalar`, `asText`, `payloadScalar`, `Arrangement(..)`, `arrange`                                                                                                                                                |
+| Text                            | `TextBuilder`, `ContentValue`, `text`, `literal`, `fragment`, `fragmentMany`, `bindContent`, `content`, `fitText`                                                                                                                                                                    |
+| Connectors                      | `ConnectorAnchor`, `AnchorPlacement(..)`, `anchor`, `Marker(..)`, `connector`, `startMarker`, `endMarker`                                                                                                                                                                            |
+| Numeric values                  | Render-form `variable`, `Coord`, `at`, `Span`, `by`, `Offset`, `shift`, `Scalar`, `num`, `VisualExpr`, `Unit`, `Angle`, `Vec2(..)`, `vec2`, `(.+.)`, `(.-.)`, `(.*.)`, `(./.)`                                                                                                       |
+| Geometry                        | `left`, `top`, `right`, `bottom`, `width`, `height`, `x`, `y`, `center`, `size`, `Insets`, `uniform`, `symmetric`, `edges`, `padding`, `margin`, `Axis(..)`, `ContentFit(..)`, `contentFit`, `Percent`, `percent`, `xAt`, `yAt`, `widthOf`, `heightOf`, `aspectRatio`, `separatedBy` |
+| Choices and constraints         | `Choice`, `choice`, `caseOf`, `VisualConstraint`, `ensure`, `(.<=.)`, `(.>=.)`, `(.==.)`, `VisualAlternative`, `alternative`, `oneOf`                                                                                                                                                |
+| Style operations                | `style`, `withoutStyle`, `styleOf`                                                                                                                                                                                                                                                   |
+| Numeric and paint fields        | `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Hsl(..)`, `Color`, `Fill`, `Stroke`                                                                                                                                                                                        |
+| Categorical fields              | `BorderStyle(..)`, `FontKind(..)`, `FontFilter`, `fontKind`, `fontChoice`, `FontFamily(..)`, `FontWeight(..)`, `FontStyle(..)`, `TextAlign(..)`                                                                                                                                      |
+
+### Generated-wrapper support surfaces
+
+Two deliberately narrow public modules support the generated wrapper. They do
+not add names to the unqualified authored `Sverlin` facade.
+
+`Sverlin.Compiler` packages the three authored builders without exposing the
+compiler implementation:
+
+```haskell
+data SverlinProgram
+
+sverlinProgram
+  :: Domain initial
+  -> (initial %1 -> Program ())
+  -> Render ()
+  -> SverlinProgram
+```
+
+`Sverlin.Linear` is imported as `Linear` and exposes exactly the following
+operations. “Linear numeric”, `Eq`, and `Ord` below refer to the corresponding
+`linear-base` instances; their classes are not Sverlin extension points.
+
+| Public names                    | Call shape                                                                                            |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- | --- | ---------------------------- |
+| `(+), (-), (*)`                 | `a %1 -> a %1 -> a` for the matching linear numeric instance                                          |
+| `(/)`                           | `Fractional a => a -> a -> a`                                                                         |
+| `quot, rem`                     | `Integral a => a -> a -> a`                                                                           |
+| `(==), (/=)`                    | `a %1 -> a %1 -> Bool` for a linear `Eq` instance                                                     |
+| `(<), (<=), (>), (>=), compare` | two linear `a` arguments for a linear `Ord` instance; `compare` returns `Ordering`, the others `Bool` |
+| `not`                           | `Bool %1 -> Bool`                                                                                     |
+| `(&&), (                        |                                                                                                       | )`  | `Bool %1 -> Bool %1 -> Bool` |
+| `(++)`                          | `[a] %1 -> [a] %1 -> [a]`                                                                             |
+
+The unrestricted arrows on `(/)`, `quot`, and `rem` mean they cannot consume a
+linear Program binding. They remain useful in Domain generators and for closed
+constants; traced linear arithmetic uses the linear operations whose call
+shapes accept `%1` arguments.
 
 ## Domain
 
@@ -423,7 +482,7 @@ instance Traceable Add where
 instance Applicable2 Add Number Number where
   type Apply2Result Add Number Number = Number
   applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
-    LInt (Linear.+ leftValue rightValue)
+    LInt (leftValue Linear.+ rightValue)
 ```
 
 An operator receives an ordinary `Kind` like every other materialized block.
@@ -692,7 +751,7 @@ one nearest mapping; ambiguity reports all candidate source locations.
 
 Presence conditions participate in that check. Mappings in mutually exclusive
 `oneOf` or `caseOf` branches do not conflict merely because they map the same
-selection; each feasible branch must still have exactly one context-local
+selection; each feasible branch must still have exactly one applicable nearest
 mapping at a use site. A branch that intentionally shows the same selection
 twice disambiguates the mappings with separate generated-parent scopes.
 
@@ -738,11 +797,21 @@ second
 ```
 
 `relation links body` evaluates once per active relation. `first links` and
-`second links` retrieve that exact scope's typed endpoint mappings. They reject
-use outside the matching relation scope or with another relation selection.
-For an ordered relation, `first` is its source and `second` its target. For a
-symmetric relation their stable order is reproducible but semantically
-meaningless. A relation supplies spatial endpoints but draws nothing itself.
+`second links` retrieve that exact occurrence's typed semantic endpoints. They
+reject use outside the matching relation scope or with another relation
+selection. For an ordered relation, `first` is its source and `second` its
+target. For a symmetric relation their stable order is reproducible but
+semantically meaningless.
+
+The endpoint handle does not itself create a visual node. A geometry or connector
+use first resolves the nearest compatible mapping of that exact semantic block in
+the current generated-parent context. If a relation crosses generated groups
+and no such local mapping exists, it may use a mapping elsewhere with the same
+semantic source block; it never broadens the match by kind alone. Presence and
+choice guards are checked on every candidate. Mutually exclusive mappings may
+therefore cover different branches, while mappings that can be active together
+remain an ambiguity diagnostic. A relation supplies spatial endpoints but draws
+nothing itself.
 
 ### Structural validation and rank
 
@@ -1029,12 +1098,13 @@ choice @TextAlign   :: Render (Choice TextAlign)
 caseOf :: Choice value -> (value -> Render ()) -> Render ()
 ```
 
-`Choice value` is an abstract symbolic finite value. `choice` and `fontChoice`
-create fresh random values; `styleOf` can project an already assigned
-categorical field into the same type without creating another decision. The
-compiler owns each finite domain and its stable serialization tokens; authors
-cannot define a `ChoiceDomain` instance. `caseOf` is an exhaustive map from any
-such value to complete Render blocks. Font-family choices use `fontChoice`, not
+`Choice value` is an abstract symbolic finite value. It is not a visual
+component and draws nothing by itself. `choice` and `fontChoice` create fresh
+random values; `styleOf` can project an already assigned categorical field into
+the same type without creating another decision. The compiler owns each finite
+domain and its stable serialization tokens; authors cannot define a
+`ChoiceDomain` instance. `caseOf` is an exhaustive map from any such value to
+complete Render blocks. Font-family choices use `fontChoice`, not
 `choice @FontFamily`. Custom alternatives use `oneOf` rather than a reusable
 custom category in the baseline.
 
@@ -1048,9 +1118,11 @@ supporting classes are not exported as authored extension points.
 `Coord` is a non-negative absolute canvas coordinate.
 
 ```haskell
-data Coord
+type Coord = VisualExpr CoordRole
 at :: Double -> Coord
 ```
+
+`CoordRole` is a private marker used only to keep expression roles distinct.
 
 A fresh `variable @Coord` must acquire a finite upper bound through authored or
 derived constraints. Adding a `Span` or `Offset` produces a coordinate;
@@ -1062,9 +1134,11 @@ subtracting coordinates produces an `Offset`.
 stroke, padding, and margin.
 
 ```haskell
-data Span
+type Span = VisualExpr SpanRole
 by :: Double -> Span
 ```
+
+`SpanRole` is private.
 
 Fresh spans require a finite upper bound. Subtracting spans produces an
 `Offset`.
@@ -1074,9 +1148,11 @@ Fresh spans require a finite upper bound. Subtracting spans produces an
 `Offset` is a signed displacement.
 
 ```haskell
-data Offset
+type Offset = VisualExpr OffsetRole
 shift :: Double -> Offset
 ```
+
+`OffsetRole` is private.
 
 It deliberately has no `asCoord` or `asSpan` reinterpretation helper.
 
@@ -1086,14 +1162,16 @@ It deliberately has no `asCoord` or `asSpan` reinterpretation helper.
 before numeric solving.
 
 ```haskell
-data Scalar
-num :: FixedNumeric value => Double -> value
+type Scalar = VisualExpr ScalarRole
+
+num :: Double -> Scalar
+num :: Double -> Unit
+num :: Double -> Angle
 ```
 
-`FixedNumeric` is private closed dispatch with instances for `Scalar`, `Unit`,
-and `Angle`; it is not an authored class. `num` constructs the fixed role
-inferred by its use and rejects non-finite or out-of-domain values. A sampled
-Scalar must be finitely bounded.
+`ScalarRole` is private. The three `num` lines are the complete closed
+overloads: the expected result type selects the role. `num` rejects non-finite
+or out-of-domain values. A sampled Scalar must be finitely bounded.
 
 ### `VisualExpr`
 
@@ -1102,26 +1180,27 @@ data VisualExpr role
 ```
 
 `VisualExpr role` is a read-only affine expression returned by selected node
-geometry or style access. Authors cannot construct or set it directly. The role
-retains distinctions such as coordinate, span, unit, and angle.
+geometry or style access. Authors cannot use its constructor. `Coord`, `Span`,
+`Offset`, `Scalar`, `Unit`, and `Angle` are its public aliases; their private
+role markers keep otherwise similar expressions incompatible.
 
 ### `Unit`
 
 ```haskell
-data Unit
+type Unit = VisualExpr UnitRole
 ```
 
 `Unit` is intrinsically bounded to the inclusive interval zero to one. It is
-used for opacity, alpha, saturation, and lightness.
+used for opacity, alpha, saturation, and lightness. `UnitRole` is private.
 
 ### `Angle`
 
 ```haskell
-data Angle
+type Angle = VisualExpr AngleRole
 ```
 
 `Angle` is the bounded HSL hue domain. The compiler gives the equivalent zero
-and 360 degree boundary one canonical representation.
+and 360 degree boundary one canonical representation. `AngleRole` is private.
 
 ### `Vec2`
 
@@ -1135,20 +1214,14 @@ arithmetic lower component by component.
 
 ### Geometry
 
-```haskell
-left, top, right, bottom :: geometry overloads
-width, height           :: geometry overloads
-x, y, center, size      :: geometry overloads
-```
-
 Each operation has only its documented setter and accessor forms:
 
-| Operation | Current-node setter | Selected-node accessor |
-|---|---|---|
-| `left`, `top`, `right`, `bottom`, `x`, `y` | `Coord -> Render ()` | `Selected a -> VisualExpr Coord` |
-| `width`, `height` | `Span -> Render ()` | `Selected a -> VisualExpr Span` |
-| `center` | `Vec2 Coord -> Render ()` | `Selected a -> Vec2 (VisualExpr Coord)` |
-| `size` | no setter | `Selected a -> Vec2 (VisualExpr Span)` |
+| Operation                                  | Current-node setter       | Selected-node accessor     |
+| ------------------------------------------ | ------------------------- | -------------------------- |
+| `left`, `top`, `right`, `bottom`, `x`, `y` | `Coord -> Render ()`      | `Selected a -> Coord`      |
+| `width`, `height`                          | `Span -> Render ()`       | `Selected a -> Span`       |
+| `center`                                   | `Vec2 Coord -> Render ()` | `Selected a -> Vec2 Coord` |
+| `size`                                     | no setter                 | `Selected a -> Vec2 Span`  |
 
 ```haskell
 ensure $ left next .==. (right previous .+. gap)
@@ -1214,9 +1287,9 @@ multiplying it by a sampled parent dimension would be bilinear.
 aspectRatio :: Double -> Double -> Render ()
 ```
 
-This root-only operation gives the canvas a fixed positive horizontal-to-
-vertical ratio. It does not bound the canvas scale, so a `Contain` canvas still
-needs a bounded width or height (or both).
+This operation gives the current non-connector node a fixed positive
+horizontal-to-vertical ratio. On the canvas it does not bound the canvas scale,
+so a `Contain` canvas still needs a bounded width or height (or both).
 
 ### `separatedBy`
 
@@ -1238,18 +1311,27 @@ counted twice.
 
 ### Affine arithmetic
 
-```haskell
-(.+.), (.-.), (.*.), (./.) :: affine overloads
+The closed public call shapes are:
 
+| Operation | Supported operand and result roles                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `(.+.)`   | `Coord -> Span -> Coord`, `Span -> Coord -> Coord`, `Coord -> Offset -> Coord`, `Offset -> Coord -> Coord`, and same-role addition for `Span`, `Offset`, `Scalar`, `Unit`, or `Angle` |
+| `(.-.)`   | `Coord -> Span -> Coord`, `Coord -> Offset -> Coord`, `Coord -> Coord -> Offset`, `Span -> Span -> Offset`, and same-role subtraction for `Offset`, `Scalar`, `Unit`, or `Angle`      |
+| `(.*.)`   | either order of `Scalar` with `Span`, `Offset`, `Scalar`, `Unit`, or `Angle`, returning the non-scalar role, or `Scalar` for two scalars                                              |
+| `(./.)`   | `Span`, `Offset`, `Scalar`, `Unit`, or `Angle` divided by `Scalar`, returning the numerator role                                                                                      |
+
+`Vec2` addition and subtraction are component-wise when the matching component
+operation has the same operand and result role. The operators have the usual
+fixities:
+
+```haskell
 infixl 6 .+., .-.
 infixl 7 .*., ./.
 ```
 
-The supporting dispatch is closed and private. Dotted operators distinguish
-Render expressions from ordinary Haskell arithmetic in Domain and Program.
-The inferred operand and result roles must form a supported combination, such
-as coordinate plus span, coordinate minus coordinate, or fixed scalar times
-span. Use `at`, `by`, `shift`, and `num` for fixed visual values.
+Dotted operators distinguish Render expressions from ordinary Haskell
+arithmetic in Domain and Program. Use `at`, `by`, `shift`, and `num` for fixed
+visual values.
 
 Multiplication requires one factor fixed before numeric solving; division
 requires a fixed non-zero denominator. Variable-by-variable products and
@@ -1259,20 +1341,31 @@ variable denominators are source diagnostics.
 
 ### Shared style operations
 
-```haskell
-style        :: forall field input. input -> Render ()
-withoutStyle :: forall field. Render ()
-styleOf      :: forall field node. Selected node -> StyleValue field
-```
+These are closed overloaded operations. Their complete node call shapes are:
 
-These are closed overloaded operations: the compiler supplies every supported
-field/input pair and the result type represented by `StyleValue field`.
-`StyleValue` and the dispatch classes are implementation details, not exported
-names. A call to `style @Field` accepts the fixed value, numeric expression, or
-matching `Choice` documented for that field. Unsupported pairs are type errors.
+| Field         | `style @Field` input                  | `styleOf @Field` result |
+| ------------- | ------------------------------------- | ----------------------- |
+| `Opacity`     | `Unit`                                | `Unit`                  |
+| `FontSize`    | `Span`                                | `Span`                  |
+| `Radius`      | `Span`                                | `Span`                  |
+| `StrokeWidth` | `Span`                                | `Span`                  |
+| `Alpha`       | `Unit`                                | `Unit`                  |
+| `Fill`        | `Color`                               | `Color`                 |
+| `Stroke`      | `Color`                               | `Color`                 |
+| `BorderStyle` | `BorderStyle` or `Choice BorderStyle` | `Choice BorderStyle`    |
+| `FontFamily`  | `FontFamily` or `Choice FontFamily`   | `Choice FontFamily`     |
+| `FontWeight`  | `FontWeight` or `Choice FontWeight`   | `Choice FontWeight`     |
+| `FontStyle`   | `FontStyle` or `Choice FontStyle`     | `Choice FontStyle`      |
+| `TextAlign`   | `TextAlign` or `Choice TextAlign`     | `Choice TextAlign`      |
+
+For every row, `style @Field input :: Render ()`,
+`withoutStyle @Field :: Render ()`, and
+`styleOf @Field selected` takes `Selected node`. Unsupported field/input pairs
+are type errors. Connector bodies accept only the subset stated in the
+connector section.
 
 `withoutStyle @Field` suppresses an inherited or generated value.
-`styleOf @Field selected` reads the final value as a symbolic expression and
+`styleOf @Field selected` reads the final symbolic value and
 requires the field to be present in every active branch. When presence itself
 is conditional, constrain the driving choice instead.
 
@@ -1302,7 +1395,7 @@ data Opacity
 ```
 
 `style @Opacity` accepts `Unit`. It fades the complete node, including its
-shape and text. `styleOf @Opacity` returns `VisualExpr Unit`.
+shape and text. `styleOf @Opacity` returns `Unit`.
 
 ```haskell
 fade <- variable @Unit
@@ -1319,7 +1412,7 @@ data FontSize
 
 `style @FontSize` accepts `Span`. A fixed value pins a line's size. A bounded
 variable remains part of the affine sample when the node uses `fitText`.
-`styleOf @FontSize` returns `VisualExpr Span`.
+`styleOf @FontSize` returns `Span`.
 
 ```haskell
 labelSize <- variable @Span
@@ -1341,7 +1434,7 @@ data Radius
 ```
 
 `style @Radius` accepts a non-negative `Span` for corner radius.
-`styleOf @Radius` returns `VisualExpr Span`.
+`styleOf @Radius` returns `Span`.
 
 ```haskell
 radius <- variable @Span
@@ -1358,7 +1451,7 @@ data StrokeWidth
 
 `style @StrokeWidth` accepts a non-negative `Span`; it is visible when the
 border style is not `BorderNone`. `styleOf @StrokeWidth` returns
-`VisualExpr Span`.
+`Span`.
 
 ```haskell
 lineWidth <- variable @Span
@@ -1377,7 +1470,7 @@ data Alpha
 
 `style @Alpha` accepts `Unit` and changes fill and stroke paint transparency.
 Unlike `Opacity`, it does not fade text or the node as a composed group.
-`styleOf @Alpha` returns `VisualExpr Unit`.
+`styleOf @Alpha` returns `Unit`.
 
 ```haskell
 paintAlpha <- variable @Unit
@@ -1389,15 +1482,18 @@ ensure $ paintAlpha .<=. num 1
 ### `Hsl`
 
 ```haskell
-data Hsl hue component = Hsl
-  { hue        :: hue
-  , saturation :: component
-  , lightness  :: component
-  }
+data Hsl hue component where
+  Hsl
+    :: { hue        :: Angle
+       , saturation :: Unit
+       , lightness  :: Unit
+       }
+    -> Hsl Angle Unit
 ```
 
-`Hsl` is public so fixed and symbolic components can be combined. Hue uses an
-`Angle`; saturation and lightness use `Unit`.
+`Hsl` retains two type parameters for its public type constructor, but the
+public value constructor deliberately produces only `Hsl Angle Unit`. Fixed
+and sampled components use the same aliases, so they can be combined directly.
 
 ```haskell
 accentHue <- variable @Angle
@@ -1425,7 +1521,7 @@ data Fill
 ```
 
 `style @Fill` accepts `Color`. `styleOf @Fill` returns
-`Hsl (VisualExpr Angle) (VisualExpr Unit)`, allowing component constraints.
+`Color`, allowing constraints on its `Angle` and `Unit` components.
 
 ```haskell
 fillLightness <- variable @Unit
@@ -1441,8 +1537,8 @@ data Stroke
 ```
 
 `style @Stroke` accepts `Color`. `styleOf @Stroke` returns
-`Hsl (VisualExpr Angle) (VisualExpr Unit)`. Stroke may be inherited,
-constrained, or suppressed with `withoutStyle @Stroke`.
+`Color`. Stroke may be inherited, constrained, or suppressed with
+`withoutStyle @Stroke`.
 
 ```haskell
 node current $ do
@@ -1526,7 +1622,9 @@ data FontWeight
 
 `style @FontWeight` accepts a fixed value or `Choice FontWeight`.
 `FontWeightNumber` accepts supported hundreds from 100 through 900. Relative
-weights are resolved against inheritance before shaping. Unsupported faces
+weights are resolved against inheritance before shaping: `bolder` maps parent
+weights up to 300, 400–500, and 600–900 to 400, 700, and 900 respectively;
+`lighter` maps 100–500, 600–700, and 800–900 to 100, 400, and 700. Unsupported faces
 invalidate that typography branch rather than being synthesized. Concrete
 duplicates are removed before weighting. `styleOf @FontWeight` returns the
 selected mapping's `Choice FontWeight` without adding a random decision.
@@ -1546,8 +1644,9 @@ data FontStyle = FontStyleNormal | FontStyleItalic
 ```
 
 `style @FontStyle` accepts a fixed value or `Choice FontStyle`.
-`FontStyleOblique` is absent because the current font resolver aliases it to
-italic. A family without the selected real face invalidates that branch.
+`FontStyleOblique` is absent because the compiler does not alias or synthesize
+an oblique face. Use `FontStyleItalic` when a real italic face is intended. A
+family without the selected real face invalidates that branch.
 `styleOf @FontStyle` returns the selected mapping's `Choice FontStyle`.
 
 ### `TextAlign`
@@ -1570,17 +1669,15 @@ data VisualConstraint
 
 ensure :: VisualConstraint -> Render ()
 
-(.<=.) :: Comparable a b => a -> b -> VisualConstraint
-(.>=.) :: Comparable a b => a -> b -> VisualConstraint
-(.==.) :: Comparable a b => a -> b -> VisualConstraint
-
 infix 4 .<=., .>=., .==.
 ```
 
-`Comparable` above denotes private closed dispatch; it is not an authored
-class. Equality and inequalities accept only compatible affine geometry,
-style, vector, or categorical expressions. A diagnostic names the source
-expression and unsupported operation before solving.
+Each comparison has call shape `a -> a -> VisualConstraint`, where `a` is one
+of `Coord`, `Span`, `Offset`, `Scalar`, `Unit`, `Angle`, or `Vec2 a` for one of
+those six numeric aliases. Both operands must have the same public role.
+Categorical values branch through `caseOf` rather than these numeric
+comparisons. A diagnostic names the source expression and unsupported
+operation before solving.
 
 ```haskell
 gap <- variable @Span
@@ -1599,10 +1696,12 @@ oneOf :: String -> VisualAlternative -> [VisualAlternative] -> Render ()
 ```
 
 `oneOf` creates one authored finite choice with a diagnostic name and a
-non-empty set of labelled alternatives. Labels must be unique within it. Each
-feasible alternative has equal authored weight in the baseline. A body may
-contain complete nodes, styles, connectors, and constraints, not just one
-equation.
+non-empty set of labelled alternatives. Labels must be unique within it. At
+each reached `oneOf`, feasible alternatives have equal local authored weight in
+the baseline. A nested `oneOf` is weighted only after its containing alternative
+is selected, so adding nested branches does not increase that parent's weight.
+A body may contain complete nodes, styles, connectors, and constraints, not
+just one equation.
 
 The strings are human-facing diagnostic and provenance labels. Choice identity
 comes from the declaration and lexical occurrence, so reusing a label elsewhere
@@ -1652,16 +1751,16 @@ canonical Program trace hash. The transcript records generator decisions, so
 arbitrary author-defined input values need no new public serialization class.
 Only views with exactly the same key may align. Different seeds, source,
 generated inputs, or traces therefore have separate playback contexts even
-when step names or labels happen to match. The current equal-step-signature
-activation check must become exact scenario-key compatibility plus hierarchical
-occurrence mapping.
+when step names or labels happen to match. Activation uses exact scenario-key
+compatibility plus hierarchical occurrence mapping rather than flat step
+signatures.
 
 For the convenience form `--seed s --count n`, the intended batch has scenario
 seed `s` and view seeds `[s .. s + n - 1]`. Its second output is not required to
 equal a separate singleton compilation at seed `s + 1`, because that singleton
-has a different scenario input. An initial implementation may rerun the same
-scenario privately for each view if it verifies identical trace identity;
-sharing the Domain and Program result is the eventual efficient path.
+has a different scenario input. The compiler runs Domain and Program once for
+the batch, prepares one Render design space, and samples that shared preparation
+for every requested view seed.
 
 ## Compiled affine design space
 
@@ -1680,25 +1779,30 @@ The compiler preserves two different reasons for branching:
    their declared weight (equal by default).
 2. **Algebraic partitions** are exact bookkeeping, such as the four possible
    directions in `separatedBy`. Splitting one numeric region must not make that
-   design more likely. Partition cells are selected according to their numeric
-   measure within the already selected authored assignment.
+   design more likely. When the complete space is small enough to prepare,
+   partition cells may be weighted by their estimated numeric measure within
+   the already selected authored assignment.
 
-For each view seed, the compiler first samples a feasible authored assignment,
-then selects an algebraic cell without branch-count bias, then samples a point
-approximately uniformly inside that cell. Geometry-neutral choices and frame
-presence are sampled separately so they do not multiply affine configurations.
+Small finite spaces may enumerate choices and prepare each feasible exact
+affine region. Large spaces instead use one HiGHS call with seed-derived,
+symmetric costs to complete all authored, categorical, and compiler-created
+algebraic choices; exact affine-region preparation follows that completion.
+Geometry-neutral choices and frame presence remain discrete decisions rather
+than multiplying a fully enumerated set of affine configurations.
 
-Equal authored alternatives remain equal after infeasible alternatives are
-removed. Nested choices apply equality locally at each reached choice. This is
-the baseline distribution; a future weighted visual choice must be explicit
-rather than inferred from how many compiler cases an alternative creates.
+Symmetric costs naturally balance uncoupled equal choices across seeds.
+Feasibility coupling can skew reachable completions, so coupled mixtures of
+authored, categorical, and algebraic decisions have no perfect local or global
+uniformity guarantee. A future weighted visual choice must be explicit rather
+than inferred from how many compiler cases an alternative creates.
 
 Regions of different affine dimension cannot be compared by ordinary volume.
-The compiler treats an authored equality that deliberately fixes a dimension
-as part of that alternative's weight, then compares algebraic cells only within
-the same reduced affine space. If compiler-created cells for one authored
-assignment unexpectedly have different dimensions, preparation rejects the
-ambiguous measure rather than silently choosing a policy.
+In an enumerated small space, the compiler treats an authored equality that
+deliberately fixes a dimension as part of that alternative's weight, then
+compares algebraic cells only within the same reduced affine space. If
+compiler-created cells for one authored assignment unexpectedly have different
+dimensions, preparation rejects the ambiguous measure rather than silently
+choosing a policy.
 
 ### Typography stays affine
 
@@ -1727,97 +1831,106 @@ nodes. The renderer shapes every `TextBuilder` line as one string so kerning,
 ligatures, bidirectional text, and fragment-to-glyph highlighting remain
 correct.
 
-### Preparation, caching, and retries
+### Preparation, caching, and numerical repair
 
 Preparing a region means normalizing constraints, reducing exact equalities,
-proving feasibility, finding one interior starting point, and caching the
+proving feasibility, finding one feasible starting point, and caching the
 matrix data used for sampling. It does not cache a sampled layout. Ten view
 seeds reuse the deterministic preparation but each still choose decisions and
 generate a new numeric point.
 
-Small choice spaces prepare all feasible authored assignments. Large spaces
-keep guarded constraints in a discrete feasibility model. Visit reached
-authored choices in stable lexical order. For each alternative, ask whether at
-least one feasible completion exists; discard only alternatives with none, then
-sample the survivors using that choice's local declared weights. Condition the
-model on the result and continue. This implements the local weighting rule
-without enumerating or counting complete assignments, then prepares the
-selected affine region lazily. A randomized MIP objective may answer
-feasibility queries, but choosing its preferred complete assignment is not a
-random sampler and must not stand in for this process.
+Small finite choice spaces may enumerate and prepare their feasible exact
+regions, with algebraic cells measure-weighted within an authored assignment.
+Large spaces retain guarded constraints in the HiGHS model rather than
+enumerating the Cartesian product. One ordinary HiGHS call gives every
+authored, categorical, and algebraic token a seed-derived symmetric cost and
+returns a complete feasible assignment; exact affine-region preparation then
+validates and prepares that assignment.
 
-Feasibility is deterministic and independent of whether one random walk
-succeeds. A prepared valid region may use a small, documented number of
-derived-seed attempts for a numeric backend failure, preserving each attempt in
-provenance. Exhausting those attempts reports a numeric sampling error, not
-infeasibility and not permission to invoke another optimizer. Concrete limits
-must be set from application-shaped benchmarks and documented beside their
-configuration.
+Only when backend completion and exact preparation disagree does a bounded,
+seed-ordered backtracking fallback try alternatives with feasibility-only
+calls. It permits at most the larger of 256 and `maxChoiceBranches` HiGHS
+queries per view. The 256-query floor prevents a deliberately small enumeration
+threshold from disabling corrective search; exhaustion is a sampling error,
+not proof that the design itself is infeasible.
 
-### Existing solver components to retain
+Once the large-space decisions identify one exact convex region, the compiler
+prepares it lazily and caches it by the complete decision assignment. Repeated
+view seeds that reach that assignment reuse the preparation, but sample a new
+numeric point inside it. This path does not prepare every algebraic cell or
+estimate their relative volumes, so it makes no global volume-uniform claim
+across the oversized nonconvex union.
 
-The implementation should evolve the current top-level
-[`Solver`](../src/Solver.hs) facade and its internals rather than introduce a
-second solver stack:
+Feasibility is deterministic and independent of whether the seed's one random
+walk succeeds. Feasibility checks, projection, and chord-boundary handling all
+use the same tolerance after constraint normalization. A tolerance-sized chord
+inversion collapses to its shared boundary; projection and retry use that same
+threshold. Any meaningful violation beyond it remains a numeric sampling
+error. This repair does not restart or reseed the walk, choose a different
+direction, project ordinary valid steps, declare the region infeasible, or
+invoke another optimizer.
 
-- retain affine classification and representation from
+### Solver components
+
+The implementation uses the top-level [`Solver`](../src/Solver.hs) facade and
+its internals rather than maintaining a second solver stack:
+
+- affine classification and representation live in
   [`Solver.Affine`](../src/Solver/Affine.hs);
-- retain categorical compilation, but distinguish authored decisions from
+- categorical compilation distinguishes authored decisions from
   compiler algebraic partitions;
-- retain [`Solver.Highs`](../src/Solver/Highs.hs) for deterministic linear
-  feasibility and conditioning;
-- retain normalization, equality reduction, hit-and-run, and volume machinery
-  from [`Solver.Sample`](../src/Solver/Sample.hs), correcting its weighting and
-  reuse boundaries; and
-- extend [`CompiledDesignSpace`](../src/Solver/DesignSpace.hs) so deterministic
-  normalized, equality-reduced region data can be reused across view seeds.
+- [`Solver.Highs`](../src/Solver/Highs.hs) provides deterministic linear
+  feasibility and seed-cost completion;
+- normalization, equality reduction, hit-and-run, and volume machinery live in
+  [`Solver.Sample`](../src/Solver/Sample.hs); and
+- [`CompiledDesignSpace`](../src/Solver/DesignSpace.hs) owns reusable,
+  deterministic normalized and equality-reduced region data plus bounded
+  corrective backtracking.
 
 The existing `containers` dependency and `Data.Graph`, `Data.Map`, and
 `Data.Set` are sufficient for sequence, tree, and DAG validation. Do not add a
 graph package merely to hold the same nodes and edges. No new Haskell solver
-library is required for this phase.
+library is required for this architecture.
 
-Current behavior that must change includes random-MIP assignment posing as
-uniform choice, repeated preparation for every sample, a seed-zero sample used
-as a feasibility test, string solver identities, and the penalty/L-BFGS-B
-fallback. Remove the old optimizer path and its dependencies only after the
-affine path has equivalent characterization coverage.
+The removed path used random-MIP assignment as a sampler, repeated preparation
+for every sample, a seed-zero sample as a feasibility test, string solver
+identities, and a penalty/L-BFGS-B fallback. None is part of the authored or
+solver facade contract.
 
 ## Internal compiler and renderer shape
 
 ### One private `RenderPlan`
 
-Lower authored Render code once into a private `RenderPlan` that owns semantic
+Authored Render code lowers once into a private `RenderPlan` that owns semantic
 matches, generated hierarchy, presence conditions, style cascade, text lines,
 connectors, prepared graph templates, affine constraints, and source
-provenance. The current Box, Style, Build, and typography algorithms are useful
-implementation donors. Some intermediate types are exported by today's legacy
-modules; they must not remain public APIs in the target facade.
+provenance. Retained Box, Style, Build, and typography algorithms are private
+implementation details rather than authored APIs.
 
-Collapse query matching, `View.Access`, `View.Template`, `StyleProfile`, and
-the authored graph/solve surfaces after their retained behavior has moved into
-that plan. Do not keep empty forwarding layers. Preserve lexical match scope,
-stable visual identity, parent containment, and independent mappings of the
-same semantic selection.
+The plan replaces the old query matching, `View.Access`, `View.Template`,
+`StyleProfile`, and authored graph/solve surfaces. It preserves lexical match
+scope, stable visual identity, parent containment, and independent mappings of
+the same semantic selection without public forwarding layers.
 
 Typography preparation happens before numeric solving for every feasible
-metric branch. Remove the current solve, shape/max-fit, pin, and re-solve flow:
-prepared glyph coefficients and fit inequalities enter the same final affine
-sample as box geometry.
+metric branch. Prepared glyph coefficients and fit inequalities enter the same
+affine sample as box geometry; there is no solve, shape/max-fit, pin, and
+re-solve flow.
 
-The first migration should follow this ownership map:
+The implementation follows this ownership map. The left column records the
+historical donor, not a second public API:
 
-| Current source | Target ownership | Action |
-|---|---|---|
-| [`LinearTrace.Choreography`](../src/LinearTrace/Choreography.hs) | `Sverlin` | Replace the authored facade; retain a compatibility shim only for current fixtures during cutover. |
-| [`LinearTrace.Core.Internal`](../src/LinearTrace/Core/Internal.hs) | private Domain/Program trace engine | Preserve linear resources, provenance, allocation, and event ordering; replace facts and string labels at its boundary. |
-| `LinearTrace.Choreography.Match`, `Graph`, and `View.Access` | private `RenderPlan` matching/projection | Merge semantic scope and identity logic after characterization tests. |
-| `View.Template`, `Build`, and `StyleProfile` | private `RenderPlan` lowering | Reuse useful algorithms, then remove public/authored template and automatic-profile layers. |
-| `View.Box`, `View.Style`, and `View.Primitives` | private affine box/style representation | Retain typed geometry and cascade behavior; stop exposing accumulated implementation records. |
-| [`Visualization.FontCatalog`](../src/LinearTrace/Visualization/FontCatalog.hs), `HarfBuzz`, and [`Typography`](../src/LinearTrace/Visualization/Typography.hs) | typography branch preparation | Add font-kind metadata and whole-line branch caching; remove maximum-fit and pinned second solve. |
-| [`Visualization.CodeHighlight`](../src/LinearTrace/Visualization/CodeHighlight.hs) | none | Remove the code-special Skylighting path after step fragments replace it; then remove `skylighting-core` when Typography no longer imports it. |
-| `Visualization.Compile`, `IR`, `Resource`, and `Target` | versioned output pipeline | Retain resource and serialization behavior while adding scenario, fragment, relation, and connector provenance. |
-| [`Solver.DesignSpace`](../src/Solver/DesignSpace.hs) and other `Solver.*` modules | stable top-level `Solver` facade | Adapt the existing affine pipeline; remove the optimizer path only after equivalent coverage. |
+| Historical source                                                                                                                                              | Current ownership                        | Retained behavior                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [`LinearTrace.Choreography`](../src/LinearTrace/Choreography.hs)                                                                                               | `Sverlin`                                | Authored facade only; legacy code is not re-exported.                                            |
+| [`LinearTrace.Core.Internal`](../src/LinearTrace/Core/Internal.hs)                                                                                             | private Domain/Program trace engine      | Linear resources, provenance, allocation, and event ordering.                                    |
+| `LinearTrace.Choreography.Match`, `Graph`, and `View.Access`                                                                                                   | private `RenderPlan` matching/projection | Semantic scope and stable projection identity.                                                   |
+| `View.Template`, `Build`, and `StyleProfile`                                                                                                                   | private `RenderPlan` lowering            | Useful lowering behavior without authored template or automatic-profile layers.                  |
+| `View.Box`, `View.Style`, and `View.Primitives`                                                                                                                | private affine box/style representation  | Typed geometry and cascade behavior without exposing accumulated records.                        |
+| [`Visualization.FontCatalog`](../src/LinearTrace/Visualization/FontCatalog.hs), `HarfBuzz`, and [`Typography`](../src/LinearTrace/Visualization/Typography.hs) | typography branch preparation            | Font metadata, whole-line shaping, and affine fit coefficients.                                  |
+| [`Visualization.CodeHighlight`](../src/LinearTrace/Visualization/CodeHighlight.hs)                                                                             | none                                     | Typed text fragments replace the code-special highlighting surface.                              |
+| `Visualization.Compile`, `IR`, `Resource`, and `Target`                                                                                                        | versioned output pipeline                | Resource and serialization behavior plus scenario, fragment, relation, and connector provenance. |
+| [`Solver.DesignSpace`](../src/Solver/DesignSpace.hs) and other `Solver.*` modules                                                                              | stable top-level `Solver` facade         | Reusable bounded affine compilation and sampling.                                                |
 
 This map intentionally unifies overlapping internal representations. It does
 not imply one large module: boundaries should follow ownership of validated
@@ -1851,26 +1964,21 @@ Preserve content/resource hashes, forward and reverse transition identity, and
 whole-line shaping data. Fragment metadata must identify glyph clusters rather
 than assume one source character equals one glyph.
 
-The application-side migration is small but cannot be skipped:
+The application boundary now follows the same scenario/view model:
 
-- [`compile/app/Main.hs`](../app/Main.hs) already builds one `VisualTraceGraph`
-  and one `ViewGraph` before solving several seeds. Preserve that shared-graph
-  batch, but give its first seed the explicit scenario role and pass the full
-  ordered view-seed batch into the new host.
+- [`compile/app/Main.hs`](../app/Main.hs) passes the first seed as the scenario
+  seed and the complete ordered view-seed batch to the narrow compiler host.
 - [`src/lib/server/compiler/index.ts`](../../src/lib/server/compiler/index.ts)
-  currently implements a batch by invoking the single-seed compiler repeatedly.
-  Change that boundary to one batch invocation, or temporarily pass the same
-  explicit scenario seed to each invocation and verify identical `scenarioKey`
-  values.
+  invokes one compiler process for the batch and verifies returned scenario and
+  view correlation.
 - [`src/lib/server/projects/service.ts`](../../src/lib/server/projects/service.ts)
-  currently accepts synchronized presentations by hashing flat step labels.
-  Store and compare `scenarioKey`, then retain hierarchical occurrence keys
-  instead of requiring identical optional-frame lists.
-- Regenerate the shared IR types under
+  stores and compares `scenarioKey` and hierarchical occurrence keys rather
+  than requiring identical optional-frame lists.
+- Shared IR types under
   [`src/lib/shared/visualization/`](../../src/lib/shared/visualization/) and
-  update client playback under
-  [`src/lib/client/visualization/`](../../src/lib/client/visualization/) to use
-  the ordered union and hold rule. Persisted project events remain immutable;
+  client playback under
+  [`src/lib/client/visualization/`](../../src/lib/client/visualization/) use the
+  ordered union and hold rule. Persisted project events remain immutable;
   compatibility belongs in the IR decoder/projection rather than by rewriting
   old events.
 
@@ -1891,16 +1999,16 @@ Expose only:
 - the intentionally stable top-level `Solver` facade; and
 - an IR module only if another package deliberately consumes that Haskell type.
 
-Historical modules are behavioral donors, not compatibility commitments. Audit
-callers and characterize behavior before collapsing them. In particular inspect
-commits `970907d` (slot owner projection), `52f842b` and `a5084ba` (render
+Historical modules are behavioral donors, not compatibility commitments. The
+refactor used characterization tests and, in particular, commits `970907d`
+(slot owner projection), `52f842b` and `a5084ba` (render
 identity and transitions), `9efb493` (typography/resources), `0ff53cc`
 (template and API-index boundary), and `03c4e14` (archived slots, connectors,
 and SVG transition edge cases).
 
 ## Deliberately absent from `Sverlin`
 
-The target facade does not expose:
+The `Sverlin` facade does not expose:
 
 - old builder/facade names, compiler runners, graph builders, solver entrypoints,
   or view statistics;
@@ -1927,48 +2035,51 @@ The target facade does not expose:
   `TextAlignJustify`; or
 - nonlinear constraints, nonlinear optimizer fallback, and soft objectives.
 
-## Implementation phases
+## Implemented migration shape
 
-### Phase 1: freeze and exercise the contract
+This section records how the implementation is divided. It is not a claim that
+the independent verification gates in the next section have all completed.
 
-Treat this document and the ten sources in [`examples/`](examples/) as the
-candidate contract. Add parser/typecheck fixtures from the examples as each API
-slice lands. Keep [`API_issues.md`](API_issues.md) limited to demonstrated gaps
-that cannot be expressed by composing this facade.
+### Contract and fixtures
 
-### Phase 2: typed Domain and Program
+This document and the ten sources in [`examples/`](examples/) define the
+contract. Parser and typecheck coverage derives from those sources.
+[`API_issues.md`](API_issues.md) remains limited to demonstrated gaps that
+cannot be expressed by composing this facade.
 
-Introduce the `Sverlin` facade and private host. Implement typed declarations,
-constructive seeded Domain initialization, its direct linear handoff to
-Program, one materialization path, typed steps, stable Slots, and relation
-events. The old fact/query representation may temporarily lower these features
-internally, but authored source cannot name it.
+### Typed Domain and Program
 
-### Phase 3: one Render plan
+The `Sverlin` facade and private host provide typed declarations, constructive
+seeded Domain initialization, its direct linear handoff to Program, one
+materialization path, typed steps, stable Slots, and relation events. Authored
+source cannot name the old fact/query representation.
 
-Implement typed selections and relations, generated hierarchy, presence
-provenance, structural rankings, text builders, connectors, prepared
-arrangements, closed style fields, and affine constraints in one private plan.
-Characterize projection identity, containment, relation lifetime, and reverse
-transitions before removing their legacy owners.
+### One Render plan
 
-### Phase 4: bounded piecewise-affine compilation
+Typed selections and relations, generated hierarchy, presence provenance,
+structural rankings, text builders, connectors, prepared arrangements, closed
+style fields, and affine constraints lower into one private plan. Projection
+identity, containment, relation lifetime, and reverse transitions remain
+covered at their compiler boundaries.
 
-Prepare typography branches before solving; distinguish authored decisions
-from algebraic partitions; add deterministic feasibility, prepared-region
-reuse, and approximately uniform region sampling. Remove pinned typography,
-penalty objectives, nonlinear fallback, and obsolete optimizer dependencies
-after the affine path passes its fixtures and benchmarks.
+### Bounded piecewise-affine compilation
 
-### Phase 5: IR, playback, and package cleanup
+Typography branches prepare before solving. Authored decisions are distinct
+from algebraic partitions, feasibility is deterministic, prepared regions are
+reused across a view batch, and numeric points are sampled from bounded affine
+regions. Pinned typography, penalty objectives, nonlinear fallback, and the old
+optimizer path are absent.
 
-Emit the new provenance and hierarchical frame data, update the browser to
-align only views from one scenario, preserve old artifact decoding, then narrow
-exposed Haskell modules and remove empty legacy layers.
+### IR, playback, and package boundary
+
+The IR carries scenario/view provenance and hierarchical frame data. Browser
+playback aligns only views from one scenario while old artifacts retain their
+decoder path. Authored code imports only `Sverlin`; the Haskell package exposure
+audit remains a separate verification gate.
 
 ## Verification gates
 
-Before treating a phase as complete:
+Before treating the overhaul as verified:
 
 - every example must parse and typecheck against `Sverlin`; later phases must
   compile it for several scenario and view seeds;
@@ -1996,19 +2107,20 @@ Before treating a phase as complete:
 
 ## Example suite
 
-| Source | Main pressure on the API |
-|---|---|
-| [`LinearSearch.sverlin`](examples/LinearSearch.sverlin) | array membership, optional labels, comparison fragments |
-| [`BinarySearch.sverlin`](examples/BinarySearch.sverlin) | narrowing ranges, midpoint relations, optional detail frames |
-| [`BubbleSort.sverlin`](examples/BubbleSort.sverlin) | stable cells, occupant replacement, adjacency, swap steps |
-| [`MergeSort.sverlin`](examples/MergeSort.sverlin) | nested steps, split/merge structures, alternate layouts |
-| [`HeapSort.sverlin`](examples/HeapSort.sverlin) | one trace shown as an array, a tree, or both |
-| [`LinkedListReversal.sverlin`](examples/LinkedListReversal.sverlin) | persistent nodes, changing directed links, connectors |
-| [`BreadthFirstSearch.sverlin`](examples/BreadthFirstSearch.sverlin) | general graph arrangement, queue membership, visit levels |
-| [`DijkstraShortestPath.sverlin`](examples/DijkstraShortestPath.sverlin) | weighted semantic values and directed edge visuals |
-| [`TopologicalSort.sverlin`](examples/TopologicalSort.sverlin) | DAG validation, rank-based layers, optional order view |
-| [`LongestCommonSubsequence.sverlin`](examples/LongestCommonSubsequence.sverlin) | two input sequences, a dynamic-programming grid, code text |
+| Source                                                                          | Main pressure on the API                                     |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [`LinearSearch.sverlin`](examples/LinearSearch.sverlin)                         | array membership, optional labels, comparison fragments      |
+| [`BinarySearch.sverlin`](examples/BinarySearch.sverlin)                         | narrowing ranges, midpoint relations, optional detail frames |
+| [`BubbleSort.sverlin`](examples/BubbleSort.sverlin)                             | stable cells, occupant replacement, adjacency, swap steps    |
+| [`MergeSort.sverlin`](examples/MergeSort.sverlin)                               | nested steps, split/merge structures, alternate layouts      |
+| [`HeapSort.sverlin`](examples/HeapSort.sverlin)                                 | one trace shown as an array, a tree, or both                 |
+| [`LinkedListReversal.sverlin`](examples/LinkedListReversal.sverlin)             | persistent nodes, changing directed links, connectors        |
+| [`BreadthFirstSearch.sverlin`](examples/BreadthFirstSearch.sverlin)             | general graph arrangement, queue membership, visit levels    |
+| [`DijkstraShortestPath.sverlin`](examples/DijkstraShortestPath.sverlin)         | weighted semantic values and directed edge visuals           |
+| [`TopologicalSort.sverlin`](examples/TopologicalSort.sverlin)                   | DAG validation, rank-based layers, optional order view       |
+| [`LongestCommonSubsequence.sverlin`](examples/LongestCommonSubsequence.sverlin) | two input sequences, a dynamic-programming grid, code text   |
 
-These are target-design fixtures, not current compiler demonstrations. Their
-comments explain composition and call out any genuinely missing operation in
+These are contract fixtures rather than evidence that runtime verification has
+completed. Their comments explain composition and call out any genuinely
+missing operation in
 [`API_issues.md`](API_issues.md) rather than inventing an unlisted public name.

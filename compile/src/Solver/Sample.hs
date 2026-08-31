@@ -13,7 +13,11 @@ module Solver.Sample
   , SamplingStrategy(..)
   , DecisionCoverage(..)
   , SamplingProvenance(..)
+  , PreparedAffineRegion
+  , prepareAffineRegion
+  , samplePreparedAffineRegion
   , sampleAffineProblem
+  , estimatePreparedAffineLogVolume
   , estimateAffineLogVolume
   ) where
 
@@ -112,6 +116,33 @@ data ReducedProblem = ReducedProblem
   , reducedInequalities :: [DenseRow]
   }
 
+-- | Deterministic, seed-independent preparation shared by every sample from
+-- one affine region.  In particular, equality reduction and phase-I
+-- feasibility are not repeated for each view seed.
+data PreparedAffineRegion = PreparedAffineRegion
+  { preparedNormalized :: NormalizedProblem
+  , preparedReduced    :: ReducedProblem
+  , preparedStart      :: LA.Vector Double
+  }
+
+-- | Normalize, reduce, and prove one affine region feasible.  Initial
+-- overrides only choose the deterministic phase-I hint; they do not pin the
+-- returned samples.
+prepareAffineRegion ::
+     Map String Double
+  -> AffineProblem
+  -> Either FeasibilityFailure PreparedAffineRegion
+prepareAffineRegion overrides problem = do
+  normalized <- normalizeProblem problem
+  reduced <- reduceEqualities normalized
+  start <- findFeasiblePoint (startingHint overrides normalized reduced) reduced
+  pure
+    PreparedAffineRegion
+      { preparedNormalized = normalized
+      , preparedReduced = reduced
+      , preparedStart = start
+      }
+
 -- | Sample one point from the feasible hard-constraint region. Initial
 -- overrides only select the starting hint; burn-in separates them from the
 -- returned sample.
@@ -121,14 +152,31 @@ sampleAffineProblem ::
   -> AffineProblem
   -> Either FeasibilityFailure (Map String Double, SamplingStatistics)
 sampleAffineProblem seed overrides problem = do
-  normalized <- normalizeProblem problem
-  reduced <- reduceEqualities normalized
-  start <- findFeasiblePoint (startingHint overrides normalized reduced) reduced
+  prepared <- prepareAffineRegion overrides problem
+  samplePreparedAffineRegion seed prepared
+
+-- | Draw one seeded point from a region whose deterministic matrix and
+-- feasibility work has already been completed.
+samplePreparedAffineRegion ::
+     RandomSeed
+  -> PreparedAffineRegion
+  -> Either FeasibilityFailure (Map String Double, SamplingStatistics)
+samplePreparedAffineRegion seed prepared = do
+  let normalized = preparedNormalized prepared
+      reduced = preparedReduced prepared
+      start = preparedStart prepared
   let dimension = LA.cols (reducedBasis reduced)
       burnIn =
         if dimension == 0
           then 0
-          else max 256 (20 * dimension)
+          else min 128 (max 32 (2 * dimension))
+          -- A dense hit-and-run step changes every free coordinate. Two steps
+          -- per dimension give small regions several independent directions;
+          -- the 32-step floor separates a sample from the deterministic
+          -- phase-I start, while the 128-step cap prevents warm-up work from
+          -- growing quadratically on large visualization graphs. These are an
+          -- operational variation policy, not an exact finite-time uniformity
+          -- guarantee.
   sampled <-
     hitAndRun
       (deriveSeed seed "numeric.hit-and-run")
@@ -160,8 +208,19 @@ estimateAffineLogVolume ::
   -> AffineProblem
   -> Either FeasibilityFailure VolumeEstimate
 estimateAffineLogVolume budget seed problem = do
-  normalized <- normalizeProblem problem
-  reduced <- reduceEqualities normalized
+  prepared <- prepareAffineRegion Map.empty problem
+  estimatePreparedAffineLogVolume budget seed prepared
+
+-- | Estimate intrinsic volume while reusing normalization, equality
+-- reduction, and the deterministic feasible point.
+estimatePreparedAffineLogVolume ::
+     VolumeBudget
+  -> RandomSeed
+  -> PreparedAffineRegion
+  -> Either FeasibilityFailure VolumeEstimate
+estimatePreparedAffineLogVolume budget seed prepared = do
+  let normalized = preparedNormalized prepared
+      reduced = preparedReduced prepared
   let dimension = LA.cols (reducedBasis reduced)
   if dimension == 0
     then pure
@@ -172,8 +231,7 @@ estimateAffineLogVolume budget seed problem = do
              , volumeWalkSteps = 0
              }
     else do
-      start <-
-        findFeasiblePoint (startingHint Map.empty normalized reduced) reduced
+      let start = preparedStart prepared
       (center, centerSteps) <-
         findInteriorCenter
           (deriveSeed seed "volume.center")
@@ -546,16 +604,31 @@ findFeasiblePoint ::
   -> Either FeasibilityFailure (LA.Vector Double)
 findFeasiblePoint initial problem
   | LA.size initial == 0 = Right initial
-  | otherwise = go 0 initial zeroCorrections
+  | otherwise =
+    projectFeasiblePoint phaseOneTolerance initial (reducedInequalities problem)
+
+projectFeasiblePoint ::
+     Double
+  -> LA.Vector Double
+  -> [DenseRow]
+  -> Either FeasibilityFailure (LA.Vector Double)
+projectFeasiblePoint target initial rows = go 0 initial zeroCorrections
   where
-    rows = reducedInequalities problem
     zeroCorrections = map (const (LA.konst 0 (LA.size initial))) rows
     go sweep point corrections
-      | maximumViolation rows point <= inequalityTolerance = Right point
+      | maximumViolation rows point <= target = Right point
       | sweep >= maximumProjectionSweeps =
         Left
           (FeasibilityFailure
-             "could not find a feasible point for bounded affine constraints")
+             ("could not find a feasible point for bounded affine constraints; "
+                ++ "remaining normalized violation="
+                ++ show (maximumViolation rows point)
+                ++ ", target="
+                ++ show target
+                ++ ", inequalities="
+                ++ show (length rows)
+                ++ ", sweeps="
+                ++ show sweep))
       | otherwise =
         let (nextPoint, nextCorrections) =
               projectionSweep point corrections rows
@@ -603,17 +676,25 @@ hitAndRun seed steps initial rows = go steps initial randomValues
       | remaining <= 0 = Right point
       | otherwise = do
         let (direction, afterDirection) = randomDirection dimension values
-        (lower, upper) <- chord rows point direction
+        (walkPoint, lower, upper) <- boundedChord point direction
         case afterDirection of
           [] -> Left (FeasibilityFailure "seeded random stream ended")
           unit:rest ->
             let distance = lower + openUnit unit * (upper - lower)
-                next = point + LA.scale distance direction
+                next = walkPoint + LA.scale distance direction
              in if finiteVector next
                   then go (remaining - 1) next rest
                   else Left
                          (FeasibilityFailure
                             "hit-and-run produced a non-finite sample")
+    boundedChord point direction =
+      case chord rows point direction of
+        Right (lower, upper) -> Right (point, lower, upper)
+        Left original -> do
+          repaired <- projectFeasiblePoint feasibilityTolerance point rows
+          case chord rows repaired direction of
+            Right (lower, upper) -> Right (repaired, lower, upper)
+            Left _               -> Left original
 
 hitAndRunBallSamples ::
      RandomSeed
@@ -684,17 +765,53 @@ chord ::
 chord rows point direction = do
   (lower, upper) <-
     foldl' intersect (Right (negativeInfinity, positiveInfinity)) rows
-  if not (finite lower && finite upper) || lower > upper + inequalityTolerance
+  if not (finite lower && finite upper)
     then Left
-           (FeasibilityFailure "bounded affine sampling found no finite chord")
-    else Right (lower, upper)
+           (FeasibilityFailure
+              ("bounded affine sampling found no finite chord: lower="
+                 ++ show lower
+                 ++ ", upper="
+                 ++ show upper
+                 ++ ", dimension="
+                 ++ show (LA.size point)
+                 ++ ", rows="
+                 ++ show (length rows)
+                 ++ ", maximumViolation="
+                 ++ show (maximumViolation rows point)
+                 ++ ", activeSlopes="
+                 ++ show
+                      (length
+                         [ ()
+                         | row <- rows
+                         , abs (LA.dot (denseCoefficients row) direction)
+                             > numericalTolerance
+                         ])))
+    else if lower <= upper
+           then Right (lower, upper)
+           else if lower - upper <= feasibilityTolerance
+                  then let boundary = (lower + upper) / 2
+                        in Right (boundary, boundary)
+                  else Left
+                         (FeasibilityFailure
+                            ("bounded affine sampling found an inverted chord: lower="
+                               ++ show lower
+                               ++ ", upper="
+                               ++ show upper
+                               ++ ", maximumViolation="
+                               ++ show (maximumViolation rows point)))
   where
     intersect interval row = do
       (lower, upper) <- interval
-      let offset = denseRhs row - LA.dot (denseCoefficients row) point
+      -- Phase I accepts this normalized tolerance, so the walk must use the
+      -- same boundary. Otherwise a harmless residual is magnified when the
+      -- sampled direction is nearly parallel to an active facet.
+      let offset =
+            denseRhs row
+              + feasibilityTolerance
+              - LA.dot (denseCoefficients row) point
           slope = LA.dot (denseCoefficients row) direction
       if abs slope <= numericalTolerance
-        then if offset >= -inequalityTolerance
+        then if offset >= -numericalTolerance
                then Right (lower, upper)
                else Left
                       (FeasibilityFailure
@@ -772,11 +889,19 @@ openUnit = clamp 1.0e-12 (1 - 1.0e-12)
 numericalTolerance :: Double
 numericalTolerance = 1.0e-12
 
+phaseOneTolerance :: Double
+phaseOneTolerance = feasibilityTolerance
+
+-- All feasibility comparisons use one epsilon after the problem has been
+-- normalized. Values are converted back into layout units only afterward.
+feasibilityTolerance :: Double
+feasibilityTolerance = 1.0e-8
+
 equalityTolerance :: Double
-equalityTolerance = 1.0e-8
+equalityTolerance = feasibilityTolerance
 
 inequalityTolerance :: Double
-inequalityTolerance = 1.0e-8
+inequalityTolerance = feasibilityTolerance
 
 maximumProjectionSweeps :: Int
 maximumProjectionSweeps = 2000

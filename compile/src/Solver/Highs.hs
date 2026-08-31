@@ -4,13 +4,15 @@
 -- The Haskell @MIP@ package owns LP serialization and invokes the external
 -- HiGHS executable; this module owns only Sverlin's lowering policy.
 module Solver.Highs
-  ( selectFeasibleAssignmentWithHighs
+  ( HighsCompletion(..)
+  , feasibleCompletionWithHighs
   ) where
 
 import           Control.Exception                     (SomeException, try)
 import           Data.Default.Class                    (def)
 import           Data.Map.Strict                       (Map)
 import qualified Data.Map.Strict                       as Map
+import           Data.Maybe                            (fromMaybe)
 import           Data.Scientific                       (Scientific,
                                                         fromFloatDigits)
 import qualified Data.Set                              as Set
@@ -24,7 +26,6 @@ import           Solver.Choice
 import           Solver.Constraint
 import           Solver.Expr
 import           Solver.Problem
-import           Solver.Random
 import           System.IO                             (hClose, hPutStrLn)
 import           System.IO.Temp                        (withSystemTempFile)
 
@@ -32,7 +33,13 @@ type Assignment = Map String String
 
 data MipVariables = MipVariables
   { numericMipVariables :: Map String MIP.Var
+  , numericMipLowers    :: Map String Double
   , choiceMipVariables  :: Map (String, String) MIP.Var
+  }
+
+data HighsCompletion = HighsCompletion
+  { highsChoiceAssignment :: Map String String
+  , highsNumericValues    :: Map String Double
   }
 
 data GuardedConstraint = GuardedConstraint
@@ -40,16 +47,17 @@ data GuardedConstraint = GuardedConstraint
   , guardedConstraint :: Constraint
   }
 
--- | Select one mixed discrete/continuous feasible assignment. Random objective
--- coefficients make repeated deterministic seeds explore different feasible
--- discrete regions; hit-and-run samples the chosen region afterwards.
-selectFeasibleAssignmentWithHighs ::
-     RandomSeed
-  -> Map String [String]
+-- | Ask whether one partial finite assignment has a feasible completion.
+-- An empty cost map is a pure feasibility query. Callers may assign costs to
+-- any deferred finite token when they need one seeded completion.
+feasibleCompletionWithHighs ::
+     Map String [String]
+  -> Map (String, String) Double
   -> SolverProblem
-  -> IO (Either String Assignment)
-selectFeasibleAssignmentWithHighs seed domains problem =
-  case buildMipProblem seed domains problem of
+  -> Assignment
+  -> IO (Either String (Maybe HighsCompletion))
+feasibleCompletionWithHighs domains objectiveCosts problem partial =
+  case buildMipProblem domains objectiveCosts problem partial of
     Left err -> pure (Left err)
     Right (variables, mipProblem) ->
       withSystemTempFile "sverlin-highs.log" $ \logPath logHandle -> do
@@ -57,9 +65,11 @@ selectFeasibleAssignmentWithHighs seed domains problem =
         withSystemTempFile "sverlin-highs.options" $ \optionsPath handle -> do
           mapM_
             (hPutStrLn handle)
-            [ "random_seed = " ++ showSeed seed
+            [ "random_seed = 0"
             , "threads = 1"
             , "parallel = off"
+            , "primal_feasibility_tolerance = 1e-9"
+            , "mip_feasibility_tolerance = 1e-9"
             , "log_file = " ++ logPath
             , "log_to_console = false"
             ]
@@ -71,23 +81,41 @@ selectFeasibleAssignmentWithHighs seed domains problem =
                     {HiGHS.highsArgs = ["--options_file", optionsPath]})
                  def
                  mipProblem)
-          pure
-            (case solved of
-               Left err ->
-                 Left
-                   ("could not run the HiGHS feasibility backend: "
-                      ++ show (err :: SomeException))
-               Right solution -> decodeAssignment domains variables solution)
+          pure $ do
+            solution <-
+              case solved of
+                Left err ->
+                  Left
+                    ("could not run the HiGHS feasibility backend: "
+                       ++ show (err :: SomeException))
+                Right value -> Right value
+            case MIP.solStatus solution of
+              MIP.StatusInfeasible -> Right Nothing
+              MIP.StatusInfeasibleOrUnbounded -> Right Nothing
+              MIP.StatusOptimal ->
+                Just <$> decodeCompletion domains variables solution
+              MIP.StatusFeasible ->
+                Just <$> decodeCompletion domains variables solution
+              status ->
+                Left
+                  ("HiGHS feasibility ended with an indeterminate status: "
+                     ++ show status)
 
 buildMipProblem ::
-     RandomSeed
-  -> Map String [String]
+     Map String [String]
+  -> Map (String, String) Double
   -> SolverProblem
+  -> Assignment
   -> Either String (MipVariables, MIP.Problem Scientific)
-buildMipProblem seed domains problem = do
+buildMipProblem domains objectiveCosts problem partial = do
+  validatePartial domains partial
   numericBounds <- finiteNumericBounds (solverConstraints problem)
   let variables = makeMipVariables numericBounds domains
       oneHot = map (oneHotConstraint variables) (Map.toAscList domains)
+      pinned =
+        [ binaryExpr variables name token MIP..==. 1
+        | (name, token) <- Map.toAscList partial
+        ]
       categorical =
         concatMap
           (categoricalConstraints variables)
@@ -98,13 +126,8 @@ buildMipProblem seed domains problem = do
       (traverse
          (lowerGuardedConstraint variables numericBounds)
          (guardedConstraints [] (solverConstraints problem)))
+  objective <- choiceObjective variables objectiveCosts
   let binaries = Map.elems (choiceMipVariables variables)
-      objectiveUnits = randomUnitsFromSeed (deriveSeed seed "highs.objective")
-      objective =
-        sum
-          [ scientificExpr unit * MIP.varExpr variable
-          | (unit, variable) <- zip objectiveUnits binaries
-          ]
       variableDomains =
         Map.fromList
           ([ ( variable
@@ -113,7 +136,9 @@ buildMipProblem seed domains problem = do
            , let variable = numericVariable variables name
            ]
              ++ [ ( variable
-                  , (MIP.IntegerVariable, (MIP.Finite 0, MIP.Finite 1)))
+                  , ( MIP.IntegerVariable
+                    , ( MIP.Finite (scientific mipChoiceOrigin)
+                      , MIP.Finite (scientific (mipChoiceOrigin + 1)))))
                 | variable <- binaries
                 ])
       mipProblem =
@@ -121,17 +146,49 @@ buildMipProblem seed domains problem = do
           { MIP.name = Just "sverlin-design-space"
           , MIP.objectiveFunction =
               MIP.ObjectiveFunction
-                { MIP.objLabel = Just "seeded_branch_selection"
+                { MIP.objLabel =
+                    Just
+                      (if Map.null objectiveCosts
+                         then "feasibility"
+                         else "algebraic_completion")
                 , MIP.objDir = MIP.OptMin
                 , MIP.objExpr = objective
                 }
-          , MIP.constraints = oneHot ++ categorical ++ numeric
+          , MIP.constraints = oneHot ++ pinned ++ categorical ++ numeric
           , MIP.varDomains = variableDomains
           }
-      -- MIP 0.2.0.1's HiGHS solution parser rejects signed numeric fields.
-      -- Positive costs preserve randomized selection because every domain is
-      -- one-hot, so a common cost translation per domain is constant.
   pure (variables, mipProblem)
+
+choiceObjective ::
+     MipVariables
+  -> Map (String, String) Double
+  -> Either String (MIP.Expr Scientific)
+choiceObjective variables costs =
+  fmap
+    sum
+    (traverse
+       (\(key, coefficient) ->
+          case Map.lookup key (choiceMipVariables variables) of
+            Nothing ->
+              Left ("cannot weight unknown finite choice token " ++ show key)
+            Just variable ->
+              Right (scientificExpr coefficient * logicalChoiceExpr variable))
+       (Map.toAscList costs))
+
+validatePartial :: Map String [String] -> Assignment -> Either String ()
+validatePartial domains partial = mapM_ validate (Map.toAscList partial)
+  where
+    validate (name, token) =
+      case Map.lookup name domains of
+        Nothing -> Left ("cannot condition unknown finite choice " ++ show name)
+        Just tokens
+          | token `elem` tokens -> Right ()
+          | otherwise ->
+            Left
+              ("cannot condition token "
+                 ++ show token
+                 ++ " for finite choice "
+                 ++ show name)
 
 makeMipVariables ::
      Map String DomainBounds -> Map String [String] -> MipVariables
@@ -142,6 +199,12 @@ makeMipVariables numericBounds domains =
           [ (name, MIP.Var (Text.pack ("x." ++ show index)))
           | (index, name) <- zip [0 :: Int ..] (Map.keys numericBounds)
           ]
+    , numericMipLowers =
+        Map.map
+          (fromMaybe
+             (error "finite MIP numeric bounds lost their lower endpoint")
+             . domainLowerBound)
+          numericBounds
     , choiceMipVariables =
         Map.fromList
           [ ((name, token), MIP.Var (Text.pack ("z." ++ show index)))
@@ -195,8 +258,8 @@ guardedConstraints guards = concatMap collect
   where
     collect constraint =
       case constraint of
-        Soft _ -> []
-        Minimize _ -> []
+        Soft _ -> [GuardedConstraint guards constraint]
+        Minimize _ -> [GuardedConstraint guards constraint]
         All nested -> guardedConstraints guards nested
         Cases spec ->
           concat
@@ -226,8 +289,9 @@ lowerGuardedConstraint variables bounds guarded =
     LessOrEqual lhs rhs -> do
       row <- affineDifference lhs rhs
       (: []) <$> guardedUpperBound variables bounds (guardedBy guarded) row
-    Soft _ -> pure []
-    Minimize _ -> pure []
+    Soft _ -> Left "soft constraints are unsupported in affine design spaces"
+    Minimize _ ->
+      Left "numeric objectives are unsupported in affine design spaces"
     All _ -> Left "unflattened conjunction reached affine MIP lowering"
     Cases _ -> Left "unflattened disjunction reached affine MIP lowering"
 
@@ -262,10 +326,7 @@ guardedUpperBound variables bounds guards row = do
           | (name, coefficient) <- Map.toAscList (affineRowCoefficients row)
           ]
       guardExpr =
-        sum
-          [ MIP.varExpr (choiceVariable variables name token)
-          | (name, token) <- guards
-          ]
+        sum [binaryExpr variables name token | (name, token) <- guards]
       guardCount = fromIntegral (length guards)
   pure
     ((numericExpr + scientificExpr bigM * guardExpr)
@@ -300,7 +361,7 @@ affineLowerShift bounds row =
           Right
           (Map.lookup name bounds)
       lower <- maybeBound name "lower" (domainLowerBound variableBounds)
-      pure (total + coefficient * lower)
+      pure (total + coefficient * (lower - mipCoordinateOrigin))
 
 maybeBound :: String -> String -> Maybe Double -> Either String Double
 maybeBound name side =
@@ -340,7 +401,14 @@ relationTokens lhs rhs =
 
 binaryExpr :: MipVariables -> String -> String -> MIP.Expr Scientific
 binaryExpr variables name token =
-  maybe 0 MIP.varExpr (Map.lookup (name, token) (choiceMipVariables variables))
+  maybe
+    0
+    logicalChoiceExpr
+    (Map.lookup (name, token) (choiceMipVariables variables))
+
+logicalChoiceExpr :: MIP.Var -> MIP.Expr Scientific
+logicalChoiceExpr variable =
+  MIP.varExpr variable - scientificExpr mipChoiceOrigin
 
 numericVariable :: MipVariables -> String -> MIP.Var
 numericVariable variables name =
@@ -358,20 +426,58 @@ choiceVariable variables name token =
 
 shiftedScientificBounds :: DomainBounds -> MIP.Bounds Scientific
 shiftedScientificBounds bounds
-  -- The shift is also reflected in every lowered affine row. Besides improving
-  -- conditioning, nonnegative columns avoid signed primal values that the MIP
-  -- 0.2.0.1 HiGHS solution parser cannot read.
+  -- The shift is also reflected in every lowered affine row. Keeping each
+  -- temporary coordinate at or above one avoids tiny negative zero-endpoint
+  -- values that the MIP 0.2.0.1 HiGHS solution parser cannot read.
  =
   case (domainLowerBound bounds, domainUpperBound bounds) of
     (Just lower, Just upper) ->
-      (MIP.Finite 0, MIP.Finite (scientific (upper - lower)))
+      ( MIP.Finite (scientific mipCoordinateOrigin)
+      , MIP.Finite (scientific (upper - lower + mipCoordinateOrigin)))
     _ -> error "non-finite numeric bounds reached affine MIP variable lowering"
+
+-- This is an exact coordinate translation, not a constraint margin. One is
+-- deliberately well above HiGHS's configured 1e-9 feasibility tolerance.
+mipCoordinateOrigin :: Double
+mipCoordinateOrigin = 1
+
+-- Logical zero and one are likewise stored as integer one and two. Every
+-- expression subtracts this origin, so this is only a parser-safe coordinate
+-- translation and does not change the MIP or its seeded objective.
+mipChoiceOrigin :: Double
+mipChoiceOrigin = 1
 
 scientific :: Double -> Scientific
 scientific = fromFloatDigits
 
 scientificExpr :: Double -> MIP.Expr Scientific
 scientificExpr = MIP.constExpr . scientific
+
+decodeCompletion ::
+     Map String [String]
+  -> MipVariables
+  -> MIP.Solution Scientific
+  -> Either String HighsCompletion
+decodeCompletion domains variables solution = do
+  assignment <- decodeAssignment domains variables solution
+  pure
+    HighsCompletion
+      { highsChoiceAssignment = assignment
+      , highsNumericValues =
+          Map.mapWithKey
+            (\name variable ->
+               Map.findWithDefault
+                 (error ("missing MIP lower bound for " ++ show name))
+                 name
+                 (numericMipLowers variables)
+                 - mipCoordinateOrigin
+                 + (realToFrac
+                      (Map.findWithDefault
+                         0
+                         variable
+                         (MIP.solVariables solution)) :: Double))
+            (numericMipVariables variables)
+      }
 
 decodeAssignment ::
      Map String [String]
@@ -398,11 +504,9 @@ decodeAssignment domains variables solution =
       where
         tokenValue token =
           ( token
-          , realToFrac
-              (Map.findWithDefault
-                 0
-                 (choiceVariable variables name token)
-                 (MIP.solVariables solution)) :: Double)
-
-showSeed :: RandomSeed -> String
-showSeed (RandomSeed value) = show (abs (toInteger value))
+          , (realToFrac
+               (Map.findWithDefault
+                  0
+                  (choiceVariable variables name token)
+                  (MIP.solVariables solution)) :: Double)
+              - mipChoiceOrigin)

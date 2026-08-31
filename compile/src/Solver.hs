@@ -2,14 +2,12 @@
 --
 -- Most callers should import this module only. The implementation modules
 -- under @Solver.*@ are kept separate so the expression language, constraint
--- layer, problem compiler, affine sampler, and penalty optimizer can be tested independently
+-- layer, problem compiler, and affine sampler can be tested independently
 -- without making those modules part of the public surface.
 module Solver
   ( -- * Numeric domains
     -- | Domains describe numeric variable compatibility, cyclic wrapping, and
-    -- default native optimizer bounds. Extra bounds are provided with 'within';
-    -- compilation lowers direct variable ranges to native optimizer bounds and
-    -- keeps compound ranges as energy terms.
+    -- default finite bounds. Extra bounds are provided with 'within'.
     Range(..)
   , Domain
   , domainName
@@ -57,9 +55,9 @@ module Solver
   , maxExpr
   , Vec2(..)
   , vec2
-  , -- * Constraints and objectives
-    -- | Hard constraints are emitted directly; wrap a constraint in 'soften'
-    -- or use 'minimize' to contribute soft objective terms.
+  , -- * Constraints
+    -- | Every numeric constraint is hard and must lower to a bounded affine
+    -- region. Unsupported objectives and nonlinear expressions are rejected.
     Constraint
   , ConstrainEq(..)
   , ConstrainOrd(..)
@@ -68,12 +66,11 @@ module Solver
   , (@>=@)
   , allOf
   , within
-  , minimize
-  , soften
   , constraintCount
   , Alternative
   , alternative
   , oneOf
+  , algebraicOneOf
   , caseOf
   , hasConstraintDecisions
   , -- * Multi-component relations
@@ -98,18 +95,13 @@ module Solver
     -- | A 'SolverProblem' compiles constraints, samples finite categorical
     -- choices, canonicalizes repeated constraints, infers native bounds, seeds
     -- initial values, and dispatches bounded affine hard constraints to the
-    -- sampler while retaining the optimizer for nonlinear fallback.
+    -- sampler. Unsupported or unbounded inputs are rejected.
     SolveConfig
   , NumericBackend(..)
   , defaultSolveConfig
-  , withNumericBackend
   , withInitialSeed
   , withInitialOverrides
-  , withConstraintWeights
   , withMaxCategoricalBranches
-  , withOptimizerTolerances
-  , withMaxOptimizerIterations
-  , withOptimizerMaxCorrections
   , SolverProblem
   , solverProblem
   , solverProblemWithChoices
@@ -121,7 +113,6 @@ module Solver
   , ProblemInspection
   , inspectedVariableCount
   , inspectedNativeBoundCount
-  , inspectedEnergyTermCount
   , inspectedFlattenedCount
   , inspectedRawCount
   , inspectedCanonicalCount
@@ -132,13 +123,10 @@ module Solver
   , inspectedLargestChoiceComponentBranches
   , inspectedNativeBoundNames
   , inspectedBackend
-  , inspectedFallbackReason
   , inspectedAffineEqualityCount
   , inspectedAffineInequalityCount
-  , inspectedIgnoredSoftConstraintCount
   , Solution
   , BackendStatistics(..)
-  , OptimizationStatistics(..)
   , SamplingStatistics(..)
   , VolumeBudget(..)
   , defaultVolumeBudget

@@ -21,14 +21,16 @@ main =
                , "generated module header")
              , ( "{-# LINE 1 \"examples/Custom.sverlin\" #-}"
                , "source-labelled line pragma")
-             , ("program :: Choreography ()", "source body")
-             , ( "runChoreographyWithGenerativeStyles (visualize visualization) program"
-               , "fixed runner")
+             , ("domain :: Domain ()", "source body")
+             , ("Compiler.sverlinProgram domain program render", "fixed runner")
+             , ("import Data.String (fromString)", "overloaded string support")
+             , ( "import Prelude.Linear (($))"
+               , "multiplicity-polymorphic application")
              ]
        , testCase "places declarations after the source boundary" $ do
            let generated = generatedModuleText (elaborateSource fixtureSource)
                boundary = "_sverlinSourceBoundary = ()"
-               body = "program :: Choreography ()"
+               body = "domain :: Domain ()"
            assertBool
              "the body follows a declaration, so module headers and imports cannot be injected"
              (indexOf boundary generated < indexOf body generated)
@@ -40,11 +42,16 @@ fixtureSource =
     { sourceDisplayPath = "examples/Custom.sverlin"
     , sourceBody =
         unlines
-          [ "program :: Choreography ()"
-          , "program = pure ()"
+          [ "data Done"
           , ""
-          , "visualization :: VisualizationBuilder ()"
-          , "visualization = pure ()"
+          , "domain :: Domain ()"
+          , "domain = declareSteps @'[Done]"
+          , ""
+          , "program :: () %1 -> Program ()"
+          , "program () = step @Done (pure ())"
+          , ""
+          , "render :: Render ()"
+          , "render = always (frame @Done)"
           ]
     }
 

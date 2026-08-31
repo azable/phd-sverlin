@@ -5,12 +5,12 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const facadePath = path.join(repositoryRoot, 'compile/src/LinearTrace/Choreography.hs');
+const facadePath = path.join(repositoryRoot, 'compile/src/Sverlin.hs');
 const indexPath = path.join(
   repositoryRoot,
   'src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md'
 );
-const sourceLabel = 'compile/src/LinearTrace/Choreography.hs';
+const sourceLabel = 'compile/src/Sverlin.hs';
 const ghciMarker = '__DSL_API_ENTRY_';
 
 function fail(message) {
@@ -18,7 +18,9 @@ function fail(message) {
 }
 
 function publicName(exportItem) {
-  const withoutChildren = exportItem.replace(/\(\.\.\)$/, '');
+  const withoutChildren = /^[A-Za-z_]/.test(exportItem)
+    ? exportItem.replace(/\([^)]*\)$/, '')
+    : exportItem;
   if (/^\([^A-Za-z0-9_].*\)$/.test(withoutChildren)) {
     return withoutChildren.slice(1, -1);
   }
@@ -60,7 +62,7 @@ function runGhci(commands) {
   });
 }
 
-function normalizeGhcNames(typeInformation, entry) {
+function normalizeGhcNames(typeInformation) {
   const normalized = typeInformation
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.String/g, 'String')
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Int/g, 'Int')
@@ -74,16 +76,14 @@ function normalizeGhcNames(typeInformation, entry) {
     .replace(/\bInternal\.Typeable\b/g, 'Typeable')
     .replace(/\b(?:Constraint|Style|Variable)\./g, '')
     .replace(/\b(?:LinearTrace|Solver)(?:\.[A-Z][A-Za-z0-9_]*)+\.([A-Z][A-Za-z0-9_']*)\b/g, '$1');
-  return entry.name === 'Choreography'
-    ? normalized
-    : normalized.replace(/\bTraceBuilder\b/g, 'Choreography');
+  return normalized;
 }
 
 function compactDeclaration(lines, entry) {
   const separatedLines = lines.map((line, index) =>
     index > 0 && /^[A-Za-z_][A-Za-z0-9_']* ::/.test(line) ? `; ${line}` : line
   );
-  const declaration = normalizeGhcNames(separatedLines.join(' '), entry)
+  const declaration = normalizeGhcNames(separatedLines.join(' '))
     .replace(/\s+/g, ' ')
     .replace(/\s+(?=(?:type(?: family)?|data|newtype|class)\s)/g, '; ')
     .replace(/^type ([A-Za-z_][A-Za-z0-9_']*) ::/, '$1 ::')
@@ -98,7 +98,9 @@ function compactDeclaration(lines, entry) {
 }
 
 function compactTypeInformation(rawInformation, entry) {
-  const declarationBlocks = rawInformation.replace(/\r/g, '').split(/\n\s*-- Defined at [^\n]+\n?/);
+  const declarationBlocks = rawInformation
+    .replace(/\r/g, '')
+    .split(/\n\s*-- Defined (?:at|in) [^\n]+\n?/);
   const declaration = /^[A-Z]/.test(entry.name)
     ? declarationBlocks.find((block) =>
         block.split('\n').some((line) => line.trim().startsWith(`type ${entry.name} ::`))
@@ -133,12 +135,138 @@ function compactTypeInformation(rawInformation, entry) {
   return compactDeclaration(lines, entry);
 }
 
+// The facade deliberately hides the closed dispatch classes behind overloaded
+// operations. GHC necessarily prints those private constraints, which would
+// make the authoring index look as though they were extension points. Keep the
+// compiled type for ordinary exports and present the documented public forms
+// for the small overloaded surface.
+const publicTypeOverrides = new Map([
+  ['Traceable', 'class Traceable tag where; type Payload tag'],
+  [
+    'Applicable1',
+    'class Applicable1 operator argument where; type Apply1Result operator argument; applyPayload1 :: Payload operator %1 -> Payload argument %1 -> Payload (Apply1Result operator argument)'
+  ],
+  [
+    'Applicable2',
+    'class Applicable2 operator left right where; type Apply2Result operator left right; applyPayload2 :: Payload operator %1 -> Payload left %1 -> Payload right %1 -> Payload (Apply2Result operator left right)'
+  ],
+  ['>>=', '(>>=) :: builder value -> (value -> builder result) -> builder result'],
+  [
+    '>>',
+    '(>>) :: Domain () %1 -> Domain result %1 -> Domain result; (>>) :: Program () %1 -> Program result %1 -> Program result; (>>) :: Generator value -> Generator result -> Generator result; (>>) :: Render value -> Render result -> Render result; (>>) :: TextBuilder value -> TextBuilder result -> TextBuilder result'
+  ],
+  ['pure', 'pure :: value -> builder value'],
+  ['return', 'return :: value -> builder value'],
+  ['fail', 'fail :: String -> builder value'],
+  ['declareSteps', 'declareSteps :: forall steps. Domain ()'],
+  [
+    'variable',
+    'variable @identity :: Generator value -> Domain value; variable @role :: Render role'
+  ],
+  [
+    'create',
+    'create :: Payload tag %1 -> Domain (Create tag); create :: Payload tag %1 -> Program (Create tag)'
+  ],
+  [
+    'materialize',
+    'materialize :: Kind tag -> Pending tag %1 -> Domain (Block tag); materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)'
+  ],
+  [
+    'seal',
+    'seal :: Block owner %1 -> Block value %1 -> Domain (Seal owner value); seal :: Block owner %1 -> Block value %1 -> Program (Seal owner value)'
+  ],
+  [
+    'relate',
+    'relate :: RelationKind source target -> Slot source sourceValue %1 -> Slot target targetValue %1 -> Domain (Relate source sourceValue target targetValue); relate :: RelationKind source target -> Slot source sourceValue %1 -> Slot target targetValue %1 -> Program (Relate source sourceValue target targetValue)'
+  ],
+  [
+    'Create',
+    'Create :: forall {k}. k -> Type; data Create tag where; Create :: forall {k} (tag :: k). Pending tag %1 -> Create tag'
+  ],
+  [
+    'Use',
+    'Use :: forall {k}. k -> Type; data Use tag where; Use :: forall {k} (tag :: k). Payload tag %1 -> Use tag'
+  ],
+  [
+    'Copy',
+    'Copy :: forall {k}. k -> Type; data Copy tag where; Copy :: forall {k} (tag :: k). Block tag %1 -> Pending tag %1 -> Copy tag'
+  ],
+  [
+    'Replace',
+    'Replace :: forall {k}. k -> Type; data Replace tag where; Replace :: forall {k} (tag :: k). Pending tag %1 -> Replace tag'
+  ],
+  [
+    'Apply1',
+    'Apply1 :: forall {k} {k1}. k -> k1 -> Type; data Apply1 operator argument where; Apply1 :: forall {k} {k1} (operator :: k) (argument :: k1). Pending (Apply1Result operator argument) %1 -> Apply1 operator argument'
+  ],
+  [
+    'Apply2',
+    'Apply2 :: forall {k} {k1} {k2}. k -> k1 -> k2 -> Type; data Apply2 operator left right where; Apply2 :: forall {k} {k1} {k2} (operator :: k) (left :: k1) (right :: k2). Pending (Apply2Result operator left right) %1 -> Apply2 operator left right'
+  ],
+  [
+    'Seal',
+    'Seal :: forall {k} {k1}. k -> k1 -> Type; data Seal owner value where; Seal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner %1 -> Slot owner value %1 -> Seal owner value'
+  ],
+  [
+    'Unseal',
+    'Unseal :: forall {k} {k1}. k -> k1 -> Type; data Unseal owner value where; Unseal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner %1 -> Block value %1 -> Unseal owner value'
+  ],
+  [
+    'Relate',
+    'Relate :: forall {k} {k1} {k2} {k3}. k -> k1 -> k2 -> k3 -> Type; data Relate source sourceValue target targetValue where; Relate :: forall {k} {k1} {k2} {k3} (source :: k) (sourceValue :: k1) (target :: k2) (targetValue :: k3). Slot source sourceValue %1 -> Slot target targetValue %1 -> Relate source sourceValue target targetValue'
+  ],
+  [
+    'select',
+    'select :: Kind tag -> Render (Selected tag); select :: RelationKind source target -> Render (Relations source target)'
+  ],
+  [
+    'node',
+    'node :: Selected tag -> Render () -> Render (); node :: Render () -> Render (Selected GeneratedNode)'
+  ],
+  ['fragmentMany', 'fragmentMany :: forall steps. String -> TextBuilder ()'],
+  ['choice', 'choice :: forall value. Render (Choice value)'],
+  ['Coord', 'Coord :: Type'],
+  ['Span', 'Span :: Type'],
+  ['Offset', 'Offset :: Type'],
+  ['Scalar', 'Scalar :: Type'],
+  ['Unit', 'Unit :: Type'],
+  ['Angle', 'Angle :: Type'],
+  ['num', 'num :: Double -> inferred numeric role'],
+  ['.+.', '(.+.) :: left -> right -> compatible result'],
+  ['.-.', '(.-.) :: left -> right -> compatible result'],
+  ['.*.', '(.*.) :: left -> right -> compatible result'],
+  ['./.', '(./.) :: left -> right -> compatible result'],
+  ['left', 'left :: Selected node -> Coord; left :: Coord -> Render ()'],
+  ['top', 'top :: Selected node -> Coord; top :: Coord -> Render ()'],
+  ['right', 'right :: Selected node -> Coord; right :: Coord -> Render ()'],
+  ['bottom', 'bottom :: Selected node -> Coord; bottom :: Coord -> Render ()'],
+  ['width', 'width :: Selected node -> Span; width :: Span -> Render ()'],
+  ['height', 'height :: Selected node -> Span; height :: Span -> Render ()'],
+  ['x', 'x :: Selected node -> Coord; x :: Coord -> Render ()'],
+  ['y', 'y :: Selected node -> Coord; y :: Coord -> Render ()'],
+  ['center', 'center :: Selected node -> Vec2 Coord; center :: Vec2 Coord -> Render ()'],
+  ['size', 'size :: Selected node -> Vec2 Span'],
+  ['style', 'style :: forall field input. input -> Render ()'],
+  ['withoutStyle', 'withoutStyle :: forall field. Render ()'],
+  ['styleOf', 'styleOf :: forall field node. Selected node -> symbolic field value'],
+  ['Hsl', 'Hsl :: Angle -> Unit -> Unit -> Color'],
+  ['.<=.', '(.<=.) :: left -> right -> VisualConstraint'],
+  ['.>=.', '(.>=.) :: left -> right -> VisualConstraint'],
+  ['.==.', '(.==.) :: left -> right -> VisualConstraint']
+]);
+
+function publicType(entry, inferredType) {
+  return publicTypeOverrides.get(entry.name) ?? inferredType;
+}
+
 async function loadCompiledTypes(entries) {
   const commands = [
     ':set prompt ""',
     ':set prompt-cont ""',
     ':set -fno-print-explicit-foralls',
-    ':module *LinearTrace.Choreography'
+    // The public package is a thin re-export library, so load its compiled
+    // facade rather than asking GHCi to interpret a home-module source file.
+    ':module +Sverlin'
   ];
   for (const [index, entry] of entries.entries()) {
     commands.push(`:! echo ${ghciMarker}${index}__`, ghciCommand(entry));
@@ -158,10 +286,8 @@ async function loadCompiledTypes(entries) {
     const rawInformation = output
       .slice(match.index + match[0].length, nextMatch?.index ?? output.length)
       .replace(/\s*Leaving GHCi\.\s*$/, '');
-    const type = compactTypeInformation(
-      rawInformation.replaceAll('LinearTrace.Choreography.', ''),
-      entry
-    );
+    const inferredType = compactTypeInformation(rawInformation.replaceAll('Sverlin.', ''), entry);
+    const type = publicType(entry, inferredType);
     if (!type || /<interactive>|not in scope|error:/i.test(type)) {
       fail(`could not infer a public type for ${entry.export}: ${type || 'no output'}`);
     }
@@ -170,7 +296,7 @@ async function loadCompiledTypes(entries) {
 }
 
 export function parseFacadeExports(source) {
-  const moduleStart = source.indexOf('module LinearTrace.Choreography');
+  const moduleStart = source.indexOf('module Sverlin');
   if (moduleStart < 0) fail('public facade module declaration was not found');
 
   const exportEnd = source.indexOf('\n  ) where', moduleStart);
@@ -202,7 +328,7 @@ export function parseFacadeExports(source) {
     }
 
     const itemMatch = line.match(
-      /^\s*(?:,\s*)?([A-Za-z_][A-Za-z0-9_']*(?:\(\.\.\))?|\([^\s][^)]*\))\s*$/
+      /^\s*(?:,\s*)?([A-Za-z_][A-Za-z0-9_']*(?:\([^)]*\))?|\([^\s][^)]*\))\s*$/
     );
     if (!itemMatch) continue;
 
@@ -247,7 +373,7 @@ export function renderMarkdown(entries) {
     '',
     '# Public Sverlin DSL API index',
     '',
-    `This compact index combines the Haddock export documentation in \`${sourceLabel}\` with signatures inferred from the compiled facade by GHC. The facade is authoritative; the authoring guide adds composition rules and examples.`,
+    `This compact index combines the Haddock export documentation in \`${sourceLabel}\` with public signatures checked against the compiled facade by GHC. Private closed-dispatch constraints are shown as their documented overloads. The facade is authoritative; the authoring guide adds composition rules and examples.`,
     ''
   ];
 

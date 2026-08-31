@@ -1,6 +1,5 @@
 -- Merge sort written against the proposed Sverlin API.
 --
--- This is a body-only planning example, not source for the current compiler.
 -- It deliberately creates every recursive run with the same Kind and every
 -- in-run link with the same RelationKind.  Render therefore has to scope the
 -- shared selections to one run before validating that run as a sequence.
@@ -382,9 +381,8 @@ mergeTreeView ::
   Span ->
   Span ->
   Span ->
-  Scalar ->
   Render (Selected GeneratedNode)
-mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight valueScale = node $ do
+mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight = node $ do
   contentFit Both Hug
 
   -- During construction the live runs form a forest; a completed-tree
@@ -417,7 +415,10 @@ mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap 
           magnitude <- payloadScalar allValues
           fitText label
           width cellWidth
-          height (cellHeight .+. by 1 .*. magnitude .*. valueScale)
+          -- A fixed coefficient keeps this affine: both `cellHeight` and the
+          -- payload-derived magnitude may vary, but two solver values are
+          -- never multiplied together.
+          height (cellHeight .+. by 0.28 .*. magnitude)
           padding (uniform (by 5))
           style @Fill (Hsl (num 205) (num 0.42) (num 0.92))
           style @Stroke (Hsl (num 205) (num 0.48) (num 0.38))
@@ -429,6 +430,7 @@ mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap 
           content (text "run[" <> asText position <> text "]")
           ensure $ x labelNode .==. x allValues
           ensure $ top labelNode .==. (bottom allValues .+. shift 4)
+        pure ()
 
       oneOf
         "run orientation"
@@ -449,7 +451,6 @@ mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap 
   relation childLinks $ do
     parent <- first childLinks
     child <- second childLinks
-    ensure $ separatedBy levelGap parent child
     connector (anchor AtBoundary parent) (anchor AtBoundary child) $ do
       style @Stroke (Hsl (num 220) (num 0.30) (num 0.45))
       style @StrokeWidth (by 2)
@@ -482,7 +483,6 @@ render = do
   cellGap <- variable @Span
   cellWidth <- variable @Span
   cellHeight <- variable @Span
-  valueScale <- variable @Scalar
   ensure $ levelGap .>=. by 28
   ensure $ levelGap .<=. by 64
   ensure $ siblingGap .>=. by 18
@@ -493,8 +493,6 @@ render = do
   ensure $ cellWidth .<=. by 64
   ensure $ cellHeight .>=. by 30
   ensure $ cellHeight .<=. by 52
-  ensure $ valueScale .>=. num 0.15
-  ensure $ valueScale .<=. num 0.45
 
-  tree <- mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight valueScale
+  tree <- mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight
   ensure $ center tree .==. center canvas

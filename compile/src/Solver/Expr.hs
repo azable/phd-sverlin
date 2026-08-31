@@ -8,7 +8,7 @@
 -- compilation.
 module Solver.Expr
   ( -- * Domains
-    -- | Numeric domains and native optimizer bounds. 'Solver.Problem' depends
+    -- | Numeric domains and finite affine bounds. 'Solver.Problem' depends
     -- on these bounds while compiling variables and range constraints.
     Range(..)
   , Domain
@@ -109,7 +109,7 @@ boundedCyclicDomain name period range =
     , domainDefaultBounds = rangeDomainBounds range
     }
 
--- Finite domain bounds are passed to the optimizer as native bounds.
+-- Finite domain bounds become explicit bounds on the affine sample region.
 data DomainBounds = DomainBounds
   { domainLowerBound :: Maybe Double
   , domainUpperBound :: Maybe Double

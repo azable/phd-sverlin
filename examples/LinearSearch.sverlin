@@ -1,252 +1,247 @@
 data Value
-
-type instance Payload Value = LInt Value
+instance Traceable Value where
+  type Payload Value = LInt Value
 
 data Match
+instance Traceable Match where
+  type Payload Match = LBool Match
 
-type instance Payload Match = LBool Match
+data Equal
+instance Traceable Equal where
+  type Payload Equal = LOperator Equal
 
-data EqualValue = EqualValue
+instance Applicable2 Equal Value Value where
+  type Apply2Result Equal Value Value = Match
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LBool (leftValue Linear.== rightValue)
 
-type instance Payload EqualValue = LOperator EqualValue EqualValue
+data TargetRole
+data ElementRole
+data TargetProbeRole
+data ElementProbeRole
+data EqualRole
+data MatchRole
+data Initialize
+data PrepareComparison
+data Compare
+data Found
+data Continue
+data Exhausted
+data Complete
 
-instance CoreOperator EqualValue where
-  operatorPayloadText EqualValue = "=="
-  persistOperatorPayload EqualValue = Ur EqualValue
+targetKind :: Kind Value
+targetKind = kind @TargetRole
 
-instance Applicable2 EqualValue Value Value where
-  type Apply2Result EqualValue Value Value = Match
-  applyPayload2 (LOperator EqualValue) = applyLinear2Into (Linear.==)
+elementKind :: Kind Value
+elementKind = kind @ElementRole
 
-data SourceCode
+targetProbeKind :: Kind Value
+targetProbeKind = kind @TargetProbeRole
 
-type instance Payload SourceCode = LString SourceCode
+elementProbeKind :: Kind Value
+elementProbeKind = kind @ElementProbeRole
 
-data SearchInput where
-  SearchInput :: Payload Value %1 -> InputValues %1 -> SearchInput
+equalKind :: Kind Equal
+equalKind = kind @EqualRole
 
-data InputValues where
-  NoInputValues :: InputValues
-  MoreInputValue :: Query -> Payload Value %1 -> InputValues %1 -> InputValues
+matchKind :: Kind Match
+matchKind = kind @MatchRole
 
 data Elements where
   NoElements :: Elements
-  MoreElement :: Query -> Block Value %1 -> Elements %1 -> Elements
+  MoreElement :: Block Value %1 -> Elements %1 -> Elements
 
-data SearchResult where
-  SearchResult :: Block Value %1 -> Elements %1 -> SearchResult
+data Initial where
+  Initial :: Block Value %1 -> Elements %1 -> Initial
 
-data PreparedComparison where
-  PreparedComparison
-    :: Block Value
-       %1 -> Block Value
-       %1 -> Block Value
-       %1 -> Block Value
-       %1 -> PreparedComparison
+data Prepared where
+  Prepared ::
+    Block Value %1 ->
+    Block Value %1 ->
+    Elements %1 ->
+    Block Equal %1 ->
+    Block Value %1 ->
+    Block Value %1 ->
+    Prepared
 
-data ComparedValues where
-  ValuesMatched :: ComparedValues
-  ValuesDifferent :: ComparedValues
+data Compared where
+  Compared :: Block Value %1 -> Block Value %1 -> Elements %1 -> Block Match %1 -> Compared
 
-program :: Choreography ()
-program = do
-  Create codePending <-
-    create @SourceCode
-      (LString
-         "linearSearch target values =\n  compare target (head values)\n  if equal then found\n  else linearSearch target (tail values)")
-  code <- materialize #code codePending
-  checkpoint "Ready"
-  linearSearch
-    (SearchInput
-       (LInt 7)
-       (MoreInputValue
-          (#index @: 0)
-          (LInt 4)
-          (MoreInputValue
-             (#index @: 1)
-             (LInt 9)
-             (MoreInputValue
-                (#index @: 2)
-                (LInt 2)
-                (MoreInputValue (#index @: 3) (LInt 7) NoInputValues)))))
-  Destroy <- destroy code
-  checkpoint "Complete"
+domain :: Domain Initial
+domain = do
+  declareKind targetKind
+  declareKind elementKind
+  declareKind targetProbeKind
+  declareKind elementProbeKind
+  declareKind equalKind
+  declareKind matchKind
+  declareSteps @'[Initialize, PrepareComparison, Compare, Found, Continue, Exhausted, Complete]
+  Create targetPending <- create (LInt 7)
+  target <- materialize targetKind targetPending
+  first <- createElement 4
+  second <- createElement 9
+  third <- createElement 2
+  fourth <- createElement 7
+  pure (Initial target (MoreElement first (MoreElement second (MoreElement third (MoreElement fourth NoElements)))))
 
-linearSearch :: SearchInput %1 -> Choreography ()
-linearSearch (SearchInput targetPayload valuePayloads) = do
-  Create targetPending <- create targetPayload
-  target <- materialize (#target <&> #source) targetPending
-  checkpoint "Create target"
-  elements <- createElements valuePayloads
-  SearchResult targetAfter searchedElements <- searchIteration target elements
-  Destroy <- destroy targetAfter
-  destroyElements searchedElements
-  checkpoint "Search complete"
+createElement :: Int %1 -> Domain (Block Value)
+createElement value = do
+  Create pending <- create (LInt value)
+  materialize elementKind pending
 
-createElements :: InputValues %1 -> Choreography Elements
-createElements inputs =
-  case inputs of
-    NoInputValues -> return NoElements
-    MoreInputValue indexFacts valuePayload rest -> do
-      Create elementPending <- create valuePayload
-      element <-
-        materialize (#array <&> #available <&> indexFacts) elementPending
-      checkpoint "Create element"
-      elements <- createElements rest
-      return (MoreElement indexFacts element elements)
+program :: Initial %1 -> Program ()
+program initial = do
+  Initial target elements <- step @Initialize (pure initial)
+  searchIteration target elements
+  step @Complete (pure ())
 
-searchIteration :: Block Value %1 -> Elements %1 -> Choreography SearchResult
+searchIteration :: Block Value %1 -> Elements %1 -> Program ()
 searchIteration target elements =
   case elements of
-    NoElements -> do
-      checkpoint "Search exhausted"
-      return (SearchResult target NoElements)
-    MoreElement indexFacts element rest -> do
-      PreparedComparison targetAfter elementAfter targetProbe elementProbe <-
-        prepareComparison target indexFacts element
-      checkpoint "Prepare comparison"
-      comparison <- compareValues targetProbe elementProbe
-      case comparison of
-        ValuesMatched -> do
-          checkpoint "Found target"
-          return (SearchResult targetAfter (MoreElement indexFacts elementAfter rest))
-        ValuesDifferent -> do
-          processedElement <- markProcessed indexFacts elementAfter
-          checkpoint "Not this element"
-          SearchResult finalTarget finalRest <- searchIteration targetAfter rest
-          return
-            (SearchResult
-               finalTarget
-               (MoreElement indexFacts processedElement finalRest))
+    NoElements ->
+      step @Exhausted $ do
+        Destroy <- destroy target
+        pure ()
+    MoreElement element remaining -> do
+      prepared <- step @PrepareComparison (prepareComparison target element remaining)
+      Compared target1 element1 remaining1 result <- step @Compare (comparePrepared prepared)
+      Use (LBool matches) <- use result
+      case matches of
+        True ->
+          step @Found $ do
+            Destroy <- destroy target1
+            Destroy <- destroy element1
+            destroyElements remaining1
+        False ->
+          step @Continue $ do
+            Destroy <- destroy element1
+            searchIteration target1 remaining1
 
-prepareComparison
-  :: Block Value %1
-  -> Query
-  -> Block Value %1
-  -> Choreography PreparedComparison
-prepareComparison target indexFacts element = do
-  Copy targetAfter targetProbePending <- copy target
-  targetProbe <- materialize #targetProbe targetProbePending
-  Copy elementAfter elementProbePending <- copy element
-  elementProbe <-
-    materialize (#elementProbe <&> indexFacts) elementProbePending
-  return (PreparedComparison targetAfter elementAfter targetProbe elementProbe)
+prepareComparison :: Block Value %1 -> Block Value %1 -> Elements %1 -> Program Prepared
+prepareComparison target element remaining = do
+  Copy target1 targetProbePending <- copy target
+  targetProbe <- materialize targetProbeKind targetProbePending
+  Copy element1 elementProbePending <- copy element
+  elementProbe <- materialize elementProbeKind elementProbePending
+  Create equalPending <- create LOperator
+  equalOperator <- materialize equalKind equalPending
+  pure (Prepared target1 element1 remaining equalOperator targetProbe elementProbe)
 
-compareValues :: Block Value %1 -> Block Value %1 -> Choreography ComparedValues
-compareValues targetProbe elementProbe = do
-  Create equalPending <- create @EqualValue (LOperator EqualValue)
-  equalOperator <- materialize #operator equalPending
-  Apply2 matchPending <- apply2 equalOperator targetProbe elementProbe
-  matchBlock <- materialize #result matchPending
-  Use matchPayload <- use matchBlock
-  case matchPayload of
-    OneUse (LBool answer) ->
-      case answer of
-        True -> return ValuesMatched
-        False -> return ValuesDifferent
+comparePrepared :: Prepared %1 -> Program Compared
+comparePrepared (Prepared target element remaining equalOperator targetProbe elementProbe) = do
+  Apply2 resultPending <- apply2 equalOperator targetProbe elementProbe
+  result <- materialize matchKind resultPending
+  pure (Compared target element remaining result)
 
-markProcessed :: Query -> Block Value %1 -> Choreography (Block Value)
-markProcessed indexFacts element = do
-  Copy original processedPending <- copy element
-  Replace continuedPending <- replace original processedPending
-  materialize (#array <&> #processed <&> indexFacts) continuedPending
-
-destroyElements :: Elements %1 -> Choreography ()
+destroyElements :: Elements %1 -> Program ()
 destroyElements elements =
   case elements of
-    NoElements -> return ()
-    MoreElement _ element rest -> do
+    NoElements -> pure ()
+    MoreElement element remaining -> do
       Destroy <- destroy element
-      destroyElements rest
+      destroyElements remaining
 
-visualization :: VisualizationBuilder ()
-visualization = do
-  width (by 1000)
-  height (by 640)
+comparisonLine :: ContentValue
+comparisonLine = do
+  literal "compare "
+  fragment @PrepareComparison "target"
+  literal " with "
+  fragment @PrepareComparison "A[i]"
+  fragmentMany @'[Compare, Found] "; stop when equal"
+
+render :: Render ()
+render = do
+  always $ frame @Initialize
+  sometimes $ frame @PrepareComparison
+  always $ frame @Compare
+  sometimes $ frame @Continue
+  always $ frame @Found
+  always $ frame @Complete
+  width (by 920)
+  height (by 560)
   contentFit Both Contain
 
-  Bound codeLabel <- bindContent
-  Selected code <- select @SourceCode (#code <&> payload codeLabel)
-  Bound targetLabel <- bindContent
-  Selected target <- select @Value (#target <&> #source <&> payload targetLabel)
-  Bound targetProbeLabel <- bindContent
-  Selected targetProbe <-
-    select @Value (#targetProbe <&> payload targetProbeLabel)
-  Bound elementProbeLabel <- bindContent
-  Bound probeIndex <- bindInt
-  Selected elementProbe <-
-    select @Value
-      (#elementProbe <&> #index @: probeIndex <&> payload elementProbeLabel)
-  Bound availableLabel <- bindContent
-  Bound availableIndex <- bindInt
-  Selected available <-
-    select @Value
-      (#array <&> #available <&> #index @: availableIndex <&> payload availableLabel)
-  Bound processedLabel <- bindContent
-  Bound processedIndex <- bindInt
-  Selected processed <-
-    select @Value
-      (#array <&> #processed <&> #index @: processedIndex <&> payload processedLabel)
-  Selected equalOperator <- select @EqualValue #operator
-  Bound resultLabel <- bindContent
-  Selected result <- select @Match (#result <&> payload resultLabel)
+  bodyFont <- fontChoice (fontKind Proportional)
+  codeFont <- fontChoice (fontKind Monospace)
+  targets <- select targetKind
+  elements <- select elementKind
+  targetProbes <- select targetProbeKind
+  elementProbes <- select elementProbeKind
+  equalOperators <- select equalKind
+  matches <- select matchKind
 
-  node code $ do
-    highlightCode "haskell" (codeWrap (codeContent codeLabel))
-    left (at 36)
-    top (at 40)
-    width (by 360)
-    height (by 540)
-    style @TextAlign (FixedStyle TextAlignLeft)
-    styleFamily "source-code"
-  node target $ do
-    fitText targetLabel
-    left (at 476)
-    top (at 56)
-    width (by 132)
-    height (by 96)
-    styleFamily "target"
-    -- TODO where does "target" get defined as a style family?
-    -- or does this just ensure unified styles within this definition?
-  node targetProbe $ do
-    fitText targetProbeLabel
-    left (at 476)
-    top (at 224)
-    width (by 116)
-    height (by 88)
-    styleFamily "probe"
-  node elementProbe $ do
-    fitText elementProbeLabel
-    left (at 640)
-    top (at 224)
-    width (by 116)
-    height (by 88)
-    styleFamily "probe"
-  node equalOperator $ do
-    fitText (text "==")
-    left (at 600)
-    top (at 236)
-    width (by 32)
-    height (by 64)
-    withoutStyle @Fill
-    withoutStyle @StrokeWidth
-  node result $ do
-    fitText resultLabel
-    left (at 804)
-    top (at 224)
-    width (by 132)
-    height (by 88)
-    styleFamily "result"
-  node available $ do
-    fitText availableLabel
-    left (at 460 + asScalar availableIndex * shift 118)
-    top (at 444)
-    width (by 96)
-    height (by 88)
-  node processed $ do
-    fitText processedLabel
-    left (at 460 + asScalar processedIndex * shift 118)
-    top (at 444)
-    width (by 96)
-    height (by 88)
-    style @Opacity (0.46 :: Unit)
+  node targets $ do
+    label <- bindContent
+    fitText label
+    width (by 112)
+    height (by 80)
+    x (at 112)
+    y (at 120)
+    style @FontFamily bodyFont
+
+  node elements $ do
+    label <- bindContent
+    fitText label
+    width (by 88)
+    height (by 72)
+    style @FontFamily bodyFont
+  arrange (ArrangeGrid 4 (vec2 (by 18) (by 18))) elements
+
+  comparison <- node $ do
+    width (by 580)
+    height (by 124)
+    x (at 560)
+    y (at 310)
+    contentFit Both Contain
+
+    node targetProbes $ do
+      label <- bindContent
+      fitText label
+      width (by 104)
+      height (by 72)
+      xAt (percent 12)
+      yAt (percent 50)
+      style @FontFamily bodyFont
+
+    node equalOperators $ do
+      fitText (text "==")
+      width (by 64)
+      height (by 64)
+      xAt (percent 38)
+      yAt (percent 50)
+      style @FontFamily codeFont
+      withoutStyle @Fill
+
+    node elementProbes $ do
+      label <- bindContent
+      fitText label
+      width (by 104)
+      height (by 72)
+      xAt (percent 62)
+      yAt (percent 50)
+      style @FontFamily bodyFont
+
+    node matches $ do
+      label <- bindContent
+      fitText label
+      width (by 112)
+      height (by 76)
+      xAt (percent 88)
+      yAt (percent 50)
+      style @FontFamily bodyFont
+
+    sometimes $ connector (anchor AtBoundary targetProbes) (anchor AtBoundary elementProbes) $ do
+      endMarker ArrowMarker
+      style @StrokeWidth (by 2)
+
+  codeLine <- node $ do
+    content comparisonLine
+    width (by 560)
+    height (by 72)
+    x (at 460)
+    y (at 490)
+    style @FontFamily codeFont
+    style @TextAlign TextAlignLeft
+
+  ensure $ separatedBy (by 28) targets comparison
+  ensure $ bottom codeLine .<=. bottom canvas

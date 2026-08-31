@@ -1,5 +1,4 @@
 -- Topological sorting for the proposed API.
--- This planning source is intentionally ahead of the current compiler.
 --
 -- Generator constructs a DAG and precomputes Kahn's output order. Domain
 -- materializes the DAG, then Program consumes that linear output plan. Render
@@ -403,7 +402,7 @@ dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth 
     style @StrokeWidth (by 2)
     style @Radius (by 12)
     node labels $ bindContent >>= fitText
-    levelLabel <- sometimes $ node $ content (text "level " <> asText level)
+    levelLabel <- node $ content (text "level " <> asText level)
     ensure $ top levelLabel .==. bottom labels .+. by 4
     ensure $ x levelLabel .==. x labels
 
@@ -440,7 +439,7 @@ outputView cells labels links order gap nodeWidth nodeHeight = node $ do
     style @StrokeWidth (by 2)
     style @Radius (by 10)
     node labels $ bindContent >>= fitText
-    positionLabel <- sometimes $ node $ content (text "#" <> asText position)
+    positionLabel <- node $ content (text "#" <> asText position)
     ensure $ top positionLabel .==. bottom labels .+. by 4
     ensure $ x positionLabel .==. x labels
 
@@ -457,13 +456,9 @@ outputView cells labels links order gap nodeWidth nodeHeight = node $ do
 render :: Render ()
 render = do
   canvasWidth <- variable @Span
-  canvasHeight <- variable @Span
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
-  ensure $ canvasHeight .>=. by 540
-  ensure $ canvasHeight .<=. by 1080
   width canvasWidth
-  height canvasHeight
   aspectRatio 16 9
   padding (uniform (by 28))
   contentFit Both Contain

@@ -17,8 +17,7 @@ module LinearTrace.Visualization.FontCatalog
 import           Control.Exception                  (IOException, try)
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Char8              as BS8
-import           Data.List                          (intercalate, minimumBy)
-import           Data.Ord                           (comparing)
+import           Data.List                          (intercalate)
 import qualified LinearTrace.Visualization.IR       as IR
 import qualified LinearTrace.Visualization.Resource as Resource
 import           Paths_compile                      (getDataFileName)
@@ -91,7 +90,7 @@ bundledFontCatalogSha256 =
 resolveFont ::
      FontCatalog -> String -> Int -> String -> IO (Either String FontResolution)
 resolveFont catalog requestedFamily requestedWeight requestedStyle =
-  case matchingFaces of
+  case styleFaces of
     [] ->
       pure
         (Left
@@ -99,22 +98,33 @@ resolveFont catalog requestedFamily requestedWeight requestedStyle =
               ++ show requestedFamily
               ++ " does not provide style "
               ++ show normalizedStyle))
-    _ -> loadResolution (minimumBy (comparing weightDistance) matchingFaces)
+    _ ->
+      case matchingFaces of
+        [] ->
+          pure
+            (Left
+               ("managed font family "
+                  ++ show requestedFamily
+                  ++ " with style "
+                  ++ show normalizedStyle
+                  ++ " does not provide weight "
+                  ++ show requestedWeight))
+        spec:_ -> loadResolution spec
   where
     family = managedFamily requestedFamily
     normalizedStyle = normalizeStyle requestedStyle
-    matchingFaces =
+    styleFaces =
       filter
         (\spec ->
            faceSpecFamily spec == family
              && faceSpecStyle spec == normalizedStyle)
         (fontCatalogFaces catalog)
-    weightDistance spec
-      | requestedWeight < faceSpecMinimumWeight spec =
-        faceSpecMinimumWeight spec - requestedWeight
-      | requestedWeight > faceSpecMaximumWeight spec =
-        requestedWeight - faceSpecMaximumWeight spec
-      | otherwise = 0
+    matchingFaces =
+      filter
+        (\spec ->
+           requestedWeight >= faceSpecMinimumWeight spec
+             && requestedWeight <= faceSpecMaximumWeight spec)
+        styleFaces
     loadResolution spec = do
       loaded <- loadFace spec requestedWeight
       pure
@@ -125,8 +135,7 @@ resolveFont catalog requestedFamily requestedWeight requestedStyle =
                 , fontResolutionRequestedFamily = requestedFamily
                 , fontResolutionRequestedWeight = requestedWeight
                 , fontResolutionRequestedStyle = requestedStyle
-                , fontResolutionWeightSubstituted =
-                    fontFaceWeight face /= requestedWeight
+                , fontResolutionWeightSubstituted = False
                 })
            loaded)
 
@@ -187,9 +196,9 @@ managedFamily family =
 normalizeStyle :: String -> String
 normalizeStyle style =
   case style of
-    "italic"  -> "italic"
-    "oblique" -> "italic"
-    _         -> "normal"
+    "italic" -> "italic"
+    "normal" -> "normal"
+    _        -> style
 
 shaText :: IR.Sha256 -> String
 shaText (IR.Sha256 value) = value

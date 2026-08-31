@@ -12,8 +12,8 @@
       "id": "lifecycle",
       "file": "Lifecycle.sverlin",
       "title": "Linear lifecycle",
-      "summary": "Create, materialize, checkpoint, and destroy one typed Block.",
-      "features": ["Block", "linear ownership", "checkpoints", "semantic selection"]
+      "summary": "Create, materialize, expose typed steps, and destroy one typed Block.",
+      "features": ["Block", "linear ownership", "typed frames", "Kind selection"]
     },
     {
       "id": "typed-addition",
@@ -33,8 +33,8 @@
       "id": "linear-search",
       "file": "LinearSearch.sverlin",
       "title": "Linear search",
-      "summary": "Search an array through recursive ownership, typed comparison, and visible checkpoints.",
-      "features": ["recursion", "branching", "apply2", "code", "typography"]
+      "summary": "Search an array through recursive ownership, typed comparison, and visible frames.",
+      "features": ["recursion", "branching", "apply2", "text fragments", "typography"]
     },
     {
       "id": "csp-compositions",

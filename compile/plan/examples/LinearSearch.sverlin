@@ -1,7 +1,6 @@
 -- Linear search written against the proposed API in API_plan_final.md.
 --
--- This is a body-only planning example. The current compiler does not implement
--- this API yet. It is nevertheless a complete Domain/Program/Render design:
+-- This is a complete body-only Domain/Program/Render design:
 -- Domain creates one bounded input from the scenario seed, Program consumes all
 -- linear resources, and Render lets the solver choose values within finite
 -- ranges while relative rules keep the result readable.
@@ -92,7 +91,7 @@ planSearch :: [Int] -> Int -> Int -> SearchPlan
 planSearch [] _ _ = SearchFinished Nothing
 planSearch (value : remaining) target position =
   SearchProbe $
-    case Linear.== value target of
+    case value Linear.== target of
       True -> SearchFinished (Just position)
       False -> planSearch remaining target (position + 1)
 
@@ -412,7 +411,7 @@ render = do
     contentFit Both Hug
 
     title <- node $ do
-      content (text "Linear search")
+      fitText (text "Linear search")
       style @FontFamily bodyFont
       style @FontSize textSize
       style @FontWeight FontWeightBold
@@ -453,13 +452,13 @@ render = do
             style @StrokeWidth (by 2)
             style @Radius (by 12)
 
-          indexLabel <- sometimes $ node $ do
-            content (text "A[" <> asText position <> text "]")
-            style @FontFamily codeFont
-            style @FontSize textSize
-
-          ensure $ x indexLabel .==. x values
-          ensure $ top indexLabel .==. bottom values .+. shift 6
+          sometimes $ do
+            indexLabel <- node $ do
+              fitText (text "A[" <> asText position <> text "]")
+              style @FontFamily codeFont
+              style @FontSize textSize
+            ensure $ x indexLabel .==. x values
+            ensure $ top indexLabel .==. bottom values .+. shift 6
 
         -- One authored choice changes the complete chain, rather than giving
         -- every pair an independent orientation.
@@ -501,21 +500,27 @@ render = do
       ensure $ x results .==. x arrayView
       ensure $ top results .==. bottom arrayView .+. sectionGap
 
-    code <- sometimes $ node $ do
-      fitText sourceLine
-      padding (uniform (by 10))
-      style @FontFamily codeFont
-      style @FontSize textSize
-      style @BorderStyle BorderSolid
-      style @Radius (by 8)
-
     ensure $ x stage .==. x title
     ensure $ top stage .==. bottom title .+. sectionGap
     -- The sampler may place the optional code panel on any free side. This
     -- keeps all four exact non-overlap cases available.
-    ensure $ separatedBy sectionGap stage code
+    sometimes $ do
+      code <- node $ do
+        fitText sourceLine
+        padding (uniform (by 10))
+        style @FontFamily codeFont
+        style @FontSize textSize
+        style @BorderStyle BorderSolid
+        style @Radius (by 8)
+      ensure $ separatedBy sectionGap stage code
 
   ensure $ center page .==. center canvas
+  -- Direct span containment exposes the finite outer size without imposing a
+  -- separate pixel cap; the edge rules below retain the local box relation.
+  -- Refer to the bounded viewport variables directly so the finite-space
+  -- compiler need not rediscover these span bounds through the canvas node.
+  ensure $ width page .+. outerInset .+. outerInset .<=. canvasWidth
+  ensure $ height page .+. outerInset .+. outerInset .<=. canvasHeight
   ensure $ left page .>=. left canvas .+. outerInset
   ensure $ right page .<=. right canvas .-. outerInset
   ensure $ top page .>=. top canvas .+. outerInset

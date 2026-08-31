@@ -50,7 +50,16 @@ data FinishHeapSort
 
 data EdgePlan where
   NoEdges :: EdgePlan
-  NextEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
+  NextEdge :: LinearIndex %1 -> LinearIndex %1 -> EdgePlan %1 -> EdgePlan
+
+-- Generator turns numeric positions into paths before linear tracing starts.
+data LinearIndex where
+  AtHead :: LinearIndex
+  InTail :: LinearIndex %1 -> LinearIndex
+
+linearIndex :: Int -> LinearIndex
+linearIndex 0 = AtHead
+linearIndex index = InTail (linearIndex (index - 1))
 
 data ValuePlan where
   NoValues :: ValuePlan
@@ -150,18 +159,18 @@ appendStored :: StoredList %1 -> StoredList %1 -> StoredList
 appendStored StoredNil right = right
 appendStored (StoredCons current rest) right = StoredCons current (appendStored rest right)
 
-takeAt :: Int %1 -> StoredList %1 -> Taken
-takeAt 0 (StoredCons current rest) = Taken StoredNil current rest
-takeAt index (StoredCons current rest) =
-  case takeAt (index Linear.- 1) rest of
+takeAt :: LinearIndex %1 -> StoredList %1 -> Taken
+takeAt AtHead (StoredCons current rest) = Taken StoredNil current rest
+takeAt (InTail index) (StoredCons current rest) =
+  case takeAt index rest of
     Taken before focus after -> Taken (StoredCons current before) focus after
 
 -- This small linear zipper is enough to construct arbitrary bounded graph
 -- edges without adding index-based mutation to the public Program API.
 relateInitialAt ::
   RelationKind ElementCell ElementCell ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList %1 ->
   Domain StoredList
 relateInitialAt relationKind leftIndex distance cells =
@@ -198,7 +207,11 @@ heapPairs count =
 
 edgePlan :: [(Int, Int)] -> EdgePlan
 edgePlan [] = NoEdges
-edgePlan ((left, right) : rest) = NextEdge left (right - left - 1) (edgePlan rest)
+edgePlan ((left, right) : rest) =
+  NextEdge
+    (linearIndex left)
+    (linearIndex (right - left - 1))
+    (edgePlan rest)
 
 valuePlan :: [Int] -> ValuePlan
 valuePlan [] = NoValues
@@ -336,21 +349,26 @@ arrayView ::
   Span ->
   Span ->
   Span ->
+  Span ->
+  Span ->
   Render (Selected GeneratedNode)
-arrayView cells values links ordering gap cellWidth cellHeight = node $ do
+arrayView cells values links ordering gap cellWidth cellHeight canvasWidth canvasHeight = node $ do
   contentFit Both Hug
   padding (uniform (by 8))
 
   -- This is one mapping of the semantic cells.
   node cells $ do
     position <- rankOf ordering
-    contentFit Both Hug
+    contentFit Both Contain
+    width (canvasWidth .*. num 0.06)
+    height (canvasHeight .*. num 0.24)
     valueNode values cellWidth cellHeight True
-    sometimes $ node $ do
+    node $ do
       labelNode <- self
       content (text "H[" <> asText position <> text "]")
       ensure $ x labelNode .==. x values
       ensure $ top labelNode .==. (bottom values .+. shift 4)
+    pure ()
 
   relation links $ do
     previous <- first links
@@ -366,14 +384,20 @@ treeView ::
   Span ->
   Span ->
   Span ->
+  Span ->
+  Span ->
   Render (Selected GeneratedNode)
-treeView cells values links levelGap siblingGap cellWidth cellHeight = node $ do
+treeView cells values links levelGap siblingGap cellWidth cellHeight canvasWidth canvasHeight = node $ do
   contentFit Both Hug
   padding (uniform (by 10))
 
   -- This second mapping has independent geometry but represents the same
   -- Program cells and current occupants as the array mapping above.
-  node cells $ valueNode values cellWidth cellHeight False
+  node cells $ do
+    contentFit Both Contain
+    width (canvasWidth .*. num 0.06)
+    height (canvasHeight .*. num 0.16)
+    valueNode values cellWidth cellHeight False
   arrange (ArrangeTree links (vec2 siblingGap levelGap)) cells
 
   relation links $ do
@@ -435,16 +459,16 @@ render = do
   oneOf
     "heap representation"
     (alternative "array" $ do
-      array <- arrayView cells values nextLinks arrayOrder gap cellWidth cellHeight
+      array <- arrayView cells values nextLinks arrayOrder gap cellWidth cellHeight canvasWidth canvasHeight
       ensure $ center array .==. center canvas)
     [ alternative "tree" $ do
-        tree <- treeView cells values parentLinks levelGap siblingGap cellWidth cellHeight
+        tree <- treeView cells values parentLinks levelGap siblingGap cellWidth cellHeight canvasWidth canvasHeight
         ensure $ center tree .==. center canvas
     , alternative "array and tree" $ do
         combined <- node $ do
           contentFit Both Hug
-          array <- arrayView cells values nextLinks arrayOrder gap cellWidth cellHeight
-          tree <- treeView cells values parentLinks levelGap siblingGap cellWidth cellHeight
+          array <- arrayView cells values nextLinks arrayOrder gap cellWidth cellHeight canvasWidth canvasHeight
+          tree <- treeView cells values parentLinks levelGap siblingGap cellWidth cellHeight canvasWidth canvasHeight
           ensure $ x array .==. x tree
           ensure $ top tree .==. (bottom array .+. representationGap)
           ensure $ separatedBy representationGap array tree

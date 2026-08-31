@@ -8,11 +8,14 @@
 module Solver.Constraint
   ( -- * Constraints
     -- | Raw constraint tree and typeclass operators used by the view and
-    -- solver problem layers to express hard and soft numeric relationships.
+    -- solver problem layers to express numeric relationships. The legacy
+    -- objective constructors remain private to implementation modules so the
+    -- compiler can reject stale inputs with a precise diagnostic.
     Constraint(..)
   , Alternative
   , alternative
   , oneOf
+  , algebraicOneOf
   , caseOf
   , ConstrainEq(..)
   , ConstrainOrd(..)
@@ -21,16 +24,15 @@ module Solver.Constraint
   , (@>=@)
   , allOf
   , within
-  , minimize
-  , soften
   , -- * Canonicalization
     -- | Implementation helpers used by 'Solver.Problem' for deduplication,
-    -- inspection, and energy lowering.
+    -- inspection, and affine lowering.
     flattenConstraint
   , flattenConstraints
   , constraintCount
   , equalityEpsilon
   , DecisionSpec(..)
+  , DecisionOrigin(..)
   , constraintDecisionSpecs
   , hasConstraintDecisions
   , resolveConstraintDecisions
@@ -79,8 +81,16 @@ data Alternative =
 -- | A stable finite decision and the constraints guarded by each token.
 data DecisionSpec = DecisionSpec
   { decisionSpecName         :: String
+  , decisionSpecOrigin       :: DecisionOrigin
   , decisionSpecAlternatives :: [(String, [Constraint])]
   } deriving (Eq, Ord, Show)
+
+-- | Why a finite split exists. Authored decisions carry design probability;
+-- algebraic partitions only decompose a numeric union into convex cells.
+data DecisionOrigin
+  = AuthoredDecision
+  | AlgebraicPartition
+  deriving (Eq, Ord, Show)
 
 -- | Label a conjunction of constraints for use with 'oneOf'.
 alternative :: String -> [Constraint] -> Alternative
@@ -91,11 +101,21 @@ alternative name constraints
 -- | Require exactly one labelled alternative. Supplying the first branch as
 -- a separate argument makes an empty disjunction unrepresentable.
 oneOf :: String -> Alternative -> [Alternative] -> Constraint
-oneOf name first rest
+oneOf = decisionOneOf AuthoredDecision
+
+-- | Introduce exact compiler bookkeeping without creating another authored
+-- design alternative. This is used for operations such as non-overlap whose
+-- feasible set is a union of affine cells.
+algebraicOneOf :: String -> Alternative -> [Alternative] -> Constraint
+algebraicOneOf = decisionOneOf AlgebraicPartition
+
+decisionOneOf ::
+     DecisionOrigin -> String -> Alternative -> [Alternative] -> Constraint
+decisionOneOf origin name first rest
   | null name = error "solver decision names must not be empty"
   | hasDuplicates tokens =
     error ("solver decision has duplicate alternative names: " ++ show name)
-  | otherwise = Cases (DecisionSpec name alternatives)
+  | otherwise = Cases (DecisionSpec name origin alternatives)
   where
     alternatives = map unwrapAlternative (first : rest)
     tokens = map fst alternatives
@@ -111,6 +131,7 @@ caseOf selected constraintsFor =
   Cases
     DecisionSpec
       { decisionSpecName = choiceName selected
+      , decisionSpecOrigin = AuthoredDecision
       , decisionSpecAlternatives =
           [ (choiceToken value, constraintsFor value)
           | value <- choiceDomain :: [value]
@@ -138,7 +159,7 @@ infix 4 @>=@
 (@==@) :: ConstrainEq a => a -> a -> Constraint
 (@==@) = constrainEqual
 
--- The solver lowers inequalities to a non-strict hinge penalty.
+-- Inequalities are non-strict affine half-spaces.
 (@<=@) :: ConstrainOrd a => a -> a -> Constraint
 (@<=@) = constrainLessOrEqual
 
@@ -265,18 +286,9 @@ binaryConstant ::
 binaryConstant op lhs rhs =
   op <$> constantRawExprValue lhs <*> constantRawExprValue rhs
 
-minimize :: Expr ty -> Constraint
-minimize (Expr _ objective) = Minimize objective
-
 within :: SymbolicType ty => Expr ty -> Range -> Constraint
 within expr range =
   All [num (rangeLower range) @<=@ expr, expr @<=@ num (rangeUpper range)]
-
-soften :: Constraint -> Constraint
-soften constraint =
-  case constraint of
-    Soft _ -> constraint
-    _      -> Soft constraint
 
 -- | Collect every finite decision nested in a constraint tree.
 constraintDecisionSpecs :: [Constraint] -> [DecisionSpec]
@@ -488,7 +500,7 @@ componentRelation relation lhs rhs =
 -- 0 and 360 degrees are the same hue). Relating their canonical numeric
 -- representatives is sufficient and keeps otherwise-affine visual design
 -- spaces on the affine backend. Unbounded cyclic domains retain the general
--- modulo equality handled by the optimizer.
+-- modulo equality, which the affine solver rejects.
 componentEquality :: Domain -> RawExpr -> RawExpr -> Constraint
 componentEquality domain lhs rhs =
   case canonicalCyclicBounds domain of

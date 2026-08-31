@@ -1,34 +1,30 @@
 module Main where
 
-import           Control.Exception                    (IOException, evaluate,
-                                                       try)
-import           Control.Monad                        (when, zipWithM)
-import qualified Data.ByteString                      as BS
-import qualified Data.ByteString.Lazy                 as BL
-import           Data.Maybe                           (fromMaybe)
-import           Data.Word                            (Word64)
-import           GHC.Clock                            (getMonotonicTimeNSec)
-import           Language.Haskell.Interpreter         (GhcError (..),
-                                                       InterpreterError (..))
-import qualified LinearTrace.Choreography             as Choreography
-import qualified LinearTrace.Visualization.Compile    as Compile
-import qualified LinearTrace.Visualization.IR         as IR
-import qualified LinearTrace.Visualization.Resource   as Resource
-import qualified LinearTrace.Visualization.Target     as Target
-import qualified LinearTrace.Visualization.Typography as Typography
-import           Numeric                              (showFFloat)
+import           Control.Exception                  (IOException, evaluate, try)
+import           Control.Monad                      (when)
+import qualified Data.ByteString                    as BS
+import qualified Data.ByteString.Lazy               as BL
+import           Data.Maybe                         (fromMaybe)
+import           Data.Word                          (Word64)
+import           GHC.Clock                          (getMonotonicTimeNSec)
+import           Language.Haskell.Interpreter       (GhcError (..),
+                                                     InterpreterError (..))
+import qualified LinearTrace.Visualization.IR       as IR
+import qualified LinearTrace.Visualization.Resource as Resource
+import qualified LinearTrace.Visualization.Target   as Target
+import           Numeric                            (showFFloat)
 import           Options.Applicative
-import qualified Solver                               as S
-import           Sverlin.Interpreter                  (withVisualization)
-import           Sverlin.Source                       (GeneratedSource (..),
-                                                       SourceUnit (..),
-                                                       elaborateSource)
-import           System.Directory                     (createDirectoryIfMissing)
-import           System.Exit                          (exitFailure)
-import           System.FilePath                      (takeDirectory, (</>))
-import           System.IO                            (Handle, hPutStrLn,
-                                                       stderr, stdout)
-import           System.Random                        (randomRIO)
+import qualified Sverlin.Internal.Compiler          as Compiler
+import           Sverlin.Interpreter                (withVisualization)
+import           Sverlin.Source                     (GeneratedSource (..),
+                                                     SourceUnit (..),
+                                                     elaborateSource)
+import           System.Directory                   (createDirectoryIfMissing)
+import           System.Exit                        (exitFailure)
+import           System.FilePath                    (takeDirectory, (</>))
+import           System.IO                          (Handle, hPutStrLn, stderr,
+                                                     stdout)
+import           System.Random                      (randomRIO)
 
 data Options = Options
   { optionSourcePath  :: FilePath
@@ -39,6 +35,7 @@ data Options = Options
   , optionTarget      :: Target.OutputTarget
   , optionDetails     :: Bool
   , optionCount       :: Int
+  , optionViewSeeds   :: [Int]
   }
 
 main :: IO ()
@@ -56,17 +53,18 @@ main = do
                 {sourceDisplayPath = sourceLabel, sourceBody = sourceBody'}
       emitGeneratedSource (optionEmitHaskell options) generated
       seed <- chooseSeed (optionSeed options)
-      let seeds = take (optionCount options) [seed ..]
+      seeds <- resolveSeeds options seed
       sourceStarted <- getMonotonicTimeNSec
       interpreted <-
-        withVisualization generated $ \graph -> do
+        withVisualization generated $ \program -> do
           sourceFinished <- getMonotonicTimeNSec
           runVisualization
             options
             sourceLabel
+            sourceBody'
             (elapsedMs sourceStarted sourceFinished)
             seeds
-            graph
+            program
       case interpreted of
         Left err -> failWith (formatInterpreterError err)
         Right result ->
@@ -81,105 +79,39 @@ main = do
 runVisualization ::
      Options
   -> FilePath
+  -> String
   -> Double
   -> [Int]
-  -> Choreography.VisualTraceGraph
+  -> Compiler.SverlinProgram
   -> IO (Either String [IR.Visualization])
-runVisualization options sourcePath sourceLoadMs seeds graph = do
-  (viewGraph, viewGraphMs) <-
-    timedPhase (evaluate (forceViewGraph (Choreography.buildViewGraph graph)))
-  (initialSolutions, solveMs) <-
+runVisualization options sourcePath sourceBody sourceLoadMs seeds program = do
+  (compiledResult, compileMs) <-
     timedPhase
-      (Choreography.solveViewGraphWithSeeds
-         (map Choreography.RandomSeed seeds)
-         viewGraph)
-  (preparedResult, typographyMs) <-
-    timedPhase
-      (fmap
-         sequence
-         (zipWithM
-            (\_seed solution -> Typography.prepareTypography solution viewGraph)
-            seeds
-            initialSolutions))
-  case preparedResult of
+      (Compiler.compileProgramBatch sourcePath sourceBody seeds program)
+  case compiledResult of
     Left err -> pure (Left err)
-    Right prepared -> do
-      (solutions, constraintSolveMs) <-
-        timedPhase
-          (zipWithM
-             (\seed (initial, typography) ->
-                solvePrepared seed initial typography)
-             seeds
-             (zip initialSolutions prepared))
-      (compiledResult, compileMs) <-
+    Right package -> do
+      (bundleResult, encodeMs) <-
         timedPhase
           (evaluate
-             (forcePackageResult (compilePrepared sourcePath solutions prepared)))
-      case compiledResult of
-        Left err -> pure (Left err)
-        Right package -> do
-          (bundleResult, encodeMs) <-
-            timedPhase
-              (evaluate
-                 (forceTargetBundle
-                    (Target.compileTarget
-                       (Target.defaultTargetRequest (optionTarget options))
-                       package)))
-          case bundleResult of
-            Left (Target.TargetError err) -> pure (Left err)
-            Right bundle -> do
-              ((), writeMs) <-
-                timedPhase (writeCompiled (optionOutputPath options) bundle)
-              when (optionDetails options) $ do
-                case solutions of
-                  solution:_ -> hPrintSolverDetails stdout solution
-                  []         -> pure ()
-                hPrintPhaseTimings
-                  stdout
-                  [ ("Source load", sourceLoadMs)
-                  , ("View graph", viewGraphMs)
-                  , ("Aesthetic solve", solveMs)
-                  , ("Text prepare", typographyMs)
-                  , ("Constraint solve", constraintSolveMs)
-                  , ("IR compile", compileMs)
-                  , ("Target encode", encodeMs)
-                  , ("Target write", writeMs)
-                  ]
-              pure (Right (Resource.compilationPackageVisualizations package))
-  where
-    solvePrepared seed initial prepared
-      | Typography.preparedTypographyNeedsResolve prepared =
-        Choreography.solveViewGraphWithPinnedSolution
-          (Choreography.RandomSeed seed)
-          initial
-          (Typography.preparedTypographyGraph prepared)
-      | otherwise = pure initial
-
-compilePrepared ::
-     FilePath
-  -> [S.Solution]
-  -> [Typography.PreparedTypography]
-  -> Either String Resource.CompilationPackage
-compilePrepared sourcePath solutions prepared = do
-  outputs <- zipWithM Typography.materializeTypography solutions prepared
-  visualizations <-
-    sequence
-      [ Compile.compileSolvedWithTypography
-        sourcePath
-        solution
-        (Typography.preparedTypographyGraph typography)
-        output
-      | (solution, typography, output) <- zip3 solutions prepared outputs
-      ]
-  pure
-    Resource.CompilationPackage
-      { Resource.compilationPackageVisualizations = visualizations
-      , Resource.compilationPackageResources =
-          Resource.deduplicateResourceBlobs
-            (concatMap Typography.typographyOutputResources outputs)
-      , Resource.compilationPackageProvenance =
-          Typography.typographyCompilationProvenance
-      }
+             (forceTargetBundle
+                (Target.compileTarget
+                   (Target.defaultTargetRequest (optionTarget options))
+                   (forcePackage package))))
+      case bundleResult of
+        Left (Target.TargetError err) -> pure (Left err)
+        Right bundle -> do
+          ((), writeMs) <-
+            timedPhase (writeCompiled (optionOutputPath options) bundle)
+          when (optionDetails options)
+            $ hPrintPhaseTimings
+                stdout
+                [ ("Source load", sourceLoadMs)
+                , ("Trace, Render, and affine solve", compileMs)
+                , ("Target encode", encodeMs)
+                , ("Target write", writeMs)
+                ]
+          pure (Right (Resource.compilationPackageVisualizations package))
 
 forcePackageResult ::
      Either String Resource.CompilationPackage
@@ -197,11 +129,11 @@ forcePackageResult result =
                  (Resource.compilationPackageResources package))
        in visualizationCount `seq` resourceBytes `seq` result
 
-forceViewGraph :: Choreography.ViewGraph -> Choreography.ViewGraph
-forceViewGraph graph =
-  case Choreography.viewGraphStats graph of
-    (nodes, constraints, steps) ->
-      nodes `seq` constraints `seq` steps `seq` graph
+forcePackage :: Resource.CompilationPackage -> Resource.CompilationPackage
+forcePackage package =
+  case forcePackageResult (Right package) of
+    Right forced -> forced
+    Left _       -> package
 
 forceTargetBundle ::
      Either Target.TargetError Target.TargetBundle
@@ -236,33 +168,6 @@ hPrintPhaseTimings handle timings = do
   where
     printTiming (name, ms) =
       hPutStrLn handle ("  " ++ name ++ ": " ++ formatMs ms)
-
-hPrintSolverDetails :: Handle -> S.Solution -> IO ()
-hPrintSolverDetails handle solution = do
-  hPutStrLn handle "Solver details:"
-  hPutStrLn handle ("  Backend: " ++ backendName (S.solutionBackend solution))
-  case S.solutionBackendStatistics solution of
-    S.AffineSamplingStatistics statistics -> do
-      hPutStrLn
-        handle
-        ("  Reduced dimension: " ++ show (S.samplingReducedDimension statistics))
-      hPutStrLn
-        handle
-        ("  Burn-in steps: " ++ show (S.samplingBurnInSteps statistics))
-    S.PenaltyOptimizationStatistics statistics -> do
-      hPutStrLn
-        handle
-        ("  Iterations: " ++ show (S.optimizationIterations statistics))
-      hPutStrLn
-        handle
-        ("  Function evaluations: "
-           ++ show (S.optimizationFunctionEvaluations statistics))
-
-backendName :: S.NumericBackend -> String
-backendName backend =
-  case backend of
-    S.AffineSampler    -> "affine-sampler"
-    S.PenaltyOptimizer -> "penalty-optimizer"
 
 formatMs :: Double -> String
 formatMs milliseconds = showFFloat (Just 1) milliseconds "ms"
@@ -346,6 +251,13 @@ optionsParser =
              <> showDefault
              <> help
                   "Generate INT seeded samples; counts above one write a JSON array")
+    <*> many
+          (option
+             auto
+             (long "view-seed"
+                <> metavar "INT"
+                <> help
+                     "Add an explicit view seed to the scenario selected by --seed"))
 
 positiveInt :: String -> Either String Int
 positiveInt input =
@@ -353,6 +265,15 @@ positiveInt input =
     [(parsed, "")]
       | parsed > 0 -> Right parsed
     _ -> Left "expected a positive integer"
+
+resolveSeeds :: Options -> Int -> IO [Int]
+resolveSeeds options scenarioSeed =
+  case optionViewSeeds options of
+    [] -> pure (take (optionCount options) [scenarioSeed ..])
+    viewSeeds
+      | optionCount options == 1 -> pure (scenarioSeed : viewSeeds)
+      | otherwise ->
+        fail "--count and explicit --view-seed values cannot be used together"
 
 emitGeneratedSource :: Maybe FilePath -> GeneratedSource -> IO ()
 emitGeneratedSource output generated =

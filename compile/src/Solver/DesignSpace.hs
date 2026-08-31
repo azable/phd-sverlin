@@ -9,9 +9,12 @@ module Solver.DesignSpace
   , sampleDesignSpaceBatch
   ) where
 
+import           Data.IORef         (atomicModifyIORef', modifyIORef', newIORef,
+                                     readIORef)
+import           Data.List          (intercalate, nub, sortOn)
 import           Data.Map.Strict    (Map)
 import qualified Data.Map.Strict    as Map
-import           Data.Maybe         (catMaybes)
+import           Data.Maybe         (mapMaybe)
 import           Data.Set           (Set)
 import qualified Data.Set           as Set
 import           Prelude
@@ -19,6 +22,7 @@ import           Solver.Affine
 import           Solver.Categorical
 import           Solver.Choice
 import           Solver.Constraint
+import           Solver.Expr        (RawExpr (ESub), domainCircularPeriod)
 import           Solver.Highs
 import           Solver.Problem
 import           Solver.Random
@@ -40,17 +44,28 @@ data CompiledDesignSpace = CompiledDesignSpace
   , compiledAllChoiceDomains   :: Map String [String]
   , compiledRelevantChoices    :: [ChoiceConstraint]
   , compiledIndependentChoices :: [ChoiceConstraint]
+  , compiledDecisionSpecs      :: [DecisionSpec]
   , compiledDesignBranches     :: CompiledBranches
   }
 
 data CompiledBranches
   = EnumeratedBranches [CompiledBranch]
-  | DeferredMipBranches
+  | DeferredConditionedChoices
+
+data DecisionSelection = DecisionSelection
+  { selectedDecisionName   :: String
+  , selectedDecisionToken  :: String
+  , selectedDecisionOrigin :: DecisionOrigin
+  } deriving (Eq, Ord, Show)
 
 data CompiledBranch = CompiledBranch
-  { branchAssignment    :: Map String String
-  , branchAffineProblem :: AffineProblem
-  , branchInspection    :: ProblemInspection
+  { branchIndex          :: Int
+  , branchAssignment     :: Map String String
+  , branchDecisions      :: [DecisionSelection]
+  , branchAffineProblem  :: AffineProblem
+  , branchPreparedRegion :: PreparedAffineRegion
+  , branchDefaultMeasure :: Either FeasibilityFailure VolumeEstimate
+  , branchInspection     :: ProblemInspection
   }
 
 -- | Compile all affine alternatives once. The configured categorical branch
@@ -59,13 +74,9 @@ data CompiledBranch = CompiledBranch
 compileDesignSpace ::
      SolveConfig -> SolverProblem -> Either DesignSpaceError CompiledDesignSpace
 compileDesignSpace config problem = do
-  case forcedBackend config of
-    Just PenaltyOptimizer ->
-      Left
-        (UnsupportedDesignSpace
-           "finite design spaces cannot use the penalty optimizer")
-    _ -> Right ()
+  validateAffineLanguage (solverConstraints problem)
   decisionDomains <- collectDecisionDomains (solverConstraints problem)
+  validateDecisionOrigins (constraintDecisionSpecs (solverConstraints problem))
   categoricalDomains <- collectChoiceDomains (solverChoiceConstraints problem)
   allDomains <- mergeDomainMaps decisionDomains categoricalDomains
   let decisionNames = Map.keysSet decisionDomains
@@ -76,15 +87,19 @@ compileDesignSpace config problem = do
         splitChoiceConstraints relevantNames (solverChoiceConstraints problem)
       candidateCount = domainProduct relevantDomains
       limit = maxChoiceBranches config
+      decisionSpecs = decisionSpecsInOrder (solverConstraints problem)
+      independentCount =
+        largestChoiceComponentProduct categoricalDomains independentChoices
+      conditionedCount = max candidateCount independentCount
   branches <-
-    if candidateCount <= toInteger limit
+    if conditionedCount <= toInteger limit
       then EnumeratedBranches
              <$> compileEnumeratedBranches
                    config
                    problem
                    relevantDomains
                    relevantChoices
-      else pure DeferredMipBranches
+      else pure DeferredConditionedChoices
   pure
     CompiledDesignSpace
       { compiledDesignConfig = config
@@ -93,8 +108,39 @@ compileDesignSpace config problem = do
       , compiledAllChoiceDomains = allDomains
       , compiledRelevantChoices = relevantChoices
       , compiledIndependentChoices = independentChoices
+      , compiledDecisionSpecs = decisionSpecs
       , compiledDesignBranches = branches
       }
+
+-- Reject language features that cannot belong to any affine branch before
+-- choosing between enumeration and deferred MIP conditioning. Branch-specific
+-- bounds and feasibility are still checked after a decision assignment is
+-- resolved.
+validateAffineLanguage :: [Constraint] -> Either DesignSpaceError ()
+validateAffineLanguage = mapM_ validate
+  where
+    validate constraint =
+      case constraint of
+        Equals domain lhs rhs ->
+          case domainCircularPeriod domain of
+            Just _ -> unsupported "cyclic equality is not affine"
+            Nothing ->
+              case linearRawExpr (ESub lhs rhs) of
+                Nothing -> unsupported "non-affine equality is unsupported"
+                Just _  -> Right ()
+        LessOrEqual lhs rhs ->
+          case linearRawExpr (ESub lhs rhs) of
+            Nothing -> unsupported "non-affine inequality is unsupported"
+            Just _  -> Right ()
+        Minimize _ ->
+          unsupported
+            "numeric objectives are unsupported in affine design spaces"
+        Soft _ ->
+          unsupported "soft constraints are unsupported in affine design spaces"
+        All nested -> mapM_ validate nested
+        Cases spec ->
+          mapM_ (mapM_ validate . snd) (decisionSpecAlternatives spec)
+    unsupported = Left . UnsupportedDesignSpace
 
 -- | Sample one seed from a compiled design space.
 sampleDesignSpace ::
@@ -121,16 +167,27 @@ sampleDesignSpaceBatch ::
 sampleDesignSpaceBatch strategy seeds compiled =
   case compiledDesignBranches compiled of
     EnumeratedBranches branches ->
-      pure $ do
-        weights <- branchWeights strategy branches
-        traverse (sampleEnumerated compiled strategy branches weights) seeds
-    DeferredMipBranches ->
+      pure
+        $ case strategy of
+            BalancedDesignChoices ->
+              traverse (sampleBalanced compiled branches) seeds
+            GeometricVolume _ -> do
+              weights <- branchWeights strategy branches
+              traverse
+                (sampleGeometric compiled strategy branches weights)
+                seeds
+    DeferredConditionedChoices ->
       case strategy of
         GeometricVolume _ ->
           pure
             (Left
                (DecisionSpaceTooLarge
-                  (boundedDomainProduct (compiledEnumerationDomains compiled))
+                  (max
+                     (boundedDomainProduct (compiledEnumerationDomains compiled))
+                     (boundedInteger
+                        (largestChoiceComponentProduct
+                           (compiledAllChoiceDomains compiled)
+                           (compiledIndependentChoices compiled))))
                   (maxChoiceBranches (compiledDesignConfig compiled))))
         BalancedDesignChoices -> sampleMipBatch compiled seeds
 
@@ -141,32 +198,48 @@ compileEnumeratedBranches ::
   -> [ChoiceConstraint]
   -> Either DesignSpaceError [CompiledBranch]
 compileEnumeratedBranches config problem domains relevantChoices = do
-  candidates <-
-    traverse
-      compileAssignment
-      (filter
-         (\assignment ->
-            all (choiceConstraintSatisfied assignment) relevantChoices)
-         (enumerateChoiceAssignments (Map.toAscList domains)))
-  let feasible = catMaybes candidates
+  paths <-
+    fmap
+      (Map.elems . Map.fromList)
+      (traverse
+         activePath
+         (filter
+            (\assignment ->
+               all (choiceConstraintSatisfied assignment) relevantChoices)
+            (enumerateChoiceAssignments (Map.toAscList domains))))
+  candidates <- traverse compileAssignment (zip [0 :: Int ..] paths)
+  let feasible = mapMaybe fst candidates
+      rejected = nub (mapMaybe snd candidates)
   if null feasible
     then Left
            (InfeasibleDesignSpace
-              "no finite decision assignment has a feasible affine region")
+              (case rejected of
+                 [] ->
+                   "no finite decision assignment has a feasible affine region"
+                 reasons ->
+                   "no finite decision assignment has a feasible affine region: "
+                     ++ intercalate "; " reasons))
     else Right feasible
   where
-    compileAssignment assignment = do
+    activePath complete = do
+      decisions <- activeDecisionPath complete (solverConstraints problem)
+      let assignment =
+            Map.fromList
+              [ (selectedDecisionName selected, selectedDecisionToken selected)
+              | selected <- decisions
+              ]
+      pure (Map.toAscList assignment, (assignment, decisions))
+    compileAssignment (index, (assignment, decisions)) = do
       resolved <- resolveAssignment problem assignment
       case classifyAffineProblem (solverConstraints resolved) of
-        AffineInvalid _ -> Right Nothing
-        AffineFallback reason -> Left (UnsupportedDesignSpace reason)
+        AffineInvalid message -> Right (Nothing, Just message)
+        AffineUnsupported reason -> Left (UnsupportedDesignSpace reason)
         AffineReady affine ->
-          case sampleAffineProblem
-                 (RandomSeed 0)
+          case prepareAffineRegion
                  (explicitInitialValues config resolved)
                  affine of
-            Left _ -> Right Nothing
-            Right _ ->
+            Left failure -> Right (Nothing, Just (feasibilityMessage failure))
+            Right prepared ->
               let pinned = assignmentConstraints domains assignment
                   inspectedProblem =
                     resolved
@@ -176,12 +249,23 @@ compileEnumeratedBranches config problem domains relevantChoices = do
                   inspection =
                     compiledInspection (compileProblem config inspectedProblem)
                in Right
-                    (Just
-                       CompiledBranch
-                         { branchAssignment = assignment
-                         , branchAffineProblem = affine
-                         , branchInspection = inspection
-                         })
+                    ( Just
+                        CompiledBranch
+                          { branchIndex = index
+                          , branchAssignment = assignment
+                          , branchDecisions = decisions
+                          , branchAffineProblem = affine
+                          , branchPreparedRegion = prepared
+                          , branchDefaultMeasure =
+                              estimatePreparedAffineLogVolume
+                                defaultVolumeBudget
+                                (deriveSeed
+                                   (RandomSeed 0)
+                                   ("algebraic.branch." ++ show index))
+                                prepared
+                          , branchInspection = inspection
+                          }
+                    , Nothing)
 
 resolveAssignment ::
      SolverProblem -> Map String String -> Either DesignSpaceError SolverProblem
@@ -195,15 +279,107 @@ resolveAssignment problem assignment = do
          (solverConstraints problem))
   pure problem {solverConstraints = constraints}
 
-sampleEnumerated ::
+activeDecisionPath ::
+     Map String String
+  -> [Constraint]
+  -> Either DesignSpaceError [DecisionSelection]
+activeDecisionPath assignment constraints =
+  uniqueSelections <$> foldMapM collect constraints
+  where
+    collect constraint =
+      case constraint of
+        Equals {} -> Right []
+        LessOrEqual _ _ -> Right []
+        Minimize _ -> Right []
+        Soft inner -> collect inner
+        All nested -> foldMapM collect nested
+        Cases spec ->
+          case Map.lookup (decisionSpecName spec) assignment of
+            Nothing ->
+              Left
+                (InvalidDecision
+                   ("missing decision assignment for "
+                      ++ show (decisionSpecName spec)))
+            Just token ->
+              case lookup token (decisionSpecAlternatives spec) of
+                Nothing ->
+                  Left
+                    (InvalidDecision
+                       ("unknown alternative "
+                          ++ show token
+                          ++ " for decision "
+                          ++ show (decisionSpecName spec)))
+                Just nested -> do
+                  rest <- foldMapM collect nested
+                  pure
+                    (DecisionSelection
+                       { selectedDecisionName = decisionSpecName spec
+                       , selectedDecisionToken = token
+                       , selectedDecisionOrigin = decisionSpecOrigin spec
+                       }
+                       : rest)
+
+uniqueSelections :: [DecisionSelection] -> [DecisionSelection]
+uniqueSelections = go Set.empty
+  where
+    go _ [] = []
+    go seen (selected:rest)
+      | selectedDecisionName selected `Set.member` seen = go seen rest
+      | otherwise =
+        selected : go (Set.insert (selectedDecisionName selected) seen) rest
+
+decisionSpecsInOrder :: [Constraint] -> [DecisionSpec]
+decisionSpecsInOrder = uniqueSpecs . concatMap collect
+  where
+    collect constraint =
+      case constraint of
+        Equals {} -> []
+        LessOrEqual _ _ -> []
+        Minimize _ -> []
+        Soft inner -> collect inner
+        All nested -> concatMap collect nested
+        Cases spec ->
+          spec
+            : concatMap
+                (concatMap collect . snd)
+                (decisionSpecAlternatives spec)
+    uniqueSpecs = go Set.empty
+    go _ [] = []
+    go seen (spec:rest)
+      | decisionSpecName spec `Set.member` seen = go seen rest
+      | otherwise = spec : go (Set.insert (decisionSpecName spec) seen) rest
+
+foldMapM :: Monad m => (a -> m [b]) -> [a] -> m [b]
+foldMapM f values = concat <$> traverse f values
+
+sampleBalanced ::
+     CompiledDesignSpace
+  -> [CompiledBranch]
+  -> RandomSeed
+  -> Either DesignSpaceError Solution
+sampleBalanced compiled branches seed = do
+  authored <- selectAuthoredBranches compiled seed branches
+  branch <- selectAlgebraicBranch seed authored
+  completeEnumeratedSolution compiled BalancedDesignChoices seed branch
+
+sampleGeometric ::
      CompiledDesignSpace
   -> SamplingStrategy
   -> [CompiledBranch]
   -> [Double]
   -> RandomSeed
   -> Either DesignSpaceError Solution
-sampleEnumerated compiled strategy branches weights seed = do
-  branch <- selectWeighted seed branches weights
+sampleGeometric compiled strategy branches weights seed = do
+  branch <- selectWeighted seed "design.geometric-branch" branches weights
+  completeEnumeratedSolution compiled strategy seed branch
+
+completeEnumeratedSolution ::
+     CompiledDesignSpace
+  -> SamplingStrategy
+  -> RandomSeed
+  -> CompiledBranch
+  -> Either DesignSpaceError Solution
+completeEnumeratedSolution compiled strategy seed branch = do
   let domains = compiledEnumerationDomains compiled
       pins = assignmentConstraints domains (branchAssignment branch)
       allChoiceConstraints =
@@ -215,74 +391,381 @@ sampleEnumerated compiled strategy branches weights seed = do
           seed
           (maxChoiceBranches (compiledDesignConfig compiled))
           allChoiceConstraints
+      algebraicNames =
+        Set.fromList
+          [ decisionSpecName spec
+          | spec <- compiledDecisionSpecs compiled
+          , decisionSpecOrigin spec == AlgebraicPartition
+          ]
   makeAffineSolution
     (SampledWith strategy EnumeratedDecisions)
     seed
-    choices
-    (explicitInitialValues
-       (compiledDesignConfig compiled)
-       (compiledDesignProblem compiled))
+    (Map.withoutKeys choices algebraicNames)
     branch
+
+selectAuthoredBranches ::
+     CompiledDesignSpace
+  -> RandomSeed
+  -> [CompiledBranch]
+  -> Either DesignSpaceError [CompiledBranch]
+selectAuthoredBranches compiled seed = go authoredSpecs
+  where
+    authoredSpecs =
+      [ spec
+      | spec <- compiledDecisionSpecs compiled
+      , decisionSpecOrigin spec == AuthoredDecision
+      ]
+    go specs candidates =
+      case specs of
+        [] -> Right candidates
+        spec:rest ->
+          let name = decisionSpecName spec
+              active = map (branchDecisionToken name) candidates
+           in if all (== Nothing) active
+                then go rest candidates
+                else if Nothing `elem` active
+                       then Left
+                              (UnsupportedDesignSpace
+                                 ("authored decision "
+                                    ++ show name
+                                    ++ " is activated by an algebraic partition"))
+                       else do
+                         let feasibleTokens =
+                               [ token
+                               | (token, _) <- decisionSpecAlternatives spec
+                               , Just token `elem` active
+                               ]
+                         selected <-
+                           selectWeighted
+                             seed
+                             ("design.authored." ++ name)
+                             feasibleTokens
+                             (replicate (length feasibleTokens) 1)
+                         go
+                           rest
+                           [ branch
+                           | branch <- candidates
+                           , branchDecisionToken name branch == Just selected
+                           ]
+
+branchDecisionToken :: String -> CompiledBranch -> Maybe String
+branchDecisionToken name branch =
+  case [ selectedDecisionToken selected
+       | selected <- branchDecisions branch
+       , selectedDecisionName selected == name
+       ] of
+    token:_ -> Just token
+    []      -> Nothing
+
+selectAlgebraicBranch ::
+     RandomSeed -> [CompiledBranch] -> Either DesignSpaceError CompiledBranch
+selectAlgebraicBranch seed branches =
+  case branches of
+    [] -> Left (InfeasibleDesignSpace "no authored assignment is feasible")
+    [branch] -> Right branch
+    _ -> do
+      estimates <-
+        traverse
+          (either (Left . SamplingFailed . feasibilityMessage) Right
+             . branchDefaultMeasure)
+          branches
+      let dimensions = Set.fromList (map volumeDimension estimates)
+      if Set.size dimensions > 1
+        then Left
+               (UnsupportedDesignSpace
+                  "algebraic cells for one authored assignment have different intrinsic dimensions")
+        else let logMeasures = map volumeLogMeasure estimates
+                 largest = maximum logMeasures
+              in selectWeighted
+                   seed
+                   "design.algebraic-cell"
+                   branches
+                   [exp (measure - largest) | measure <- logMeasures]
 
 sampleMipBatch ::
      CompiledDesignSpace
   -> [RandomSeed]
   -> IO (Either DesignSpaceError [Solution])
-sampleMipBatch compiled = go []
+sampleMipBatch compiled = go Map.empty []
   where
-    go solutions remaining =
+    go cache solutions remaining =
       case remaining of
         [] -> pure (Right (reverse solutions))
         seed:rest -> do
-          selected <-
-            selectFeasibleAssignmentWithHighs
-              seed
-              (compiledAllChoiceDomains compiled)
-              (compiledDesignProblem compiled)
-          case selected of
-            Left err -> pure (Left (SamplingFailed err))
-            Right assignment ->
-              case compileMipBranch compiled assignment of
-                Left err -> pure (Left err)
-                Right branch ->
-                  case makeAffineSolution
-                         (SampledWith
-                            BalancedDesignChoices
-                            MipConditionedDecisions)
-                         seed
-                         assignment
-                         (explicitInitialValues
-                            (compiledDesignConfig compiled)
-                            (compiledDesignProblem compiled))
-                         branch of
-                    Left err       -> pure (Left err)
-                    Right solution -> go (solution : solutions) rest
+          conditioned <- selectConditionedBranch compiled seed cache
+          case conditioned of
+            Left err -> pure (Left err)
+            Right (nextCache, assignment, branch) ->
+              case do
+                     visibleAssignment <-
+                       visibleConditionedChoices compiled assignment branch
+                     makeAffineSolution
+                       (SampledWith
+                          BalancedDesignChoices
+                          MipConditionedDecisions)
+                       seed
+                       visibleAssignment
+                       branch of
+                Left err       -> pure (Left err)
+                Right solution -> go nextCache (solution : solutions) rest
 
-compileMipBranch ::
+-- Ask HiGHS for one seed-driven completion of the large finite space. If exact
+-- affine preparation rejects that completion, bounded backtracking remains a
+-- correctness fallback rather than work paid by every ordinary sample.
+selectConditionedBranch ::
      CompiledDesignSpace
+  -> RandomSeed
+  -> Map (Map String String) CompiledBranch
+  -> IO
+       (Either
+          DesignSpaceError
+          ( Map (Map String String) CompiledBranch
+          , Map String String
+          , CompiledBranch))
+selectConditionedBranch compiled seed cache = do
+  attempts <- newIORef 0
+  rejections <- newIORef []
+  completionResult <- queryFeasible attempts seededCompletionCosts Map.empty
+  selected <-
+    case completionResult of
+      Left err -> pure (Left err)
+      Right Nothing -> pure (Right Nothing)
+      Right (Just completion) -> do
+        let complete = highsChoiceAssignment completion
+        prepared <-
+          prepareCompletion rejections complete (highsNumericValues completion)
+        case prepared of
+          Left err -> pure (Left err)
+          Right (Just success) -> pure (Right (Just success))
+          Right Nothing ->
+            chooseDeferred
+              attempts
+              rejections
+              Map.empty
+              completionDomains
+              Nothing
+  rejected <- readIORef rejections
+  pure $ do
+    result <- selected
+    case result of
+      Nothing ->
+        Left
+          (InfeasibleDesignSpace
+             ("no conditioned decision assignment has a feasible affine region"
+                ++ case nub rejected of
+                     []      -> ""
+                     reasons -> ": " ++ intercalate "; " reasons))
+      Just value -> Right value
+  where
+    problem = compiledDesignProblem compiled
+    domains = compiledAllChoiceDomains compiled
+    decisionNames =
+      Set.fromList (map decisionSpecName (compiledDecisionSpecs compiled))
+    categoricalNames =
+      [name | name <- Map.keys domains, name `Set.notMember` decisionNames]
+    authoredAndCategoricalDomains =
+      [ ( decisionSpecName spec
+        , map fst (decisionSpecAlternatives spec)
+        , "conditioned")
+      | spec <- compiledDecisionSpecs compiled
+      , decisionSpecOrigin spec == AuthoredDecision
+      ]
+        ++ [ ( name
+             , Map.findWithDefault
+                 (error ("missing finite choice domain " ++ show name))
+                 name
+                 domains
+             , "conditioned")
+           | name <- categoricalNames
+           ]
+    algebraicDomains =
+      [ ( decisionSpecName spec
+        , map fst (decisionSpecAlternatives spec)
+        , "algebraic")
+      | spec <- compiledDecisionSpecs compiled
+      , decisionSpecOrigin spec == AlgebraicPartition
+      ]
+    completionDomains = authoredAndCategoricalDomains ++ algebraicDomains
+    feasible objective = feasibleCompletionWithHighs domains objective problem
+    -- IID positive costs treat every token symmetrically across seeds. Each
+    -- domain is one-hot, so centering all of its costs would add only a
+    -- constant; avoiding negative coefficients also keeps MIP serialization
+    -- compatible with the bundled HiGHS solution parser.
+    seededCompletionCosts =
+      Map.fromList
+        [ ( (name, token)
+          , randomUnit seed ("design.deferred-mip." ++ name ++ "." ++ token))
+        | (name, tokens, _) <- completionDomains
+        , token <- tokens
+        ]
+    -- This operational search-work bound is independent of the exact-
+    -- enumeration threshold. 256 is large enough for the expected shallow,
+    -- local branching while preventing test configs of one or two from
+    -- disabling backtracking altogether.
+    attemptLimit = max 256 (maxChoiceBranches (compiledDesignConfig compiled))
+    chooseDeferred attempts rejections partial remaining lastCompletion =
+      case remaining of
+        [] ->
+          case lastCompletion of
+            Nothing -> pure (Right Nothing)
+            Just completion ->
+              prepareCompletion
+                rejections
+                (Map.union partial (highsChoiceAssignment completion))
+                (highsNumericValues completion)
+        (name, tokens, category):rest ->
+          tryDeferredTokens attempts rejections partial rest name ordered
+          where
+            ordered =
+              sortOn
+                (randomUnit seed
+                   . (("design." ++ category ++ "." ++ name ++ ".") ++))
+                tokens
+    tryDeferredTokens _ _ _ _ _ [] = pure (Right Nothing)
+    tryDeferredTokens attempts rejections partial remaining name (token:tokens) = do
+      let candidate = Map.insert name token partial
+      feasibility <- queryFeasible attempts Map.empty candidate
+      case feasibility of
+        Left err -> pure (Left err)
+        Right Nothing ->
+          tryDeferredTokens attempts rejections partial remaining name tokens
+        Right (Just completion) -> do
+          nested <-
+            chooseDeferred
+              attempts
+              rejections
+              candidate
+              remaining
+              (Just completion)
+          case nested of
+            Left err -> pure (Left err)
+            Right Nothing ->
+              tryDeferredTokens
+                attempts
+                rejections
+                partial
+                remaining
+                name
+                tokens
+            Right success -> pure (Right success)
+    queryFeasible attempts objective partial = do
+      attempt <-
+        atomicModifyIORef'
+          attempts
+          (\count ->
+             let next = count + 1
+              in (next, next))
+      if attempt > attemptLimit
+        then pure
+               (Left
+                  (SamplingFailed
+                     ("conditioned feasibility search exceeded "
+                        ++ show attemptLimit
+                        ++ " attempts")))
+        else do
+          feasibility <- feasible objective partial
+          case feasibility of
+            Left err         -> pure (Left (SamplingFailed err))
+            Right completion -> pure (Right completion)
+    prepareCompletion rejections completion hint =
+      case Map.lookup completion cache of
+        Just branch -> pure (Right (Just (cache, completion, branch)))
+        Nothing ->
+          case compileConditionedBranch compiled hint completion of
+            Left (InfeasibleDesignSpace message) -> do
+              modifyIORef' rejections (message :)
+              pure (Right Nothing)
+            Left err -> pure (Left err)
+            Right branch ->
+              pure
+                (Right
+                   (Just
+                      (Map.insert completion branch cache, completion, branch)))
+
+compileConditionedBranch ::
+     CompiledDesignSpace
+  -> Map String Double
   -> Map String String
   -> Either DesignSpaceError CompiledBranch
-compileMipBranch compiled assignment = do
+compileConditionedBranch compiled numericHint completion = do
+  active <-
+    activeDecisionPath
+      completion
+      (solverConstraints (compiledDesignProblem compiled))
+  let assignment =
+        Map.fromList
+          [ (selectedDecisionName selected, selectedDecisionToken selected)
+          | selected <- active
+          ]
+  compileMipBranchWithHint numericHint compiled 0 assignment active
+
+visibleConditionedChoices ::
+     CompiledDesignSpace
+  -> Map String String
+  -> CompiledBranch
+  -> Either DesignSpaceError (Map String String)
+visibleConditionedChoices compiled fixed branch = do
+  let problem = compiledDesignProblem compiled
+      complete = Map.union (branchAssignment branch) fixed
+      registeredChoiceNames =
+        Set.fromList
+          [ name
+          | constraint <- solverChoiceConstraints problem
+          , (name, _) <- choiceConstraintSpecs constraint
+          ]
+  active <- activeDecisionPath complete (solverConstraints problem)
+  let visibleDecisionNames =
+        Set.fromList
+          [ selectedDecisionName selected
+          | selected <- active
+          , selectedDecisionOrigin selected == AuthoredDecision
+          ]
+  pure
+    (Map.restrictKeys
+       complete
+       (Set.union visibleDecisionNames registeredChoiceNames))
+
+compileMipBranchWithHint ::
+     Map String Double
+  -> CompiledDesignSpace
+  -> Int
+  -> Map String String
+  -> [DecisionSelection]
+  -> Either DesignSpaceError CompiledBranch
+compileMipBranchWithHint numericHint compiled index assignment decisions = do
   resolved <- resolveAssignment (compiledDesignProblem compiled) assignment
   affine <-
     case classifyAffineProblem (solverConstraints resolved) of
-      AffineReady value     -> Right value
-      AffineInvalid message -> Left (InfeasibleDesignSpace message)
-      AffineFallback reason -> Left (UnsupportedDesignSpace reason)
-  let pins =
-        assignmentConstraints (compiledAllChoiceDomains compiled) assignment
-      inspectedProblem =
-        resolved
-          { solverChoiceConstraints =
-              pins ++ solverChoiceConstraints (compiledDesignProblem compiled)
-          }
-      inspection =
+      AffineReady value        -> Right value
+      AffineInvalid message    -> Left (InfeasibleDesignSpace message)
+      AffineUnsupported reason -> Left (UnsupportedDesignSpace reason)
+  prepared <-
+    either
+      (Left . InfeasibleDesignSpace . feasibilityMessage)
+      Right
+      (prepareAffineRegion
+         (numericHint
+            `Map.union` explicitInitialValues
+                          (compiledDesignConfig compiled)
+                          resolved)
+         affine)
+  let inspection =
         compiledInspection
-          (compileProblem (compiledDesignConfig compiled) inspectedProblem)
+          (compileProblem
+             (compiledDesignConfig compiled)
+             resolved {solverChoiceConstraints = []})
   pure
     CompiledBranch
-      { branchAssignment = assignment
+      { branchIndex = index
+      , branchAssignment = assignment
+      , branchDecisions = decisions
       , branchAffineProblem = affine
+      , branchPreparedRegion = prepared
+      , branchDefaultMeasure =
+          estimatePreparedAffineLogVolume
+            defaultVolumeBudget
+            (deriveSeed (RandomSeed 0) ("algebraic.branch." ++ show index))
+            prepared
       , branchInspection = inspection
       }
 
@@ -290,15 +773,14 @@ makeAffineSolution ::
      SamplingProvenance
   -> RandomSeed
   -> Map String String
-  -> Map String Double
   -> CompiledBranch
   -> Either DesignSpaceError Solution
-makeAffineSolution provenance seed choices overrides branch = do
+makeAffineSolution provenance seed choices branch = do
   (values, statistics) <-
     either
       (Left . SamplingFailed . feasibilityMessage)
       Right
-      (sampleAffineProblem seed overrides (branchAffineProblem branch))
+      (samplePreparedAffineRegion seed (branchPreparedRegion branch))
   let names = affineVariableNames (branchAffineProblem branch)
       vector =
         [ Map.findWithDefault
@@ -333,10 +815,10 @@ branchWeights strategy branches =
              either
                (Left . SamplingFailed . feasibilityMessage)
                Right
-               (estimateAffineLogVolume
+               (estimatePreparedAffineLogVolume
                   budget
                   (deriveSeed (RandomSeed 0) ("branch." ++ show index))
-                  (branchAffineProblem branch)))
+                  (branchPreparedRegion branch)))
           (zip [0 :: Int ..] branches)
       let dimensions = Set.fromList (map volumeDimension estimates)
       if Set.size dimensions > 1
@@ -347,8 +829,9 @@ branchWeights strategy branches =
                  largest = maximum (0 : logMeasures)
               in Right [exp (measure - largest) | measure <- logMeasures]
 
-selectWeighted :: RandomSeed -> [a] -> [Double] -> Either DesignSpaceError a
-selectWeighted seed values weights =
+selectWeighted ::
+     RandomSeed -> String -> [a] -> [Double] -> Either DesignSpaceError a
+selectWeighted seed label values weights =
   case values of
     [] -> Left (InfeasibleDesignSpace "the compiled design space is empty")
     _
@@ -359,7 +842,7 @@ selectWeighted seed values weights =
       | otherwise -> Right (pick target (zip values weights))
   where
     total = sum weights
-    target = randomUnit seed "design.branch" * total
+    target = randomUnit seed label * total
     pick _ [(value, _)] = value
     pick remaining ((value, weight):rest)
       | remaining < weight = value
@@ -399,6 +882,22 @@ collectDecisionDomains constraints =
         (decisionSpecName spec)
         (map fst (decisionSpecAlternatives spec))
         domains
+
+validateDecisionOrigins :: [DecisionSpec] -> Either DesignSpaceError ()
+validateDecisionOrigins = go Map.empty
+  where
+    go _ [] = Right ()
+    go origins (spec:rest) =
+      let name = decisionSpecName spec
+          origin = decisionSpecOrigin spec
+       in case Map.lookup name origins of
+            Nothing -> go (Map.insert name origin origins) rest
+            Just previous
+              | previous == origin -> go origins rest
+              | otherwise ->
+                Left
+                  (InvalidDecision
+                     ("decision is both authored and algebraic: " ++ show name))
 
 collectChoiceDomains ::
      [ChoiceConstraint] -> Either DesignSpaceError (Map String [String])
@@ -469,12 +968,35 @@ splitChoiceConstraints relevant =
          else (related, constraint : independent))
     ([], [])
 
+largestChoiceComponentProduct ::
+     Map String [String] -> [ChoiceConstraint] -> Integer
+largestChoiceComponentProduct domains constraints =
+  maximum
+    (0
+       : [ domainProduct (Map.restrictKeys domains choiceComponent)
+         | choiceComponent <- Set.toList components
+         ])
+  where
+    names =
+      Set.fromList
+        [ name
+        | constraint <- constraints
+        , (name, _) <- choiceConstraintSpecs constraint
+        ]
+    components =
+      Set.fromList
+        [ choiceClosure (Set.singleton name) constraints
+        | name <- Set.toList names
+        ]
+
 domainProduct :: Map String [String] -> Integer
 domainProduct = product . map (toInteger . length) . Map.elems
 
 boundedDomainProduct :: Map String [String] -> Int
-boundedDomainProduct domains =
-  fromInteger (min (toInteger (maxBound :: Int)) (domainProduct domains))
+boundedDomainProduct domains = boundedInteger (domainProduct domains)
+
+boundedInteger :: Integer -> Int
+boundedInteger = fromInteger . min (toInteger (maxBound :: Int))
 
 feasibilityMessage :: FeasibilityFailure -> String
 feasibilityMessage (FeasibilityFailure message) = message

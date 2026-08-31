@@ -26,40 +26,12 @@ packages:
   original:
     hackage: data-default-class-0.1.2.2@sha256:51400ed341ec87e86a4acf83301c6890e1fc67708e2d0ac519d48e0a14f54c15,1309
 - completed:
-    hackage: l-bfgs-b-0.1.0.1@sha256:baa2aab4eca4ed039379eb76b4e254a5a590b44a5030b017f33e7301f829be2c,3853
-    pantry-tree:
-      sha256: a0fadfc2f9feb76b583acc5d83273f07b8163350ca838d899d7fc8b801091f15
-      size: 358
-  original:
-    hackage: l-bfgs-b-0.1.0.1@sha256:baa2aab4eca4ed039379eb76b4e254a5a590b44a5030b017f33e7301f829be2c,3853
-- completed:
-    hackage: lbfgs-0.1@sha256:1f318f28422798d686de877f3fd55990ec8404c14e778f8189be809f6180791b,1283
-    pantry-tree:
-      sha256: fb69877bffe751a0af0b6044dc5b80b9db401a2651b856b6395b5bdd09b9a18a
-      size: 775
-  original:
-    hackage: lbfgs-0.1@sha256:1f318f28422798d686de877f3fd55990ec8404c14e778f8189be809f6180791b,1283
-- completed:
     hackage: linear-base-0.8.1@sha256:e95e244542df13f80692b271727b2bf328cf1af8ff99791857d835a71c82c97b,7339
     pantry-tree:
       sha256: 9e1154dabf0a5e95975471a755d9624545998c4ea5812aef7fba788b178e3d4a
       size: 9270
   original:
     hackage: linear-base-0.8.1
-- completed:
-    hackage: numeric-optimization-0.1.1.0@sha256:e341ecfcaee455142c61b856df3bbfcd4f0cfbab2f75c9c5e96cc40134ccf2c2,3928
-    pantry-tree:
-      sha256: c4fa4b4abd2d95230c4a84c2698344286c8b50f4d58839cd7646e8476baaffb2
-      size: 506
-  original:
-    hackage: numeric-optimization-0.1.1.0
-- completed:
-    hackage: numeric-optimization-ad-0.1.0.1@sha256:e03ded25e2b7d0e9baf3067649889cfed54741f0f941933949d9c0b0543ca6fe,3075
-    pantry-tree:
-      sha256: ee22152d859cff4a210a70198279a581d23f46fb441438b5801c24fc21755f75
-      size: 509
-  original:
-    hackage: numeric-optimization-ad-0.1.0.1
 snapshots:
 - completed:
     sha256: 74b41f766415e985473d1e27befeb0394ed62f95295da1ec630a48ba84751c1c

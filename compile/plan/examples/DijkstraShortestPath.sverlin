@@ -1,5 +1,4 @@
 -- Dijkstra's shortest-path algorithm for the proposed API.
--- This planning source is intentionally not compiled by the current compiler.
 --
 -- A weighted edge is a real typed location containing a numeric weight. Two
 -- ordered relations connect that edge to its source and target vertices. This
@@ -498,6 +497,8 @@ render = do
   canvasHeight <- variable @Span
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
+  -- These height endpoints follow exactly from the width range and 16:9
+  -- ratio; they are viewport bounds, not a cap on the graph or table.
   ensure $ canvasHeight .>=. by 540
   ensure $ canvasHeight .<=. by 1080
   width canvasWidth
@@ -596,9 +597,10 @@ render = do
       style @StrokeWidth (by 2)
       style @Radius (by 10)
       node distanceTexts $ bindContent >>= fitText
-      positionLabel <- sometimes $ node $ content (text "settled #" <> asText position)
-      ensure $ top positionLabel .==. bottom distanceTexts .+. by 4
-      ensure $ x positionLabel .==. x distanceTexts
+      sometimes $ do
+        positionLabel <- node $ content (text "settled #" <> asText position)
+        ensure $ top positionLabel .==. bottom distanceTexts .+. by 4
+        ensure $ x positionLabel .==. x distanceTexts
 
     relation distanceLinks $ do
       previous <- first distanceLinks
@@ -643,3 +645,19 @@ render = do
   ensure $ top statusPanel .==. bottom distanceTable .+. panelGap
   ensure $ x statusPanel .==. x distanceTable
   ensure $ x graphView .==. x canvas
+
+  -- Each top-level panel stays inside the chosen viewport. These relative
+  -- edge rules expose finite bounds to the disjunction compiler without
+  -- assigning any panel an arbitrary pixel maximum.
+  ensure $ left graphView .>=. left canvas .+. panelGap
+  ensure $ right graphView .<=. right canvas .-. panelGap
+  ensure $ top graphView .>=. top canvas .+. panelGap
+  ensure $ bottom graphView .<=. bottom canvas .-. panelGap
+  ensure $ left distanceTable .>=. left canvas .+. panelGap
+  ensure $ right distanceTable .<=. right canvas .-. panelGap
+  ensure $ top distanceTable .>=. top canvas .+. panelGap
+  ensure $ bottom distanceTable .<=. bottom canvas .-. panelGap
+  ensure $ left statusPanel .>=. left canvas .+. panelGap
+  ensure $ right statusPanel .<=. right canvas .-. panelGap
+  ensure $ top statusPanel .>=. top canvas .+. panelGap
+  ensure $ bottom statusPanel .<=. bottom canvas .-. panelGap

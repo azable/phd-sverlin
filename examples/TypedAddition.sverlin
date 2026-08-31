@@ -1,73 +1,117 @@
 data Value
+instance Traceable Value where
+  type Payload Value = LInt Value
 
-type instance Payload Value = LInt Value
-
-data Add = Add
-
-type instance Payload Add = LOperator Add Add
-
-instance CoreOperator Add where
-  operatorPayloadText Add = "+"
-  persistOperatorPayload Add = Ur Add
+data Add
+instance Traceable Add where
+  type Payload Add = LOperator Add
 
 instance Applicable2 Add Value Value where
   type Apply2Result Add Value Value = Value
-  applyPayload2 (LOperator Add) = applyLinear2Into (Linear.+)
+  applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+    LInt (leftValue Linear.+ rightValue)
 
-program :: Choreography ()
-program = do
-  Create leftPending <- create @Value (LInt 20)
-  leftValue <- materialize #leftInput leftPending
-  Create rightPending <- create @Value (LInt 22)
-  rightValue <- materialize #rightInput rightPending
-  Create addPending <- create @Add (LOperator Add)
-  addOperator <- materialize #operator addPending
-  checkpoint "Inputs"
-  Apply2 resultPending <- apply2 addOperator leftValue rightValue
-  result <- materialize #result resultPending
-  checkpoint "Result"
-  Destroy <- destroy result
-  checkpoint "Complete"
+data LeftRole
+data RightRole
+data AddRole
+data ResultRole
+data Inputs
+data Sum
+data Complete
 
-visualization :: VisualizationBuilder ()
-visualization = do
+leftKind :: Kind Value
+leftKind = kind @LeftRole
+
+rightKind :: Kind Value
+rightKind = kind @RightRole
+
+addKind :: Kind Add
+addKind = kind @AddRole
+
+resultKind :: Kind Value
+resultKind = kind @ResultRole
+
+data Initial where
+  Initial :: Block Value %1 -> Block Add %1 -> Block Value %1 -> Initial
+
+domain :: Domain Initial
+domain = do
+  declareKind leftKind
+  declareKind rightKind
+  declareKind addKind
+  declareKind resultKind
+  declareSteps @'[Inputs, Sum, Complete]
+  Create leftPending <- create (LInt 20)
+  leftValue <- materialize leftKind leftPending
+  Create addPending <- create LOperator
+  addOperator <- materialize addKind addPending
+  Create rightPending <- create (LInt 22)
+  rightValue <- materialize rightKind rightPending
+  pure (Initial leftValue addOperator rightValue)
+
+program :: Initial %1 -> Program ()
+program initial = do
+  Initial leftValue addOperator rightValue <- step @Inputs (pure initial)
+  result <- step @Sum $ do
+    Apply2 resultPending <- apply2 addOperator leftValue rightValue
+    materialize resultKind resultPending
+  step @Complete $ do
+    Destroy <- destroy result
+    pure ()
+
+render :: Render ()
+render = do
+  always $ frame @Inputs
+  always $ frame @Sum
+  always $ frame @Complete
   width (by 800)
   height (by 450)
   contentFit Both Contain
 
-  Bound leftLabel <- bindContent
-  Selected leftValue <- select @Value (#leftInput <&> payload leftLabel)
-  Bound rightLabel <- bindContent
-  Selected rightValue <- select @Value (#rightInput <&> payload rightLabel)
-  Bound resultLabel <- bindContent
-  Selected result <- select @Value (#result <&> payload resultLabel)
-  Selected addOperator <- select @Add #operator
+  leftValues <- select leftKind
+  rightValues <- select rightKind
+  addOperators <- select addKind
+  results <- select resultKind
 
-  Selected expression <- node $ do
-    node leftValue $ do
-      fitText leftLabel
+  expression <- node $ do
+    width (by 640)
+    height (by 160)
+    contentFit Both Contain
+
+    node leftValues $ do
+      label <- bindContent
+      fitText label
       width (by 132)
       height (by 96)
-    node addOperator $ do
+      xAt (percent 16)
+      yAt (percent 50)
+
+    node addOperators $ do
       fitText (text "+")
       width (by 72)
       height (by 72)
-    node rightValue $ do
-      fitText rightLabel
+      xAt (percent 50)
+      yAt (percent 50)
+      withoutStyle @Fill
+
+    node rightValues $ do
+      label <- bindContent
+      fitText label
       width (by 132)
       height (by 96)
-    node result $ do
-      fitText resultLabel
+      xAt (percent 84)
+      yAt (percent 50)
+
+    node results $ do
+      label <- bindContent
+      fitText label
       width (by 160)
       height (by 112)
-      styleFamily "result"
+      xAt (percent 50)
+      yAt (percent 50)
+      style @Fill (Hsl (num 132) (num 0.34) (num 0.9))
+      style @Stroke (Hsl (num 132) (num 0.5) (num 0.35))
+      style @StrokeWidth (by 2)
+      style @BorderStyle BorderSolid
 
-  ensure $ x expression .==. x canvas
-  ensure $ left leftValue .==. at 72
-  ensure $ y leftValue .==. at 160
-  ensure $ left addOperator .==. at 244
-  ensure $ y addOperator .==. y leftValue
-  ensure $ left rightValue .==. at 356
-  ensure $ y rightValue .==. y leftValue
-  ensure $ left result .==. at 568
-  ensure $ y result .==. y leftValue
+  ensure $ center expression .==. center canvas

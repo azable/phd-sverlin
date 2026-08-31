@@ -7,7 +7,7 @@ import           Language.Haskell.Interpreter        (InterpreterError, as,
                                                       interpret, loadModules,
                                                       setTopLevelModules)
 import           Language.Haskell.Interpreter.Unsafe (unsafeRunInterpreterWithArgs)
-import           LinearTrace.Choreography            (VisualTraceGraph)
+import           Sverlin.Compiler                    (SverlinProgram)
 import           Sverlin.Source                      (GeneratedSource (..))
 import           System.Directory                    (createDirectoryIfMissing)
 import           System.Environment                  (lookupEnv)
@@ -16,7 +16,7 @@ import           System.IO.Temp                      (withSystemTempDirectory)
 
 withVisualization ::
      GeneratedSource
-  -> (VisualTraceGraph -> IO a)
+  -> (SverlinProgram -> IO a)
   -> IO (Either InterpreterError a)
 withVisualization generated useVisualization =
   withSystemTempDirectory "sverlin-source" $ \temporaryDirectory -> do
@@ -28,7 +28,7 @@ withVisualization generated useVisualization =
     unsafeRunInterpreterWithArgs (packageEnvironmentArgs packageEnvironment) $ do
       loadModules [modulePath]
       setTopLevelModules [generatedModuleName generated]
-      visualization <- interpret "_sverlinResult" (as :: VisualTraceGraph)
+      visualization <- interpret "_sverlinResult" (as :: SverlinProgram)
       liftIO (useVisualization visualization)
 
 packageEnvironmentArgs :: Maybe FilePath -> [String]

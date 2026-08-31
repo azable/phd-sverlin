@@ -349,20 +349,33 @@ render = do
   adjacentLinks <- select adjacent
   ordering <- asSequence adjacentLinks cells
 
-  page <- node $ do
+  -- The page shares the sampled canvas bounds. The origin is the canvas's
+  -- fixed top-left origin; padding creates the content inset without a second
+  -- absolute size range.
+  node $ do
+    contentFit Both Contain
+    left (at 0)
+    top (at 0)
+    width canvasWidth
+    height canvasHeight
     padding (uniform outerInset)
 
     title <- node $ do
-      content (text "Bubble sort")
+      fitText (text "Bubble sort")
       style @FontFamily bodyFont
       style @FontSize fontSize
       style @FontWeight FontWeightBold
 
     comparisonPanel <- node $ do
+      -- The panel scales with the canvas. These fractions leave room for two
+      -- side-by-side reads while preserving space for the array and code.
+      contentFit Both Contain
+      width (canvasWidth .*. num 0.45)
+      height (canvasHeight .*. num 0.32)
       padding (uniform (by 8))
 
       panelTitle <- node $ do
-        content (text "current comparison")
+        fitText (text "current comparison")
         style @FontFamily bodyFont
         style @FontSize fontSize
 
@@ -391,8 +404,8 @@ render = do
         style @FontFamily bodyFont
         style @FontSize fontSize
         style @FontWeight FontWeightBold
-        -- These constraints inherit the same optional mapping. Keeping them
-        -- here avoids referring to a node in the branch where it is omitted.
+        -- This one shared choice shows or hides comparison results for the
+        -- whole presentation; it is not repeated per historical comparison.
         ensure $ x comparisons .==. x panelTitle
         ensure $ top comparisons .==. bottom panelTitle .+. sectionGap
 
@@ -400,7 +413,10 @@ render = do
       ensure $ left rightReads .==. right leftReads .+. sectionGap
       ensure $ y rightReads .==. y leftReads
 
-    code <- sometimes $ node $ do
+    -- The code panel is one shared component for both value encodings. Only
+    -- its relation to the branch-local array view is repeated below.
+    code <- node $ do
+      contentFit Both Hug
       fitText bubbleLine
       padding (uniform (by 9))
       style @FontFamily codeFont
@@ -414,6 +430,9 @@ render = do
           padding (uniform (by 8))
 
           node cells $ do
+            contentFit Both Contain
+            width (canvasWidth .*. num 0.07)
+            height (canvasHeight .*. num 0.20)
             position <- rankOf ordering
             node values $ do
               valueText <- bindContent
@@ -429,8 +448,11 @@ render = do
               style @StrokeWidth (by 2)
               style @Radius (by 12)
 
-            indexLabel <- sometimes $ node $ do
-              content (text "A[" <> asText position <> text "]")
+            -- Labels are part of the mapping rather than separate per-cell
+            -- presence decisions. Hug derives their bounds from the text.
+            indexLabel <- node $ do
+              contentFit Both Hug
+              fitText (text "A[" <> asText position <> text "]")
               style @FontFamily codeFont
               style @FontSize fontSize
             ensure $ x indexLabel .==. x values
@@ -451,6 +473,9 @@ render = do
           padding (uniform (by 8))
 
           node cells $ do
+            contentFit Both Contain
+            width (canvasWidth .*. num 0.07)
+            height (canvasHeight .*. num 0.42)
             position <- rankOf ordering
             node values $ do
               amount <- payloadScalar values
@@ -467,8 +492,9 @@ render = do
               style @StrokeWidth (by 2)
               style @Radius (by 7)
 
-            indexLabel <- sometimes $ node $ do
-              content (text "A[" <> asText position <> text "]")
+            indexLabel <- node $ do
+              contentFit Both Hug
+              fitText (text "A[" <> asText position <> text "]")
               style @FontFamily codeFont
               style @FontSize fontSize
             ensure $ x indexLabel .==. x values
@@ -489,8 +515,4 @@ render = do
     ensure $ separatedBy sectionGap title code
     ensure $ separatedBy sectionGap comparisonPanel code
 
-  ensure $ center page .==. center canvas
-  ensure $ left page .>=. left canvas .+. outerInset
-  ensure $ right page .<=. right canvas .-. outerInset
-  ensure $ top page .>=. top canvas .+. outerInset
-  ensure $ bottom page .<=. bottom canvas .-. outerInset
+  pure ()

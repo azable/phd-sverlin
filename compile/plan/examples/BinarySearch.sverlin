@@ -108,12 +108,22 @@ highAt = orderedRelation @HighAtRole
 data SearchPlan where
   SearchDone :: Int %1 -> SearchPlan
   SearchProbe ::
-    Int %1 ->
-    Int %1 ->
-    Int %1 ->
-    Int %1 ->
+    LinearIndex %1 ->
+    LinearIndex %1 ->
+    LinearIndex %1 ->
+    LinearIndex %1 ->
     SearchPlan %1 ->
     SearchPlan
+
+-- Generator converts numeric positions into paths. Program consumes each path
+-- one constructor at a time, without inspecting or duplicating a linear Int.
+data LinearIndex where
+  AtHead :: LinearIndex
+  InTail :: LinearIndex %1 -> LinearIndex
+
+linearIndex :: Int -> LinearIndex
+linearIndex 0 = AtHead
+linearIndex index = InTail (linearIndex (index - 1))
 
 planSearch :: [Int] -> Int -> Int -> Int -> SearchPlan
 planSearch values target lowIndex highIndex
@@ -125,7 +135,12 @@ planSearch values target lowIndex highIndex
               EQ -> SearchDone middleIndex
               LT -> planSearch values target (middleIndex + 1) highIndex
               GT -> planSearch values target lowIndex (middleIndex - 1)
-       in SearchProbe lowIndex middleIndex highIndex middleIndex next
+       in SearchProbe
+            (linearIndex lowIndex)
+            (linearIndex middleIndex)
+            (linearIndex highIndex)
+            (linearIndex middleIndex)
+            next
 
 data SearchCase where
   SearchCase :: Int %1 -> [Int] %1 -> Int %1 -> SearchPlan %1 -> SearchCase
@@ -327,31 +342,31 @@ initializeChain value (nextValue : remaining) = do
 -- The Domain generator proves every requested position is in range. These
 -- helpers therefore keep their surface small instead of adding a general
 -- failure protocol that none of the examples needs.
-readAt :: Int %1 -> Chain Number %1 -> Program ReadAt
-readAt 0 (Last cell) = do
+readAt :: LinearIndex %1 -> Chain Number %1 -> Program ReadAt
+readAt AtHead (Last cell) = do
   ReadStored cell1 value <- readStored middleReadKind cell
   return (ReadAt (Last cell1) value)
-readAt 0 (More cell rest) = do
+readAt AtHead (More cell rest) = do
   ReadStored cell1 value <- readStored middleReadKind cell
   return (ReadAt (More cell1 rest) value)
-readAt position (More cell rest) = do
-  ReadAt rest1 value <- readAt (Linear.- position 1) rest
+readAt (InTail position) (More cell rest) = do
+  ReadAt rest1 value <- readAt position rest
   return (ReadAt (More cell rest1) value)
 
 markAt ::
-  Int %1 ->
+  LinearIndex %1 ->
   RelationKind marker ElementCell ->
   Stored marker MarkerToken %1 ->
   Chain Number %1 ->
   Program (Marked marker)
-markAt 0 relationKind marker (Last cell) = do
+markAt AtHead relationKind marker (Last cell) = do
   Related marker1 cell1 <- relateStored relationKind marker cell
   return (Marked marker1 (Last cell1))
-markAt 0 relationKind marker (More cell rest) = do
+markAt AtHead relationKind marker (More cell rest) = do
   Related marker1 cell1 <- relateStored relationKind marker cell
   return (Marked marker1 (More cell1 rest))
-markAt position relationKind marker (More cell rest) = do
-  Marked marker1 rest1 <- markAt (Linear.- position 1) relationKind marker rest
+markAt (InTail position) relationKind marker (More cell rest) = do
+  Marked marker1 rest1 <- markAt position relationKind marker rest
   return (Marked marker1 (More cell rest1))
 
 createMarkers :: Program RangeMarkers
@@ -362,9 +377,9 @@ createMarkers = do
   return (RangeMarkers low middle high)
 
 placeMarkers ::
-  Int %1 ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   RangeMarkers %1 ->
   Chain Number %1 ->
   Program PlacedMarkers
@@ -514,7 +529,7 @@ render = do
     padding (uniform outerInset)
 
     title <- node $ do
-      content (text "Binary search")
+      fitText (text "Binary search")
       style @FontFamily bodyFont
       style @FontSize fontSize
       style @FontWeight FontWeightBold
@@ -536,21 +551,21 @@ render = do
         padding (uniform markerGap)
 
         node lowMarkers $ do
-          content (text "low")
+          fitText (text "low")
           padding (uniform (by 5))
           style @FontFamily codeFont
           style @FontSize fontSize
           style @Radius (by 6)
 
         node middleMarkers $ do
-          content (text "mid")
+          fitText (text "mid")
           padding (uniform (by 5))
           style @FontFamily codeFont
           style @FontSize fontSize
           style @Radius (by 6)
 
         node highMarkers $ do
-          content (text "high")
+          fitText (text "high")
           padding (uniform (by 5))
           style @FontFamily codeFont
           style @FontSize fontSize
@@ -573,7 +588,7 @@ render = do
             style @Radius (by 9)
 
           label <- node $ do
-            content (text "A[" <> asText position <> text "]")
+            fitText (text "A[" <> asText position <> text "]")
             style @FontFamily codeFont
             style @FontSize fontSize
           ensure $ x label .==. x values
@@ -600,6 +615,19 @@ render = do
           cell <- second middleLinks
           ensure $ top marker .==. bottom cell .+. markerGap
           ensure $ x marker .==. x cell
+          -- The relation scope pairs this probe's transient read with this
+          -- probe's marker. A top-level read/marker equation would instead
+          -- form every possible pair across all iterations.
+          node middleReads $ do
+            readText <- bindContent
+            fitText (text "A[mid] = " <> readText)
+            padding (uniform (by 7))
+            style @FontFamily bodyFont
+            style @FontSize fontSize
+            style @BorderStyle BorderDotted
+            style @Radius (by 7)
+            ensure $ x middleReads .==. x marker
+            ensure $ top middleReads .==. bottom marker .+. markerGap
           sometimes $ connector (anchor AtTop marker) (anchor AtBottom cell) $ do
             style @StrokeWidth (by 2)
 
@@ -610,17 +638,6 @@ render = do
           ensure $ y marker .==. y cell
           sometimes $ connector (anchor AtLeft marker) (anchor AtRight cell) $ do
             style @StrokeWidth (by 2)
-
-        node middleReads $ do
-          readText <- bindContent
-          fitText (text "A[mid] = " <> readText)
-          padding (uniform (by 7))
-          style @FontFamily bodyFont
-          style @FontSize fontSize
-          style @BorderStyle BorderDotted
-          style @Radius (by 7)
-        ensure $ x middleReads .==. x middleMarkers
-        ensure $ top middleReads .==. bottom middleMarkers .+. markerGap
 
       node results $ do
         resultText <- bindContent
@@ -637,19 +654,24 @@ render = do
       ensure $ separatedBy sectionGap targetCells arrayView
       ensure $ separatedBy sectionGap targetCells results
 
-    code <- sometimes $ node $ do
-      fitText binarySearchLine
-      padding (uniform (by 9))
-      style @FontFamily codeFont
-      style @FontSize fontSize
-      style @BorderStyle BorderSolid
-      style @Radius (by 7)
-
     ensure $ x stage .==. x title
     ensure $ top stage .==. bottom title .+. sectionGap
-    ensure $ separatedBy sectionGap stage code
+    sometimes $ do
+      code <- node $ do
+        fitText binarySearchLine
+        padding (uniform (by 9))
+        style @FontFamily codeFont
+        style @FontSize fontSize
+        style @BorderStyle BorderSolid
+        style @Radius (by 7)
+      ensure $ separatedBy sectionGap stage code
 
   ensure $ center page .==. center canvas
+  -- These span relationships state the same containment as the edge rules
+  -- below, while making the finite outer size available directly to the
+  -- discrete feasibility pass. They add no fixed container-size cap.
+  ensure $ width page .+. outerInset .+. outerInset .<=. width canvas
+  ensure $ height page .+. outerInset .+. outerInset .<=. height canvas
   ensure $ left page .>=. left canvas .+. outerInset
   ensure $ right page .<=. right canvas .-. outerInset
   ensure $ top page .>=. top canvas .+. outerInset

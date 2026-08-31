@@ -1,5 +1,4 @@
 -- Longest common subsequence (LCS) for the proposed API.
--- This planning source is intentionally not compiled by the current compiler.
 --
 -- Every DP row owns a semantic set of cells through InRow. The same Cell kind
 -- and RightOf relation kind are reused by every row. Render uses `within` to
@@ -91,11 +90,22 @@ data FinishLcs
 
 data EdgePlan where
   NoEdges :: EdgePlan
-  NextEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
+  NextEdge :: LinearIndex %1 -> LinearIndex %1 -> EdgePlan %1 -> EdgePlan
+
+-- Numeric indices are useful while Generator prepares a finite scenario, but
+-- a linear Program cannot safely inspect or subtract from an Int. Convert each
+-- index to a structural path before it crosses the Domain boundary.
+data LinearIndex where
+  AtHead :: LinearIndex
+  InTail :: LinearIndex %1 -> LinearIndex
+
+linearIndex :: Int -> LinearIndex
+linearIndex 0 = AtHead
+linearIndex index = InTail (linearIndex (index - 1))
 
 data MembershipPlan where
   NoMemberships :: MembershipPlan
-  NextMembership :: Int %1 -> Int %1 -> MembershipPlan %1 -> MembershipPlan
+  NextMembership :: LinearIndex %1 -> LinearIndex %1 -> MembershipPlan %1 -> MembershipPlan
 
 data TextPlan where
   NoTexts :: TextPlan
@@ -264,54 +274,54 @@ relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) 
 relateExternalAt ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
   StoredList target targetValue %1 ->
   Domain (RelatedExternal source sourceValue target targetValue)
-relateExternalAt relationKind source 0 (StoredCons target rest) = do
+relateExternalAt relationKind source AtHead (StoredCons target rest) = do
   RelatedStored source1 target1 <- relateStored relationKind source target
   pure (RelatedExternal source1 (StoredCons target1 rest))
-relateExternalAt relationKind source index (StoredCons target rest) = do
-  RelatedExternal source1 remaining <- relateExternalAt relationKind source (index Linear.- 1) rest
+relateExternalAt relationKind source (InTail index) (StoredCons target rest) = do
+  RelatedExternal source1 remaining <- relateExternalAt relationKind source index rest
   pure (RelatedExternal source1 (StoredCons target remaining))
 
 relateListsAt ::
   RelationKind source target ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList source sourceValue %1 ->
   StoredList target targetValue %1 ->
   Domain (RelatedLists source sourceValue target targetValue)
-relateListsAt relationKind 0 targetIndex (StoredCons source rest) targets = do
+relateListsAt relationKind AtHead targetIndex (StoredCons source rest) targets = do
   RelatedExternal source1 targets1 <- relateExternalAt relationKind source targetIndex targets
   pure (RelatedLists (StoredCons source1 rest) targets1)
-relateListsAt relationKind sourceIndex targetIndex (StoredCons current rest) targets = do
-  RelatedLists rest1 targets1 <- relateListsAt relationKind (sourceIndex Linear.- 1) targetIndex rest targets
+relateListsAt relationKind (InTail sourceIndex) targetIndex (StoredCons current rest) targets = do
+  RelatedLists rest1 targets1 <- relateListsAt relationKind sourceIndex targetIndex rest targets
   pure (RelatedLists (StoredCons current rest1) targets1)
 
 relateSourceToLater ::
   RelationKind owner owner ->
   Stored owner value %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
   Domain (RelatedTail owner value)
-relateSourceToLater relationKind source 0 (StoredCons target tailValues) = do
+relateSourceToLater relationKind source AtHead (StoredCons target tailValues) = do
   RelatedStored source1 target1 <- relateStored relationKind source target
   pure (RelatedTail source1 (StoredCons target1 tailValues))
-relateSourceToLater relationKind source offset (StoredCons current tailValues) = do
-  RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset Linear.- 1) tailValues
+relateSourceToLater relationKind source (InTail offset) (StoredCons current tailValues) = do
+  RelatedTail source1 remaining <- relateSourceToLater relationKind source offset tailValues
   pure (RelatedTail source1 (StoredCons current remaining))
 
 relateAt ::
   RelationKind owner owner ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
   Domain (StoredList owner value)
-relateAt relationKind 0 distance (StoredCons source rest) = do
+relateAt relationKind AtHead distance (StoredCons source rest) = do
   RelatedTail source1 rest1 <- relateSourceToLater relationKind source distance rest
   pure (StoredCons source1 rest1)
-relateAt relationKind sourceIndex distance (StoredCons current rest) = do
-  rest1 <- relateAt relationKind (sourceIndex Linear.- 1) distance rest
+relateAt relationKind (InTail sourceIndex) distance (StoredCons current rest) = do
+  rest1 <- relateAt relationKind sourceIndex distance rest
   pure (StoredCons current rest1)
 
 relateAll ::
@@ -347,27 +357,27 @@ relateStoredProgram relationKind (Stored source sourceSlot) (Stored target targe
 relateSourceToLaterProgram ::
   RelationKind owner owner ->
   Stored owner value %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
   Program (RelatedTail owner value)
-relateSourceToLaterProgram relationKind source 0 (StoredCons target tailValues) = do
+relateSourceToLaterProgram relationKind source AtHead (StoredCons target tailValues) = do
   RelatedStored source1 target1 <- relateStoredProgram relationKind source target
   pure (RelatedTail source1 (StoredCons target1 tailValues))
-relateSourceToLaterProgram relationKind source offset (StoredCons current tailValues) = do
-  RelatedTail source1 remaining <- relateSourceToLaterProgram relationKind source (offset Linear.- 1) tailValues
+relateSourceToLaterProgram relationKind source (InTail offset) (StoredCons current tailValues) = do
+  RelatedTail source1 remaining <- relateSourceToLaterProgram relationKind source offset tailValues
   pure (RelatedTail source1 (StoredCons current remaining))
 
 relateAtProgram ::
   RelationKind owner owner ->
-  Int %1 ->
-  Int %1 ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
   Program (StoredList owner value)
-relateAtProgram relationKind 0 offset (StoredCons source rest) = do
+relateAtProgram relationKind AtHead offset (StoredCons source rest) = do
   RelatedTail source1 rest1 <- relateSourceToLaterProgram relationKind source offset rest
   pure (StoredCons source1 rest1)
-relateAtProgram relationKind index offset (StoredCons current rest) = do
-  rest1 <- relateAtProgram relationKind (index Linear.- 1) offset rest
+relateAtProgram relationKind (InTail index) offset (StoredCons current rest) = do
+  rest1 <- relateAtProgram relationKind index offset rest
   pure (StoredCons current rest1)
 
 relateAllProgram ::
@@ -466,12 +476,15 @@ lcsText leftValue rightValue table = reverse (go (length leftValue) (length righ
 edgePlan :: [(Int, Int)] -> EdgePlan
 edgePlan [] = NoEdges
 edgePlan ((source, target) : rest) =
-  NextEdge source (target - source - 1) (edgePlan rest)
+  NextEdge
+    (linearIndex source)
+    (linearIndex (target - source - 1))
+    (edgePlan rest)
 
 membershipPlan :: [(Int, Int)] -> MembershipPlan
 membershipPlan [] = NoMemberships
 membershipPlan ((source, target) : rest) =
-  NextMembership source target (membershipPlan rest)
+  NextMembership (linearIndex source) (linearIndex target) (membershipPlan rest)
 
 textPlan :: [String] -> TextPlan
 textPlan [] = NoTexts
@@ -555,13 +568,9 @@ program (InitialState inputs initialRows initialCells dependencyPlan fillPlan re
 render :: Render ()
 render = do
   canvasWidth <- variable @Span
-  canvasHeight <- variable @Span
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
-  ensure $ canvasHeight .>=. by 540
-  ensure $ canvasHeight .<=. by 1080
   width canvasWidth
-  height canvasHeight
   aspectRatio 16 9
   padding (uniform (by 28))
   contentFit Both Contain
@@ -635,10 +644,11 @@ render = do
             contentFit Both Contain
             ensure $ height rowValues .>=. by 24 .+. by 2 .*. score
 
-          coordinateLabel <- sometimes $ node $
-            content (text "(" <> asText rowPosition <> text "," <> asText columnPosition <> text ")")
-          ensure $ top coordinateLabel .==. bottom rowValues .+. by 4
-          ensure $ x coordinateLabel .==. x rowValues
+          sometimes $ do
+            coordinateLabel <- node $
+              content (text "(" <> asText rowPosition <> text "," <> asText columnPosition <> text ")")
+            ensure $ top coordinateLabel .==. bottom rowValues .+. by 4
+            ensure $ x coordinateLabel .==. x rowValues
 
     relation rowLinks $ do
       previous <- first rowLinks

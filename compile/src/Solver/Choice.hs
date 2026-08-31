@@ -2,7 +2,7 @@
 
 -- | Finite categorical choice implementation. Choice domains provide typed
 -- values plus stable solver tokens; 'Solver.Problem' samples satisfying
--- assignments before numeric optimization.
+-- assignments before affine-region preparation.
 module Solver.Choice
   ( -- * Choice domains
     -- | Typed finite choices. Public users normally access these through the

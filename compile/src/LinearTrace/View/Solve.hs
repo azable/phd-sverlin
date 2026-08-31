@@ -10,7 +10,6 @@ module LinearTrace.View.Solve
   ) where
 
 import           LinearTrace.View.Graph
-import           Prelude                (Maybe (..))
 import qualified Prelude                as P
 import qualified Solver                 as S
 import           Solver                 (RandomSeed, Solution, SolveConfig,
@@ -22,21 +21,16 @@ solveCSP seed config graph =
 
 solveViewProblem ::
      RandomSeed -> SolveConfig -> ViewGraph -> SolverProblem -> P.IO Solution
-solveViewProblem seed config graph problem =
+solveViewProblem seed config _graph problem =
   case S.compileDesignSpace config problem of
     P.Right designSpace ->
       S.sampleDesignSpace S.BalancedDesignChoices seed designSpace
         P.>>= P.either designSpaceFailure P.pure
-    P.Left err
-      | S.hasConstraintDecisions (viewConstraints graph) ->
-        designSpaceFailure err
-      | P.otherwise -> S.solveProblem config problem
+    P.Left err -> designSpaceFailure err
 
 solveCSPWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
 solveCSPWithSeed seed graph =
-  let problem = viewSolveProblem graph
-   in solveCSP seed (viewSolveConfig seed) graph
-        P.>>= acceptOrRetry seed problem
+  solveCSP seed (viewSolveConfig seed) graph P.>>= requireAcceptable
 
 -- | Re-solve a text-prepared view while retaining every finite aesthetic and
 -- structure decision from the initial solution.
@@ -50,21 +44,9 @@ solveCSPWithPinnedSolution seed initial graph =
       let problem =
             S.withProblemInitialOverrides (S.solutionValues initial) pinned
        in solveViewProblem seed (viewSolveConfig seed) graph problem
-            P.>>= acceptOrRetry seed problem
-
-acceptOrRetry :: RandomSeed -> SolverProblem -> Solution -> P.IO Solution
-acceptOrRetry seed problem solution =
-  case viewSolutionAcceptable solution of
-    P.True -> P.pure solution
-    P.False ->
-      case S.solutionBackend solution of
-        S.PenaltyOptimizer ->
-          S.solveProblem (viewRetrySolveConfig seed) problem
             P.>>= requireAcceptable
-        S.AffineSampler -> rejectSolution solution
 
 -- | Compile a view's affine branches once and sample every requested seed.
--- Non-affine legacy views retain the established per-seed optimizer path.
 solveCSPWithSeeds :: [RandomSeed] -> ViewGraph -> P.IO [Solution]
 solveCSPWithSeeds seeds graph =
   case seeds of
@@ -75,16 +57,7 @@ solveCSPWithSeeds seeds graph =
             P.Right designSpace ->
               S.sampleDesignSpaceBatch S.BalancedDesignChoices seeds designSpace
                 P.>>= P.either designSpaceFailure P.pure
-            P.Left err
-              | S.hasConstraintDecisions (viewConstraints graph) ->
-                designSpaceFailure err
-              | P.otherwise -> P.mapM (`solveLegacyWithSeed` graph) seeds
-
-solveLegacyWithSeed :: RandomSeed -> ViewGraph -> P.IO Solution
-solveLegacyWithSeed seed graph =
-  let problem = viewSolveProblem graph
-   in S.solveProblem (viewSolveConfig seed) problem
-        P.>>= acceptOrRetry seed problem
+            P.Left err -> designSpaceFailure err
 
 designSpaceFailure :: S.DesignSpaceError -> P.IO value
 designSpaceFailure err =
@@ -92,21 +65,7 @@ designSpaceFailure err =
     (P.userError ("visualization design space failed: " P.++ P.show err))
 
 viewSolveConfig :: RandomSeed -> SolveConfig
-viewSolveConfig seed =
-  S.withOptimizerTolerances (Just 1e-5) (Just 1e-3)
-    P.$ S.withConstraintWeights
-          (P.fromInteger (10 :: P.Integer))
-          (P.fromInteger (1 :: P.Integer))
-    P.$ S.withInitialSeed seed S.defaultSolveConfig
-
-viewRetrySolveConfig :: RandomSeed -> SolveConfig
-viewRetrySolveConfig seed =
-  S.withMaxOptimizerIterations 3000
-    P.$ S.withOptimizerTolerances (Just 1e-7) (Just 1e-5)
-    P.$ S.withConstraintWeights
-          (P.fromInteger (10 :: P.Integer))
-          (P.fromInteger (1 :: P.Integer))
-    P.$ S.withInitialSeed seed S.defaultSolveConfig
+viewSolveConfig seed = S.withInitialSeed seed S.defaultSolveConfig
 
 viewSolutionAcceptable :: Solution -> P.Bool
 viewSolutionAcceptable solution =

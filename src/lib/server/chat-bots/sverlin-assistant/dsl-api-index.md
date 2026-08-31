@@ -10,7 +10,7 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 - `Program` — Type: `Program :: Type -> Type` — Linear semantic program that records resource lifetimes and typed steps.
 - `Render` — Type: `Render :: Type -> Type` — Declarative visual-rule builder compiled after the semantic trace is known.
 - `>>=` — Type: `(>>=) :: builder value -> (value -> builder result) -> builder result` — Bind according to the builder's compiler-owned multiplicity.
-- `>>` — Type: `(>>) :: builder () -> builder result -> builder result` — Sequence according to the builder's compiler-owned multiplicity.
+- `>>` — Type: `(>>) :: Domain () %1 -> Domain result %1 -> Domain result; (>>) :: Program () %1 -> Program result %1 -> Program result; (>>) :: Generator value -> Generator result -> Generator result; (>>) :: Render value -> Render result -> Render result; (>>) :: TextBuilder value -> TextBuilder result -> TextBuilder result` — Sequence according to the builder's compiler-owned multiplicity.
 - `pure` — Type: `pure :: value -> builder value` — Lift a value using the current builder's multiplicity.
 - `return` — Type: `return :: value -> builder value` — Compatibility spelling used by RebindableSyntax.
 - `fail` — Type: `fail :: String -> builder value` — Turn a failed pattern match into a builder diagnostic.
@@ -53,16 +53,16 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 - `Block` — Type: `Block :: forall {k}. k -> Type` — Sole live capability for one materialized semantic value.
 - `Pending` — Type: `Pending :: forall {k}. k -> Type` — Unfinished value that must be materialized exactly once.
 - `Slot` — Type: `Slot :: forall {k} {k1}. k -> k1 -> Type` — Stable owner capability retaining one hidden occupant.
-- `Create` — Type: `Create :: forall {k}. k -> Type; data Create tag where; Create :: forall {k} (tag :: k). Pending tag -> Create tag` — Result wrapper produced by create.
-- `Use` — Type: `Use :: forall {k}. k -> Type; data Use tag where; Use :: forall {k} (tag :: k). Payload tag -> Use tag` — Result wrapper exposing a terminally consumed payload.
-- `Copy` — Type: `Copy :: forall {k}. k -> Type; data Copy tag where; Copy :: forall {k} (tag :: k). Block tag -> Pending tag -> Copy tag` — Result wrapper containing the original Block and a pending fork.
-- `Replace` — Type: `Replace :: forall {k}. k -> Type; data Replace tag where; Replace :: forall {k} (tag :: k). Pending tag -> Replace tag` — Result wrapper containing a pending replacement.
-- `Apply1` — Type: `Apply1 :: forall {k} {k1}. k -> k1 -> Type; data Apply1 operator argument where; Apply1 :: forall {k} {k1} (operator :: k) (argument :: k1). Pending (Apply1Result operator argument) -> Apply1 operator argument` — Result wrapper containing a unary-operation output.
-- `Apply2` — Type: `Apply2 :: forall {k} {k1} {k2}. k -> k1 -> k2 -> Type; data Apply2 operator left right where; Apply2 :: forall {k} {k1} {k2} (operator :: k) (left :: k1) (right :: k2). Pending (Apply2Result operator left right) -> Apply2 operator left right` — Result wrapper containing a binary-operation output.
+- `Create` — Type: `Create :: forall {k}. k -> Type; data Create tag where; Create :: forall {k} (tag :: k). Pending tag %1 -> Create tag` — Result wrapper produced by create.
+- `Use` — Type: `Use :: forall {k}. k -> Type; data Use tag where; Use :: forall {k} (tag :: k). Payload tag %1 -> Use tag` — Result wrapper exposing a terminally consumed payload.
+- `Copy` — Type: `Copy :: forall {k}. k -> Type; data Copy tag where; Copy :: forall {k} (tag :: k). Block tag %1 -> Pending tag %1 -> Copy tag` — Result wrapper containing the original Block and a pending fork.
+- `Replace` — Type: `Replace :: forall {k}. k -> Type; data Replace tag where; Replace :: forall {k} (tag :: k). Pending tag %1 -> Replace tag` — Result wrapper containing a pending replacement.
+- `Apply1` — Type: `Apply1 :: forall {k} {k1}. k -> k1 -> Type; data Apply1 operator argument where; Apply1 :: forall {k} {k1} (operator :: k) (argument :: k1). Pending (Apply1Result operator argument) %1 -> Apply1 operator argument` — Result wrapper containing a unary-operation output.
+- `Apply2` — Type: `Apply2 :: forall {k} {k1} {k2}. k -> k1 -> k2 -> Type; data Apply2 operator left right where; Apply2 :: forall {k} {k1} {k2} (operator :: k) (left :: k1) (right :: k2). Pending (Apply2Result operator left right) %1 -> Apply2 operator left right` — Result wrapper containing a binary-operation output.
 - `Destroy` — Type: `Destroy :: forall {k}. k -> Type; data Destroy tag where; Destroy :: forall {k} (tag :: k). Destroy tag` — Result wrapper confirming terminal destruction.
-- `Seal` — Type: `Seal :: forall {k} {k1}. k -> k1 -> Type; data Seal owner value where; Seal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner -> Slot owner value -> Seal owner value` — Result wrapper containing the owner and its occupied Slot.
-- `Unseal` — Type: `Unseal :: forall {k} {k1}. k -> k1 -> Type; data Unseal owner value where; Unseal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner -> Block value -> Unseal owner value` — Result wrapper recovering the owner and current occupant.
-- `Relate` — Type: `Relate :: forall {k} {k1} {k2} {k3}. k -> k1 -> k2 -> k3 -> Type; data Relate source sourceValue target targetValue where; Relate :: forall {k} {k1} {k2} {k3} (source :: k) (sourceValue :: k1) (target :: k2) (targetValue :: k3). Slot source sourceValue -> Slot target targetValue -> Relate source sourceValue target targetValue` — Result wrapper reissuing both related Slot capabilities.
+- `Seal` — Type: `Seal :: forall {k} {k1}. k -> k1 -> Type; data Seal owner value where; Seal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner %1 -> Slot owner value %1 -> Seal owner value` — Result wrapper containing the owner and its occupied Slot.
+- `Unseal` — Type: `Unseal :: forall {k} {k1}. k -> k1 -> Type; data Unseal owner value where; Unseal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner %1 -> Block value %1 -> Unseal owner value` — Result wrapper recovering the owner and current occupant.
+- `Relate` — Type: `Relate :: forall {k} {k1} {k2} {k3}. k -> k1 -> k2 -> k3 -> Type; data Relate source sourceValue target targetValue where; Relate :: forall {k} {k1} {k2} {k3} (source :: k) (sourceValue :: k1) (target :: k2) (targetValue :: k3). Slot source sourceValue %1 -> Slot target targetValue %1 -> Relate source sourceValue target targetValue` — Result wrapper reissuing both related Slot capabilities.
 - `create` — Type: `create :: Payload tag %1 -> Domain (Create tag); create :: Payload tag %1 -> Program (Create tag)` — Begin one payload lifetime as a pending value.
 - `materialize` — Type: `materialize :: Kind tag -> Pending tag %1 -> Domain (Block tag); materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)` — Assign one declared Kind to a pending value.
 - `seal` — Type: `seal :: Block owner %1 -> Block value %1 -> Domain (Seal owner value); seal :: Block owner %1 -> Block value %1 -> Program (Seal owner value)` — Hide a value inside one stable owner Slot.
@@ -167,7 +167,7 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 - `x` — Type: `x :: Selected node -> Coord; x :: Coord -> Render ()` — Read or set a node's horizontal centre using closed dispatch.
 - `y` — Type: `y :: Selected node -> Coord; y :: Coord -> Render ()` — Read or set a node's vertical centre using closed dispatch.
 - `center` — Type: `center :: Selected node -> Vec2 Coord; center :: Vec2 Coord -> Render ()` — Read or set both centre coordinates.
-- `size` — Type: `size :: Selected node -> Vec2 Span; size :: Vec2 Span -> Render ()` — Read or set both node spans.
+- `size` — Type: `size :: Selected node -> Vec2 Span` — Read both node spans; use `width` and `height` to set them.
 - `Insets` — Type: `Insets :: Type` — Four typed edge inset expressions.
 - `uniform` — Type: `uniform :: Span -> Insets` — Use one inset on all four edges.
 - `symmetric` — Type: `symmetric :: Span -> Span -> Insets` — Use separate vertical and horizontal insets.
@@ -188,7 +188,7 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 
 ## Styles and colour
 
-- `style` — Type: `style :: forall field input. input -> Render ()` — Set one supported style field on the current node or connector.
+- `style` — Type: `style :: forall field input. input -> Render ()` — Set one supported style field; connectors accept opacity and stroke fields only.
 - `withoutStyle` — Type: `withoutStyle :: forall field. Render ()` — Remove one inherited style field.
 - `styleOf` — Type: `styleOf :: forall field node. Selected node -> symbolic field value` — Read one final style field as a symbolic value.
 - `Opacity` — Type: `Opacity :: Type` — Whole-node opacity field marker.

@@ -76,6 +76,9 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
     IR.Visualization
       { IR.visualizationIrVersion = 1
       , IR.visualizationSeed = solutionSeedInt solution
+      , IR.visualizationScenarioKey = Nothing
+      , IR.visualizationScenarioSeed = Nothing
+      , IR.visualizationViewSeed = Nothing
       , IR.visualizationSourcePath = sourcePath
       , IR.visualizationSampling = Just (compileSampling solution)
       , IR.visualizationCoordinates =
@@ -92,6 +95,7 @@ compileSolvedWith sourcePath solution graph contents resources findings = do
             (findings ++ compileViewDiagnostics graph)
       , IR.visualizationVariables = compileVariables solution
       , IR.visualizationElements = elements
+      , IR.visualizationConnectors = Nothing
       , IR.visualizationSteps = steps
       }
 
@@ -419,7 +423,13 @@ compileStep lookup' instanceIds emphasis step = do
   mapM_ (applyIntent lookup' instanceIds) removals
   pure
     IR.TimelineStep
-      {IR.stepLabel = V.viewStepLabel step, IR.stepInstances = instances}
+      { IR.stepLabel = V.viewStepLabel step
+      , IR.stepInstances = instances
+      , IR.stepOccurrenceKey = Nothing
+      , IR.stepOrdinal = Nothing
+      , IR.stepParentOccurrenceKey = Nothing
+      , IR.stepConnectorInstances = Nothing
+      }
 
 clearOrigins :: SceneState -> SceneState
 clearOrigins scene =
@@ -573,6 +583,7 @@ continueElement source target = do
                   , IR.instanceElementId = IR.elementId target
                   , IR.instanceOriginElementId = Nothing
                   , IR.instanceCodeEmphasisRanges = Nothing
+                  , IR.instanceFragmentClusters = Nothing
                   })
                (sceneInstances scene)
          })
@@ -619,6 +630,7 @@ createElementWithOrigin instanceIds origin element =
                           , IR.instanceElementId = elementId'
                           , IR.instanceOriginElementId = origin
                           , IR.instanceCodeEmphasisRanges = Nothing
+                          , IR.instanceFragmentClusters = Nothing
                           })
                        (sceneInstances scene)
                  })

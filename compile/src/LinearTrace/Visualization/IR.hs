@@ -11,6 +11,10 @@
 module LinearTrace.Visualization.IR
   ( VisualId(..)
   , RenderInstanceId(..)
+  , ConnectorId(..)
+  , ConnectorInstanceId(..)
+  , ScenarioKey(..)
+  , FrameOccurrenceKey(..)
   , ResourceId(..)
   , Sha256(..)
   , CspVariableId(..)
@@ -34,6 +38,7 @@ module LinearTrace.Visualization.IR
   , FontAxis(..)
   , FontInstance(..)
   , TextLine(..)
+  , GlyphCluster(..)
   , TextLayout(..)
   , CodeTokenKind(..)
   , CodeToken(..)
@@ -43,6 +48,10 @@ module LinearTrace.Visualization.IR
   , StyleVariableBinding(..)
   , VisualElement(..)
   , VisualInstance(..)
+  , LayoutPoint(..)
+  , ConnectorMarker(..)
+  , VisualConnector(..)
+  , ConnectorInstance(..)
   , TimelineStep(..)
   , SamplingMode(..)
   , DecisionCoverage(..)
@@ -62,6 +71,24 @@ newtype VisualId =
 
 newtype RenderInstanceId =
   RenderInstanceId Int
+  deriving (Eq, Ord, Show, Generic)
+
+newtype ConnectorId =
+  ConnectorId Int
+  deriving (Eq, Ord, Show, Generic)
+
+newtype ConnectorInstanceId =
+  ConnectorInstanceId Int
+  deriving (Eq, Ord, Show, Generic)
+
+-- | Content-derived identity shared by every view of one generated trace.
+newtype ScenarioKey =
+  ScenarioKey String
+  deriving (Eq, Ord, Show, Generic)
+
+-- | Stable hierarchical identity of one runtime step occurrence.
+newtype FrameOccurrenceKey =
+  FrameOccurrenceKey String
   deriving (Eq, Ord, Show, Generic)
 
 -- | Stable logical identifier for a content-addressed package resource.
@@ -224,6 +251,14 @@ data TextLine = TextLine
   , textLineInkBounds   :: LayoutRect
   } deriving (Eq, Show, Generic)
 
+-- | One shaped glyph cluster and the source bytes that produced it. Bounds use
+-- the same solved coordinates as the containing text line.
+data GlyphCluster = GlyphCluster
+  { glyphClusterLineIndex   :: Int
+  , glyphClusterSourceRange :: TextSourceRange
+  , glyphClusterInkBounds   :: LayoutRect
+  } deriving (Eq, Show, Generic)
+
 data TextLayout = TextLayout
   { textLayoutSource          :: String
   , textLayoutWhitespace      :: TextWhitespace
@@ -319,11 +354,49 @@ data VisualInstance = VisualInstance
   , instanceElementId          :: VisualId
   , instanceOriginElementId    :: Maybe VisualId
   , instanceCodeEmphasisRanges :: Maybe [TextSourceRange]
+  , instanceFragmentClusters   :: Maybe [GlyphCluster]
+  } deriving (Eq, Show, Generic)
+
+data LayoutPoint = LayoutPoint
+  { layoutPointX :: Double
+  , layoutPointY :: Double
+  } deriving (Eq, Show, Generic)
+
+data ConnectorMarker
+  = ConnectorNoMarker
+  | ConnectorArrowMarker
+  | ConnectorCircleMarker
+  | ConnectorDiamondMarker
+  deriving (Eq, Show, Generic)
+
+-- | Solved straight connector. Rendering it never changes layout.
+data VisualConnector = VisualConnector
+  { connectorId               :: ConnectorId
+  , connectorRelationIdentity :: Maybe String
+  , connectorStartElementId   :: VisualId
+  , connectorEndElementId     :: VisualId
+  , connectorStart            :: LayoutPoint
+  , connectorEnd              :: LayoutPoint
+  , connectorStartMarker      :: ConnectorMarker
+  , connectorEndMarker        :: ConnectorMarker
+  , connectorStroke           :: Maybe HslColor
+  , connectorStrokeWidth      :: Double
+  , connectorOpacity          :: Double
+  } deriving (Eq, Show, Generic)
+
+data ConnectorInstance = ConnectorInstance
+  { connectorInstanceId                :: ConnectorInstanceId
+  , connectorInstanceConnectorId       :: ConnectorId
+  , connectorInstanceOriginConnectorId :: Maybe ConnectorId
   } deriving (Eq, Show, Generic)
 
 data TimelineStep = TimelineStep
-  { stepLabel     :: String
-  , stepInstances :: [VisualInstance]
+  { stepLabel               :: String
+  , stepInstances           :: [VisualInstance]
+  , stepOccurrenceKey       :: Maybe FrameOccurrenceKey
+  , stepOrdinal             :: Maybe Int
+  , stepParentOccurrenceKey :: Maybe FrameOccurrenceKey
+  , stepConnectorInstances  :: Maybe [ConnectorInstance]
   } deriving (Eq, Show, Generic)
 
 -- | Measure from which the solver proposed this visualization.
@@ -348,22 +421,34 @@ data SamplingProvenance = SamplingProvenance
   } deriving (Eq, Show, Generic)
 
 data Visualization = Visualization
-  { visualizationIrVersion   :: Int
-  , visualizationSeed        :: Int
-  , visualizationSourcePath  :: FilePath
-  , visualizationSampling    :: Maybe SamplingProvenance
-  , visualizationCoordinates :: CoordinateSystem
-  , visualizationRoot        :: VisualId
-  , visualizationResources   :: [ResourceDescriptor]
-  , visualizationFindings    :: [VisualizationFinding]
-  , visualizationVariables   :: [CspVariable]
-  , visualizationElements    :: [VisualElement]
-  , visualizationSteps       :: [TimelineStep]
+  { visualizationIrVersion    :: Int
+  , visualizationSeed         :: Int
+  , visualizationScenarioKey  :: Maybe ScenarioKey
+  , visualizationScenarioSeed :: Maybe Int
+  , visualizationViewSeed     :: Maybe Int
+  , visualizationSourcePath   :: FilePath
+  , visualizationSampling     :: Maybe SamplingProvenance
+  , visualizationCoordinates  :: CoordinateSystem
+  , visualizationRoot         :: VisualId
+  , visualizationResources    :: [ResourceDescriptor]
+  , visualizationFindings     :: [VisualizationFinding]
+  , visualizationVariables    :: [CspVariable]
+  , visualizationElements     :: [VisualElement]
+  , visualizationConnectors   :: Maybe [VisualConnector]
+  , visualizationSteps        :: [TimelineStep]
   } deriving (Eq, Show, Generic)
 
 $(deriveJSON irJsonOptions ''VisualId)
 
 $(deriveJSON irJsonOptions ''RenderInstanceId)
+
+$(deriveJSON irJsonOptions ''ConnectorId)
+
+$(deriveJSON irJsonOptions ''ConnectorInstanceId)
+
+$(deriveJSON irJsonOptions ''ScenarioKey)
+
+$(deriveJSON irJsonOptions ''FrameOccurrenceKey)
 
 $(deriveJSON irJsonOptions ''ResourceId)
 
@@ -407,6 +492,8 @@ $(deriveJSON irJsonOptions ''FontInstance)
 
 $(deriveJSON irJsonOptions ''TextLine)
 
+$(deriveJSON irJsonOptions ''GlyphCluster)
+
 $(deriveJSON irJsonOptions ''TextLayout)
 
 $(deriveJSON irJsonOptions ''CodeTokenKind)
@@ -426,6 +513,14 @@ $(deriveJSON irJsonOptions ''StyleVariableBinding)
 $(deriveJSON irJsonOptions ''VisualElement)
 
 $(deriveJSON irJsonOptions ''VisualInstance)
+
+$(deriveJSON irJsonOptions ''LayoutPoint)
+
+$(deriveJSON irJsonOptions ''ConnectorMarker)
+
+$(deriveJSON irJsonOptions ''VisualConnector)
+
+$(deriveJSON irJsonOptions ''ConnectorInstance)
 
 $(deriveJSON irJsonOptions ''TimelineStep)
 

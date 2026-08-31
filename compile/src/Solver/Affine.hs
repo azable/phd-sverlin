@@ -13,7 +13,7 @@ module Solver.Affine
 import           Data.List         (intercalate)
 import           Data.Map.Strict   (Map)
 import qualified Data.Map.Strict   as Map
-import           Data.Maybe        (fromMaybe)
+import           Data.Maybe        (fromMaybe, isNothing)
 import           Prelude
 import           Solver.Constraint
 import           Solver.Expr
@@ -31,58 +31,60 @@ data AffineProblem = AffineProblem
   , affineVariableBounds :: Map String DomainBounds
   , affineEqualities     :: [AffineRow]
   , affineInequalities   :: [AffineRow]
-  , affineSoftCount      :: Int
   } deriving (Eq, Show)
 
--- | Result of deciding whether hit-and-run can solve a constraint set.
+-- | Result of validating and lowering a constraint set for affine sampling.
 data AffineClassification
   = AffineReady AffineProblem
-  | AffineFallback String
+  | AffineUnsupported String
   | AffineInvalid String
   deriving (Eq, Show)
 
--- | Compile all hard constraints into affine rows. Soft constraints remain
--- visible to the optimizer fallback but intentionally do not affect sampling.
+-- | Compile every constraint into affine rows. Unsupported expressions and
+-- objectives are rejected; there is no secondary numeric backend.
 classifyAffineProblem :: [Constraint] -> AffineClassification
 classifyAffineProblem constraints =
-  case invalidBounds of
-    Just message -> AffineInvalid message
+  case firstUnsupported flatConstraints of
+    Just message -> AffineUnsupported message
     Nothing ->
-      case unboundedNames of
-        names@(_:_) ->
-          AffineFallback
-            ("uniform affine sampling requires finite bounds for: "
-               ++ intercalate ", " names)
-        [] ->
-          case traverse classifyHard hardConstraints of
-            Left reason -> AffineFallback reason
-            Right rows ->
-              case firstInvalid rows of
-                Just message -> AffineInvalid message
-                Nothing ->
-                  AffineReady
-                    AffineProblem
-                      { affineVariableNames = Map.keys variableTypes
-                      , affineVariableBounds = finalBounds
-                      , affineEqualities = [row | HardEquality row <- rows]
-                      , affineInequalities = [row | HardInequality row <- rows]
-                      , affineSoftCount = length softConstraints
-                      }
+      case invalidBounds of
+        Just message -> AffineInvalid message
+        Nothing ->
+          case unboundedNames of
+            names@(_:_) ->
+              AffineUnsupported
+                ("affine sampling requires finite lower and upper bounds for: "
+                   ++ intercalate ", " names)
+            [] ->
+              case traverse classifyHard flatConstraints of
+                Left reason -> AffineUnsupported reason
+                Right rows ->
+                  case firstInvalid rows of
+                    Just message -> AffineInvalid message
+                    Nothing ->
+                      AffineReady
+                        AffineProblem
+                          { affineVariableNames = Map.keys variableTypes
+                          , affineVariableBounds = finalBounds
+                          , affineEqualities = [row | HardEquality row <- rows]
+                          , affineInequalities =
+                              [row | HardInequality row <- rows]
+                          }
   where
     flatConstraints = flattenConstraints constraints
-    hardConstraints = filter hardConstraint flatConstraints
-    softConstraints = filter (not . hardConstraint) flatConstraints
     variableTypes = collectConstraintVarTypes flatConstraints
-    inferredBounds = inferDomainBounds hardConstraints
+    inferredBounds = inferDomainBounds flatConstraints
     finalBounds =
-      Map.mapWithKey
-        (\name ty ->
-           domainDefaultBounds ty
-             `mergeDomainBounds` Map.findWithDefault
-                                   unboundedDomainBounds
-                                   name
-                                   inferredBounds)
-        variableTypes
+      Map.map
+        canonicalizeBounds
+        (Map.mapWithKey
+           (\name ty ->
+              domainDefaultBounds ty
+                `mergeDomainBounds` Map.findWithDefault
+                                      unboundedDomainBounds
+                                      name
+                                      inferredBounds)
+           variableTypes)
     invalidBounds = firstInvalidBound (Map.toAscList finalBounds)
     unboundedNames =
       [ name
@@ -95,28 +97,31 @@ data HardRow
   | HardInequality AffineRow
   | HardSatisfied
 
-hardConstraint :: Constraint -> Bool
-hardConstraint constraint =
-  case constraint of
-    Soft _     -> False
-    Minimize _ -> False
-    Cases _    -> True
-    _          -> True
+firstUnsupported :: [Constraint] -> Maybe String
+firstUnsupported constraints = firstJust (map unsupported constraints)
+  where
+    unsupported constraint =
+      case constraint of
+        Soft _ ->
+          Just "soft constraints are unsupported in affine design spaces"
+        Minimize _ ->
+          Just "numeric objectives are unsupported in affine design spaces"
+        _ -> Nothing
 
 classifyHard :: Constraint -> Either String HardRow
 classifyHard constraint =
   case constraint of
     Equals ty lhs rhs ->
       case domainCircularPeriod ty of
-        Just _ -> Left "cyclic equality requires the optimizer backend"
+        Just _ -> Left "cyclic equality is not affine"
         Nothing ->
           maybe
-            (Left "non-affine equality requires the optimizer backend")
+            (Left "non-affine equality is unsupported")
             (Right . equalityRow)
             (linearRawExpr (ESub lhs rhs))
     LessOrEqual lhs rhs ->
       maybe
-        (Left "non-affine inequality requires the optimizer backend")
+        (Left "non-affine inequality is unsupported")
         (Right . inequalityRow)
         (linearRawExpr (ESub lhs rhs))
     Soft _ -> Right HardSatisfied
@@ -180,6 +185,22 @@ boundedOnBothSides bounds =
     (Just _, Just _) -> True
     _                -> False
 
+-- Affine propagation may derive the same exact endpoint through differently
+-- ordered floating-point arithmetic. Collapse a tolerance-sized crossed range
+-- to its midpoint so a valid equality is not rejected as contradictory.
+canonicalizeBounds :: DomainBounds -> DomainBounds
+canonicalizeBounds bounds =
+  case (domainLowerBound bounds, domainUpperBound bounds) of
+    (Just lower, Just upper)
+      | lower > upper
+      , lower - upper <= equalityEpsilon ->
+        let endpoint = (lower + upper) / 2
+         in DomainBounds
+              { domainLowerBound = Just endpoint
+              , domainUpperBound = Just endpoint
+              }
+    _ -> bounds
+
 -- | Collect and validate the symbolic domain used for every variable.
 collectConstraintVarTypes :: [Constraint] -> Map String Domain
 collectConstraintVarTypes = foldMap collectOne
@@ -234,18 +255,95 @@ mergeVarTypes lhs rhs
          ++ " and "
          ++ show rhs)
 
--- | Infer per-variable bounds from direct ranges and affine inequalities whose
--- other variables already have direct finite bounds.
+-- | Infer finite outer bounds from domains, direct ranges, and affine
+-- relationships. Equality propagation is repeated only until no new bound
+-- side becomes available; further numeric tightening is unnecessary because
+-- every original affine row remains in the sampled problem.
 inferDomainBounds :: [Constraint] -> Map String DomainBounds
-inferDomainBounds constraints =
-  foldl (addAffineConstraint directBounds) directBounds constraints
+inferDomainBounds constraints = inferBoundsFrom domainBounds constraints
   where
-    directBounds = foldl addDirectConstraint Map.empty constraints
+    domainBounds =
+      Map.map domainDefaultBounds (collectConstraintVarTypes constraints)
+
+inferBoundsFrom ::
+     Map String DomainBounds -> [Constraint] -> Map String DomainBounds
+inferBoundsFrom initial originalConstraints = propagate directBounds
+  where
+    constraints = mergeParallelCases originalConstraints
+    directBounds = foldl addDirectConstraint domainBounds constraints
+    domainBounds = initial
+    propagate known =
+      let next = foldl (addAffineConstraint known) known constraints
+       in if boundAvailability next == boundAvailability known
+            then next
+            else propagate next
+
+-- Several constraints may be guarded by the same finite decision.  Bound
+-- inference must consider their conjunction per token: inspecting each Cases
+-- node separately would miss complementary arms such as "omit fixes size to
+-- zero" and "include derives size from content".  Decisions with different
+-- names remain independent, so this does not construct a Cartesian product.
+mergeParallelCases :: [Constraint] -> [Constraint]
+mergeParallelCases original = ordinary ++ map Cases (Map.elems grouped)
+  where
+    normalized = concatMap normalize original
+    ordinary = [constraint | constraint <- normalized, notCase constraint]
+    grouped =
+      Map.fromListWith
+        mergeSpecs
+        [(specKey spec, spec) | Cases spec <- normalized]
+    normalize constraint =
+      case constraint of
+        All nested -> mergeParallelCases nested
+        Cases spec ->
+          [ Cases
+              spec
+                { decisionSpecAlternatives =
+                    [ (token, mergeParallelCases nested)
+                    | (token, nested) <- decisionSpecAlternatives spec
+                    ]
+                }
+          ]
+        _ -> [constraint]
+    notCase constraint =
+      case constraint of
+        Cases _ -> False
+        _       -> True
+    specKey spec =
+      ( decisionSpecName spec
+      , decisionSpecOrigin spec
+      , map fst (decisionSpecAlternatives spec))
+    mergeSpecs newer older =
+      older
+        { decisionSpecAlternatives =
+            zipWith
+              (\(token, oldConstraints) (_, newConstraints) ->
+                 (token, oldConstraints ++ newConstraints))
+              (decisionSpecAlternatives older)
+              (decisionSpecAlternatives newer)
+        }
+
+boundAvailability :: Map String DomainBounds -> Map String (Bool, Bool)
+boundAvailability =
+  Map.map
+    (\bounds ->
+       (hasBound (domainLowerBound bounds), hasBound (domainUpperBound bounds)))
+  where
+    hasBound maybeBound =
+      case maybeBound of
+        Nothing -> False
+        Just _  -> True
 
 addDirectConstraint ::
      Map String DomainBounds -> Constraint -> Map String DomainBounds
 addDirectConstraint bounds constraint =
   case constraint of
+    Equals domain (EVar _ variable) (ELit value)
+      | isNothing (domainCircularPeriod domain) ->
+        addFixedBound variable value bounds
+    Equals domain (ELit value) (EVar _ variable)
+      | isNothing (domainCircularPeriod domain) ->
+        addFixedBound variable value bounds
     LessOrEqual (ELit lower) (EVar _ variable) ->
       Map.alter
         (Just . addDomainLower lower . fromMaybe unboundedDomainBounds)
@@ -260,6 +358,16 @@ addDirectConstraint bounds constraint =
     Cases _ -> bounds
     _ -> bounds
 
+addFixedBound ::
+     Var -> Double -> Map String DomainBounds -> Map String DomainBounds
+addFixedBound variable value =
+  Map.alter
+    (Just
+       . addDomainUpper value
+       . addDomainLower value
+       . fromMaybe unboundedDomainBounds)
+    (varName variable)
+
 addAffineConstraint ::
      Map String DomainBounds
   -> Map String DomainBounds
@@ -267,10 +375,74 @@ addAffineConstraint ::
   -> Map String DomainBounds
 addAffineConstraint known bounds constraint =
   case constraint of
+    Equals domain lhs rhs
+      | isNothing (domainCircularPeriod domain) ->
+        let difference = ESub lhs rhs
+         in addLinearUpperBounds
+              known
+              (ENeg difference)
+              (addLinearUpperBounds known difference bounds)
     LessOrEqual lhs rhs -> addLinearUpperBounds known (ESub lhs rhs) bounds
-    All nested          -> foldl (addAffineConstraint known) bounds nested
-    Cases _             -> bounds
-    _                   -> bounds
+    All nested -> foldl (addAffineConstraint known) bounds nested
+    Cases spec ->
+      Map.unionWith
+        mergeDomainBounds
+        bounds
+        (commonAlternativeBounds
+           [ inferBoundsFrom known nested
+           | (_, nested) <- decisionSpecAlternatives spec
+           , not (constraintsDefinitelyInfeasible nested)
+           ])
+    _ -> bounds
+
+-- Constant contradictions are independent of every numeric bound.  Ignoring
+-- those branches is required for guarded constraints: an inactive guard is
+-- represented by @0 == 1@, so it cannot weaken the bounds proved by the only
+-- feasible alternative.
+constraintsDefinitelyInfeasible :: [Constraint] -> Bool
+constraintsDefinitelyInfeasible = any constraintDefinitelyInfeasible
+
+constraintDefinitelyInfeasible :: Constraint -> Bool
+constraintDefinitelyInfeasible constraint =
+  case constraint of
+    Equals domain lhs rhs
+      | isNothing (domainCircularPeriod domain) ->
+        maybe False ((> equalityEpsilon) . abs) (constantDifference lhs rhs)
+    LessOrEqual lhs rhs ->
+      maybe False (> equalityEpsilon) (constantDifference lhs rhs)
+    All nested -> constraintsDefinitelyInfeasible nested
+    Cases spec ->
+      all
+        (constraintsDefinitelyInfeasible . snd)
+        (decisionSpecAlternatives spec)
+    _ -> False
+  where
+    constantDifference lhs rhs =
+      case linearRawExpr (ESub lhs rhs) of
+        Just (coefficients, constant)
+          | Map.null coefficients -> Just constant
+        _ -> Nothing
+
+commonAlternativeBounds :: [Map String DomainBounds] -> Map String DomainBounds
+commonAlternativeBounds alternatives =
+  case alternatives of
+    [] -> Map.empty
+    first:_ ->
+      Map.mapWithKey
+        (\name _ ->
+           DomainBounds
+             { domainLowerBound =
+                 minimum
+                   <$> traverse
+                         (\branch -> Map.lookup name branch >>= domainLowerBound)
+                         alternatives
+             , domainUpperBound =
+                 maximum
+                   <$> traverse
+                         (\branch -> Map.lookup name branch >>= domainUpperBound)
+                         alternatives
+             })
+        first
 
 addLinearUpperBounds ::
      Map String DomainBounds
