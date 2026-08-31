@@ -1,10 +1,10 @@
 -- Topological sorting for the proposed API.
 -- This planning source is intentionally ahead of the current compiler.
 --
--- The input generator constructs a DAG directly: every edge points from a
--- lower location number to a higher one. Program still runs Kahn's algorithm
--- rather than relying on that construction order. Render can show the DAG,
--- its output sequence, or both as one explicit three-way design choice.
+-- Generator constructs a DAG and precomputes Kahn's output order. Domain
+-- materializes the DAG, then Program consumes that linear output plan. Render
+-- can show the DAG, its output sequence, or both as one three-way choice.
+-- This concise replay does not independently prove that output order.
 
 data Task
 instance Traceable Task where
@@ -52,30 +52,76 @@ nextOutput = orderedRelation @NextOutputRole
 outputFor :: RelationKind OutputCell Task
 outputFor = orderedRelation @OutputForRole
 
-topologicalScenario :: Input TopologicalInput
-topologicalScenario = input @TopologicalScenarioRole
-
 data TopologicalSort
 data BuildDag
 data FindReadyTasks
 data EmitTask
 data FinishTopologicalSort
 
-data TopologicalInput = TopologicalInput
-  { taskLabels :: [String]
-  , dependencyEdges :: [(Int, Int)]
-  }
+data LinearIndex where
+  AtHead :: LinearIndex
+  InTail :: LinearIndex %1 -> LinearIndex
 
-topologicalGenerator :: Generator TopologicalInput
+data InitialDependency where
+  InitialDependency :: LinearIndex %1 -> LinearIndex %1 -> InitialDependency
+
+data InitialDependencies where
+  NoInitialDependencies :: InitialDependencies
+  MoreInitialDependencies ::
+    InitialDependency %1 ->
+    InitialDependencies %1 ->
+    InitialDependencies
+
+data OutputPlan where
+  NoOutput :: OutputPlan
+  MoreOutput :: String %1 -> LinearIndex %1 -> OutputPlan %1 -> OutputPlan
+
+data TopologicalSample where
+  TopologicalSample ::
+    [String] %1 ->
+    InitialDependencies %1 ->
+    OutputPlan %1 ->
+    TopologicalSample
+
+data InitialState where
+  InitialState ::
+    StoredList Task TaskLabel %1 ->
+    OutputPlan %1 ->
+    InitialState
+
+-- Only Generator performs this numeric conversion. The path crossing
+-- `variable` is consumed structurally by Domain or Program.
+linearIndex :: Int -> LinearIndex
+linearIndex 0 = AtHead
+linearIndex index = InTail (linearIndex (index - 1))
+
+consumeLinearIndex :: LinearIndex %1 -> value %1 -> value
+consumeLinearIndex AtHead value = value
+consumeLinearIndex (InTail rest) value = consumeLinearIndex rest value
+
+initialDependencies :: [(Int, Int)] -> InitialDependencies
+initialDependencies [] = NoInitialDependencies
+initialDependencies ((source, target) : rest) =
+  InitialDependency (linearIndex source) (linearIndex (target - source - 1))
+    `MoreInitialDependencies` initialDependencies rest
+
+outputPlan :: [String] -> [Int] -> OutputPlan
+outputPlan _ [] = NoOutput
+outputPlan labels (taskIndex : rest) =
+  MoreOutput (labels !! taskIndex) (linearIndex taskIndex) (outputPlan labels rest)
+
+topologicalGenerator :: Generator TopologicalSample
 topologicalGenerator = do
   taskCount <- between 6 10
   labels <- shuffle (take taskCount ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"])
   stride <- elementOf 2 [3]
   let spine = [(index, index + 1) | index <- [0 .. taskCount - 2]]
   let shortcuts = [(index, index + stride) | index <- [0 .. taskCount - stride - 1]]
-  pure (TopologicalInput labels (spine <> shortcuts))
+  let dependencies = spine <> shortcuts
+  let order = topologicalOrder taskCount dependencies
+  pure (TopologicalSample labels (initialDependencies dependencies) (outputPlan labels order))
 
-domain :: Domain ()
+domain :: Domain InitialState
 domain = do
   declareKind taskKind
   declareKind taskLabelKind
@@ -84,7 +130,6 @@ domain = do
   declareRelation precedes
   declareRelation nextOutput
   declareRelation outputFor
-  variable topologicalScenario topologicalGenerator
   declareSteps
     @'[ TopologicalSort
       , BuildDag
@@ -92,6 +137,11 @@ domain = do
       , EmitTask
       , FinishTopologicalSort
       ]
+  TopologicalSample labels dependencies plan <-
+    variable @TopologicalScenarioRole topologicalGenerator
+  tasks <- initializeTasks labels
+  relatedTasks <- relateInitialDependencies precedes dependencies tasks
+  pure (InitialState relatedTasks plan)
 
 --------------------------------------------------------------------------------
 -- Linear locations and relation threading
@@ -134,6 +184,21 @@ createStored ownerKind ownerPayload valueKind valuePayload = do
   Seal owner1 slot <- seal owner value
   pure (Stored owner1 slot)
 
+initializeStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
 relateStored ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
@@ -143,63 +208,82 @@ relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) 
   Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
   pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
 
+relateInitialStored ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Domain (RelatedStored source sourceValue target targetValue)
+relateInitialStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
 relateExternalAt ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
-  Int ->
+  LinearIndex %1 ->
   StoredList target targetValue %1 ->
   Program (RelatedExternal source sourceValue target targetValue)
 relateExternalAt relationKind source targetIndex targets =
   case (targetIndex, targets) of
-    (0, StoredCons target rest) -> do
+    (AtHead, StoredCons target rest) -> do
       RelatedStored source1 target1 <- relateStored relationKind source target
       pure (RelatedExternal source1 (StoredCons target1 rest))
-    (index, StoredCons target rest) -> do
-      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
+    (InTail index, StoredCons target rest) -> do
+      RelatedExternal source1 remaining <- relateExternalAt relationKind source index rest
       pure (RelatedExternal source1 (StoredCons target remaining))
-    (_, StoredNil) -> error "topological generator produced an invalid task index"
+    (index, StoredNil) ->
+      pure (consumeLinearIndex index (RelatedExternal source StoredNil))
 
-relateSourceToLater ::
+relateInitialSourceToLater ::
   RelationKind owner owner ->
   Stored owner value %1 ->
-  Int ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
-  Program (RelatedTail owner value)
-relateSourceToLater relationKind source distance rest =
+  Domain (RelatedTail owner value)
+relateInitialSourceToLater relationKind source distance rest =
   case (distance, rest) of
-    (0, StoredCons target tailValues) -> do
-      RelatedStored source1 target1 <- relateStored relationKind source target
+    (AtHead, StoredCons target tailValues) -> do
+      RelatedStored source1 target1 <- relateInitialStored relationKind source target
       pure (RelatedTail source1 (StoredCons target1 tailValues))
-    (offset, StoredCons current tailValues) -> do
-      RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset - 1) tailValues
+    (InTail offset, StoredCons current tailValues) -> do
+      RelatedTail source1 remaining <-
+        relateInitialSourceToLater relationKind source offset tailValues
       pure (RelatedTail source1 (StoredCons current remaining))
-    (_, StoredNil) -> error "topological generator produced an invalid dependency"
+    (offset, StoredNil) ->
+      pure (consumeLinearIndex offset (RelatedTail source StoredNil))
 
-relateAt ::
+seekInitialSource ::
   RelationKind owner owner ->
-  Int ->
-  Int ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
-  Program (StoredList owner value)
-relateAt relationKind sourceIndex targetIndex = seek sourceIndex
-  where
-    seek 0 (StoredCons source rest) = do
-      RelatedTail source1 rest1 <- relateSourceToLater relationKind source (targetIndex - sourceIndex - 1) rest
-      pure (StoredCons source1 rest1)
-    seek index (StoredCons current rest) = do
-      rest1 <- seek (index - 1) rest
-      pure (StoredCons current rest1)
-    seek _ StoredNil = error "topological generator produced an invalid dependency"
+  Domain (StoredList owner value)
+seekInitialSource relationKind AtHead targetDistance (StoredCons source rest) = do
+  RelatedTail source1 rest1 <-
+    relateInitialSourceToLater relationKind source targetDistance rest
+  pure (StoredCons source1 rest1)
+seekInitialSource relationKind (InTail sourceOffset) targetDistance (StoredCons current rest) = do
+  rest1 <-
+    seekInitialSource relationKind sourceOffset targetDistance rest
+  pure (StoredCons current rest1)
+seekInitialSource _ sourceOffset targetDistance StoredNil =
+  pure
+    (consumeLinearIndex
+       sourceOffset
+       (consumeLinearIndex targetDistance StoredNil))
 
-relateAll ::
+relateInitialDependencies ::
   RelationKind owner owner ->
-  [(Int, Int)] ->
+  InitialDependencies %1 ->
   StoredList owner value %1 ->
-  Program (StoredList owner value)
-relateAll _ [] values = pure values
-relateAll relationKind ((source, target) : rest) values = do
-  values1 <- relateAt relationKind source target values
-  relateAll relationKind rest values1
+  Domain (StoredList owner value)
+relateInitialDependencies _ NoInitialDependencies values = pure values
+relateInitialDependencies relationKind (MoreInitialDependencies dependency rest) values =
+  case dependency of
+    InitialDependency sourceOffset targetDistance -> do
+      values1 <-
+        seekInitialSource relationKind sourceOffset targetDistance values
+      relateInitialDependencies relationKind rest values1
 
 destroyStored :: Stored owner value %1 -> Program ()
 destroyStored (Stored owner slot) = do
@@ -215,16 +299,18 @@ destroyStoredList (StoredCons current rest) = do
   destroyStoredList rest
 
 --------------------------------------------------------------------------------
--- Program
+-- Domain initialization and Program
 --------------------------------------------------------------------------------
 
-buildTasks :: [String] -> Program (StoredList Task TaskLabel)
-buildTasks [] = pure StoredNil
-buildTasks (label : rest) = do
-  task <- createStored taskKind LUnit taskLabelKind (LString label)
-  tasks <- buildTasks rest
+initializeTasks :: [String] %1 -> Domain (StoredList Task TaskLabel)
+initializeTasks [] = pure StoredNil
+initializeTasks (label : rest) = do
+  task <- initializeStored taskKind LUnit taskLabelKind (LString label)
+  tasks <- initializeTasks rest
   pure (StoredCons task tasks)
 
+-- These ordinary helpers are evaluated only by topologicalGenerator. Program
+-- consumes their already-constructed OutputPlan.
 memberInt :: Int -> [Int] -> Bool
 memberInt _ [] = False
 memberInt wanted (value : rest) = wanted == value || memberInt wanted rest
@@ -236,7 +322,7 @@ removeOutgoing :: Int -> [(Int, Int)] -> [(Int, Int)]
 removeOutgoing task = filter (\(source, _) -> source /= task)
 
 -- Kahn's algorithm repeatedly emits one zero-indegree task. Sorting the ready
--- set makes the trace deterministic for one generated input; view randomness
+-- set makes the trace deterministic for one generated sample; view randomness
 -- remains independent in Render.
 topologicalOrder :: Int -> [(Int, Int)] -> [Int]
 topologicalOrder taskCount initialEdges = go [] initialEdges
@@ -255,16 +341,15 @@ data OutputState where
     OutputState
 
 emitOutput ::
-  [String] ->
-  [Int] ->
+  OutputPlan %1 ->
   StoredList OutputCell OutputLabel %1 ->
   StoredList Task TaskLabel %1 ->
   Program OutputState
-emitOutput _ [] output tasks = pure (OutputState output tasks)
-emitOutput labels (taskIndex : rest) output tasks = do
+emitOutput NoOutput output tasks = pure (OutputState output tasks)
+emitOutput (MoreOutput label taskIndex rest) output tasks = do
   OutputState output1 tasks1 <- step @FindReadyTasks $
     step @EmitTask $ do
-      cell <- createStored outputCellKind LUnit outputLabelKind (LString (labels !! taskIndex))
+      cell <- createStored outputCellKind LUnit outputLabelKind (LString label)
       RelatedExternal cell1 tasks2 <- relateExternalAt outputFor cell taskIndex tasks
 
       output2 <-
@@ -276,16 +361,12 @@ emitOutput labels (taskIndex : rest) output tasks = do
 
       pure (OutputState output2 tasks2)
 
-  emitOutput labels rest output1 tasks1
+  emitOutput rest output1 tasks1
 
-program :: Program ()
-program = step @TopologicalSort $ do
-  inputValue <- resolveInput topologicalScenario
-  tasks0 <- buildTasks (taskLabels inputValue)
-  tasks1 <- step @BuildDag (relateAll precedes (dependencyEdges inputValue) tasks0)
-
-  let order = topologicalOrder (length (taskLabels inputValue)) (dependencyEdges inputValue)
-  OutputState output tasks2 <- emitOutput (taskLabels inputValue) order StoredNil tasks1
+program :: InitialState %1 -> Program ()
+program (InitialState tasks plan) = step @TopologicalSort $ do
+  tasks1 <- step @BuildDag (pure tasks)
+  OutputState output tasks2 <- emitOutput plan StoredNil tasks1
 
   step @FinishTopologicalSort $ do
     destroyStoredList output

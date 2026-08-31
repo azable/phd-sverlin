@@ -5,6 +5,8 @@
 -- replaces the old location owners before relating the successor snapshot.
 -- Every successor owner receives its complete set of constraints once.  This
 -- is more honest than silently changing the same Slot relation mid-lifetime.
+-- Generator prepares the pointer snapshots; Program traces the actual owner
+-- cuts and relations but does not independently choose the next pointer.
 
 data Number
 
@@ -39,9 +41,6 @@ data SourceOrder
 data NextPointer
 data CursorAt
 
-valuesInput :: Input [Int]
-valuesInput = input @ReversalValues
-
 numberKind :: Kind Number
 numberKind = kind @ListNumber
 
@@ -63,10 +62,44 @@ nextPointer = orderedRelation @NextPointer
 cursorAt :: RelationKind CursorCell ListCell
 cursorAt = orderedRelation @CursorAt
 
-reversalGenerator :: Generator [Int]
+data EdgePlan where
+  NoEdges :: EdgePlan
+  ForwardEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
+  BackwardEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
+
+data ValuePlan where
+  NoValues :: ValuePlan
+  NextValue :: Int %1 -> ValuePlan %1 -> ValuePlan
+
+data OptionalIndex where
+  NoIndex :: OptionalIndex
+  AtIndex :: Int %1 -> OptionalIndex
+
+data PointerPlan where
+  PointerPlan ::
+    EdgePlan %1 ->
+    EdgePlan %1 ->
+    OptionalIndex %1 ->
+    OptionalIndex %1 ->
+    PointerPlan
+
+data ReversalPlan where
+  ReversalDone :: ReversalPlan
+  ReversalStep :: PointerPlan %1 -> ReversalPlan %1 -> ReversalPlan
+
+data ReversalCase where
+  ReversalCase :: ValuePlan %1 -> PointerPlan %1 -> ReversalPlan %1 -> ReversalCase
+
+reversalGenerator :: Generator ReversalCase
 reversalGenerator = do
   values <- listOf 4 9 (between 0 99)
-  shuffle values
+  shuffled <- shuffle values
+  let valueCount = length shuffled
+  pure
+    (ReversalCase
+       (valuePlan shuffled)
+       (pointerPlan valueCount 0)
+       (reversalPlan valueCount 1))
 
 data ReverseList
 data InitializeList
@@ -76,7 +109,7 @@ data CreateNewLocations
 data Finished
 data RemoveList
 
-domain :: Domain ()
+domain :: Domain InitialState
 domain = do
   declareKind numberKind
   declareKind cellKind
@@ -95,9 +128,13 @@ domain = do
       , RemoveList
       ]
 
-  -- Shuffling is part of finite Domain generation, not an authored read of the
-  -- random seed.  Four to nine values keeps every relation set bounded.
-  variable valuesInput reversalGenerator
+  -- Shuffling and every later pointer schedule are computed while Generator
+  -- values are unrestricted. Domain consumes the sampled values into the
+  -- first Snapshot and passes Program only that Snapshot and a linear plan.
+  ReversalCase values initialPointers remaining <-
+    variable @ReversalValues reversalGenerator
+  initial <- initializeSnapshot values initialPointers
+  pure (InitialState initial remaining)
 
 --------------------------------------------------------------------------------
 -- Program storage helpers
@@ -149,11 +186,25 @@ createStored ownerKind ownerPayload valueKind valuePayload = do
   Seal owner1 slot <- seal owner value
   pure (Stored owner1 slot)
 
-createCells :: [Int] -> Program (StoredList ListCell Number)
-createCells [] = pure StoredNil
-createCells (value : values) = do
-  current <- createStored cellKind LUnit numberKind (LInt value)
-  rest <- createCells values
+initializeStored ::
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+initializeCells :: ValuePlan %1 -> Domain (StoredList ListCell Number)
+initializeCells NoValues = pure StoredNil
+initializeCells (NextValue value values) = do
+  current <- initializeStored cellKind LUnit numberKind (LInt value)
+  rest <- initializeCells values
   pure (StoredCons current rest)
 
 relateStored ::
@@ -165,59 +216,77 @@ relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSl
   Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
   pure (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
 
+relateInitialStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Domain (Related leftOwner leftValue rightOwner rightValue)
+relateInitialStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  pure (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
 appendStored :: StoredList owner value %1 -> StoredList owner value %1 -> StoredList owner value
 appendStored StoredNil right = right
 appendStored (StoredCons current rest) right = StoredCons current (appendStored rest right)
 
-takeAt :: Int -> StoredList owner value %1 -> Taken owner value
+takeAt :: Int %1 -> StoredList owner value %1 -> Taken owner value
 takeAt 0 (StoredCons current rest) = Taken StoredNil current rest
 takeAt index (StoredCons current rest) =
-  case takeAt (index - 1) rest of
+  case takeAt (index Linear.- 1) rest of
     Taken before focus after -> Taken (StoredCons current before) focus after
 
-relateAt ::
+relateForwardAt ::
   RelationKind ListCell ListCell ->
-  Int ->
-  Int ->
+  Int %1 ->
+  Int %1 ->
   StoredList ListCell Number %1 ->
   Program (StoredList ListCell Number)
-relateAt relationKind leftIndex rightIndex cells
-  | leftIndex < rightIndex =
-      case takeAt leftIndex cells of
-        Taken beforeLeft left afterLeft ->
-          case takeAt (rightIndex - leftIndex - 1) afterLeft of
-            Taken between right afterRight -> do
-              Related left1 right1 <- relateStored relationKind left right
-              pure
-                (appendStored
-                   beforeLeft
-                   (StoredCons left1 (appendStored between (StoredCons right1 afterRight))))
-  | otherwise = do
-      -- `relate` preserves its authored endpoint order.  The zipper extracts
-      -- locations in ascending storage order, then passes them in reverse.
-      case takeAt rightIndex cells of
-        Taken beforeRight right afterRight ->
-          case takeAt (leftIndex - rightIndex - 1) afterRight of
-            Taken between left afterLeft -> do
-              Related left1 right1 <- relateStored relationKind left right
-              pure
-                (appendStored
-                   beforeRight
-                   (StoredCons right1 (appendStored between (StoredCons left1 afterLeft))))
+relateForwardAt relationKind leftIndex distance cells =
+  case takeAt leftIndex cells of
+    Taken beforeLeft left afterLeft ->
+      case takeAt distance afterLeft of
+        Taken between right afterRight -> do
+          Related left1 right1 <- relateStored relationKind left right
+          pure
+            (appendStored
+               beforeLeft
+               (StoredCons left1 (appendStored between (StoredCons right1 afterRight))))
+
+relateBackwardAt ::
+  RelationKind ListCell ListCell ->
+  Int %1 ->
+  Int %1 ->
+  StoredList ListCell Number %1 ->
+  Program (StoredList ListCell Number)
+relateBackwardAt relationKind rightIndex distance cells = do
+  -- `relate` preserves its authored endpoint order. The zipper extracts
+  -- locations in ascending storage order, then passes them in reverse.
+  case takeAt rightIndex cells of
+    Taken beforeRight right afterRight ->
+      case takeAt distance afterRight of
+        Taken between left afterLeft -> do
+          Related left1 right1 <- relateStored relationKind left right
+          pure
+            (appendStored
+               beforeRight
+               (StoredCons right1 (appendStored between (StoredCons left1 afterLeft))))
 
 relatePairs ::
   RelationKind ListCell ListCell ->
-  [(Int, Int)] ->
+  EdgePlan %1 ->
   StoredList ListCell Number %1 ->
   Program (StoredList ListCell Number)
-relatePairs _ [] cells = pure cells
-relatePairs relationKind ((left, right) : pairs) cells = do
-  cells1 <- relateAt relationKind left right cells
-  relatePairs relationKind pairs cells1
+relatePairs _ NoEdges cells = pure cells
+relatePairs relationKind (ForwardEdge left distance rest) cells = do
+  cells1 <- relateForwardAt relationKind left distance cells
+  relatePairs relationKind rest cells1
+relatePairs relationKind (BackwardEdge right distance rest) cells = do
+  cells1 <- relateBackwardAt relationKind right distance cells
+  relatePairs relationKind rest cells1
 
 attachCursor ::
   String ->
-  Int ->
+  Int %1 ->
   StoredList ListCell Number %1 ->
   Program AttachedCursor
 attachCursor label index cells =
@@ -227,51 +296,133 @@ attachCursor label index cells =
       Related cursor1 target1 <- relateStored cursorAt cursor target
       pure (AttachedCursor (appendStored before (StoredCons target1 after)) cursor1)
 
+relateInitialForwardAt ::
+  RelationKind ListCell ListCell ->
+  Int %1 ->
+  Int %1 ->
+  StoredList ListCell Number %1 ->
+  Domain (StoredList ListCell Number)
+relateInitialForwardAt relationKind leftIndex distance cells =
+  case takeAt leftIndex cells of
+    Taken beforeLeft left afterLeft ->
+      case takeAt distance afterLeft of
+        Taken between right afterRight -> do
+          Related left1 right1 <- relateInitialStored relationKind left right
+          pure
+            (appendStored
+               beforeLeft
+               (StoredCons left1 (appendStored between (StoredCons right1 afterRight))))
+
+relateInitialBackwardAt ::
+  RelationKind ListCell ListCell ->
+  Int %1 ->
+  Int %1 ->
+  StoredList ListCell Number %1 ->
+  Domain (StoredList ListCell Number)
+relateInitialBackwardAt relationKind rightIndex distance cells =
+  case takeAt rightIndex cells of
+    Taken beforeRight right afterRight ->
+      case takeAt distance afterRight of
+        Taken between left afterLeft -> do
+          Related left1 right1 <- relateInitialStored relationKind left right
+          pure
+            (appendStored
+               beforeRight
+               (StoredCons right1 (appendStored between (StoredCons left1 afterLeft))))
+
+relateInitialPairs ::
+  RelationKind ListCell ListCell ->
+  EdgePlan %1 ->
+  StoredList ListCell Number %1 ->
+  Domain (StoredList ListCell Number)
+relateInitialPairs _ NoEdges cells = pure cells
+relateInitialPairs relationKind (ForwardEdge left distance rest) cells = do
+  cells1 <- relateInitialForwardAt relationKind left distance cells
+  relateInitialPairs relationKind rest cells1
+relateInitialPairs relationKind (BackwardEdge right distance rest) cells = do
+  cells1 <- relateInitialBackwardAt relationKind right distance cells
+  relateInitialPairs relationKind rest cells1
+
+attachInitialCursor ::
+  String ->
+  Int %1 ->
+  StoredList ListCell Number %1 ->
+  Domain AttachedCursor
+attachInitialCursor label index cells =
+  case takeAt index cells of
+    Taken before target after -> do
+      cursor <- initializeStored cursorCellKind LUnit cursorLabelKind (LString label)
+      Related cursor1 target1 <- relateInitialStored cursorAt cursor target
+      pure (AttachedCursor (appendStored before (StoredCons target1 after)) cursor1)
+
 --------------------------------------------------------------------------------
 -- Snapshot construction and linear cuts
 --------------------------------------------------------------------------------
 
-data PointerState = PointerState
-  { previousIndex :: Maybe Int
-  , currentIndex :: Maybe Int
-  , nextPairs :: [(Int, Int)]
-  }
-
 sourcePairs :: Int -> [(Int, Int)]
 sourcePairs count = [(index, index + 1) | index <- [0 .. count - 2]]
 
-pointerState :: Int -> Int -> PointerState
-pointerState count reversedCount =
-  PointerState
-    { previousIndex = if reversedCount == 0 then Nothing else Just (reversedCount - 1)
-    , currentIndex = if reversedCount == count then Nothing else Just reversedCount
-    , nextPairs =
-        [(index, index - 1) | index <- [1 .. reversedCount - 1]]
-          ++ [(index, index + 1) | index <- [reversedCount .. count - 2]]
-    }
+edgePlan :: [(Int, Int)] -> EdgePlan
+edgePlan [] = NoEdges
+edgePlan ((left, right) : rest)
+  | left < right = ForwardEdge left (right - left - 1) (edgePlan rest)
+  | otherwise = BackwardEdge right (left - right - 1) (edgePlan rest)
+
+valuePlan :: [Int] -> ValuePlan
+valuePlan [] = NoValues
+valuePlan (value : rest) = NextValue value (valuePlan rest)
+
+pointerPlan :: Int -> Int -> PointerPlan
+pointerPlan count reversedCount =
+  PointerPlan
+    (edgePlan (sourcePairs count))
+    (edgePlan
+       ([(index, index - 1) | index <- [1 .. reversedCount - 1]]
+          ++ [(index, index + 1) | index <- [reversedCount .. count - 2]]))
+    (if reversedCount == count then NoIndex else AtIndex reversedCount)
+    (if reversedCount == 0 then NoIndex else AtIndex (reversedCount - 1))
+
+reversalPlan :: Int -> Int -> ReversalPlan
+reversalPlan count reversedCount
+  | reversedCount > count = ReversalDone
+  | otherwise = ReversalStep (pointerPlan count reversedCount) (reversalPlan count (reversedCount + 1))
 
 addCursor ::
   String ->
-  Maybe Int ->
+  OptionalIndex %1 ->
   StoredList ListCell Number %1 ->
   StoredList CursorCell CursorLabel %1 ->
   Program Snapshot
-addCursor _ Nothing cells cursors = pure (Snapshot cells cursors)
-addCursor label (Just index) cells cursors = do
+addCursor _ NoIndex cells cursors = pure (Snapshot cells cursors)
+addCursor label (AtIndex index) cells cursors = do
   AttachedCursor cells1 cursor <- attachCursor label index cells
   pure (Snapshot cells1 (StoredCons cursor cursors))
 
-finishSnapshot :: Int -> PointerState -> StoredList ListCell Number %1 -> Program Snapshot
-finishSnapshot valueCount state cells = step @CreateNewLocations $ do
-  orderedCells <- relatePairs sourceOrder (sourcePairs valueCount) cells
-  linkedCells <- relatePairs nextPointer (nextPairs state) orderedCells
-  Snapshot cells1 cursors1 <- addCursor "current" (currentIndex state) linkedCells StoredNil
-  addCursor "previous" (previousIndex state) cells1 cursors1
+finishSnapshot :: PointerPlan %1 -> StoredList ListCell Number %1 -> Program Snapshot
+finishSnapshot (PointerPlan sourceEdges nextEdges current previous) cells = step @CreateNewLocations $ do
+  orderedCells <- relatePairs sourceOrder sourceEdges cells
+  linkedCells <- relatePairs nextPointer nextEdges orderedCells
+  Snapshot cells1 cursors1 <- addCursor "current" current linkedCells StoredNil
+  addCursor "previous" previous cells1 cursors1
 
-createSnapshot :: [Int] -> PointerState -> Program Snapshot
-createSnapshot values state = do
-  cells <- createCells values
-  finishSnapshot (length values) state cells
+addInitialCursor ::
+  String ->
+  OptionalIndex %1 ->
+  StoredList ListCell Number %1 ->
+  StoredList CursorCell CursorLabel %1 ->
+  Domain Snapshot
+addInitialCursor _ NoIndex cells cursors = pure (Snapshot cells cursors)
+addInitialCursor label (AtIndex index) cells cursors = do
+  AttachedCursor cells1 cursor <- attachInitialCursor label index cells
+  pure (Snapshot cells1 (StoredCons cursor cursors))
+
+initializeSnapshot :: ValuePlan %1 -> PointerPlan %1 -> Domain Snapshot
+initializeSnapshot values (PointerPlan sourceEdges nextEdges current previous) = do
+  cells <- initializeCells values
+  orderedCells <- relateInitialPairs sourceOrder sourceEdges cells
+  linkedCells <- relateInitialPairs nextPointer nextEdges orderedCells
+  Snapshot cells1 cursors1 <- addInitialCursor "current" current linkedCells StoredNil
+  addInitialCursor "previous" previous cells1 cursors1
 
 -- Replacing a location owner is the linear cut.  The old owner's relations
 -- end, the Number occupant keeps its identity, and replacement lineage lets
@@ -318,25 +469,23 @@ cutSnapshot (Snapshot cells cursors) = do
   destroyStoredList cursors
   cutCellOwners cells
 
-advanceSnapshots :: [Int] -> Int -> Snapshot %1 -> Program Snapshot
-advanceSnapshots values reversedCount old
-  | reversedCount > length values = pure old
-  | otherwise = do
-      next <- step @ReverseOneLink $ do
-        -- Replacing the old owners ends both their semantic relations and the
-        -- fixed visual constraints associated with those owner lifetimes.
-        successorCells <- step @CutOldLocations (cutSnapshot old)
-        finishSnapshot
-          (length values)
-          (pointerState (length values) reversedCount)
-          successorCells
-      advanceSnapshots values (reversedCount + 1) next
+advanceSnapshots :: ReversalPlan %1 -> Snapshot %1 -> Program Snapshot
+advanceSnapshots ReversalDone old = pure old
+advanceSnapshots (ReversalStep pointers rest) old = do
+  next <- step @ReverseOneLink $ do
+    -- Replacing the old owners ends both their semantic relations and the
+    -- fixed visual constraints associated with those owner lifetimes.
+    successorCells <- step @CutOldLocations (cutSnapshot old)
+    finishSnapshot pointers successorCells
+  advanceSnapshots rest next
 
-program :: Program ()
-program = step @ReverseList $ do
-  values <- resolveInput valuesInput
-  initial <- step @InitializeList (createSnapshot values (pointerState (length values) 0))
-  reversed <- advanceSnapshots values 1 initial
+data InitialState where
+  InitialState :: Snapshot %1 -> ReversalPlan %1 -> InitialState
+
+program :: InitialState %1 -> Program ()
+program (InitialState initialized remaining) = step @ReverseList $ do
+  initial <- step @InitializeList (pure initialized)
+  reversed <- advanceSnapshots remaining initial
   final <- step @Finished (pure reversed)
   step @RemoveList (destroySnapshot final)
 

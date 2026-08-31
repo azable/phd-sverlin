@@ -38,8 +38,12 @@ data InRun
 data NextElement
 data ChildRun
 
-valuesInput :: Input [Int]
-valuesInput = input @MergeValues
+mergeValuesGenerator :: Generator MergeSpec
+mergeValuesGenerator =
+  mergeSpec
+    <$> weighted
+      (1, elementOf [38, 27, 43, 3, 9, 82, 10] [[5, 1, 4, 2, 8, 0], [2, 7, 1, 8, 2, 8]])
+      [(3, listOf 6 12 (between 0 99))]
 
 numberKind :: Kind Number
 numberKind = kind @NumberValue
@@ -72,7 +76,15 @@ data RelateChild
 data BuiltMergeTree
 data FinishMergeSort
 
-domain :: Domain ()
+data ValuePlan where
+  NoValues :: ValuePlan
+  NextValue :: Int %1 -> ValuePlan %1 -> ValuePlan
+
+data MergeSpec where
+  MergeLeafSpec :: Int %1 -> MergeSpec
+  MergeBranchSpec :: ValuePlan %1 -> MergeSpec %1 -> MergeSpec %1 -> MergeSpec
+
+domain :: Domain InitialTree
 domain = do
   declareKind numberKind
   declareKind elementCellKind
@@ -93,10 +105,12 @@ domain = do
       , FinishMergeSort
       ]
 
-  -- The generated list is finite and valid by construction.  Domain owns the
-  -- random choice; Program sees only the resolved list and cannot inspect the
-  -- compiler seed.
-  variable valuesInput (listOf 6 12 (between 0 99))
+  -- A branch may choose a complete fixed input or run another generator. The
+  -- sampled values become a linear tree specification before Domain sees them;
+  -- Domain creates only the input leaves. Derived parent values remain in
+  -- linear plans until Program reaches the corresponding merge.
+  specification <- variable @MergeValues mergeValuesGenerator
+  initializeTree specification
 
 --------------------------------------------------------------------------------
 -- Program storage helpers
@@ -122,6 +136,79 @@ data MergeTree where
   Leaf :: Run %1 -> MergeTree
   Branch :: Run %1 -> MergeTree %1 -> MergeTree %1 -> MergeTree
 
+data InitialTree where
+  InitialLeaf :: Run %1 -> InitialTree
+  InitialBranch :: ValuePlan %1 -> InitialTree %1 -> InitialTree %1 -> InitialTree
+
+initializeStored ::
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
+relateInitialStored ::
+  RelationKind leftOwner rightOwner ->
+  Stored leftOwner leftValue %1 ->
+  Stored rightOwner rightValue %1 ->
+  Domain (Related leftOwner leftValue rightOwner rightValue)
+relateInitialStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
+  pure (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
+
+initializeElements :: ValuePlan %1 -> Domain (StoredList ElementCell Number)
+initializeElements NoValues = pure StoredNil
+initializeElements (NextValue value values) = do
+  current <- initializeStored elementCellKind LUnit numberKind (LInt value)
+  rest <- initializeElements values
+  pure (StoredCons current rest)
+
+-- Relating neighbours consumes and reissues both Slot capabilities.  The list
+-- is rebuilt with those successors; no public relation handle is retained.
+relateInitialNeighbours :: StoredList ElementCell Number %1 -> Domain (StoredList ElementCell Number)
+relateInitialNeighbours StoredNil = pure StoredNil
+relateInitialNeighbours (StoredCons current StoredNil) = pure (StoredCons current StoredNil)
+relateInitialNeighbours (StoredCons current (StoredCons following rest)) = do
+  Related current1 following1 <- relateInitialStored nextElement current following
+  linkedRest <- relateInitialNeighbours (StoredCons following1 rest)
+  pure (StoredCons current1 linkedRest)
+
+relateInitialMembers ::
+  Stored RunCell RunToken %1 ->
+  StoredList ElementCell Number %1 ->
+  Domain Run
+relateInitialMembers run StoredNil = pure (Run run StoredNil)
+relateInitialMembers run (StoredCons cell rest) = do
+  Related run1 cell1 <- relateInitialStored inRun run cell
+  Run run2 rest1 <- relateInitialMembers run1 rest
+  pure (Run run2 (StoredCons cell1 rest1))
+
+initializeRun :: ValuePlan %1 -> Domain Run
+initializeRun values = do
+  run <- initializeStored runKind LUnit runTokenKind LUnit
+  cells <- initializeElements values
+  linkedCells <- relateInitialNeighbours cells
+  relateInitialMembers run linkedCells
+
+initializeTree :: MergeSpec %1 -> Domain InitialTree
+initializeTree (MergeLeafSpec value) = do
+  run <- initializeRun (NextValue value NoValues)
+  pure (InitialLeaf run)
+initializeTree (MergeBranchSpec values left right) = do
+  leftTree <- initializeTree left
+  rightTree <- initializeTree right
+  -- A branch's sorted values are a future merge result. Keep only their
+  -- linear construction plan here; creating the Run now would make that
+  -- derived state visible before its MergeRuns step.
+  pure (InitialBranch values leftTree rightTree)
+
 createStored ::
   Kind owner ->
   Payload owner %1 ->
@@ -136,6 +223,13 @@ createStored ownerKind ownerPayload valueKind valuePayload = do
   Seal owner1 slot <- seal owner value
   pure (Stored owner1 slot)
 
+createElements :: ValuePlan %1 -> Program (StoredList ElementCell Number)
+createElements NoValues = pure StoredNil
+createElements (NextValue value values) = do
+  current <- createStored elementCellKind LUnit numberKind (LInt value)
+  rest <- createElements values
+  pure (StoredCons current rest)
+
 relateStored ::
   RelationKind leftOwner rightOwner ->
   Stored leftOwner leftValue %1 ->
@@ -145,19 +239,10 @@ relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSl
   Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
   pure (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
 
-createElements :: [Int] -> Program (StoredList ElementCell Number)
-createElements [] = pure StoredNil
-createElements (value : values) = do
-  current <- createStored elementCellKind LUnit numberKind (LInt value)
-  rest <- createElements values
-  pure (StoredCons current rest)
-
--- Relating neighbours consumes and reissues both Slot capabilities.  The list
--- is rebuilt with those successors; no public relation handle is retained.
 relateNeighbours :: StoredList ElementCell Number %1 -> Program (StoredList ElementCell Number)
 relateNeighbours StoredNil = pure StoredNil
 relateNeighbours (StoredCons current StoredNil) = pure (StoredCons current StoredNil)
-relateNeighbours (StoredCons current (StoredCons following rest)) = step @RelateAdjacent $ do
+relateNeighbours (StoredCons current (StoredCons following rest)) = do
   Related current1 following1 <- relateStored nextElement current following
   linkedRest <- relateNeighbours (StoredCons following1 rest)
   pure (StoredCons current1 linkedRest)
@@ -167,12 +252,12 @@ relateMembers ::
   StoredList ElementCell Number %1 ->
   Program Run
 relateMembers run StoredNil = pure (Run run StoredNil)
-relateMembers run (StoredCons cell rest) = step @RelateMember $ do
+relateMembers run (StoredCons cell rest) = do
   Related run1 cell1 <- relateStored inRun run cell
   Run run2 rest1 <- relateMembers run1 rest
   pure (Run run2 (StoredCons cell1 rest1))
 
-createRun :: [Int] -> Program Run
+createRun :: ValuePlan %1 -> Program Run
 createRun values = do
   run <- createStored runKind LUnit runTokenKind LUnit
   cells <- createElements values
@@ -216,9 +301,9 @@ putRoot :: Run %1 -> RootRemainder %1 -> MergeTree
 putRoot run LeafRemainder = Leaf run
 putRoot run (BranchRemainder left right) = Branch run left right
 
--- The pure list calculation decides which trace operations to build.  Values
--- still become typed Program blocks, and every recursive run has a complete
--- lifecycle.  No layout decision leaks into the algorithm.
+-- These ordinary helpers run only in Generator and build the expected merge
+-- states for this replay-oriented example. Program still creates typed result
+-- Blocks at each MergeRuns step, but does not independently prove the merge.
 mergeValues :: [Int] -> [Int] -> [Int]
 mergeValues [] right = right
 mergeValues left [] = left
@@ -233,16 +318,24 @@ mergeSortValues values =
   let (left, right) = splitAt (length values `div` 2) values
    in mergeValues (mergeSortValues left) (mergeSortValues right)
 
-buildTree :: [Int] -> Program MergeTree
-buildTree [value] = step @BuildLeaf $ do
-  run <- createRun [value]
-  pure (Leaf run)
-buildTree values = step @SplitRun $ do
+valuePlan :: [Int] -> ValuePlan
+valuePlan [] = NoValues
+valuePlan (value : rest) = NextValue value (valuePlan rest)
+
+mergeSpec :: [Int] -> MergeSpec
+mergeSpec [] = error "merge generator is non-empty by construction"
+mergeSpec [value] = MergeLeafSpec value
+mergeSpec values =
   let (leftValues, rightValues) = splitAt (length values `div` 2) values
-  leftTree <- buildTree leftValues
-  rightTree <- buildTree rightValues
-  parent <- step @MergeRuns (createRun (mergeValues (mergeSortValues leftValues) (mergeSortValues rightValues)))
-  attachChildren parent leftTree rightTree
+   in MergeBranchSpec (valuePlan (mergeSortValues values)) (mergeSpec leftValues) (mergeSpec rightValues)
+
+buildTree :: InitialTree %1 -> Program MergeTree
+buildTree (InitialLeaf run) = step @BuildLeaf (pure (Leaf run))
+buildTree (InitialBranch parentValues initialLeft initialRight) = step @SplitRun $ do
+  leftTree <- buildTree initialLeft
+  rightTree <- buildTree initialRight
+  parent1 <- step @MergeRuns (createRun parentValues)
+  attachChildren parent1 leftTree rightTree
 
 destroyStored :: Stored owner value %1 -> Program ()
 destroyStored (Stored owner slot) = do
@@ -269,10 +362,9 @@ destroyTree (Branch run left right) = do
   destroyTree left
   destroyTree right
 
-program :: Program ()
-program = step @MergeSort $ do
-  values <- resolveInput valuesInput
-  tree <- buildTree values
+program :: InitialTree %1 -> Program ()
+program initial = step @MergeSort $ do
+  tree <- buildTree initial
   final <- step @BuiltMergeTree (pure tree)
   step @FinishMergeSort (destroyTree final)
 

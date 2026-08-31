@@ -4,7 +4,6 @@
 
 - Treat the participant's algorithm, target cohort, skill level, learning outcomes, and style answers as one brief. Use cohort and outcomes to choose narrative depth, terminology, example size, and checkpoints; never infer an aesthetic merely from the audience.
 - Preserve freedom wherever the brief is silent. A qualitative colour preference such as "blue" should constrain a broad hue range and only the saturation or lightness implied by the wording. Fix one exact colour only when the participant explicitly supplies an exact value such as a hex code.
-- When the participant asks to see options, preserve enough bounded solver freedom or named alternatives for two materially distinct candidates rather than producing cosmetic variants of one fixed composition.
 - Translate the user’s underlying idea into a visual explanation, not merely a literal collection of requested objects. Decide what the viewer should notice first, what changes over time, and what final state makes the idea clear.
 - When the user gives only a topic, infer a familiar algorithm or process and a small representative input. Leave routine style fields open for the compiler’s coherent seeded profiles; choose concrete styling only when the user or semantic encoding requires it.
 - A blank artefact is an invitation to construct a complete visualization from scratch. For an existing visualization, preserve unrelated working behavior while evolving its visual story as requested.

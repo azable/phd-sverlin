@@ -5,6 +5,8 @@
 -- Domain creates one bounded input from the scenario seed, Program consumes all
 -- linear resources, and Render lets the solver choose values within finite
 -- ranges while relative rules keep the result readable.
+-- A linear probe plan chooses continuation; traced comparisons are recorded,
+-- but this concise replay does not independently prove the search result.
 
 --------------------------------------------------------------------------------
 -- Trace vocabulary
@@ -79,14 +81,25 @@ equalOperatorKind = kind @EqualOperatorRole
 adjacent :: RelationKind ElementCell ElementCell
 adjacent = orderedRelation @AdjacentRole
 
-searchCase :: Input (NonEmptyValues, Int)
-searchCase = input @LinearSearchCase
+-- Domain consumes the generated values into Blocks and Slots. The only other
+-- seed-derived value crossing into Program is the explicitly linear replay
+-- plan, whose constructors are consumed one at a time.
+data SearchPlan where
+  SearchFinished :: Maybe Int %1 -> SearchPlan
+  SearchProbe :: SearchPlan %1 -> SearchPlan
 
--- The non-empty constructor makes the array invariant visible to Program. It
--- avoids an impossible empty-list branch later.
-data NonEmptyValues = NonEmptyValues Int [Int]
+planSearch :: [Int] -> Int -> Int -> SearchPlan
+planSearch [] _ _ = SearchFinished Nothing
+planSearch (value : remaining) target position =
+  SearchProbe $
+    case Linear.== value target of
+      True -> SearchFinished (Just position)
+      False -> planSearch remaining target (position + 1)
 
-searchCases :: Generator (NonEmptyValues, Int)
+data SearchCase where
+  SearchCase :: Int %1 -> [Int] %1 -> Int %1 -> SearchPlan %1 -> SearchCase
+
+searchCases :: Generator SearchCase
 searchCases = do
   tailLength <- between 3 9
   firstValue <- between 0 49
@@ -94,7 +107,8 @@ searchCases = do
   -- Half the cases contain the target. The other half draw it from a disjoint
   -- range, so every generated case is valid without retrying a seed.
   target <- weighted (1, elementOf firstValue remaining) [(1, between 50 99)]
-  return (NonEmptyValues firstValue remaining, target)
+  let searchPlan = planSearch (firstValue : remaining) target 0
+  return (SearchCase firstValue remaining target searchPlan)
 
 --------------------------------------------------------------------------------
 -- Named steps
@@ -103,8 +117,6 @@ searchCases = do
 data LinearSearch
 data InitializeTarget
 data InitializeArray
-data CreateStored
-data LinkCells
 data SearchIteration
 data ReadTarget
 data ReadElement
@@ -114,7 +126,7 @@ data PublishResult
 data SearchComplete
 data CleanUp
 
-domain :: Domain ()
+domain :: Domain InitialState
 domain = do
   declareKind elementValueKind
   declareKind targetValueKind
@@ -130,8 +142,6 @@ domain = do
     @'[ LinearSearch
       , InitializeTarget
       , InitializeArray
-      , CreateStored
-      , LinkCells
       , SearchIteration
       , ReadTarget
       , ReadElement
@@ -141,7 +151,12 @@ domain = do
       , SearchComplete
       , CleanUp
       ]
-  variable searchCase searchCases
+  SearchCase firstValue remaining targetValue searchPlan <-
+    variable @LinearSearchCase searchCases
+  target <-
+    initializeStored targetCellKind LUnit targetValueKind (LInt targetValue)
+  cells <- initializeChain firstValue remaining
+  pure (InitialState target cells searchPlan)
 
 --------------------------------------------------------------------------------
 -- Small linear storage library local to this example
@@ -163,14 +178,14 @@ data Chain value where
   Last :: Stored ElementCell value %1 -> Chain value
   More :: Stored ElementCell value %1 -> Chain value %1 -> Chain value
 
-createStored ::
+initializeStored ::
   (Traceable owner, Traceable value) =>
   Kind owner ->
   Payload owner %1 ->
   Kind value ->
   Payload value %1 ->
-  Program (Stored owner value)
-createStored ownerKind ownerPayload valueKind valuePayload = step @CreateStored $ do
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
   Create pendingOwner <- create ownerPayload
   owner <- materialize ownerKind pendingOwner
   Create pendingValue <- create valuePayload
@@ -190,12 +205,12 @@ readStored readKind (Stored owner slot) = do
   Seal owner2 slot1 <- seal owner1 value1
   return (ReadStored (Stored owner2 slot1) readValue)
 
-relateStored ::
+relateInitialStored ::
   RelationKind leftOwner rightOwner ->
   Stored leftOwner leftValue %1 ->
   Stored rightOwner rightValue %1 ->
-  Program (Related leftOwner leftValue rightOwner rightValue)
-relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Domain (Related leftOwner leftValue rightOwner rightValue)
+relateInitialStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
   Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
   return (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
 
@@ -217,19 +232,19 @@ destroyChain (More cell rest) = do
 
 -- Adjacency belongs to persistent cell owners, so it survives reads and other
 -- occupant identity changes without a public relation token.
-buildChain :: Int -> [Int] -> Program (Chain Number)
-buildChain value [] = do
-  cell <- createStored elementCellKind LUnit elementValueKind (LInt value)
+initializeChain :: Int %1 -> [Int] %1 -> Domain (Chain Number)
+initializeChain value [] = do
+  cell <- initializeStored elementCellKind LUnit elementValueKind (LInt value)
   return (Last cell)
-buildChain value (nextValue : remaining) = do
-  current <- createStored elementCellKind LUnit elementValueKind (LInt value)
-  rest <- buildChain nextValue remaining
+initializeChain value (nextValue : remaining) = do
+  current <- initializeStored elementCellKind LUnit elementValueKind (LInt value)
+  rest <- initializeChain nextValue remaining
   case rest of
-    Last next -> step @LinkCells $ do
-      Related current1 next1 <- relateStored adjacent current next
+    Last next -> do
+      Related current1 next1 <- relateInitialStored adjacent current next
       return (More current1 (Last next1))
-    More next tailValues -> step @LinkCells $ do
-      Related current1 next1 <- relateStored adjacent current next
+    More next tailValues -> do
+      Related current1 next1 <- relateInitialStored adjacent current next
       return (More current1 (More next1 tailValues))
 
 --------------------------------------------------------------------------------
@@ -240,11 +255,18 @@ data Examined where
   Examined ::
     Stored TargetCell Number %1 ->
     Stored ElementCell Number %1 ->
-    Bool ->
+    Bool %1 ->
     Examined
 
 data SearchState where
-  SearchState :: Maybe Int -> Stored TargetCell Number %1 -> Chain Number %1 -> SearchState
+  SearchState :: Maybe Int %1 -> Stored TargetCell Number %1 -> Chain Number %1 -> SearchState
+
+data InitialState where
+  InitialState ::
+    Stored TargetCell Number %1 ->
+    Chain Number %1 ->
+    SearchPlan %1 ->
+    InitialState
 
 data CompletedSearch where
   CompletedSearch ::
@@ -270,27 +292,48 @@ examine target cell = do
   Use (LBool matched) <- step @DecideComparison (use condition)
   return (Examined target1 cell1 matched)
 
-searchFrom ::
-  Int ->
+continueSearch ::
+  SearchPlan %1 ->
   Stored TargetCell Number %1 ->
   Chain Number %1 ->
   Program SearchState
-searchFrom position target (Last cell) = step @SearchIteration $ do
+continueSearch (SearchFinished outcome) target cells =
+  return (SearchState outcome target cells)
+continueSearch (SearchProbe remainingPlan) target (More cell rest) = do
+  SearchState outcome target1 searchedRest <-
+    searchFrom (SearchProbe remainingPlan) target rest
+  return (SearchState outcome target1 (More cell searchedRest))
+
+searchFrom ::
+  SearchPlan %1 ->
+  Stored TargetCell Number %1 ->
+  Chain Number %1 ->
+  Program SearchState
+searchFrom (SearchProbe remainingPlan) target (Last cell) = step @SearchIteration $ do
   Examined target1 cell1 matched <- examine target cell
-  return (SearchState (if matched then Just position else Nothing) target1 (Last cell1))
-searchFrom position target (More cell rest) = do
+  -- The trusted generator chose the plan tail from this same comparison.
+  -- The traced comparison records and consumes the Boolean, while this concise
+  -- replay model—not the branch itself—selects the continuation.
+  case matched of
+    True -> continueSearch remainingPlan target1 (Last cell1)
+    False -> continueSearch remainingPlan target1 (Last cell1)
+searchFrom (SearchProbe remainingPlan) target (More cell rest) = do
   Examined target1 cell1 matched <- step @SearchIteration (examine target cell)
-  if matched
-    then return (SearchState (Just position) target1 (More cell1 rest))
-    else do
-      SearchState outcome target2 searchedRest <- searchFrom (position + 1) target1 rest
-      return (SearchState outcome target2 (More cell1 searchedRest))
+  case matched of
+    True -> continueSearch remainingPlan target1 (More cell1 rest)
+    False -> continueSearch remainingPlan target1 (More cell1 rest)
+
+materializeResult :: Int %1 -> Program (Block Number)
+materializeResult resultValue = do
+  Create pendingResult <- create (LInt resultValue)
+  materialize resultKind pendingResult
 
 publishResult :: SearchState %1 -> Program CompletedSearch
 publishResult (SearchState outcome target cells) = step @PublishResult $ do
-  let resultValue = maybe (-1) id outcome
-  Create pendingResult <- create (LInt resultValue)
-  result <- materialize resultKind pendingResult
+  result <-
+    case outcome of
+      Nothing -> materializeResult (-1)
+      Just position -> materializeResult position
   return (CompletedSearch result target cells)
 
 cleanUp :: CompletedSearch %1 -> Program ()
@@ -299,12 +342,11 @@ cleanUp (CompletedSearch result target cells) = step @CleanUp $ do
   destroyStored target
   destroyChain cells
 
-program :: Program ()
-program = step @LinearSearch $ do
-  (NonEmptyValues firstValue remaining, targetValue) <- resolveInput searchCase
-  target <- step @InitializeTarget $ createStored targetCellKind LUnit targetValueKind (LInt targetValue)
-  cells <- step @InitializeArray $ buildChain firstValue remaining
-  searched <- searchFrom 0 target cells
+program :: InitialState %1 -> Program ()
+program initial = step @LinearSearch $ do
+  initializedTarget <- step @InitializeTarget (pure initial)
+  InitialState target cells searchPlan <- step @InitializeArray (pure initializedTarget)
+  searched <- searchFrom searchPlan target cells
   completed <- publishResult searched
   completed1 <- step @SearchComplete (return completed)
   cleanUp completed1

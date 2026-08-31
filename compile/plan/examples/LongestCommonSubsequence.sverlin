@@ -4,6 +4,8 @@
 -- Every DP row owns a semantic set of cells through InRow. The same Cell kind
 -- and RightOf relation kind are reused by every row. Render uses `within` to
 -- restrict those selections to the current row before validating a sequence.
+-- Generator prepares the expected DP table; Program traces the cell writes but
+-- does not independently prove the recurrence in this concise replay.
 
 data Row
 instance Traceable Row where
@@ -79,9 +81,6 @@ cellDependency = orderedRelation @CellDependencyRole
 resultNext :: RelationKind Cell Cell
 resultNext = orderedRelation @ResultNextRole
 
-lcsScenario :: Input LcsInput
-lcsScenario = input @LcsScenarioRole
-
 data LongestCommonSubsequence
 data InitializeStrings
 data BuildRows
@@ -90,20 +89,66 @@ data BuildDependencies
 data TraceResult
 data FinishLcs
 
-data LcsInput = LcsInput
-  { leftString :: String
-  , rightString :: String
-  }
+data EdgePlan where
+  NoEdges :: EdgePlan
+  NextEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
 
-lcsGenerator :: Generator LcsInput
+data MembershipPlan where
+  NoMemberships :: MembershipPlan
+  NextMembership :: Int %1 -> Int %1 -> MembershipPlan %1 -> MembershipPlan
+
+data TextPlan where
+  NoTexts :: TextPlan
+  NextText :: String %1 -> TextPlan %1 -> TextPlan
+
+data ValuePlan where
+  NoValues :: ValuePlan
+  NextValue :: Int %1 -> ValuePlan %1 -> ValuePlan
+
+data ResultPlan where
+  ResultPlan :: String %1 -> ResultPlan
+
+data LcsCase where
+  LcsCase ::
+    String %1 ->
+    String %1 ->
+    TextPlan %1 ->
+    EdgePlan %1 ->
+    ValuePlan %1 ->
+    MembershipPlan %1 ->
+    EdgePlan %1 ->
+    EdgePlan %1 ->
+    ValuePlan %1 ->
+    EdgePlan %1 ->
+    ResultPlan %1 ->
+    LcsCase
+
+lcsGenerator :: Generator LcsCase
 lcsGenerator = do
   leftLength <- between 3 7
   rightLength <- between 3 7
   leftChars <- listOf leftLength leftLength (elementOf 'A' ['B', 'C', 'D'])
   rightChars <- listOf rightLength rightLength (elementOf 'A' ['B', 'C', 'D'])
-  pure (LcsInput leftChars rightChars)
+  let table = lcsTable leftChars rightChars
+  let rowCount = length leftChars + 1
+  let columnCount = length rightChars + 1
+  let path = resultCells leftChars rightChars table
+  pure
+    (LcsCase
+       leftChars
+       rightChars
+       (textPlan ("∅" : map (: []) leftChars))
+       (edgePlan [(row, row + 1) | row <- [0 .. rowCount - 2]])
+       (valuePlan (replicate (rowCount * columnCount) 0))
+       (membershipPlan
+          [(row, cellIndex columnCount row column) | row <- [0 .. rowCount - 1], column <- [0 .. columnCount - 1]])
+       (edgePlan (rightEdges rowCount columnCount))
+       (edgePlan (dependencyEdges leftChars rightChars))
+       (valuePlan (concat table))
+       (edgePlan (pairwise path))
+       (ResultPlan (lcsText leftChars rightChars table)))
 
-domain :: Domain ()
+domain :: Domain InitialState
 domain = do
   declareKind rowKind
   declareKind rowLabelKind
@@ -117,7 +162,6 @@ domain = do
   declareRelation rightOf
   declareRelation cellDependency
   declareRelation resultNext
-  variable lcsScenario lcsGenerator
   declareSteps
     @'[ LongestCommonSubsequence
       , InitializeStrings
@@ -127,6 +171,33 @@ domain = do
       , TraceResult
       , FinishLcs
       ]
+
+  LcsCase leftValue rightValue rowLabels rowEdges initialValues memberships horizontalEdges dependencyPlan fillPlan resultEdges resultText <-
+    variable @LcsScenarioRole lcsGenerator
+
+  Create leftPending <- create (LString leftValue)
+  leftBlock <- materialize leftInputKind leftPending
+  Create rightPending <- create (LString rightValue)
+  rightBlock <- materialize rightInputKind rightPending
+
+  rows0 <- initializeRows rowLabels
+  rows1 <- relateAll nextRow rowEdges rows0
+  cells0 <- initializeCells initialValues
+  RelatedLists rows2 cells1 <- relateAllMemberships inRow memberships rows1 cells0
+  cells2 <- relateAll rightOf horizontalEdges cells1
+
+  -- The blank table and its row/column structure are initial state. Dependency
+  -- and result-path edges are derived state, so only their linear plans cross
+  -- into Program; the relations are added by their named steps.
+  pure
+    (InitialState
+       (InputBlocks leftBlock rightBlock)
+       rows2
+       cells2
+       dependencyPlan
+       fillPlan
+       resultEdges
+       resultText)
 
 --------------------------------------------------------------------------------
 -- Linear storage helpers
@@ -166,14 +237,14 @@ data RelatedLists source sourceValue target targetValue where
 data RelatedTail owner value where
   RelatedTail :: Stored owner value %1 -> StoredList owner value %1 -> RelatedTail owner value
 
-createStored ::
+initializeStored ::
   (Traceable owner, Traceable value) =>
   Kind owner ->
   Payload owner %1 ->
   Kind value ->
   Payload value %1 ->
-  Program (Stored owner value)
-createStored ownerKind ownerPayload valueKind valuePayload = do
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
   Create ownerPending <- create ownerPayload
   owner <- materialize ownerKind ownerPending
   Create valuePending <- create valuePayload
@@ -185,7 +256,7 @@ relateStored ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
   Stored target targetValue %1 ->
-  Program (RelatedStored source sourceValue target targetValue)
+  Domain (RelatedStored source sourceValue target targetValue)
 relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
   Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
   pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
@@ -193,88 +264,121 @@ relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) 
 relateExternalAt ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
-  Int ->
+  Int %1 ->
   StoredList target targetValue %1 ->
-  Program (RelatedExternal source sourceValue target targetValue)
-relateExternalAt relationKind source targetIndex targets =
-  case (targetIndex, targets) of
-    (0, StoredCons target rest) -> do
-      RelatedStored source1 target1 <- relateStored relationKind source target
-      pure (RelatedExternal source1 (StoredCons target1 rest))
-    (index, StoredCons target rest) -> do
-      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
-      pure (RelatedExternal source1 (StoredCons target remaining))
-    (_, StoredNil) -> error "LCS generator produced an invalid relation index"
+  Domain (RelatedExternal source sourceValue target targetValue)
+relateExternalAt relationKind source 0 (StoredCons target rest) = do
+  RelatedStored source1 target1 <- relateStored relationKind source target
+  pure (RelatedExternal source1 (StoredCons target1 rest))
+relateExternalAt relationKind source index (StoredCons target rest) = do
+  RelatedExternal source1 remaining <- relateExternalAt relationKind source (index Linear.- 1) rest
+  pure (RelatedExternal source1 (StoredCons target remaining))
 
 relateListsAt ::
   RelationKind source target ->
-  Int ->
-  Int ->
+  Int %1 ->
+  Int %1 ->
   StoredList source sourceValue %1 ->
   StoredList target targetValue %1 ->
-  Program (RelatedLists source sourceValue target targetValue)
-relateListsAt relationKind sourceIndex targetIndex sources targets = seek sourceIndex sources targets
-  where
-    seek 0 (StoredCons source rest) targetValues = do
-      RelatedExternal source1 targetValues1 <- relateExternalAt relationKind source targetIndex targetValues
-      pure (RelatedLists (StoredCons source1 rest) targetValues1)
-    seek index (StoredCons current rest) targetValues = do
-      RelatedLists rest1 targetValues1 <- seek (index - 1) rest targetValues
-      pure (RelatedLists (StoredCons current rest1) targetValues1)
-    seek _ StoredNil _ = error "LCS generator produced an invalid relation index"
+  Domain (RelatedLists source sourceValue target targetValue)
+relateListsAt relationKind 0 targetIndex (StoredCons source rest) targets = do
+  RelatedExternal source1 targets1 <- relateExternalAt relationKind source targetIndex targets
+  pure (RelatedLists (StoredCons source1 rest) targets1)
+relateListsAt relationKind sourceIndex targetIndex (StoredCons current rest) targets = do
+  RelatedLists rest1 targets1 <- relateListsAt relationKind (sourceIndex Linear.- 1) targetIndex rest targets
+  pure (RelatedLists (StoredCons current rest1) targets1)
 
 relateSourceToLater ::
   RelationKind owner owner ->
   Stored owner value %1 ->
-  Int ->
+  Int %1 ->
   StoredList owner value %1 ->
-  Program (RelatedTail owner value)
-relateSourceToLater relationKind source distance rest =
-  case (distance, rest) of
-    (0, StoredCons target tailValues) -> do
-      RelatedStored source1 target1 <- relateStored relationKind source target
-      pure (RelatedTail source1 (StoredCons target1 tailValues))
-    (offset, StoredCons current tailValues) -> do
-      RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset - 1) tailValues
-      pure (RelatedTail source1 (StoredCons current remaining))
-    (_, StoredNil) -> error "LCS generator produced an invalid cell edge"
+  Domain (RelatedTail owner value)
+relateSourceToLater relationKind source 0 (StoredCons target tailValues) = do
+  RelatedStored source1 target1 <- relateStored relationKind source target
+  pure (RelatedTail source1 (StoredCons target1 tailValues))
+relateSourceToLater relationKind source offset (StoredCons current tailValues) = do
+  RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset Linear.- 1) tailValues
+  pure (RelatedTail source1 (StoredCons current remaining))
 
 relateAt ::
   RelationKind owner owner ->
-  Int ->
-  Int ->
+  Int %1 ->
+  Int %1 ->
   StoredList owner value %1 ->
-  Program (StoredList owner value)
-relateAt relationKind sourceIndex targetIndex = seek sourceIndex
-  where
-    seek 0 (StoredCons source rest) = do
-      RelatedTail source1 rest1 <- relateSourceToLater relationKind source (targetIndex - sourceIndex - 1) rest
-      pure (StoredCons source1 rest1)
-    seek index (StoredCons current rest) = do
-      rest1 <- seek (index - 1) rest
-      pure (StoredCons current rest1)
-    seek _ StoredNil = error "LCS generator produced an invalid cell edge"
+  Domain (StoredList owner value)
+relateAt relationKind 0 distance (StoredCons source rest) = do
+  RelatedTail source1 rest1 <- relateSourceToLater relationKind source distance rest
+  pure (StoredCons source1 rest1)
+relateAt relationKind sourceIndex distance (StoredCons current rest) = do
+  rest1 <- relateAt relationKind (sourceIndex Linear.- 1) distance rest
+  pure (StoredCons current rest1)
 
 relateAll ::
   RelationKind owner owner ->
-  [(Int, Int)] ->
+  EdgePlan %1 ->
   StoredList owner value %1 ->
-  Program (StoredList owner value)
-relateAll _ [] values = pure values
-relateAll relationKind ((source, target) : rest) values = do
-  values1 <- relateAt relationKind source target values
+  Domain (StoredList owner value)
+relateAll _ NoEdges values = pure values
+relateAll relationKind (NextEdge source distance rest) values = do
+  values1 <- relateAt relationKind source distance values
   relateAll relationKind rest values1
 
 relateAllMemberships ::
   RelationKind source target ->
-  [(Int, Int)] ->
+  MembershipPlan %1 ->
   StoredList source sourceValue %1 ->
   StoredList target targetValue %1 ->
-  Program (RelatedLists source sourceValue target targetValue)
-relateAllMemberships _ [] sources targets = pure (RelatedLists sources targets)
-relateAllMemberships relationKind ((source, target) : rest) sources targets = do
+  Domain (RelatedLists source sourceValue target targetValue)
+relateAllMemberships _ NoMemberships sources targets = pure (RelatedLists sources targets)
+relateAllMemberships relationKind (NextMembership source target rest) sources targets = do
   RelatedLists sources1 targets1 <- relateListsAt relationKind source target sources targets
   relateAllMemberships relationKind rest sources1 targets1
+
+relateStoredProgram ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Program (RelatedStored source sourceValue target targetValue)
+relateStoredProgram relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
+relateSourceToLaterProgram ::
+  RelationKind owner owner ->
+  Stored owner value %1 ->
+  Int %1 ->
+  StoredList owner value %1 ->
+  Program (RelatedTail owner value)
+relateSourceToLaterProgram relationKind source 0 (StoredCons target tailValues) = do
+  RelatedStored source1 target1 <- relateStoredProgram relationKind source target
+  pure (RelatedTail source1 (StoredCons target1 tailValues))
+relateSourceToLaterProgram relationKind source offset (StoredCons current tailValues) = do
+  RelatedTail source1 remaining <- relateSourceToLaterProgram relationKind source (offset Linear.- 1) tailValues
+  pure (RelatedTail source1 (StoredCons current remaining))
+
+relateAtProgram ::
+  RelationKind owner owner ->
+  Int %1 ->
+  Int %1 ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAtProgram relationKind 0 offset (StoredCons source rest) = do
+  RelatedTail source1 rest1 <- relateSourceToLaterProgram relationKind source offset rest
+  pure (StoredCons source1 rest1)
+relateAtProgram relationKind index offset (StoredCons current rest) = do
+  rest1 <- relateAtProgram relationKind (index Linear.- 1) offset rest
+  pure (StoredCons current rest1)
+
+relateAllProgram ::
+  RelationKind owner owner ->
+  EdgePlan %1 ->
+  StoredList owner value %1 ->
+  Program (StoredList owner value)
+relateAllProgram _ NoEdges values = pure values
+relateAllProgram relationKind (NextEdge source distance rest) values = do
+  values1 <- relateAtProgram relationKind source distance values
+  relateAllProgram relationKind rest values1
 
 destroyStored :: Stored owner value %1 -> Program ()
 destroyStored (Stored owner slot) = do
@@ -359,85 +463,90 @@ lcsText leftValue rightValue table = reverse (go (length leftValue) (length righ
       | table !! (row - 1) !! column >= table !! row !! (column - 1) = go (row - 1) column
       | otherwise = go row (column - 1)
 
+edgePlan :: [(Int, Int)] -> EdgePlan
+edgePlan [] = NoEdges
+edgePlan ((source, target) : rest) =
+  NextEdge source (target - source - 1) (edgePlan rest)
+
+membershipPlan :: [(Int, Int)] -> MembershipPlan
+membershipPlan [] = NoMemberships
+membershipPlan ((source, target) : rest) =
+  NextMembership source target (membershipPlan rest)
+
+textPlan :: [String] -> TextPlan
+textPlan [] = NoTexts
+textPlan (value : rest) = NextText value (textPlan rest)
+
+valuePlan :: [Int] -> ValuePlan
+valuePlan [] = NoValues
+valuePlan (value : rest) = NextValue value (valuePlan rest)
+
 --------------------------------------------------------------------------------
 -- Program
 --------------------------------------------------------------------------------
 
-buildRows :: [String] -> Program (StoredList Row RowLabel)
-buildRows [] = pure StoredNil
-buildRows (label : rest) = do
-  row <- createStored rowKind LUnit rowLabelKind (LString label)
-  rows <- buildRows rest
+initializeRows :: TextPlan %1 -> Domain (StoredList Row RowLabel)
+initializeRows NoTexts = pure StoredNil
+initializeRows (NextText label rest) = do
+  row <- initializeStored rowKind LUnit rowLabelKind (LString label)
+  rows <- initializeRows rest
   pure (StoredCons row rows)
 
-buildCells :: [Int] -> Program (StoredList Cell CellValue)
-buildCells [] = pure StoredNil
-buildCells (value : rest) = do
-  cell <- createStored cellKind LUnit cellValueKind (LInt value)
-  cells <- buildCells rest
+initializeCells :: ValuePlan %1 -> Domain (StoredList Cell CellValue)
+initializeCells NoValues = pure StoredNil
+initializeCells (NextValue value rest) = do
+  cell <- initializeStored cellKind LUnit cellValueKind (LInt value)
+  cells <- initializeCells rest
   pure (StoredCons cell cells)
 
-writeCellAt :: Int -> Int -> StoredList Cell CellValue %1 -> Program (StoredList Cell CellValue)
-writeCellAt 0 nextValue (StoredCons (Stored owner slot) rest) = do
+writeCell :: Int %1 -> Stored Cell CellValue %1 -> Program (Stored Cell CellValue)
+writeCell nextValue (Stored owner slot) = do
   Unseal owner1 oldValue <- unseal owner slot
   Create rawPending <- create (LInt nextValue)
   Replace nextPending <- replace oldValue rawPending
   nextBlock <- materialize cellValueKind nextPending
   Seal owner2 slot1 <- seal owner1 nextBlock
-  pure (StoredCons (Stored owner2 slot1) rest)
-writeCellAt index nextValue (StoredCons current rest) = do
-  rest1 <- writeCellAt (index - 1) nextValue rest
-  pure (StoredCons current rest1)
-writeCellAt _ _ StoredNil = error "LCS generator produced an invalid cell index"
+  pure (Stored owner2 slot1)
 
-fillCells :: [Int] -> Int -> StoredList Cell CellValue %1 -> Program (StoredList Cell CellValue)
-fillCells [] _ cells = pure cells
-fillCells (value : rest) index cells = do
-  cells1 <- step @FillCell (writeCellAt index value cells)
-  fillCells rest (index + 1) cells1
+fillCells :: ValuePlan %1 -> StoredList Cell CellValue %1 -> Program (StoredList Cell CellValue)
+fillCells NoValues StoredNil = pure StoredNil
+fillCells (NextValue value values) (StoredCons current rest) = do
+  current1 <- step @FillCell (writeCell value current)
+  rest1 <- fillCells values rest
+  pure (StoredCons current1 rest1)
 
-program :: Program ()
-program = step @LongestCommonSubsequence $ do
-  inputValue <- resolveInput lcsScenario
-  let leftValue = leftString inputValue
-  let rightValue = rightString inputValue
-  let table = lcsTable leftValue rightValue
-  let rowCount = length leftValue + 1
-  let columnCount = length rightValue + 1
+data InitialState where
+  InitialState ::
+    InputBlocks %1 ->
+    StoredList Row RowLabel %1 ->
+    StoredList Cell CellValue %1 ->
+    EdgePlan %1 ->
+    ValuePlan %1 ->
+    EdgePlan %1 ->
+    ResultPlan %1 ->
+    InitialState
 
-  InputBlocks leftBlock rightBlock <- step @InitializeStrings $ do
-    Create leftPending <- create (LString leftValue)
-    leftBlock <- materialize leftInputKind leftPending
-    Create rightPending <- create (LString rightValue)
-    rightBlock <- materialize rightInputKind rightPending
-    pure (InputBlocks leftBlock rightBlock)
-
-  rows0 <- step @BuildRows (buildRows ("∅" : map (: []) leftValue))
-  rows1 <- relateAll nextRow [(row, row + 1) | row <- [0 .. rowCount - 2]] rows0
+program :: InitialState %1 -> Program ()
+program (InitialState inputs initialRows initialCells dependencyPlan fillPlan resultEdges resultPlan) = step @LongestCommonSubsequence $ do
+  InputBlocks leftBlock rightBlock <- step @InitializeStrings (pure inputs)
+  rows <- step @BuildRows (pure initialRows)
   -- Locations and recurrence relations exist before values change. Each FillCell
   -- replaces one occupant while its stable Cell owner keeps every relation.
-  cells0 <- buildCells (replicate (rowCount * columnCount) 0)
-
-  let memberships =
-        [(row, cellIndex columnCount row column) | row <- [0 .. rowCount - 1], column <- [0 .. columnCount - 1]]
-  RelatedLists rows2 cells1 <- relateAllMemberships inRow memberships rows1 cells0
-  cells2 <- relateAll rightOf (rightEdges rowCount columnCount) cells1
-  cells3 <- step @BuildDependencies (relateAll cellDependency (dependencyEdges leftValue rightValue) cells2)
-  cellsFilled <- fillCells (concat table) 0 cells3
-
-  let path = resultCells leftValue rightValue table
-  ResultState cells4 result <- step @TraceResult $ do
-    linkedCells <- relateAll resultNext (pairwise path) cellsFilled
-    Create resultPending <- create (LString (lcsText leftValue rightValue table))
+  cells <- step @BuildDependencies (relateAllProgram cellDependency dependencyPlan initialCells)
+  cellsFilled <- fillCells fillPlan cells
+  ResultState cells1 result <- step @TraceResult $ do
+    ResultPlan resultText <- pure resultPlan
+    tracedCells <- relateAllProgram resultNext resultEdges cellsFilled
+    Create resultPending <- create (LString resultText)
     resultBlock <- materialize resultKind resultPending
-    pure (ResultState linkedCells resultBlock)
+    pure (ResultState tracedCells resultBlock)
 
   step @FinishLcs $ do
     Destroy <- destroy leftBlock
     Destroy <- destroy rightBlock
     Destroy <- destroy result
-    destroyStoredList cells4
-    destroyStoredList rows2
+    destroyStoredList cells1
+    destroyStoredList rows
 
 --------------------------------------------------------------------------------
 -- Render

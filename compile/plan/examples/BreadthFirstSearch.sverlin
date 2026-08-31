@@ -1,10 +1,12 @@
 -- Breadth-first search written against the proposed API in API_plan_final.md.
 -- This is a planning example: the current compiler does not yet provide this API.
 --
--- The Domain generator always makes a connected cyclic graph. Program then
--- records its graph, the BFS discovery tree, a changing frontier, and one
--- persistent visit marker per discovered vertex. Render is free to show the
--- semantic graph, the traversal tree, or both without changing Program.
+-- Generator precomputes one BFS plan for a connected cyclic graph, Domain
+-- materializes that graph and its discovery tree, and Program consumes the
+-- plan to record a changing frontier and one visit marker per vertex. Render
+-- can show the semantic graph, the traversal tree, or both.
+-- This is the concise replay model: the trace does not independently prove
+-- the Generator's BFS order.
 
 data Vertex
 instance Traceable Vertex where
@@ -60,9 +62,6 @@ discoveredFrom = orderedRelation @DiscoveredFromRole
 visitAt :: RelationKind Visit Vertex
 visitAt = orderedRelation @VisitAtRole
 
-bfsScenario :: Input BfsInput
-bfsScenario = input @BfsScenarioRole
-
 data BreadthFirstSearch
 data BuildGraph
 data BuildTraversalTree
@@ -71,24 +70,93 @@ data VisitVertex
 data UpdateFrontier
 data FinishBreadthFirstSearch
 
-data BfsInput = BfsInput
-  { bfsLabels :: [String]
-  , bfsEdges :: [(Int, Int)]
-  , bfsStart :: Int
-  }
+data LinearIndex where
+  AtHead :: LinearIndex
+  InTail :: LinearIndex %1 -> LinearIndex
+
+data InitialLink where
+  InitialForward :: LinearIndex %1 -> LinearIndex %1 -> InitialLink
+  InitialBackward :: LinearIndex %1 -> LinearIndex %1 -> InitialLink
+
+data InitialLinks where
+  NoInitialLinks :: InitialLinks
+  MoreInitialLinks :: InitialLink %1 -> InitialLinks %1 -> InitialLinks
+
+data TraversalPlan where
+  NoTraversal :: TraversalPlan
+  MoreTraversal ::
+    String %1 ->
+    LinearIndex %1 ->
+    String %1 ->
+    TraversalPlan %1 ->
+    TraversalPlan
+
+data BfsSample where
+  BfsSample ::
+    [String] %1 ->
+    InitialLinks %1 ->
+    InitialLinks %1 ->
+    String %1 ->
+    TraversalPlan %1 ->
+    BfsSample
+
+data InitialState where
+  InitialState ::
+    Block Frontier %1 ->
+    StoredList Vertex VertexLabel %1 ->
+    TraversalPlan %1 ->
+    InitialState
+
+-- Only Generator calls this ordinary recursive conversion. Domain and Program
+-- consume the resulting path one constructor at a time, without applying an
+-- unrestricted numeric operator to a linearly bound index.
+linearIndex :: Int -> LinearIndex
+linearIndex 0 = AtHead
+linearIndex index = InTail (linearIndex (index - 1))
+
+consumeLinearIndex :: LinearIndex %1 -> value %1 -> value
+consumeLinearIndex AtHead value = value
+consumeLinearIndex (InTail rest) value = consumeLinearIndex rest value
+
+initialLinks :: [(Int, Int)] -> InitialLinks
+initialLinks [] = NoInitialLinks
+initialLinks ((source, target) : rest)
+  | source < target =
+      InitialForward (linearIndex source) (linearIndex (target - source - 1))
+        `MoreInitialLinks` initialLinks rest
+  | otherwise =
+      InitialBackward (linearIndex target) (linearIndex (source - target - 1))
+        `MoreInitialLinks` initialLinks rest
+
+traversalPlan :: [String] -> [BfsMoment] -> TraversalPlan
+traversalPlan _ [] = NoTraversal
+traversalPlan labels (moment : rest) =
+  MoreTraversal
+    (labels !! momentVertex moment)
+    (linearIndex (momentVertex moment))
+    (frontierText labels (momentFrontier moment))
+    (traversalPlan labels rest)
 
 -- A ring supplies connectivity and a cycle. Skip edges add variation without
 -- filtering or retrying generated values.
-bfsGenerator :: Generator BfsInput
+bfsGenerator :: Generator BfsSample
 bfsGenerator = do
   vertexCount <- between 5 9
   names <- shuffle (take vertexCount ["A", "B", "C", "D", "E", "F", "G", "H", "I"])
   skip <- elementOf 2 [3]
   let ring = [(index, index + 1) | index <- [0 .. vertexCount - 2]] <> [(0, vertexCount - 1)]
   let chords = [(index, index + skip) | index <- [0 .. vertexCount - skip - 1]]
-  pure (BfsInput names (ring <> chords) 0)
+  let edges = ring <> chords
+  let moments = bfsMoments edges 0
+  pure
+    (BfsSample
+       names
+       (initialLinks edges)
+       (initialLinks (treeEdges moments))
+       (frontierText names [0])
+       (traversalPlan names moments))
 
-domain :: Domain ()
+domain :: Domain InitialState
 domain = do
   declareKind vertexKind
   declareKind vertexLabelKind
@@ -98,7 +166,6 @@ domain = do
   declareRelation connected
   declareRelation discoveredFrom
   declareRelation visitAt
-  variable bfsScenario bfsGenerator
   declareSteps
     @'[ BreadthFirstSearch
       , BuildGraph
@@ -108,6 +175,15 @@ domain = do
       , UpdateFrontier
       , FinishBreadthFirstSearch
       ]
+  BfsSample labels graphLinks traversalLinks initialFrontier plan <-
+    variable @BfsScenarioRole bfsGenerator
+  vertices <- initializeVertices labels
+  graphVertices <- relateInitialLinks connected graphLinks vertices
+  traversalVertices <-
+    relateInitialLinks discoveredFrom traversalLinks graphVertices
+  Create frontierPending <- create (LString initialFrontier)
+  frontier <- materialize frontierKind frontierPending
+  pure (InitialState frontier traversalVertices plan)
 
 --------------------------------------------------------------------------------
 -- Ordinary author-side linear containers
@@ -150,6 +226,21 @@ createStored ownerKind ownerPayload valueKind valuePayload = do
   Seal owner1 slot <- seal owner value
   pure (Stored owner1 slot)
 
+initializeStored ::
+  (Traceable owner, Traceable value) =>
+  Kind owner ->
+  Payload owner %1 ->
+  Kind value ->
+  Payload value %1 ->
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
+  Create ownerPending <- create ownerPayload
+  owner <- materialize ownerKind ownerPending
+  Create valuePending <- create valuePayload
+  value <- materialize valueKind valuePending
+  Seal owner1 slot <- seal owner value
+  pure (Stored owner1 slot)
+
 relateStored ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
@@ -159,92 +250,126 @@ relateStored relationKind (Stored source sourceSlot) (Stored target targetSlot) 
   Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
   pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
 
+relateInitialStored ::
+  RelationKind source target ->
+  Stored source sourceValue %1 ->
+  Stored target targetValue %1 ->
+  Domain (RelatedStored source sourceValue target targetValue)
+relateInitialStored relationKind (Stored source sourceSlot) (Stored target targetSlot) = do
+  Relate sourceSlot1 targetSlot1 <- relate relationKind sourceSlot targetSlot
+  pure (RelatedStored (Stored source sourceSlot1) (Stored target targetSlot1))
+
 -- This helper seeks one location while preserving every unrelated linear
 -- value. It is ordinary Program composition, not a public graph API.
 relateExternalAt ::
   RelationKind source target ->
   Stored source sourceValue %1 ->
-  Int ->
+  LinearIndex %1 ->
   StoredList target targetValue %1 ->
   Program (RelatedExternal source sourceValue target targetValue)
 relateExternalAt relationKind source targetIndex targets =
   case (targetIndex, targets) of
-    (0, StoredCons target rest) -> do
+    (AtHead, StoredCons target rest) -> do
       RelatedStored source1 target1 <- relateStored relationKind source target
       pure (RelatedExternal source1 (StoredCons target1 rest))
-    (index, StoredCons target rest) -> do
-      RelatedExternal source1 remaining <- relateExternalAt relationKind source (index - 1) rest
+    (InTail index, StoredCons target rest) -> do
+      RelatedExternal source1 remaining <- relateExternalAt relationKind source index rest
       pure (RelatedExternal source1 (StoredCons target remaining))
-    (_, StoredNil) -> error "BFS generator produced an invalid vertex index"
+    (index, StoredNil) ->
+      pure (consumeLinearIndex index (RelatedExternal source StoredNil))
 
-relateSourceToLater ::
+relateInitialSourceToLater ::
   RelationKind owner owner ->
   Stored owner value %1 ->
-  Int ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
-  Program (RelatedTail owner value)
-relateSourceToLater relationKind source distance rest =
+  Domain (RelatedTail owner value)
+relateInitialSourceToLater relationKind source distance rest =
   case (distance, rest) of
-    (0, StoredCons target tailValues) -> do
-      RelatedStored source1 target1 <- relateStored relationKind source target
+    (AtHead, StoredCons target tailValues) -> do
+      RelatedStored source1 target1 <- relateInitialStored relationKind source target
       pure (RelatedTail source1 (StoredCons target1 tailValues))
-    (offset, StoredCons current tailValues) -> do
-      RelatedTail source1 remaining <- relateSourceToLater relationKind source (offset - 1) tailValues
+    (InTail offset, StoredCons current tailValues) -> do
+      RelatedTail source1 remaining <-
+        relateInitialSourceToLater relationKind source offset tailValues
       pure (RelatedTail source1 (StoredCons current remaining))
-    (_, StoredNil) -> error "BFS generator produced an invalid edge"
+    (offset, StoredNil) ->
+      pure (consumeLinearIndex offset (RelatedTail source StoredNil))
 
-relateLaterSourceToTarget ::
+relateInitialLaterSourceToTarget ::
   RelationKind owner owner ->
   Stored owner value %1 ->
-  Int ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
-  Program (RelatedTail owner value)
-relateLaterSourceToTarget relationKind target distance rest =
+  Domain (RelatedTail owner value)
+relateInitialLaterSourceToTarget relationKind target distance rest =
   case (distance, rest) of
-    (0, StoredCons source tailValues) -> do
-      RelatedStored source1 target1 <- relateStored relationKind source target
+    (AtHead, StoredCons source tailValues) -> do
+      RelatedStored source1 target1 <- relateInitialStored relationKind source target
       pure (RelatedTail target1 (StoredCons source1 tailValues))
-    (offset, StoredCons current tailValues) -> do
-      RelatedTail target1 remaining <- relateLaterSourceToTarget relationKind target (offset - 1) tailValues
+    (InTail offset, StoredCons current tailValues) -> do
+      RelatedTail target1 remaining <-
+        relateInitialLaterSourceToTarget relationKind target offset tailValues
       pure (RelatedTail target1 (StoredCons current remaining))
-    (_, StoredNil) -> error "BFS generator produced an invalid edge"
+    (offset, StoredNil) ->
+      pure (consumeLinearIndex offset (RelatedTail target StoredNil))
 
-relateAt ::
+seekInitialForward ::
   RelationKind owner owner ->
-  Int ->
-  Int ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
-  Program (StoredList owner value)
-relateAt relationKind sourceIndex targetIndex values
-  | sourceIndex == targetIndex = error "a relation cannot join a location to itself"
-  | sourceIndex < targetIndex = seekSource sourceIndex values
-  | otherwise = seekTarget targetIndex values
-  where
-    seekSource 0 (StoredCons source rest) = do
-      RelatedTail source1 rest1 <- relateSourceToLater relationKind source (targetIndex - sourceIndex - 1) rest
-      pure (StoredCons source1 rest1)
-    seekSource index (StoredCons current rest) = do
-      rest1 <- seekSource (index - 1) rest
-      pure (StoredCons current rest1)
-    seekSource _ StoredNil = error "BFS generator produced an invalid source"
+  Domain (StoredList owner value)
+seekInitialForward relationKind AtHead targetDistance (StoredCons source rest) = do
+  RelatedTail source1 rest1 <-
+    relateInitialSourceToLater relationKind source targetDistance rest
+  pure (StoredCons source1 rest1)
+seekInitialForward relationKind (InTail sourceOffset) targetDistance (StoredCons current rest) = do
+  rest1 <-
+    seekInitialForward relationKind sourceOffset targetDistance rest
+  pure (StoredCons current rest1)
+seekInitialForward _ sourceOffset targetDistance StoredNil =
+  pure
+    (consumeLinearIndex
+       sourceOffset
+       (consumeLinearIndex targetDistance StoredNil))
 
-    seekTarget 0 (StoredCons target rest) = do
-      RelatedTail target1 rest1 <- relateLaterSourceToTarget relationKind target (sourceIndex - targetIndex - 1) rest
-      pure (StoredCons target1 rest1)
-    seekTarget index (StoredCons current rest) = do
-      rest1 <- seekTarget (index - 1) rest
-      pure (StoredCons current rest1)
-    seekTarget _ StoredNil = error "BFS generator produced an invalid target"
-
-relateAll ::
+seekInitialBackward ::
   RelationKind owner owner ->
-  [(Int, Int)] ->
+  LinearIndex %1 ->
+  LinearIndex %1 ->
   StoredList owner value %1 ->
-  Program (StoredList owner value)
-relateAll _ [] values = pure values
-relateAll relationKind ((source, target) : rest) values = do
-  values1 <- relateAt relationKind source target values
-  relateAll relationKind rest values1
+  Domain (StoredList owner value)
+seekInitialBackward relationKind AtHead sourceDistance (StoredCons target rest) = do
+  RelatedTail target1 rest1 <-
+    relateInitialLaterSourceToTarget relationKind target sourceDistance rest
+  pure (StoredCons target1 rest1)
+seekInitialBackward relationKind (InTail targetOffset) sourceDistance (StoredCons current rest) = do
+  rest1 <-
+    seekInitialBackward relationKind targetOffset sourceDistance rest
+  pure (StoredCons current rest1)
+seekInitialBackward _ targetOffset sourceDistance StoredNil =
+  pure
+    (consumeLinearIndex
+       targetOffset
+       (consumeLinearIndex sourceDistance StoredNil))
+
+relateInitialLinks ::
+  RelationKind owner owner ->
+  InitialLinks %1 ->
+  StoredList owner value %1 ->
+  Domain (StoredList owner value)
+relateInitialLinks _ NoInitialLinks values = pure values
+relateInitialLinks relationKind (MoreInitialLinks link rest) values =
+  case link of
+    InitialForward sourceOffset targetDistance -> do
+      values1 <-
+        seekInitialForward relationKind sourceOffset targetDistance values
+      relateInitialLinks relationKind rest values1
+    InitialBackward targetOffset sourceDistance -> do
+      values1 <-
+        seekInitialBackward relationKind targetOffset sourceDistance values
+      relateInitialLinks relationKind rest values1
 
 destroyStored :: Stored owner value %1 -> Program ()
 destroyStored (Stored owner slot) = do
@@ -260,16 +385,18 @@ destroyStoredList (StoredCons current rest) = do
   destroyStoredList rest
 
 --------------------------------------------------------------------------------
--- Program
+-- Domain initialization and Program
 --------------------------------------------------------------------------------
 
-buildVertices :: [String] -> Program (StoredList Vertex VertexLabel)
-buildVertices [] = pure StoredNil
-buildVertices (label : rest) = do
-  vertex <- createStored vertexKind LUnit vertexLabelKind (LString label)
-  vertices <- buildVertices rest
+initializeVertices :: [String] %1 -> Domain (StoredList Vertex VertexLabel)
+initializeVertices [] = pure StoredNil
+initializeVertices (label : rest) = do
+  vertex <- initializeStored vertexKind LUnit vertexLabelKind (LString label)
+  vertices <- initializeVertices rest
   pure (StoredCons vertex vertices)
 
+-- These ordinary helpers are evaluated only by bfsGenerator. Program receives
+-- their already-constructed TraversalPlan instead of their reusable values.
 memberInt :: Int -> [Int] -> Bool
 memberInt _ [] = False
 memberInt wanted (value : rest) = wanted == value || memberInt wanted rest
@@ -320,43 +447,34 @@ data TraversalState where
     TraversalState
 
 runTraversal ::
-  [String] ->
-  [BfsMoment] ->
+  TraversalPlan %1 ->
   Block Frontier %1 ->
   StoredList Visit VisitLabel %1 ->
   StoredList Vertex VertexLabel %1 ->
   Program TraversalState
-runTraversal _ [] frontier visits vertices = pure (TraversalState frontier visits vertices)
-runTraversal labels (moment : rest) frontier visits vertices = do
+runTraversal NoTraversal frontier visits vertices =
+  pure (TraversalState frontier visits vertices)
+runTraversal (MoreTraversal label vertexIndex nextFrontierText rest) frontier visits vertices = do
   marker <- step @VisitVertex $
-    createStored visitKind LUnit visitLabelKind (LString (labels !! momentVertex moment))
-  RelatedExternal marker1 vertices1 <- relateExternalAt visitAt marker (momentVertex moment) vertices
+    createStored visitKind LUnit visitLabelKind (LString label)
+  RelatedExternal marker1 vertices1 <-
+    relateExternalAt visitAt marker vertexIndex vertices
 
   frontier1 <- step @UpdateFrontier $ do
-    Create nextText <- create (LString (frontierText labels (momentFrontier moment)))
-    Replace nextFrontier <- replace frontier nextText
-    materialize frontierKind nextFrontier
+    Create nextText <- create (LString nextFrontierText)
+    Replace pendingFrontier <- replace frontier nextText
+    materialize frontierKind pendingFrontier
 
-  runTraversal labels rest frontier1 (StoredCons marker1 visits) vertices1
+  runTraversal rest frontier1 (StoredCons marker1 visits) vertices1
 
-program :: Program ()
-program = step @BreadthFirstSearch $ do
-  inputValue <- resolveInput bfsScenario
-  let moments = bfsMoments (bfsEdges inputValue) (bfsStart inputValue)
-
-  vertices0 <- step @BuildGraph $ do
-    created <- buildVertices (bfsLabels inputValue)
-    relateAll connected (bfsEdges inputValue) created
-
-  vertices1 <- step @BuildTraversalTree $
-    relateAll discoveredFrom (treeEdges moments) vertices0
-
-  frontier0 <- step @InitializeFrontier $ do
-    Create pending <- create (LString (frontierText (bfsLabels inputValue) [bfsStart inputValue]))
-    materialize frontierKind pending
+program :: InitialState %1 -> Program ()
+program (InitialState frontier vertices plan) = step @BreadthFirstSearch $ do
+  vertices0 <- step @BuildGraph (pure vertices)
+  vertices1 <- step @BuildTraversalTree (pure vertices0)
+  frontier0 <- step @InitializeFrontier (pure frontier)
 
   TraversalState frontier1 visits vertices2 <-
-    runTraversal (bfsLabels inputValue) moments frontier0 StoredNil vertices1
+    runTraversal plan frontier0 StoredNil vertices1
 
   step @FinishBreadthFirstSearch $ do
     Destroy <- destroy frontier1

@@ -60,10 +60,19 @@ greaterOperatorKind = kind @GreaterOperatorRole
 adjacent :: RelationKind ElementCell ElementCell
 adjacent = orderedRelation @AdjacentRole
 
-data BubbleValues = BubbleValues Int [Int]
+-- The generator turns the numeric pass count into a linear replay plan before
+-- it crosses into Domain. Program can then consume one constructor per pass;
+-- it never extracts a count and applies unrestricted arithmetic to it.
+data PassPlan where
+  NoMorePasses :: PassPlan
+  AnotherPass :: PassPlan %1 -> PassPlan
 
-bubbleValues :: Input BubbleValues
-bubbleValues = input @BubbleSortInput
+passesFor :: Int -> PassPlan
+passesFor 0 = NoMorePasses
+passesFor count = AnotherPass (passesFor (count - 1))
+
+data BubbleValues where
+  BubbleValues :: Int %1 -> [Int] %1 -> PassPlan %1 -> BubbleValues
 
 bubbleCases :: Generator BubbleValues
 bubbleCases = do
@@ -71,13 +80,11 @@ bubbleCases = do
   start <- between 1 12
   shuffled <- shuffle [start .. start + tailLength]
   case shuffled of
-    first : rest -> return (BubbleValues first rest)
-    [] -> return (BubbleValues start []) -- the constructed range is never empty
+    first : rest -> return (BubbleValues first rest (passesFor (length rest)))
+    [] -> return (BubbleValues start [] NoMorePasses) -- the range is never empty
 
 data BubbleSort
 data InitializeArray
-data CreateStored
-data LinkCells
 data ReadLeft
 data ReadRight
 data ComparePair
@@ -87,7 +94,7 @@ data FinishPass
 data Sorted
 data CleanUp
 
-domain :: Domain ()
+domain :: Domain InitialState
 domain = do
   declareKind elementValueKind
   declareKind leftReadKind
@@ -99,8 +106,6 @@ domain = do
   declareSteps
     @'[ BubbleSort
       , InitializeArray
-      , CreateStored
-      , LinkCells
       , ReadLeft
       , ReadRight
       , ComparePair
@@ -110,7 +115,10 @@ domain = do
       , Sorted
       , CleanUp
       ]
-  variable bubbleValues bubbleCases
+  BubbleValues firstValue remaining passes <-
+    variable @BubbleSortInput bubbleCases
+  cells <- initializeChain firstValue remaining
+  pure (InitialState cells passes)
 
 --------------------------------------------------------------------------------
 -- Stable array storage
@@ -135,21 +143,21 @@ data ComparedPair where
   ComparedPair ::
     Stored ElementCell Number %1 ->
     Stored ElementCell Number %1 ->
-    Bool ->
+    Bool %1 ->
     ComparedPair
 
 data Chain value where
   Last :: Stored ElementCell value %1 -> Chain value
   More :: Stored ElementCell value %1 -> Chain value %1 -> Chain value
 
-createStored ::
+initializeStored ::
   (Traceable owner, Traceable value) =>
   Kind owner ->
   Payload owner %1 ->
   Kind value ->
   Payload value %1 ->
-  Program (Stored owner value)
-createStored ownerKind ownerPayload valueKind valuePayload = step @CreateStored $ do
+  Domain (Stored owner value)
+initializeStored ownerKind ownerPayload valueKind valuePayload = do
   Create pendingOwner <- create ownerPayload
   owner <- materialize ownerKind pendingOwner
   Create pendingValue <- create valuePayload
@@ -169,12 +177,12 @@ readStored readKind (Stored owner slot) = do
   Seal owner2 slot1 <- seal owner1 value1
   return (ReadStored (Stored owner2 slot1) readValue)
 
-relateStored ::
+relateInitialStored ::
   RelationKind leftOwner rightOwner ->
   Stored leftOwner leftValue %1 ->
   Stored rightOwner rightValue %1 ->
-  Program (Related leftOwner leftValue rightOwner rightValue)
-relateStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
+  Domain (Related leftOwner leftValue rightOwner rightValue)
+relateInitialStored relationKind (Stored leftOwner leftSlot) (Stored rightOwner rightSlot) = do
   Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
   return (Related (Stored leftOwner leftSlot1) (Stored rightOwner rightSlot1))
 
@@ -194,24 +202,27 @@ destroyChain (More cell rest) = do
   destroyStored cell
   destroyChain rest
 
-buildChain :: Int -> [Int] -> Program (Chain Number)
-buildChain value [] = do
-  cell <- createStored elementCellKind LUnit elementValueKind (LInt value)
+initializeChain :: Int %1 -> [Int] %1 -> Domain (Chain Number)
+initializeChain value [] = do
+  cell <- initializeStored elementCellKind LUnit elementValueKind (LInt value)
   return (Last cell)
-buildChain value (nextValue : remaining) = do
-  current <- createStored elementCellKind LUnit elementValueKind (LInt value)
-  rest <- buildChain nextValue remaining
+initializeChain value (nextValue : remaining) = do
+  current <- initializeStored elementCellKind LUnit elementValueKind (LInt value)
+  rest <- initializeChain nextValue remaining
   case rest of
-    Last next -> step @LinkCells $ do
-      Related current1 next1 <- relateStored adjacent current next
+    Last next -> do
+      Related current1 next1 <- relateInitialStored adjacent current next
       return (More current1 (Last next1))
-    More next tailValues -> step @LinkCells $ do
-      Related current1 next1 <- relateStored adjacent current next
+    More next tailValues -> do
+      Related current1 next1 <- relateInitialStored adjacent current next
       return (More current1 (More next1 tailValues))
 
 --------------------------------------------------------------------------------
 -- Program
 --------------------------------------------------------------------------------
+
+data InitialState where
+  InitialState :: Chain Number %1 -> PassPlan %1 -> InitialState
 
 comparePair ::
   Stored ElementCell Number %1 ->
@@ -247,9 +258,9 @@ compareAndSwap ::
   Program Pair
 compareAndSwap leftCell rightCell = do
   ComparedPair leftCell1 rightCell1 shouldSwap <- comparePair leftCell rightCell
-  if shouldSwap
-    then swapPair leftCell1 rightCell1
-    else return (Pair leftCell1 rightCell1)
+  case shouldSwap of
+    True -> swapPair leftCell1 rightCell1
+    False -> return (Pair leftCell1 rightCell1)
 
 -- After comparing the first pair, the larger occupant is in the right cell.
 -- Recursing from that right cell carries the pass's maximum towards the end.
@@ -265,18 +276,17 @@ bubblePass (More leftCell rest) =
       sortedRest <- bubblePass (More rightCell1 remaining)
       return (More leftCell1 sortedRest)
 
-runPasses :: Int -> Chain Number %1 -> Program (Chain Number)
-runPasses 0 cells = return cells
-runPasses remaining cells = do
+runPasses :: PassPlan %1 -> Chain Number %1 -> Program (Chain Number)
+runPasses NoMorePasses cells = return cells
+runPasses (AnotherPass remaining) cells = do
   cells1 <- bubblePass cells
   cells2 <- step @FinishPass (return cells1)
-  runPasses (remaining - 1) cells2
+  runPasses remaining cells2
 
-program :: Program ()
-program = step @BubbleSort $ do
-  BubbleValues firstValue remaining <- resolveInput bubbleValues
-  cells <- step @InitializeArray $ buildChain firstValue remaining
-  sorted <- runPasses (length remaining) cells
+program :: InitialState %1 -> Program ()
+program initial = step @BubbleSort $ do
+  InitialState cells passes <- step @InitializeArray (pure initial)
+  sorted <- runPasses passes cells
   sorted1 <- step @Sorted (return sorted)
   step @CleanUp (destroyChain sorted1)
 

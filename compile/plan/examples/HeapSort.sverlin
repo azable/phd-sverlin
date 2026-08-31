@@ -4,6 +4,8 @@
 -- tree, or both.  One three-way `oneOf` guarantees that at least one useful
 -- representation is present; two unrelated `sometimes` wrappers could omit
 -- both and would therefore be the wrong model.
+-- Generator prepares the expected heap states; Program traces their writes but
+-- does not independently perform each comparison in this concise replay.
 
 data Number
 
@@ -24,9 +26,6 @@ data HeapNumber
 data HeapCell
 data ArrayNext
 data HeapParent
-
-valuesInput :: Input [Int]
-valuesInput = input @HeapValues
 
 numberKind :: Kind Number
 numberKind = kind @HeapNumber
@@ -49,7 +48,40 @@ data WriteHeapState
 data SortedHeap
 data FinishHeapSort
 
-domain :: Domain ()
+data EdgePlan where
+  NoEdges :: EdgePlan
+  NextEdge :: Int %1 -> Int %1 -> EdgePlan %1 -> EdgePlan
+
+data ValuePlan where
+  NoValues :: ValuePlan
+  NextValue :: Int %1 -> ValuePlan %1 -> ValuePlan
+
+data StatePlan where
+  NoStates :: StatePlan
+  NextState :: ValuePlan %1 -> StatePlan %1 -> StatePlan
+
+data HeapCase where
+  HeapCase ::
+    ValuePlan %1 ->
+    EdgePlan %1 ->
+    EdgePlan %1 ->
+    StatePlan %1 ->
+    StatePlan %1 ->
+    HeapCase
+
+heapGenerator :: Generator HeapCase
+heapGenerator = do
+  values <- listOf 7 15 (between 1 99)
+  let (building, extracting) = heapSortStates values
+  pure
+    (HeapCase
+       (valuePlan values)
+       (edgePlan (adjacentPairs (length values)))
+       (edgePlan (heapPairs (length values)))
+       (statePlan building)
+       (statePlan extracting))
+
+domain :: Domain InitialState
 domain = do
   declareKind numberKind
   declareKind cellKind
@@ -66,9 +98,15 @@ domain = do
       , FinishHeapSort
       ]
 
-  -- Fifteen is the largest complete four-level binary heap.  The explicit
-  -- bound also keeps the prepared tree-layout decision space small.
-  variable valuesInput (listOf 7 15 (between 1 99))
+  -- Fifteen is the largest complete four-level binary heap. The Generator
+  -- computes the complete write schedule while its sampled values are still
+  -- unrestricted; Domain consumes those values into Blocks and a linear plan.
+  HeapCase values arrayEdges treeEdges building extracting <-
+    variable @HeapValues heapGenerator
+  cells <- initializeCells values
+  arrayLinked <- relateInitialPairs arrayNext arrayEdges cells
+  heapLinked <- relateInitialPairs heapParent treeEdges arrayLinked
+  pure (InitialState heapLinked building extracting)
 
 --------------------------------------------------------------------------------
 -- Program storage and relation helpers
@@ -87,8 +125,8 @@ data Related where
 data Taken where
   Taken :: StoredList %1 -> Stored %1 -> StoredList %1 -> Taken
 
-createStored :: Int -> Program Stored
-createStored value = do
+initializeStored :: Int %1 -> Domain Stored
+initializeStored value = do
   Create valuePending <- create (LInt value)
   valueBlock <- materialize numberKind valuePending
   Create cellPending <- create LUnit
@@ -96,15 +134,15 @@ createStored value = do
   Seal cell1 slot <- seal cell valueBlock
   pure (Stored cell1 slot)
 
-createCells :: [Int] -> Program StoredList
-createCells [] = pure StoredNil
-createCells (value : values) = do
-  current <- createStored value
-  rest <- createCells values
+initializeCells :: ValuePlan %1 -> Domain StoredList
+initializeCells NoValues = pure StoredNil
+initializeCells (NextValue value values) = do
+  current <- initializeStored value
+  rest <- initializeCells values
   pure (StoredCons current rest)
 
-relateStored :: RelationKind ElementCell ElementCell -> Stored %1 -> Stored %1 -> Program Related
-relateStored relationKind (Stored left leftSlot) (Stored right rightSlot) = do
+relateInitialStored :: RelationKind ElementCell ElementCell -> Stored %1 -> Stored %1 -> Domain Related
+relateInitialStored relationKind (Stored left leftSlot) (Stored right rightSlot) = do
   Relate leftSlot1 rightSlot1 <- relate relationKind leftSlot rightSlot
   pure (Related (Stored left leftSlot1) (Stored right rightSlot1))
 
@@ -112,40 +150,40 @@ appendStored :: StoredList %1 -> StoredList %1 -> StoredList
 appendStored StoredNil right = right
 appendStored (StoredCons current rest) right = StoredCons current (appendStored rest right)
 
-takeAt :: Int -> StoredList %1 -> Taken
+takeAt :: Int %1 -> StoredList %1 -> Taken
 takeAt 0 (StoredCons current rest) = Taken StoredNil current rest
 takeAt index (StoredCons current rest) =
-  case takeAt (index - 1) rest of
+  case takeAt (index Linear.- 1) rest of
     Taken before focus after -> Taken (StoredCons current before) focus after
 
 -- This small linear zipper is enough to construct arbitrary bounded graph
 -- edges without adding index-based mutation to the public Program API.
-relateAt ::
+relateInitialAt ::
   RelationKind ElementCell ElementCell ->
-  Int ->
-  Int ->
+  Int %1 ->
+  Int %1 ->
   StoredList %1 ->
-  Program StoredList
-relateAt relationKind leftIndex rightIndex cells =
+  Domain StoredList
+relateInitialAt relationKind leftIndex distance cells =
   case takeAt leftIndex cells of
     Taken beforeLeft left afterLeft ->
-      case takeAt (rightIndex - leftIndex - 1) afterLeft of
+      case takeAt distance afterLeft of
         Taken between right afterRight -> do
-          Related left1 right1 <- relateStored relationKind left right
+          Related left1 right1 <- relateInitialStored relationKind left right
           pure
             (appendStored
                beforeLeft
                (StoredCons left1 (appendStored between (StoredCons right1 afterRight))))
 
-relatePairs ::
+relateInitialPairs ::
   RelationKind ElementCell ElementCell ->
-  [(Int, Int)] ->
+  EdgePlan %1 ->
   StoredList %1 ->
-  Program StoredList
-relatePairs _ [] cells = pure cells
-relatePairs relationKind ((left, right) : pairs) cells = do
-  cells1 <- relateAt relationKind left right cells
-  relatePairs relationKind pairs cells1
+  Domain StoredList
+relateInitialPairs _ NoEdges cells = pure cells
+relateInitialPairs relationKind (NextEdge left distance rest) cells = do
+  cells1 <- relateInitialAt relationKind left distance cells
+  relateInitialPairs relationKind rest cells1
 
 adjacentPairs :: Int -> [(Int, Int)]
 adjacentPairs count = [(index, index + 1) | index <- [0 .. count - 2]]
@@ -158,7 +196,19 @@ heapPairs count =
   , child < count
   ]
 
-rewriteStored :: Int -> Stored %1 -> Program Stored
+edgePlan :: [(Int, Int)] -> EdgePlan
+edgePlan [] = NoEdges
+edgePlan ((left, right) : rest) = NextEdge left (right - left - 1) (edgePlan rest)
+
+valuePlan :: [Int] -> ValuePlan
+valuePlan [] = NoValues
+valuePlan (value : rest) = NextValue value (valuePlan rest)
+
+statePlan :: [[Int]] -> StatePlan
+statePlan [] = NoStates
+statePlan (state : rest) = NextState (valuePlan state) (statePlan rest)
+
+rewriteStored :: Int %1 -> Stored %1 -> Program Stored
 rewriteStored value (Stored cell slot) = do
   Unseal cell1 oldValue <- unseal cell slot
   Create replacementValue <- create (LInt value)
@@ -167,9 +217,9 @@ rewriteStored value (Stored cell slot) = do
   Seal cell2 slot1 <- seal cell1 value1
   pure (Stored cell2 slot1)
 
-rewriteCells :: [Int] -> StoredList %1 -> Program StoredList
-rewriteCells [] StoredNil = pure StoredNil
-rewriteCells (value : values) (StoredCons current rest) = do
+rewriteCells :: ValuePlan %1 -> StoredList %1 -> Program StoredList
+rewriteCells NoValues StoredNil = pure StoredNil
+rewriteCells (NextValue value values) (StoredCons current rest) = do
   current1 <- rewriteStored value current
   rest1 <- rewriteCells values rest
   pure (StoredCons current1 rest1)
@@ -223,15 +273,15 @@ heapSortStates values =
       (extracting, _) = extractStates (length values) heap
    in (building, extracting)
 
-writeBuildStates :: [[Int]] -> StoredList %1 -> Program StoredList
-writeBuildStates [] cells = pure cells
-writeBuildStates (state : states) cells = do
+writeBuildStates :: StatePlan %1 -> StoredList %1 -> Program StoredList
+writeBuildStates NoStates cells = pure cells
+writeBuildStates (NextState state states) cells = do
   cells1 <- step @SiftDown (step @WriteHeapState (rewriteCells state cells))
   writeBuildStates states cells1
 
-writeExtractionStates :: [[Int]] -> StoredList %1 -> Program StoredList
-writeExtractionStates [] cells = pure cells
-writeExtractionStates (state : states) cells = do
+writeExtractionStates :: StatePlan %1 -> StoredList %1 -> Program StoredList
+writeExtractionStates NoStates cells = pure cells
+writeExtractionStates (NextState state states) cells = do
   cells1 <- step @ExtractMaximum (step @WriteHeapState (rewriteCells state cells))
   writeExtractionStates states cells1
 
@@ -248,14 +298,12 @@ destroyCells (StoredCons current rest) = do
   destroyStored current
   destroyCells rest
 
-program :: Program ()
-program = step @HeapSort $ do
-  values <- resolveInput valuesInput
-  heapLinked <- step @InitializeHeap $ do
-    cells <- createCells values
-    arrayLinked <- relatePairs arrayNext (adjacentPairs (length values)) cells
-    relatePairs heapParent (heapPairs (length values)) arrayLinked
-  let (building, extracting) = heapSortStates values
+data InitialState where
+  InitialState :: StoredList %1 -> StatePlan %1 -> StatePlan %1 -> InitialState
+
+program :: InitialState %1 -> Program ()
+program (InitialState initial building extracting) = step @HeapSort $ do
+  heapLinked <- step @InitializeHeap (pure initial)
   heap <- step @BuildHeap (writeBuildStates building heapLinked)
   sorted <- writeExtractionStates extracting heap
   final <- step @SortedHeap (pure sorted)

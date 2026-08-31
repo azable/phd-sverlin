@@ -10,20 +10,29 @@ disagree with it.
 The examples in [`examples/`](examples/) are complete body-only sources for this
 target API. The current compiler does not yet accept them.
 
+The semantics and safety rules below are firmer than the exact Haskell
+encoding. If implementation reveals a substantially simpler signature,
+constructor shape, or closed-overload encoding with equivalent authored
+behaviour, it may be proposed as a replacement. The proposal must show the old
+and new spelling, explain why the guarantees are unchanged, and identify any
+trade-off; do not silently drift the facade or examples. A material semantic
+change still needs a design decision rather than being treated as syntax.
+
 ## Design in one page
 
 The generated wrapper imports `Sverlin` as its only DSL facade; the body-only
 authored source defines three independent builders:
 
 ```haskell
-domain  :: Domain ()
-program :: Program ()
+domain  :: Domain initial
+program :: initial %1 -> Program ()
 render  :: Render ()
 ```
 
-- **Domain** declares typed classifications, relations, steps, and finite
-  seed-generated input.
-- **Program** consumes that input to construct one immutable linear trace.
+- **Domain** declares typed vocabulary, samples finite input, and constructs
+  the initial linear resources.
+- **Program** consumes those resources exactly once to complete one immutable
+  linear trace.
 - **Render** independently selects trace objects and relations, then describes
   their text, hierarchy, appearance, connectors, and bounded affine layout.
 
@@ -39,13 +48,7 @@ data Number
 instance Traceable Number where
   type Payload Number = LInt Number
 
-data Cell
-instance Traceable Cell where
-  type Payload Cell = LUnit Cell
-
 data Values
-data Cells
-data Adjacent
 data SearchInputRole
 data Initialized
 data Displayed
@@ -53,33 +56,24 @@ data Displayed
 valueKind :: Kind Number
 valueKind = kind @Values
 
-cellKind :: Kind Cell
-cellKind = kind @Cells
+data Initial where
+  Initial :: Block Number %1 -> Initial
 
-adjacent :: RelationKind Cell Cell
-adjacent = orderedRelation @Adjacent
-
-searchInput :: Input [Int]
-searchInput = input @SearchInputRole
-
+domain :: Domain Initial
 domain = do
   declareKind valueKind
-  declareKind cellKind
-  declareRelation adjacent
   declareSteps @'[Initialized, Displayed]
-  variable searchInput (listOf 4 9 (between 0 99))
+  value <- variable @SearchInputRole (between 0 99)
+  Create pending <- create (LInt value)
+  block <- materialize valueKind pending
+  pure (Initial block)
 
-program = do
-  values <- resolveInput searchInput
-  let visit [] = pure ()
-      visit (value : rest) = do
-        valueBlock <- step @Initialized $ do
-          Create pending <- create (LInt value)
-          materialize valueKind pending
-        valueBlock1 <- step @Displayed (pure valueBlock)
-        Destroy <- destroy valueBlock1
-        visit rest
-  visit values
+program :: Initial %1 -> Program ()
+program (Initial value) = do
+  value1 <- step @Initialized (pure value)
+  value2 <- step @Displayed (pure value1)
+  Destroy <- destroy value2
+  pure ()
 
 render = do
   always $ frame @Initialized
@@ -95,16 +89,33 @@ in the example suite.
 
 A `.sverlin` file contains declarations, helpers, `domain`, `program`, and
 `render`; it does not write a module header or imports. The generated wrapper
-supplies the linear Haskell prelude, including the qualified `Linear` name used
-inside `Applicable1` and `Applicable2` implementations, and imports `Sverlin`
-as the sole DSL facade. It must not expose `LinearTrace.*` implementation
-modules to authored code.
+supplies a curated linear Haskell prelude, including the qualified `Linear`
+arithmetic used inside `Applicable1` and `Applicable2` implementations, and
+imports `Sverlin` as the sole DSL facade. It must not expose `LinearTrace.*`
+implementation modules to authored code.
 
-Ordinary linear-prelude arithmetic remains unqualified for pure input and
-Program calculations. Symbolic Render values deliberately have no ordinary
-`Num`/`Fractional` instances and use the dotted affine operators instead. This
-lets `index + 1` remain normal Haskell while `right cell .+. gap` is visibly a
-solver expression.
+The authored profile does not expose `Ur`, `move`, `dup2`, `Consumable`,
+`Dupable`, `Movable`, or another operation that changes a linear binding into
+an unrestricted one. Program duplication happens only through traced lifecycle
+operations such as `copy`. The private compiler may use unrestricted storage
+internally to persist snapshots; that representation never crosses the
+authored facade.
+
+Ordinary arithmetic remains available in Generator. Program uses the linear
+prelude, so any runtime operand received through a linear value must still be
+consumed according to its multiplicity. Symbolic Render values deliberately
+have no ordinary `Num`/`Fractional` instances and use the dotted affine
+operators instead. This lets generator-side `index + 1` remain normal Haskell
+while `right cell .+. gap` is visibly a solver expression.
+
+The generated prelude also supplies one closed `do`-notation dispatch. Domain
+and Program bind results linearly; Generator, Render, and TextBuilder use
+unrestricted builder values. A value crosses from Generator into Domain
+through Domain-form `variable`, after which it must be consumed exactly once
+while constructing the initial resources. This is ordinary
+`RebindableSyntax` type-class dispatch checked by GHC, not a source-rewriting
+pass. The dispatch class and its instances are fixed compiler support, not
+authored APIs.
 
 The target profile supplies at least `DataKinds`, `GADTs`, `LinearTypes`,
 `MultiParamTypeClasses`, `NoImplicitPrelude`, `OverloadedStrings`,
@@ -123,12 +134,13 @@ to implement closed overloads are deliberately absent.
 | Area | Public names |
 |---|---|
 | Builders | `Domain`, `Program`, `Render` |
-| Domain identities | `Kind`, `kind`, `declareKind`, `RelationKind`, `orderedRelation`, `symmetricRelation`, `declareRelation`, `declareSteps`, `Input`, `input` |
-| Input generation | `Generator`, Domain-form `variable`, `resolveInput`, `between`, `elementOf`, `weighted`, `listOf`, `shuffle` |
+| Domain identities | `Kind`, `kind`, `declareKind`, `RelationKind`, `orderedRelation`, `symmetricRelation`, `declareRelation`, `declareSteps` |
+| Input generation | `Generator`, Domain-form `variable`, `between`, `elementOf`, `weighted`, `listOf`, `shuffle` |
 | Payloads | `Traceable(Payload)`, `LUnit(..)`, `LBool(..)`, `LInt(..)`, `LDouble(..)`, `LString(..)`, `LOperator(..)` |
 | Operators | `Applicable1(Apply1Result, applyPayload1)`, `Applicable2(Apply2Result, applyPayload2)` |
 | Linear resources | `Block`, `Pending`, `Slot`, `Create(..)`, `Use(..)`, `Copy(..)`, `Replace(..)`, `Apply1(..)`, `Apply2(..)`, `Destroy(..)`, `Seal(..)`, `Unseal(..)`, `Relate(..)` |
-| Program operations | `create`, `copy`, `use`, `apply1`, `apply2`, `replace`, `destroy`, `materialize`, `seal`, `unseal`, `relate`, `step` |
+| Domain and Program construction | `create`, `materialize`, `seal`, `relate` |
+| Program-only lifecycle | `copy`, `use`, `apply1`, `apply2`, `replace`, `destroy`, `unseal`, `step` |
 | Presence and frames | `always`, `sometimes`, `frame` |
 | Selection and hierarchy | `Selected`, `Relations`, `GeneratedNode`, `CanvasNode`, `select`, `node`, `self`, `canvas`, `within`, `relation`, `first`, `second` |
 | Structure | `Ranking`, `FixedInt`, `asSequence`, `asTree`, `asDag`, `rankOf`, `asScalar`, `asText`, `payloadScalar`, `Arrangement(..)`, `arrange` |
@@ -149,12 +161,13 @@ to implement closed overloads are deliberately absent.
 data Domain a
 ```
 
-`Domain` validates the complete vocabulary before input is sampled or Program
-is run. Declarations return `()` because the reusable typed handles are ordinary
-top-level values. The compiler records the marker type and source location for
-diagnostics and stable identity.
+`Domain` validates the complete vocabulary, samples its generators, and emits
+the constructive trace prefix before Program runs. Declaration operations
+return `()` because reusable typed handles are ordinary top-level values;
+construction operations return linear capabilities. The compiler records each
+marker type and source location for diagnostics and stable identity.
 
-One marker type names one declaration across kinds, relations, inputs, and
+One marker type names one declaration across kinds, relations, variables, and
 steps. Reusing it in another declaration category is diagnosed; this keeps
 serialized identity independent of an extra string namespace.
 
@@ -222,36 +235,51 @@ diagnosed.
 Nested `step` calls express hierarchy directly. There is no public type-level
 path-concatenation operator or separate branch declaration.
 
-### `Input` and `Generator`
+### `Generator` and linear initialization
 
 ```haskell
-data Input value
 data Generator value
 
-input
-  :: forall identity value.
-     (Typeable identity, Typeable value)
-  => Input value
-
 -- Domain specialization of the closed `variable` operation.
-variable :: Input value -> Generator value -> Domain ()
-
-resolveInput :: Input value -> Program value
+variable
+  :: forall identity value.
+     Typeable identity
+  => Generator value
+  -> Domain value
 ```
 
-An `Input` is a typed reference to one declared seed-generated value.
-`resolveInput` returns the value sampled for the current scenario; repeated
-calls return that same value. Render cannot resolve Program input directly.
+`variable @Identity generator` samples once for the scenario. Its result is
+bound linearly in Domain: it may be pattern-matched and transformed, but every
+part must be consumed exactly once into the returned initialization structure.
+There is no `Input` handle, `resolveInput`, `Ur`, or other unrestricted value
+crossing into Program.
 
-Each declared input receives a deterministic sub-seed derived from the scenario
-seed and its marker identity. Reordering declarations or adding an unrelated
-input therefore does not perturb existing values. Inputs that must be
-correlated are fields of one author-defined composite value generated by one
-`Generator`, as the examples do.
+Each Domain variable receives a deterministic sub-seed derived from the
+scenario seed and marker identity. Reordering declarations or adding an
+unrelated variable therefore does not perturb existing values. Values that
+must be correlated are fields of one author-defined composite value generated
+by one `Generator`.
 
-`Generator` has library-provided `Functor`, `Applicative`, and `Monad`
-instances. Custom valid structures are ordinary top-level functions returning
-`Generator a`.
+`Generator` has library-provided unrestricted `Functor`, `Applicative`, and
+`Monad` instances. Its ordinary `do` notation supports dependent generation;
+it never creates a Program `Block`, `Pending`, or `Slot`. Custom valid
+structures are ordinary top-level functions returning `Generator a`.
+
+Generator defines scenario input, including fixed alternatives and derived
+input structure such as a unary path through a generated collection. It cannot
+construct or capture a `Program` action. Algorithm work that should appear in
+the trace remains in Program; when that work needs the same runtime value more
+than once, the author uses `copy` on its Block instead of asking Generator to
+smuggle duplicate live capabilities across the boundary.
+
+There are two deliberately visible modelling choices. A trace-faithful example
+performs comparisons and updates with Blocks and `Applicable*` operators, so
+the trace records the computation. A replay-oriented example may instead make
+a finite sequence of expected states part of its generated scenario and pass
+that sequence linearly through Domain; Program then visualizes the sequence but
+does not independently establish that the algorithm produced it. The latter is
+useful for concise teaching material, not a hidden compiler fallback, and an
+example must say when it takes that trade-off.
 
 ```haskell
 between  :: Int -> Int -> Generator Int
@@ -268,11 +296,64 @@ shuffle  :: [value] -> Generator [value]
   items independently.
 - `shuffle` produces a uniform permutation of the supplied positions.
 
+`listOf` produces an ordinary runtime Haskell list; its bounds are not a
+type-level length and it creates no trace resources. The list is unrestricted
+while Generator constructs the scenario. Once Domain-form `variable` returns
+it, Domain's linear bind makes the whole value linear, so pattern matching must
+consume each head and tail exactly once while, for example, creating Blocks.
+No preprocessing pass changes the list's type.
+
+The `value` in `elementOf` may itself be a list, record, tree, or other fixed
+input. `weighted` branches over complete generators, with `pure fixedValue`
+representing a fixed branch. These two operations cover equal and weighted
+input alternatives without another public branching API:
+
+```haskell
+fixedList = elementOf [1, 2, 3] [[3, 1, 2], [8, 5, 3]]
+
+fixedOrGenerated = weighted (1, pure [1, 2, 3]) [(1, listOf 4 8 (between 0 99))]
+```
+
+Monadic bind expresses a later choice that depends on an earlier one, as in
+choosing a vertex count before generating exactly that many labels. Prefer
+constructive branches like these to predicate filtering or retry loops.
+
 Invalid bounds, impossible lengths, and non-positive weights are Domain
 diagnostics. The leading argument makes `elementOf` and `weighted` non-empty by
 construction. There is no public raw seed, predicate filter, retry loop, or
 rejection-sampling operation. Valid graph, tree, and DAG generators must
 construct valid values directly.
+
+Domain shares only the constructive `create`, `materialize`, `seal`, and
+`relate` operations with Program. Their supporting overload is closed and
+private. Domain cannot `copy`, `use`, apply operators, replace, destroy,
+`unseal`, or declare a `step`; those are algorithm actions. Every generated
+value, `Pending`, `Block`, and `Slot` must be consumed once, and Domain returns
+the resulting author-defined linear structure directly:
+
+```haskell
+data InitialValue
+
+data InitialValues where
+  InitialValues :: Block Number %1 -> InitialValues
+
+domain :: Domain InitialValues
+domain = do
+  value <- variable @InitialValue (between 0 99)
+  Create pending <- create (LInt value)
+  block <- materialize valueKind pending
+  pure (InitialValues block)
+
+program :: InitialValues %1 -> Program ()
+```
+
+The private host executes this initialization prefix and Program in one trace
+allocation state, passing the Domain result to `program` with a linear arrow.
+Creation and relation provenance are therefore ordinary trace events. Generated
+scenario data may accompany the resources only through linear fields in that
+returned structure; it never reaches Program as an unrestricted value. A
+dynamic resource collection is returned in an author-defined GADT whose fields
+and tail are linear, not an ordinary list of reusable Blocks.
 
 ### `Traceable` and `Payload`
 
@@ -280,12 +361,23 @@ construct valid values directly.
 class Traceable tag where
   type Payload tag = payload | payload -> tag
 
-data LUnit tag     = LUnit
-data LBool tag     = LBool Bool
-data LInt tag      = LInt Int
-data LDouble tag   = LDouble Double
-data LString tag   = LString String
-data LOperator tag = LOperator
+data LUnit tag where
+  LUnit :: LUnit tag
+
+data LBool tag where
+  LBool :: Bool %1 -> LBool tag
+
+data LInt tag where
+  LInt :: Int %1 -> LInt tag
+
+data LDouble tag where
+  LDouble :: Double %1 -> LDouble tag
+
+data LString tag where
+  LString :: String %1 -> LString tag
+
+data LOperator tag where
+  LOperator :: LOperator tag
 ```
 
 `tag` is the semantic block type; `Payload tag` is its trusted linear carrier.
@@ -347,6 +439,25 @@ sometimes $ node addOperators $ do
 
 ## Program
 
+The top-level Program consumes the value produced by Domain:
+
+```haskell
+program :: initial %1 -> Program ()
+```
+
+There is no input lookup inside Program. Any initial `Block` and `Slot`
+capabilities arrive through this linear argument and must be threaded to a
+terminal operation.
+
+Program has no unrestricted bind or escape operation. A helper that receives
+runtime data uses `%1` arguments, and consumes it with the qualified `Linear`
+arithmetic and comparison operations supplied by the curated prelude. Closed
+constants may still be ordinary Haskell values, but a generated value, payload,
+resource, or structure containing one cannot enter a `%Many` argument or be
+captured by an unrestricted closure. GHC rejects that source before the trace
+runs. A calculation that needs to reuse a traced value must first make the
+reuse explicit with `copy` and operate on the resulting Blocks.
+
 ### Linear resources and result patterns
 
 ```haskell
@@ -378,6 +489,10 @@ constructors themselves remain abstract. Every linear value must be passed to
 another operation or consumed exactly once before Program finishes.
 
 ### Lifecycle operations
+
+The signatures below are the Program specializations. `create`, `materialize`,
+`seal`, and `relate` also have the closed Domain specializations described
+above; their result shapes and ownership rules are identical.
 
 ```haskell
 create
@@ -1074,7 +1189,10 @@ additionally makes relevant parent edges touch the extremal content;
 not a solver choice. At the root, `Contain` therefore needs bounded canvas
 width and height: bounded children provide a minimum but no maximum. A root
 using `Hug` can instead derive bounded dimensions when all of its content is
-bounded.
+bounded. The rejection is not primarily about floating-point error: a free
+expansion direction has no finite range from which to sample uniformly. If
+children and `Hug` determine both canvas spans, no separate canvas maximum is
+needed.
 
 ### `Percent`
 
@@ -1507,8 +1625,9 @@ extra design weight. There are no bridge operators or soft `encourage` API.
 The compiler service accepts an ordered non-empty batch of integer seeds. Call
 its first element `s1` and each element at position `i` `si`.
 
-- `s1` is the **scenario seed**. Domain input is generated once and Program
-  constructs one shared trace for the whole batch.
+- `s1` is the **scenario seed**. Domain generation and its linear
+  initialization prefix run once; Program consumes that result to construct
+  one shared trace for the whole batch.
 - Every `si`, including `s1`, is a **view seed**. It controls Render choices,
   numeric sampling, and independent `sometimes` decisions.
 - A singleton batch uses its one seed for both roles.
@@ -1706,10 +1825,12 @@ state, not historical public module names.
 
 ### Trace, projection, and identity
 
-Compile Domain declarations into a typed registry, generate finite input, and
-run Program as an immutable event stream. Nested step occurrences retain typed
-definition identity and runtime paths. Relations are trace events attached to
-stable slot owners, not current occupants.
+Compile Domain declarations into a typed registry, sample its finite
+generators, and execute its constructive prefix in the trace engine. Pass the
+resulting resource structure linearly into Program, which continues the same
+immutable event stream. Nested step occurrences retain typed definition
+identity and runtime paths. Relations are trace events attached to stable slot
+owners, not current occupants.
 
 A stable visual projection identity includes the Render declaration, semantic
 scope, block or owner identity, and generated occurrence path. It must not use
@@ -1756,8 +1877,9 @@ The application-side migration is small but cannot be skipped:
 ### Host and package boundary
 
 The generated wrapper imports `Sverlin` as its only DSL module, alongside the
-fixed language prelude described above. A private host module combines the
-validated `domain`, completed `program`, compiled `render`, and service seeds.
+fixed language prelude described above. A private host module validates
+`domain`, executes its constructive prefix, passes its result once to
+`program`, compiles `render`, and applies the service seeds.
 The compiler remains one service accepting `.sverlin` content plus a non-empty
 seed batch; Haskell implementation types do not cross into the SvelteKit
 server.
@@ -1784,6 +1906,8 @@ The target facade does not expose:
   or view statistics;
 - free facts, queries, atoms, integer bindings, payload predicates, query-era
   selections, or alternate materialization calls;
+- `Input`, `input`, `resolveInput`, `Ur`, or another unrestricted input escape
+  into Program;
 - `SelectionBinding`, `Variable`, `Bound`, `NodeBinding`, `NodeStyle`, or the
   closed overload classes behind selection, nodes, geometry, styles, and
   choices;
@@ -1815,9 +1939,10 @@ that cannot be expressed by composing this facade.
 ### Phase 2: typed Domain and Program
 
 Introduce the `Sverlin` facade and private host. Implement typed declarations,
-constructive seed input, one materialization path, typed steps, stable Slots,
-and relation events. The old fact/query representation may temporarily lower
-these features internally, but authored source cannot name it.
+constructive seeded Domain initialization, its direct linear handoff to
+Program, one materialization path, typed steps, stable Slots, and relation
+events. The old fact/query representation may temporarily lower these features
+internally, but authored source cannot name it.
 
 ### Phase 3: one Render plan
 
@@ -1852,9 +1977,10 @@ Before treating a phase as complete:
   or process reuse; request order itself remains meaningful because its first
   seed selects the scenario;
 - tests must cover linear ownership, exactly-once pending materialization,
-  Slot owner identity, late relation creation, duplicate relations, structural
-  diagnostics, optional dependency propagation, whole-line shaping, and
-  fragment cluster mapping;
+  the direct linear Domain-to-Program handoff, rejection of unrestricted
+  escape operations, Slot owner identity, late relation creation, duplicate
+  relations, structural diagnostics, optional dependency propagation,
+  whole-line shaping, and fragment cluster mapping;
 - solver fixtures must distinguish authored weighting from algebraic splitting,
   exercise lower-dimensional alternatives, reject unsupported/unbounded input,
   and show that repeated view seeds reuse preparation without reusing samples;
