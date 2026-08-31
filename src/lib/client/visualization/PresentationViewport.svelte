@@ -22,6 +22,7 @@
     label: string;
     selectedIds?: RenderInstanceId[];
     onSelectionChange?: (ids: RenderInstanceId[]) => void;
+    onViewportChange?: (viewport: { zoom: number; panX: number; panY: number }) => void;
   };
 
   let {
@@ -30,7 +31,8 @@
     projectId,
     label,
     selectedIds = [],
-    onSelectionChange = (_ids: RenderInstanceId[]) => {}
+    onSelectionChange = (_ids: RenderInstanceId[]) => {},
+    onViewportChange = (_viewport: { zoom: number; panX: number; panY: number }) => {}
   }: Props = $props();
   const player = new VisualizationPlayer();
   let loadedPresentationId: string | undefined;
@@ -75,6 +77,7 @@
       width={player.canvasWidth}
       {selectedIds}
       {onSelectionChange}
+      {onViewportChange}
     />
   {:else if presentation?.format === 'html-frames-v1' && htmlDocument}
     <iframe

@@ -19,6 +19,7 @@
   import { Switch } from '$lib/client/components/ui/switch';
   import * as Tabs from '$lib/client/components/ui/tabs';
   import PhaseExpiredDialog from '$lib/client/study/PhaseExpiredDialog.svelte';
+  import { ProjectInteractionRecorder } from '$lib/client/study/interaction-recorder';
   import StudyTimer from '$lib/client/study/StudyTimer.svelte';
   import FeedbackComposer from '$lib/client/timeline/FeedbackComposer.svelte';
   import Timeline from '$lib/client/timeline/Timeline.svelte';
@@ -35,7 +36,13 @@
   } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { EventId } from '$lib/shared/projects/events';
+  import type { MessageContent } from '$lib/shared/projects/events/message-content';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
+  import { activeProjectOperation } from '$lib/shared/projects/operations';
+  import type {
+    StudyInteractionCapturePolicy,
+    StudyWorkspaceObservation
+  } from '$lib/shared/study/interactions';
 
   import NewProjectDialog from './NewProjectDialog.svelte';
   import ProjectArtifactPanel, {
@@ -56,6 +63,9 @@
         layout: PresentationLayout;
         presentationBufferTarget?: number;
         allowEarlyCompletion: boolean;
+        interactionCapture?: StudyInteractionCapturePolicy;
+        applicationVersion?: string;
+        buildSha?: string;
       }
     | {
         context: 'admin-preview';
@@ -116,6 +126,16 @@
   let expired = $state(study?.expired ?? false);
   let studyAdvancing = $state(false);
   let visualSelections = $state.raw<VisualSelection[]>([]);
+  let workspaceRoot = $state<HTMLElement>();
+  let interactionRecorder = $state.raw<ProjectInteractionRecorder>();
+  let timelineObservation = $state<StudyWorkspaceObservation['timeline']>();
+  let viewportObservations = $state.raw<StudyWorkspaceObservation['viewports']>([]);
+  let draftObservation = $state<StudyWorkspaceObservation['draft']>({
+    hasContent: false,
+    characterCount: 0,
+    referenceCount: 0,
+    focused: false
+  });
 
   function toggleInstances(
     current: VisualSelection['instances'],
@@ -139,6 +159,7 @@
     session.loaded && session.snapshot.renderer === 'sverlin' && layout === 'comparison' ? 2 : 1
   );
   const visiblePresentations = $derived(presentationSelection.selected(session.events, layout));
+  const playbackContext = $derived(presentationPlaybackContext(visiblePresentations));
   const activeSeed = $derived.by(() => {
     const presentation = session.loaded
       ? session.snapshot.activePresentationSet?.presentations[0]
@@ -154,7 +175,85 @@
 
   onMount(() => {
     void session.open();
-    return () => session.dispose();
+    if (study?.context === 'participant' && study.interactionCapture && workspaceRoot) {
+      interactionRecorder = new ProjectInteractionRecorder({
+        projectId,
+        capture: study.interactionCapture,
+        applicationVersion: study.applicationVersion ?? '0.0.1',
+        ...(study.deadlineAt ? { captureEndsAt: study.deadlineAt } : {}),
+        readProjectHead: () => session.head,
+        ...(study.buildSha ? { buildSha: study.buildSha } : {})
+      });
+      interactionRecorder.start(workspaceRoot);
+    }
+    return () => {
+      interactionRecorder?.stop();
+      session.dispose();
+    };
+  });
+
+  $effect(() => {
+    const recorder = interactionRecorder;
+    if (!recorder || !session.loaded || expired) return;
+    const operation = activeProjectOperation(session.events);
+    const playbackStep = presentationPlayback.stepFor(playbackContext);
+    const frame = playbackContext.frames[playbackStep];
+    recorder.recordWorkspaceState(
+      {
+        projectHead: session.head,
+        ...(!session.atHead ? { viewedProjectEvent: session.snapshot.at } : {}),
+        ...(operation
+          ? {
+              activeOperation: {
+                id: operation.operationId,
+                kind: operation.kind,
+                status: operation.status as 'accepted' | 'running'
+              }
+            }
+          : {}),
+        connection: session.connection,
+        atHead: session.atHead,
+        layout,
+        visiblePresentationIds: visiblePresentations.map(
+          ({ presentation }) => presentation.presentationId
+        ),
+        followingLatestPresentations: presentationSelection.followingLatest,
+        focusedTimelineEvents: session.focusedEvents,
+        ...(playbackContext.stepCount
+          ? {
+              playback: {
+                contextKey: playbackContext.key,
+                step: playbackStep,
+                ...(frame ? { frameKey: frame.key } : {}),
+                localSteps: frame
+                  ? visiblePresentations.map(({ presentation }) => ({
+                      presentationId: presentation.presentationId,
+                      step: frame.localSteps[presentation.presentationId] ?? -1
+                    }))
+                  : []
+              }
+            }
+          : {}),
+        visualSelections,
+        ...(timelineObservation ? { timeline: timelineObservation } : {}),
+        viewports: viewportObservations.filter(({ presentationId }) =>
+          visiblePresentations.some(
+            ({ presentation }) => presentation.presentationId === presentationId
+          )
+        ),
+        draft: draftObservation,
+        document: {
+          visibility: document.visibilityState === 'hidden' ? 'hidden' : 'visible',
+          focused: document.hasFocus(),
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            devicePixelRatio: window.devicePixelRatio
+          }
+        }
+      },
+      session.head === 0 ? 'started' : 'changed'
+    );
   });
 
   $effect(() => {
@@ -193,15 +292,67 @@
 
   function expireStudyPhase() {
     expired = true;
+    interactionRecorder?.stop();
     session.disablePresentationBuffer();
+  }
+
+  function recordDraft(content: MessageContent, focused: boolean) {
+    draftObservation = {
+      hasContent: content.length > 0,
+      characterCount: content.reduce(
+        (total, segment) => total + (segment.type === 'markdown' ? segment.text.length : 0),
+        0
+      ),
+      referenceCount: content.filter((segment) => segment.type !== 'markdown').length,
+      focused
+    };
+    interactionRecorder?.recordDraft(content, focused);
+  }
+
+  function recordViewport(
+    presentationId: string,
+    viewport: Omit<StudyWorkspaceObservation['viewports'][number], 'presentationId'>
+  ) {
+    const current = viewportObservations.find((entry) => entry.presentationId === presentationId);
+    if (
+      current?.zoom === viewport.zoom &&
+      current.panX === viewport.panX &&
+      current.panY === viewport.panY
+    ) {
+      return;
+    }
+    viewportObservations = [
+      ...viewportObservations.filter((entry) => entry.presentationId !== presentationId),
+      { presentationId, ...viewport }
+    ];
+  }
+
+  function recordTimeline(value: NonNullable<StudyWorkspaceObservation['timeline']>) {
+    if (
+      timelineObservation?.following === value.following &&
+      timelineObservation.scrollTop === value.scrollTop &&
+      timelineObservation.scrollHeight === value.scrollHeight &&
+      timelineObservation.clientHeight === value.clientHeight &&
+      timelineObservation.normalized === value.normalized
+    ) {
+      return;
+    }
+    timelineObservation = value;
   }
 </script>
 
-<div class="dark h-screen overflow-hidden bg-background text-foreground">
+<div
+  bind:this={workspaceRoot}
+  class="dark h-screen overflow-hidden bg-background text-foreground"
+  data-replay-region="workspace"
+>
   {#if session.loaded}
     <main class="flex h-full min-w-[72rem] flex-col overflow-hidden">
       {#if study}
-        <header class="flex items-center gap-3 border-b bg-card px-4 py-2">
+        <header
+          class="flex items-center gap-3 border-b bg-card px-4 py-2"
+          data-replay-region="study-header"
+        >
           <div class="mr-auto min-w-0">
             <div class="flex items-center gap-2">
               <p class="text-base font-medium">{study.title}</p>
@@ -330,7 +481,11 @@
                 {/if}
               {/if}
             </Tabs.List>
-            <Tabs.Content value="timeline" class="flex min-h-0 flex-1 flex-col">
+            <Tabs.Content
+              value="timeline"
+              class="flex min-h-0 flex-1 flex-col"
+              data-replay-region="timeline"
+            >
               {#if developerView}
                 <div class="flex items-center border-b bg-muted px-4 py-2 text-sm">
                   <span class="mr-auto text-muted-foreground">Complete retained event details</span>
@@ -348,6 +503,7 @@
                 {layout}
                 inspect={developerView}
                 onPresentationChange={() => (visualSelections = [])}
+                onViewportChange={recordTimeline}
                 onReferenceRequest={(presentation) =>
                   feedbackComposer?.referencePresentation(presentation)}
                 onElementReferenceActivate={(reference, extend) => {
@@ -402,6 +558,7 @@
                     visualSelections = [];
                     presentationSelection.returnToLatest();
                   }}
+                  onDraftChange={recordDraft}
                 />
               {/if}
             </Tabs.Content>
@@ -410,7 +567,12 @@
 
         <Resizable.Handle withHandle />
 
-        <Resizable.Pane defaultSize={68} minSize={50} class="flex min-w-0 flex-col">
+        <Resizable.Pane
+          defaultSize={68}
+          minSize={50}
+          class="flex min-w-0 flex-col"
+          data-replay-region="project-workspace"
+        >
           {#if showAdminControls}
             <div class="flex items-center gap-2 border-b px-3 py-1.5 text-sm">
               <span class="text-muted-foreground">Presentation layout</span>
@@ -459,8 +621,11 @@
             onVisualSelectionsChange={(selections) => (visualSelections = selections)}
             onReferenceSelections={(selections) =>
               feedbackComposer?.referenceSelections(selections)}
+            onViewportChange={recordViewport}
           />
-          <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
+          <div class="contents" data-replay-region="artifact">
+            <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
+          </div>
         </Resizable.Pane>
       </Resizable.PaneGroup>
     </main>

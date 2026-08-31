@@ -5,6 +5,7 @@ import type {
   VisualizationMode,
   WorkspaceView
 } from '$lib/shared/presentations';
+import type { StudyInteractionCapturePolicy } from '$lib/shared/study/interactions';
 
 export type StudyCondition = {
   renderer: VisualizationMode;
@@ -44,6 +45,7 @@ export type StudyDefinition = {
   name: string;
   description: string;
   assignment: { strategy: 'balanced'; tieBreakOrder: string[] };
+  interactionCapture?: StudyInteractionCapturePolicy;
   conditions: Record<string, StudyCondition>;
   arms: Record<string, { slots: Record<string, string> }>;
   flow: StudyPhase[];
@@ -84,6 +86,15 @@ export function defineStudy<const Definition extends StudyDefinition>(
   }
   if (!definition.assignment.tieBreakOrder.length) {
     throw new Error('Study protocols need at least one assignment arm.');
+  }
+  if (definition.interactionCapture) {
+    const capture = definition.interactionCapture;
+    if (capture.cursorChunkDurationMs < capture.cursorSampleIntervalMs) {
+      throw new Error('Study interaction cursor chunks must contain at least one sample.');
+    }
+    if (capture.flushByteThreshold > capture.outboxByteLimit) {
+      throw new Error('Study interaction flush bytes cannot exceed the local outbox limit.');
+    }
   }
   for (const [id, condition] of Object.entries(definition.conditions)) {
     if (!Number.isSafeInteger(condition.durationSeconds) || condition.durationSeconds <= 0) {

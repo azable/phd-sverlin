@@ -22,6 +22,12 @@ describe('study definition', () => {
     expect(mainStudyV1.conditions.sverlin.presentationBufferTarget).toBe(4);
     expect(mainStudyV1.conditions.html.workspace.layout).toBe('single');
     expect(mainStudyV1.conditions.sverlin).not.toHaveProperty('candidatePool');
+    expect(mainStudyV1.interactionCapture).toMatchObject({
+      schemaVersion: 1,
+      cursorSampleIntervalMs: 250,
+      draftSnapshotIntervalMs: 1_000,
+      outboxByteLimit: 5 * 1024 * 1024
+    });
     expect(() => studyDefinition(mainStudyV1.id, 999)).toThrow('Unknown study protocol');
   });
 

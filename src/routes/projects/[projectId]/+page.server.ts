@@ -36,7 +36,17 @@ export const load: PageServerLoad = async ({ locals, params }) => {
               ...task,
               context: 'participant' as const,
               deadlineAt: flowPhase.deadlineAt,
-              allowEarlyCompletion: !!flowPhase.phase.allowEarlyCompletion
+              allowEarlyCompletion: !!flowPhase.phase.allowEarlyCompletion,
+              ...(inspection.study.interactionCapture && !inspection.readOnly
+                ? {
+                    interactionCapture: inspection.study.interactionCapture,
+                    applicationVersion: process.env.npm_package_version ?? '0.0.1',
+                    buildSha:
+                      process.env.RENDER_GIT_COMMIT?.trim() ||
+                      process.env.SVERLIN_BUILD_SHA?.trim() ||
+                      undefined
+                  }
+                : {})
             };
     }
   }

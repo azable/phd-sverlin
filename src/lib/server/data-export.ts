@@ -29,7 +29,7 @@ import { projectStudyFlow, type StudyFlow } from '$lib/shared/study/projection';
 import { registeredStudyDefinitions, studyDefinition } from '$lib/shared/study/registry';
 
 const exportFormat = 'sverlin-data-export';
-const exportVersion = 1;
+const exportVersion = 2;
 
 export type ExportScope =
   | { type: 'projects'; projectId?: string }
@@ -75,8 +75,42 @@ export type ExportSnapshot = {
   };
 };
 
+export type ExportInteractionSession = {
+  id: string;
+  projectId: string;
+  studyRunId?: string;
+  studyPhaseId?: string;
+  schemaVersion: number;
+  clientStartedAt: string;
+  clientTimeOrigin: number;
+  initialViewport: Record<string, unknown>;
+  applicationVersion: string;
+  buildSha?: string;
+  capture: Record<string, unknown>;
+  acceptedThrough: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ExportInteractionEvent = {
+  sessionId: string;
+  sequence: number;
+  kind: string;
+  elapsedMs: number;
+  clientOccurredAt: string;
+  projectHead: number;
+  payload: Record<string, unknown>;
+  receivedAt: string;
+};
+
+export type ExportInteractionSnapshot = {
+  sessions: ExportInteractionSession[];
+  events: ExportInteractionEvent[];
+};
+
 export interface ExportDataSource {
   collect(scope: ExportScope): Promise<ExportSnapshot>;
+  collectInteractions?(scope: ExportScope): Promise<ExportInteractionSnapshot>;
   readResource(projectId: string, resourceId: string): Promise<Uint8Array>;
 }
 
@@ -93,6 +127,13 @@ export type DataExportManifest = {
   ownerCount: number;
   participantCount: number;
   projectCount: number;
+  interactions: {
+    status: 'included' | 'unavailable';
+    sessionCount: number;
+    eventCount: number;
+    draftSnapshotCount: number;
+    warnings: string[];
+  };
   files: Array<{ path: string; sha256: string; byteLength: number; mediaType: string }>;
 };
 
@@ -395,6 +436,111 @@ export class PostgresExportDataSource implements ExportDataSource {
   readResource(projectId: string, resourceId: string): Promise<Uint8Array> {
     return this.repository.readResource(projectId, resourceId);
   }
+
+  async collectInteractions(scope: ExportScope): Promise<ExportInteractionSnapshot> {
+    return database().transaction(
+      async (transaction) => {
+        const projectConditions = [isNull(schema.projects.deletedAt)];
+        if (scope.type === 'projects' && scope.projectId) {
+          projectConditions.push(eq(schema.projectInteractionSessions.projectId, scope.projectId));
+        }
+        const studyConditions = [eq(schema.studyRuns.mode, 'participant')];
+        if (scope.type === 'participant') {
+          studyConditions.push(eq(schema.studyRuns.ownerUserId, scope.userId));
+        }
+        if (scope.type === 'study' && scope.studyId) {
+          studyConditions.push(eq(schema.studyRuns.studyId, scope.studyId));
+        }
+        if (scope.type === 'study' && scope.studyVersion !== undefined) {
+          studyConditions.push(eq(schema.studyRuns.studyVersion, scope.studyVersion));
+        }
+
+        const rows =
+          scope.type === 'projects'
+            ? await transaction
+                .select({
+                  session: schema.projectInteractionSessions,
+                  runId: schema.studyPhaseRuns.runId,
+                  phaseId: schema.studyPhaseRuns.phaseId
+                })
+                .from(schema.projectInteractionSessions)
+                .innerJoin(
+                  schema.projects,
+                  eq(schema.projects.id, schema.projectInteractionSessions.projectId)
+                )
+                .leftJoin(
+                  schema.studyPhaseRuns,
+                  eq(schema.studyPhaseRuns.projectId, schema.projectInteractionSessions.projectId)
+                )
+                .where(projectConditions.length ? and(...projectConditions) : undefined)
+                .orderBy(
+                  asc(schema.projectInteractionSessions.clientStartedAt),
+                  asc(schema.projectInteractionSessions.id)
+                )
+            : await transaction
+                .select({
+                  session: schema.projectInteractionSessions,
+                  runId: schema.studyPhaseRuns.runId,
+                  phaseId: schema.studyPhaseRuns.phaseId
+                })
+                .from(schema.projectInteractionSessions)
+                .innerJoin(
+                  schema.projects,
+                  eq(schema.projects.id, schema.projectInteractionSessions.projectId)
+                )
+                .innerJoin(
+                  schema.studyPhaseRuns,
+                  eq(schema.studyPhaseRuns.projectId, schema.projectInteractionSessions.projectId)
+                )
+                .innerJoin(schema.studyRuns, eq(schema.studyRuns.id, schema.studyPhaseRuns.runId))
+                .where(and(...studyConditions, isNull(schema.projects.deletedAt)))
+                .orderBy(
+                  asc(schema.projectInteractionSessions.clientStartedAt),
+                  asc(schema.projectInteractionSessions.id)
+                );
+        const sessionIds = rows.map(({ session }) => session.id);
+        const events = sessionIds.length
+          ? await transaction
+              .select()
+              .from(schema.projectInteractionEvents)
+              .where(inArray(schema.projectInteractionEvents.sessionId, sessionIds))
+              .orderBy(
+                asc(schema.projectInteractionEvents.sessionId),
+                asc(schema.projectInteractionEvents.sequence)
+              )
+          : [];
+        return {
+          sessions: rows.map(({ session, runId, phaseId }) => ({
+            id: session.id,
+            projectId: session.projectId,
+            ...(runId ? { studyRunId: runId } : {}),
+            ...(phaseId ? { studyPhaseId: phaseId } : {}),
+            schemaVersion: session.schemaVersion,
+            clientStartedAt: session.clientStartedAt.toISOString(),
+            clientTimeOrigin: session.clientTimeOrigin,
+            initialViewport: session.initialViewport,
+            applicationVersion: session.applicationVersion,
+            ...(session.buildSha ? { buildSha: session.buildSha } : {}),
+            capture: session.capture,
+            acceptedThrough: session.acceptedThrough,
+            createdAt: session.createdAt.toISOString(),
+            updatedAt: session.updatedAt.toISOString()
+          })),
+          events: events.map((event) => ({
+            sessionId: event.sessionId,
+            sequence: event.sequence,
+            kind: event.kind,
+            elapsedMs: event.elapsedMs,
+            clientOccurredAt: event.clientOccurredAt.toISOString(),
+            projectHead: event.projectHead,
+            payload: event.payload as Record<string, unknown>,
+            receivedAt: event.receivedAt.toISOString()
+          }))
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' }
+    );
+  }
 }
 
 function requiredProjectDocument(
@@ -447,6 +593,10 @@ export async function writeDataExport(
       );
     }
   }
+  const interactionExport = await prepareInteractionExport(source, scope);
+  for (const file of interactionExport.files) {
+    await appendBytes(sink, files, file.path, file.bytes, file.mediaType);
+  }
   const manifest: DataExportManifest = {
     format: exportFormat,
     version: exportVersion,
@@ -460,10 +610,101 @@ export async function writeDataExport(
     ownerCount: snapshot.owners.length,
     participantCount: snapshot.participants.length,
     projectCount: snapshot.projects.length,
+    interactions: interactionExport.summary,
     files
   };
   await sink.write('manifest.json', jsonBytes(manifest), 'application/json');
   return manifest;
+}
+
+type PreparedInteractionFiles = {
+  summary: DataExportManifest['interactions'];
+  files: Array<{ path: string; bytes: Uint8Array; mediaType: string }>;
+};
+
+async function prepareInteractionExport(
+  source: ExportDataSource,
+  scope: ExportScope
+): Promise<PreparedInteractionFiles> {
+  const warning =
+    'Interaction telemetry was unavailable; the primary project Timeline and chat export is complete.';
+  try {
+    if (!source.collectInteractions) throw new Error('Interaction collection is unsupported.');
+    const snapshot = await source.collectInteractions(scope);
+    const drafts: Array<Record<string, unknown>> = [];
+    const events = snapshot.events.map((event) => {
+      if (event.kind !== 'draft.snapshot') return event;
+      const recordId = `${event.sessionId}:${event.sequence}`;
+      const { content, ...metadata } = event.payload;
+      drafts.push({
+        id: recordId,
+        sessionId: event.sessionId,
+        sequence: event.sequence,
+        clientOccurredAt: event.clientOccurredAt,
+        content
+      });
+      return {
+        ...event,
+        payload: { ...metadata, sensitiveDraftRecordId: recordId }
+      };
+    });
+    const summary: DataExportManifest['interactions'] = {
+      status: 'included',
+      sessionCount: snapshot.sessions.length,
+      eventCount: snapshot.events.length,
+      draftSnapshotCount: drafts.length,
+      warnings: []
+    };
+    const coverage = {
+      ...summary,
+      scope,
+      note: 'Events align to project operations through projectHead and active-operation checkpoints.'
+    };
+    return {
+      summary,
+      files: [
+        {
+          path: 'interactions/sessions.json',
+          bytes: jsonBytes(snapshot.sessions),
+          mediaType: 'application/json'
+        },
+        {
+          path: 'interactions/events.jsonl',
+          bytes: jsonLines(events),
+          mediaType: 'application/x-ndjson'
+        },
+        {
+          path: 'sensitive/unsent-feedback-drafts.jsonl',
+          bytes: jsonLines(drafts),
+          mediaType: 'application/x-ndjson'
+        },
+        {
+          path: 'interactions/coverage.json',
+          bytes: jsonBytes(coverage),
+          mediaType: 'application/json'
+        }
+      ]
+    };
+  } catch (cause) {
+    console.warn(warning, cause);
+    const summary: DataExportManifest['interactions'] = {
+      status: 'unavailable',
+      sessionCount: 0,
+      eventCount: 0,
+      draftSnapshotCount: 0,
+      warnings: [warning]
+    };
+    return {
+      summary,
+      files: [
+        {
+          path: 'interactions/coverage.json',
+          bytes: jsonBytes({ ...summary, scope }),
+          mediaType: 'application/json'
+        }
+      ]
+    };
+  }
 }
 
 export async function writeDataDirectory(
@@ -590,6 +831,12 @@ function serializeDates(value: Record<string, unknown>): Record<string, unknown>
 
 function jsonBytes(value: unknown): Uint8Array {
   return Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function jsonLines(values: readonly unknown[]): Uint8Array {
+  return Buffer.from(
+    values.length ? `${values.map((value) => JSON.stringify(value)).join('\n')}\n` : ''
+  );
 }
 
 function sha256(bytes: Uint8Array): string {

@@ -11,6 +11,7 @@ import { projectRepository, ProjectNotFoundError } from '$lib/server/projects/re
 import { createProject, renderProjectPresentations } from '$lib/server/projects/service';
 import { projectSnapshotAt } from '$lib/shared/projects/projection';
 import { resolveStudyArm, type ResolvedStudyPhase } from '$lib/shared/study/definition';
+import type { StudyInteractionCapturePolicy } from '$lib/shared/study/interactions';
 import {
   projectStudyFlow,
   type StudyFlow,
@@ -50,6 +51,7 @@ export type StudyProjectContext = {
   expired: boolean;
   deadlineAt?: string;
   presentationBufferTarget?: number;
+  interactionCapture?: StudyInteractionCapturePolicy;
   layout?: string;
   view?: string;
 };
@@ -290,9 +292,8 @@ export async function studyProjectContext(
     .limit(1);
   if (!row) return undefined;
   const expired = !!row.deadlineAt && row.deadlineAt.getTime() <= Date.now();
-  const phase = resolveStudyArm(studyDefinition(row.studyId, row.studyVersion), row.armId).find(
-    ({ id }) => id === row.phaseId
-  );
+  const definition = studyDefinition(row.studyId, row.studyVersion);
+  const phase = resolveStudyArm(definition, row.armId).find(({ id }) => id === row.phaseId);
   return {
     runId: row.runId,
     mode: row.mode,
@@ -305,6 +306,9 @@ export async function studyProjectContext(
     ...(row.deadlineAt ? { deadlineAt: row.deadlineAt.toISOString() } : {}),
     ...(phase?.kind === 'task' && phase.condition.presentationBufferTarget
       ? { presentationBufferTarget: phase.condition.presentationBufferTarget }
+      : {}),
+    ...(phase?.kind === 'task' && definition.interactionCapture
+      ? { interactionCapture: definition.interactionCapture }
       : {}),
     ...(row.layout ? { layout: row.layout } : {}),
     ...(row.view ? { view: row.view } : {})

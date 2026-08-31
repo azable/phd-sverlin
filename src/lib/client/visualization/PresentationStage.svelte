@@ -29,6 +29,10 @@
     visualSelections?: readonly VisualSelection[];
     onVisualSelectionsChange?: (selections: VisualSelection[]) => void;
     onReferenceSelections?: (selections: VisualSelection[]) => void;
+    onViewportChange?: (
+      presentationId: string,
+      viewport: { zoom: number; panX: number; panY: number }
+    ) => void;
   };
 
   let {
@@ -39,7 +43,11 @@
     disabled = false,
     visualSelections = [],
     onVisualSelectionsChange = (_selections: VisualSelection[]) => {},
-    onReferenceSelections = (_selections: VisualSelection[]) => {}
+    onReferenceSelections = (_selections: VisualSelection[]) => {},
+    onViewportChange = (
+      _presentationId: string,
+      _viewport: { zoom: number; panX: number; panY: number }
+    ) => {}
   }: Props = $props();
   let preferencePending = $state<string>();
 
@@ -161,6 +169,7 @@
 {#snippet controls()}
   <div
     class="flex min-h-14 shrink-0 items-center justify-center gap-2 border-y bg-background px-3 py-2"
+    data-replay-region="presentation-controls"
   >
     {#if layout === 'comparison' && visible.length === 2}
       <Button
@@ -246,6 +255,7 @@
     {#each visible as entry, index (entry.presentation.presentationId)}
       <div
         class="flex min-h-0 flex-1 overflow-hidden bg-muted/30 p-2"
+        data-replay-region={`candidate-${index + 1}`}
         in:fly={{ x: 24, duration: 180 }}
       >
         <div
@@ -258,6 +268,8 @@
             label={`Visualization ${index + 1}`}
             selectedIds={selectedInstances(entry)}
             onSelectionChange={(instances) => selectInstances(entry, instances)}
+            onViewportChange={(viewport) =>
+              onViewportChange(entry.presentation.presentationId, viewport)}
           />
         </div>
       </div>

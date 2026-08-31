@@ -23,6 +23,13 @@
     layout: PresentationLayout;
     inspect?: boolean;
     onPresentationChange?: () => void;
+    onViewportChange?: (value: {
+      following: boolean;
+      scrollTop: number;
+      scrollHeight: number;
+      clientHeight: number;
+      normalized: number;
+    }) => void;
     onReferenceRequest?: (presentation: TimelinePresentation) => void;
     onElementReferenceActivate?: (
       reference: Extract<MessageContentSegment, { type: 'element-ref' }>,
@@ -37,6 +44,7 @@
     layout,
     inspect = false,
     onPresentationChange = () => {},
+    onViewportChange = () => {},
     onReferenceRequest = () => {},
     onElementReferenceActivate = () => {}
   }: Props = $props();
@@ -52,6 +60,14 @@
     if (!node) return;
     const updateFollowing = () => {
       following = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+      const maximum = Math.max(0, node.scrollHeight - node.clientHeight);
+      onViewportChange({
+        following,
+        scrollTop: Math.max(0, Math.round(node.scrollTop)),
+        scrollHeight: Math.max(0, Math.round(node.scrollHeight)),
+        clientHeight: Math.max(0, Math.round(node.clientHeight)),
+        normalized: maximum ? Math.min(1, Math.max(0, node.scrollTop / maximum)) : 1
+      });
     };
     updateFollowing();
     node.addEventListener('scroll', updateFollowing, { passive: true });

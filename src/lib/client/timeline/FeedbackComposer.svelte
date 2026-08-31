@@ -28,6 +28,7 @@
     presentations: TimelinePresentation[];
     visualSelections?: readonly VisualSelection[];
     onSubmitted?: () => void;
+    onDraftChange?: (content: MessageContent, focused: boolean) => void;
   };
 
   let {
@@ -35,13 +36,15 @@
     presentationCount,
     presentations,
     visualSelections = [],
-    onSubmitted = () => {}
+    onSubmitted = () => {},
+    onDraftChange = (_content: MessageContent, _focused: boolean) => {}
   }: Props = $props();
   let editor = $state<HTMLDivElement>();
   let savedRange: Range | undefined;
   let hasContent = $state(false);
   let hasExplicitReferences = $state(false);
   let editorRevision = $state(0);
+  let focused = $state(false);
   const automaticContext = $derived(automaticFeedbackContext(presentations, visualSelections));
 
   export function referencePresentation(presentation: TimelinePresentation): void {
@@ -91,6 +94,7 @@
       hasExplicitReferences = false;
       savedRange = undefined;
       session.focusedEvents = [];
+      onDraftChange([], false);
       onSubmitted();
     }
   }
@@ -113,6 +117,7 @@
     const content = serializeEditor();
     hasContent = content.length > 0;
     hasExplicitReferences = content.some((segment) => segment.type !== 'markdown');
+    onDraftChange(content, focused);
   }
 
   function insertReference(reference: ReferenceSegment) {
@@ -149,6 +154,13 @@
     savedRange = range.cloneRange();
     hasContent = true;
     hasExplicitReferences = true;
+    onDraftChange(serializeEditor(), focused);
+  }
+
+  function focusChanged(next: boolean) {
+    focused = next;
+    if (!next) rememberSelection();
+    onDraftChange(serializeEditor(), focused);
   }
 
   function referenceChip(reference: ReferenceSegment): HTMLSpanElement {
@@ -217,7 +229,7 @@
   }
 </script>
 
-<form class="border-t bg-background p-4" onsubmit={submit}>
+<form class="border-t bg-background p-4" data-replay-region="feedback-composer" onsubmit={submit}>
   <Field.FieldGroup>
     <Field.Field>
       {#if session.focusedEvents.length > 0}
@@ -260,7 +272,8 @@
             oninput={updateContentState}
             onkeyup={rememberSelection}
             onmouseup={rememberSelection}
-            onfocusout={rememberSelection}
+            onfocus={() => focusChanged(true)}
+            onfocusout={() => focusChanged(false)}
             onkeydown={submitOnEnter}
           ></div>
         {/key}

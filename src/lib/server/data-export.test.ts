@@ -23,6 +23,42 @@ describe('project data export traversal', () => {
     };
     const source: ExportDataSource = {
       collect: vi.fn(async () => snapshot),
+      collectInteractions: vi.fn(async () => ({
+        sessions: [
+          {
+            id: '12345678-1234-4123-8123-123456789abc',
+            projectId: 'project-test',
+            studyRunId: 'run-1',
+            studyPhaseId: 'task-one',
+            schemaVersion: 1,
+            clientStartedAt: '2026-08-30T10:00:00.000Z',
+            clientTimeOrigin: 1,
+            initialViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
+            applicationVersion: '0.0.1',
+            capture: {},
+            acceptedThrough: 1,
+            createdAt: '2026-08-30T10:00:00.000Z',
+            updatedAt: '2026-08-30T10:01:00.000Z'
+          }
+        ],
+        events: [
+          {
+            sessionId: '12345678-1234-4123-8123-123456789abc',
+            sequence: 1,
+            kind: 'draft.snapshot',
+            elapsedMs: 1_000,
+            clientOccurredAt: '2026-08-30T10:00:01.000Z',
+            projectHead: 4,
+            payload: {
+              content: [{ type: 'markdown', text: 'unsent research draft' }],
+              focused: true,
+              truncated: false,
+              originalByteLength: 47
+            },
+            receivedAt: '2026-08-30T10:00:02.000Z'
+          }
+        ]
+      })),
       readResource: vi.fn(async () => bytes)
     };
 
@@ -44,6 +80,10 @@ describe('project data export traversal', () => {
       'projects/project-test/project.json',
       'projects/project-test/resources.json',
       `projects/project-test/resources/sha256-${digest}`,
+      'interactions/sessions.json',
+      'interactions/events.jsonl',
+      'sensitive/unsent-feedback-drafts.jsonl',
+      'interactions/coverage.json',
       'manifest.json'
     ]);
     expect(manifest).toMatchObject({
@@ -51,7 +91,13 @@ describe('project data export traversal', () => {
       ownerCount: 1,
       projectCount: 1
     });
-    expect(manifest.files).toHaveLength(10);
+    expect(manifest.files).toHaveLength(14);
+    expect(manifest.interactions).toMatchObject({
+      status: 'included',
+      sessionCount: 1,
+      eventCount: 1,
+      draftSnapshotCount: 1
+    });
     expect(JSON.parse(Buffer.from(files.get('owners.json')!).toString())).toEqual([
       { id: 'owner-1', label: 'P001', role: 'user', enabled: true }
     ]);
@@ -73,6 +119,39 @@ describe('project data export traversal', () => {
       projectId: 'project-test'
     });
     expect(source.readResource).toHaveBeenCalledWith('project-test', `sha256-${digest}`);
+    const publicInteractions = Buffer.from(files.get('interactions/events.jsonl')!).toString();
+    expect(publicInteractions).not.toContain('unsent research draft');
+    expect(publicInteractions).toContain('sensitiveDraftRecordId');
+    expect(Buffer.from(files.get('sensitive/unsent-feedback-drafts.jsonl')!).toString()).toContain(
+      'unsent research draft'
+    );
+  });
+
+  it('keeps the primary export usable when interaction collection fails', async () => {
+    const snapshot = fixtureSnapshot('0'.repeat(64), 0);
+    snapshot.projects = [];
+    const files = new Map<string, Uint8Array>();
+    const source: ExportDataSource = {
+      collect: vi.fn(async () => snapshot),
+      collectInteractions: vi.fn(async () => {
+        throw new Error('telemetry database unavailable');
+      }),
+      readResource: vi.fn(async () => new Uint8Array())
+    };
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const manifest = await writeDataExport(
+      source,
+      { write: (pathname, value) => void files.set(pathname, Uint8Array.from(value)) },
+      { type: 'projects' },
+      '2026-08-30T12:00:00.000Z'
+    );
+
+    expect(manifest.interactions.status).toBe('unavailable');
+    expect(files.has('owners.json')).toBe(true);
+    expect(files.has('interactions/coverage.json')).toBe(true);
+    expect(files.has('interactions/events.jsonl')).toBe(false);
+    warning.mockRestore();
   });
 
   it('rejects substituted resource bytes before completing an export', () => {

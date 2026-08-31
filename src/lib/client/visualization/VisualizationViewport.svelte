@@ -30,6 +30,7 @@
     selectedIds?: RenderInstanceId[];
     resourceBaseUrl?: string;
     onSelectionChange?: (ids: RenderInstanceId[]) => void;
+    onViewportChange?: (viewport: { zoom: number; panX: number; panY: number }) => void;
     onFontLoadFailure?: (resourceId: string, message: string) => void;
     onRuntimeObservation?: (observation: TextRuntimeObservation) => void;
   };
@@ -43,6 +44,7 @@
     selectedIds = $bindable<RenderInstanceId[]>([]),
     resourceBaseUrl,
     onSelectionChange = (_ids: RenderInstanceId[]) => {},
+    onViewportChange = (_viewport: { zoom: number; panX: number; panY: number }) => {},
     onFontLoadFailure = (_resourceId: string, _message: string) => {},
     onRuntimeObservation = (_observation: TextRuntimeObservation) => {}
   }: Props = $props();
@@ -80,6 +82,10 @@
         }
       : null
   );
+
+  $effect(() => {
+    onViewportChange({ zoom, panX, panY });
+  });
 
   $effect(() => {
     for (const element of elements) {

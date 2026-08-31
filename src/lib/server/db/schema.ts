@@ -6,6 +6,7 @@ import {
   boolean,
   check,
   customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -21,6 +22,11 @@ import {
 import type { ProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectSummary } from '$lib/shared/projects/model';
 import type { VisualizationMode } from '$lib/shared/presentations';
+import type {
+  StudyInteractionCapturePolicy,
+  StudyInteractionEventInput,
+  StudyInteractionKind
+} from '$lib/shared/study/interactions';
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -236,6 +242,58 @@ export const studyPhaseRuns = pgTable(
     primaryKey({ columns: [table.runId, table.phaseId] }),
     uniqueIndex('study_phase_run_sequence_unique').on(table.runId, table.sequenceIndex),
     uniqueIndex('study_phase_run_project_unique').on(table.projectId)
+  ]
+);
+
+/** One best-effort browser observation stream for an active participant task. */
+export const projectInteractionSessions = pgTable(
+  'project_interaction_session',
+  {
+    id: uuid('id').primaryKey(),
+    projectId: varchar('project_id', { length: 128 })
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    schemaVersion: integer('schema_version').notNull(),
+    clientStartedAt: timestamp('client_started_at', { withTimezone: true }).notNull(),
+    clientTimeOrigin: doublePrecision('client_time_origin').notNull(),
+    initialViewport: jsonb('initial_viewport')
+      .$type<{ width: number; height: number; devicePixelRatio: number }>()
+      .notNull(),
+    applicationVersion: text('application_version').notNull(),
+    buildSha: text('build_sha'),
+    capture: jsonb('capture').$type<StudyInteractionCapturePolicy>().notNull(),
+    acceptedThrough: integer('accepted_through').default(0).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    check('project_interaction_session_schema_check', sql`${table.schemaVersion} = 1`),
+    check('project_interaction_session_sequence_check', sql`${table.acceptedThrough} >= 0`),
+    index('project_interaction_session_project_idx').on(table.projectId)
+  ]
+);
+
+/** Ordered state, activation, pointer, draft, and lifecycle observation. */
+export const projectInteractionEvents = pgTable(
+  'project_interaction_event',
+  {
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => projectInteractionSessions.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    kind: text('kind').$type<StudyInteractionKind>().notNull(),
+    elapsedMs: integer('elapsed_ms').notNull(),
+    clientOccurredAt: timestamp('client_occurred_at', { withTimezone: true }).notNull(),
+    projectHead: integer('project_head').notNull(),
+    payload: jsonb('payload').$type<StudyInteractionEventInput['payload']>().notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    primaryKey({ columns: [table.sessionId, table.sequence] }),
+    check('project_interaction_event_sequence_check', sql`${table.sequence} > 0`),
+    check('project_interaction_event_elapsed_check', sql`${table.elapsedMs} >= 0`),
+    check('project_interaction_event_head_check', sql`${table.projectHead} >= 0`),
+    index('project_interaction_event_received_idx').on(table.receivedAt)
   ]
 );
 

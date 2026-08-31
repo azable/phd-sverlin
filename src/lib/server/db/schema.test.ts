@@ -2,7 +2,15 @@ import { eq, getTableColumns } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 
 import { database } from './index';
-import { account, session, studyEnrollments, studyPhaseRuns, studyRuns } from './schema';
+import {
+  account,
+  projectInteractionEvents,
+  projectInteractionSessions,
+  session,
+  studyEnrollments,
+  studyPhaseRuns,
+  studyRuns
+} from './schema';
 
 describe('PostgreSQL relations', () => {
   it('constructs Better Auth joined session queries', () => {
@@ -33,5 +41,12 @@ describe('PostgreSQL relations', () => {
     expect(getTableColumns(studyEnrollments)).not.toHaveProperty('studyId');
     expect(getTableColumns(studyPhaseRuns)).toHaveProperty('runId');
     expect(getTableColumns(studyPhaseRuns)).toHaveProperty('endReason');
+  });
+
+  it('associates ordered interaction sessions with projects', () => {
+    expect(getTableColumns(projectInteractionSessions)).toHaveProperty('projectId');
+    expect(getTableColumns(projectInteractionSessions)).not.toHaveProperty('runId');
+    expect(getTableColumns(projectInteractionEvents)).toHaveProperty('projectHead');
+    expect(getTableColumns(projectInteractionEvents)).toHaveProperty('receivedAt');
   });
 });

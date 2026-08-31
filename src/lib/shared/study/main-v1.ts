@@ -11,6 +11,24 @@ export const mainStudyV1 = defineStudy({
     strategy: 'balanced',
     tieBreakOrder: ['sverlin-first', 'html-first']
   },
+  interactionCapture: {
+    schemaVersion: 1,
+    // Four samples per second retain a recognizable path without recording video-like motion.
+    cursorSampleIntervalMs: 250,
+    cursorChunkDurationMs: 5_000,
+    // Five seconds keeps ordinary delivery prompt while remaining well below the batch rate limit.
+    flushIntervalMs: 5_000,
+    flushRecordThreshold: 50,
+    flushByteThreshold: 32 * 1024,
+    // Periodic complete state makes later replay resilient to missing incremental observations.
+    checkpointIntervalMs: 30_000,
+    // One snapshot per second shows typing progression without storing per-key events.
+    draftSnapshotIntervalMs: 1_000,
+    // Five MiB comfortably covers both tasks while placing a hard bound on participant devices.
+    outboxByteLimit: 5 * 1024 * 1024,
+    // Same-day delivery recovers a temporarily offline browser without extending data collection.
+    lateDeliverySeconds: 24 * 60 * 60
+  },
   conditions: {
     sverlin: {
       renderer: 'sverlin',
