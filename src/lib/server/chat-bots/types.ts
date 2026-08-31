@@ -4,6 +4,7 @@
  * @packageDocumentation
  */
 
+import type { ParticipantIntakeStepId } from '$lib/shared/projects/events';
 import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
 import * as v from 'valibot';
 
@@ -137,7 +138,7 @@ export type CompilationFeedback = {
 };
 
 /** Role of one bounded generation profile in an agent's attempt ladder. */
-export type ChatAttemptPurpose = 'initial' | 'repair' | 'fallback';
+export type ChatAttemptPurpose = 'intake' | 'initial' | 'repair' | 'fallback';
 
 /** Recordable identity of the profile selected for one generation request. */
 export type ChatAttempt = {
@@ -192,12 +193,12 @@ export type SourceArtifactChatOutput =
       recovery?: RecoveryExplanation;
     };
 
-export type ChatBotConfig<
-  Project,
-  Output extends { reply: GeneratedMessageContent } = SourceArtifactChatOutput
-> = {
+export type ChatBotConfig<Project, Output extends object = SourceArtifactChatOutput> = {
   id: string;
-  participantIntroduction: string;
+  participantIntake: readonly [
+    { id: ParticipantIntakeStepId; question: string },
+    ...Array<{ id: ParticipantIntakeStepId; question: string }>
+  ];
   initialPrompt: string;
   buildContext: (input: ChatContextInput<Project>) => ChatContext | Promise<ChatContext>;
   attemptProfiles: readonly [ChatBotAttemptProfile, ...ChatBotAttemptProfile[]];
@@ -224,9 +225,7 @@ export type ChatbotRequest<Project> = {
 };
 
 /** Parsed chatbot output enriched with prompt and generation provenance. */
-export type ChatbotResult<
-  Output extends { reply: GeneratedMessageContent } = SourceArtifactChatOutput
-> = Output & {
+export type ChatbotResult<Output extends object = SourceArtifactChatOutput> = Output & {
   providerResponse?: unknown;
   prompt: ChatbotPrompt;
   generation: {
@@ -242,10 +241,7 @@ export type ChatbotResult<
 export type { ChatAdapter, ChatAdapterResult } from '$lib/server/chat-adapters/types';
 
 /** Executable chatbot assembled from a bot configuration and provider adapter. */
-export interface Chatbot<
-  Project,
-  Output extends { reply: GeneratedMessageContent } = SourceArtifactChatOutput
-> {
+export interface Chatbot<Project, Output extends object = SourceArtifactChatOutput> {
   /** Stable bot identifier recorded in project events. */
   readonly id: string;
   /** Static configuration used by this bot. */

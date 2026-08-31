@@ -56,6 +56,20 @@ vi.mock('$lib/server/chat-bots/registry', () => ({
     preparePrompt: mocks.preparePrompt,
     generatePrepared: mocks.generatePrepared,
     requestTimeoutMs: () => 180_000
+  }),
+  getParticipantIntakeClassifier: () => ({
+    config: {
+      participantIntake: [{ id: 'algorithm', question: 'Test' }],
+      attemptProfiles: [
+        {
+          purpose: 'intake' as const,
+          parameters: { model: 'gpt-5.6-luna', reasoningEffort: 'low' as const }
+        }
+      ]
+    },
+    preparePrompt: mocks.preparePrompt,
+    generatePrepared: mocks.generatePrepared,
+    requestTimeoutMs: () => 180_000
   })
 }));
 vi.mock('./fingerprints', () => ({
@@ -220,6 +234,21 @@ beforeEach(() => {
         generatePrepared: mocks.generatePrepared,
         requestTimeoutMs: () => 180_000
       }) as unknown as ReturnType<ProjectCommandDependencies['getHtmlChatbot']>,
+    getParticipantIntakeClassifier: () =>
+      ({
+        config: {
+          participantIntake: [{ id: 'algorithm', question: 'Test' }],
+          attemptProfiles: [
+            {
+              purpose: 'intake',
+              parameters: { model: 'gpt-5.6-luna', reasoningEffort: 'low' }
+            }
+          ]
+        },
+        preparePrompt: mocks.preparePrompt,
+        generatePrepared: mocks.generatePrepared,
+        requestTimeoutMs: () => 180_000
+      }) as unknown as ReturnType<ProjectCommandDependencies['getParticipantIntakeClassifier']>,
     readDslRevision: serviceDependencies.readDslRevision
   };
 });
@@ -277,6 +306,122 @@ describe('createProject', () => {
       payload: { content: markdownMessage('Tell me what you would like to visualize.') }
     });
     expect(mocks.generatePrepared).not.toHaveBeenCalled();
+  });
+});
+
+describe('participant intake', () => {
+  it('records the first two answers without authoring and authors from the style answer', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Intake sequence' }, serviceDependencies);
+    let document = await withActiveIntake(created, 'algorithm');
+
+    mocks.preparePrompt.mockResolvedValue(intakePrompt());
+    mocks.generatePrepared.mockResolvedValue(classifierGeneration('continue'));
+    const algorithm = await submitProjectFeedback(
+      feedbackOptions(document, 'Bubble sort', '12345678-1234-4123-8123-123456789a01'),
+      commandDependencies
+    );
+    document = algorithm.document;
+    expect(algorithm.appendedEvents.map(({ type }) => type)).toEqual([
+      'feedback.submitted',
+      'ai.generation-requested',
+      'ai.generation-succeeded',
+      'assistant.responded'
+    ]);
+    expect(algorithm.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: { intakeStep: 'audience' }
+    });
+    expect(mocks.compileSource).not.toHaveBeenCalled();
+
+    const audience = await submitProjectFeedback(
+      feedbackOptions(
+        document,
+        'First-year undergraduates who should understand adjacent swaps.',
+        '12345678-1234-4123-8123-123456789a02'
+      ),
+      commandDependencies
+    );
+    document = audience.document;
+    expect(audience.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: { intakeStep: 'style' }
+    });
+    expect(mocks.compileSource).not.toHaveBeenCalled();
+
+    mocks.preparePrompt.mockImplementation(async () => generationPrompt('initial'));
+    mocks.generatePrepared.mockResolvedValue(
+      generation('valid intake source', 'I am preparing two distinct options.')
+    );
+    const style = await submitProjectFeedback(
+      feedbackOptions(
+        document,
+        'I would like a couple of different options.',
+        '12345678-1234-4123-8123-123456789a03'
+      ),
+      commandDependencies
+    );
+    expect(style.appendedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'assistant.intake-completed',
+        payload: expect.objectContaining({ outcome: 'answered' })
+      })
+    );
+    expect(
+      style.appendedEvents.filter(({ type }) => type === 'visualization.presented')
+    ).toHaveLength(2);
+  });
+
+  it('authors immediately when the classifier confirms an explicit intake exit', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Skipped intake' }, serviceDependencies);
+    const document = await withActiveIntake(created, 'algorithm');
+    mocks.preparePrompt
+      .mockResolvedValueOnce(intakePrompt())
+      .mockResolvedValueOnce(generationPrompt('initial'));
+    mocks.generatePrepared
+      .mockResolvedValueOnce(classifierGeneration('exit'))
+      .mockResolvedValueOnce(generation('valid skipped source', 'Starting now.'));
+
+    const result = await submitProjectFeedback(
+      feedbackOptions(
+        document,
+        'Skip these questions and make a merge-sort visualization now.',
+        '12345678-1234-4123-8123-123456789a04'
+      ),
+      commandDependencies
+    );
+
+    expect(result.appendedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'assistant.intake-completed',
+        payload: expect.objectContaining({ outcome: 'waived' })
+      })
+    );
+    expect(result.appendedEvents.some(({ type }) => type === 'visualization.presented')).toBe(true);
+  });
+
+  it('advances without a participant-visible error when intake classification fails', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject({ title: 'Intake fallback' }, serviceDependencies);
+    const document = await withActiveIntake(created, 'algorithm');
+    mocks.preparePrompt.mockResolvedValue(intakePrompt());
+    mocks.generatePrepared.mockRejectedValue(new Error('classifier unavailable'));
+
+    const result = await submitProjectFeedback(
+      feedbackOptions(document, 'Heap sort', '12345678-1234-4123-8123-123456789a05'),
+      commandDependencies
+    );
+
+    expect(result.appendedEvents.some(({ type }) => type === 'ai.generation-failed')).toBe(true);
+    expect(result.appendedEvents.some(({ type }) => type === 'system.notified')).toBe(false);
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: { intakeStep: 'audience' }
+    });
   });
 });
 
@@ -1342,6 +1487,78 @@ function generation(
       adapterId: 'test-adapter',
       model: 'test-model'
     }
+  };
+}
+
+function intakePrompt() {
+  return {
+    initialPrompt: 'intake classifier prompt',
+    messages: [],
+    context: {},
+    attempt: { number: 1, purpose: 'intake' as const },
+    parameters: {
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low' as const,
+      maxOutputTokens: 200
+    },
+    responseFormat: { name: 'participant_intake_decision', schema: {} }
+  };
+}
+
+function generationPrompt(purpose: 'initial' | 'repair' | 'fallback') {
+  return {
+    initialPrompt: 'test prompt',
+    messages: [],
+    context: {},
+    attempt: { number: 1, purpose },
+    parameters: { model: 'test-model' },
+    responseFormat: { name: 'test', schema: {} }
+  };
+}
+
+function classifierGeneration(decision: 'continue' | 'exit') {
+  return {
+    decision,
+    prompt: intakePrompt(),
+    generation: {
+      botId: 'participant-intake-classifier',
+      adapterId: 'test-adapter',
+      model: 'gpt-5.6-luna'
+    }
+  };
+}
+
+async function withActiveIntake(
+  document: ProjectDocument,
+  intakeStep: 'algorithm' | 'audience' | 'style'
+): Promise<ProjectDocument> {
+  const appended = await serviceDependencies.repository.append(
+    document.projectId,
+    projectHead(document).id,
+    [
+      {
+        type: 'assistant.responded',
+        actor: { kind: 'assistant', botId: 'sverlin-assistant' },
+        operationId: '12345678-1234-4123-8123-123456789a00',
+        createdAt: '2026-08-31T00:00:00.000Z',
+        payload: {
+          content: markdownMessage('Intake question'),
+          intakeStep
+        }
+      }
+    ]
+  );
+  return appended.document;
+}
+
+function feedbackOptions(document: ProjectDocument, text: string, operationId: string) {
+  return {
+    projectId: document.projectId,
+    expectedHead: projectHead(document).id,
+    content: markdownMessage(text),
+    focus: [],
+    presentationCount: 2 as const,
+    operationId
   };
 }
 

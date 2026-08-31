@@ -74,6 +74,13 @@ const presenters = {
       'assistant',
       'Considering your feedback…'
     ),
+  'assistant.intake-completed': (event) =>
+    details(
+      'Participant intake completed',
+      event.payload.outcome,
+      'assistant',
+      'Preparing the visualization…'
+    ),
   'visualization.candidates-advanced': (event) =>
     details(
       'Visualization candidates advanced',
@@ -90,7 +97,9 @@ const presenters = {
         ? 'Preparing a simpler working visualization…'
         : event.payload.purpose === 'repair'
           ? 'Repairing generated source…'
-          : 'Generating a visualization…'
+          : event.payload.purpose === 'intake'
+            ? 'Considering your response…'
+            : 'Generating a visualization…'
     ),
   'ai.generation-succeeded': (event) =>
     details(

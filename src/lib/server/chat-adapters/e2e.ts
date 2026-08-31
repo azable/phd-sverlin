@@ -28,9 +28,11 @@ export const e2eChatAdapter: ChatAdapter = {
     ];
     return {
       output:
-        request.responseFormat.name === 'html_visualization_turn'
-          ? { reply, candidates: [], recovery: null }
-          : { reply, action: 'respond', sourceArtifactContent: null, recovery: null },
+        request.responseFormat.name === 'participant_intake_decision'
+          ? { decision: 'continue' }
+          : request.responseFormat.name === 'html_visualization_turn'
+            ? { reply, candidates: [], recovery: null }
+            : { reply, action: 'respond', sourceArtifactContent: null, recovery: null },
       generation: { model: 'e2e-deterministic' }
     };
   },

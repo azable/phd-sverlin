@@ -156,39 +156,53 @@
   >
     {#if layout === 'comparison' && visible.length === 2}
       <Button
-        size="sm"
+        size="lg"
         variant={preferred === selectedIds[0] ? 'default' : 'outline'}
         onclick={() => prefer(selectedIds[0])}
         disabled={disabled || preferencePending !== undefined}
       >
-        {#if preferencePending === selectedIds[0]}<Spinner /> Recording…{:else}Prefer top{/if}
+        {#if preferencePending === selectedIds[0]}
+          <Spinner data-icon="inline-start" /> Recording…
+        {:else}
+          Prefer top candidate
+        {/if}
       </Button>
     {/if}
     <Button
-      size="icon-sm"
-      variant="ghost"
+      size="lg"
+      variant="outline"
       aria-label="Previous visualization step"
       onclick={() => seek(step - 1)}
-      disabled={disabled || step === 0}><ChevronLeftIcon /></Button
+      disabled={disabled || step === 0}
     >
+      <ChevronLeftIcon data-icon="inline-start" />
+      Previous
+    </Button>
     <span class="min-w-32 text-center text-sm text-muted-foreground">
       {stepCount ? `Step ${step + 1} of ${stepCount}` : 'No steps'}
     </span>
     <Button
-      size="icon-sm"
-      variant="ghost"
+      size="lg"
+      variant="outline"
       aria-label="Next visualization step"
       onclick={() => seek(step + 1)}
-      disabled={disabled || step >= stepCount - 1}><ChevronRightIcon /></Button
+      disabled={disabled || step >= stepCount - 1}
     >
+      Next
+      <ChevronRightIcon data-icon="inline-end" />
+    </Button>
     {#if layout === 'comparison' && visible.length === 2}
       <Button
-        size="sm"
+        size="lg"
         variant={preferred === selectedIds[1] ? 'default' : 'outline'}
         onclick={() => prefer(selectedIds[1])}
         disabled={disabled || preferencePending !== undefined}
       >
-        {#if preferencePending === selectedIds[1]}<Spinner /> Recording…{:else}Prefer bottom{/if}
+        {#if preferencePending === selectedIds[1]}
+          <Spinner data-icon="inline-start" /> Recording…
+        {:else}
+          Prefer bottom candidate
+        {/if}
       </Button>
     {/if}
     {#if !selection.followingLatest}

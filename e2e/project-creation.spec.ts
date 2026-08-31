@@ -155,7 +155,7 @@ test('comparison selections focus an immediate preference assistant turn', async
       response.url().endsWith(`/api/projects/${comparisonProjectId}`) &&
       response.request().method() === 'POST'
   );
-  await page.getByRole('button', { name: 'Prefer top' }).click();
+  await page.getByRole('button', { name: 'Prefer top candidate' }).click();
   await expect(page.getByText('Recording…', { exact: true })).toBeVisible();
   const response = await preferenceResponse;
   expect(response.status()).toBe(202);

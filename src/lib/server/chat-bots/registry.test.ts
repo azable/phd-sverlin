@@ -12,15 +12,23 @@ describe('chatbot registry', () => {
   });
 
   it('uses the resolved assistant identity for participant introductions', () => {
-    expect(assistantIntroduction('sverlin-assistant').botId).toBe('sverlin-assistant');
-    expect(assistantIntroduction('html-assistant').botId).toBe('html-assistant');
+    expect(assistantIntroduction('sverlin-assistant')).toEqual({
+      botId: 'sverlin-assistant',
+      step: 'algorithm',
+      text: 'What algorithm would you like to visualise?'
+    });
+    expect(assistantIntroduction('html-assistant')).toEqual({
+      botId: 'html-assistant',
+      step: 'algorithm',
+      text: 'What algorithm would you like to visualise?'
+    });
   });
 
   it('selects one exact configured profile and rejects attempts outside the ladder', async () => {
     let receivedSignal: AbortSignal | undefined;
     const config = {
       id: 'test-agent',
-      participantIntroduction: 'Test',
+      participantIntake: [{ id: 'algorithm', question: 'Test' }],
       initialPrompt: 'Test prompt',
       attemptProfiles: [
         { purpose: 'initial', parameters: { model: 'fast', reasoningEffort: 'low' } },

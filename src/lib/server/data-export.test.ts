@@ -56,10 +56,15 @@ describe('project data export traversal', () => {
       { id: 'owner-1', label: 'P001', role: 'user', enabled: true }
     ]);
     expect(Buffer.from(files.get('owners.json')!).toString()).not.toContain('@');
-    expect(
-      JSON.parse(Buffer.from(files.get('projects/project-test/project.json')!).toString()).document
-        .events[1].payload.visualSelections
-    ).toEqual([
+    const exportedProject = JSON.parse(
+      Buffer.from(files.get('projects/project-test/project.json')!).toString()
+    ).document;
+    expect(exportedProject.events[1].payload.intakeStep).toBe('algorithm');
+    expect(exportedProject.events[2].payload).toEqual({
+      interactionEventId: 7,
+      outcome: 'answered'
+    });
+    expect(exportedProject.events[3].payload.visualSelections).toEqual([
       { presentationEvent: 3, step: 0, instances: [0] },
       { presentationEvent: 4, step: 0, instances: [1] }
     ]);
@@ -113,6 +118,25 @@ function fixtureSnapshot(digest: string, byteLength: number): ExportSnapshot {
             },
             {
               id: 2,
+              type: 'assistant.responded',
+              actor: { kind: 'assistant', botId: 'sverlin-assistant' },
+              operationId: '12345678-1234-4123-8123-123456789abd',
+              createdAt: '2026-08-30T10:01:00.000Z',
+              payload: {
+                content: [{ type: 'markdown', text: 'What algorithm?' }],
+                intakeStep: 'algorithm'
+              }
+            },
+            {
+              id: 3,
+              type: 'assistant.intake-completed',
+              actor: { kind: 'system' },
+              operationId: '12345678-1234-4123-8123-123456789abe',
+              createdAt: '2026-08-30T10:04:00.000Z',
+              payload: { interactionEventId: 7, outcome: 'answered' }
+            },
+            {
+              id: 4,
               type: 'visualization.preference-recorded',
               actor: { kind: 'user' },
               operationId: '12345678-1234-4123-8123-123456789abd',

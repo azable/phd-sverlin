@@ -91,21 +91,23 @@
         aria-label="Previous step"
         type="button"
         variant="outline"
-        size="icon-sm"
+        size="lg"
         onclick={onPrevious}
         disabled={!canPrevious || playbackBusy}
       >
-        <ChevronLeftIcon />
+        <ChevronLeftIcon data-icon="inline-start" />
+        Previous
       </Button>
       <Button
         aria-label="Next step"
         type="button"
         variant="outline"
-        size="icon-sm"
+        size="lg"
         onclick={onNext}
         disabled={!canNext || playbackBusy}
       >
-        <ChevronRightIcon />
+        Next
+        <ChevronRightIcon data-icon="inline-end" />
       </Button>
     </div>
 

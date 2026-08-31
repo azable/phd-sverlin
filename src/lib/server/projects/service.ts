@@ -174,7 +174,10 @@ export async function createProjectSkeleton(
         type: 'assistant.responded',
         actor: { kind: 'assistant', botId: introduction.botId },
         operationId,
-        payload: { content: markdownMessage(introduction.text) }
+        payload: {
+          content: markdownMessage(introduction.text),
+          intakeStep: introduction.step
+        }
       })
     });
   }

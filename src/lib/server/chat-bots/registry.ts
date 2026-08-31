@@ -7,16 +7,21 @@
 import { e2eChatAdapter, e2eChatAdapterEnabled } from '$lib/server/chat-adapters/e2e';
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 import { assistantMode, type AssistantId } from '$lib/shared/assistants';
+import type { ParticipantIntakeStepId } from '$lib/shared/projects/events';
 
 import type { ChatAdapter } from '$lib/server/chat-adapters/types';
 import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
 import type { AiProjectContext } from './sverlin-assistant/project-context';
-import type { ChatBotConfig, Chatbot, ChatbotRequest, GeneratedMessageContent } from './types';
+import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
 import sverlinAssistantBot from './sverlin-assistant';
 import htmlAssistantBot, { type HtmlAssistantOutput } from './html-assistant';
+import {
+  participantIntakeClassifier,
+  type ParticipantIntakeClassifierOutput
+} from './participant-intake';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
-export function createChatbot<Project, Output extends { reply: GeneratedMessageContent }>(
+export function createChatbot<Project, Output extends object>(
   config: ChatBotConfig<Project, Output>,
   adapter: ChatAdapter
 ): Chatbot<Project, Output> {
@@ -79,6 +84,10 @@ const htmlChatbot: Chatbot<AiProjectContext, HtmlAssistantOutput> = createChatbo
   htmlAssistantBot,
   configuredAdapter
 );
+const intakeClassifier: Chatbot<
+  Record<string, never>,
+  ParticipantIntakeClassifierOutput
+> = createChatbot(participantIntakeClassifier, configuredAdapter);
 
 /** Return the Sverlin-source assistant recorded by a project. */
 export function getChatbot(assistantId: AssistantId): Chatbot<AiProjectContext> {
@@ -102,11 +111,21 @@ export function getHtmlChatbot(
   return htmlChatbot;
 }
 
+/** Return the shared classifier for exceptional requests to leave participant intake early. */
+export function getParticipantIntakeClassifier(): Chatbot<
+  Record<string, never>,
+  ParticipantIntakeClassifierOutput
+> {
+  return intakeClassifier;
+}
+
 /** Return participant-facing identity and guidance owned by the mode's recorded assistant. */
 export function assistantIntroduction(assistantId: AssistantId): {
   botId: string;
   text: string;
+  step: ParticipantIntakeStepId;
 } {
   const config = assistantId === 'html-assistant' ? htmlAssistantBot : sverlinAssistantBot;
-  return { botId: config.id, text: config.participantIntroduction };
+  const first = config.participantIntake[0];
+  return { botId: config.id, text: first.question, step: first.id };
 }

@@ -158,6 +158,8 @@ const timelineCases = {
     `Queued assistant consideration of interaction ${event.payload.interactionEventId}.`,
   'assistant.turn-started': (event) =>
     `Started assistant consideration of interactions ${event.payload.interactionEventIds.join(', ')}.`,
+  'assistant.intake-completed': (event) =>
+    `Completed participant intake (${event.payload.outcome}) at interaction ${event.payload.interactionEventId}.`,
   'visualization.candidates-advanced': (event) =>
     `Advanced past presentations ${event.payload.presentations.join(', ')} (${event.payload.reason}).`,
   'ai.generation-requested': (event) =>
@@ -191,6 +193,7 @@ const conversationCases = {
   'feedback.submitted': (event) => [{ role: 'user', content: feedbackMessage(event) } as const],
   'assistant.turn-requested': () => [],
   'assistant.turn-started': () => [],
+  'assistant.intake-completed': () => [],
   'visualization.candidates-advanced': () => [],
   'ai.generation-requested': () => [],
   'ai.generation-succeeded': () => [],

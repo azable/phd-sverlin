@@ -62,7 +62,7 @@ describe('AI assistant DSL interface', () => {
 
   it('delegates unspecified presentation to conditional family profiles', async () => {
     expect(aiAssistant.initialPrompt).toContain(
-      'Leave visual style fields unspecified unless semantics require them'
+      'Leave visual style fields unspecified unless semantics or an explicit participant preference require them'
     );
     const guide = await loadDslInterfaceContext();
     expect(guide).toContain('`style @Field value` is a hard authoring requirement');
@@ -70,6 +70,8 @@ describe('AI assistant DSL interface', () => {
     expect(guide).toContain('Use `styleCase` only when the requested design itself needs');
     expect(guide).toContain('one exact managed font face and one text occupancy target');
     expect(guide).toContain('Do not make a numeric list');
+    expect(guide).toContain('A qualitative colour preference');
+    expect(guide).toContain('never infer an aesthetic merely from the audience');
   });
 
   it('lets preference evidence drive or defer a proactive source adaptation', () => {

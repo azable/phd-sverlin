@@ -9,6 +9,18 @@ const manifest = {
 };
 
 describe('HTML assistant contract', () => {
+  it('uses the shared intake brief and produces distinct options when requested', () => {
+    expect(htmlAssistant.participantIntake.map(({ id }) => id)).toEqual([
+      'algorithm',
+      'audience',
+      'style'
+    ]);
+    expect(htmlAssistant.initialPrompt).toContain(
+      'return exactly two materially distinct candidates'
+    );
+    expect(htmlAssistant.initialPrompt).toContain('Do not infer a visual style from the audience');
+  });
+
   it('accepts zero to two labelled candidates per conversational turn', () => {
     expect(
       htmlAssistant.parseOutput({

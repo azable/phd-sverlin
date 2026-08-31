@@ -3,9 +3,15 @@
 import { randomUUID } from 'node:crypto';
 
 import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
-import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
+import type {
+  EventId,
+  NewProjectEvent,
+  ParticipantIntakeStepId,
+  ProjectEventOf
+} from '$lib/shared/projects/events';
 import {
   markdownMessage,
+  plainMessageText,
   structureKnownPresentationReferences,
   type MessageContent
 } from '$lib/shared/projects/events/message-content';
@@ -23,8 +29,17 @@ import type {
 } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { assistantTurnClaim, projectOperation } from '$lib/shared/projects/operations';
-import { getChatbot, getHtmlChatbot } from '$lib/server/chat-bots/registry';
+import {
+  getChatbot,
+  getHtmlChatbot,
+  getParticipantIntakeClassifier
+} from '$lib/server/chat-bots/registry';
 import type { HtmlAssistantOutput } from '$lib/server/chat-bots/html-assistant';
+import {
+  nextParticipantIntakeStep,
+  participantIntakeStep,
+  type ParticipantIntakeClassifierOutput
+} from '$lib/server/chat-bots/participant-intake';
 import {
   projectAiContext,
   projectConversationMessages,
@@ -71,6 +86,7 @@ export type ProjectCommandDependencies = {
   projectService: ProjectServiceDependencies;
   getChatbot: typeof getChatbot;
   getHtmlChatbot: typeof getHtmlChatbot;
+  getParticipantIntakeClassifier: typeof getParticipantIntakeClassifier;
   readDslRevision: typeof readDslRevision;
 };
 
@@ -79,6 +95,7 @@ export const defaultProjectCommandDependencies: ProjectCommandDependencies = {
   projectService: defaultProjectServiceDependencies,
   getChatbot,
   getHtmlChatbot,
+  getParticipantIntakeClassifier,
   readDslRevision
 };
 
@@ -229,8 +246,22 @@ export async function runQueuedSverlinAssistantTurn(
     )
   ) as 1 | 2;
   const concurrentDependencies = rebasingDependencies(dependencies);
-  const document = await runSverlinAssistantTurn(
+  const intake = await handleParticipantIntake(
     before,
+    options.operationId,
+    feedback,
+    concurrentDependencies
+  );
+  if (!intake.author) {
+    return {
+      document: intake.document,
+      appendedEvents: intake.document.events.filter(
+        (event) => event.id > projectHead(before).id && event.operationId === options.operationId
+      )
+    };
+  }
+  const document = await runSverlinAssistantTurn(
+    intake.document,
     options.operationId,
     contextSelection,
     presentationCount,
@@ -293,6 +324,20 @@ async function submitProjectFeedbackUnlocked(
     [],
     dependencies.projectService
   );
+  const interaction = document.events.findLast(
+    (event) => event.operationId === options.operationId && event.type === 'feedback.submitted'
+  );
+  if (interaction?.type !== 'feedback.submitted') {
+    throw new Error('The submitted feedback event could not be resolved.');
+  }
+  const intake = await handleParticipantIntake(
+    document,
+    options.operationId,
+    [interaction],
+    dependencies
+  );
+  document = intake.document;
+  if (!intake.author) return finishMutation(before, document);
   if (projectSnapshotAt(document).renderer === 'html') {
     document = await submitHtmlFeedback(
       document,
@@ -361,6 +406,137 @@ export function submitProjectPreference(
     );
     return finishMutation(before, document);
   });
+}
+
+type ParticipantIntakeResult = { document: ProjectDocument; author: boolean };
+
+/** Advance the durable blank-project intake before either renderer may author output. */
+async function handleParticipantIntake(
+  document: ProjectDocument,
+  operationId: string,
+  feedback: readonly ProjectEventOf<'feedback.submitted'>[],
+  dependencies: ProjectCommandDependencies
+): Promise<ParticipantIntakeResult> {
+  let current = document;
+  for (const interaction of feedback.toSorted((left, right) => left.id - right.id)) {
+    const activeStep = activeParticipantIntakeStep(current);
+    if (!activeStep) return { document: current, author: true };
+
+    if (activeStep === 'style') {
+      current = await completeParticipantIntake(
+        current,
+        interaction.id,
+        'answered',
+        operationId,
+        dependencies
+      );
+      return { document: current, author: true };
+    }
+
+    const classification = await classifyParticipantIntake(
+      current,
+      activeStep,
+      interaction,
+      operationId,
+      dependencies
+    );
+    current = classification.document;
+    if (classification.decision === 'exit') {
+      current = await completeParticipantIntake(
+        current,
+        interaction.id,
+        'waived',
+        operationId,
+        dependencies
+      );
+      return { document: current, author: true };
+    }
+
+    const next = nextParticipantIntakeStep(activeStep);
+    if (!next) throw new Error(`Participant intake has no step after ${activeStep}.`);
+    current = await appendAssistantResponse(
+      current,
+      next.question,
+      projectSnapshotAt(current).assistantId,
+      operationId,
+      dependencies,
+      [interaction.id],
+      next.id
+    );
+  }
+  return { document: current, author: activeParticipantIntakeStep(current) === undefined };
+}
+
+function activeParticipantIntakeStep(
+  document: ProjectDocument
+): ParticipantIntakeStepId | undefined {
+  const question = document.events.findLast(
+    (event) => event.type === 'assistant.responded' && event.payload.intakeStep !== undefined
+  );
+  if (question?.type !== 'assistant.responded' || !question.payload.intakeStep) return undefined;
+  const completed = document.events.findLast(
+    (event) => event.type === 'assistant.intake-completed'
+  );
+  return completed && completed.id > question.id ? undefined : question.payload.intakeStep;
+}
+
+async function classifyParticipantIntake(
+  document: ProjectDocument,
+  step: ParticipantIntakeStepId,
+  interaction: ProjectEventOf<'feedback.submitted'>,
+  operationId: string,
+  dependencies: ProjectCommandDependencies
+): Promise<{ document: ProjectDocument; decision: 'continue' | 'exit' }> {
+  const classifier = dependencies.getParticipantIntakeClassifier();
+  const prompt = await classifier.preparePrompt({
+    messages: [
+      {
+        role: 'user',
+        content: `Question: ${participantIntakeStep(step).question}\nParticipant response: ${plainMessageText(interaction.payload.content)}`
+      }
+    ],
+    project: {},
+    attempt: 1
+  });
+  const generation = await runPreparedGeneration<ParticipantIntakeClassifierOutput>(
+    {
+      document,
+      attempt: 1,
+      operationId,
+      prompt,
+      generate: () =>
+        classifier.generatePrepared(prompt, { signal: currentProjectOperationSignal() }),
+      validateResult: () => {},
+      fallbackResponse: (result) => result,
+      notifyFailure: false
+    },
+    dependencies
+  );
+  return generation.ok
+    ? { document: generation.document, decision: generation.result.decision }
+    : { document: generation.document, decision: 'continue' };
+}
+
+function completeParticipantIntake(
+  document: ProjectDocument,
+  interactionEventId: EventId,
+  outcome: 'answered' | 'waived',
+  operationId: string,
+  dependencies: ProjectCommandDependencies
+): Promise<ProjectDocument> {
+  return appendProjectEvents(
+    document,
+    [
+      draftEvent({
+        type: 'assistant.intake-completed',
+        actor: { kind: 'system' },
+        operationId,
+        payload: { interactionEventId, outcome }
+      })
+    ],
+    [],
+    dependencies.projectService
+  );
 }
 
 async function runSverlinAssistantTurn(
@@ -811,7 +987,7 @@ async function generationPreparationFailure(
   };
 }
 
-async function runPreparedGeneration<Output extends { reply: GeneratedMessageContent }>(
+async function runPreparedGeneration<Output extends object>(
   options: {
     document: ProjectDocument;
     attempt: number;
@@ -821,6 +997,7 @@ async function runPreparedGeneration<Output extends { reply: GeneratedMessageCon
     generate: () => Promise<ChatbotResult<Output>>;
     validateResult: (result: ChatbotResult<Output>) => void;
     fallbackResponse: (result: ChatbotResult<Output>) => unknown;
+    notifyFailure?: boolean;
   },
   dependencies: ProjectCommandDependencies
 ) {
@@ -888,12 +1065,14 @@ async function runPreparedGeneration<Output extends { reply: GeneratedMessageCon
       }
     });
     document = await appendProjectEvents(document, [failed], [], dependencies.projectService);
-    document = await appendSystemFailure(
-      document,
-      failed.payload.message,
-      options.operationId,
-      dependencies
-    );
+    if (options.notifyFailure !== false) {
+      document = await appendSystemFailure(
+        document,
+        failed.payload.message,
+        options.operationId,
+        dependencies
+      );
+    }
     return { ok: false as const, document };
   }
 }
@@ -1157,7 +1336,8 @@ function appendAssistantResponse(
   botId: string,
   operationId: string,
   dependencies: ProjectCommandDependencies,
-  inReplyTo: readonly EventId[] = []
+  inReplyTo: readonly EventId[] = [],
+  intakeStep?: ParticipantIntakeStepId
 ) {
   return appendProjectEvents(
     document,
@@ -1168,7 +1348,8 @@ function appendAssistantResponse(
         operationId,
         payload: {
           content: typeof content === 'string' ? markdownMessage(content) : content,
-          ...(inReplyTo.length > 0 ? { inReplyTo: [...inReplyTo] } : {})
+          ...(inReplyTo.length > 0 ? { inReplyTo: [...inReplyTo] } : {}),
+          ...(intakeStep ? { intakeStep } : {})
         }
       })
     ],

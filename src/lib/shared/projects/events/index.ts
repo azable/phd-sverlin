@@ -13,6 +13,7 @@ import {
 } from './ai-generation';
 import { artifactVersionCreatedEventSchema } from './artifact-version-created';
 import { assistantRespondedEventSchema } from './assistant-responded';
+import { assistantIntakeCompletedEventSchema } from './assistant-intake';
 import {
   assistantTurnRequestedEventSchema,
   assistantTurnStartedEventSchema
@@ -47,6 +48,7 @@ export const projectEventSchema = v.variant('type', [
   feedbackSubmittedEventSchema,
   assistantTurnRequestedEventSchema,
   assistantTurnStartedEventSchema,
+  assistantIntakeCompletedEventSchema,
   aiGenerationRequestedEventSchema,
   aiGenerationSucceededEventSchema,
   aiGenerationFailedEventSchema,
@@ -60,6 +62,8 @@ export const projectEventSchema = v.variant('type', [
   assistantRespondedEventSchema,
   systemNotifiedEventSchema
 ]);
+
+export type { ParticipantIntakeStepId } from './assistant-intake';
 
 export type { ProjectOperationKind } from './operation-lifecycle';
 
