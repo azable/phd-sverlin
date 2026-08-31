@@ -3,11 +3,13 @@
 import type { ProjectEvent } from './events';
 import type { ProjectDocument } from './model';
 import { projectSnapshotAt } from './projection';
+import { isSverlinPresentation, presentationScenarioKey } from '$lib/shared/presentations';
 
 /** One current-source presentation that has not been consumed by an explicit advance action. */
 export type AvailablePresentation = {
   eventId: number;
   presentationId: string;
+  scenarioKey: string;
 };
 
 /** Current state of a configured ahead-of-time presentation buffer. */
@@ -38,24 +40,42 @@ export function presentationBufferState(
     if (event.type === 'visualization.presented') {
       const presentation = event.payload.presentation;
       if (
-        presentation.format !== 'sverlin-ir-v1' ||
+        !isSverlinPresentation(presentation) ||
         presentation.source.sha256 !== currentSourceSha256
       ) {
         return [];
       }
-      return [{ eventId: event.id, presentationId: presentation.presentationId }];
+      return [
+        {
+          eventId: event.id,
+          presentationId: presentation.presentationId,
+          scenarioKey: presentationScenarioKey(presentation)
+        }
+      ];
     }
     return [];
   });
   const available = currentSourcePresentations.filter(
     ({ presentationId }) => !consumedPresentationIds.has(presentationId)
   );
+  const groupSizes = new Map<string, number>();
+  for (const presentation of available) {
+    groupSizes.set(presentation.scenarioKey, (groupSizes.get(presentation.scenarioKey) ?? 0) + 1);
+  }
+  const pairedAvailable = [...groupSizes.values()].reduce(
+    (total, size) => total + Math.floor(size / 2) * 2,
+    0
+  );
+  const deficit =
+    target > 1
+      ? Math.ceil(Math.max(0, target - pairedAvailable) / 2) * 2
+      : Math.max(0, target - available.length);
   return {
     sourceSha256: currentSourceSha256,
     hasCurrentSourcePresentation: currentSourcePresentations.length > 0,
     available,
     consumedPresentationIds,
-    deficit: Math.max(0, target - available.length)
+    deficit
   };
 }
 

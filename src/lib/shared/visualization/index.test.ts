@@ -13,6 +13,74 @@ describe('decodeVisualization', () => {
     ).toThrow(InvalidVisualizationError);
   });
 
+  it('accepts scenario-aware version two while retaining strict frame metadata', () => {
+    const current = visualization();
+    const value = {
+      ...current,
+      irVersion: 2,
+      scenarioKey: 'a'.repeat(64),
+      scenarioSeed: 1,
+      viewSeed: 1,
+      connectors: [],
+      steps: current.steps.map((step, ordinal) => ({
+        ...step,
+        occurrenceKey: `show/${ordinal}`,
+        ordinal,
+        connectorInstances: [],
+        instances: step.instances.map((instance) => ({ ...instance, fragmentClusters: [] }))
+      }))
+    };
+
+    expect(decodeVisualization(JSON.stringify(value))).toMatchObject({
+      irVersion: 2,
+      scenarioKey: 'a'.repeat(64),
+      steps: [{ occurrenceKey: 'show/0' }]
+    });
+  });
+
+  it('rejects out-of-order or cyclic version-two frame metadata', () => {
+    const current = visualization();
+    const frame = {
+      ...current.steps[0],
+      instances: current.steps[0].instances.map((instance) => ({
+        ...instance,
+        fragmentClusters: []
+      })),
+      connectorInstances: []
+    };
+    const value = {
+      ...current,
+      irVersion: 2,
+      scenarioKey: 'a'.repeat(64),
+      scenarioSeed: 1,
+      viewSeed: 1,
+      connectors: [],
+      steps: [
+        { ...frame, occurrenceKey: 'show/first', ordinal: 2 },
+        { ...frame, occurrenceKey: 'show/second', ordinal: 1 }
+      ]
+    };
+
+    expect(() => decodeVisualization(JSON.stringify(value))).toThrow(
+      'Frame ordinals must be emitted in increasing trace order'
+    );
+
+    const cyclicValue = {
+      ...value,
+      steps: [
+        {
+          ...frame,
+          occurrenceKey: 'show/first',
+          ordinal: 0,
+          parentOccurrenceKey: 'show/first'
+        }
+      ]
+    };
+    expect(() => decodeVisualization(JSON.stringify(cyclicValue))).toThrow(
+      'Frame hierarchy contains a cycle'
+    );
+  });
+
   it('rejects unsupported versions and dangling resource references', () => {
     expect(() => decodeVisualization(JSON.stringify({ ...visualization(), irVersion: 2 }))).toThrow(
       InvalidVisualizationError

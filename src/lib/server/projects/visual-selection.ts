@@ -4,6 +4,8 @@ import type { ProjectEventOf } from '$lib/shared/projects/events';
 import type { VisualSelection } from '$lib/shared/projects/events/values';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 import { decodeVisualization } from '$lib/shared/visualization';
+import { isSverlinPresentation, presentationViewSeed } from '$lib/shared/presentations';
+import type { CompilerPresentation } from '$lib/shared/presentations';
 
 type SelectionEvent = ProjectEventOf<'visualization.presented'>;
 
@@ -14,14 +16,8 @@ export type ResolvedProjectVisualSelection = {
   seed: number;
   sourceSha256: string;
   renderSha256: string;
-  provenance?: Extract<
-    ProjectEventOf<'visualization.presented'>['payload']['presentation'],
-    { format: 'sverlin-ir-v1' }
-  >['provenance'];
-  targetDiagnostics?: Extract<
-    ProjectEventOf<'visualization.presented'>['payload']['presentation'],
-    { format: 'sverlin-ir-v1' }
-  >['targetDiagnostics'];
+  provenance?: CompilerPresentation['provenance'];
+  targetDiagnostics?: CompilerPresentation['targetDiagnostics'];
   visualization: ReturnType<typeof decodeVisualization>;
   step: ReturnType<typeof decodeVisualization>['steps'][number];
 };
@@ -36,7 +32,7 @@ export function resolveProjectVisualSelection(
     throw new Error('The visual selection references an unknown presentation.');
   }
   const presentation = event.payload.presentation;
-  if (presentation.format !== 'sverlin-ir-v1') {
+  if (!isSverlinPresentation(presentation)) {
     throw new Error('Visual feedback is only available for Sverlin presentations.');
   }
 
@@ -51,7 +47,7 @@ export function resolveProjectVisualSelection(
   return {
     selection: { ...selection, instances },
     event,
-    seed: presentation.seed,
+    seed: presentationViewSeed(presentation),
     sourceSha256: presentation.source.sha256,
     renderSha256: presentation.render.sha256,
     ...(presentation.provenance ? { provenance: presentation.provenance } : {}),

@@ -12,7 +12,8 @@ describe('starter catalog', () => {
     const blank = resolveProjectTemplate({ templateId: 'blank' });
     const templates = listProjectTemplates();
 
-    expect(blank.source).toContain('program = return ()');
+    expect(blank.source).toContain('domain :: Domain ()');
+    expect(blank.source).toContain('render :: Render ()');
     expect(templates).toHaveLength(6);
     expect(templates.map(({ id }) => id)).toEqual([
       'blank',

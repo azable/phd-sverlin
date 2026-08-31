@@ -218,14 +218,16 @@ export async function compileSourceBatch(
           ? error.message
           : String(error);
     const debug = emptyCompileDebug(cwd, message);
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error: message,
-      debug,
-      status: 503,
-      diagnostics: diagnosticsForFailure(debug, message),
-      failureKind: 'infrastructure'
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error: message,
+        debug,
+        status: 503,
+        diagnostics: diagnosticsForFailure(debug, message),
+        failureKind: 'infrastructure'
+      })
+    );
   }
 
   const direct = compileBatchCommand(
@@ -255,17 +257,19 @@ export async function compileSourceBatch(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const failed = emptyCompileDebug(cwd, message);
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error: message,
-      debug: failed,
-      status: errorName(error) === 'CompileQueueFullError' ? 429 : 503,
-      diagnostics: diagnosticsForFailure(failed, message),
-      failureKind:
-        errorName(error) === 'CompilerShuttingDownError' || errorName(error) === 'AbortError'
-          ? 'cancelled'
-          : 'infrastructure'
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error: message,
+        debug: failed,
+        status: errorName(error) === 'CompileQueueFullError' ? 429 : 503,
+        diagnostics: diagnosticsForFailure(failed, message),
+        failureKind:
+          errorName(error) === 'CompilerShuttingDownError' || errorName(error) === 'AbortError'
+            ? 'cancelled'
+            : 'infrastructure'
+      })
+    );
   }
   let compiledJson = '';
 
@@ -283,26 +287,30 @@ export async function compileSourceBatch(
   debug = { ...debug, outputPath };
   if (debug.error) {
     const diagnostics = diagnosticsForFailure(debug, debug.error);
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error: debug.error,
-      debug,
-      status: 500,
-      diagnostics,
-      failureKind: classifyCompileFailure(debug)
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error: debug.error,
+        debug,
+        status: 500,
+        diagnostics,
+        failureKind: classifyCompileFailure(debug)
+      })
+    );
   }
 
   if (debug.timedOut) {
     const error = `Compile backend timed out after ${formatDuration(timeoutMs)}.`;
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error,
-      debug,
-      status: 504,
-      diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: 'timeout'
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error,
+        debug,
+        status: 504,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: 'timeout'
+      })
+    );
   }
 
   if (debug.exitCode !== 0) {
@@ -310,53 +318,61 @@ export async function compileSourceBatch(
     const error = lockBusy
       ? 'Compiler preparation is in progress. Try again when the prepared compiler is ready.'
       : `Compile backend exited with code ${debug.exitCode}.`;
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error,
-      debug,
-      status: lockBusy ? 503 : 500,
-      diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: lockBusy ? 'infrastructure' : classifyCompileFailure(debug)
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error,
+        debug,
+        status: lockBusy ? 503 : 500,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: lockBusy ? 'infrastructure' : classifyCompileFailure(debug)
+      })
+    );
   }
 
   try {
     if ((await compilerSourceFingerprint()) !== prepared.sourceSha256) {
       const error =
         'Compiler inputs changed while this request was queued or running. Prepare the compiler and try again.';
-      return finish(batchFailure(seeds, {
+      return finish(
+        batchFailure(seeds, {
+          ok: false,
+          error,
+          debug,
+          status: 503,
+          diagnostics: diagnosticsForFailure(debug, error),
+          failureKind: 'infrastructure'
+        })
+      );
+    }
+  } catch (cause) {
+    const error = `Compiler inputs could not be verified after compilation: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`;
+    return finish(
+      batchFailure(seeds, {
         ok: false,
         error,
         debug,
         status: 503,
         diagnostics: diagnosticsForFailure(debug, error),
         failureKind: 'infrastructure'
-      }));
-    }
-  } catch (cause) {
-    const error = `Compiler inputs could not be verified after compilation: ${
-      cause instanceof Error ? cause.message : String(cause)
-    }`;
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error,
-      debug,
-      status: 503,
-      diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: 'infrastructure'
-    }));
+      })
+    );
   }
 
   if (outputReadError) {
     const error = `Compile backend did not produce a readable output package: ${outputReadError}`;
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error,
-      debug,
-      status: 502,
-      diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: 'invalid-output'
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error,
+        debug,
+        status: 502,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: 'invalid-output'
+      })
+    );
   }
 
   try {
@@ -378,14 +394,16 @@ export async function compileSourceBatch(
     const error = `Compile backend wrote an invalid output package: ${
       err instanceof Error ? err.message : String(err)
     }`;
-    return finish(batchFailure(seeds, {
-      ok: false,
-      error,
-      debug,
-      status: 502,
-      diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: 'invalid-output'
-    }));
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error,
+        debug,
+        status: 502,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: 'invalid-output'
+      })
+    );
   }
 }
 
@@ -430,7 +448,9 @@ export async function readCompileBundle(
 
   const visualizations = Array.isArray(visualization) ? visualization : [visualization];
   const allDescriptors = visualizations.flatMap(({ resources }) => resources);
-  const descriptors = new Map(allDescriptors.map((descriptor) => [descriptor.descriptorId, descriptor]));
+  const descriptors = new Map(
+    allDescriptors.map((descriptor) => [descriptor.descriptorId, descriptor])
+  );
   if (
     allDescriptors.some((descriptor) => {
       const retained = descriptors.get(descriptor.descriptorId);
@@ -525,6 +545,11 @@ function validateCompiledBatch(
     throw new Error('Multi-view compilation requires scenario-aware IR v2.');
   }
   const scenarioKey = visualizations[0].scenarioKey;
+  const occurrences = new Map<
+    string,
+    { ordinal: number | undefined; parent: string | undefined; label: string }
+  >();
+  const occurrenceKeysByOrdinal = new Map<number, string>();
   visualizations.forEach((visualization, index) => {
     if (
       visualization.scenarioKey !== scenarioKey ||
@@ -532,6 +557,31 @@ function validateCompiledBatch(
       visualization.viewSeed !== requestedSeeds[index]
     ) {
       throw new Error('Compiler returned an incorrectly correlated scenario/view batch.');
+    }
+    for (const frame of visualization.steps) {
+      if (frame.occurrenceKey === undefined) continue;
+      const metadata = {
+        ordinal: frame.ordinal,
+        parent: frame.parentOccurrenceKey,
+        label: frame.label
+      };
+      const retained = occurrences.get(frame.occurrenceKey);
+      if (
+        retained &&
+        (retained.ordinal !== metadata.ordinal ||
+          retained.parent !== metadata.parent ||
+          retained.label !== metadata.label)
+      ) {
+        throw new Error(`Compiler views disagree about frame occurrence ${frame.occurrenceKey}.`);
+      }
+      occurrences.set(frame.occurrenceKey, metadata);
+      if (frame.ordinal !== undefined) {
+        const retainedKey = occurrenceKeysByOrdinal.get(frame.ordinal);
+        if (retainedKey !== undefined && retainedKey !== frame.occurrenceKey) {
+          throw new Error(`Compiler views disagree about frame ordinal ${frame.ordinal}.`);
+        }
+        occurrenceKeysByOrdinal.set(frame.ordinal, frame.occurrenceKey);
+      }
     }
   });
 }
@@ -766,10 +816,7 @@ export function compileBatchCommand(
   const command = compileCommand(binaryPath, seeds[0], outputPath, sourcePath, sourceLabel);
   return {
     ...command,
-    args: [
-      ...command.args,
-      ...seeds.slice(1).flatMap((seed) => ['--view-seed', String(seed)])
-    ]
+    args: [...command.args, ...seeds.slice(1).flatMap((seed) => ['--view-seed', String(seed)])]
   };
 }
 

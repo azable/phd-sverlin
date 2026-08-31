@@ -6,13 +6,24 @@
 
 export type * from '$lib/shared/visualization';
 
-import type { RenderInstanceId, TextSourceRange, VisualElement } from '$lib/shared/visualization';
+import type {
+  ConnectorInstanceId,
+  GlyphCluster,
+  RenderInstanceId,
+  TextSourceRange,
+  VisualConnector,
+  VisualElement
+} from '$lib/shared/visualization';
 
 /** A visual element paired with its identity in the current scene snapshot. */
 export type LiveElement = VisualElement & {
   instanceId: RenderInstanceId;
   codeEmphasisRanges: TextSourceRange[];
+  fragmentClusters: GlyphCluster[];
 };
+
+/** A solved connector paired with its identity in the current frame. */
+export type LiveConnector = VisualConnector & { instanceId: ConnectorInstanceId };
 
 /** Ephemeral renderer evidence kept separate from immutable compiler findings. */
 export type TextRuntimeObservation = {

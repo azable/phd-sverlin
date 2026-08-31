@@ -14,6 +14,7 @@
 
   import type { PresentationSelection } from './presentation-selection.svelte';
   import {
+    localPresentationStep,
     presentationPlaybackContext,
     type PresentationPlayback
   } from './presentation-playback.svelte';
@@ -67,7 +68,8 @@
   const visibleSelections = $derived(
     visible.flatMap((entry) =>
       visualSelections.filter(
-        (selection) => selection.presentationEvent === entry.eventId && selection.step === step
+        (selection) =>
+          selection.presentationEvent === entry.eventId && selection.step === localStep(entry)
       )
     )
   );
@@ -130,23 +132,29 @@
   function selectedInstances(entry: (typeof visible)[number]) {
     return (
       visualSelections.find(
-        (selection) => selection.presentationEvent === entry.eventId && selection.step === step
+        (selection) =>
+          selection.presentationEvent === entry.eventId && selection.step === localStep(entry)
       )?.instances ?? []
     );
   }
 
   function selectInstances(entry: (typeof visible)[number], instances: number[]) {
+    const entryStep = localStep(entry);
+    if (entryStep < 0) return;
     const retained = visualSelections.filter(
       (selection) =>
-        selection.step === step &&
         visible.some(({ eventId }) => eventId === selection.presentationEvent) &&
         selection.presentationEvent !== entry.eventId
     );
     onVisualSelectionsChange(
       instances.length
-        ? [...retained, { presentationEvent: entry.eventId, step, instances }]
+        ? [...retained, { presentationEvent: entry.eventId, step: entryStep, instances }]
         : retained
     );
+  }
+
+  function localStep(entry: (typeof visible)[number]) {
+    return localPresentationStep(playbackContext, entry.presentation.presentationId, step);
   }
 </script>
 
@@ -245,7 +253,7 @@
         >
           <PresentationViewport
             presentation={entry.presentation}
-            {step}
+            step={localStep(entry)}
             projectId={session.projectId}
             label={`Visualization ${index + 1}`}
             selectedIds={selectedInstances(entry)}

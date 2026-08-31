@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { error } from '@sveltejs/kit';
 
 import { requireProjectAccess } from '$lib/server/authorization';
+import { isSverlinPresentation } from '$lib/shared/presentations';
 
 import {
   projectRepository,
@@ -20,7 +21,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     const reference = document.events
       .flatMap((event) => {
         if (event.type === 'visualization.presented') {
-          return event.payload.presentation.format === 'sverlin-ir-v1'
+          return isSverlinPresentation(event.payload.presentation)
             ? (event.payload.presentation.resources ?? [])
             : [];
         }

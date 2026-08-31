@@ -28,7 +28,11 @@
     PresentationPlayback
   } from '$lib/client/visualization/presentation-playback.svelte';
   import { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
-  import type { PresentationLayout } from '$lib/shared/presentations';
+  import {
+    isSverlinPresentation,
+    presentationViewSeed,
+    type PresentationLayout
+  } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { EventId } from '$lib/shared/projects/events';
   import type { VisualSelection } from '$lib/shared/projects/events/values';
@@ -141,9 +145,9 @@
       : undefined;
     if (
       presentation?.type === 'visualization.presented' &&
-      presentation.payload.presentation.format === 'sverlin-ir-v1'
+      isSverlinPresentation(presentation.payload.presentation)
     ) {
-      return presentation.payload.presentation.seed;
+      return presentationViewSeed(presentation.payload.presentation);
     }
     return 1;
   });

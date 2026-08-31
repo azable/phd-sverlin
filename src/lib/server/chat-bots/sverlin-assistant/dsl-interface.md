@@ -1,324 +1,227 @@
-# Sverlin visualization design and source authoring guide
+# Sverlin source authoring guide
 
-## Creative brief
+## Authoring brief
 
-- Treat the participant's algorithm, target cohort, skill level, learning outcomes, and style answers as one brief. Use cohort and outcomes to choose narrative depth, terminology, example size, and checkpoints; never infer an aesthetic merely from the audience.
-- Preserve freedom wherever the brief is silent. A qualitative colour preference such as "blue" should constrain a broad hue range and only the saturation or lightness implied by the wording. Fix one exact colour only when the participant explicitly supplies an exact value such as a hex code.
-- Translate the user’s underlying idea into a visual explanation, not merely a literal collection of requested objects. Decide what the viewer should notice first, what changes over time, and what final state makes the idea clear.
-- When the user gives only a topic, infer a familiar algorithm or process and a small representative input. Leave routine style fields open for the compiler’s coherent seeded profiles; choose concrete styling only when the user or semantic encoding requires it.
-- A blank artefact is an invitation to construct a complete visualization from scratch. For an existing visualization, preserve unrelated working behavior while evolving its visual story as requested.
-- Prefer the smallest example that tells a satisfying story. As a default, use roughly 3–6 data values and 3–7 meaningful checkpoints; expand only when the concept calls for more detail.
-- Treat the seed as a compositional input. Unless the user requests a rigid diagram, design a family of recognizably different valid layouts rather than one fixed layout with tiny spacing changes.
-- Choose a visual grammar that fits the subject. Lists, tables, sequences, and direct comparisons often benefit from meaningful shared alignment; ordered values can also occupy a bounded ribbon or staggered lane when that remains readable. Alternatives can form groups, and state transitions can use stable semantic relationships without fixing the whole composition.
-- Use readable labels and deliberate sizes and spacing. Encode semantic accents explicitly, but leave unspecified presentation to the compiler. Avoid decorative clutter and do not invent unsupported shapes, connectors, or interactions.
-- Make every checkpoint advance the explanation. Show setup, consequential operations and decisions, and a resolved final state; skip trace noise that would produce visually identical or pedagogically empty steps.
+- Turn the participant's algorithm, audience, learning outcomes, and style answers into one clear visual explanation. Use the audience to choose terminology and detail, not to guess an aesthetic.
+- Prefer a small representative scenario: usually 3–6 values and 3–7 meaningful typed steps. Each exposed step should visibly advance the explanation.
+- Preserve design freedom where the brief is silent. Encode semantic requirements and explicit preferences; leave routine appearance open.
+- Treat a seed as a request for another valid presentation, not merely tiny spacing changes. Give major groups room to move and use named alternatives for genuinely different compositions.
+- The application owns playback and controls. Do not draw substitute navigation, tabs, preference controls, or interactions inside the visualization.
 
-## Public source contract
+## Complete public source contract
 
-- Treat the source-derived `dslApiIndex` as the exhaustive public-name, compiler-inferred type, and per-symbol behavior reference. It combines GHC signatures with Haddock export documentation from the `LinearTrace.Choreography` facade; do not infer additional APIs from examples or private modules.
-- Treat this guide as the stable composition and authoring contract and the supplied artefact as the current project source of truth. Where this guide adds syntax constraints or examples, they refine rather than expand the facade API.
-- Return body-only Haskell declarations: never add a module header, imports, or `LANGUAGE`/`OPTIONS` pragmas.
-- Define `program :: Choreography ()`; execution of this algorithm becomes the trace.
-- Define `visualization :: VisualizationBuilder ()`; it declares selections, hierarchical nodes, styling, and layout rules.
-- The compiler supplies the public `LinearTrace.Choreography` facade, linear Prelude imports, extensions, and a generated runner that enables coherent generative styles. Do not define the runner or reach into private core/view modules.
-- Use only helpers exported by the public facade. If behavior is not expressible by this contract, explain the limitation rather than inventing an API.
+- `dslApiIndex` is the exhaustive public-name, compiler-inferred type, and per-symbol behavior reference. It is generated from the `Sverlin` facade. Do not infer APIs from private modules or old examples.
+- Return body-only Haskell declarations. Do not add a module header, imports, language pragmas, a runner, or seed handling.
+- Define exactly these three entry points:
 
-## Compiler-critical syntax
+  ```haskell
+  domain  :: Domain Initial
+  program :: Initial %1 -> Program ()
+  render  :: Render ()
+  ```
 
-- `Payload` is not injective. Give `create` an explicit tag application: write `Create pending <- create @Item (LInt 3)`, not `create (LInt 3)` or `(3 :: LInt Item)`. This applies to all payload wrappers.
-- `select @Tag query` returns `VisualizationBuilder (NodeBinding (Selected Tag))`. Unwrap it only as `Selected item <- select @Tag query`; neither `item <- select ...` nor `NodeBinding item <- select ...` is valid. Pass the unpacked selection to `node`.
-- Unwrap visualization values with their public constructors: `Bound value <- bindContent`, `Bound i <- bindInt`, and `Variable gap <- variable @Span`.
-- Positions are `Coord`: use `at` for `left`, `top`, `right`, `bottom`, `x`, `y`, and center coordinates. Sizes are `Span`: use `by` for width, height, gaps, padding, radius, stroke width, and font size.
-- `Hsl` uses degrees for hue and values from 0 to 1 for saturation and lightness, for example `Hsl 215 0.76 0.93`, not CSS percentages.
-- Categorical styles require `FixedStyle` or `VariableStyle`, not strings or bare numbers. Examples include `FixedStyle FontWeightBold`, `FixedStyle (FontWeightNumber 700)`, and `FixedStyle TextAlignCenter`.
-- The compiler, not the browser, chooses text lines and measures the solved content box. With `content`, an authored `style @FontSize` is fixed. With `fitText`, an omitted `FontSize` means the largest feasible fit and an authored `FontSize` is a cap.
-- Style authoring has three states. `style @Field value` requires a field, `withoutStyle @Field` requires its absence, and omission leaves it to the compiler’s family profile. Do not add `Fill`, `Radius`, `StrokeWidth`, or typography merely to create seeded variation.
-- `styleFamily "key"` gives selected peers one explicit family identity when payload type alone is too broad. `styleCase @Field choice` exhaustively maps a typed categorical choice to `Just value` or `Nothing` for authored conditional presence.
-- Every relation expression produces a `VisualConstraint`, not a `VisualizationBuilder ()`. Emit it with `ensure` or `encourage`, including bridge expressions: write `ensure $ right first =| gap |= left second` and `encourage $ x item .==. x guide`. Never place `.==.`, `.<=.`, `.>=.`, `=| ... |=`, or `=/ ... /=` directly as a statement in `visualization`.
-- `oneOf` is the deliberate exception: each `alternative` takes a list of raw `VisualConstraint` values, without `ensure`. Write `oneOf "composition" (alternative "row" [y first .==. y second]) [alternative "column" [x first .==. x second]]`. Alternative constraints are always hard.
-- A `do` block cannot end with a pattern bind such as `Destroy <- destroy item`; follow the final destroy with `return ()` or a meaningful final checkpoint.
+- `Domain` declares typed vocabulary, samples bounded scenario input, and constructs the initial linear resources. `Program` consumes those resources to record one immutable semantic trace. `Render` independently selects trace objects and relations and describes their visual mappings.
+- The wrapper supplies the curated linear prelude, qualified `Linear` operations for payload implementations, and `Sverlin` as the sole DSL facade.
+- `do` notation is ordinary GHC-checked `RebindableSyntax`; there is no source-rewriting pass. Generator and Render values bind normally, while Domain and Program bindings are linear.
+- Do not expose or emulate an unrestricted escape from Domain or Program. Runtime input, payloads, `Block`, `Pending`, `Slot`, and structures containing them must be consumed exactly once.
 
-## Value-first computation
-
-- `create` is the ingress boundary. Use it to introduce external/source inputs, literal constants, operator values, and genuine prose annotations. Never use it to introduce a domain value that is semantically derived from values already present in the trace.
-- A meaningful unary or binary derivation must be performed by a typed operator: define `LOperator`, `CoreOperator`, and `Applicable1` or `Applicable2`, then execute it with `apply1` or `apply2`. The returned pending value is the result; materialize it with result facts and introduce its checkpoint there.
-- An algorithmic source is incomplete when it precomputes its results in Haskell and passes them to `create`, or when its only account of the computation is fixed text. In a Fibonacci visualization, only the initial `0` and `1` are input values; every later term must be produced by applying addition to owned copies of the preceding terms. Strings such as `"1 + 1 = 2"` may annotate those events only after the corresponding values and application exist in the trace.
-- `apply1` and `apply2` consume the operator and their operands. If an input or result must remain available, `copy` it first, materialize or `commit` the pending copy, and consume the appropriate owned copy. Create and materialize a fresh operator value for each repeated application because operators are also consumed.
-- Attach facts that distinguish inputs, operators, and results, then render payload-bound values from those facts. Text is appropriate for headings, short narration, and symbols; it must not carry computational meaning that should be present in the typed trace.
-- Do not manufacture operators for purely descriptive concepts with no meaningful value transformation. Algorithms based on movement, grouping, replacement, or lifecycle should encode those actual operations instead of forcing arithmetic into the story.
-
-### Canonical value-flow pattern
+## Minimal shape
 
 ```haskell
-data Addition = Addition
-type instance Payload Addition = LOperator Addition Addition
-
-instance CoreOperator Addition where
-  operatorPayloadText Addition = "+"
-  persistOperatorPayload Addition = Ur Addition
-
 data Number
-type instance Payload Number = LInt Number
+instance Traceable Number where
+  type Payload Number = LInt Number
 
-instance Applicable2 Addition Number Number where
-  type Apply2Result Addition Number Number = Number
-  applyPayload2 (LOperator Addition) = applyLinear2Into (Linear.+)
+data ValueRole
+data InputVariable
+data Introduce
+data Finish
 
-program :: Choreography ()
-program = do
-  Create pendingLeft <- create @Number (LInt 1)
-  leftInput <- materialize (#number <&> #input <&> #left) pendingLeft
-  Create pendingRight <- create @Number (LInt 1)
-  rightInput <- materialize (#number <&> #input <&> #right) pendingRight
-  Create pendingAddition <- create @Addition (LOperator Addition)
-  addition <- materialize #operator pendingAddition
-  checkpoint "Introduce inputs"
+valueKind :: Kind Number
+valueKind = kind @ValueRole
 
-  Apply2 pendingResult <- apply2 addition leftInput rightInput
-  result <- materialize (#number <&> #result) pendingResult
-  checkpoint "Apply addition"
+data Initial where
+  Initial :: Block Number %1 -> Initial
 
-  Destroy <- destroy result
-  return ()
+domain :: Domain Initial
+domain = do
+  declareKind valueKind
+  declareSteps @'[Introduce, Finish]
+  value <- variable @InputVariable (between 0 99)
+  Create pending <- create (LInt value)
+  block <- materialize valueKind pending
+  pure (Initial block)
 
-visualization :: VisualizationBuilder ()
-visualization = do
-  aspectRatio 16 9
-  Bound label <- bindContent
-  Selected numbers <- select @Number (#number <&> payload label)
-  node numbers $ do
-    content label
+program :: Initial %1 -> Program ()
+program (Initial block) = do
+  block1 <- step @Introduce (pure block)
+  block2 <- step @Finish (pure block1)
+  Destroy <- destroy block2
+  pure ()
+
+render :: Render ()
+render = do
+  always $ frame @Introduce
+  always $ frame @Finish
+  values <- select valueKind
+  node values $ do
+    label <- bindContent
+    fitText label
     width (by 72)
-    height (by 56)
-  ensure $ left numbers .>=. at 48
-  ensure $ right numbers .<=. at 752
-  ensure $ top numbers .>=. at 120
-  ensure $ bottom numbers .<=. at 480
-
-  Selected addition <- select @Addition #operator
-  node addition $ do
-    content "+"
-    width (by 48)
-    height (by 48)
-    style @FontSize (by 24)
-    style @FontWeight (FixedStyle FontWeightBold)
-    style @TextAlign (FixedStyle TextAlignCenter)
-  ensure $ left addition .>=. at 48
-  ensure $ right addition .<=. at 752
-  ensure $ top addition .>=. at 120
-  ensure $ bottom addition .<=. at 480
+    height (by 52)
+    style @Radius (by 10)
 ```
 
-Use this only as a syntax reference. Design the actual domain, facts, checkpoints, visual encoding, and layout around the user’s subject.
+Use this only as a syntax reference. Choose types, steps, relations, and visual rules for the actual subject.
 
-## Linear trace and lifecycle
+## Domain: typed input and vocabulary
 
-- `Choreography a` is a linear trace builder. A `Block tag` is an opaque, linearly owned live resource; every block must be consumed exactly once.
-- Declare semantic phantom tags and map each to a payload, for example `data Value` and `type instance Payload Value = LInt Value`.
-- Supported payload wrappers are `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, and `LOperator`.
-- For custom operators, define `CoreOperator` and `Applicable1` or `Applicable2` with the corresponding result and payload-application methods. Use `applyLinear1`, `applyLinear1Into`, `applyLinear2`, or `applyLinear2Into`; do not unwrap or duplicate linear payloads with ordinary helpers.
-- `create @Tag payload` returns `Create pending`. Every `Pending tag` must be completed by `materialize`, `materializeWithTags`, or `commit`.
-- `materialize query pending` creates a live block and attaches semantic facts. Prefer tagged materialization for values that must be selected visually.
-- `copy block` returns `Copy original pending`; retain the original and materialize the pending copy.
-- `replace block pending` consumes the old block and produces a pending replacement, which must be materialized.
-- `apply1` and `apply2` consume their operands and return pending typed results, which must be materialized.
-- `Use (OneUse value) <- use block` consumes the block and permits exactly one inspection of its payload.
-- `Destroy <- destroy block` closes a live resource. Destroy all remaining blocks in every branch and recursively through ownership structures.
-- Use linear pattern matching, recursion, and explicit ownership-passing structures such as `Block tag %1`. Never use `unsafeCoerce`, duplicate a live block, or hide one in a non-linear alias.
-- `checkpoint "label"` creates one timeline step from events since the previous checkpoint. Introductions appear in that step; removals prepare the starting state of the following step.
+- A nullary marker type is a stable compiler identity; it is not runtime data or a string key. Use a different marker for every kind, relation, generated variable, and step declaration.
+- `kind @Identity` classifies one `Traceable` type. Declare every handle with `declareKind` before materializing a pending value with it. Several kinds may classify the same payload type when they have different semantic roles.
+- `orderedRelation @Identity` gives source and target distinct roles. `symmetricRelation @Identity` makes reversing same-typed endpoints equivalent. Declare either with `declareRelation`.
+- `declareSteps @'[...]` declares every marker later used by `step`, `frame`, `fragment`, or `fragmentMany`.
+- Domain-form `variable @Identity generator` samples once from a deterministic sub-seed. Use `between`, `elementOf`, `weighted`, `listOf`, and `shuffle` to construct valid finite input directly.
+- `listOf` returns an ordinary Haskell list while inside Generator. After Domain binds that list, the list is linear: consume every constructor and element while creating the initial resources.
+- Generator has ordinary `Functor`, `Applicative`, and `Monad` behavior, so dependent input is allowed. For example, sample a vertex count and then generate exactly that many labels. Do not use retry loops or predicate rejection.
+- `elementOf first rest` and `weighted first rest` are non-empty by construction. A fixed complete scenario is a normal choice value, such as `elementOf [1, 3, 2] [[4, 2, 5]]`.
+- `create`, `materialize`, `seal`, and `relate` are the only trace-building operations shared by Domain and Program. Domain cannot perform algorithm lifecycle actions.
 
-## Semantic facts and queries
+## Program: strict linear semantics
 
-- Materialized snapshots contain payload, lifecycle provenance, and `Facts`. Facts are the stable semantic address used by visual rules; never depend on generated IDs or source line numbers.
-- Give every visual-worthy value a meaningful path such as `#target <&> #source`, `#array <&> #index @: 3`, `#result <&> payload True`, or `#array <&> #processed`.
-- `#label` creates an atom query. Compose paths with `<&>` and use the same `#name @: value` form for integer facts: the value may be a literal or a `QueryInt` unpacked from `bindInt`.
-- The public programmatic query helpers are `emptyQuery`, `queryAtom`, and `queryInt`. Prefer overloaded labels and `<&>` for readable semantic paths.
-- `materializeWithTags baseQuery selectQuery pending` adds a base path plus payload-dependent facts.
-- `payload` creates a typed payload pattern. Match literal values or a value unpacked from `bindContent`. Use `select @AnyPayload query` only when the tag is intentionally irrelevant.
-- Attach facts consistently across sources, probes, results, replacements, and updates so visual rules can follow the complete lineage.
-
-## Visual rules
-
-- The body of `visualization = do ...` is the persistent canvas root. At root level, `width`, `height`, `aspectRatio`, `padding`, `contentFit`, and `style` edit that canvas; position, margin, and content declarations are rejected. The root origin is always `(0,0)`, it contains all top-level children, and it is rendered continuously rather than appearing in timeline instances.
-- All geometry and typography use scalable logical layout units. The solved IR records these units without a CSS-pixel or physical-resolution assumption, and renderers scale them through the root canvas viewport.
-- `aspectRatio horizontal vertical` adds a fixed affine ratio to the canvas, for example `aspectRatio 16 9`. With one explicit axis it derives the other; with neither axis it hugs the limiting content axis, and an empty ratio canvas takes the largest matching rectangle in the 800×600 automatic envelope. Prefer 16:9 when the user has not specified a format and a stable presentation canvas is appropriate. Keep content-driven sizing when the subject benefits from a naturally shaped list, table, or diagram rather than forcing a format.
-- Under the default `Hug` fit, omitted canvas axes hug retained children and their margins/padding, capped at 800 layout units wide and 600 layout units high. An empty omitted canvas is 800×600. Set `width` and/or `height` at the top level for an explicit canvas (up to 4096 layout units per axis), and normally use `contentFit Both Contain` when explicit dimensions should leave unused room instead of requiring a child to touch the trailing edge.
-- A selection rule applies to every matching trace snapshot, including repeated iterations. Prefer reusable semantic rules over one rule per occurrence.
-- `node selected $ do ...` declares every trace output matched by a selection and attaches content, box geometry, style, and constraints. Each materialized trace output must match exactly one such declaration: unmatched outputs are not visual nodes, while overlapping declarations are a compile error.
-- `Selected parent <- node $ do ...` declares an anonymous generated node. Any `node` declarations nested in that `do` block become its children; nesting can be recursive. A trace-selected node is terminal and cannot contain children. A selection may match one or many trace outputs, so an entire selection can be nested without enumerating its members.
-- Every node has one parent: either the canvas or one generated node. Empty generated branches are pruned. The compiler emits warning findings when a declaration matches no visible trace output or a generated parent is pruned.
-- Generated parents are ordinary selectable node handles. Bind the result and use `left`, `right`, `center`, `size`, `styleOf`, and other relations on it just as on a trace selection. Inside an anonymous node, `Selected current <- self` retrieves the same handle; `canvas` is the ordinary root-layout handle. A relation may combine several selected handles in one affine expression; repeated use of one handle resolves to the same node, while distinct query selections join on compatible bound query integers.
-- Generated parents default to `Hug` on each axis: their content edge is tight to at least one child edge while containing every child margin box. Use `contentFit Horizontal Contain`, `contentFit Vertical Contain`, or `contentFit Both Contain` when a parent may be larger than its children.
-- `padding` and `margin` use a real four-edge box model. Construct insets with `uniform span`, `symmetric vertical horizontal`, or `edges top right bottom left`. Parent containment uses the content box inside padding; child margins remain separate and never collapse.
-- Parent-relative setters are explicit and affine: `xAt (percent 50)` and `yAt (percent 50)` place the node center at the midpoint of its parent content box; `widthOf (percent 60)` and `heightOf (percent 40)` size it from that content box. Percent values are in the inclusive range 0–100. These work for children and for canvas children.
-- For indexed repeated nodes, bind the index once and let geometry scale from it instead of enumerating every item:
+- `Traceable` associates an authored semantic type with one trusted payload: `LUnit`, `LBool`, `LInt`, `LDouble`, `LString`, or stateless `LOperator`.
+- `create payload` returns `Create pending`; every `Pending` must reach exactly one `materialize kind pending` or `replace old pending` path. Materialization always requires one declared `Kind`.
+- Each `Block` is the sole live capability for one semantic value. Thread it through `copy`, `use`, `apply1`, `apply2`, `replace`, `destroy`, `seal`, `unseal`, and `step` by matching their public result wrappers.
+- `copy` is the only way to reuse a live semantic value: it returns the original Block and a pending fork. `use`, `apply1`, `apply2`, `replace`, and `destroy` end their input Block lifetimes.
+- Model a meaningful derivation with `Applicable1` or `Applicable2`, then execute it with `apply1` or `apply2`. Do not precompute algorithm results outside Program and introduce them as if they were inputs.
+- Operators are ordinary stateless trace types whose payload is `LOperator Operator`. Runtime parameters are separate operand Blocks.
 
   ```haskell
-  Bound i <- bindInt
-  Selected items <- select @Item (#item <&> #index @: i)
-  node items $ do
-    left (at 48 + asScalar i * shift 64)
-    width (by 48)
-    height (by 48)
+  data Add
+  instance Traceable Add where
+    type Payload Add = LOperator Add
+
+  instance Applicable2 Add Number Number where
+    type Apply2Result Add Number Number = Number
+    applyPayload2 LOperator (LInt leftValue) (LInt rightValue) =
+      LInt (leftValue Linear.+ rightValue)
   ```
 
-  Selection accessors return `VisualExpr` values, so formulas such as `ensure $ x group .==. left first + (right last - left first) / 2` are lowered as one joined relation rather than guessed through repeated AI edits. Multiplication and division in selected expressions must use a fixed or query-resolved scalar so the result remains affine.
+- `step @Name action` records one typed, nestable occurrence around the complete action and returns its result unchanged. Repeated calls create distinct occurrences.
+- A Program helper receiving generated data or a linear resource uses `%1` arguments. GHC must reject duplication, dropping, or capture by an unrestricted closure before tracing begins.
 
-- Use `content "literal"` for fixed text or a value unpacked from `bindContent` for matched payload text.
-- `content value` uses managed typography and prefers one line, with at most two compiler-selected fallback breaks. When its `FontSize` is omitted, the automatic profile selects a proportional size after geometry is solved; an authored `FontSize` is fixed. `fitText value` instead maximizes the feasible size when `FontSize` is omitted, or treats an authored size as a cap. Automatic fitting uses 0.25-layout-unit steps with a 12-layout-unit managed minimum. Always provide adequate width and height; no feasible layout is a compile error.
-- For exact code or other verbatim output, start with `codeContent value`. Wrap it with `codeWrap` only when up to two compiler-selected visual breaks are acceptable, and wrap that with `highlightCode "language"` for semantic syntax tokens. For example:
+## Slots and semantic relations
+
+- `seal owner occupant` hides the occupant and returns the same owner identity plus `Slot owner occupant`. `unseal owner slot` returns the owner and current occupant. Replacing and resealing an occupant does not change the owner identity.
+- `relate relationKind sourceSlot targetSlot` records a relation between stable Slot owners and reissues both Slot capabilities through `Relate`. It returns no public relation token.
+- A relation survives unsealing and resealing because it belongs to owners, not their current occupants. It ends when either owner is terminally consumed; a replacement owner does not inherit it.
+- There is no mid-lifetime relation removal. To make a semantic transition to a different relation set, end the relevant owner lifetime, materialize successor owners, and relate their Slots.
+- Adding a duplicate ordered pair, or either orientation of a duplicate symmetric pair, is a diagnostic.
+- The relation becomes visible after its creation event. Its Render rules participate in the fixed visual constraint system for the overlapping endpoint lifetimes; do not author mutually incompatible rules for the same owners.
+
+## Render presence, frames, and hierarchy
+
+- `always action` adds no random decision. `sometimes action` creates one equal include/omit decision at the current match scope. Nested conditions combine, and Render handles returned from an optional action carry that condition into dependent visual components.
+- Wrap every `frame @Step` in `always` or `sometimes`; bare frames are invalid. At least one declared step that executes in every scenario must have an `always` frame.
+- `sometimes $ frame @Step` independently includes each runtime occurrence. Omission affects playback output only: the compiler still validates topology and prepares layout for every occurrence.
+- `select kindHandle` returns all current semantic matches. `select relationHandle` returns active relation matches. No predicate or string-fact language exists.
+- `node selected body` maps every current match. `node body` creates and returns one generated visual parent. Both forms may contain child nodes; nested selected nodes map the matching current occupants of selected Slot owners.
+- A generated `node $ do ...` returns its handle. Earlier statements in a Render `do` block discard that result normally; if it is the final statement where `Render ()` is required, bind/discard the handle or follow it with `pure ()`.
+- Use generated parents to define groups and local constraint scopes. They default to hugging their retained children. `self` is the current generated parent; `canvas` is the persistent root geometry handle.
+- A selection may have several visual mappings, but any use of its geometry or as a connector endpoint must resolve to exactly one context-local mapping. Use separate generated-parent scopes to disambiguate deliberate duplicates.
+- `within membership owners body` restricts selections inside one current owner match to targets of that ordered owner-to-member relation. It does not itself draw or create hierarchy.
+
+## Relation rules and graph structure
+
+- `relation links body` evaluates the body once for each active relation. Inside it, `first links` and `second links` return the typed endpoint selections for that exact relation occurrence.
+- Ordered endpoints preserve source and target meaning. Symmetric endpoints have a stable output order but no semantic direction.
+- Relations pair nodes and may support constraints, connectors, or both; selecting a relation draws nothing automatically.
+- `asSequence links nodes`, `asTree links nodes`, and `asDag links nodes` validate the complete selected structure. They do not replace the original selections.
+- Inside the matching node body, `rankOf ranking` returns sequence position, tree depth, or longest-path DAG level as a compiler-fixed integer. Use `asScalar` in affine formulas or `asText` in a label.
+- `payloadScalar selection` similarly exposes the current `LInt` or `LDouble` payload as a fixed affine coefficient. It is not a fresh variable or Program value.
+- `arrange` applies a deterministic relative template: `ArrangeGrid`, `ArrangeLayered`, `ArrangeRadial`, or `ArrangeTree`. Put alternative templates in an explicit `oneOf`; arrangements make no hidden random choice.
+
+## Whole-line text and typed fragments
+
+- `text "literal"` constructs one complete line. `bindContent` reads the current selected payload's display text.
+- A `TextBuilder` can concatenate `literal`, `fragment @Step`, and `fragmentMany @'[StepA, StepB]` pieces. Concatenation inserts no whitespace.
+- A fragment associates a character range with typed step occurrences so the renderer can highlight the relevant glyph clusters. The compiler still shapes the complete line once, preserving kerning, ligatures, and bidirectional text.
 
   ```haskell
-  node example $ do
-    emphasizeCode
-      "computed"
-      [codeRange 4 10]
-      (highlightCode
-        "haskell"
-        (codeWrap
-          (codeContent "let answer = 40 + 2\n-- computed result")))
-    width (by 280)
-    height (by 96)
-    style @TextAlign (FixedStyle TextAlignLeft)
+  comparisonLine :: ContentValue
+  comparisonLine = do
+    literal "if "
+    fragment @ReadElement "A[i]"
+    fragmentMany @'[Compare, ReadTarget] " == "
+    fragment @ReadTarget "target"
   ```
 
-  `emphasizeCode "checkpoint" [codeRange start end] recipe` adds emphasis only when the selected node is visible at a checkpoint with that exact label. Ranges are half-open, zero-based Unicode character offsets in the authored source; the compiler converts them to UTF-8 byte ranges, merges overlap, and rejects invalid or invisible schedules. Emphasis is separate from syntax roles, so do not rewrite highlighted tokens to simulate it. Supported highlighting aliases cover `sverlin`/`haskell`/`hs`, JavaScript/TypeScript and common C-like languages, Python/shell, JSON, CSS, and SQL. Code defaults to the managed non-ligature JetBrains Mono face. Do not simulate code with ordinary wrapped prose.
+- Text never wraps. A `ContentValue` must contain no newline. Use separate positioned nodes for separate or indented lines; a geometric indent remains correct when the font changes.
+- `content value` uses a fixed authored or theme size and contributes intrinsic bounds to a hugging node. `fitText value` keeps one line within its bounded box while leaving `FontSize` free in its feasible finite range. It does not maximize the size.
+- One node may define content exactly once. Different fonts within one shaped line are unsupported.
 
-- Managed font choices are `FontInter`, `FontSystem` (pinned Source Sans 3), `FontMono` (pinned JetBrains Mono NL), `FontSerif` (pinned Source Serif 4), `FontSourceSans3`, `FontAtkinsonHyperlegibleNext`, `FontSpaceGrotesk`, `FontSourceSerif4`, `FontLiterata`, `FontJetBrainsMonoNL`, and `FontIBMPlexMono`.
-- Style fields are `Opacity`, `ZIndex`, `FontSize`, `Radius`, `StrokeWidth`, `Alpha`, `Fill`, `Stroke`, `FontFamily`, `FontWeight`, `FontStyle`, `TextAlign`, `WhiteSpace`, and `BorderStyle`. Padding and margin are box declarations, not styles.
-- Treat an explicitly requested border as one composite visual property. Set a positive `StrokeWidth`, a contrasting `Stroke`, and a deterministic non-empty `BorderStyle`, normally `FixedStyle BorderSolid`. Do not claim a border was added after changing only its width, and do not rely on renderer fallbacks or automatic profiles for an explicit request; `BorderNone` always suppresses the border.
-- Absolute geometry setters are `width`, `height`, `top`, `left`, `right`, `bottom`, `x`, `y`, `bounds`, and `center`; `size` reads a selected node’s dimensions. Prefer parent-relative setters for hierarchical composition when percentages express the intent directly.
-- Use separate fact/payload selections for semantic sub-states such as neutral, active, success, and failure.
-- `FixedStyle` supplies deterministic categorical values. `VariableStyle` with `choice` allows solver-selected categories. `styleOf` reads a selected style field for relations.
-- If a node needs distinct content, color, position, or status, encode that distinction in semantic facts or payload patterns rather than list order or incidental compiler output.
+## Connectors
 
-## Semantic encoding and fluid presentation
+- `connector start end body` draws one straight connector from two `anchor` values. `AtBoundary` is useful for graph edges; explicit edge-center placements are `AtTop`, `AtRight`, `AtBottom`, and `AtLeft`.
+- `startMarker` and `endMarker` select `NoMarker`, `ArrowMarker`, `CircleMarker`, or `DiamondMarker`. Connector bodies accept connector-relevant style fields such as `Stroke`, `StrokeWidth`, and `Opacity`.
+- A connector adds no layout constraint. Pair it with explicit geometry rules when its endpoints must be separated or ordered.
+- Inside `relation`, a connector inherits that semantic relation's identity and lifetime. Outside, it joins the two context-local node mappings. Endpoint and surrounding presence conditions propagate automatically, so `sometimes` works for arrows, guides, labels, and other visual components, not only frames.
 
-- Facts and typed selections determine what an element means. “Local” means scoped to a semantic family or state rule, not independently randomized for every matching node.
-- The body-only runner assigns trace leaves a semantic family by payload type. Leaf families share surface, weight, palette, and fitted-size decisions, so peers remain coherent within an output while seeds can produce different treatments. Generated structural parents remain transparent unless their node body explicitly styles them.
-- Unspecified leaves make balanced choices: one exact managed font face and one text occupancy target are global to the output; surface treatment and weight are per semantic family. Font faces sample equally across all eight managed faces, occupancy across 68%, 78%, 86%, and 94% of the maximum feasible size, surfaces across transparent, outline, flat fill, soft card, and pill treatments, and weights across 400, 500, and 600. These are compiler defaults, not APIs to reproduce manually, and they do not infer a semantic role from payload text or names.
-- Let unspecified presentation use those defaults. Choose a font, weight, alignment, surface, or colour only when the user asks for it or the choice actually communicates a semantic distinction—for example, managed monospace for code or left alignment for a scannable table. Do not make a numeric list “technical,” a heading “editorial,” or each state visually different merely to add variety.
-- Every style declared on the canvas or an anonymous parent cascades through all descendants unless a child replaces it with `style`, `withoutStyle`, or `styleCase`. This includes typography, fill, stroke, radius, opacity, z-index, and `styleFamily`. Style a parent itself only when that shared semantic treatment is intended for the complete subtree; omitted styles still allow ordinary family defaults at the leaves.
-- Use `styleFamily "name"` when one payload type has multiple semantic roles that should vary independently. Apply the same explicit key to peers that should share a family.
-- `style @Field value` is a hard authoring requirement and overrides the default for that field. `withoutStyle @Field` is also hard and keeps the field absent for every seed. Omitted fields remain available to the family profile.
-- Plain text that must remain unboxed should explicitly forbid fill and border width instead of relying on omission:
+## Bounded affine layout
 
-  ```haskell
-  node caption $ do
-    content "Current comparison"
-    withoutStyle @Fill
-    withoutStyle @StrokeWidth
-  ```
-
-- Use `styleCase` only when the requested design itself needs a custom categorical treatment. It is exhaustive and the controlling choice is shared wherever the same choice is reused:
+- Numeric Render values are typed: `Coord` is a non-negative position, `Span` a non-negative length, `Offset` a signed difference, `Scalar` unitless, `Unit` bounded from zero to one, and `Angle` a bounded hue.
+- Render-form `variable @Span` (or another supported numeric type) creates one fresh symbolic value. It returns the value directly; there is no wrapper constructor or string-named identity.
+- Use `at`, `by`, `shift`, and `num` for constants. Symbolic values use `.+.`, `.-.`, `.*.`, and `./.`; ordinary arithmetic remains for Generator values.
+- Every independent symbolic value must have finite lower and upper bounds, either explicitly or through derived constraints. The compiler rejects unbounded, infeasible, and unsupported nonlinear designs; it never falls back to nonlinear optimization.
+- Products are affine only when at least one factor is fixed before solving, and division requires a fixed non-zero denominator. Variable-by-variable products and variable denominators are rejected.
+- `ensure` records exact `.<=.`, `.>=.`, or `.==.` requirements. Prefer local relative constraints over fixed canvas coordinates:
 
   ```haskell
-  data Treatment = Typographic | Highlighted
-
-  instance ChoiceDomain Treatment where
-    choiceDomain = [Typographic, Highlighted]
-    choiceToken treatment =
-      case treatment of
-        Typographic -> "typographic"
-        Highlighted -> "highlighted"
-
-  Variable treatment <- choice @Treatment
-  node items $ do
-    styleCase @Fill treatment $ \candidate ->
-      case candidate of
-        Typographic -> Nothing
-        Highlighted -> Just (Hsl 210 0.5 0.9)
-    styleCase @Radius treatment $ \candidate ->
-      case candidate of
-        Typographic -> Nothing
-        Highlighted -> Just (by 12)
-  ```
-
-- Every candidate supplied to `styleCase` is compiled, but only the selected branch is emitted into the solved IR. Do not use unconditional `styleOf` on a field authored with `styleCase` or `withoutStyle`; `styleOf` requires guaranteed presence and compilation rejects that conflict.
-- A state override should change one primary channel and at most one or two supporting channels. Use explicit styling only when a fact such as selected, active, compared, success, or failure must remain visible across every seed.
-- `styleOf @Fill item` makes fill required for every matching item. Use it only when a hard relation must read that field; do not use `styleOf` merely to introduce random styling.
-- The current renderer has a fixed dark foreground text colour and the public DSL has no foreground-colour field. Any generated fill behind text must therefore remain light, normally with `lightness (styleOf @Fill selection) .>=. (0.78 :: Unit)`. Do not use dark fills for text-bearing nodes. Transparent text is safe on the white canvas.
-- The DSL has no separate shape primitive. Express a family shape through shared width, height, radius, stroke width, and border style: small radii suggest cells, large radii suggest pills or badges, and equal width/height with a sufficiently large radius suggests a circle. Do not invent unsupported shape constructors.
-- Preserve enough width and height for every valid profile; automatic padding and typography do not replace legibility and containment constraints. Typography reads and then pins the solved box, padding, and stroke inputs, so it cannot enlarge a box during the second solve to rescue weak geometry.
-- Compiler findings retain reductions to small text, fallback wrapping, and substituted static weights. Avoid forcing small boxes merely because fitting can make a candidate compile.
-
-## Solver-backed layout
-
-- Layout values are typed expressions: `Coord` for positions, `Span` for sizes and gaps, `Offset` for differences, and `Scalar` for unitless factors.
-- `Variable gap <- variable @Span` creates a fresh solver variable; `variableFrom expression` creates a derived value. Use `global "name"` only for deliberate sharing and `Variable value <- choice @Domain` for a seeded categorical choice.
-- Read selection geometry with `x`, `y`, `left`, `right`, `top`, `bottom`, `width`, and `height`, then relate selections instead of fixing every coordinate.
-- For a repeated list, table, sequence, or set of numbers, allocate a reasonable bounded canvas lane first. Use the known item count to choose or constrain shared cell dimensions and gaps so the collection occupies that lane without overlap; more items should imply smaller cells. Leave `FontSize` unspecified or use uncapped `fitText` so typography follows those solved boxes instead of trial-and-error size edits. The DSL has no runtime selection-count primitive, so derive count-dependent constants from the source structure when the count is statically known.
-- `ensure` emits a hard constraint with `.<=.`, `.>=.`, or `.==.`. `encourage` emits a soft preference.
-- Directed and symmetric gap relations use `=|`/`|=` and `=/`/`/=` respectively.
-- Use `oneOf name firstAlternative remainingAlternatives` when two or more substantially different compositions are all semantically valid. Names and alternative labels must be stable and descriptive. Put minimum semantic, containment, ordering, and readability constraints outside the alternatives; put only the relationships that distinguish each composition inside them. The solver balances feasible named alternatives before sampling continuous geometry:
-
-  ```haskell
-  Variable gap <- variable @Span
-  ensure $ gap .>=. by 20
-  ensure $ gap .<=. by 72
-  oneOf
-    "comparison.composition"
-    (alternative
-       "row"
-       [right source =| gap |= left result, y source .==. y result])
-    [ alternative
-        "column"
-        [bottom source =| gap |= top result, x source .==. x result]
-    ]
-  ```
-
-- `caseOf choice $ \value -> ...` is the exhaustive typed form when an existing finite choice also determines numeric layout constraints. Pattern-match every constructor and return a list of `VisualConstraint` values. Define categorical equality/difference constraints globally; conditional alternatives currently accept numeric visual relations only.
-- Do not imitate a discrete composition with a continuous selector, magic numeric thresholds, or mutually contradictory soft constraints. Use `oneOf` so infeasible alternatives can be rejected explicitly and the chosen branch is retained in visualization provenance.
-- The runner supplies the random seed; it is not a random value available to `program`. The same seed is reproducible. Bounded affine hard constraints are sampled across their feasible region instead of optimized toward one preferred point, and categorical choices are sampled uniformly from satisfying alternatives. Different seeds therefore explore freedom that the hard constraints genuinely leave open.
-- Keep a generative numeric problem on that sampling path when practical: use variables, constants, addition/subtraction, and multiplication or division by constants in hard constraints, and give every independent value finite lower and upper bounds. Variable-by-variable multiplication/division, `absExpr`, `minExpr`, `maxExpr`, cyclic equality, or an unbounded value selects the nonlinear penalty fallback and can make seeds converge on similar results.
-- On the bounded affine path, `encourage` and `minimize` are deliberately ignored: they describe attraction toward an optimum, which conflicts with broad exploration. Express the user's minimum requirements, semantic relationships, containment, contrast, and legibility with `ensure`, then leave all other values free inside broad hard ranges. Exact hard equalities remain valid but reduce the dimension available for variation.
-- Hard constraints must have a non-empty common region. Check fixed widths/heights against containment, accumulated row gaps against canvas width, and shared-variable ranges against every use; the compiler rejects contradictions instead of weakening one of the requirements.
-- For generative requests, use at least two independent, bounded, seed-controlled degrees of freedom that affect major spatial composition: parent-node X/Y placement, relationships between parent nodes, spacing, wrapping, lane offsets, or alignment when alignment is not semantic. The automatic family profile supplies routine style variation; do not duplicate it with authored style variables.
-- Do not count movement of a few layout units in one shared gap as meaningful variation. Aim for seed changes to move at least one major parent node across a substantial part of its allowed region and to visibly change a second spatial relationship.
-- Avoid exact `left (at ...)` and `top (at ...)` pins except for a small number of deliberate anchors. Hard alignment is appropriate when it communicates a list, table, common baseline, ordered sequence, or direct comparison. In that case, align the members relative to one another, then preserve variation by moving the aligned assembly, varying its gap or dimensions, or varying surrounding parent nodes. Do not break a useful alignment merely to satisfy randomness.
-- Prefer local constraints on selected geometry. They apply to each matching visual node and give each node's own solver geometry a bounded feasible region:
-
-  ```haskell
-  ensure $ left item .>=. at 48
-  ensure $ right item .<=. at 760
-  ensure $ top item .>=. at 132
-  ensure $ bottom item .<=. at 520
-  ```
-
-  If `item` matches a repeated set, these bounds can give each item its own seeded position. Add semantic ordering or lanes where needed. For a meaningful list or table, sharing an axis is correct; retain seed freedom in the collection's other axis, anchor, gaps, dimensions, or relationship to surrounding elements.
-
-- Use semantic facts to select specific neighbors, lanes, rows, or clusters, then constrain only the relationships required for comprehension. For example, give a fresh gap a wide range and preserve ordering without fixing the whole row:
-
-  ```haskell
-  Variable gap <- variable @Span
+  gap <- variable @Span
   ensure $ gap .>=. by 16
-  ensure $ gap .<=. by 96
-  ensure $ right first =| gap |= left second
+  ensure $ gap .<=. by 72
+  relation adjacentLinks $ do
+    previous <- first adjacentLinks
+    next <- second adjacentLinks
+    ensure $ left next .==. (right previous .+. gap)
+    ensure $ y next .==. y previous
   ```
 
-- Create several independent, bounded variables when layout variation should be large: separate horizontal and vertical gaps, parent-node offsets, and shared sizes. Add HSL or other style variables only for a semantic or explicit user requirement. Keep minimum dimensions, canvas containment, semantic order, and collision-preventing lanes as hard constraints so every seed remains legible.
-- Use categorical `choice` only where every remaining alternative fits the semantics, such as a permitted font family or non-empty border style. Do not randomize text alignment for a list or table when that alignment aids scanning, and do not randomize each semantic state independently:
+- `separatedBy gap firstNode secondNode` requires non-overlap without choosing an order. Its four exact geometric cases are compiler bookkeeping and do not make that authored design four times as likely.
+- Parent-relative `xAt`, `yAt`, `widthOf`, and `heightOf` use a fixed `percent 0..100`. A sampled percentage times a sampled parent size would be nonlinear and is not supported.
+- `padding` and `margin` use `uniform`, `symmetric vertical horizontal`, or `edges top right bottom left`. `contentFit axis Hug` keeps parent edges tight to content; `Contain` permits extra bounded space.
+- A free-expanding canvas is invalid because there is no finite interval to sample uniformly. Hugging bounded content can determine its size; a containing canvas needs finite width and height. `aspectRatio` fixes shape, not scale.
+- The compiler prepares each feasible affine region once, then independently samples it for every view seed. Reusing preparation does not reuse a layout point.
+
+## Authored choices and optional variation
+
+- `oneOf name first rest` creates one fresh authored choice. Each `alternative label body` contains a complete `Render ()` action, so alternatives may differ in nodes, hierarchy, styles, connectors, and constraints.
 
   ```haskell
-  Variable border <- choice @BorderStyle
-  ensure $ border /= BorderNone
-  node labels $ style @BorderStyle (VariableStyle border)
+  oneOf "layout"
+    (alternative "row" $ ensure $ left result .==. (right source .+. gap))
+    [alternative "column" $ ensure $ top result .==. (bottom source .+. gap)]
   ```
 
-- Prefer layouts whose safety comes from topology rather than exact coordinates: an aligned list with a movable anchor and variable spacing, an ordered lane with bounded stagger, separated clusters with movable anchors, or a bounded focal/satellite composition. Preserve semantic order, meaningful alignment, and non-overlap while leaving translation, spacing, secondary relationships, and whitespace genuinely free.
-- Do not rely on an aesthetic `encourage` equality to shape a generative affine layout; it is ignored so the feasible space remains exploratory. Use broad hard ranges and relative constraints for intended variation. Soft preferences matter only after the problem requires nonlinear/cyclic/unbounded optimizer fallback, where they can pull every seed toward the same arrangement.
-- Prefer fresh `variable` bindings and selection-local geometry over named `global` values. A global intentionally couples distant rules and can collapse otherwise independent variation.
-- Keep relative constraints reusable and stable across checkpoints so persistent elements do not jitter merely because the trace advances.
+- Feasible authored alternatives have equal baseline weight; infeasible ones are removed. Nested choices are weighted locally at the point reached.
+- `choice` creates a reusable finite built-in categorical value. `caseOf existingChoice` exhaustively maps it to complete Render actions. Authors cannot define custom categorical domains; use `oneOf` for custom alternatives.
+- `fontChoice (fontKind Monospace)` and `fontChoice (fontKind Proportional)` choose among unique concrete bundled faces. Reuse one returned choice when nodes should share a font decision.
+- `sometimes` is appropriate when either presence or absence is valid. Use `oneOf` when alternatives are mutually exclusive but at least one representation is required, such as array-only, tree-only, or both views of a heap.
 
-## Completion check
+## Style rules
 
-- Work backward from the intended visual story: choose conceptual objects and state changes, give them typed payloads and semantic facts, then write reusable visual rules.
-- Audit every `create` whose payload is a domain value: it must be an external/source input or literal constant, never a result obtainable from live values. Rewrite any violation as `apply1`, `apply2`, or the corresponding lifecycle operation. An algorithmic visualization with derived values but no matching operation events is not complete.
-- Preserve the complete linear lifecycle of every value.
-- Ensure every selected object is rendered with visible content or styling and sufficient dimensions/layout constraints.
-- Audit every text-bearing box at its longest expected value. Prefer more space or an intentional `codeWrap`/`fitText` policy over relying on minimum-size output.
-- For an explicitly requested visual property, audit its complete rendering dependencies before returning source. In particular, requested borders must have a positive width, a contrasting stroke colour, and a non-empty border style on every intended semantic selection.
-- Ensure each checkpoint communicates a distinct stage and that the final state resolves the story.
-- Audit equivalent peers before returning source: use payload-type family inference by default, add `styleFamily` only when one type has distinct roles, and justify every explicit within-family override with a semantic fact or payload.
-- Unless the user requests a rigid composition, preserve meaningful bounded freedom in at least two major spatial relationships and leave routine style fields unspecified for seeded family sampling.
-- Return complete source that compiles and communicates the subject without relying on the chat reply.
+- `style @Field value` requires one field; `withoutStyle @Field` removes an inherited field; omission leaves the theme/default free. Do not invent style fields or private helper classes.
+- Numeric style fields are `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, and paint `Alpha`. Paint uses `Hsl hue saturation lightness` as `Color`, with `Angle` hue and `Unit` components.
+- Paint fields are `Fill` and `Stroke`. Categorical fields are `BorderStyle`, `FontFamily`, `FontWeight`, `FontStyle`, and `TextAlign`. Use only the constructors in the API index.
+- `styleOf @Field selected` reads a mapped final style value for an exact relation. It requires that field to exist in every reached branch.
+- A requested border needs a positive `StrokeWidth`, a `Stroke`, and a non-empty `BorderStyle`; changing only one does not establish a complete border.
+- Prefer one semantic accent channel plus at most one or two supporting changes. Leave unrelated fields unspecified so the compiler can produce coherent seeded variation.
+
+## Final source audit
+
+- Every declaration marker is unique and registered; every typed step used by Program or Render is declared.
+- Every generated value and linear resource is consumed exactly once. Algorithm results come from traced operations, not unrestricted precomputation.
+- Every frame has an explicit presence policy, and each scenario executes at least one always-visible frame.
+- Every selected mapping and relation endpoint resolves locally without ambiguity. Optional dependencies inherit the correct presence condition.
+- Every symbolic numeric value is finitely bounded; all geometry remains affine and feasible for every surviving authored alternative.
+- Every line is shaped as one non-wrapping string, and every connector has mapped endpoints.
+- Use only names present in `dslApiIndex`. If the requested behavior is not expressible, explain the limitation instead of inventing an API.

@@ -1,7 +1,7 @@
 /** Reactive selection state shared by the Timeline and visualization stage. */
 
 import type { ProjectEvent } from '$lib/shared/projects/events';
-import type { PresentationLayout } from '$lib/shared/presentations';
+import { isSverlinPresentation, type PresentationLayout } from '$lib/shared/presentations';
 
 import {
   availablePresentations,
@@ -92,7 +92,7 @@ export class PresentationSelection {
       this.notice = null;
       return;
     }
-    if (selected.presentation.format !== 'sverlin-ir-v1') {
+    if (!isSverlinPresentation(selected.presentation)) {
       this.notice = 'HTML visualizations can only be viewed one at a time.';
       return;
     }

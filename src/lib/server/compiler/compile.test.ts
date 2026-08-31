@@ -7,7 +7,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Visualization } from '$lib/shared/visualization';
 
-import { compileCommand, compilerLockCommand, readCompileBundle, runCompile } from './compile';
+import {
+  compileBatchCommand,
+  compileCommand,
+  compilerLockCommand,
+  readCompileBundle,
+  runCompile
+} from './compile';
 
 const temporaryRoots: string[] = [];
 
@@ -92,6 +98,25 @@ describe('compileSource', () => {
         'Main.sverlin'
       ])
     );
+  });
+
+  it('passes additional view seeds to one ordered compiler process', () => {
+    const command = compileBatchCommand(
+      '/tmp/prepared/compile-app',
+      [42, 91, 7],
+      '/tmp/output.json',
+      '/tmp/Main.sverlin',
+      'Main.sverlin'
+    );
+
+    expect(command.args.slice(-6)).toEqual([
+      '--seed',
+      '42',
+      '--view-seed',
+      '91',
+      '--view-seed',
+      '7'
+    ]);
   });
 
   it('uses the portable flock argument form without a command separator', () => {

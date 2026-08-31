@@ -237,9 +237,9 @@ const visualConnectorSchema = v.strictObject({
 });
 
 const connectorInstanceSchema = v.strictObject({
-  id: natural,
+  instanceId: natural,
   instanceConnectorId: natural,
-  originConnectorId: v.optional(natural)
+  instanceOriginConnectorId: v.optional(natural)
 });
 
 const timelineStepSchema = v.strictObject({
@@ -448,17 +448,37 @@ export function validateVisualizationReferences(visualization: Visualization): v
       }
     }
     assertUnique(
-      visualization.steps.map(({ occurrenceKey }) => occurrenceKey),
+      visualization.steps.map(({ occurrenceKey }) => occurrenceKey!),
       'frame occurrence key'
     );
     assertUnique(
-      visualization.steps.map(({ ordinal }) => ordinal),
+      visualization.steps.map(({ ordinal }) => ordinal!),
       'frame ordinal'
     );
-    const frameKeys = new Set(visualization.steps.map(({ occurrenceKey }) => occurrenceKey));
+    const frameKeys = new Set(visualization.steps.map(({ occurrenceKey }) => occurrenceKey!));
+    const frameParents = new Map(
+      visualization.steps.map(({ occurrenceKey, parentOccurrenceKey }) => [
+        occurrenceKey!,
+        parentOccurrenceKey
+      ])
+    );
+    let previousOrdinal = -1;
     for (const step of visualization.steps) {
+      if (step.ordinal! <= previousOrdinal) {
+        throw new Error('Frame ordinals must be emitted in increasing trace order.');
+      }
+      previousOrdinal = step.ordinal!;
       if (step.parentOccurrenceKey && !frameKeys.has(step.parentOccurrenceKey)) {
         throw new Error(`Frame ${step.occurrenceKey} references an unknown parent occurrence.`);
+      }
+      const ancestors = new Set<string>();
+      let ancestor = step.parentOccurrenceKey;
+      while (ancestor !== undefined) {
+        if (ancestor === step.occurrenceKey || ancestors.has(ancestor)) {
+          throw new Error(`Frame hierarchy contains a cycle through ${step.occurrenceKey}.`);
+        }
+        ancestors.add(ancestor);
+        ancestor = frameParents.get(ancestor);
       }
     }
   }
@@ -521,28 +541,31 @@ export function validateVisualizationReferences(visualization: Visualization): v
           instance.elementId
         );
       }
-      if (instance.fragmentClusters !== undefined) {
+      if (instance.fragmentClusters !== undefined && instance.fragmentClusters.length > 0) {
         const content = elementRegistry.get(instance.elementId)?.content;
         if (content?.kind !== 'plainTextContent' && content?.kind !== 'codeTextContent') {
           throw new Error(`Step ${stepIndex} highlights a non-text element ${instance.elementId}.`);
         }
-        const sourceLength = new TextEncoder().encode(content.textLayout.layoutSource).byteLength;
+        const sourceBytes = new TextEncoder().encode(content.textLayout.layoutSource);
         for (const cluster of instance.fragmentClusters) {
           const start = cluster.clusterSourceRange.sourceRangeStart;
           const end = cluster.clusterSourceRange.sourceRangeEnd;
+          const line = content.textLayout.layoutLines[cluster.clusterLineIndex];
           if (
-            cluster.clusterLineIndex >= content.textLayout.layoutLines.length ||
+            line === undefined ||
             end <= start ||
-            end > sourceLength
+            start < line.lineSourceRange.sourceRangeStart ||
+            end > line.lineSourceRange.sourceRangeEnd
           ) {
             throw new Error(`Step ${stepIndex} has an invalid shaped fragment cluster.`);
           }
+          decodeUtf8Range(sourceBytes, start, end);
         }
       }
     }
     if (step.connectorInstances !== undefined) {
       assertUnique(
-        step.connectorInstances.map(({ id }) => id),
+        step.connectorInstances.map(({ instanceId }) => instanceId),
         `connector instance ID in step ${stepIndex}`
       );
       for (const instance of step.connectorInstances) {
@@ -550,8 +573,8 @@ export function validateVisualizationReferences(visualization: Visualization): v
           throw new Error(`Step ${stepIndex} references an unknown connector.`);
         }
         if (
-          instance.originConnectorId !== undefined &&
-          !connectors.has(instance.originConnectorId)
+          instance.instanceOriginConnectorId !== undefined &&
+          !connectors.has(instance.instanceOriginConnectorId)
         ) {
           throw new Error(`Step ${stepIndex} references an unknown connector origin.`);
         }

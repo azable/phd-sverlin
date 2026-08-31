@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectEvent, ProjectEventOf } from '$lib/shared/projects/events';
 
 import {
+  availablePresentations,
   latestPresentations,
   presentationDisplayId,
   timelinePresentations
@@ -87,6 +88,20 @@ describe('presentation history', () => {
     ).toEqual(presentationIds.slice(2));
   });
 
+  it('selects a complete scenario pair instead of combining unrelated buffered views', () => {
+    const events: ProjectEvent[] = [
+      scenarioPresentationEvent(1, setOne, 0, presentationIds[0], 'b'.repeat(64)),
+      scenarioPresentationEvent(2, setTwo, 0, presentationIds[1], 'c'.repeat(64)),
+      scenarioPresentationEvent(3, setTwo, 1, presentationIds[2], 'c'.repeat(64))
+    ];
+
+    expect(
+      availablePresentations(events, 'comparison').map(
+        ({ presentation }) => presentation.presentationId
+      )
+    ).toEqual(presentationIds.slice(1, 3));
+  });
+
   it('pins the evaluated pair while a preference operation is running', () => {
     const events = comparisonEvents();
     const entries = timelinePresentations(events);
@@ -159,6 +174,39 @@ function presentationEvent(
         render: {
           text: JSON.stringify({ steps: [{ label: 'Only step' }] }),
           sha256: String(seed).repeat(64).slice(0, 64),
+          mediaType: 'application/json'
+        }
+      }
+    }
+  };
+}
+
+function scenarioPresentationEvent(
+  id: number,
+  displaySetId: string,
+  slot: 0 | 1,
+  presentationId: string,
+  scenarioKey: string
+): ProjectEventOf<'visualization.presented'> {
+  return {
+    id,
+    type: 'visualization.presented',
+    actor: { kind: 'system' },
+    operationId,
+    createdAt: `2026-08-30T00:00:0${id}.000Z`,
+    payload: {
+      displaySetId,
+      slot,
+      presentation: {
+        presentationId,
+        format: 'sverlin-ir-v2',
+        scenarioKey,
+        scenarioSeed: 1,
+        viewSeed: id,
+        source: { text: 'source', sha256: 'a'.repeat(64), mediaType: 'text/x-sverlin' },
+        render: {
+          text: JSON.stringify({ steps: [{ label: 'Only step' }] }),
+          sha256: String(id).repeat(64).slice(0, 64),
           mediaType: 'application/json'
         }
       }

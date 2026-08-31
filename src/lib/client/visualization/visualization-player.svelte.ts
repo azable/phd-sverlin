@@ -7,7 +7,14 @@
 /* eslint-disable svelte/prefer-svelte-reactivity -- These Maps are ephemeral lookup tables, not reactive state. */
 import { tick } from 'svelte';
 
-import type { LiveElement, VisualElement, VisualId, VisualInstance, Visualization } from './types';
+import type {
+  LiveConnector,
+  LiveElement,
+  VisualElement,
+  VisualId,
+  VisualInstance,
+  Visualization
+} from './types';
 
 /** Options controlling the initial checkpoint when loading a visualization. */
 export type SetVisualizationOptions = { initialStep?: number };
@@ -21,6 +28,8 @@ export class VisualizationPlayer {
   visualization = $state.raw<Visualization | null>(null);
   /** Elements visible at the current checkpoint. */
   elements = $state.raw<LiveElement[]>([]);
+  /** Connectors visible at the current checkpoint. */
+  connectors = $state.raw<LiveConnector[]>([]);
   /** Zero-based checkpoint index, or `-1` when no step is active. */
   currentStep = $state(-1);
 
@@ -85,6 +94,7 @@ export class VisualizationPlayer {
     this.#transitionVersion += 1;
     this.visualization = null;
     this.elements = [];
+    this.connectors = [];
     this.currentStep = -1;
   }
 
@@ -107,14 +117,17 @@ export class VisualizationPlayer {
   seek(requestedStep: number): void {
     this.#transitionVersion += 1;
 
-    if (!this.visualization || this.visualization.steps.length === 0) {
+    if (!this.visualization || this.visualization.steps.length === 0 || requestedStep < 0) {
       this.currentStep = -1;
       this.elements = [];
+      this.connectors = [];
       return;
     }
 
     this.currentStep = this.clampStep(requestedStep);
-    this.elements = this.elementsForStep(this.visualization.steps[this.currentStep].instances);
+    const frame = this.visualization.steps[this.currentStep];
+    this.elements = this.elementsForStep(frame.instances);
+    this.connectors = this.connectorsForStep(frame.connectorInstances ?? []);
   }
 
   /** Release pending playback work and clear state. */
@@ -151,6 +164,7 @@ export class VisualizationPlayer {
 
     this.currentStep = step;
     this.elements = next;
+    this.connectors = this.connectorsForStep(targetStep.connectorInstances ?? []);
   }
 
   private elementsForStep(instances: VisualInstance[]): LiveElement[] {
@@ -163,10 +177,23 @@ export class VisualizationPlayer {
             {
               ...element,
               instanceId: instance.id,
-              codeEmphasisRanges: instance.codeEmphasisRanges ?? []
+              codeEmphasisRanges: instance.codeEmphasisRanges ?? [],
+              fragmentClusters: instance.fragmentClusters ?? []
             }
           ]
         : [];
+    });
+  }
+
+  private connectorsForStep(
+    instances: NonNullable<Visualization['steps'][number]['connectorInstances']>
+  ): LiveConnector[] {
+    const registry = new Map(
+      (this.visualization?.connectors ?? []).map((connector) => [connector.id, connector])
+    );
+    return instances.flatMap((instance) => {
+      const connector = registry.get(instance.instanceConnectorId);
+      return connector ? [{ ...connector, instanceId: instance.instanceId }] : [];
     });
   }
 

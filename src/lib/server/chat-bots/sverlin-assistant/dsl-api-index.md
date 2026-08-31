@@ -2,251 +2,221 @@
 
 # Public Sverlin DSL API index
 
-This compact index combines the Haddock export documentation in `compile/src/LinearTrace/Choreography.hs` with signatures inferred from the compiled facade by GHC. The facade is authoritative; the authoring guide adds composition rules and examples.
+This compact index combines the Haddock export documentation in `compile/src/Sverlin.hs` with public signatures checked against the compiled facade by GHC. Private closed-dispatch constraints are shown as their documented overloads. The facade is authoritative; the authoring guide adds composition rules and examples.
 
-## Program and graph execution
+## Builders and do notation
 
-- `Choreography` — Type: `Choreography :: Type -> Type; type Choreography a = TraceBuilder a` — Linear program builder that records semantic trace events.
-- `VisualTraceGraph` — Type: `VisualTraceGraph :: Type` — Trace plus compiled visual rules, ready to become a solver graph.
-- `ViewGraph` — Type: `ViewGraph :: Type` — Solver-ready visual graph containing nodes, choices, and constraints.
-- `buildViewGraph` — Type: `buildViewGraph :: VisualTraceGraph -> ViewGraph` — Compile a completed visual trace into its solver-ready graph.
-- `solveViewGraphWithSeed` — Type: `solveViewGraphWithSeed :: RandomSeed -> ViewGraph -> IO Solution` — Solve one graph deterministically from one random seed.
-- `solveViewGraphWithSeeds` — Type: `solveViewGraphWithSeeds :: [RandomSeed] -> ViewGraph -> IO [Solution]` — Solve the same graph independently for every supplied seed.
-- `solveViewGraphWithPinnedSolution` — Type: `solveViewGraphWithPinnedSolution :: RandomSeed -> Solution -> ViewGraph -> IO Solution` — Re-solve while pinning values supplied by an earlier solution.
-- `viewGraphStats` — Type: `viewGraphStats :: ViewGraph -> (Int, Int, Int)` — Return graph size statistics for diagnostics and benchmarks.
-- `runChoreography` — Type: `runChoreography :: Choreography () -> VisualTraceGraph` — Run a trace program without authored visual matching rules.
-- `runChoreographyWith` — Type: `runChoreographyWith :: MatchSpec -> Choreography () -> VisualTraceGraph` — Run a trace program with an explicit visual rule specification.
-- `runChoreographyWithGenerativeStyles` — Type: `runChoreographyWithGenerativeStyles :: MatchSpec -> Choreography () -> VisualTraceGraph` — Run with explicit rules plus conservative automatic style defaults.
+- `Domain` — Type: `Domain :: Type -> Type` — Seeded, constructive initialization whose result crosses linearly into Program.
+- `Program` — Type: `Program :: Type -> Type` — Linear semantic program that records resource lifetimes and typed steps.
+- `Render` — Type: `Render :: Type -> Type` — Declarative visual-rule builder compiled after the semantic trace is known.
+- `>>=` — Type: `(>>=) :: builder value -> (value -> builder result) -> builder result` — Bind according to the builder's compiler-owned multiplicity.
+- `>>` — Type: `(>>) :: builder () -> builder result -> builder result` — Sequence according to the builder's compiler-owned multiplicity.
+- `pure` — Type: `pure :: value -> builder value` — Lift a value using the current builder's multiplicity.
+- `return` — Type: `return :: value -> builder value` — Compatibility spelling used by RebindableSyntax.
+- `fail` — Type: `fail :: String -> builder value` — Turn a failed pattern match into a builder diagnostic.
 
-## Linear resources and lifecycle
+## Domain vocabulary
 
-- `Block` — Type: `Block :: Type -> Type` — Stable handle to a materialized semantic block in the trace.
-- `SlotHandle` — Type: `SlotHandle :: forall {k}. k -> Type -> Type; type SlotHandle = Slot :: k -> Type -> Type` — Alias for the core trace slot handle used by low-level integrations.
-- `Payload` — Type: `Payload :: Type -> Type; type family Payload tag = payload | payload -> tag` — Typed payload stored by a trace block.
-- `create` — Type: `create :: Traceable tag => Payload tag %1 -> Choreography (Create tag)` — Start the lifecycle of a new payload and return its pending obligation.
-- `copy` — Type: `copy :: Traceable tag => Block tag %1 -> Choreography (Copy tag)` — Duplicate an eligible block, returning the original and pending copy.
-- `use` — Type: `use :: Traceable tag => Block tag %1 -> Choreography (Use tag)` — Consume a block for one linear observation/use operation.
-- `apply1` — Type: `apply1 :: (Applicable1 op arg, Traceable op, Traceable arg, Traceable (Apply1Result op arg)) => Block op %1 -> Block arg %1 -> Choreography (Apply1 op arg)` — Apply one registered unary operator to a consumed input.
-- `apply2` — Type: `apply2 :: (Applicable2 op lhs rhs, Traceable op, Traceable lhs, Traceable rhs, Traceable (Apply2Result op lhs rhs)) => Block op %1 -> Block lhs %1 -> Block rhs %1 -> Choreography (Apply2 op lhs rhs)` — Apply one registered binary operator to two consumed inputs.
-- `replace` — Type: `replace :: Traceable tag => Block tag %1 -> Pending tag %1 -> Choreography (Replace tag)` — Replace a consumed block with a pending replacement payload.
-- `materialize` — Type: `materialize :: Traceable tag => Query -> Pending tag %1 -> Choreography (Block tag)` — Materialize a pending value with facts derived from a `Query`.
-- `materializeWithTags` — Type: `materializeWithTags :: Traceable tag => Query -> (Payload tag -> Query) -> Pending tag %1 -> Choreography (Block tag)` — Materialize with base facts and additional facts derived from payload.
-- `commit` — Type: `commit :: Traceable tag => Pending tag %1 -> Choreography (Block tag)` — Materialize a pending value without adding semantic facts.
-- `destroy` — Type: `destroy :: Traceable tag => Block tag %1 -> Choreography (Destroy tag)` — Consume a live block and record its removal from the semantic trace.
-- `checkpoint` — Type: `checkpoint :: String -> Choreography ()` — Attach a materialized event to the visible trace checkpoint sequence.
+- `Kind` — Type: `Kind :: forall {k}. k -> Type` — Typed classification assigned when a pending value is materialized.
+- `kind` — Type: `kind :: forall {k1} {k2} (identity :: k1) (tag :: k2). (Typeable identity, Traceable tag) => Kind tag` — Define a Kind using a type-applied stable identity marker.
+- `declareKind` — Type: `declareKind :: forall {k} (tag :: k). Kind tag -> Domain ()` — Register one Kind before it is used.
+- `RelationKind` — Type: `RelationKind :: forall {k} {k1}. k -> k1 -> Type` — Typed semantic relation between stable Slot owners.
+- `orderedRelation` — Type: `orderedRelation :: forall {k1} {k2} {k3} (identity :: k1) (source :: k2) (target :: k3). (Typeable identity, Traceable source, Traceable target) => RelationKind source target` — Define a relation whose source and target roles are distinct.
+- `symmetricRelation` — Type: `symmetricRelation :: forall {k1} {k2} (identity :: k1) (node :: k2). (Typeable identity, Traceable node) => RelationKind node node` — Define a same-typed relation for which reversing endpoints is equivalent.
+- `declareRelation` — Type: `declareRelation :: forall {k1} {k2} (source :: k1) (target :: k2). RelationKind source target -> Domain ()` — Register one RelationKind before it is used.
+- `declareSteps` — Type: `declareSteps :: forall steps. Domain ()` — Register a type-level list of step marker types.
 
-## Facts and semantic queries
+## Scenario generation
 
-- `FactValue` — Type: `FactValue :: Type; data FactValue = FactAtom | FactSymbol String | FactInt Int` — Primitive semantic fact values: atoms, symbols, and integers.
-- `Fact` — Type: `Fact :: Type; data Fact = Fact String FactValue` — Named semantic fact attached to a materialized block.
-- `Facts` — Type: `Facts :: Type; newtype Facts = Facts [Fact]` — Ordered collection of semantic facts used by matching queries.
-- `emptyFacts` — Type: `emptyFacts :: Facts` — A fact collection containing no facts.
-- `factAtom` — Type: `factAtom :: String -> Fact` — Construct an atom-valued fact.
-- `factSymbol` — Type: `factSymbol :: String -> String -> Fact` — Construct a symbol-valued fact.
-- `factInt` — Type: `factInt :: String -> Int -> Fact` — Construct an integer-valued fact.
-- `factsUnion` — Type: `factsUnion :: Facts -> Facts -> Facts` — Combine fact collections for materialization or matching.
-- `factsToList` — Type: `factsToList :: Facts -> [Fact]` — Expose facts as an ordered list for external integrations.
-- `PayloadView` — Type: `PayloadView :: Type; newtype PayloadView = PayloadView {payloadKind :: String}` — Renderable, non-linear snapshot of a typed payload.
-- `Traceable` — Type: `Traceable :: Type -> Constraint; class (CorePayload (Payload tag), Typeable tag) => Traceable tag` — Payload class whose values can participate in a linear trace.
-- `Query` — Type: `Query :: Type` — Semantic fact query used both for tagging and block selection.
-- `QueryInt` — Type: `QueryInt :: Type` — Integer captured from a matching query for use in layout expressions.
-- `emptyQuery` — Type: `emptyQuery :: Query` — Query that imposes no semantic predicates.
-- `queryAtom` — Type: `queryAtom :: String -> Query` — Query predicate requiring a named atom fact.
-- `queryInt` — Type: `queryInt :: String -> QueryInt -> Query` — Query predicate requiring a named integer fact and exposing its value.
-- `queryFacts` — Type: `queryFacts :: Query -> Facts` — Convert a query into facts suitable for materialization.
+- `Generator` — Type: `Generator :: Type -> Type` — Ordinary seeded generator used only while Domain constructs input.
+- `variable` — Type: `variable @identity :: Generator value -> Domain value; variable @role :: Render role` — Sample a Domain generator or create a Render numeric variable, selected by context.
+- `between` — Type: `between :: Int -> Int -> Generator Int` — Sample an inclusive uniform integer range.
+- `elementOf` — Type: `elementOf :: value -> [value] -> Generator value` — Choose uniformly from a statically non-empty list of values.
+- `weighted` — Type: `weighted :: (Int, Generator value) -> [(Int, Generator value)] -> Generator value` — Choose among generators using positive integer weights.
+- `listOf` — Type: `listOf :: Int -> Int -> Generator value -> Generator [value]` — Generate an ordinary list with a uniformly sampled bounded length.
+- `shuffle` — Type: `shuffle :: [value] -> Generator [value]` — Produce a uniform permutation of an ordinary list.
 
-## Built-in payload and operator vocabulary
+## Payloads and operators
 
-- `LUnit` — Type: `LUnit :: forall {k}. k -> Type; data LUnit tag where; LUnit :: forall {k} (tag :: k). LUnit tag` — Linear unit payload.
-- `LBool` — Type: `LBool :: forall {k}. k -> Type; data LBool tag where; LBool :: forall {k} (tag :: k). Bool -> LBool tag` — Linear Boolean payload.
-- `LInt` — Type: `LInt :: forall {k}. k -> Type; data LInt tag where; LInt :: forall {k} (tag :: k). Int -> LInt tag` — Linear integer payload.
-- `LDouble` — Type: `LDouble :: forall {k}. k -> Type; data LDouble tag where; LDouble :: forall {k} (tag :: k). Double -> LDouble tag` — Linear floating-point payload.
-- `LString` — Type: `LString :: forall {k}. k -> Type; data LString tag where; LString :: forall {k} (tag :: k). String -> LString tag` — Linear string payload.
-- `LOperator` — Type: `LOperator :: forall {k}. Type -> k -> Type; data LOperator operator tag where; LOperator :: forall {k} operator (tag :: k). operator -> LOperator operator tag` — Named linear operator carried in the semantic trace.
-- `CoreOperator` — Type: `CoreOperator :: Type -> Constraint; class CoreOperator operator where; operatorPayloadText :: operator -> String; persistOperatorPayload :: operator %1 -> Ur operator` — Class defining display and persistence behavior for operator payloads.
-- `LinearPayload` — Type: `LinearPayload :: Type -> Type -> Constraint; class LinearPayload payload value | payload -> value where; withPayload :: payload %1 -> (value %1 -> result) %1 -> result; buildPayload :: value %1 -> payload` — Class for safely unpacking and rebuilding linear payload wrappers.
-- `applyLinear1` — Type: `applyLinear1 :: LinearPayload payload value => (value %1 -> output) -> payload %1 -> output` — Apply a unary linear operator and return its pending result.
-- `applyLinear1Into` — Type: `applyLinear1Into :: (LinearPayload input inputValue, LinearPayload output outputValue) => (inputValue %1 -> outputValue) -> input %1 -> output` — Apply a unary operator into an explicitly supplied output payload.
-- `applyLinear2` — Type: `applyLinear2 :: (LinearPayload lhs lhsValue, LinearPayload rhs rhsValue) => (lhsValue %1 -> rhsValue %1 -> output) -> lhs %1 -> rhs %1 -> output` — Apply a binary linear operator and return its pending result.
-- `applyLinear2Into` — Type: `applyLinear2Into :: (LinearPayload lhs lhsValue, LinearPayload rhs rhsValue, LinearPayload output outputValue) => (lhsValue %1 -> rhsValue %1 -> outputValue) -> lhs %1 -> rhs %1 -> output` — Apply a binary operator into an explicitly supplied output payload.
-- `Applicable1` — Type: `Applicable1 :: Type -> Type -> Constraint; class Applicable1 op arg where; type Apply1Result :: Type -> Type -> Type; type family Apply1Result op arg; applyPayload1 :: Payload op %1 -> Payload arg %1 -> Payload (Apply1Result op arg)` — Typeclass for payloads accepted by unary operators.
-- `Applicable2` — Type: `Applicable2 :: Type -> Type -> Type -> Constraint; class Applicable2 op lhs rhs where; type Apply2Result :: Type -> Type -> Type -> Type; type family Apply2Result op lhs rhs; applyPayload2 :: Payload op %1 -> Payload lhs %1 -> Payload rhs %1 -> Payload (Apply2Result op lhs rhs)` — Typeclass for payloads accepted by binary operators.
+- `Traceable` — Type: `class Traceable tag where; type Payload tag` — Author-defined trace marker with one trusted linear payload representation.
+- `LUnit` — Type: `LUnit :: forall {k}. k -> Type; data LUnit tag where; LUnit :: forall {k} (tag :: k). LUnit tag` — Trusted linear unit payload.
+- `LBool` — Type: `LBool :: forall {k}. k -> Type; data LBool tag where; LBool :: forall {k} (tag :: k). Bool -> LBool tag` — Trusted linear Boolean payload.
+- `LInt` — Type: `LInt :: forall {k}. k -> Type; data LInt tag where; LInt :: forall {k} (tag :: k). Int -> LInt tag` — Trusted linear integer payload.
+- `LDouble` — Type: `LDouble :: forall {k}. k -> Type; data LDouble tag where; LDouble :: forall {k} (tag :: k). Double -> LDouble tag` — Trusted linear floating-point payload.
+- `LString` — Type: `LString :: forall {k}. k -> Type; data LString tag where; LString :: forall {k} (tag :: k). String -> LString tag` — Trusted linear string payload.
+- `LOperator` — Type: `LOperator :: forall {k}. k -> Type; data LOperator tag where; LOperator :: forall {k} (tag :: k). LOperator tag` — Stateless typed operator payload.
+- `Applicable1` — Type: `class Applicable1 operator argument where; type Apply1Result operator argument; applyPayload1 :: Payload operator %1 -> Payload argument %1 -> Payload (Apply1Result operator argument)` — Author-defined unary payload operation.
+- `Applicable2` — Type: `class Applicable2 operator left right where; type Apply2Result operator left right; applyPayload2 :: Payload operator %1 -> Payload left %1 -> Payload right %1 -> Payload (Apply2Result operator left right)` — Author-defined binary payload operation.
 
-## Lifecycle result wrappers
+## Linear lifecycle
 
-- `Pending` — Type: `Pending :: Type -> Type` — Unresolved lifecycle output that linear code must consume exactly once.
-- `OneUse` — Type: `OneUse :: Type -> Type; data OneUse a where; OneUse :: a -> OneUse a` — Result of consuming one materialized block.
-- `Create` — Type: `Create :: Type -> Type; data Create tag where; Create :: Pending tag -> Create tag` — Result wrapper produced by creation.
-- `Observe` — Type: `Observe :: Type -> Type; data Observe tag where; Observe :: Block tag -> Observe tag` — Result wrapper produced by non-consuming observation.
-- `Use` — Type: `Use :: Type -> Type; data Use tag where; Use :: OneUse (Payload tag) -> Use tag` — Result wrapper produced by one-use consumption.
-- `Copy` — Type: `Copy :: Type -> Type; data Copy tag where; Copy :: Block tag -> Pending tag -> Copy tag` — Result wrapper produced by copying.
-- `Replace` — Type: `Replace :: Type -> Type; data Replace tag where; Replace :: Pending tag -> Replace tag` — Result wrapper produced by replacement.
-- `Apply1` — Type: `Apply1 :: Type -> Type -> Type; data Apply1 op arg where; Apply1 :: Pending (Apply1Result op arg) -> Apply1 op arg` — Result wrapper produced by unary application.
-- `Apply2` — Type: `Apply2 :: Type -> Type -> Type -> Type; data Apply2 op lhs rhs where; Apply2 :: Pending (Apply2Result op lhs rhs) -> Apply2 op lhs rhs` — Result wrapper produced by binary application.
-- `Destroy` — Type: `Destroy :: forall {k}. k -> Type; data Destroy tag where; Destroy :: forall {k} (tag :: k). Destroy tag` — Result wrapper produced by destruction.
-- `Seal` — Type: `Seal :: Type -> Type -> Type; data Seal owner tag where; Seal :: Block owner -> Slot owner tag -> Seal owner tag` — Result wrapper produced when sealing an exposed payload.
-- `Unseal` — Type: `Unseal :: Type -> Type -> Type; data Unseal owner tag where; Unseal :: Block owner -> Block tag -> Unseal owner tag` — Result wrapper produced when unsealing a payload.
-- `<$>` — Type: `(<$>) :: (a %1 -> b) %1 -> OneUse a %1 -> OneUse b` — Linear functor mapping for composing lifecycle results.
-- `<*>` — Type: `(<*>) :: OneUse (a %1 -> b) %1 -> OneUse a %1 -> OneUse b` — Linear applicative application for composing lifecycle results.
+- `Block` — Type: `Block :: forall {k}. k -> Type` — Sole live capability for one materialized semantic value.
+- `Pending` — Type: `Pending :: forall {k}. k -> Type` — Unfinished value that must be materialized exactly once.
+- `Slot` — Type: `Slot :: forall {k} {k1}. k -> k1 -> Type` — Stable owner capability retaining one hidden occupant.
+- `Create` — Type: `Create :: forall {k}. k -> Type; data Create tag where; Create :: forall {k} (tag :: k). Pending tag -> Create tag` — Result wrapper produced by create.
+- `Use` — Type: `Use :: forall {k}. k -> Type; data Use tag where; Use :: forall {k} (tag :: k). Payload tag -> Use tag` — Result wrapper exposing a terminally consumed payload.
+- `Copy` — Type: `Copy :: forall {k}. k -> Type; data Copy tag where; Copy :: forall {k} (tag :: k). Block tag -> Pending tag -> Copy tag` — Result wrapper containing the original Block and a pending fork.
+- `Replace` — Type: `Replace :: forall {k}. k -> Type; data Replace tag where; Replace :: forall {k} (tag :: k). Pending tag -> Replace tag` — Result wrapper containing a pending replacement.
+- `Apply1` — Type: `Apply1 :: forall {k} {k1}. k -> k1 -> Type; data Apply1 operator argument where; Apply1 :: forall {k} {k1} (operator :: k) (argument :: k1). Pending (Apply1Result operator argument) -> Apply1 operator argument` — Result wrapper containing a unary-operation output.
+- `Apply2` — Type: `Apply2 :: forall {k} {k1} {k2}. k -> k1 -> k2 -> Type; data Apply2 operator left right where; Apply2 :: forall {k} {k1} {k2} (operator :: k) (left :: k1) (right :: k2). Pending (Apply2Result operator left right) -> Apply2 operator left right` — Result wrapper containing a binary-operation output.
+- `Destroy` — Type: `Destroy :: forall {k}. k -> Type; data Destroy tag where; Destroy :: forall {k} (tag :: k). Destroy tag` — Result wrapper confirming terminal destruction.
+- `Seal` — Type: `Seal :: forall {k} {k1}. k -> k1 -> Type; data Seal owner value where; Seal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner -> Slot owner value -> Seal owner value` — Result wrapper containing the owner and its occupied Slot.
+- `Unseal` — Type: `Unseal :: forall {k} {k1}. k -> k1 -> Type; data Unseal owner value where; Unseal :: forall {k} {k1} (owner :: k) (value :: k1). Block owner -> Block value -> Unseal owner value` — Result wrapper recovering the owner and current occupant.
+- `Relate` — Type: `Relate :: forall {k} {k1} {k2} {k3}. k -> k1 -> k2 -> k3 -> Type; data Relate source sourceValue target targetValue where; Relate :: forall {k} {k1} {k2} {k3} (source :: k) (sourceValue :: k1) (target :: k2) (targetValue :: k3). Slot source sourceValue -> Slot target targetValue -> Relate source sourceValue target targetValue` — Result wrapper reissuing both related Slot capabilities.
+- `create` — Type: `create :: Payload tag %1 -> Domain (Create tag); create :: Payload tag %1 -> Program (Create tag)` — Begin one payload lifetime as a pending value.
+- `materialize` — Type: `materialize :: Kind tag -> Pending tag %1 -> Domain (Block tag); materialize :: Kind tag -> Pending tag %1 -> Program (Block tag)` — Assign one declared Kind to a pending value.
+- `seal` — Type: `seal :: Block owner %1 -> Block value %1 -> Domain (Seal owner value); seal :: Block owner %1 -> Block value %1 -> Program (Seal owner value)` — Hide a value inside one stable owner Slot.
+- `relate` — Type: `relate :: RelationKind source target -> Slot source sourceValue %1 -> Slot target targetValue %1 -> Domain (Relate source sourceValue target targetValue); relate :: RelationKind source target -> Slot source sourceValue %1 -> Slot target targetValue %1 -> Program (Relate source sourceValue target targetValue)` — Add a persistent relation between two Slot owners.
+- `copy` — Type: `copy :: forall {k} (tag :: k). Block tag %1 -> Program (Copy tag)` — Fork a live Block while preserving its original capability.
+- `use` — Type: `use :: forall {k} (tag :: k). Block tag %1 -> Program (Use tag)` — Terminally consume a Block and expose its linear payload.
+- `apply1` — Type: `apply1 :: forall {k1} {k2} (operator :: k1) (argument :: k2). Applicable1 operator argument => Block operator %1 -> Block argument %1 -> Program (Apply1 operator argument)` — Consume an operator and argument to produce one pending result.
+- `apply2` — Type: `apply2 :: forall {k1} {k2} {k3} (operator :: k1) (left :: k2) (right :: k3). Applicable2 operator left right => Block operator %1 -> Block left %1 -> Block right %1 -> Program (Apply2 operator left right)` — Consume an operator and two arguments to produce one pending result.
+- `replace` — Type: `replace :: forall {k} (tag :: k). Block tag %1 -> Pending tag %1 -> Program (Replace tag)` — End a Block and attach a pending successor to its lineage.
+- `destroy` — Type: `destroy :: forall {k} (tag :: k). Block tag %1 -> Program (Destroy tag)` — End a Block without a successor.
+- `unseal` — Type: `unseal :: forall {k1} {k2} (owner :: k1) (value :: k2). Block owner %1 -> Slot owner value %1 -> Program (Unseal owner value)` — Recover a Slot owner and its current occupant.
+- `step` — Type: `step :: forall {k} (name :: k) value. Typeable name => Program value %1 -> Program value` — Record a typed, nestable step around one Program action.
 
-## Visualization rules and selections
+## Presence and frames
 
-- `MatchSpec` — Type: `MatchSpec :: Type` — Compiled collection of selections, node declarations, edits, and rules.
-- `Selected` — Type: `Selected :: Type -> Type` — Reference to one declared visual node or the canvas.
-- `Variable` — Type: `Variable :: Type -> Type; data Variable a where; Variable :: a -> Variable a` — Solver-backed reusable value introduced inside visual rules.
-- `Bound` — Type: `Bound :: Type -> Type; data Bound a where; Bound :: a -> Bound a` — Value captured from the current query match.
-- `NodeBinding` — Type: `NodeBinding :: Type -> Type; data NodeBinding a where; Selected :: a -> NodeBinding a` — Explicit node handle returned by generated-parent declarations.
-- `AnyPayload` — Type: `AnyPayload :: Type` — Existential payload marker for heterogeneous trace selections.
-- `GeneratedNode` — Type: `GeneratedNode :: Type` — Marker carried by handles for anonymous generated parent nodes.
-- `CanvasNode` — Type: `CanvasNode :: Type` — Marker carried by the persistent root canvas handle.
-- `PayloadQuery` — Type: `PayloadQuery :: Type -> Constraint; class PayloadQuery selector` — Supported literal/bound `ContentValue`, `Bool`, `Int`, `Double`, or unit selector.
-- `VisualizationBuilder` — Type: `VisualizationBuilder :: Type -> Type` — Linear builder that accumulates visual declarations and constraints.
-- `select` — Type: `select :: Select payload => Query -> VisualizationBuilder (NodeBinding (Selected payload))` — Select trace payloads matching a semantic query.
-- `Select` — Type: `Select :: Type -> Constraint; class Select payload` — Overloaded selection class for typed and heterogeneous payload queries.
-- `visualize` — Type: `visualize :: VisualizationBuilder () -> MatchSpec` — Compile a root-canvas body and its descendant declarations into reusable rules.
-- `<&>` — Type: `(<&>) :: Query -> Query -> Query` — Append query fragments with the visual-query composition operator.
+- `always` — Type: `always :: Render value -> Render value` — Include every component produced by an action.
+- `sometimes` — Type: `sometimes :: Render value -> Render value` — Give components produced by an action one scoped include/omit choice.
+- `frame` — Type: `frame :: forall {k} (name :: k). Typeable name => Render ()` — Expose all runtime occurrences of one declared typed step.
 
-## Node hierarchy and content
+## Selections, hierarchy, and relations
 
-- `Node` — Type: `Node :: Type -> Type -> Constraint; class Node input result | input -> result` — Overloaded hierarchy primitive for leaves, generated parents, and binds.
-- `content` — Type: `content :: ContentValue -> VisualizationBuilder ()` — Assign fixed textual content to the current node.
-- `fitText` — Type: `fitText :: ContentValue -> VisualizationBuilder ()` — Assign text whose font size is solved to fill the current node, subject to caps.
-- `codeContent` — Type: `codeContent :: ContentValue -> VisualizationBuilder ()` — Assign source-code content to the current node.
-- `codeWrap` — Type: `codeWrap :: VisualizationBuilder () %1 -> VisualizationBuilder ()` — Enable soft wrapping for the enclosed code-content recipe.
-- `highlightCode` — Type: `highlightCode :: String -> VisualizationBuilder () %1 -> VisualizationBuilder ()` — Apply language-aware syntax highlighting to the enclosed code recipe.
-- `CodeRange` — Type: `CodeRange :: Type` — Half-open source range measured in character offsets.
-- `codeRange` — Type: `codeRange :: Int -> Int -> CodeRange` — Construct a half-open source range from start and end offsets.
-- `emphasizeCode` — Type: `emphasizeCode :: String -> [CodeRange] -> VisualizationBuilder () %1 -> VisualizationBuilder ()` — Emphasize source ranges while the named checkpoint is visible.
-- `payload` — Type: `payload :: PayloadQuery selector => selector -> Query` — Match a literal payload display value or capture it through bound content.
-- `node` — Type: `node :: Node input result => input -> result` — Declare trace selections as children or create a recursively nestable parent node.
-- `self` — Type: `self :: VisualizationBuilder (NodeBinding (Selected GeneratedNode))` — Bind the current generated parent from inside its node body.
-- `canvas` — Type: `canvas :: Selected CanvasNode` — Persistent root canvas handle; read its geometry like any selected node.
-- `text` — Type: `text :: String -> ContentValue` — Construct literal textual content.
-- `ContentValue` — Type: `ContentValue :: Type` — Content expression accepted by text and code content functions.
+- `Selected` — Type: `Selected :: forall {k}. k -> Type` — Typed set of semantic matches or a generated visual node handle.
+- `Relations` — Type: `Relations :: forall {k} {k1}. k -> k1 -> Type` — Typed set of active semantic relation matches.
+- `GeneratedNode` — Type: `GeneratedNode :: Type` — Marker type for an authored generated node.
+- `CanvasNode` — Type: `CanvasNode :: Type` — Marker type for the persistent canvas root.
+- `select` — Type: `select :: Kind tag -> Render (Selected tag); select :: RelationKind source target -> Render (Relations source target)` — Select a Kind or RelationKind using closed compiler dispatch.
+- `node` — Type: `node :: Selected tag -> Render () -> Render (); node :: Render () -> Render (Selected GeneratedNode)` — Map a selection or create a generated node using closed compiler dispatch.
+- `self` — Type: `self :: Render (Selected GeneratedNode)` — Return the current generated-node handle.
+- `canvas` — Type: `canvas :: Selected CanvasNode` — Persistent canvas geometry handle.
+- `within` — Type: `within :: forall {k1} {k2} (owner :: k1) (member :: k2) value. Relations owner member -> Selected owner -> Render value -> Render value` — Restrict member selections through one ordered membership relation.
+- `relation` — Type: `relation :: forall {k1} {k2} (source :: k1) (target :: k2). Relations source target -> Render () -> Render ()` — Evaluate a visual rule once per active relation occurrence.
+- `first` — Type: `first :: forall {k1} {k2} (source :: k1) (target :: k2). Relations source target -> Render (Selected source)` — Return the source endpoint inside the matching relation scope.
+- `second` — Type: `second :: forall {k1} {k2} (source :: k1) (target :: k2). Relations source target -> Render (Selected target)` — Return the target endpoint inside the matching relation scope.
 
-## Reusable values and finite decisions
+## Validated structure and arrangements
 
-- `bindInt` — Type: `bindInt :: VisualizationBuilder (Bound QueryInt)` — Bind the current query's captured integer for later reuse.
-- `bindContent` — Type: `bindContent :: VisualizationBuilder (Bound ContentValue)` — Bind the current query's payload display text for later reuse.
-- `variable` — Type: `variable :: VariableValue value => VisualizationBuilder (Variable value)` — Create a fresh named solver value using its type's intrinsic domain.
-- `variableFrom` — Type: `variableFrom :: value -> VisualizationBuilder (Variable value)` — Wrap an existing DSL value for reuse through the `Variable` pattern.
-- `choice` — Type: `choice :: ChoiceDomain value => VisualizationBuilder (Variable (Choice value))` — Create a named finite categorical choice from a non-empty domain.
-- `ChoiceDomain` — Type: `ChoiceDomain :: Type -> Constraint; class ChoiceDomain value where; choiceDomain :: [value]; choiceToken :: value -> String` — Values that can inhabit a finite solver choice.
-- `Choice` — Type: `Choice :: forall {k}. k -> Type` — Solver-backed finite categorical decision.
-- `RandomSeed` — Type: `RandomSeed :: Type; newtype RandomSeed = RandomSeed Int` — Deterministic random seed used for solver initialization.
+- `Ranking` — Type: `Ranking :: forall {k}. k -> Type` — Validated structural rank associated with a node selection.
+- `FixedInt` — Type: `FixedInt :: Type` — Compiler-fixed integer available inside the matching node scope.
+- `asSequence` — Type: `asSequence :: forall {k} (node :: k). Relations node node -> Selected node -> Render (Ranking node)` — Validate one selected relation graph as a complete sequence.
+- `asTree` — Type: `asTree :: forall {k} (node :: k). Relations node node -> Selected node -> Render (Ranking node)` — Validate one selected relation graph as a rooted tree.
+- `asDag` — Type: `asDag :: forall {k} (node :: k). Relations node node -> Selected node -> Render (Ranking node)` — Validate one selected relation graph as a directed acyclic graph.
+- `rankOf` — Type: `rankOf :: forall {k} (node :: k). Ranking node -> Render FixedInt` — Read sequence position, tree depth, or DAG level in the current node.
+- `asScalar` — Type: `asScalar :: FixedInt -> Scalar` — Convert a FixedInt into a fixed affine scalar.
+- `asText` — Type: `asText :: FixedInt -> ContentValue` — Convert a FixedInt into decimal text.
+- `payloadScalar` — Type: `payloadScalar :: forall {k} (tag :: k). Selected tag -> Render Scalar` — Read the current selected numeric payload as a fixed affine scalar.
+- `Arrangement` — Type: `Arrangement :: forall {k}. k -> Type; data Arrangement node = ArrangeGrid Int (Vec2 Span) | ArrangeLayered (Relations node node) (Vec2 Span) | ArrangeRadial (Relations node node) (Vec2 Span) | ArrangeTree (Relations node node) (Vec2 Span)` — Prepared deterministic layout template.
+- `arrange` — Type: `arrange :: forall {k} (node :: k). Arrangement node -> Selected node -> Render ()` — Apply one prepared arrangement to a node selection.
 
-## Typed layout values and geometry
+## Text
 
-- `Coord` — Type: `Coord :: Type; type Coord = LayoutValue CoordRole` — Absolute horizontal or vertical position.
-- `Span` — Type: `Span :: Type; type Span = LayoutValue SpanRole` — Non-negative width or height.
-- `Offset` — Type: `Offset :: Type; type Offset = LayoutValue OffsetRole` — Signed displacement between positions.
-- `Scalar` — Type: `Scalar :: Type; type Scalar = LayoutValue ScalarRole` — Unitless numeric expression.
-- `VisualExpr` — Type: `VisualExpr :: forall {k}. k -> Type` — Affine expression over one or more selected node values.
-- `Left` — Type: `Left :: Type -> Type -> Constraint; class Left input output | input -> output` — Overloaded left-edge accessor or assignment.
-- `Top` — Type: `Top :: Type -> Type -> Constraint; class Top input output | input -> output` — Overloaded top-edge accessor or assignment.
-- `Right` — Type: `Right :: Type -> Type -> Constraint; class Right input output | input -> output` — Overloaded right-edge accessor or assignment.
-- `Bottom` — Type: `Bottom :: Type -> Type -> Constraint; class Bottom input output | input -> output` — Overloaded bottom-edge accessor or assignment.
-- `Width` — Type: `Width :: Type -> Type -> Constraint; class Width input output | input -> output` — Overloaded width accessor or assignment.
-- `Height` — Type: `Height :: Type -> Type -> Constraint; class Height input output | input -> output` — Overloaded height accessor or assignment.
-- `X` — Type: `X :: Type -> Type -> Constraint; class X input output | input -> output` — Overloaded horizontal-center accessor or assignment.
-- `Y` — Type: `Y :: Type -> Type -> Constraint; class Y input output | input -> output` — Overloaded vertical-center accessor or assignment.
-- `Center` — Type: `Center :: Type -> Constraint; class Center input where; type CenterOutput :: Type -> Type; type family CenterOutput input; center :: input -> CenterOutput input` — Set or read both center coordinates as a typed vector.
-- `x` — Type: `x :: X input output => input -> output` — Read the horizontal center of a selected node.
-- `y` — Type: `y :: Y input output => input -> output` — Read the vertical center of a selected node.
-- `left` — Type: `left :: Left input output => input -> output` — Read the left edge of a selected node.
-- `top` — Type: `top :: Top input output => input -> output` — Read the top edge of a selected node.
-- `right` — Type: `right :: Right input output => input -> output` — Read the right edge of a selected node.
-- `bottom` — Type: `bottom :: Bottom input output => input -> output` — Read the bottom edge of a selected node.
-- `width` — Type: `width :: Width input output => input -> output` — Read the width of a selected node.
-- `height` — Type: `height :: Height input output => input -> output` — Read the height of a selected node.
-- `size` — Type: `size :: (Width input value, Height input value) => input -> Vec2 value` — Read width and height together as a typed vector.
-- `bounds` — Type: `bounds :: BoundsExpr -> VisualizationBuilder ()` — Constrain all four bounds of the current node at once.
-- `Vec2` — Type: `Vec2 :: Type -> Type; data Vec2 a = Vec2 a a` — Two-dimensional value used for centers, sizes, and vector arithmetic.
-- `vec2` — Type: `vec2 :: a -> a -> Vec2 a` — Construct a two-dimensional value from its components.
-- `at` — Type: `at :: Double -> Coord` — Construct an absolute coordinate in scalable canvas layout units.
-- `by` — Type: `by :: Double -> Span` — Construct a non-negative span in scalable canvas layout units.
-- `shift` — Type: `shift :: Double -> Offset` — Construct a signed displacement in scalable canvas layout units.
-- `asScalar` — Type: `asScalar :: QueryInt -> Scalar` — Interpret a captured query integer as a unitless scalar.
-- `asCoord` — Type: `asCoord :: Offset -> Coord` — Reinterpret a signed offset as a coordinate expression.
-- `asSpan` — Type: `asSpan :: Offset -> Span` — Reinterpret a signed offset as a span expression.
-- `num` — Type: `num :: NumExpr a => Double -> a` — Construct a solver numeric literal in an inferred typed domain.
-- `fromInteger` — Type: `fromInteger :: IntegerLiteral a => Integer -> a` — Overloaded integer literal conversion for DSL numeric values.
-- `fromRational` — Type: `fromRational :: RationalLiteral a => Rational -> a` — Overloaded rational literal conversion for DSL numeric values.
-- `+` — Type: `(+) :: AddExpr lhs rhs result => lhs -> rhs -> result` — Add compatible typed layout values.
-- `-` — Type: `(-) :: SubExpr lhs rhs result => lhs -> rhs -> result` — Subtract compatible typed layout values.
-- `*` — Type: `(*) :: MulExpr lhs rhs result => lhs -> rhs -> result` — Scale a layout value or multiply compatible scalar values.
-- `/` — Type: `(/) :: DivExpr lhs rhs result => lhs -> rhs -> result` — Divide a layout value by a scalar expression.
-- `|+|` — Type: `(|+|) :: Span -> Span -> Span` — Add two non-negative spans while preserving the span domain.
+- `TextBuilder` — Type: `TextBuilder :: Type -> Type` — Whole-line text builder with optional typed fragment ranges.
+- `ContentValue` — Type: `ContentValue :: Type; type ContentValue = TextBuilder ()` — Completed single-line text value.
+- `text` — Type: `text :: String -> ContentValue` — Construct literal single-line text.
+- `literal` — Type: `literal :: String -> TextBuilder ()` — Append literal text to a TextBuilder.
+- `fragment` — Type: `fragment :: forall {k} (step :: k). Typeable step => String -> TextBuilder ()` — Append text associated with one typed step.
+- `fragmentMany` — Type: `fragmentMany :: forall steps. String -> TextBuilder ()` — Append text associated with any of several typed steps.
+- `bindContent` — Type: `bindContent :: Render ContentValue` — Read the current selected payload's display text.
+- `content` — Type: `content :: ContentValue -> Render ()` — Shape one fixed-size, non-wrapping line.
+- `fitText` — Type: `fitText :: ContentValue -> Render ()` — Shape one non-wrapping line at any feasible bounded font size.
 
-## Hierarchical box model
+## Connectors
 
-- `Insets` — Type: `Insets :: Type` — Four edge values ordered as top, right, bottom, and left.
-- `uniform` — Type: `uniform :: Span -> Insets` — Construct equal insets on every edge.
-- `symmetric` — Type: `symmetric :: Span -> Span -> Insets` — Construct vertical and horizontal inset pairs.
-- `edges` — Type: `edges :: Span -> Span -> Span -> Span -> Insets` — Construct independent top, right, bottom, and left insets.
-- `padding` — Type: `padding :: Insets -> VisualizationBuilder ()` — Set the current node's internal child/content insets.
-- `margin` — Type: `margin :: Insets -> VisualizationBuilder ()` — Set the current node's external edge spacing.
-- `Axis` — Type: `Axis :: Type; data Axis = Horizontal | Vertical | Both` — Layout axis used by content-fit rules.
-- `ContentFit` — Type: `ContentFit :: Type; data ContentFit = Hug | Contain` — Policy controlling how a parent fits around its children.
-- `contentFit` — Type: `contentFit :: Axis -> ContentFit -> VisualizationBuilder ()` — Set the current node's child-fitting policy.
-- `aspectRatio` — Type: `aspectRatio :: Double -> Double -> VisualizationBuilder ()` — Constrain the canvas to a finite positive horizontal:vertical ratio.
-- `Percent` — Type: `Percent :: Type` — Percentage in the inclusive 0 to 100 parent-relative domain.
-- `percent` — Type: `percent :: Double -> Percent` — Construct a validated parent-relative percentage.
-- `xAt` — Type: `xAt :: Percent -> VisualizationBuilder ()` — Pin the current node's horizontal center within its parent content box.
-- `yAt` — Type: `yAt :: Percent -> VisualizationBuilder ()` — Pin the current node's vertical center within its parent content box.
-- `widthOf` — Type: `widthOf :: Percent -> VisualizationBuilder ()` — Set width as a percentage of the parent content width.
-- `heightOf` — Type: `heightOf :: Percent -> VisualizationBuilder ()` — Set height as a percentage of the parent content height.
+- `ConnectorAnchor` — Type: `ConnectorAnchor :: Type` — Typed endpoint and placement for a straight connector.
+- `AnchorPlacement` — Type: `AnchorPlacement :: Type; data AnchorPlacement = AtCenter | AtBoundary | AtTop | AtRight | AtBottom | AtLeft` — Supported connector attachment positions.
+- `anchor` — Type: `anchor :: forall {k} (node :: k). AnchorPlacement -> Selected node -> ConnectorAnchor` — Create a connector endpoint from a mapped node.
+- `Marker` — Type: `Marker :: Type; data Marker = NoMarker | ArrowMarker | CircleMarker | DiamondMarker` — Supported connector endpoint markers.
+- `connector` — Type: `connector :: ConnectorAnchor -> ConnectorAnchor -> Render () -> Render ()` — Draw a straight connector without adding layout constraints.
+- `startMarker` — Type: `startMarker :: Marker -> Render ()` — Set the connector's starting marker.
+- `endMarker` — Type: `endMarker :: Marker -> Render ()` — Set the connector's ending marker.
 
-## Style authoring and cascade
+## Solver-backed values and choices
 
-- `StyleChoice` — Type: `StyleChoice :: Type -> Type; data StyleChoice value = FixedStyle value | VariableStyle (Choice value)` — Type-directed style assignment, including fixed and finite-choice values.
-- `style` — Type: `style :: (StyleField field, StyleFieldInput field) => StyleInputValue field -> VisualizationBuilder ()` — Set or override one style field on the current node.
-- `withoutStyle` — Type: `withoutStyle :: StyleField field => VisualizationBuilder ()` — Explicitly remove an inherited or automatic style field.
-- `styleCase` — Type: `styleCase :: (StyleField field, StyleFieldInput field, ChoiceDomain value) => Choice value -> (value -> Maybe (StyleInputValue field)) -> VisualizationBuilder ()` — Select a style value from a named finite decision.
-- `styleFamily` — Type: `styleFamily :: String -> VisualizationBuilder ()` — Set a semantic family shared by automatic descendant styling.
-- `styleOf` — Type: `styleOf :: forall {k} (field :: k) tag. SelectStyle field => Selected tag -> SelectedStyle field tag` — Read a selected node's style field as a constraint expression.
-- `sat` — Type: `sat :: Hsl hue unit -> unit` — Convert colour saturation to a unitless scalar expression.
-- `NodeStyle` — Type: `NodeStyle :: Type` — Complete accumulated style plan for a node.
-- `Opacity` — Type: `Opacity :: Type` — Opacity style field in the unit interval.
-- `ZIndex` — Type: `ZIndex :: Type` — Z-order style field.
-- `FontSize` — Type: `FontSize :: Type` — Font-size field in layout units; with `fitText` it acts as a cap.
-- `Radius` — Type: `Radius :: Type` — Corner-radius style field.
-- `StrokeWidth` — Type: `StrokeWidth :: Type` — Border/stroke-width style field.
-- `Alpha` — Type: `Alpha :: Type` — Colour alpha-channel style field.
-- `Fill` — Type: `Fill :: Type` — Fill-colour style field.
-- `Stroke` — Type: `Stroke :: Type` — Stroke-colour style field.
-- `BorderStyle` — Type: `BorderStyle :: Type; data BorderStyle = BorderNone | BorderSolid | BorderDashed | BorderDotted | BorderDouble` — Finite border-line styles.
-- `FontFamily` — Type: `FontFamily :: Type; data FontFamily = FontInter | FontSystem | FontMono | FontSerif | FontSourceSans3 | FontAtkinsonHyperlegibleNext | FontSpaceGrotesk | FontSourceSerif4 | FontLiterata | FontJetBrainsMonoNL | FontIBMPlexMono` — Finite font-family choices.
-- `FontWeight` — Type: `FontWeight :: Type; data FontWeight = FontWeightNormal | FontWeightBold | FontWeightBolder | FontWeightLighter | FontWeightNumber Int` — Finite font-weight choices.
-- `FontStyle` — Type: `FontStyle :: Type; data FontStyle = FontStyleNormal | FontStyleItalic | FontStyleOblique` — Finite font-style choices.
-- `TextAlign` — Type: `TextAlign :: Type; data TextAlign = TextAlignLeft | TextAlignCenter | TextAlignRight | TextAlignJustify` — Finite text-alignment choices.
-- `WhiteSpace` — Type: `WhiteSpace :: Type; data WhiteSpace = WhiteSpaceNormal | WhiteSpaceNoWrap | WhiteSpacePre | WhiteSpacePreWrap` — Finite whitespace/wrapping choices.
+- `Choice` — Type: `Choice :: Type -> Type` — Abstract finite categorical value selected by Render.
+- `choice` — Type: `choice :: forall value. Render (Choice value)` — Create one finite built-in categorical choice.
+- `caseOf` — Type: `caseOf :: Choice value -> (value -> Render ()) -> Render ()` — Apply Render actions for every value of an existing Choice.
+- `Coord` — Type: `Coord :: Type` — Typed horizontal or vertical position.
+- `Span` — Type: `Span :: Type` — Non-negative size or distance.
+- `Offset` — Type: `Offset :: Type` — Signed positional difference.
+- `Scalar` — Type: `Scalar :: Type` — Unitless affine numeric value.
+- `Unit` — Type: `Unit :: Type` — Bounded value from zero through one.
+- `Angle` — Type: `Angle :: Type` — Bounded cyclic angle value.
+- `VisualExpr` — Type: `VisualExpr :: forall {k}. k -> Type` — Opaque typed affine expression.
+- `Vec2` — Type: `Vec2 :: Type -> Type; data Vec2 value = Vec2 value value` — Two-dimensional value with matching component types.
+- `vec2` — Type: `vec2 :: value -> value -> Vec2 value` — Construct a two-dimensional value.
+- `at` — Type: `at :: Double -> Coord` — Construct a fixed coordinate.
+- `by` — Type: `by :: Double -> Span` — Construct a fixed span.
+- `shift` — Type: `shift :: Double -> Offset` — Construct a fixed signed offset.
+- `num` — Type: `num :: Double -> inferred numeric role` — Construct a fixed value inferred from its numeric role.
+- `.+.` — Type: `(.+.) :: left -> right -> compatible result` — Add compatible affine values component-wise.
+- `.-.` — Type: `(.-.) :: left -> right -> compatible result` — Subtract compatible affine values component-wise.
+- `.*.` — Type: `(.*.) :: left -> right -> compatible result` — Multiply when at least one factor is fixed before solving.
+- `./.` — Type: `(./.) :: left -> right -> compatible result` — Divide by a fixed non-zero scalar.
 
-## Visual constraints and alternatives
+## Geometry and box model
 
-- `ensure` — Type: `ensure :: VisualConstraint -> VisualizationBuilder ()` — Add a hard constraint that every valid solution must satisfy.
-- `encourage` — Type: `encourage :: VisualConstraint -> VisualizationBuilder ()` — Add a soft relation that improves ranking without invalidating solutions.
-- `VisualAlternative` — Type: `VisualAlternative :: Type` — Named branch containing the constraints for one finite visual alternative.
-- `alternative` — Type: `alternative :: String -> [VisualConstraint] -> VisualAlternative` — Construct one named visual alternative branch.
-- `oneOf` — Type: `oneOf :: String -> VisualAlternative -> [VisualAlternative] -> VisualizationBuilder ()` — Require exactly one named alternative from a non-empty set.
-- `caseOf` — Type: `caseOf :: ChoiceDomain value => Choice value -> (value -> [VisualConstraint]) -> VisualizationBuilder ()` — Apply branch-specific visual rules for a finite choice.
-- `QueryField` — Type: `QueryField :: Type` — Overloaded-label field name consumed by the integer query operator.
-- `@:` — Type: `(@:) :: QueryField -> QueryInt -> Query` — Construct a named integer query from a literal or bound `QueryInt`.
-- `.<=.` — Type: `(.<=.) :: RelateValues lhs rhs => lhs -> rhs -> VisualConstraint` — Less-than-or-equal relation for compatible numeric expressions.
-- `.>=.` — Type: `(.>=.) :: RelateValues rhs lhs => lhs -> rhs -> VisualConstraint` — Greater-than-or-equal relation for compatible numeric expressions.
-- `.==.` — Type: `(.==.) :: RelateValues lhs rhs => lhs -> rhs -> VisualConstraint` — Equality relation for compatible numeric expressions.
-- `=|` — Type: `(=|) :: OpenDirectedBridge lhs gap => lhs -> gap -> DirectedBridge` — Directed affine bridge: left plus gap equals right.
-- `=/` — Type: `(=/) :: OpenSymmetricBridge lhs delta => lhs -> delta -> SymmetricBridge` — Start a symmetric-distance bridge whose magnitude is supplied by `(=/)`.
-- `|=` — Type: `(|=) :: CloseDirectedBridge bridge rhs => bridge -> rhs -> VisualConstraint` — Complete a directed affine bridge begun by `(=|)`.
-- `/=` — Type: `(/=) :: NotEqualOrClose lhs rhs => lhs -> rhs -> VisualConstraint` — Complete a symmetric-distance bridge, or require categorical inequality.
+- `left` — Type: `left :: Selected node -> Coord; left :: Coord -> Render ()` — Read or set a node's left edge using closed dispatch.
+- `top` — Type: `top :: Selected node -> Coord; top :: Coord -> Render ()` — Read or set a node's top edge using closed dispatch.
+- `right` — Type: `right :: Selected node -> Coord; right :: Coord -> Render ()` — Read or set a node's right edge using closed dispatch.
+- `bottom` — Type: `bottom :: Selected node -> Coord; bottom :: Coord -> Render ()` — Read or set a node's bottom edge using closed dispatch.
+- `width` — Type: `width :: Selected node -> Span; width :: Span -> Render ()` — Read or set a node's width using closed dispatch.
+- `height` — Type: `height :: Selected node -> Span; height :: Span -> Render ()` — Read or set a node's height using closed dispatch.
+- `x` — Type: `x :: Selected node -> Coord; x :: Coord -> Render ()` — Read or set a node's horizontal centre using closed dispatch.
+- `y` — Type: `y :: Selected node -> Coord; y :: Coord -> Render ()` — Read or set a node's vertical centre using closed dispatch.
+- `center` — Type: `center :: Selected node -> Vec2 Coord; center :: Vec2 Coord -> Render ()` — Read or set both centre coordinates.
+- `size` — Type: `size :: Selected node -> Vec2 Span; size :: Vec2 Span -> Render ()` — Read or set both node spans.
+- `Insets` — Type: `Insets :: Type` — Four typed edge inset expressions.
+- `uniform` — Type: `uniform :: Span -> Insets` — Use one inset on all four edges.
+- `symmetric` — Type: `symmetric :: Span -> Span -> Insets` — Use separate vertical and horizontal insets.
+- `edges` — Type: `edges :: Span -> Span -> Span -> Span -> Insets` — Set top, right, bottom, and left insets explicitly.
+- `padding` — Type: `padding :: Insets -> Render ()` — Set the current node's inner padding.
+- `margin` — Type: `margin :: Insets -> Render ()` — Set the current node's outer margin.
+- `Axis` — Type: `Axis :: Type; data Axis = Horizontal | Vertical | Both` — Axis selected by content-fitting operations.
+- `ContentFit` — Type: `ContentFit :: Type; data ContentFit = Hug | Contain` — Whether an axis hugs children or only contains them.
+- `contentFit` — Type: `contentFit :: Axis -> ContentFit -> Render ()` — Set content fitting for one or both axes.
+- `Percent` — Type: `Percent :: Type` — Valid parent-relative percentage.
+- `percent` — Type: `percent :: Double -> Percent` — Construct a percentage from zero through one hundred.
+- `xAt` — Type: `xAt :: Percent -> Render ()` — Pin horizontal centre to a parent percentage.
+- `yAt` — Type: `yAt :: Percent -> Render ()` — Pin vertical centre to a parent percentage.
+- `widthOf` — Type: `widthOf :: Percent -> Render ()` — Pin width to a parent percentage.
+- `heightOf` — Type: `heightOf :: Percent -> Render ()` — Pin height to a parent percentage.
+- `aspectRatio` — Type: `aspectRatio :: Double -> Double -> Render ()` — Relate current width and height by a positive ratio.
+- `separatedBy` — Type: `separatedBy :: forall {k1} {k2} (first :: k1) (second :: k2). Span -> Selected first -> Selected second -> VisualConstraint` — Require two mapped rectangles not to overlap by at least a gap.
 
-## Primitive solver values and colour
+## Styles and colour
 
-- `Bounds` — Type: `Bounds :: Type -> Type; data Bounds a = Bounds a a a a` — Four-component bounds value.
-- `Hsl` — Type: `Hsl :: Type -> Type -> Type; data Hsl hue unit = Hsl {hue :: hue, saturation :: unit, lightness :: unit}` — Hue, saturation, and lightness colour expression.
-- `Free` — Type: `Free :: Type; type Free = Expr FreeDomain` — Unbounded numeric solver domain marker.
-- `Unit` — Type: `Unit :: Type; type Unit = Expr UnitDomain` — Unit-interval numeric solver domain marker.
-- `Angle` — Type: `Angle :: Type; type Angle = Expr AngleDomain` — Angular numeric solver domain marker.
-- `Color` — Type: `Color :: Type; type Color = Hsl Angle Unit` — Colour expression used by fill and stroke styles.
-- `global` — Type: `global :: VariableValue value => String -> value` — Refer to a stable named global solver variable.
-- `fromLabel` — Type: `fromLabel :: IsLabel x a => a` — Overloaded-label entry point used by semantic query syntax.
+- `style` — Type: `style :: forall field input. input -> Render ()` — Set one supported style field on the current node or connector.
+- `withoutStyle` — Type: `withoutStyle :: forall field. Render ()` — Remove one inherited style field.
+- `styleOf` — Type: `styleOf :: forall field node. Selected node -> symbolic field value` — Read one final style field as a symbolic value.
+- `Opacity` — Type: `Opacity :: Type` — Whole-node opacity field marker.
+- `FontSize` — Type: `FontSize :: Type` — Text size field marker.
+- `Radius` — Type: `Radius :: Type` — Corner radius field marker.
+- `StrokeWidth` — Type: `StrokeWidth :: Type` — Border or connector width field marker.
+- `Alpha` — Type: `Alpha :: Type` — Paint alpha field marker.
+- `Hsl` — Type: `Hsl :: Angle -> Unit -> Unit -> Color` — Hue, saturation, and lightness value.
+- `Color` — Type: `Color :: Type; type Color = Hsl Angle Unit` — HSL colour with typed angle and unit components.
+- `Fill` — Type: `Fill :: Type` — Fill paint field marker.
+- `Stroke` — Type: `Stroke :: Type` — Stroke paint field marker.
+- `BorderStyle` — Type: `BorderStyle :: Type; data BorderStyle = BorderNone | BorderSolid | BorderDashed | BorderDotted` — Supported distinct border rendering styles.
+- `FontKind` — Type: `FontKind :: Type; data FontKind = Monospace | Proportional` — Font catalogue classification.
+- `FontFilter` — Type: `FontFilter :: Type` — Abstract font catalogue filter.
+- `fontKind` — Type: `fontKind :: FontKind -> FontFilter` — Filter concrete fonts by catalogue classification.
+- `fontChoice` — Type: `fontChoice :: FontFilter -> Render (Choice FontFamily)` — Create a unique concrete font-family Choice matching a filter.
+- `FontFamily` — Type: `FontFamily :: Type; data FontFamily = FontInter | FontSourceSans3 | FontAtkinsonHyperlegibleNext | FontSpaceGrotesk | FontSourceSerif4 | FontLiterata | FontJetBrainsMonoNL | FontIBMPlexMono` — Concrete bundled font families.
+- `FontWeight` — Type: `FontWeight :: Type; data FontWeight = FontWeightNormal | FontWeightBold | FontWeightBolder | FontWeightLighter | FontWeightNumber Int` — Canonical fixed and numeric font-weight forms.
+- `FontStyle` — Type: `FontStyle :: Type; data FontStyle = FontStyleNormal | FontStyleItalic` — Available real font face styles.
+- `TextAlign` — Type: `TextAlign :: Type; data TextAlign = TextAlignLeft | TextAlignCenter | TextAlignRight` — Single-line horizontal text alignment.
+
+## Constraints and alternatives
+
+- `VisualConstraint` — Type: `VisualConstraint :: Type` — Opaque exact visual constraint.
+- `ensure` — Type: `ensure :: VisualConstraint -> Render ()` — Add a required constraint to the current scope.
+- `.<=.` — Type: `(.<=.) :: left -> right -> VisualConstraint` — Require the left affine value not to exceed the right.
+- `.>=.` — Type: `(.>=.) :: left -> right -> VisualConstraint` — Require the left affine value not to be below the right.
+- `.==.` — Type: `(.==.) :: left -> right -> VisualConstraint` — Require two compatible affine values to be equal.
+- `VisualAlternative` — Type: `VisualAlternative :: Type` — Labelled authored Render alternative.
+- `alternative` — Type: `alternative :: String -> Render () -> VisualAlternative` — Associate one label with a complete Render action.
+- `oneOf` — Type: `oneOf :: String -> VisualAlternative -> [VisualAlternative] -> Render ()` — Select exactly one non-empty authored alternative.

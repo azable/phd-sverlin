@@ -10,6 +10,11 @@ import {
   type ProjectEventCases
 } from '$lib/shared/projects/events';
 import { plainMessageText } from '$lib/shared/projects/events/message-content';
+import {
+  isSverlinPresentation,
+  presentationScenarioKey,
+  presentationViewSeed
+} from '$lib/shared/presentations';
 
 /** Icon families available to Timeline event cards. */
 export type TimelineEventIcon =
@@ -156,8 +161,10 @@ const presenters = {
     ),
   'visualization.presented': (event) =>
     details(
-      `Visualization presented · ${event.payload.presentation.format === 'sverlin-ir-v1' ? `seed ${event.payload.presentation.seed}` : 'HTML'}`,
-      event.payload.presentation.stepSignature,
+      `Visualization presented · ${isSverlinPresentation(event.payload.presentation) ? `seed ${presentationViewSeed(event.payload.presentation)}` : 'HTML'}`,
+      isSverlinPresentation(event.payload.presentation)
+        ? presentationScenarioKey(event.payload.presentation)
+        : event.payload.presentation.stepSignature,
       'visualization',
       'Loading the visualization…',
       true

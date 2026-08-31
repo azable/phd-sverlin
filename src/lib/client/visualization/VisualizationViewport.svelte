@@ -13,6 +13,7 @@
   import type {
     HslColor,
     CodeTokenKind,
+    LiveConnector,
     LiveElement,
     RenderInstanceId,
     TextRuntimeObservation,
@@ -25,6 +26,7 @@
     height: number;
     root: VisualElement;
     elements: LiveElement[];
+    connectors?: LiveConnector[];
     selectedIds?: RenderInstanceId[];
     resourceBaseUrl?: string;
     onSelectionChange?: (ids: RenderInstanceId[]) => void;
@@ -37,6 +39,7 @@
     height,
     root,
     elements,
+    connectors = [],
     selectedIds = $bindable<RenderInstanceId[]>([]),
     resourceBaseUrl,
     onSelectionChange = (_ids: RenderInstanceId[]) => {},
@@ -117,6 +120,16 @@
 
   function clipPathId(instanceId: RenderInstanceId): string {
     return `${viewportId}-visual-clip-${instanceId}`;
+  }
+
+  function connectorMarkerId(marker: LiveConnector['startMarker']): string | undefined {
+    if (marker === 'connectorNoMarker') return undefined;
+    return `${viewportId}-${marker}`;
+  }
+
+  function connectorMarkerUrl(marker: LiveConnector['startMarker']): string | undefined {
+    const id = connectorMarkerId(marker);
+    return id ? `url(#${id})` : undefined;
   }
 
   function onWheel(event: WheelEvent) {
@@ -394,6 +407,39 @@
         vector-effect="non-scaling-stroke"
       />
       <defs>
+        <marker
+          id={`${viewportId}-connectorArrowMarker`}
+          markerWidth="8"
+          markerHeight="8"
+          refX="7"
+          refY="4"
+          orient="auto-start-reverse"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="context-stroke" />
+        </marker>
+        <marker
+          id={`${viewportId}-connectorCircleMarker`}
+          markerWidth="8"
+          markerHeight="8"
+          refX="4"
+          refY="4"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <circle cx="4" cy="4" r="3" fill="context-stroke" />
+        </marker>
+        <marker
+          id={`${viewportId}-connectorDiamondMarker`}
+          markerWidth="10"
+          markerHeight="10"
+          refX="5"
+          refY="5"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 5 0 L 10 5 L 5 10 L 0 5 z" fill="context-stroke" />
+        </marker>
         {#each orderedElements as element (element.instanceId)}
           <clipPath id={clipPathId(element.instanceId)}>
             <rect
@@ -406,6 +452,22 @@
           </clipPath>
         {/each}
       </defs>
+
+      <g class="connectors" aria-hidden="true">
+        {#each connectors as connector (connector.instanceId)}
+          <line
+            x1={connector.start.pointX}
+            y1={connector.start.pointY}
+            x2={connector.end.pointX}
+            y2={connector.end.pointY}
+            stroke={color(connector.stroke, 1, 'currentColor')}
+            stroke-width={connector.strokeWidth}
+            opacity={connector.opacity}
+            marker-start={connectorMarkerUrl(connector.startMarker)}
+            marker-end={connectorMarkerUrl(connector.endMarker)}
+          />
+        {/each}
+      </g>
 
       {#each orderedElements as element (element.instanceId)}
         {@const style = element.style}
@@ -431,6 +493,16 @@
             stroke-width={style.borderStyle === 'none' ? 0 : (style.strokeWidth ?? 0)}
             stroke-dasharray={borderDasharray(style.borderStyle)}
           />
+
+          {#each element.fragmentClusters as cluster (`${cluster.clusterLineIndex}:${cluster.clusterSourceRange.sourceRangeStart}:${cluster.clusterSourceRange.sourceRangeEnd}`)}
+            <line
+              class="fragment-emphasis"
+              x1={cluster.clusterInkBounds.rectX}
+              x2={cluster.clusterInkBounds.rectX + cluster.clusterInkBounds.rectWidth}
+              y1={cluster.clusterInkBounds.rectY + cluster.clusterInkBounds.rectHeight + 1}
+              y2={cluster.clusterInkBounds.rectY + cluster.clusterInkBounds.rectHeight + 1}
+            />
+          {/each}
 
           {#if element.content?.kind === 'plainTextContent'}
             {@const layout = element.content.textLayout}
@@ -584,6 +656,16 @@
     transition:
       fill 300ms ease,
       stroke 300ms ease;
+  }
+
+  .connectors {
+    pointer-events: none;
+  }
+
+  .fragment-emphasis {
+    stroke: var(--chart-1);
+    stroke-width: 2;
+    pointer-events: none;
   }
 
   .compiler-text,

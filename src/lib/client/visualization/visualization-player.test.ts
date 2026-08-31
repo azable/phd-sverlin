@@ -65,6 +65,45 @@ describe('VisualizationPlayer', () => {
     ]);
   });
 
+  it('joins shaped fragment clusters and active connectors without changing node geometry', () => {
+    const compiledVisualization = visualization(['one', 'two']);
+    compiledVisualization.steps[0].instances[0].fragmentClusters = [
+      {
+        clusterLineIndex: 0,
+        clusterSourceRange: { sourceRangeStart: 0, sourceRangeEnd: 3 },
+        clusterInkBounds: { rectX: 1, rectY: 1, rectWidth: 8, rectHeight: 7 }
+      }
+    ];
+    compiledVisualization.connectors = [
+      {
+        id: 9,
+        startElementId: 0,
+        endElementId: 1,
+        start: { pointX: 10, pointY: 5 },
+        end: { pointX: 20, pointY: 5 },
+        startMarker: 'connectorNoMarker',
+        endMarker: 'connectorArrowMarker',
+        strokeWidth: 2,
+        opacity: 1
+      }
+    ];
+    compiledVisualization.steps[0].connectorInstances = [{ instanceId: 4, instanceConnectorId: 9 }];
+    compiledVisualization.steps[1].connectorInstances = [];
+
+    const player = new VisualizationPlayer();
+    player.setVisualization(compiledVisualization);
+
+    expect(player.elements[0].fragmentClusters).toHaveLength(1);
+    expect(player.connectors).toEqual([
+      expect.objectContaining({ instanceId: 4, id: 9, endMarker: 'connectorArrowMarker' })
+    ]);
+
+    player.next();
+    expect(player.connectors).toEqual([]);
+    player.previous();
+    expect(player.connectors).toHaveLength(1);
+  });
+
   it('keeps the requested step when installing a replacement visualization', () => {
     const player = new VisualizationPlayer();
     player.setVisualization(visualization(['one', 'two']));

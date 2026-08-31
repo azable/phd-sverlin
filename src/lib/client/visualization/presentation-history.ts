@@ -2,7 +2,12 @@
 
 import type { ProjectEvent } from '$lib/shared/projects/events';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
-import { type PresentationLayout, type RenderablePresentation } from '$lib/shared/presentations';
+import {
+  isSverlinPresentation,
+  presentationScenarioKey,
+  type PresentationLayout,
+  type RenderablePresentation
+} from '$lib/shared/presentations';
 
 const presentationAdjectives = [
   'Amber',
@@ -138,8 +143,8 @@ export function availablePresentations(
   layout: PresentationLayout
 ): TimelinePresentation[] {
   const all = timelinePresentations(events);
-  const latest = all.findLast(({ presentation }) => presentation.format === 'sverlin-ir-v1');
-  if (!latest || latest.presentation.format !== 'sverlin-ir-v1') {
+  const latest = all.findLast(({ presentation }) => isSverlinPresentation(presentation));
+  if (!latest || !isSverlinPresentation(latest.presentation)) {
     return latestPresentations(all, layout);
   }
   const availableIds = new Set(
@@ -147,9 +152,17 @@ export function availablePresentations(
       ({ presentationId }) => presentationId
     )
   );
-  return all
-    .filter(({ presentation }) => availableIds.has(presentation.presentationId))
-    .slice(0, layout === 'comparison' ? 2 : 1);
+  const available = all.filter(({ presentation }) => availableIds.has(presentation.presentationId));
+  if (layout !== 'comparison') return available.slice(0, 1);
+  const groups = new Map<string, TimelinePresentation[]>();
+  for (const entry of available) {
+    const key = isSverlinPresentation(entry.presentation)
+      ? presentationScenarioKey(entry.presentation)
+      : entry.presentation.presentationId;
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  const pair = [...groups.values()].find((group) => group.length >= 2);
+  return pair?.slice(0, 2) ?? available.slice(0, 1);
 }
 
 /** Return the generated set containing a selected render, subject to the current layout. */
@@ -158,7 +171,7 @@ export function presentationGroup(
   selected: TimelinePresentation,
   layout: PresentationLayout
 ): TimelinePresentation[] {
-  if (layout !== 'comparison' || selected.presentation.format !== 'sverlin-ir-v1') {
+  if (layout !== 'comparison' || !isSverlinPresentation(selected.presentation)) {
     return [selected];
   }
   const group = presentations
@@ -174,10 +187,9 @@ export function compatibleSverlinPair(
   right: TimelinePresentation
 ): boolean {
   return (
-    left.presentation.format === 'sverlin-ir-v1' &&
-    right.presentation.format === 'sverlin-ir-v1' &&
-    left.presentation.source.sha256 === right.presentation.source.sha256 &&
-    left.presentation.stepSignature === right.presentation.stepSignature
+    isSverlinPresentation(left.presentation) &&
+    isSverlinPresentation(right.presentation) &&
+    presentationScenarioKey(left.presentation) === presentationScenarioKey(right.presentation)
   );
 }
 

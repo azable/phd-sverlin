@@ -15,7 +15,7 @@ import type {
   TargetDiagnostic
 } from '$lib/shared/projects/events/values';
 
-import { compileSource, type CompileVisualizationResult } from './compile';
+import { compileSource, compileSourceBatch, type CompileVisualizationResult } from './compile';
 import { formatDiagnosticSummary } from './diagnostics';
 import { readPreparedCompiler } from './prepared-compiler.js';
 import { compilerScheduler } from './scheduler';
@@ -113,11 +113,16 @@ class DefaultSverlinVisualizationService implements SverlinVisualizationService 
     request: GenerateVisualizationBatchRequest
   ): Promise<VisualizationGenerationResult[]> {
     assertSource(request.source);
-    const results: VisualizationGenerationResult[] = [];
-    for (const seed of request.seeds) {
-      results.push(await this.generate({ source: request.source, seed, signal: request.signal }));
-    }
-    return results;
+    if (request.seeds.length === 0) throw new Error('At least one seed is required.');
+    request.seeds.forEach(assertSeed);
+    const results = await compileSourceBatch({
+      sourceContent: request.source.content,
+      sourceLabel: request.source.name,
+      seeds: request.seeds,
+      owner: 'visualization-service',
+      signal: request.signal
+    });
+    return results.map((result, index) => publicResult(request.seeds[index], result));
   }
 
   async readiness(): Promise<{ sourceSha256: string; preparedAt: string }> {

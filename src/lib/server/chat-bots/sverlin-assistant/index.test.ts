@@ -36,9 +36,10 @@ describe('AI assistant DSL interface', () => {
     const index = await loadDslApiIndex();
     expect(index).toContain('# Public Sverlin DSL API index');
     expect(index).toContain('`node` —');
-    expect(index).toContain(
-      '`fitText` — Type: `fitText :: ContentValue -> VisualizationBuilder ()`'
-    );
+    expect(index).toContain('`fitText` — Type: `fitText :: ContentValue -> Render ()`');
+    expect(index).toContain('`Traceable` — Type: `class Traceable tag where; type Payload tag`');
+    expect(index).not.toContain('NodeBinding');
+    expect(index).not.toContain('ChoiceDomain');
 
     const context = await aiAssistant.buildContext({
       messages: [],
@@ -50,28 +51,24 @@ describe('AI assistant DSL interface', () => {
 
   it('makes linear value flow the source of computational meaning', async () => {
     expect(aiAssistant.initialPrompt).toContain(
-      'never directly create a domain value that should be derived from live values'
+      'never introduce a Program result with create when it should be derived from live Blocks'
     );
     const guide = await loadDslInterfaceContext();
-    expect(guide).toContain('`create` is the ingress boundary');
-    expect(guide).toContain('Apply2 pendingResult <- apply2 addition leftInput rightInput');
-    expect(guide).toContain(
-      'Treat an explicitly requested border as one composite visual property'
-    );
+    expect(guide).toContain('Do not precompute algorithm results outside Program');
+    expect(guide).toContain('`copy` is the only way to reuse a live semantic value');
+    expect(guide).toContain('A requested border needs a positive `StrokeWidth`');
   });
 
-  it('delegates unspecified presentation to conditional family profiles', async () => {
+  it('keeps unspecified presentation open and uses explicit finite choices', async () => {
     expect(aiAssistant.initialPrompt).toContain(
       'Leave visual style fields unspecified unless semantics or an explicit participant preference require them'
     );
     const guide = await loadDslInterfaceContext();
-    expect(guide).toContain('`style @Field value` is a hard authoring requirement');
-    expect(guide).toContain('`withoutStyle @Field` is also hard');
-    expect(guide).toContain('Use `styleCase` only when the requested design itself needs');
-    expect(guide).toContain('one exact managed font face and one text occupancy target');
-    expect(guide).toContain('Do not make a numeric list');
-    expect(guide).toContain('A qualitative colour preference');
-    expect(guide).toContain('never infer an aesthetic merely from the audience');
+    expect(guide).toContain('`style @Field value` requires one field');
+    expect(guide).toContain('`withoutStyle @Field` removes an inherited field');
+    expect(guide).toContain('`oneOf name first rest` creates one fresh authored choice');
+    expect(guide).toContain('`fontChoice (fontKind Monospace)`');
+    expect(guide).toContain('not to guess an aesthetic');
   });
 
   it('lets preference evidence drive or defer a proactive source adaptation', () => {

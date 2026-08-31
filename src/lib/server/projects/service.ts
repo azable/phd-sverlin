@@ -30,7 +30,12 @@ import {
   projectCreationRenderer,
   type ProjectCreation
 } from '$lib/shared/projects/creation';
-import type { HtmlFramesManifest, SverlinPresentation } from '$lib/shared/presentations';
+import type { CompilerPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
+import {
+  isSverlinPresentation,
+  presentationScenarioKey,
+  presentationViewSeed
+} from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import { visualizationService, type VisualizationGenerationResult } from '$lib/server/compiler';
@@ -286,9 +291,9 @@ export function replenishProjectPresentations(
       const count = Math.min(2, state.deficit) as 1 | 2;
       const usedSeeds = document.events.flatMap((event) =>
         event.type === 'visualization.presented' &&
-        event.payload.presentation.format === 'sverlin-ir-v1' &&
+        isSverlinPresentation(event.payload.presentation) &&
         event.payload.presentation.source.sha256 === state.sourceSha256
-          ? [event.payload.presentation.seed]
+          ? [presentationViewSeed(event.payload.presentation)]
           : []
       );
       const next = await renderDocument(
@@ -735,24 +740,42 @@ export async function activateCompiledPresentations(
   if (recorded.compilations.length > 2) {
     throw new Error('A display set supports at most two presentations.');
   }
-  const presentations = recorded.compilations.map((item): SverlinPresentation => {
+  const presentations = recorded.compilations.map((item): CompilerPresentation => {
     if (!item.result.ok || !('render' in item)) {
       throw new Error('A failed compilation cannot become a presentation.');
     }
-    return {
+    const common = {
       presentationId: randomUUID(),
-      format: 'sverlin-ir-v1',
-      stepSignature: stepSignature(item.result.visualization.steps.map(({ label }) => label)),
-      seed: item.seed,
       source: item.source,
       render: item.render,
       resources: item.result.resources.map(({ bytes: _bytes, ...resource }) => resource),
       provenance: item.result.provenance,
       targetDiagnostics: item.result.targetDiagnostics
     };
+    const visualization = item.result.visualization;
+    if (
+      visualization.irVersion === 2 &&
+      visualization.scenarioKey &&
+      visualization.scenarioSeed !== undefined &&
+      visualization.viewSeed !== undefined
+    ) {
+      return {
+        ...common,
+        format: 'sverlin-ir-v2',
+        scenarioKey: visualization.scenarioKey,
+        scenarioSeed: visualization.scenarioSeed,
+        viewSeed: visualization.viewSeed
+      };
+    }
+    return {
+      ...common,
+      format: 'sverlin-ir-v1',
+      stepSignature: stepSignature(visualization.steps.map(({ label }) => label)),
+      seed: item.seed
+    };
   });
-  if (new Set(presentations.map(({ stepSignature: signature }) => signature)).size !== 1) {
-    throw new Error('Synchronized presentations must expose the same ordered steps.');
+  if (new Set(presentations.map(presentationScenarioKey)).size !== 1) {
+    throw new Error('Synchronized presentations must come from the same scenario.');
   }
   const displaySetId = randomUUID();
   const operationId = recorded.compilations[0].operationId;

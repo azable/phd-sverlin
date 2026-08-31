@@ -31,6 +31,7 @@ import {
   projectOperations
 } from '$lib/shared/projects/operations';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
+import { isSverlinPresentation } from '$lib/shared/presentations';
 import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
 /** Browser-visible state of the project's durable event polling connection. */
@@ -143,7 +144,7 @@ export class ProjectSession {
     const presentation = this.loaded
       ? this.snapshot.activePresentationSet?.presentations[0]?.payload.presentation
       : undefined;
-    return presentation?.format === 'sverlin-ir-v1'
+    return presentation && isSverlinPresentation(presentation)
       ? decodeVisualization(presentation.render.text)
       : undefined;
   }

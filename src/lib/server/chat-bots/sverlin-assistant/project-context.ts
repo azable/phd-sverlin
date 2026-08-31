@@ -24,6 +24,7 @@ import type {
 import { plainMessageText } from '$lib/shared/projects/events/message-content';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
 import type { RenderablePresentation } from '$lib/shared/presentations';
+import { isSverlinPresentation, presentationViewSeed } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import {
   decodeVisualization,
@@ -406,11 +407,11 @@ function renderSummary(
   event: ProjectEventOf<'visualization.presented'>
 ): AiRenderSummary | undefined {
   const presentation = event.payload.presentation;
-  if (presentation.format !== 'sverlin-ir-v1') return undefined;
+  if (!isSverlinPresentation(presentation)) return undefined;
   return {
     id: event.id,
     presentationId: presentation.presentationId,
-    seed: presentation.seed,
+    seed: presentationViewSeed(presentation),
     sourceSha256: presentation.source.sha256,
     renderSha256: presentation.render.sha256,
     ...(presentation.provenance ? { provenance: presentation.provenance } : {}),
@@ -428,7 +429,7 @@ function activePresentationSummaries(snapshot: ProjectSnapshot): AiRenderSummary
 function activePresentationFindings(snapshot: ProjectSnapshot): VisualizationFinding[] {
   return (snapshot.activePresentationSet?.presentations ?? []).flatMap((event) => {
     const presentation = event.payload.presentation;
-    return presentation.format === 'sverlin-ir-v1'
+    return isSverlinPresentation(presentation)
       ? decodeVisualization(presentation.render.text).findings
       : [];
   });

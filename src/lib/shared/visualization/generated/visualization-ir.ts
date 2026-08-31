@@ -20,6 +20,22 @@ export type CodeTokenKind =
   | 'codeOperator'
   | 'codeError';
 
+export type ConnectorId = number;
+
+export interface ConnectorInstance {
+  instanceId: ConnectorInstanceId;
+  instanceConnectorId: ConnectorId;
+  instanceOriginConnectorId?: ConnectorId;
+}
+
+export type ConnectorInstanceId = number;
+
+export type ConnectorMarker =
+  | 'connectorNoMarker'
+  | 'connectorArrowMarker'
+  | 'connectorCircleMarker'
+  | 'connectorDiamondMarker';
+
 export interface CoordinateSystem {
   systemName: string;
   systemOrigin: string;
@@ -71,10 +87,23 @@ export interface FontInstance {
   instanceFeatures: string[];
 }
 
+export type FrameOccurrenceKey = string;
+
+export interface GlyphCluster {
+  clusterLineIndex: number;
+  clusterSourceRange: TextSourceRange;
+  clusterInkBounds: LayoutRect;
+}
+
 export interface HslColor {
   hue: number;
   saturation: number;
   lightness: number;
+}
+
+export interface LayoutPoint {
+  pointX: number;
+  pointY: number;
 }
 
 export interface LayoutRect {
@@ -104,6 +133,8 @@ export interface SamplingProvenance {
   mode: SamplingMode;
   coverage: DecisionCoverage;
 }
+
+export type ScenarioKey = string;
 
 export type Sha256 = string;
 
@@ -154,12 +185,30 @@ export type TextWrapMode =
 export interface TimelineStep {
   label: string;
   instances: VisualInstance[];
+  occurrenceKey?: FrameOccurrenceKey;
+  ordinal?: number;
+  parentOccurrenceKey?: FrameOccurrenceKey;
+  connectorInstances?: ConnectorInstance[];
 }
 
 export interface VisualBox {
   bounds: LayoutRect;
   padding: EdgeInsets;
   margin: EdgeInsets;
+}
+
+export interface VisualConnector {
+  id: ConnectorId;
+  relationIdentity?: string;
+  startElementId: VisualId;
+  endElementId: VisualId;
+  start: LayoutPoint;
+  end: LayoutPoint;
+  startMarker: ConnectorMarker;
+  endMarker: ConnectorMarker;
+  stroke?: HslColor;
+  strokeWidth: number;
+  opacity: number;
 }
 
 export type VisualContent =
@@ -189,6 +238,7 @@ export interface VisualInstance {
   elementId: VisualId;
   originElementId?: VisualId;
   codeEmphasisRanges?: TextSourceRange[];
+  fragmentClusters?: GlyphCluster[];
 }
 
 export interface VisualStyle {
@@ -211,6 +261,9 @@ export interface VisualStyle {
 export interface Visualization {
   irVersion: number;
   seed: number;
+  scenarioKey?: ScenarioKey;
+  scenarioSeed?: number;
+  viewSeed?: number;
   sourcePath: string;
   sampling?: SamplingProvenance;
   coordinates: CoordinateSystem;
@@ -219,6 +272,7 @@ export interface Visualization {
   findings: VisualizationFinding[];
   variables: CspVariable[];
   elements: VisualElement[];
+  connectors?: VisualConnector[];
   steps: TimelineStep[];
 }
 

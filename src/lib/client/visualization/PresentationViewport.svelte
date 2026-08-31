@@ -4,6 +4,7 @@
   import { Skeleton } from '$lib/client/components/ui/skeleton';
   import {
     htmlFramesManifestSchema,
+    isSverlinPresentation,
     staticHtmlFrameDocument,
     type RenderablePresentation
   } from '$lib/shared/presentations';
@@ -46,7 +47,7 @@
     if (nextPresentation?.presentationId === loadedPresentationId) return;
     loadedPresentationId = nextPresentation?.presentationId;
     untrack(() => {
-      if (nextPresentation?.format === 'sverlin-ir-v1') {
+      if (nextPresentation && isSverlinPresentation(nextPresentation)) {
         player.setVisualization(decodeVisualization(nextPresentation.render.text), {
           initialStep: step
         });
@@ -57,15 +58,16 @@
   });
 
   $effect(() => {
-    if (presentation?.format === 'sverlin-ir-v1') player.seek(step);
+    if (presentation && isSverlinPresentation(presentation)) player.seek(step);
   });
 
   onDestroy(() => player.dispose());
 </script>
 
 <section class="relative min-h-0 flex-1 overflow-hidden bg-white" aria-label={label}>
-  {#if presentation?.format === 'sverlin-ir-v1' && player.hasVisualization}
+  {#if presentation && isSverlinPresentation(presentation) && player.hasVisualization}
     <VisualizationViewport
+      connectors={player.connectors}
       elements={player.elements}
       height={player.canvasHeight}
       root={player.canvasRoot!}

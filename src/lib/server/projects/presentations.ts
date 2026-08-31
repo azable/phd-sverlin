@@ -5,8 +5,13 @@ import { randomUUID } from 'node:crypto';
 import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
 import type { VisualSelection } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
-import type { HtmlFramesManifest } from '$lib/shared/presentations';
-import { presentationStepLabels } from '$lib/shared/presentations';
+import type { CompilerPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
+import {
+  isSverlinPresentation,
+  presentationScenarioKey,
+  presentationStepLabels
+} from '$lib/shared/presentations';
+import { decodeVisualization } from '$lib/shared/visualization';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { validateHtmlFramesManifest } from '$lib/server/visualization-modes/html-safety';
 import { stepSignature } from '$lib/server/visualization-modes';
@@ -85,23 +90,24 @@ export async function appendProjectPreference(
   const leftPresentation = left.payload.presentation;
   const rightPresentation = right.payload.presentation;
   if (
-    leftPresentation.format !== 'sverlin-ir-v1' ||
-    rightPresentation.format !== 'sverlin-ir-v1' ||
-    leftPresentation.source.sha256 !== rightPresentation.source.sha256 ||
-    leftPresentation.stepSignature !== rightPresentation.stepSignature
+    !isSverlinPresentation(leftPresentation) ||
+    !isSverlinPresentation(rightPresentation) ||
+    presentationScenarioKey(leftPresentation) !== presentationScenarioKey(rightPresentation)
   ) {
     throw new Error('Only compatible versions of the same visualization can be compared.');
   }
-  if (
-    options.step >= presentationStepLabels(leftPresentation).length ||
-    options.step >= presentationStepLabels(rightPresentation).length
-  ) {
+  const localSteps = alignedLocalSteps([leftPresentation, rightPresentation], options.step);
+  if (!localSteps) {
     throw new Error('The preference references an unknown presentation step.');
   }
   const allowedEvents = new Set([left.id, right.id]);
   const visualSelections = options.visualSelections.map((selection) => {
     const resolved = resolveProjectVisualSelection(document, selection).selection;
-    if (!allowedEvents.has(resolved.presentationEvent) || resolved.step !== options.step) {
+    const presentationIndex = resolved.presentationEvent === left.id ? 0 : 1;
+    if (
+      !allowedEvents.has(resolved.presentationEvent) ||
+      resolved.step !== localSteps[presentationIndex]
+    ) {
       throw new Error('Preference focus must belong to the compared presentations and step.');
     }
     return resolved;
@@ -136,6 +142,35 @@ export async function appendProjectPreference(
     [],
     dependencies
   );
+}
+
+function alignedLocalSteps(
+  presentations: readonly [CompilerPresentation, CompilerPresentation],
+  unionStep: number
+): [number, number] | undefined {
+  if (presentations.every(({ format }) => format === 'sverlin-ir-v1')) {
+    return presentations.every(
+      (presentation) => unionStep < presentationStepLabels(presentation).length
+    )
+      ? [unionStep, unionStep]
+      : undefined;
+  }
+  if (!presentations.every(({ format }) => format === 'sverlin-ir-v2')) return undefined;
+  const visualizations = presentations.map((presentation) =>
+    decodeVisualization(presentation.render.text)
+  );
+  const ordinals = [
+    ...new Set(
+      visualizations.flatMap(({ steps }) =>
+        steps.flatMap(({ ordinal }) => (ordinal === undefined ? [] : [ordinal]))
+      )
+    )
+  ].toSorted((left, right) => left - right);
+  const ordinal = ordinals[unionStep];
+  if (ordinal === undefined) return undefined;
+  return visualizations.map(({ steps }) =>
+    steps.findLastIndex((step) => step.ordinal !== undefined && step.ordinal <= ordinal)
+  ) as [number, number];
 }
 
 /** Save and immediately present one complete editable HTML manifest. */
