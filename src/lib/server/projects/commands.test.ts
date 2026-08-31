@@ -1137,6 +1137,45 @@ describe('submitProjectFeedback', () => {
     });
   });
 
+  it('turns a known presentation UUID in assistant Markdown into a retained reference', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { title: 'Assistant presentation reference', creation: { templateId: 'linear-search' } },
+      serviceDependencies
+    );
+    const presentationId = presentedEvent(created).payload.presentation.presentationId;
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: markdownMessage(`I prefer presentation \`${presentationId}\` here.`),
+      action: 'respond',
+      prompt: {},
+      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Which treatment is clearer?'),
+        focus: [],
+        presentationCount: 2,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: {
+        content: [
+          { type: 'markdown', text: 'I prefer presentation ' },
+          { type: 'presentation-ref', presentationId },
+          { type: 'markdown', text: ' here.' }
+        ]
+      }
+    });
+  });
+
   it('resolves focused history into historical source and render context', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue({
       reply: markdownMessage('No source change needed.'),

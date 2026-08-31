@@ -50,6 +50,42 @@ export function markdownMessage(text: string): MessageContent {
   return [{ type: 'markdown', text: value }];
 }
 
+/** Promote known presentation UUIDs in Markdown into interactive reference segments. */
+export function structureKnownPresentationReferences(
+  content: readonly MessageContentSegment[],
+  presentationIds: readonly string[]
+): MessageContent;
+export function structureKnownPresentationReferences<Segment extends { type: string }>(
+  content: readonly Segment[],
+  presentationIds: readonly string[]
+): Array<Exclude<Segment, { type: 'markdown' }> | MessageContentSegment>;
+export function structureKnownPresentationReferences(
+  content: readonly { type: string }[],
+  presentationIds: readonly string[]
+): Array<{ type: string }> {
+  const known = new Map(presentationIds.map((id) => [id.toLowerCase(), id]));
+  return content.flatMap((segment) => {
+    if (segment.type !== 'markdown') return [segment];
+    const text = (segment as { type: 'markdown'; text: string }).text;
+    const structured: MessageContent = [];
+    let cursor = 0;
+    for (const match of text.matchAll(presentationReferencePattern)) {
+      const presentationId = match[1] ? known.get(match[1].toLowerCase()) : undefined;
+      if (!presentationId || match.index === undefined) continue;
+      if (match.index > cursor) {
+        structured.push({ type: 'markdown', text: text.slice(cursor, match.index) });
+      }
+      structured.push({ type: 'presentation-ref', presentationId });
+      cursor = match.index + match[0].length;
+    }
+    if (cursor === 0) return [segment];
+    if (cursor < text.length) {
+      structured.push({ type: 'markdown', text: text.slice(cursor) });
+    }
+    return structured;
+  });
+}
+
 /** Flatten structured content for compact logs and model-provider text channels. */
 export function plainMessageText(content: MessageContent): string {
   return content
@@ -66,3 +102,6 @@ export function plainMessageText(content: MessageContent): string {
     .join(' ')
     .trim();
 }
+
+const presentationReferencePattern =
+  /`?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`?/giu;

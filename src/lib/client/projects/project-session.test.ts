@@ -170,6 +170,39 @@ describe('ProjectSession', () => {
     expect(session.refillPending).toBe(false);
   });
 
+  it('does not restart a refill between its cancellation and the foreground operation that replaced it', async () => {
+    const initial = bufferedProjectResource();
+    const refillAccepted = operationAcceptedEvent(5, 'presentation-refill');
+    const active = projectResource([...initial.document.events, refillAccepted], 'Buffered');
+    const cancelled: ProjectEventOf<'operation.failed'> = {
+      id: 6,
+      type: 'operation.failed',
+      actor: { kind: 'system' },
+      operationId,
+      createdAt: '2026-01-01T00:00:06.000Z',
+      payload: {
+        kind: 'presentation-refill',
+        failureKind: 'cancelled',
+        message: 'Superseded by participant activity.'
+      }
+    };
+    const feedbackAccepted = {
+      ...operationAcceptedEvent(7, 'feedback'),
+      operationId: externalOperationId
+    };
+    fetchMock
+      .mockResolvedValueOnce(response(workspaceResource(active)))
+      .mockResolvedValueOnce(eventResponse([cancelled, feedbackAccepted]));
+
+    const session = new ProjectSession('project-test', false, 'comparison', 4);
+    sessions.push(session);
+    await session.open();
+    await pollEvents(session);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(session.refillError).toBeNull();
+  });
+
   it('keeps background assistant work out of the foreground command lock', async () => {
     const interactionId = '12345678-1234-4123-8123-123456789abe';
     const assistantId = '12345678-1234-4123-8123-123456789abf';

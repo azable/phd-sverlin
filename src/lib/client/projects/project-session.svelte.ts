@@ -394,6 +394,10 @@ export class ProjectSession {
         .map((project) => (project.projectId === this.projectId ? summary : project))
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     };
+    const cancelledRefill =
+      event.type === 'operation.failed' &&
+      event.payload.kind === 'presentation-refill' &&
+      event.payload.failureKind === 'cancelled';
     if (event.type === 'operation.failed' && event.payload.kind === 'presentation-refill') {
       if (event.payload.failureKind !== 'cancelled') {
         this.#refillBlocked = true;
@@ -406,7 +410,7 @@ export class ProjectSession {
       this.#refillBlocked = false;
       this.refillError = null;
     }
-    this.reconcilePresentationBuffer();
+    if (!cancelledRefill) this.reconcilePresentationBuffer();
   }
 
   private async recover(): Promise<void> {

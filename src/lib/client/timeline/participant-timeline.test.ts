@@ -72,6 +72,28 @@ describe('participant Timeline projection', () => {
       ])
     });
   });
+
+  it('presents known UUIDs from historical assistant Markdown as references', () => {
+    const values = events();
+    const response = values.find((event) => event.type === 'assistant.responded');
+    if (response?.type !== 'assistant.responded') throw new Error('Missing assistant response.');
+    response.payload.content = [
+      {
+        type: 'markdown',
+        text: `Prefer presentation \`${presentationIds[0]}\` over the outlined treatment.`
+      }
+    ];
+
+    expect(participantTimeline(values)[1]).toMatchObject({
+      kind: 'message',
+      actor: 'assistant',
+      content: [
+        { type: 'markdown', text: 'Prefer presentation ' },
+        { type: 'presentation-ref', presentationId: presentationIds[0] },
+        { type: 'markdown', text: ' over the outlined treatment.' }
+      ]
+    });
+  });
 });
 
 function events(): ProjectEvent[] {

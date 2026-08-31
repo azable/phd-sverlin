@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 
 import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
 import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
-import { markdownMessage, type MessageContent } from '$lib/shared/projects/events/message-content';
+import {
+  markdownMessage,
+  structureKnownPresentationReferences,
+  type MessageContent
+} from '$lib/shared/projects/events/message-content';
 import type {
   ArtifactChange,
   DslRevision,
@@ -1047,7 +1051,13 @@ function resolveAssistantContent(
   reply: GeneratedMessageContent,
   candidates: readonly RenderablePresentation[]
 ): MessageContent {
-  const content: MessageContent = reply.map((segment) => {
+  const knownPresentationIds = document.events.flatMap((event) =>
+    event.type === 'visualization.presented' ? [event.payload.presentation.presentationId] : []
+  );
+  const content: MessageContent = structureKnownPresentationReferences(
+    reply,
+    knownPresentationIds
+  ).map((segment) => {
     if (segment.type === 'markdown') return segment;
     if (segment.type === 'presentation-ref') return segment;
     if (segment.type === 'element-ref') return segment;

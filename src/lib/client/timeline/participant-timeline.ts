@@ -1,7 +1,10 @@
 /** Participant-facing conversational projection of the complete immutable Timeline. */
 
 import type { ProjectEvent } from '$lib/shared/projects/events';
-import type { MessageContent } from '$lib/shared/projects/events/message-content';
+import {
+  structureKnownPresentationReferences,
+  type MessageContent
+} from '$lib/shared/projects/events/message-content';
 
 import {
   timelinePresentations,
@@ -23,6 +26,9 @@ export type ParticipantTimelineItem =
 export function participantTimeline(events: readonly ProjectEvent[]): ParticipantTimelineItem[] {
   const presentations = new Map(
     timelinePresentations(events).map((entry) => [entry.eventId, entry] as const)
+  );
+  const presentationIds = [...presentations.values()].map(
+    ({ presentation }) => presentation.presentationId
   );
   const groups = Map.groupBy(events, ({ operationId }) => operationId);
   return [...groups.values()]
@@ -54,7 +60,12 @@ export function participantTimeline(events: readonly ProjectEvent[]): Participan
       for (const event of related) {
         if (event.type === 'assistant.responded') {
           items.push(
-            messageItem(`assistant-${event.id}`, 'assistant', event.payload.content, event.id)
+            messageItem(
+              `assistant-${event.id}`,
+              'assistant',
+              structureKnownPresentationReferences(event.payload.content, presentationIds),
+              event.id
+            )
           );
         }
       }
