@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { pilotStudyV1 } from './pilot-v1';
+import { mainStudyV1 } from './main-v1';
 import { projectStudyFlow, type StudyRunSnapshot } from './projection';
 
 const baseRun: StudyRunSnapshot = {
   id: 'run-one',
   mode: 'participant',
-  studyId: pilotStudyV1.id,
-  studyVersion: pilotStudyV1.version,
+  studyId: mainStudyV1.id,
+  studyVersion: mainStudyV1.version,
   armId: 'sverlin-first',
   currentPhaseIndex: 0,
   startPhaseIndex: 0
@@ -15,9 +15,9 @@ const baseRun: StudyRunSnapshot = {
 
 describe('complete study flow projection', () => {
   it('shows every configured phase as unfilled before the participant starts', () => {
-    const flow = projectStudyFlow(pilotStudyV1, baseRun, []);
+    const flow = projectStudyFlow(mainStudyV1, baseRun, []);
     expect(flow.status).toBe('not-started');
-    expect(flow.phases).toHaveLength(pilotStudyV1.flow.length);
+    expect(flow.phases).toHaveLength(mainStudyV1.flow.length);
     expect(flow.phases.every(({ status }) => status === 'pending')).toBe(true);
   });
 
@@ -43,19 +43,19 @@ describe('complete study flow projection', () => {
       }
     ];
     expect(
-      projectStudyFlow(pilotStudyV1, run, phases, Date.parse(deadlineAt) - 1).phases[1]?.status
+      projectStudyFlow(mainStudyV1, run, phases, Date.parse(deadlineAt) - 1).phases[1]?.status
     ).toBe('active');
     expect(
-      projectStudyFlow(pilotStudyV1, run, phases, Date.parse(deadlineAt)).phases[1]?.status
+      projectStudyFlow(mainStudyV1, run, phases, Date.parse(deadlineAt)).phases[1]?.status
     ).toBe('ready-to-continue');
   });
 
   it('fills a completed flow and keeps isolated preview phases outside scope', () => {
     const completed = projectStudyFlow(
-      pilotStudyV1,
+      mainStudyV1,
       {
         ...baseRun,
-        currentPhaseIndex: pilotStudyV1.flow.length - 1,
+        currentPhaseIndex: mainStudyV1.flow.length - 1,
         startedAt: '2026-08-30T12:00:00.000Z',
         completedAt: '2026-08-30T12:30:00.000Z'
       },
@@ -65,7 +65,7 @@ describe('complete study flow projection', () => {
     expect(completed.phases.every(({ status }) => status === 'completed')).toBe(true);
 
     const isolated = projectStudyFlow(
-      pilotStudyV1,
+      mainStudyV1,
       {
         ...baseRun,
         mode: 'preview',

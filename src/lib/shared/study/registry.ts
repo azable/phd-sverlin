@@ -1,7 +1,7 @@
 /** Versioned study-protocol registry used by enrollment, playback, and exports. */
 
 import type { StudyDefinition } from './definition';
-import { pilotStudyV1 } from './pilot-v1';
+import { mainStudyV1 } from './main-v1';
 
 export type StudyRef = { id: string; version: number };
 export type StudyRegistration = {
@@ -9,7 +9,7 @@ export type StudyRegistration = {
   enrollment: 'open' | 'closed';
 };
 
-const registrations = registerStudies([{ definition: pilotStudyV1, enrollment: 'open' }]);
+const registrations = registerStudies([{ definition: mainStudyV1, enrollment: 'open' }]);
 const registry = new Map(
   registrations.map((registration) => [
     key(registration.definition.id, registration.definition.version),

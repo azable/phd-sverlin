@@ -29,6 +29,13 @@
       "when": 1788088908925,
       "tag": "0003_safe_black_cat",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788138684350,
+      "tag": "0004_promote_main_study",
+      "breakpoints": true
     }
   ]
 }

@@ -22,10 +22,10 @@ describe('canonical data export service', () => {
       filenameLabel: 'all-projects'
     });
     await expect(
-      resolveDataExport({ type: 'study', studyId: 'pilot-study', studyVersion: 1 })
+      resolveDataExport({ type: 'study', studyId: 'main-study', studyVersion: 1 })
     ).resolves.toEqual({
-      scope: { type: 'study', studyId: 'pilot-study', studyVersion: 1 },
-      filenameLabel: 'study-pilot-study-v1'
+      scope: { type: 'study', studyId: 'main-study', studyVersion: 1 },
+      filenameLabel: 'study-main-study-v1'
     });
     const resolveParticipant = vi.fn(async () => ({
       userId: 'user-2',

@@ -337,7 +337,7 @@ test('administrator can run a timed study preview and configure a participant gi
 
   await expect(page.getByRole('heading', { name: 'Configured studies' })).toBeVisible();
   await page.getByRole('button', { name: 'Create preview' }).first().click();
-  const previewDialog = page.getByRole('dialog', { name: /Preview Pilot study/ });
+  const previewDialog = page.getByRole('dialog', { name: /Preview Main study/ });
   await expect(previewDialog.getByText('Full flow', { exact: true })).toBeVisible();
   await delayNextAdminAction(page, 'createPreview');
   await previewDialog.getByRole('button', { name: 'Create preview' }).click({ noWaitAfter: true });
@@ -369,11 +369,11 @@ test('administrator can run a timed study preview and configure a participant gi
   await expect(
     page.getByRole('heading', { name: 'Administrator projects and previews' })
   ).toBeVisible();
-  await expect(page.getByText(/Preview · Pilot study/).first()).toBeVisible();
+  await expect(page.getByText(/Preview · Main study/).first()).toBeVisible();
 
   const participant = page.locator('[data-slot="card"]').filter({ hasText: 'E2E-GIFT' });
   await expect(participant.locator('[data-slot="card-description"]')).toContainText(
-    /^Pilot study v1 · .+$/
+    /^Main study v1 · .+$/
   );
   await expect(participant.getByText('Not started', { exact: true })).toHaveAttribute(
     'data-slot',

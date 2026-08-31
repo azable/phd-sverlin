@@ -5,7 +5,7 @@ import StudyPage from './+page.svelte';
 import { actions } from './+page.server';
 
 const completionState = {
-  studyId: 'pilot-study',
+  studyId: 'main-study',
   studyVersion: 1,
   armId: 'sverlin-first',
   phaseIndex: 4,

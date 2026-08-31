@@ -1,11 +1,11 @@
-/** Initial counterbalanced Sverlin-versus-HTML study protocol. */
+/** Main counterbalanced Sverlin-versus-HTML study protocol. */
 
 import { defineStudy, minutes } from './definition';
 
-export const pilotStudyV1 = defineStudy({
-  id: 'pilot-study',
+export const mainStudyV1 = defineStudy({
+  id: 'main-study',
   version: 1,
-  name: 'Pilot study',
+  name: 'Main study',
   description: 'Counterbalanced comparison of Sverlin and HTML visualization workflows.',
   assignment: {
     strategy: 'balanced',

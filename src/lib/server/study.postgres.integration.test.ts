@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, expect, it } from 'vitest';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { pilotStudyV1 } from '$lib/shared/study/pilot-v1';
+import { mainStudyV1 } from '$lib/shared/study/main-v1';
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
@@ -48,7 +48,7 @@ it.skipIf(!enabled)('makes concurrent enrollment idempotent for one participant'
       role: 'user'
     });
 
-  const ref = { id: pilotStudyV1.id, version: pilotStudyV1.version };
+  const ref = { id: mainStudyV1.id, version: mainStudyV1.version };
   const runIds = await Promise.all([
     enrollParticipant(userId, ref),
     enrollParticipant(userId, ref)
@@ -82,8 +82,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'participant',
         ownerUserId: userId,
-        studyId: pilotStudyV1.id,
-        studyVersion: pilotStudyV1.version,
+        studyId: mainStudyV1.id,
+        studyVersion: mainStudyV1.version,
         armId: 'sverlin-first'
       })
       .returning({ id: schema.studyRuns.id });
@@ -134,7 +134,7 @@ it.skipIf(!enabled)(
 
     const initial = await createStudyPreview({
       ownerUserId: adminId,
-      ref: { id: pilotStudyV1.id, version: pilotStudyV1.version },
+      ref: { id: mainStudyV1.id, version: mainStudyV1.version },
       armId: 'sverlin-first'
     });
     expect(initial).toMatchObject({ mode: 'preview', phase: { id: 'welcome' }, completed: false });
@@ -152,7 +152,7 @@ it.skipIf(!enabled)(
 
     const isolated = await createStudyPreview({
       ownerUserId: adminId,
-      ref: { id: pilotStudyV1.id, version: pilotStudyV1.version },
+      ref: { id: mainStudyV1.id, version: mainStudyV1.version },
       armId: 'html-first',
       phaseId: 'between-tasks'
     });
@@ -186,8 +186,8 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
     .values({
       mode: 'participant',
       ownerUserId: userId,
-      studyId: pilotStudyV1.id,
-      studyVersion: pilotStudyV1.version,
+      studyId: mainStudyV1.id,
+      studyVersion: mainStudyV1.version,
       armId: 'sverlin-first'
     })
     .returning({ id: schema.studyRuns.id });
@@ -200,7 +200,7 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
   await database()
     .update(schema.studyRuns)
     .set({
-      currentPhaseIndex: pilotStudyV1.flow.length - 1,
+      currentPhaseIndex: mainStudyV1.flow.length - 1,
       completedAt: new Date()
     })
     .where(eq(schema.studyRuns.id, run.id));

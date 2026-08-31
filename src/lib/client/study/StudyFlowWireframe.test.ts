@@ -8,9 +8,9 @@ import StudyFlowWireframe from './StudyFlowWireframe.svelte';
 const flow: StudyFlow = {
   runId: 'preview-one',
   mode: 'preview',
-  studyId: 'pilot-study',
+  studyId: 'main-study',
   studyVersion: 1,
-  studyName: 'Pilot study',
+  studyName: 'Main study',
   armId: 'html-first',
   status: 'not-started',
   currentPhaseIndex: 0,
@@ -33,7 +33,7 @@ describe('StudyFlowWireframe', () => {
   it('can omit repeated study metadata when embedded in a labelled card', () => {
     const { body } = render(StudyFlowWireframe, { props: { flow, showHeader: false } });
 
-    expect(body).not.toContain('<p class="font-medium">Pilot study');
+    expect(body).not.toContain('<p class="font-medium">Main study');
     expect(body).not.toContain('Arm: html-first');
     expect(body).toContain('Welcome');
   });

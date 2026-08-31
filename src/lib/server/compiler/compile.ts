@@ -10,7 +10,7 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as v from 'valibot';
 
-import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
+import { decodeVisualizationBatch, type Visualization } from '$lib/shared/visualization';
 import type {
   CompilationProvenance,
   CompilationResource,
@@ -88,6 +88,11 @@ export type CompileSourceOptions = {
   signal?: AbortSignal;
 };
 
+/** Inputs for one process that shares a scenario across several view seeds. */
+export type CompileSourceBatchOptions = Omit<CompileSourceOptions, 'seed'> & {
+  seeds: readonly number[];
+};
+
 type CompileRun = CompileDebug & {
   timedOut: boolean;
 };
@@ -143,23 +148,32 @@ const compileManifestSchema = v.strictObject({
   })
 });
 
-/** Compile Sverlin source in an isolated workspace and decode its output. */
+/** Compile one view; singleton execution uses the same batch boundary. */
 export async function compileSource(
   options: CompileSourceOptions
 ): Promise<CompileVisualizationResult> {
-  const { sourceContent, sourceLabel, seed, owner, signal } = options;
+  return (await compileSourceBatch({ ...options, seeds: [options.seed] }))[0];
+}
+
+/** Compile one scenario and its ordered view-seed batch in a single process. */
+export async function compileSourceBatch(
+  options: CompileSourceBatchOptions
+): Promise<CompileVisualizationResult[]> {
+  const { sourceContent, sourceLabel, seeds, owner, signal } = options;
+  if (seeds.length === 0) throw new Error('At least one compiler seed is required.');
+  const seed = seeds[0];
   const cwd = process.cwd();
   if (Buffer.byteLength(sourceContent, 'utf8') > maxCompileSourceBytes) {
     const error = `Compile source exceeds the ${maxCompileSourceBytes} byte limit.`;
     const debug = emptyCompileDebug(cwd, error);
-    return {
+    return batchFailure(seeds, {
       ok: false,
       error,
       debug,
       status: 413,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'source'
-    };
+    });
   }
   let outputPath: string;
   let outputDir: string | undefined;
@@ -178,17 +192,17 @@ export async function compileSource(
     }
     const message = error instanceof Error ? error.message : String(error);
     const debug = emptyCompileDebug(cwd, message);
-    return {
+    return batchFailure(seeds, {
       ok: false,
       error: message,
       debug,
       status: 500,
       diagnostics: diagnosticsForFailure(debug, message),
       failureKind: 'infrastructure'
-    };
+    });
   }
 
-  const finish = async (result: CompileVisualizationResult) => {
+  const finish = async (result: CompileVisualizationResult[]) => {
     await rm(outputDir!, { recursive: true, force: true }).catch(() => undefined);
     return result;
   };
@@ -204,17 +218,23 @@ export async function compileSource(
           ? error.message
           : String(error);
     const debug = emptyCompileDebug(cwd, message);
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error: message,
       debug,
       status: 503,
       diagnostics: diagnosticsForFailure(debug, message),
       failureKind: 'infrastructure'
-    });
+    }));
   }
 
-  const direct = compileCommand(prepared.binaryPath, seed, outputPath, sourcePath, sourceLabel);
+  const direct = compileBatchCommand(
+    prepared.binaryPath,
+    seeds,
+    outputPath,
+    sourcePath,
+    sourceLabel
+  );
   const { command, args } = compilerLockCommand(
     direct.command,
     direct.args,
@@ -235,7 +255,7 @@ export async function compileSource(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const failed = emptyCompileDebug(cwd, message);
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error: message,
       debug: failed,
@@ -245,7 +265,7 @@ export async function compileSource(
         errorName(error) === 'CompilerShuttingDownError' || errorName(error) === 'AbortError'
           ? 'cancelled'
           : 'infrastructure'
-    });
+    }));
   }
   let compiledJson = '';
 
@@ -263,26 +283,26 @@ export async function compileSource(
   debug = { ...debug, outputPath };
   if (debug.error) {
     const diagnostics = diagnosticsForFailure(debug, debug.error);
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error: debug.error,
       debug,
       status: 500,
       diagnostics,
       failureKind: classifyCompileFailure(debug)
-    });
+    }));
   }
 
   if (debug.timedOut) {
     const error = `Compile backend timed out after ${formatDuration(timeoutMs)}.`;
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error,
       debug,
       status: 504,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'timeout'
-    });
+    }));
   }
 
   if (debug.exitCode !== 0) {
@@ -290,79 +310,82 @@ export async function compileSource(
     const error = lockBusy
       ? 'Compiler preparation is in progress. Try again when the prepared compiler is ready.'
       : `Compile backend exited with code ${debug.exitCode}.`;
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error,
       debug,
       status: lockBusy ? 503 : 500,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: lockBusy ? 'infrastructure' : classifyCompileFailure(debug)
-    });
+    }));
   }
 
   try {
     if ((await compilerSourceFingerprint()) !== prepared.sourceSha256) {
       const error =
         'Compiler inputs changed while this request was queued or running. Prepare the compiler and try again.';
-      return finish({
+      return finish(batchFailure(seeds, {
         ok: false,
         error,
         debug,
         status: 503,
         diagnostics: diagnosticsForFailure(debug, error),
         failureKind: 'infrastructure'
-      });
+      }));
     }
   } catch (cause) {
     const error = `Compiler inputs could not be verified after compilation: ${
       cause instanceof Error ? cause.message : String(cause)
     }`;
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error,
       debug,
       status: 503,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'infrastructure'
-    });
+    }));
   }
 
   if (outputReadError) {
     const error = `Compile backend did not produce a readable output package: ${outputReadError}`;
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error,
       debug,
       status: 502,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'invalid-output'
-    });
+    }));
   }
 
   try {
-    const visualization = decodeVisualization(compiledJson);
-    const bundle = await readCompileBundle(outputPath, compiledJson, visualization);
-    return finish({
-      ok: true,
-      visualization,
-      resources: bundle.resources,
-      provenance: bundle.provenance,
-      targetDiagnostics: bundle.targetDiagnostics,
-      compilerSourceSha256: prepared.sourceSha256,
-      debug
-    });
+    const visualizations = decodeVisualizationBatch(compiledJson);
+    validateCompiledBatch(visualizations, seeds);
+    const bundle = await readCompileBundle(outputPath, compiledJson, visualizations);
+    return finish(
+      visualizations.map((visualization) => ({
+        ok: true,
+        visualization,
+        resources: bundle.resources,
+        provenance: bundle.provenance,
+        targetDiagnostics: bundle.targetDiagnostics,
+        compilerSourceSha256: prepared.sourceSha256,
+        debug
+      }))
+    );
   } catch (err) {
     const error = `Compile backend wrote an invalid output package: ${
       err instanceof Error ? err.message : String(err)
     }`;
-    return finish({
+    return finish(batchFailure(seeds, {
       ok: false,
       error,
       debug,
       status: 502,
       diagnostics: diagnosticsForFailure(debug, error),
       failureKind: 'invalid-output'
-    });
+    }));
   }
 }
 
@@ -370,7 +393,7 @@ export async function compileSource(
 export async function readCompileBundle(
   outputPath: string,
   compiledJson: string,
-  visualization: Visualization
+  visualization: Visualization | readonly Visualization[]
 ): Promise<{
   resources: CompileResource[];
   provenance: CompileProvenance;
@@ -405,11 +428,16 @@ export async function readCompileBundle(
   }
   verifyBytes(Buffer.from(compiledJson), manifest.primary, 'primary visualization');
 
-  const descriptors = new Map(
-    visualization.resources.map((descriptor) => [descriptor.descriptorId, descriptor])
-  );
-  if (descriptors.size !== visualization.resources.length) {
-    throw new Error('Visualization contains duplicate resource descriptors.');
+  const visualizations = Array.isArray(visualization) ? visualization : [visualization];
+  const allDescriptors = visualizations.flatMap(({ resources }) => resources);
+  const descriptors = new Map(allDescriptors.map((descriptor) => [descriptor.descriptorId, descriptor]));
+  if (
+    allDescriptors.some((descriptor) => {
+      const retained = descriptors.get(descriptor.descriptorId);
+      return retained !== undefined && JSON.stringify(retained) !== JSON.stringify(descriptor);
+    })
+  ) {
+    throw new Error('Visualizations disagree about a shared resource descriptor.');
   }
   if (manifest.attachments.length !== descriptors.size) {
     throw new Error('Compile manifest attachments do not match visualization resources.');
@@ -471,6 +499,41 @@ export async function readCompileBundle(
         : {})
     }
   };
+}
+
+function batchFailure(
+  seeds: readonly number[],
+  failure: Extract<CompileVisualizationResult, { ok: false }>
+): CompileVisualizationResult[] {
+  return seeds.map(() => ({ ...failure }));
+}
+
+function validateCompiledBatch(
+  visualizations: readonly Visualization[],
+  requestedSeeds: readonly number[]
+): void {
+  if (visualizations.length !== requestedSeeds.length) {
+    throw new Error('Compiler returned an incorrectly sized visualization batch.');
+  }
+  if (visualizations.length === 1 && visualizations[0].irVersion === 1) {
+    if (visualizations[0].seed !== requestedSeeds[0]) {
+      throw new Error('Compiler returned a visualization for the wrong seed.');
+    }
+    return;
+  }
+  if (visualizations.some(({ irVersion }) => irVersion !== 2)) {
+    throw new Error('Multi-view compilation requires scenario-aware IR v2.');
+  }
+  const scenarioKey = visualizations[0].scenarioKey;
+  visualizations.forEach((visualization, index) => {
+    if (
+      visualization.scenarioKey !== scenarioKey ||
+      visualization.scenarioSeed !== requestedSeeds[0] ||
+      visualization.viewSeed !== requestedSeeds[index]
+    ) {
+      throw new Error('Compiler returned an incorrectly correlated scenario/view batch.');
+    }
+  });
 }
 
 function verifyBytes(
@@ -689,6 +752,25 @@ export function compileCommand(
   ];
 
   return { command: binaryPath, args };
+}
+
+/** Build one process invocation for an ordered scenario/view batch. */
+export function compileBatchCommand(
+  binaryPath: string,
+  seeds: readonly number[],
+  outputPath: string,
+  sourcePath: string,
+  sourceLabel: string
+): CompileCommand {
+  if (seeds.length === 0) throw new Error('At least one compiler seed is required.');
+  const command = compileCommand(binaryPath, seeds[0], outputPath, sourcePath, sourceLabel);
+  return {
+    ...command,
+    args: [
+      ...command.args,
+      ...seeds.slice(1).flatMap((seed) => ['--view-seed', String(seed)])
+    ]
+  };
 }
 
 /** Wrap a compiler child in a non-blocking shared lock against compiler preparation. */

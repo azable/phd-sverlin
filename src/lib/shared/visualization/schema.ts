@@ -200,9 +200,60 @@ const visualInstanceSchema = v.strictObject({
   codeEmphasisRanges: v.optional(v.array(textSourceRangeSchema))
 });
 
+const glyphClusterSchema = v.strictObject({
+  clusterLineIndex: natural,
+  clusterSourceRange: textSourceRangeSchema,
+  clusterInkBounds: layoutRectSchema
+});
+
+const visualInstanceV2Schema = v.strictObject({
+  id: natural,
+  elementId: integer,
+  originElementId: v.optional(integer),
+  fragmentClusters: v.array(glyphClusterSchema)
+});
+
+const connectorMarkerSchema = v.picklist([
+  'connectorNoMarker',
+  'connectorArrowMarker',
+  'connectorCircleMarker',
+  'connectorDiamondMarker'
+]);
+
+const layoutPointSchema = v.strictObject({ pointX: finite, pointY: finite });
+
+const visualConnectorSchema = v.strictObject({
+  id: natural,
+  relationIdentity: v.optional(text),
+  startElementId: integer,
+  endElementId: integer,
+  start: layoutPointSchema,
+  end: layoutPointSchema,
+  startMarker: connectorMarkerSchema,
+  endMarker: connectorMarkerSchema,
+  stroke: v.optional(hslColorSchema),
+  strokeWidth: v.pipe(finite, v.minValue(0)),
+  opacity: v.pipe(finite, v.minValue(0), v.maxValue(1))
+});
+
+const connectorInstanceSchema = v.strictObject({
+  id: natural,
+  instanceConnectorId: natural,
+  originConnectorId: v.optional(natural)
+});
+
 const timelineStepSchema = v.strictObject({
   label: v.string(),
   instances: v.array(visualInstanceSchema)
+});
+
+const timelineStepV2Schema = v.strictObject({
+  label: v.string(),
+  instances: v.array(visualInstanceV2Schema),
+  occurrenceKey: text,
+  ordinal: natural,
+  parentOccurrenceKey: v.optional(text),
+  connectorInstances: v.array(connectorInstanceSchema)
 });
 
 /** Strict runtime schema for the root-based visualization IR version 1. */
@@ -229,6 +280,39 @@ export const visualizationV1Schema = v.strictObject({
   steps: v.array(timelineStepSchema)
 });
 
+/** Strict runtime schema for scenario-aware visualization IR version 2. */
+export const visualizationV2Schema = v.strictObject({
+  irVersion: v.literal(2),
+  seed: integer,
+  scenarioKey: sha256,
+  scenarioSeed: integer,
+  viewSeed: integer,
+  sourcePath: v.string(),
+  sampling: v.optional(
+    v.strictObject({
+      mode: v.picklist(['balancedChoices', 'geometricMeasure']),
+      coverage: v.picklist(['exactEnumeration', 'mipConditioning'])
+    })
+  ),
+  coordinates: v.strictObject({
+    systemName: v.literal('sverlin-logical-y-down'),
+    systemOrigin: v.literal('top-left'),
+    systemYAxis: v.literal('down')
+  }),
+  root: integer,
+  resources: v.array(resourceDescriptorSchema),
+  findings: v.array(findingSchema),
+  variables: v.array(cspVariableSchema),
+  elements: v.array(visualElementSchema),
+  connectors: v.array(visualConnectorSchema),
+  steps: v.array(timelineStepV2Schema)
+});
+
+export const visualizationSchema = v.variant('irVersion', [
+  visualizationV1Schema,
+  visualizationV2Schema
+]);
+
 /** Validate cross-resource and cross-element invariants not expressible structurally. */
 export function validateVisualizationReferences(visualization: Visualization): void {
   assertUnique(
@@ -253,6 +337,9 @@ export function validateVisualizationReferences(visualization: Visualization): v
   );
   const elementRegistry = new Map(visualization.elements.map((element) => [element.id, element]));
   const elements = new Set(elementRegistry.keys());
+  const connectors = new Map(
+    (visualization.connectors ?? []).map((connector) => [connector.id, connector])
+  );
   const root = elementRegistry.get(visualization.root);
   if (visualization.root !== -1 || root === undefined) {
     throw new Error('Visualization root must reference the canonical canvas element -1.');
@@ -350,6 +437,32 @@ export function validateVisualizationReferences(visualization: Visualization): v
     }
   }
 
+  if (visualization.irVersion === 2) {
+    if (visualization.seed !== visualization.viewSeed) {
+      throw new Error('Visualization seed must equal its explicit view seed.');
+    }
+    assertUnique([...connectors.keys()], 'connector ID');
+    for (const connector of connectors.values()) {
+      if (!elements.has(connector.startElementId) || !elements.has(connector.endElementId)) {
+        throw new Error(`Connector ${connector.id} references an unknown endpoint.`);
+      }
+    }
+    assertUnique(
+      visualization.steps.map(({ occurrenceKey }) => occurrenceKey),
+      'frame occurrence key'
+    );
+    assertUnique(
+      visualization.steps.map(({ ordinal }) => ordinal),
+      'frame ordinal'
+    );
+    const frameKeys = new Set(visualization.steps.map(({ occurrenceKey }) => occurrenceKey));
+    for (const step of visualization.steps) {
+      if (step.parentOccurrenceKey && !frameKeys.has(step.parentOccurrenceKey)) {
+        throw new Error(`Frame ${step.occurrenceKey} references an unknown parent occurrence.`);
+      }
+    }
+  }
+
   const parents = new Map<number, number>();
   for (const element of visualization.elements) {
     for (const child of element.children) {
@@ -407,6 +520,41 @@ export function validateVisualizationReferences(visualization: Visualization): v
           stepIndex,
           instance.elementId
         );
+      }
+      if (instance.fragmentClusters !== undefined) {
+        const content = elementRegistry.get(instance.elementId)?.content;
+        if (content?.kind !== 'plainTextContent' && content?.kind !== 'codeTextContent') {
+          throw new Error(`Step ${stepIndex} highlights a non-text element ${instance.elementId}.`);
+        }
+        const sourceLength = new TextEncoder().encode(content.textLayout.layoutSource).byteLength;
+        for (const cluster of instance.fragmentClusters) {
+          const start = cluster.clusterSourceRange.sourceRangeStart;
+          const end = cluster.clusterSourceRange.sourceRangeEnd;
+          if (
+            cluster.clusterLineIndex >= content.textLayout.layoutLines.length ||
+            end <= start ||
+            end > sourceLength
+          ) {
+            throw new Error(`Step ${stepIndex} has an invalid shaped fragment cluster.`);
+          }
+        }
+      }
+    }
+    if (step.connectorInstances !== undefined) {
+      assertUnique(
+        step.connectorInstances.map(({ id }) => id),
+        `connector instance ID in step ${stepIndex}`
+      );
+      for (const instance of step.connectorInstances) {
+        if (!connectors.has(instance.instanceConnectorId)) {
+          throw new Error(`Step ${stepIndex} references an unknown connector.`);
+        }
+        if (
+          instance.originConnectorId !== undefined &&
+          !connectors.has(instance.originConnectorId)
+        ) {
+          throw new Error(`Step ${stepIndex} references an unknown connector origin.`);
+        }
       }
     }
   });

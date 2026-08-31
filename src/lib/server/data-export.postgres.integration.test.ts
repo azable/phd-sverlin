@@ -7,7 +7,7 @@ import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { pilotStudyV1 } from '$lib/shared/study/pilot-v1';
+import { mainStudyV1 } from '$lib/shared/study/main-v1';
 
 import { PostgresExportDataSource } from './data-export';
 
@@ -65,8 +65,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'participant',
         ownerUserId: participantId,
-        studyId: pilotStudyV1.id,
-        studyVersion: pilotStudyV1.version,
+        studyId: mainStudyV1.id,
+        studyVersion: mainStudyV1.version,
         armId: 'sverlin-first',
         currentPhaseIndex: 1,
         startedAt: new Date()
@@ -77,8 +77,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'preview',
         ownerUserId: adminId,
-        studyId: pilotStudyV1.id,
-        studyVersion: pilotStudyV1.version,
+        studyId: mainStudyV1.id,
+        studyVersion: mainStudyV1.version,
         armId: 'html-first',
         currentPhaseIndex: 1,
         startedAt: new Date()
@@ -113,8 +113,8 @@ it.skipIf(!enabled)(
     const source = new PostgresExportDataSource(repository);
     const research = await source.collect({
       type: 'study',
-      studyId: pilotStudyV1.id,
-      studyVersion: pilotStudyV1.version
+      studyId: mainStudyV1.id,
+      studyVersion: mainStudyV1.version
     });
     expect(research.projects.map(({ id }) => id)).toEqual([studyProjectId]);
     expect(research.study.runs).toHaveLength(1);

@@ -36,16 +36,28 @@ export const htmlFramesManifestSchema = v.strictObject({
 /** Stable identity for a presentation, independent of its Timeline event position. */
 export const presentationIdSchema = v.pipe(v.string(), v.uuid());
 
-const presentationEnvelope = {
-  presentationId: presentationIdSchema,
-  stepSignature: textSchema
-};
+const presentationEnvelope = { presentationId: presentationIdSchema };
 
 /** Compiler-produced presentation recorded without exposing its implementation language. */
 export const sverlinPresentationSchema = v.strictObject({
   ...presentationEnvelope,
   format: v.literal('sverlin-ir-v1'),
+  stepSignature: textSchema,
   seed: positiveSchema,
+  source: recordedTextSchema,
+  render: recordedTextSchema,
+  resources: v.optional(v.array(compilationResourceSchema)),
+  provenance: v.optional(compilationProvenanceSchema),
+  targetDiagnostics: v.optional(v.array(targetDiagnosticSchema))
+});
+
+/** Scenario-aware compiler presentation; views with one scenario key may align. */
+export const sverlinPresentationV2Schema = v.strictObject({
+  ...presentationEnvelope,
+  format: v.literal('sverlin-ir-v2'),
+  scenarioKey: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/)),
+  scenarioSeed: positiveSchema,
+  viewSeed: positiveSchema,
   source: recordedTextSchema,
   render: recordedTextSchema,
   resources: v.optional(v.array(compilationResourceSchema)),
@@ -57,6 +69,7 @@ export const sverlinPresentationSchema = v.strictObject({
 export const htmlFramesPresentationSchema = v.strictObject({
   ...presentationEnvelope,
   format: v.literal('html-frames-v1'),
+  stepSignature: textSchema,
   authored: recordedTextSchema,
   rendered: recordedTextSchema,
   generationEventId: v.optional(positiveSchema)
@@ -65,6 +78,7 @@ export const htmlFramesPresentationSchema = v.strictObject({
 /** Any steppable presentation accepted by the workspace. */
 export const renderablePresentationSchema = v.variant('format', [
   sverlinPresentationSchema,
+  sverlinPresentationV2Schema,
   htmlFramesPresentationSchema
 ]);
 
@@ -74,6 +88,8 @@ export type WorkspaceView = v.InferOutput<typeof workspaceViewSchema>;
 export type HtmlFrame = v.InferOutput<typeof htmlFrameSchema>;
 export type HtmlFramesManifest = v.InferOutput<typeof htmlFramesManifestSchema>;
 export type SverlinPresentation = v.InferOutput<typeof sverlinPresentationSchema>;
+export type SverlinPresentationV2 = v.InferOutput<typeof sverlinPresentationV2Schema>;
+export type CompilerPresentation = SverlinPresentation | SverlinPresentationV2;
 export type HtmlFramesPresentation = v.InferOutput<typeof htmlFramesPresentationSchema>;
 export type RenderablePresentation = v.InferOutput<typeof renderablePresentationSchema>;
 
@@ -86,6 +102,25 @@ export function presentationStepLabels(presentation: RenderablePresentation): st
   const value = JSON.parse(presentation.render.text) as { steps?: Array<{ label?: unknown }> };
   const labels = value.steps?.map(({ label }) => (typeof label === 'string' ? label : '')) ?? [];
   return labels.length ? labels : ['Initial view'];
+}
+
+/** Whether a presentation contains compiler-produced Sverlin IR. */
+export function isSverlinPresentation(
+  presentation: RenderablePresentation
+): presentation is CompilerPresentation {
+  return presentation.format === 'sverlin-ir-v1' || presentation.format === 'sverlin-ir-v2';
+}
+
+/** Compatibility identity for synchronized playback. */
+export function presentationScenarioKey(presentation: CompilerPresentation): string {
+  return presentation.format === 'sverlin-ir-v2'
+    ? presentation.scenarioKey
+    : `legacy:${presentation.source.sha256}:${presentation.stepSignature}`;
+}
+
+/** Seed controlling this presentation's visual choices. */
+export function presentationViewSeed(presentation: CompilerPresentation): number {
+  return presentation.format === 'sverlin-ir-v2' ? presentation.viewSeed : presentation.seed;
 }
 
 /** Wrap a validated static fragment in the single iframe isolation policy used by every client. */
