@@ -100,6 +100,38 @@ it. Render alone decides whether a kind has no mapping, a fixed mapping, or a
 seeded optional mapping through `sometimes`. Do not use an unclassified
 materialization operation as an indirect visibility control.
 
+## Maximize structured variation, not independent noise
+
+When the prompt and authored Render rules leave a visual property unspecified,
+the compiler should preserve that design freedom rather than silently choose one
+fixed default. It may complete missing style fields with finite categorical
+choices and bounded affine variables. Explicit `style` and `withoutStyle` rules
+always take precedence, and missing-style completion must not create a visual
+mapping that Render did not request.
+
+Random decisions should be scoped to the smallest coherent visual family, such
+as one semantic `Kind` or one node-mapping declaration. Repeated peers normally
+share a category and a base style. For example, an array may make one categorical
+choice between exactly uniform cells and a deliberately irregular treatment. In
+the irregular branch, each cell can remain within fixed narrow percentages of a
+shared base size. Constraints such as `0.96 * base <= item <= 1.04 * base` remain
+affine; independently sampling every cell across the complete font-size or box-size
+range is noise rather than useful design freedom.
+
+“As broad as possible” therefore means the union of distinct, semantically and
+aesthetically valid regions: group-level choices for different representations or
+style treatments, followed by generous continuous ranges inside each treatment.
+It does not mean making every property of every repeated element independent.
+Large peer differences require semantic meaning; small aesthetic deviations must
+be explicit, coherent, and narrowly bounded.
+
+The historical missing-style pass in
+[`LinearTrace/View/StyleProfile.hs`](../src/LinearTrace/View/StyleProfile.hs)
+demonstrates this behavior by adding family-scoped choices only where fields were
+absent. A refactor may replace that implementation, but must retain the behavior at
+the compiler boundary rather than require authors or the solver itself to recreate
+it.
+
 ## Preserve behavior while collapsing implementation layers
 
 The authored package boundary should expose only `Sverlin`; compiler assembly
