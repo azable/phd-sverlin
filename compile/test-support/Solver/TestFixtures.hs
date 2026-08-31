@@ -39,7 +39,8 @@ data SolverFixture = SolverFixture
   }
 
 availableFixtures :: [SolverFixture]
-availableFixtures = [boundedRowFixture, cyclicHueFixture, appShapedFixture]
+availableFixtures =
+  [boundedRowFixture, cyclicHueFixture, appShapedFixture, fitFamilyFixture]
 
 defaultBenchmarkSeeds :: [RandomSeed]
 defaultBenchmarkSeeds =
@@ -61,6 +62,7 @@ validateFixtureSolution fixture solution =
     "bounded-row" -> validateBoundedRow solution
     "cyclic-hue"  -> validateCyclicHue solution
     "app-shaped"  -> validateAppShaped solution
+    "fit-family"  -> validateFitFamily solution
     _             -> []
 
 boundedRowFixture :: SolverFixture
@@ -385,3 +387,70 @@ validateAppShaped solution =
           | otherwise ->
             [label ++ " mismatch: " ++ show lhsValue ++ " vs " ++ show rhsValue]
         _ -> ["missing " ++ label]
+
+fitFamilyFixture :: SolverFixture
+fitFamilyFixture =
+  SolverFixture
+    { fixtureName = "fit-family"
+    , fixtureDescription =
+        "Sixteen text peers sharing one bounded fitted size and coherent cell dimensions."
+    , fixtureConstraints =
+        [ within fitFamilyFontSize (Range 12 32)
+        , within fitFamilyWidth (Range 160 300)
+        , within fitFamilyHeight (Range 52 96)
+        , fitFamilyHeight @>=@ fitFamilyFontSize @*@ num 1.3 @+@ num 16
+        ]
+          ++ [ fitFamilyFontSize @*@ num widthEm @+@ num 24 @<=@ fitFamilyWidth
+             | widthEm <- fitFamilyTextWidths
+             ]
+    }
+
+fitFamilyFontSize :: Expr FixtureLayout
+fitFamilyFontSize = var "fixture.fit-family.font-size"
+
+fitFamilyWidth :: Expr FixtureLayout
+fitFamilyWidth = var "fixture.fit-family.width"
+
+fitFamilyHeight :: Expr FixtureLayout
+fitFamilyHeight = var "fixture.fit-family.height"
+
+-- Fixed shaped-line coefficients stand in for sixteen labels of different
+-- lengths; the largest one limits the single shared size variable.
+fitFamilyTextWidths :: [Double]
+fitFamilyTextWidths =
+  [ 1.1
+  , 2.4
+  , 3.2
+  , 4.7
+  , 5.5
+  , 6.8
+  , 7.1
+  , 8.3
+  , 9.2
+  , 10.4
+  , 11.0
+  , 11.6
+  , 12.1
+  , 12.8
+  , 13.4
+  , 13.9
+  ]
+
+validateFitFamily :: Solution -> [String]
+validateFitFamily solution =
+  case ( evalExpr solution fitFamilyFontSize
+       , evalExpr solution fitFamilyWidth
+       , evalExpr solution fitFamilyHeight) of
+    (Just fontSize, Just width, Just height) ->
+      [ "fit-family sampled outside its declared bounds"
+      | fontSize < 12 - 1e-3
+          || fontSize > 32 + 1e-3
+          || width < 160 - 1e-3
+          || width > 300 + 1e-3
+          || height < 52 - 1e-3
+          || height > 96 + 1e-3
+      ]
+        ++ [ "fit-family longest label does not fit"
+           | fontSize * maximum fitFamilyTextWidths + 24 > width + 1e-3
+           ]
+    _ -> ["fit-family solution omitted a shared variable"]

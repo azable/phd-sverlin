@@ -92,6 +92,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - `create payload` returns `Create pending`; every `Pending` must reach exactly one `materialize kind pending` or `replace old pending` path. Materialization always requires one declared `Kind`.
 - Each `Block` is the sole live capability for one semantic value. Thread it through `copy`, `use`, `apply1`, `apply2`, `replace`, `destroy`, `seal`, `unseal`, and `step` by matching their public result wrappers.
 - `copy` is the only way to reuse a live semantic value: it returns the original Block and a pending fork. `use`, `apply1`, `apply2`, `replace`, and `destroy` end their input Block lifetimes.
+- A copied fork is still `Pending`; materialize it before passing it to an operator. For example: `Copy value1 pendingProbe <- copy value`, then `probe <- materialize probeKind pendingProbe`, then `Apply1 resultPending <- apply1 operator probe`.
 - Model a meaningful derivation with `Applicable1` or `Applicable2`, then execute it with `apply1` or `apply2`. Do not precompute algorithm results outside Program and introduce them as if they were inputs.
 - Operators are ordinary stateless trace types whose payload is `LOperator Operator`. Runtime parameters are separate operand Blocks.
 
@@ -157,6 +158,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 
 - Text never wraps. A `ContentValue` must contain no newline. Use separate positioned nodes for separate or indented lines; a geometric indent remains correct when the font changes.
 - `content value` uses a fixed authored or theme size and contributes intrinsic bounds to a hugging node. `fitText value` keeps one line within its bounded box while leaving `FontSize` free in its feasible finite range. It does not maximize the size.
+- Every concrete peer created by one `node selected` mapping shares the same implicit fitted size. Each peer contributes a fit constraint, so the longest label limits that shared size. A separate mapping of the same selection owns a separate size family.
 - One node may define content exactly once. Different fonts within one shaped line are unsupported.
 
 ## Connectors
@@ -210,12 +212,14 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 ## Style rules
 
 - `style @Field value` requires one field; `withoutStyle @Field` removes an inherited field; omission leaves the theme/default free. Do not invent style fields or private helper classes.
+- When routine leaf styles are omitted, the compiler chooses one coherent surface profile and palette per node-mapping lineage. It may also choose one concrete managed font for the presentation. Repeated peers do not independently randomize these fields.
 - Numeric style fields are `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, and paint `Alpha`. Paint uses `Hsl hue saturation lightness` as `Color`, with `Angle` hue and `Unit` components.
 - Paint fields are `Fill` and `Stroke`. Categorical fields are `BorderStyle`, `FontFamily`, `FontWeight`, `FontStyle`, and `TextAlign`. Use only the constructors in the API index.
 - Font weight and style choices must name a real managed face. Unsupported combinations are removed from the design space rather than synthesized or mapped to a nearby face; `FontWeightBolder` and `FontWeightLighter` resolve from the inherited weight.
 - `styleOf @Field selected` reads a mapped final style value from the exact context-local node mapping. It requires that field to exist in every reached branch.
 - A requested border needs a positive `StrokeWidth`, a `Stroke`, and a non-empty `BorderStyle`; changing only one does not establish a complete border.
 - Prefer one semantic accent channel plus at most one or two supporting changes. Leave unrelated fields unspecified so the compiler can produce coherent seeded variation.
+- Array-like peers should normally share dimensions, padding, and typography. If the brief genuinely calls for an organic treatment, put the whole family in one named alternative and constrain each peer to `0.96`–`1.04` of shared base dimensions; do not give every cell an unrelated full-range size.
 
 ## Final source audit
 

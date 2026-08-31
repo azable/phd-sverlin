@@ -1,11 +1,13 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
+  import { onMount } from 'svelte';
 
   import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 
   import { Button } from '$lib/client/components/ui/button';
   import * as Card from '$lib/client/components/ui/card';
   import { Spinner } from '$lib/client/components/ui/spinner';
+  import { ProjectInteractionDelivery } from '$lib/client/study/interaction-delivery';
 
   import type { ActionData, PageData } from './$types';
 
@@ -13,6 +15,14 @@
   const phase = $derived(data.state.phase);
   const title = $derived(phase.kind === 'task' ? phase.instructions.title : phase.title);
   let continuing = $state(false);
+
+  onMount(() => {
+    const delivery = new ProjectInteractionDelivery({
+      participantId: data.interactionParticipantId
+    });
+    delivery.start();
+    return () => delivery.stop();
+  });
 </script>
 
 <svelte:head><title>{title} · Sverlin study</title></svelte:head>

@@ -1419,8 +1419,8 @@ describe('submitProjectFeedback', () => {
             presentations: [
               expect.objectContaining({
                 eventId: presentation.id,
-                presentation: expect.objectContaining({
-                  presentationId,
+                presentationId,
+                renderSummary: expect.objectContaining({
                   seed: presentation.payload.presentation.seed
                 })
               })

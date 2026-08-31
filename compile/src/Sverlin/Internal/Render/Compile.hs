@@ -20,7 +20,8 @@ import           Data.List                          (find, intercalate,
 import           Data.Map.Strict                    (Map)
 import qualified Data.Map.Strict                    as Map
 import           Data.Maybe                         (catMaybes, fromMaybe,
-                                                     isNothing, mapMaybe)
+                                                     isJust, isNothing,
+                                                     mapMaybe)
 import           Data.Set                           (Set)
 import qualified Data.Set                           as Set
 import qualified Data.Text                          as Text
@@ -30,6 +31,7 @@ import qualified LinearTrace.Visualization.Resource as Resource
 import           Prelude
 import qualified Solver                             as S
 import qualified Sverlin.Internal.Render            as R
+import qualified Sverlin.Internal.Render.Theme      as Theme
 import qualified Sverlin.Internal.Render.Typography as Typography
 import qualified Sverlin.Internal.Semantic          as Sem
 import           Text.Read                          (readMaybe)
@@ -58,7 +60,9 @@ compileRenderBatch sourcePath sourceContent viewSeeds trace plan = do
   case preparedResult of
     Left err -> pure (Left err)
     Right prepared ->
-      case S.compileDesignSpace renderSolveConfig (preparedProblem prepared) of
+      case S.compileDesignSpace
+             (renderSolveConfig prepared)
+             (preparedProblem prepared) of
         Left err -> pure (Left (RenderDesignSpaceError err))
         Right design -> do
           sampled <-
@@ -89,13 +93,41 @@ compileRenderBatch sourcePath sourceContent viewSeeds trace plan = do
                     Typography.typographyCompilationProvenance
                 }
   where
-    renderSolveConfig = S.defaultSolveConfig
+    -- Fitted text and theme variables start at the midpoints of their
+    -- documented ranges. Otherwise HiGHS supplies a lower-corner feasibility
+    -- point and high-dimensional hit-and-run can spend its bounded burn-in at
+    -- that corner. Phase I projects an infeasible text midpoint back into the
+    -- valid region; these values are hints only and never pin the sample.
+    renderSolveConfig prepared =
+      S.withInitialOverrides
+        (Map.fromList
+           ([ (syntheticTextFontSizeName index declaration, 22)
+            | (index, declaration) <-
+                zip [0 :: Int ..] (R.planContents (preparedPlan prepared))
+            , R.contentDeclarationFit declaration
+            ]
+              ++ [ (automaticStyleVariableName family field, midpoint)
+                 | family <- automaticStyleFamilies (preparedExpanded prepared)
+                 , (field, midpoint) <-
+                     [ ("fill.hue", 180)
+                     , ("fill.saturation", 0.45)
+                     , ("fill.lightness", 0.9)
+                     , ("stroke.saturation", 0.55)
+                     , ("stroke.lightness", 0.375)
+                     , ("soft-card.radius", 11)
+                     ]
+                 ]))
+        -- Eight branches keep small authored alternatives exactly enumerable.
+        -- The automatic 8-by-3 font catalog is instead conditioned once per
+        -- requested seed, avoiding 24 repeated affine preparation passes.
+        (S.withMaxCategoricalBranches 8 S.defaultSolveConfig)
 
 scenarioKey :: String -> Sem.SemanticTrace -> IR.ScenarioKey
 scenarioKey source trace =
   let bytes =
         Text.encodeUtf8
-          (Text.pack ("sverlin-ir-v2\NUL" ++ source ++ "\NUL" ++ show trace))
+          (Text.pack
+             ("sverlin-ir-v2-theme-1\NUL" ++ source ++ "\NUL" ++ show trace))
       IR.Sha256 digest = Resource.sha256Bytes bytes
    in IR.ScenarioKey digest
 
@@ -370,11 +402,27 @@ categoricalStyleOptions ::
   -> String
   -> Either RenderCompileError [(String, [ChoiceRequirement])]
 categoricalStyleOptions trace plan expanded context concrete field fallback = do
-  domains <- collectStyleDomains Set.empty context concrete field Map.empty
+  domains <-
+    collectStyleDomains Set.empty context concrete field automaticDomains
   traverse
     (evaluateOption domains)
     (decisionAssignments (Map.toAscList domains))
   where
+    automaticDomains
+      | not (automaticStyleEligible expanded concrete) = Map.empty
+      | styleCascadeDeclared concrete field = Map.empty
+      | field == R.FontFamilyField =
+        Map.singleton
+          Theme.automaticFontFamilyChoice
+          Theme.automaticFontFamilies
+      | field == R.FontWeightField =
+        Map.singleton Theme.automaticFontWeightChoice Theme.automaticFontWeights
+      | otherwise = Map.empty
+    styleCascadeDeclared current fieldName =
+      not (null (matchingStyleDeclarations plan current fieldName))
+        || case parentConcrete expanded current of
+             Left _       -> False
+             Right parent -> styleCascadeDeclared parent fieldName
     evaluateOption domains assignment = do
       token <-
         evaluateStyleToken Set.empty assignment context concrete field fallback
@@ -480,7 +528,7 @@ categoricalStyleOptions trace plan expanded context concrete field fallback = do
               token
           Nothing ->
             case parentConcrete expanded current of
-              Left _ -> pure defaultToken
+              Left _ -> automaticToken assignment fieldName defaultToken
               Right parent ->
                 evaluateStyleToken
                   nextVisited
@@ -489,6 +537,23 @@ categoricalStyleOptions trace plan expanded context concrete field fallback = do
                   parent
                   fieldName
                   defaultToken
+    automaticToken assignment fieldName defaultToken
+      | not (automaticStyleEligible expanded concrete) = pure defaultToken
+      | fieldName == R.FontFamilyField =
+        requireAutomatic
+          Theme.automaticFontFamilyChoice
+          Theme.automaticFontFamilies
+      | fieldName == R.FontWeightField =
+        requireAutomatic
+          Theme.automaticFontWeightChoice
+          Theme.automaticFontWeights
+      | otherwise = pure defaultToken
+      where
+        requireAutomatic name tokens =
+          case Map.lookup name assignment of
+            Just token
+              | token `elem` tokens -> pure token
+            _ -> leftInvalid ("missing automatic style decision " ++ show name)
     -- CSS resolves relative weights against the inherited concrete weight:
     -- bolder maps <=300/400-500/>=600 to 400/700/900; lighter maps
     -- <=500/600-700/>=800 to 100/400/700.
@@ -1639,6 +1704,64 @@ type SolverExpr = S.Expr RenderNumber
 
 type NodeEnvironment = Map R.NodeReference ConcreteNode
 
+automaticStyleFamily :: ConcreteNode -> Maybe String
+automaticStyleFamily concrete =
+  case concrete of
+    ConcreteCanvas -> Nothing
+    ConcreteVisual node ->
+      Just ("node-" ++ showNodeDeclarationId (expandedNodeDeclaration node))
+
+automaticStyleEligible :: ExpandedPlan -> ConcreteNode -> Bool
+automaticStyleEligible expanded concrete =
+  case concrete of
+    ConcreteCanvas -> False
+    ConcreteVisual node ->
+      not
+        (any
+           ((== expandedNodeId node) . expandedNodeParent)
+           (expandedNodes expanded))
+
+automaticStyleFamilies :: ExpandedPlan -> [String]
+automaticStyleFamilies expanded =
+  nub
+    [ family
+    | node <- expandedNodes expanded
+    , let concrete = ConcreteVisual node
+    , automaticStyleEligible expanded concrete
+    , Just family <- [automaticStyleFamily concrete]
+    ]
+
+automaticStyleVariable :: String -> String -> SolverExpr
+automaticStyleVariable family field =
+  S.var (automaticStyleVariableName family field)
+
+automaticStyleVariableName :: String -> String -> String
+automaticStyleVariableName family field =
+  "render.theme." ++ family ++ "." ++ field
+
+automaticStyleConstraints :: ExpandedPlan -> [S.Constraint]
+automaticStyleConstraints expanded =
+  concatMap familyConstraints (automaticStyleFamilies expanded)
+  where
+    familyConstraints family =
+      [ S.within (automaticStyleVariable family "fill.hue") (S.Range 0 360)
+      , S.within
+          (automaticStyleVariable family "fill.saturation")
+          (S.Range 0.25 0.65)
+      , S.within
+          (automaticStyleVariable family "fill.lightness")
+          (S.Range 0.84 0.96)
+      , S.within
+          (automaticStyleVariable family "stroke.saturation")
+          (S.Range 0.35 0.75)
+      , S.within
+          (automaticStyleVariable family "stroke.lightness")
+          (S.Range 0.25 0.5)
+      , S.within
+          (automaticStyleVariable family "soft-card.radius")
+          (S.Range 6 16)
+      ]
+
 data ResolvedGuard
   = GuardDecision String [String] String
   | GuardAlways
@@ -1671,6 +1794,7 @@ lowerPlan trace plan expanded typography = do
   pure
     (canvasConstraints
        ++ nodeBounds
+       ++ automaticStyleConstraints expanded
        ++ variableConstraints
        ++ decisionConstraints
        ++ inactiveNodeConstraints
@@ -3185,7 +3309,7 @@ lowerTextFits trace plan expanded typography =
           , preparedTextNode candidate == concreteNodeId concrete
           ]
       (fontSize, sizeConstraints) <-
-        contentFontSize declaration context concrete
+        contentFontSize index declaration context concrete
       (paddingTop, paddingRight, paddingBottom, paddingLeft) <-
         textPadding context concrete
       let hasChildren =
@@ -3273,7 +3397,7 @@ lowerTextFits trace plan expanded typography =
                 [topValue, rightValue, bottomValue, leftValue] ->
                   pure (topValue, rightValue, bottomValue, leftValue)
                 _ -> leftInvalid "invalid text padding arity"
-    contentFontSize declaration context concrete =
+    contentFontSize index declaration context concrete =
       case requireStyleAssignment
              trace
              plan
@@ -3291,13 +3415,13 @@ lowerTextFits trace plan expanded typography =
           | otherwise ->
             leftInvalid
               "content uses a sampled FontSize; use fitText for variable font size"
-        Right R.RemovedStyle -> fallback
+        Right R.RemovedStyle -> pure (S.num 16, [])
         Right _ -> leftInvalid "FontSize has a non-numeric style assignment"
         Left _ -> fallback
       where
         fallback
           | R.contentDeclarationFit declaration =
-            let expression = S.var (syntheticTextFontSizeName concrete)
+            let expression = S.var (syntheticTextFontSizeName index declaration)
              in pure (expression, [S.within expression (S.Range 12 32)])
           | otherwise = pure (S.num 16, [])
         lowerAuthored authored = do
@@ -3323,9 +3447,16 @@ numericExprIsFixed expression =
   where
     nested left right = numericExprIsFixed left && numericExprIsFixed right
 
-syntheticTextFontSizeName :: ConcreteNode -> String
-syntheticTextFontSizeName concrete =
-  "render.text." ++ show (concreteNodeId concrete) ++ ".font-size"
+syntheticTextFontSizeName :: Int -> R.ContentDeclaration -> String
+syntheticTextFontSizeName index declaration =
+  "render.text."
+    ++ show index
+    ++ "."
+    ++ maybe
+         "canvas"
+         (("node-" ++) . showNodeDeclarationId)
+         (R.scopeCurrentNode (R.contentDeclarationScope declaration))
+    ++ ".font-size"
 
 renderContentLine ::
      Sem.SemanticTrace
@@ -3503,6 +3634,7 @@ materializeVisualization sourcePath key trace prepared solution = do
           , IR.visualizationFindings = []
           , IR.visualizationVariables =
               compileVariables solution
+                ++ compileAutomaticStyleVariables expanded solution activeNodes
                 ++ compileFramePresenceVariables trace plan solution
           , IR.visualizationElements = elements
           , IR.visualizationConnectors = Just connectors
@@ -3807,11 +3939,14 @@ materializeVisualStyle ::
   -> Either RenderCompileError IR.VisualStyle
 materializeVisualStyle trace plan expanded solution context concrete = do
   opacity <- numeric R.OpacityField
-  authoredFontSize <- numeric R.FontSizeField
+  fontSizeAssignment <- activeStyleAssignment R.FontSizeField
   fontSize <-
-    case authoredFontSize of
-      Just value -> pure (Just value)
-      Nothing    -> contentDefaultFontSize
+    case fontSizeAssignment of
+      Just (R.NumericStyle expression) ->
+        Just . roundLayout <$> evaluateStyle expression
+      Just R.RemovedStyle -> pure Nothing
+      Just _ -> pure Nothing
+      Nothing -> contentDefaultFontSize
   radius <- numeric R.RadiusField
   strokeWidth <- numeric R.StrokeWidthField
   alpha <- numeric R.AlphaField
@@ -3841,10 +3976,18 @@ materializeVisualStyle trace plan expanded solution context concrete = do
       , IR.visualWhiteSpace = Nothing
       }
   where
+    family = automaticStyleFamily concrete
+    profile =
+      if automaticStyleEligible expanded concrete
+        then Theme.leafProfileFor (randomSeedInt (S.solutionSeed solution))
+               <$> family
+        else Nothing
+    hasDeclaredContent =
+      any (contentTargetMatches concrete) (R.planContents plan)
     numeric field = do
       assignment <- activeStyleAssignment field
       case assignment of
-        Nothing -> pure Nothing
+        Nothing -> automaticNumeric field
         Just (R.NumericStyle expression) ->
           Just . roundLayout <$> evaluateStyle expression
         Just R.RemovedStyle -> pure Nothing
@@ -3852,7 +3995,7 @@ materializeVisualStyle trace plan expanded solution context concrete = do
     color hueField _saturationField _lightnessField = do
       assignment <- activeStyleAssignment hueField
       case assignment of
-        Nothing -> pure Nothing
+        Nothing -> automaticColor hueField
         Just (R.ColorStyle hue saturation lightness) -> do
           hueValue <- evaluateStyle hue
           saturationValue <- evaluateStyle saturation
@@ -3869,7 +4012,7 @@ materializeVisualStyle trace plan expanded solution context concrete = do
     categorical field = do
       assignment <- activeStyleAssignment field
       case assignment of
-        Nothing -> pure Nothing
+        Nothing -> automaticCategorical field
         Just (R.FixedStyle token)
           | field == R.FontWeightField -> Just <$> materializeFontWeight
           | otherwise -> pure (Just token)
@@ -3878,6 +4021,78 @@ materializeVisualStyle trace plan expanded solution context concrete = do
           | otherwise -> Just <$> materializeChoice reference
         Just R.RemovedStyle -> pure Nothing
         Just _ -> pure Nothing
+    automaticNumeric field =
+      case (field, profile) of
+        (R.RadiusField, Just Theme.LeafSoftCard) ->
+          Just . roundLayout <$> automaticValue "soft-card.radius"
+        (R.RadiusField, Just Theme.LeafPill) ->
+          Just . roundLayout . (/ 2)
+            <$> evaluateExpr solution (nodeAttribute concrete R.GeometryHeight)
+        (R.StrokeWidthField, Just Theme.LeafOutline) -> pure (Just 1.5)
+        _ -> pure Nothing
+    automaticColor field =
+      case (field, profile) of
+        (R.FillHueField, Just Theme.LeafFlat)      -> Just <$> fillColor
+        (R.FillHueField, Just Theme.LeafSoftCard)  -> Just <$> fillColor
+        (R.FillHueField, Just Theme.LeafPill)      -> Just <$> fillColor
+        (R.StrokeHueField, Just Theme.LeafOutline) -> Just <$> strokeColor
+        _                                          -> pure Nothing
+    fillColor = do
+      hue <- automaticValue "fill.hue"
+      saturation <- automaticValue "fill.saturation"
+      lightness <- automaticValue "fill.lightness"
+      pure
+        IR.HslColor
+          { IR.hslHue = canonicalHue hue
+          , IR.hslSaturation = clampUnit saturation
+          , IR.hslLightness = clampUnit lightness
+          }
+    strokeColor = do
+      hue <- automaticValue "fill.hue"
+      saturation <- automaticValue "stroke.saturation"
+      lightness <- automaticValue "stroke.lightness"
+      pure
+        IR.HslColor
+          { IR.hslHue = canonicalHue hue
+          , IR.hslSaturation = clampUnit saturation
+          , IR.hslLightness = clampUnit lightness
+          }
+    automaticValue field =
+      case family of
+        Nothing -> leftInvalid "automatic style has no visual family"
+        Just familyName ->
+          evaluateExpr solution (automaticStyleVariable familyName field)
+    automaticCategorical field =
+      case field of
+        R.FontFamilyField
+          | hasDeclaredContent ->
+            automaticChoice
+              Theme.automaticFontFamilyChoice
+              Theme.automaticFontFamilies
+        R.FontWeightField
+          | hasDeclaredContent ->
+            automaticChoice
+              Theme.automaticFontWeightChoice
+              Theme.automaticFontWeights
+        R.FontStyleField
+          | hasDeclaredContent && isJust profile -> pure (Just "normal")
+        R.TextAlignField ->
+          pure
+            (case profile of
+               Just Theme.LeafTransparent -> Just "left"
+               Just _                     -> Just "center"
+               Nothing                    -> Nothing)
+        R.BorderStyleField ->
+          pure
+            (case profile of
+               Just Theme.LeafOutline -> Just "solid"
+               _                      -> Nothing)
+        _ -> pure Nothing
+    automaticChoice name tokens =
+      case Map.lookup name (S.solutionChoices solution) of
+        Just token
+          | token `elem` tokens -> pure (Just token)
+        _ -> leftInvalid ("solution omitted automatic style choice " ++ name)
     materializeFontWeight = do
       options <-
         categoricalStyleOptions
@@ -3989,9 +4204,10 @@ materializeVisualStyle trace plan expanded solution context concrete = do
             filterMRight
               (guardsActive trace plan expanded solution context
                  . R.scopeGuards
-                 . R.contentDeclarationScope)
-              [ declaration
-              | declaration <- R.planContents plan
+                 . R.contentDeclarationScope
+                 . snd)
+              [ (index, declaration)
+              | (index, declaration) <- zip [0 :: Int ..] (R.planContents plan)
               , R.scopeCurrentNode (R.contentDeclarationScope declaration)
                   == Just (expandedNodeDeclaration node)
               , referenceMatchesTarget
@@ -4000,12 +4216,12 @@ materializeVisualStyle trace plan expanded solution context concrete = do
               ]
           case reverse declarations of
             [] -> pure Nothing
-            declaration:_
+            (index, declaration):_
               | R.contentDeclarationFit declaration ->
                 Just . roundLayout
                   <$> evaluateExpr
                         solution
-                        (S.var (syntheticTextFontSizeName concrete))
+                        (S.var (syntheticTextFontSizeName index declaration))
               | otherwise -> pure (Just 16)
     positiveMaybe = fmap (max 0.001)
     nonnegativeMaybe = fmap (max 0)
@@ -4535,6 +4751,28 @@ compileVariables solution =
     ++ [ IR.CspVariable (IR.CspVariableId name) (IR.CspCategory value)
        | (name, value) <- Map.toAscList (S.solutionChoices solution)
        ]
+
+compileAutomaticStyleVariables ::
+     ExpandedPlan -> S.Solution -> [ExpandedNode] -> [IR.CspVariable]
+compileAutomaticStyleVariables expanded solution activeNodes =
+  Map.elems
+    (Map.fromList
+       [ (family, profileVariable family)
+       | node <- activeNodes
+       , let concrete = ConcreteVisual node
+       , automaticStyleEligible expanded concrete
+       , Just family <- [automaticStyleFamily concrete]
+       ])
+  where
+    seed = randomSeedInt (S.solutionSeed solution)
+    profileVariable family =
+      IR.CspVariable
+        { IR.cspVariableId =
+            IR.CspVariableId ("render.theme." ++ family ++ ".leaf.profile")
+        , IR.cspVariableValue =
+            IR.CspCategory
+              (Theme.leafProfileToken (Theme.leafProfileFor seed family))
+        }
 
 deduplicateResources :: [Resource.ResourceBlob] -> [Resource.ResourceBlob]
 deduplicateResources = Map.elems . Map.fromList . map keyed

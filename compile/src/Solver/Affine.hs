@@ -6,6 +6,7 @@ module Solver.Affine
   , classifyAffineProblem
   , collectConstraintVarTypes
   , collectRawExprVarTypes
+  , canonicalizeBounds
   , inferDomainBounds
   , linearRawExpr
   ) where

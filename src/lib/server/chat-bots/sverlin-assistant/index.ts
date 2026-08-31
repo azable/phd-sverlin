@@ -17,7 +17,7 @@ import {
   retainedMessageContentJsonSchema,
   type ChatBotConfig
 } from '../types';
-import { visualizationAttemptProfiles } from '../attempt-profiles';
+import { sverlinAttemptProfiles } from '../attempt-profiles';
 import { visualizationParticipantIntake } from '../participant-intake';
 import * as v from 'valibot';
 import type { AiProjectContext } from './project-context';
@@ -72,6 +72,7 @@ export default {
     'A complete source defines domain, program, and render. Domain constructs bounded seeded input and initial linear resources; Program consumes them exactly once into typed operations and steps; Render independently maps selected Kinds and Relations into frames, nodes, text, connectors, styles, and constraints.',
     'Make Program the source of computational meaning. Use create for genuine inputs, constants, stateless operators, and annotations; never introduce a Program result with create when it should be derived from live Blocks. Model meaningful derivations through apply1, apply2, or the matching lifecycle operation, and use copy before reusing a live value. Text may annotate value flow but must not replace it.',
     'Leave visual style fields unspecified unless semantics or an explicit participant preference require them. Use style for required presence, withoutStyle for required absence, caseOf for a reusable built-in Choice, and oneOf for custom named visual alternatives. Express a qualitative color preference with a bounded hue range and only the saturation or lightness implied by the wording; fix one exact color only for an explicit exact value.',
+    'One node mapping defines one coherent visual lineage: its concrete peers share implicit fitted text size and automatic style choices. Keep array-like peers uniform unless one explicit family-level alternative introduces only narrow proportional variation.',
     'Use always or sometimes around every frame and around other optional visual components where either presence is valid. Use broad finite ranges and relative affine constraints for layout; unsupported nonlinear or unbounded constraints are errors and have no optimization fallback. Keep semantic requirements outside oneOf alternatives.',
     'Before returning source, audit every linear value for exactly one consumption, every step and identity for declaration, every symbolic value for finite bounds, and every visual dependency for valid presence. Rewrite precomputed algorithm results as explicit linear operations.',
     'Treat the supplied project and artifacts as authoritative. Keep reply segments brief. Set recovery to null for initial and repair attempts.',
@@ -91,7 +92,7 @@ export default {
       ...(compilationFeedback ? { compilationFeedback } : {})
     };
   },
-  attemptProfiles: visualizationAttemptProfiles(12000),
+  attemptProfiles: sverlinAttemptProfiles(12000),
   responseFormat: {
     name: 'chat_result',
     strict: true,
@@ -100,46 +101,69 @@ export default {
       additionalProperties: false,
       properties: {
         reply: retainedMessageContentJsonSchema,
-        action: { type: 'string', enum: ['respond', 'resample', 'revise'] },
-        sourceArtifactContent: {
-          anyOf: [{ type: 'string', minLength: 1, pattern: '\\S' }, { type: 'null' }]
+        decision: {
+          anyOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                action: { type: 'string', enum: ['revise'] },
+                sourceArtifactContent: { type: 'string', minLength: 1, pattern: '\\S' }
+              },
+              required: ['action', 'sourceArtifactContent']
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                action: { type: 'string', enum: ['respond', 'resample'] },
+                sourceArtifactContent: { type: 'null' }
+              },
+              required: ['action', 'sourceArtifactContent']
+            }
+          ]
         },
         recovery: recoveryExplanationJsonSchema
       },
-      required: ['reply', 'action', 'sourceArtifactContent', 'recovery']
+      required: ['reply', 'decision', 'recovery']
     }
   },
   parseOutput(value) {
     const output = value as {
       reply?: unknown;
-      action?: unknown;
-      sourceArtifactContent?: unknown;
+      decision?: {
+        action?: unknown;
+        sourceArtifactContent?: unknown;
+      };
       recovery?: unknown;
     };
+    const decision = output?.decision;
     if (
-      (output?.action !== 'respond' &&
-        output?.action !== 'resample' &&
-        output?.action !== 'revise') ||
-      !('sourceArtifactContent' in output) ||
-      (output.sourceArtifactContent !== null &&
-        (typeof output.sourceArtifactContent !== 'string' || !output.sourceArtifactContent.trim()))
+      !decision ||
+      (decision.action !== 'respond' &&
+        decision?.action !== 'resample' &&
+        decision?.action !== 'revise') ||
+      !('sourceArtifactContent' in decision) ||
+      (decision.sourceArtifactContent !== null &&
+        (typeof decision.sourceArtifactContent !== 'string' ||
+          !decision.sourceArtifactContent.trim()))
     ) {
       throw new Error('The chatbot returned an invalid structured response.');
     }
-    const hasSource = typeof output.sourceArtifactContent === 'string';
-    if ((output.action === 'revise') !== hasSource) {
+    const hasSource = typeof decision.sourceArtifactContent === 'string';
+    if ((decision.action === 'revise') !== hasSource) {
       throw new Error('The chatbot action did not match its source artifact content.');
     }
     const recovery = parseRecoveryExplanation(output.recovery);
     const reply = v.parse(generatedMessageContentSchema, output.reply);
-    if (output.action === 'revise') {
+    if (decision.action === 'revise') {
       return {
         reply,
         action: 'revise',
-        sourceArtifactContent: output.sourceArtifactContent as string,
+        sourceArtifactContent: decision.sourceArtifactContent as string,
         ...(recovery ? { recovery } : {})
       };
     }
-    return { reply, action: output.action, ...(recovery ? { recovery } : {}) };
+    return { reply, action: decision.action, ...(recovery ? { recovery } : {}) };
   }
 } satisfies ChatBotConfig<AiProjectContext>;

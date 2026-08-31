@@ -4,12 +4,21 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 import type {
   StudyInteractionEventInput,
-  StudyInteractionSessionInput
+  StudyInteractionSessionInput,
+  StudyInteractionTerminal
 } from '$lib/shared/study/interactions';
+
+export type InteractionDropReason = Extract<
+  StudyInteractionEventInput,
+  { kind: 'recorder.dropped' }
+>['payload']['reason'];
 
 export type StoredInteractionSession = {
   session: StudyInteractionSessionInput;
-  stoppedAt?: string;
+  participantId: string;
+  deliveryExpiresAt?: string;
+  terminal?: StudyInteractionTerminal;
+  blocked?: { at: string; reason: string };
 };
 
 export type StoredInteractionEvent = {
@@ -22,6 +31,7 @@ export type StoredInteractionEvent = {
 type StoreResult = {
   stored: boolean;
   dropped: Partial<Record<StudyInteractionEventInput['kind'], number>>;
+  storageUnavailable: boolean;
 };
 
 interface InteractionDatabase extends DBSchema {
@@ -38,11 +48,14 @@ interface InteractionDatabase extends DBSchema {
 
 export interface InteractionOutbox {
   putSession(value: StoredInteractionSession): Promise<void>;
-  markStopped(sessionId: string, stoppedAt: string): Promise<void>;
+  finalize(sessionId: string, terminal: StudyInteractionTerminal): Promise<void>;
+  block(sessionId: string, reason: string, at: string): Promise<void>;
   putEvent(value: StoredInteractionEvent, byteLimit: number): Promise<StoreResult>;
+  replaceEvent(value: StoredInteractionEvent): Promise<void>;
   sessions(): Promise<StoredInteractionSession[]>;
   events(sessionId: string): Promise<StoredInteractionEvent[]>;
   acknowledge(sessionId: string, acceptedThrough: number): Promise<void>;
+  complete(sessionId: string): Promise<void>;
   abandon(sessionId: string): Promise<void>;
 }
 
@@ -59,22 +72,36 @@ export class ResilientInteractionOutbox implements InteractionOutbox {
     await this.#withDatabase((database) => database.put('sessions', value));
   }
 
-  async markStopped(sessionId: string, stoppedAt: string): Promise<void> {
+  async finalize(sessionId: string, terminal: StudyInteractionTerminal): Promise<void> {
     const sessions = await this.sessions();
     const value = sessions.find(({ session }) => session.id === sessionId);
     if (!value) return;
-    await this.putSession({ ...value, stoppedAt });
+    await this.putSession({ ...value, terminal });
+  }
+
+  async block(sessionId: string, reason: string, at: string): Promise<void> {
+    const sessions = await this.sessions();
+    const value = sessions.find(({ session }) => session.id === sessionId);
+    if (!value) return;
+    await this.putSession({ ...value, blocked: { at, reason } });
   }
 
   async putEvent(value: StoredInteractionEvent, byteLimit: number): Promise<StoreResult> {
     this.#memoryEvents.set(eventKey(value.sessionId, value.sequence), value);
     await this.#withDatabase((database) => database.put('events', value));
-    return this.#enforceLimit(byteLimit);
+    const result = await this.#enforceLimit(byteLimit);
+    if (!result.stored) await this.#deleteEvent(value.sessionId, value.sequence);
+    return { ...result, storageUnavailable: !this.#durable };
+  }
+
+  async replaceEvent(value: StoredInteractionEvent): Promise<void> {
+    await this.#replaceEvent(value);
   }
 
   async sessions(): Promise<StoredInteractionSession[]> {
     const durable = await this.#withDatabase((database) => database.getAll('sessions'));
     if (durable) {
+      this.#memorySessions.clear();
       for (const value of durable) this.#memorySessions.set(value.session.id, value);
     }
     return [...this.#memorySessions.values()].toSorted((left, right) =>
@@ -87,6 +114,9 @@ export class ResilientInteractionOutbox implements InteractionOutbox {
       database.getAllFromIndex('events', 'by-session', sessionId)
     );
     if (durable) {
+      for (const [key, value] of this.#memoryEvents) {
+        if (value.sessionId === sessionId) this.#memoryEvents.delete(key);
+      }
       for (const value of durable) {
         this.#memoryEvents.set(eventKey(value.sessionId, value.sequence), value);
       }
@@ -109,11 +139,13 @@ export class ResilientInteractionOutbox implements InteractionOutbox {
         transaction.done
       ]);
     });
-    const session = this.#memorySessions.get(sessionId);
-    if (session?.stoppedAt && (await this.events(sessionId)).length === 0) {
-      this.#memorySessions.delete(sessionId);
-      await this.#withDatabase((database) => database.delete('sessions', sessionId));
-    }
+  }
+
+  async complete(sessionId: string): Promise<void> {
+    const session = (await this.sessions()).find(({ session }) => session.id === sessionId);
+    if (!session?.terminal || (await this.events(sessionId)).length) return;
+    this.#memorySessions.delete(sessionId);
+    await this.#withDatabase((database) => database.delete('sessions', sessionId));
   }
 
   async abandon(sessionId: string): Promise<void> {
@@ -151,12 +183,12 @@ export class ResilientInteractionOutbox implements InteractionOutbox {
     ];
     for (const value of removable) {
       if (total <= byteLimit) break;
-      const replacement = droppedRecord(value);
+      const replacement = droppedStoredRecord(value, 'outbox-limit');
       await this.#replaceEvent(replacement);
       total -= value.byteLength - replacement.byteLength;
       dropped[value.event.kind] = (dropped[value.event.kind] ?? 0) + 1;
     }
-    return { stored: total <= byteLimit, dropped };
+    return { stored: total <= byteLimit, dropped, storageUnavailable: !this.#durable };
   }
 
   async #replaceEvent(value: StoredInteractionEvent): Promise<void> {
@@ -164,8 +196,17 @@ export class ResilientInteractionOutbox implements InteractionOutbox {
     await this.#withDatabase((database) => database.put('events', value));
   }
 
+  async #deleteEvent(sessionId: string, sequence: number): Promise<void> {
+    this.#memoryEvents.delete(eventKey(sessionId, sequence));
+    await this.#withDatabase((database) => database.delete('events', [sessionId, sequence]));
+  }
+
   async #withDatabase<T>(operation: (database: IDBPDatabase<InteractionDatabase>) => Promise<T>) {
-    if (!this.#durable || typeof indexedDB === 'undefined') return undefined;
+    if (!this.#durable) return undefined;
+    if (typeof indexedDB === 'undefined') {
+      this.#durable = false;
+      return undefined;
+    }
     try {
       this.#database ??= openDB<InteractionDatabase>('sverlin-project-interactions', 1, {
         upgrade(database) {
@@ -205,14 +246,18 @@ function eventKey(sessionId: string, sequence: number): string {
   return `${sessionId}:${sequence}`;
 }
 
-function droppedRecord(value: StoredInteractionEvent): StoredInteractionEvent {
+/** Replace one unavailable record without opening a gap in the session sequence. */
+export function droppedStoredRecord(
+  value: StoredInteractionEvent,
+  reason: InteractionDropReason
+): StoredInteractionEvent {
   const event: StudyInteractionEventInput = {
     sequence: value.event.sequence,
     elapsedMs: value.event.elapsedMs,
     clientOccurredAt: value.event.clientOccurredAt,
     projectHead: value.event.projectHead,
     kind: 'recorder.dropped',
-    payload: { counts: { [value.event.kind]: 1 }, reason: 'outbox-limit' }
+    payload: { counts: { [value.event.kind]: 1 }, reason }
   };
   return {
     ...value,

@@ -8,8 +8,14 @@ import { ResilientInteractionOutbox, type StoredInteractionEvent } from './inter
 describe('project interaction outbox', () => {
   it('acknowledges ordered records without affecting another session', async () => {
     const outbox = new ResilientInteractionOutbox();
-    await outbox.putSession({ session: session('12345678-1234-4123-8123-123456789abc') });
-    await outbox.putSession({ session: session('12345678-1234-4123-8123-123456789abd') });
+    await outbox.putSession({
+      session: session('12345678-1234-4123-8123-123456789abc'),
+      participantId: 'participant-one'
+    });
+    await outbox.putSession({
+      session: session('12345678-1234-4123-8123-123456789abd'),
+      participantId: 'participant-one'
+    });
     await outbox.putEvent(stored('12345678-1234-4123-8123-123456789abc', lifecycle(1)), 10_000);
     await outbox.putEvent(stored('12345678-1234-4123-8123-123456789abc', lifecycle(2)), 10_000);
     await outbox.putEvent(stored('12345678-1234-4123-8123-123456789abd', lifecycle(1)), 10_000);
@@ -25,7 +31,7 @@ describe('project interaction outbox', () => {
   it('compacts pointer paths to sequence-preserving dropped records first', async () => {
     const outbox = new ResilientInteractionOutbox();
     const sessionId = '12345678-1234-4123-8123-123456789abc';
-    await outbox.putSession({ session: session(sessionId) });
+    await outbox.putSession({ session: session(sessionId), participantId: 'participant-one' });
     const pointer: StudyInteractionEventInput = {
       sequence: 1,
       elapsedMs: 1,
@@ -51,6 +57,23 @@ describe('project interaction outbox', () => {
     expect(result.dropped).toEqual({ 'pointer.path': 1 });
     expect(retained?.sequence).toBe(1);
     expect(retained?.event.kind).toBe('recorder.dropped');
+  });
+
+  it('retains finalized metadata until the server confirms delivery is complete', async () => {
+    const outbox = new ResilientInteractionOutbox();
+    const sessionId = '12345678-1234-4123-8123-123456789abc';
+    await outbox.putSession({ session: session(sessionId), participantId: 'participant-one' });
+    await outbox.putEvent(stored(sessionId, lifecycle(1)), 10_000);
+    await outbox.finalize(sessionId, {
+      clientStoppedAt: '2026-08-30T10:01:00.000Z',
+      recordedThrough: 1
+    });
+
+    await outbox.acknowledge(sessionId, 1);
+    expect(await outbox.sessions()).toHaveLength(1);
+
+    await outbox.complete(sessionId);
+    expect(await outbox.sessions()).toHaveLength(0);
   });
 });
 

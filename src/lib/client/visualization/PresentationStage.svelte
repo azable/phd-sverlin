@@ -175,6 +175,7 @@
       <Button
         size="lg"
         variant={preferred === selectedIds[0] ? 'default' : 'outline'}
+        aria-label="Prefer top candidate"
         onclick={() => prefer(selectedIds[0])}
         disabled={disabled || preferencePending !== undefined}
       >
@@ -212,6 +213,7 @@
       <Button
         size="lg"
         variant={preferred === selectedIds[1] ? 'default' : 'outline'}
+        aria-label="Prefer bottom candidate"
         onclick={() => prefer(selectedIds[1])}
         disabled={disabled || preferencePending !== undefined}
       >
@@ -223,12 +225,22 @@
       </Button>
     {/if}
     {#if !selection.followingLatest}
-      <Button size="sm" variant="ghost" onclick={returnToCurrent} {disabled}
-        >Return to current</Button
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-label="Return to current visualizations"
+        onclick={returnToCurrent}
+        {disabled}>Return to current</Button
       >
     {/if}
     {#if selection.buffered && selection.followingLatest && visible.length}
-      <Button size="sm" variant="outline" onclick={advancePresentations} {disabled}>
+      <Button
+        size="sm"
+        variant="outline"
+        aria-label="Show next visualization pair"
+        onclick={advancePresentations}
+        {disabled}
+      >
         Next pair
       </Button>
     {/if}
@@ -236,6 +248,7 @@
       <Button
         size="sm"
         variant="outline"
+        aria-label="Reference selected visualization elements"
         onclick={() => onReferenceSelections(visibleSelections)}
         {disabled}
       >
@@ -256,6 +269,7 @@
       <div
         class="flex min-h-0 flex-1 overflow-hidden bg-muted/30 p-2"
         data-replay-region={`candidate-${index + 1}`}
+        data-replay-presentation-id={entry.presentation.presentationId}
         in:fly={{ x: 24, duration: 180 }}
       >
         <div

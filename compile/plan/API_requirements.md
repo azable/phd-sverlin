@@ -118,6 +118,10 @@ shared base size. Constraints such as `0.96 * base <= item <= 1.04 * base` remai
 affine; independently sampling every cell across the complete font-size or box-size
 range is noise rather than useful design freedom.
 
+The implemented default uses node-mapping declaration lineage: expanded peers
+from one declaration share automatic style and implicit fitted text size, while
+a separate mapping of the same semantic `Kind` remains an independent family.
+
 “As broad as possible” therefore means the union of distinct, semantically and
 aesthetically valid regions: group-level choices for different representations or
 style treatments, followed by generous continuous ranges inside each treatment.

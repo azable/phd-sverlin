@@ -7,7 +7,8 @@ module TypographyTest
 
 import           Control.Monad                      (unless, when)
 import qualified Data.ByteString                    as BS
-import           Data.List                          (isInfixOf)
+import           Data.List                          (isInfixOf, nub, sort)
+import           Data.Maybe                         (isJust)
 import qualified Data.Set                           as Set
 import qualified LinearTrace.Visualization.IR       as IR
 import qualified LinearTrace.Visualization.Resource as Resource
@@ -34,6 +35,10 @@ data Child
 data NestedTextFrame
 
 data FontWeightFrame
+
+data PeerFrame
+
+data Peer
 
 tests :: TestTree
 tests =
@@ -197,6 +202,126 @@ tests =
             assertFailure
               ("expected one visualization, got "
                  ++ show (length visualizations))
+    , testCase "one selected mapping shares fitted size across all peers" $ do
+        visualizations <-
+          compilePeerPlan "shared peer text" [1 .. 6] peerTextPlan
+        let sizeGroups = map textLayoutSizes visualizations
+        mapM_
+          (\sizes -> do
+             length sizes @?= 4
+             length (nub sizes) @?= 1)
+          sizeGroups
+        map (length . fittedSizeVariables) visualizations @?= replicate 6 1
+        assertBool
+          "the shared feasible size should remain seed-variable"
+          (length (nub (concatMap (take 1) sizeGroups)) > 1)
+    , testCase "separate mappings of one selection own separate size families" $ do
+        visualizations <-
+          compilePeerPlan "separate peer mappings" [3] repeatedPeerTextPlan
+        case visualizations of
+          [visualization] -> do
+            length (textLayoutSizes visualization) @?= 8
+            length (fittedSizeVariables visualization) @?= 2
+          values ->
+            assertFailure
+              ("expected one visualization, got " ++ show (length values))
+    , testCase "nested peers share the child declaration's fitted size" $ do
+        plan <- expectPlan nestedContentPlan
+        marker <- referenceMarker plan
+        compiled <-
+          Compile.compileRenderBatch
+            "TypographyTest.sverlin"
+            "nested shared size"
+            [7]
+            (nestedContentTrace marker)
+            plan
+        package <-
+          case compiled of
+            Left problem -> assertFailure (show problem)
+            Right value  -> pure value
+        case Resource.compilationPackageVisualizations package of
+          [visualization] -> do
+            length (nub (textLayoutSizes visualization)) @?= 1
+            length (fittedSizeVariables visualization) @?= 1
+          values ->
+            assertFailure
+              ("expected one visualization, got " ++ show (length values))
+    , testCase "automatic leaf styles vary by family rather than by peer" $ do
+        visualizations <-
+          compilePeerPlan "automatic peer styles" [1 .. 96] peerSurfacePlan
+        let profiles =
+              sort
+                (nub
+                   [ token
+                   | visualization <- visualizations
+                   , variable <- IR.visualizationVariables visualization
+                   , IR.CspVariableId name <- [IR.cspVariableId variable]
+                   , ".leaf.profile" `isInfixOf` name
+                   , IR.CspCategory token <- [IR.cspVariableValue variable]
+                   ])
+        profiles @?= ["flat", "outline", "pill", "soft-card", "transparent"]
+        mapM_ assertPeerStylesCoherent visualizations
+    , testCase "authored and removed surface fields beat automatic styles" $ do
+        visualizations <-
+          compileFramePlan "style precedence" [1 .. 24] stylePrecedencePlan
+        mapM_
+          (\visualization ->
+             case nonCanvasStyles visualization of
+               [style'] -> do
+                 fmap IR.hslHue (IR.visualFill style') @?= Just 42
+                 IR.visualStroke style' @?= Nothing
+               styles ->
+                 assertFailure
+                   ("expected one visual leaf, got " ++ show (length styles)))
+          visualizations
+    , testCase "removed FontSize uses the fixed renderer size without fallback" $ do
+        visualizations <-
+          compileFramePlan "removed font size" [5] removedFontSizePlan
+        case visualizations of
+          [visualization] ->
+            case textStyles visualization of
+              [(style', layout)] -> do
+                IR.visualFontSize style' @?= Nothing
+                IR.textLayoutFontSize layout @?= 16
+                fittedSizeVariables visualization @?= []
+              values ->
+                assertFailure
+                  ("expected one text line, got " ++ show (length values))
+          values ->
+            assertFailure
+              ("expected one visualization, got " ++ show (length values))
+    , testCase "structural parents remain transparent by default" $ do
+        visualizations <-
+          compileFramePlan "transparent parent" [11] structuralStylePlan
+        case visualizations of
+          [visualization] -> do
+            let elements =
+                  [ element
+                  | element <- IR.visualizationElements visualization
+                  , IR.elementId element /= IR.VisualId (-1)
+                  ]
+                parents = filter (not . null . IR.elementChildren) elements
+                profiles =
+                  [ token
+                  | variable <- IR.visualizationVariables visualization
+                  , IR.CspVariableId name <- [IR.cspVariableId variable]
+                  , ".leaf.profile" `isInfixOf` name
+                  , IR.CspCategory token <- [IR.cspVariableValue variable]
+                  ]
+            case parents of
+              [parent] -> do
+                let style' = IR.elementStyle parent
+                IR.visualFill style' @?= Nothing
+                IR.visualStroke style' @?= Nothing
+                IR.visualRadius style' @?= Nothing
+              values ->
+                assertFailure
+                  ("expected one structural parent, got "
+                     ++ show (length values))
+            length profiles @?= 1
+          values ->
+            assertFailure
+              ("expected one visualization, got " ++ show (length values))
     , testCase "context-local selections and endpoints reuse semantic mappings" $ do
         assertReferencePlan "semantic fallback" contextLocalFallbackPlan
         assertReferencePlan
@@ -319,6 +444,67 @@ ibmWeightChoicePlan =
         (Render.Selected Render.GeneratedNode)
     pure ()
 
+stylePrecedencePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+stylePrecedencePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 180)
+           Render.height (Render.by 72)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           Render.style @Render.Fill
+             (Render.Hsl (Render.num 42) (Render.num 0.4) (Render.num 0.9))
+           Render.withoutStyle @Render.Stroke) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+removedFontSizePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+removedFontSizePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 180)
+           Render.height (Render.by 72)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           Render.withoutStyle @Render.FontSize
+           Render.fitText (Render.text "fixed default")) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+structuralStylePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+structuralStylePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 260)
+           Render.height (Render.by 160)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           _ <-
+             Render.node
+               (do
+                  Render.width (Render.by 120)
+                  Render.height (Render.by 60)
+                  Render.xAt (Render.percent 50)
+                  Render.yAt (Render.percent 50)) :: Render.Render
+               (Render.Selected Render.GeneratedNode)
+           pure ()) :: Render.Render (Render.Selected Render.GeneratedNode)
+    pure ()
+
 nestedContentPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 nestedContentPlan =
   Render.buildRenderPlan $ do
@@ -378,6 +564,156 @@ nestedContentTrace marker =
         , Semantic.traceBlockEnded = Nothing
         , Semantic.traceBlockOccupancies = occupancies
         }
+
+peerTextPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+peerTextPlan = peerPlan [peerMapping 50 300 True]
+
+repeatedPeerTextPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+repeatedPeerTextPlan =
+  peerPlan [peerMapping 25 190 True, peerMapping 75 320 True]
+
+peerSurfacePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+peerSurfacePlan = peerPlan [peerMapping 50 180 False]
+
+peerPlan ::
+     [Render.Selected Peer -> Render.Render ()]
+  -> Either Render.RenderDiagnostic Render.RenderPlan
+peerPlan mappings =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @PeerFrame)
+    Render.width (Render.by 800)
+    Render.height (Render.by 400)
+    peers <- Render.selectKind "peer" :: Render.Render (Render.Selected Peer)
+    mapM_ ($ peers) mappings
+
+peerMapping ::
+     Double -> Double -> Bool -> Render.Selected Peer -> Render.Render ()
+peerMapping horizontal nodeWidth withText peers =
+  Render.node peers $ do
+    Render.width (Render.by nodeWidth)
+    Render.height (Render.by 72)
+    Render.xAt (Render.percent horizontal)
+    Render.yAt (Render.percent 50)
+    when withText (Render.bindContent >>= Render.fitText)
+
+compilePeerPlan ::
+     String
+  -> [Int]
+  -> Either Render.RenderDiagnostic Render.RenderPlan
+  -> IO [IR.Visualization]
+compilePeerPlan label seeds planResult = do
+  plan <- expectPlan planResult
+  marker <- referenceMarker plan
+  compiled <-
+    Compile.compileRenderBatch
+      "TypographyTest.sverlin"
+      label
+      seeds
+      (peerTrace marker)
+      plan
+  case compiled of
+    Left problem  -> assertFailure (show problem)
+    Right package -> pure (Resource.compilationPackageVisualizations package)
+
+peerTrace :: Semantic.TraceMarker -> Semantic.SemanticTrace
+peerTrace marker =
+  Semantic.SemanticTrace
+    { Semantic.semanticTraceScenarioSeed = 1
+    , Semantic.semanticTraceDeclarations = [(marker, "peer frame")]
+    , Semantic.semanticTraceVariables = []
+    , Semantic.semanticTraceBlocks =
+        zipWith
+          peerBlock
+          [0 ..]
+          ["1", "twenty", "three hundred", "a longer peer label"]
+    , Semantic.semanticTraceRelations = []
+    , Semantic.semanticTraceSteps = [Semantic.StepOccurrence marker [0] 0 1]
+    , Semantic.semanticTraceEvents = []
+    }
+  where
+    peerBlock identifier payload =
+      Semantic.TraceBlock
+        { Semantic.traceBlockId = Semantic.BlockId identifier
+        , Semantic.traceBlockKind = Semantic.TraceMarker "peer"
+        , Semantic.traceBlockType = Semantic.TraceMarker "peer"
+        , Semantic.traceBlockPayloadText = payload
+        , Semantic.traceBlockPayloadScalar = Nothing
+        , Semantic.traceBlockBorn = 0
+        , Semantic.traceBlockEnded = Nothing
+        , Semantic.traceBlockOccupancies = []
+        }
+
+textLayoutSizes :: IR.Visualization -> [Double]
+textLayoutSizes visualization =
+  [IR.textLayoutFontSize layout | (_style, layout) <- textStyles visualization]
+
+fittedSizeVariables :: IR.Visualization -> [(String, Double)]
+fittedSizeVariables visualization =
+  [ (name, value)
+  | variable <- IR.visualizationVariables visualization
+  , IR.CspVariableId name <- [IR.cspVariableId variable]
+  , ".font-size" `isInfixOf` name
+  , IR.CspNumber value <- [IR.cspVariableValue variable]
+  ]
+
+assertPeerStylesCoherent :: IR.Visualization -> IO ()
+assertPeerStylesCoherent visualization = do
+  let styles =
+        [ IR.elementStyle element
+        | element <- IR.visualizationElements visualization
+        , IR.elementId element /= IR.VisualId (-1)
+        ]
+      profiles =
+        [ token
+        | variable <- IR.visualizationVariables visualization
+        , IR.CspVariableId name <- [IR.cspVariableId variable]
+        , ".leaf.profile" `isInfixOf` name
+        , IR.CspCategory token <- [IR.cspVariableValue variable]
+        ]
+  length styles @?= 4
+  length (nub styles) @?= 1
+  length profiles @?= 1
+  case (profiles, styles) of
+    (["transparent"], style':_) -> do
+      IR.visualFill style' @?= Nothing
+      IR.visualStroke style' @?= Nothing
+      IR.visualTextAlign style' @?= Just "left"
+    (["outline"], style':_) -> do
+      IR.visualFill style' @?= Nothing
+      assertBool
+        "outline profile should have a stroke"
+        (isJust (IR.visualStroke style'))
+      IR.visualStrokeWidth style' @?= Just 1.5
+      IR.visualBorderStyle style' @?= Just "solid"
+    (["flat"], style':_) ->
+      assertBool
+        "flat profile should have a fill"
+        (isJust (IR.visualFill style'))
+    (["soft-card"], style':_) -> do
+      assertBool
+        "soft-card profile should have a fill"
+        (isJust (IR.visualFill style'))
+      assertBool
+        "soft-card radius should stay in its bounded theme range"
+        (maybe
+           False
+           (\value -> value >= 6 && value <= 16)
+           (IR.visualRadius style'))
+    (["pill"], style':_) -> do
+      assertBool
+        "pill profile should have a fill"
+        (isJust (IR.visualFill style'))
+      IR.visualRadius style' @?= Just 36
+    _ ->
+      assertFailure
+        ("unexpected automatic profile/style " ++ show (profiles, styles))
+
+nonCanvasStyles :: IR.Visualization -> [IR.VisualStyle]
+nonCanvasStyles visualization =
+  [ IR.elementStyle element
+  | element <- IR.visualizationElements visualization
+  , IR.elementId element /= IR.VisualId (-1)
+  ]
 
 contextLocalFallbackPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 contextLocalFallbackPlan = referencePlan False

@@ -18,6 +18,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
   return {
     state,
+    interactionParticipantId: principal.user.id,
     giftCardUrl:
       state.phase.kind === 'completion'
         ? await participantCompletionGiftCardUrl(principal.user.id)

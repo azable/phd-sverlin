@@ -224,20 +224,28 @@ finiteNumericBounds constraints = traverseWithKey validate bounds
     types = collectConstraintVarTypes constraints
     inferred = inferDomainBounds constraints
     bounds =
-      Map.mapWithKey
-        (\name ty ->
-           domainDefaultBounds ty
-             `mergeDomainBounds` Map.findWithDefault
-                                   unboundedDomainBounds
-                                   name
-                                   inferred)
-        types
+      Map.map
+        canonicalizeBounds
+        (Map.mapWithKey
+           (\name ty ->
+              domainDefaultBounds ty
+                `mergeDomainBounds` Map.findWithDefault
+                                      unboundedDomainBounds
+                                      name
+                                      inferred)
+           types)
     validate name domainBounds =
       case (domainLowerBound domainBounds, domainUpperBound domainBounds) of
         (Just lower, Just upper)
           | lower <= upper -> Right domainBounds
           | otherwise ->
-            Left ("inconsistent numeric bounds for MIP variable " ++ show name)
+            Left
+              ("inconsistent numeric bounds for MIP variable "
+                 ++ show name
+                 ++ ": inferred lower "
+                 ++ show lower
+                 ++ " exceeds upper "
+                 ++ show upper)
         _ ->
           Left
             ("HiGHS disjunction lowering requires finite bounds for numeric variable "

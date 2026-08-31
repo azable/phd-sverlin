@@ -54,6 +54,7 @@
   type StudyTask =
     | {
         context: 'participant';
+        participantId: string;
         runId: string;
         phaseId: string;
         title: string;
@@ -178,6 +179,7 @@
     if (study?.context === 'participant' && study.interactionCapture && workspaceRoot) {
       interactionRecorder = new ProjectInteractionRecorder({
         projectId,
+        participantId: study.participantId,
         capture: study.interactionCapture,
         applicationVersion: study.applicationVersion ?? '0.0.1',
         ...(study.deadlineAt ? { captureEndsAt: study.deadlineAt } : {}),
@@ -187,7 +189,7 @@
       interactionRecorder.start(workspaceRoot);
     }
     return () => {
-      interactionRecorder?.stop();
+      interactionRecorder?.dispose();
       session.dispose();
     };
   });

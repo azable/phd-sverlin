@@ -24,12 +24,17 @@ import type {
 import { plainMessageText } from '$lib/shared/projects/events/message-content';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
 import type { RenderablePresentation } from '$lib/shared/presentations';
-import { isSverlinPresentation, presentationViewSeed } from '$lib/shared/presentations';
+import {
+  isSverlinPresentation,
+  presentationStepLabels,
+  presentationViewSeed
+} from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import {
   decodeVisualization,
   type RenderInstanceId,
   type VisualElement,
+  type Visualization,
   type VisualizationFinding
 } from '$lib/shared/visualization';
 import type { ConversationMessage } from '$lib/server/chat-bots/types';
@@ -120,11 +125,42 @@ export type AiInteraction =
       }>;
     };
 
-/** Full retained presentation explicitly visible when the user submitted feedback. */
+/** Text facts useful for discussing a presentation without retaining glyph data. */
+export type AiPresentationText = {
+  kind: 'plain' | 'code' | 'legacy';
+  source: string;
+  language?: string;
+  fontFamily?: string;
+  fontWeight?: number;
+  fontStyle?: string;
+  fontSize?: number;
+  alignment?: string;
+};
+
+/** One compact rendered element; solver provenance and shaped glyphs stay in history. */
+export type AiPresentationElement = Pick<VisualElement, 'id' | 'role' | 'box' | 'children' | 'style'> & {
+  content?: AiPresentationText;
+};
+
+/** Compact retained presentation explicitly visible when the user submitted feedback. */
 export type AiSelectedPresentation = {
   eventId: EventId;
   displaySetId?: string;
-  presentation: RenderablePresentation;
+  presentationId: string;
+  format: RenderablePresentation['format'];
+  renderSummary?: AiRenderSummary;
+  elements?: AiPresentationElement[];
+  connectors?: NonNullable<Visualization['connectors']>;
+  steps: Array<{
+    label: string;
+    instances?: Array<{ id: number; elementId: number; originElementId?: number }>;
+    connectorInstances?: Array<{
+      instanceId: number;
+      instanceConnectorId: number;
+      instanceOriginConnectorId?: number;
+    }>;
+  }>;
+  findings?: VisualizationFinding[];
 };
 
 /** Strongly typed, consumer-specific context supplied to the AI assistant. */
@@ -321,14 +357,85 @@ function selectedPresentation(document: ProjectDocument, id: string): AiSelected
       event.type === 'visualization.presented' &&
       event.payload.presentation.presentationId === id
     ) {
-      return {
+      const presentation = event.payload.presentation;
+      const common = {
         eventId: event.id,
         displaySetId: event.payload.displaySetId,
-        presentation: event.payload.presentation
+        presentationId: presentation.presentationId,
+        format: presentation.format
+      };
+      if (!isSverlinPresentation(presentation)) {
+        return {
+          ...common,
+          steps: presentationStepLabels(presentation).map((label) => ({ label }))
+        };
+      }
+      const visualization = decodeVisualization(presentation.render.text);
+      return {
+        ...common,
+        renderSummary: renderSummary(event),
+        elements: visualization.elements.map(compactPresentationElement),
+        connectors: visualization.connectors ?? [],
+        steps: visualization.steps.map((step) => ({
+          label: step.label,
+          instances: step.instances.map(({ id, elementId, originElementId }) => ({
+            id,
+            elementId,
+            ...(originElementId === undefined ? {} : { originElementId })
+          })),
+          ...(step.connectorInstances
+            ? {
+                connectorInstances: step.connectorInstances.map(
+                  ({ instanceId, instanceConnectorId, instanceOriginConnectorId }) => ({
+                    instanceId,
+                    instanceConnectorId,
+                    ...(instanceOriginConnectorId === undefined
+                      ? {}
+                      : { instanceOriginConnectorId })
+                  })
+                )
+              }
+            : {})
+        })),
+        findings: visualization.findings
       };
     }
   }
   throw new Error(`Unknown selected presentation ${id}.`);
+}
+
+function compactPresentationElement(element: VisualElement): AiPresentationElement {
+  const content = compactPresentationText(element.content);
+  return {
+    id: element.id,
+    role: element.role,
+    box: element.box,
+    children: element.children,
+    style: element.style,
+    ...(content ? { content } : {})
+  };
+}
+
+function compactPresentationText(
+  content: VisualElement['content']
+): AiPresentationText | undefined {
+  if (!content) return undefined;
+  if (content.kind === 'legacyTextContent') {
+    return { kind: 'legacy', source: content.textSource };
+  }
+  const layout = content.textLayout;
+  return {
+    kind: content.kind === 'codeTextContent' ? 'code' : 'plain',
+    source: layout.layoutSource,
+    ...(content.kind === 'codeTextContent' && content.textLanguage
+      ? { language: content.textLanguage }
+      : {}),
+    fontFamily: layout.layoutFont.instanceFamily,
+    fontWeight: layout.layoutFont.instanceWeight,
+    fontStyle: layout.layoutFont.instanceStyle,
+    fontSize: layout.layoutFontSize,
+    alignment: layout.layoutAlignment
+  };
 }
 
 function eventDetail(document: ProjectDocument, id: EventId): AiEventDetail {

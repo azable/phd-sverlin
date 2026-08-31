@@ -210,7 +210,7 @@ module Sverlin
     bindContent
   , -- | Shape one fixed-size, non-wrapping line.
     content
-  , -- | Shape one non-wrapping line at any feasible bounded font size.
+  , -- | Shape one non-wrapping line at a feasible size shared by its node-mapping lineage.
     fitText
   , -- * Connectors
     -- | Typed endpoint and placement for a straight connector.

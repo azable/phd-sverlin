@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import * as v from 'valibot';
 
 import { requirePrincipal } from '$lib/server/authorization';
 import {
@@ -6,7 +7,14 @@ import {
   ingestStudyInteractions,
   StudyInteractionIngestionError
 } from '$lib/server/study-interactions';
-import { parseStudyInteractionBatch } from '$lib/shared/study/interactions';
+import {
+  parseStudyInteractionBatch,
+  studyInteractionEventInputSchema,
+  studyInteractionSessionInputSchema,
+  studyInteractionTerminalSchema,
+  type StudyInteractionBatchInput,
+  type StudyInteractionErrorCode
+} from '$lib/shared/study/interactions';
 
 import type { RequestHandler } from './$types';
 
@@ -17,35 +25,117 @@ const maximumBodyBytes = 64 * 1024;
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   const principal = requirePrincipal(locals);
   if (principal.kind !== 'participant') {
-    return json({ error: 'Participant interaction recording is required.' }, { status: 403 });
+    return interactionError(
+      'Participant interaction recording is required.',
+      'capture-unavailable',
+      403
+    );
   }
   if (!consumeStudyInteractionBatchAllowance(principal.user.id)) {
-    return json({ error: 'Interaction batches are arriving too quickly.' }, { status: 429 });
+    return interactionError('Interaction batches are arriving too quickly.', 'rate-limited', 429, {
+      headers: { 'retry-after': '5' }
+    });
   }
   try {
     const text = await boundedRequestText(request);
     if (text === undefined) {
-      return json({ error: 'The interaction batch is too large.' }, { status: 413 });
+      return interactionError('The interaction batch is too large.', 'body-too-large', 413);
     }
-    const batch = parseStudyInteractionBatch(JSON.parse(text));
+    const parsed = parseRequestBatch(JSON.parse(text));
+    if ('response' in parsed) return parsed.response;
+    const batch = parsed.batch;
     if (batch.session.projectId !== params.projectId) {
-      return json(
-        { error: 'The interaction project does not match the request.' },
-        { status: 409 }
+      return interactionError(
+        'The interaction project does not match the request.',
+        'project-mismatch',
+        409
       );
     }
     return json(await ingestStudyInteractions(principal, batch, new Date()));
   } catch (cause) {
     if (cause instanceof StudyInteractionIngestionError) {
-      return json({ error: cause.message }, { status: cause.status });
+      return json(
+        { error: cause.message, code: cause.code, ...cause.details },
+        { status: cause.status }
+      );
     }
-    if (cause instanceof SyntaxError || (cause instanceof Error && cause.name === 'ValiError')) {
-      return json({ error: 'The interaction batch is invalid.' }, { status: 400 });
+    if (cause instanceof SyntaxError) {
+      return interactionError('The interaction batch is not valid JSON.', 'invalid-json', 400);
     }
     console.error('Participant interaction ingestion failed.', cause);
-    return json({ error: 'Interaction recording is temporarily unavailable.' }, { status: 503 });
+    return interactionError(
+      'Interaction recording is temporarily unavailable.',
+      'temporarily-unavailable',
+      503
+    );
   }
 };
+
+function parseRequestBatch(
+  value: unknown
+): { batch: StudyInteractionBatchInput } | { response: Response } {
+  if (!isRecord(value)) {
+    return {
+      response: interactionError('The interaction batch is invalid.', 'invalid-batch', 400)
+    };
+  }
+  if (!v.safeParse(studyInteractionSessionInputSchema, value.session).success) {
+    return {
+      response: interactionError('The interaction session is invalid.', 'invalid-session', 400)
+    };
+  }
+  if (
+    value.terminal !== undefined &&
+    !v.safeParse(studyInteractionTerminalSchema, value.terminal).success
+  ) {
+    return {
+      response: interactionError(
+        'The interaction terminal metadata is invalid.',
+        'invalid-session',
+        400
+      )
+    };
+  }
+  if (!Array.isArray(value.events)) {
+    return {
+      response: interactionError('The interaction batch is invalid.', 'invalid-batch', 400)
+    };
+  }
+  for (const [invalidEventIndex, event] of value.events.entries()) {
+    if (!v.safeParse(studyInteractionEventInputSchema, event).success) {
+      return {
+        response: json(
+          {
+            error: 'One interaction event is invalid.',
+            code: 'invalid-event',
+            invalidEventIndex
+          },
+          { status: 400 }
+        )
+      };
+    }
+  }
+  try {
+    return { batch: parseStudyInteractionBatch(value) };
+  } catch {
+    return {
+      response: interactionError('The interaction batch is invalid.', 'invalid-batch', 400)
+    };
+  }
+}
+
+function interactionError(
+  error: string,
+  code: StudyInteractionErrorCode,
+  status: number,
+  init: Omit<ResponseInit, 'status'> = {}
+): Response {
+  return json({ error, code }, { ...init, status });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 async function boundedRequestText(request: Request): Promise<string | undefined> {
   const declared = Number(request.headers.get('content-length'));

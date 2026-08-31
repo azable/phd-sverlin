@@ -7,7 +7,9 @@ import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import type {
   StudyInteractionBatchInput,
-  StudyInteractionCapturePolicy
+  StudyInteractionCapturePolicy,
+  StudyInteractionErrorCode,
+  StudyInteractionIngestionResult
 } from '$lib/shared/study/interactions';
 import { studyDefinition } from '$lib/shared/study/registry';
 
@@ -20,15 +22,16 @@ const clientClockToleranceMs = 5_000;
 type RateWindow = { startedAt: number; count: number };
 const rateWindows = new Map<string, RateWindow>();
 
-export type StudyInteractionIngestionResult = {
-  acceptedThrough: number;
-  serverReceivedAt: string;
-};
-
 export class StudyInteractionIngestionError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 403 | 409 | 410 | 429 = 400
+    readonly status: 400 | 403 | 409 | 410 | 429 = 400,
+    readonly code: StudyInteractionErrorCode = 'invalid-batch',
+    readonly details: {
+      acceptedThrough?: number;
+      requiredNext?: number;
+      invalidEventIndex?: number;
+    } = {}
   ) {
     super(message);
     this.name = 'StudyInteractionIngestionError';
@@ -82,21 +85,24 @@ export async function ingestStudyInteractions(
       ) {
         throw new StudyInteractionIngestionError(
           'Interaction recording is unavailable for this study phase.',
-          403
+          403,
+          'capture-unavailable'
         );
       }
       const captureEnd = association.endedAt ?? association.deadlineAt;
       if (now.getTime() > captureEnd.getTime() + policy.lateDeliverySeconds * 1_000) {
         throw new StudyInteractionIngestionError(
           'The interaction delivery window has closed.',
-          410
+          410,
+          'delivery-window-closed'
         );
       }
       const clientStartedAt = new Date(batch.session.clientStartedAt);
       if (!sameCapturePolicy(batch.session.capture, policy)) {
         throw new StudyInteractionIngestionError(
           'The interaction capture policy has changed.',
-          409
+          409,
+          'capture-policy-mismatch'
         );
       }
       if (
@@ -106,7 +112,8 @@ export async function ingestStudyInteractions(
       ) {
         throw new StudyInteractionIngestionError(
           'The interaction session falls outside the study phase.',
-          410
+          410,
+          'session-outside-phase'
         );
       }
       assertWithinCaptureWindow(clientStartedAt, captureEnd, batch.events);
@@ -137,7 +144,8 @@ export async function ingestStudyInteractions(
     if (!stored) {
       throw new StudyInteractionIngestionError(
         'The interaction session could not be created.',
-        409
+        409,
+        'invalid-session'
       );
     }
 
@@ -147,58 +155,109 @@ export async function ingestStudyInteractions(
       association.projectDeletedAt ||
       association.mode !== 'participant' ||
       association.ownerUserId !== principal.user.id ||
-      stored.projectId !== batch.session.projectId ||
-      stored.schemaVersion !== batch.session.schemaVersion ||
-      !sameCapturePolicy(stored.capture, batch.session.capture)
+      stored.projectId !== batch.session.projectId
     ) {
-      throw new StudyInteractionIngestionError('Interaction session access was rejected.', 403);
+      throw new StudyInteractionIngestionError(
+        'Interaction session access was rejected.',
+        403,
+        'capture-unavailable'
+      );
+    }
+    if (!sameSessionMetadata(stored, batch.session)) {
+      throw new StudyInteractionIngestionError(
+        'The interaction session metadata conflicts with its stored value.',
+        409,
+        'invalid-session'
+      );
     }
 
     const captureEnd = association.endedAt ?? association.deadlineAt;
     if (!captureEnd) {
-      throw new StudyInteractionIngestionError('The study phase has no capture boundary.', 409);
+      throw new StudyInteractionIngestionError(
+        'The study phase has no capture boundary.',
+        409,
+        'capture-unavailable'
+      );
     }
     const deliveryEndsAt = captureEnd.getTime() + stored.capture.lateDeliverySeconds * 1_000;
     if (now.getTime() > deliveryEndsAt) {
-      throw new StudyInteractionIngestionError('The interaction delivery window has closed.', 410);
+      throw new StudyInteractionIngestionError(
+        'The interaction delivery window has closed.',
+        410,
+        'delivery-window-closed'
+      );
     }
 
+    const terminal = reconcileTerminal(stored, batch, captureEnd);
     const pending = batch.events.filter(({ sequence }) => sequence > stored.acceptedThrough);
-    if (!pending.length) {
-      return { acceptedThrough: stored.acceptedThrough, serverReceivedAt: now.toISOString() };
-    }
-    if (pending[0]?.sequence !== stored.acceptedThrough + 1) {
+    if (pending.length && pending[0]?.sequence !== stored.acceptedThrough + 1) {
+      const requiredNext = stored.acceptedThrough + 1;
       throw new StudyInteractionIngestionError(
-        `Interaction sequence ${stored.acceptedThrough + 1} is required next.`,
-        409
+        `Interaction sequence ${requiredNext} is required next.`,
+        409,
+        'sequence-conflict',
+        { acceptedThrough: stored.acceptedThrough, requiredNext }
       );
     }
     assertWithinCaptureWindow(stored.clientStartedAt, captureEnd, pending);
     if (pending.some((event) => event.projectHead > association.projectHead)) {
       throw new StudyInteractionIngestionError(
         'An interaction references a future project Timeline head.',
-        409
+        409,
+        'future-project-head'
+      );
+    }
+    if (terminal && pending.at(-1) && pending.at(-1)!.sequence > terminal.recordedThrough) {
+      throw new StudyInteractionIngestionError(
+        'Interaction records extend beyond the session terminal sequence.',
+        409,
+        'terminal-conflict'
       );
     }
 
-    await transaction.insert(schema.projectInteractionEvents).values(
-      pending.map((event) => ({
-        sessionId: stored.id,
-        sequence: event.sequence,
-        kind: event.kind,
-        elapsedMs: event.elapsedMs,
-        clientOccurredAt: new Date(event.clientOccurredAt),
-        projectHead: event.projectHead,
-        payload: event.payload,
-        receivedAt: now
-      }))
-    );
-    const acceptedThrough = pending.at(-1)!.sequence;
+    if (pending.length) {
+      await transaction.insert(schema.projectInteractionEvents).values(
+        pending.map((event) => ({
+          sessionId: stored.id,
+          sequence: event.sequence,
+          kind: event.kind,
+          elapsedMs: event.elapsedMs,
+          clientOccurredAt: new Date(event.clientOccurredAt),
+          projectHead: event.projectHead,
+          payload: event.payload,
+          receivedAt: now
+        }))
+      );
+    }
+    const acceptedThrough = pending.at(-1)?.sequence ?? stored.acceptedThrough;
+    if (terminal && acceptedThrough > terminal.recordedThrough) {
+      throw new StudyInteractionIngestionError(
+        'The terminal sequence precedes records already accepted by the server.',
+        409,
+        'terminal-conflict'
+      );
+    }
+    const deliveryComplete = terminal?.recordedThrough === acceptedThrough;
     await transaction
       .update(schema.projectInteractionSessions)
-      .set({ acceptedThrough, updatedAt: now })
+      .set({
+        acceptedThrough,
+        ...(terminal
+          ? {
+              clientStoppedAt: terminal.clientStoppedAt,
+              recordedThrough: terminal.recordedThrough,
+              deliveryCompletedAt: deliveryComplete ? (stored.deliveryCompletedAt ?? now) : null
+            }
+          : {}),
+        updatedAt: now
+      })
       .where(eq(schema.projectInteractionSessions.id, stored.id));
-    return { acceptedThrough, serverReceivedAt: now.toISOString() };
+    return {
+      acceptedThrough,
+      serverReceivedAt: now.toISOString(),
+      terminalAccepted: terminal !== undefined,
+      deliveryComplete
+    };
   });
   return result;
 }
@@ -206,7 +265,11 @@ export async function ingestStudyInteractions(
 function assertContiguousBatch(batch: StudyInteractionBatchInput): void {
   for (let index = 1; index < batch.events.length; index += 1) {
     if (batch.events[index]!.sequence !== batch.events[index - 1]!.sequence + 1) {
-      throw new StudyInteractionIngestionError('Interaction batches must be contiguous.', 409);
+      throw new StudyInteractionIngestionError(
+        'Interaction batches must be contiguous.',
+        409,
+        'sequence-conflict'
+      );
     }
   }
 }
@@ -225,10 +288,49 @@ function assertWithinCaptureWindow(
     if (event.elapsedMs > maximumElapsed || occurredAt < earliest || occurredAt > latest) {
       throw new StudyInteractionIngestionError(
         'An interaction falls outside the study phase capture window.',
-        410
+        410,
+        'delivery-window-closed'
       );
     }
   }
+}
+
+function reconcileTerminal(
+  stored: typeof schema.projectInteractionSessions.$inferSelect,
+  batch: StudyInteractionBatchInput,
+  captureEnd: Date
+): { clientStoppedAt: Date; recordedThrough: number } | undefined {
+  const supplied = batch.terminal;
+  const existing =
+    stored.clientStoppedAt && stored.recordedThrough !== null
+      ? {
+          clientStoppedAt: stored.clientStoppedAt,
+          recordedThrough: stored.recordedThrough
+        }
+      : undefined;
+  if (!supplied) return existing;
+  const clientStoppedAt = new Date(supplied.clientStoppedAt);
+  const earliest = stored.clientStartedAt.getTime() - clientClockToleranceMs;
+  const latest = captureEnd.getTime() + clientClockToleranceMs;
+  if (clientStoppedAt.getTime() < earliest || clientStoppedAt.getTime() > latest) {
+    throw new StudyInteractionIngestionError(
+      'The terminal timestamp falls outside the study phase.',
+      410,
+      'delivery-window-closed'
+    );
+  }
+  if (
+    existing &&
+    (existing.clientStoppedAt.getTime() !== clientStoppedAt.getTime() ||
+      existing.recordedThrough !== supplied.recordedThrough)
+  ) {
+    throw new StudyInteractionIngestionError(
+      'The interaction session terminal metadata conflicts with its stored value.',
+      409,
+      'terminal-conflict'
+    );
+  }
+  return existing ?? { clientStoppedAt, recordedThrough: supplied.recordedThrough };
 }
 
 async function projectAssociation(
@@ -274,6 +376,23 @@ function sameCapturePolicy(
     'lateDeliverySeconds'
   ];
   return keys.every((key) => left[key] === right[key]);
+}
+
+function sameSessionMetadata(
+  stored: typeof schema.projectInteractionSessions.$inferSelect,
+  supplied: StudyInteractionBatchInput['session']
+): boolean {
+  return (
+    stored.schemaVersion === supplied.schemaVersion &&
+    stored.clientStartedAt.getTime() === new Date(supplied.clientStartedAt).getTime() &&
+    stored.clientTimeOrigin === supplied.timeOrigin &&
+    stored.initialViewport.width === supplied.initialViewport.width &&
+    stored.initialViewport.height === supplied.initialViewport.height &&
+    stored.initialViewport.devicePixelRatio === supplied.initialViewport.devicePixelRatio &&
+    stored.applicationVersion === supplied.applicationVersion &&
+    (stored.buildSha ?? undefined) === supplied.buildSha &&
+    sameCapturePolicy(stored.capture, supplied.capture)
+  );
 }
 
 function pruneRateWindows(now: number): void {

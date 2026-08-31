@@ -112,6 +112,7 @@ library sverlin-internal
         Sverlin.Internal.Compiler
         Sverlin.Internal.Render
         Sverlin.Internal.Render.Compile
+        Sverlin.Internal.Render.Theme
         Sverlin.Internal.Render.Typography
         Sverlin.Syntax
 

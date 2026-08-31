@@ -29,7 +29,7 @@ import { projectStudyFlow, type StudyFlow } from '$lib/shared/study/projection';
 import { registeredStudyDefinitions, studyDefinition } from '$lib/shared/study/registry';
 
 const exportFormat = 'sverlin-data-export';
-const exportVersion = 2;
+const exportVersion = 3;
 
 export type ExportScope =
   | { type: 'projects'; projectId?: string }
@@ -88,6 +88,9 @@ export type ExportInteractionSession = {
   buildSha?: string;
   capture: Record<string, unknown>;
   acceptedThrough: number;
+  clientStoppedAt?: string;
+  recordedThrough?: number;
+  deliveryCompletedAt?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -106,6 +109,14 @@ export type ExportInteractionEvent = {
 export type ExportInteractionSnapshot = {
   sessions: ExportInteractionSession[];
   events: ExportInteractionEvent[];
+  expectedProjects: Array<{
+    projectId: string;
+    studyRunId: string;
+    studyPhaseId: string;
+    captureStartedAt: string;
+    captureEndedAt: string;
+    deliveryEndsAt: string;
+  }>;
 };
 
 export interface ExportDataSource {
@@ -132,6 +143,12 @@ export type DataExportManifest = {
     sessionCount: number;
     eventCount: number;
     draftSnapshotCount: number;
+    completeSessionCount: number;
+    openSessionCount: number;
+    pendingSessionCount: number;
+    incompleteSessionCount: number;
+    missingProjectCount: number;
+    droppedEventCount: number;
     warnings: string[];
   };
   files: Array<{ path: string; sha256: string; byteLength: number; mediaType: string }>;
@@ -498,6 +515,33 @@ export class PostgresExportDataSource implements ExportDataSource {
                   asc(schema.projectInteractionSessions.clientStartedAt),
                   asc(schema.projectInteractionSessions.id)
                 );
+        const expectedRows = await transaction
+          .select({
+            projectId: schema.projects.id,
+            runId: schema.studyPhaseRuns.runId,
+            phaseId: schema.studyPhaseRuns.phaseId,
+            studyId: schema.studyRuns.studyId,
+            studyVersion: schema.studyRuns.studyVersion,
+            mode: schema.studyRuns.mode,
+            startedAt: schema.studyPhaseRuns.startedAt,
+            deadlineAt: schema.studyPhaseRuns.deadlineAt,
+            endedAt: schema.studyPhaseRuns.endedAt
+          })
+          .from(schema.studyPhaseRuns)
+          .innerJoin(schema.studyRuns, eq(schema.studyRuns.id, schema.studyPhaseRuns.runId))
+          .innerJoin(schema.projects, eq(schema.projects.id, schema.studyPhaseRuns.projectId))
+          .where(
+            and(
+              eq(schema.studyPhaseRuns.kind, 'task'),
+              isNull(schema.projects.deletedAt),
+              ...(scope.type === 'projects'
+                ? scope.projectId
+                  ? [eq(schema.projects.id, scope.projectId)]
+                  : []
+                : studyConditions)
+            )
+          )
+          .orderBy(asc(schema.studyPhaseRuns.startedAt), asc(schema.projects.id));
         const sessionIds = rows.map(({ session }) => session.id);
         const events = sessionIds.length
           ? await transaction
@@ -523,6 +567,15 @@ export class PostgresExportDataSource implements ExportDataSource {
             ...(session.buildSha ? { buildSha: session.buildSha } : {}),
             capture: session.capture,
             acceptedThrough: session.acceptedThrough,
+            ...(session.clientStoppedAt
+              ? { clientStoppedAt: session.clientStoppedAt.toISOString() }
+              : {}),
+            ...(session.recordedThrough === null
+              ? {}
+              : { recordedThrough: session.recordedThrough }),
+            ...(session.deliveryCompletedAt
+              ? { deliveryCompletedAt: session.deliveryCompletedAt.toISOString() }
+              : {}),
             createdAt: session.createdAt.toISOString(),
             updatedAt: session.updatedAt.toISOString()
           })),
@@ -535,7 +588,24 @@ export class PostgresExportDataSource implements ExportDataSource {
             projectHead: event.projectHead,
             payload: event.payload as Record<string, unknown>,
             receivedAt: event.receivedAt.toISOString()
-          }))
+          })),
+          expectedProjects: expectedRows.flatMap((row) => {
+            const policy = studyDefinition(row.studyId, row.studyVersion).interactionCapture;
+            const captureEnd = row.endedAt ?? row.deadlineAt;
+            if (row.mode !== 'participant' || !row.startedAt || !captureEnd || !policy) return [];
+            return [
+              {
+                projectId: row.projectId,
+                studyRunId: row.runId,
+                studyPhaseId: row.phaseId,
+                captureStartedAt: row.startedAt.toISOString(),
+                captureEndedAt: captureEnd.toISOString(),
+                deliveryEndsAt: new Date(
+                  captureEnd.getTime() + policy.lateDeliverySeconds * 1_000
+                ).toISOString()
+              }
+            ];
+          })
         };
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' }
@@ -593,7 +663,7 @@ export async function writeDataExport(
       );
     }
   }
-  const interactionExport = await prepareInteractionExport(source, scope);
+  const interactionExport = await prepareInteractionExport(source, scope, exportedAt);
   for (const file of interactionExport.files) {
     await appendBytes(sink, files, file.path, file.bytes, file.mediaType);
   }
@@ -624,7 +694,8 @@ type PreparedInteractionFiles = {
 
 async function prepareInteractionExport(
   source: ExportDataSource,
-  scope: ExportScope
+  scope: ExportScope,
+  exportedAt: string
 ): Promise<PreparedInteractionFiles> {
   const warning =
     'Interaction telemetry was unavailable; the primary project Timeline and chat export is complete.';
@@ -648,17 +719,28 @@ async function prepareInteractionExport(
         payload: { ...metadata, sensitiveDraftRecordId: recordId }
       };
     });
+    const coverage = interactionCoverage(snapshot, exportedAt);
     const summary: DataExportManifest['interactions'] = {
       status: 'included',
       sessionCount: snapshot.sessions.length,
       eventCount: snapshot.events.length,
       draftSnapshotCount: drafts.length,
-      warnings: []
+      completeSessionCount: coverage.completeSessionCount,
+      openSessionCount: coverage.openSessionCount,
+      pendingSessionCount: coverage.pendingSessionCount,
+      incompleteSessionCount: coverage.incompleteSessionCount,
+      missingProjectCount: coverage.missingProjectCount,
+      droppedEventCount: coverage.droppedEventCount,
+      warnings: coverage.warnings
     };
-    const coverage = {
+    const coverageDocument = {
       ...summary,
       scope,
-      note: 'Events align to project operations through projectHead and active-operation checkpoints.'
+      exportedAt,
+      projects: coverage.projects,
+      sessions: coverage.sessions,
+      droppedByReason: coverage.droppedByReason,
+      note: 'Per-session sequence is authoritative. Cross-tab ordering is approximate using clientOccurredAt, receivedAt, sessionId, sequence, and projectHead.'
     };
     return {
       summary,
@@ -680,7 +762,7 @@ async function prepareInteractionExport(
         },
         {
           path: 'interactions/coverage.json',
-          bytes: jsonBytes(coverage),
+          bytes: jsonBytes(coverageDocument),
           mediaType: 'application/json'
         }
       ]
@@ -692,6 +774,12 @@ async function prepareInteractionExport(
       sessionCount: 0,
       eventCount: 0,
       draftSnapshotCount: 0,
+      completeSessionCount: 0,
+      openSessionCount: 0,
+      pendingSessionCount: 0,
+      incompleteSessionCount: 0,
+      missingProjectCount: 0,
+      droppedEventCount: 0,
       warnings: [warning]
     };
     return {
@@ -705,6 +793,104 @@ async function prepareInteractionExport(
       ]
     };
   }
+}
+
+type InteractionDeliveryStatus = 'complete' | 'incomplete' | 'open' | 'pending';
+
+function interactionCoverage(snapshot: ExportInteractionSnapshot, exportedAt: string) {
+  const exportedAtMs = new Date(exportedAt).getTime();
+  const expectedByProject = new Map(
+    snapshot.expectedProjects.map((project) => [project.projectId, project] as const)
+  );
+  const sessions = snapshot.sessions.map((session) => {
+    const expected = expectedByProject.get(session.projectId);
+    const complete =
+      session.recordedThrough !== undefined && session.acceptedThrough === session.recordedThrough;
+    const deliveryClosed =
+      expected !== undefined && exportedAtMs > new Date(expected.deliveryEndsAt).getTime();
+    const status: InteractionDeliveryStatus = complete
+      ? 'complete'
+      : deliveryClosed
+        ? 'incomplete'
+        : session.recordedThrough === undefined
+          ? 'open'
+          : 'pending';
+    return {
+      sessionId: session.id,
+      projectId: session.projectId,
+      status,
+      acceptedThrough: session.acceptedThrough,
+      ...(session.recordedThrough === undefined
+        ? {}
+        : { recordedThrough: session.recordedThrough }),
+      ...(session.clientStoppedAt ? { clientStoppedAt: session.clientStoppedAt } : {}),
+      ...(session.deliveryCompletedAt ? { deliveryCompletedAt: session.deliveryCompletedAt } : {})
+    };
+  });
+  const sessionsByProject = new Map<string, typeof sessions>();
+  for (const session of sessions) {
+    const projectSessions = sessionsByProject.get(session.projectId) ?? [];
+    projectSessions.push(session);
+    sessionsByProject.set(session.projectId, projectSessions);
+  }
+  const projects = snapshot.expectedProjects.map((project) => {
+    const projectSessions = sessionsByProject.get(project.projectId) ?? [];
+    return {
+      ...project,
+      status: projectSessions.length ? 'recorded' : 'missing',
+      sessionIds: projectSessions.map(({ sessionId }) => sessionId)
+    };
+  });
+  const droppedByReason: Record<string, number> = {};
+  let droppedEventCount = 0;
+  for (const event of snapshot.events) {
+    if (event.kind !== 'recorder.dropped') continue;
+    const reason = typeof event.payload.reason === 'string' ? event.payload.reason : 'unknown';
+    const counts = isPlainRecord(event.payload.counts) ? Object.values(event.payload.counts) : [];
+    const count = counts.reduce(
+      (total: number, value) =>
+        total +
+        (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0),
+      0
+    );
+    droppedByReason[reason] = (droppedByReason[reason] ?? 0) + count;
+    droppedEventCount += count;
+  }
+  const count = (status: InteractionDeliveryStatus) =>
+    sessions.filter((session) => session.status === status).length;
+  const incompleteSessionCount = count('incomplete');
+  const openSessionCount = count('open');
+  const pendingSessionCount = count('pending');
+  const missingProjectCount = projects.filter(({ status }) => status === 'missing').length;
+  const warnings = [
+    ...(missingProjectCount
+      ? [`${missingProjectCount} started participant task project(s) have no interaction session.`]
+      : []),
+    ...(incompleteSessionCount
+      ? [`${incompleteSessionCount} interaction session(s) are incomplete after delivery closed.`]
+      : []),
+    ...(openSessionCount || pendingSessionCount
+      ? [
+          `${openSessionCount + pendingSessionCount} interaction session(s) were still open or pending when exported.`
+        ]
+      : [])
+  ];
+  return {
+    projects,
+    sessions,
+    droppedByReason,
+    droppedEventCount,
+    completeSessionCount: count('complete'),
+    openSessionCount,
+    pendingSessionCount,
+    incompleteSessionCount,
+    missingProjectCount,
+    warnings
+  };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function writeDataDirectory(

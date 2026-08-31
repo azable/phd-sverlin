@@ -32,7 +32,11 @@ export const e2eChatAdapter: ChatAdapter = {
           ? { decision: 'continue' }
           : request.responseFormat.name === 'html_visualization_turn'
             ? { reply, candidates: [], recovery: null }
-            : { reply, action: 'respond', sourceArtifactContent: null, recovery: null },
+            : {
+                reply,
+                decision: { action: 'respond', sourceArtifactContent: null },
+                recovery: null
+              },
       generation: { model: 'e2e-deterministic' }
     };
   },

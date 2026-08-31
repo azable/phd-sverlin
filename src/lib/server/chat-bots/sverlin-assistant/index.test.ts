@@ -36,7 +36,9 @@ describe('AI assistant DSL interface', () => {
     const index = await loadDslApiIndex();
     expect(index).toContain('# Public Sverlin DSL API index');
     expect(index).toContain('`node` —');
-    expect(index).toContain('`fitText` — Type: `fitText :: ContentValue -> Render ()`');
+    expect(index).toContain(
+      '`fitText` — Type: `fitText :: ContentValue -> Render ()` — Shape one non-wrapping line at a feasible size shared by its node-mapping lineage.'
+    );
     expect(index).toContain('`Traceable` — Type: `class Traceable tag where; type Payload tag`');
     expect(index).not.toContain('NodeBinding');
     expect(index).not.toContain('ChoiceDomain');
@@ -69,6 +71,8 @@ describe('AI assistant DSL interface', () => {
     expect(guide).toContain('`oneOf name first rest` creates one fresh authored choice');
     expect(guide).toContain('`fontChoice (fontKind Monospace)`');
     expect(guide).toContain('not to guess an aesthetic');
+    expect(guide).toContain('Every concrete peer created by one `node selected` mapping');
+    expect(guide).toContain('Repeated peers do not independently randomize these fields');
   });
 
   it('lets preference evidence drive or defer a proactive source adaptation', () => {
@@ -81,15 +85,13 @@ describe('AI assistant DSL interface', () => {
     expect(() =>
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: '' }],
-        action: 'respond',
-        sourceArtifactContent: null
+        decision: { action: 'respond', sourceArtifactContent: null }
       })
     ).toThrow();
     expect(() =>
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'Update' }],
-        action: 'revise',
-        sourceArtifactContent: '   '
+        decision: { action: 'revise', sourceArtifactContent: '   ' }
       })
     ).toThrow();
   });
@@ -98,8 +100,7 @@ describe('AI assistant DSL interface', () => {
     expect(
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'Here is a simpler version.' }],
-        action: 'revise',
-        sourceArtifactContent: 'main = pure ()',
+        decision: { action: 'revise', sourceArtifactContent: 'main = pure ()' },
         recovery: {
           struggledWith: 'the dense animated layout',
           simplified: 'the layout while preserving the value flow'
@@ -114,27 +115,45 @@ describe('AI assistant DSL interface', () => {
   });
 
   it('enforces the respond, resample, and revise source contract', () => {
+    expect(aiAssistant.responseFormat.schema).toMatchObject({
+      type: 'object',
+      properties: {
+        decision: {
+          anyOf: [
+            {
+              properties: {
+                action: { enum: ['revise'] },
+                sourceArtifactContent: { type: 'string' }
+              }
+            },
+            {
+              properties: {
+                action: { enum: ['respond', 'resample'] },
+                sourceArtifactContent: { type: 'null' }
+              }
+            }
+          ]
+        }
+      }
+    });
     expect(() =>
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'I will change it.' }],
-        action: 'respond',
-        sourceArtifactContent: 'main = pure ()',
+        decision: { action: 'respond', sourceArtifactContent: 'main = pure ()' },
         recovery: null
       })
     ).toThrow(/action/i);
     expect(() =>
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'I am updating it.' }],
-        action: 'revise',
-        sourceArtifactContent: null,
+        decision: { action: 'revise', sourceArtifactContent: null },
         recovery: null
       })
     ).toThrow(/action/i);
     expect(
       aiAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'I am preparing another pair.' }],
-        action: 'resample',
-        sourceArtifactContent: null,
+        decision: { action: 'resample', sourceArtifactContent: null },
         recovery: null
       })
     ).toMatchObject({ action: 'resample' });
@@ -153,8 +172,7 @@ describe('AI assistant DSL interface', () => {
           },
           { type: 'markdown', text: 'Do you prefer this element?' }
         ],
-        action: 'respond',
-        sourceArtifactContent: null,
+        decision: { action: 'respond', sourceArtifactContent: null },
         recovery: null
       })
     ).toMatchObject({ action: 'respond' });

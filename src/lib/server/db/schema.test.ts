@@ -45,6 +45,9 @@ describe('PostgreSQL relations', () => {
 
   it('associates ordered interaction sessions with projects', () => {
     expect(getTableColumns(projectInteractionSessions)).toHaveProperty('projectId');
+    expect(getTableColumns(projectInteractionSessions)).toHaveProperty('clientStoppedAt');
+    expect(getTableColumns(projectInteractionSessions)).toHaveProperty('recordedThrough');
+    expect(getTableColumns(projectInteractionSessions)).toHaveProperty('deliveryCompletedAt');
     expect(getTableColumns(projectInteractionSessions)).not.toHaveProperty('runId');
     expect(getTableColumns(projectInteractionEvents)).toHaveProperty('projectHead');
     expect(getTableColumns(projectInteractionEvents)).toHaveProperty('receivedAt');

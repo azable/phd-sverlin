@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mainStudyV1 } from '$lib/shared/study/main-v1';
 
-import type { InteractionOutbox } from './interaction-outbox';
+import { ResilientInteractionOutbox, type InteractionOutbox } from './interaction-outbox';
 import { ProjectInteractionRecorder } from './interaction-recorder';
 
 describe('project interaction recorder isolation', () => {
@@ -28,15 +28,19 @@ describe('project interaction recorder isolation', () => {
     };
     const outbox: InteractionOutbox = {
       putSession: vi.fn(failure),
-      markStopped: vi.fn(failure),
+      finalize: vi.fn(failure),
+      block: vi.fn(failure),
       putEvent: vi.fn(failure),
+      replaceEvent: vi.fn(failure),
       sessions: vi.fn(failure),
       events: vi.fn(failure),
       acknowledge: vi.fn(failure),
+      complete: vi.fn(failure),
       abandon: vi.fn(failure)
     };
     const recorder = new ProjectInteractionRecorder({
       projectId: 'project-one',
+      participantId: 'participant-one',
       capture: mainStudyV1.interactionCapture!,
       applicationVersion: 'test',
       outbox,
@@ -81,19 +85,24 @@ describe('project interaction recorder isolation', () => {
     installBrowserGlobals();
     const putEvent = vi.fn<InteractionOutbox['putEvent']>(async () => ({
       stored: true,
-      dropped: {}
+      dropped: {},
+      storageUnavailable: false
     }));
     const outbox: InteractionOutbox = {
       putSession: vi.fn(async () => undefined),
-      markStopped: vi.fn(async () => undefined),
+      finalize: vi.fn(async () => undefined),
+      block: vi.fn(async () => undefined),
       putEvent,
+      replaceEvent: vi.fn(async () => undefined),
       sessions: vi.fn(async () => []),
       events: vi.fn(async () => []),
       acknowledge: vi.fn(async () => undefined),
+      complete: vi.fn(async () => undefined),
       abandon: vi.fn(async () => undefined)
     };
     const recorder = new ProjectInteractionRecorder({
       projectId: 'project-one',
+      participantId: 'participant-one',
       capture: mainStudyV1.interactionCapture!,
       captureEndsAt: '2026-08-30T10:00:01.000Z',
       applicationVersion: 'test',
@@ -111,6 +120,34 @@ describe('project interaction recorder isolation', () => {
 
     expect(putEvent).toHaveBeenCalledTimes(1);
     expect(putEvent.mock.calls[0]?.[0].event.kind).toBe('workspace.state');
+  });
+
+  it('keeps simultaneous tabs as separate active sessions', async () => {
+    installBrowserGlobals();
+    const outbox = new ResilientInteractionOutbox();
+    const options = {
+      projectId: 'project-one',
+      participantId: 'participant-one',
+      capture: mainStudyV1.interactionCapture!,
+      applicationVersion: 'test',
+      outbox,
+      fetch: vi.fn(async () => new Response(null, { status: 503 }))
+    };
+    const first = new ProjectInteractionRecorder(options);
+    const second = new ProjectInteractionRecorder(options);
+
+    first.start(new EventTarget() as HTMLElement);
+    second.start(new EventTarget() as HTMLElement);
+    first.recordWorkspaceState(workspaceObservation());
+    second.recordWorkspaceState(workspaceObservation());
+    await first.flush();
+    await second.flush();
+
+    const sessions = await outbox.sessions();
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every(({ terminal }) => terminal === undefined)).toBe(true);
+    first.dispose();
+    second.dispose();
   });
 });
 

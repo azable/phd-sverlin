@@ -1011,6 +1011,12 @@ an arbitrary canvas scale. A later theme may change both bounds, but they are
 compiled into the design-space identity and output provenance rather than read
 during materialization.
 
+An implicit fitted size belongs to the content declaration and its node-mapping
+lineage, not to each expanded concrete node. All peers produced by one
+`node selected` declaration therefore share one sampled size, and every line
+contributes a fit constraint so the longest peer limits it. A second mapping of
+the same semantic selection has a distinct lineage and may sample another size.
+
 One node may declare content exactly once. Calling both operations, or calling
 either twice, is a source diagnostic.
 
@@ -1368,6 +1374,14 @@ connector section.
 `styleOf @Field selected` reads the final symbolic value and
 requires the field to be present in every active branch. When presence itself
 is conditional, constrain the driving choice instead.
+
+For a childless visual mapping, an unspecified field may be completed by a
+private seeded theme. The baseline surface profiles are `transparent`,
+`outline`, `flat`, `soft-card`, and `pill`; one mapping lineage shares its
+profile and palette. Automatic font choices use unique concrete catalog
+families and real weights. Canvas and structural parent mappings remain
+transparent unless authored. These defaults are compiler behavior, not a
+public `styleFamily` or `StyleProfile` API.
 
 Choices made outside a helper are shared by its callers; choices made inside
 the helper are fresh each time:
@@ -1925,7 +1939,7 @@ historical donor, not a second public API:
 | [`LinearTrace.Choreography`](../src/LinearTrace/Choreography.hs)                                                                                               | `Sverlin`                                | Authored facade only; legacy code is not re-exported.                                            |
 | [`LinearTrace.Core.Internal`](../src/LinearTrace/Core/Internal.hs)                                                                                             | private Domain/Program trace engine      | Linear resources, provenance, allocation, and event ordering.                                    |
 | `LinearTrace.Choreography.Match`, `Graph`, and `View.Access`                                                                                                   | private `RenderPlan` matching/projection | Semantic scope and stable projection identity.                                                   |
-| `View.Template`, `Build`, and `StyleProfile`                                                                                                                   | private `RenderPlan` lowering            | Useful lowering behavior without authored template or automatic-profile layers.                  |
+| `View.Template`, `Build`, and `StyleProfile`                                                                                                                   | private `RenderPlan` lowering            | Useful lowering and coherent missing-style completion without a public authored profile layer.   |
 | `View.Box`, `View.Style`, and `View.Primitives`                                                                                                                | private affine box/style representation  | Typed geometry and cascade behavior without exposing accumulated records.                        |
 | [`Visualization.FontCatalog`](../src/LinearTrace/Visualization/FontCatalog.hs), `HarfBuzz`, and [`Typography`](../src/LinearTrace/Visualization/Typography.hs) | typography branch preparation            | Font metadata, whole-line shaping, and affine fit coefficients.                                  |
 | [`Visualization.CodeHighlight`](../src/LinearTrace/Visualization/CodeHighlight.hs)                                                                             | none                                     | Typed text fragments replace the code-special highlighting surface.                              |

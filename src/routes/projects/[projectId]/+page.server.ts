@@ -35,6 +35,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
           : {
               ...task,
               context: 'participant' as const,
+              participantId: inspection.ownerUserId,
               deadlineAt: flowPhase.deadlineAt,
               allowEarlyCompletion: !!flowPhase.phase.allowEarlyCompletion,
               ...(inspection.study.interactionCapture && !inspection.readOnly

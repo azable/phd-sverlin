@@ -16,6 +16,22 @@ describe('project interaction contracts', () => {
 
     expect(() => parseStudyInteractionBatch(value)).toThrow();
   });
+
+  it('accepts a metadata-only terminal batch and rejects an empty open batch', () => {
+    const value = fixtureBatch();
+    value.events = [];
+
+    expect(
+      parseStudyInteractionBatch({
+        ...value,
+        terminal: {
+          clientStoppedAt: '2026-08-30T10:01:00.000Z',
+          recordedThrough: 0
+        }
+      })
+    ).toMatchObject({ events: [], terminal: { recordedThrough: 0 } });
+    expect(() => parseStudyInteractionBatch(value)).toThrow();
+  });
 });
 
 function fixtureBatch() {

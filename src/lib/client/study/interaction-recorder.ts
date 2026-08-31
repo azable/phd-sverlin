@@ -1,14 +1,19 @@
 /** Fail-isolated browser recorder for coarse project-workspace replay. */
 
+import * as v from 'valibot';
+
 import type { MessageContent } from '$lib/shared/projects/events/message-content';
-import type {
-  StudyInteractionCapturePolicy,
-  StudyInteractionEventInput,
-  StudyInteractionSessionInput,
-  StudyWorkspaceObservation
+import {
+  studyInteractionEventInputSchema,
+  type StudyInteractionEventInput,
+  type StudyInteractionCapturePolicy,
+  type StudyInteractionSessionInput,
+  type StudyWorkspaceObservation
 } from '$lib/shared/study/interactions';
 
+import { ProjectInteractionDelivery } from './interaction-delivery';
 import {
+  droppedStoredRecord,
   ResilientInteractionOutbox,
   type InteractionOutbox,
   type StoredInteractionEvent
@@ -21,6 +26,7 @@ const stateDebounceMs = 100;
 
 export type ProjectInteractionRecorderOptions = {
   projectId: string;
+  participantId: string;
   capture: StudyInteractionCapturePolicy;
   applicationVersion: string;
   buildSha?: string;
@@ -42,7 +48,7 @@ type InteractionRecord = StudyInteractionEventInput extends infer Event
 export class ProjectInteractionRecorder {
   readonly #options: ProjectInteractionRecorderOptions;
   readonly #outbox: InteractionOutbox;
-  readonly #fetch: typeof fetch;
+  readonly #delivery: ProjectInteractionDelivery;
   readonly #now: () => number;
   readonly #monotonicNow: () => number;
   readonly #startedMonotonic: number;
@@ -53,13 +59,11 @@ export class ProjectInteractionRecorder {
   #lastState?: StudyWorkspaceObservation;
   #root?: HTMLElement;
   #queue = Promise.resolve();
-  #flushInFlight?: Promise<void>;
   #stateTimer?: ReturnType<typeof setTimeout>;
   #draftTimer?: ReturnType<typeof setTimeout>;
   #pendingDraft?: { content: MessageContent; focused: boolean };
   #lastDraftAt = -Infinity;
   #checkpointTimer?: ReturnType<typeof setInterval>;
-  #flushTimer?: ReturnType<typeof setInterval>;
   #expiryTimer?: ReturnType<typeof setTimeout>;
   #pointerStartedAt?: number;
   #pointerLastSampleAt = -Infinity;
@@ -73,12 +77,18 @@ export class ProjectInteractionRecorder {
   }> = [];
   #pointerType: 'mouse' | 'pen' | 'touch' | 'unknown' = 'unknown';
   #stopped = false;
-  #captureDisabled = false;
+  #disposed = false;
+  #storageUnavailableReported = false;
 
   constructor(options: ProjectInteractionRecorderOptions) {
     this.#options = options;
     this.#outbox = options.outbox ?? new ResilientInteractionOutbox();
-    this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.#delivery = new ProjectInteractionDelivery({
+      participantId: options.participantId,
+      outbox: this.#outbox,
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(options.now ? { now: options.now } : {})
+    });
     this.#now = options.now ?? Date.now;
     // performance.now is immune to wall-clock corrections during a task.
     this.#monotonicNow =
@@ -113,15 +123,22 @@ export class ProjectInteractionRecorder {
     this.#root = root;
     root.addEventListener('click', this.#activated, { capture: true });
     root.addEventListener('pointermove', this.#pointerMoved, { passive: true });
+    root.addEventListener('pointerover', this.#regionEntered, { passive: true });
+    root.addEventListener('pointerout', this.#regionLeft, { passive: true });
+    root.addEventListener('focusin', this.#regionFocused);
     this.#safely(async () => {
-      await this.#outbox.putSession({ session: this.#session });
-      const stoppedAt = new Date(this.#now()).toISOString();
-      for (const stored of await this.#outbox.sessions()) {
-        if (stored.session.id !== this.#session.id && !stored.stoppedAt) {
-          await this.#outbox.markStopped(stored.session.id, stoppedAt);
-        }
-      }
-      void this.flush();
+      await this.#outbox.putSession({
+        session: this.#session,
+        participantId: this.#options.participantId,
+        ...(this.#captureEndsAt !== undefined
+          ? {
+              deliveryExpiresAt: new Date(
+                this.#captureEndsAt + this.#options.capture.lateDeliverySeconds * 1_000
+              ).toISOString()
+            }
+          : {})
+      });
+      if (!this.#disposed) this.#delivery.start();
     });
     document.addEventListener('visibilitychange', this.#visibilityChanged);
     window.addEventListener('focus', this.#focused);
@@ -133,7 +150,6 @@ export class ProjectInteractionRecorder {
       () => this.#recordLastState('checkpoint'),
       this.#options.capture.checkpointIntervalMs
     );
-    this.#flushTimer = setInterval(() => void this.flush(), this.#options.capture.flushIntervalMs);
     if (this.#captureEndsAt !== undefined) {
       this.#expiryTimer = setTimeout(
         () => this.stop(false),
@@ -223,7 +239,7 @@ export class ProjectInteractionRecorder {
     this.#draftTimer = setTimeout(() => this.#flushDraft(), delay);
   }
 
-  /** Stop new capture; delivery continues only as a best-effort keepalive request. */
+  /** Stop new capture while the independent delivery loop keeps draining this session. */
   stop(recordTerminal = true): void {
     if (this.#stopped) return;
     const withinCapture = this.#captureEndsAt === undefined || this.#now() <= this.#captureEndsAt;
@@ -231,7 +247,6 @@ export class ProjectInteractionRecorder {
     clearTimeout(this.#draftTimer);
     this.#draftTimer = undefined;
     clearInterval(this.#checkpointTimer);
-    clearInterval(this.#flushTimer);
     clearTimeout(this.#expiryTimer);
     document.removeEventListener('visibilitychange', this.#visibilityChanged);
     window.removeEventListener('focus', this.#focused);
@@ -241,6 +256,9 @@ export class ProjectInteractionRecorder {
     window.removeEventListener('resize', this.#resized);
     this.#root?.removeEventListener('click', this.#activated, { capture: true });
     this.#root?.removeEventListener('pointermove', this.#pointerMoved);
+    this.#root?.removeEventListener('pointerover', this.#regionEntered);
+    this.#root?.removeEventListener('pointerout', this.#regionLeft);
+    this.#root?.removeEventListener('focusin', this.#regionFocused);
     if (withinCapture && recordTerminal) {
       this.#flushPointerPath();
       this.#flushDraft();
@@ -250,57 +268,30 @@ export class ProjectInteractionRecorder {
       this.#pendingDraft = undefined;
     }
     this.#stopped = true;
-    const stoppedAt = new Date(this.#now()).toISOString();
+    const stoppedAt = new Date(
+      this.#captureEndsAt === undefined ? this.#now() : Math.min(this.#now(), this.#captureEndsAt)
+    ).toISOString();
     this.#safely(async () => {
-      await this.#outbox.markStopped(this.#session.id, stoppedAt);
-      void this.flush(true);
+      await this.#outbox.finalize(this.#session.id, {
+        clientStoppedAt: stoppedAt,
+        recordedThrough: this.#sequence
+      });
+      await this.#delivery.flush(true);
     });
   }
 
-  /** Drain durable sessions in order; transport and server failures remain invisible to the app. */
-  async flush(keepalive = false): Promise<void> {
-    if (this.#flushInFlight) return this.#flushInFlight;
-    this.#flushInFlight = this.#flushSessions(keepalive).catch(() => undefined);
-    try {
-      await this.#flushInFlight;
-    } finally {
-      this.#flushInFlight = undefined;
-    }
+  /** Stop capture and detach delivery listeners when the workspace is destroyed. */
+  dispose(): void {
+    this.#disposed = true;
+    this.stop();
+    // stop() already queues a keepalive flush after terminal metadata; only detach here.
+    this.#delivery.stop(false);
   }
 
-  async #flushSessions(keepalive: boolean): Promise<void> {
+  /** Drain durable sessions after all observations already queued by this recorder. */
+  async flush(keepalive = false): Promise<void> {
     await this.#queue;
-    for (const stored of await this.#outbox.sessions()) {
-      const events = await this.#outbox.events(stored.session.id);
-      if (!events.length) continue;
-      for (const batch of batches(events, stored.session.capture.flushByteThreshold)) {
-        let response: Response;
-        try {
-          response = await this.#fetch(
-            `/api/projects/${encodeURIComponent(stored.session.projectId)}/interactions`,
-            {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                session: stored.session,
-                events: batch.map(({ event }) => event)
-              }),
-              keepalive
-            }
-          );
-        } catch {
-          return;
-        }
-        if ([400, 403, 409, 410, 413].includes(response.status)) {
-          await this.#outbox.abandon(stored.session.id);
-          break;
-        }
-        if (!response.ok) return;
-        const result = (await response.json()) as { acceptedThrough?: unknown };
-        if (!Number.isSafeInteger(result.acceptedThrough)) return;
-        await this.#outbox.acknowledge(stored.session.id, result.acceptedThrough as number);
-      }
-    }
+    await this.#delivery.flush(keepalive);
   }
 
   #recordLastState(reason: 'changed' | 'checkpoint' | 'started' | 'resumed'): void {
@@ -308,6 +299,34 @@ export class ProjectInteractionRecorder {
     this.#record({
       kind: 'workspace.state',
       payload: { reason, state: withCurrentDocumentState(this.#lastState) }
+    });
+  }
+
+  #recordRegion(event: Event, state: 'entered' | 'left' | 'focused'): void {
+    if (!this.#canRecord() || !this.#root) return;
+    const region = replayPresentationRegion(event.target);
+    if (!region || !this.#root.contains(region)) return;
+    if (event instanceof PointerEvent && replayPresentationRegion(event.relatedTarget) === region) {
+      return;
+    }
+    const rect = region.getBoundingClientRect();
+    const viewportWidth = Math.max(1, globalThis.innerWidth ?? 1);
+    const viewportHeight = Math.max(1, globalThis.innerHeight ?? 1);
+    this.#record({
+      kind: 'ui.region',
+      payload: {
+        state,
+        region: region.dataset.replayRegion!,
+        ...(region.dataset.replayPresentationId
+          ? { presentationId: region.dataset.replayPresentationId }
+          : {}),
+        bounds: {
+          x: clamp(rect.left / viewportWidth, 0, 1),
+          y: clamp(rect.top / viewportHeight, 0, 1),
+          width: clamp(rect.width / viewportWidth, 0, 1),
+          height: clamp(rect.height / viewportHeight, 0, 1)
+        }
+      }
     });
   }
 
@@ -340,14 +359,25 @@ export class ProjectInteractionRecorder {
 
   #record(value: InteractionRecord): void {
     if (!this.#canRecord()) return;
-    const now = this.#now();
-    const event = {
-      sequence: ++this.#sequence,
-      elapsedMs: Math.max(0, Math.round(this.#monotonicNow() - this.#startedMonotonic)),
+    const now = validTime(this.#now());
+    const sequence = ++this.#sequence;
+    const envelope = {
+      sequence,
+      elapsedMs: natural(this.#monotonicNow() - this.#startedMonotonic),
       clientOccurredAt: new Date(now).toISOString(),
-      projectHead: this.#options.readProjectHead?.() ?? this.#lastProjectHead,
+      projectHead: natural(this.#options.readProjectHead?.() ?? this.#lastProjectHead)
+    };
+    const parsed = v.safeParse(studyInteractionEventInputSchema, {
+      ...envelope,
       ...value
-    } as StudyInteractionEventInput;
+    });
+    const event: StudyInteractionEventInput = parsed.success
+      ? parsed.output
+      : {
+          ...envelope,
+          kind: 'recorder.dropped',
+          payload: { counts: { [value.kind]: 1 }, reason: 'invalid-record' }
+        };
     const stored: StoredInteractionEvent = {
       sessionId: this.#session.id,
       sequence: event.sequence,
@@ -357,12 +387,17 @@ export class ProjectInteractionRecorder {
     this.#safely(async () => {
       const result = await this.#outbox.putEvent(stored, this.#options.capture.outboxByteLimit);
       if (!result.stored) {
-        this.#captureDisabled = true;
-        await this.#outbox.abandon(this.#session.id);
-        return;
+        await this.#outbox.replaceEvent(droppedStoredRecord(stored, 'outbox-limit'));
+      }
+      if (result.storageUnavailable && !this.#storageUnavailableReported) {
+        this.#storageUnavailableReported = true;
+        this.#record({
+          kind: 'recorder.dropped',
+          payload: { counts: { 'durable-storage': 1 }, reason: 'storage-unavailable' }
+        });
       }
       const count = (await this.#outbox.events(this.#session.id)).length;
-      if (count >= this.#options.capture.flushRecordThreshold) void this.flush();
+      if (count >= this.#options.capture.flushRecordThreshold) this.#delivery.requestFlush();
     });
   }
 
@@ -371,7 +406,7 @@ export class ProjectInteractionRecorder {
   }
 
   #canRecord(): boolean {
-    if (this.#stopped || this.#captureDisabled) return false;
+    if (this.#stopped) return false;
     if (this.#captureEndsAt !== undefined && this.#now() > this.#captureEndsAt) {
       this.stop(false);
       return false;
@@ -397,26 +432,9 @@ export class ProjectInteractionRecorder {
   #resized = () => this.#recordLastState('changed');
   #activated = (event: MouseEvent) => this.recordActivation(event);
   #pointerMoved = (event: PointerEvent) => this.recordPointerMove(event);
-}
-
-function batches(
-  events: StoredInteractionEvent[],
-  maximumBytes: number
-): StoredInteractionEvent[][] {
-  const result: StoredInteractionEvent[][] = [];
-  let current: StoredInteractionEvent[] = [];
-  let bytes = 0;
-  for (const event of events) {
-    if (current.length && (current.length >= 100 || bytes + event.byteLength > maximumBytes)) {
-      result.push(current);
-      current = [];
-      bytes = 0;
-    }
-    current.push(event);
-    bytes += event.byteLength;
-  }
-  if (current.length) result.push(current);
-  return result;
+  #regionEntered = (event: PointerEvent) => this.#recordRegion(event, 'entered');
+  #regionLeft = (event: PointerEvent) => this.#recordRegion(event, 'left');
+  #regionFocused = (event: FocusEvent) => this.#recordRegion(event, 'focused');
 }
 
 function withCurrentDocumentState(state: StudyWorkspaceObservation): StudyWorkspaceObservation {
@@ -459,13 +477,20 @@ function interactionName(target: HTMLElement): string {
     target.dataset.interaction ||
     target.getAttribute('aria-label') ||
     target.getAttribute('name') ||
-    target.textContent?.trim().replace(/\s+/g, ' ').slice(0, 128) ||
+    target.getAttribute('role') ||
     target.tagName.toLowerCase()
   ).slice(0, 128);
 }
 
 function interactionRegion(target?: Element): string | undefined {
   return target?.closest<HTMLElement>('[data-replay-region]')?.dataset.replayRegion?.slice(0, 128);
+}
+
+function replayPresentationRegion(target: EventTarget | null): HTMLElement | undefined {
+  if (!(target instanceof Element)) return undefined;
+  return (
+    target.closest<HTMLElement>('[data-replay-region][data-replay-presentation-id]') ?? undefined
+  );
 }
 
 function pointerType(value: string): 'mouse' | 'pen' | 'touch' | 'unknown' {
@@ -478,11 +503,12 @@ function limitDraft(content: MessageContent): {
   originalByteLength: number;
 } {
   const originalByteLength = encodedLength(content);
-  if (originalByteLength <= maximumDraftBytes) {
-    return { content, truncated: false, originalByteLength };
+  const boundedContent = content.slice(0, 200);
+  if (originalByteLength <= maximumDraftBytes && boundedContent.length === content.length) {
+    return { content: boundedContent, truncated: false, originalByteLength };
   }
   const retained: MessageContent = [];
-  for (const segment of content) {
+  for (const segment of boundedContent) {
     const candidate = [...retained, segment];
     if (encodedLength(candidate) <= maximumDraftBytes) {
       retained.push(segment);
@@ -509,4 +535,12 @@ function encodedLength(value: unknown): number {
 
 function clamp(value: number, lower: number, upper: number): number {
   return Math.min(upper, Math.max(lower, value));
+}
+
+function natural(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+function validTime(value: number): number {
+  return Number.isFinite(value) ? value : Date.now();
 }

@@ -11,6 +11,8 @@ import {
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 const hash = '0'.repeat(64);
+const fontResourceId = `sha256-${'1'.repeat(64)}`;
+const textRunResourceId = `sha256-${'2'.repeat(64)}`;
 
 describe('AI project context projection', () => {
   it('derives conversation only from feedback and assistant responses', () => {
@@ -255,9 +257,41 @@ describe('AI project context projection', () => {
       alternativePresentationId: presentationIds[1],
       step: 0
     });
-    expect(
-      context.selected.presentations.map(({ presentation }) => presentation.presentationId)
-    ).toEqual(presentationIds);
+    expect(context.selected.presentations.map(({ presentationId }) => presentationId)).toEqual(
+      presentationIds
+    );
+    expect(context.selected.presentations[0]).toMatchObject({
+      presentationId: presentationIds[0],
+      renderSummary: { seed: 1 },
+      elements: expect.arrayContaining([
+        expect.objectContaining({
+          role: 'Canvas',
+          box: expect.any(Object),
+          style: expect.any(Object)
+        }),
+        expect.objectContaining({
+          role: 'Value',
+          content: {
+            kind: 'plain',
+            source: 'Value',
+            fontFamily: 'Inter',
+            fontWeight: 400,
+            fontStyle: 'normal',
+            fontSize: 16,
+            alignment: 'center'
+          }
+        })
+      ]),
+      steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]
+    });
+    const selectedJson = JSON.stringify(context.selected.presentations);
+    expect(selectedJson).not.toContain('current source');
+    expect(selectedJson).not.toContain('styleVariables');
+    expect(selectedJson).not.toContain('variables');
+    expect(selectedJson).not.toContain('fragmentClusters');
+    expect(selectedJson).not.toContain('secret-variable');
+    expect(selectedJson).not.toContain('layoutLines');
+    expect(selectedJson).not.toContain(textRunResourceId);
     expect(projectConversationMessages(document.events)).toEqual([
       {
         role: 'user',
@@ -279,9 +313,24 @@ function minimalVisualization(seed: number) {
       systemYAxis: 'down'
     },
     root: -1,
-    resources: [],
+    resources: [
+      {
+        descriptorId: fontResourceId,
+        descriptorKind: 'fontResource',
+        descriptorSha256: '1'.repeat(64),
+        descriptorMediaType: 'font/ttf',
+        descriptorByteLength: 100
+      },
+      {
+        descriptorId: textRunResourceId,
+        descriptorKind: 'textRunResource',
+        descriptorSha256: '2'.repeat(64),
+        descriptorMediaType: 'application/x-sverlin-text-run',
+        descriptorByteLength: 50
+      }
+    ],
     findings: [],
-    variables: [],
+    variables: [{ id: 'secret-variable', value: { kind: 'number', value: 42 } }],
     elements: [
       {
         id: -1,
@@ -304,9 +353,43 @@ function minimalVisualization(seed: number) {
           margin: { top: 0, right: 0, bottom: 0, left: 0 }
         },
         children: [],
-        content: { kind: 'legacyTextContent', textSource: 'Value' },
+        content: {
+          kind: 'plainTextContent',
+          textLayout: {
+            layoutSource: 'Value',
+            layoutWhitespace: 'textPreserveWhitespace',
+            layoutWrapMode: { kind: 'textNoAutomaticWrap' },
+            layoutFont: {
+              instanceFamily: 'Inter',
+              instanceResourceId: fontResourceId,
+              instanceWeight: 400,
+              instanceStyle: 'normal',
+              instanceAxes: [],
+              instanceFeatures: []
+            },
+            layoutFontSize: 16,
+            layoutPreferredSize: 16,
+            layoutLineHeight: 20,
+            layoutDirection: 'textLeftToRight',
+            layoutScript: 'Latn',
+            layoutLanguage: 'und',
+            layoutAlignment: 'center',
+            layoutContentBox: { rectX: 20, rectY: 20, rectWidth: 120, rectHeight: 40 },
+            layoutLines: [
+              {
+                lineSourceRange: { sourceRangeStart: 0, sourceRangeEnd: 5 },
+                lineDisplayText: 'Value',
+                lineOriginX: 40,
+                lineBaselineY: 45,
+                lineAdvance: 50,
+                lineInkBounds: { rectX: 40, rectY: 30, rectWidth: 50, rectHeight: 16 }
+              }
+            ],
+            layoutTextRunResource: textRunResourceId
+          }
+        },
         style: {},
-        styleVariables: []
+        styleVariables: [{ field: 'fontSize', variables: ['secret-variable'] }]
       }
     ],
     steps: [{ label: 'show', instances: [{ id: 0, elementId: 0 }] }]

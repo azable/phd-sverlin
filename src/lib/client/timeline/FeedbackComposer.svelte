@@ -286,6 +286,7 @@
           <Button
             type="submit"
             size="sm"
+            aria-label="Submit project feedback"
             disabled={!session.atHead || !!session.pending || session.readOnly || !hasContent}
           >
             {#if session.pending?.type === 'feedback'}

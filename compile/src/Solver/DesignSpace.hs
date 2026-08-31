@@ -744,11 +744,11 @@ compileMipBranchWithHint numericHint compiled index assignment decisions = do
       (Left . InfeasibleDesignSpace . feasibilityMessage)
       Right
       (prepareAffineRegion
-         (numericHint
-            `Map.union` explicitInitialValues
-                          (compiledDesignConfig compiled)
-                          resolved)
+         (explicitInitialValues (compiledDesignConfig compiled) resolved
+            `Map.union` numericHint)
          affine)
+      -- Caller hints deliberately replace HiGHS's feasible-corner values;
+      -- the backend completion still supplies every unconfigured variable.
   let inspection =
         compiledInspection
           (compileProblem

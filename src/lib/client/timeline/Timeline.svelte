@@ -87,7 +87,9 @@
       <span class="mr-auto"
         >Viewing historical state · mutations are disabled; playback remains available</span
       >
-      <Button href={projectPath} size="sm" variant="outline">Return to present</Button>
+      <Button href={projectPath} size="sm" variant="outline" aria-label="Return to present"
+        >Return to present</Button
+      >
     </div>
   {/if}
   <ScrollArea bind:viewportRef={viewport} class="min-h-0 flex-1">

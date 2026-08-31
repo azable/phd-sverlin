@@ -43,6 +43,13 @@
       "when": 1788147528683,
       "tag": "0005_yummy_hairball",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788162175632,
+      "tag": "0006_complete_interaction_delivery",
+      "breakpoints": true
     }
   ]
 }

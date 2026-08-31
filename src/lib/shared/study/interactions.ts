@@ -2,7 +2,7 @@
 
 import * as v from 'valibot';
 
-import { messageContentSchema } from '$lib/shared/projects/events/message-content';
+import { messageContentSegmentSchema } from '$lib/shared/projects/events/message-content';
 import {
   naturalSchema,
   positiveSchema,
@@ -128,6 +128,13 @@ const pointerPointSchema = v.strictObject({
   region: v.optional(boundedText(128))
 });
 
+const normalizedBoundsSchema = v.strictObject({
+  x: normalizedCoordinateSchema,
+  y: normalizedCoordinateSchema,
+  width: normalizedCoordinateSchema,
+  height: normalizedCoordinateSchema
+});
+
 /** One ordered, client-observed interaction record. */
 export const studyInteractionEventInputSchema = v.variant('kind', [
   v.strictObject({
@@ -158,6 +165,16 @@ export const studyInteractionEventInputSchema = v.variant('kind', [
   }),
   v.strictObject({
     ...interactionEnvelope,
+    kind: v.literal('ui.region'),
+    payload: v.strictObject({
+      state: v.picklist(['entered', 'left', 'focused']),
+      region: boundedText(128),
+      presentationId: v.optional(presentationIdSchema),
+      bounds: normalizedBoundsSchema
+    })
+  }),
+  v.strictObject({
+    ...interactionEnvelope,
     kind: v.literal('pointer.path'),
     payload: v.strictObject({
       pointerType: v.picklist(['mouse', 'pen', 'touch', 'unknown']),
@@ -168,7 +185,7 @@ export const studyInteractionEventInputSchema = v.variant('kind', [
     ...interactionEnvelope,
     kind: v.literal('draft.snapshot'),
     payload: v.strictObject({
-      content: v.pipe(messageContentSchema, v.maxLength(200)),
+      content: v.pipe(v.array(messageContentSegmentSchema), v.maxLength(200)),
       focused: v.boolean(),
       truncated: v.boolean(),
       originalByteLength: naturalSchema
@@ -186,16 +203,34 @@ export const studyInteractionEventInputSchema = v.variant('kind', [
     kind: v.literal('recorder.dropped'),
     payload: v.strictObject({
       counts: v.record(v.string(), naturalSchema),
-      reason: v.picklist(['outbox-limit', 'storage-unavailable', 'invalid-record'])
+      reason: v.picklist([
+        'outbox-limit',
+        'storage-unavailable',
+        'invalid-record',
+        'transport-limit'
+      ])
     })
   })
 ]);
 
-/** Idempotent batch accepted by the participant interaction endpoint. */
-export const studyInteractionBatchInputSchema = v.strictObject({
-  session: studyInteractionSessionInputSchema,
-  events: v.pipe(v.array(studyInteractionEventInputSchema), v.minLength(1), v.maxLength(100))
+/** Immutable terminal extent of one browser recording session. */
+export const studyInteractionTerminalSchema = v.strictObject({
+  clientStoppedAt: v.pipe(v.string(), v.isoTimestamp()),
+  recordedThrough: naturalSchema
 });
+
+/** Idempotent batch accepted by the participant interaction endpoint. */
+export const studyInteractionBatchInputSchema = v.pipe(
+  v.strictObject({
+    session: studyInteractionSessionInputSchema,
+    terminal: v.optional(studyInteractionTerminalSchema),
+    events: v.pipe(v.array(studyInteractionEventInputSchema), v.maxLength(100))
+  }),
+  v.check(
+    ({ events, terminal }) => events.length > 0 || terminal !== undefined,
+    'An interaction batch must contain events or terminal metadata.'
+  )
+);
 
 export type StudyInteractionCapturePolicy = v.InferOutput<
   typeof studyInteractionCapturePolicySchema
@@ -203,8 +238,38 @@ export type StudyInteractionCapturePolicy = v.InferOutput<
 export type StudyInteractionSessionInput = v.InferOutput<typeof studyInteractionSessionInputSchema>;
 export type StudyWorkspaceObservation = v.InferOutput<typeof studyWorkspaceObservationSchema>;
 export type StudyInteractionEventInput = v.InferOutput<typeof studyInteractionEventInputSchema>;
+export type StudyInteractionTerminal = v.InferOutput<typeof studyInteractionTerminalSchema>;
 export type StudyInteractionBatchInput = v.InferOutput<typeof studyInteractionBatchInputSchema>;
 export type StudyInteractionKind = StudyInteractionEventInput['kind'];
+export type StudyInteractionIngestionResult = {
+  acceptedThrough: number;
+  serverReceivedAt: string;
+  terminalAccepted: boolean;
+  deliveryComplete: boolean;
+};
+export type StudyInteractionErrorCode =
+  | 'body-too-large'
+  | 'capture-policy-mismatch'
+  | 'capture-unavailable'
+  | 'delivery-window-closed'
+  | 'future-project-head'
+  | 'invalid-batch'
+  | 'invalid-event'
+  | 'invalid-json'
+  | 'invalid-session'
+  | 'project-mismatch'
+  | 'rate-limited'
+  | 'sequence-conflict'
+  | 'session-outside-phase'
+  | 'temporarily-unavailable'
+  | 'terminal-conflict';
+export type StudyInteractionErrorResponse = {
+  error: string;
+  code: StudyInteractionErrorCode;
+  acceptedThrough?: number;
+  requiredNext?: number;
+  invalidEventIndex?: number;
+};
 
 /** Validate a browser ingestion payload and reject unknown keys. */
 export function parseStudyInteractionBatch(value: unknown): StudyInteractionBatchInput {

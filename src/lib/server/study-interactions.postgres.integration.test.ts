@@ -83,10 +83,42 @@ it.skipIf(!enabled)(
     const batch = interactionBatch(projectId, now);
 
     await expect(ingestStudyInteractions(principal, batch, now)).resolves.toMatchObject({
-      acceptedThrough: 1
+      acceptedThrough: 1,
+      terminalAccepted: true,
+      deliveryComplete: true
     });
     await expect(ingestStudyInteractions(principal, batch, now)).resolves.toMatchObject({
       acceptedThrough: 1
+    });
+    await expect(
+      ingestStudyInteractions(
+        principal,
+        {
+          ...batch,
+          terminal: { ...batch.terminal, recordedThrough: 2 }
+        },
+        now
+      )
+    ).rejects.toMatchObject({ status: 409, code: 'terminal-conflict' });
+    await expect(
+      ingestStudyInteractions(
+        principal,
+        { ...batch, session: { ...batch.session, applicationVersion: 'conflicting-version' } },
+        now
+      )
+    ).rejects.toMatchObject({ status: 409, code: 'invalid-session' });
+    const terminalOnlyBatch = interactionBatch(projectId, new Date(now.getTime() + 10));
+    const { terminal, ...openBatch } = terminalOnlyBatch;
+    await expect(ingestStudyInteractions(principal, openBatch, now)).resolves.toMatchObject({
+      terminalAccepted: false,
+      deliveryComplete: false
+    });
+    await expect(
+      ingestStudyInteractions(principal, { ...openBatch, terminal, events: [] }, now)
+    ).resolves.toMatchObject({
+      acceptedThrough: 1,
+      terminalAccepted: true,
+      deliveryComplete: true
     });
     await expect(
       ingestStudyInteractions(
@@ -128,7 +160,9 @@ it.skipIf(!enabled)(
           id: batch.session.id,
           projectId,
           studyRunId: run.id,
-          studyPhaseId: 'task-one'
+          studyPhaseId: 'task-one',
+          acceptedThrough: 1,
+          recordedThrough: 1
         }),
         expect.objectContaining({ id: lateBatch.session.id, projectId })
       ])
@@ -139,6 +173,9 @@ it.skipIf(!enabled)(
         expect.objectContaining({ sessionId: lateBatch.session.id, sequence: 1, projectHead: 1 })
       ])
     );
+    expect(exported.expectedProjects).toEqual([
+      expect.objectContaining({ projectId, studyRunId: run.id, studyPhaseId: 'task-one' })
+    ]);
 
     await database().delete(schema.projects).where(eq(schema.projects.id, projectId));
 
@@ -162,6 +199,10 @@ function interactionBatch(projectId: string, now: Date) {
       initialViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
       applicationVersion: '0.0.1',
       capture: mainStudyV1.interactionCapture!
+    },
+    terminal: {
+      clientStoppedAt: new Date(now.getTime() + 2).toISOString(),
+      recordedThrough: 1
     },
     events: [
       {

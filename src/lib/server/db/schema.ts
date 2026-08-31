@@ -263,12 +263,27 @@ export const projectInteractionSessions = pgTable(
     buildSha: text('build_sha'),
     capture: jsonb('capture').$type<StudyInteractionCapturePolicy>().notNull(),
     acceptedThrough: integer('accepted_through').default(0).notNull(),
+    clientStoppedAt: timestamp('client_stopped_at', { withTimezone: true }),
+    recordedThrough: integer('recorded_through'),
+    deliveryCompletedAt: timestamp('delivery_completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
   },
   (table) => [
     check('project_interaction_session_schema_check', sql`${table.schemaVersion} = 1`),
     check('project_interaction_session_sequence_check', sql`${table.acceptedThrough} >= 0`),
+    check(
+      'project_interaction_session_terminal_pair_check',
+      sql`(${table.clientStoppedAt} is null) = (${table.recordedThrough} is null)`
+    ),
+    check(
+      'project_interaction_session_recorded_sequence_check',
+      sql`${table.recordedThrough} is null or (${table.recordedThrough} >= 0 and ${table.acceptedThrough} <= ${table.recordedThrough})`
+    ),
+    check(
+      'project_interaction_session_completion_check',
+      sql`${table.deliveryCompletedAt} is null or (${table.recordedThrough} is not null and ${table.acceptedThrough} = ${table.recordedThrough})`
+    ),
     index('project_interaction_session_project_idx').on(table.projectId)
   ]
 );

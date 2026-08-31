@@ -37,6 +37,9 @@ describe('project data export traversal', () => {
             applicationVersion: '0.0.1',
             capture: {},
             acceptedThrough: 1,
+            clientStoppedAt: '2026-08-30T10:01:00.000Z',
+            recordedThrough: 1,
+            deliveryCompletedAt: '2026-08-30T10:01:01.000Z',
             createdAt: '2026-08-30T10:00:00.000Z',
             updatedAt: '2026-08-30T10:01:00.000Z'
           }
@@ -56,6 +59,16 @@ describe('project data export traversal', () => {
               originalByteLength: 47
             },
             receivedAt: '2026-08-30T10:00:02.000Z'
+          }
+        ],
+        expectedProjects: [
+          {
+            projectId: 'project-test',
+            studyRunId: 'run-1',
+            studyPhaseId: 'task-one',
+            captureStartedAt: '2026-08-30T10:00:00.000Z',
+            captureEndedAt: '2026-08-30T11:00:00.000Z',
+            deliveryEndsAt: '2026-08-31T11:00:00.000Z'
           }
         ]
       })),
@@ -96,7 +109,12 @@ describe('project data export traversal', () => {
       status: 'included',
       sessionCount: 1,
       eventCount: 1,
-      draftSnapshotCount: 1
+      draftSnapshotCount: 1,
+      completeSessionCount: 1,
+      openSessionCount: 0,
+      pendingSessionCount: 0,
+      incompleteSessionCount: 0,
+      missingProjectCount: 0
     });
     expect(JSON.parse(Buffer.from(files.get('owners.json')!).toString())).toEqual([
       { id: 'owner-1', label: 'P001', role: 'user', enabled: true }
@@ -125,6 +143,17 @@ describe('project data export traversal', () => {
     expect(Buffer.from(files.get('sensitive/unsent-feedback-drafts.jsonl')!).toString()).toContain(
       'unsent research draft'
     );
+    expect(
+      JSON.parse(Buffer.from(files.get('interactions/coverage.json')!).toString())
+    ).toMatchObject({
+      sessions: [
+        {
+          sessionId: '12345678-1234-4123-8123-123456789abc',
+          status: 'complete'
+        }
+      ],
+      projects: [{ projectId: 'project-test', status: 'recorded' }]
+    });
   });
 
   it('keeps the primary export usable when interaction collection fails', async () => {
@@ -152,6 +181,77 @@ describe('project data export traversal', () => {
     expect(files.has('interactions/coverage.json')).toBe(true);
     expect(files.has('interactions/events.jsonl')).toBe(false);
     warning.mockRestore();
+  });
+
+  it('reports incomplete sessions, dropped observations, and started projects with no session', async () => {
+    const snapshot = fixtureSnapshot('0'.repeat(64), 0);
+    snapshot.projects = [];
+    const files = new Map<string, Uint8Array>();
+    const source: ExportDataSource = {
+      collect: vi.fn(async () => snapshot),
+      collectInteractions: vi.fn(async () => ({
+        sessions: [
+          {
+            id: '12345678-1234-4123-8123-123456789abc',
+            projectId: 'project-observed',
+            schemaVersion: 1,
+            clientStartedAt: '2026-08-30T10:00:00.000Z',
+            clientTimeOrigin: 1,
+            initialViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
+            applicationVersion: '0.0.1',
+            capture: {},
+            acceptedThrough: 1,
+            createdAt: '2026-08-30T10:00:00.000Z',
+            updatedAt: '2026-08-30T10:01:00.000Z'
+          }
+        ],
+        events: [
+          {
+            sessionId: '12345678-1234-4123-8123-123456789abc',
+            sequence: 1,
+            kind: 'recorder.dropped',
+            elapsedMs: 1,
+            clientOccurredAt: '2026-08-30T10:00:00.001Z',
+            projectHead: 1,
+            payload: { reason: 'outbox-limit', counts: { 'pointer.path': 2 } },
+            receivedAt: '2026-08-30T10:00:01.000Z'
+          }
+        ],
+        expectedProjects: ['project-observed', 'project-missing'].map((projectId, index) => ({
+          projectId,
+          studyRunId: 'run-one',
+          studyPhaseId: `task-${index + 1}`,
+          captureStartedAt: '2026-08-30T10:00:00.000Z',
+          captureEndedAt: '2026-08-30T11:00:00.000Z',
+          deliveryEndsAt: '2026-08-31T11:00:00.000Z'
+        }))
+      })),
+      readResource: vi.fn(async () => new Uint8Array())
+    };
+
+    const manifest = await writeDataExport(
+      source,
+      { write: (pathname, value) => void files.set(pathname, Uint8Array.from(value)) },
+      { type: 'projects' },
+      '2026-09-01T12:00:00.000Z'
+    );
+
+    expect(manifest.interactions).toMatchObject({
+      incompleteSessionCount: 1,
+      missingProjectCount: 1,
+      droppedEventCount: 2
+    });
+    expect(manifest.interactions.warnings).toHaveLength(2);
+    expect(
+      JSON.parse(Buffer.from(files.get('interactions/coverage.json')!).toString())
+    ).toMatchObject({
+      sessions: [{ status: 'incomplete' }],
+      projects: [
+        { projectId: 'project-observed', status: 'recorded' },
+        { projectId: 'project-missing', status: 'missing' }
+      ],
+      droppedByReason: { 'outbox-limit': 2 }
+    });
   });
 
   it('rejects substituted resource bytes before completing an export', () => {

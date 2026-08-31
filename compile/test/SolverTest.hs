@@ -10,7 +10,7 @@ import           Control.Exception                    (ErrorCall, SomeException,
 import           Control.Monad                        (zipWithM_)
 import qualified Data.List                            as List
 import qualified Data.Map.Strict                      as Map
-import           Data.Maybe                           (isJust)
+import           Data.Maybe                           (isJust, mapMaybe)
 import           LinearTrace.Choreography             (Applicable2 (..),
                                                        CoreOperator (..),
                                                        LBool (..), LInt (..),
@@ -1631,6 +1631,47 @@ designSpaceTests =
                (solutionChoices solution)
                @?= Nothing)
           solutions
+    , testCase "MIP conditioning tolerates rounding-sized crossed bounds" $ do
+        let x = var "test.design.mip-rounding" :: Expr TestLayout
+            problem =
+              solverProblem
+                [ x @>=@ num (490.4 + 5e-14)
+                , x @<=@ num 490.4
+                , oneOf
+                    "test.design.mip-rounding.branch"
+                    (alternative "first" [])
+                    [alternative "second" []]
+                ]
+            config = withMaxCategoricalBranches 1 defaultSolveConfig
+        design <- assertDesignCompiled (compileDesignSpace config problem)
+        sampled <- sampleDesignSpace BalancedDesignChoices (RandomSeed 5) design
+        solution <- assertSingleDesignSample sampled
+        assertEvalNear "MIP rounding-sized bound" 490.4 solution x
+    , testCase "caller hints replace a conditioned MIP corner" $ do
+        let names =
+              [ "test.design.mip-hint." ++ show index
+              | index <- [0 :: Int .. 15]
+              ]
+            variables = [var name :: Expr TestUnit | name <- names]
+            problem =
+              solverProblem
+                (oneOf
+                   "test.design.mip-hint.branch"
+                   (alternative "first" [])
+                   [alternative "second" []]
+                   : [value @>=@ num 0 | value <- variables])
+            config =
+              withInitialOverrides
+                (Map.fromList [(name, 0.5) | name <- names])
+                (withMaxCategoricalBranches 1 defaultSolveConfig)
+        design <- assertDesignCompiled (compileDesignSpace config problem)
+        sampled <- sampleDesignSpace BalancedDesignChoices (RandomSeed 7) design
+        solution <- assertSingleDesignSample sampled
+        let values = mapMaybe (evalExpr solution) variables
+        length values @?= length variables
+        assertBool
+          "the MIP lower corner should not replace the configured midpoint"
+          (maximum values > 0.1)
     , testCase "materializes and varies choices beyond the balanced prefix" $ do
         let decisionNames =
               ["test.design.deferred." ++ show index | index <- [0 :: Int .. 9]]
@@ -1968,6 +2009,10 @@ seededFixtureTests =
         validateFixtureSolution defaultFixture solution @?= []
     , testCase "app-shaped affine fixture satisfies hard constraints" $ do
         let fixture = namedFixture "app-shaped"
+        solution <- solveFixture fixture (RandomSeed 1)
+        validateFixtureSolution fixture solution @?= []
+    , testCase "shared text-family fixture satisfies every peer fit" $ do
+        let fixture = namedFixture "fit-family"
         solution <- solveFixture fixture (RandomSeed 1)
         validateFixtureSolution fixture solution @?= []
     ]

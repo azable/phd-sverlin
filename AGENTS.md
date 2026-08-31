@@ -114,7 +114,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - For current implemented behavior, use
   `compile/src/LinearTrace/Choreography.hs` and the generated DSL API index described
   below. For proposed API changes, consult
-  [`compile/src/LinearTrace/API_plan.md`](compile/src/LinearTrace/API_plan.md); it
+  [`compile/plan/API_plan_final.md`](compile/plan/API_plan_final.md); it
   describes a target design and does not override current behavior until implemented.
   [`compile/src/LinearTrace/API_refactoring.md`](compile/src/LinearTrace/API_refactoring.md)
   is supporting rationale rather than the current implementation contract.
@@ -126,7 +126,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   generated `src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md` by hand.
 - `src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md` is the complementary
   human-readable composition and authoring guide for the primary `sverlin-assistant`
-  bot (starting with `gpt-5.6-luna`/low before its bounded Sol repair ladder). It
+  bot (starting with `gpt-5.6-sol`/medium before its bounded Sol repair ladder). It
   should explain cross-cutting invariants, syntax hazards, and examples without
   duplicating the exhaustive API index.
 - The guide and generated index are read from disk for every model request during
