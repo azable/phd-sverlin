@@ -10,6 +10,7 @@ module Sverlin.Internal.Render.Compile
   , compileRenderBatch
   ) where
 
+import qualified Control.Exception                  as Exception
 import           Control.Monad                      (foldM, unless, when)
 import qualified Data.ByteString                    as BS
 import           Data.Either                        (fromRight, lefts)
@@ -30,6 +31,7 @@ import qualified LinearTrace.Visualization.IR       as IR
 import qualified LinearTrace.Visualization.Resource as Resource
 import           Prelude
 import qualified Solver                             as S
+import qualified Sverlin.Internal.Metrics           as Metrics
 import qualified Sverlin.Internal.Render            as R
 import qualified Sverlin.Internal.Render.Theme      as Theme
 import qualified Sverlin.Internal.Render.Typography as Typography
@@ -49,49 +51,88 @@ data RenderCompileError
 -- prepared affine design space.  The source content participates in the
 -- scenario key; the display path does not.
 compileRenderBatch ::
-     FilePath
+     Metrics.MetricsRecorder
+  -> FilePath
   -> String
   -> [Int]
   -> Sem.SemanticTrace
   -> R.RenderPlan
   -> IO (Either RenderCompileError Resource.CompilationPackage)
-compileRenderBatch sourcePath sourceContent viewSeeds trace plan = do
-  preparedResult <- prepareCompilation trace plan
+compileRenderBatch recorder sourcePath sourceContent viewSeeds trace plan = do
+  preparedResult <- prepareCompilation recorder trace plan
   case preparedResult of
     Left err -> pure (Left err)
-    Right prepared ->
-      case S.compileDesignSpace
-             (renderSolveConfig prepared)
-             (preparedProblem prepared) of
-        Left err -> pure (Left (RenderDesignSpaceError err))
+    Right prepared -> do
+      designResult <-
+        Metrics.measurePhase recorder "designSpaceCompilation"
+          $ Exception.evaluate
+              (S.compileDesignSpace
+                 (renderSolveConfig prepared)
+                 (preparedProblem prepared))
+      case designResult of
+        Left err -> do
+          Metrics.markFailedPhase recorder "designSpaceCompilation"
+          pure (Left (RenderDesignSpaceError err))
         Right design -> do
           sampled <-
-            S.sampleDesignSpaceBatch
-              S.BalancedDesignChoices
-              (map S.RandomSeed viewSeeds)
-              design
-          pure $ do
-            solutions <- either (Left . RenderDesignSpaceError) Right sampled
-            let key = scenarioKey sourceContent trace
-            materialized <-
-              sequence
-                [ materializeVisualization
-                  sourcePath
-                  key
-                  trace
-                  prepared
-                  solution
-                | solution <- solutions
-                ]
-            let visualizations = map fst materialized
-                resources = deduplicateResources (concatMap snd materialized)
-            pure
-              Resource.CompilationPackage
-                { Resource.compilationPackageVisualizations = visualizations
-                , Resource.compilationPackageResources = resources
-                , Resource.compilationPackageProvenance =
-                    Typography.typographyCompilationProvenance
-                }
+            Metrics.measurePhase recorder "designSpaceSampling"
+              $ S.sampleDesignSpaceBatch
+                  S.BalancedDesignChoices
+                  (map S.RandomSeed viewSeeds)
+                  design
+          case sampled of
+            Left err -> do
+              Metrics.markFailedPhase recorder "designSpaceSampling"
+              pure (Left (RenderDesignSpaceError err))
+            Right solutions -> do
+              let key = scenarioKey sourceContent trace
+              measured <-
+                traverse
+                  (materializeMeasured sourcePath key trace prepared)
+                  solutions
+              let materializationMs =
+                    sum [duration | (_, duration, _) <- measured]
+              Metrics.recordPhase recorder "irMaterialization" materializationMs
+              case sequence [result | (result, _, _) <- measured] of
+                Left err -> do
+                  Metrics.markFailedPhase recorder "irMaterialization"
+                  pure (Left err)
+                Right materialized -> do
+                  let visualizations = map fst materialized
+                      resources =
+                        deduplicateResources (concatMap snd materialized)
+                      viewMetrics =
+                        zipWith3
+                          compileViewMetrics
+                          solutions
+                          visualizations
+                          [ (duration, viewResources)
+                          | ((_, viewResources), (_, duration, _)) <-
+                              zip materialized measured
+                          ]
+                  Metrics.recordViews recorder viewMetrics
+                  Metrics.recordCount
+                    recorder
+                    "outputViews"
+                    (length visualizations)
+                  Metrics.recordCount
+                    recorder
+                    "outputResources"
+                    (length resources)
+                  Metrics.recordCount
+                    recorder
+                    "outputResourceBytes"
+                    (sum
+                       (map (BS.length . Resource.resourceBlobBytes) resources))
+                  pure
+                    (Right
+                       Resource.CompilationPackage
+                         { Resource.compilationPackageVisualizations =
+                             visualizations
+                         , Resource.compilationPackageResources = resources
+                         , Resource.compilationPackageProvenance =
+                             Typography.typographyCompilationProvenance
+                         })
   where
     -- Fitted text and theme variables start at the midpoints of their
     -- documented ranges. Otherwise HiGHS supplies a lower-corner feasibility
@@ -187,7 +228,7 @@ data ExpandedPlan = ExpandedPlan
   { expandedNodes      :: [ExpandedNode]
   , expandedConnectors :: [ExpandedConnector]
   , expandedRanks      :: Map R.RankingId (Map Sem.BlockId Int)
-  }
+  } deriving (Show)
 
 data PreparedCompilation = PreparedCompilation
   { preparedExpanded :: ExpandedPlan
@@ -233,24 +274,51 @@ data FontConfiguration = FontConfiguration
   }
 
 prepareCompilation ::
-     Sem.SemanticTrace
+     Metrics.MetricsRecorder
+  -> Sem.SemanticTrace
   -> R.RenderPlan
   -> IO (Either RenderCompileError PreparedCompilation)
-prepareCompilation trace plan =
-  case expand of
-    Left err -> pure (Left err)
+prepareCompilation recorder trace plan = do
+  expandedResult <-
+    Metrics.measurePhase recorder "renderExpansion"
+      $ Exception.evaluate (forceExpandedResult expand)
+  case expandedResult of
+    Left err -> do
+      Metrics.markFailedPhase recorder "renderExpansion"
+      pure (Left err)
     Right expanded -> do
-      typographyResult <- prepareTypographyLines trace plan expanded
-      pure $ do
-        typography <- typographyResult
-        constraints <- lowerPlan trace plan expanded typography
-        pure
-          PreparedCompilation
-            { preparedExpanded = expanded
-            , preparedProblem = S.solverProblem constraints
-            , preparedPlan = plan
-            , preparedText = typography
-            }
+      recordExpandedCounts recorder expanded
+      typographyResult <-
+        Metrics.measurePhase recorder "typographyPreparation"
+          $ prepareTypographyLines trace plan expanded
+      case typographyResult of
+        Left err -> do
+          Metrics.markFailedPhase recorder "typographyPreparation"
+          pure (Left err)
+        Right typography -> do
+          recordTypographyCounts recorder typography
+          constraintsResult <-
+            Metrics.measurePhase recorder "constraintLowering"
+              $ Exception.evaluate
+                  (forceConstraintsResult
+                     (lowerPlan trace plan expanded typography))
+          case constraintsResult of
+            Left err -> do
+              Metrics.markFailedPhase recorder "constraintLowering"
+              pure (Left err)
+            Right constraints -> do
+              Metrics.recordCount
+                recorder
+                "solverInputConstraints"
+                (S.constraintCount constraints)
+              pure
+                (Right
+                   PreparedCompilation
+                     { preparedExpanded = expanded
+                     , preparedProblem = S.solverProblem constraints
+                     , preparedPlan = plan
+                     , preparedText = typography
+                     })
   where
     expand = do
       validateFrames trace plan
@@ -258,6 +326,139 @@ prepareCompilation trace plan =
       ranks <- compileRankings trace plan nodes
       connectors <- expandConnectors trace plan nodes
       pure (ExpandedPlan nodes connectors ranks)
+
+forceExpandedResult ::
+     Either RenderCompileError ExpandedPlan
+  -> Either RenderCompileError ExpandedPlan
+forceExpandedResult result =
+  case result of
+    Left err       -> length (show err) `seq` result
+    Right expanded -> length (show expanded) `seq` result
+
+forceConstraintsResult ::
+     Either RenderCompileError [S.Constraint]
+  -> Either RenderCompileError [S.Constraint]
+forceConstraintsResult result =
+  case result of
+    Left err          -> length (show err) `seq` result
+    Right constraints -> length (show constraints) `seq` result
+
+recordExpandedCounts :: Metrics.MetricsRecorder -> ExpandedPlan -> IO ()
+recordExpandedCounts recorder expanded = do
+  Metrics.recordCount recorder "expandedNodes" (length (expandedNodes expanded))
+  Metrics.recordCount
+    recorder
+    "expandedConnectors"
+    (length (expandedConnectors expanded))
+  Metrics.recordCount
+    recorder
+    "expandedRankedBlocks"
+    (sum (map Map.size (Map.elems (expandedRanks expanded))))
+
+recordTypographyCounts :: Metrics.MetricsRecorder -> [PreparedText] -> IO ()
+recordTypographyCounts recorder prepared = do
+  Metrics.recordCount recorder "preparedTextRuns" (length prepared)
+  Metrics.recordCount
+    recorder
+    "preparedTextBranches"
+    (sum (map (length . preparedTextBranches) prepared))
+  Metrics.recordCount
+    recorder
+    "rejectedTextConfigurations"
+    (sum (map (length . preparedTextRejected) prepared))
+
+materializeMeasured ::
+     FilePath
+  -> IR.ScenarioKey
+  -> Sem.SemanticTrace
+  -> PreparedCompilation
+  -> S.Solution
+  -> IO
+       ( Either RenderCompileError (IR.Visualization, [Resource.ResourceBlob])
+       , Double
+       , S.Solution)
+materializeMeasured sourcePath key trace prepared solution = do
+  (result, duration) <-
+    Metrics.measureDuration
+      (Exception.evaluate
+         (forceMaterializedResult
+            (materializeVisualization sourcePath key trace prepared solution)))
+  pure (result, duration, solution)
+
+forceMaterializedResult ::
+     Either RenderCompileError (IR.Visualization, [Resource.ResourceBlob])
+  -> Either RenderCompileError (IR.Visualization, [Resource.ResourceBlob])
+forceMaterializedResult result =
+  case result of
+    Left err -> length (show err) `seq` result
+    Right (visualization, resources) ->
+      let structuralCount =
+            length (IR.visualizationElements visualization)
+              + length (fromMaybe [] (IR.visualizationConnectors visualization))
+              + length (IR.visualizationSteps visualization)
+              + length (IR.visualizationVariables visualization)
+          resourceBytes =
+            sum (map (BS.length . Resource.resourceBlobBytes) resources)
+       in structuralCount `seq` resourceBytes `seq` result
+
+compileViewMetrics ::
+     S.Solution
+  -> IR.Visualization
+  -> (Double, [Resource.ResourceBlob])
+  -> Metrics.ViewMetrics
+compileViewMetrics solution visualization (duration, resources) =
+  let inspection = S.solutionInspection solution
+      S.AffineSamplingStatistics sampling = S.solutionBackendStatistics solution
+      counts =
+        Map.fromList
+          [ ("solverVariables", S.inspectedVariableCount inspection)
+          , ("solverNativeBounds", S.inspectedNativeBoundCount inspection)
+          , ("solverRawConstraints", S.inspectedRawCount inspection)
+          , ("solverCanonicalConstraints", S.inspectedCanonicalCount inspection)
+          , ( "solverEliminatedConstraints"
+            , S.inspectedEliminatedCount inspection)
+          , ("solverChoices", S.inspectedChoiceCount inspection)
+          , ("solverChoiceBranches", S.inspectedChoiceBranchCount inspection)
+          , ( "solverChoiceComponents"
+            , S.inspectedChoiceComponentCount inspection)
+          , ( "solverLargestChoiceComponentBranches"
+            , S.inspectedLargestChoiceComponentBranches inspection)
+          , ( "solverAffineEqualities"
+            , S.inspectedAffineEqualityCount inspection)
+          , ( "solverAffineInequalities"
+            , S.inspectedAffineInequalityCount inspection)
+          , ("samplingAmbientDimension", S.samplingAmbientDimension sampling)
+          , ("samplingReducedDimension", S.samplingReducedDimension sampling)
+          , ("samplingEqualities", S.samplingEqualityCount sampling)
+          , ("samplingInequalities", S.samplingInequalityCount sampling)
+          , ("samplingBurnInSteps", S.samplingBurnInSteps sampling)
+          , ("outputElements", length (IR.visualizationElements visualization))
+          , ( "outputConnectors"
+            , length (fromMaybe [] (IR.visualizationConnectors visualization)))
+          , ("outputSteps", length (IR.visualizationSteps visualization))
+          , ( "outputVariables"
+            , length (IR.visualizationVariables visualization))
+          , ("outputResources", length resources)
+          ]
+      labels =
+        Map.fromList
+          [ ("solverBackend", "affine-sampler")
+          , ( "decisionCoverage"
+            , decisionCoverageLabel (S.solutionSampling solution))
+          ]
+   in Metrics.ViewMetrics
+        { Metrics.viewMetricSeed = randomSeedInt (S.solutionSeed solution)
+        , Metrics.viewMetricMaterializationMs = duration
+        , Metrics.viewMetricCounts = counts
+        , Metrics.viewMetricLabels = labels
+        }
+
+decisionCoverageLabel :: S.SamplingProvenance -> String
+decisionCoverageLabel provenance =
+  case provenance of
+    S.SampledWith _ S.EnumeratedDecisions     -> "exact-enumeration"
+    S.SampledWith _ S.MipConditionedDecisions -> "mip-conditioning"
+    S.LegacySampling                          -> "legacy"
 
 prepareTypographyLines ::
      Sem.SemanticTrace

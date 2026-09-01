@@ -65,6 +65,8 @@ export const projectEventSchema = v.variant('type', [
 
 export type { ParticipantIntakeStepId } from './assistant-intake';
 
+export type { CompilationMetrics, CompilerMetricsSidecar } from './compilation-metrics';
+
 export type { ProjectOperationKind } from './operation-lifecycle';
 
 /** Any validated immutable event in a project Timeline. */

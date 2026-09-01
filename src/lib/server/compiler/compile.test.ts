@@ -95,7 +95,9 @@ describe('compileSource', () => {
         '--source',
         '/tmp/request-a/source/Main.sverlin',
         '--source-label',
-        'Main.sverlin'
+        'Main.sverlin',
+        '--metrics-output',
+        '/tmp/request-a/compiled.json.metrics.json'
       ])
     );
   });

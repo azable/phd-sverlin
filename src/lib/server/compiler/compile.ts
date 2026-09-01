@@ -5,12 +5,16 @@
  */
 
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as v from 'valibot';
 
 import { decodeVisualizationBatch, type Visualization } from '$lib/shared/visualization';
+import {
+  compilerMetricsSidecarSchema,
+  type CompilerMetricsSidecar
+} from '$lib/shared/projects/events/compilation-metrics';
 import type {
   CompilationProvenance,
   CompilationResource,
@@ -42,6 +46,16 @@ export type CompileDebug = {
   stdout: string;
   stderr: string;
   error?: string;
+  compilationId?: string;
+  compilerMetrics?: CompilerMetricsSidecar;
+  serviceMetrics?: {
+    totalMs: number;
+    requestPreparationMs: number;
+    queueWaitMs: number;
+    compilerProcessMs: number;
+    outputValidationMs: number;
+    cleanupMs: number;
+  };
 };
 
 /** Stable categories used to route and present compilation failures. */
@@ -81,6 +95,7 @@ export type CompileProvenance = CompilationProvenance;
 
 /** Inputs required to compile an isolated source snapshot. */
 export type CompileSourceOptions = {
+  compilationId?: string;
   sourceContent: string;
   sourceLabel: string;
   seed: number;
@@ -115,6 +130,9 @@ const timeoutKillGraceMs = 1_000;
 const compileTimeoutEnvVar = 'SVERLIN_COMPILE_TIMEOUT_MS';
 const maxCompileSourceBytes = 512 * 1024;
 const maxCompilerLogBytes = 2 * 1024 * 1024;
+// The fixed metrics schema is normally under 10 KiB; 64 KiB allows evolution
+// without permitting an unbounded compiler control file.
+const maxCompilerMetricsBytes = 64 * 1024;
 const maxVisualizationBytes = 32 * 1024 * 1024;
 const maxManifestBytes = 1024 * 1024;
 const maxResourceBytes = 16 * 1024 * 1024;
@@ -160,23 +178,59 @@ export async function compileSourceBatch(
   options: CompileSourceBatchOptions
 ): Promise<CompileVisualizationResult[]> {
   const { sourceContent, sourceLabel, seeds, owner, signal } = options;
+  const compilationId = options.compilationId ?? randomUUID();
   if (seeds.length === 0) throw new Error('At least one compiler seed is required.');
+  const serviceStartedAt = performance.now();
   const seed = seeds[0];
   const cwd = process.cwd();
+  let outputDir: string | undefined;
+  let requestPreparationMs = 0;
+  let queueWaitMs = 0;
+  let outputValidationStartedAt = 0;
+  let compilerMetrics: CompilerMetricsSidecar | undefined;
+
+  const finish = async (results: CompileVisualizationResult[]) => {
+    const outputValidationMs = outputValidationStartedAt
+      ? performance.now() - outputValidationStartedAt
+      : 0;
+    const cleanupStartedAt = performance.now();
+    if (outputDir) await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
+    const cleanupMs = performance.now() - cleanupStartedAt;
+    const totalMs = performance.now() - serviceStartedAt;
+    return results.map((result) => ({
+      ...result,
+      debug: {
+        ...result.debug,
+        compilationId,
+        ...(compilerMetrics ? { compilerMetrics } : {}),
+        serviceMetrics: {
+          totalMs: roundMetric(totalMs),
+          requestPreparationMs: roundMetric(requestPreparationMs),
+          queueWaitMs: roundMetric(queueWaitMs),
+          compilerProcessMs: roundMetric(result.debug.durationMs),
+          outputValidationMs: roundMetric(outputValidationMs),
+          cleanupMs: roundMetric(cleanupMs)
+        }
+      }
+    }));
+  };
+
   if (Buffer.byteLength(sourceContent, 'utf8') > maxCompileSourceBytes) {
     const error = `Compile source exceeds the ${maxCompileSourceBytes} byte limit.`;
     const debug = emptyCompileDebug(cwd, error);
-    return batchFailure(seeds, {
-      ok: false,
-      error,
-      debug,
-      status: 413,
-      diagnostics: diagnosticsForFailure(debug, error),
-      failureKind: 'source'
-    });
+    requestPreparationMs = performance.now() - serviceStartedAt;
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error,
+        debug,
+        status: 413,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: 'source'
+      })
+    );
   }
   let outputPath: string;
-  let outputDir: string | undefined;
   let sourcePath: string;
 
   try {
@@ -187,25 +241,20 @@ export async function compileSourceBatch(
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(sourcePath, sourceContent, 'utf8');
   } catch (error) {
-    if (outputDir) {
-      await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
-    }
     const message = error instanceof Error ? error.message : String(error);
     const debug = emptyCompileDebug(cwd, message);
-    return batchFailure(seeds, {
-      ok: false,
-      error: message,
-      debug,
-      status: 500,
-      diagnostics: diagnosticsForFailure(debug, message),
-      failureKind: 'infrastructure'
-    });
+    requestPreparationMs = performance.now() - serviceStartedAt;
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error: message,
+        debug,
+        status: 500,
+        diagnostics: diagnosticsForFailure(debug, message),
+        failureKind: 'infrastructure'
+      })
+    );
   }
-
-  const finish = async (result: CompileVisualizationResult[]) => {
-    await rm(outputDir!, { recursive: true, force: true }).catch(() => undefined);
-    return result;
-  };
 
   let prepared;
   try {
@@ -218,6 +267,7 @@ export async function compileSourceBatch(
           ? error.message
           : String(error);
     const debug = emptyCompileDebug(cwd, message);
+    requestPreparationMs = performance.now() - serviceStartedAt;
     return finish(
       batchFailure(seeds, {
         ok: false,
@@ -245,15 +295,16 @@ export async function compileSourceBatch(
 
   const timeoutMs = readCompileTimeoutMs();
   let debug: CompileRun;
+  requestPreparationMs = performance.now() - serviceStartedAt;
+  const queuedAt = performance.now();
   try {
-    debug = await compilerScheduler.run(
-      (scheduledSignal) =>
-        runCompile(command, args, cwd, timeoutMs, {
-          signal: scheduledSignal,
-          env: preparedCompilerEnvironment(prepared)
-        }),
-      signal
-    );
+    debug = await compilerScheduler.run((scheduledSignal) => {
+      queueWaitMs = performance.now() - queuedAt;
+      return runCompile(command, args, cwd, timeoutMs, {
+        signal: scheduledSignal,
+        env: preparedCompilerEnvironment(prepared)
+      });
+    }, signal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const failed = emptyCompileDebug(cwd, message);
@@ -271,7 +322,27 @@ export async function compileSourceBatch(
       })
     );
   }
+  outputValidationStartedAt = performance.now();
   let compiledJson = '';
+  let metricsReadError: string | undefined;
+
+  try {
+    const rawMetrics = JSON.parse(
+      await readTextFileBounded(
+        `${outputPath}.metrics.json`,
+        maxCompilerMetricsBytes,
+        'Compiler metrics'
+      )
+    ) as unknown;
+    const parsed = v.safeParse(compilerMetricsSidecarSchema, rawMetrics);
+    if (!parsed.success) throw new Error(v.summarize(parsed.issues));
+    if (JSON.stringify(parsed.output.viewSeeds) !== JSON.stringify(seeds)) {
+      throw new Error('Compiler metrics view seeds do not match the requested batch.');
+    }
+    compilerMetrics = parsed.output;
+  } catch (error) {
+    metricsReadError = error instanceof Error ? error.message : String(error);
+  }
 
   let outputReadError: string | undefined;
   try {
@@ -326,6 +397,20 @@ export async function compileSourceBatch(
         status: lockBusy ? 503 : 500,
         diagnostics: diagnosticsForFailure(debug, error),
         failureKind: lockBusy ? 'infrastructure' : classifyCompileFailure(debug)
+      })
+    );
+  }
+
+  if (metricsReadError) {
+    const error = `Compile backend did not produce valid structured metrics: ${metricsReadError}`;
+    return finish(
+      batchFailure(seeds, {
+        ok: false,
+        error,
+        debug,
+        status: 502,
+        diagnostics: diagnosticsForFailure(debug, error),
+        failureKind: 'invalid-output'
       })
     );
   }
@@ -793,6 +878,8 @@ export function compileCommand(
     outputPath,
     '--target',
     'ir-json',
+    '--metrics-output',
+    `${outputPath}.metrics.json`,
     '--details',
     '--seed',
     String(seed)
@@ -883,4 +970,8 @@ function readCompileTimeoutMs() {
 
 function formatDuration(timeoutMs: number) {
   return timeoutMs % 1_000 === 0 ? `${timeoutMs / 1_000}s` : `${timeoutMs}ms`;
+}
+
+function roundMetric(value: number): number {
+  return Math.round(Math.max(0, value) * 10) / 10;
 }

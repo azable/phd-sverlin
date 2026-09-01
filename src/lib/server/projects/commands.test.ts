@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import { projectCompilationMetrics } from '$lib/shared/projects/compilation-metrics';
 import { markdownMessage } from '$lib/shared/projects/events/message-content';
 import type { ProjectEventOf } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
@@ -678,6 +679,32 @@ describe('submitProjectFeedback', () => {
 
   it('compiles a synchronized comparison directly from two distinct fresh seeds', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue(generation('valid source', 'Ready'));
+    mocks.generateBatch.mockImplementationOnce(async ({ compilationId, source, seeds, signal }) => {
+      const results = await Promise.all(
+        seeds.map((seed: number) => mocks.compileSource({ source, seed, signal }))
+      );
+      return results.map((result) => ({
+        ...result,
+        execution: {
+          ...result.execution,
+          metrics: {
+            schemaVersion: 1,
+            compilationId,
+            viewSeeds: seeds,
+            requestedViewCount: seeds.length,
+            producedViewCount: results.filter(({ ok }) => ok).length,
+            service: {
+              totalMs: 12,
+              requestPreparationMs: 1,
+              queueWaitMs: 2,
+              compilerProcessMs: 6,
+              outputValidationMs: 2,
+              cleanupMs: 1
+            }
+          }
+        }
+      }));
+    });
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject({ title: 'Comparison' }, serviceDependencies);
@@ -705,6 +732,23 @@ describe('submitProjectFeedback', () => {
     expect(new Set(presented.map(({ payload }) => payload.presentation.presentationId)).size).toBe(
       2
     );
+    const compilationRequests = result.appendedEvents.filter(
+      (event) => event.type === 'compilation.requested'
+    );
+    const compilationResults = result.appendedEvents.filter(
+      (event) => event.type === 'compilation.succeeded'
+    );
+    expect(compilationRequests).toHaveLength(2);
+    expect(compilationResults).toHaveLength(2);
+    expect(
+      new Set([
+        ...compilationRequests.map(({ payload }) => payload.compilationId),
+        ...compilationResults.map(({ payload }) => payload.compilationId)
+      ]).size
+    ).toBe(1);
+    expect(projectCompilationMetrics(result.document)).toEqual([
+      compilationResults[0].payload.metrics
+    ]);
   });
 
   it('repairs a partial batch once using the same two seeds', async () => {

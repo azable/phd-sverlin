@@ -110,6 +110,7 @@ library sverlin-internal
         Sverlin.Internal.Semantic
         Sverlin.Internal.Semantic.Generator
         Sverlin.Internal.Compiler
+        Sverlin.Internal.Metrics
         Sverlin.Internal.Render
         Sverlin.Internal.Render.Compile
         Sverlin.Internal.Render.Theme

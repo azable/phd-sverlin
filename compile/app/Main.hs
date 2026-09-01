@@ -1,9 +1,10 @@
 module Main where
 
 import           Control.Exception                  (IOException, evaluate, try)
-import           Control.Monad                      (when)
+import           Control.Monad                      (unless, when)
 import qualified Data.ByteString                    as BS
 import qualified Data.ByteString.Lazy               as BL
+import qualified Data.Map.Strict                    as Map
 import           Data.Maybe                         (fromMaybe)
 import           Data.Word                          (Word64)
 import           GHC.Clock                          (getMonotonicTimeNSec)
@@ -15,6 +16,7 @@ import qualified LinearTrace.Visualization.Target   as Target
 import           Numeric                            (showFFloat)
 import           Options.Applicative
 import qualified Sverlin.Internal.Compiler          as Compiler
+import qualified Sverlin.Internal.Metrics           as Metrics
 import           Sverlin.Interpreter                (withVisualization)
 import           Sverlin.Source                     (GeneratedSource (..),
                                                      SourceUnit (..),
@@ -33,6 +35,7 @@ data Options = Options
   , optionSeed        :: Maybe Int
   , optionOutputPath  :: FilePath
   , optionTarget      :: Target.OutputTarget
+  , optionMetricsPath :: Maybe FilePath
   , optionDetails     :: Bool
   , optionCount       :: Int
   , optionViewSeeds   :: [Int]
@@ -54,17 +57,46 @@ main = do
       emitGeneratedSource (optionEmitHaskell options) generated
       seed <- chooseSeed (optionSeed options)
       seeds <- resolveSeeds options seed
+      recorder <- Metrics.newMetricsRecorder seeds
       sourceStarted <- getMonotonicTimeNSec
       interpreted <-
         withVisualization generated $ \program -> do
           sourceFinished <- getMonotonicTimeNSec
+          Metrics.recordPhase
+            recorder
+            "sourceInterpretation"
+            (elapsedMs sourceStarted sourceFinished)
           runVisualization
             options
+            recorder
             sourceLabel
             sourceBody'
-            (elapsedMs sourceStarted sourceFinished)
+            sourceStarted
             seeds
             program
+      sourceFinished <- getMonotonicTimeNSec
+      recorded <- Metrics.readCompilerMetrics recorder
+      unless
+        (Map.member
+           "sourceInterpretation"
+           (Metrics.compilerMetricPhasesMs recorded)) $ do
+        Metrics.recordPhase
+          recorder
+          "sourceInterpretation"
+          (elapsedMs sourceStarted sourceFinished)
+        Metrics.markFailedPhase recorder "sourceInterpretation"
+      afterSource <- Metrics.readCompilerMetrics recorder
+      unless
+        (Map.member
+           "compilerInternalTotal"
+           (Metrics.compilerMetricPhasesMs afterSource))
+        $ Metrics.recordPhase
+            recorder
+            "compilerInternalTotal"
+            (elapsedMs sourceStarted sourceFinished)
+      finalMetrics <- Metrics.readCompilerMetrics recorder
+      writeMetrics options finalMetrics
+      when (optionDetails options) (hPrintCompilerMetrics stdout finalMetrics)
       case interpreted of
         Left err -> failWith (formatInterpreterError err)
         Right result ->
@@ -78,39 +110,38 @@ main = do
 
 runVisualization ::
      Options
+  -> Metrics.MetricsRecorder
   -> FilePath
   -> String
-  -> Double
+  -> Word64
   -> [Int]
   -> Compiler.SverlinProgram
   -> IO (Either String [IR.Visualization])
-runVisualization options sourcePath sourceBody sourceLoadMs seeds program = do
-  (compiledResult, compileMs) <-
-    timedPhase
-      (Compiler.compileProgramBatch sourcePath sourceBody seeds program)
+runVisualization options recorder sourcePath sourceBody compilerStarted seeds program = do
+  compiledResult <-
+    Compiler.compileProgramBatch recorder sourcePath sourceBody seeds program
   case compiledResult of
     Left err -> pure (Left err)
     Right package -> do
-      (bundleResult, encodeMs) <-
-        timedPhase
-          (evaluate
-             (forceTargetBundle
-                (Target.compileTarget
-                   (Target.defaultTargetRequest (optionTarget options))
-                   (forcePackage package))))
+      bundleResult <-
+        Metrics.measurePhase recorder "targetEncoding"
+          $ evaluate
+              (forceTargetBundle
+                 (Target.compileTarget
+                    (Target.defaultTargetRequest (optionTarget options))
+                    (forcePackage package)))
       case bundleResult of
-        Left (Target.TargetError err) -> pure (Left err)
+        Left (Target.TargetError err) -> do
+          Metrics.markFailedPhase recorder "targetEncoding"
+          pure (Left err)
         Right bundle -> do
-          ((), writeMs) <-
-            timedPhase (writeCompiled (optionOutputPath options) bundle)
-          when (optionDetails options)
-            $ hPrintPhaseTimings
-                stdout
-                [ ("Source load", sourceLoadMs)
-                , ("Trace, Render, and affine solve", compileMs)
-                , ("Target encode", encodeMs)
-                , ("Target write", writeMs)
-                ]
+          Metrics.measurePhase recorder "targetWriting"
+            $ writeCompiled (optionOutputPath options) bundle
+          compilerFinished <- getMonotonicTimeNSec
+          Metrics.recordPhase
+            recorder
+            "compilerInternalTotal"
+            (elapsedMs compilerStarted compilerFinished)
           pure (Right (Resource.compilationPackageVisualizations package))
 
 forcePackageResult ::
@@ -151,23 +182,65 @@ forceTargetBundle result =
                      (Target.targetBundleAttachments bundle))
        in byteCount `seq` result
 
-timedPhase :: IO a -> IO (a, Double)
-timedPhase ioAction = do
-  start <- getMonotonicTimeNSec
-  result <- ioAction
-  end <- getMonotonicTimeNSec
-  pure (result, elapsedMs start end)
-
 elapsedMs :: Word64 -> Word64 -> Double
 elapsedMs start end = fromIntegral (end - start) / 1000000
 
-hPrintPhaseTimings :: Handle -> [(String, Double)] -> IO ()
-hPrintPhaseTimings handle timings = do
+hPrintCompilerMetrics :: Handle -> Metrics.CompilerMetrics -> IO ()
+hPrintCompilerMetrics handle metrics = do
   hPutStrLn handle "Phase timings:"
-  mapM_ printTiming timings
+  mapM_ printTiming available
+  unless (Map.null counts) $ do
+    hPutStrLn handle "Workload counts:"
+    mapM_ printCount (Map.toAscList counts)
+  mapM_ printView (Metrics.compilerMetricViews metrics)
   where
+    phases = Metrics.compilerMetricPhasesMs metrics
+    counts = Metrics.compilerMetricCounts metrics
+    available =
+      [ (label, milliseconds)
+      | (name, label) <- phaseLabels
+      , Just milliseconds <- [Map.lookup name phases]
+      ]
     printTiming (name, ms) =
       hPutStrLn handle ("  " ++ name ++ ": " ++ formatMs ms)
+    printCount (name, count) =
+      hPutStrLn handle ("  " ++ name ++ ": " ++ show count)
+    printView view = do
+      hPutStrLn
+        handle
+        ("View workload (seed " ++ show (Metrics.viewMetricSeed view) ++ "):")
+      hPutStrLn
+        handle
+        ("  materializationMs: "
+           ++ formatMs (Metrics.viewMetricMaterializationMs view))
+      mapM_ printCount (Map.toAscList (Metrics.viewMetricCounts view))
+      mapM_ printLabel (Map.toAscList (Metrics.viewMetricLabels view))
+    printLabel (name, labelValue) =
+      hPutStrLn handle ("  " ++ name ++ ": " ++ labelValue)
+
+phaseLabels :: [(String, String)]
+phaseLabels =
+  [ ("sourceInterpretation", "Source interpretation")
+  , ("renderPlanBuild", "Render plan build")
+  , ("semanticTraceBuild", "Semantic trace build")
+  , ("renderExpansion", "Render expansion")
+  , ("typographyPreparation", "Typography preparation")
+  , ("constraintLowering", "Constraint lowering")
+  , ("designSpaceCompilation", "Design-space compilation")
+  , ("designSpaceSampling", "Design-space sampling")
+  , ("irMaterialization", "IR materialization")
+  , ("targetEncoding", "Target encode")
+  , ("targetWriting", "Target write")
+  , ("compilerInternalTotal", "Compiler internal total")
+  ]
+
+writeMetrics :: Options -> Metrics.CompilerMetrics -> IO ()
+writeMetrics options metrics =
+  case optionMetricsPath options of
+    Nothing -> pure ()
+    Just path -> do
+      createDirectoryIfMissing True (takeDirectory path)
+      Metrics.writeCompilerMetrics path metrics
 
 formatMs :: Double -> String
 formatMs milliseconds = showFFloat (Just 1) milliseconds "ms"
@@ -242,7 +315,13 @@ optionsParser =
              <> value Target.IrJson
              <> showDefaultWith Target.outputTargetName
              <> help "Compile to TARGET (currently: ir-json)")
-    <*> switch (long "details" <> help "Print phase timings")
+    <*> optional
+          (strOption
+             (long "metrics-output"
+                <> metavar "FILE"
+                <> help "Write structured compiler metrics to FILE"))
+    <*> switch
+          (long "details" <> help "Print phase timings and workload counts")
     <*> option
           (eitherReader positiveInt)
           (long "count"

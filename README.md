@@ -168,7 +168,7 @@ Compile the minimal example with a deterministic seed:
 pnpm run compile -- --source examples/Minimal.sverlin --seed 1
 ```
 
-Seeded commands write beneath `outputs/seed-<seed>/`. The `--seed` value selects the scenario and its first view. Repeat `--view-seed INT` to sample additional presentations of that same input and trace in the same compiler process. `--count N` is the convenience form for consecutive view seeds beginning at `--seed`; it cannot be combined with explicit `--view-seed` values. A batch reuses prepared affine regions but samples a fresh layout for every view. Use `--output FILE` for an explicit destination or when omitting `--seed`, and add `--details` for phase timings.
+Seeded commands write beneath `outputs/seed-<seed>/`. The `--seed` value selects the scenario and its first view. Repeat `--view-seed INT` to sample additional presentations of that same input and trace in the same compiler process. `--count N` is the convenience form for consecutive view seeds beginning at `--seed`; it cannot be combined with explicit `--view-seed` values. A batch reuses prepared affine regions but samples a fresh layout for every view. Use `--output FILE` for an explicit destination or when omitting `--seed`, and add `--details` for phase timings and workload counts. The visualization service stores the same structured measurements in compilation Timeline events, including its own queue, process, validation, and cleanup times. Historical events without metrics remain valid.
 
 ```sh
 pnpm run compile -- \

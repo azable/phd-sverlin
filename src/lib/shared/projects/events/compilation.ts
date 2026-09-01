@@ -2,6 +2,8 @@
 
 import * as v from 'valibot';
 
+import { compilationMetricsSchema } from './compilation-metrics';
+
 import {
   diagnosticSchema,
   compilationResourceSchema,
@@ -28,7 +30,10 @@ export const compilationRequestedEventSchema = v.object({
     sourceLabel: textSchema,
     seed: v.pipe(integerSchema, v.minValue(1)),
     attempt: v.optional(positiveSchema),
-    dslRevision: v.optional(dslRevisionSchema)
+    dslRevision: v.optional(dslRevisionSchema),
+    compilationId: v.optional(v.pipe(v.string(), v.uuid())),
+    batchIndex: v.optional(naturalSchema),
+    batchSize: v.optional(positiveSchema)
   })
 });
 
@@ -38,6 +43,11 @@ export const compilationSucceededEventSchema = v.object({
   type: v.literal('compilation.succeeded'),
   payload: v.object({
     durationMs: naturalSchema,
+    compilationId: v.optional(v.pipe(v.string(), v.uuid())),
+    seed: v.optional(positiveSchema),
+    batchIndex: v.optional(naturalSchema),
+    batchSize: v.optional(positiveSchema),
+    metrics: v.optional(compilationMetricsSchema),
     stdout: recordedTextSchema,
     stderr: recordedTextSchema,
     render: recordedTextSchema,
@@ -53,6 +63,11 @@ export const compilationFailedEventSchema = v.object({
   type: v.literal('compilation.failed'),
   payload: v.object({
     durationMs: naturalSchema,
+    compilationId: v.optional(v.pipe(v.string(), v.uuid())),
+    seed: v.optional(positiveSchema),
+    batchIndex: v.optional(naturalSchema),
+    batchSize: v.optional(positiveSchema),
+    metrics: v.optional(compilationMetricsSchema),
     exitCode: v.nullable(integerSchema),
     failureKind: v.picklist([
       'source',

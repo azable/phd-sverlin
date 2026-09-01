@@ -68,6 +68,7 @@ type RecordedCompilationBase = {
   sourceLabel: string;
   seed: number;
   operationId: string;
+  compilationId: string;
 };
 
 /** Compilation result together with the immutable event and blobs recorded for it. */
@@ -565,8 +566,9 @@ export async function compileProjectSourceBatch(
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<RecordedCompilationBatch> {
   if (options.seeds.length === 0) throw new Error('At least one seed is required.');
+  const compilationId = randomUUID();
   const dslRevision = await dependencies.readDslRevision();
-  const requests = options.seeds.map((seed) =>
+  const requests = options.seeds.map((seed, batchIndex) =>
     draftEvent<'compilation.requested'>({
       type: 'compilation.requested',
       actor: { kind: 'system' },
@@ -577,6 +579,9 @@ export async function compileProjectSourceBatch(
         source: options.source,
         sourceLabel: options.sourceLabel,
         seed,
+        compilationId,
+        batchIndex,
+        batchSize: options.seeds.length,
         ...(options.attempt ? { attempt: options.attempt } : {}),
         ...(dslRevision ? { dslRevision } : {})
       }
@@ -584,6 +589,7 @@ export async function compileProjectSourceBatch(
   );
   let document = await appendProjectEvents(options.document, requests, [], dependencies);
   const results = await dependencies.compiler.generateBatch({
+    compilationId,
     source: { name: logicalSourceName(options.sourceLabel), content: options.sourceContent },
     seeds: options.seeds,
     signal: currentProjectOperationSignal()
@@ -603,7 +609,10 @@ export async function compileProjectSourceBatch(
         source: options.source,
         sourceLabel: options.sourceLabel,
         seed: options.seeds[index],
-        operationId: options.operationId
+        operationId: options.operationId,
+        compilationId,
+        batchIndex: index,
+        batchSize: options.seeds.length
       },
       dependencies
     );
@@ -628,6 +637,7 @@ export async function compileProjectSource(
   },
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<RecordedCompilation> {
+  const compilationId = randomUUID();
   const dslRevision = await dependencies.readDslRevision();
   const request = draftEvent<'compilation.requested'>({
     type: 'compilation.requested',
@@ -639,17 +649,31 @@ export async function compileProjectSource(
       source: options.source,
       sourceLabel: options.sourceLabel,
       seed: options.seed,
+      compilationId,
+      batchIndex: 0,
+      batchSize: 1,
       ...(options.attempt ? { attempt: options.attempt } : {}),
       ...(dslRevision ? { dslRevision } : {})
     }
   });
   const document = await appendProjectEvents(options.document, [request], [], dependencies);
   const result = await dependencies.compiler.generate({
+    compilationId,
     source: { name: logicalSourceName(options.sourceLabel), content: options.sourceContent },
     seed: options.seed,
     signal: currentProjectOperationSignal()
   });
-  return recordCompileResult({ ...options, document, result }, dependencies);
+  return recordCompileResult(
+    {
+      ...options,
+      document,
+      result,
+      compilationId,
+      batchIndex: 0,
+      batchSize: 1
+    },
+    dependencies
+  );
 }
 
 async function recordCompileResult(
@@ -660,6 +684,9 @@ async function recordCompileResult(
     sourceLabel: string;
     seed: number;
     operationId: string;
+    compilationId: string;
+    batchIndex: number;
+    batchSize: number;
   },
   dependencies: ProjectServiceDependencies
 ): Promise<RecordedCompilation> {
@@ -673,6 +700,11 @@ async function recordCompileResult(
       operationId: options.operationId,
       payload: {
         durationMs: options.result.execution.durationMs,
+        compilationId: options.compilationId,
+        seed: options.seed,
+        batchIndex: options.batchIndex,
+        batchSize: options.batchSize,
+        ...(options.result.execution.metrics ? { metrics: options.result.execution.metrics } : {}),
         exitCode: options.result.execution.exitCode,
         failureKind: options.result.failureKind ?? 'pipeline',
         diagnostics: options.result.diagnostics,
@@ -691,7 +723,8 @@ async function recordCompileResult(
       source: options.source,
       sourceLabel: options.sourceLabel,
       seed: options.seed,
-      operationId: options.operationId
+      operationId: options.operationId,
+      compilationId: options.compilationId
     };
   }
 
@@ -703,6 +736,11 @@ async function recordCompileResult(
     operationId: options.operationId,
     payload: {
       durationMs: options.result.execution.durationMs,
+      compilationId: options.compilationId,
+      seed: options.seed,
+      batchIndex: options.batchIndex,
+      batchSize: options.batchSize,
+      ...(options.result.execution.metrics ? { metrics: options.result.execution.metrics } : {}),
       stdout,
       stderr,
       render,
@@ -724,7 +762,8 @@ async function recordCompileResult(
     source: options.source,
     sourceLabel: options.sourceLabel,
     seed: options.seed,
-    operationId: options.operationId
+    operationId: options.operationId,
+    compilationId: options.compilationId
   };
 }
 

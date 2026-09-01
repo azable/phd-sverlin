@@ -8,6 +8,7 @@
  */
 
 import type { Visualization } from '$lib/shared/visualization';
+import type { CompilationMetrics } from '$lib/shared/projects/events/compilation-metrics';
 import type {
   CompilationProvenance,
   CompilationResource,
@@ -30,6 +31,7 @@ export type VisualizationExecution = {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  metrics?: CompilationMetrics;
 };
 
 /** Verified immutable resource bytes emitted beside one visualization. */
@@ -73,12 +75,14 @@ export type VisualizationGenerationResult =
     };
 
 export type GenerateVisualizationRequest = {
+  compilationId?: string;
   source: SverlinSource;
   seed: number;
   signal?: AbortSignal;
 };
 
 export type GenerateVisualizationBatchRequest = {
+  compilationId?: string;
   source: SverlinSource;
   seeds: readonly number[];
   signal?: AbortSignal;
@@ -100,13 +104,14 @@ class DefaultSverlinVisualizationService implements SverlinVisualizationService 
     assertSource(request.source);
     assertSeed(request.seed);
     const result = await compileSource({
+      compilationId: request.compilationId ?? crypto.randomUUID(),
       sourceContent: request.source.content,
       sourceLabel: request.source.name,
       seed: request.seed,
       owner: 'visualization-service',
       signal: request.signal
     });
-    return publicResult(request.seed, result);
+    return publicResult(request.seed, result, [request.seed], result.ok ? 1 : 0);
   }
 
   async generateBatch(
@@ -116,13 +121,17 @@ class DefaultSverlinVisualizationService implements SverlinVisualizationService 
     if (request.seeds.length === 0) throw new Error('At least one seed is required.');
     request.seeds.forEach(assertSeed);
     const results = await compileSourceBatch({
+      compilationId: request.compilationId ?? crypto.randomUUID(),
       sourceContent: request.source.content,
       sourceLabel: request.source.name,
       seeds: request.seeds,
       owner: 'visualization-service',
       signal: request.signal
     });
-    return results.map((result, index) => publicResult(request.seeds[index], result));
+    const producedViewCount = results.filter(({ ok }) => ok).length;
+    return results.map((result, index) =>
+      publicResult(request.seeds[index], result, request.seeds, producedViewCount)
+    );
   }
 
   async readiness(): Promise<{ sourceSha256: string; preparedAt: string }> {
@@ -146,14 +155,29 @@ export { formatDiagnosticSummary };
 
 function publicResult(
   seed: number,
-  result: CompileVisualizationResult
+  result: CompileVisualizationResult,
+  requestedSeeds: readonly number[],
+  producedViewCount: number
 ): VisualizationGenerationResult {
+  const metrics =
+    result.debug.compilationId && result.debug.serviceMetrics
+      ? {
+          schemaVersion: 1 as const,
+          compilationId: result.debug.compilationId,
+          viewSeeds: result.debug.compilerMetrics?.viewSeeds ?? [...requestedSeeds],
+          requestedViewCount: requestedSeeds.length,
+          producedViewCount,
+          service: result.debug.serviceMetrics,
+          ...(result.debug.compilerMetrics ? { compiler: result.debug.compilerMetrics } : {})
+        }
+      : undefined;
   const execution = {
     durationMs: result.debug.durationMs,
     exitCode: result.debug.exitCode,
     stdout: result.debug.stdout,
     stderr: result.debug.stderr,
-    timedOut: result.debug.timedOut ?? false
+    timedOut: result.debug.timedOut ?? false,
+    ...(metrics ? { metrics } : {})
   };
   return result.ok
     ? {
