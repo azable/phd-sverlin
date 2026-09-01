@@ -715,6 +715,15 @@ view a shared baseline; otherwise compilation reports the step declarations
 and scenario seed. Duplicate frame declarations for one step definition are
 rejected. `frame` is valid only at the root of Render.
 
+Visual emphasis is explicit trace state, not something inferred from every
+block used within a step. Program may transition a value into a dedicated Kind
+with `copy`, `replace`, and `materialize`, keep that successor alive through the
+relevant frame, and later transition it again. Render selects that Kind and
+assigns its visual style. This preserves the earlier linear tag/relation model:
+the trace says exactly when a state exists, while Render decides how it looks.
+It also avoids treating unrelated operator inputs or all earlier lineage roots
+as highlighted merely because they participated in the same step.
+
 ### Selection and nodes
 
 ```haskell
@@ -1377,11 +1386,12 @@ is conditional, constrain the driving choice instead.
 
 For a childless visual mapping, an unspecified field may be completed by a
 private seeded theme. The baseline surface profiles are `transparent`,
-`outline`, `flat`, `soft-card`, and `pill`; one mapping lineage shares its
-profile and palette. Automatic font choices use unique concrete catalog
-families and real weights. Canvas and structural parent mappings remain
-transparent unless authored. These defaults are compiler behavior, not a
-public `styleFamily` or `StyleProfile` API.
+`outline`, `flat`, `soft-card`, and `pill`; one semantic mapping lineage shares
+its profile, while the presentation shares one palette. Automatic font choices
+use unique concrete catalog families and real weights. Canvas, structural
+parents, and generated text-only leaves remain transparent unless authored.
+These defaults are compiler behavior, not a public `styleFamily` or
+`StyleProfile` API.
 
 Choices made outside a helper are shared by its callers; choices made inside
 the helper are fresh each time:

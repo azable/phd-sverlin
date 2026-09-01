@@ -14,13 +14,22 @@ describe('starter catalog', () => {
 
     expect(blank.source).toContain('domain :: Domain ()');
     expect(blank.source).toContain('render :: Render ()');
-    expect(templates).toHaveLength(6);
+    expect(templates).toHaveLength(15);
     expect(templates.map(({ id }) => id)).toEqual([
       'blank',
       'lifecycle',
       'typed-addition',
       'continuity-and-fork',
       'linear-search',
+      'binary-search',
+      'bubble-sort',
+      'merge-sort',
+      'heap-sort',
+      'breadth-first-search',
+      'dijkstra-shortest-path',
+      'topological-sort',
+      'linked-list-reversal',
+      'longest-common-subsequence',
       'csp-compositions'
     ]);
   });

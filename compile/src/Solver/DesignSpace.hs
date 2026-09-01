@@ -525,7 +525,8 @@ selectConditionedBranch ::
 selectConditionedBranch compiled seed cache = do
   attempts <- newIORef 0
   rejections <- newIORef []
-  completionResult <- queryFeasible attempts seededCompletionCosts Map.empty
+  completionResult <-
+    queryFeasible attempts rejections seededCompletionCosts Map.empty
   selected <-
     case completionResult of
       Left err -> pure (Left err)
@@ -599,10 +600,12 @@ selectConditionedBranch compiled seed cache = do
         , token <- tokens
         ]
     -- This operational search-work bound is independent of the exact-
-    -- enumeration threshold. 256 is large enough for the expected shallow,
-    -- local branching while preventing test configs of one or two from
-    -- disabling backtracking altogether.
-    attemptLimit = max 256 (maxChoiceBranches (compiledDesignConfig compiled))
+    -- enumeration threshold. A conditioned completion should normally pass
+    -- exact affine preparation immediately; sixteen attempts allow bounded
+    -- recovery without turning one bad categorical corner into a multi-minute
+    -- compile.
+    attemptLimit :: Int
+    attemptLimit = 16
     chooseDeferred attempts rejections partial remaining lastCompletion =
       case remaining of
         [] ->
@@ -624,7 +627,7 @@ selectConditionedBranch compiled seed cache = do
     tryDeferredTokens _ _ _ _ _ [] = pure (Right Nothing)
     tryDeferredTokens attempts rejections partial remaining name (token:tokens) = do
       let candidate = Map.insert name token partial
-      feasibility <- queryFeasible attempts Map.empty candidate
+      feasibility <- queryFeasible attempts rejections Map.empty candidate
       case feasibility of
         Left err -> pure (Left err)
         Right Nothing ->
@@ -648,7 +651,7 @@ selectConditionedBranch compiled seed cache = do
                 name
                 tokens
             Right success -> pure (Right success)
-    queryFeasible attempts objective partial = do
+    queryFeasible attempts rejections objective partial = do
       attempt <-
         atomicModifyIORef'
           attempts
@@ -656,12 +659,17 @@ selectConditionedBranch compiled seed cache = do
              let next = count + 1
               in (next, next))
       if attempt > attemptLimit
-        then pure
-               (Left
-                  (SamplingFailed
-                     ("conditioned feasibility search exceeded "
-                        ++ show attemptLimit
-                        ++ " attempts")))
+        then do
+          rejected <- readIORef rejections
+          pure
+            (Left
+               (SamplingFailed
+                  ("conditioned feasibility search exceeded "
+                     ++ show attemptLimit
+                     ++ " attempts"
+                     ++ case nub rejected of
+                          []      -> ""
+                          reasons -> ": " ++ intercalate "; " reasons)))
         else do
           feasibility <- feasible objective partial
           case feasibility of
@@ -739,16 +747,30 @@ compileMipBranchWithHint numericHint compiled index assignment decisions = do
       AffineReady value        -> Right value
       AffineInvalid message    -> Left (InfeasibleDesignSpace message)
       AffineUnsupported reason -> Left (UnsupportedDesignSpace reason)
+  let preferredHint =
+        explicitInitialValues (compiledDesignConfig compiled) resolved
+          `Map.union` numericHint
   prepared <-
-    either
-      (Left . InfeasibleDesignSpace . feasibilityMessage)
-      Right
-      (prepareAffineRegion
-         (explicitInitialValues (compiledDesignConfig compiled) resolved
-            `Map.union` numericHint)
-         affine)
-      -- Caller hints deliberately replace HiGHS's feasible-corner values;
-      -- the backend completion still supplies every unconfigured variable.
+    case prepareAffineRegionWithPhaseOneLimit
+           midpointProjectionSweeps
+           preferredHint
+           affine of
+      Right region -> Right region
+      Left preferredFailure ->
+        either
+          (\fallbackFailure ->
+             Left
+               (InfeasibleDesignSpace
+                  (feasibilityMessage fallbackFailure
+                     ++ numericHintDiagnostic numericHint affine
+                     ++ "; preferred midpoint hint also failed: "
+                     ++ feasibilityMessage preferredFailure)))
+          Right
+          (prepareAffineRegion numericHint affine)
+      -- Explicit midpoint hints keep high-dimensional fitted text and theme
+      -- variables away from a MIP corner. Phase I projects them back into the
+      -- exact chosen region; if that bounded projection does not converge,
+      -- the already-feasible HiGHS point is the deterministic fallback.
   let inspection =
         compiledInspection
           (compileProblem
@@ -768,6 +790,43 @@ compileMipBranchWithHint numericHint compiled index assignment decisions = do
             prepared
       , branchInspection = inspection
       }
+  where
+    -- Each projection sweep touches every affine inequality. Sixty-four is
+    -- enough for ordinary fitted-text/theme midpoint repair while keeping a
+    -- failed optional hint much cheaper than the guaranteed-feasible HiGHS
+    -- fallback on large visualization graphs.
+    midpointProjectionSweeps = 64
+
+numericHintDiagnostic :: Map String Double -> AffineProblem -> String
+numericHintDiagnostic hint problem =
+  "; initial hint matched "
+    ++ show matchedCount
+    ++ "/"
+    ++ show (length names)
+    ++ " variables, maximum raw equality residual="
+    ++ show maximumEqualityResidual
+    ++ ", maximum raw inequality violation="
+    ++ show maximumInequalityViolation
+  where
+    names = affineVariableNames problem
+    matchedCount = length [name | name <- names, Map.member name hint]
+    rowValue row =
+      sum
+        [ coefficient * Map.findWithDefault 0 name hint
+        | (name, coefficient) <- Map.toAscList (affineRowCoefficients row)
+        ]
+    maximumEqualityResidual =
+      maximum
+        (0
+           : [ abs (rowValue row - affineRowRhs row)
+             | row <- affineEqualities problem
+             ])
+    maximumInequalityViolation =
+      maximum
+        (0
+           : [ rowValue row - affineRowRhs row
+             | row <- affineInequalities problem
+             ])
 
 makeAffineSolution ::
      SamplingProvenance

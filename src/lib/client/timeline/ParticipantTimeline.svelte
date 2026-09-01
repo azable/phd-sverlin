@@ -18,6 +18,7 @@
   import type { MessageContentSegment } from '$lib/shared/projects/events/message-content';
 
   import MessageContent from './MessageContent.svelte';
+  import { presentProjectEvent } from './event-presentation';
   import { participantTimeline } from './participant-timeline';
 
   type Props = {
@@ -41,6 +42,13 @@
     onElementReferenceActivate = () => {}
   }: Props = $props();
   const items = $derived(participantTimeline(session.events));
+  const activityProgress = $derived.by(() => {
+    const pendingEvent = session.pendingEvent;
+    if (pendingEvent) return presentProjectEvent(pendingEvent).progress;
+    if (session.assistantResponding) return 'Assistant is responding…';
+    if (session.pending) return 'Recording your update…';
+    return 'Generating more visualizations…';
+  });
   const selectedIds = $derived(
     selection
       .selected(session.events, layout)
@@ -164,7 +172,7 @@
       role="status"
     >
       <Spinner />
-      <span>Assistant is responding…</span>
+      <span>{activityProgress}</span>
     </div>
   </li>
 {:else if session.pending}
@@ -174,7 +182,7 @@
       role="status"
     >
       <Spinner />
-      <span>Recording your update…</span>
+      <span>{activityProgress}</span>
     </div>
   </li>
 {:else if session.refillPending}
@@ -184,7 +192,7 @@
       role="status"
     >
       <Spinner />
-      <span>Generating more visualizations…</span>
+      <span>{activityProgress}</span>
     </div>
   </li>
 {:else if session.refillError}

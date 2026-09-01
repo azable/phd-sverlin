@@ -1,4 +1,4 @@
--- In-place linked-list reversal written against the proposed Sverlin API.
+-- In-place linked-list reversal using the implemented Sverlin API.
 --
 -- Relations cannot be removed or retargeted during an endpoint owner's life.
 -- Reversing `next` therefore creates a deliberate linear cut: each snapshot
@@ -103,7 +103,7 @@ data ReversalCase where
 
 reversalGenerator :: Generator ReversalCase
 reversalGenerator = do
-  values <- listOf 4 9 (between 0 99)
+  values <- listOf 3 4 (between 0 99)
   shuffled <- shuffle values
   let valueCount = length shuffled
   pure
@@ -542,14 +542,12 @@ render = do
   cursorGap <- variable @Span
   cellWidth <- variable @Span
   cellHeight <- variable @Span
+  -- The list is contained by the finite canvas, so these need only express
+  -- legibility. Their maxima are consequences of the selected orientation.
   ensure $ gap .>=. by 14
-  ensure $ gap .<=. by 38
   ensure $ cursorGap .>=. by 10
-  ensure $ cursorGap .<=. by 28
   ensure $ cellWidth .>=. by 54
-  ensure $ cellWidth .<=. by 86
   ensure $ cellHeight .>=. by 42
-  ensure $ cellHeight .<=. by 68
 
   listView <- node $ do
     contentFit Both Hug

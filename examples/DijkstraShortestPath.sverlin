@@ -1,4 +1,4 @@
--- Dijkstra's shortest-path algorithm for the proposed API.
+-- Dijkstra's shortest-path algorithm using the implemented Sverlin API.
 --
 -- A weighted edge is a real typed location containing a numeric weight. Two
 -- ordered relations connect that edge to its source and target vertices. This
@@ -162,7 +162,7 @@ dijkstraPlan labels (moment : rest) =
 
 dijkstraGenerator :: Generator DijkstraSample
 dijkstraGenerator = do
-  vertexCount <- between 5 8
+  vertexCount <- between 4 4
   labels <- shuffle (take vertexCount ["A", "B", "C", "D", "E", "F", "G", "H"])
   start <- between 0 (vertexCount - 1)
   let pairs = [(index, (index + 1) `mod` vertexCount) | index <- [0 .. vertexCount - 1]]
@@ -494,15 +494,9 @@ program (InitialState edges vertices status plan) = step @Dijkstra $ do
 render :: Render ()
 render = do
   canvasWidth <- variable @Span
-  canvasHeight <- variable @Span
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
-  -- These height endpoints follow exactly from the width range and 16:9
-  -- ratio; they are viewport bounds, not a cap on the graph or table.
-  ensure $ canvasHeight .>=. by 540
-  ensure $ canvasHeight .<=. by 1080
   width canvasWidth
-  height canvasHeight
   aspectRatio 16 9
   padding (uniform (by 28))
   contentFit Both Contain
@@ -516,14 +510,12 @@ render = do
   verticalGap <- variable @Span
   panelGap <- variable @Span
   vertexSize <- variable @Span
+  -- The aspect-ratio canvas is the finite outer envelope. Inner variables
+  -- express readability only; containment derives their available maxima.
   ensure $ horizontalGap .>=. by 76
-  ensure $ horizontalGap .<=. by 126
   ensure $ verticalGap .>=. by 70
-  ensure $ verticalGap .<=. by 118
   ensure $ panelGap .>=. by 24
-  ensure $ panelGap .<=. by 52
   ensure $ vertexSize .>=. by 50
-  ensure $ vertexSize .<=. by 76
 
   vertices <- select vertexKind
   labels <- select vertexLabelKind
@@ -608,12 +600,10 @@ render = do
       ensure $ top next .==. bottom previous .+. shift 10
       ensure $ x next .==. x previous
 
-  -- The table is still empty in the initialization frame, so explicit finite
-  -- bounds keep that valid state prepared without assigning it a fixed size.
+  -- These minima keep the empty initialization table visible. Its enclosing
+  -- canvas and selected major layout provide the upper bounds.
   ensure $ width distanceTable .>=. by 120
-  ensure $ width distanceTable .<=. by 280
   ensure $ height distanceTable .>=. by 44
-  ensure $ height distanceTable .<=. by 620
 
   status <- select statusKind
   statusPanel <- node $ do

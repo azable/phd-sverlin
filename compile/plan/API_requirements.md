@@ -31,6 +31,14 @@ its width from its children's bounds and padding, not from a node count multipli
 by their spacing. Add a count or absolute-extent accessor only when that value must
 itself be visualized or cannot be derived from existing constraints.
 
+Authored visualizations should likewise minimize absolute pixel constraints. Use
+one broad canvas envelope where a finite outer bound is required, state only real
+readability minima, and let `Hug`, `Contain`, hierarchy, shared peer dimensions,
+and relative constraints determine the rest. Narrow ranges for every panel, gap,
+and node both remove valid outputs and enlarge the affine system without adding
+semantic information. Exact coordinates or sizes belong only to an explicit
+visual requirement, not to routine initial layout.
+
 Node hierarchy is evaluated in the current selected match. A selected node may
 therefore contain generated children, with one copy of that subtree per matched
 Program block. When a selected Slot owner contains a selected occupant mapping,

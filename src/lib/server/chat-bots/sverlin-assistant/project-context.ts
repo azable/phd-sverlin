@@ -40,7 +40,7 @@ import {
 import type { ConversationMessage } from '$lib/server/chat-bots/types';
 import { resolveProjectVisualSelection } from '$lib/server/projects/visual-selection';
 
-/** Compact, body-free entry that lets the AI identify any event in history. */
+/** Compact, body-free entry that lets the AI identify one retained event. */
 export type AiTimelineEntry = {
   id: EventId;
   type: ProjectEventType;
@@ -138,7 +138,10 @@ export type AiPresentationText = {
 };
 
 /** One compact rendered element; solver provenance and shaped glyphs stay in history. */
-export type AiPresentationElement = Pick<VisualElement, 'id' | 'role' | 'box' | 'children' | 'style'> & {
+export type AiPresentationElement = Pick<
+  VisualElement,
+  'id' | 'role' | 'box' | 'children' | 'style'
+> & {
   content?: AiPresentationText;
 };
 
@@ -153,7 +156,11 @@ export type AiSelectedPresentation = {
   connectors?: NonNullable<Visualization['connectors']>;
   steps: Array<{
     label: string;
-    instances?: Array<{ id: number; elementId: number; originElementId?: number }>;
+    instances?: Array<{
+      id: number;
+      elementId: number;
+      originElementId?: number;
+    }>;
     connectorInstances?: Array<{
       instanceId: number;
       instanceConnectorId: number;
@@ -173,6 +180,10 @@ export type AiProjectContext = {
   interfaceCapabilities: string[];
   activeVisualizationFindings: VisualizationFinding[];
   interaction: AiInteraction;
+  timelineWindow: {
+    totalEventCount: number;
+    omittedEventCount: number;
+  };
   timeline: AiTimelineEntry[];
   selected: {
     events: AiEventDetail[];
@@ -180,6 +191,11 @@ export type AiProjectContext = {
     visualizations: AiVisualSelection[];
   };
 };
+
+// The bounded five-call repair ladder can emit at most 30 generation and
+// two-seed compilation events. Forty-eight retains that full ladder plus its
+// surrounding interaction events without resending an unbounded event log.
+const recentTimelineEventLimit = 48;
 
 const timelineCases = {
   'project.created': (event) => `Created project “${event.payload.title}”.`,
@@ -202,7 +218,7 @@ const timelineCases = {
   'ai.generation-requested': (event) =>
     `Requested ${event.payload.purpose} generation attempt ${event.payload.attempt} from ${event.payload.requestedModel}; prompt ${shortHash(event.payload.prompt.sha256)}.`,
   'ai.generation-succeeded': (event) =>
-    `Generation attempt ${event.payload.attempt} succeeded with ${event.payload.model ?? event.payload.requestedModel}; response ${shortHash(event.payload.response.sha256)}.`,
+    `Generation attempt ${event.payload.attempt} succeeded in ${event.payload.durationMs} ms with ${event.payload.model ?? event.payload.requestedModel}; response ${shortHash(event.payload.response.sha256)}.`,
   'ai.generation-failed': (event) =>
     `Generation attempt ${event.payload.attempt} failed (${event.payload.failureKind}): ${event.payload.message}`,
   'compilation.requested': (event) =>
@@ -287,6 +303,7 @@ export function projectAiContext(
     const resolved = resolveVisualSelection(document, visualSelection);
     return resolved ? [resolved] : [];
   });
+  const timelineEvents = document.events.slice(-recentTimelineEventLimit);
 
   return {
     projectId: document.projectId,
@@ -296,13 +313,17 @@ export function projectAiContext(
     activePresentations: activePresentationSummaries(snapshot),
     activeVisualizationFindings: activePresentationFindings(snapshot),
     interaction,
+    timelineWindow: {
+      totalEventCount: document.events.length,
+      omittedEventCount: document.events.length - timelineEvents.length
+    },
     interfaceCapabilities: [
       'The application owns previous/next step playback controls; never draw replacement controls inside a visualization.',
       'The participant can select compatible retained Sverlin presentations to compare a pair.',
       'A visible pair has preference controls, and a participant can select exact canvas elements and reference presentations or elements inline in messages.',
       'Sverlin projects may keep another pair generated ahead of time; ordinary conversation does not advance the visible pair.'
     ],
-    timeline: document.events.map(projectAiTimelineEntry),
+    timeline: timelineEvents.map(projectAiTimelineEntry),
     selected: {
       events: selection.eventIds.map((id) => eventDetail(document, id)),
       presentations: (selection.presentationIds ?? []).map((id) =>

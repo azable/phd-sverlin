@@ -106,16 +106,15 @@ compileRenderBatch sourcePath sourceContent viewSeeds trace plan = do
                 zip [0 :: Int ..] (R.planContents (preparedPlan prepared))
             , R.contentDeclarationFit declaration
             ]
+              ++ [ ( automaticStyleVariableName automaticPaletteFamily field
+                   , midpoint)
+                 | not
+                     (null (automaticStyleFamilies (preparedExpanded prepared)))
+                 , (field, midpoint) <- automaticPaletteMidpoints
+                 ]
               ++ [ (automaticStyleVariableName family field, midpoint)
                  | family <- automaticStyleFamilies (preparedExpanded prepared)
-                 , (field, midpoint) <-
-                     [ ("fill.hue", 180)
-                     , ("fill.saturation", 0.45)
-                     , ("fill.lightness", 0.9)
-                     , ("stroke.saturation", 0.55)
-                     , ("stroke.lightness", 0.375)
-                     , ("soft-card.radius", 11)
-                     ]
+                 , (field, midpoint) <- automaticFamilyMidpoints
                  ]))
         -- Eight branches keep small authored alternatives exactly enumerable.
         -- The automatic 8-by-3 font catalog is instead conditioned once per
@@ -127,7 +126,7 @@ scenarioKey source trace =
   let bytes =
         Text.encodeUtf8
           (Text.pack
-             ("sverlin-ir-v2-theme-1\NUL" ++ source ++ "\NUL" ++ show trace))
+             ("sverlin-ir-v2-theme-2\NUL" ++ source ++ "\NUL" ++ show trace))
       IR.Sha256 digest = Resource.sha256Bytes bytes
    in IR.ScenarioKey digest
 
@@ -402,27 +401,68 @@ categoricalStyleOptions ::
   -> String
   -> Either RenderCompileError [(String, [ChoiceRequirement])]
 categoricalStyleOptions trace plan expanded context concrete field fallback = do
+  needsAutomatic <- styleCascadeFallsThrough context concrete field
+  let automaticDomains
+        | not (automaticStyleEligible expanded concrete) = Map.empty
+        | not needsAutomatic = Map.empty
+        | field == R.FontFamilyField =
+          Map.singleton
+            Theme.automaticFontFamilyChoice
+            Theme.automaticFontFamilies
+        | field == R.FontWeightField =
+          Map.singleton
+            Theme.automaticFontWeightChoice
+            Theme.automaticFontWeights
+        | otherwise = Map.empty
   domains <-
     collectStyleDomains Set.empty context concrete field automaticDomains
   traverse
     (evaluateOption domains)
     (decisionAssignments (Map.toAscList domains))
   where
-    automaticDomains
-      | not (automaticStyleEligible expanded concrete) = Map.empty
-      | styleCascadeDeclared concrete field = Map.empty
-      | field == R.FontFamilyField =
-        Map.singleton
-          Theme.automaticFontFamilyChoice
-          Theme.automaticFontFamilies
-      | field == R.FontWeightField =
-        Map.singleton Theme.automaticFontWeightChoice Theme.automaticFontWeights
-      | otherwise = Map.empty
-    styleCascadeDeclared current fieldName =
-      not (null (matchingStyleDeclarations plan current fieldName))
-        || case parentConcrete expanded current of
-             Left _       -> False
-             Right parent -> styleCascadeDeclared parent fieldName
+    styleCascadeFallsThrough currentContext current fieldName = do
+      declarationGuards <-
+        collectCascadeGuards Set.empty currentContext current fieldName
+      domains' <- foldM insertGuardDomains Map.empty (concat declarationGuards)
+      pure
+        (any
+           (\assignment ->
+              not (any (declarationActive assignment) declarationGuards))
+           (decisionAssignments (Map.toAscList domains')))
+      where
+        declarationActive assignment = all (guardActive assignment)
+    collectCascadeGuards visited currentContext current fieldName
+      | Set.member (concreteNodeId current, fieldName) visited =
+        leftInvalid "categorical style projection contains a cycle"
+      | otherwise = do
+        let nextVisited = Set.insert (concreteNodeId current, fieldName) visited
+        local <-
+          traverse
+            (traverse (resolveGuard trace plan expanded currentContext)
+               . R.scopeGuards
+               . R.styleDeclarationScope)
+            (matchingStyleDeclarations plan current fieldName)
+        inherited <-
+          case parentConcrete expanded current of
+            Left _ -> pure []
+            Right parent ->
+              collectCascadeGuards
+                nextVisited
+                (contextForConcrete parent)
+                parent
+                fieldName
+        pure (local ++ inherited)
+    insertGuardDomains domains' guard =
+      case guard of
+        GuardDecision name tokens _ -> insertDecisionDomain name tokens domains'
+        GuardAlways                 -> pure domains'
+        GuardNever                  -> pure domains'
+    guardActive assignment guard =
+      case guard of
+        GuardDecision name _ required ->
+          Map.lookup name assignment == Just required
+        GuardAlways -> True
+        GuardNever -> False
     evaluateOption domains assignment = do
       token <-
         evaluateStyleToken Set.empty assignment context concrete field fallback
@@ -760,7 +800,29 @@ expandNodes trace plan = foldM expand [] (R.planNodes plan)
       pure (nodes ++ additions)
     candidatesFor declaration nodes context = do
       candidates <- targetCandidates trace plan nodes context declaration
+      validateTransientSurface declaration nodes context candidates
       pure [(context, candidate) | candidate <- candidates]
+    validateTransientSurface declaration nodes context candidates =
+      case R.nodeDeclarationTarget declaration of
+        R.SelectedNodeTarget selection
+          | null candidates && mappingHasSurfaceEffect plan declaration -> do
+            transient <-
+              selectedBlocksIncludingTransient
+                trace
+                plan
+                nodes
+                context
+                (R.nodeDeclarationScope declaration)
+                selection
+            unless (null transient) $ do
+              selectionDeclaration <- requireSelection plan selection
+              leftInvalid
+                ("node mapping "
+                   ++ showNodeDeclarationId (R.nodeDeclarationId declaration)
+                   ++ " for selection "
+                   ++ show (R.selectionDeclarationKindKey selectionDeclaration)
+                   ++ " matches semantic blocks, but none can appear in any declared frame")
+        _ -> pure ()
     instantiate declaration identifier (context, candidate) =
       let semanticBlock = candidateBlock candidate
           relationSuffix =
@@ -872,6 +934,54 @@ targetRole plan declaration _candidate =
         then "RelationSource"
         else "RelationTarget"
 
+mappingHasSurfaceEffect :: R.RenderPlan -> R.NodeDeclaration -> Bool
+mappingHasSurfaceEffect plan declaration =
+  any (ownedScope . R.contentDeclarationScope) (R.planContents plan)
+    || any (ownedScope . R.styleDeclarationScope) (R.planStyles plan)
+    || any connectorUsesComponent (R.planConnectors plan)
+  where
+    componentIds = nodeComponentIds plan (R.nodeDeclarationId declaration)
+    componentReferences =
+      [ referenceForNode candidate
+      | candidate <- R.planNodes plan
+      , R.nodeDeclarationId candidate `elem` componentIds
+      ]
+    ownedScope scope = R.scopeCurrentNode scope `elem` map Just componentIds
+    connectorUsesComponent connectorDeclaration =
+      ownedScope (R.connectorDeclarationScope connectorDeclaration)
+        || startReference `elem` componentReferences
+        || endReference `elem` componentReferences
+      where
+        R.ConnectorAnchor _ startReference =
+          R.connectorDeclarationStart connectorDeclaration
+        R.ConnectorAnchor _ endReference =
+          R.connectorDeclarationEnd connectorDeclaration
+    referenceForNode candidate =
+      case R.nodeDeclarationTarget candidate of
+        R.GeneratedNodeTarget ->
+          R.GeneratedReference (R.nodeDeclarationId candidate)
+        R.SelectedNodeTarget selection -> R.SelectionReference selection
+        R.RelationEndpointTarget selection isFirst ->
+          R.EndpointReference selection isFirst
+
+nodeComponentIds :: R.RenderPlan -> R.NodeDeclarationId -> [R.NodeDeclarationId]
+nodeComponentIds plan root = descendants [root]
+  where
+    descendants identifiers =
+      let children =
+            [ R.nodeDeclarationId declaration
+            | declaration <- R.planNodes plan
+            , R.scopeCurrentNode (R.nodeDeclarationScope declaration)
+                `elem` map Just identifiers
+            ]
+          expanded = foldl' addIdentifier identifiers children
+       in if length expanded == length identifiers
+            then identifiers
+            else descendants expanded
+    addIdentifier identifiers identifier
+      | identifier `elem` identifiers = identifiers
+      | otherwise = identifiers ++ [identifier]
+
 selectedBlocks ::
      Sem.SemanticTrace
   -> R.RenderPlan
@@ -880,14 +990,36 @@ selectedBlocks ::
   -> R.Scope
   -> R.SelectionId
   -> Either RenderCompileError [(Sem.BlockId, Maybe Sem.TraceOccupancy)]
-selectedBlocks trace plan nodes context scope selection = do
+selectedBlocks trace plan =
+  selectedBlocksMatching (blockVisibleAtAnyFrame trace plan) trace plan
+
+selectedBlocksIncludingTransient ::
+     Sem.SemanticTrace
+  -> R.RenderPlan
+  -> [ExpandedNode]
+  -> ExpansionContext
+  -> R.Scope
+  -> R.SelectionId
+  -> Either RenderCompileError [(Sem.BlockId, Maybe Sem.TraceOccupancy)]
+selectedBlocksIncludingTransient = selectedBlocksMatching (const True)
+
+selectedBlocksMatching ::
+     (Sem.TraceBlock -> Bool)
+  -> Sem.SemanticTrace
+  -> R.RenderPlan
+  -> [ExpandedNode]
+  -> ExpansionContext
+  -> R.Scope
+  -> R.SelectionId
+  -> Either RenderCompileError [(Sem.BlockId, Maybe Sem.TraceOccupancy)]
+selectedBlocksMatching include trace plan nodes context scope selection = do
   declaration <- requireSelection plan selection
   let allMatches =
         [ Sem.traceBlockId block
         | block <- Sem.semanticTraceBlocks trace
         , Sem.traceMarkerType (Sem.traceBlockKind block)
             == R.selectionDeclarationKindKey declaration
-        , blockVisibleAtAnyFrame trace plan block
+        , include block
         ]
       membershipMatches = applyMemberships trace plan context scope allMatches
   case contextCurrentNode context >>= (`lookupExpandedNode` nodes) of
@@ -1645,20 +1777,8 @@ expandConnectors trace plan nodes =
             R.connectorDeclarationStart declaration
           R.ConnectorAnchor _ endReference =
             R.connectorDeclarationEnd declaration
-      starts <-
-        resolveReferenceCandidates
-          trace
-          plan
-          partialExpanded
-          context
-          startReference
-      ends <-
-        resolveReferenceCandidates
-          trace
-          plan
-          partialExpanded
-          context
-          endReference
+      starts <- resolveConnectorCandidates context startReference
+      ends <- resolveConnectorCandidates context endReference
       let relation' =
             R.scopeRelation (R.connectorDeclarationScope declaration)
               >>= (`Map.lookup` contextRelations context)
@@ -1679,6 +1799,89 @@ expandConnectors trace plan nodes =
         | start <- starts
         , end <- ends
         ]
+    resolveConnectorCandidates context reference
+      | declaredReferenceIsEmpty context reference = pure []
+      | otherwise =
+        resolveReferenceCandidates trace plan partialExpanded context reference
+    declaredReferenceIsEmpty context reference =
+      any
+        (declarationAvailableIn context)
+        [ declaration
+        | declaration <- R.planNodes plan
+        , declaresReference reference declaration
+        ]
+        && not (referenceHasExpansionIn context reference)
+    declarationAvailableIn context declaration =
+      parentAvailable && relationAvailable
+      where
+        scope = R.nodeDeclarationScope declaration
+        ancestorDeclarations =
+          [ expandedNodeDeclaration ancestor
+          | identifier <- contextAncestors nodes context
+          , Just ancestor <- [lookupExpandedNode identifier nodes]
+          ]
+        parentAvailable =
+          case R.scopeCurrentNode scope of
+            Nothing         -> True
+            Just identifier -> identifier `elem` ancestorDeclarations
+        relationAvailable =
+          case R.scopeRelation scope of
+            Nothing        -> True
+            Just selection -> Map.member selection (contextRelations context)
+    declaresReference reference declaration =
+      case reference of
+        R.CanvasReference -> False
+        R.GeneratedReference identifier ->
+          R.nodeDeclarationId declaration == identifier
+        R.SelectionReference selection ->
+          R.nodeDeclarationTarget declaration == R.SelectedNodeTarget selection
+        R.EndpointReference selection isFirst ->
+          R.nodeDeclarationTarget declaration
+            == R.RelationEndpointTarget selection isFirst
+    referenceHasExpansionIn context reference =
+      case reference of
+        R.CanvasReference -> True
+        R.GeneratedReference identifier ->
+          any
+            (\node ->
+               expandedNodeDeclaration node == identifier
+                 && compatibleNode nodes context node)
+            nodes
+        R.SelectionReference selection ->
+          let desired = Map.lookup selection (contextBindings context)
+              exact =
+                [ node
+                | node <- nodes
+                , expandedNodeTarget node == R.SelectedNodeTarget selection
+                , maybe
+                    True
+                    (\block -> expandedNodeSemanticBlock node == Just block)
+                    desired
+                , compatibleNode nodes context node
+                ]
+              matchingBlock =
+                case desired of
+                  Nothing -> []
+                  Just block ->
+                    [ node
+                    | node <- nodes
+                    , expandedNodeSemanticBlock node == Just block
+                    , compatibleNode nodes context node
+                    ]
+           in not
+                (null
+                   (if null exact
+                      then matchingBlock
+                      else exact))
+        R.EndpointReference selection isFirst ->
+          case Map.lookup selection (contextRelations context) of
+            Nothing -> True
+            Just relation' ->
+              let desired =
+                    if isFirst
+                      then Sem.traceRelationSource relation'
+                      else Sem.traceRelationTarget relation'
+               in any ((== Just desired) . expandedNodeSemanticBlock) nodes
 
 concreteNodeGuards :: ConcreteNode -> [R.PresenceGuard]
 concreteNodeGuards ConcreteCanvas        = []
@@ -1721,6 +1924,24 @@ automaticStyleEligible expanded concrete =
            ((== expandedNodeId node) . expandedNodeParent)
            (expandedNodes expanded))
 
+automaticStyleProfile ::
+     Int
+  -> R.RenderPlan
+  -> ExpandedPlan
+  -> ConcreteNode
+  -> Maybe Theme.LeafProfile
+automaticStyleProfile seed plan expanded concrete
+  | not (automaticStyleEligible expanded concrete) = Nothing
+  | generatedTextOnly = Just Theme.LeafTransparent
+  | otherwise = Theme.leafProfileFor seed <$> automaticStyleFamily concrete
+  where
+    generatedTextOnly =
+      case concrete of
+        ConcreteVisual node ->
+          expandedNodeTarget node == R.GeneratedNodeTarget
+            && any (contentTargetMatches concrete) (R.planContents plan)
+        ConcreteCanvas -> False
+
 automaticStyleFamilies :: ExpandedPlan -> [String]
 automaticStyleFamilies expanded =
   nub
@@ -1730,6 +1951,21 @@ automaticStyleFamilies expanded =
     , automaticStyleEligible expanded concrete
     , Just family <- [automaticStyleFamily concrete]
     ]
+
+automaticPaletteFamily :: String
+automaticPaletteFamily = "presentation"
+
+automaticPaletteMidpoints :: [(String, Double)]
+automaticPaletteMidpoints =
+  [ ("fill.hue", 180)
+  , ("fill.saturation", 0.45)
+  , ("fill.lightness", 0.9)
+  , ("stroke.saturation", 0.55)
+  , ("stroke.lightness", 0.375)
+  ]
+
+automaticFamilyMidpoints :: [(String, Double)]
+automaticFamilyMidpoints = [("soft-card.radius", 11)]
 
 automaticStyleVariable :: String -> String -> SolverExpr
 automaticStyleVariable family field =
@@ -1741,9 +1977,13 @@ automaticStyleVariableName family field =
 
 automaticStyleConstraints :: ExpandedPlan -> [S.Constraint]
 automaticStyleConstraints expanded =
-  concatMap familyConstraints (automaticStyleFamilies expanded)
+  case automaticStyleFamilies expanded of
+    [] -> []
+    families ->
+      paletteConstraints automaticPaletteFamily
+        ++ concatMap familyConstraints families
   where
-    familyConstraints family =
+    paletteConstraints family =
       [ S.within (automaticStyleVariable family "fill.hue") (S.Range 0 360)
       , S.within
           (automaticStyleVariable family "fill.saturation")
@@ -1757,7 +1997,9 @@ automaticStyleConstraints expanded =
       , S.within
           (automaticStyleVariable family "stroke.lightness")
           (S.Range 0.25 0.5)
-      , S.within
+      ]
+    familyConstraints family =
+      [ S.within
           (automaticStyleVariable family "soft-card.radius")
           (S.Range 6 16)
       ]
@@ -3634,7 +3876,11 @@ materializeVisualization sourcePath key trace prepared solution = do
           , IR.visualizationFindings = []
           , IR.visualizationVariables =
               compileVariables solution
-                ++ compileAutomaticStyleVariables expanded solution activeNodes
+                ++ compileAutomaticStyleVariables
+                     plan
+                     expanded
+                     solution
+                     activeNodes
                 ++ compileFramePresenceVariables trace plan solution
           , IR.visualizationElements = elements
           , IR.visualizationConnectors = Just connectors
@@ -3978,10 +4224,11 @@ materializeVisualStyle trace plan expanded solution context concrete = do
   where
     family = automaticStyleFamily concrete
     profile =
-      if automaticStyleEligible expanded concrete
-        then Theme.leafProfileFor (randomSeedInt (S.solutionSeed solution))
-               <$> family
-        else Nothing
+      automaticStyleProfile
+        (randomSeedInt (S.solutionSeed solution))
+        plan
+        expanded
+        concrete
     hasDeclaredContent =
       any (contentTargetMatches concrete) (R.planContents plan)
     numeric field = do
@@ -4058,10 +4305,17 @@ materializeVisualStyle trace plan expanded solution context concrete = do
           , IR.hslLightness = clampUnit lightness
           }
     automaticValue field =
-      case family of
+      case profile of
         Nothing -> leftInvalid "automatic style has no visual family"
-        Just familyName ->
-          evaluateExpr solution (automaticStyleVariable familyName field)
+        Just _ -> do
+          variableFamily <-
+            if field == "soft-card.radius"
+              then maybe
+                     (leftInvalid "automatic style has no visual family")
+                     pure
+                     family
+              else pure automaticPaletteFamily
+          evaluateExpr solution (automaticStyleVariable variableFamily field)
     automaticCategorical field =
       case field of
         R.FontFamilyField
@@ -4753,25 +5007,27 @@ compileVariables solution =
        ]
 
 compileAutomaticStyleVariables ::
-     ExpandedPlan -> S.Solution -> [ExpandedNode] -> [IR.CspVariable]
-compileAutomaticStyleVariables expanded solution activeNodes =
+     R.RenderPlan
+  -> ExpandedPlan
+  -> S.Solution
+  -> [ExpandedNode]
+  -> [IR.CspVariable]
+compileAutomaticStyleVariables plan expanded solution activeNodes =
   Map.elems
     (Map.fromList
-       [ (family, profileVariable family)
+       [ (family, profileVariable family profile)
        | node <- activeNodes
        , let concrete = ConcreteVisual node
-       , automaticStyleEligible expanded concrete
        , Just family <- [automaticStyleFamily concrete]
+       , Just profile <- [automaticStyleProfile seed plan expanded concrete]
        ])
   where
     seed = randomSeedInt (S.solutionSeed solution)
-    profileVariable family =
+    profileVariable family profile =
       IR.CspVariable
         { IR.cspVariableId =
             IR.CspVariableId ("render.theme." ++ family ++ ".leaf.profile")
-        , IR.cspVariableValue =
-            IR.CspCategory
-              (Theme.leafProfileToken (Theme.leafProfileFor seed family))
+        , IR.cspVariableValue = IR.CspCategory (Theme.leafProfileToken profile)
         }
 
 deduplicateResources :: [Resource.ResourceBlob] -> [Resource.ResourceBlob]

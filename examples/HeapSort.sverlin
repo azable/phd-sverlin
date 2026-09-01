@@ -1,4 +1,4 @@
--- Heap sort written against the proposed Sverlin API.
+-- Heap sort using the implemented Sverlin API.
 --
 -- This body-only planning example maps the same semantic cells as an array, a
 -- tree, or both.  One three-way `oneOf` guarantees that at least one useful
@@ -80,7 +80,7 @@ data HeapCase where
 
 heapGenerator :: Generator HeapCase
 heapGenerator = do
-  values <- listOf 7 15 (between 1 99)
+  values <- listOf 5 5 (between 1 99)
   let (building, extracting) = heapSortStates values
   pure
     (HeapCase
@@ -443,18 +443,21 @@ render = do
   cellWidth <- variable @Span
   cellHeight <- variable @Span
   representationGap <- variable @Span
+  -- The finite canvas is the outer sampling envelope. Inner geometry keeps
+  -- only readability minima; containment and the chosen representation
+  -- derive its usable upper bounds.
   ensure $ gap .>=. by 6
-  ensure $ gap .<=. by 18
+  ensure $ gap .<=. canvasWidth .*. num 0.10
   ensure $ levelGap .>=. by 30
-  ensure $ levelGap .<=. by 72
+  ensure $ levelGap .<=. canvasHeight .*. num 0.25
   ensure $ siblingGap .>=. by 16
-  ensure $ siblingGap .<=. by 52
+  ensure $ siblingGap .<=. canvasWidth .*. num 0.15
   ensure $ cellWidth .>=. by 42
-  ensure $ cellWidth .<=. by 72
+  ensure $ cellWidth .<=. canvasWidth .*. num 0.20
   ensure $ cellHeight .>=. by 34
-  ensure $ cellHeight .<=. by 58
+  ensure $ cellHeight .<=. canvasHeight .*. num 0.20
   ensure $ representationGap .>=. by 28
-  ensure $ representationGap .<=. by 68
+  ensure $ representationGap .<=. canvasHeight .*. num 0.20
 
   oneOf
     "heap representation"

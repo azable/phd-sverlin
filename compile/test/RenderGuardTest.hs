@@ -5,7 +5,7 @@ module RenderGuardTest
   ( tests
   ) where
 
-import           Data.List                          (nub, sort)
+import           Data.List                          (isInfixOf, nub, sort)
 import qualified LinearTrace.Visualization.IR       as IR
 import qualified LinearTrace.Visualization.Resource as Resource
 import qualified Sverlin.Internal.Render            as Render
@@ -28,6 +28,10 @@ data RankingFrame
 data MembershipBefore
 
 data MembershipAfter
+
+data TransientFrame
+
+data ContextConnectorFrame
 
 tests :: TestTree
 tests =
@@ -269,6 +273,85 @@ tests =
           steps ->
             assertFailure
               ("expected two compiled frames, got " ++ show (length steps))
+    , testCase "transient surface mappings report a frame diagnostic" $ do
+        plan <- expectPlan transientSurfacePlan
+        frameIdentity <- onlyFrameIdentity plan
+        compiled <-
+          Compile.compileRenderBatch
+            "RenderGuardTest.sverlin"
+            "transient surface mapping"
+            [1]
+            (transientTrace frameIdentity True)
+            plan
+        case compiled of
+          Left (Compile.InvalidRenderPlan message) ->
+            assertBool
+              ("unexpected transient mapping diagnostic: " ++ message)
+              ("matches semantic blocks, but none can appear in any declared frame"
+                 `isInfixOf` message)
+          Left problem -> assertFailure (show problem)
+          Right _ -> assertFailure "expected a transient surface diagnostic"
+    , testCase "empty and geometry-only transient mappings remain valid" $ do
+        surfacePlan <- expectPlan transientSurfacePlan
+        surfaceFrame <- onlyFrameIdentity surfacePlan
+        _ <-
+          compileSingleVisualization
+            "empty surface selection"
+            (transientTrace surfaceFrame False)
+            surfacePlan
+        geometryPlan <- expectPlan transientGeometryPlan
+        geometryFrame <- onlyFrameIdentity geometryPlan
+        _ <-
+          compileSingleVisualization
+            "transient geometry guide"
+            (transientTrace geometryFrame True)
+            geometryPlan
+        pure ()
+    , testCase "empty connector mappings emit no connector instances" $ do
+        plan <- expectPlan emptyConnectorPlan
+        frameIdentity <- onlyFrameIdentity plan
+        visualization <-
+          compileSingleVisualization
+            "empty connector mapping"
+            (transientTrace frameIdentity False)
+            plan
+        IR.visualizationConnectors visualization @?= Just []
+        case IR.visualizationSteps visualization of
+          [step'] -> IR.stepConnectorInstances step' @?= Just []
+          steps ->
+            assertFailure
+              ("expected one connector frame, got " ++ show (length steps))
+        undeclaredPlan <- expectPlan undeclaredConnectorPlan
+        undeclaredFrame <- onlyFrameIdentity undeclaredPlan
+        compiled <-
+          Compile.compileRenderBatch
+            "RenderGuardTest.sverlin"
+            "undeclared connector mapping"
+            [1]
+            (transientTrace undeclaredFrame False)
+            undeclaredPlan
+        case compiled of
+          Left (Compile.InvalidRenderPlan message) ->
+            assertBool
+              ("unexpected undeclared connector diagnostic: " ++ message)
+              ("no context-local visual mapping" `isInfixOf` message)
+          Left problem -> assertFailure (show problem)
+          Right _ -> assertFailure "expected an undeclared endpoint diagnostic"
+    , testCase "connector mappings may be empty in one owner context" $ do
+        plan <- expectPlan contextLocalConnectorPlan
+        frameIdentity <- onlyFrameIdentity plan
+        visualization <-
+          compileSingleVisualization
+            "context-local empty connector mapping"
+            (contextLocalConnectorTrace frameIdentity)
+            plan
+        fmap length (IR.visualizationConnectors visualization) @?= Just 1
+        case IR.visualizationSteps visualization of
+          [step'] -> fmap length (IR.stepConnectorInstances step') @?= Just 1
+          steps ->
+            assertFailure
+              ("expected one context-local connector frame, got "
+                 ++ show (length steps))
     ]
 
 structuralPlan :: Either Render.RenderDiagnostic Render.RenderPlan
@@ -598,6 +681,191 @@ membershipLifetimeTrace (before, after) =
         , Semantic.traceBlockEnded = Nothing
         , Semantic.traceBlockOccupancies = occupancies
         }
+
+transientSurfacePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+transientSurfacePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @TransientFrame)
+    Render.width (Render.by 320)
+    Render.height (Render.by 200)
+    nodes <-
+      Render.selectKind "transient" :: Render.Render (Render.Selected Cell)
+    Render.node nodes (Render.content (Render.text "transient"))
+
+transientGeometryPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+transientGeometryPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @TransientFrame)
+    Render.width (Render.by 320)
+    Render.height (Render.by 200)
+    nodes <-
+      Render.selectKind "transient" :: Render.Render (Render.Selected Cell)
+    Render.node nodes $ do
+      Render.width (Render.by 24)
+      Render.height (Render.by 24)
+
+emptyConnectorPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+emptyConnectorPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @TransientFrame)
+    Render.width (Render.by 320)
+    Render.height (Render.by 200)
+    missing <-
+      Render.selectKind "connector-empty" :: Render.Render
+        (Render.Selected Cell)
+    Render.node missing $ do
+      Render.width (Render.by 24)
+      Render.height (Render.by 24)
+    endpoint <-
+      Render.node
+        (do
+           Render.width (Render.by 24)
+           Render.height (Render.by 24)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    Render.connector
+      (Render.anchor Render.AtBoundary missing)
+      (Render.anchor Render.AtBoundary endpoint)
+      (pure ())
+
+undeclaredConnectorPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+undeclaredConnectorPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @TransientFrame)
+    Render.width (Render.by 320)
+    Render.height (Render.by 200)
+    missing <-
+      Render.selectKind "connector-empty" :: Render.Render
+        (Render.Selected Cell)
+    endpoint <-
+      Render.node
+        (do
+           Render.width (Render.by 24)
+           Render.height (Render.by 24)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    Render.connector
+      (Render.anchor Render.AtBoundary missing)
+      (Render.anchor Render.AtBoundary endpoint)
+      (pure ())
+
+contextLocalConnectorPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+contextLocalConnectorPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @ContextConnectorFrame)
+    Render.width (Render.by 420)
+    Render.height (Render.by 260)
+    owners <-
+      Render.selectKind "connector-owner" :: Render.Render (Render.Selected Row)
+    memberships <-
+      Render.selectRelation "connector-membership" True :: Render.Render
+        (Render.Relations Row Cell)
+    Render.node owners $ do
+      Render.width (Render.by 160)
+      Render.height (Render.by 120)
+      Render.xAt (Render.percent 50)
+      Render.yAt (Render.percent 50)
+      Render.within memberships owners $ do
+        members <-
+          Render.selectKind "connector-member" :: Render.Render
+            (Render.Selected Cell)
+        Render.node members $ do
+          Render.width (Render.by 48)
+          Render.height (Render.by 32)
+          Render.xAt (Render.percent 50)
+          Render.yAt (Render.percent 50)
+        Render.connector
+          (Render.anchor Render.AtBoundary owners)
+          (Render.anchor Render.AtBoundary members)
+          (pure ())
+
+contextLocalConnectorTrace :: String -> Semantic.SemanticTrace
+contextLocalConnectorTrace frameIdentity =
+  Semantic.SemanticTrace
+    { Semantic.semanticTraceScenarioSeed = 14
+    , Semantic.semanticTraceDeclarations =
+        [(traceMarker frameIdentity, "context connector frame")]
+    , Semantic.semanticTraceVariables = []
+    , Semantic.semanticTraceBlocks =
+        [ traceBlock 0 "connector-owner" 0 Nothing
+        , traceBlock 1 "connector-owner" 0 Nothing
+        , traceBlock 2 "connector-member" 0 Nothing
+        ]
+    , Semantic.semanticTraceRelations =
+        [ Semantic.TraceRelation
+            { Semantic.traceRelationId = 0
+            , Semantic.traceRelationKind = traceMarker "connector-membership"
+            , Semantic.traceRelationDirection = Semantic.OrderedRelation
+            , Semantic.traceRelationSource = Semantic.BlockId 0
+            , Semantic.traceRelationTarget = Semantic.BlockId 2
+            , Semantic.traceRelationStart = 0
+            , Semantic.traceRelationEnd = Nothing
+            }
+        ]
+    , Semantic.semanticTraceSteps =
+        [Semantic.StepOccurrence (traceMarker frameIdentity) [0] 0 1]
+    , Semantic.semanticTraceEvents = []
+    }
+
+transientTrace :: String -> Bool -> Semantic.SemanticTrace
+transientTrace frameIdentity withMatch =
+  Semantic.SemanticTrace
+    { Semantic.semanticTraceScenarioSeed = 13
+    , Semantic.semanticTraceDeclarations =
+        [(traceMarker frameIdentity, "transient frame")]
+    , Semantic.semanticTraceVariables = []
+    , Semantic.semanticTraceBlocks =
+        [traceBlock 0 "transient" 0 (Just 0) | withMatch]
+    , Semantic.semanticTraceRelations = []
+    , Semantic.semanticTraceSteps =
+        [Semantic.StepOccurrence (traceMarker frameIdentity) [0] 1 2]
+    , Semantic.semanticTraceEvents = []
+    }
+
+traceMarker :: String -> Semantic.TraceMarker
+traceMarker = Semantic.TraceMarker
+
+traceBlock :: Int -> String -> Int -> Maybe Int -> Semantic.TraceBlock
+traceBlock identifier kind born ended =
+  Semantic.TraceBlock
+    { Semantic.traceBlockId = Semantic.BlockId identifier
+    , Semantic.traceBlockKind = traceMarker kind
+    , Semantic.traceBlockType = traceMarker kind
+    , Semantic.traceBlockPayloadText = ""
+    , Semantic.traceBlockPayloadScalar = Nothing
+    , Semantic.traceBlockBorn = born
+    , Semantic.traceBlockEnded = ended
+    , Semantic.traceBlockOccupancies = []
+    }
+
+compileSingleVisualization ::
+     String
+  -> Semantic.SemanticTrace
+  -> Render.RenderPlan
+  -> IO IR.Visualization
+compileSingleVisualization label trace plan = do
+  compiled <-
+    Compile.compileRenderBatch "RenderGuardTest.sverlin" label [1] trace plan
+  package <-
+    case compiled of
+      Left problem -> assertFailure (show problem)
+      Right value  -> pure value
+  case Resource.compilationPackageVisualizations package of
+    [visualization] -> pure visualization
+    visualizations ->
+      assertFailure
+        ("expected one compiled visualization, got "
+           ++ show (length visualizations))
+
+onlyFrameIdentity :: Render.RenderPlan -> IO String
+onlyFrameIdentity plan =
+  case Render.planFrames plan of
+    [declaration] -> pure (Render.frameStepIdentity declaration)
+    declarations ->
+      assertFailure
+        ("expected one frame declaration, got " ++ show (length declarations))
 
 roleVisibleAt :: String -> IR.Visualization -> IR.TimelineStep -> Bool
 roleVisibleAt role visualization step =

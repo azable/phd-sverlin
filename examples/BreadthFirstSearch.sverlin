@@ -1,0 +1,404 @@
+-- This example keeps the breadth-first frontier inside a typed linear Block.
+-- Domain chooses a complete graph input, while Program advances the frontier
+-- itself; it does not receive a precomputed visit order to replay.
+
+data Graph
+instance Traceable Graph where
+  type Payload Graph = LInt Graph
+
+data GraphDescription
+instance Traceable GraphDescription where
+  type Payload GraphDescription = LString GraphDescription
+
+data BfsState
+instance Traceable BfsState where
+  type Payload BfsState = LString BfsState
+
+data Visit
+instance Traceable Visit where
+  type Payload Visit = LString Visit
+
+data Finished
+instance Traceable Finished where
+  type Payload Finished = LBool Finished
+
+data CurrentVertex
+instance Traceable CurrentVertex where
+  type Payload CurrentVertex = LOperator CurrentVertex
+
+data AdvanceBfs
+instance Traceable AdvanceBfs where
+  type Payload AdvanceBfs = LOperator AdvanceBfs
+
+data IsFinished
+instance Traceable IsFinished where
+  type Payload IsFinished = LOperator IsFinished
+
+-- A state is written as queue|visited. For example, "BD|A" means that B and
+-- D are waiting in the queue and A has already been visited. These transition
+-- tables are the algorithm implementation for two small tree-shaped graphs.
+-- Every transition removes the queue head, appends its children, and records
+-- that vertex as visited.
+instance Applicable2 AdvanceBfs Graph BfsState where
+  type Apply2Result AdvanceBfs Graph BfsState = BfsState
+  applyPayload2 LOperator (LInt graphNumber) (LString stateText) =
+    case graphNumber Linear.== 0 of
+      True -> LString (advanceWide stateText)
+      False -> LString (advanceDeep stateText)
+
+instance Applicable1 CurrentVertex BfsState where
+  type Apply1Result CurrentVertex BfsState = Visit
+  applyPayload1 LOperator (LString stateText) = LString (frontOf stateText)
+
+instance Applicable1 IsFinished BfsState where
+  type Apply1Result IsFinished BfsState = Finished
+  applyPayload1 LOperator (LString stateText) = LBool (finished stateText)
+
+advanceWide :: String %1 -> String
+advanceWide ('A' : '|' : []) = "BCD|A"
+advanceWide ('B' : 'C' : 'D' : '|' : 'A' : []) = "CDE|AB"
+advanceWide ('C' : 'D' : 'E' : '|' : 'A' : 'B' : []) = "DE|ABC"
+advanceWide ('D' : 'E' : '|' : 'A' : 'B' : 'C' : []) = "E|ABCD"
+advanceWide ('E' : '|' : 'A' : 'B' : 'C' : 'D' : []) = "|ABCDE"
+advanceWide stateText = stateText
+
+advanceDeep :: String %1 -> String
+advanceDeep ('A' : '|' : []) = "BD|A"
+advanceDeep ('B' : 'D' : '|' : 'A' : []) = "DC|AB"
+advanceDeep ('D' : 'C' : '|' : 'A' : 'B' : []) = "CE|ABD"
+advanceDeep ('C' : 'E' : '|' : 'A' : 'B' : 'D' : []) = "E|ABDC"
+advanceDeep ('E' : '|' : 'A' : 'B' : 'D' : 'C' : []) = "|ABDCE"
+advanceDeep stateText = stateText
+
+frontOf :: String %1 -> String
+frontOf ('A' : '|' : []) = "A"
+frontOf ('B' : 'C' : 'D' : '|' : 'A' : []) = "B"
+frontOf ('C' : 'D' : 'E' : '|' : 'A' : 'B' : []) = "C"
+frontOf ('D' : 'E' : '|' : 'A' : 'B' : 'C' : []) = "D"
+frontOf ('E' : '|' : 'A' : 'B' : 'C' : 'D' : []) = "E"
+frontOf ('B' : 'D' : '|' : 'A' : []) = "B"
+frontOf ('D' : 'C' : '|' : 'A' : 'B' : []) = "D"
+frontOf ('C' : 'E' : '|' : 'A' : 'B' : 'D' : []) = "C"
+frontOf ('E' : '|' : 'A' : 'B' : 'D' : 'C' : []) = "E"
+frontOf stateText = stateText
+
+finished :: String %1 -> Bool
+finished ('A' : '|' : []) = False
+finished ('B' : 'C' : 'D' : '|' : 'A' : []) = False
+finished ('C' : 'D' : 'E' : '|' : 'A' : 'B' : []) = False
+finished ('D' : 'E' : '|' : 'A' : 'B' : 'C' : []) = False
+finished ('E' : '|' : 'A' : 'B' : 'C' : 'D' : []) = False
+finished ('|' : 'A' : 'B' : 'C' : 'D' : 'E' : []) = True
+finished ('B' : 'D' : '|' : 'A' : []) = False
+finished ('D' : 'C' : '|' : 'A' : 'B' : []) = False
+finished ('C' : 'E' : '|' : 'A' : 'B' : 'D' : []) = False
+finished ('E' : '|' : 'A' : 'B' : 'D' : 'C' : []) = False
+finished ('|' : 'A' : 'B' : 'D' : 'C' : 'E' : []) = True
+
+data GraphRole
+data GraphDescriptionRole
+data BfsStateRole
+data StateProbeRole
+data VisitRole
+data CurrentVisitRole
+data FinishedRole
+data CurrentVertexRole
+data AdvanceBfsRole
+data IsFinishedRole
+data BfsInput
+
+graphKind :: Kind Graph
+graphKind = kind @GraphRole
+
+graphDescriptionKind :: Kind GraphDescription
+graphDescriptionKind = kind @GraphDescriptionRole
+
+bfsStateKind :: Kind BfsState
+bfsStateKind = kind @BfsStateRole
+
+stateProbeKind :: Kind BfsState
+stateProbeKind = kind @StateProbeRole
+
+visitKind :: Kind Visit
+visitKind = kind @VisitRole
+
+currentVisitKind :: Kind Visit
+currentVisitKind = kind @CurrentVisitRole
+
+finishedKind :: Kind Finished
+finishedKind = kind @FinishedRole
+
+currentVertexKind :: Kind CurrentVertex
+currentVertexKind = kind @CurrentVertexRole
+
+advanceBfsKind :: Kind AdvanceBfs
+advanceBfsKind = kind @AdvanceBfsRole
+
+isFinishedKind :: Kind IsFinished
+isFinishedKind = kind @IsFinishedRole
+
+data Initialize
+data VisitVertex
+data AdvanceFrontier
+data CheckFrontier
+data Complete
+
+data GraphInput where
+  GraphInput :: Int %1 -> String %1 -> GraphInput
+
+graphInputs :: Generator GraphInput
+graphInputs =
+  elementOf
+    (GraphInput 0 "A -> B,C,D; B -> E")
+    [GraphInput 1 "A -> B,D; B -> C; D -> E"]
+
+data Initial where
+  Initial :: Block Graph %1 -> Block GraphDescription %1 -> Block BfsState %1 -> Initial
+
+domain :: Domain Initial
+domain = do
+  declareKind graphKind
+  declareKind graphDescriptionKind
+  declareKind bfsStateKind
+  declareKind stateProbeKind
+  declareKind visitKind
+  declareKind currentVisitKind
+  declareKind finishedKind
+  declareKind currentVertexKind
+  declareKind advanceBfsKind
+  declareKind isFinishedKind
+  declareSteps @'[Initialize, VisitVertex, AdvanceFrontier, CheckFrontier, Complete]
+  GraphInput graphNumber description <- variable @BfsInput graphInputs
+  Create graphPending <- create (LInt graphNumber)
+  graph <- materialize graphKind graphPending
+  Create descriptionPending <- create (LString description)
+  graphDescription <- materialize graphDescriptionKind descriptionPending
+  Create statePending <- create (LString "A|")
+  state <- materialize bfsStateKind statePending
+  pure (Initial graph graphDescription state)
+
+data Visits where
+  NoVisits :: Visits
+  MoreVisit :: Block Visit %1 -> Visits %1 -> Visits
+
+-- The current visit has a distinct linear lifetime. Moving it to visitKind at
+-- the next iteration records that it has become history; Render only decides
+-- how those two semantic states look.
+data CurrentVisit where
+  NoCurrentVisit :: CurrentVisit
+  CurrentVisit :: Block Visit %1 -> CurrentVisit
+
+data Iteration where
+  Iteration :: Block Graph %1 -> Block BfsState %1 -> CurrentVisit %1 -> Visits %1 -> Iteration
+
+data Checked where
+  Checked :: Block Graph %1 -> Block BfsState %1 -> Block Finished %1 -> Checked
+
+archiveCurrent :: CurrentVisit %1 -> Visits %1 -> Program Visits
+archiveCurrent NoCurrentVisit visits = pure visits
+archiveCurrent (CurrentVisit current) visits = do
+  Copy original historyOrigin <- copy current
+  Replace historyPending <- replace original historyOrigin
+  history <- materialize visitKind historyPending
+  pure (MoreVisit history visits)
+
+-- The state copies have distinct purposes: one derives the current vertex and
+-- one is consumed by AdvanceBfs. The original state is then replaced by the
+-- computed result, preserving one visual lineage across all queue updates.
+advanceOnce :: Block Graph %1 -> Block BfsState %1 -> CurrentVisit %1 -> Visits %1 -> Program Iteration
+advanceOnce graph state current visits = step @VisitVertex $ do
+  history <- archiveCurrent current visits
+  Copy state1 currentPending <- copy state
+  currentProbe <- materialize stateProbeKind currentPending
+  Create currentOperatorPending <- create LOperator
+  currentOperator <- materialize currentVertexKind currentOperatorPending
+  Apply1 visitPending <- apply1 currentOperator currentProbe
+  currentVisit <- materialize currentVisitKind visitPending
+
+  Copy graph1 graphPending <- copy graph
+  graphProbe <- materialize graphKind graphPending
+  Copy state2 advancePending <- copy state1
+  stateProbe <- materialize stateProbeKind advancePending
+  nextStatePending <- step @AdvanceFrontier $ do
+    Create advanceOperatorPending <- create LOperator
+    advanceOperator <- materialize advanceBfsKind advanceOperatorPending
+    Apply2 pending <- apply2 advanceOperator graphProbe stateProbe
+    pure pending
+  Replace replacement <- replace state2 nextStatePending
+  nextState <- materialize bfsStateKind replacement
+  pure (Iteration graph1 nextState (CurrentVisit currentVisit) history)
+
+checkFrontier :: Block Graph %1 -> Block BfsState %1 -> Program Checked
+checkFrontier graph state = step @CheckFrontier $ do
+  Copy state1 probePending <- copy state
+  probe <- materialize stateProbeKind probePending
+  Create operatorPending <- create LOperator
+  operator <- materialize isFinishedKind operatorPending
+  Apply1 finishedPending <- apply1 operator probe
+  result <- materialize finishedKind finishedPending
+  pure (Checked graph state1 result)
+
+runBfs :: Block Graph %1 -> Block BfsState %1 -> CurrentVisit %1 -> Visits %1 -> Program (Block Graph, Block BfsState, CurrentVisit, Visits)
+runBfs graph state current visits = do
+  Iteration graph1 nextState currentVisit history <- advanceOnce graph state current visits
+  Checked graph2 checkedState result <- checkFrontier graph1 nextState
+  Use (LBool isComplete) <- use result
+  case isComplete of
+    True -> pure (graph2, checkedState, currentVisit, history)
+    False -> runBfs graph2 checkedState currentVisit history
+
+destroyVisits :: Visits %1 -> Program ()
+destroyVisits NoVisits = pure ()
+destroyVisits (MoreVisit visit rest) = do
+  Destroy <- destroy visit
+  destroyVisits rest
+
+destroyCurrentVisit :: CurrentVisit %1 -> Program ()
+destroyCurrentVisit NoCurrentVisit = pure ()
+destroyCurrentVisit (CurrentVisit visit) = do
+  Destroy <- destroy visit
+  pure ()
+
+program :: Initial %1 -> Program ()
+program initial = do
+  Initial graph graphDescription state <- step @Initialize (pure initial)
+  (graph1, finalState, currentVisit, visits) <- runBfs graph state NoCurrentVisit NoVisits
+  step @Complete $ do
+    Destroy <- destroy graph1
+    Destroy <- destroy graphDescription
+    Destroy <- destroy finalState
+    destroyCurrentVisit currentVisit
+    destroyVisits visits
+
+boundedSpan :: Span -> Span -> Render Span
+boundedSpan lower upper = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  ensure $ value .<=. upper
+  pure value
+
+minimumSpan :: Span -> Render Span
+minimumSpan lower = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  pure value
+
+render :: Render ()
+render = do
+  always $ frame @Initialize
+  always $ frame @VisitVertex
+  sometimes $ frame @CheckFrontier
+  always $ frame @Complete
+
+  canvasWidth <- boundedSpan (by 780) (by 1180)
+  -- Only the finite outer envelope has an authored upper limit. Containment
+  -- derives useful upper bounds for the remaining layout variables.
+  gap <- minimumSpan (by 14)
+  panelWidth <- minimumSpan (by 220)
+  panelHeight <- minimumSpan (by 64)
+  visitWidth <- minimumSpan (by 54)
+  visitHeight <- minimumSpan (by 42)
+  bodyFont <- fontChoice (fontKind Proportional)
+  codeFont <- fontChoice (fontKind Monospace)
+
+  width canvasWidth
+  aspectRatio 16 10
+  padding (uniform gap)
+  contentFit Both Contain
+
+  graphDescriptions <- select graphDescriptionKind
+  states <- select bfsStateKind
+  currentVisits <- select currentVisitKind
+  visits <- select visitKind
+
+  page <- node $ do
+    padding (uniform gap)
+    contentFit Both Hug
+    style @FontFamily bodyFont
+
+    title <- node $ do
+      fitText (text "Breadth-first search")
+      style @FontFamily bodyFont
+      style @FontWeight FontWeightBold
+      withoutStyle @Fill
+
+    graphPanel <- node $ do
+      padding (uniform (by 10))
+      contentFit Both Hug
+      style @Radius (by 12)
+      node graphDescriptions $ do
+        description <- bindContent
+        fitText (text "graph: " <> description)
+        width panelWidth
+        height panelHeight
+        style @FontFamily codeFont
+
+    statusPanel <- node $ do
+      padding (uniform (by 10))
+      contentFit Both Hug
+      style @Radius (by 12)
+      node states $ do
+        stateText <- bindContent
+        fitText (text "queue | visited: " <> stateText)
+        width panelWidth
+        height panelHeight
+        style @FontFamily codeFont
+
+      node currentVisits $ do
+        vertex <- bindContent
+        fitText (text "current vertex: " <> vertex)
+        width panelWidth
+        height visitHeight
+        style @FontFamily bodyFont
+        style @Stroke (Hsl (num 32) (num 0.82) (num 0.46))
+        style @StrokeWidth (by 3)
+        style @Radius (by 10)
+
+      ensure $ x currentVisits .==. x states
+      ensure $ top currentVisits .==. bottom states .+. gap
+
+    visitPanel <- node $ do
+      padding (uniform (by 10))
+      contentFit Both Hug
+      node visits $ do
+        vertex <- bindContent
+        fitText (text "visit " <> vertex)
+        width visitWidth
+        height visitHeight
+        style @FontFamily bodyFont
+        style @Radius (by 10)
+      arrange (ArrangeGrid 5 (vec2 gap gap)) visits
+
+    -- The whole explanation changes composition as one categorical decision;
+    -- peers still share their dimensions in either branch.
+    oneOf "bfs.composition"
+      (alternative "panels-above-history" $ do
+        ensure $ left statusPanel .==. right graphPanel .+. gap
+        ensure $ y statusPanel .==. y graphPanel
+        ensure $ top visitPanel .==. bottom graphPanel .+. gap
+        ensure $ x visitPanel .==. x title)
+      [alternative "panels-beside-history" $ do
+        ensure $ top statusPanel .==. bottom graphPanel .+. gap
+        ensure $ x statusPanel .==. x graphPanel
+        ensure $ left visitPanel .==. right graphPanel .+. gap
+        ensure $ y visitPanel .==. y statusPanel]
+
+    ensure $ x graphPanel .==. x title
+    ensure $ top graphPanel .==. bottom title .+. gap
+    ensure $ separatedBy gap graphPanel statusPanel
+    ensure $ separatedBy gap graphPanel visitPanel
+    ensure $ separatedBy gap statusPanel visitPanel
+
+    -- This key is optional information, not an essential algorithm state.
+    sometimes $ do
+      key <- node $ do
+        fitText (text "left of | waits; right of | is visited")
+        style @FontFamily codeFont
+        withoutStyle @Fill
+      ensure $ separatedBy gap visitPanel key
+
+  ensure $ center page .==. center canvas
+  ensure $ left page .>=. left canvas .+. gap
+  ensure $ right page .<=. right canvas .-. gap
+  ensure $ top page .>=. top canvas .+. gap
+  ensure $ bottom page .<=. bottom canvas .-. gap

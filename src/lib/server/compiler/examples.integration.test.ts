@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { Visualization } from '$lib/shared/visualization';
 import { getProjectTemplate, listProjectTemplates } from '$lib/server/projects/starter-catalog';
 
-import { compileSource } from './compile';
+import { compileSourceBatch } from './compile';
 
 const runExamples = process.env.SVERLIN_RUN_EXAMPLE_TESTS === '1';
-const seeds = [1, 2, 7, 11] as const;
+// Production accepts one or two fresh view seeds per compilation. Two fixed
+// seeds exercise that complete boundary while keeping the starter suite fast.
+const seeds = [1, 2] as const;
 
 describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
   it(
@@ -20,13 +22,14 @@ describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
       const compiled = new Map<string, Visualization>();
 
       for (const starter of starters) {
-        for (const seed of seeds) {
-          const result = await compileSource({
-            sourceContent: starter.source,
-            sourceLabel: `examples/${starter.file}`,
-            seed,
-            owner: 'example-test'
-          });
+        const results = await compileSourceBatch({
+          sourceContent: starter.source,
+          sourceLabel: `examples/${starter.file}`,
+          seeds,
+          owner: 'example-test'
+        });
+        for (const [index, result] of results.entries()) {
+          const seed = seeds[index]!;
           if (!result.ok) {
             throw new Error(
               `${starter.file} seed ${seed} failed:\n${result.diagnostics.map(({ raw }) => raw).join('\n')}`
@@ -37,7 +40,7 @@ describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
           expect(result.visualization.sourcePath).toBe(`examples/${starter.file}`);
           expect(result.visualization.irVersion).toBe(2);
           if (result.visualization.irVersion !== 2) throw new Error('Expected IR version 2.');
-          expect(result.visualization.scenarioSeed).toBe(seed);
+          expect(result.visualization.scenarioSeed).toBe(seeds[0]);
           expect(result.visualization.viewSeed).toBe(seed);
           expect(result.targetDiagnostics.filter(({ severity }) => severity === 'warning')).toEqual(
             []
@@ -57,15 +60,17 @@ describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
       expect(JSON.stringify(addition)).toContain('"layoutSource":"42"');
       expect(addition.elements.some(({ children }) => children.length >= 1)).toBe(true);
 
-      const linearSearch = compiled.get('linear-search:7')!;
-      expect(linearSearch.steps.length).toBeGreaterThanOrEqual(4);
+      const linearSearchOutputs = seeds.map((seed) => compiled.get(`linear-search:${seed}`)!);
+      expect(linearSearchOutputs.every(({ steps }) => steps.length >= 4)).toBe(true);
       expect(
-        linearSearch.steps.some(({ instances }) =>
-          instances.some(({ fragmentClusters }) => (fragmentClusters?.length ?? 0) > 0)
+        linearSearchOutputs.some(({ steps }) =>
+          steps.some(({ instances }) =>
+            instances.some(({ fragmentClusters }) => (fragmentClusters?.length ?? 0) > 0)
+          )
         )
       ).toBe(true);
 
-      const continuity = compiled.get('continuity-and-fork:7')!;
+      const continuity = compiled.get('continuity-and-fork:2')!;
       expect(
         continuity.steps.some(({ instances }) =>
           instances.some(({ originElementId }) => originElementId !== undefined)

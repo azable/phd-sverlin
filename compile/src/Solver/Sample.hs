@@ -15,6 +15,7 @@ module Solver.Sample
   , SamplingProvenance(..)
   , PreparedAffineRegion
   , prepareAffineRegion
+  , prepareAffineRegionWithPhaseOneLimit
   , samplePreparedAffineRegion
   , sampleAffineProblem
   , estimatePreparedAffineLogVolume
@@ -132,10 +133,26 @@ prepareAffineRegion ::
      Map String Double
   -> AffineProblem
   -> Either FeasibilityFailure PreparedAffineRegion
-prepareAffineRegion overrides problem = do
+prepareAffineRegion =
+  prepareAffineRegionWithPhaseOneLimit maximumProjectionSweeps
+
+-- | Prepare a region while bounding only the attempt to repair the supplied
+-- hint. Conditioned design spaces use this before falling back to a numeric
+-- point already proved feasible by HiGHS.
+prepareAffineRegionWithPhaseOneLimit ::
+     Int
+  -> Map String Double
+  -> AffineProblem
+  -> Either FeasibilityFailure PreparedAffineRegion
+prepareAffineRegionWithPhaseOneLimit projectionLimit overrides problem = do
   normalized <- normalizeProblem problem
-  reduced <- reduceEqualities normalized
-  start <- findFeasiblePoint (startingHint overrides normalized reduced) reduced
+  initialReduced <- reduceEqualities normalized
+  initialStart <-
+    findFeasiblePointWithin
+      projectionLimit
+      (startingHint overrides normalized initialReduced)
+      initialReduced
+  (reduced, start) <- reduceEqualityFaces initialStart initialReduced
   pure
     PreparedAffineRegion
       { preparedNormalized = normalized
@@ -511,12 +528,25 @@ reduceEqualities problem
         , reducedBasis = (LA.><) 0 0 []
         , reducedInequalities = []
         }
-  | null equalities =
+  | otherwise = do
+    reduceDenseRows ambientDimension equalities inequalities
+  where
+    ambientDimension = length (normalizedVariables problem)
+    equalities = normalizedEqualities problem
+    inequalities = normalizedInequalities problem
+
+reduceDenseRows ::
+     Int -> [DenseRow] -> [DenseRow] -> Either FeasibilityFailure ReducedProblem
+reduceDenseRows dimension equalities inequalities
+  | null equalities = do
+    let origin = LA.konst 0 dimension
+        basis = LA.ident dimension
+    reducedRows <- traverse (reduceInequality origin basis) inequalities
     pure
       ReducedProblem
-        { reducedOrigin = LA.konst 0 ambientDimension
-        , reducedBasis = LA.ident ambientDimension
-        , reducedInequalities = inequalities
+        { reducedOrigin = origin
+        , reducedBasis = basis
+        , reducedInequalities = catMaybes reducedRows
         }
   | otherwise = do
     let equalityMatrix = LA.fromRows (map denseCoefficients equalities)
@@ -536,10 +566,72 @@ reduceEqualities problem
             , reducedBasis = basis
             , reducedInequalities = catMaybes reducedRows
             }
+
+-- Opposing inequalities can encode an equality without having been authored
+-- as one. Keeping that zero-width face in hit-and-run makes almost every
+-- random direction stationary. Reduce those faces only after phase I has
+-- found a valid point, then use that point as the new origin. This avoids an
+-- unstable second least-squares solve for large, dependent layout systems.
+reduceEqualityFaces ::
+     LA.Vector Double
+  -> ReducedProblem
+  -> Either FeasibilityFailure (ReducedProblem, LA.Vector Double)
+reduceEqualityFaces start reduced =
+  case opposingInequalityEqualities (reducedInequalities reduced) of
+    [] -> Right (reduced, start)
+    equalities -> do
+      let equalityMatrix = LA.fromRows (map denseCoefficients equalities)
+          basis = LA.nullspace equalityMatrix
+      nestedRows <-
+        traverse (reduceInequality start basis) (reducedInequalities reduced)
+      let nestedStart = LA.konst 0 (LA.cols basis)
+          nested =
+            ReducedProblem
+              { reducedOrigin =
+                  reducedOrigin reduced + reducedBasis reduced LA.#> start
+              , reducedBasis = reducedBasis reduced LA.<> basis
+              , reducedInequalities = catMaybes nestedRows
+              }
+      reduceEqualityFaces nestedStart nested
+
+opposingInequalityEqualities :: [DenseRow] -> [DenseRow]
+opposingInequalityEqualities [] = []
+opposingInequalityEqualities (row:rows) =
+  case normalizedDenseRow row of
+    Nothing -> opposingInequalityEqualities rows
+    Just normalized ->
+      case extractOpposing normalized rows of
+        Nothing -> opposingInequalityEqualities rows
+        Just (equality, remaining) ->
+          equality : opposingInequalityEqualities remaining
   where
-    ambientDimension = length (normalizedVariables problem)
-    equalities = normalizedEqualities problem
-    inequalities = normalizedInequalities problem
+    extractOpposing _ [] = Nothing
+    extractOpposing (coefficients, rhs) (candidate:candidates) =
+      case normalizedDenseRow candidate of
+        Just (candidateCoefficients, candidateRhs)
+          | LA.norm_Inf (coefficients + candidateCoefficients)
+              <= numericalTolerance
+          , abs (rhs + candidateRhs) <= implicitEqualityTolerance ->
+            Just
+              ( DenseRow
+                  { denseCoefficients = coefficients
+                  , denseRhs = (rhs - candidateRhs) / 2
+                  }
+              , candidates)
+        _ -> do
+          (equality, remaining) <-
+            extractOpposing (coefficients, rhs) candidates
+          pure (equality, candidate : remaining)
+
+normalizedDenseRow :: DenseRow -> Maybe (LA.Vector Double, Double)
+normalizedDenseRow row
+  | magnitude <= numericalTolerance = Nothing
+  | otherwise =
+    Just
+      ( LA.scale (1 / magnitude) (denseCoefficients row)
+      , denseRhs row / magnitude)
+  where
+    magnitude = LA.norm_2 (denseCoefficients row)
 
 validateConstantRows :: [DenseRow] -> Bool -> Either FeasibilityFailure ()
 validateConstantRows rows equality =
@@ -596,28 +688,42 @@ startingHint overrides normalized reduced
         | scale <- normalizedVariables normalized
         ]
 
--- | Phase-I feasibility boundary. The current implementation uses Dykstra's
--- cyclic projections; callers do not depend on that choice.
-findFeasiblePoint ::
-     LA.Vector Double
+-- Phase-I uses Dykstra's cyclic projections. Callers depend only on its work
+-- limit and the resulting feasible point, not on that algorithmic choice.
+findFeasiblePointWithin ::
+     Int
+  -> LA.Vector Double
   -> ReducedProblem
   -> Either FeasibilityFailure (LA.Vector Double)
-findFeasiblePoint initial problem
+findFeasiblePointWithin projectionLimit initial problem
   | LA.size initial == 0 = Right initial
   | otherwise =
-    projectFeasiblePoint phaseOneTolerance initial (reducedInequalities problem)
+    projectFeasiblePointWithin
+      projectionLimit
+      phaseOneTolerance
+      initial
+      (reducedInequalities problem)
 
 projectFeasiblePoint ::
      Double
   -> LA.Vector Double
   -> [DenseRow]
   -> Either FeasibilityFailure (LA.Vector Double)
-projectFeasiblePoint target initial rows = go 0 initial zeroCorrections
+projectFeasiblePoint = projectFeasiblePointWithin maximumProjectionSweeps
+
+projectFeasiblePointWithin ::
+     Int
+  -> Double
+  -> LA.Vector Double
+  -> [DenseRow]
+  -> Either FeasibilityFailure (LA.Vector Double)
+projectFeasiblePointWithin projectionLimit target initial rows =
+  go 0 initial zeroCorrections
   where
     zeroCorrections = map (const (LA.konst 0 (LA.size initial))) rows
     go sweep point corrections
       | maximumViolation rows point <= target = Right point
-      | sweep >= maximumProjectionSweeps =
+      | sweep >= projectionLimit =
         Left
           (FeasibilityFailure
              ("could not find a feasible point for bounded affine constraints; "
@@ -888,6 +994,12 @@ openUnit = clamp 1.0e-12 (1 - 1.0e-12)
 
 numericalTolerance :: Double
 numericalTolerance = 1.0e-12
+
+-- Normalization can perturb two algebraically opposing rows by a few units in
+-- the last decimal place. This is deliberately much tighter than general
+-- feasibility: a real, merely narrow band must remain sampleable as a band.
+implicitEqualityTolerance :: Double
+implicitEqualityTolerance = 1.0e-10
 
 phaseOneTolerance :: Double
 phaseOneTolerance = feasibilityTolerance

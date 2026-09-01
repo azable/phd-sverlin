@@ -1,4 +1,4 @@
--- Binary search written against the proposed API in API_plan_final.md.
+-- Binary search using the implemented Sverlin API.
 --
 -- The input generator constructs a sorted, distinct array directly. Program
 -- creates short-lived low, middle, and high owners for each iteration. Their
@@ -147,7 +147,7 @@ data SearchCase where
 
 binarySearchCases :: Generator SearchCase
 binarySearchCases = do
-  tailLength <- between 6 14
+  tailLength <- between 4 7
   firstValue <- between 4 24
   positiveGaps <- listOf tailLength tailLength (between 1 6)
   let values = scanl (+) firstValue positiveGaps
@@ -478,6 +478,12 @@ boundedSpan lower upper = do
   ensure $ value .<=. upper
   return value
 
+minimumSpan :: Span -> Render Span
+minimumSpan lower = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  return value
+
 binarySearchLine :: TextBuilder ()
 binarySearchLine = do
   literal "while low <= high: compare target with "
@@ -489,13 +495,15 @@ render :: Render ()
 render = do
   canvasWidth <- boundedSpan (by 820) (by 1360)
   canvasHeight <- boundedSpan (by 500) (by 820)
-  outerInset <- boundedSpan (by 20) (by 48)
-  sectionGap <- boundedSpan (by 16) (by 38)
-  cellWidth <- boundedSpan (by 46) (by 76)
-  cellHeight <- boundedSpan (by 42) (by 68)
-  cellGap <- boundedSpan (by 6) (by 18)
-  markerGap <- boundedSpan (by 10) (by 26)
-  fontSize <- boundedSpan (by 13) (by 22)
+  -- Canvas bounds make the affine region finite. Everything inside states
+  -- only a readability minimum; containment supplies its effective maximum.
+  outerInset <- minimumSpan (by 16)
+  sectionGap <- minimumSpan (by 12)
+  cellWidth <- minimumSpan (by 42)
+  cellHeight <- minimumSpan (by 36)
+  cellGap <- minimumSpan (by 5)
+  markerGap <- minimumSpan (by 8)
+  fontSize <- minimumSpan (by 12)
   bodyFont <- fontChoice (fontKind Proportional)
   codeFont <- fontChoice (fontKind Monospace)
 

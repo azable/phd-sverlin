@@ -125,6 +125,11 @@ tests =
         let visualizations = Resource.compilationPackageVisualizations package
         length visualizations @?= length seeds
         mapM_ assertTypographyMatchesStyle visualizations
+    , testCase "optional font styling retains an automatic fallback" $ do
+        visualizations <-
+          compileFramePlan "optional font fallback" [1 .. 16] optionalFontPlan
+        length visualizations @?= 16
+        mapM_ assertTypographyMatchesStyle visualizations
     , testCase
         "relative font weight resolves against the inherited concrete weight" $ do
         visualizations <-
@@ -261,6 +266,71 @@ tests =
                    ])
         profiles @?= ["flat", "outline", "pill", "soft-card", "transparent"]
         mapM_ assertPeerStylesCoherent visualizations
+    , testCase "automatic lineages share one presentation palette" $ do
+        visualizations <-
+          compilePeerPlan "shared automatic palette" [3] repeatedPeerTextPlan
+        case visualizations of
+          [visualization] -> do
+            let paletteVariables =
+                  sort
+                    [ name
+                    | variable <- IR.visualizationVariables visualization
+                    , IR.CspVariableId name <- [IR.cspVariableId variable]
+                    , "render.theme.presentation." `isInfixOf` name
+                    , IR.CspNumber _ <- [IR.cspVariableValue variable]
+                    ]
+                radiusVariables =
+                  [ name
+                  | variable <- IR.visualizationVariables visualization
+                  , IR.CspVariableId name <- [IR.cspVariableId variable]
+                  , ".soft-card.radius" `isInfixOf` name
+                  , IR.CspNumber _ <- [IR.cspVariableValue variable]
+                  ]
+                profileVariables =
+                  [ name
+                  | variable <- IR.visualizationVariables visualization
+                  , IR.CspVariableId name <- [IR.cspVariableId variable]
+                  , ".leaf.profile" `isInfixOf` name
+                  ]
+            paletteVariables
+              @?= sort
+                    [ "render.theme.presentation.fill.hue"
+                    , "render.theme.presentation.fill.lightness"
+                    , "render.theme.presentation.fill.saturation"
+                    , "render.theme.presentation.stroke.lightness"
+                    , "render.theme.presentation.stroke.saturation"
+                    ]
+            length radiusVariables @?= 2
+            length profileVariables @?= 2
+          values ->
+            assertFailure
+              ("expected one visualization, got " ++ show (length values))
+    , testCase "generated text-only leaves stay transparent by default" $ do
+        visualizations <-
+          compileFramePlan
+            "transparent generated text"
+            [1 .. 24]
+            generatedTextOnlyPlan
+        mapM_
+          (\visualization -> do
+             case textStyles visualization of
+               [(style', _layout)] -> do
+                 IR.visualFill style' @?= Nothing
+                 IR.visualStroke style' @?= Nothing
+                 IR.visualRadius style' @?= Nothing
+               values ->
+                 assertFailure
+                   ("expected one generated text leaf, got "
+                      ++ show (length values))
+             let profiles =
+                   [ token
+                   | variable <- IR.visualizationVariables visualization
+                   , IR.CspVariableId name <- [IR.cspVariableId variable]
+                   , ".leaf.profile" `isInfixOf` name
+                   , IR.CspCategory token <- [IR.cspVariableValue variable]
+                   ]
+             profiles @?= ["transparent"])
+          visualizations
     , testCase "authored and removed surface fields beat automatic styles" $ do
         visualizations <-
           compileFramePlan "style precedence" [1 .. 24] stylePrecedencePlan
@@ -386,6 +456,25 @@ guardedFontPlan =
         (Render.Selected Render.GeneratedNode)
     pure ()
 
+optionalFontPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+optionalFontPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 800)
+    Render.height (Render.by 450)
+    family <- Render.fontChoice (Render.fontKind Render.Proportional)
+    _ <-
+      Render.node
+        (do
+           Render.sometimes (Render.style @Render.FontFamily family)
+           Render.fitText (Render.text "optional face")
+           Render.width (Render.by 360)
+           Render.height (Render.by 120)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
 relativeWeightPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 relativeWeightPlan =
   Render.buildRenderPlan $ do
@@ -459,7 +548,25 @@ stylePrecedencePlan =
            Render.yAt (Render.percent 50)
            Render.style @Render.Fill
              (Render.Hsl (Render.num 42) (Render.num 0.4) (Render.num 0.9))
-           Render.withoutStyle @Render.Stroke) :: Render.Render
+           Render.withoutStyle @Render.Stroke
+           Render.content (Render.text "styled label")) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+generatedTextOnlyPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+generatedTextOnlyPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 180)
+           Render.height (Render.by 72)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           Render.content (Render.text "transparent label")) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
 

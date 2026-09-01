@@ -74,6 +74,45 @@ describe('AI project context projection', () => {
     expect(JSON.stringify(expanded.selected.events[0])).toContain('private prompt');
   });
 
+  it('keeps the latest 48 timeline entries and reports the omitted history', () => {
+    const request: ProjectEventOf<'ai.generation-requested'> = {
+      ...base(3),
+      type: 'ai.generation-requested',
+      payload: {
+        attempt: 1,
+        purpose: 'initial',
+        prompt: recorded('{}', 'application/json'),
+        promptTemplateSha256: '1'.repeat(64),
+        requestedModel: 'test-model',
+        parameters: {}
+      }
+    };
+    const document = projectDocument(request);
+    for (let id = 4; id <= 63; id += 1) {
+      document.events.push(
+        event(id, 'system.notified', { severity: 'info', message: `Notification ${id}` })
+      );
+    }
+
+    const context = projectAiContext(document);
+    expect(context.timelineWindow).toEqual({ totalEventCount: 63, omittedEventCount: 15 });
+    expect(context.timeline).toHaveLength(48);
+    expect(context.timeline[0]?.id).toBe(16);
+    expect(context.timeline.at(-1)?.id).toBe(63);
+  });
+
+  it('includes completed AI generation duration in the compact summary', () => {
+    const generation = event(3, 'ai.generation-succeeded', {
+      attempt: 1,
+      adapterId: 'test-adapter',
+      requestedModel: 'test-model',
+      durationMs: 54321,
+      response: recorded('{}', 'application/json')
+    });
+
+    expect(projectAiTimelineEntry(generation).summary).toContain('54321 ms');
+  });
+
   it('exposes compiler findings globally and on the selected zero-based instance', () => {
     const request: ProjectEventOf<'ai.generation-requested'> = {
       ...base(3),

@@ -1,4 +1,4 @@
--- Topological sorting for the proposed API.
+-- Topological sorting using the implemented Sverlin API.
 --
 -- Generator constructs a DAG and precomputes Kahn's output order. Domain
 -- materializes the DAG, then Program consumes that linear output plan. Render
@@ -111,7 +111,7 @@ outputPlan labels (taskIndex : rest) =
 
 topologicalGenerator :: Generator TopologicalSample
 topologicalGenerator = do
-  taskCount <- between 6 10
+  taskCount <- between 4 5
   labels <- shuffle (take taskCount ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"])
   stride <- elementOf 2 [3]
   let spine = [(index, index + 1) | index <- [0 .. taskCount - 2]]
@@ -379,19 +379,17 @@ dagView ::
   Selected Task ->
   Selected TaskLabel ->
   Relations Task Task ->
-  Ranking Task ->
   Span ->
   Span ->
   Span ->
   Span ->
   Render (Selected GeneratedNode)
-dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth nodeHeight = node $ do
+dagView tasks labels dependencyLinks horizontalGap verticalGap nodeWidth nodeHeight = node $ do
   padding (uniform (by 20))
   contentFit Both Hug
   arrange (ArrangeLayered dependencyLinks (vec2 horizontalGap verticalGap)) tasks
 
   node tasks $ do
-    level <- rankOf levels
     width nodeWidth
     height nodeHeight
     padding (uniform (by 8))
@@ -402,9 +400,6 @@ dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth 
     style @StrokeWidth (by 2)
     style @Radius (by 12)
     node labels $ bindContent >>= fitText
-    levelLabel <- node $ content (text "level " <> asText level)
-    ensure $ top levelLabel .==. bottom labels .+. by 4
-    ensure $ x levelLabel .==. x labels
 
   relation dependencyLinks $ do
     prerequisite <- first dependencyLinks
@@ -418,17 +413,15 @@ outputView ::
   Selected OutputCell ->
   Selected OutputLabel ->
   Relations OutputCell OutputCell ->
-  Ranking OutputCell ->
   Span ->
   Span ->
   Span ->
   Render (Selected GeneratedNode)
-outputView cells labels links order gap nodeWidth nodeHeight = node $ do
+outputView cells labels links gap nodeWidth nodeHeight = node $ do
   padding (uniform (by 16))
   contentFit Both Hug
 
   node cells $ do
-    position <- rankOf order
     width nodeWidth
     height nodeHeight
     padding (uniform (by 8))
@@ -439,9 +432,6 @@ outputView cells labels links order gap nodeWidth nodeHeight = node $ do
     style @StrokeWidth (by 2)
     style @Radius (by 10)
     node labels $ bindContent >>= fitText
-    positionLabel <- node $ content (text "#" <> asText position)
-    ensure $ top positionLabel .==. bottom labels .+. by 4
-    ensure $ x positionLabel .==. x labels
 
   relation links $ do
     previous <- first links
@@ -466,57 +456,52 @@ render = do
   always $ frame @EmitTask
   sometimes $ frame @FindReadyTasks
 
-  horizontalGap <- variable @Span
-  verticalGap <- variable @Span
-  outputGap <- variable @Span
-  panelGap <- variable @Span
-  nodeWidth <- variable @Span
-  nodeHeight <- variable @Span
-  ensure $ horizontalGap .>=. by 80
-  ensure $ horizontalGap .<=. by 132
-  ensure $ verticalGap .>=. by 72
-  ensure $ verticalGap .<=. by 124
-  ensure $ outputGap .>=. by 10
-  ensure $ outputGap .<=. by 28
-  ensure $ panelGap .>=. by 24
-  ensure $ panelGap .<=. by 52
-  ensure $ nodeWidth .>=. by 56
-  ensure $ nodeWidth .<=. by 84
-  ensure $ nodeHeight .>=. by 46
-  ensure $ nodeHeight .<=. by 68
-
   tasks <- select taskKind
   labels <- select taskLabelKind
   dependencyLinks <- select precedes
-  levels <- asDag dependencyLinks tasks
+  _levels <- asDag dependencyLinks tasks
 
   outputCells <- select outputCellKind
   outputLabels <- select outputLabelKind
   outputLinks <- select nextOutput
-  outputAssociations <- select outputFor
-  outputOrder <- asSequence outputLinks outputCells
+  _outputOrder <- asSequence outputLinks outputCells
 
-  -- `oneOf` has three alternatives rather than two independent `sometimes`
-  -- wrappers, so every sampled design contains at least one representation.
-  oneOf "representation"
-    (alternative "dag" $ do
-      graph <- dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth nodeHeight
-      ensure $ center graph .==. center canvas)
-    [ alternative "order" $ do
-        sequenceView <- outputView outputCells outputLabels outputLinks outputOrder outputGap nodeWidth nodeHeight
-        ensure $ center sequenceView .==. center canvas
-    , alternative "both" $ do
-        graph <- dagView tasks labels dependencyLinks levels horizontalGap verticalGap nodeWidth nodeHeight
-        sequenceView <- outputView outputCells outputLabels outputLinks outputOrder outputGap nodeWidth nodeHeight
-        ensure $ top sequenceView .==. bottom graph .+. panelGap
-        ensure $ x sequenceView .==. x graph
-        ensure $ separatedBy panelGap graph sequenceView
-        ensure $ x graph .==. x canvas
-        sometimes $ relation outputAssociations $ do
-          emittedCell <- first outputAssociations
-          sourceTask <- second outputAssociations
-          connector (anchor AtBoundary emittedCell) (anchor AtBoundary sourceTask) $ do
-            style @Stroke (Hsl (num 42) (num 0.62) (num 0.48))
-            style @StrokeWidth (by 1)
-            endMarker CircleMarker
-    ]
+  horizontalGap <- variable @Span
+  verticalGap <- variable @Span
+  nodeWidth <- variable @Span
+  nodeHeight <- variable @Span
+  outputGap <- variable @Span
+  representationGap <- variable @Span
+  -- The canvas is the only independent upper envelope. These constraints
+  -- protect readability while the two relative compositions remain broad.
+  ensure $ horizontalGap .>=. by 56
+  ensure $ horizontalGap .<=. canvasWidth .*. num 0.25
+  ensure $ verticalGap .>=. by 48
+  ensure $ verticalGap .<=. canvasWidth .*. num 0.20
+  ensure $ nodeWidth .>=. by 52
+  ensure $ nodeWidth .<=. canvasWidth .*. num 0.20
+  ensure $ nodeHeight .>=. by 40
+  ensure $ nodeHeight .<=. canvasWidth .*. num 0.15
+  ensure $ outputGap .>=. by 10
+  ensure $ outputGap .<=. canvasWidth .*. num 0.10
+  ensure $ representationGap .>=. by 20
+  ensure $ representationGap .<=. canvasWidth .*. num 0.15
+
+  page <- node $ do
+    contentFit Both Hug
+    graph <- dagView tasks labels dependencyLinks horizontalGap verticalGap nodeWidth nodeHeight
+    sequenceView <- outputView outputCells outputLabels outputLinks outputGap nodeWidth nodeHeight
+
+    -- Both representations share one mapping. The categorical choice changes
+    -- only their composition, avoiding duplicate graph and sequence geometry.
+    oneOf "representation-layout"
+      (alternative "stacked" $ do
+          ensure $ top sequenceView .==. bottom graph .+. representationGap
+          ensure $ x sequenceView .==. x graph
+          ensure $ separatedBy representationGap graph sequenceView)
+      [alternative "side-by-side" $ do
+        ensure $ left sequenceView .==. right graph .+. representationGap
+        ensure $ y sequenceView .==. y graph
+        ensure $ separatedBy representationGap graph sequenceView]
+
+  ensure $ center page .==. center canvas

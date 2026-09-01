@@ -4,6 +4,7 @@
   import { Button } from '$lib/client/components/ui/button';
 
   import { codeRenderSegments } from './code-emphasis';
+  import { fragmentEmphasisBands } from './fragment-emphasis';
   import {
     compilerFontFamily,
     ensureCompilerFont,
@@ -478,6 +479,7 @@
       {#each orderedElements as element (element.instanceId)}
         {@const style = element.style}
         {@const bounds = element.box.bounds}
+        {@const fragmentBands = fragmentEmphasisBands(element.fragmentClusters)}
         <g
           data-visual-id={element.id}
           data-instance-id={element.instanceId}
@@ -500,13 +502,15 @@
             stroke-dasharray={borderDasharray(style.borderStyle)}
           />
 
-          {#each element.fragmentClusters as cluster (`${cluster.clusterLineIndex}:${cluster.clusterSourceRange.sourceRangeStart}:${cluster.clusterSourceRange.sourceRangeEnd}`)}
-            <line
+          {#each fragmentBands as band (`${band.lineIndex}:${band.rectX}:${band.rectY}:${band.rectWidth}`)}
+            {@const padding = Math.max(1, band.rectHeight * 0.12)}
+            <rect
               class="fragment-emphasis"
-              x1={cluster.clusterInkBounds.rectX}
-              x2={cluster.clusterInkBounds.rectX + cluster.clusterInkBounds.rectWidth}
-              y1={cluster.clusterInkBounds.rectY + cluster.clusterInkBounds.rectHeight + 1}
-              y2={cluster.clusterInkBounds.rectY + cluster.clusterInkBounds.rectHeight + 1}
+              x={band.rectX - padding}
+              y={band.rectY - padding}
+              width={band.rectWidth + 2 * padding}
+              height={band.rectHeight + 2 * padding}
+              rx={Math.max(2, band.rectHeight * 0.16)}
             />
           {/each}
 
@@ -669,8 +673,8 @@
   }
 
   .fragment-emphasis {
-    stroke: var(--chart-1);
-    stroke-width: 2;
+    fill: var(--chart-1);
+    fill-opacity: 0.16;
     pointer-events: none;
   }
 
@@ -691,10 +695,8 @@
   }
 
   .code-emphasis {
-    text-decoration-line: underline;
-    text-decoration-color: var(--chart-1);
-    text-decoration-thickness: 0.14em;
-    text-underline-offset: 0.18em;
+    fill: var(--chart-1);
+    font-weight: 700;
   }
 
   .selection-outline {

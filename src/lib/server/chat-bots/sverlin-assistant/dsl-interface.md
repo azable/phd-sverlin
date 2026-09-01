@@ -84,6 +84,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - `listOf` returns an ordinary Haskell list while inside Generator. After Domain binds that list, the list is linear: consume every constructor and element while creating the initial resources.
 - Generator has ordinary `Functor`, `Applicative`, and `Monad` behavior, so dependent input is allowed. For example, sample a vertex count and then generate exactly that many labels. Do not use retry loops or predicate rejection.
 - `elementOf first rest` and `weighted first rest` are non-empty by construction. A fixed complete scenario is a normal choice value, such as `elementOf [1, 3, 2] [[4, 2, 5]]`.
+- Give generators containing overloaded strings or tuples an explicit signature, such as `graphScenario :: Generator (String, String, String)`, so GHC does not have to guess their concrete types.
 - `create`, `materialize`, `seal`, and `relate` are the only trace-building operations shared by Domain and Program. Domain cannot perform algorithm lifecycle actions.
 
 ## Program: strict linear semantics
@@ -109,6 +110,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 
 - `step @Name action` records one typed, nestable occurrence around the complete action and returns its result unchanged. Repeated calls create distinct occurrences.
 - A Program helper receiving generated data or a linear resource uses `%1` arguments. GHC must reject duplication, dropping, or capture by an unrestricted closure before tracing begins.
+- A traversal algorithm must advance its queue, frontier, visited set, or equivalent state through typed lifecycle operations. Domain may generate the graph and start value, but it must not generate the finished traversal for Program to replay.
 
 ## Slots and semantic relations
 
@@ -129,6 +131,21 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - A generated `node $ do ...` returns its handle. Earlier statements in a Render `do` block discard that result normally; if it is the final statement where `Render ()` is required, bind/discard the handle or follow it with `pure ()`.
 - Use generated parents to define groups and local constraint scopes. They default to hugging their retained children. `self` is the current generated parent; `canvas` is the persistent root geometry handle.
 - A selection may have several visual mappings, but any use of its geometry or as a connector endpoint must resolve to exactly one context-local mapping. Use separate generated-parent scopes to disambiguate deliberate duplicates.
+- Visual state must be explicit in Program. To show a current, visited, processed, or frontier value, transition it with `copy`, `replace`, and `materialize` under a dedicated `Kind`, keep that successor alive through the relevant frame, and select/style that Kind in Render. Do not infer visual emphasis from every Block used by a step or create a short-lived probe that is destroyed before the frame.
+
+  ```haskell
+  markCurrent :: Block Value %1 -> Program (Block Value)
+  markCurrent value = do
+    Copy original currentOrigin <- copy value
+    Replace currentPending <- replace original currentOrigin
+    materialize currentValueKind currentPending
+
+  currentValues <- select currentValueKind
+  node currentValues $ style @Stroke (Hsl (num 32) (num 0.8) (num 0.45))
+  ```
+
+  A later transition can replace the current-state Block under the ordinary or processed Kind. This is the current equivalent of the older linear tag pattern: Program owns the state lifetime, and Render owns its appearance.
+
 - `within membership owners body` restricts selections inside one current owner match to targets of that ordered owner-to-member relation. It does not itself draw or create hierarchy.
 
 ## Relation rules and graph structure
@@ -157,6 +174,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
   ```
 
 - Text never wraps. A `ContentValue` must contain no newline. Use separate positioned nodes for separate or indented lines; a geometric indent remains correct when the font changes.
+- Typed fragments render as continuous background emphasis behind each spatial text run. Use ASCII `->` in authored text when an explicitly selected font is not known to contain a Unicode arrow; use a connector for a semantic arrow between nodes.
 - `content value` uses a fixed authored or theme size and contributes intrinsic bounds to a hugging node. `fitText value` keeps one line within its bounded box while leaving `FontSize` free in its feasible finite range. It does not maximize the size.
 - Every concrete peer created by one `node selected` mapping shares the same implicit fitted size. Each peer contributes a fit constraint, so the longest label limits that shared size. A separate mapping of the same selection owns a separate size family.
 - One node may define content exactly once. Different fonts within one shaped line are unsupported.
@@ -208,11 +226,13 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - `choice` creates a reusable finite built-in categorical value. `caseOf existingChoice` exhaustively maps it to complete Render actions. Authors cannot define custom categorical domains; use `oneOf` for custom alternatives.
 - `fontChoice (fontKind Monospace)` and `fontChoice (fontKind Proportional)` choose among unique concrete bundled faces. Reuse one returned choice when nodes should share a font decision.
 - `sometimes` is appropriate when either presence or absence is valid. Use `oneOf` when alternatives are mutually exclusive but at least one representation is required, such as array-only, tree-only, or both views of a heap.
+- When the brief leaves composition open, include at least two meaningful layout or representation alternatives. Prefer alternatives such as row/column, graph/tree, or overview/detail over random per-node sizes. Keep essential states visible and make only subordinate explanation frames or components optional.
+- Minimize absolute pixel constraints. Give the canvas one broad finite envelope, use only genuine readability minima, and derive ordinary panel, group, and peer geometry through `Hug`, `Contain`, hierarchy, shared dimensions, relations, and relative affine constraints. Do not assign a separate narrow size or coordinate range to every component.
 
 ## Style rules
 
 - `style @Field value` requires one field; `withoutStyle @Field` removes an inherited field; omission leaves the theme/default free. Do not invent style fields or private helper classes.
-- When routine leaf styles are omitted, the compiler chooses one coherent surface profile and palette per node-mapping lineage. It may also choose one concrete managed font for the presentation. Repeated peers do not independently randomize these fields.
+- When routine leaf styles are omitted, the compiler chooses one coherent surface profile per semantic node-mapping lineage and one shared palette for the presentation. It may also choose one concrete managed font. Repeated peers do not independently randomize these fields, and generated text-only labels stay transparent unless explicitly styled.
 - Numeric style fields are `Opacity`, `FontSize`, `Radius`, `StrokeWidth`, and paint `Alpha`. Paint uses `Hsl hue saturation lightness` as `Color`, with `Angle` hue and `Unit` components.
 - Paint fields are `Fill` and `Stroke`. Categorical fields are `BorderStyle`, `FontFamily`, `FontWeight`, `FontStyle`, and `TextAlign`. Use only the constructors in the API index.
 - Font weight and style choices must name a real managed face. Unsupported combinations are removed from the design space rather than synthesized or mapped to a nearby face; `FontWeightBolder` and `FontWeightLighter` resolve from the inherited weight.
@@ -227,6 +247,7 @@ Use this only as a syntax reference. Choose types, steps, relations, and visual 
 - Every generated value and linear resource is consumed exactly once. Algorithm results come from traced operations, not unrestricted precomputation.
 - Every frame has an explicit presence policy, and each scenario executes at least one always-visible frame.
 - Every selected mapping and relation endpoint resolves locally without ambiguity. Optional dependencies inherit the correct presence condition.
+- Every effectful semantic node mapping can appear in at least one declared frame. A transient probe consumed before the frame cannot carry visual state; materialize a dedicated state successor whose lifetime reaches the frame instead.
 - Every symbolic numeric value is finitely bounded; all geometry remains affine and feasible for every surviving authored alternative.
 - Every line is shaped as one non-wrapping string, and every connector has mapped endpoints.
 - Use only names present in `dslApiIndex`. If the requested behavior is not expressible, explain the limitation instead of inventing an API.

@@ -1,4 +1,4 @@
--- Longest common subsequence (LCS) for the proposed API.
+-- Longest common subsequence (LCS) using the implemented Sverlin API.
 --
 -- Every DP row owns a semantic set of cells through InRow. The same Cell kind
 -- and RightOf relation kind are reused by every row. Render uses `within` to
@@ -135,8 +135,8 @@ data LcsCase where
 
 lcsGenerator :: Generator LcsCase
 lcsGenerator = do
-  leftLength <- between 3 7
-  rightLength <- between 3 7
+  leftLength <- between 2 3
+  rightLength <- between 2 3
   leftChars <- listOf leftLength leftLength (elementOf 'A' ['B', 'C', 'D'])
   rightChars <- listOf rightLength rightLength (elementOf 'A' ['B', 'C', 'D'])
   let table = lcsTable leftChars rightChars
@@ -582,14 +582,12 @@ render = do
   columnGap <- variable @Span
   rowGap <- variable @Span
   panelGap <- variable @Span
+  -- The finite canvas bounds these through containment. Only lower limits
+  -- encode legibility; no arbitrary inner pixel maximum selects the layout.
   ensure $ cellSize .>=. by 42
-  ensure $ cellSize .<=. by 68
   ensure $ columnGap .>=. by 6
-  ensure $ columnGap .<=. by 18
   ensure $ rowGap .>=. by 8
-  ensure $ rowGap .<=. by 22
   ensure $ panelGap .>=. by 20
-  ensure $ panelGap .<=. by 44
 
   rows <- select rowKind
   rowLabels <- select rowLabelKind

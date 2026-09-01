@@ -1261,6 +1261,65 @@ backendDispatchTests =
             samplingReducedDimension statistics @?= 1
             samplingEqualityCount statistics @?= 1
             samplingBurnInSteps statistics @?= 32
+    , testCase "opposing inequalities preserve movement along an equality face" $ do
+        let x = var "test.sample.implicit-face.x" :: Expr TestUnit
+            y = var "test.sample.implicit-face.y" :: Expr TestUnit
+            free = var "test.sample.implicit-face.free" :: Expr TestUnit
+            total = x @+@ y
+            constraints = [total @<=@ num 1, num 1 @<=@ total, free @<=@ num 1]
+        solutions <-
+          traverse
+            (\seed ->
+               solve
+                 (withInitialSeed (RandomSeed seed) defaultSolveConfig)
+                 constraints)
+            [1 .. 24]
+        mapM_
+          (\solution -> assertEvalNear "implicit face" 1 solution total)
+          solutions
+        let freeValues = mapMaybe (`evalExpr` free) solutions
+        length freeValues @?= length solutions
+        assertBool
+          "expected the unrelated variable to vary across seeds"
+          (maximum freeValues - minimum freeValues > 0.25)
+        case solutions of
+          firstSolution:_ ->
+            case solutionBackendStatistics firstSolution of
+              AffineSamplingStatistics statistics ->
+                samplingReducedDimension statistics @?= 2
+          [] -> assertFailure "expected seeded affine solutions"
+    , testCase "repeats opposing inequality reduction on exposed faces" $ do
+        let x = var "test.sample.iterated-face.x" :: Expr TestSignedUnit
+            y = var "test.sample.iterated-face.y" :: Expr TestSignedUnit
+            z = var "test.sample.iterated-face.z" :: Expr TestSignedUnit
+            firstFace = x @+@ y
+            secondFace = x @+@ z
+            constraints =
+              [ firstFace @<=@ num 0
+              , num 0 @<=@ num 2 @*@ firstFace
+              , secondFace @<=@ num 0
+              , num 2 @*@ (y @-@ z) @<=@ num 0
+              ]
+        solution <-
+          solve (withInitialSeed (RandomSeed 37) defaultSolveConfig) constraints
+        assertEvalNear "first exposed face" 0 solution firstFace
+        assertEvalNear "second exposed face" 0 solution secondFace
+        case solutionBackendStatistics solution of
+          AffineSamplingStatistics statistics -> do
+            samplingAmbientDimension statistics @?= 3
+            samplingReducedDimension statistics @?= 1
+    , testCase "does not collapse an opposing band above tolerance" $ do
+        let x = var "test.sample.nonzero-band.x" :: Expr TestUnit
+            y = var "test.sample.nonzero-band.y" :: Expr TestUnit
+            total = x @+@ y
+            upper = 1 + 1e-6
+            constraints = [total @<=@ num upper, num 1 @<=@ total]
+        solution <-
+          solve (withInitialSeed (RandomSeed 31) defaultSolveConfig) constraints
+        assertEvalRange "nonzero band" 1 upper solution total
+        case solutionBackendStatistics solution of
+          AffineSamplingStatistics statistics ->
+            samplingReducedDimension statistics @?= 2
     , testCase "phase I enters a narrow affine corner before hit-and-run" $ do
         let x = var "test.phase-i-corner.x" :: Expr TestSignedUnit
             y = var "test.phase-i-corner.y" :: Expr TestSignedUnit
@@ -1647,7 +1706,7 @@ designSpaceTests =
         sampled <- sampleDesignSpace BalancedDesignChoices (RandomSeed 5) design
         solution <- assertSingleDesignSample sampled
         assertEvalNear "MIP rounding-sized bound" 490.4 solution x
-    , testCase "caller hints replace a conditioned MIP corner" $ do
+    , testCase "conditioned MIP corners still produce varied samples" $ do
         let names =
               [ "test.design.mip-hint." ++ show index
               | index <- [0 :: Int .. 15]
@@ -1670,7 +1729,7 @@ designSpaceTests =
         let values = mapMaybe (evalExpr solution) variables
         length values @?= length variables
         assertBool
-          "the MIP lower corner should not replace the configured midpoint"
+          "hit-and-run should move away from the feasible MIP corner"
           (maximum values > 0.1)
     , testCase "materializes and varies choices beyond the balanced prefix" $ do
         let decisionNames =

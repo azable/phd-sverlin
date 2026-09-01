@@ -20,6 +20,7 @@ data ElementRole
 data TargetProbeRole
 data ElementProbeRole
 data EqualRole
+data SearchInputRole
 data MatchRole
 data Initialize
 data PrepareComparison
@@ -54,6 +55,17 @@ data Elements where
 data Initial where
   Initial :: Block Value %1 -> Elements %1 -> Initial
 
+data SearchInput where
+  SearchInput :: Int %1 -> Int %1 -> Int %1 -> Int %1 -> Int %1 -> SearchInput
+
+searchInputs :: Generator SearchInput
+searchInputs =
+  elementOf
+    (SearchInput 7 4 9 2 7)
+    [ SearchInput 5 5 3 8 1
+    , SearchInput 6 1 4 9 2
+    ]
+
 data Prepared where
   Prepared ::
     Block Value %1 ->
@@ -76,12 +88,14 @@ domain = do
   declareKind equalKind
   declareKind matchKind
   declareSteps @'[Initialize, PrepareComparison, Compare, Found, Continue, Exhausted, Complete]
-  Create targetPending <- create (LInt 7)
+  SearchInput targetValue firstValue secondValue thirdValue fourthValue <-
+    variable @SearchInputRole searchInputs
+  Create targetPending <- create (LInt targetValue)
   target <- materialize targetKind targetPending
-  first <- createElement 4
-  second <- createElement 9
-  third <- createElement 2
-  fourth <- createElement 7
+  first <- createElement firstValue
+  second <- createElement secondValue
+  third <- createElement thirdValue
+  fourth <- createElement fourthValue
   pure (Initial target (MoreElement first (MoreElement second (MoreElement third (MoreElement fourth NoElements)))))
 
 createElement :: Int %1 -> Domain (Block Value)
@@ -149,6 +163,19 @@ comparisonLine = do
   fragment @PrepareComparison "A[i]"
   fragmentMany @'[Compare, Found] "; stop when equal"
 
+boundedSpan :: Span -> Span -> Render Span
+boundedSpan lower upper = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  ensure $ value .<=. upper
+  pure value
+
+minimumSpan :: Span -> Render Span
+minimumSpan lower = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  pure value
+
 render :: Render ()
 render = do
   always $ frame @Initialize
@@ -157,8 +184,15 @@ render = do
   sometimes $ frame @Continue
   always $ frame @Found
   always $ frame @Complete
-  width (by 920)
-  height (by 560)
+  canvasWidth <- boundedSpan (by 780) (by 1180)
+  -- The canvas is the only independent finite envelope. The page's
+  -- containment constraints provide the remaining variables' upper bounds.
+  gap <- minimumSpan (by 12)
+  cellWidth <- minimumSpan (by 58)
+  cellHeight <- minimumSpan (by 44)
+  width canvasWidth
+  aspectRatio 16 10
+  padding (uniform gap)
   contentFit Both Contain
 
   bodyFont <- fontChoice (fontKind Proportional)
@@ -170,78 +204,110 @@ render = do
   equalOperators <- select equalKind
   matches <- select matchKind
 
-  node targets $ do
-    label <- bindContent
-    fitText label
-    width (by 112)
-    height (by 80)
-    x (at 112)
-    y (at 120)
+  page <- node $ do
+    padding (uniform gap)
+    contentFit Both Hug
     style @FontFamily bodyFont
 
-  node elements $ do
-    label <- bindContent
-    fitText label
-    width (by 88)
-    height (by 72)
-    style @FontFamily bodyFont
-  arrange (ArrangeGrid 4 (vec2 (by 18) (by 18))) elements
-
-  comparison <- node $ do
-    width (by 580)
-    height (by 124)
-    x (at 560)
-    y (at 310)
-    contentFit Both Contain
-
-    node targetProbes $ do
-      label <- bindContent
-      fitText label
-      width (by 104)
-      height (by 72)
-      xAt (percent 12)
-      yAt (percent 50)
+    title <- node $ do
+      fitText (text "Linear search")
       style @FontFamily bodyFont
-
-    node equalOperators $ do
-      fitText (text "==")
-      width (by 64)
-      height (by 64)
-      xAt (percent 38)
-      yAt (percent 50)
-      style @FontFamily codeFont
+      style @FontWeight FontWeightBold
       withoutStyle @Fill
 
-    node elementProbes $ do
-      label <- bindContent
-      fitText label
-      width (by 104)
-      height (by 72)
-      xAt (percent 62)
-      yAt (percent 50)
-      style @FontFamily bodyFont
+    targetPanel <- node $ do
+      padding (uniform (by 8))
+      contentFit Both Hug
+      node targets $ do
+        label <- bindContent
+        fitText (text "target = " <> label)
+        width (cellWidth .+. by 28)
+        height cellHeight
+        style @FontFamily bodyFont
+        style @Radius (by 10)
 
-    node matches $ do
-      label <- bindContent
-      fitText label
-      width (by 112)
-      height (by 76)
-      xAt (percent 88)
-      yAt (percent 50)
-      style @FontFamily bodyFont
+    arrayPanel <- node $ do
+      padding (uniform (by 8))
+      contentFit Both Hug
+      node elements $ do
+        label <- bindContent
+        fitText label
+        width cellWidth
+        height cellHeight
+        style @FontFamily bodyFont
+        style @Radius (by 10)
 
-    sometimes $ connector (anchor AtBoundary targetProbes) (anchor AtBoundary elementProbes) $ do
-      endMarker ArrowMarker
-      style @StrokeWidth (by 2)
+      -- All four cells share one layout decision and one size. This gives a
+      -- genuine row/two-row variation without randomizing peers separately.
+      oneOf "linear-search.array-layout"
+        (alternative "row" $ arrange (ArrangeGrid 4 (vec2 gap gap)) elements)
+        [alternative "two-rows" $ arrange (ArrangeGrid 2 (vec2 gap gap)) elements]
 
-  codeLine <- node $ do
-    content comparisonLine
-    width (by 560)
-    height (by 72)
-    x (at 460)
-    y (at 490)
-    style @FontFamily codeFont
-    style @TextAlign TextAlignLeft
+    comparison <- node $ do
+      padding (uniform (by 8))
+      contentFit Both Hug
 
-  ensure $ separatedBy (by 28) targets comparison
-  ensure $ bottom codeLine .<=. bottom canvas
+      node targetProbes $ do
+        label <- bindContent
+        fitText label
+        width cellWidth
+        height cellHeight
+        style @FontFamily bodyFont
+
+      node equalOperators $ do
+        fitText (text "==")
+        width cellHeight
+        height cellHeight
+        style @FontFamily codeFont
+        withoutStyle @Fill
+
+      node elementProbes $ do
+        label <- bindContent
+        fitText label
+        width cellWidth
+        height cellHeight
+        style @FontFamily bodyFont
+
+      node matches $ do
+        label <- bindContent
+        fitText (text "equal: " <> label)
+        width (cellWidth .+. by 28)
+        height cellHeight
+        style @FontFamily bodyFont
+
+      ensure $ left equalOperators .==. right targetProbes .+. gap
+      ensure $ left elementProbes .==. right equalOperators .+. gap
+      ensure $ left matches .==. right elementProbes .+. gap
+      ensure $ y targetProbes .==. y equalOperators
+      ensure $ y equalOperators .==. y elementProbes
+      ensure $ y elementProbes .==. y matches
+
+      sometimes $ connector (anchor AtBoundary targetProbes) (anchor AtBoundary elementProbes) $ do
+        endMarker ArrowMarker
+        style @StrokeWidth (by 2)
+
+    ensure $ x targetPanel .==. x title
+    ensure $ top targetPanel .==. bottom title .+. gap
+    ensure $ x arrayPanel .==. x targetPanel
+    ensure $ top arrayPanel .==. bottom targetPanel .+. gap
+    ensure $ x comparison .==. x arrayPanel
+    ensure $ top comparison .==. bottom arrayPanel .+. gap
+
+    -- Source text is useful context, but the algorithm remains understandable
+    -- when this optional component is omitted.
+    sometimes $ do
+      codeLine <- node $ do
+        content comparisonLine
+        width (cellWidth .+. cellWidth .+. cellWidth .+. by 120)
+        height cellHeight
+        style @FontFamily codeFont
+        style @TextAlign TextAlignLeft
+        withoutStyle @Fill
+      ensure $ top codeLine .==. bottom comparison .+. gap
+      ensure $ x codeLine .==. x comparison
+
+  ensure $ center page .==. center canvas
+  ensure $ left page .>=. left canvas .+. gap
+  ensure $ right page .<=. right canvas .-. gap
+  ensure $ top page .>=. top canvas .+. gap
+  ensure $ bottom page .<=. bottom canvas .-. gap

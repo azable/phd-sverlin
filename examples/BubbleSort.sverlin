@@ -1,4 +1,4 @@
--- Bubble sort written against the proposed API in API_plan_final.md.
+-- Bubble sort using the implemented Sverlin API.
 --
 -- Array cells are stable Slot owners. Swapping unseals two cells and reseals
 -- their existing occupants in the opposite locations; it does not destroy and
@@ -76,9 +76,8 @@ data BubbleValues where
 
 bubbleCases :: Generator BubbleValues
 bubbleCases = do
-  tailLength <- between 4 9
   start <- between 1 12
-  shuffled <- shuffle [start .. start + tailLength]
+  shuffled <- shuffle [start .. start + 3]
   case shuffled of
     first : rest -> return (BubbleValues first rest (passesFor (length rest)))
     [] -> return (BubbleValues start [] NoMorePasses) -- the range is never empty
@@ -301,6 +300,12 @@ boundedSpan lower upper = do
   ensure $ value .<=. upper
   return value
 
+minimumSpan :: Span -> Render Span
+minimumSpan lower = do
+  value <- variable @Span
+  ensure $ value .>=. lower
+  return value
+
 bubbleLine :: TextBuilder ()
 bubbleLine = do
   literal "compare "
@@ -318,15 +323,14 @@ render :: Render ()
 render = do
   canvasWidth <- boundedSpan (by 760) (by 1320)
   canvasHeight <- boundedSpan (by 520) (by 880)
-  outerInset <- boundedSpan (by 20) (by 48)
-  sectionGap <- boundedSpan (by 16) (by 38)
-  cellGap <- boundedSpan (by 7) (by 22)
-  cellWidth <- boundedSpan (by 48) (by 82)
-  cellHeight <- boundedSpan (by 46) (by 76)
-  barWidth <- boundedSpan (by 30) (by 62)
-  barBase <- boundedSpan (by 20) (by 38)
-  barUnit <- boundedSpan (by 5) (by 12)
-  fontSize <- boundedSpan (by 13) (by 23)
+  -- Keep one finite canvas envelope, then let containment bound all inner
+  -- variables. These minima protect legibility without choosing a layout.
+  outerInset <- minimumSpan (by 16)
+  sectionGap <- minimumSpan (by 12)
+  cellGap <- minimumSpan (by 5)
+  cellWidth <- minimumSpan (by 42)
+  cellHeight <- minimumSpan (by 38)
+  fontSize <- minimumSpan (by 12)
   bodyFont <- fontChoice (fontKind Proportional)
   codeFont <- fontChoice (fontKind Monospace)
 
@@ -424,92 +428,46 @@ render = do
       style @BorderStyle BorderSolid
       style @Radius (by 7)
 
-    oneOf "value-encoding"
-      (alternative "rounded boxes" $ do
-        arrayView <- node $ do
-          padding (uniform (by 8))
+    arrayView <- node $ do
+      padding (uniform (by 8))
 
-          node cells $ do
-            contentFit Both Contain
-            width (canvasWidth .*. num 0.07)
-            height (canvasHeight .*. num 0.20)
-            position <- rankOf ordering
-            node values $ do
-              valueText <- bindContent
-              fitText valueText
-              width cellWidth
-              height cellHeight
-              padding (uniform (by 6))
-              style @FontFamily bodyFont
-              style @FontSize fontSize
-              style @Fill (Hsl (num 32) (num 0.70) (num 0.83))
-              style @Stroke (Hsl (num 28) (num 0.62) (num 0.38))
-              style @BorderStyle BorderSolid
-              style @StrokeWidth (by 2)
-              style @Radius (by 12)
+      node cells $ do
+        contentFit Both Contain
+        width (canvasWidth .*. num 0.07)
+        height (canvasHeight .*. num 0.20)
+        position <- rankOf ordering
+        node values $ do
+          valueText <- bindContent
+          fitText valueText
+          width cellWidth
+          height cellHeight
+          padding (uniform (by 6))
+          style @FontFamily bodyFont
+          style @FontSize fontSize
+          style @Fill (Hsl (num 32) (num 0.70) (num 0.83))
+          style @Stroke (Hsl (num 28) (num 0.62) (num 0.38))
+          style @BorderStyle BorderSolid
+          style @StrokeWidth (by 2)
+          style @Radius (by 12)
 
-            -- Labels are part of the mapping rather than separate per-cell
-            -- presence decisions. Hug derives their bounds from the text.
-            indexLabel <- node $ do
-              contentFit Both Hug
-              fitText (text "A[" <> asText position <> text "]")
-              style @FontFamily codeFont
-              style @FontSize fontSize
-            ensure $ x indexLabel .==. x values
-            ensure $ top indexLabel .==. bottom values .+. shift 5
+        indexLabel <- node $ do
+          contentFit Both Hug
+          fitText (text "A[" <> asText position <> text "]")
+          style @FontFamily codeFont
+          style @FontSize fontSize
+        ensure $ x indexLabel .==. x values
+        ensure $ top indexLabel .==. bottom values .+. shift 5
 
-          relation adjacentLinks $ do
-            previous <- first adjacentLinks
-            next <- second adjacentLinks
-            ensure $ left next .==. right previous .+. cellGap
-            ensure $ top next .==. top previous
+      relation adjacentLinks $ do
+        previous <- first adjacentLinks
+        next <- second adjacentLinks
+        ensure $ left next .==. right previous .+. cellGap
+        ensure $ top next .==. top previous
 
-        ensure $ x arrayView .==. x title
-        ensure $ top arrayView .==. bottom title .+. sectionGap
-        ensure $ separatedBy sectionGap arrayView comparisonPanel
-        ensure $ separatedBy sectionGap arrayView code)
-      [alternative "value-height bars" $ do
-        arrayView <- node $ do
-          padding (uniform (by 8))
-
-          node cells $ do
-            contentFit Both Contain
-            width (canvasWidth .*. num 0.07)
-            height (canvasHeight .*. num 0.42)
-            position <- rankOf ordering
-            node values $ do
-              amount <- payloadScalar values
-              valueText <- bindContent
-              fitText valueText
-              width barWidth
-              height (barBase .+. barUnit .*. amount)
-              padding (uniform (by 5))
-              style @FontFamily bodyFont
-              style @FontSize fontSize
-              style @Fill (Hsl (num 188) (num 0.66) (num 0.55))
-              style @Stroke (Hsl (num 192) (num 0.58) (num 0.30))
-              style @BorderStyle BorderSolid
-              style @StrokeWidth (by 2)
-              style @Radius (by 7)
-
-            indexLabel <- node $ do
-              contentFit Both Hug
-              fitText (text "A[" <> asText position <> text "]")
-              style @FontFamily codeFont
-              style @FontSize fontSize
-            ensure $ x indexLabel .==. x values
-            ensure $ bottom indexLabel .==. top values .-. by 5
-
-          relation adjacentLinks $ do
-            previous <- first adjacentLinks
-            next <- second adjacentLinks
-            ensure $ left next .==. right previous .+. cellGap
-            ensure $ bottom next .==. bottom previous
-
-        ensure $ x arrayView .==. x title
-        ensure $ top arrayView .==. bottom title .+. sectionGap
-        ensure $ separatedBy sectionGap arrayView comparisonPanel
-        ensure $ separatedBy sectionGap arrayView code]
+    ensure $ x arrayView .==. x title
+    ensure $ top arrayView .==. bottom title .+. sectionGap
+    ensure $ separatedBy sectionGap arrayView comparisonPanel
+    ensure $ separatedBy sectionGap arrayView code
 
     ensure $ separatedBy sectionGap title comparisonPanel
     ensure $ separatedBy sectionGap title code

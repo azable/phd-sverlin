@@ -1,4 +1,4 @@
--- Merge sort written against the proposed Sverlin API.
+-- Merge sort using the implemented Sverlin API.
 --
 -- It deliberately creates every recursive run with the same Kind and every
 -- in-run link with the same RelationKind.  Render therefore has to scope the
@@ -42,7 +42,7 @@ mergeValuesGenerator =
   mergeSpec
     <$> weighted
       (1, elementOf [38, 27, 43, 3, 9, 82, 10] [[5, 1, 4, 2, 8, 0], [2, 7, 1, 8, 2, 8]])
-      [(3, listOf 6 12 (between 0 99))]
+      [(3, listOf 5 5 (between 0 99))]
 
 numberKind :: Kind Number
 numberKind = kind @NumberValue
@@ -483,16 +483,13 @@ render = do
   cellGap <- variable @Span
   cellWidth <- variable @Span
   cellHeight <- variable @Span
+  -- Only the canvas has an independent upper envelope. The tree and its
+  -- shared dimensions are bounded by containment in that canvas.
   ensure $ levelGap .>=. by 28
-  ensure $ levelGap .<=. by 64
   ensure $ siblingGap .>=. by 18
-  ensure $ siblingGap .<=. by 48
   ensure $ cellGap .>=. by 4
-  ensure $ cellGap .<=. by 14
   ensure $ cellWidth .>=. by 36
-  ensure $ cellWidth .<=. by 64
   ensure $ cellHeight .>=. by 30
-  ensure $ cellHeight .<=. by 52
 
   tree <- mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight
   ensure $ center tree .==. center canvas

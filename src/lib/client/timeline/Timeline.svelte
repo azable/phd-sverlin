@@ -14,6 +14,7 @@
 
   import ParticipantTimeline from './ParticipantTimeline.svelte';
   import TimelineEventCard from './TimelineEventCard.svelte';
+  import { presentProjectEvent } from './event-presentation';
 
   /** Public properties for the project Timeline. */
   type Props = {
@@ -51,6 +52,13 @@
   let viewport = $state<HTMLElement | null>(null);
   let timelineEnd = $state<HTMLElement | null>(null);
   let following = $state(true);
+  const activityProgress = $derived.by(() => {
+    const pendingEvent = session.pendingEvent;
+    if (pendingEvent) return presentProjectEvent(pendingEvent).progress;
+    if (session.assistantResponding) return 'Assistant is responding…';
+    if (session.pending) return 'Recording the update…';
+    return 'Generating more visualizations…';
+  });
   const projectPath = $derived(
     `${resolve('/projects/[projectId]', { projectId: session.projectId })}${inspect ? '?dev=1' : ''}`
   );
@@ -107,13 +115,7 @@
               role="status"
             >
               <Spinner />
-              <span
-                >{session.assistantResponding
-                  ? 'Assistant is responding…'
-                  : session.pending
-                    ? 'Recording the update…'
-                    : 'Generating more visualizations…'}</span
-              >
+              <span>{activityProgress}</span>
             </div>
           </li>
         {/if}

@@ -545,10 +545,10 @@ function validateCompiledBatch(
     throw new Error('Multi-view compilation requires scenario-aware IR v2.');
   }
   const scenarioKey = visualizations[0].scenarioKey;
-  const occurrences = new Map<
-    string,
-    { ordinal: number | undefined; parent: string | undefined; label: string }
-  >();
+  // A stochastic frame can be absent from one view, so a retained child's
+  // nearest visible parent may legitimately differ. Its semantic key,
+  // ordinal, and label must still agree across the batch.
+  const occurrences = new Map<string, { ordinal: number | undefined; label: string }>();
   const occurrenceKeysByOrdinal = new Map<number, string>();
   visualizations.forEach((visualization, index) => {
     if (
@@ -562,15 +562,12 @@ function validateCompiledBatch(
       if (frame.occurrenceKey === undefined) continue;
       const metadata = {
         ordinal: frame.ordinal,
-        parent: frame.parentOccurrenceKey,
         label: frame.label
       };
       const retained = occurrences.get(frame.occurrenceKey);
       if (
         retained &&
-        (retained.ordinal !== metadata.ordinal ||
-          retained.parent !== metadata.parent ||
-          retained.label !== metadata.label)
+        (retained.ordinal !== metadata.ordinal || retained.label !== metadata.label)
       ) {
         throw new Error(`Compiler views disagree about frame occurrence ${frame.occurrenceKey}.`);
       }
