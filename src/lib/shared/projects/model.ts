@@ -80,6 +80,11 @@ export const projectCommandSchema = v.variant('type', [
   v.strictObject({ ...commandBase, type: v.literal('render'), seed: positiveSchema }),
   v.strictObject({
     ...commandBase,
+    type: v.literal('resample'),
+    presentationCount: v.picklist([1, 2])
+  }),
+  v.strictObject({
+    ...commandBase,
     type: v.literal('prefer'),
     presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
     preferred: presentationIdSchema,

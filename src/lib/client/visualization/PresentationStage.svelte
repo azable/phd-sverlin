@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
   import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import ShuffleIcon from '@lucide/svelte/icons/shuffle';
   import { fly } from 'svelte/transition';
 
   import { Button } from '$lib/client/components/ui/button';
@@ -56,6 +57,7 @@
     'feedback',
     'prefer',
     'render',
+    'resample',
     'save',
     'save-html',
     'restore'
@@ -125,6 +127,17 @@
     const succeeded = await session.runCommand({
       type: 'advance-presentations',
       presentations: selectedIds
+    });
+    if (succeeded) {
+      onVisualSelectionsChange([]);
+      selection.returnToLatest();
+    }
+  }
+
+  async function generateVariants() {
+    const succeeded = await session.runCommand({
+      type: 'resample',
+      presentationCount: layout === 'comparison' ? 2 : 1
     });
     if (succeeded) {
       onVisualSelectionsChange([]);
@@ -242,6 +255,24 @@
         {disabled}
       >
         Next pair
+      </Button>
+    {/if}
+    {#if !selection.buffered && session.snapshot.renderer === 'sverlin'}
+      <Button
+        size="sm"
+        variant="outline"
+        aria-label={layout === 'comparison'
+          ? 'Generate another visualization pair'
+          : 'Generate another visualization variant'}
+        onclick={generateVariants}
+        disabled={disabled || !session.atHead}
+      >
+        {#if session.pending?.type === 'resample'}
+          <Spinner data-icon="inline-start" /> Generating…
+        {:else}
+          <ShuffleIcon data-icon="inline-start" />
+          {layout === 'comparison' ? 'New pair' : 'Another variant'}
+        {/if}
       </Button>
     {/if}
     {#if visibleSelections.length}

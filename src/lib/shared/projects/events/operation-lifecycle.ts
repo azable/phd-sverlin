@@ -12,6 +12,7 @@ export const projectOperationKindSchema = v.picklist([
   'assistant-turn',
   'advance-presentations',
   'render',
+  'resample',
   'presentation-refill',
   'prefer',
   'save',

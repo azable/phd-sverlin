@@ -140,6 +140,25 @@ describe('project JSON API', () => {
     );
   });
 
+  it('accepts a request for fresh variants of the unchanged Sverlin source', async () => {
+    const { POST } = await import('./+server');
+    const response = await POST(
+      request('POST', {
+        type: 'resample',
+        operationId,
+        expectedHead: 4,
+        presentationCount: 2
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.accept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.objectContaining({ type: 'resample', presentationCount: 2 })
+      })
+    );
+  });
+
   it('accepts focused selections from both candidates in a preference command', async () => {
     const { POST } = await import('./+server');
     const presentations = [

@@ -33,6 +33,7 @@ import {
   replenishProjectPresentations,
   renderInitialProject,
   renderProject,
+  renderProjectPresentations,
   restoreProjectArtifacts,
   updateProjectArtifact
 } from './service';
@@ -634,6 +635,11 @@ async function executeProjectCommand(options: {
       });
     case 'render':
       return renderProject({ ...common, seed: options.command.seed });
+    case 'resample':
+      return renderProjectPresentations({
+        ...common,
+        presentationCount: options.command.presentationCount
+      });
     case 'presentation-refill':
       return replenishProjectPresentations({ ...common, target: options.command.target });
     case 'prefer':
