@@ -7,13 +7,15 @@ module Solver.Problem
     -- visualization regeneration.
     RandomSeed(..)
   , -- * Solve configuration
-    -- | User-facing seeds, initial values, and categorical conditioning limit.
+    -- | User-facing seeds, initial values, categorical conditioning limit,
+    -- and inferred-bound normalization tolerance.
     SolveConfig(..)
   , NumericBackend(..)
   , defaultSolveConfig
   , withInitialSeed
   , withInitialOverrides
   , withMaxCategoricalBranches
+  , withBoundTolerance
   , -- * Problem model
     -- | Numeric constraints, categorical choices, and optional initial
     -- overrides before backend lowering.
@@ -74,6 +76,7 @@ data SolveConfig = SolveConfig
   { initialSeed       :: RandomSeed
   , initialOverrides  :: Map String Double
   , maxChoiceBranches :: Int
+  , boundTolerance    :: Double
   }
 
 defaultSolveConfig :: SolveConfig
@@ -82,6 +85,7 @@ defaultSolveConfig =
     { initialSeed = RandomSeed 0
     , initialOverrides = Map.empty
     , maxChoiceBranches = 256
+    , boundTolerance = equalityEpsilon
     }
 
 withInitialSeed :: RandomSeed -> SolveConfig -> SolveConfig
@@ -93,6 +97,15 @@ withInitialOverrides overrides config = config {initialOverrides = overrides}
 withMaxCategoricalBranches :: Int -> SolveConfig -> SolveConfig
 withMaxCategoricalBranches branchLimit config =
   config {maxChoiceBranches = max 1 branchLimit}
+
+-- | Set the largest lower/upper crossover treated as floating-point noise
+-- while inferred bounds are normalized. The default reuses the constraint
+-- equality epsilon (1e-9); this does not relax the affine constraints.
+withBoundTolerance :: Double -> SolveConfig -> SolveConfig
+withBoundTolerance tolerance config
+  | isNaN tolerance || isInfinite tolerance || tolerance < 0 =
+    error "solver bound tolerance must be finite and non-negative"
+  | otherwise = config {boundTolerance = tolerance}
 
 sampleInitialWithinBounds :: DomainBounds -> Double -> Double
 sampleInitialWithinBounds bounds t =
@@ -320,7 +333,7 @@ compileProblem config problem =
         (initialSeed config)
         (maxChoiceBranches config)
         (solverChoiceConstraints problem)
-    classification = classifyAffineProblem constraints
+    classification = classifyAffineProblem (boundTolerance config) constraints
     validatedAffine =
       case classification of
         AffineReady affine -> affine
@@ -331,12 +344,18 @@ compileProblem config problem =
     inferredBounds = inferDomainBounds flatConstraints
     finalBounds =
       Map.mapWithKey
-        (\name ty -> validateDomainBounds name (finalDomainBounds name ty))
+        (\name ty ->
+           validateDomainBounds
+             (boundTolerance config)
+             name
+             (finalDomainBounds name ty))
         varTypes
     boundsValidation =
       foldl'
         (\checked (name, bounds) ->
-           checked `seq` validateDomainBounds name bounds `seq` ())
+           checked
+             `seq` validateDomainBounds (boundTolerance config) name bounds
+             `seq` ())
         ()
         (Map.toAscList finalBounds)
     nativeBoundNames = Map.keys (Map.filter finiteDomainBounds finalBounds)
@@ -346,7 +365,11 @@ compileProblem config problem =
         (randomUnitsFromSeed (initialSeed config))
         (Map.toAscList varTypes)
     rangeInitialValues =
-      seedRangeInitialValues flatConstraints initialSpecs Map.empty
+      seedRangeInitialValues
+        (boundTolerance config)
+        flatConstraints
+        initialSpecs
+        Map.empty
     configuredInitialValues =
       Map.union
         (solverInitialOverrides problem)
@@ -369,10 +392,14 @@ compileProblem config problem =
                               name
                               inferredBounds
 
-validateDomainBounds :: String -> DomainBounds -> DomainBounds
-validateDomainBounds name bounds =
-  case nativeBoundsFor name bounds of
-    (lower, upper) -> lower `seq` upper `seq` bounds
+validateDomainBounds :: Double -> String -> DomainBounds -> DomainBounds
+validateDomainBounds tolerance name bounds
+  | lower <= upper = normalized
+  | otherwise = inconsistentNativeBounds name lower upper
+  where
+    normalized = canonicalizeBounds tolerance bounds
+    lower = fromMaybe negativeInfinity (domainLowerBound normalized)
+    upper = fromMaybe positiveInfinity (domainUpperBound normalized)
 
 data InitialSpec = InitialSpec
   { initialSpecUnit   :: Double
@@ -393,20 +420,22 @@ inspectConstraints :: SolveConfig -> [Constraint] -> ProblemInspection
 inspectConstraints config constraints =
   compiledInspection (compileProblem config (solverProblem constraints))
 
-nativeBoundsFor :: String -> DomainBounds -> NativeBounds
-nativeBoundsFor name bounds
-  | lower <= upper = (lower, upper)
-  | otherwise =
-    error
-      ("inconsistent native bounds for solver variable "
-         ++ show name
-         ++ ": lower "
-         ++ show lower
-         ++ " is greater than upper "
-         ++ show upper)
+nativeBoundsFor :: Double -> String -> DomainBounds -> NativeBounds
+nativeBoundsFor tolerance name bounds =
+  ( fromMaybe negativeInfinity (domainLowerBound normalized)
+  , fromMaybe positiveInfinity (domainUpperBound normalized))
   where
-    lower = fromMaybe negativeInfinity (domainLowerBound bounds)
-    upper = fromMaybe positiveInfinity (domainUpperBound bounds)
+    normalized = validateDomainBounds tolerance name bounds
+
+inconsistentNativeBounds :: String -> Double -> Double -> value
+inconsistentNativeBounds name lower upper =
+  error
+    ("inconsistent native bounds for solver variable "
+       ++ show name
+       ++ ": lower "
+       ++ show lower
+       ++ " is greater than upper "
+       ++ show upper)
 
 positiveInfinity :: Double
 positiveInfinity = 1 / 0
@@ -418,8 +447,12 @@ clampInitialValue :: NativeBounds -> Double -> Double
 clampInitialValue (lower, upper) = min upper . max lower
 
 seedRangeInitialValues ::
-     [Constraint] -> [InitialSpec] -> Map String Double -> Map String Double
-seedRangeInitialValues constraints specs values =
+     Double
+  -> [Constraint]
+  -> [InitialSpec]
+  -> Map String Double
+  -> Map String Double
+seedRangeInitialValues tolerance constraints specs values =
   foldl' seedRangeInitialValue values specs
   where
     ranges = dynamicDomainBounds constraints values
@@ -428,7 +461,8 @@ seedRangeInitialValues constraints specs values =
         Nothing -> seeded
         Just rangeBounds ->
           let bounds = initialSpecBounds spec `mergeDomainBounds` rangeBounds
-              nativeBounds = nativeBoundsFor (initialSpecName spec) bounds
+              nativeBounds =
+                nativeBoundsFor tolerance (initialSpecName spec) bounds
               sampled = sampleInitialWithinBounds bounds (initialSpecUnit spec)
            in Map.insert
                 (initialSpecName spec)

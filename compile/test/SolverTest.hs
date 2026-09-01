@@ -1125,6 +1125,44 @@ nativeBoundsTests =
             constraints = [x @==@ num 640, x @<=@ num (640 - 2e-13)]
         solution <- solve defaultSolveConfig constraints
         assertEvalNear "rounding-sized bound" 640 solution x
+    , testCase "default tolerance repairs crossed native bounds" $ do
+        let x = var "test.range.native-rounding" :: Expr TestLayout
+            constraints = [x @>=@ num 400, x @<=@ num 399.99999999999994]
+        solution <- solve defaultSolveConfig constraints
+        assertEvalNear "normalized native bound" 400 solution x
+    , testCase "bound tolerance is configurable" $ do
+        let x = var "test.range.configured-rounding" :: Expr TestLayout
+            constraints = [x @>=@ num 400, x @<=@ num 399.99999999999994]
+            strictConfigs =
+              [ withBoundTolerance 0 defaultSolveConfig
+              , withBoundTolerance 1e-15 defaultSolveConfig
+              ]
+        mapM_
+          (\strictConfig ->
+             assertErrorContains
+               "configured bound tolerance"
+               "inconsistent bounds for solver variable"
+               (evaluate
+                  (inspectedVariableCount
+                     (inspectConstraints strictConfig constraints))))
+          strictConfigs
+    , testCase "crossed native bounds above tolerance remain invalid" $ do
+        let x = var "test.range.material-conflict" :: Expr TestLayout
+            constraints = [x @>=@ num (400 + 1e-6), x @<=@ num 400]
+        assertErrorContains
+          "materially crossed bounds"
+          "inconsistent bounds for solver variable"
+          (evaluate
+             (inspectedVariableCount
+                (inspectConstraints defaultSolveConfig constraints)))
+    , testCase "bound tolerance must be finite and non-negative" $ do
+        mapM_
+          (\invalid ->
+             assertErrorContains
+               "invalid bound tolerance"
+               "solver bound tolerance must be finite and non-negative"
+               (evaluate (withBoundTolerance invalid defaultSolveConfig)))
+          [-1, 0 / 0, 1 / 0]
     , testCase "disjunction bounds enclose every alternative" $ do
         let x = var "test.range.alternatives" :: Expr TestLayout
             problem =

@@ -51,13 +51,14 @@ data GuardedConstraint = GuardedConstraint
 -- An empty cost map is a pure feasibility query. Callers may assign costs to
 -- any deferred finite token when they need one seeded completion.
 feasibleCompletionWithHighs ::
-     Map String [String]
+     Double
+  -> Map String [String]
   -> Map (String, String) Double
   -> SolverProblem
   -> Assignment
   -> IO (Either String (Maybe HighsCompletion))
-feasibleCompletionWithHighs domains objectiveCosts problem partial =
-  case buildMipProblem domains objectiveCosts problem partial of
+feasibleCompletionWithHighs boundTolerance domains objectiveCosts problem partial =
+  case buildMipProblem boundTolerance domains objectiveCosts problem partial of
     Left err -> pure (Left err)
     Right (variables, mipProblem) ->
       withSystemTempFile "sverlin-highs.log" $ \logPath logHandle -> do
@@ -102,14 +103,16 @@ feasibleCompletionWithHighs domains objectiveCosts problem partial =
                      ++ show status)
 
 buildMipProblem ::
-     Map String [String]
+     Double
+  -> Map String [String]
   -> Map (String, String) Double
   -> SolverProblem
   -> Assignment
   -> Either String (MipVariables, MIP.Problem Scientific)
-buildMipProblem domains objectiveCosts problem partial = do
+buildMipProblem boundTolerance domains objectiveCosts problem partial = do
   validatePartial domains partial
-  numericBounds <- finiteNumericBounds (solverConstraints problem)
+  numericBounds <-
+    finiteNumericBounds boundTolerance (solverConstraints problem)
   let variables = makeMipVariables numericBounds domains
       oneHot = map (oneHotConstraint variables) (Map.toAscList domains)
       pinned =
@@ -218,14 +221,15 @@ makeMipVariables numericBounds domains =
           ]
     }
 
-finiteNumericBounds :: [Constraint] -> Either String (Map String DomainBounds)
-finiteNumericBounds constraints = traverseWithKey validate bounds
+finiteNumericBounds ::
+     Double -> [Constraint] -> Either String (Map String DomainBounds)
+finiteNumericBounds boundTolerance constraints = traverseWithKey validate bounds
   where
     types = collectConstraintVarTypes constraints
     inferred = inferDomainBounds constraints
     bounds =
       Map.map
-        canonicalizeBounds
+        (canonicalizeBounds boundTolerance)
         (Map.mapWithKey
            (\name ty ->
               domainDefaultBounds ty

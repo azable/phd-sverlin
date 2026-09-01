@@ -102,6 +102,8 @@ module Solver
   , withInitialSeed
   , withInitialOverrides
   , withMaxCategoricalBranches
+  , -- | Configure rounding tolerance for inferred bound intersections.
+    withBoundTolerance
   , SolverProblem
   , solverProblem
   , solverProblemWithChoices

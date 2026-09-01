@@ -231,7 +231,9 @@ compileEnumeratedBranches config problem domains relevantChoices = do
       pure (Map.toAscList assignment, (assignment, decisions))
     compileAssignment (index, (assignment, decisions)) = do
       resolved <- resolveAssignment problem assignment
-      case classifyAffineProblem (solverConstraints resolved) of
+      case classifyAffineProblem
+             (boundTolerance config)
+             (solverConstraints resolved) of
         AffineInvalid message -> Right (Nothing, Just message)
         AffineUnsupported reason -> Left (UnsupportedDesignSpace reason)
         AffineReady affine ->
@@ -587,7 +589,12 @@ selectConditionedBranch compiled seed cache = do
       , decisionSpecOrigin spec == AlgebraicPartition
       ]
     completionDomains = authoredAndCategoricalDomains ++ algebraicDomains
-    feasible objective = feasibleCompletionWithHighs domains objective problem
+    feasible objective =
+      feasibleCompletionWithHighs
+        (boundTolerance (compiledDesignConfig compiled))
+        domains
+        objective
+        problem
     -- IID positive costs treat every token symmetrically across seeds. Each
     -- domain is one-hot, so centering all of its costs would add only a
     -- constant; avoiding negative coefficients also keeps MIP serialization
@@ -743,7 +750,9 @@ compileMipBranchWithHint ::
 compileMipBranchWithHint numericHint compiled index assignment decisions = do
   resolved <- resolveAssignment (compiledDesignProblem compiled) assignment
   affine <-
-    case classifyAffineProblem (solverConstraints resolved) of
+    case classifyAffineProblem
+           (boundTolerance (compiledDesignConfig compiled))
+           (solverConstraints resolved) of
       AffineReady value        -> Right value
       AffineInvalid message    -> Left (InfeasibleDesignSpace message)
       AffineUnsupported reason -> Left (UnsupportedDesignSpace reason)

@@ -43,8 +43,8 @@ data AffineClassification
 
 -- | Compile every constraint into affine rows. Unsupported expressions and
 -- objectives are rejected; there is no secondary numeric backend.
-classifyAffineProblem :: [Constraint] -> AffineClassification
-classifyAffineProblem constraints =
+classifyAffineProblem :: Double -> [Constraint] -> AffineClassification
+classifyAffineProblem boundTolerance constraints =
   case firstUnsupported flatConstraints of
     Just message -> AffineUnsupported message
     Nothing ->
@@ -77,7 +77,7 @@ classifyAffineProblem constraints =
     inferredBounds = inferDomainBounds flatConstraints
     finalBounds =
       Map.map
-        canonicalizeBounds
+        (canonicalizeBounds boundTolerance)
         (Map.mapWithKey
            (\name ty ->
               domainDefaultBounds ty
@@ -189,12 +189,12 @@ boundedOnBothSides bounds =
 -- Affine propagation may derive the same exact endpoint through differently
 -- ordered floating-point arithmetic. Collapse a tolerance-sized crossed range
 -- to its midpoint so a valid equality is not rejected as contradictory.
-canonicalizeBounds :: DomainBounds -> DomainBounds
-canonicalizeBounds bounds =
+canonicalizeBounds :: Double -> DomainBounds -> DomainBounds
+canonicalizeBounds tolerance bounds =
   case (domainLowerBound bounds, domainUpperBound bounds) of
     (Just lower, Just upper)
       | lower > upper
-      , lower - upper <= equalityEpsilon ->
+      , lower - upper <= tolerance ->
         let endpoint = (lower + upper) / 2
          in DomainBounds
               { domainLowerBound = Just endpoint
