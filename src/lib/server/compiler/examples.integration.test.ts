@@ -9,6 +9,69 @@ const runExamples = process.env.SVERLIN_RUN_EXAMPLE_TESTS === '1';
 // Production accepts one or two fresh view seeds per compilation. Two fixed
 // seeds exercise that complete boundary while keeping the starter suite fast.
 const seeds = [1, 2] as const;
+const compilerPhases = [
+  'sourceInterpretation',
+  'renderPlanBuild',
+  'semanticTraceBuild',
+  'renderExpansion',
+  'typographyPreparation',
+  'constraintLowering',
+  'designSpaceCompilation',
+  'designSpaceSampling',
+  'irMaterialization',
+  'targetEncoding',
+  'targetWriting',
+  'compilerInternalTotal'
+] as const;
+const compilerCounts = [
+  'semanticDeclarations',
+  'semanticVariables',
+  'semanticBlocks',
+  'semanticRelations',
+  'semanticSteps',
+  'semanticEvents',
+  'planSelections',
+  'planRelationSelections',
+  'planNodes',
+  'planFrames',
+  'planConstraints',
+  'planContents',
+  'planChoices',
+  'planConnectors',
+  'expandedNodes',
+  'expandedConnectors',
+  'expandedRankedBlocks',
+  'preparedTextRuns',
+  'preparedTextBranches',
+  'rejectedTextConfigurations',
+  'solverInputConstraints',
+  'outputViews',
+  'outputResources',
+  'outputResourceBytes'
+] as const;
+const viewCounts = [
+  'solverVariables',
+  'solverNativeBounds',
+  'solverRawConstraints',
+  'solverCanonicalConstraints',
+  'solverEliminatedConstraints',
+  'solverChoices',
+  'solverChoiceBranches',
+  'solverChoiceComponents',
+  'solverLargestChoiceComponentBranches',
+  'solverAffineEqualities',
+  'solverAffineInequalities',
+  'samplingAmbientDimension',
+  'samplingReducedDimension',
+  'samplingEqualities',
+  'samplingInequalities',
+  'samplingBurnInSteps',
+  'outputElements',
+  'outputConnectors',
+  'outputSteps',
+  'outputVariables',
+  'outputResources'
+] as const;
 
 describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
   it(
@@ -28,6 +91,7 @@ describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
           seeds,
           owner: 'example-test'
         });
+        assertCompleteTimingBreakdown(starter.file, results[0]!.debug);
         for (const [index, result] of results.entries()) {
           const seed = seeds[index]!;
           if (!result.ok) {
@@ -85,6 +149,54 @@ describe.skipIf(!runExamples)('catalogued Sverlin examples', () => {
     }
   );
 });
+
+function assertCompleteTimingBreakdown(
+  source: string,
+  debug: {
+    durationMs: number;
+    compilerMetrics?: {
+      phasesMs: Record<string, number>;
+      counts: Record<string, number>;
+      views: Array<{ counts: Record<string, number> }>;
+    };
+    serviceMetrics?: {
+      totalMs: number;
+      requestPreparationMs: number;
+      queueWaitMs: number;
+      compilerProcessMs: number;
+      outputValidationMs: number;
+      cleanupMs: number;
+    };
+  }
+) {
+  const compiler = debug.compilerMetrics;
+  const service = debug.serviceMetrics;
+  expect(compiler, `${source} compiler metrics`).toBeDefined();
+  expect(service, `${source} service metrics`).toBeDefined();
+  if (!compiler || !service) return;
+
+  expect(Object.keys(compiler.phasesMs)).toEqual(expect.arrayContaining([...compilerPhases]));
+  expect(Object.keys(compiler.counts)).toEqual(expect.arrayContaining([...compilerCounts]));
+  expect(compiler.views).toHaveLength(seeds.length);
+  for (const view of compiler.views) {
+    expect(Object.keys(view.counts)).toEqual(expect.arrayContaining([...viewCounts]));
+  }
+
+  const internalTotal = compiler.phasesMs.compilerInternalTotal!;
+  for (const phase of compilerPhases) {
+    expect(compiler.phasesMs[phase], `${source} ${phase}`).toBeLessThanOrEqual(internalTotal + 0.1);
+  }
+  expect(internalTotal).toBeLessThanOrEqual(service.compilerProcessMs + 0.1);
+  for (const duration of [
+    service.requestPreparationMs,
+    service.queueWaitMs,
+    service.compilerProcessMs,
+    service.outputValidationMs,
+    service.cleanupMs
+  ]) {
+    expect(duration).toBeLessThanOrEqual(service.totalMs + 0.1);
+  }
+}
 
 function compositionAlternative(visualization: Visualization): string | undefined {
   const variable = visualization.variables.find(

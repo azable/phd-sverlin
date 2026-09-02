@@ -1,5 +1,6 @@
 module Main where
 
+import qualified MetricsTest
 import qualified RenderGuardTest
 import qualified SemanticTest
 import           Test.Tasty      (defaultMain, testGroup)
@@ -10,4 +11,8 @@ main =
   defaultMain
     (testGroup
        "Sverlin internals"
-       [SemanticTest.tests, RenderGuardTest.tests, TypographyTest.tests])
+       [ MetricsTest.tests
+       , SemanticTest.tests
+       , RenderGuardTest.tests
+       , TypographyTest.tests
+       ])

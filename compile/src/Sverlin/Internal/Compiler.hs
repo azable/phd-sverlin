@@ -77,7 +77,7 @@ compileProgramBatch recorder sourcePath sourceContent seeds@(scenarioSeed:_) pro
                       (forceTrace (runSemanticScenario seed domain runProgram))
               recordTraceCounts recorder trace
               compiled <-
-                Render.compileRenderBatch
+                Render.compileRenderBatchWithMetrics
                   recorder
                   sourcePath
                   sourceContent

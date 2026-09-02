@@ -18,6 +18,38 @@ const metrics: CompilationMetrics = {
     compilerProcessMs: 5,
     outputValidationMs: 1,
     cleanupMs: 1
+  },
+  compiler: {
+    schemaVersion: 1,
+    viewSeeds: [1, 2],
+    phasesMs: {
+      sourceInterpretation: 6,
+      compilerInternalTotal: 8
+    },
+    counts: {
+      outputViews: 2
+    },
+    views: [
+      {
+        seed: 1,
+        materializationMs: 0.2,
+        counts: { outputElements: 3 },
+        labels: {
+          solverBackend: 'affine-sampler',
+          decisionCoverage: 'exact-enumeration'
+        }
+      },
+      {
+        seed: 2,
+        materializationMs: 0.3,
+        counts: { outputElements: 3 },
+        labels: {
+          solverBackend: 'affine-sampler',
+          decisionCoverage: 'exact-enumeration'
+        }
+      }
+    ],
+    failedPhase: null
   }
 };
 
@@ -25,6 +57,7 @@ describe('project compilation metrics', () => {
   it('returns one invocation for metrics repeated across a seeded batch', () => {
     const events = [outcome(1, 0), outcome(2, 1)];
     expect(projectCompilationMetrics(events)).toEqual([metrics]);
+    expect(projectCompilationMetrics(events)[0]?.compiler?.phasesMs.sourceInterpretation).toBe(6);
   });
 
   it('ignores historical outcomes without structured metrics', () => {

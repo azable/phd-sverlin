@@ -8,6 +8,7 @@
 module Sverlin.Internal.Render.Compile
   ( RenderCompileError(..)
   , compileRenderBatch
+  , compileRenderBatchWithMetrics
   ) where
 
 import qualified Control.Exception                  as Exception
@@ -51,6 +52,23 @@ data RenderCompileError
 -- prepared affine design space.  The source content participates in the
 -- scenario key; the display path does not.
 compileRenderBatch ::
+     FilePath
+  -> String
+  -> [Int]
+  -> Sem.SemanticTrace
+  -> R.RenderPlan
+  -> IO (Either RenderCompileError Resource.CompilationPackage)
+compileRenderBatch sourcePath sourceContent viewSeeds trace plan = do
+  recorder <- Metrics.newMetricsRecorder viewSeeds
+  compileRenderBatchWithMetrics
+    recorder
+    sourcePath
+    sourceContent
+    viewSeeds
+    trace
+    plan
+
+compileRenderBatchWithMetrics ::
      Metrics.MetricsRecorder
   -> FilePath
   -> String
@@ -58,7 +76,7 @@ compileRenderBatch ::
   -> Sem.SemanticTrace
   -> R.RenderPlan
   -> IO (Either RenderCompileError Resource.CompilationPackage)
-compileRenderBatch recorder sourcePath sourceContent viewSeeds trace plan = do
+compileRenderBatchWithMetrics recorder sourcePath sourceContent viewSeeds trace plan = do
   preparedResult <- prepareCompilation recorder trace plan
   case preparedResult of
     Left err -> pure (Left err)
