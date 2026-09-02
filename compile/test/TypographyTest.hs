@@ -360,6 +360,49 @@ tests =
           values ->
             assertFailure
               ("expected one visualization, got " ++ show (length values))
+    , testCase "authored fixed FontSize materializes without a fit variable" $ do
+        visualizations <-
+          compileFramePlan "fixed authored font size" [5] fixedFontSizePlan
+        case visualizations of
+          [visualization] ->
+            case textStyles visualization of
+              [(style', layout)] -> do
+                IR.visualFontSize style' @?= Just 28
+                IR.textLayoutFontSize layout @?= 28
+                IR.textLayoutPreferredSize layout @?= 28
+                fittedSizeVariables visualization @?= []
+              values ->
+                assertFailure
+                  ("expected one fixed text line, got " ++ show (length values))
+          values ->
+            assertFailure
+              ("expected one visualization, got " ++ show (length values))
+    , testCase "fitText responds to the available solved geometry" $ do
+        narrow <-
+          compileFramePlan
+            "responsive fitted geometry"
+            [9]
+            (responsiveFitPlan 140)
+        wide <-
+          compileFramePlan
+            "responsive fitted geometry"
+            [9]
+            (responsiveFitPlan 360)
+        case (concatMap textLayoutSizes narrow, concatMap textLayoutSizes wide) of
+          ([narrowSize], [wideSize]) ->
+            assertBool
+              ("expected the wider box to permit a larger size, got "
+                 ++ show (narrowSize, wideSize))
+              (wideSize > narrowSize)
+          sizes ->
+            assertFailure
+              ("expected one fitted line per plan, got " ++ show sizes)
+    , testCase "same-seed typography and resource output is deterministic" $ do
+        first <-
+          compileFramePackage "deterministic typography" [17] fixedFontSizePlan
+        second <-
+          compileFramePackage "deterministic typography" [17] fixedFontSizePlan
+        first @?= second
     , testCase "structural parents remain transparent by default" $ do
         visualizations <-
           compileFramePlan "transparent parent" [11] structuralStylePlan
@@ -585,6 +628,41 @@ removedFontSizePlan =
            Render.yAt (Render.percent 50)
            Render.withoutStyle @Render.FontSize
            Render.fitText (Render.text "fixed default")) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+fixedFontSizePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+fixedFontSizePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 220)
+           Render.height (Render.by 72)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           Render.style @Render.FontSize (Render.by 28)
+           Render.content (Render.text "fixed size")) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+responsiveFitPlan :: Double -> Either Render.RenderDiagnostic Render.RenderPlan
+responsiveFitPlan nodeWidth =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 600)
+    Render.height (Render.by 300)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by nodeWidth)
+           Render.height (Render.by 100)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           Render.fitText (Render.text "responsive typography")) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
 
@@ -999,6 +1077,15 @@ compileFramePlan ::
   -> Either Render.RenderDiagnostic Render.RenderPlan
   -> IO [IR.Visualization]
 compileFramePlan label seeds planResult = do
+  package <- compileFramePackage label seeds planResult
+  pure (Resource.compilationPackageVisualizations package)
+
+compileFramePackage ::
+     String
+  -> [Int]
+  -> Either Render.RenderDiagnostic Render.RenderPlan
+  -> IO Resource.CompilationPackage
+compileFramePackage label seeds planResult = do
   plan <- expectPlan planResult
   marker <- referenceMarker plan
   compiled <-
@@ -1010,7 +1097,7 @@ compileFramePlan label seeds planResult = do
       plan
   case compiled of
     Left problem  -> assertFailure (show problem)
-    Right package -> pure (Resource.compilationPackageVisualizations package)
+    Right package -> pure package
 
 frameTrace :: Semantic.TraceMarker -> Semantic.SemanticTrace
 frameTrace marker =

@@ -195,6 +195,7 @@ FROM build AS verification
 RUN pnpm run check \
     && pnpm run lint \
     && pnpm run test:unit \
+    && pnpm run test:compiler \
     && pnpm run test:examples
 
 FROM toolchain AS production-dependencies

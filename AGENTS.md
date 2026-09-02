@@ -111,48 +111,37 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## DSL LLM Authoring Context
 
-- For current implemented behavior, use
-  `compile/src/LinearTrace/Choreography.hs` and the generated DSL API index described
+- For current implemented behavior, use `compile/src/Sverlin.hs`,
+  `compile/app/Sverlin/Source.hs`, and the generated DSL API index described
   below. For proposed API changes, consult
   [`compile/plan/API_plan_final.md`](compile/plan/API_plan_final.md); it
   describes a target design and does not override current behavior until implemented.
-  [`compile/src/LinearTrace/API_refactoring.md`](compile/src/LinearTrace/API_refactoring.md)
-  is supporting rationale rather than the current implementation contract.
-- `compile/src/LinearTrace/Choreography.hs` is the canonical public-name and
+- `compile/src/Sverlin.hs` is the canonical public-name and
   per-symbol behavior contract. Keep one Haddock description on every explicit
   facade export. `scripts/dsl-api-index.mjs` validates and indexes those comments
   together with GHC-inferred public signatures; run
   `pnpm run generate:dsl-api-index` after changing them. Never edit the
   generated `src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md` by hand.
-- `src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md` is the complementary
-  human-readable composition and authoring guide for the primary `sverlin-assistant`
-  bot (starting with `gpt-5.6-sol`/medium before its bounded Sol repair ladder). It
-  should explain cross-cutting invariants, syntax hazards, and examples without
-  duplicating the exhaustive API index.
-- The guide and generated index are read from disk for every model request during
-  local development, so saved edits are picked up without restarting the
-  SvelteKit server. The sibling `index.ts` keeps the short role prompt, model
-  configuration, structured response contract, and bundled fallbacks for
-  packaged deployments.
+- `src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md` is intentionally a
+  neutral pointer to the generated index, not a second authoring contract. Do not
+  expand it into an opinionated guide without developer approval. Both files are
+  read from disk for every local model request; the sibling `index.ts` owns the
+  role prompt, authoring policy, model configuration, structured response
+  contract, and bundled fallbacks for packaged deployments.
 - Keep this context synchronized in the same change whenever the public DSL
   changes. At minimum, review it when editing
-  `compile/src/LinearTrace/Choreography.hs`, its re-exported public modules,
-  query/materialization semantics, trace lifecycle operations, visual selection
-  and rendering, style fields, layout variables, or constraint operators.
+  `compile/src/Sverlin.hs`, `compile/src/Sverlin/Linear.hs`, the body-only source
+  wrapper, trace lifecycle operations, visual selection and rendering, style
+  fields, layout variables, or constraint operators.
 - Also review it whenever the body-only Sverlin source contract changes, including
   required declarations, supplied imports/extensions, payload conventions, or
   the shape of the generated visual runner. Remove stale API names and add new public API
   before merging the corresponding implementation change.
-- Derive API statements from the public choreography facade and the frontend's
+- Derive API statements from the public `Sverlin` facade and the frontend's
   minimal starting example. Do not document private implementation details as if
   they were stable DSL affordances, and do not invent helpers that are not
   exported by the facade. `pnpm run check:dsl-api-index` must pass; the normal
   lint command also enforces generated-index drift and missing export docs.
-- Keep the context human-readable and organized as compact dot-point sections.
-  Explain the linear ownership invariants, the semantic-fact/materialization
-  bridge from trace values to visual nodes, and the separation between program
-  logic and visual rules. Prefer concrete signatures and small examples when
-  they prevent an otherwise likely code-generation error.
 - Apply OpenAI code-generation prompting best practices: put the role and public
   contract first; state each invariant once; make scope, success criteria,
   validation expectations, and complete-source output requirements explicit; and
@@ -165,7 +154,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   rule, update the context rather than relying on an example hidden in history.
 - When changing only the prompt context, run the Svelte checks, lint the bot
   module, and run the project command tests. When changing the DSL or its public API,
-  also follow the Haskell compile, solver-test, lint, and formatter requirements
+  also follow the Haskell compile, compiler-test, solver-test, lint, and formatter requirements
   below.
 
 ## Verification
@@ -173,6 +162,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 Before finishing:
 
 - If modifying the Haskell application, run `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory to compile and run the Haskell application.
+- For compiler or source-wrapper changes, run `pnpm run test:compiler`.
 - For solver or view-solver changes, run `pnpm run test:solver`.
 - Use `hlint compile/src compile/app compile/test compile/bench compile/test-support` to check for any Haskell code style issues.
 - After any Haskell source change, run the same formatter pipeline as VSCode on project-owned Haskell source directories (`compile/app compile/src compile/test compile/bench compile/test-support`): first `hindent`, then `stylish-haskell -i`. Run this full formatting pipeline exactly once per task, at the very end after the implementation, lint-driven fixes, and other source changes are complete. Do not run it speculatively or repeatedly during development. The `stylish-haskell -i` pass should be the final source-modifying step; afterward, perform only non-modifying verification unless a necessary source correction requires another final formatting pass.

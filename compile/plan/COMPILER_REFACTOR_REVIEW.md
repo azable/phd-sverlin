@@ -10,71 +10,179 @@ The refactor has a sound top-level architecture: authored source enters through
 the explicit [`Sverlin`](../src/Sverlin.hs) facade, semantic execution and
 render planning are separate, the top-level [`Solver`](../src/Solver.hs) module
 remains the solver boundary, and the browser contract stays behind the
-visualization IR. The repository is not yet in a clean post-refactor state,
-however. Provenance and verification still point partly at the retired
-pipeline, and 24 legacy source modules remain reachable only through tests.
+visualization IR. The first three findings below have now been resolved:
+provenance names the authored contract explicitly, current compiler tests run
+routinely, and the test-only legacy pipeline has been removed.
+
+At a high level, [`Sverlin.Source`](../app/Sverlin/Source.hs) turns the supplied
+body into a generated Haskell module with one public facade import and a fixed
+three-part result:
+
+```haskell
+import Sverlin
+import Sverlin.Compiler (SverlinProgram)
+import qualified Sverlin.Compiler as Compiler (sverlinProgram)
+
+_sverlinResult :: SverlinProgram
+_sverlinResult = Compiler.sverlinProgram domain program render
+```
+
+That result then follows the active implementation path:
+
+```text
+.sverlin body -> Sverlin.Source -> Sverlin.Compiler
+              -> semantic trace -> render compilation
+              -> LinearTrace.Visualization.IR -> JSON
+```
 
 ## Module use
 
-| Category                           | Modules                                                                                                                                    | Status                                                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Current DSL and compiler           | `Sverlin`, `Sverlin.Compiler`, `Sverlin.Linear`, `Sverlin.Syntax`, and `Sverlin.Internal.*`                                                | Production path. `Sverlin` and `Sverlin.Linear` are imported dynamically by the generated source wrapper. |
-| Solver                             | `Solver` and all `Solver.*` modules                                                                                                        | Production, tests, and benchmarks.                                                                        |
-| Shared output implementation       | `LinearTrace.Visualization.IR`, `Options`, `Resource`, `Target`, `FontCatalog`, and `HarfBuzz`                                             | Still active; do not remove with the old pipeline.                                                        |
-| Executable and generation tools    | `Main`, `Sverlin.Source`, `Sverlin.Interpreter`, and `GenerateVisualizationTypes*`                                                         | Active host/tooling path.                                                                                 |
-| Retired pipeline retained by tests | `LinearTrace.Choreography*`, `LinearTrace.Core*`, `LinearTrace.View.*`, and `LinearTrace.Visualization.{Compile,Typography,CodeHighlight}` | No production importer; 24 modules and approximately 11,346 source lines.                                 |
+| Category                        | Modules                                                                                                                                                                                                                                                                                                                                                                                  | Status                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Current DSL and compiler        | [`Sverlin`](../src/Sverlin.hs), [`Sverlin.Compiler`](../src/Sverlin/Compiler.hs), [`Sverlin.Linear`](../src/Sverlin/Linear.hs), [`Sverlin.Syntax`](../src/Sverlin/Syntax.hs), and [`Sverlin.Internal.*`](../src/Sverlin/Internal/)                                                                                                                                                       | Production path. `Sverlin` and `Sverlin.Linear` are imported dynamically by the generated source wrapper.                |
+| Solver                          | [`Solver`](../src/Solver.hs) and [`Solver.*`](../src/Solver/)                                                                                                                                                                                                                                                                                                                            | Production, tests, and benchmarks.                                                                                       |
+| Shared output implementation    | [`LinearTrace.Visualization.IR`](../src/LinearTrace/Visualization/IR.hs), [`Options`](../src/LinearTrace/Visualization/Options.hs), [`Resource`](../src/LinearTrace/Visualization/Resource.hs), [`Target`](../src/LinearTrace/Visualization/Target.hs), [`FontCatalog`](../src/LinearTrace/Visualization/FontCatalog.hs), and [`HarfBuzz`](../src/LinearTrace/Visualization/HarfBuzz.hs) | Still active; do not remove with the old pipeline.                                                                       |
+| Executable and generation tools | [`Main`](../app/Main.hs), [`Sverlin.Source`](../app/Sverlin/Source.hs), [`Sverlin.Interpreter`](../app/Sverlin/Interpreter.hs), [`GenerateVisualizationTypes`](../app/GenerateVisualizationTypes.hs), and its [TypeScript generator](../app/GenerateVisualizationTypes/TypeScript.hs)                                                                                                    | Active host/tooling path.                                                                                                |
+| Retired pipeline                | `LinearTrace.Choreography*`, `LinearTrace.Core*`, `LinearTrace.View.*`, and `LinearTrace.Visualization.{Compile,Typography,CodeHighlight}`                                                                                                                                                                                                                                               | Removed after relevant characterization coverage was moved to the current semantic, render-guard, and typography suites. |
 
-There are no wholly unreachable Haskell modules because Cabal and the old
-solver test suite still compile the retired pipeline. This makes "compiled" a
-weaker signal than "used by production". The old
-[`Invalid.sverlin`](../test/fixtures/Invalid.sverlin) fixture is genuinely
-orphaned: it uses the retired API and is only listed as an extra source file.
+At review time, Cabal and the old solver test suite still compiled the retired
+pipeline even though production did not import it. This made "compiled" a
+weaker signal than "used by production". The orphaned `Invalid.sverlin`
+fixture likewise used the retired API and was only listed as an extra source
+file. The retired modules, fixture, and Cabal entries have now been removed.
+
+## Resolution of findings 1–3
+
+- [`DslRevision`](../../src/lib/shared/projects/events/values.ts) now
+  fingerprints one explicit authored-contract set: [`Sverlin.Source`](../app/Sverlin/Source.hs),
+  [`Sverlin`](../src/Sverlin.hs), [`Sverlin.Linear`](../src/Sverlin/Linear.hs),
+  and the [generated DSL API index](../../src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md).
+  Its [Git dirty check](../../src/lib/server/projects/fingerprints.ts) uses the
+  same paths. Compiler internals, assistant policy, and the neutral
+  [`dsl-interface.md`](../../src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md)
+  pointer are deliberately excluded; the [prepared-compiler fingerprint](../../src/lib/server/compiler/prepared-compiler.js)
+  continues to cover implementation and build inputs. Both fingerprints use
+  the shared [enumeration and hashing module](../../src/lib/server/repository-fingerprints.js).
+- [`pnpm run test:compiler`](../../package.json) runs `semantic-test` and
+  `sverlin-source-test`. The normal test command and the
+  [container verification stage](../../Dockerfile) both invoke it.
+- [`solver-test`](../test/SolverTest.hs) now exercises only the supported
+  [`Solver`](../src/Solver.hs) facade and [stable solver fixtures](../test-support/Solver/TestFixtures.hs).
+  Current behavior formerly protected by the old suite was moved into
+  [`RenderGuardTest`](../test/RenderGuardTest.hs) and
+  [`TypographyTest`](../test/TypographyTest.hs) before the obsolete modules and
+  the large `Choreography.TestFixtures` support module were deleted.
+- The small [`dsl-interface.md`](../../src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md)
+  file now points without additional policy to the [generated API index](../../src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md).
+  Authoring policy remains in the [assistant configuration](../../src/lib/server/chat-bots/sverlin-assistant/index.ts),
+  and this pointer is not a DSL revision input. The sibling
+  [`index.ts`](../../src/lib/server/chat-bots/sverlin-assistant/index.ts)
+  attaches the generated reference as `dslApiIndex` to every model request;
+  that generated reference is a DSL revision input.
+- [`compile.cabal`](../compile.cabal) remains the package and component
+  description. Stack's current documentation distinguishes that package
+  description from the project-level [`stack.yaml`](../stack.yaml); because
+  this repository has no Hpack `package.yaml`, Stack consumes the Cabal file
+  directly. See
+  [Stack's package-description documentation](https://docs.haskellstack.org/en/stable/tutorial/package_description/).
+
+The request-time attachment in the
+[`sverlin-assistant` configuration](../../src/lib/server/chat-bots/sverlin-assistant/index.ts)
+is deliberately direct (abridged here to show the boundary):
+
+```ts
+const [dslInterface, dslApiIndex] = await Promise.all([
+  loadDslInterfaceContext(),
+  loadDslApiIndex()
+]);
+
+return { dslInterface, dslApiIndex, project, attemptContext: attempt };
+```
+
+Consequently the generated index is supplied as its own structured context
+field on every authoring request; the neutral interface file is only a pointer
+and compatibility field.
 
 ## Prioritized findings
 
-### 1. Fix DSL revision provenance
+### 1. Fix DSL revision provenance — resolved
 
-[`fingerprints.ts`](../../src/lib/server/projects/fingerprints.ts) claims to
-fingerprint the active Haskell DSL, but hashes
-`LinearTrace.Choreography*` and `Sverlin.Source` rather than the current
-`Sverlin` implementation. As a result:
+At review time, [`fingerprints.ts`](../../src/lib/server/projects/fingerprints.ts)
+claimed to fingerprint the active Haskell DSL, but hashed
+`LinearTrace.Choreography*` and `Sverlin.Source` rather than the authored
+contract. As a result:
 
-- changes to the active facade or semantic/render implementation may leave the
-  recorded `contentSha256` unchanged;
+- changes to the active facade could leave the recorded `contentSha256`
+  unchanged;
 - active compiler edits may be reported as a clean working tree; and
 - changes to retired choreography code can alter the recorded revision without
   changing production output.
 
-Use one canonical active-source enumeration, preferably shared with prepared
-compiler fingerprinting. Extend the fingerprint test so it detects path drift,
-not merely a well-formed digest.
+The resolved boundary is intentionally narrower than the prepared compiler:
+the DSL revision identifies authored syntax and documented API, while semantic
+and rendering implementation changes affect the prepared-compiler fingerprint.
+Path-sensitive tests now assert the exact contract set, each included path, and
+representative excluded implementation and prompt-context paths.
 
-### 2. Run the current Haskell tests routinely
+The canonical list lives in
+[`repository-fingerprints.js`](../../src/lib/server/repository-fingerprints.js)
+and is consumed directly by
+[`fingerprints.ts`](../../src/lib/server/projects/fingerprints.ts):
 
-The 46-test `semantic-test` component in [`compile.cabal`](../compile.cabal)
-covers the new semantic engine, render guards, typography, and metrics. Neither
-the normal scripts in [`package.json`](../../package.json) nor the verification
-stage in [`Dockerfile`](../../Dockerfile) runs it. End-to-end example tests cover
-the production path, but do not replace these focused regressions.
+```js
+export const dslContractInputPaths = Object.freeze([
+  'compile/app/Sverlin/Source.hs',
+  'compile/src/Sverlin.hs',
+  'compile/src/Sverlin/Linear.hs',
+  'src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md'
+]);
+```
 
-Add a `test:compiler` command for `semantic-test` and
-`sverlin-source-test`, then include it in normal and container verification.
+The corresponding [fingerprint tests](../../src/lib/server/projects/fingerprints.test.ts)
+mutate every included file, check representative exclusions, and create a
+temporary Git repository to prove that the dirty-path check cannot silently
+drift from this list.
 
-### 3. Isolate and retire the old pipeline
+### 2. Run the current Haskell tests routinely — resolved
+
+At review time, the 46-test `semantic-test` component in
+[`compile.cabal`](../compile.cabal) covered the new semantic engine, render
+guards, typography, and metrics, but neither the normal scripts in
+[`package.json`](../../package.json) nor the verification stage in
+[`Dockerfile`](../../Dockerfile) ran it. End-to-end example tests cover the
+production path, but do not replace these focused regressions.
+
+The new `test:compiler` command runs `semantic-test` and
+`sverlin-source-test`; normal and container verification now include it.
+
+The relevant [`package.json`](../../package.json) scripts make that relationship
+explicit:
+
+```json
+{
+  "test:compiler": "stack --stack-yaml compile/stack.yaml test compile:semantic-test compile:sverlin-source-test",
+  "test": "pnpm run test:unit && pnpm run test:compiler && pnpm run test:postgres && pnpm run test:examples"
+}
+```
+
+[`Dockerfile`](../../Dockerfile) invokes the same `test:compiler` command in its
+verification stage, so the container does not maintain a second test-suite
+enumeration.
+
+### 3. Isolate and retire the old pipeline — resolved
 
 The current plan already says that `RenderPlan` replaces old query matching,
 `View.Access`, `View.Template`, and `StyleProfile`; see
 [`API_plan_final.md`](API_plan_final.md#internal-compiler-and-renderer-shape).
-Nevertheless, [`SolverTest.hs`](../test/SolverTest.hs) still imports the old
+At review time, [`SolverTest.hs`](../test/SolverTest.hs) still imported the old
 facade, core, visualization compiler, and typography implementation, backed by
-the 876-line
-[`Choreography.TestFixtures`](../test-support/Choreography/TestFixtures.hs).
+the 876-line `Choreography.TestFixtures` module.
 
-First migrate any characterization assertions that still protect current
-behavior into `SemanticTest`, `RenderGuardTest`, or `TypographyTest`. Until that
-is complete, put the remaining tests in an explicitly named legacy suite so
-`test:solver` again means tests through the supported `Solver` facade. Then
-remove the retired modules and their Cabal entries while retaining the six
+Relevant characterization assertions now protect current behavior in
+[`RenderGuardTest`](../test/RenderGuardTest.hs) and
+[`TypographyTest`](../test/TypographyTest.hs); [`solver-test`](../test/SolverTest.hs)
+goes through the public facade. The retired modules and
+[`compile.cabal`](../compile.cabal) entries were removed while retaining the six
 shared output modules listed above.
 
 ### 4. Split the render implementation at validated phase boundaries
@@ -88,7 +196,9 @@ coordinated edits across state, finalization, promotion, counting, and lowering.
 
 The existing transitions provide natural module boundaries:
 
-`RenderPlan -> ExpandedPlan -> PreparedCompilation -> visualization IR`
+```text
+RenderPlan -> ExpandedPlan -> PreparedCompilation -> visualization IR
+```
 
 Separate semantic expansion/projection, constraint lowering, style resolution,
 and IR materialization around those states. A shared scoped-declaration wrapper
@@ -114,36 +224,32 @@ therefore includes several phases that its name says are external. Either
 rename it as an overall compiler-process duration or measure only the
 `compileProgramBatch` interval.
 
-### 7. Remove remaining documentation and fixture drift
+### 7. Remove remaining documentation and fixture drift — resolved
 
-[`AGENTS.md`](../../AGENTS.md) still names `LinearTrace.Choreography` as the
-canonical facade and links to a nonexistent `API_refactoring.md`; the actual
-index generator correctly reads `Sverlin.hs`. Several planning links also still
-assume that examples live under `compile/plan/examples/`. Update the standing
-instructions and links, and either remove the orphaned invalid fixture or
-rewrite it as a real negative test for the current body-only contract.
+At review time, [`AGENTS.md`](../../AGENTS.md) still named
+`LinearTrace.Choreography` as the canonical facade and linked to a nonexistent
+`API_refactoring.md`; the actual
+[`dsl-api-index.mjs`](../../scripts/dsl-api-index.mjs) generator correctly read
+[`Sverlin.hs`](../src/Sverlin.hs). Several planning links also assumed that
+examples lived under `compile/plan/examples/`. The standing instructions and
+planning links now name the current sources, and the obsolete invalid fixture
+has been removed.
 
-## Recommended cleanup order
+## Remaining cleanup order
 
-1. Correct DSL revision fingerprinting and add a path-sensitive regression
-   test.
-2. Wire `semantic-test` and `sverlin-source-test` into routine verification.
-3. Split legacy characterization tests from direct solver tests.
-4. Port still-relevant behavior to the new test suites, then delete the 24
-   retired modules and obsolete fixture.
-5. Split render compilation along its existing validated phase boundaries.
-6. Replace `Show`-based forcing and hashing, then correct the total-duration
+1. Split render compilation along its existing validated phase boundaries.
+2. Replace `Show`-based forcing and hashing, then correct the total-duration
    metric.
-7. Synchronize `AGENTS.md` and repair the moved-example links.
 
-## Verification performed during review
+## Baseline verification performed during review
 
 - All 54 library modules compiled.
-- All 46 `semantic-test` cases passed.
-- All 120 `solver-test` cases passed, including the legacy characterization
-  groups.
-- Both `sverlin-source-test` cases passed.
-- The generated API index verified all 175 documented `Sverlin` names.
+- All 46 [`semantic-test`](../test/SemanticTest.hs) cases passed.
+- All 120 [`solver-test`](../test/SolverTest.hs) cases passed, including the
+  legacy characterization groups.
+- Both [`sverlin-source-test`](../test/SverlinSourceTest.hs) cases passed.
+- The [generated API index](../../src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md)
+  verified all 175 documented [`Sverlin`](../src/Sverlin.hs) names.
 - `git diff --check` passed.
 - HLint reported five existing non-functional suggestions, so the HLint gate
   was not clean.

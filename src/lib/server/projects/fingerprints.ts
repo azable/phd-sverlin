@@ -1,21 +1,20 @@
 /**
- * Reproducible fingerprints for source text and the active Haskell DSL implementation.
+ * Reproducible fingerprints for source text and the authored Sverlin contract.
  *
  * @packageDocumentation
  */
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
-import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type { DslRevision, RecordedText } from '$lib/shared/projects/events/values';
+import {
+  dslContractInputPaths,
+  fingerprintRepositoryFiles
+} from '$lib/server/repository-fingerprints.js';
 
 const execFileAsync = promisify(execFile);
-const choreographyDirectory = 'compile/src/LinearTrace/Choreography';
-const dslSourcePaths = ['compile/src/LinearTrace/Choreography.hs', 'compile/app/Sverlin/Source.hs'];
-const dslGitPaths = [...dslSourcePaths, choreographyDirectory];
 
 /** Calculate the lowercase SHA-256 digest for source text. */
 export function sourceSha256(content: string): string {
@@ -27,12 +26,11 @@ export function recordText(text: string, mediaType: string): RecordedText {
   return { text, sha256: sourceSha256(text), mediaType };
 }
 
-/** Read the current DSL content fingerprint and best-effort Git provenance. */
-export async function readDslRevision(): Promise<DslRevision | undefined> {
+/** Read the current authored DSL contract fingerprint and best-effort Git provenance. */
+export async function readDslRevision(root = process.cwd()): Promise<DslRevision | undefined> {
   try {
-    const sourcePaths = await listDslSourcePaths();
-    const contentSha256 = await hashFiles(sourcePaths);
-    const git = await readGitRevision();
+    const contentSha256 = await fingerprintRepositoryFiles(root, dslContractInputPaths);
+    const git = await readGitRevision(root);
     return { contentSha256, ...git };
   } catch (error) {
     console.error('Could not identify the Sverlin DSL revision.', error);
@@ -40,33 +38,14 @@ export async function readDslRevision(): Promise<DslRevision | undefined> {
   }
 }
 
-async function listDslSourcePaths() {
-  const modules = (await readdir(path.resolve(process.cwd(), choreographyDirectory)))
-    .filter((file) => file.endsWith('.hs'))
-    .sort()
-    .map((file) => path.join(choreographyDirectory, file));
-  return [...dslSourcePaths, ...modules];
-}
-
-async function hashFiles(sourcePaths: string[]) {
-  const contents = await Promise.all(
-    sourcePaths.map(async (sourcePath) => {
-      const content = await readFile(path.resolve(process.cwd(), sourcePath), 'utf8');
-      return `${sourcePath}\0${content}`;
-    })
-  );
-  return sourceSha256(contents.join('\0'));
-}
-
-async function readGitRevision(): Promise<Omit<DslRevision, 'contentSha256'>> {
+async function readGitRevision(root: string): Promise<Omit<DslRevision, 'contentSha256'>> {
   try {
-    const cwd = process.cwd();
     const [{ stdout: commit }, { stdout: status }] = await Promise.all([
-      execFileAsync('git', ['rev-parse', '--verify', 'HEAD'], { cwd }),
+      execFileAsync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: root }),
       execFileAsync(
         'git',
-        ['status', '--porcelain=v1', '--untracked-files=normal', '--', ...dslGitPaths],
-        { cwd }
+        ['status', '--porcelain=v1', '--untracked-files=normal', '--', ...dslContractInputPaths],
+        { cwd: root }
       )
     ]);
     return {

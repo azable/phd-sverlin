@@ -8,7 +8,7 @@ import aiAssistant, {
 } from '.';
 
 describe('AI assistant DSL interface', () => {
-  it('reads the guide again for every request', async () => {
+  it('reads the API reference again for every request', async () => {
     const readPrompt = vi
       .fn()
       .mockResolvedValueOnce('first revision')
@@ -18,6 +18,12 @@ describe('AI assistant DSL interface', () => {
     await expect(loadDslInterfaceContext(readPrompt)).resolves.toBe('second revision');
     expect(readPrompt).toHaveBeenNthCalledWith(1, dslInterfacePath, 'utf8');
     expect(readPrompt).toHaveBeenNthCalledWith(2, dslInterfacePath, 'utf8');
+  });
+
+  it('keeps the supplemental reference neutral and defers to the generated index', async () => {
+    await expect(loadDslInterfaceContext()).resolves.toBe(
+      '# Sverlin authoring reference\n\nThe generated `dslApiIndex` supplied alongside this reference is the authoritative current Sverlin API.\n'
+    );
   });
 
   it('reads the source-derived API index again for every request', async () => {
@@ -55,24 +61,17 @@ describe('AI assistant DSL interface', () => {
     expect(aiAssistant.initialPrompt).toContain(
       'never introduce a Program result with create when it should be derived from live Blocks'
     );
-    const guide = await loadDslInterfaceContext();
-    expect(guide).toContain('Do not precompute algorithm results outside Program');
-    expect(guide).toContain('`copy` is the only way to reuse a live semantic value');
-    expect(guide).toContain('A requested border needs a positive `StrokeWidth`');
+    expect(aiAssistant.initialPrompt).toContain('use copy before reusing a live value');
   });
 
   it('keeps unspecified presentation open and uses explicit finite choices', async () => {
     expect(aiAssistant.initialPrompt).toContain(
       'Leave visual style fields unspecified unless semantics or an explicit participant preference require them'
     );
-    const guide = await loadDslInterfaceContext();
-    expect(guide).toContain('`style @Field value` requires one field');
-    expect(guide).toContain('`withoutStyle @Field` removes an inherited field');
-    expect(guide).toContain('`oneOf name first rest` creates one fresh authored choice');
-    expect(guide).toContain('`fontChoice (fontKind Monospace)`');
-    expect(guide).toContain('not to guess an aesthetic');
-    expect(guide).toContain('Every concrete peer created by one `node selected` mapping');
-    expect(guide).toContain('Repeated peers do not independently randomize these fields');
+    expect(aiAssistant.initialPrompt).toContain('oneOf for custom named visual alternatives');
+    expect(aiAssistant.initialPrompt).toContain(
+      'One node mapping defines one coherent visual lineage'
+    );
   });
 
   it('lets preference evidence drive or defer a proactive source adaptation', () => {

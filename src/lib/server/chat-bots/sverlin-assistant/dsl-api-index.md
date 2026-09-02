@@ -2,7 +2,7 @@
 
 # Public Sverlin DSL API index
 
-This compact index combines the Haddock export documentation in `compile/src/Sverlin.hs` with public signatures checked against the compiled facade by GHC. Private closed-dispatch constraints are shown as their documented overloads. The facade is authoritative; the authoring guide adds composition rules and examples.
+This compact index combines the Haddock export documentation in `compile/src/Sverlin.hs` with public signatures checked against the compiled facade by GHC. Private closed-dispatch constraints are shown as their documented overloads. The facade and the body-only source wrapper are authoritative.
 
 ## Builders and do notation
 

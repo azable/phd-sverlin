@@ -137,12 +137,10 @@ It does not mean making every property of every repeated element independent.
 Large peer differences require semantic meaning; small aesthetic deviations must
 be explicit, coherent, and narrowly bounded.
 
-The historical missing-style pass in
-[`LinearTrace/View/StyleProfile.hs`](../src/LinearTrace/View/StyleProfile.hs)
-demonstrates this behavior by adding family-scoped choices only where fields were
-absent. A refactor may replace that implementation, but must retain the behavior at
-the compiler boundary rather than require authors or the solver itself to recreate
-it.
+The retired `LinearTrace.View.StyleProfile` pass demonstrated this behavior by
+adding family-scoped choices only where fields were absent. The current private
+render theme retains the behavior at the compiler boundary rather than requiring
+authors or the solver itself to recreate it.
 
 ## Preserve behavior while collapsing implementation layers
 

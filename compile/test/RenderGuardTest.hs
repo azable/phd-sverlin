@@ -5,7 +5,7 @@ module RenderGuardTest
   ( tests
   ) where
 
-import           Data.List                          (isInfixOf, nub, sort)
+import           Data.List                          (find, isInfixOf, nub, sort)
 import qualified LinearTrace.Visualization.IR       as IR
 import qualified LinearTrace.Visualization.Resource as Resource
 import qualified Sverlin.Internal.Render            as Render
@@ -32,6 +32,12 @@ data MembershipAfter
 data TransientFrame
 
 data ContextConnectorFrame
+
+data CanvasFrame
+
+data AlternativeFrame
+
+data CascadeFrame
 
 tests :: TestTree
 tests =
@@ -210,6 +216,130 @@ tests =
                  ++ " presences and "
                  ++ show (length nodes)
                  ++ " nodes")
+    , testCase "canvas root hugs retained content and never becomes an instance" $ do
+        plan <- expectPlan canvasHugPlan
+        frameIdentity <- onlyFrameIdentity plan
+        visualization <-
+          compileSingleVisualization
+            "canvas hug"
+            (transientTrace frameIdentity False)
+            plan
+        case [ element
+             | element <- IR.visualizationElements visualization
+             , IR.elementId element == IR.visualizationRoot visualization
+             ] of
+          [root] -> do
+            IR.visualizationRoot visualization @?= IR.VisualId (-1)
+            IR.elementRole root @?= "Canvas"
+            IR.boxBounds (IR.elementBox root) @?= IR.LayoutRect 0 0 200 120
+            IR.boxPadding (IR.elementBox root) @?= IR.EdgeInsets 10 20 30 40
+            IR.elementContent root @?= Nothing
+            length (IR.elementChildren root) @?= 1
+            assertBool
+              "the persistent canvas must not have a timeline instance"
+              (all
+                 (all
+                    ((/= IR.visualizationRoot visualization)
+                       . IR.instanceElementId)
+                    . IR.stepInstances)
+                 (IR.visualizationSteps visualization))
+          roots ->
+            assertFailure
+              ("expected one canvas root, got " ++ show (length roots))
+    , testCase "canvas aspect ratio derives its missing axis" $ do
+        plan <- expectPlan canvasAspectRatioPlan
+        frameIdentity <- onlyFrameIdentity plan
+        visualization <-
+          compileSingleVisualization
+            "canvas aspect ratio"
+            (transientTrace frameIdentity False)
+            plan
+        case [ IR.boxBounds (IR.elementBox element)
+             | element <- IR.visualizationElements visualization
+             , IR.elementId element == IR.visualizationRoot visualization
+             ] of
+          [bounds] -> bounds @?= IR.LayoutRect 0 0 800 450
+          roots ->
+            assertFailure
+              ("expected one canvas root, got " ++ show (length roots))
+        case Render.buildRenderPlan (Render.aspectRatio 0 9) of
+          Left diagnostic ->
+            Render.renderDiagnosticMessage diagnostic
+              @?= "aspectRatio requires finite positive values"
+          Right _ -> assertFailure "expected an invalid aspect ratio to fail"
+    , testCase "authored visual alternatives vary across a seeded batch" $ do
+        plan <- expectPlan alternativePlan
+        frameIdentity <- onlyFrameIdentity plan
+        compiled <-
+          Compile.compileRenderBatch
+            "RenderGuardTest.sverlin"
+            "authored alternatives"
+            [1 .. 24]
+            (transientTrace frameIdentity False)
+            plan
+        package <-
+          case compiled of
+            Left problem -> assertFailure (show problem)
+            Right value  -> pure value
+        let selected =
+              [ token
+              | visualization <-
+                  Resource.compilationPackageVisualizations package
+              , variable <- IR.visualizationVariables visualization
+              , IR.CspCategory token <- [IR.cspVariableValue variable]
+              , token `elem` ["left", "right"]
+              ]
+        sort (nub selected) @?= ["left", "right"]
+    , testCase "affine child geometry and final styles survive current lowering" $ do
+        cascade <- expectPlan cascadePlan
+        cascadeFrame <- onlyFrameIdentity cascade
+        visualization <-
+          compileSingleVisualization
+            "affine cascade"
+            (transientTrace cascadeFrame False)
+            cascade
+        case [ element
+             | element <- IR.visualizationElements visualization
+             , length (IR.elementChildren element) == 2
+             ] of
+          [parent] -> do
+            IR.boxBounds (IR.elementBox parent)
+              @?= IR.LayoutRect 200 150 400 300
+            fmap IR.hslHue (IR.visualFill (IR.elementStyle parent)) @?= Just 30
+            let children =
+                  [ child
+                  | childId <- IR.elementChildren parent
+                  , Just child <-
+                      [ find
+                          ((== childId) . IR.elementId)
+                          (IR.visualizationElements visualization)
+                      ]
+                  ]
+            sort (map (IR.layoutRectX . IR.boxBounds . IR.elementBox) children)
+              @?= [270, 430]
+            sort
+              [ IR.hslHue fill
+              | child <- children
+              , Just fill <- [IR.visualFill (IR.elementStyle child)]
+              ]
+              @?= [30, 210]
+          parents ->
+            assertFailure
+              ("expected one generated parent, got " ++ show (length parents))
+        projection <- expectPlan styleProjectionPlan
+        projectionFrame <- onlyFrameIdentity projection
+        projected <-
+          compileSingleVisualization
+            "style projection"
+            (transientTrace projectionFrame False)
+            projection
+        sort
+          [ radius
+          | element <- IR.visualizationElements projected
+          , IR.elementId element /= IR.visualizationRoot projected
+          , Just radius <- [IR.visualRadius (IR.elementStyle element)]
+          ]
+          @?= [12, 12]
     , testCase "within validates an independent sequence for each current owner" $ do
         plan <- expectPlan scopedRankingPlan
         frameIdentity <-
@@ -808,6 +938,118 @@ contextLocalConnectorTrace frameIdentity =
         [Semantic.StepOccurrence (traceMarker frameIdentity) [0] 0 1]
     , Semantic.semanticTraceEvents = []
     }
+
+canvasHugPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+canvasHugPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @CanvasFrame)
+    Render.padding
+      (Render.edges (Render.by 10) (Render.by 20) (Render.by 30) (Render.by 40))
+    _ <-
+      Render.node
+        (do
+           Render.left (Render.at 40)
+           Render.top (Render.at 10)
+           Render.width (Render.by 140)
+           Render.height (Render.by 80)) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+canvasAspectRatioPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+canvasAspectRatioPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @CanvasFrame)
+    Render.contentFit Render.Both Render.Contain
+    Render.height (Render.by 450)
+    Render.aspectRatio 16 9
+
+alternativePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+alternativePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @AlternativeFrame)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    Render.oneOf
+      "layout"
+      (Render.alternative "left" (nodeAt 25))
+      [Render.alternative "right" (nodeAt 75)]
+  where
+    nodeAt horizontal = do
+      _ <-
+        Render.node
+          (do
+             Render.width (Render.by 80)
+             Render.height (Render.by 60)
+             Render.xAt (Render.percent horizontal)
+             Render.yAt (Render.percent 50)) :: Render.Render
+          (Render.Selected Render.GeneratedNode)
+      pure ()
+
+cascadePlan :: Either Render.RenderDiagnostic Render.RenderPlan
+cascadePlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @CascadeFrame)
+    Render.width (Render.by 800)
+    Render.height (Render.by 600)
+    _ <-
+      Render.node
+        (do
+           Render.left (Render.at 200)
+           Render.top (Render.at 150)
+           Render.width (Render.by 400)
+           Render.height (Render.by 300)
+           Render.padding
+             (Render.edges
+                (Render.by 10)
+                (Render.by 20)
+                (Render.by 30)
+                (Render.by 40))
+           Render.style @Render.Fill
+             (Render.Hsl (Render.num 30) (Render.num 0.4) (Render.num 0.7))
+           childAt 30 (pure ())
+           childAt
+             70
+             (Render.style @Render.Fill
+                (Render.Hsl (Render.num 210) (Render.num 0.5) (Render.num 0.6)))) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+  where
+    childAt horizontal childStyle = do
+      _ <-
+        Render.node
+          (do
+             Render.width (Render.by 100)
+             Render.height (Render.by 80)
+             Render.xAt (Render.percent horizontal)
+             Render.yAt (Render.percent 50)
+             childStyle) :: Render.Render (Render.Selected Render.GeneratedNode)
+      pure ()
+
+styleProjectionPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+styleProjectionPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @CascadeFrame)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    source <-
+      Render.node
+        (do
+           Render.width (Render.by 80)
+           Render.height (Render.by 60)
+           Render.xAt (Render.percent 30)
+           Render.yAt (Render.percent 50)
+           Render.style @Render.Radius (Render.by 12))
+    let projectedRadius = Render.styleOf @Render.Radius source
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 80)
+           Render.height (Render.by 60)
+           Render.xAt (Render.percent 70)
+           Render.yAt (Render.percent 50)
+           Render.style @Render.Radius projectedRadius) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
 
 transientTrace :: String -> Bool -> Semantic.SemanticTrace
 transientTrace frameIdentity withMatch =

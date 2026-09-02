@@ -27,11 +27,12 @@
     "lint:haskell": "hlint compile/src compile/app compile/test compile/bench compile/test-support",
     "test:unit": "vitest run --configLoader native",
     "test:postgres": "SVERLIN_RUN_POSTGRES_TESTS=1 node scripts/run-with-test-database.mjs pnpm exec vitest run --no-file-parallelism src/lib/server/*.postgres.integration.test.ts src/lib/server/projects/*.postgres.integration.test.ts",
+    "test:compiler": "stack --stack-yaml compile/stack.yaml test compile:semantic-test compile:sverlin-source-test",
     "test:sverlin-source": "stack --stack-yaml compile/stack.yaml test compile:sverlin-source-test",
     "test:examples": "pnpm run prepare:compiler && SVERLIN_RUN_EXAMPLE_TESTS=1 vitest run src/lib/server/compiler/examples.integration.test.ts --testTimeout=900000",
     "test:e2e": "PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright playwright test",
     "test:solver": "stack --stack-yaml compile/stack.yaml test compile:solver-test",
-    "test": "pnpm run test:unit && pnpm run test:postgres && pnpm run test:examples",
+    "test": "pnpm run test:unit && pnpm run test:compiler && pnpm run test:postgres && pnpm run test:examples",
     "bench:solver": "stack --stack-yaml compile/stack.yaml exec solver-bench --",
     "format": "prettier --write .",
     "format:haskell": "find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 hindent && find compile/app compile/src compile/test compile/bench compile/test-support -name '*.hs' -print0 | xargs -0 stylish-haskell -i"

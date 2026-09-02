@@ -154,7 +154,7 @@ libraries retain only their registered library artifacts.
 | [`compile/src/Sverlin.hs`](compile/src/Sverlin.hs)     | Sole public facade imported by authored `.sverlin` source.                                            |
 | [`compile/src/Sverlin/`](compile/src/Sverlin/)         | Compiler-owned Domain, Program, Render, generated-source host, and linear Prelude support.            |
 | [`compile/src/Solver.hs`](compile/src/Solver.hs)       | Stable solver facade; sibling `Solver/` modules are its private implementation.                       |
-| [`compile/src/LinearTrace/`](compile/src/LinearTrace/) | Internal visualization IR, resource, typography, and retained implementation support.                 |
+| [`compile/src/LinearTrace/`](compile/src/LinearTrace/) | Versioned visualization IR, resources, targets, font catalogue, and HarfBuzz bridge.                  |
 | [`compile/app/`](compile/app/)                         | Executable-only source elaboration, interpretation, compilation, and generated-type tools.            |
 | [`examples/`](examples/)                               | Catalogued `.sverlin` examples and the minimal starting template.                                     |
 
@@ -230,7 +230,8 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `pnpm run test:unit`           | Run the fast TypeScript suite once.                                    |
 | `pnpm run test:postgres`       | Run focused persistence tests in a temporary database.                 |
-| `pnpm run test`                | Run unit, PostgreSQL, and catalogued compiler-example tests.           |
+| `pnpm run test`                | Run unit, compiler, PostgreSQL, and catalogued compiler-example tests. |
+| `pnpm run test:compiler`       | Run the current Haskell semantic and source/elaboration suites.        |
 | `pnpm run test:examples`       | Compile every catalogued example through the production boundary.      |
 | `pnpm run test:e2e`            | Run Playwright against temporary PostgreSQL and the SvelteKit service. |
 | `pnpm run test:sverlin-source` | Run the Haskell source/elaboration tests.                              |
@@ -243,7 +244,7 @@ PostgreSQL database, migrate it, and force-drop only that validated test databas
 afterward. The end-to-end authentication bypass seeds its matching administrator
 row because project ownership remains enforced.
 
-After Haskell changes, run the relevant compile, Haskell tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the Haddock descriptions in the authored [`Sverlin` facade](compile/src/Sverlin.hs) and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md) by hand; cross-cutting guidance lives in [`dsl-interface.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md).
+After Haskell changes, run the relevant compile, compiler tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the Haddock descriptions in the authored [`Sverlin` facade](compile/src/Sverlin.hs) and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md) by hand. The supplemental [`dsl-interface.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md) intentionally contains only a neutral pointer to that generated reference; authoring policy belongs to the assistant configuration.
 
 ## Production deployment
 

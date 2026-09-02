@@ -1,8 +1,10 @@
 /** Prepared compiler discovery and source-fingerprint validation. */
 
-import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { access, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+
+import { compilerInputPaths, fingerprintRepositoryFiles } from '../repository-fingerprints.js';
 
 export const repositoryRoot = process.cwd();
 const preparedCompilerSchemaVersion = 1;
@@ -11,26 +13,6 @@ const preparedCompilerSchemaVersion = 1;
 export function compilerWorkspaceLockPath(root = repositoryRoot) {
   return path.join(root, '.cache', 'sverlin', 'compiler-workspace.lock');
 }
-
-// Keep this aligned with the compile-app component and its library inputs in
-// compile/compile.cabal. Design documents, authoring examples, other executables,
-// and vendored tests/samples do not affect the prepared compiler.
-const fingerprintFiles = [
-  'compile/compile.cabal',
-  'compile/stack.yaml',
-  'compile/stack.yaml.lock',
-  'compile/app/Main.hs',
-  'compile/vendor/MIP-0.2.0.1/MIP.cabal',
-  'compile/vendor/MIP-0.2.0.1/Setup.hs'
-];
-const haskellSourceExtensions = new Set(['.hs', '.lhs', '.hs-boot', '.hsc', '.chs']);
-const fingerprintDirectories = [
-  { path: 'compile/app/Sverlin', extensions: haskellSourceExtensions },
-  { path: 'compile/cbits', extensions: new Set(['.c', '.h']) },
-  { path: 'compile/fonts', extensions: new Set(['.ttf']) },
-  { path: 'compile/src', extensions: haskellSourceExtensions },
-  { path: 'compile/vendor/MIP-0.2.0.1/src', extensions: haskellSourceExtensions }
-];
 
 /** Raised when no direct compiler binary matches the current checkout. */
 export class CompilerNotReadyError extends Error {
@@ -66,20 +48,7 @@ export function preparedCompilerEnvironment(prepared, root = repositoryRoot) {
 
 /** Hash every owned source, configuration, and bundled asset used by the compiler. */
 export async function compilerSourceFingerprint(root = repositoryRoot) {
-  const relativePaths = [...fingerprintFiles];
-  for (const input of fingerprintDirectories) {
-    relativePaths.push(...(await filesBelow(root, input.path, input.extensions)));
-  }
-  relativePaths.sort();
-
-  const hash = createHash('sha256');
-  for (const relativePath of relativePaths) {
-    hash.update(relativePath);
-    hash.update('\0');
-    hash.update(await readFile(path.join(root, relativePath)));
-    hash.update('\0');
-  }
-  return hash.digest('hex');
+  return fingerprintRepositoryFiles(root, await compilerInputPaths(root));
 }
 
 /**
@@ -229,27 +198,6 @@ export function isUnsupportedDirectorySyncError(error) {
     typeof error.code === 'string' &&
     ['EINVAL', 'ENOTSUP', 'EBADF'].includes(error.code)
   );
-}
-
-/**
- * @param {string} root
- * @param {string} relativeDirectory
- * @param {ReadonlySet<string>} extensions
- * @returns {Promise<string[]>}
- */
-async function filesBelow(root, relativeDirectory, extensions) {
-  const directory = path.join(root, relativeDirectory);
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const relativePath = path.join(relativeDirectory, entry.name);
-    if (entry.isDirectory() && entry.name !== '.stack-work') {
-      files.push(...(await filesBelow(root, relativePath, extensions)));
-    } else if (entry.isFile() && extensions.has(path.extname(entry.name))) {
-      files.push(relativePath);
-    }
-  }
-  return files;
 }
 
 /** @param {string} binaryPath */

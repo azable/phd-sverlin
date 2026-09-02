@@ -51,7 +51,6 @@ extra-doc-files:    CHANGELOG.md
 extra-source-files:
     cbits/sverlin_harfbuzz.h
     fonts/README.md
-    test/fixtures/Invalid.sverlin
 
 data-files:
     fonts/**/*.ttf
@@ -88,7 +87,6 @@ library sverlin-internal
                       data-default-class,
                       filepath,
                       scientific,
-                      skylighting-core ==0.14.7,
                       temporary,
                       text
 
@@ -98,15 +96,11 @@ library sverlin-internal
         Sverlin
         Sverlin.Compiler
         Sverlin.Linear
-        LinearTrace.Choreography
-        LinearTrace.Core
         Solver
-        LinearTrace.Visualization.Compile
         LinearTrace.Visualization.IR
         LinearTrace.Visualization.Options
         LinearTrace.Visualization.Resource
         LinearTrace.Visualization.Target
-        LinearTrace.Visualization.Typography
         Sverlin.Internal.Semantic
         Sverlin.Internal.Semantic.Generator
         Sverlin.Internal.Compiler
@@ -118,27 +112,7 @@ library sverlin-internal
         Sverlin.Syntax
 
     other-modules:
-        LinearTrace.Choreography.Constraint
-        LinearTrace.Choreography.Box
-        LinearTrace.Choreography.Graph
-        LinearTrace.Choreography.Layout
-        LinearTrace.Choreography.Match
-        LinearTrace.Choreography.Node
-        LinearTrace.Choreography.Style
-        LinearTrace.Choreography.Variable
-        LinearTrace.Core.Internal
-        LinearTrace.Core.Query
-        LinearTrace.View.Access
-        LinearTrace.View.Box
-        LinearTrace.View.Build
-        LinearTrace.View.Graph
-        LinearTrace.View.Primitives
-        LinearTrace.View.Solve
-        LinearTrace.View.Style
-        LinearTrace.View.StyleProfile
-        LinearTrace.View.Template
         LinearTrace.Visualization.FontCatalog
-        LinearTrace.Visualization.CodeHighlight
         LinearTrace.Visualization.HarfBuzz
         Paths_compile
         Solver.Affine
@@ -239,8 +213,7 @@ test-suite solver-test
 
     build-depends:    base >=4.18.3.0 && <4.23,
                       containers,
-                      compile:sverlin-internal,
-                      linear-base,
+                      compile,
                       tasty,
                       tasty-hunit
 
@@ -248,7 +221,6 @@ test-suite solver-test
                       test-support
 
     other-modules:
-        Choreography.TestFixtures
         Solver.TestFixtures
 
     default-language: GHC2024

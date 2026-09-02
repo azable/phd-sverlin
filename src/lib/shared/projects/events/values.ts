@@ -104,7 +104,7 @@ export const visualSelectionSchema = v.object({
   instances: v.pipe(v.array(naturalSchema), v.minLength(1))
 });
 
-/** Runtime schema identifying the exact DSL implementation used for a compilation. */
+/** Runtime schema identifying the authored DSL contract used for a compilation. */
 export const dslRevisionSchema = v.object({
   contentSha256: sha256Schema,
   repositoryCommit: v.optional(gitCommitSchema),
@@ -151,7 +151,7 @@ export type VisualSelection = ParsedVisualSelection extends infer Selection
     ? Omit<Selection, 'instances'> & { instances: RenderInstanceId[] }
     : never
   : never;
-/** Fingerprint of the DSL implementation used to compile a visualization. */
+/** Fingerprint of the authored DSL contract used to compile a visualization. */
 export type DslRevision = v.InferOutput<typeof dslRevisionSchema>;
 /** Reason a visualization render was requested. */
 export type RenderPurpose = v.InferOutput<typeof renderPurposeSchema>;
