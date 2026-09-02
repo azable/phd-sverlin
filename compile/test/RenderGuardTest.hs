@@ -5,15 +5,15 @@ module RenderGuardTest
   ( tests
   ) where
 
-import           Data.List                          (find, isInfixOf, nub, sort)
-import qualified LinearTrace.Visualization.IR       as IR
-import qualified LinearTrace.Visualization.Resource as Resource
-import qualified Sverlin.Internal.Render            as Render
-import qualified Sverlin.Internal.Render.Compile    as Compile
-import qualified Sverlin.Internal.Semantic          as Semantic
-import           Test.Tasty                         (TestTree, testGroup)
-import           Test.Tasty.HUnit                   (assertBool, assertFailure,
-                                                     testCase, (@?=))
+import           Data.List                       (find, isInfixOf, nub, sort)
+import qualified Sverlin.Internal.Render         as Render
+import qualified Sverlin.Internal.Render.Compile as Compile
+import qualified Sverlin.Internal.Semantic       as Semantic
+import qualified Sverlin.Output.IR               as IR
+import qualified Sverlin.Output.Resource         as Resource
+import           Test.Tasty                      (TestTree, testGroup)
+import           Test.Tasty.HUnit                (assertBool, assertFailure,
+                                                  testCase, (@?=))
 
 data Item
 

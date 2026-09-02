@@ -1,22 +1,21 @@
 -- | Content-addressed resources carried beside solved visualization IR.
-module LinearTrace.Visualization.Resource
+module Sverlin.Output.Resource
   ( ResourceBlob(..)
   , CompilationProvenance(..)
   , CompilationPackage(..)
-  , emptyCompilationPackage
   , resourceBlob
   , deduplicateResourceBlobs
   , sha256Bytes
   ) where
 
-import qualified Crypto.Hash.SHA256           as SHA256
-import qualified Data.ByteString              as BS
-import           Data.Char                    (toLower)
-import           Data.List                    (intercalate)
-import qualified Data.Map.Strict              as Map
-import qualified LinearTrace.Visualization.IR as IR
-import           Numeric                      (showHex)
+import qualified Crypto.Hash.SHA256 as SHA256
+import qualified Data.ByteString    as BS
+import           Data.Char          (toLower)
+import           Data.List          (intercalate)
+import qualified Data.Map.Strict    as Map
+import           Numeric            (showHex)
 import           Prelude
+import qualified Sverlin.Output.IR  as IR
 
 -- | Bytes whose public descriptor is embedded in the visualization IR.
 data ResourceBlob = ResourceBlob
@@ -39,21 +38,6 @@ data CompilationPackage = CompilationPackage
   , compilationPackageResources      :: [ResourceBlob]
   , compilationPackageProvenance     :: CompilationProvenance
   } deriving (Eq, Show)
-
-emptyCompilationPackage :: [IR.Visualization] -> CompilationPackage
-emptyCompilationPackage visualizations =
-  CompilationPackage
-    { compilationPackageVisualizations = visualizations
-    , compilationPackageResources = []
-    , compilationPackageProvenance =
-        CompilationProvenance
-          { compilationProvenancePackageVersion = 1
-          , compilationProvenanceTextRunFormatVersion = 2
-          , compilationProvenanceShapingEngine = "none"
-          , compilationProvenanceShapingEngineVersion = "none"
-          , compilationProvenanceFontCatalogSha256 = Nothing
-          }
-    }
 
 resourceBlob :: IR.ResourceKind -> String -> BS.ByteString -> ResourceBlob
 resourceBlob kind mediaType bytes =

@@ -12,7 +12,10 @@ render planning are separate, the top-level [`Solver`](../src/Solver.hs) module
 remains the solver boundary, and the browser contract stays behind the
 visualization IR. The first three findings below have now been resolved:
 provenance names the authored contract explicitly, current compiler tests run
-routinely, and the test-only legacy pipeline has been removed.
+routinely, and the test-only legacy pipeline has been removed. A follow-up
+namespace review also removed the last `LinearTrace` implementation namespace:
+active output contracts now live under `Sverlin.Output`, while font selection
+and shaping live with the current Render implementation.
 
 At a high level, [`Sverlin.Source`](../app/Sverlin/Source.hs) turns the supplied
 body into a generated Haskell module with one public facade import and a fixed
@@ -32,24 +35,83 @@ That result then follows the active implementation path:
 ```text
 .sverlin body -> Sverlin.Source -> Sverlin.Compiler
               -> semantic trace -> render compilation
-              -> LinearTrace.Visualization.IR -> JSON
+              -> Sverlin.Output.IR -> JSON
 ```
 
 ## Module use
 
-| Category                        | Modules                                                                                                                                                                                                                                                                                                                                                                                  | Status                                                                                                                   |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Current DSL and compiler        | [`Sverlin`](../src/Sverlin.hs), [`Sverlin.Compiler`](../src/Sverlin/Compiler.hs), [`Sverlin.Linear`](../src/Sverlin/Linear.hs), [`Sverlin.Syntax`](../src/Sverlin/Syntax.hs), and [`Sverlin.Internal.*`](../src/Sverlin/Internal/)                                                                                                                                                       | Production path. `Sverlin` and `Sverlin.Linear` are imported dynamically by the generated source wrapper.                |
-| Solver                          | [`Solver`](../src/Solver.hs) and [`Solver.*`](../src/Solver/)                                                                                                                                                                                                                                                                                                                            | Production, tests, and benchmarks.                                                                                       |
-| Shared output implementation    | [`LinearTrace.Visualization.IR`](../src/LinearTrace/Visualization/IR.hs), [`Options`](../src/LinearTrace/Visualization/Options.hs), [`Resource`](../src/LinearTrace/Visualization/Resource.hs), [`Target`](../src/LinearTrace/Visualization/Target.hs), [`FontCatalog`](../src/LinearTrace/Visualization/FontCatalog.hs), and [`HarfBuzz`](../src/LinearTrace/Visualization/HarfBuzz.hs) | Still active; do not remove with the old pipeline.                                                                       |
-| Executable and generation tools | [`Main`](../app/Main.hs), [`Sverlin.Source`](../app/Sverlin/Source.hs), [`Sverlin.Interpreter`](../app/Sverlin/Interpreter.hs), [`GenerateVisualizationTypes`](../app/GenerateVisualizationTypes.hs), and its [TypeScript generator](../app/GenerateVisualizationTypes/TypeScript.hs)                                                                                                    | Active host/tooling path.                                                                                                |
-| Retired pipeline                | `LinearTrace.Choreography*`, `LinearTrace.Core*`, `LinearTrace.View.*`, and `LinearTrace.Visualization.{Compile,Typography,CodeHighlight}`                                                                                                                                                                                                                                               | Removed after relevant characterization coverage was moved to the current semantic, render-guard, and typography suites. |
+| Category                        | Modules                                                                                                                                                                                                                                                                               | Status                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Authored facade                 | [`Sverlin`](../src/Sverlin.hs), [`Sverlin.Compiler`](../src/Sverlin/Compiler.hs), and [`Sverlin.Linear`](../src/Sverlin/Linear.hs)                                                                                                                                                    | Production path. `Sverlin` and `Sverlin.Linear` are imported dynamically by the generated source wrapper.                |
+| Current compiler internals      | [`Sverlin.Syntax`](../src/Sverlin/Syntax.hs), [`Sverlin.Internal.Semantic`](../src/Sverlin/Internal/Semantic.hs), [`Sverlin.Internal.Render`](../src/Sverlin/Internal/Render.hs), and the other [`Sverlin.Internal`](../src/Sverlin/Internal/) modules                                | Active semantic, plan, lowering, materialization, and metrics implementation.                                            |
+| Output contract                 | [`Sverlin.Output.IR`](../src/Sverlin/Output/IR.hs), [`Options`](../src/Sverlin/Output/Options.hs), [`Resource`](../src/Sverlin/Output/Resource.hs), and [`Target`](../src/Sverlin/Output/Target.hs)                                                                                   | Active versioned wire model, resource package, JSON options, and target packaging.                                       |
+| Typography implementation       | [`Font`](../src/Sverlin/Internal/Render/Font.hs), [`FontCatalog`](../src/Sverlin/Internal/Render/Typography/FontCatalog.hs), [`HarfBuzz`](../src/Sverlin/Internal/Render/Typography/HarfBuzz.hs), and [`Typography`](../src/Sverlin/Internal/Render/Typography.hs)                    | Active Render-owned font metadata, validated face bytes, shaping bridge, and whole-line materialization.                 |
+| Solver                          | [`Solver`](../src/Solver.hs) and [`Solver.*`](../src/Solver/)                                                                                                                                                                                                                         | Production, tests, and benchmarks.                                                                                       |
+| Executable and generation tools | [`Main`](../app/Main.hs), [`Sverlin.Source`](../app/Sverlin/Source.hs), [`Sverlin.Interpreter`](../app/Sverlin/Interpreter.hs), [`GenerateVisualizationTypes`](../app/GenerateVisualizationTypes.hs), and its [TypeScript generator](../app/GenerateVisualizationTypes/TypeScript.hs) | Active host/tooling path.                                                                                                |
+| Retired pipeline                | `LinearTrace.Choreography*`, `LinearTrace.Core*`, `LinearTrace.View.*`, and `LinearTrace.Visualization.*`                                                                                                                                                                             | Removed after relevant characterization coverage was moved to the current semantic, render-guard, and typography suites. |
 
 At review time, Cabal and the old solver test suite still compiled the retired
 pipeline even though production did not import it. This made "compiled" a
 weaker signal than "used by production". The orphaned `Invalid.sverlin`
 fixture likewise used the retired API and was only listed as an extra source
 file. The retired modules, fixture, and Cabal entries have now been removed.
+
+### Namespace and internal cleanup
+
+The six files that originally remained under `LinearTrace.Visualization` were
+active, but they did not form one subsystem. Four describe the compiler's
+versioned output package; two implement Render typography. Keeping them beneath
+the retired application's name obscured that ownership. They are now split as:
+
+```text
+Sverlin.Output.{IR,Options,Resource,Target}
+Sverlin.Internal.Render.Typography.{FontCatalog,HarfBuzz}
+```
+
+The output modules remain implementation-facing Cabal modules rather than part
+of the re-exported authored library. Their compatibility declarations are
+intentional: the [generated TypeScript contract](../../src/lib/shared/visualization/generated/visualization-ir.ts),
+[runtime schema](../../src/lib/shared/visualization/schema.ts), and
+[viewport](../../src/lib/client/visualization/VisualizationViewport.svelte)
+still understand older text and diagnostic variants in retained Timeline
+artifacts, even though current Render only produces IR v2 whole-line text.
+Renaming their Haskell modules does not rename Aeson fields or constructors, so
+it is not a wire-format or authored-DSL change.
+
+Font choice metadata previously appeared independently in Render, Theme, and
+the catalog. [`Sverlin.Internal.Render.Font`](../src/Sverlin/Internal/Render/Font.hs)
+now supplies the one ordered family set, its kind partition, and public tokens:
+
+```haskell
+allFontFamilies :: [FontFamily]
+fontFamiliesForKind :: FontKind -> [FontFamily]
+fontFamilyToken :: FontFamily -> String
+```
+
+[`Render`](../src/Sverlin/Internal/Render.hs) re-exports the same `FontKind` and
+`FontFamily` constructors, preserving the authored facade, while
+[`Theme`](../src/Sverlin/Internal/Render/Theme.hs) and
+[`FontCatalog`](../src/Sverlin/Internal/Render/Typography/FontCatalog.hs)
+consume the canonical metadata. Catalog entries now hold a typed `FontFamily`;
+string conversion occurs only at the input and output boundaries. Focused
+catalog tests check exact family coverage, the kind partition and token order,
+token uniqueness, every bundled face digest, and the three supported generic
+aliases.
+
+The cleanup also removed the unused empty-package constructor and the
+write-only request fields from `FontResolution`. Resource deduplication had two
+identical implementations; materialization now uses the single function owned
+by [`Sverlin.Output.Resource`](../src/Sverlin/Output/Resource.hs):
+
+```haskell
+resources = Resource.deduplicateResourceBlobs (concatMap snd materialized)
+```
+
+No compatibility shim remains under `LinearTrace`, and no current Haskell
+source or Cabal component refers to that namespace. A before-and-after compile
+of [`Minimal.sverlin`](../../examples/Minimal.sverlin) produced byte-identical
+primary JSON and manifest files, confirming that the ownership move did not
+alter the output package.
 
 ## Resolution of findings 1–3
 
@@ -182,8 +244,9 @@ Relevant characterization assertions now protect current behavior in
 [`RenderGuardTest`](../test/RenderGuardTest.hs) and
 [`TypographyTest`](../test/TypographyTest.hs); [`solver-test`](../test/SolverTest.hs)
 goes through the public facade. The retired modules and
-[`compile.cabal`](../compile.cabal) entries were removed while retaining the six
-shared output modules listed above.
+[`compile.cabal`](../compile.cabal) entries were removed. The later namespace
+cleanup classified the remaining active files as the output contract or Render
+typography, as listed above.
 
 ### 4. Split the render implementation at validated phase boundaries
 

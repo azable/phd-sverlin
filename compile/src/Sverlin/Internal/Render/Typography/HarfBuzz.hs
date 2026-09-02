@@ -5,7 +5,7 @@
 -- The C shim owns structure layout and copies font bytes into an immutable
 -- HarfBuzz blob. Keeping this boundary narrow avoids exposing a general FFI as
 -- Sverlin API and makes the values serialized into text-run resources explicit.
-module LinearTrace.Visualization.HarfBuzz
+module Sverlin.Internal.Render.Typography.HarfBuzz
   ( ShapeOptions(..)
   , defaultShapeOptions
   , ShapedGlyph(..)

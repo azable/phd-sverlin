@@ -2136,7 +2136,7 @@ node label $ style @TextAlign alignment
 ensure $ styleOf @TextAlign label .==. alignment
 ```
 
-The current materializer in [Typography.hs](Visualization/Typography.hs) treats
+The current materializer in [Typography.hs](../src/Sverlin/Internal/Render/Typography.hs) treats
 every value other than left or right as centre, so `TextAlignJustify` is not
 currently distinct. Its meaning without automatic wrapping remains an open
 decision below. It must not remain as a separately weighted alias for centre,
@@ -2574,10 +2574,12 @@ returned by one `fontChoice` call across several lines makes the family assignme
 without sharing a sampled layout; each line still has its own geometry and shaping
 constants. The catalog must not infer kind from a family name, and all selectable faces
 exposed as one family must have a consistent kind. The current `FontFaceSpec` in
-[FontCatalog.hs](Visualization/FontCatalog.hs) has no such classification, so this target
-requires new catalog metadata rather than filtering the existing `FontFamily` constructor
-names. Resolve generic family aliases before deduplicating and weighting candidates; an
-alias and its concrete target must not give one font twice the sampling probability.
+[Font.hs](../src/Sverlin/Internal/Render/Font.hs) now owns this classification,
+and [FontCatalog.hs](../src/Sverlin/Internal/Render/Typography/FontCatalog.hs)
+uses those typed families rather than inferring kind from constructor names.
+Resolve generic family aliases before deduplicating and weighting candidates;
+an alias and its concrete target must not give one font twice the sampling
+probability.
 
 Font feasibility for `fitText` must be tested with the shaped text constraints before
 selecting a branch. The compiler must not choose a font without considering its text,
@@ -2598,7 +2600,7 @@ variables, alignment constraints, and vertical gap variables, all without leavin
 convex affine region.
 
 The existing typography implementation already emits affine inequalities of this shape
-in [Typography.hs](Visualization/Typography.hs). Its current two-pass flow nevertheless
+in [Typography.hs](../src/Sverlin/Internal/Render/Typography.hs). Its current two-pass flow nevertheless
 selects a fitted size, replaces it with a numeric literal, and pins the initially sampled
 width, height, padding, and stroke before the final solve. The target flow must remove
 those pins: shaping supplies constants and constraints, while the final sampler jointly

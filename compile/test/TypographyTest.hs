@@ -5,20 +5,26 @@ module TypographyTest
   ( tests
   ) where
 
-import           Control.Monad                      (unless, when)
-import qualified Data.ByteString                    as BS
-import           Data.List                          (isInfixOf, nub, sort)
-import           Data.Maybe                         (isJust)
-import qualified Data.Set                           as Set
-import qualified LinearTrace.Visualization.IR       as IR
-import qualified LinearTrace.Visualization.Resource as Resource
-import qualified Sverlin.Internal.Render            as Render
-import qualified Sverlin.Internal.Render.Compile    as Compile
-import qualified Sverlin.Internal.Render.Typography as Typography
-import qualified Sverlin.Internal.Semantic          as Semantic
-import           Test.Tasty                         (TestTree, testGroup)
-import           Test.Tasty.HUnit                   (assertBool, assertFailure,
-                                                     testCase, (@?=))
+import           Control.Monad                                  (unless, void,
+                                                                 when)
+import qualified Data.ByteString                                as BS
+import           Data.List                                      (isInfixOf, nub,
+                                                                 sort)
+import           Data.Maybe                                     (isJust)
+import qualified Data.Set                                       as Set
+import qualified Sverlin.Internal.Render                        as Render
+import qualified Sverlin.Internal.Render.Compile                as Compile
+import qualified Sverlin.Internal.Render.Typography             as Typography
+import qualified Sverlin.Internal.Render.Typography.FontCatalog as FontCatalog
+import qualified Sverlin.Internal.Semantic                      as Semantic
+import qualified Sverlin.Output.IR                              as IR
+import qualified Sverlin.Output.Resource                        as Resource
+import           Test.Tasty                                     (TestTree,
+                                                                 testGroup)
+import           Test.Tasty.HUnit                               (assertBool,
+                                                                 assertFailure,
+                                                                 testCase,
+                                                                 (@?=))
 
 data Visible
 
@@ -44,7 +50,32 @@ tests :: TestTree
 tests =
   testGroup
     "Render typography"
-    [ testCase "shapes one line and maps a fragment through a ligature cluster" $ do
+    [ testCase
+        "the bundled catalog covers every canonical family and valid face" $ do
+        validation <- FontCatalog.validateBundledFontCatalog
+        validation @?= Right ()
+    , testCase "font filters partition the canonical family order" $ do
+        proportional <- fontChoiceTokens Render.Proportional
+        monospace <- fontChoiceTokens Render.Monospace
+        proportional
+          @?= [ "Inter"
+              , "Source Sans 3"
+              , "Atkinson Hyperlegible Next"
+              , "Space Grotesk"
+              , "Source Serif 4"
+              , "Literata"
+              ]
+        monospace @?= ["JetBrains Mono NL", "IBM Plex Mono"]
+    , testCase "generic font aliases resolve to canonical bundled families" $ do
+        families <-
+          traverse
+            resolvedFamily
+            [ ("system-ui", "Source Sans 3")
+            , ("monospace", "JetBrains Mono NL")
+            , ("serif", "Source Serif 4")
+            ]
+        families @?= ["Source Sans 3", "JetBrains Mono NL", "Source Serif 4"]
+    , testCase "shapes one line and maps a fragment through a ligature cluster" $ do
         preparedResult <-
           Typography.prepareLine
             "Source Serif 4"
@@ -474,6 +505,34 @@ tests =
             assertFailure
               "expected overlapping endpoint mappings to be rejected"
     ]
+
+resolvedFamily :: (String, String) -> IO String
+resolvedFamily (alias, expected) = do
+  resolution <-
+    FontCatalog.resolveFont FontCatalog.bundledFontCatalog alias 400 "normal"
+  case resolution of
+    Left problem ->
+      assertFailure
+        ("expected alias "
+           ++ show alias
+           ++ " to resolve to "
+           ++ show expected
+           ++ ", but received: "
+           ++ problem)
+    Right value ->
+      pure (FontCatalog.fontFaceFamily (FontCatalog.fontResolutionFace value))
+
+fontChoiceTokens :: Render.FontKind -> IO [String]
+fontChoiceTokens kind = do
+  plan <-
+    expectPlan
+      (Render.buildRenderPlan (void (Render.fontChoice (Render.fontKind kind))))
+  case Render.planChoices plan of
+    [declaration] -> pure (Render.choiceDeclarationTokens declaration)
+    declarations ->
+      assertFailure
+        ("expected one font choice declaration, got "
+           ++ show (length declarations))
 
 guardedFontPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 guardedFontPlan =

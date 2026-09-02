@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Shared JSON naming and sum-encoding options for the visualization IR.
-module LinearTrace.Visualization.Options
+module Sverlin.Output.Options
   ( irJsonOptions
   , jsonConstructorName
   , jsonFieldName

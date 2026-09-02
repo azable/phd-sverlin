@@ -8,19 +8,17 @@ module Sverlin.Internal.Compiler
   , compileProgramBatch
   ) where
 
-import           Control.Exception                  (ErrorCall,
-                                                     displayException, evaluate,
-                                                     try)
-import qualified LinearTrace.Visualization.Resource as Resource
-import qualified Sverlin.Internal.Metrics           as Metrics
-import           Sverlin.Internal.Render            (Render,
-                                                     RenderDiagnostic (..),
-                                                     RenderPlan (..),
-                                                     buildRenderPlan)
-import qualified Sverlin.Internal.Render.Compile    as Render
-import           Sverlin.Internal.Semantic          (Domain, Program,
-                                                     SemanticTrace (..),
-                                                     runSemanticScenario)
+import           Control.Exception               (ErrorCall, displayException,
+                                                  evaluate, try)
+import qualified Sverlin.Internal.Metrics        as Metrics
+import           Sverlin.Internal.Render         (Render, RenderDiagnostic (..),
+                                                  RenderPlan (..),
+                                                  buildRenderPlan)
+import qualified Sverlin.Internal.Render.Compile as Render
+import           Sverlin.Internal.Semantic       (Domain, Program,
+                                                  SemanticTrace (..),
+                                                  runSemanticScenario)
+import qualified Sverlin.Output.Resource         as Resource
 
 data SverlinProgram where
   SverlinProgram

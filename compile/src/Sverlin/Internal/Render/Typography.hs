@@ -16,21 +16,21 @@ module Sverlin.Internal.Render.Typography
   , typographyCompilationProvenance
   ) where
 
-import qualified Data.Binary.Put                       as Binary
-import qualified Data.ByteString                       as BS
-import qualified Data.ByteString.Lazy                  as BL
-import           Data.Int                              (Int32)
-import           Data.List                             (nub, sort)
-import qualified Data.Map.Strict                       as Map
-import           Data.Set                              (Set)
-import qualified Data.Set                              as Set
-import qualified Data.Text                             as Text
-import qualified Data.Text.Encoding                    as Text
-import qualified LinearTrace.Visualization.FontCatalog as Font
-import qualified LinearTrace.Visualization.HarfBuzz    as HB
-import qualified LinearTrace.Visualization.IR          as IR
-import qualified LinearTrace.Visualization.Resource    as Resource
+import qualified Data.Binary.Put                                as Binary
+import qualified Data.ByteString                                as BS
+import qualified Data.ByteString.Lazy                           as BL
+import           Data.Int                                       (Int32)
+import           Data.List                                      (nub, sort)
+import qualified Data.Map.Strict                                as Map
+import           Data.Set                                       (Set)
+import qualified Data.Set                                       as Set
+import qualified Data.Text                                      as Text
+import qualified Data.Text.Encoding                             as Text
 import           Prelude
+import qualified Sverlin.Internal.Render.Typography.FontCatalog as Font
+import qualified Sverlin.Internal.Render.Typography.HarfBuzz    as HB
+import qualified Sverlin.Output.IR                              as IR
+import qualified Sverlin.Output.Resource                        as Resource
 
 data FragmentRange = FragmentRange
   { fragmentSourceRange :: IR.TextSourceRange

@@ -97,10 +97,10 @@ library sverlin-internal
         Sverlin.Compiler
         Sverlin.Linear
         Solver
-        LinearTrace.Visualization.IR
-        LinearTrace.Visualization.Options
-        LinearTrace.Visualization.Resource
-        LinearTrace.Visualization.Target
+        Sverlin.Output.IR
+        Sverlin.Output.Options
+        Sverlin.Output.Resource
+        Sverlin.Output.Target
         Sverlin.Internal.Semantic
         Sverlin.Internal.Semantic.Generator
         Sverlin.Internal.Compiler
@@ -109,11 +109,10 @@ library sverlin-internal
         Sverlin.Internal.Render.Compile
         Sverlin.Internal.Render.Theme
         Sverlin.Internal.Render.Typography
+        Sverlin.Internal.Render.Typography.FontCatalog
         Sverlin.Syntax
 
     other-modules:
-        LinearTrace.Visualization.FontCatalog
-        LinearTrace.Visualization.HarfBuzz
         Paths_compile
         Solver.Affine
         Solver.Choice
@@ -125,6 +124,8 @@ library sverlin-internal
         Solver.Problem
         Solver.Random
         Solver.Sample
+        Sverlin.Internal.Render.Font
+        Sverlin.Internal.Render.Typography.HarfBuzz
     hs-source-dirs:   src
 
     c-sources:        cbits/sverlin_harfbuzz.c

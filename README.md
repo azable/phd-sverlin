@@ -145,18 +145,18 @@ libraries retain only their registered library artifacts.
 
 ## Project layout
 
-| Path                                                   | Responsibility                                                                                        |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| [`src/lib/shared/`](src/lib/shared/)                   | Environment-neutral event schemas, projections, project contracts, and generated visualization types. |
-| [`src/lib/client/`](src/lib/client/)                   | Svelte UI, project sessions, Timeline presentation, and visualization playback.                       |
-| [`src/lib/server/`](src/lib/server/)                   | Better Auth, authorization, PostgreSQL persistence, operations, AI providers, and compiler execution. |
-| [`src/routes/`](src/routes/)                           | SvelteKit pages and authenticated APIs.                                                               |
-| [`compile/src/Sverlin.hs`](compile/src/Sverlin.hs)     | Sole public facade imported by authored `.sverlin` source.                                            |
-| [`compile/src/Sverlin/`](compile/src/Sverlin/)         | Compiler-owned Domain, Program, Render, generated-source host, and linear Prelude support.            |
-| [`compile/src/Solver.hs`](compile/src/Solver.hs)       | Stable solver facade; sibling `Solver/` modules are its private implementation.                       |
-| [`compile/src/LinearTrace/`](compile/src/LinearTrace/) | Versioned visualization IR, resources, targets, font catalogue, and HarfBuzz bridge.                  |
-| [`compile/app/`](compile/app/)                         | Executable-only source elaboration, interpretation, compilation, and generated-type tools.            |
-| [`examples/`](examples/)                               | Catalogued `.sverlin` examples and the minimal starting template.                                     |
+| Path                                                         | Responsibility                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| [`src/lib/shared/`](src/lib/shared/)                         | Environment-neutral event schemas, projections, project contracts, and generated visualization types.                    |
+| [`src/lib/client/`](src/lib/client/)                         | Svelte UI, project sessions, Timeline presentation, and visualization playback.                                          |
+| [`src/lib/server/`](src/lib/server/)                         | Better Auth, authorization, PostgreSQL persistence, operations, AI providers, and compiler execution.                    |
+| [`src/routes/`](src/routes/)                                 | SvelteKit pages and authenticated APIs.                                                                                  |
+| [`compile/src/Sverlin.hs`](compile/src/Sverlin.hs)           | Sole public facade imported by authored `.sverlin` source.                                                               |
+| [`compile/src/Sverlin/`](compile/src/Sverlin/)               | Compiler-owned Domain, Program, Render, typography, output contracts, generated-source host, and linear Prelude support. |
+| [`compile/src/Sverlin/Output/`](compile/src/Sverlin/Output/) | Versioned visualization IR, content-addressed resources, and output-target packaging.                                    |
+| [`compile/src/Solver.hs`](compile/src/Solver.hs)             | Stable solver facade; sibling `Solver/` modules are its private implementation.                                          |
+| [`compile/app/`](compile/app/)                               | Executable-only source elaboration, interpretation, compilation, and generated-type tools.                               |
+| [`examples/`](examples/)                                     | Catalogued `.sverlin` examples and the minimal starting template.                                                        |
 
 The TypeScript boundaries are one-way: `shared` may be used everywhere, `client` owns browser-only behavior, and `server` owns secrets and persistence. ESLint enforces this separation. Study protocols are registered by ID and version in [`src/lib/shared/study/registry.ts`](src/lib/shared/study/registry.ts); the active protocol in [`src/lib/shared/study/main-v1.ts`](src/lib/shared/study/main-v1.ts) centrally defines timing, counterbalance order, renderer, and workspace layout.
 

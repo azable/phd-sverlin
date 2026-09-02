@@ -208,17 +208,21 @@ module Sverlin.Internal.Render
   , InsetsKind(..)
   ) where
 
-import           Control.Monad              (when)
-import           Control.Monad.State.Strict (MonadState, StateT (..),
-                                             evalStateT, gets, modify')
-import           Data.Kind                  (Constraint, Type)
-import           Data.Maybe                 (isJust)
-import           Data.Proxy                 (Proxy (..))
-import           Data.String                (IsString (..))
-import           Data.Typeable              (Typeable, typeRep)
-import           GHC.Exts                   (Multiplicity (Many))
-import           Prelude                    hiding (fail)
-import qualified Sverlin.Syntax             as Syntax
+import           Control.Monad                (when)
+import           Control.Monad.State.Strict   (MonadState, StateT (..),
+                                               evalStateT, gets, modify')
+import           Data.Kind                    (Constraint, Type)
+import           Data.Maybe                   (isJust)
+import           Data.Proxy                   (Proxy (..))
+import           Data.String                  (IsString (..))
+import           Data.Typeable                (Typeable, typeRep)
+import           GHC.Exts                     (Multiplicity (Many))
+import           Prelude                      hiding (fail)
+import           Sverlin.Internal.Render.Font (FontFamily (..), FontKind (..),
+                                               allFontFamilies,
+                                               fontFamiliesForKind,
+                                               fontFamilyToken)
+import qualified Sverlin.Syntax               as Syntax
 
 --------------------------------------------------------------------------------
 -- Builder state and stable references
@@ -2071,28 +2075,12 @@ data BorderStyle
   | BorderDotted
   deriving stock (Eq, Show)
 
-data FontKind
-  = Monospace
-  | Proportional
-  deriving stock (Eq, Show)
-
 newtype FontFilter =
   FontFilter FontKind
   deriving stock (Eq, Show)
 
 fontKind :: FontKind -> FontFilter
 fontKind = FontFilter
-
-data FontFamily
-  = FontInter
-  | FontSourceSans3
-  | FontAtkinsonHyperlegibleNext
-  | FontSpaceGrotesk
-  | FontSourceSerif4
-  | FontLiterata
-  | FontJetBrainsMonoNL
-  | FontIBMPlexMono
-  deriving stock (Eq, Show)
 
 data FontWeight
   = FontWeightNormal
@@ -2138,30 +2126,8 @@ instance ChoiceDomain TextAlign where
 fontChoice :: FontFilter -> Render (Choice FontFamily)
 fontChoice (FontFilter kind) = declareChoice "font-family" values
   where
-    families =
-      case kind of
-        Monospace -> [FontJetBrainsMonoNL, FontIBMPlexMono]
-        Proportional ->
-          [ FontInter
-          , FontSourceSans3
-          , FontAtkinsonHyperlegibleNext
-          , FontSpaceGrotesk
-          , FontSourceSerif4
-          , FontLiterata
-          ]
+    families = fontFamiliesForKind kind
     values = [(family, fontFamilyToken family) | family <- families]
-
-fontFamilyToken :: FontFamily -> String
-fontFamilyToken family =
-  case family of
-    FontInter                    -> "Inter"
-    FontSourceSans3              -> "Source Sans 3"
-    FontAtkinsonHyperlegibleNext -> "Atkinson Hyperlegible Next"
-    FontSpaceGrotesk             -> "Space Grotesk"
-    FontSourceSerif4             -> "Source Serif 4"
-    FontLiterata                 -> "Literata"
-    FontJetBrainsMonoNL          -> "JetBrains Mono NL"
-    FontIBMPlexMono              -> "IBM Plex Mono"
 
 data StyleAssignment
   = NumericStyle NumericExpr
@@ -2398,18 +2364,7 @@ instance StyleFieldRead FontFamily where
   styleReadValue reference =
     Choice
       (StyleChoice reference FontFamilyField)
-      [(family, fontFamilyToken family) | family <- allFonts]
-    where
-      allFonts =
-        [ FontInter
-        , FontSourceSans3
-        , FontAtkinsonHyperlegibleNext
-        , FontSpaceGrotesk
-        , FontSourceSerif4
-        , FontLiterata
-        , FontJetBrainsMonoNL
-        , FontIBMPlexMono
-        ]
+      [(family, fontFamilyToken family) | family <- allFontFamilies]
 
 instance StyleFieldRead FontWeight where
   type StyleReadResult FontWeight = Choice FontWeight

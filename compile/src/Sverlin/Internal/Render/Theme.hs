@@ -13,12 +13,13 @@ module Sverlin.Internal.Render.Theme
   , leafProfileToken
   ) where
 
-import           Data.Char                          (digitToInt)
-import qualified Data.Text                          as Text
-import qualified Data.Text.Encoding                 as Text
-import qualified LinearTrace.Visualization.IR       as IR
-import qualified LinearTrace.Visualization.Resource as Resource
+import           Data.Char                    (digitToInt)
+import qualified Data.Text                    as Text
+import qualified Data.Text.Encoding           as Text
 import           Prelude
+import qualified Sverlin.Internal.Render.Font as Font
+import qualified Sverlin.Output.IR            as IR
+import qualified Sverlin.Output.Resource      as Resource
 
 data LeafProfile
   = LeafTransparent
@@ -37,16 +38,7 @@ automaticFontWeightChoice = "render.theme.typography.font-weight"
 -- Keep this list to unique concrete catalog families.  Generic aliases would
 -- otherwise give the same bundled face more than one chance of being chosen.
 automaticFontFamilies :: [String]
-automaticFontFamilies =
-  [ "Inter"
-  , "Source Sans 3"
-  , "Atkinson Hyperlegible Next"
-  , "Space Grotesk"
-  , "Source Serif 4"
-  , "Literata"
-  , "JetBrains Mono NL"
-  , "IBM Plex Mono"
-  ]
+automaticFontFamilies = map Font.fontFamilyToken Font.allFontFamilies
 
 automaticFontWeights :: [String]
 automaticFontWeights = ["400", "500", "600"]

@@ -3,14 +3,13 @@ module GenerateVisualizationTypes.TypeScript
   ) where
 
 import           Control.Monad
-import           Data.List                         (intercalate, isInfixOf)
-import           Data.Set                          (Set)
-import qualified Data.Set                          as Set
+import           Data.List                  (intercalate, isInfixOf)
+import           Data.Set                   (Set)
+import qualified Data.Set                   as Set
 import           Language.Haskell.TH
-import           Language.Haskell.TH.Syntax        (lift)
-import           LinearTrace.Visualization.Options (jsonConstructorName,
-                                                    jsonFieldName)
+import           Language.Haskell.TH.Syntax (lift)
 import           Prelude
+import           Sverlin.Output.Options     (jsonConstructorName, jsonFieldName)
 
 generateDeclarations :: Name -> Q Exp
 generateDeclarations root = do

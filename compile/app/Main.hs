@@ -1,32 +1,31 @@
 module Main where
 
-import           Control.Exception                  (IOException, evaluate, try)
-import           Control.Monad                      (unless, when)
-import qualified Data.ByteString                    as BS
-import qualified Data.ByteString.Lazy               as BL
-import qualified Data.Map.Strict                    as Map
-import           Data.Maybe                         (fromMaybe)
-import           Data.Word                          (Word64)
-import           GHC.Clock                          (getMonotonicTimeNSec)
-import           Language.Haskell.Interpreter       (GhcError (..),
-                                                     InterpreterError (..))
-import qualified LinearTrace.Visualization.IR       as IR
-import qualified LinearTrace.Visualization.Resource as Resource
-import qualified LinearTrace.Visualization.Target   as Target
-import           Numeric                            (showFFloat)
+import           Control.Exception            (IOException, evaluate, try)
+import           Control.Monad                (unless, when)
+import qualified Data.ByteString              as BS
+import qualified Data.ByteString.Lazy         as BL
+import qualified Data.Map.Strict              as Map
+import           Data.Maybe                   (fromMaybe)
+import           Data.Word                    (Word64)
+import           GHC.Clock                    (getMonotonicTimeNSec)
+import           Language.Haskell.Interpreter (GhcError (..),
+                                               InterpreterError (..))
+import           Numeric                      (showFFloat)
 import           Options.Applicative
-import qualified Sverlin.Internal.Compiler          as Compiler
-import qualified Sverlin.Internal.Metrics           as Metrics
-import           Sverlin.Interpreter                (withVisualization)
-import           Sverlin.Source                     (GeneratedSource (..),
-                                                     SourceUnit (..),
-                                                     elaborateSource)
-import           System.Directory                   (createDirectoryIfMissing)
-import           System.Exit                        (exitFailure)
-import           System.FilePath                    (takeDirectory, (</>))
-import           System.IO                          (Handle, hPutStrLn, stderr,
-                                                     stdout)
-import           System.Random                      (randomRIO)
+import qualified Sverlin.Internal.Compiler    as Compiler
+import qualified Sverlin.Internal.Metrics     as Metrics
+import           Sverlin.Interpreter          (withVisualization)
+import qualified Sverlin.Output.IR            as IR
+import qualified Sverlin.Output.Resource      as Resource
+import qualified Sverlin.Output.Target        as Target
+import           Sverlin.Source               (GeneratedSource (..),
+                                               SourceUnit (..), elaborateSource)
+import           System.Directory             (createDirectoryIfMissing)
+import           System.Exit                  (exitFailure)
+import           System.FilePath              (takeDirectory, (</>))
+import           System.IO                    (Handle, hPutStrLn, stderr,
+                                               stdout)
+import           System.Random                (randomRIO)
 
 data Options = Options
   { optionSourcePath  :: FilePath

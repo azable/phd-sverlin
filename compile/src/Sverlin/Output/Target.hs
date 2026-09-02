@@ -5,7 +5,7 @@
 -- Targets are pure transformations. Filesystem/process execution belongs to
 -- the compile executable so future LaTeX/PDF targets can share this contract
 -- without acquiring hidden randomness or ambient resource lookup.
-module LinearTrace.Visualization.Target
+module Sverlin.Output.Target
   ( OutputTarget(..)
   , TargetRequest(..)
   , defaultTargetRequest
@@ -20,14 +20,14 @@ module LinearTrace.Visualization.Target
   , targetManifestFor
   ) where
 
-import           Data.Aeson                         (Value, object, (.=))
-import           Data.Aeson.Encode.Pretty           (encodePretty)
-import qualified Data.ByteString                    as BS
-import qualified Data.ByteString.Lazy               as BL
-import qualified LinearTrace.Visualization.IR       as IR
-import qualified LinearTrace.Visualization.Resource as Resource
+import           Data.Aeson               (Value, object, (.=))
+import           Data.Aeson.Encode.Pretty (encodePretty)
+import qualified Data.ByteString          as BS
+import qualified Data.ByteString.Lazy     as BL
 import           Prelude
-import           System.FilePath                    (takeFileName, (</>))
+import qualified Sverlin.Output.IR        as IR
+import qualified Sverlin.Output.Resource  as Resource
+import           System.FilePath          (takeFileName, (</>))
 
 data OutputTarget =
   IrJson

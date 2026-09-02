@@ -8,7 +8,7 @@
 -- choices have concrete values, while variable references retain the link to
 -- the CSP that produced each value. Renderers consume this model; they do not
 -- solve it or make seeded choices of their own.
-module LinearTrace.Visualization.IR
+module Sverlin.Output.IR
   ( VisualId(..)
   , RenderInstanceId(..)
   , ConnectorId(..)
@@ -61,9 +61,9 @@ module LinearTrace.Visualization.IR
   ) where
 
 import           Data.Aeson.TH
-import           GHC.Generics                      (Generic)
-import           LinearTrace.Visualization.Options (irJsonOptions)
+import           GHC.Generics           (Generic)
 import           Prelude
+import           Sverlin.Output.Options (irJsonOptions)
 
 newtype VisualId =
   VisualId Int
@@ -330,8 +330,6 @@ data VisualStyle = VisualStyle
   , visualWhiteSpace  :: Maybe String
   } deriving (Eq, Show, Generic)
 
--- TODO check if there is some unnecessary redundancy here -- if a new
--- style attribute is added, does this have to be updated too?
 -- | Sparse traceback from a concrete style field to the CSP variables that
 -- contributed to it. Literal-only fields do not need an entry.
 data StyleVariableBinding = StyleVariableBinding

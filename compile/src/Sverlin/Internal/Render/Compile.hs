@@ -28,8 +28,6 @@ import           Data.Set                           (Set)
 import qualified Data.Set                           as Set
 import qualified Data.Text                          as Text
 import qualified Data.Text.Encoding                 as Text
-import qualified LinearTrace.Visualization.IR       as IR
-import qualified LinearTrace.Visualization.Resource as Resource
 import           Prelude
 import qualified Solver                             as S
 import qualified Sverlin.Internal.Metrics           as Metrics
@@ -37,6 +35,8 @@ import qualified Sverlin.Internal.Render            as R
 import qualified Sverlin.Internal.Render.Theme      as Theme
 import qualified Sverlin.Internal.Render.Typography as Typography
 import qualified Sverlin.Internal.Semantic          as Sem
+import qualified Sverlin.Output.IR                  as IR
+import qualified Sverlin.Output.Resource            as Resource
 import           Text.Read                          (readMaybe)
 
 --------------------------------------------------------------------------------
@@ -118,7 +118,8 @@ compileRenderBatchWithMetrics recorder sourcePath sourceContent viewSeeds trace 
                 Right materialized -> do
                   let visualizations = map fst materialized
                       resources =
-                        deduplicateResources (concatMap snd materialized)
+                        Resource.deduplicateResourceBlobs
+                          (concatMap snd materialized)
                       viewMetrics =
                         zipWith3
                           compileViewMetrics
@@ -4050,7 +4051,7 @@ materializeVisualization sourcePath key trace prepared solution = do
           | (_, Just (identifier, text'), _) <- materializedNodes
           ]
       resources =
-        deduplicateResources
+        Resource.deduplicateResourceBlobs
           [ resource
           | (_, _, nodeResources) <- materializedNodes
           , resource <- nodeResources
@@ -5248,13 +5249,6 @@ compileAutomaticStyleVariables plan expanded solution activeNodes =
             IR.CspVariableId ("render.theme." ++ family ++ ".leaf.profile")
         , IR.cspVariableValue = IR.CspCategory (Theme.leafProfileToken profile)
         }
-
-deduplicateResources :: [Resource.ResourceBlob] -> [Resource.ResourceBlob]
-deduplicateResources = Map.elems . Map.fromList . map keyed
-  where
-    keyed resource =
-      ( IR.resourceDescriptorId (Resource.resourceBlobDescriptor resource)
-      , resource)
 
 -- Frame omission is deliberately sampled per runtime occurrence, outside the
 -- affine branch count.  Recording each result as a categorical variable makes
