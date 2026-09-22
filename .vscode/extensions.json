@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "svelte.svelte-vscode",
+    "esbenp.prettier-vscode",
+    "haskell.haskell",
+    "0xCD.stylish-hindent"
+  ]
+}

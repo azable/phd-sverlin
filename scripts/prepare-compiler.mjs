@@ -19,7 +19,7 @@ if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_LOCK_HELD !== '
   await mkdir(path.dirname(lockPath), { recursive: true });
   const locked = await run(
     'flock',
-    ['--exclusive', '--no-fork', lockPath, process.execPath, fileURLToPath(import.meta.url)],
+    ['--exclusive', lockPath, process.execPath, fileURLToPath(import.meta.url)],
     {
       captureStdout: false,
       cwd: process.cwd(),

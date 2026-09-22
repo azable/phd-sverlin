@@ -4,7 +4,6 @@
  * @packageDocumentation
  */
 
-import { e2eChatAdapter, e2eChatAdapterEnabled } from '$lib/server/chat-adapters/e2e';
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 import { assistantMode, type AssistantId } from '$lib/shared/assistants';
 import type { ParticipantIntakeStepId } from '$lib/shared/projects/events';
@@ -74,20 +73,19 @@ export function createChatbot<Project, Output extends object>(
   } satisfies Chatbot<Project, Output>;
 }
 
-const configuredAdapter = e2eChatAdapterEnabled() ? e2eChatAdapter : openAIAdapter;
-const sverlinChatbot = createChatbot(sverlinAssistantBot, configuredAdapter);
+const sverlinChatbot = createChatbot(sverlinAssistantBot, openAIAdapter);
 const configuredChatbots: Partial<Record<AssistantId, Chatbot<AiProjectContext>>> = {
   [sverlinAssistantBot.id]: sverlinChatbot
 };
 
 const htmlChatbot: Chatbot<AiProjectContext, HtmlAssistantOutput> = createChatbot(
   htmlAssistantBot,
-  configuredAdapter
+  openAIAdapter
 );
 const intakeClassifier: Chatbot<
   Record<string, never>,
   ParticipantIntakeClassifierOutput
-> = createChatbot(participantIntakeClassifier, configuredAdapter);
+> = createChatbot(participantIntakeClassifier, openAIAdapter);
 
 /** Return the Sverlin-source assistant recorded by a project. */
 export function getChatbot(assistantId: AssistantId): Chatbot<AiProjectContext> {

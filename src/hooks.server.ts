@@ -37,17 +37,10 @@ export const handle: Handle = async ({ event, resolve }) => {
     return resolve(event);
   }
 
-  const testPrincipal = developmentTestPrincipal();
-  if (testPrincipal) {
-    event.locals.session = testPrincipal.session;
-    event.locals.user = testPrincipal.user;
-    event.locals.principal = testPrincipal;
-  } else {
-    const session = await auth.api.getSession({ headers: event.request.headers });
-    event.locals.session = session?.session ?? null;
-    event.locals.user = session?.user ?? null;
-    event.locals.principal = await resolvePrincipal(session);
-  }
+  const session = await auth.api.getSession({ headers: event.request.headers });
+  event.locals.session = session?.session ?? null;
+  event.locals.user = session?.user ?? null;
+  event.locals.principal = await resolvePrincipal(session);
 
   if (!event.locals.principal && !isPublicPath(event.url.pathname)) {
     if (event.url.pathname.startsWith('/api/')) {
@@ -63,46 +56,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     redirect(303, `/login?next=${encodeURIComponent(next)}`);
   }
 
-  return testPrincipal ? resolve(event) : svelteKitHandler({ event, resolve, auth, building });
+  return svelteKitHandler({ event, resolve, auth, building });
 };
 
 function isPublicPath(pathname: string) {
   return (
     publicPaths.has(pathname) || pathname.startsWith('/_app/') || pathname.startsWith('/api/auth/')
   );
-}
-
-/** Explicit non-production seam for project-focused browser tests. */
-function developmentTestPrincipal() {
-  if (process.env.NODE_ENV === 'production' || process.env.SVERLIN_E2E_AUTH_BYPASS !== 'true') {
-    return null;
-  }
-  const now = new Date();
-  return {
-    kind: 'admin' as const,
-    user: {
-      id: 'sverlin-e2e-admin',
-      name: 'Sverlin E2E administrator',
-      email: 'e2e-admin@sverlin.invalid',
-      emailVerified: true,
-      image: null,
-      role: 'admin',
-      banned: false,
-      banReason: null,
-      banExpires: null,
-      createdAt: now,
-      updatedAt: now
-    },
-    session: {
-      id: 'sverlin-e2e-session',
-      userId: 'sverlin-e2e-admin',
-      token: 'not-a-real-session-token',
-      expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
-      ipAddress: null,
-      userAgent: null,
-      impersonatedBy: null,
-      createdAt: now,
-      updatedAt: now
-    }
-  };
 }

@@ -24,7 +24,6 @@ if (process.platform !== 'win32' && process.env.SVERLIN_COMPILER_SHARED_LOCK_HEL
     'flock',
     [
       '--shared',
-      '--no-fork',
       lockPath,
       process.execPath,
       fileURLToPath(import.meta.url),

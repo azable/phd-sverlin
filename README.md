@@ -6,44 +6,53 @@ Each project is an immutable Timeline stored in PostgreSQL together with authent
 
 ## Local development
 
-The recommended environment is the checked-in devcontainer. It uses the root [`Dockerfile`](Dockerfile), while [`compose.yaml`](compose.yaml) adds PostgreSQL and Docker-managed volumes for dependencies and build caches. Source remains bind-mounted for host and container editors. The official Docker-in-Docker feature provides an isolated daemon for container checks without exposing the host Docker socket.
+The development environment uses [devenv](https://devenv.sh/getting-started/), which supplies a pinned Nix toolchain and manages local PostgreSQL and application processes. [`devenv.nix`](devenv.nix) defines the environment; [`devenv.lock`](devenv.lock) pins its package sources. Development runs directly on macOS or Linux. Podman is useful for checking the production image, but is not required to run the application.
 
 ### 1. Prepare the environment
 
-On macOS with the beta Docker VMM, first add this repository (or a parent directory) explicitly under **Docker Desktop → Settings → Resources → File Sharing**; Docker VMM does not add bind-mounted paths automatically. Keep Docker Desktop current because Docker VMM and its VirtioFS implementation are still evolving.
+Install Nix and devenv using the linked installation instructions. Use devenv 2.3 or newer for the native process-management commands below.
 
 If `.env` does not already exist, copy [`.env.example`](.env.example) to `.env`
-before creating the devcontainer. Keep personal values in `.env`; it is ignored by
+before entering the shell. Keep personal values in `.env`; it is ignored by
 Git. Do not overwrite an existing file.
 
 ```sh
 cp .env.example .env
 ```
 
-Start the host SSH agent and load any key needed by the repository, then in VS Code run **Dev Containers: Rebuild and Reopen in Container**. Post-create installs Node dependencies and migrates PostgreSQL; it does not compile project-owned Haskell source. The privileged local workspace and its `SYS_ADMIN`/seccomp settings support Docker-in-Docker and Bubblewrap, so run only trusted repository code there.
-
-If the container is already current, rerun individual setup steps when needed:
+From the repository root:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm run db:migrate
+devenv shell
+devenv tasks run sverlin:setup
 ```
+
+Setup installs the locked Node dependencies. The first compiler preparation also builds Stack dependencies and takes longer than subsequent starts. Entering a shell alone starts no services.
+
+Run project commands inside `devenv shell`. For VS Code, launch `code .` from that shell with existing VS Code instances closed so its extension host inherits the toolchain. Install the workspace's [recommended extensions](.vscode/extensions.json); [editor settings](.vscode/settings.json) use HLS from `PATH` and preserve Hindent followed by Stylish Haskell formatting.
 
 ### 2. Start the application
 
 Start the application:
 
 ```sh
+devenv up
+```
+
+This starts PostgreSQL, waits until it is ready, then runs `pnpm run dev`: apply pending migrations, prepare the compiler, and start SvelteKit. Applied migrations are recorded in PostgreSQL, so subsequent starts only check for new ones. The server owns both HTTP handling and the bounded asynchronous operation executor. Open <http://localhost:5173>.
+
+Use `devenv down` to stop managed processes. A foreground `devenv up` started from scratch also stops them with Ctrl+C; attaching to an already-running manager only detaches on Ctrl+C. For database-backed tests or a manually controlled application, start only PostgreSQL:
+
+```sh
+devenv up -d postgres
 pnpm run dev
 ```
 
-Each run applies pending database migrations, prepares project-owned compiler source, then starts the SvelteKit server. Applied migrations are recorded in PostgreSQL, so subsequent starts only check for new ones. The server owns both HTTP handling and the bounded asynchronous operation executor. To skip migration and compiler preparation when both are already current, run:
+Use `pnpm run dev:web` when migrations and compiler preparation are already current. Stop any existing application before starting another server; the server lock protects the checkout's operation state.
 
-```sh
-pnpm run dev:web
-```
+PostgreSQL 17 stores data in `.devenv/state/postgres`, independently of the old Docker volume. The initial database is empty; restarting preserves it. The development role has `CREATEDB` for isolated test databases. The service listens only on `127.0.0.1`; devenv allocates a port starting at PostgreSQL's standard port 5432 and supplies the matching `DATABASE_URL`. To choose a different starting port, put `{ services.postgres.port = 5433; }` in the ignored `devenv.local.nix`. An explicit `DATABASE_URL` in `.env` instead selects an external database for application commands.
 
-Open <http://localhost:5173>. VS Code notifies when the port is available but does not open browser windows automatically.
+The shell loads `.env` at runtime as trusted shell-compatible assignments, avoiding devenv's [dotenv integration](https://devenv.sh/integrations/dotenv/), which copies the file into the Nix store. After changing values, exit/re-enter the shell and restart managed processes. Dependencies and build caches live in `node_modules`, `.cache`, and Stack's `.stack-work` directories; application state lives in `.local`. Do not delete `.devenv/state/postgres` as a cache-cleanup step.
 
 ### 3. Create the administrator
 
@@ -51,7 +60,7 @@ Open <http://localhost:5173>. When the database has no administrator, the app op
 the one-time setup page automatically. Register an administrator passkey promptly:
 until one exists, the first visitor to the deployment can claim administrator access.
 Setup becomes unavailable after the administrator exists; sign in at `/login` with
-the passkey already registered in the persistent PostgreSQL volume.
+the passkey already registered in the persistent PostgreSQL database.
 
 ### 4. Test participant access
 
@@ -96,7 +105,7 @@ The visualization mode selects its compatible assistant implicitly, and the reso
 
 In Sverlin comparison mode, selections in the top and bottom candidates remain active together and become exact feedback context. Feedback and preferences are recorded immediately, then durably queued for one background assistant turn per project; interactions submitted while a turn is running are combined into the next turn. The participant can keep chatting, selecting, and comparing the current pair during generation. The assistant revises source when accumulated evidence supports a concrete change, may ask a more granular question with clickable element references, and otherwise records an observation without advancing candidates. Explicit requests for more alternatives resample the accepted source.
 
-`CHATBOT_REQUEST_TIMEOUT_MS` defaults to 180,000 ms (three minutes). A timed study operation may begin a subsequent repair or simplification only when that complete allowance remains, and in-flight AI or compiler work is cancelled at the phase deadline. This keeps the five-call ceiling inside the 15-minute task phase while allowing standalone administrator projects to use the normal per-request timeout. Compose passes these provider values into the devcontainer, so changing them requires recreating it.
+`CHATBOT_REQUEST_TIMEOUT_MS` defaults to 180,000 ms (three minutes). A timed study operation may begin a subsequent repair or simplification only when that complete allowance remains, and in-flight AI or compiler work is cancelled at the phase deadline. This keeps the five-call ceiling inside the 15-minute task phase while allowing standalone administrator projects to use the normal per-request timeout.
 
 ### Health checks
 
@@ -124,23 +133,22 @@ authenticated browser
   -> browser polls Timeline deltas and locally derives participant conversation or Developer detail
 ```
 
-The root container files have distinct responsibilities:
+The environment and deployment files have distinct responsibilities:
 
-| File                                                                 | Responsibility                                                                               |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [`Dockerfile`](Dockerfile)                                           | Shared development, build, verification, and Render runtime image targets.                   |
-| [`compose.yaml`](compose.yaml)                                       | Local workspace, PostgreSQL service, and persistent volumes.                                 |
-| [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) | Attaches the editor, installs development features including Docker, and runs project setup. |
+| File                                                       | Responsibility                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`devenv.nix`](devenv.nix)                                 | Development toolchain, setup task, PostgreSQL, and application processes. |
+| [`devenv.yaml`](devenv.yaml), [`devenv.lock`](devenv.lock) | Package sources and their reproducible revisions.                         |
+| [`Dockerfile`](Dockerfile)                                 | Production build, verification, and Render runtime image targets.         |
 
-These definitions overlap intentionally: the Dockerfile owns the image, Compose owns the local multi-service topology, and the devcontainer owns the editor experience.
+GHC and HiGHS versions are aligned between devenv and the production image. Stack's existing [snapshot](compile/stack.yaml) owns Haskell dependencies. Nix pins Node 24, pnpm 10, editor tools, and native libraries; the Dockerfile pins its own Linux build toolchain.
 
-The production `runtime` target is separate from the development and
+The production `runtime` target is separate from the build and
 verification stages. It uses the official slim Haskell image and includes only
 the Node server, runtime libraries, prepared Sverlin compiler, solver, and the
-GHC package data required to interpret generated Sverlin source. HLS, Haskell
-formatters and linters, browser dependencies, C/C++/Fortran build tools, Git,
-pnpm, and executable/test build trees remain in discarded development or build
-stages and are not shipped to staging or production. The two in-place Haskell
+GHC package data required to interpret generated Sverlin source. Editor tools
+belong to devenv; C/C++/Fortran build tools, Git, pnpm, and executable/test
+build trees remain in discarded build stages. The two in-place Haskell
 libraries retain only their registered library artifacts.
 
 ## Project layout
@@ -188,18 +196,22 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 ### Development and runtime
 
-| Command                      | Purpose                                                            |
-| ---------------------------- | ------------------------------------------------------------------ |
-| `pnpm run dev`               | Apply migrations, prepare the compiler, then run the service.      |
-| `pnpm run dev:web`           | Run the service without migrating or preparing the compiler first. |
-| `pnpm run preview`           | Prepare the compiler and preview the production frontend locally.  |
-| `pnpm run start`             | Start the built adapter-node web service.                          |
-| `pnpm run build`             | Prepare the compiler and build the web and migration bundles.      |
-| `pnpm run build:data`        | Build the canonical local PostgreSQL data-export command.          |
-| `pnpm run build:migrate`     | Build only `build-migrate/index.js`.                               |
-| `pnpm run prepare`           | Internal package lifecycle hook that synchronizes SvelteKit types. |
-| `pnpm run prepare:compiler`  | Build and fingerprint the direct Haskell compiler executable.      |
-| `pnpm run compile -- <args>` | Compile a `.sverlin` source through the prepared executable.       |
+| Command                          | Purpose                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `devenv tasks run sverlin:setup` | Install locked Node dependencies.                                  |
+| `devenv up`                      | Start PostgreSQL, then the application's development pipeline.     |
+| `devenv up -d postgres`          | Start only PostgreSQL in the background.                           |
+| `devenv down`                    | Stop managed processes while retaining database data.              |
+| `pnpm run dev`                   | Apply migrations, prepare the compiler, then run the service.      |
+| `pnpm run dev:web`               | Run the service without migrating or preparing the compiler first. |
+| `pnpm run preview`               | Prepare the compiler and preview the production frontend locally.  |
+| `pnpm run start`                 | Start the built adapter-node web service.                          |
+| `pnpm run build`                 | Prepare the compiler and build the web and migration bundles.      |
+| `pnpm run build:data`            | Build the canonical local PostgreSQL data-export command.          |
+| `pnpm run build:migrate`         | Build only `build-migrate/index.js`.                               |
+| `pnpm run prepare`               | Internal package lifecycle hook that synchronizes SvelteKit types. |
+| `pnpm run prepare:compiler`      | Build and fingerprint the direct Haskell compiler executable.      |
+| `pnpm run compile -- <args>`     | Compile a `.sverlin` source through the prepared executable.       |
 
 ### Database, data, and operations
 
@@ -233,16 +245,15 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 | `pnpm run test`                | Run unit, compiler, PostgreSQL, and catalogued compiler-example tests. |
 | `pnpm run test:compiler`       | Run the current Haskell semantic and source/elaboration suites.        |
 | `pnpm run test:examples`       | Compile every catalogued example through the production boundary.      |
-| `pnpm run test:e2e`            | Run Playwright against temporary PostgreSQL and the SvelteKit service. |
 | `pnpm run test:sverlin-source` | Run the Haskell source/elaboration tests.                              |
 | `pnpm run test:solver`         | Run direct solver tests against stable fixtures.                       |
 | `pnpm run bench:solver`        | Benchmark solver lowering and execution on stable fixtures.            |
 
 Unit tests replace the narrow persistence, compiler, and chatbot interfaces with
-in-memory fakes. Focused integration and Playwright tests create a uniquely named
+in-memory fakes. PostgreSQL integration tests create a uniquely named
 PostgreSQL database, migrate it, and force-drop only that validated test database
-afterward. The end-to-end authentication bypass seeds its matching administrator
-row because project ownership remains enforced.
+afterward. There is currently no automated E2E suite; manually verify affected
+browser interactions after UI changes.
 
 After Haskell changes, run the relevant compile, compiler tests, solver tests, and HLint commands, then finish with `pnpm run format:haskell`. When the public DSL changes, update the Haddock descriptions in the authored [`Sverlin` facade](compile/src/Sverlin.hs) and regenerate the DSL index. Do not edit the generated [`dsl-api-index.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md) by hand. The supplemental [`dsl-interface.md`](src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md) intentionally contains only a neutral pointer to that generated reference; authoring policy belongs to the assistant configuration.
 

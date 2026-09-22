@@ -24,16 +24,7 @@ const child =
     ? spawn(command, args, childOptions())
     : spawn(
         'flock',
-        [
-          '--exclusive',
-          '--nonblock',
-          '--no-fork',
-          '--conflict-exit-code',
-          '73',
-          stateLock,
-          command,
-          ...args
-        ],
+        ['--exclusive', '--nonblock', '--conflict-exit-code', '73', stateLock, command, ...args],
         childOptions()
       );
 

@@ -1,6 +1,11 @@
 node_modules
 /.cache/
 /.local/
+/.devenv/
+/.direnv/
+/devenv.local.nix
+/devenv.local.yaml
+**/.stack-work/
 
 # Output
 /outputs/

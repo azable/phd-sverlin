@@ -5,6 +5,10 @@ build
 node_modules
 .cache
 .local
+.devenv
+.direnv
+devenv.local.nix
+devenv.local.yaml
 outputs
 data/projects
 data/project-archives

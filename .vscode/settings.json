@@ -2,6 +2,8 @@
   "files.associations": {
     "*.css": "tailwindcss",
     "*.hs": "haskell",
+    "*.sverlin": "haskell",
+    "*.lhs": "haskell",
     "*.hs-boot": "haskell",
     "*.hsc": "haskell",
     "*.cabal": "cabal",
@@ -27,6 +29,8 @@
 
   "stylish-hindent.commandline.hindent": "",
   "stylish-hindent.executables.hindent": "hindent",
+
+  "haskell.manageHLS": "PATH",
 
   "editor.tabSize": 2
 }

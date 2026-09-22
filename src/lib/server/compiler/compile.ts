@@ -916,7 +916,6 @@ export function compilerLockCommand(
     args: [
       '--shared',
       '--nonblock',
-      '--no-fork',
       '--conflict-exit-code',
       String(compilerLockConflictExitCode),
       lockPath,

@@ -6,8 +6,6 @@ import { spawn } from 'node:child_process';
 import postgres from 'postgres';
 
 const arguments_ = process.argv.slice(2);
-const seedAdmin = arguments_[0] === '--seed-admin';
-if (seedAdmin) arguments_.shift();
 if (arguments_.length === 0) throw new Error('A test command is required.');
 
 const baseUrl = new URL(
@@ -27,11 +25,6 @@ let child;
 try {
   await admin.unsafe(`create database "${databaseName}"`);
   await run('pnpm', ['run', 'db:migrate'], { DATABASE_URL: testUrl.toString() });
-  if (seedAdmin) {
-    await run('pnpm', ['exec', 'tsx', 'scripts/seed-e2e.ts'], {
-      DATABASE_URL: testUrl.toString()
-    });
-  }
   child = spawn(arguments_[0], arguments_.slice(1), {
     stdio: 'inherit',
     env: { ...process.env, DATABASE_URL: testUrl.toString() }

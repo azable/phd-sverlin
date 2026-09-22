@@ -60,6 +60,35 @@ describe('runCompile', () => {
     expect(Date.now() - startedAt).toBeLessThan(3_000);
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'cancels a flock-wrapped child and releases its lock',
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), 'sverlin-compiler-lock-'));
+      temporaryRoots.push(root);
+      const lockPath = path.join(root, 'compiler.lock');
+      const controller = new AbortController();
+      const locked = compilerLockCommand(
+        process.execPath,
+        ['-e', 'console.log("ready"); setInterval(() => {}, 1000)'],
+        lockPath
+      );
+      const result = await runCompile(locked.command, locked.args, root, 5_000, {
+        signal: controller.signal,
+        onStdout: () => controller.abort()
+      });
+
+      expect(result.stdout).toContain('ready');
+      expect(result.error).toBe('Compile backend was cancelled.');
+      expect(result.timedOut).toBe(false);
+      const acquired = await runCompile(
+        'flock',
+        ['--exclusive', '--nonblock', lockPath, process.execPath, '-e', 'process.exit(0)'],
+        root
+      );
+      expect(acquired.exitCode).toBe(0);
+    }
+  );
+
   it('uses SVERLIN_COMPILE_TIMEOUT_MS when no explicit timeout is provided', async () => {
     const previousTimeout = process.env.SVERLIN_COMPILE_TIMEOUT_MS;
     process.env.SVERLIN_COMPILE_TIMEOUT_MS = '100';
@@ -133,7 +162,6 @@ describe('compileSource', () => {
       args: [
         '--shared',
         '--nonblock',
-        '--no-fork',
         '--conflict-exit-code',
         '75',
         '/tmp/compiler.lock',

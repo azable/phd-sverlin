@@ -2,7 +2,15 @@
 
 ## Project Context
 
-This repo contains a SvelteKit application (root), and a Haskell application under `compile/`. The SvelteKit app stores projects as immutable event Timelines in PostgreSQL. The web process accepts asynchronous operations into those Timelines and executes them through a bounded in-process executor; interrupted work is explicitly failed and retried by the user. The compiler is exposed to server code only as a service that accepts `.sverlin` content and one or more seeds. The Haskell application generates the data that the SvelteKit application displays, but that implementation detail does not cross the compiler service boundary.
+This repo contains a SvelteKit application (root), and a Haskell application
+under `compile/`. The SvelteKit app stores projects as immutable event Timelines
+in PostgreSQL. The web process accepts asynchronous operations into those
+Timelines and executes them through a bounded in-process executor; interrupted
+work is explicitly failed and retried by the user. The compiler is exposed to
+server code only as a service that accepts `.sverlin` content and one or more
+seeds. The Haskell application generates the data that the SvelteKit application
+displays, but that implementation detail does not cross the compiler service
+boundary.
 
 ## Communication and Documentation
 
@@ -60,6 +68,11 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 
 ## Commands
 
+- Enter `devenv shell` before running project commands. Run
+  `devenv tasks run sverlin:setup` for dependencies and `devenv up` for PostgreSQL
+  plus the application. For database-backed tests, start only PostgreSQL with
+  `devenv up -d postgres`; stop managed processes with `devenv down`.
+
 - Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.
 - To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
 - To run the SvelteKit application, use `pnpm run dev` from the root directory. It applies pending database migrations, prepares the compiler, and starts the development server with hot-reloading.
@@ -74,13 +87,13 @@ This repo contains a SvelteKit application (root), and a Haskell application und
   for confirmation before continuing. Do not bypass the guard, remove the lock file,
   or start with another `SVERLIN_STATE_DIR` unless the developer explicitly confirms
   that the previous server has stopped and asks for that recovery action.
-- If completing an active task requires a devcontainer rebuild or Codex restart,
+- If completing an active task requires a development-environment restart or agent restart,
   create or update a temporary root `HANDOVER.md` before stopping. Record the
   task objective, completed work, current working-tree changes and their
   ownership, the next safe action, remaining work or blockers, validations
   already run, and relevant operational state. Do not create a handover for
   completed work or use it as a chronological log.
-- On the first turn after a devcontainer rebuild or Codex restart, read
+- On the first turn after a development-environment restart or agent restart, read
   `HANDOVER.md` completely when it exists, inspect `git status` and the relevant
   diffs, and verify any recorded operational state before changing files.
   Continue from the recorded next safe action, rerun only checks invalidated by
@@ -101,7 +114,7 @@ This repo contains a SvelteKit application (root), and a Haskell application und
 - This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout.
 - When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
 - When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
-- `pnpm run test:unit` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. Run `pnpm run test:e2e` after Svelte behavior changes.
+- `pnpm run test:unit` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. After Svelte behavior changes, run `pnpm run check` and manually verify the affected browser interactions; there is currently no automated E2E suite.
 - When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
 - When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
 - `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.
