@@ -68,9 +68,11 @@ boundary.
 
 ## Commands
 
-- Enter `devenv shell` before running project commands. Run
-  `devenv tasks run sverlin:setup` for dependencies and `devenv up` for PostgreSQL
-  plus the application. For database-backed tests, start only PostgreSQL with
+- Run project commands inside the Dev Container. Its checked-in `.envrc` activates
+  the devenv environment in interactive terminals; use `devenv shell -- COMMAND`
+  for non-interactive execution. Container creation runs
+  `devenv tasks run sverlin:setup`; use `devenv up` for PostgreSQL plus the
+  application. For database-backed tests, start only PostgreSQL with
   `devenv up -d postgres`; stop managed processes with `devenv down`.
 
 - Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.

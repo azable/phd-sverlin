@@ -11,9 +11,42 @@ let
     };
   });
   flock = if pkgs.stdenv.isDarwin then pkgs.flock else pkgs.util-linux;
+  vscodeExtensions = [
+    "mkhl.direnv"
+    "jnoortheen.nix-ide"
+    "svelte.svelte-vscode"
+    "dbaeumer.vscode-eslint"
+    "esbenp.prettier-vscode"
+    "haskell.haskell"
+    "0xCD.stylish-hindent"
+  ];
 in
 {
   dotenv.disableHint = true;
+
+  devcontainer = {
+    enable = true;
+    settings = {
+      name = "Sverlin";
+      # Pin the multi-platform manifest so rebuilding the environment cannot
+      # silently replace its Nix/devenv base image.
+      image = "ghcr.io/cachix/devenv/devcontainer@sha256:233b726a6570777be9403cca1e177a4f61fc772b540032bca41f3aabb85aa4e9";
+      overrideCommand = false;
+      updateContentCommand = "devenv tasks run sverlin:setup";
+      forwardPorts = [ 5173 ];
+      portsAttributes."5173" = {
+        label = "Sverlin";
+        onAutoForward = "notify";
+        requireLocalPort = true;
+      };
+      customizations.vscode.extensions = vscodeExtensions;
+    };
+  };
+
+  files.".vscode/extensions.json" = {
+    copyMode = "copy";
+    json.recommendations = vscodeExtensions;
+  };
 
   languages.haskell = {
     enable = true;

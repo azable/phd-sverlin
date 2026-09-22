@@ -1,0 +1,32 @@
+{
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "mkhl.direnv",
+        "jnoortheen.nix-ide",
+        "svelte.svelte-vscode",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "haskell.haskell",
+        "0xCD.stylish-hindent"
+      ]
+    },
+    "zed": {
+      "extensions": []
+    }
+  },
+  "forwardPorts": [
+    5173
+  ],
+  "image": "ghcr.io/cachix/devenv/devcontainer@sha256:233b726a6570777be9403cca1e177a4f61fc772b540032bca41f3aabb85aa4e9",
+  "name": "Sverlin",
+  "overrideCommand": false,
+  "portsAttributes": {
+    "5173": {
+      "label": "Sverlin",
+      "onAutoForward": "notify",
+      "requireLocalPort": true
+    }
+  },
+  "updateContentCommand": "devenv tasks run sverlin:setup"
+}
