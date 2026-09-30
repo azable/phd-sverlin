@@ -25,6 +25,10 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
+    watch: {
+      // Toolchain symlinks and generated state can exhaust Linux file watchers.
+      ignored: ['**/{.devenv,.direnv,.cache,.local,.stack-work,outputs,tmp}/**']
+    },
     sourcemapIgnoreList(sourcePath) {
       return sourcePath.includes('node_modules');
     }
