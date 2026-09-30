@@ -30,7 +30,9 @@ Without direnv, prefix commands with `devenv shell --`, for example `devenv shel
 
 The environment includes the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenCode](https://opencode.ai/) coding-agent CLIs (`claude-code` is unfree, so [`devenv.yaml`](devenv.yaml) permits that one package). `devenv.nix` points `XDG_DATA_HOME` at the ignored `.local/share/`, so their history stays inside the checkout and must be set up once per clone by running `claude` or `opencode auth login`. Each reads its ordinary host configuration from `~/.config/`.
 
-[Editor settings](.vscode/settings.json) use HLS from `PATH` and preserve Hindent followed by Stylish Haskell formatting; devenv generates the matching [extension recommendations](.vscode/extensions.json).
+[Editor settings](.vscode/settings.json) use HLS from `PATH` and leave Haskell formatting to `pnpm run format:haskell`, since HLS applies one formatter and that pipeline is Hindent followed by Stylish Haskell. Formatting on save is off for Cabal files too, whose HLS default is `cabal-gild`, a formatter the environment does not provide. devenv generates the matching [extension recommendations](.vscode/extensions.json).
+
+Decline any VS Code offer to install GHCup. `devenv.nix` already supplies `haskell-language-server` built against the project's GHC; that prompt is what the Haskell extension shows when it activates before direnv has finished evaluating the environment, so `PATH` held no HLS yet. Wait for direnv to settle, then run `Developer: Reload Window`. The extension's `Haskell` output channel logs the `PATH` it searched, which confirms whether the devenv environment reached the extension host.
 
 ### 2. Start the application
 

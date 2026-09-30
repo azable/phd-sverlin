@@ -17,8 +17,12 @@ let
     "svelte.svelte-vscode"
     "dbaeumer.vscode-eslint"
     "esbenp.prettier-vscode"
+    # Every Haskell grammar, including the .sverlin association in
+    # .vscode/settings.json. haskell.haskell contributes the language ids and
+    # the HLS client but no grammars, and declares no extensionDependencies,
+    # so highlighting needs this named alongside it.
+    "justusadam.language-haskell"
     "haskell.haskell"
-    "0xCD.stylish-hindent"
   ];
 in
 {

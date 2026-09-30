@@ -23,14 +23,14 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[haskell]": {
-    "editor.defaultFormatter": "0xCD.stylish-hindent",
-    "editor.formatOnSave": true
+    "editor.formatOnSave": false
+  },
+  "[cabal]": {
+    "editor.formatOnSave": false
   },
 
-  "stylish-hindent.commandline.hindent": "",
-  "stylish-hindent.executables.hindent": "hindent",
-
   "haskell.manageHLS": "PATH",
+  "haskell.formattingProvider": "none",
 
   "editor.tabSize": 2
 }

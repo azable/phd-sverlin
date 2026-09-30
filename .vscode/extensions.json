@@ -5,7 +5,7 @@
     "svelte.svelte-vscode",
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
-    "haskell.haskell",
-    "0xCD.stylish-hindent"
+    "justusadam.language-haskell",
+    "haskell.haskell"
   ]
 }
