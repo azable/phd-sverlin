@@ -32,7 +32,7 @@ The environment includes the [Claude Code](https://docs.anthropic.com/en/docs/cl
 
 [Editor settings](.vscode/settings.json) use HLS from `PATH` and leave Haskell formatting to `pnpm run format:haskell`, since HLS applies one formatter and that pipeline is Hindent followed by Stylish Haskell. Formatting on save is off for Cabal files too, whose HLS default is `cabal-gild`, a formatter the environment does not provide. devenv generates the matching [extension recommendations](.vscode/extensions.json).
 
-Decline any VS Code offer to install GHCup. `devenv.nix` already supplies `haskell-language-server` built against the project's GHC; that prompt is what the Haskell extension shows when it activates before direnv has finished evaluating the environment, so `PATH` held no HLS yet. Wait for direnv to settle, then run `Developer: Reload Window`. The extension's `Haskell` output channel logs the `PATH` it searched, which confirms whether the devenv environment reached the extension host.
+On its first activation the Haskell extension asks how it should find HLS, before it reads this workspace's `haskell.manageHLS`, so answer `Manually via PATH`. Answering `Automatically via GHCup` instead fails with `Project requires GHCup but it isn't installed`: decline that install, because `devenv.nix` already supplies `haskell-language-server` built against the project's GHC, then run `Developer: Reload Window` to pick the setting up. The extension's `Haskell` output channel logs the `PATH` it searched, which confirms whether the devenv environment reached the extension host.
 
 ### 2. Start the application
 
