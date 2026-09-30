@@ -6,22 +6,17 @@ Each project is an immutable Timeline stored in PostgreSQL together with authent
 
 ## Local development
 
-Development runs in a [Dev Container](https://containers.dev/) backed by [devenv](https://devenv.sh/). Podman provides the Linux container; [`devenv.nix`](devenv.nix) supplies the pinned Nix toolchain and manages PostgreSQL and application processes inside it. [`devenv.lock`](devenv.lock) pins the package sources, and devenv generates the committed [Dev Container configuration](.devcontainer/devcontainer.json). The root [`Dockerfile`](Dockerfile) remains production-only.
+Development runs natively through [devenv](https://devenv.sh/): [`devenv.nix`](devenv.nix) supplies the pinned Nix toolchain and manages PostgreSQL and the application processes, while [`devenv.lock`](devenv.lock) pins the package sources. The root [`Dockerfile`](Dockerfile) remains production-only.
 
 ### 1. Prepare the environment
 
-Install Podman, VS Code, and Microsoft's **Dev Containers** VS Code extension. Set VS Code's user setting `dev.containers.dockerPath` to `podman` (or its absolute executable path), following the [VS Code Podman setup](https://code.visualstudio.com/remote/advancedcontainers/docker-options#_podman). Nix and devenv are installed in the container and are not host prerequisites.
+Install [Nix](https://nixos.org/download/), [devenv](https://devenv.sh/getting-started/installation/), and [direnv](https://direnv.net/). Everything the project builds against — GHC, HiGHS, Node 24, pnpm 10, PostgreSQL 17, and the editor tools — comes from `devenv.nix`, so those three are the only host prerequisites.
 
-On macOS, containers run inside a [Podman machine](https://docs.podman.io/en/latest/markdown/podman-machine.1.html), a Linux virtual machine. Start with 8 GiB of VM memory to leave room for Nix downloads and native toolchain builds: setup verification in September 2026 ran out of memory at 2 GiB while building HiGHS, then completed at 8 GiB. This is a recommended starting allocation, not a measured minimum. For a new machine, use `podman machine init --memory 8192` followed by `podman machine start`. To resize an existing default machine after stopping its containers:
+Allow direnv once per clone so the checked-in [`.envrc`](.envrc) activates devenv for terminals and the VS Code extension host. Entering the environment starts no services.
 
 ```sh
-podman machine stop podman-machine-default
-podman machine set --memory 8192 podman-machine-default
-podman machine start podman-machine-default
-podman machine inspect --format '{{.Resources.Memory}}'
+direnv allow
 ```
-
-The final command should report `8192` MiB. If setup exits with code 137, check `podman inspect CONTAINER_ID --format '{{.State.OOMKilled}}'`; `true` records an out-of-memory kill and can persist after restarting that container. After increasing memory, retry **Dev Containers: Reopen in Container**.
 
 If `.env` does not already exist, copy [`.env.example`](.env.example) to `.env`
 before entering the shell. Keep personal values in `.env`; it is ignored by
@@ -31,19 +26,23 @@ Git. Do not overwrite an existing file.
 cp .env.example .env
 ```
 
-Open the repository in VS Code and run **Dev Containers: Reopen in Container**. The first creation pulls the pinned multi-platform devenv image, evaluates the Nix environment, installs the [container extensions](.vscode/extensions.json), and runs `devenv tasks run sverlin:setup` to install locked Node dependencies. The checked-in [`.envrc`](.envrc) activates devenv for terminals and the VS Code extension host; entering the environment starts no services. The first compiler preparation also builds Stack dependencies and takes longer than subsequent starts.
+Without direnv, prefix commands with `devenv shell --`, for example `devenv shell -- pnpm run lint`.
 
-Rebuild the container after changing its image or Dev Container settings. Ordinary `devenv.nix` changes are picked up by direnv without rebuilding. [Editor settings](.vscode/settings.json) use HLS from `PATH` and preserve Hindent followed by Stylish Haskell formatting.
+The environment includes the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenCode](https://opencode.ai/) coding-agent CLIs (`claude-code` is unfree, so [`devenv.yaml`](devenv.yaml) permits that one package). `devenv.nix` points `XDG_DATA_HOME` at the ignored `.local/share/`, so their history stays inside the checkout and must be set up once per clone by running `claude` or `opencode auth login`. Each reads its ordinary host configuration from `~/.config/`.
+
+[Editor settings](.vscode/settings.json) use HLS from `PATH` and preserve Hindent followed by Stylish Haskell formatting; devenv generates the matching [extension recommendations](.vscode/extensions.json).
 
 ### 2. Start the application
 
-Start the application:
+Start everything with one command:
 
 ```sh
 devenv up
 ```
 
-This starts PostgreSQL, waits until it is ready, then runs `pnpm run dev`: apply pending migrations, prepare the compiler, and start SvelteKit. Applied migrations are recorded in PostgreSQL, so subsequent starts only check for new ones. The server owns both HTTP handling and the bounded asynchronous operation executor. VS Code forwards the required stable port to <http://localhost:5173>; keeping this origin stable preserves Better Auth passkey identity.
+This installs locked Node dependencies, starts PostgreSQL, waits until it is ready, applies pending migrations, prepares the compiler, and then starts SvelteKit on <http://localhost:5173>. Keeping that origin stable preserves Better Auth passkey identity.
+
+Dependency installation, migration, and compiler preparation are devenv tasks (`sverlin:setup`, `sverlin:migrate`, `sverlin:compiler`) rather than steps inside the service, so the `web` process owns only the server and its `/api/health/ready` probe reports the service instead of the build. Applied migrations are recorded in PostgreSQL, so subsequent starts only check for new ones. The first compiler preparation builds Stack dependencies and takes considerably longer than later starts.
 
 Use `devenv down` to stop managed processes. A foreground `devenv up` started from scratch also stops them with Ctrl+C; attaching to an already-running manager only detaches on Ctrl+C. For database-backed tests or a manually controlled application, start only PostgreSQL:
 
@@ -52,13 +51,11 @@ devenv up -d postgres
 pnpm run dev
 ```
 
-Use `pnpm run dev:web` when migrations and compiler preparation are already current. Stop any existing application before starting another server; the server lock protects the checkout's operation state.
+`pnpm run dev` chains migration, compiler preparation, and the server, so it remains the entry point for tooling that does not go through devenv. Use `pnpm run dev:web` when migrations and compiler preparation are already current. Stop any existing application before starting another server; the server lock protects the checkout's operation state.
 
-PostgreSQL 17 stores data in the bind-mounted checkout at `.devenv/state/postgres`; restarting or rebuilding the container preserves it. The development role has `CREATEDB` for isolated test databases. PostgreSQL listens only inside the container, and devenv supplies the matching `DATABASE_URL`; it is deliberately not forwarded to the host. An explicit `DATABASE_URL` in `.env` instead selects an external database for application commands.
+PostgreSQL 17 stores data in the checkout at `.devenv/state/postgres`, which survives restarts. The development role has `CREATEDB` for isolated test databases. PostgreSQL listens on `127.0.0.1` only, and devenv supplies the matching `DATABASE_URL`. An explicit `DATABASE_URL` in `.env` instead selects an external database for application commands.
 
-Do not open a PostgreSQL data directory previously initialized by native macOS PostgreSQL from the Linux container. If that local data matters, make a PostgreSQL 17 logical backup before the first container start, preserve the old physical directory, initialize fresh container state, and restore the backup. Otherwise, start with a fresh container-owned database.
-
-The shell loads `.env` at runtime as trusted shell-compatible assignments, avoiding devenv's [dotenv integration](https://devenv.sh/integrations/dotenv/), which copies the file into the Nix store. Direnv reloads after `.env` changes; restart managed processes so they receive the new values. Linux dependencies and build caches live in the bind-mounted `node_modules`, `.cache`, and Stack `.stack-work` directories; application state lives in `.local`. Do not use the same checkout for native host builds, and do not delete `.devenv/state/postgres` as a cache-cleanup step.
+The shell loads `.env` at runtime as trusted shell-compatible assignments, avoiding devenv's [dotenv integration](https://devenv.sh/integrations/dotenv/), which copies the file into the Nix store. Direnv reloads after `.env` changes; restart managed processes so they receive the new values. Dependencies and build caches live in the ignored `node_modules`, `.cache`, and Stack `.stack-work` directories; application state lives in `.local`. Do not delete `.devenv/state/postgres` as a cache-cleanup step.
 
 ### 3. Create the administrator
 
@@ -141,15 +138,14 @@ authenticated browser
 
 The environment and deployment files have distinct responsibilities:
 
-| File                                                                 | Responsibility                                                                                |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [`devenv.nix`](devenv.nix)                                           | Development toolchain, generated editor configuration, PostgreSQL, and application processes. |
-| [`devenv.yaml`](devenv.yaml), [`devenv.lock`](devenv.lock)           | Package sources and their reproducible revisions.                                             |
-| [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) | Generated, committed VS Code container configuration.                                         |
-| [`.envrc`](.envrc)                                                   | Direnv activation for terminals and the VS Code extension host.                               |
-| [`Dockerfile`](Dockerfile)                                           | Production build, verification, and Render runtime image targets.                             |
+| File                                                       | Responsibility                                                                                |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [`devenv.nix`](devenv.nix)                                 | Development toolchain, generated editor configuration, PostgreSQL, and application processes. |
+| [`devenv.yaml`](devenv.yaml), [`devenv.lock`](devenv.lock) | Package sources and their reproducible revisions.                                             |
+| [`.envrc`](.envrc)                                         | Direnv activation for terminals and the VS Code extension host.                               |
+| [`Dockerfile`](Dockerfile)                                 | Production build, verification, and Render runtime image targets.                             |
 
-GHC and HiGHS versions are aligned between devenv and the production image. Stack's existing [snapshot](compile/stack.yaml) owns Haskell dependencies. Nix pins Node 24, pnpm 10, editor tools, and native libraries; the Dev Container image is pinned by multi-platform manifest digest, while the Dockerfile pins its separate production Linux toolchain.
+GHC and HiGHS versions are aligned between devenv and the production image. Stack's existing [snapshot](compile/stack.yaml) owns Haskell dependencies. Nix pins Node 24, pnpm 10, editor tools, and native libraries, while the Dockerfile pins its separate production Linux toolchain.
 
 The production `runtime` target is separate from the build and
 verification stages. It uses the official slim Haskell image and includes only
@@ -204,22 +200,24 @@ These tables cover the common local scripts. Pass script-specific arguments afte
 
 ### Development and runtime
 
-| Command                          | Purpose                                                            |
-| -------------------------------- | ------------------------------------------------------------------ |
-| `devenv tasks run sverlin:setup` | Install locked Node dependencies.                                  |
-| `devenv up`                      | Start PostgreSQL, then the application's development pipeline.     |
-| `devenv up -d postgres`          | Start only PostgreSQL in the background.                           |
-| `devenv down`                    | Stop managed processes while retaining database data.              |
-| `pnpm run dev`                   | Apply migrations, prepare the compiler, then run the service.      |
-| `pnpm run dev:web`               | Run the service without migrating or preparing the compiler first. |
-| `pnpm run preview`               | Prepare the compiler and preview the production frontend locally.  |
-| `pnpm run start`                 | Start the built adapter-node web service.                          |
-| `pnpm run build`                 | Prepare the compiler and build the web and migration bundles.      |
-| `pnpm run build:data`            | Build the canonical local PostgreSQL data-export command.          |
-| `pnpm run build:migrate`         | Build only `build-migrate/index.js`.                               |
-| `pnpm run prepare`               | Internal package lifecycle hook that synchronizes SvelteKit types. |
-| `pnpm run prepare:compiler`      | Build and fingerprint the direct Haskell compiler executable.      |
-| `pnpm run compile -- <args>`     | Compile a `.sverlin` source through the prepared executable.       |
+| Command                             | Purpose                                                                    |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| `devenv tasks run sverlin:setup`    | Install locked Node dependencies.                                          |
+| `devenv up`                         | Run setup, migration, and compiler tasks, then PostgreSQL and the service. |
+| `devenv up -d postgres`             | Start only PostgreSQL in the background.                                   |
+| `devenv tasks run sverlin:migrate`  | Apply pending migrations against the managed database.                     |
+| `devenv tasks run sverlin:compiler` | Build and fingerprint the compiler through devenv.                         |
+| `devenv down`                       | Stop managed processes while retaining database data.                      |
+| `pnpm run dev`                      | Apply migrations, prepare the compiler, then run the service.              |
+| `pnpm run dev:web`                  | Run the service without migrating or preparing the compiler first.         |
+| `pnpm run preview`                  | Prepare the compiler and preview the production frontend locally.          |
+| `pnpm run start`                    | Start the built adapter-node web service.                                  |
+| `pnpm run build`                    | Prepare the compiler and build the web and migration bundles.              |
+| `pnpm run build:data`               | Build the canonical local PostgreSQL data-export command.                  |
+| `pnpm run build:migrate`            | Build only `build-migrate/index.js`.                                       |
+| `pnpm run prepare`                  | Internal package lifecycle hook that synchronizes SvelteKit types.         |
+| `pnpm run prepare:compiler`         | Build and fingerprint the direct Haskell compiler executable.              |
+| `pnpm run compile -- <args>`        | Compile a `.sverlin` source through the prepared executable.               |
 
 ### Database, data, and operations
 

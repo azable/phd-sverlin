@@ -24,25 +24,6 @@ in
 {
   dotenv.disableHint = true;
 
-  devcontainer = {
-    enable = true;
-    settings = {
-      name = "Sverlin";
-      # Pin the multi-platform manifest so rebuilding the environment cannot
-      # silently replace its Nix/devenv base image.
-      image = "ghcr.io/cachix/devenv/devcontainer@sha256:233b726a6570777be9403cca1e177a4f61fc772b540032bca41f3aabb85aa4e9";
-      overrideCommand = false;
-      updateContentCommand = "devenv tasks run sverlin:setup";
-      forwardPorts = [ 5173 ];
-      portsAttributes."5173" = {
-        label = "Sverlin";
-        onAutoForward = "notify";
-        requireLocalPort = true;
-      };
-      customizations.vscode.extensions = vscodeExtensions;
-    };
-  };
-
   files.".vscode/extensions.json" = {
     copyMode = "copy";
     json.recommendations = vscodeExtensions;
@@ -59,9 +40,14 @@ in
     nodejs_24 pnpm_10
     haskellPackages.hindent haskellPackages.hlint haskellPackages.stylish-haskell
     pkg-config clang gfortran cmake gnumake
-    openblas lapack harfbuzz freetype glib libsysprof-capture pcre2 libffi zlib
+    # openblasCompat, not openblas: nixpkgs builds openblas with USE64BITINT
+    # (ILP64) while exporting unsuffixed symbols, so hmatrix's 32-bit CInt
+    # arguments are read as 64-bit and LAPACK rejects LDC/LWORK. It also
+    # supplies libblas/liblapack/libcblas, replacing the separate lapack.
+    openblasCompat harfbuzz freetype glib libsysprof-capture pcre2 libffi zlib
     git jq curl
     highs flock
+    claude-code opencode
   ];
 
   env = {
@@ -88,13 +74,37 @@ in
     '';
   };
 
-  tasks."sverlin:setup".exec = ''
-    CI=true pnpm install --frozen-lockfile
-  '';
+  tasks = {
+    "sverlin:setup".exec = ''
+      CI=true pnpm install --frozen-lockfile
+    '';
+
+    # drizzle-kit comes from node_modules, so setup must finish first.
+    "sverlin:migrate" = {
+      exec = "pnpm run db:migrate";
+      after = [ "sverlin:setup" ];
+    };
+
+    # Deliberately unconditional. devenv forbids status with execIfModified,
+    # and neither alone is correct here: execIfModified would skip after a
+    # .cache/ wipe and leave no descriptor, while status would skip whenever
+    # a descriptor exists and never pick up changed compiler sources.
+    # prepare-compiler.mjs already owns freshness via its source fingerprint,
+    # and an up-to-date stack build is a cheap no-op.
+    "sverlin:compiler" = {
+      exec = "pnpm run prepare:compiler";
+      after = [ "sverlin:setup" ];
+    };
+  };
 
   processes.web = {
-    exec = "pnpm run dev";
-    after = [ "devenv:processes:postgres" ];
+    exec = "pnpm run dev:web";
+    after = [
+      "devenv:processes:postgres"
+      "sverlin:setup"
+      "sverlin:migrate"
+      "sverlin:compiler"
+    ];
     restart.on = "never";
     ready.http.get = { port = 5173; path = "/api/health/ready"; };
     # Match Dockerfile's shutdown ceiling so runtime-state.ts's 270-second
