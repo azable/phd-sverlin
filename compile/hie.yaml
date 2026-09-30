@@ -1,7 +1,7 @@
 cradle:
   stack:
     - path: './src'
-      component: 'compile:lib:compile'
+      component: 'compile:lib'
     - path: './app'
       component: 'compile:exe:compile-app'
     - path: './test'

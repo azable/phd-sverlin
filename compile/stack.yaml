@@ -12,3 +12,5 @@ extra-deps:
 
 system-ghc: true
 install-ghc: false
+
+notify-if-nix-on-path: false
