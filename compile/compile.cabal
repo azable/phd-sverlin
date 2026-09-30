@@ -73,12 +73,10 @@ common app-dependencies
 
     default-language: GHC2024
 
-library sverlin-internal
+library
     -- Import common warning flags.
     import:           warnings
     import:           app-dependencies
-
-    visibility:       private
 
     build-depends:    hmatrix >=0.20.2 && <0.21,
                       MIP >=0.2.0.1 && <0.3,
@@ -132,21 +130,6 @@ library sverlin-internal
 
     include-dirs:     cbits
 
-library
-    import:             warnings
-
-    build-depends:      base >=4.18.3.0 && <4.23,
-                        compile:sverlin-internal,
-                        linear-base
-
-    reexported-modules:
-        Sverlin,
-        Sverlin.Compiler,
-        Sverlin.Linear,
-        Solver
-
-    default-language:   GHC2024
-
 executable compile-app
     -- Import common warning flags.
     import:           warnings
@@ -160,7 +143,6 @@ executable compile-app
         Sverlin.Source
 
     build-depends:    compile,
-                      compile:sverlin-internal,
                       directory,
                       filepath,
                       hint >=0.9.0.9 && <0.10,
@@ -181,7 +163,6 @@ executable visualization-types
         GenerateVisualizationTypes.TypeScript
 
     build-depends:      compile,
-                        compile:sverlin-internal,
                         template-haskell
 
     hs-source-dirs:     app
@@ -252,7 +233,7 @@ test-suite semantic-test
 
     build-depends:    base >=4.18.3.0 && <4.23,
                       bytestring,
-                      compile:sverlin-internal,
+                      compile,
                       containers,
                       linear-base,
                       random,
