@@ -30,6 +30,7 @@
     connectors?: LiveConnector[];
     selectedIds?: RenderInstanceId[];
     resourceBaseUrl?: string;
+    resourceUrls?: Readonly<Record<string, string>>;
     onSelectionChange?: (ids: RenderInstanceId[]) => void;
     onViewportChange?: (viewport: { zoom: number; panX: number; panY: number }) => void;
     onFontLoadFailure?: (resourceId: string, message: string) => void;
@@ -44,6 +45,7 @@
     connectors = [],
     selectedIds = $bindable<RenderInstanceId[]>([]),
     resourceBaseUrl,
+    resourceUrls,
     onSelectionChange = (_ids: RenderInstanceId[]) => {},
     onViewportChange = (_viewport: { zoom: number; panX: number; panY: number }) => {},
     onFontLoadFailure = (_resourceId: string, _message: string) => {},
@@ -99,14 +101,18 @@
       const font = element.content.textLayout.layoutFont;
       const resourceId = font.instanceResourceId;
       if (fontStates[resourceId]) continue;
-      if (!resourceBaseUrl) {
+      const resourceUrl =
+        resourceUrls?.[resourceId] ??
+        (resourceBaseUrl
+          ? `${resourceBaseUrl.replace(/\/$/, '')}/${encodeURIComponent(resourceId)}`
+          : undefined);
+      if (!resourceUrl) {
         fontStates[resourceId] = 'failed';
         onFontLoadFailure(resourceId, 'No compiler resource URL was supplied for this font.');
         continue;
       }
 
       fontStates[resourceId] = 'loading';
-      const resourceUrl = `${resourceBaseUrl.replace(/\/$/, '')}/${encodeURIComponent(resourceId)}`;
       void ensureCompilerFont(font, resourceUrl).then(
         () => {
           fontStates[resourceId] = 'ready';

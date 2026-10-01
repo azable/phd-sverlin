@@ -30,10 +30,8 @@ const examplesDirectory = path.resolve(
   process.env.SVERLIN_REPOSITORY_ROOT?.trim() || process.cwd(),
   'examples'
 );
-const sourcesByFile = new Map(
-  readdirSync(examplesDirectory)
-    .filter((fileName) => fileName.endsWith('.sverlin'))
-    .map((fileName) => [fileName, readFileSync(path.join(examplesDirectory, fileName), 'utf8')])
+const sourceFiles = readdirSync(examplesDirectory).filter((fileName) =>
+  fileName.endsWith('.sverlin')
 );
 const parsedCatalog = v.safeParse(catalogSchema, catalogValue);
 if (!parsedCatalog.success) {
@@ -82,9 +80,8 @@ export class UnknownProjectTemplateError extends Error {
 }
 
 function sourceFor(fileName: string): string {
-  const source = sourcesByFile.get(fileName);
-  if (source === undefined) throw new Error(`Example source is missing: ${fileName}.`);
-  return source;
+  if (!sourceFiles.includes(fileName)) throw new Error(`Example source is missing: ${fileName}.`);
+  return readFileSync(path.join(examplesDirectory, fileName), 'utf8');
 }
 
 function validateCatalogFiles(): void {
@@ -96,7 +93,7 @@ function validateCatalogFiles(): void {
   if (new Set(ids).size !== ids.length)
     throw new Error('The example catalog contains duplicate IDs.');
   for (const file of referenced) sourceFor(file);
-  const orphans = [...sourcesByFile.keys()].filter((file) => !referenced.includes(file));
+  const orphans = sourceFiles.filter((file) => !referenced.includes(file));
   if (orphans.length > 0) {
     throw new Error(`Uncatalogued Sverlin example files: ${orphans.sort().join(', ')}.`);
   }

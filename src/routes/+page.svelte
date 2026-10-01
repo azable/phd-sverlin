@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
+  import { dev } from '$app/environment';
 
   import AdminProjectList from '$lib/client/admin/AdminProjectList.svelte';
   import * as Alert from '$lib/client/components/ui/alert';
@@ -52,8 +53,12 @@
         administration panel.
       </p>
     </div>
-    {#if data.isAdmin}<Button href={resolve('/admin')} variant="outline">Administration</Button
-      >{/if}
+    {#if data.isAdmin}
+      <div class="flex gap-2">
+        {#if dev}<Button href={resolve('/examples')} variant="outline">Examples</Button>{/if}
+        <Button href={resolve('/admin')} variant="outline">Administration</Button>
+      </div>
+    {/if}
   </header>
 
   <section class="flex flex-col gap-4" aria-labelledby="owned-projects-title">

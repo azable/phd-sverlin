@@ -91,6 +91,7 @@ describe('application root', () => {
     expect(body).toContain('Your projects and previews');
     expect(body).toContain('Administrator project');
     expect(body).toContain('href="/projects/admin-project"');
+    expect(body).toContain('href="/examples"');
   });
 });
 

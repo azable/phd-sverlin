@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { describe, expect, it, vi } from 'vitest';
+
+import catalog from '../../../../examples/catalog.json';
 
 import {
   getProjectTemplate,
@@ -39,5 +45,31 @@ describe('starter catalog', () => {
     expect(template.file).toBe('LinearSearch.sverlin');
     expect(template.source).toContain('searchIteration ::');
     expect(() => getProjectTemplate('not-catalogued')).toThrow(UnknownProjectTemplateError);
+  });
+
+  it('reads an edited example from disk without restarting the catalog module', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'sverlin-example-catalog-'));
+    const directory = path.join(root, 'examples');
+    const previousRoot = process.env.SVERLIN_REPOSITORY_ROOT;
+    try {
+      await mkdir(directory);
+      await Promise.all(
+        catalog.templates.map(({ file }) =>
+          writeFile(path.join(directory, file), 'original source')
+        )
+      );
+      process.env.SVERLIN_REPOSITORY_ROOT = root;
+      vi.resetModules();
+      const current = await import('./starter-catalog');
+      expect(current.getProjectTemplate('linear-search').source).toBe('original source');
+
+      await writeFile(path.join(directory, 'LinearSearch.sverlin'), 'revised source');
+      expect(current.getProjectTemplate('linear-search').source).toBe('revised source');
+    } finally {
+      if (previousRoot === undefined) delete process.env.SVERLIN_REPOSITORY_ROOT;
+      else process.env.SVERLIN_REPOSITORY_ROOT = previousRoot;
+      vi.resetModules();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

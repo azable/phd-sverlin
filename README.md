@@ -196,6 +196,8 @@ Run `pnpm run prepare:compiler` after changing compiler inputs. Preparation and 
 
 Project templates are registered in [`examples/catalog.json`](examples/catalog.json). To add one, add its `.sverlin` source, one unique catalog entry, and a focused assertion when it introduces new behavior. Catalog validation rejects missing, duplicate, and unregistered sources so the creation menu and compiler-example suite stay aligned.
 
+In local development, administrators can open the [Examples page](src/routes/examples/+page.svelte) from Projects to compile a catalogued source directly, without creating a project or using chat. The preview has step controls, source inspection, and a seed in its URL for repeatable layouts. Saving the selected `.sverlin` file recompiles the preview with that seed; a failed compile leaves the last successful view visible. After changing Haskell compiler inputs, run `pnpm run prepare:compiler`, then use **Retry** on the page. The direct preview uses the same bounded [compiler service](src/lib/server/compiler/index.ts) as projects.
+
 ## Command reference
 
 These tables cover the common local scripts. Pass script-specific arguments after `--`, for example `pnpm run compile -- --source examples/Minimal.sverlin --seed 1`.
