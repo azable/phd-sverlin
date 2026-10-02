@@ -817,17 +817,14 @@ designSpaceTests =
                    (alternative "first" [])
                    [alternative "second" []]
                    : [value @>=@ num 0 | value <- variables])
-            config =
-              withInitialOverrides
-                (Map.fromList [(name, 0.5) | name <- names])
-                (withMaxCategoricalBranches 1 defaultSolveConfig)
+            config = withMaxCategoricalBranches 1 defaultSolveConfig
         design <- assertDesignCompiled (compileDesignSpace config problem)
         sampled <- sampleDesignSpace BalancedDesignChoices (RandomSeed 7) design
         solution <- assertSingleDesignSample sampled
         let values = mapMaybe (evalExpr solution) variables
         length values @?= length variables
         assertBool
-          "hit-and-run should move away from the feasible MIP corner"
+          "hit-and-run should move away from the MIP corner without a hint"
           (maximum values > 0.1)
     , testCase "materializes and varies choices beyond the balanced prefix" $ do
         let decisionNames =

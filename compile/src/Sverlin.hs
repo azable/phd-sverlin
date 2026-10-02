@@ -295,7 +295,7 @@ module Sverlin
     symmetric
   , -- | Set top, right, bottom, and left insets explicitly.
     edges
-  , -- | Set the current node's inner padding.
+  , -- | Override paired solver-sampled inner padding for the current node.
     padding
   , -- | Set the current node's outer margin.
     margin

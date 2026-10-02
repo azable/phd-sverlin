@@ -437,6 +437,32 @@ tests =
             (transientTrace geometryFrame True)
             geometryPlan
         pure ()
+    , testCase "an empty Hug node cannot acquire arbitrary free padding" $ do
+        plan <-
+          expectPlan
+            (Render.buildRenderPlan $ do
+               Render.always (Render.frame @CanvasFrame)
+               Render.width (Render.by 400)
+               Render.height (Render.by 240)
+               _ <- emptyNode
+               pure ())
+        frameIdentity <- onlyFrameIdentity plan
+        visualization <-
+          compileSingleVisualization
+            "empty free padding"
+            (transientTrace frameIdentity False)
+            plan
+        case [ IR.elementBox element
+             | element <- IR.visualizationElements visualization
+             , IR.elementId element /= IR.visualizationRoot visualization
+             ] of
+          [box] -> do
+            IR.layoutRectWidth (IR.boxBounds box) @?= 0
+            IR.layoutRectHeight (IR.boxBounds box) @?= 0
+            IR.boxPadding box @?= IR.EdgeInsets 0 0 0 0
+          boxes ->
+            assertFailure
+              ("expected one empty node, got " ++ show (length boxes))
     , testCase "empty connector mappings emit no connector instances" $ do
         plan <- expectPlan emptyConnectorPlan
         frameIdentity <- onlyFrameIdentity plan

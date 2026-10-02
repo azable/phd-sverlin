@@ -2235,6 +2235,39 @@ automaticStyleVariableName :: String -> String -> String
 automaticStyleVariableName family field =
   "render.theme." ++ family ++ "." ++ field
 
+automaticPaddingVariable :: ConcreteNode -> Bool -> SolverExpr
+automaticPaddingVariable concrete horizontal =
+  S.var (automaticPaddingVariableName concrete horizontal)
+
+automaticPaddingVariableName :: ConcreteNode -> Bool -> String
+automaticPaddingVariableName concrete horizontal =
+  "render.padding." ++ mapping ++ "." ++ axis
+  where
+    mapping =
+      case concrete of
+        ConcreteCanvas -> "canvas"
+        ConcreteVisual node ->
+          "mapping." ++ showNodeDeclarationId (expandedNodeDeclaration node)
+    axis =
+      if horizontal
+        then "horizontal"
+        else "vertical"
+
+automaticPaddingInsets ::
+     ConcreteNode -> (SolverExpr, SolverExpr, SolverExpr, SolverExpr)
+automaticPaddingInsets concrete =
+  let vertical = automaticPaddingVariable concrete False
+      horizontal = automaticPaddingVariable concrete True
+   in (vertical, horizontal, vertical, horizontal)
+
+hasAuthoredInsets :: R.RenderPlan -> R.InsetsKind -> ConcreteNode -> Bool
+hasAuthoredInsets plan kind concrete =
+  any
+    (\declaration ->
+       sameInsetsKind (R.insetsDeclarationKind declaration) kind
+         && insetsTargetMatches concrete declaration)
+    (R.planInsets plan)
+
 automaticStyleConstraints :: ExpandedPlan -> [S.Constraint]
 automaticStyleConstraints expanded =
   case automaticStyleFamilies expanded of
@@ -2298,6 +2331,7 @@ lowerPlan trace plan expanded typography = do
        ++ nodeBounds
        ++ sharedSizeBounds
        ++ automaticStyleConstraints expanded
+       ++ automaticPaddingConstraints
        ++ variableConstraints
        ++ decisionConstraints
        ++ inactiveNodeConstraints
@@ -2350,6 +2384,39 @@ lowerPlan trace plan expanded typography = do
                 then R.GeometryWidth
                 else R.GeometryHeight
       ]
+    automaticPaddingConstraints
+      -- Explicit finite bounds are required even when geometry supplies
+      -- tighter coupled limits. 512 exceeds a fifth of the examples' largest
+      -- 1920-unit canvas; the proportional bounds set the effective range.
+     =
+      [ S.within (S.var name :: SolverExpr) (S.Range 0 512)
+      | name <-
+          nub
+            [ automaticPaddingVariableName concrete horizontal
+            | concrete <- automaticPaddingNodes
+            , horizontal <- [True, False]
+            ]
+      ]
+        ++ concatMap proportionalPaddingBounds automaticPaddingNodes
+    automaticPaddingNodes =
+      [ concrete
+      | concrete <- ConcreteCanvas : map ConcreteVisual nodes
+      , not (hasAuthoredInsets plan R.PaddingInsets concrete)
+      ]
+    proportionalPaddingBounds concrete
+      -- Each side gets at most one fifth of its box's axis, so paired sides
+      -- leave at least three fifths available to text or children.
+     =
+      guardOne
+        (contextForConcrete concrete)
+        (concreteNodeGuards concrete)
+        [ automaticPaddingVariable concrete True
+            S.@<=@ nodeAttribute concrete R.GeometryWidth
+            S.@*@ S.num 0.2
+        , automaticPaddingVariable concrete False
+            S.@<=@ nodeAttribute concrete R.GeometryHeight
+            S.@*@ S.num 0.2
+        ]
     guardOne context guards =
       concatMap
         (fromRight [] . guardConstraint trace plan expanded context guards)
@@ -3697,7 +3764,11 @@ lowerContainment trace plan expanded =
              , sameInsetsKind (R.insetsDeclarationKind declaration) kind
              , insetsTargetMatches concrete declaration
              ] of
-        [] -> pure zeroInsets
+        [] ->
+          pure
+            (case kind of
+               R.PaddingInsets -> automaticPaddingInsets concrete
+               R.MarginInsets  -> zeroInsets)
         declaration:_ ->
           case R.insetsDeclarationValue declaration of
             R.InsetsExpr top right bottom left -> do
@@ -4037,7 +4108,7 @@ lowerTextFits trace plan expanded typography = do
                  R.PaddingInsets
              , insetsTargetMatches concrete declaration
              ] of
-        [] -> pure (S.num 0, S.num 0, S.num 0, S.num 0)
+        [] -> pure (automaticPaddingInsets concrete)
         declaration:_ ->
           case R.insetsDeclarationValue declaration of
             R.InsetsExpr top right bottom left -> do
@@ -4439,7 +4510,21 @@ materializeInsets trace plan expanded solution context concrete kind =
          , sameInsetsKind (R.insetsDeclarationKind declaration) kind
          , insetsTargetMatches concrete declaration
          ] of
-    [] -> pure zeroIrInsets
+    [] ->
+      case kind of
+        R.PaddingInsets -> do
+          vertical <-
+            evaluateExpr solution (automaticPaddingVariable concrete False)
+          horizontal <-
+            evaluateExpr solution (automaticPaddingVariable concrete True)
+          pure
+            IR.EdgeInsets
+              { IR.insetsTop = nonnegative vertical
+              , IR.insetsRight = nonnegative horizontal
+              , IR.insetsBottom = nonnegative vertical
+              , IR.insetsLeft = nonnegative horizontal
+              }
+        R.MarginInsets -> pure zeroIrInsets
     declaration:_ ->
       case R.insetsDeclarationValue declaration of
         R.InsetsExpr top right bottom left -> do

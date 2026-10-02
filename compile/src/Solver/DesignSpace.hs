@@ -756,9 +756,12 @@ compileMipBranchWithHint numericHint compiled index assignment decisions = do
       AffineReady value        -> Right value
       AffineInvalid message    -> Left (InfeasibleDesignSpace message)
       AffineUnsupported reason -> Left (UnsupportedDesignSpace reason)
+  -- Keep authored overrides, but let all other coordinates start from their
+  -- normalized midpoints. The MIP feasibility point is often a box corner;
+  -- hit-and-run cannot leave such a corner in a random direction in a large
+  -- affine region. It remains a bounded fallback if midpoint repair fails.
   let preferredHint =
         explicitInitialValues (compiledDesignConfig compiled) resolved
-          `Map.union` numericHint
   prepared <-
     case prepareAffineRegionWithPhaseOneLimit
            midpointProjectionSweeps
@@ -776,10 +779,9 @@ compileMipBranchWithHint numericHint compiled index assignment decisions = do
                      ++ feasibilityMessage preferredFailure)))
           Right
           (prepareAffineRegion numericHint affine)
-      -- Explicit midpoint hints keep high-dimensional fitted text and theme
-      -- variables away from a MIP corner. Phase I projects them back into the
-      -- exact chosen region; if that bounded projection does not converge,
-      -- the already-feasible HiGHS point is the deterministic fallback.
+       -- Phase I projects the midpoint into the chosen region; if the bounded
+       -- projection does not converge, the already-feasible HiGHS point is
+       -- the deterministic fallback.
   let inspection =
         compiledInspection
           (compileProblem

@@ -309,6 +309,112 @@ tests =
                "text Hug dimensions must be positive"
                (all (> 0) (widths ++ heights)))
           visualizations
+    , testCase "unassigned padding varies by mapping within its node bounds" $ do
+        visualizations <-
+          compilePeerPlan "free peer padding" [1 .. 8] implicitPeerHugPlan
+        let paddings =
+              [ IR.boxPadding (IR.elementBox element)
+              | visualization <- visualizations
+              , element <- IR.visualizationElements visualization
+              , IR.elementId element /= IR.VisualId (-1)
+              ]
+            canvasPaddings =
+              [ IR.boxPadding (IR.elementBox element)
+              | visualization <- visualizations
+              , element <- IR.visualizationElements visualization
+              , IR.elementId element == IR.visualizationRoot visualization
+              ]
+        assertBool
+          "sampled padding should not always be zero"
+          (any ((> 0) . IR.insetsLeft) paddings)
+        length canvasPaddings @?= 8
+        mapM_
+          (\pad -> do
+             IR.insetsTop pad @?= IR.insetsBottom pad
+             IR.insetsLeft pad @?= IR.insetsRight pad
+             assertBool
+               "canvas horizontal padding must fit"
+               (IR.insetsLeft pad <= 800 * 0.2 + 1e-3)
+             assertBool
+               "canvas vertical padding must fit"
+               (IR.insetsTop pad <= 400 * 0.2 + 1e-3))
+          canvasPaddings
+        mapM_
+          (\visualization -> do
+             let peers =
+                   [ element
+                   | element <- IR.visualizationElements visualization
+                   , IR.elementId element /= IR.VisualId (-1)
+                   ]
+                 paddingValues = map (IR.boxPadding . IR.elementBox) peers
+                 mappingVariables =
+                   [ name
+                   | variable <- IR.visualizationVariables visualization
+                   , IR.CspVariableId name <- [IR.cspVariableId variable]
+                   , "render.padding.mapping." `isInfixOf` name
+                   ]
+             length peers @?= 4
+             length (nub paddingValues) @?= 1
+             length mappingVariables @?= 2
+             mapM_
+               (\element -> do
+                  let box = IR.elementBox element
+                      bounds = IR.boxBounds box
+                      pad = IR.boxPadding box
+                  IR.insetsTop pad @?= IR.insetsBottom pad
+                  IR.insetsLeft pad @?= IR.insetsRight pad
+                  assertBool
+                    "horizontal padding must fit the node"
+                    (IR.insetsLeft pad <= IR.layoutRectWidth bounds * 0.2 + 1e-3)
+                  assertBool
+                    "vertical padding must fit the node"
+                    (IR.insetsTop pad <= IR.layoutRectHeight bounds * 0.2 + 1e-3))
+               peers)
+          visualizations
+    , testCase "canvas-only free padding samples nonzero insets" $ do
+        visualizations <-
+          compileFramePlan "canvas-only padding" [1 .. 8] canvasOnlyPaddingPlan
+        let paddings =
+              [ IR.boxPadding (IR.elementBox element)
+              | visualization <- visualizations
+              , element <- IR.visualizationElements visualization
+              , IR.elementId element == IR.visualizationRoot visualization
+              ]
+        length paddings @?= 8
+        assertBool
+          "an unconstrained canvas should sample nonzero padding"
+          (any ((> 0) . IR.insetsLeft) paddings)
+    , testCase "connected peer text leaves the MIP corner across view seeds" $ do
+        plan <- expectPlan connectedPeerTextPlan
+        marker <- referenceMarker plan
+        compiled <-
+          Compile.compileRenderBatch
+            "TypographyTest.sverlin"
+            "connected peer text"
+            [1 .. 20]
+            (connectedPeerTrace marker)
+            plan
+        visualizations <-
+          case compiled of
+            Left problem -> assertFailure (show problem)
+            Right package ->
+              pure (Resource.compilationPackageVisualizations package)
+        let sizes = concatMap textLayoutSizes visualizations
+            positions =
+              [ IR.layoutRectX (IR.boxBounds (IR.elementBox element))
+              | visualization <- visualizations
+              , element <- IR.visualizationElements visualization
+              , IR.elementId element == IR.VisualId 0
+              ]
+        length sizes @?= 40
+        -- A few small samples are valid, but most of the 40 labels on this
+        -- 800-by-450 canvas should exceed 32 rather than repeat the MIP corner.
+        assertBool
+          "most connected labels should outgrow a small font"
+          (length (filter (> 32) sizes) >= 30)
+        assertBool
+          "font sizes and placement should vary across the feasible region"
+          (length (nub sizes) > 8 && length (nub positions) > 8)
     , testCase "absent shared Hug mappings have no visible peers" $ do
         visualizations <-
           compilePeerPlan "optional peer Hug" [1 .. 24] optionalPeerHugPlan
@@ -528,16 +634,18 @@ tests =
         visualizations <- compileFramePlan "ink Hug" [1 .. 4] inkHugPlan
         mapM_
           (\visualization ->
-             case [ (IR.boxBounds (IR.elementBox element), layout)
+             case [ (IR.elementBox element, layout)
                   | element <- IR.visualizationElements visualization
                   , Just (IR.PlainTextContent layout) <-
                       [IR.elementContent element]
                   ] of
-               [(bounds, layout)] ->
+               [(box, layout)] ->
                  case IR.textLayoutLines layout of
                    [line] -> do
                      let ink = IR.textLineInkBounds line
                          contentBox = IR.textLayoutContentBox layout
+                         bounds = IR.boxBounds box
+                     IR.boxPadding box @?= IR.EdgeInsets 6 6 6 6
                      assertBool
                        ("Hug height must exclude nominal font leading: "
                           ++ show (bounds, ink, contentBox))
@@ -883,6 +991,68 @@ inkHugPlan =
            Render.yAt (Render.percent 50)) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
+
+canvasOnlyPaddingPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+canvasOnlyPaddingPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 800)
+    Render.height (Render.by 400)
+
+connectedPeerTextPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+connectedPeerTextPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @PeerFrame)
+    Render.width (Render.by 800)
+    Render.height (Render.by 450)
+    peers <- Render.selectKind "peer" :: Render.Render (Render.Selected Peer)
+    links <-
+      Render.selectRelation "next" True :: Render.Render
+        (Render.Relations Peer Peer)
+    Render.node peers (Render.bindContent >>= Render.content)
+    Render.relation links $ do
+      earlier <- Render.first links
+      later <- Render.second links
+      Render.ensure (Render.right earlier Render..<=. Render.left later)
+      Render.ensure (Render.y earlier Render..==. Render.y later)
+      Render.connector
+        (Render.anchor Render.AtBoundary earlier)
+        (Render.anchor Render.AtBoundary later)
+        (pure ())
+
+connectedPeerTrace :: Semantic.TraceMarker -> Semantic.SemanticTrace
+connectedPeerTrace marker =
+  Semantic.SemanticTrace
+    { Semantic.semanticTraceScenarioSeed = 1
+    , Semantic.semanticTraceDeclarations = [(marker, "connected peer frame")]
+    , Semantic.semanticTraceVariables = []
+    , Semantic.semanticTraceBlocks = [block 0 "7", block 1 "9"]
+    , Semantic.semanticTraceRelations =
+        [ Semantic.TraceRelation
+            { Semantic.traceRelationId = 0
+            , Semantic.traceRelationKind = Semantic.TraceMarker "next"
+            , Semantic.traceRelationDirection = Semantic.OrderedRelation
+            , Semantic.traceRelationSource = Semantic.BlockId 0
+            , Semantic.traceRelationTarget = Semantic.BlockId 1
+            , Semantic.traceRelationStart = 0
+            , Semantic.traceRelationEnd = Nothing
+            }
+        ]
+    , Semantic.semanticTraceSteps = [Semantic.StepOccurrence marker [0] 0 1]
+    , Semantic.semanticTraceEvents = []
+    }
+  where
+    block identifier payload =
+      Semantic.TraceBlock
+        { Semantic.traceBlockId = Semantic.BlockId identifier
+        , Semantic.traceBlockKind = Semantic.TraceMarker "peer"
+        , Semantic.traceBlockType = Semantic.TraceMarker "peer"
+        , Semantic.traceBlockPayloadText = payload
+        , Semantic.traceBlockPayloadScalar = Nothing
+        , Semantic.traceBlockBorn = 0
+        , Semantic.traceBlockEnded = Nothing
+        , Semantic.traceBlockOccupancies = []
+        }
 
 structuralStylePlan :: Either Render.RenderDiagnostic Render.RenderPlan
 structuralStylePlan =

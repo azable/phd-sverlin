@@ -171,7 +171,7 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 - `uniform` — Type: `uniform :: Span -> Insets` — Use one inset on all four edges.
 - `symmetric` — Type: `symmetric :: Span -> Span -> Insets` — Use separate vertical and horizontal insets.
 - `edges` — Type: `edges :: Span -> Span -> Span -> Span -> Insets` — Set top, right, bottom, and left insets explicitly.
-- `padding` — Type: `padding :: Insets -> Render ()` — Set the current node's inner padding.
+- `padding` — Type: `padding :: Insets -> Render ()` — Override paired solver-sampled inner padding for the current node.
 - `margin` — Type: `margin :: Insets -> Render ()` — Set the current node's outer margin.
 - `Percent` — Type: `Percent :: Type` — Valid parent-relative percentage.
 - `percent` — Type: `percent :: Double -> Percent` — Construct a percentage from zero through one hundred.
