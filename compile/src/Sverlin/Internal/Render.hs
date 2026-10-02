@@ -115,9 +115,6 @@ module Sverlin.Internal.Render
   , edges
   , padding
   , margin
-  , Axis(..)
-  , ContentFit(..)
-  , contentFit
   , Percent
   , percent
   , xAt
@@ -182,7 +179,6 @@ module Sverlin.Internal.Render
   , GeometryAttribute(..)
   , GeometryAssignment(..)
   , InsetsExpr(..)
-  , FitDeclaration(..)
   , ContentDeclaration(..)
   , TextPiece(..)
   , TextSource(..)
@@ -312,7 +308,6 @@ data RenderState = RenderState
   , renderConstraints        :: [ConstraintDeclaration]
   , renderGeometry           :: [GeometryAssignment]
   , renderInsets             :: [InsetsDeclaration]
-  , renderFits               :: [FitDeclaration]
   , renderContents           :: [ContentDeclaration]
   , renderStyles             :: [StyleDeclaration]
   , renderChoices            :: [ChoiceDeclaration]
@@ -336,7 +331,6 @@ initialRenderState =
     , renderConstraints = []
     , renderGeometry = []
     , renderInsets = []
-    , renderFits = []
     , renderContents = []
     , renderStyles = []
     , renderChoices = []
@@ -354,7 +348,6 @@ data RenderPlan = RenderPlan
   , planConstraints        :: [ConstraintDeclaration]
   , planGeometry           :: [GeometryAssignment]
   , planInsets             :: [InsetsDeclaration]
-  , planFits               :: [FitDeclaration]
   , planContents           :: [ContentDeclaration]
   , planStyles             :: [StyleDeclaration]
   , planChoices            :: [ChoiceDeclaration]
@@ -394,7 +387,6 @@ buildRenderPlan action = do
       , planConstraints = reverse (renderConstraints final)
       , planGeometry = reverse (renderGeometry final)
       , planInsets = reverse (renderInsets final)
-      , planFits = reverse (renderFits final)
       , planContents = reverse (renderContents final)
       , planStyles = reverse (renderStyles final)
       , planChoices = reverse (renderChoices final)
@@ -585,14 +577,6 @@ promoteNodeComponent root guards state =
                    promoteScope (insetsDeclarationScope declaration)
                })
           (renderInsets state)
-    , renderFits =
-        map
-          (\declaration ->
-             declaration
-               { fitDeclarationScope =
-                   promoteScope (fitDeclarationScope declaration)
-               })
-          (renderFits state)
     , renderContents =
         map
           (\declaration ->
@@ -1721,37 +1705,6 @@ setInsets kind (Insets topValue rightValue bottomValue leftValue) = do
                    (visualExpr leftValue))
                 scope
                 : renderInsets state
-          }
-
-data Axis
-  = Horizontal
-  | Vertical
-  | Both
-  deriving stock (Eq, Show)
-
-data ContentFit
-  = Hug
-  | Contain
-  deriving stock (Eq, Show)
-
-data FitDeclaration = FitDeclaration
-  { fitDeclarationNode  :: NodeReference
-  , fitDeclarationAxis  :: Axis
-  , fitDeclarationValue :: ContentFit
-  , fitDeclarationScope :: Scope
-  } deriving stock (Show)
-
-contentFit :: Axis -> ContentFit -> Render ()
-contentFit axis fit = do
-  target <- gets renderBuilderTarget
-  scope <- currentScope
-  case target of
-    ConnectorBuilderTarget _ -> renderFail "connectors do not contain children"
-    NodeBuilderTarget reference ->
-      modify' $ \state ->
-        state
-          { renderFits =
-              FitDeclaration reference axis fit scope : renderFits state
           }
 
 newtype Percent =

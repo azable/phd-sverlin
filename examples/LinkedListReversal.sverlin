@@ -522,7 +522,6 @@ render = do
   ensure $ canvasHeight .<=. by 1200
   width canvasWidth
   height canvasHeight
-  contentFit Both Contain
 
   always $ frame @InitializeList
   sometimes $ frame @ReverseOneLink
@@ -550,12 +549,10 @@ render = do
   ensure $ cellHeight .>=. by 42
 
   listView <- node $ do
-    contentFit Both Hug
     padding (uniform (by 14))
 
     node cells $ do
       position <- rankOf ordering
-      contentFit Both Hug
 
       node values $ do
         label <- bindContent
@@ -605,7 +602,6 @@ render = do
         endMarker ArrowMarker
 
     node cursors $ do
-      contentFit Both Hug
       node cursorLabels $ do
         label <- bindContent
         content label

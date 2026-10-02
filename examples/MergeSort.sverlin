@@ -383,7 +383,6 @@ mergeTreeView ::
   Span ->
   Render (Selected GeneratedNode)
 mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap cellWidth cellHeight = node $ do
-  contentFit Both Hug
 
   -- During construction the live runs form a forest; a completed-tree
   -- arrangement would reject those intermediate frames.  The layered DAG
@@ -392,7 +391,6 @@ mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap 
   arrange (ArrangeLayered childLinks (vec2 siblingGap levelGap)) runs
 
   node runs $ do
-    contentFit Both Hug
     padding (uniform (by 8))
     style @BorderStyle BorderSolid
     style @StrokeWidth (by 1)
@@ -408,7 +406,6 @@ mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap 
 
       node runCells $ do
         position <- rankOf runOrder
-        contentFit Both Hug
 
         node allValues $ do
           label <- bindContent
@@ -466,7 +463,6 @@ render = do
   ensure $ canvasHeight .<=. by 1200
   width canvasWidth
   height canvasHeight
-  contentFit Both Contain
 
   always $ frame @BuildLeaf
   sometimes $ frame @SplitRun

@@ -571,9 +571,8 @@ render = do
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
   width canvasWidth
-  aspectRatio 16 9
+  height (canvasWidth .*. num (9 / 16))
   padding (uniform (by 28))
-  contentFit Both Contain
 
   always $ frame @BuildDependencies
   always $ frame @TraceResult
@@ -597,19 +596,16 @@ render = do
 
   grid <- node $ do
     padding (uniform (by 20))
-    contentFit Both Hug
 
     node rows $ do
       rowPosition <- rankOf rowOrder
       padding (uniform (by 6))
-      contentFit Both Hug
 
       node rowLabels $ do
         label <- bindContent
         content label
         width cellSize
         height cellSize
-        contentFit Both Contain
         style @Fill (Hsl (num 220) (num 0.18) (num 0.94))
         style @Radius (by 8)
 
@@ -628,7 +624,6 @@ render = do
           width cellSize
           height cellSize
           padding (uniform (by 6))
-          contentFit Both Contain
           style @Fill (Hsl (num 202) (num 0.30) (num 0.92))
           style @Stroke (Hsl (num 202) (num 0.50) (num 0.40))
           style @BorderStyle BorderSolid
@@ -639,8 +634,7 @@ render = do
             score <- payloadScalar rowValues
             scoreText <- bindContent
             content scoreText
-            contentFit Both Contain
-            ensure $ height rowValues .>=. by 24 .+. by 2 .*. score
+            height (by 24 .+. by 2 .*. score)
 
           sometimes $ do
             coordinateLabel <- node $

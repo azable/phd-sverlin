@@ -66,7 +66,6 @@ render = do
   always $ frame @Complete
   width (by 800)
   height (by 450)
-  contentFit Both Contain
 
   leftValues <- select leftKind
   rightValues <- select rightKind
@@ -76,7 +75,6 @@ render = do
   expression <- node $ do
     width (by 640)
     height (by 160)
-    contentFit Both Contain
 
     node leftValues $ do
       label <- bindContent

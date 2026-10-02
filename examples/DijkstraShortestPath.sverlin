@@ -497,9 +497,8 @@ render = do
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
   width canvasWidth
-  aspectRatio 16 9
+  height (canvasWidth .*. num (9 / 16))
   padding (uniform (by 28))
-  contentFit Both Contain
 
   always $ frame @InitializeDistances
   always $ frame @ChooseNearest
@@ -526,7 +525,6 @@ render = do
 
   graphView <- node $ do
     padding (uniform (by 24))
-    contentFit Both Hug
 
     oneOf "graph-grid"
       (alternative "two-columns" $ arrange (ArrangeGrid 2 (vec2 horizontalGap verticalGap)) vertices)
@@ -536,7 +534,6 @@ render = do
       width vertexSize
       height vertexSize
       padding (uniform (by 8))
-      contentFit Both Contain
       style @Fill (Hsl (num 218) (num 0.32) (num 0.92))
       style @Stroke (Hsl (num 218) (num 0.56) (num 0.38))
       style @BorderStyle BorderSolid
@@ -557,9 +554,8 @@ render = do
         numericWeight <- payloadScalar weights
         weightText <- bindContent
         content weightText
-        contentFit Both Contain
-        ensure $ width weights .>=. by 28 .+. by 1 .*. numericWeight
-        ensure $ height weights .>=. by 28
+        width (by 28 .+. by 1 .*. numericWeight)
+        height (by 28)
         padding (uniform (by 6))
         style @Fill (Hsl (num 42) (num 0.48) (num 0.93))
         style @Stroke (Hsl (num 42) (num 0.65) (num 0.40))
@@ -579,7 +575,6 @@ render = do
 
   distanceTable <- node $ do
     padding (uniform (by 16))
-    contentFit Both Hug
     node distanceCells $ do
       position <- rankOf rowOrder
       padding (uniform (by 10))

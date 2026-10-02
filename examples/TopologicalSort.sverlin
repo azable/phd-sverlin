@@ -386,14 +386,12 @@ dagView ::
   Render (Selected GeneratedNode)
 dagView tasks labels dependencyLinks horizontalGap verticalGap nodeWidth nodeHeight = node $ do
   padding (uniform (by 20))
-  contentFit Both Hug
   arrange (ArrangeLayered dependencyLinks (vec2 horizontalGap verticalGap)) tasks
 
   node tasks $ do
     width nodeWidth
     height nodeHeight
     padding (uniform (by 8))
-    contentFit Both Contain
     style @Fill (Hsl (num 222) (num 0.32) (num 0.92))
     style @Stroke (Hsl (num 222) (num 0.54) (num 0.40))
     style @BorderStyle BorderSolid
@@ -419,13 +417,11 @@ outputView ::
   Render (Selected GeneratedNode)
 outputView cells labels links gap nodeWidth nodeHeight = node $ do
   padding (uniform (by 16))
-  contentFit Both Hug
 
   node cells $ do
     width nodeWidth
     height nodeHeight
     padding (uniform (by 8))
-    contentFit Both Contain
     style @Fill (Hsl (num 145) (num 0.30) (num 0.90))
     style @Stroke (Hsl (num 145) (num 0.48) (num 0.38))
     style @BorderStyle BorderSolid
@@ -449,9 +445,8 @@ render = do
   ensure $ canvasWidth .>=. by 960
   ensure $ canvasWidth .<=. by 1920
   width canvasWidth
-  aspectRatio 16 9
+  height (canvasWidth .*. num (9 / 16))
   padding (uniform (by 28))
-  contentFit Both Contain
 
   always $ frame @EmitTask
   sometimes $ frame @FindReadyTasks
@@ -488,7 +483,6 @@ render = do
   ensure $ representationGap .<=. canvasWidth .*. num 0.15
 
   page <- node $ do
-    contentFit Both Hug
     graph <- dagView tasks labels dependencyLinks horizontalGap verticalGap nodeWidth nodeHeight
     sequenceView <- outputView outputCells outputLabels outputLinks outputGap nodeWidth nodeHeight
 

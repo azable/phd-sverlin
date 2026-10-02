@@ -49,7 +49,6 @@ render = do
   always $ frame @Complete
   width (by 800)
   height (by 600)
-  contentFit Both Contain
 
   parseItems <- select parseKind
   solveItems <- select solveKind

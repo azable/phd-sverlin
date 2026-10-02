@@ -302,9 +302,8 @@ render = do
   codeFont <- fontChoice (fontKind Monospace)
 
   width canvasWidth
-  aspectRatio 16 10
+  height (canvasWidth .*. num (10 / 16))
   padding (uniform gap)
-  contentFit Both Contain
 
   graphDescriptions <- select graphDescriptionKind
   states <- select bfsStateKind
@@ -313,7 +312,6 @@ render = do
 
   page <- node $ do
     padding (uniform gap)
-    contentFit Both Hug
     style @FontFamily bodyFont
 
     title <- node $ do
@@ -324,7 +322,6 @@ render = do
 
     graphPanel <- node $ do
       padding (uniform (by 10))
-      contentFit Both Hug
       style @Radius (by 12)
       node graphDescriptions $ do
         description <- bindContent
@@ -335,7 +332,6 @@ render = do
 
     statusPanel <- node $ do
       padding (uniform (by 10))
-      contentFit Both Hug
       style @Radius (by 12)
       node states $ do
         stateText <- bindContent
@@ -359,7 +355,6 @@ render = do
 
     visitPanel <- node $ do
       padding (uniform (by 10))
-      contentFit Both Hug
       node visits $ do
         vertex <- bindContent
         content (text "visit " <> vertex)

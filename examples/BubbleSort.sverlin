@@ -336,7 +336,6 @@ render = do
 
   width canvasWidth
   height canvasHeight
-  contentFit Both Contain
 
   always $ frame @InitializeArray
   sometimes $ frame @ReadRight
@@ -357,7 +356,6 @@ render = do
   -- fixed top-left origin; padding creates the content inset without a second
   -- absolute size range.
   node $ do
-    contentFit Both Contain
     left (at 0)
     top (at 0)
     width canvasWidth
@@ -373,7 +371,6 @@ render = do
     comparisonPanel <- node $ do
       -- The panel scales with the canvas. These fractions leave room for two
       -- side-by-side reads while preserving space for the array and code.
-      contentFit Both Contain
       width (canvasWidth .*. num 0.45)
       height (canvasHeight .*. num 0.32)
       padding (uniform (by 8))
@@ -420,7 +417,6 @@ render = do
     -- The code panel is one shared component for both value encodings. Only
     -- its relation to the branch-local array view is repeated below.
     code <- node $ do
-      contentFit Both Hug
       content bubbleLine
       padding (uniform (by 9))
       style @FontFamily codeFont
@@ -432,7 +428,6 @@ render = do
       padding (uniform (by 8))
 
       node cells $ do
-        contentFit Both Contain
         width (canvasWidth .*. num 0.07)
         height (canvasHeight .*. num 0.20)
         position <- rankOf ordering
@@ -451,7 +446,6 @@ render = do
           style @Radius (by 12)
 
         indexLabel <- node $ do
-          contentFit Both Hug
           content (text "A[" <> asText position <> text "]")
           style @FontFamily codeFont
           style @FontSize fontSize

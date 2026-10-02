@@ -191,9 +191,8 @@ render = do
   cellWidth <- minimumSpan (by 58)
   cellHeight <- minimumSpan (by 44)
   width canvasWidth
-  aspectRatio 16 10
+  height (canvasWidth .*. num (10 / 16))
   padding (uniform gap)
-  contentFit Both Contain
 
   bodyFont <- fontChoice (fontKind Proportional)
   codeFont <- fontChoice (fontKind Monospace)
@@ -206,7 +205,6 @@ render = do
 
   page <- node $ do
     padding (uniform gap)
-    contentFit Both Hug
     style @FontFamily bodyFont
 
     title <- node $ do
@@ -217,7 +215,6 @@ render = do
 
     targetPanel <- node $ do
       padding (uniform (by 8))
-      contentFit Both Hug
       node targets $ do
         label <- bindContent
         content (text "target = " <> label)
@@ -228,7 +225,6 @@ render = do
 
     arrayPanel <- node $ do
       padding (uniform (by 8))
-      contentFit Both Hug
       node elements $ do
         label <- bindContent
         content label
@@ -245,7 +241,6 @@ render = do
 
     comparison <- node $ do
       padding (uniform (by 8))
-      contentFit Both Hug
 
       node targetProbes $ do
         label <- bindContent

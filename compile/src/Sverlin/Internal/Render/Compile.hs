@@ -3133,7 +3133,6 @@ nonFrameScopes plan =
     ++ map R.constraintDeclarationScope (R.planConstraints plan)
     ++ map R.geometryAssignmentScope (R.planGeometry plan)
     ++ map R.insetsDeclarationScope (R.planInsets plan)
-    ++ map R.fitDeclarationScope (R.planFits plan)
     ++ map R.contentDeclarationScope (R.planContents plan)
     ++ map R.styleDeclarationScope (R.planStyles plan)
     ++ map R.choiceDeclarationScope (R.planChoices plan)
@@ -3595,7 +3594,6 @@ lowerContainment trace plan expanded =
               [ constraint
               | (isHorizontal, constraint) <-
                   [(True, horizontal), (False, vertical)]
-              , fitPolicy plan parent isHorizontal == R.Hug
               , not (geometryAxisExplicit plan parent isHorizontal)
               ]
         concat
@@ -3609,8 +3607,7 @@ lowerContainment trace plan expanded =
                 constraints
     hugChildren context parent padding childMargins = do
       horizontal <-
-        if fitPolicy plan parent True == R.Hug
-             && not (geometryAxisExplicit plan parent True)
+        if not (geometryAxisExplicit plan parent True)
           then do
             leading <-
               hugPartition context parent padding childMargins True True
@@ -3619,8 +3616,7 @@ lowerContainment trace plan expanded =
             pure (leading ++ trailing)
           else pure []
       vertical <-
-        if fitPolicy plan parent False == R.Hug
-             && not (geometryAxisExplicit plan parent False)
+        if not (geometryAxisExplicit plan parent False)
           then do
             leading <-
               hugPartition context parent padding childMargins False True
@@ -3739,32 +3735,6 @@ sameInsetsKind R.PaddingInsets R.PaddingInsets = True
 sameInsetsKind R.MarginInsets R.MarginInsets   = True
 sameInsetsKind _ _                             = False
 
-fitPolicy :: R.RenderPlan -> ConcreteNode -> Bool -> R.ContentFit
-fitPolicy plan concrete horizontal =
-  case reverse
-         [ R.fitDeclarationValue declaration
-         | declaration <- R.planFits plan
-         , fitTargetMatches concrete declaration
-         , axisContains horizontal (R.fitDeclarationAxis declaration)
-         ] of
-    value:_ -> value
-    []      -> R.Hug
-
-axisContains :: Bool -> R.Axis -> Bool
-axisContains _ R.Both          = True
-axisContains True R.Horizontal = True
-axisContains False R.Vertical  = True
-axisContains _ _               = False
-
-fitTargetMatches :: ConcreteNode -> R.FitDeclaration -> Bool
-fitTargetMatches concrete declaration =
-  case concrete of
-    ConcreteCanvas -> R.fitDeclarationNode declaration == R.CanvasReference
-    ConcreteVisual node ->
-      R.scopeCurrentNode (R.fitDeclarationScope declaration)
-        == Just (expandedNodeDeclaration node)
-        && referenceMatchesTarget (R.fitDeclarationNode declaration) node
-
 geometryAxisExplicit :: R.RenderPlan -> ConcreteNode -> Bool -> Bool
 geometryAxisExplicit plan concrete horizontal =
   hasSpan || (hasLeading && hasTrailing)
@@ -3856,13 +3826,11 @@ lowerTextFits trace plan expanded typography = do
       let hasChildren =
             any ((== concreteNodeId concrete) . expandedNodeParent) nodes
           hugHorizontal =
-            fitPolicy plan concrete True == R.Hug
-              && not (geometryAxisExplicit plan concrete True)
+            not (geometryAxisExplicit plan concrete True)
               && not hasChildren
               && not (sharedAxis concrete True)
           hugVertical =
-            fitPolicy plan concrete False == R.Hug
-              && not (geometryAxisExplicit plan concrete False)
+            not (geometryAxisExplicit plan concrete False)
               && not hasChildren
               && not (sharedAxis concrete False)
           guards =
@@ -3933,7 +3901,6 @@ lowerTextFits trace plan expanded typography = do
                   , paddingBottom)
                 ]
             , sharedAxis concrete horizontal
-            , fitPolicy plan concrete horizontal == R.Hug
             , (branchIndex, branch) <-
                 zip [0 :: Int ..] (preparedTextBranches prepared)
             , let measure = measureFor (preparedTextLine branch)

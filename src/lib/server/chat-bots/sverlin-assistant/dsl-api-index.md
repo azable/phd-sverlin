@@ -173,9 +173,6 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 - `edges` — Type: `edges :: Span -> Span -> Span -> Span -> Insets` — Set top, right, bottom, and left insets explicitly.
 - `padding` — Type: `padding :: Insets -> Render ()` — Set the current node's inner padding.
 - `margin` — Type: `margin :: Insets -> Render ()` — Set the current node's outer margin.
-- `Axis` — Type: `Axis :: Type; data Axis = Horizontal | Vertical | Both` — Axis selected by content-fitting operations.
-- `ContentFit` — Type: `ContentFit :: Type; data ContentFit = Hug | Contain` — Whether an axis hugs children or only contains them.
-- `contentFit` — Type: `contentFit :: Axis -> ContentFit -> Render ()` — Set content fitting for one or both axes.
 - `Percent` — Type: `Percent :: Type` — Valid parent-relative percentage.
 - `percent` — Type: `percent :: Double -> Percent` — Construct a percentage from zero through one hundred.
 - `xAt` — Type: `xAt :: Percent -> Render ()` — Pin horizontal centre to a parent percentage.

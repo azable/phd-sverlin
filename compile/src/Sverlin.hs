@@ -299,12 +299,6 @@ module Sverlin
     padding
   , -- | Set the current node's outer margin.
     margin
-  , -- | Axis selected by content-fitting operations.
-    Axis(..)
-  , -- | Whether an axis hugs children or only contains them.
-    ContentFit(..)
-  , -- | Set content fitting for one or both axes.
-    contentFit
   , -- | Valid parent-relative percentage.
     Percent
   , -- | Construct a percentage from zero through one hundred.

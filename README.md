@@ -194,7 +194,7 @@ pnpm run compile -- \
 
 Run `pnpm run prepare:compiler` after changing compiler inputs. Preparation and execution use coordinated locks, so an executable cannot be rebuilt underneath an active compile. Source input is trusted Haskell-based authoring input, not a hostile-code sandbox.
 
-In authored source, `content` without an explicit `FontSize` samples a single-line text size constrained by the node's width and height. An implicit Hug height follows the visible glyph bounds plus padding; an explicit height only has to contain the glyphs. An explicit `style @FontSize` pins or bounds text size. The [text lowering](compile/src/Sverlin/Internal/Render/Compile.hs) and [typography preparation](compile/src/Sverlin/Internal/Render/Typography.hs) define these relationships.
+In authored source, `content` without an explicit `FontSize` samples a single-line text size constrained by the node's width and height. Implicit dimensions Hug the text or children; explicit dimensions may leave space around them while still containing them. Text-driven height follows the visible glyph bounds plus padding. An explicit `style @FontSize` pins or bounds text size. The [text lowering](compile/src/Sverlin/Internal/Render/Compile.hs) and [typography preparation](compile/src/Sverlin/Internal/Render/Typography.hs) define these relationships.
 
 Project templates are registered in [`examples/catalog.json`](examples/catalog.json). To add one, add its `.sverlin` source, one unique catalog entry, and a focused assertion when it introduces new behavior. Catalog validation rejects missing, duplicate, and unregistered sources so the creation menu and compiler-example suite stay aligned.
 

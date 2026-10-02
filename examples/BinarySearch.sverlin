@@ -509,7 +509,6 @@ render = do
 
   width canvasWidth
   height canvasHeight
-  contentFit Both Contain
 
   always $ frame @InitializeArray
   always $ frame @ProbeRange

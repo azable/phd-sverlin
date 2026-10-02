@@ -665,7 +665,6 @@ guardedFontPlan =
     Render.always (Render.frame @Visible)
     Render.width (Render.by 800)
     Render.height (Render.by 450)
-    Render.contentFit Render.Both Render.Contain
     family <- Render.fontChoice (Render.fontKind Render.Proportional)
     slant <- Render.freshChoice @Render.FontStyle
     _ <-

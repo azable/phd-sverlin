@@ -46,6 +46,9 @@ describe('AI assistant DSL interface', () => {
       '`content` — Type: `content :: ContentValue -> Render ()` — Shape one non-wrapping line with a sampled size constrained by its node geometry unless FontSize is authored; implicit height hugs visible glyph ink plus padding.'
     );
     expect(index).not.toContain('`fitText` —');
+    expect(index).not.toContain('`contentFit` —');
+    expect(index).not.toContain('`ContentFit` —');
+    expect(index).not.toContain('`Axis` —');
     expect(index).toContain('`Traceable` — Type: `class Traceable tag where; type Payload tag`');
     expect(index).not.toContain('NodeBinding');
     expect(index).not.toContain('ChoiceDomain');

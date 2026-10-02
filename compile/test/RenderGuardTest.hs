@@ -959,9 +959,17 @@ canvasAspectRatioPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 canvasAspectRatioPlan =
   Render.buildRenderPlan $ do
     Render.always (Render.frame @CanvasFrame)
-    Render.contentFit Render.Both Render.Contain
     Render.height (Render.by 450)
     Render.aspectRatio 16 9
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by 800)
+           Render.height (Render.by 450)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
 
 alternativePlan :: Either Render.RenderDiagnostic Render.RenderPlan
 alternativePlan =
