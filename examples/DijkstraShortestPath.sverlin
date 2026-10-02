@@ -542,7 +542,7 @@ render = do
       style @BorderStyle BorderSolid
       style @StrokeWidth (by 2)
       style @Radius (by 18)
-      node labels $ bindContent >>= fitText
+      node labels $ bindContent >>= content
 
     -- `within` gives this exact edge its one SourceOf and TargetOf vertex.
     -- It does not copy either vertex or infer a join from the label text.
@@ -556,7 +556,7 @@ render = do
       node weights $ do
         numericWeight <- payloadScalar weights
         weightText <- bindContent
-        fitText weightText
+        content weightText
         contentFit Both Contain
         ensure $ width weights .>=. by 28 .+. by 1 .*. numericWeight
         ensure $ height weights .>=. by 28
@@ -588,7 +588,7 @@ render = do
       style @BorderStyle BorderSolid
       style @StrokeWidth (by 2)
       style @Radius (by 10)
-      node distanceTexts $ bindContent >>= fitText
+      node distanceTexts $ bindContent >>= content
       sometimes $ do
         positionLabel <- node $ content (text "settled #" <> asText position)
         ensure $ top positionLabel .==. bottom distanceTexts .+. by 4
@@ -612,7 +612,7 @@ render = do
     style @Radius (by 10)
     node status $ do
       value <- bindContent
-      fitText value
+      content value
 
   settledLinks <- select distanceFor
   relation settledLinks $ do

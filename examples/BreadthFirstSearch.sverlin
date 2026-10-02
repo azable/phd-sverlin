@@ -317,7 +317,7 @@ render = do
     style @FontFamily bodyFont
 
     title <- node $ do
-      fitText (text "Breadth-first search")
+      content (text "Breadth-first search")
       style @FontFamily bodyFont
       style @FontWeight FontWeightBold
       withoutStyle @Fill
@@ -328,7 +328,7 @@ render = do
       style @Radius (by 12)
       node graphDescriptions $ do
         description <- bindContent
-        fitText (text "graph: " <> description)
+        content (text "graph: " <> description)
         width panelWidth
         height panelHeight
         style @FontFamily codeFont
@@ -339,14 +339,14 @@ render = do
       style @Radius (by 12)
       node states $ do
         stateText <- bindContent
-        fitText (text "queue | visited: " <> stateText)
+        content (text "queue | visited: " <> stateText)
         width panelWidth
         height panelHeight
         style @FontFamily codeFont
 
       node currentVisits $ do
         vertex <- bindContent
-        fitText (text "current vertex: " <> vertex)
+        content (text "current vertex: " <> vertex)
         width panelWidth
         height visitHeight
         style @FontFamily bodyFont
@@ -362,7 +362,7 @@ render = do
       contentFit Both Hug
       node visits $ do
         vertex <- bindContent
-        fitText (text "visit " <> vertex)
+        content (text "visit " <> vertex)
         width visitWidth
         height visitHeight
         style @FontFamily bodyFont
@@ -392,7 +392,7 @@ render = do
     -- This key is optional information, not an essential algorithm state.
     sometimes $ do
       key <- node $ do
-        fitText (text "left of | waits; right of | is visited")
+        content (text "left of | waits; right of | is visited")
         style @FontFamily codeFont
         withoutStyle @Fill
       ensure $ separatedBy gap visitPanel key

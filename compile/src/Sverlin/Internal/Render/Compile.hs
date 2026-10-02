@@ -153,25 +153,17 @@ compileRenderBatchWithMetrics recorder sourcePath sourceContent viewSeeds trace 
                              Typography.typographyCompilationProvenance
                          })
   where
-    -- Fitted text and theme variables start at the midpoints of their
-    -- documented ranges. Otherwise HiGHS supplies a lower-corner feasibility
-    -- point and high-dimensional hit-and-run can spend its bounded burn-in at
-    -- that corner. Phase I projects an infeasible text midpoint back into the
-    -- valid region; these values are hints only and never pin the sample.
+    -- Theme variables start at the midpoints of their documented ranges.
+    -- Otherwise HiGHS supplies a lower-corner feasibility point and the
+    -- bounded sampler can spend its burn-in near that corner.
     renderSolveConfig prepared =
       S.withInitialOverrides
         (Map.fromList
-           ([ (syntheticTextFontSizeName index declaration, 22)
-            | (index, declaration) <-
-                zip [0 :: Int ..] (R.planContents (preparedPlan prepared))
-            , R.contentDeclarationFit declaration
+           ([ ( automaticStyleVariableName automaticPaletteFamily field
+              , midpoint)
+            | not (null (automaticStyleFamilies (preparedExpanded prepared)))
+            , (field, midpoint) <- automaticPaletteMidpoints
             ]
-              ++ [ ( automaticStyleVariableName automaticPaletteFamily field
-                   , midpoint)
-                 | not
-                     (null (automaticStyleFamilies (preparedExpanded prepared)))
-                 , (field, midpoint) <- automaticPaletteMidpoints
-                 ]
               ++ [ (automaticStyleVariableName family field, midpoint)
                  | family <- automaticStyleFamilies (preparedExpanded prepared)
                  , (field, midpoint) <- automaticFamilyMidpoints
@@ -221,6 +213,8 @@ data ExpandedNode = ExpandedNode
   { expandedNodeId            :: Int
   , expandedNodeDeclaration   :: R.NodeDeclarationId
   , expandedNodeTarget        :: R.NodeTarget
+  , expandedNodeSharedWidth   :: Bool
+  , expandedNodeSharedHeight  :: Bool
   , expandedNodeParent        :: Int
   , expandedNodeSemanticBlock :: Maybe Sem.BlockId
   , expandedNodeRole          :: String
@@ -266,6 +260,15 @@ data PreparedText = PreparedText
 data PreparedTextBranch = PreparedTextBranch
   { preparedTextRequirements :: [ChoiceRequirement]
   , preparedTextLine         :: Typography.PreparedLine
+  }
+
+data SharedTextHug = SharedTextHug
+  { sharedHugNode         :: ConcreteNode
+  , sharedHugContext      :: ExpansionContext
+  , sharedHugGuards       :: [R.PresenceGuard]
+  , sharedHugRequirements :: [ChoiceRequirement]
+  , sharedHugIntrinsic    :: SolverExpr
+  , sharedHugBranch       :: Int
   }
 
 data MaterializedText = MaterializedText
@@ -1089,10 +1092,47 @@ expandNodes trace plan = foldM expand [] (R.planNodes plan)
               , contextChecks = nub checks
               , contextKey = nodeKey
               }
+          shareImplicitSize =
+            case R.nodeDeclarationTarget declaration of
+              R.SelectedNodeTarget _ ->
+                not
+                  (any
+                     ((== Just (R.nodeDeclarationId declaration))
+                        . R.scopeCurrentNode
+                        . R.nodeDeclarationScope)
+                     (R.planNodes plan))
+              _ -> False
+          sharedOn horizontal =
+            shareImplicitSize
+              && not
+                   (spanAttribute `elem` assignedAttributes
+                      || (leadingAttribute `elem` assignedAttributes
+                            && trailingAttribute `elem` assignedAttributes))
+            where
+              assignedAttributes =
+                [ R.geometryAssignmentAttribute assignment
+                | assignment <- R.planGeometry plan
+                , R.scopeCurrentNode (R.geometryAssignmentScope assignment)
+                    == Just (R.nodeDeclarationId declaration)
+                ]
+              spanAttribute =
+                if horizontal
+                  then R.GeometryWidth
+                  else R.GeometryHeight
+              leadingAttribute =
+                if horizontal
+                  then R.GeometryLeft
+                  else R.GeometryTop
+              trailingAttribute =
+                if horizontal
+                  then R.GeometryRight
+                  else R.GeometryBottom
        in ExpandedNode
             { expandedNodeId = identifier
             , expandedNodeDeclaration = R.nodeDeclarationId declaration
             , expandedNodeTarget = R.nodeDeclarationTarget declaration
+            , expandedNodeSharedWidth = sharedOn True
+            , expandedNodeSharedHeight = sharedOn False
             , expandedNodeParent = fromMaybe (-1) (contextCurrentNode context)
             , expandedNodeSemanticBlock = semanticBlock
             , expandedNodeRole = targetRole plan declaration candidate
@@ -2256,6 +2296,7 @@ lowerPlan trace plan expanded typography = do
   pure
     (canvasConstraints
        ++ nodeBounds
+       ++ sharedSizeBounds
        ++ automaticStyleConstraints expanded
        ++ variableConstraints
        ++ decisionConstraints
@@ -2289,6 +2330,26 @@ lowerPlan trace plan expanded typography = do
               ]
         | node <- nodes
         ]
+    sharedSizeBounds =
+      [ nodeAttribute (ConcreteVisual node) attribute
+        S.@<=@ nodeAttribute ConcreteCanvas attribute
+      | ((_, horizontal), node) <-
+          Map.toAscList
+            (Map.fromListWith
+               const
+               [ ((expandedNodeDeclaration candidate, horizontal), candidate)
+               | candidate <- nodes
+               , (shared, horizontal) <-
+                   [ (expandedNodeSharedWidth candidate, True)
+                   , (expandedNodeSharedHeight candidate, False)
+                   ]
+               , shared
+               ])
+      , let attribute =
+              if horizontal
+                then R.GeometryWidth
+                else R.GeometryHeight
+      ]
     guardOne context guards =
       concatMap
         (fromRight [] . guardConstraint trace plan expanded context guards)
@@ -2300,9 +2361,13 @@ lowerPlan trace plan expanded typography = do
           pins =
             [ nodeAttribute concrete R.GeometryX S.@==@ S.num 0
             , nodeAttribute concrete R.GeometryY S.@==@ S.num 0
-            , nodeAttribute concrete R.GeometryWidth S.@==@ S.num 0
-            , nodeAttribute concrete R.GeometryHeight S.@==@ S.num 0
             ]
+              ++ [ nodeAttribute concrete R.GeometryWidth S.@==@ S.num 0
+                 | not (expandedNodeSharedWidth node)
+                 ]
+              ++ [ nodeAttribute concrete R.GeometryHeight S.@==@ S.num 0
+                 | not (expandedNodeSharedHeight node)
+                 ]
       resolved <-
         traverse
           (resolveGuard trace plan expanded (expandedNodeContext node))
@@ -2685,7 +2750,13 @@ nodeAttribute concrete attribute =
 nodeVariableName :: ConcreteNode -> String -> String
 nodeVariableName ConcreteCanvas field = "render.canvas." ++ field
 nodeVariableName (ConcreteVisual node) field =
-  "render.node." ++ show (expandedNodeId node) ++ "." ++ field
+  if (field == "width" && expandedNodeSharedWidth node)
+       || (field == "height" && expandedNodeSharedHeight node)
+    then "render.mapping."
+           ++ showNodeDeclarationId (expandedNodeDeclaration node)
+           ++ "."
+           ++ field
+    else "render.node." ++ show (expandedNodeId node) ++ "." ++ field
 
 numericVariableName :: Int -> String
 numericVariableName identifier = "render.variable." ++ show identifier
@@ -3744,8 +3815,14 @@ lowerTextFits ::
   -> ExpandedPlan
   -> [PreparedText]
   -> Either RenderCompileError [S.Constraint]
-lowerTextFits trace plan expanded typography =
-  fmap concat (traverse lowerContent (zip [0 :: Int ..] (R.planContents plan)))
+lowerTextFits trace plan expanded typography = do
+  lowered <- traverse lowerContent (zip [0 :: Int ..] (R.planContents plan))
+  let groups =
+        Map.fromListWith
+          (++)
+          [(key, [candidate]) | (key, candidate) <- concatMap snd lowered]
+  sharedHugs <- traverse lowerSharedHug (Map.toAscList groups)
+  pure (concatMap fst lowered ++ sharedHugs)
   where
     nodes = expandedNodes expanded
     lowerContent (index, declaration) = do
@@ -3755,12 +3832,14 @@ lowerTextFits trace plan expanded typography =
           plan
           nodes
           (R.contentDeclarationScope declaration)
-      concat <$> traverse (contentContext index declaration) contexts
+      lowered <- traverse (contentContext index declaration) contexts
+      pure (concatMap fst lowered, concatMap snd lowered)
     contentContext index declaration context = do
       let reference = R.contentDeclarationNode declaration
       candidates <-
         resolveReferenceCandidates trace plan expanded context reference
-      concat <$> traverse (contentNode index declaration context) candidates
+      lowered <- traverse (contentNode index declaration context) candidates
+      pure (concatMap fst lowered, concatMap snd lowered)
     contentNode index declaration context concrete = do
       prepared <-
         requireSingle
@@ -3780,10 +3859,12 @@ lowerTextFits trace plan expanded typography =
             fitPolicy plan concrete True == R.Hug
               && not (geometryAxisExplicit plan concrete True)
               && not hasChildren
+              && not (sharedAxis concrete True)
           hugVertical =
             fitPolicy plan concrete False == R.Hug
               && not (geometryAxisExplicit plan concrete False)
               && not hasChildren
+              && not (sharedAxis concrete False)
           guards =
             nub
               (R.scopeGuards (R.contentDeclarationScope declaration)
@@ -3828,7 +3909,154 @@ lowerTextFits trace plan expanded typography =
       -- A synthesized FontSize exists in the prepared model even when an
       -- optional text node is omitted.  Keep that auxiliary dimension finite;
       -- only its geometric effect is conditional.
-      pure (sizeConstraints ++ guarded)
+      let sharedCandidates =
+            [ ( (expandedNodeDeclaration node, horizontal)
+              , SharedTextHug
+                  { sharedHugNode = concrete
+                  , sharedHugContext = context
+                  , sharedHugGuards = guards
+                  , sharedHugRequirements = preparedTextRequirements branch
+                  , sharedHugIntrinsic =
+                      fontSize S.@*@ S.num measure S.@+@ leading S.@+@ trailing
+                  , sharedHugBranch = branchIndex
+                  })
+            | not hasChildren
+            , ConcreteVisual node <- [concrete]
+            , (horizontal, measureFor, leading, trailing) <-
+                [ ( True
+                  , Typography.preparedLineWidthEm
+                  , paddingLeft
+                  , paddingRight)
+                , ( False
+                  , Typography.preparedLineHeightEm
+                  , paddingTop
+                  , paddingBottom)
+                ]
+            , sharedAxis concrete horizontal
+            , fitPolicy plan concrete horizontal == R.Hug
+            , (branchIndex, branch) <-
+                zip [0 :: Int ..] (preparedTextBranches prepared)
+            , let measure = measureFor (preparedTextLine branch)
+            ]
+      pure (sizeConstraints ++ guarded, sharedCandidates)
+    sharedAxis (ConcreteVisual node) horizontal =
+      if horizontal
+        then expandedNodeSharedWidth node
+        else expandedNodeSharedHeight node
+    sharedAxis ConcreteCanvas _ = False
+    lowerSharedHug (_, []) = leftInvalid "shared text Hug has no candidates"
+    lowerSharedHug ((declaration, horizontal), firstCandidate:candidates) = do
+      let allCandidates = firstCandidate : candidates
+          dimension =
+            if horizontal
+              then R.GeometryWidth
+              else R.GeometryHeight
+          shared = nodeAttribute (sharedHugNode firstCandidate) dimension
+          label =
+            "render.mapping."
+              ++ showNodeDeclarationId declaration
+              ++ ".hug."
+              ++ if horizontal
+                   then "width"
+                   else "height"
+          peers =
+            Map.elems
+              (Map.fromList
+                 [ (concreteNodeId (sharedHugNode candidate), candidate)
+                 | candidate <- allCandidates
+                 ])
+      firstFitted <- fittedAlternative shared firstCandidate
+      fitted <- traverse (fittedAlternative shared) candidates
+      absent <- concat <$> traverse (inactivePeer label) peers
+      pure
+        (S.algebraicOneOf
+           label
+           firstFitted
+           (fitted
+              ++ [S.alternative "absent" ((shared S.@==@ S.num 0) : absent)]))
+    fittedAlternative shared candidate = do
+      required <-
+        requireGuardConstraint
+          trace
+          plan
+          expanded
+          (sharedHugContext candidate)
+          (sharedHugGuards candidate)
+          (requireTextRequirements
+             (sharedHugRequirements candidate)
+             (shared S.@==@ sharedHugIntrinsic candidate))
+      pure
+        (S.alternative
+           ("node-"
+              ++ show (concreteNodeId (sharedHugNode candidate))
+              ++ "-branch-"
+              ++ show (sharedHugBranch candidate))
+           required)
+    requireTextRequirements requirements constraint =
+      foldr requireOne constraint requirements
+      where
+        requireOne requirement inner =
+          case requirementTokens requirement of
+            [] -> impossibleConstraint
+            firstToken:remaining ->
+              S.oneOf
+                (requirementName requirement)
+                (tokenAlternative firstToken)
+                (map tokenAlternative remaining)
+          where
+            tokenAlternative token =
+              S.alternative
+                token
+                [ if token == requirementSelected requirement
+                    then inner
+                    else impossibleConstraint
+                ]
+    inactivePeer groupLabel candidate = do
+      resolved <-
+        traverse
+          (resolveGuard trace plan expanded (sharedHugContext candidate))
+          (nub (sharedHugGuards candidate))
+      if GuardNever `elem` resolved
+        then pure []
+        else do
+          consolidated <-
+            consolidateGuards [guard | guard@GuardDecision {} <- resolved]
+          if GuardNever `elem` consolidated
+            then pure []
+            else case consolidated of
+                   [] -> pure [impossibleConstraint]
+                   _ ->
+                     let alternatives =
+                           [ S.alternative
+                             ("guard-" ++ show index)
+                             [ S.oneOf
+                                 name
+                                 (tokenAlternative firstToken)
+                                 (map tokenAlternative remaining)
+                             ]
+                           | (index, GuardDecision name (firstToken:remaining) required) <-
+                               zip [0 :: Int ..] consolidated
+                           , let tokenAlternative token =
+                                   S.alternative
+                                     token
+                                     [ if token == required
+                                         then impossibleConstraint
+                                         else tautologyConstraint
+                                     ]
+                           ]
+                      in case alternatives of
+                           firstAlternative:remaining ->
+                             pure
+                               [ S.algebraicOneOf
+                                   (groupLabel
+                                      ++ ".absent."
+                                      ++ show
+                                           (concreteNodeId
+                                              (sharedHugNode candidate)))
+                                   firstAlternative
+                                   remaining
+                               ]
+                           [] -> pure [impossibleConstraint]
     compareTextSize exact current intrinsic =
       if exact
         then current S.@==@ intrinsic
@@ -3867,25 +4095,21 @@ lowerTextFits trace plan expanded typography =
              context
              concrete
              R.FontSizeField of
-        Right (R.NumericStyle authored)
-          | R.contentDeclarationFit declaration -> do
-            expression <- lowerAuthored authored
-            pure (expression, [])
-          | numericExprIsFixed authored -> do
-            expression <- lowerAuthored authored
-            pure (expression, [])
-          | otherwise ->
-            leftInvalid
-              "content uses a sampled FontSize; use fitText for variable font size"
+        Right (R.NumericStyle authored) -> do
+          expression <- lowerAuthored authored
+          pure (expression, [])
         Right R.RemovedStyle -> pure (S.num 16, [])
         Right _ -> leftInvalid "FontSize has a non-numeric style assignment"
         Left _ -> fallback
       where
-        fallback
-          | R.contentDeclarationFit declaration =
-            let expression = S.var (syntheticTextFontSizeName index declaration)
-             in pure (expression, [S.within expression (S.Range 12 32)])
-          | otherwise = pure (S.num 16, [])
+        fallback =
+          let expression = S.var (syntheticTextFontSizeName index declaration)
+              -- The affine backend needs finite per-variable bounds even
+              -- when containment supplies a tighter coupled upper bound.
+              -- 4096 exceeds the 800px example canvas by over five times:
+              -- a finite solver safety ceiling, not a typography preset.
+              limits = S.Range 12 4096
+           in pure (expression, [S.within expression limits])
         lowerAuthored authored = do
           environments <-
             referenceEnvironments
@@ -3896,18 +4120,6 @@ lowerTextFits trace plan expanded typography =
               (numericReferences authored)
           environment <- requireSingle "FontSize" environments
           lowerNumeric trace plan expanded context environment authored
-
-numericExprIsFixed :: R.NumericExpr -> Bool
-numericExprIsFixed expression =
-  case expression of
-    R.NumericConstant _          -> True
-    R.NumericAdd left right      -> nested left right
-    R.NumericSubtract left right -> nested left right
-    R.NumericMultiply left right -> nested left right
-    R.NumericDivide left right   -> nested left right
-    _                            -> False
-  where
-    nested left right = numericExprIsFixed left && numericExprIsFixed right
 
 syntheticTextFontSizeName :: Int -> R.ContentDeclaration -> String
 syntheticTextFontSizeName index declaration =
@@ -4691,12 +4903,11 @@ materializeVisualStyle trace plan expanded solution context concrete = do
           case reverse declarations of
             [] -> pure Nothing
             (index, declaration):_
-              | R.contentDeclarationFit declaration ->
+              | otherwise ->
                 Just . roundLayout
                   <$> evaluateExpr
                         solution
                         (S.var (syntheticTextFontSizeName index declaration))
-              | otherwise -> pure (Just 16)
     positiveMaybe = fmap (max 0.001)
     nonnegativeMaybe = fmap (max 0)
 

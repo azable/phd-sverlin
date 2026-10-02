@@ -365,7 +365,7 @@ render = do
     padding (uniform outerInset)
 
     title <- node $ do
-      fitText (text "Bubble sort")
+      content (text "Bubble sort")
       style @FontFamily bodyFont
       style @FontSize fontSize
       style @FontWeight FontWeightBold
@@ -379,13 +379,13 @@ render = do
       padding (uniform (by 8))
 
       panelTitle <- node $ do
-        fitText (text "current comparison")
+        content (text "current comparison")
         style @FontFamily bodyFont
         style @FontSize fontSize
 
       node leftReads $ do
         valueText <- bindContent
-        fitText (text "left: " <> valueText)
+        content (text "left: " <> valueText)
         padding (uniform (by 7))
         style @FontFamily bodyFont
         style @FontSize fontSize
@@ -394,7 +394,7 @@ render = do
 
       node rightReads $ do
         valueText <- bindContent
-        fitText (text "right: " <> valueText)
+        content (text "right: " <> valueText)
         padding (uniform (by 7))
         style @FontFamily bodyFont
         style @FontSize fontSize
@@ -403,7 +403,7 @@ render = do
 
       sometimes $ node comparisons $ do
         resultText <- bindContent
-        fitText (text "left > right: " <> resultText)
+        content (text "left > right: " <> resultText)
         padding (uniform (by 7))
         style @FontFamily bodyFont
         style @FontSize fontSize
@@ -421,7 +421,7 @@ render = do
     -- its relation to the branch-local array view is repeated below.
     code <- node $ do
       contentFit Both Hug
-      fitText bubbleLine
+      content bubbleLine
       padding (uniform (by 9))
       style @FontFamily codeFont
       style @FontSize fontSize
@@ -438,7 +438,7 @@ render = do
         position <- rankOf ordering
         node values $ do
           valueText <- bindContent
-          fitText valueText
+          content valueText
           width cellWidth
           height cellHeight
           padding (uniform (by 6))
@@ -452,7 +452,7 @@ render = do
 
         indexLabel <- node $ do
           contentFit Both Hug
-          fitText (text "A[" <> asText position <> text "]")
+          content (text "A[" <> asText position <> text "]")
           style @FontFamily codeFont
           style @FontSize fontSize
         ensure $ x indexLabel .==. x values

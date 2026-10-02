@@ -80,14 +80,14 @@ render = do
 
     node leftValues $ do
       label <- bindContent
-      fitText label
+      content label
       width (by 132)
       height (by 96)
       xAt (percent 16)
       yAt (percent 50)
 
     node addOperators $ do
-      fitText (text "+")
+      content (text "+")
       width (by 72)
       height (by 72)
       xAt (percent 50)
@@ -96,7 +96,7 @@ render = do
 
     node rightValues $ do
       label <- bindContent
-      fitText label
+      content label
       width (by 132)
       height (by 96)
       xAt (percent 84)
@@ -104,7 +104,7 @@ render = do
 
     node results $ do
       label <- bindContent
-      fitText label
+      content label
       width (by 160)
       height (by 112)
       xAt (percent 50)

@@ -634,7 +634,7 @@ duplicateMappingContentPlan =
         (Render.Selected Item)
     Render.node items $ do
       Render.content (Render.text "first")
-      Render.fitText (Render.text "second")
+      Render.content (Render.text "second")
 
 presenceOwnershipPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 presenceOwnershipPlan =

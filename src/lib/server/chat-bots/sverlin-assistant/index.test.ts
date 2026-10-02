@@ -43,8 +43,9 @@ describe('AI assistant DSL interface', () => {
     expect(index).toContain('# Public Sverlin DSL API index');
     expect(index).toContain('`node` —');
     expect(index).toContain(
-      '`fitText` — Type: `fitText :: ContentValue -> Render ()` — Shape one non-wrapping line at a feasible size shared by its node-mapping lineage.'
+      '`content` — Type: `content :: ContentValue -> Render ()` — Shape one non-wrapping line with a sampled size constrained by its node geometry unless FontSize is authored.'
     );
+    expect(index).not.toContain('`fitText` —');
     expect(index).toContain('`Traceable` — Type: `class Traceable tag where; type Payload tag`');
     expect(index).not.toContain('NodeBinding');
     expect(index).not.toContain('ChoiceDomain');

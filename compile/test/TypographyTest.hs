@@ -251,6 +251,42 @@ tests =
         assertBool
           "the shared feasible size should remain seed-variable"
           (length (nub (concatMap (take 1) sizeGroups)) > 1)
+    , testCase "implicit Hug geometry fits unequal peer labels as one size" $ do
+        visualizations <-
+          compilePeerPlan "shared peer Hug" [1 .. 4] implicitPeerHugPlan
+        mapM_
+          (\visualization -> do
+             let boxes =
+                   [ IR.boxBounds (IR.elementBox element)
+                   | element <- IR.visualizationElements visualization
+                   , IR.elementId element /= IR.VisualId (-1)
+                   ]
+                 widths = map IR.layoutRectWidth boxes
+                 heights = map IR.layoutRectHeight boxes
+             length boxes @?= 4
+             length (nub widths) @?= 1
+             length (nub heights) @?= 1
+             assertBool
+               "text Hug dimensions must be positive"
+               (all (> 0) (widths ++ heights)))
+          visualizations
+    , testCase "absent shared Hug mappings have no visible peers" $ do
+        visualizations <-
+          compilePeerPlan "optional peer Hug" [1 .. 24] optionalPeerHugPlan
+        let counts =
+              [ length
+                [ ()
+                | element <- IR.visualizationElements visualization
+                , IR.elementId element /= IR.VisualId (-1)
+                ]
+              | visualization <- visualizations
+              ]
+        assertBool
+          "expected both present and absent mappings"
+          (0 `elem` counts && 4 `elem` counts)
+        assertBool
+          "the mapping must be activated as a whole"
+          (all (`elem` [0, 4]) counts)
     , testCase "separate mappings of one selection own separate size families" $ do
         visualizations <-
           compilePeerPlan "separate peer mappings" [3] repeatedPeerTextPlan
@@ -408,17 +444,17 @@ tests =
           values ->
             assertFailure
               ("expected one visualization, got " ++ show (length values))
-    , testCase "fitText responds to the available solved geometry" $ do
+    , testCase "content responds to the available solved geometry" $ do
         narrow <-
           compileFramePlan
             "responsive fitted geometry"
             [9]
-            (responsiveFitPlan 140)
+            (responsiveLongContentPlan 140)
         wide <-
           compileFramePlan
             "responsive fitted geometry"
             [9]
-            (responsiveFitPlan 360)
+            (responsiveLongContentPlan 360)
         case (concatMap textLayoutSizes narrow, concatMap textLayoutSizes wide) of
           ([narrowSize], [wideSize]) ->
             assertBool
@@ -428,6 +464,27 @@ tests =
           sizes ->
             assertFailure
               ("expected one fitted line per plan, got " ++ show sizes)
+    , testCase "content samples font sizes constrained by its box" $ do
+        narrow <-
+          compileFramePlan "automatic content" [9] (responsiveContentPlan 80)
+        wide <-
+          compileFramePlan "automatic content" [9] (responsiveContentPlan 360)
+        variations <-
+          compileFramePlan
+            "automatic content"
+            [1 .. 8]
+            (responsiveContentPlan 360)
+        case (concatMap textLayoutSizes narrow, concatMap textLayoutSizes wide) of
+          ([small], [large]) -> do
+            assertBool "wider content should have a larger font" (large > small)
+            assertBool
+              "content must have a sampled font-size variable"
+              (all ((== 1) . length . fittedSizeVariables) (narrow ++ wide))
+            assertBool
+              "font size should vary with the view seed"
+              (length (nub (concatMap textLayoutSizes variations)) > 1)
+          sizes ->
+            assertFailure ("expected two content sizes, got " ++ show sizes)
     , testCase "same-seed typography and resource output is deterministic" $ do
         first <-
           compileFramePackage "deterministic typography" [17] fixedFontSizePlan
@@ -550,7 +607,7 @@ guardedFontPlan =
              Render.style @Render.FontFamily selected
            Render.caseOf slant $ \selected ->
              Render.style @Render.FontStyle selected
-           Render.fitText (Render.text "office affine")
+           Render.content (Render.text "office affine")
            Render.width (Render.by 360)
            Render.height (Render.by 120)
            Render.xAt (Render.percent 50)
@@ -569,7 +626,7 @@ optionalFontPlan =
       Render.node
         (do
            Render.sometimes (Render.style @Render.FontFamily family)
-           Render.fitText (Render.text "optional face")
+           Render.content (Render.text "optional face")
            Render.width (Render.by 360)
            Render.height (Render.by 120)
            Render.xAt (Render.percent 50)
@@ -599,7 +656,7 @@ relativeWeightPlan =
                   Render.xAt (Render.percent 50)
                   Render.yAt (Render.percent 30)
                   Render.style @Render.FontWeight Render.FontWeightBolder
-                  Render.fitText (Render.text "bolder")) :: Render.Render
+                  Render.content (Render.text "bolder")) :: Render.Render
                (Render.Selected Render.GeneratedNode)
            _ <-
              Render.node
@@ -609,7 +666,7 @@ relativeWeightPlan =
                   Render.xAt (Render.percent 50)
                   Render.yAt (Render.percent 70)
                   Render.style @Render.FontWeight Render.FontWeightLighter
-                  Render.fitText (Render.text "lighter")) :: Render.Render
+                  Render.content (Render.text "lighter")) :: Render.Render
                (Render.Selected Render.GeneratedNode)
            pure ()) :: Render.Render (Render.Selected Render.GeneratedNode)
     pure ()
@@ -631,7 +688,7 @@ ibmWeightChoicePlan =
            Render.style @Render.FontFamily Render.FontIBMPlexMono
            Render.caseOf weight $ \selected ->
              Render.style @Render.FontWeight selected
-           Render.fitText (Render.text "exact static face")) :: Render.Render
+           Render.content (Render.text "exact static face")) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
 
@@ -686,7 +743,7 @@ removedFontSizePlan =
            Render.xAt (Render.percent 50)
            Render.yAt (Render.percent 50)
            Render.withoutStyle @Render.FontSize
-           Render.fitText (Render.text "fixed default")) :: Render.Render
+           Render.content (Render.text "fixed default")) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
 
@@ -708,8 +765,9 @@ fixedFontSizePlan =
         (Render.Selected Render.GeneratedNode)
     pure ()
 
-responsiveFitPlan :: Double -> Either Render.RenderDiagnostic Render.RenderPlan
-responsiveFitPlan nodeWidth =
+responsiveLongContentPlan ::
+     Double -> Either Render.RenderDiagnostic Render.RenderPlan
+responsiveLongContentPlan nodeWidth =
   Render.buildRenderPlan $ do
     Render.always (Render.frame @Visible)
     Render.width (Render.by 600)
@@ -721,7 +779,25 @@ responsiveFitPlan nodeWidth =
            Render.height (Render.by 100)
            Render.xAt (Render.percent 50)
            Render.yAt (Render.percent 50)
-           Render.fitText (Render.text "responsive typography")) :: Render.Render
+           Render.content (Render.text "responsive typography")) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+responsiveContentPlan ::
+     Double -> Either Render.RenderDiagnostic Render.RenderPlan
+responsiveContentPlan nodeWidth =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 600)
+    Render.height (Render.by 300)
+    _ <-
+      Render.node
+        (do
+           Render.width (Render.by nodeWidth)
+           Render.height (Render.by 100)
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)
+           Render.content (Render.text "automatic")) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
 
@@ -766,7 +842,7 @@ nestedContentPlan =
       Render.yAt (Render.percent 50)
       Render.node children $ do
         label <- Render.bindContent
-        Render.fitText label
+        Render.content label
         Render.width (Render.by 120)
         Render.height (Render.by 52)
         Render.xAt (Render.percent 50)
@@ -812,6 +888,30 @@ nestedContentTrace marker =
 peerTextPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 peerTextPlan = peerPlan [peerMapping 50 300 True]
 
+implicitPeerHugPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+implicitPeerHugPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @PeerFrame)
+    Render.width (Render.by 800)
+    Render.height (Render.by 400)
+    peers <- Render.selectKind "peer" :: Render.Render (Render.Selected Peer)
+    Render.node peers $ do
+      label <- Render.bindContent
+      Render.content label
+
+optionalPeerHugPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+optionalPeerHugPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @PeerFrame)
+    Render.width (Render.by 800)
+    Render.height (Render.by 400)
+    peers <- Render.selectKind "peer" :: Render.Render (Render.Selected Peer)
+    void
+      $ Render.sometimes
+      $ Render.node peers $ do
+      label <- Render.bindContent
+      Render.content label
+
 repeatedPeerTextPlan :: Either Render.RenderDiagnostic Render.RenderPlan
 repeatedPeerTextPlan =
   peerPlan [peerMapping 25 190 True, peerMapping 75 320 True]
@@ -838,7 +938,7 @@ peerMapping horizontal nodeWidth withText peers =
     Render.height (Render.by 72)
     Render.xAt (Render.percent horizontal)
     Render.yAt (Render.percent 50)
-    when withText (Render.bindContent >>= Render.fitText)
+    when withText (Render.bindContent >>= Render.content)
 
 compilePeerPlan ::
      String

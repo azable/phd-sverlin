@@ -70,7 +70,6 @@ module Sverlin.Internal.Render
   , fragmentMany
   , bindContent
   , content
-  , fitText
   , -- * Connectors
     ConnectorAnchor(ConnectorAnchor)
   , AnchorPlacement(..)
@@ -1170,19 +1169,12 @@ asText (FixedInt ranking nodeIdentifier guards) =
 
 data ContentDeclaration = ContentDeclaration
   { contentDeclarationNode   :: NodeReference
-  , contentDeclarationFit    :: Bool
   , contentDeclarationPieces :: [TextPiece]
   , contentDeclarationScope  :: Scope
   } deriving stock (Show)
 
 content :: ContentValue -> Render ()
-content = addContent False
-
-fitText :: ContentValue -> Render ()
-fitText = addContent True
-
-addContent :: Bool -> ContentValue -> Render ()
-addContent fitted (TextBuilder () pieces guards) = do
+content (TextBuilder () pieces guards) = do
   target <- gets renderBuilderTarget
   scope <- scopeForDependencies guards
   case target of
@@ -1198,7 +1190,7 @@ addContent fitted (TextBuilder () pieces guards) = do
         else modify' $ \state ->
                state
                  { renderContents =
-                     ContentDeclaration reference fitted pieces scope
+                     ContentDeclaration reference pieces scope
                        : renderContents state
                  }
 

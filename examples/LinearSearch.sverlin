@@ -210,7 +210,7 @@ render = do
     style @FontFamily bodyFont
 
     title <- node $ do
-      fitText (text "Linear search")
+      content (text "Linear search")
       style @FontFamily bodyFont
       style @FontWeight FontWeightBold
       withoutStyle @Fill
@@ -220,7 +220,7 @@ render = do
       contentFit Both Hug
       node targets $ do
         label <- bindContent
-        fitText (text "target = " <> label)
+        content (text "target = " <> label)
         width (cellWidth .+. by 28)
         height cellHeight
         style @FontFamily bodyFont
@@ -231,7 +231,7 @@ render = do
       contentFit Both Hug
       node elements $ do
         label <- bindContent
-        fitText label
+        content label
         width cellWidth
         height cellHeight
         style @FontFamily bodyFont
@@ -249,13 +249,13 @@ render = do
 
       node targetProbes $ do
         label <- bindContent
-        fitText label
+        content label
         width cellWidth
         height cellHeight
         style @FontFamily bodyFont
 
       node equalOperators $ do
-        fitText (text "==")
+        content (text "==")
         width cellHeight
         height cellHeight
         style @FontFamily codeFont
@@ -263,14 +263,14 @@ render = do
 
       node elementProbes $ do
         label <- bindContent
-        fitText label
+        content label
         width cellWidth
         height cellHeight
         style @FontFamily bodyFont
 
       node matches $ do
         label <- bindContent
-        fitText (text "equal: " <> label)
+        content (text "equal: " <> label)
         width (cellWidth .+. by 28)
         height cellHeight
         style @FontFamily bodyFont

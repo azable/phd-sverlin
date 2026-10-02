@@ -537,7 +537,7 @@ render = do
     padding (uniform outerInset)
 
     title <- node $ do
-      fitText (text "Binary search")
+      content (text "Binary search")
       style @FontFamily bodyFont
       style @FontSize fontSize
       style @FontWeight FontWeightBold
@@ -551,7 +551,7 @@ render = do
         style @Radius (by 8)
         node targetValues $ do
           targetText <- bindContent
-          fitText (text "target = " <> targetText)
+          content (text "target = " <> targetText)
           style @FontFamily bodyFont
           style @FontSize fontSize
 
@@ -559,21 +559,21 @@ render = do
         padding (uniform markerGap)
 
         node lowMarkers $ do
-          fitText (text "low")
+          content (text "low")
           padding (uniform (by 5))
           style @FontFamily codeFont
           style @FontSize fontSize
           style @Radius (by 6)
 
         node middleMarkers $ do
-          fitText (text "mid")
+          content (text "mid")
           padding (uniform (by 5))
           style @FontFamily codeFont
           style @FontSize fontSize
           style @Radius (by 6)
 
         node highMarkers $ do
-          fitText (text "high")
+          content (text "high")
           padding (uniform (by 5))
           style @FontFamily codeFont
           style @FontSize fontSize
@@ -583,7 +583,7 @@ render = do
           position <- rankOf ordering
           node values $ do
             valueText <- bindContent
-            fitText valueText
+            content valueText
             width cellWidth
             height cellHeight
             padding (uniform (by 6))
@@ -596,7 +596,7 @@ render = do
             style @Radius (by 9)
 
           label <- node $ do
-            fitText (text "A[" <> asText position <> text "]")
+            content (text "A[" <> asText position <> text "]")
             style @FontFamily codeFont
             style @FontSize fontSize
           ensure $ x label .==. x values
@@ -628,7 +628,7 @@ render = do
           -- form every possible pair across all iterations.
           node middleReads $ do
             readText <- bindContent
-            fitText (text "A[mid] = " <> readText)
+            content (text "A[mid] = " <> readText)
             padding (uniform (by 7))
             style @FontFamily bodyFont
             style @FontSize fontSize
@@ -649,7 +649,7 @@ render = do
 
       node results $ do
         resultText <- bindContent
-        fitText (text "result index = " <> resultText)
+        content (text "result index = " <> resultText)
         padding (uniform (by 8))
         style @FontFamily bodyFont
         style @FontSize fontSize
@@ -666,7 +666,7 @@ render = do
     ensure $ top stage .==. bottom title .+. sectionGap
     sometimes $ do
       code <- node $ do
-        fitText binarySearchLine
+        content binarySearchLine
         padding (uniform (by 9))
         style @FontFamily codeFont
         style @FontSize fontSize

@@ -330,7 +330,7 @@ valueNode :: Selected Number -> Span -> Span -> Bool -> Render ()
 valueNode values cellWidth baseHeight varyHeight = node values $ do
   label <- bindContent
   magnitude <- payloadScalar values
-  fitText label
+  content label
   width cellWidth
   case varyHeight of
     False -> height baseHeight

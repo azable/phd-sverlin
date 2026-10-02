@@ -2,29 +2,65 @@ data Value
 instance Traceable Value where
   type Payload Value = LInt Value
 
+-- Relations connect Slots; each visible value owns an invisible link token.
+data LinkToken
+instance Traceable LinkToken where
+  type Payload LinkToken = LUnit LinkToken
+
 data ValueRole
+data LinkRole
+data NextRole
 data ValueLive
 data ValueDestroyed
 
 valueKind :: Kind Value
 valueKind = kind @ValueRole
 
+linkKind :: Kind LinkToken
+linkKind = kind @LinkRole
+
+nextValue :: RelationKind Value Value
+nextValue = orderedRelation @NextRole
+
 data Initial where
-  Initial :: Block Value %1 -> Initial
+  Initial ::
+    Block Value %1 ->
+    Slot Value LinkToken %1 ->
+    Block Value %1 ->
+    Slot Value LinkToken %1 ->
+    Initial
 
 domain :: Domain Initial
 domain = do
   declareKind valueKind
+  declareKind linkKind
+  declareRelation nextValue
   declareSteps @'[ValueLive, ValueDestroyed]
-  Create pending <- create (LInt 7)
-  value <- materialize valueKind pending
-  pure (Initial value)
+  Create firstPending <- create (LInt 7)
+  firstValue <- materialize valueKind firstPending
+  Create firstLinkPending <- create LUnit
+  firstLink <- materialize linkKind firstLinkPending
+  Seal firstOwner firstSlot <- seal firstValue firstLink
+
+  Create secondPending <- create (LInt 9)
+  secondValue <- materialize valueKind secondPending
+  Create secondLinkPending <- create LUnit
+  secondLink <- materialize linkKind secondLinkPending
+  Seal secondOwner secondSlot <- seal secondValue secondLink
+
+  Relate firstSlot1 secondSlot1 <- relate nextValue firstSlot secondSlot
+  pure (Initial firstOwner firstSlot1 secondOwner secondSlot1)
 
 program :: Initial %1 -> Program ()
-program (Initial value) = do
-  value1 <- step @ValueLive (pure value)
+program initial = do
+  Initial first firstSlot second secondSlot <- step @ValueLive (pure initial)
   step @ValueDestroyed $ do
-    Destroy <- destroy value1
+    Unseal first1 firstLink <- unseal first firstSlot
+    Unseal second1 secondLink <- unseal second secondSlot
+    Destroy <- destroy firstLink
+    Destroy <- destroy secondLink
+    Destroy <- destroy first1
+    Destroy <- destroy second1
     pure ()
 
 render :: Render ()
@@ -33,12 +69,16 @@ render = do
   always $ frame @ValueDestroyed
   width (by 800)
   height (by 450)
-  contentFit Both Contain
   values <- select valueKind
   node values $ do
     label <- bindContent
-    fitText label
-    width (by 180)
-    height (by 120)
-    xAt (percent 50)
-    yAt (percent 50)
+    content label
+
+  links <- select nextValue
+  relation links $ do
+    earlier <- first links
+    later <- second links
+    ensure $ right earlier .<=. left later
+    ensure $ y earlier .==. y later
+    connector (anchor AtBoundary earlier) (anchor AtBoundary later) $ do
+      endMarker ArrowMarker

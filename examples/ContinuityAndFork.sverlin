@@ -67,7 +67,7 @@ program (Initial original) = do
 
 valueNode :: ContentValue -> Render ()
 valueNode label = do
-  fitText label
+  content label
   width (by 180)
   height (by 112)
 

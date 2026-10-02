@@ -559,7 +559,7 @@ render = do
 
       node values $ do
         label <- bindContent
-        fitText label
+        content label
         width cellWidth
         height cellHeight
         padding (uniform (by 7))

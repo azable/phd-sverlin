@@ -399,7 +399,7 @@ dagView tasks labels dependencyLinks horizontalGap verticalGap nodeWidth nodeHei
     style @BorderStyle BorderSolid
     style @StrokeWidth (by 2)
     style @Radius (by 12)
-    node labels $ bindContent >>= fitText
+    node labels $ bindContent >>= content
 
   relation dependencyLinks $ do
     prerequisite <- first dependencyLinks
@@ -431,7 +431,7 @@ outputView cells labels links gap nodeWidth nodeHeight = node $ do
     style @BorderStyle BorderSolid
     style @StrokeWidth (by 2)
     style @Radius (by 10)
-    node labels $ bindContent >>= fitText
+    node labels $ bindContent >>= content
 
   relation links $ do
     previous <- first links

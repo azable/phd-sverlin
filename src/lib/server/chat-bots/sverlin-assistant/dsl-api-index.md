@@ -120,8 +120,7 @@ This compact index combines the Haddock export documentation in `compile/src/Sve
 - `fragment` — Type: `fragment :: forall {k} (step :: k). Typeable step => String -> TextBuilder ()` — Append text associated with one typed step.
 - `fragmentMany` — Type: `fragmentMany :: forall steps. String -> TextBuilder ()` — Append text associated with any of several typed steps.
 - `bindContent` — Type: `bindContent :: Render ContentValue` — Read the current selected payload's display text.
-- `content` — Type: `content :: ContentValue -> Render ()` — Shape one fixed-size, non-wrapping line.
-- `fitText` — Type: `fitText :: ContentValue -> Render ()` — Shape one non-wrapping line at a feasible size shared by its node-mapping lineage.
+- `content` — Type: `content :: ContentValue -> Render ()` — Shape one non-wrapping line with a sampled size constrained by its node geometry unless FontSize is authored.
 
 ## Connectors
 

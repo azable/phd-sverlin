@@ -57,19 +57,19 @@ render = do
 
   node parseItems $ do
     label <- bindContent
-    fitText label
+    content label
     width (by 144)
     height (by 88)
 
   node solveItems $ do
     label <- bindContent
-    fitText label
+    content label
     width (by 144)
     height (by 88)
 
   node renderItems $ do
     label <- bindContent
-    fitText label
+    content label
     width (by 144)
     height (by 88)
 

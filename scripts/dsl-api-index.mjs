@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -34,16 +34,31 @@ function markdownDescription(description) {
 }
 
 function ghciCommand(entry) {
-  if (/^[A-Z]/.test(entry.name)) return `:info ${entry.name}`;
-  if (/^[A-Za-z_]/.test(entry.name)) return `:type ${entry.name}`;
-  return `:type (${entry.name})`;
+  if (/^[A-Z]/.test(entry.name)) return `:info Sverlin.${entry.name}`;
+  if (/^[A-Za-z_]/.test(entry.name)) return `:type Sverlin.${entry.name}`;
+  return `:type (Sverlin.${entry.name})`;
 }
 
 function runGhci(commands) {
   return new Promise((resolve, reject) => {
+    // GHCi loads the bundled HarfBuzz C shim into a temporary shared object.
+    // On Nix, pkg-config knows its library directory but the dynamic loader
+    // does not search that directory unless the library is loaded first.
+    const harfbuzz = spawnSync('pkg-config', ['--variable=libdir', 'harfbuzz'], {
+      encoding: 'utf8'
+    });
+    const preload =
+      harfbuzz.status === 0 && harfbuzz.stdout.trim()
+        ? path.join(harfbuzz.stdout.trim(), 'libharfbuzz.so')
+        : '';
     const child = spawn('stack', ['repl', 'compile:lib'], {
       cwd: path.join(repositoryRoot, 'compile'),
-      env: process.env,
+      env: {
+        ...process.env,
+        ...(preload && {
+          LD_PRELOAD: [process.env.LD_PRELOAD, preload].filter(Boolean).join(' ')
+        })
+      },
       stdio: ['pipe', 'pipe', 'pipe']
     });
     let stdout = '';
@@ -64,6 +79,7 @@ function runGhci(commands) {
 
 function normalizeGhcNames(typeInformation) {
   const normalized = typeInformation
+    .replace(/\bP\.(?:Int|Bool|Double|String)\b/g, (name) => name.slice(2))
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.String/g, 'String')
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Int/g, 'Int')
     .replace(/(?:ghc-internal|ghc-prim)(?:-[^:]+)?:GHC\.[A-Za-z0-9_.]+\.Double/g, 'Double')

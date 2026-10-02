@@ -208,10 +208,8 @@ module Sverlin
     fragmentMany
   , -- | Read the current selected payload's display text.
     bindContent
-  , -- | Shape one fixed-size, non-wrapping line.
+  , -- | Shape one non-wrapping line with a sampled size constrained by its node geometry unless FontSize is authored.
     content
-  , -- | Shape one non-wrapping line at a feasible size shared by its node-mapping lineage.
-    fitText
   , -- * Connectors
     -- | Typed endpoint and placement for a straight connector.
     ConnectorAnchor

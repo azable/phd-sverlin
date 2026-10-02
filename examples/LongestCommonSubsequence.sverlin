@@ -606,7 +606,7 @@ render = do
 
       node rowLabels $ do
         label <- bindContent
-        fitText label
+        content label
         width cellSize
         height cellSize
         contentFit Both Contain
@@ -638,7 +638,7 @@ render = do
           node rowValues $ do
             score <- payloadScalar rowValues
             scoreText <- bindContent
-            fitText scoreText
+            content scoreText
             contentFit Both Contain
             ensure $ height rowValues .>=. by 24 .+. by 2 .*. score
 
@@ -660,10 +660,10 @@ render = do
     padding (uniform (by 12))
     node leftInputs $ do
       value <- bindContent
-      fitText (text "left:  " <> value)
+      content (text "left:  " <> value)
     node rightInputs $ do
       value <- bindContent
-      fitText (text "right: " <> value)
+      content (text "right: " <> value)
       ensure $ top rightInputs .==. bottom leftInputs .+. by 8
       ensure $ left rightInputs .==. left leftInputs
 
@@ -692,7 +692,7 @@ render = do
   results <- select resultKind
   node results $ do
     value <- bindContent
-    fitText (text "LCS: " <> value)
+    content (text "LCS: " <> value)
     padding (uniform (by 14))
     style @Fill (Hsl (num 145) (num 0.34) (num 0.90))
     style @Stroke (Hsl (num 145) (num 0.52) (num 0.38))

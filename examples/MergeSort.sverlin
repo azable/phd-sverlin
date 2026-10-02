@@ -413,7 +413,7 @@ mergeTreeView runs allValues memberships childLinks levelGap siblingGap cellGap 
         node allValues $ do
           label <- bindContent
           magnitude <- payloadScalar allValues
-          fitText label
+          content label
           width cellWidth
           -- A fixed coefficient keeps this affine: both `cellHeight` and the
           -- payload-derived magnitude may vary, but two solver values are
