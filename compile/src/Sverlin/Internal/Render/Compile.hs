@@ -3878,7 +3878,7 @@ lowerTextFits trace plan expanded typography = do
                     S.@+@ paddingRight
                 verticalIntrinsic =
                   fontSize
-                    S.@*@ S.num (Typography.preparedLineHeightEm line)
+                    S.@*@ S.num (Typography.preparedLineInkHeightEm line)
                     S.@+@ paddingTop
                     S.@+@ paddingBottom
              in [ guardChoiceRequirements
@@ -3928,7 +3928,7 @@ lowerTextFits trace plan expanded typography = do
                   , paddingLeft
                   , paddingRight)
                 , ( False
-                  , Typography.preparedLineHeightEm
+                  , Typography.preparedLineInkHeightEm
                   , paddingTop
                   , paddingBottom)
                 ]

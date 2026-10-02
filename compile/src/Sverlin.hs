@@ -208,7 +208,7 @@ module Sverlin
     fragmentMany
   , -- | Read the current selected payload's display text.
     bindContent
-  , -- | Shape one non-wrapping line with a sampled size constrained by its node geometry unless FontSize is authored.
+  , -- | Shape one non-wrapping line with a sampled size constrained by its node geometry unless FontSize is authored; implicit height hugs visible glyph ink plus padding.
     content
   , -- * Connectors
     -- | Typed endpoint and placement for a straight connector.

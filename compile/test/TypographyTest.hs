@@ -5,8 +5,8 @@ module TypographyTest
   ( tests
   ) where
 
-import           Control.Monad                                  (unless, void,
-                                                                 when)
+import           Control.Monad                                  (forM_, unless,
+                                                                 void, when)
 import qualified Data.ByteString                                as BS
 import           Data.List                                      (isInfixOf, nub,
                                                                  sort)
@@ -120,6 +120,45 @@ tests =
                  in IR.textSourceRangeStart range == 1
                       && IR.textSourceRangeEnd range == 4)
              active)
+    , testCase "ink height excludes nominal leading and centers visible glyphs" $ do
+        forM_ ["A", "gy", "Ag"] $ \source -> do
+          prepared <-
+            Typography.prepareLine "Source Sans 3" 400 "normal" source []
+              >>= expectPrepared
+          let fontSize = 32
+              box = IR.LayoutRect 10 20 120 80
+              (_content, layout) =
+                Typography.materializeLine
+                  fontSize
+                  fontSize
+                  "center"
+                  box
+                  prepared
+          assertBool
+            "visible glyph height must be below nominal line height"
+            (Typography.preparedLineInkHeightEm prepared
+               < Typography.preparedLineHeightEm prepared)
+          case IR.textLayoutLines layout of
+            [line] -> do
+              let ink = IR.textLineInkBounds line
+                  expectedHeight =
+                    fontSize * Typography.preparedLineInkHeightEm prepared
+                  expectedTop =
+                    IR.layoutRectY box
+                      + (IR.layoutRectHeight box - expectedHeight) / 2
+              assertBool
+                "ink bounds must use shaped glyph height"
+                (abs (IR.layoutRectHeight ink - expectedHeight) < 1e-4)
+              assertBool
+                "visible glyphs must be centered in the content box"
+                (abs (IR.layoutRectY ink - expectedTop) < 1e-4)
+            lines' ->
+              assertFailure
+                ("expected one text line, got " ++ show (length lines'))
+        blank <-
+          Typography.prepareLine "Source Sans 3" 400 "normal" "   " []
+            >>= expectPrepared
+        Typography.preparedLineInkHeightEm blank @?= 0
     , testCase "guarded font branches shape with the sampled concrete style" $ do
         plan <- expectPlan guardedFontPlan
         marker <-
@@ -485,6 +524,35 @@ tests =
               (length (nub (concatMap textLayoutSizes variations)) > 1)
           sizes ->
             assertFailure ("expected two content sizes, got " ++ show sizes)
+    , testCase "Hug height follows glyph ink plus padding" $ do
+        visualizations <- compileFramePlan "ink Hug" [1 .. 4] inkHugPlan
+        mapM_
+          (\visualization ->
+             case [ (IR.boxBounds (IR.elementBox element), layout)
+                  | element <- IR.visualizationElements visualization
+                  , Just (IR.PlainTextContent layout) <-
+                      [IR.elementContent element]
+                  ] of
+               [(bounds, layout)] ->
+                 case IR.textLayoutLines layout of
+                   [line] -> do
+                     let ink = IR.textLineInkBounds line
+                         contentBox = IR.textLayoutContentBox layout
+                     assertBool
+                       ("Hug height must exclude nominal font leading: "
+                          ++ show (bounds, ink, contentBox))
+                       (abs
+                          (IR.layoutRectHeight bounds
+                             - IR.layoutRectHeight ink
+                             - 12)
+                          < 1e-3)
+                     assertBool
+                       "glyph ink must sit inside the padded node"
+                       (abs (IR.layoutRectY ink - IR.layoutRectY contentBox)
+                          < 1e-3)
+                   _ -> assertFailure "expected one text line"
+               _ -> assertFailure "expected one text node")
+          visualizations
     , testCase "same-seed typography and resource output is deterministic" $ do
         first <-
           compileFramePackage "deterministic typography" [17] fixedFontSizePlan
@@ -798,6 +866,22 @@ responsiveContentPlan nodeWidth =
            Render.xAt (Render.percent 50)
            Render.yAt (Render.percent 50)
            Render.content (Render.text "automatic")) :: Render.Render
+        (Render.Selected Render.GeneratedNode)
+    pure ()
+
+inkHugPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+inkHugPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @Visible)
+    Render.width (Render.by 400)
+    Render.height (Render.by 240)
+    _ <-
+      Render.node
+        (do
+           Render.content (Render.text "Agy")
+           Render.padding (Render.uniform (Render.by 6))
+           Render.xAt (Render.percent 50)
+           Render.yAt (Render.percent 50)) :: Render.Render
         (Render.Selected Render.GeneratedNode)
     pure ()
 

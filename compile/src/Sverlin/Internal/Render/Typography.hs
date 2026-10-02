@@ -10,6 +10,7 @@ module Sverlin.Internal.Render.Typography
   , prepareLine
   , preparedLineWidthEm
   , preparedLineHeightEm
+  , preparedLineInkHeightEm
   , preparedLineResources
   , materializeLine
   , activeFragmentClusters
@@ -106,6 +107,12 @@ preparedLineWidthEm line =
   where
     metrics = preparedMetrics line
 
+preparedLineInkHeightEm :: PreparedLine -> Double
+preparedLineInkHeightEm line =
+  (metricMaxY metrics - metricMinY metrics) / unitsPerEm line
+  where
+    metrics = preparedMetrics line
+
 preparedLineResources :: PreparedLine -> [Resource.ResourceBlob]
 preparedLineResources line =
   [ Font.fontFaceResource (Font.fontResolutionFace (preparedResolution line))
@@ -147,21 +154,11 @@ materializeLine fontSize preferredSize alignment contentBox prepared =
             + (IR.layoutRectWidth contentBox - lineWidth) / 2
     originX = targetLeft - metricMinX metrics * scale
     blockHeight = preparedLineHeightEm prepared * fontSize
-    nominalHeight =
-      fromIntegral
-        (HB.shapedTextAscender shaped - HB.shapedTextDescender shaped)
-    leading =
-      max
-        0
-        (preparedLineHeightEm prepared * unitsPerEm prepared - nominalHeight)
-    nominalTop = fromIntegral (HB.shapedTextAscender shaped) + leading / 2
-    topUnits = max nominalTop (metricMaxY metrics)
-    baseline =
-      IR.layoutRectY contentBox
-        + (IR.layoutRectHeight contentBox - blockHeight) / 2
-        + topUnits * scale
-    inkTop = baseline - metricMaxY metrics * scale
     inkHeight = (metricMaxY metrics - metricMinY metrics) * scale
+    inkTop =
+      IR.layoutRectY contentBox
+        + (IR.layoutRectHeight contentBox - inkHeight) / 2
+    baseline = inkTop + metricMaxY metrics * scale
     sourceRange =
       IR.TextSourceRange
         0
@@ -310,13 +307,13 @@ clusterBounds prepared fontSize layout =
 
 lineMetrics :: HB.ShapedText -> LineMetrics
 lineMetrics shaped =
-  let (penX, penY, bounds) =
+  let (penX, _, bounds) =
         foldl addGlyph (0, 0, Nothing) (HB.shapedTextGlyphs shaped)
       (minX, maxX, minY, maxY) =
         case bounds of
-          Nothing -> (min 0 penX, max 0 penX, min 0 penY, max 0 penY)
+          Nothing -> (min 0 penX, max 0 penX, 0, 0)
           Just (x0, x1, y0, y1) ->
-            (min x0 (min 0 penX), max x1 (max 0 penX), min y0 0, max y1 0)
+            (min x0 (min 0 penX), max x1 (max 0 penX), y0, y1)
    in LineMetrics (abs penX) minX maxX minY maxY
   where
     addGlyph (penX, penY, bounds) glyph =
@@ -333,7 +330,9 @@ lineMetrics shaped =
           current = (min x0 x1, max x0 x1, min y0 y1, max y0 y1)
        in ( penX + fromIntegral (HB.shapedGlyphXAdvance glyph)
           , penY + fromIntegral (HB.shapedGlyphYAdvance glyph)
-          , Just (maybe current (merge current) bounds))
+          , if HB.shapedGlyphWidth glyph == 0 || HB.shapedGlyphHeight glyph == 0
+              then bounds
+              else Just (maybe current (merge current) bounds))
     merge (x0, x1, y0, y1) (a0, a1, b0, b1) =
       (min x0 a0, max x1 a1, min y0 b0, max y1 b1)
 
