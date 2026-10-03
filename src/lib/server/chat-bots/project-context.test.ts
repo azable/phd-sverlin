@@ -25,7 +25,7 @@ function document(): ProjectDocument {
         createdAt: '2026-01-01T00:00:01.000Z',
         payload: {
           title: 'Test',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank', renderer: 'sverlin' }
         }
@@ -42,7 +42,7 @@ function document(): ProjectDocument {
             {
               operation: 'upsert',
               artifact: {
-                artifactId: 'dsl-main',
+                artifactId: 'main',
                 path: 'Main.svelte',
                 language: 'svelte',
                 content: recorded('<h1>Hello</h1>', 'text/x-svelte')

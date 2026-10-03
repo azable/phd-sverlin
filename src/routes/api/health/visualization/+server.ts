@@ -1,8 +1,8 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 
 import { runtimeReadiness } from '$lib/server/runtime-state';
-import { compileSvelteComponent } from '$lib/visualization-modes/sverlin/compile.server';
-import { sverlinStarter } from '$lib/visualization-modes/sverlin/contract';
+import { compileSvelteComponent } from '$lib/modes/sverlin/compile.server';
+import { sverlinStarter } from '$lib/modes/sverlin/contract';
 
 /** Run a real single-component compilation for an authenticated operator. */
 export const POST: RequestHandler = async () => {

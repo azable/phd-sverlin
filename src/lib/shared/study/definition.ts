@@ -5,7 +5,7 @@ import type {
   VisualizationMode,
   WorkspaceView
 } from '$lib/shared/presentations';
-import type { StudyInteractionCapturePolicy } from '$lib/shared/study/interactions';
+import type { StudyInteractionCapturePolicy } from './interactions';
 
 export type StudyCondition = {
   renderer: VisualizationMode;

@@ -11,7 +11,7 @@ const shared = globalThis as typeof globalThis & {
 const commandTails = (shared[commandTailsKey] ??= new Map());
 
 /**
- * Serialize whole project commands, including slow provider and compiler work.
+ * Serialize whole project commands, including slow provider and source-build work.
  * The repository still performs an optimistic head check at every append; this
  * queue only prevents two accepted commands from interleaving their events.
  */

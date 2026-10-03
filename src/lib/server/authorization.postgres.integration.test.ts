@@ -88,7 +88,7 @@ function rootDocument(projectId: string): ProjectDocument {
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: 'Access project',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }

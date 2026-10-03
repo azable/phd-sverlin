@@ -14,7 +14,7 @@ describe('Svelte-backed project lifecycle', () => {
     const repository = new MemoryProjectRepository();
     const dependencies: ProjectServiceDependencies = { repository };
     const { document: created } = await createProjectSkeleton({}, dependencies);
-    const artifact = projectSnapshotAt(created).artifacts['dsl-main'];
+    const artifact = projectSnapshotAt(created).artifacts.main;
     expect(artifact.path).toBe('Main.svelte');
     const source =
       '<script module>export const steps = ["First", "Second"];</script><script>let { step = 0 } = $props();</script><h1>{step}</h1>';

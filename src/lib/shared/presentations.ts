@@ -1,7 +1,7 @@
 /** Renderer-neutral presentation, layout, and HTML-frame contracts. */
 
 import * as v from 'valibot';
-import { modeCatalog } from '$lib/visualization-modes/catalog';
+import { modeCatalog } from '$lib/modes/catalog';
 
 import { positiveSchema, recordedTextSchema, textSchema } from './projects/events/values';
 

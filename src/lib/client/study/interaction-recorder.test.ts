@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mainStudyV1 } from '$lib/shared/study/main-v1';
+import { mainStudy } from '$lib/studies/main';
 
 import { ResilientInteractionOutbox, type InteractionOutbox } from './interaction-outbox';
 import { ProjectInteractionRecorder } from './interaction-recorder';
@@ -41,7 +41,7 @@ describe('project interaction recorder isolation', () => {
     const recorder = new ProjectInteractionRecorder({
       projectId: 'project-one',
       participantId: 'participant-one',
-      capture: mainStudyV1.interactionCapture!,
+      capture: mainStudy.interactionCapture!,
       applicationVersion: 'test',
       outbox,
       fetch: vi.fn(async () => {
@@ -60,7 +60,6 @@ describe('project interaction recorder isolation', () => {
         visiblePresentationIds: [],
         followingLatestPresentations: true,
         focusedTimelineEvents: [],
-        visualSelections: [],
         viewports: [],
         draft: { hasContent: false, characterCount: 0, referenceCount: 0, focused: false },
         document: {
@@ -103,7 +102,7 @@ describe('project interaction recorder isolation', () => {
     const recorder = new ProjectInteractionRecorder({
       projectId: 'project-one',
       participantId: 'participant-one',
-      capture: mainStudyV1.interactionCapture!,
+      capture: mainStudy.interactionCapture!,
       captureEndsAt: '2026-08-30T10:00:01.000Z',
       applicationVersion: 'test',
       outbox,
@@ -128,7 +127,7 @@ describe('project interaction recorder isolation', () => {
     const options = {
       projectId: 'project-one',
       participantId: 'participant-one',
-      capture: mainStudyV1.interactionCapture!,
+      capture: mainStudy.interactionCapture!,
       applicationVersion: 'test',
       outbox,
       fetch: vi.fn(async () => new Response(null, { status: 503 }))
@@ -171,7 +170,6 @@ function workspaceObservation() {
     visiblePresentationIds: [],
     followingLatestPresentations: true,
     focusedTimelineEvents: [],
-    visualSelections: [],
     viewports: [],
     draft: { hasContent: false, characterCount: 0, referenceCount: 0, focused: false },
     document: {

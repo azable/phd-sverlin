@@ -790,7 +790,6 @@ describe('submitProjectFeedback', () => {
     mocks.generatePrepared
       .mockReset()
       .mockResolvedValue(generation(undefined, 'The preference suggests clearer spacing.'));
-    const visualSelections: [] = [];
 
     const result = await submitProjectPreference(
       {
@@ -801,7 +800,6 @@ describe('submitProjectFeedback', () => {
         ) as [string, string],
         preferred: comparison.presentations[0].payload.presentation.presentationId,
         step: 0,
-        visualSelections,
         operationId: '12345678-1234-4123-8123-123456789abd'
       },
       commandDependencies
@@ -809,7 +807,10 @@ describe('submitProjectFeedback', () => {
 
     expect(result.appendedEvents[0]).toMatchObject({
       type: 'visualization.preference-recorded',
-      payload: { visualSelections }
+      payload: {
+        preferred: comparison.presentations[0].payload.presentation.presentationId,
+        step: 0
+      }
     });
     expect(result.appendedEvents.at(-1)).toMatchObject({
       type: 'assistant.responded',
@@ -850,7 +851,6 @@ describe('submitProjectFeedback', () => {
         ) as [string, string],
         preferred: comparison.presentations[1].payload.presentation.presentationId,
         step: 0,
-        visualSelections: [],
         operationId: '12345678-1234-4123-8123-123456789abe'
       },
       commandDependencies
@@ -958,9 +958,7 @@ describe('submitProjectFeedback', () => {
       throw new Error('Expected HTML/JS bundle.');
     expect(presentation.payload.presentation.mode).toBe('html-js');
     expect(presentation.payload.presentation.html.text).toBe('<main>Demo</main>');
-    expect(projectSnapshotAt(result.document).artifacts['dsl-main'].content.text).toContain(
-      'html-js-v1'
-    );
+    expect(projectSnapshotAt(result.document).artifacts.main.content.text).toContain('html-js-v1');
   });
 
   it('repairs an HTML/JS import violation without activating the rejected candidate', async () => {

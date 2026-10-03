@@ -1,3 +1,0 @@
-- ignore:
-    name: Functor law
-    within: DSL.Main

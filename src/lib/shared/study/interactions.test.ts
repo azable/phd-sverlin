@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mainStudyV1 } from './main-v1';
+import { mainStudy } from '$lib/studies/main';
 import { parseStudyInteractionBatch } from './interactions';
 
 describe('project interaction contracts', () => {
@@ -44,7 +44,7 @@ function fixtureBatch() {
       timeOrigin: 1,
       initialViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
       applicationVersion: '0.0.1',
-      capture: mainStudyV1.interactionCapture!
+      capture: mainStudy.interactionCapture!
     },
     events: [
       {

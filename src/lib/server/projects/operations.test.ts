@@ -150,7 +150,7 @@ describe('ProjectOperationExecutor', () => {
       },
       {
         command: 'initial-render' as const,
-        event: compilationFailure('timeout'),
+        event: compilationFailure('infrastructure'),
         expected: 'infrastructure'
       }
     ] as const;
@@ -194,7 +194,7 @@ describe('ProjectOperationExecutor', () => {
     }
   });
 
-  it('uses the sanitized system notice for a recorded compiler failure', async () => {
+  it('uses the sanitized system notice for a recorded build failure', async () => {
     const repository = new MemoryProjectRepository();
     const projectId = randomUUID();
     const operationId = randomUUID();
@@ -530,7 +530,7 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: 'Initial',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }
@@ -555,7 +555,7 @@ function aiFailure(failureKind: 'provider' | 'cancelled') {
   };
 }
 
-function compilationFailure(failureKind: 'source' | 'timeout') {
+function compilationFailure(failureKind: 'source' | 'infrastructure') {
   return {
     type: 'compilation.failed' as const,
     actor: { kind: 'system' as const },
@@ -563,12 +563,8 @@ function compilationFailure(failureKind: 'source' | 'timeout') {
     createdAt: '2026-08-30T00:00:01.000Z',
     payload: {
       durationMs: 1,
-      exitCode: failureKind === 'source' ? 1 : null,
       failureKind,
       diagnostics: [],
-      stdout: recorded('', 'text/plain'),
-      stderr: recorded('', 'text/plain'),
-      timedOut: failureKind === 'timeout',
       repairEligible: failureKind === 'source',
       error: `Compilation ${failureKind}`
     }

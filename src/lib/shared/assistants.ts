@@ -3,7 +3,7 @@
 import * as v from 'valibot';
 
 import type { VisualizationMode } from './presentations';
-import { modeCatalog } from '$lib/visualization-modes/catalog';
+import { modeCatalog } from '$lib/modes/catalog';
 
 /** Assistant implementations that may be recorded in a project Timeline. */
 export const assistantIdSchema = v.picklist(

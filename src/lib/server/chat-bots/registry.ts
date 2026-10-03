@@ -4,7 +4,7 @@ import { openAIAdapter } from '$lib/server/chat-adapters/openai';
 import { InvalidChatbotResponseError, type ChatAdapter } from '$lib/server/chat-adapters/types';
 import { assistantMode, type AssistantId } from '$lib/shared/assistants';
 import type { ParticipantIntakeStepId } from '$lib/shared/projects/events';
-import { modeCatalog } from '$lib/visualization-modes/catalog';
+import { modeCatalog } from '$lib/modes/catalog';
 
 import {
   participantIntakeClassifier,
@@ -70,12 +70,12 @@ export function createChatbot<Project, Output extends object>(
 
 type ModeOutput = SourceArtifactChatOutput | CandidateAssistantOutput;
 const modules = import.meta.glob<{ default: ChatBotConfig<AiProjectContext, ModeOutput> }>(
-  '../../visualization-modes/*/bot.server.ts',
+  '../../modes/*/bot.server.ts',
   { eager: true }
 );
 const modeChatbots = Object.fromEntries(
   Object.keys(modeCatalog).map((mode) => {
-    const config = modules[`../../visualization-modes/${mode}/bot.server.ts`]?.default;
+    const config = modules[`../../modes/${mode}/bot.server.ts`]?.default;
     if (!config || config.id !== modeCatalog[mode as keyof typeof modeCatalog].assistantId)
       throw new Error(`Visualization mode ${mode} needs its own matching assistant.`);
     return [mode, createChatbot(config, openAIAdapter)];

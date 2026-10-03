@@ -81,7 +81,7 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: 'Project export integration',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }

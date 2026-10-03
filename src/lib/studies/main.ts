@@ -1,12 +1,12 @@
-/** Main counterbalanced Sverlin-versus-HTML study protocol. */
+/** Main counterbalanced single-component Svelte-versus-static-HTML study protocol. */
 
-import { defineStudy, minutes } from './definition';
+import { defineStudy, minutes } from '$lib/shared/study/definition';
 
-export const mainStudyV1 = defineStudy({
+export const mainStudy = defineStudy({
   id: 'main-study',
   version: 1,
   name: 'Main study',
-  description: 'Counterbalanced comparison of Sverlin and HTML visualization workflows.',
+  description: 'Counterbalanced comparison of single-component Svelte and static HTML frames.',
   assignment: {
     strategy: 'balanced',
     tieBreakOrder: ['sverlin-first', 'html-first']
@@ -35,7 +35,7 @@ export const mainStudyV1 = defineStudy({
       // Keep two comparison pairs ready: one visible pair and one ahead-of-time pair.
       presentationBufferTarget: 4,
       workspace: { view: 'participant', layout: 'comparison', artifactEditor: 'collapsible' },
-      project: { templateId: 'blank' },
+      project: { templateId: 'blank', artifactFormat: 'svelte-component' },
       durationSeconds: minutes(15)
     },
     html: {

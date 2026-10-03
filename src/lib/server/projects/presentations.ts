@@ -1,7 +1,6 @@
 /** Preference commands for compatible retained presentations. */
 
 import type { EventId } from '$lib/shared/projects/events';
-import type { VisualSelection } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
 import {
   isSverlinPresentation,
@@ -38,7 +37,6 @@ export function recordProjectPreference(
     presentations: [string, string];
     preferred: string;
     step: number;
-    visualSelections: VisualSelection[];
     operationId: string;
   },
   dependencies: PresentationCommandDependencies = defaultDependencies
@@ -57,7 +55,6 @@ export async function appendProjectPreference(
     presentations: [string, string];
     preferred: string;
     step: number;
-    visualSelections: VisualSelection[];
     operationId: string;
   },
   dependencies: ProjectServiceDependencies
@@ -96,8 +93,6 @@ export async function appendProjectPreference(
   ) {
     throw new Error('The preference references an unknown presentation step.');
   }
-  if (options.visualSelections.length)
-    throw new Error('Browser presentations do not expose selectable elements.');
   const displaySetId =
     left.payload.displaySetId === right.payload.displaySetId
       ? left.payload.displaySetId
@@ -113,8 +108,7 @@ export async function appendProjectPreference(
           ...(displaySetId ? { displaySetId } : {}),
           presentations: options.presentations,
           preferred: options.preferred,
-          step: options.step,
-          visualSelections: []
+          step: options.step
         }
       })
     ],

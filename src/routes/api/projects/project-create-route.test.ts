@@ -65,9 +65,9 @@ describe('project creation API', () => {
     expect(mocks.accept).not.toHaveBeenCalled();
   });
 
-  it('rejects malformed and legacy mode requests before project creation', async () => {
+  it('rejects malformed project creation requests before project creation', async () => {
     const { POST } = await import('./+server');
-    const malformed = await POST(request({ mode: 'ai', exampleId: 'linear-search' }));
+    const malformed = await POST(request({ templateId: 123 }));
     const unknownTemplate = await POST(request({ templateId: 'not_known' }));
 
     expect(malformed.status).toBe(400);

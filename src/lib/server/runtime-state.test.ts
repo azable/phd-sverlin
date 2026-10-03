@@ -5,7 +5,7 @@ import type { ProjectEvent } from '$lib/shared/projects/events';
 import { recoveryEventsForInterruptedOperations } from './projects/recovery';
 
 describe('runtime crash recovery', () => {
-  it('terminates unmatched compiler and AI requests without duplicating completed work', () => {
+  it('terminates unmatched build and AI requests without duplicating completed work', () => {
     const events = [
       event('compilation.requested', 1, '11111111-1111-4111-8111-111111111111', {
         purpose: 'seed-change',
@@ -16,12 +16,8 @@ describe('runtime crash recovery', () => {
       }),
       event('compilation.failed', 2, '11111111-1111-4111-8111-111111111111', {
         durationMs: 1,
-        exitCode: 1,
         failureKind: 'source',
         diagnostics: [],
-        stdout: recorded(''),
-        stderr: recorded('failed'),
-        timedOut: false,
         repairEligible: true
       }),
       event('ai.generation-requested', 3, '22222222-2222-4222-8222-222222222222', {

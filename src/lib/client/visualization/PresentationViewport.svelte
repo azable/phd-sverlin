@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import { Skeleton } from '$lib/client/components/ui/skeleton';
-  import { modeCatalog } from '$lib/visualization-modes/catalog';
+  import { modeCatalog } from '$lib/modes/catalog';
   import {
     presentationMode,
     type RenderablePresentation,
@@ -15,7 +15,7 @@
   }: { presentation?: RenderablePresentation; step: number; label: string } = $props();
   const viewports = import.meta.glob<{
     default: Component<{ presentation: RenderablePresentation; step: number; label: string }>;
-  }>('../../visualization-modes/*/Viewport.svelte', { eager: true });
+  }>('../../modes/*/Viewport.svelte', { eager: true });
   const registered = Object.fromEntries(
     Object.entries(viewports).map(([file, module]) => [file.split('/').at(-2), module.default])
   ) as Partial<

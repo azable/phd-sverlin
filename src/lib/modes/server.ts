@@ -14,28 +14,16 @@ export type ModeBuildResult =
   | {
       ok: true;
       seed: number;
+      durationMs: number;
       bundle: { mode: VisualizationMode; html: string; javascript: string; labels: string[] };
-      execution: {
-        durationMs: number;
-        stdout: string;
-        stderr: string;
-        exitCode: number;
-        timedOut: false;
-      };
     }
   | {
       ok: false;
       seed: number;
+      durationMs: number;
       error: string;
       diagnostics: BuildDiagnostic[];
       failureKind: 'source' | 'infrastructure';
-      execution: {
-        durationMs: number;
-        stdout: string;
-        stderr: string;
-        exitCode: number;
-        timedOut: false;
-      };
     };
 
 export type ModeBatchBuilder = (

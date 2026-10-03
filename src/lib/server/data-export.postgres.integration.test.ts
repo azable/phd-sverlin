@@ -7,7 +7,7 @@ import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { mainStudyV1 } from '$lib/shared/study/main-v1';
+import { mainStudy } from '$lib/studies/main';
 
 import { PostgresExportDataSource } from './data-export';
 
@@ -65,8 +65,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'participant',
         ownerUserId: participantId,
-        studyId: mainStudyV1.id,
-        studyVersion: mainStudyV1.version,
+        studyId: mainStudy.id,
+        studyVersion: mainStudy.version,
         armId: 'sverlin-first',
         currentPhaseIndex: 1,
         startedAt: new Date()
@@ -77,8 +77,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'preview',
         ownerUserId: adminId,
-        studyId: mainStudyV1.id,
-        studyVersion: mainStudyV1.version,
+        studyId: mainStudy.id,
+        studyVersion: mainStudy.version,
         armId: 'html-first',
         currentPhaseIndex: 1,
         startedAt: new Date()
@@ -113,8 +113,8 @@ it.skipIf(!enabled)(
     const source = new PostgresExportDataSource();
     const research = await source.collect({
       type: 'study',
-      studyId: mainStudyV1.id,
-      studyVersion: mainStudyV1.version
+      studyId: mainStudy.id,
+      studyVersion: mainStudy.version
     });
     expect(research.projects.map(({ id }) => id)).toEqual([studyProjectId]);
     expect(research.study.runs).toHaveLength(1);
@@ -164,7 +164,7 @@ function document(projectId: string): ProjectDocument {
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: projectId,
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }

@@ -279,7 +279,7 @@ describe('ProjectSession', () => {
 
   it('releases project creation state after a server failure', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: 'Compiler unavailable.' }), {
+      new Response(JSON.stringify({ error: 'Project creation unavailable.' }), {
         status: 503,
         headers: { 'content-type': 'application/json' }
       })
@@ -289,7 +289,7 @@ describe('ProjectSession', () => {
     await expect(session.createProject({ templateId: 'blank' })).resolves.toBe(false);
 
     expect(session.creating).toBe(false);
-    expect(session.error).toBe('Compiler unavailable.');
+    expect(session.error).toBe('Project creation unavailable.');
     expect(navigation.goto).not.toHaveBeenCalled();
   });
 });
@@ -369,7 +369,7 @@ function bufferedProjectResource(): ProjectResource {
             {
               operation: 'upsert',
               artifact: {
-                artifactId: 'dsl-main',
+                artifactId: 'main',
                 path: 'Main.svelte',
                 language: 'svelte',
                 content: {
@@ -427,7 +427,7 @@ function createdEvent(): ProjectEventOf<'project.created'> {
     createdAt: '2026-01-01T00:00:01.000Z',
     payload: {
       title: 'Initial',
-      entryArtifactId: 'dsl-main',
+      entryArtifactId: 'main',
       assistantId: 'sverlin-assistant',
       creation: { templateId: 'blank' }
     }

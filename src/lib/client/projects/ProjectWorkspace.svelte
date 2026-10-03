@@ -220,7 +220,6 @@
               }
             }
           : {}),
-        visualSelections: [],
         ...(timelineObservation ? { timeline: timelineObservation } : {}),
         viewports: [],
         draft: draftObservation,

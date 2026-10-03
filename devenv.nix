@@ -1,6 +1,5 @@
 { pkgs, lib, config, ... }:
 let
-  flock = if pkgs.stdenv.isDarwin then pkgs.flock else pkgs.util-linux;
   vscodeExtensions = [
     "mkhl.direnv"
     "jnoortheen.nix-ide"
@@ -20,7 +19,6 @@ in
   packages = with pkgs; [
     nodejs_24 pnpm_10
     git jq curl
-    flock
     claude-code opencode
   ];
 
@@ -50,7 +48,7 @@ in
 
     # drizzle-kit comes from node_modules, so setup must finish first.
     "sverlin:migrate" = {
-      exec = "pnpm run db:migrate";
+      exec = "bash scripts/run-with-env.sh pnpm run db:migrate";
       after = [ "sverlin:setup" ];
     };
 
@@ -76,16 +74,7 @@ in
   '';
 
   enterShell = ''
-    # Runtime shell loading deliberately avoids dotenv.enable, which stores .env
-    # contents in the Nix store. .env is trusted, local shell-compatible config.
-    if [ -f "$DEVENV_ROOT/.env" ]; then
-      set -a
-      . "$DEVENV_ROOT/.env"
-      set +a
-    fi
-    export DATABASE_URL="''${DATABASE_URL:-postgres://sverlin:sverlin@127.0.0.1:$PGPORT/sverlin}"
-    export BETTER_AUTH_URL="''${BETTER_AUTH_URL:-http://localhost:5173}"
-    export BETTER_AUTH_SECRET="''${BETTER_AUTH_SECRET:-development-only-secret-at-least-32-bytes}"
-    export BETTER_AUTH_TRUSTED_ORIGINS="''${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:5173}"
+    # Runtime shell loading avoids dotenv.enable, which stores .env in the Nix store.
+    source "$DEVENV_ROOT/scripts/load-env.sh"
   '';
 }

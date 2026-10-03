@@ -3,11 +3,7 @@
 import * as v from 'valibot';
 
 import { messageContentSegmentSchema } from '$lib/shared/projects/events/message-content';
-import {
-  naturalSchema,
-  positiveSchema,
-  visualSelectionSchema
-} from '$lib/shared/projects/events/values';
+import { naturalSchema, positiveSchema } from '$lib/shared/projects/events/values';
 import { presentationIdSchema } from '$lib/shared/presentations';
 
 const boundedText = (maximum: number) => v.pipe(v.string(), v.maxLength(maximum));
@@ -96,7 +92,6 @@ export const studyWorkspaceObservationSchema = v.strictObject({
   followingLatestPresentations: v.boolean(),
   focusedTimelineEvents: v.pipe(v.array(positiveSchema), v.maxLength(100)),
   playback: v.optional(playbackStateSchema),
-  visualSelections: v.pipe(v.array(visualSelectionSchema), v.maxLength(20)),
   timeline: v.optional(timelineViewportSchema),
   viewports: v.pipe(v.array(visualizationViewportSchema), v.maxLength(2)),
   draft: v.strictObject({

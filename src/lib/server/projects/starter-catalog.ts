@@ -1,7 +1,7 @@
 /** Developer-owned project starters. */
 
 import type { ProjectCreation, ProjectTemplateSummary } from '$lib/shared/projects/creation';
-import { linearSearchSource, sverlinStarter } from '$lib/visualization-modes/sverlin/contract';
+import { linearSearchSource, sverlinStarter } from '$lib/modes/sverlin/contract';
 
 const templates = [
   {

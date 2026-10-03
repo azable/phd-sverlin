@@ -81,7 +81,7 @@ describe('project model and projection', () => {
     const document = documentWithHistory();
     expect(projectSnapshotAt(document, 3).activePresentationSet?.presentations[0].id).toBe(3);
     expect(projectSnapshotAt(document, 4).activePresentationSet).toBeUndefined();
-    expect(projectSnapshotAt(document, 2).artifacts['dsl-main']?.content.sha256).toBe(hash);
+    expect(projectSnapshotAt(document, 2).artifacts.main?.content.sha256).toBe(hash);
     expect(projectSnapshotAt(document).activePresentationSet?.presentations[0]).toMatchObject({
       id: 5,
       payload: { presentation: { source: { sha256: '1'.repeat(64) } } }
@@ -112,7 +112,7 @@ function documentWithHistory(): ProjectDocument {
     events: [
       event(1, 'project.created', {
         title: 'Test',
-        entryArtifactId: 'dsl-main',
+        entryArtifactId: 'main',
         assistantId: 'sverlin-assistant',
         creation: { templateId: 'blank' }
       }),
@@ -122,7 +122,7 @@ function documentWithHistory(): ProjectDocument {
           {
             operation: 'upsert',
             artifact: {
-              artifactId: 'dsl-main',
+              artifactId: 'main',
               path: 'Main.svelte',
               language: 'svelte',
               content: { ...recorded, text: 'initial', mediaType: 'text/x-svelte' }
@@ -137,7 +137,7 @@ function documentWithHistory(): ProjectDocument {
           {
             operation: 'upsert',
             artifact: {
-              artifactId: 'dsl-main',
+              artifactId: 'main',
               path: 'Main.svelte',
               language: 'svelte',
               content: { ...edited, mediaType: 'text/x-svelte' }

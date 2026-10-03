@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { StudyInteractionEventInput } from '$lib/shared/study/interactions';
-import { mainStudyV1 } from '$lib/shared/study/main-v1';
+import { mainStudy } from '$lib/studies/main';
 
 import { ResilientInteractionOutbox, type StoredInteractionEvent } from './interaction-outbox';
 
@@ -86,7 +86,7 @@ function session(id: string) {
     timeOrigin: 1,
     initialViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
     applicationVersion: '0.0.1',
-    capture: mainStudyV1.interactionCapture!
+    capture: mainStudy.interactionCapture!
   };
 }
 

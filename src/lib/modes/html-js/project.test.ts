@@ -16,7 +16,7 @@ describe('free-form HTML/JS project', () => {
       { creation: { templateId: 'blank', renderer: 'html-js' } },
       dependencies
     );
-    const artifact = projectSnapshotAt(document).artifacts['dsl-main'];
+    const artifact = projectSnapshotAt(document).artifacts.main;
     expect(artifact.path).toBe('Visualization.html-js.json');
     const source = JSON.stringify({
       format: 'html-js-v1',
@@ -45,6 +45,6 @@ describe('free-form HTML/JS project', () => {
       throw new Error('Expected browser bundle');
     expect(presented.payload.presentation.html.text).toBe('<h1>Safe</h1>');
     expect(presented.payload.presentation.javascript.text).toContain('Ready');
-    expect(projectSnapshotAt(updated.document).artifacts['dsl-main'].content.text).toBe(source);
+    expect(projectSnapshotAt(updated.document).artifacts.main.content.text).toBe(source);
   });
 });

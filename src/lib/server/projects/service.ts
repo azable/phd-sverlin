@@ -41,17 +41,13 @@ import { currentProjectOperationSignal } from './operation-context';
 import { recordText } from './fingerprints';
 import { projectRepository } from './repository';
 import { resolveProjectTemplate } from './starter-catalog';
-import { stepSignature } from '$lib/visualization-modes/signature.server';
-import {
-  directModeBuilders,
-  sourceModeBuilders,
-  type ModeBuildResult
-} from '$lib/visualization-modes/server';
-import { modeCatalog } from '$lib/visualization-modes/catalog';
+import { stepSignature } from '$lib/modes/signature.server';
+import { directModeBuilders, sourceModeBuilders, type ModeBuildResult } from '$lib/modes/server';
+import { modeCatalog } from '$lib/modes/catalog';
 
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
-const entryArtifactId = 'dsl-main';
+const entryArtifactId = 'main';
 type RecordedCompilationBase = {
   document: ProjectDocument;
   source: RecordedText;
@@ -625,26 +621,19 @@ async function recordCompileResult(
   },
   dependencies: ProjectServiceDependencies
 ): Promise<RecordedCompilation> {
-  const stdout = recordText(options.result.execution.stdout, 'text/plain');
-  const stderr = recordText(options.result.execution.stderr, 'text/plain');
-
   if (!options.result.ok) {
     const compileEvent = draftEvent<'compilation.failed'>({
       type: 'compilation.failed',
       actor: { kind: 'system' },
       operationId: options.operationId,
       payload: {
-        durationMs: options.result.execution.durationMs,
+        durationMs: options.result.durationMs,
         compilationId: options.compilationId,
         seed: options.seed,
         batchIndex: options.batchIndex,
         batchSize: options.batchSize,
-        exitCode: options.result.execution.exitCode,
         failureKind: options.result.failureKind,
         diagnostics: options.result.diagnostics,
-        stdout,
-        stderr,
-        timedOut: options.result.execution.timedOut,
         repairEligible: options.result.failureKind === 'source',
         error: options.result.error
       }
@@ -667,13 +656,11 @@ async function recordCompileResult(
     actor: { kind: 'system' },
     operationId: options.operationId,
     payload: {
-      durationMs: options.result.execution.durationMs,
+      durationMs: options.result.durationMs,
       compilationId: options.compilationId,
       seed: options.seed,
       batchIndex: options.batchIndex,
       batchSize: options.batchSize,
-      stdout,
-      stderr,
       render
     }
   });

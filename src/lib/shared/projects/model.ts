@@ -30,7 +30,6 @@ import {
   operationIdSchema,
   positiveSchema,
   textSchema,
-  visualSelectionSchema,
   type ProjectArtifact
 } from './events/values';
 import { messageContentSchema } from './events/message-content';
@@ -87,8 +86,7 @@ export const projectCommandSchema = v.variant('type', [
     type: v.literal('prefer'),
     presentations: v.tuple([presentationIdSchema, presentationIdSchema]),
     preferred: presentationIdSchema,
-    step: naturalSchema,
-    visualSelections: v.pipe(v.array(visualSelectionSchema), v.maxLength(2))
+    step: naturalSchema
   }),
   v.strictObject({
     ...commandBase,

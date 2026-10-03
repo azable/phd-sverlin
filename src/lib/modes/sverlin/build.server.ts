@@ -13,37 +13,26 @@ export async function buildBatch(
   try {
     const compiled = await compileSvelteComponent(source);
     if (signal?.aborted) throw signal.reason ?? new DOMException('Build cancelled.', 'AbortError');
-    const execution = {
-      durationMs: Math.round(performance.now() - start),
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
-      timedOut: false as const
-    };
+    const durationMs = Math.round(performance.now() - start);
     return seeds.map((seed) => ({
       ok: true,
       seed,
+      durationMs,
       bundle: {
         mode: 'sverlin',
         html: '',
         javascript: compiled.javascript,
         labels: compiled.labels
-      },
-      execution
+      }
     }));
   } catch (cause) {
     if (signal?.aborted) throw cause;
     const message = cause instanceof Error ? cause.message : String(cause);
-    const execution = {
-      durationMs: Math.round(performance.now() - start),
-      stdout: '',
-      stderr: message,
-      exitCode: 1,
-      timedOut: false as const
-    };
+    const durationMs = Math.round(performance.now() - start);
     return seeds.map((seed) => ({
       ok: false,
       seed,
+      durationMs,
       error: message,
       diagnostics: [
         {
@@ -56,8 +45,7 @@ export async function buildBatch(
             : {})
         }
       ],
-      failureKind: cause instanceof InvalidSvelteSourceError ? 'source' : 'infrastructure',
-      execution
+      failureKind: cause instanceof InvalidSvelteSourceError ? 'source' : 'infrastructure'
     }));
   }
 }

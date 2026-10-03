@@ -7,7 +7,7 @@ import type { ParticipantPrincipal } from '$lib/server/auth';
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresExportDataSource } from '$lib/server/data-export';
-import { mainStudyV1 } from '$lib/shared/study/main-v1';
+import { mainStudy } from '$lib/studies/main';
 
 import { ingestStudyInteractions } from './study-interactions';
 
@@ -59,8 +59,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'participant',
         ownerUserId: userId,
-        studyId: mainStudyV1.id,
-        studyVersion: mainStudyV1.version,
+        studyId: mainStudy.id,
+        studyVersion: mainStudy.version,
         armId: 'sverlin-first',
         currentPhaseIndex: 1,
         startedAt: now
@@ -198,7 +198,7 @@ function interactionBatch(projectId: string, now: Date) {
       timeOrigin: now.getTime(),
       initialViewport: { width: 1280, height: 720, devicePixelRatio: 1 },
       applicationVersion: '0.0.1',
-      capture: mainStudyV1.interactionCapture!
+      capture: mainStudy.interactionCapture!
     },
     terminal: {
       clientStoppedAt: new Date(now.getTime() + 2).toISOString(),

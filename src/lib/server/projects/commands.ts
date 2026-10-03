@@ -15,11 +15,7 @@ import {
   structureKnownPresentationReferences,
   type MessageContent
 } from '$lib/shared/projects/events/message-content';
-import type {
-  ArtifactChange,
-  RecordedText,
-  VisualSelection
-} from '$lib/shared/projects/events/values';
+import type { ArtifactChange, RecordedText } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import type { RenderablePresentation } from '$lib/shared/presentations';
@@ -31,8 +27,8 @@ import {
   getCandidateChatbot,
   getParticipantIntakeClassifier
 } from '$lib/server/chat-bots/registry';
-import { modeCatalog } from '$lib/visualization-modes/catalog';
-import { directModeBuilders } from '$lib/visualization-modes/server';
+import { modeCatalog } from '$lib/modes/catalog';
+import { directModeBuilders } from '$lib/modes/server';
 import {
   nextParticipantIntakeStep,
   participantIntakeStep,
@@ -147,7 +143,6 @@ export function queueProjectPreference(
     presentations: [string, string];
     preferred: string;
     step: number;
-    visualSelections: VisualSelection[];
     deadlineAt?: string;
   },
   dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
@@ -368,7 +363,6 @@ export function submitProjectPreference(
     presentations: [string, string];
     preferred: string;
     step: number;
-    visualSelections: VisualSelection[];
     operationId: string;
   },
   dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
@@ -1459,7 +1453,7 @@ function replyWithRecovery(
 function participantDiagnostic(diagnostics: readonly { message: string }[]): string {
   return diagnostics.length > 0
     ? 'the generated program still did not satisfy the visualization language checks'
-    : 'the visualization compiler could not validate the generated program';
+    : 'the visualization builder could not validate the generated source';
 }
 
 function plainFailureSummary(value: string): string {

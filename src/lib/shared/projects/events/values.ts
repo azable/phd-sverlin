@@ -66,13 +66,6 @@ export const artifactChangeSchema = v.variant('operation', [
   v.object({ operation: v.literal('delete'), artifactId: textSchema })
 ]);
 
-/** Runtime schema for feedback attached to concrete visualization instances. */
-export const visualSelectionSchema = v.object({
-  presentationEvent: positiveSchema,
-  step: naturalSchema,
-  instances: v.pipe(v.array(naturalSchema), v.minLength(1))
-});
-
 /** Runtime schema for the reason a visualization render was requested. */
 export const renderPurposeSchema = v.picklist([
   'initial',
@@ -100,7 +93,5 @@ export type ProjectArtifact = v.InferOutput<typeof projectArtifactSchema>;
 export type ArtifactChange = v.InferOutput<typeof artifactChangeSchema>;
 /** Provenance of an artifact version. */
 export type ArtifactVersionOrigin = v.InferOutput<typeof artifactOriginSchema>;
-/** Historical telemetry shape retained for study export compatibility. */
-export type VisualSelection = v.InferOutput<typeof visualSelectionSchema>;
 /** Reason a visualization render was requested. */
 export type RenderPurpose = v.InferOutput<typeof renderPurposeSchema>;

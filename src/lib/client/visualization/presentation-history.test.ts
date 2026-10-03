@@ -118,8 +118,7 @@ describe('presentation history', () => {
         displaySetId: setOne,
         presentations: [presentationIds[0], presentationIds[1]],
         preferred: presentationIds[0],
-        step: 0,
-        visualSelections: []
+        step: 0
       }
     });
 

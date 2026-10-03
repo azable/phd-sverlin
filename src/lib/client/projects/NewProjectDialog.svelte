@@ -10,7 +10,7 @@
   import * as ToggleGroup from '$lib/client/components/ui/toggle-group';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { VisualizationMode } from '$lib/shared/presentations';
-  import { modeCatalog } from '$lib/visualization-modes/catalog';
+  import { modeCatalog } from '$lib/modes/catalog';
 
   import type { ProjectSession } from './project-session.svelte';
 

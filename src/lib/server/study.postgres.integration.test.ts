@@ -4,8 +4,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, expect, it } from 'vitest';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import { mainStudyV1 } from '$lib/shared/study/main-v1';
-import { mainStudyV2 } from '$lib/shared/study/main-v2';
+import { mainStudy } from '$lib/studies/main';
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
@@ -49,7 +48,7 @@ it.skipIf(!enabled)('makes concurrent enrollment idempotent for one participant'
       role: 'user'
     });
 
-  const ref = { id: mainStudyV2.id, version: mainStudyV2.version };
+  const ref = { id: mainStudy.id, version: mainStudy.version };
   const runIds = await Promise.all([
     enrollParticipant(userId, ref),
     enrollParticipant(userId, ref)
@@ -83,8 +82,8 @@ it.skipIf(!enabled)(
       .values({
         mode: 'participant',
         ownerUserId: userId,
-        studyId: mainStudyV1.id,
-        studyVersion: mainStudyV1.version,
+        studyId: mainStudy.id,
+        studyVersion: mainStudy.version,
         armId: 'sverlin-first'
       })
       .returning({ id: schema.studyRuns.id });
@@ -135,7 +134,7 @@ it.skipIf(!enabled)(
 
     const initial = await createStudyPreview({
       ownerUserId: adminId,
-      ref: { id: mainStudyV1.id, version: mainStudyV1.version },
+      ref: { id: mainStudy.id, version: mainStudy.version },
       armId: 'sverlin-first'
     });
     expect(initial).toMatchObject({ mode: 'preview', phase: { id: 'welcome' }, completed: false });
@@ -153,7 +152,7 @@ it.skipIf(!enabled)(
 
     const isolated = await createStudyPreview({
       ownerUserId: adminId,
-      ref: { id: mainStudyV1.id, version: mainStudyV1.version },
+      ref: { id: mainStudy.id, version: mainStudy.version },
       armId: 'html-first',
       phaseId: 'between-tasks'
     });
@@ -187,8 +186,8 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
     .values({
       mode: 'participant',
       ownerUserId: userId,
-      studyId: mainStudyV1.id,
-      studyVersion: mainStudyV1.version,
+      studyId: mainStudy.id,
+      studyVersion: mainStudy.version,
       armId: 'sverlin-first'
     })
     .returning({ id: schema.studyRuns.id });
@@ -201,7 +200,7 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
   await database()
     .update(schema.studyRuns)
     .set({
-      currentPhaseIndex: mainStudyV1.flow.length - 1,
+      currentPhaseIndex: mainStudy.flow.length - 1,
       completedAt: new Date()
     })
     .where(eq(schema.studyRuns.id, run.id));
@@ -213,7 +212,7 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
 
 function readyComparison(projectId: string): ProjectDocument {
   const operationId = randomUUID();
-  const source = recorded('main = pure ()', 'text/x-sverlin');
+  const source = recorded('<p>Prepared study visualization</p>', 'text/x-svelte');
   const render = recorded(JSON.stringify({ steps: [{ label: 'Only step' }] }), 'application/json');
   const displaySetId = randomUUID();
   return {
@@ -228,7 +227,7 @@ function readyComparison(projectId: string): ProjectDocument {
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: 'Prepared study project',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank', renderer: 'sverlin' }
         }
@@ -245,7 +244,7 @@ function readyComparison(projectId: string): ProjectDocument {
             {
               operation: 'upsert',
               artifact: {
-                artifactId: 'dsl-main',
+                artifactId: 'main',
                 path: 'Main.svelte',
                 language: 'svelte',
                 content: source

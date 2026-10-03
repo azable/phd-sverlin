@@ -106,18 +106,12 @@ describe('single-component Svelte assistant', () => {
     ).toMatchObject({ action: 'resample' });
   });
 
-  it('rejects unsupported element references in assistant discussion', () => {
+  it('rejects unsupported message content in assistant discussion', () => {
     expect(() =>
       aiAssistant.parseOutput({
         reply: [
-          {
-            type: 'element-ref',
-            presentationId: '12345678-1234-4123-8123-123456789abc',
-            presentationEvent: 4,
-            step: 1,
-            instances: [2]
-          },
-          { type: 'markdown', text: 'Do you prefer this element?' }
+          { type: 'unsupported-content' },
+          { type: 'markdown', text: 'Do you prefer this presentation?' }
         ],
         decision: { action: 'respond', sourceArtifactContent: null },
         recovery: null

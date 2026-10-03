@@ -2,8 +2,6 @@
 
 import type { NewProjectEvent, ProjectEvent, ProjectEventOf } from '$lib/shared/projects/events';
 
-import { recordText } from './fingerprints';
-
 /** Derive terminal cancellation events for lifecycle requests left open by a process crash. */
 export function recoveryEventsForInterruptedOperations(events: ProjectEvent[]): NewProjectEvent[] {
   const compilations = new Map<string, ProjectEventOf<'compilation.requested'>>();
@@ -22,7 +20,6 @@ export function recoveryEventsForInterruptedOperations(events: ProjectEvent[]): 
   }
 
   const recoveredAt = new Date().toISOString();
-  const emptyText = recordText('', 'text/plain');
   const pending = [
     ...[...compilations.values()].map((request) => ({ request, kind: 'compile' as const })),
     ...[...generations.values()].map((request) => ({ request, kind: 'generation' as const }))
@@ -38,12 +35,8 @@ export function recoveryEventsForInterruptedOperations(events: ProjectEvent[]): 
         createdAt: recoveredAt,
         payload: {
           durationMs: 0,
-          exitCode: null,
           failureKind: 'cancelled',
           diagnostics: [{ severity: 'unknown', message, raw: message }],
-          stdout: emptyText,
-          stderr: recordText(message, 'text/plain'),
-          timedOut: false,
           repairEligible: false,
           error: message
         }

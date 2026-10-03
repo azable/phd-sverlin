@@ -27,12 +27,8 @@ function compilationFailure(): ProjectEventOf<'compilation.failed'> {
     type: 'compilation.failed',
     payload: {
       durationMs: 10,
-      exitCode: 1,
       failureKind: 'source',
       diagnostics: [],
-      stdout: blob(),
-      stderr: blob(),
-      timedOut: false,
       repairEligible: true,
       error: 'Source failed'
     }
@@ -52,8 +48,4 @@ function base() {
     operationId,
     createdAt: '2026-01-01T00:00:01.000Z'
   };
-}
-
-function blob() {
-  return { text: '', sha256: '0'.repeat(64), mediaType: 'text/plain' };
 }

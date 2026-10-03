@@ -79,8 +79,7 @@
         type: 'prefer',
         presentations: [selectedIds[0], selectedIds[1]],
         preferred,
-        step,
-        visualSelections: []
+        step
       });
       if (succeeded) {
         selection.returnToLatest();

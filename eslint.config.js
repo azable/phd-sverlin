@@ -57,7 +57,7 @@ export default defineConfig(
     }
   },
   {
-    files: ['src/lib/shared/**/*.{ts,js}'],
+    files: ['src/lib/shared/**/*.{ts,js}', 'src/lib/studies/**/*.{ts,js}'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -90,10 +90,10 @@ export default defineConfig(
   },
   {
     files: [
-      'src/lib/visualization-modes/**/contract.ts',
-      'src/lib/visualization-modes/**/Viewport.svelte',
-      'src/lib/visualization-modes/catalog.ts',
-      'src/lib/visualization-modes/sandbox.ts'
+      'src/lib/modes/**/contract.ts',
+      'src/lib/modes/**/Viewport.svelte',
+      'src/lib/modes/catalog.ts',
+      'src/lib/modes/sandbox.ts'
     ],
     rules: {
       'no-restricted-imports': [

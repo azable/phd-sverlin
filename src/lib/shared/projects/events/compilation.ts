@@ -40,8 +40,6 @@ export const compilationSucceededEventSchema = v.object({
     seed: v.optional(positiveSchema),
     batchIndex: v.optional(naturalSchema),
     batchSize: v.optional(positiveSchema),
-    stdout: recordedTextSchema,
-    stderr: recordedTextSchema,
     render: recordedTextSchema
   })
 });
@@ -56,19 +54,8 @@ export const compilationFailedEventSchema = v.object({
     seed: v.optional(positiveSchema),
     batchIndex: v.optional(naturalSchema),
     batchSize: v.optional(positiveSchema),
-    exitCode: v.nullable(integerSchema),
-    failureKind: v.picklist([
-      'source',
-      'pipeline',
-      'infrastructure',
-      'timeout',
-      'invalid-output',
-      'cancelled'
-    ]),
+    failureKind: v.picklist(['source', 'infrastructure', 'cancelled']),
     diagnostics: v.array(diagnosticSchema),
-    stdout: recordedTextSchema,
-    stderr: recordedTextSchema,
-    timedOut: v.boolean(),
     repairEligible: v.boolean(),
     error: v.optional(v.string())
   })

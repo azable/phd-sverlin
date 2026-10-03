@@ -16,7 +16,7 @@ describe('script-free HTML source edits', () => {
       { creation: { templateId: 'blank', renderer: 'html' } },
       dependencies
     );
-    const artifact = projectSnapshotAt(document).artifacts['dsl-main'];
+    const artifact = projectSnapshotAt(document).artifacts.main;
     const operation = {
       projectId: document.projectId,
       expectedHead: document.events.length,

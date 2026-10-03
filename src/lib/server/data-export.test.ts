@@ -120,10 +120,10 @@ describe('project data export traversal', () => {
       interactionEventId: 7,
       outcome: 'answered'
     });
-    expect(exportedProject.events[3].payload.visualSelections).toEqual([
-      { presentationEvent: 3, step: 0, instances: [0] },
-      { presentationEvent: 4, step: 0, instances: [1] }
-    ]);
+    expect(exportedProject.events[3].payload).toMatchObject({
+      preferred: '12345678-1234-4123-8123-123456789ac1',
+      step: 0
+    });
     expect(source.collect).toHaveBeenCalledWith({
       type: 'projects',
       projectId: 'project-test'
@@ -268,7 +268,7 @@ function fixtureSnapshot(): ExportSnapshot {
               createdAt: '2026-08-30T10:00:00.000Z',
               payload: {
                 title: 'Project export fixture',
-                entryArtifactId: 'dsl-main',
+                entryArtifactId: 'main',
                 assistantId: 'sverlin-assistant',
                 creation: { templateId: 'blank' }
               }
@@ -304,11 +304,7 @@ function fixtureSnapshot(): ExportSnapshot {
                   '12345678-1234-4123-8123-123456789ac2'
                 ],
                 preferred: '12345678-1234-4123-8123-123456789ac1',
-                step: 0,
-                visualSelections: [
-                  { presentationEvent: 3, step: 0, instances: [0] },
-                  { presentationEvent: 4, step: 0, instances: [1] }
-                ]
+                step: 0
               }
             }
           ]

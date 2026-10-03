@@ -66,7 +66,7 @@ function rootDocument(projectId: string, operationId: string): ProjectDocument {
         createdAt: '2026-01-01T00:00:00.000Z',
         payload: {
           title: 'Repository test',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank' }
         }

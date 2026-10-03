@@ -102,7 +102,7 @@ describe('project JSON API', () => {
     );
   });
 
-  it('rejects obsolete inline element references at the request boundary', async () => {
+  it('rejects unknown message content at the request boundary', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
@@ -110,16 +110,7 @@ describe('project JSON API', () => {
         operationId,
         expectedHead: 4,
         focus: [],
-        content: [
-          { type: 'markdown', text: 'Make this clearer' },
-          {
-            type: 'element-ref',
-            presentationId: '12345678-1234-4123-8123-123456789ac1',
-            presentationEvent: 3,
-            step: 0,
-            instances: [0]
-          }
-        ],
+        content: [{ type: 'markdown', text: 'Make this clearer' }, { type: 'unsupported-content' }],
         presentationCount: 1
       })
     );
@@ -147,16 +138,12 @@ describe('project JSON API', () => {
     );
   });
 
-  it('accepts focused selections from both candidates in a preference command', async () => {
+  it('accepts a preference between two presentations at a specific step', async () => {
     const { POST } = await import('./+server');
     const presentations = [
       '12345678-1234-4123-8123-123456789ac1',
       '12345678-1234-4123-8123-123456789ac2'
     ] as const;
-    const visualSelections = [
-      { presentationEvent: 3, step: 0, instances: [0, 2] },
-      { presentationEvent: 4, step: 0, instances: [1] }
-    ];
     const response = await POST(
       request('POST', {
         type: 'prefer',
@@ -164,20 +151,19 @@ describe('project JSON API', () => {
         expectedHead: 4,
         presentations,
         preferred: presentations[0],
-        step: 0,
-        visualSelections
+        step: 0
       })
     );
 
     expect(response.status).toBe(202);
     expect(mocks.accept).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: expect.objectContaining({ type: 'prefer', visualSelections })
+        command: expect.objectContaining({ type: 'prefer', presentations, step: 0 })
       })
     );
   });
 
-  it('rejects the former top-level visual-selection shape', async () => {
+  it('rejects unknown command fields', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
@@ -185,8 +171,8 @@ describe('project JSON API', () => {
         operationId,
         expectedHead: 4,
         focus: [],
-        selection: { presentationEvent: 3, step: 0, instances: [0] },
-        content: [{ type: 'markdown', text: 'Legacy selection' }],
+        unexpected: true,
+        content: [{ type: 'markdown', text: 'Feedback' }],
         presentationCount: 2
       })
     );

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { json, type RequestHandler } from '@sveltejs/kit';
 
 import { runtimeRoot } from '$lib/server/runtime-config';
-import { modeCatalog } from '$lib/visualization-modes/catalog';
+import { modeCatalog } from '$lib/modes/catalog';
 
 export const GET: RequestHandler = async () => {
   const packageFile = JSON.parse(

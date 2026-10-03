@@ -20,7 +20,6 @@ describe('presentation preferences', () => {
         presentations: ids,
         preferred: ids[1],
         step: 1,
-        visualSelections: [],
         operationId: randomUUID()
       },
       { repository, projectService: { repository } }
@@ -43,7 +42,6 @@ describe('presentation preferences', () => {
         presentations: ids,
         preferred: ids[0],
         step: 0,
-        visualSelections: [],
         operationId: randomUUID()
       },
       { repository, projectService: { repository } }
@@ -55,7 +53,7 @@ describe('presentation preferences', () => {
     ).toBeUndefined();
   });
 
-  it('rejects unknown steps and unsupported element focus', async () => {
+  it('rejects unknown presentation steps', async () => {
     const repository = new MemoryProjectRepository();
     const ids = [randomUUID(), randomUUID()] as [string, string];
     const document = comparisonDocument(randomUUID(), randomUUID(), ids);
@@ -68,15 +66,9 @@ describe('presentation preferences', () => {
       operationId: randomUUID()
     };
     const dependencies = { repository, projectService: { repository } };
-    await expect(
-      recordProjectPreference({ ...base, step: 4, visualSelections: [] }, dependencies)
-    ).rejects.toThrow('unknown presentation step');
-    await expect(
-      recordProjectPreference(
-        { ...base, step: 0, visualSelections: [{ presentationEvent: 3, step: 0, instances: [0] }] },
-        dependencies
-      )
-    ).rejects.toThrow('do not expose selectable elements');
+    await expect(recordProjectPreference({ ...base, step: 4 }, dependencies)).rejects.toThrow(
+      'unknown presentation step'
+    );
   });
 });
 
@@ -108,7 +100,7 @@ function comparisonDocument(
         createdAt: '2026-08-30T00:00:00.000Z',
         payload: {
           title: 'Comparison',
-          entryArtifactId: 'dsl-main',
+          entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
           creation: { templateId: 'blank', renderer: 'sverlin' }
         }
@@ -125,7 +117,7 @@ function comparisonDocument(
             {
               operation: 'upsert',
               artifact: {
-                artifactId: 'dsl-main',
+                artifactId: 'main',
                 path: 'Main.svelte',
                 language: 'svelte',
                 content: source

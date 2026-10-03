@@ -644,7 +644,6 @@ async function executeProjectCommand(options: {
         presentations: options.command.presentations,
         preferred: options.command.preferred,
         step: options.command.step,
-        visualSelections: options.command.visualSelections,
         ...(options.deadlineAt === undefined
           ? {}
           : { deadlineAt: new Date(options.deadlineAt).toISOString() })

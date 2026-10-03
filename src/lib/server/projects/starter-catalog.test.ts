@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compileSvelteComponent } from '$lib/visualization-modes/sverlin/compile.server';
+import { compileSvelteComponent } from '$lib/modes/sverlin/compile.server';
 
 import {
   getProjectTemplate,
