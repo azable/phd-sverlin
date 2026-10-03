@@ -7,14 +7,14 @@ import { recoveryEventsForInterruptedOperations } from './projects/recovery';
 describe('runtime crash recovery', () => {
   it('terminates unmatched build and AI requests without duplicating completed work', () => {
     const events = [
-      event('compilation.requested', 1, '11111111-1111-4111-8111-111111111111', {
+      event('build.requested', 1, '11111111-1111-4111-8111-111111111111', {
         purpose: 'seed-change',
         input: 'committed-artifact',
         source: recorded('source'),
         sourceLabel: 'Main.svelte',
         seed: 1
       }),
-      event('compilation.failed', 2, '11111111-1111-4111-8111-111111111111', {
+      event('build.failed', 2, '11111111-1111-4111-8111-111111111111', {
         durationMs: 1,
         failureKind: 'source',
         diagnostics: [],
@@ -28,7 +28,7 @@ describe('runtime crash recovery', () => {
         requestedModel: 'test-model',
         parameters: {}
       }),
-      event('compilation.requested', 4, '33333333-3333-4333-8333-333333333333', {
+      event('build.requested', 4, '33333333-3333-4333-8333-333333333333', {
         purpose: 'seed-change',
         input: 'committed-artifact',
         source: recorded('source'),
@@ -38,10 +38,7 @@ describe('runtime crash recovery', () => {
     ] as ProjectEvent[];
 
     const recovered = recoveryEventsForInterruptedOperations(events);
-    expect(recovered.map(({ type }) => type)).toEqual([
-      'ai.generation-failed',
-      'compilation.failed'
-    ]);
+    expect(recovered.map(({ type }) => type)).toEqual(['ai.generation-failed', 'build.failed']);
     expect(
       recovered.every(
         ({ payload }) => 'failureKind' in payload && payload.failureKind === 'cancelled'

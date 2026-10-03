@@ -3,6 +3,7 @@
 
   import { cn } from '$lib/client/components/utils';
   import type { StudyFlow, StudyFlowPhase } from '$lib/shared/study/projection';
+  import { modeCatalog } from '$lib/modes/catalog';
 
   import StudyStatusBadge from './StudyStatusBadge.svelte';
   import StudyTimer from './StudyTimer.svelte';
@@ -58,7 +59,9 @@
             <p class="font-medium">{phaseTitle(item)}</p>
           {/if}
           <p class="text-xs text-muted-foreground">
-            {item.phase.kind === 'task' ? item.phase.condition.renderer : item.phase.kind}
+            {item.phase.kind === 'task'
+              ? modeCatalog[item.phase.condition.mode].title
+              : item.phase.kind}
           </p>
         </div>
         {#if item.status === 'active' && item.deadlineAt}

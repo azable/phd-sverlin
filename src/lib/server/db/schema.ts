@@ -18,9 +18,10 @@ import {
   varchar
 } from 'drizzle-orm/pg-core';
 
-import type { ProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectSummary } from '$lib/shared/projects/model';
+import type { ProjectEvent } from '$lib/shared/projects/events';
 import type { VisualizationMode } from '$lib/shared/presentations';
+import type { StudyRunKind } from '$lib/shared/study/projection';
 import type {
   StudyInteractionCapturePolicy,
   StudyInteractionEventInput,
@@ -143,7 +144,7 @@ export const projects = pgTable(
     head: integer('head').notNull(),
     title: text('title').notNull(),
     templateId: text('template_id').notNull(),
-    renderer: text('renderer').$type<VisualizationMode>().default('sverlin').notNull(),
+    mode: text('mode').$type<VisualizationMode>().default('sverlin').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true })
@@ -159,7 +160,7 @@ export const studyRuns = pgTable(
   'study_run',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    mode: text('mode').$type<'participant' | 'preview'>().notNull(),
+    kind: text('kind').$type<StudyRunKind>().notNull(),
     ownerUserId: text('owner_user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
@@ -174,7 +175,7 @@ export const studyRuns = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
   },
   (table) => [
-    check('study_run_mode_check', sql`${table.mode} in ('participant', 'preview')`),
+    check('study_run_kind_check', sql`${table.kind} in ('participant', 'preview')`),
     check('study_run_current_phase_check', sql`${table.currentPhaseIndex} >= 0`),
     check('study_run_start_phase_check', sql`${table.startPhaseIndex} >= 0`),
     check(
@@ -182,7 +183,7 @@ export const studyRuns = pgTable(
       sql`${table.stopAfterPhaseIndex} is null or ${table.stopAfterPhaseIndex} >= ${table.startPhaseIndex}`
     ),
     index('study_run_protocol_arm_idx').on(
-      table.mode,
+      table.kind,
       table.studyId,
       table.studyVersion,
       table.armId
@@ -219,7 +220,7 @@ export const studyPhaseRuns = pgTable(
     sequenceIndex: integer('sequence_index').notNull(),
     kind: text('kind').notNull(),
     conditionId: text('condition_id'),
-    renderer: text('renderer').$type<VisualizationMode>(),
+    mode: text('mode').$type<VisualizationMode>(),
     layout: text('layout'),
     view: text('view'),
     projectId: varchar('project_id', { length: 128 }).references(() => projects.id, {

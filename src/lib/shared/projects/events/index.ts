@@ -19,10 +19,10 @@ import {
   assistantTurnStartedEventSchema
 } from './assistant-turn';
 import {
-  compilationFailedEventSchema,
-  compilationRequestedEventSchema,
-  compilationSucceededEventSchema
-} from './compilation';
+  buildFailedEventSchema,
+  buildRequestedEventSchema,
+  buildSucceededEventSchema
+} from './build';
 import { feedbackSubmittedEventSchema } from './feedback-submitted';
 import {
   operationAcceptedEventSchema,
@@ -52,9 +52,9 @@ export const projectEventSchema = v.variant('type', [
   aiGenerationRequestedEventSchema,
   aiGenerationSucceededEventSchema,
   aiGenerationFailedEventSchema,
-  compilationRequestedEventSchema,
-  compilationSucceededEventSchema,
-  compilationFailedEventSchema,
+  buildRequestedEventSchema,
+  buildSucceededEventSchema,
+  buildFailedEventSchema,
   artifactVersionCreatedEventSchema,
   visualizationPresentedEventSchema,
   visualizationPreferenceRecordedEventSchema,
@@ -104,8 +104,8 @@ export class InvalidProjectDocumentError extends Error {
   }
 }
 
-/** Parse and validate one version-two project event. */
-export function normalizeProjectEventV2(value: unknown): ProjectEvent {
+/** Parse and validate one project event. */
+export function normalizeProjectEvent(value: unknown): ProjectEvent {
   const parsed = v.safeParse(projectEventSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   return parsed.output;

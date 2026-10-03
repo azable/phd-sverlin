@@ -8,7 +8,7 @@ import type { ParticipantPrincipal } from '$lib/server/auth';
 import { database, sqlClient } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { projectRepository, ProjectNotFoundError } from '$lib/server/projects/repository';
-import { createProject, renderProjectPresentations } from '$lib/server/projects/service';
+import { createProject, buildProjectPresentations } from '$lib/server/projects/service';
 import { projectSnapshotAt } from '$lib/shared/projects/projection';
 import { resolveStudyArm, type ResolvedStudyPhase } from '$lib/shared/study/definition';
 import type { StudyInteractionCapturePolicy } from '$lib/shared/study/interactions';
@@ -17,6 +17,7 @@ import {
   type StudyFlow,
   type StudyPhaseEndReason,
   type StudyPhaseRunSnapshot,
+  type StudyRunKind,
   type StudyRunSnapshot
 } from '$lib/shared/study/projection';
 import { studyDefinition, studyRegistration, type StudyRef } from '$lib/shared/study/registry';
@@ -26,7 +27,7 @@ type StudyPhaseRunRow = typeof schema.studyPhaseRuns.$inferSelect;
 
 export type StudyRunState = {
   runId: string;
-  mode: 'participant' | 'preview';
+  kind: StudyRunKind;
   studyId: string;
   studyVersion: number;
   armId: string;
@@ -42,7 +43,7 @@ export type StudyRunState = {
 
 export type StudyProjectContext = {
   runId: string;
-  mode: 'participant' | 'preview';
+  kind: StudyRunKind;
   ownerUserId: string;
   phaseId: string;
   sequenceIndex: number;
@@ -81,7 +82,7 @@ export async function enrollParticipant(userId: string, ref: StudyRef): Promise<
       .from(schema.studyRuns)
       .where(
         and(
-          eq(schema.studyRuns.mode, 'participant'),
+          eq(schema.studyRuns.kind, 'participant'),
           eq(schema.studyRuns.studyId, ref.id),
           eq(schema.studyRuns.studyVersion, ref.version)
         )
@@ -94,7 +95,7 @@ export async function enrollParticipant(userId: string, ref: StudyRef): Promise<
     const [run] = await transaction
       .insert(schema.studyRuns)
       .values({
-        mode: 'participant',
+        kind: 'participant',
         ownerUserId: userId,
         studyId: ref.id,
         studyVersion: ref.version,
@@ -192,7 +193,7 @@ export async function createStudyPreview(options: {
   const [run] = await database()
     .insert(schema.studyRuns)
     .values({
-      mode: 'preview',
+      kind: 'preview',
       ownerUserId: options.ownerUserId,
       studyId: options.ref.id,
       studyVersion: options.ref.version,
@@ -249,7 +250,7 @@ export async function adminStudyPreviewState(
   ownerUserId: string
 ): Promise<StudyRunState> {
   const run = await loadStudyRun(runId);
-  if (run.mode !== 'preview' || run.ownerUserId !== ownerUserId) {
+  if (run.kind !== 'preview' || run.ownerUserId !== ownerUserId) {
     throw new Error('Preview run not found.');
   }
   return loadStudyRunState(runId);
@@ -260,7 +261,7 @@ export async function listStudyPreviews(ownerUserId: string): Promise<StudyRunSt
   const runs = await database()
     .select({ id: schema.studyRuns.id })
     .from(schema.studyRuns)
-    .where(and(eq(schema.studyRuns.mode, 'preview'), eq(schema.studyRuns.ownerUserId, ownerUserId)))
+    .where(and(eq(schema.studyRuns.kind, 'preview'), eq(schema.studyRuns.ownerUserId, ownerUserId)))
     .orderBy(desc(schema.studyRuns.createdAt));
   return studyRunStates(runs.map(({ id }) => id));
 }
@@ -272,7 +273,7 @@ export async function studyProjectContext(
   const [row] = await database()
     .select({
       runId: schema.studyRuns.id,
-      mode: schema.studyRuns.mode,
+      kind: schema.studyRuns.kind,
       ownerUserId: schema.studyRuns.ownerUserId,
       currentPhaseIndex: schema.studyRuns.currentPhaseIndex,
       completedAt: schema.studyRuns.completedAt,
@@ -296,7 +297,7 @@ export async function studyProjectContext(
   const phase = resolveStudyArm(definition, row.armId).find(({ id }) => id === row.phaseId);
   return {
     runId: row.runId,
-    mode: row.mode,
+    kind: row.kind,
     ownerUserId: row.ownerUserId,
     phaseId: row.phaseId,
     sequenceIndex: row.sequenceIndex,
@@ -323,7 +324,7 @@ export async function assertParticipantStudyMutation(
   const context = await studyProjectContext(projectId);
   if (
     !context ||
-    context.mode !== 'participant' ||
+    context.kind !== 'participant' ||
     context.ownerUserId !== principal.user.id ||
     !context.isCurrent ||
     !context.active ||
@@ -355,8 +356,8 @@ async function advanceStudyRun(
     const state = await loadStudyRunState(runId);
     const run = await loadStudyRun(runId);
     if (run.ownerUserId !== ownerUserId) throw new StudyReadOnlyError();
-    if (action === 'admin-forced' && run.mode !== 'preview') throw new StudyReadOnlyError();
-    if (action !== 'admin-forced' && run.mode !== 'participant') throw new StudyReadOnlyError();
+    if (action === 'admin-forced' && run.kind !== 'preview') throw new StudyReadOnlyError();
+    if (action !== 'admin-forced' && run.kind !== 'participant') throw new StudyReadOnlyError();
     if (state.completed || state.phase.kind === 'completion') return state;
 
     if (state.phase.kind === 'task' && action !== 'admin-forced') {
@@ -468,7 +469,7 @@ function stateFromRows(run: StudyRunRow, phaseRows: StudyPhaseRunRow[]): StudyRu
   const deadlineAt = current?.deadlineAt?.toISOString();
   return {
     runId: run.id,
-    mode: run.mode,
+    kind: run.kind,
     studyId: run.studyId,
     studyVersion: run.studyVersion,
     armId: run.armId,
@@ -496,7 +497,7 @@ async function loadStudyRun(runId: string): Promise<StudyRunRow> {
 function runSnapshot(run: StudyRunRow): StudyRunSnapshot {
   return {
     id: run.id,
-    mode: run.mode,
+    kind: run.kind,
     studyId: run.studyId,
     studyVersion: run.studyVersion,
     armId: run.armId,
@@ -544,7 +545,7 @@ function phaseRunValues(
     sequenceIndex,
     kind: 'task',
     conditionId: phase.conditionId,
-    renderer: phase.condition.renderer,
+    mode: phase.condition.mode,
     layout: phase.condition.workspace.layout,
     view: phase.condition.workspace.view,
     projectId,
@@ -570,10 +571,10 @@ async function ensureTaskProject(options: {
       projectId,
       ownerUserId: options.run.ownerUserId,
       operationId: randomUUID(),
-      title: `${options.run.mode === 'preview' ? 'Preview · ' : ''}${options.definitionName} · ${options.phase.instructions.title}`,
+      title: `${options.run.kind === 'preview' ? 'Preview · ' : ''}${options.definitionName} · ${options.phase.instructions.title}`,
       creation: {
         templateId: options.phase.condition.project.templateId,
-        renderer: options.phase.condition.renderer
+        mode: options.phase.condition.mode
       },
       presentationCount
     });
@@ -588,13 +589,13 @@ async function ensureTaskProject(options: {
     options.phase.condition.project.templateId !== 'blank' &&
     !hasReadyPresentation(document, presentationCount)
   ) {
-    const rendered = await renderProjectPresentations({
+    const built = await buildProjectPresentations({
       projectId,
       expectedHead: document.events.length,
       presentationCount,
       operationId: randomUUID()
     });
-    document = rendered.document;
+    document = built.document;
   }
   if (
     options.phase.condition.project.templateId !== 'blank' &&

@@ -77,7 +77,7 @@ function locals(kind: 'participant' | 'admin', id: string): App.Locals {
 
 function rootDocument(projectId: string): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId,
     events: [
       {

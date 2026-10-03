@@ -52,12 +52,12 @@ it.skipIf(!enabled)(
       head: 1,
       title: 'Interaction ingestion fixture',
       templateId: 'blank',
-      renderer: 'sverlin'
+      mode: 'sverlin'
     });
     const [run] = await database()
       .insert(schema.studyRuns)
       .values({
-        mode: 'participant',
+        kind: 'participant',
         ownerUserId: userId,
         studyId: mainStudy.id,
         studyVersion: mainStudy.version,

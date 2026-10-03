@@ -1,5 +1,5 @@
 /**
- * Server-side project operations and the event-recorded compilation lifecycle.
+ * Server-side project operations and the event-recorded presentation-build lifecycle.
  *
  * @packageDocumentation
  */
@@ -17,17 +17,18 @@ import type {
   ArtifactChange,
   ArtifactVersionOrigin,
   RecordedText,
-  RenderPurpose
+  BuildPurpose
 } from '$lib/shared/projects/events/values';
-import type {
-  ProjectCommandResult,
-  ProjectDocument,
-  ProjectResource
+import {
+  projectSchemaVersion,
+  type ProjectCommandResult,
+  type ProjectDocument,
+  type ProjectResource
 } from '$lib/shared/projects/model';
 import { markdownMessage } from '$lib/shared/projects/events/message-content';
 import {
   defaultProjectCreation,
-  projectCreationRenderer,
+  projectCreationMode,
   type ProjectCreation
 } from '$lib/shared/projects/creation';
 import type { BrowserBundlePresentation } from '$lib/shared/presentations';
@@ -42,32 +43,32 @@ import { recordText } from './fingerprints';
 import { projectRepository } from './repository';
 import { resolveProjectTemplate } from './starter-catalog';
 import { stepSignature } from '$lib/modes/signature.server';
-import { directModeBuilders, sourceModeBuilders, type ModeBuildResult } from '$lib/modes/server';
+import { modeBuilders, type ModeBuildResult } from '$lib/modes/server';
 import { modeCatalog } from '$lib/modes/catalog';
 
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
 const entryArtifactId = 'main';
-type RecordedCompilationBase = {
+type RecordedBuildBase = {
   document: ProjectDocument;
   source: RecordedText;
   sourceLabel: string;
   seed: number;
   operationId: string;
-  compilationId: string;
+  buildId: string;
 };
 
-/** Compilation result together with the immutable event and blobs recorded for it. */
-export type RecordedCompilation = RecordedCompilationBase &
+/** Build result together with its immutable event and recorded bundle. */
+export type RecordedBuild = RecordedBuildBase &
   (
     | {
         result: Extract<ModeBuildResult, { ok: true }>;
-        compileEvent: NewProjectEvent<'compilation.succeeded'>;
-        render: RecordedText;
+        buildEvent: NewProjectEvent<'build.succeeded'>;
+        bundle: RecordedText;
       }
     | {
         result: Extract<ModeBuildResult, { ok: false }>;
-        compileEvent: NewProjectEvent<'compilation.failed'>;
+        buildEvent: NewProjectEvent<'build.failed'>;
       }
   );
 
@@ -90,14 +91,14 @@ export const defaultProjectServiceDependencies: ProjectServiceDependencies = {
   repository: projectRepository
 };
 
-/** Create a project, leaving blank conversational templates unrendered until first use. */
+/** Create a project, leaving blank conversational templates unbuilt until first use. */
 export async function createProject(
   options: CreateProjectOptions = {},
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<ProjectDocument> {
   const { document, operationId } = await createProjectSkeleton(options, dependencies);
   if (projectSnapshotAt(document).creation.templateId === 'blank') return document;
-  return renderDocument(
+  return buildDocument(
     document,
     freshPresentationSeeds(options.presentationCount ?? 1),
     'initial',
@@ -106,7 +107,7 @@ export async function createProject(
   );
 }
 
-/** Persist the cheap event-sourced project skeleton before asynchronous compilation. */
+/** Persist the event-sourced project skeleton before asynchronous presentation building. */
 export async function createProjectSkeleton(
   options: CreateProjectOptions = {},
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
@@ -116,8 +117,8 @@ export async function createProjectSkeleton(
   const title = options.title?.trim() || template.title;
   const projectId = options.projectId ?? randomUUID();
   const operationId = options.operationId ?? randomUUID();
-  const renderer = projectCreationRenderer(creation);
-  const assistantId = defaultAssistantId(renderer);
+  const mode = projectCreationMode(creation);
+  const assistantId = defaultAssistantId(mode);
   const root: ProjectEventOf<'project.created'> = {
     id: 1,
     type: 'project.created',
@@ -126,9 +127,9 @@ export async function createProjectSkeleton(
     createdAt: new Date().toISOString(),
     payload: { title, entryArtifactId, assistantId, creation }
   };
-  const starter = modeCatalog[renderer].starter;
+  const starter = modeCatalog[mode].starter;
   const content = recordText(
-    modeCatalog[renderer].authoring === 'source' ? template.source : starter.source,
+    modeCatalog[mode].authoring === 'source' ? template.source : starter.source,
     starter.mediaType
   );
   const artifact: ProjectEventOf<'artifact.version-created'> = {
@@ -170,33 +171,10 @@ export async function createProjectSkeleton(
     });
   }
   const document = await dependencies.repository.create(
-    { schemaVersion: 2, projectId, events: initialEvents },
+    { schemaVersion: projectSchemaVersion, projectId, events: initialEvents },
     options.ownerUserId
   );
   return { document, operationId };
-}
-
-/** Compile the initial artifact for a previously persisted skeleton. */
-export async function renderInitialProject(
-  options: {
-    projectId: string;
-    expectedHead: EventId;
-    seed: number;
-    operationId: string;
-  },
-  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
-): Promise<ProjectCommandResult> {
-  return runProjectCommand(options.projectId, async () => {
-    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const document = await renderDocument(
-      before,
-      [options.seed],
-      'initial',
-      options.operationId,
-      dependencies
-    );
-    return commandResult(before, document);
-  });
 }
 
 /** Load the complete project document and project selector metadata. */
@@ -209,45 +187,21 @@ export async function loadProjectResource(
   return { document, projects: await dependencies.repository.list(ownerUserId) };
 }
 
-/** Compile the current artifact with a new seed and record the resulting events. */
-export function renderProject(
+/** Build the accepted artifact for an explicit seed or a fresh presentation set. */
+export function buildProjectPresentations(
   options: {
     projectId: string;
     expectedHead: EventId;
-    seed: number;
     operationId: string;
-  },
+  } & ({ seed: number; purpose: BuildPurpose } | { presentationCount: 1 | 2 }),
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const document = await renderDocument(
+    const document = await buildDocument(
       before,
-      [options.seed],
-      'seed-change',
-      options.operationId,
-      dependencies
-    );
-    return commandResult(before, document);
-  });
-}
-
-/** Generate one or two fresh presentations from the currently accepted artifact. */
-export function renderProjectPresentations(
-  options: {
-    projectId: string;
-    expectedHead: EventId;
-    presentationCount: 1 | 2;
-    operationId: string;
-  },
-  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
-): Promise<ProjectCommandResult> {
-  return runProjectCommand(options.projectId, async () => {
-    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const document = await renderDocument(
-      before,
-      freshPresentationSeeds(options.presentationCount),
-      'seed-change',
+      'seed' in options ? [options.seed] : freshPresentationSeeds(options.presentationCount),
+      'seed' in options ? options.purpose : 'seed-change',
       options.operationId,
       dependencies
     );
@@ -280,7 +234,7 @@ export function replenishProjectPresentations(
           ? [event.payload.presentation.seed]
           : []
       );
-      const next = await renderDocument(
+      const next = await buildDocument(
         document,
         freshPresentationSeeds(count, usedSeeds),
         'seed-change',
@@ -365,7 +319,7 @@ export function renameProject(
   });
 }
 
-/** Save a manual artifact version and compile it into a new visualization. */
+/** Save a manual artifact version and build its presentations. */
 export function updateProjectArtifact(
   options: {
     projectId: string;
@@ -382,9 +336,9 @@ export function updateProjectArtifact(
     const snapshot = projectSnapshotAt(before);
     const current = snapshot.artifacts[options.artifactId];
     if (!current) throw new Error(`Unknown artifact ${options.artifactId}.`);
-    if (modeCatalog[snapshot.renderer].authoring === 'candidates') {
-      const builder = directModeBuilders[snapshot.renderer];
-      if (!builder) throw new Error(`Mode ${snapshot.renderer} has no direct builder.`);
+    if (modeCatalog[snapshot.mode].authoring === 'candidates') {
+      const builder = modeBuilders[snapshot.mode].buildPresentation;
+      if (!builder) throw new Error(`Mode ${snapshot.mode} has no presentation builder.`);
       await builder(options.source, 1);
     }
     const content = recordText(options.source, current.content.mediaType);
@@ -399,7 +353,7 @@ export function updateProjectArtifact(
       ],
       dependencies
     );
-    document = await renderDocument(
+    document = await buildDocument(
       document,
       freshPresentationSeeds(options.presentationCount),
       'manual-edit',
@@ -410,7 +364,7 @@ export function updateProjectArtifact(
   });
 }
 
-/** Copy historical artifacts forward and compile them as a new project state. */
+/** Copy historical artifacts forward and build them as a new project state. */
 export function restoreProjectArtifacts(
   options: {
     projectId: string;
@@ -444,7 +398,7 @@ export function restoreProjectArtifacts(
       ],
       dependencies
     );
-    document = await renderDocument(
+    document = await buildDocument(
       document,
       [options.seed],
       'restore',
@@ -473,21 +427,21 @@ export function draftEvent<Type extends ProjectEventType>(
   return { ...event, createdAt: new Date().toISOString() } as NewProjectEvent<Type>;
 }
 
-async function renderDocument(
+async function buildDocument(
   document: ProjectDocument,
   seeds: readonly number[],
-  purpose: RenderPurpose,
+  purpose: BuildPurpose,
   operationId: string,
   dependencies: ProjectServiceDependencies
 ) {
   const snapshot = projectSnapshotAt(document);
   const artifact = snapshot.artifacts[snapshot.entryArtifactId];
   if (!artifact) throw new Error('The project has no entry artifact.');
-  if (modeCatalog[snapshot.renderer].authoring === 'candidates') {
-    const directBuilder = directModeBuilders[snapshot.renderer];
-    if (!directBuilder) throw new Error(`Mode ${snapshot.renderer} has no direct builder.`);
-    const presentation = await directBuilder(artifact.content.text, seeds[0] ?? 1);
-    if (presentationMode(presentation) !== snapshot.renderer)
+  if (modeCatalog[snapshot.mode].authoring === 'candidates') {
+    const builder = modeBuilders[snapshot.mode].buildPresentation;
+    if (!builder) throw new Error(`Mode ${snapshot.mode} has no presentation builder.`);
+    const presentation = await builder(artifact.content.text, seeds[0] ?? 1);
+    if (presentationMode(presentation) !== snapshot.mode)
       throw new Error('The mode builder returned a presentation for a different mode.');
     return appendProjectEvents(
       document,
@@ -503,7 +457,7 @@ async function renderDocument(
     );
   }
   if (seeds.length === 0) throw new Error('At least one seed is required.');
-  const recorded = await compileProjectSourceBatch(
+  const recorded = await buildProjectSourceBatch(
     {
       document,
       sourceContent: artifact.content.text,
@@ -516,41 +470,41 @@ async function renderDocument(
     },
     dependencies
   );
-  return recorded.compilations.every(({ result }) => result.ok)
-    ? activateCompiledPresentations(recorded, dependencies)
+  return recorded.builds.every(({ result }) => result.ok)
+    ? activateBuiltPresentations(recorded, dependencies)
     : recorded.document;
 }
 
-export type RecordedCompilationBatch = {
+export type RecordedBuildBatch = {
   document: ProjectDocument;
-  compilations: RecordedCompilation[];
+  builds: RecordedBuild[];
 };
 
 /** Build one component for several seeds and record each requested presentation. */
-export async function compileProjectSourceBatch(
+export async function buildProjectSourceBatch(
   options: {
     document: ProjectDocument;
     sourceContent: string;
     source: RecordedText;
     sourceLabel: string;
     seeds: readonly number[];
-    purpose: RenderPurpose;
+    purpose: BuildPurpose;
     input: 'committed-artifact' | 'assistant-candidate';
     operationId: string;
     attempt?: number;
   },
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
-): Promise<RecordedCompilationBatch> {
+): Promise<RecordedBuildBatch> {
   if (options.seeds.length === 0) throw new Error('At least one seed is required.');
-  const mode = projectSnapshotAt(options.document).renderer;
+  const mode = projectSnapshotAt(options.document).mode;
   if (options.sourceLabel !== modeCatalog[mode].starter.path)
     throw new Error(`Mode ${mode} has an unexpected source artifact.`);
-  const builder = sourceModeBuilders[mode];
+  const builder = modeBuilders[mode].buildBatch;
   if (!builder) throw new Error(`Mode ${mode} has no source builder.`);
-  const compilationId = randomUUID();
+  const buildId = randomUUID();
   const requests = options.seeds.map((seed, batchIndex) =>
-    draftEvent<'compilation.requested'>({
-      type: 'compilation.requested',
+    draftEvent<'build.requested'>({
+      type: 'build.requested',
       actor: { kind: 'system' },
       operationId: options.operationId,
       payload: {
@@ -559,7 +513,7 @@ export async function compileProjectSourceBatch(
         source: options.source,
         sourceLabel: options.sourceLabel,
         seed,
-        compilationId,
+        buildId,
         batchIndex,
         batchSize: options.seeds.length,
         ...(options.attempt ? { attempt: options.attempt } : {})
@@ -585,9 +539,9 @@ export async function compileProjectSourceBatch(
   if (results.some((result, index) => result.seed !== options.seeds[index])) {
     throw new Error('The visualization service returned an incorrectly correlated batch.');
   }
-  const compilations: RecordedCompilation[] = [];
+  const builds: RecordedBuild[] = [];
   for (const [index, result] of results.entries()) {
-    const recorded = await recordCompileResult(
+    const recorded = await recordBuildResult(
       {
         document,
         result,
@@ -595,19 +549,19 @@ export async function compileProjectSourceBatch(
         sourceLabel: options.sourceLabel,
         seed: options.seeds[index],
         operationId: options.operationId,
-        compilationId,
+        buildId,
         batchIndex: index,
         batchSize: options.seeds.length
       },
       dependencies
     );
     document = recorded.document;
-    compilations.push(recorded);
+    builds.push(recorded);
   }
-  return { document, compilations };
+  return { document, builds };
 }
 
-async function recordCompileResult(
+async function recordBuildResult(
   options: {
     document: ProjectDocument;
     result: ModeBuildResult;
@@ -615,20 +569,20 @@ async function recordCompileResult(
     sourceLabel: string;
     seed: number;
     operationId: string;
-    compilationId: string;
+    buildId: string;
     batchIndex: number;
     batchSize: number;
   },
   dependencies: ProjectServiceDependencies
-): Promise<RecordedCompilation> {
+): Promise<RecordedBuild> {
   if (!options.result.ok) {
-    const compileEvent = draftEvent<'compilation.failed'>({
-      type: 'compilation.failed',
+    const buildEvent = draftEvent<'build.failed'>({
+      type: 'build.failed',
       actor: { kind: 'system' },
       operationId: options.operationId,
       payload: {
         durationMs: options.result.durationMs,
-        compilationId: options.compilationId,
+        buildId: options.buildId,
         seed: options.seed,
         batchIndex: options.batchIndex,
         batchSize: options.batchSize,
@@ -639,59 +593,59 @@ async function recordCompileResult(
       }
     });
     return {
-      document: await appendProjectEvents(options.document, [compileEvent], dependencies),
+      document: await appendProjectEvents(options.document, [buildEvent], dependencies),
       result: options.result,
-      compileEvent,
+      buildEvent,
       source: options.source,
       sourceLabel: options.sourceLabel,
       seed: options.seed,
       operationId: options.operationId,
-      compilationId: options.compilationId
+      buildId: options.buildId
     };
   }
 
-  const render = recordText(JSON.stringify(options.result.bundle), 'application/json');
-  const compileEvent = draftEvent<'compilation.succeeded'>({
-    type: 'compilation.succeeded',
+  const bundle = recordText(JSON.stringify(options.result.bundle), 'application/json');
+  const buildEvent = draftEvent<'build.succeeded'>({
+    type: 'build.succeeded',
     actor: { kind: 'system' },
     operationId: options.operationId,
     payload: {
       durationMs: options.result.durationMs,
-      compilationId: options.compilationId,
+      buildId: options.buildId,
       seed: options.seed,
       batchIndex: options.batchIndex,
       batchSize: options.batchSize,
-      render
+      bundle
     }
   });
   return {
-    document: await appendProjectEvents(options.document, [compileEvent], dependencies),
+    document: await appendProjectEvents(options.document, [buildEvent], dependencies),
     result: options.result,
-    compileEvent,
-    render,
+    buildEvent,
+    bundle,
     source: options.source,
     sourceLabel: options.sourceLabel,
     seed: options.seed,
     operationId: options.operationId,
-    compilationId: options.compilationId
+    buildId: options.buildId
   };
 }
 
 /** Promote a complete successful batch to one synchronized active display set. */
-export async function activateCompiledPresentations(
-  recorded: RecordedCompilationBatch,
+export async function activateBuiltPresentations(
+  recorded: RecordedBuildBatch,
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies,
   actor: NewProjectEvent<'visualization.presented'>['actor'] = { kind: 'system' }
 ): Promise<ProjectDocument> {
-  if (recorded.compilations.length === 0 || recorded.compilations.some((item) => !item.result.ok)) {
-    throw new Error('Only a complete successful compilation batch can be presented.');
+  if (recorded.builds.length === 0 || recorded.builds.some((item) => !item.result.ok)) {
+    throw new Error('Only a complete successful build batch can be presented.');
   }
-  if (recorded.compilations.length > 2) {
+  if (recorded.builds.length > 2) {
     throw new Error('A display set supports at most two presentations.');
   }
-  const presentations = recorded.compilations.map((item): BrowserBundlePresentation => {
-    if (!item.result.ok || !('render' in item)) {
-      throw new Error('A failed compilation cannot become a presentation.');
+  const presentations = recorded.builds.map((item): BrowserBundlePresentation => {
+    if (!item.result.ok || !('bundle' in item)) {
+      throw new Error('A failed build cannot become a presentation.');
     }
     const { bundle } = item.result;
     return {
@@ -710,7 +664,7 @@ export async function activateCompiledPresentations(
     throw new Error('Synchronized presentations must come from the same scenario.');
   }
   const displaySetId = randomUUID();
-  const operationId = recorded.compilations[0].operationId;
+  const operationId = recorded.builds[0].operationId;
   return appendProjectEvents(
     recorded.document,
     presentations.map((presentation, slot) =>

@@ -2,7 +2,7 @@
 
 import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
 import {
-  normalizeProjectV2,
+  normalizeProject,
   type ProjectDocument,
   type ProjectId,
   type ProjectSummary
@@ -32,7 +32,7 @@ export class MemoryProjectRepository implements ProjectRepository {
   }
 
   async create(document: ProjectDocument, ownerUserId?: string): Promise<ProjectDocument> {
-    const normalized = normalizeProjectV2(document);
+    const normalized = normalizeProject(document);
     if (this.#projects.has(normalized.projectId)) throw new Error('Project already exists.');
     this.#projects.set(normalized.projectId, {
       document: structuredClone(normalized),
@@ -61,7 +61,7 @@ export class MemoryProjectRepository implements ProjectRepository {
       const events = pendingEvents.map(
         (event, index): ProjectEvent => ({ ...event, id: head + index + 1 }) as ProjectEvent
       );
-      const document = normalizeProjectV2({
+      const document = normalizeProject({
         ...stored.document,
         events: [...stored.document.events, ...events]
       });

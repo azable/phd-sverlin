@@ -78,7 +78,7 @@ export async function ingestStudyInteractions(
       if (
         !association ||
         association.projectDeletedAt ||
-        association.mode !== 'participant' ||
+        association.kind !== 'participant' ||
         association.ownerUserId !== principal.user.id ||
         !association.deadlineAt ||
         !policy
@@ -153,7 +153,7 @@ export async function ingestStudyInteractions(
     if (
       !association ||
       association.projectDeletedAt ||
-      association.mode !== 'participant' ||
+      association.kind !== 'participant' ||
       association.ownerUserId !== principal.user.id ||
       stored.projectId !== batch.session.projectId
     ) {
@@ -339,7 +339,7 @@ async function projectAssociation(
 ) {
   const [row] = await transaction
     .select({
-      mode: schema.studyRuns.mode,
+      kind: schema.studyRuns.kind,
       ownerUserId: schema.studyRuns.ownerUserId,
       studyId: schema.studyRuns.studyId,
       studyVersion: schema.studyRuns.studyVersion,

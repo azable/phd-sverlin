@@ -14,7 +14,7 @@ import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { ProjectNotFoundError } from '$lib/server/projects/repository';
-import type { ProjectDocument } from '$lib/shared/projects/model';
+import { projectSchemaVersion, type ProjectDocument } from '$lib/shared/projects/model';
 import {
   activeProjectOperation,
   pendingAssistantTurnRequests
@@ -25,7 +25,7 @@ import { projectStudyFlow, type StudyFlow } from '$lib/shared/study/projection';
 import { registeredStudyDefinitions, studyDefinition } from '$lib/shared/study/registry';
 
 const exportFormat = 'sverlin-data-export';
-const exportVersion = 4;
+const exportVersion = 1;
 
 export type ExportScope =
   | { type: 'projects'; projectId?: string }
@@ -44,7 +44,7 @@ export type ExportProject = {
   ownerUserId: string;
   title: string;
   templateId: string;
-  renderer: VisualizationMode;
+  mode: VisualizationMode;
   createdAt: string;
   updatedAt: string;
   document: ProjectDocument;
@@ -164,7 +164,7 @@ export class PostgresExportDataSource implements ExportDataSource {
         let phaseRows: Array<typeof schema.studyPhaseRuns.$inferSelect> = [];
 
         if (scope.type !== 'projects') {
-          const conditions = [eq(schema.studyRuns.mode, 'participant')];
+          const conditions = [eq(schema.studyRuns.kind, 'participant')];
           if (scope.type === 'participant') conditions.push(eq(schema.user.id, scope.userId));
           if (scope.type === 'study' && scope.studyId) {
             conditions.push(eq(schema.studyRuns.studyId, scope.studyId));
@@ -218,7 +218,7 @@ export class PostgresExportDataSource implements ExportDataSource {
             ownerUserId: schema.projects.ownerUserId,
             title: schema.projects.title,
             templateId: schema.projects.templateId,
-            renderer: schema.projects.renderer,
+            mode: schema.projects.mode,
             createdAt: schema.projects.createdAt,
             updatedAt: schema.projects.updatedAt
           })
@@ -278,7 +278,7 @@ export class PostgresExportDataSource implements ExportDataSource {
                 .where(
                   and(
                     inArray(schema.studyRuns.id, runIds),
-                    eq(schema.studyRuns.mode, 'participant'),
+                    eq(schema.studyRuns.kind, 'participant'),
                     eq(schema.user.role, 'user'),
                     isNotNull(schema.user.username)
                   )
@@ -313,7 +313,7 @@ export class PostgresExportDataSource implements ExportDataSource {
         const projectDocuments = new Map(
           projectRows.map((project) => {
             const document: ProjectDocument = {
-              schemaVersion: 2,
+              schemaVersion: projectSchemaVersion,
               projectId: project.id,
               events: eventRows
                 .filter((row) => row.projectId === project.id)
@@ -350,7 +350,7 @@ export class PostgresExportDataSource implements ExportDataSource {
             studyDefinition(run.studyId, run.studyVersion),
             {
               id: run.id,
-              mode: run.mode,
+              kind: run.kind,
               studyId: run.studyId,
               studyVersion: run.studyVersion,
               armId: run.armId,
@@ -420,7 +420,7 @@ export class PostgresExportDataSource implements ExportDataSource {
         if (scope.type === 'projects' && scope.projectId) {
           projectConditions.push(eq(schema.projectInteractionSessions.projectId, scope.projectId));
         }
-        const studyConditions = [eq(schema.studyRuns.mode, 'participant')];
+        const studyConditions = [eq(schema.studyRuns.kind, 'participant')];
         if (scope.type === 'participant') {
           studyConditions.push(eq(schema.studyRuns.ownerUserId, scope.userId));
         }
@@ -481,7 +481,7 @@ export class PostgresExportDataSource implements ExportDataSource {
             phaseId: schema.studyPhaseRuns.phaseId,
             studyId: schema.studyRuns.studyId,
             studyVersion: schema.studyRuns.studyVersion,
-            mode: schema.studyRuns.mode,
+            kind: schema.studyRuns.kind,
             startedAt: schema.studyPhaseRuns.startedAt,
             deadlineAt: schema.studyPhaseRuns.deadlineAt,
             endedAt: schema.studyPhaseRuns.endedAt
@@ -551,7 +551,7 @@ export class PostgresExportDataSource implements ExportDataSource {
           expectedProjects: expectedRows.flatMap((row) => {
             const policy = studyDefinition(row.studyId, row.studyVersion).interactionCapture;
             const captureEnd = row.endedAt ?? row.deadlineAt;
-            if (row.mode !== 'participant' || !row.startedAt || !captureEnd || !policy) return [];
+            if (row.kind !== 'participant' || !row.startedAt || !captureEnd || !policy) return [];
             return [
               {
                 projectId: row.projectId,
@@ -604,7 +604,7 @@ export async function writeDataExport(
       ownerUserId: project.ownerUserId,
       title: project.title,
       templateId: project.templateId,
-      renderer: project.renderer,
+      mode: project.mode,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       document: project.document

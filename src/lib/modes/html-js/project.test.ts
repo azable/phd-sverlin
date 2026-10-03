@@ -13,7 +13,7 @@ describe('free-form HTML/JS project', () => {
     const repository = new MemoryProjectRepository();
     const dependencies: ProjectServiceDependencies = { repository };
     const { document } = await createProjectSkeleton(
-      { creation: { templateId: 'blank', renderer: 'html-js' } },
+      { creation: { templateId: 'blank', mode: 'html-js' } },
       dependencies
     );
     const artifact = projectSnapshotAt(document).artifacts.main;

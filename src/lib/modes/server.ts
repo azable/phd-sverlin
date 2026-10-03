@@ -4,7 +4,7 @@ import { modeCatalog } from './catalog';
 import type { VisualizationMode, RenderablePresentation } from '$lib/shared/presentations';
 import type { BuildDiagnostic } from '$lib/shared/projects/events/values';
 
-export type ModeBuilder = (
+export type PresentationBuilder = (
   source: string,
   seed: number,
   generationEventId?: number
@@ -26,26 +26,24 @@ export type ModeBuildResult =
       failureKind: 'source' | 'infrastructure';
     };
 
-export type ModeBatchBuilder = (
+export type SourceBatchBuilder = (
   source: string,
   seeds: readonly number[],
   signal?: AbortSignal
 ) => Promise<ModeBuildResult[]>;
 
-const modules = import.meta.glob<{
-  buildPresentation?: ModeBuilder;
-  buildBatch?: ModeBatchBuilder;
-}>('./*/build.server.ts', {
+type ModeBuilders = {
+  buildPresentation?: PresentationBuilder;
+  buildBatch?: SourceBatchBuilder;
+};
+
+const modules = import.meta.glob<ModeBuilders>('./*/build.server.ts', {
   eager: true
 });
 
-export const directModeBuilders = Object.fromEntries(
-  Object.keys(modeCatalog).map((id) => [id, modules[`./${id}/build.server.ts`]?.buildPresentation])
-) as Record<VisualizationMode, ModeBuilder | undefined>;
-
-export const sourceModeBuilders = Object.fromEntries(
-  Object.keys(modeCatalog).map((id) => [id, modules[`./${id}/build.server.ts`]?.buildBatch])
-) as Record<VisualizationMode, ModeBatchBuilder | undefined>;
+export const modeBuilders = Object.fromEntries(
+  Object.keys(modeCatalog).map((id) => [id, modules[`./${id}/build.server.ts`]])
+) as Record<VisualizationMode, ModeBuilders>;
 
 for (const pathname of Object.keys(modules)) {
   const id = pathname.split('/').at(-2) ?? '';

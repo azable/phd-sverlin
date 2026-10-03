@@ -40,7 +40,7 @@ export function resolveProjectTemplate(creation: ProjectCreation): {
   title: string;
 } {
   const template = getProjectTemplate(creation.templateId);
-  if (creation.renderer && creation.renderer !== 'sverlin' && creation.templateId !== 'blank') {
+  if (creation.mode && creation.mode !== 'sverlin' && creation.templateId !== 'blank') {
     throw new Error('This starter is available only for the Svelte-backed mode.');
   }
   return { source: template.source, title: template.title };

@@ -74,7 +74,7 @@ function testLocals() {
 
 function rootDocument(): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId: 'stream-test',
     events: [
       {

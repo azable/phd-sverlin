@@ -13,7 +13,7 @@ describe('script-free HTML source edits', () => {
     const repository = new MemoryProjectRepository();
     const dependencies: ProjectServiceDependencies = { repository };
     const { document } = await createProjectSkeleton(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       dependencies
     );
     const artifact = projectSnapshotAt(document).artifacts.main;

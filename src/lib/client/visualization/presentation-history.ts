@@ -79,7 +79,7 @@ const presentationNouns = [
   'Zebra'
 ] as const;
 
-/** One render recorded in the Timeline, with its display-set context retained. */
+/** One presentation recorded in the Timeline, with its display-set context retained. */
 export type TimelinePresentation = {
   eventId: number;
   eventType: 'visualization.presented';
@@ -102,7 +102,7 @@ export function presentationDisplayId(presentationId: string): string {
   return `${adjective}-${noun}-${number}`;
 }
 
-/** Return every render in Timeline order. */
+/** Return every presentation in Timeline order. */
 export function timelinePresentations(events: readonly ProjectEvent[]): TimelinePresentation[] {
   return events.flatMap<TimelinePresentation>((event): TimelinePresentation[] => {
     if (event.type === 'visualization.presented') {
@@ -121,7 +121,7 @@ export function timelinePresentations(events: readonly ProjectEvent[]): Timeline
   });
 }
 
-/** Return the most recently generated single render or compatible comparison pair. */
+/** Return the most recently generated presentation or compatible comparison pair. */
 export function latestPresentations(
   presentations: readonly TimelinePresentation[],
   layout: PresentationLayout
@@ -165,7 +165,7 @@ export function availablePresentations(
   return pair?.slice(0, 2) ?? available.slice(0, 1);
 }
 
-/** Return the generated set containing a selected render, subject to the current layout. */
+/** Return the generated set containing a selected presentation, subject to the current layout. */
 export function presentationGroup(
   presentations: readonly TimelinePresentation[],
   selected: TimelinePresentation,
@@ -181,7 +181,7 @@ export function presentationGroup(
   return group.length === 2 && compatibleSverlinPair(group[0], group[1]) ? group : [selected];
 }
 
-/** Whether two renders can share one playback position in a custom comparison. */
+/** Whether two presentations can share one playback position in a custom comparison. */
 export function compatibleSverlinPair(
   left: TimelinePresentation,
   right: TimelinePresentation

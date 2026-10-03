@@ -79,7 +79,7 @@
       <div>
         <h2 id="create-project-title" class="text-xl font-medium">Create a project</h2>
         <p class="mt-2 text-muted-foreground">
-          Choose a starting point. Compilation continues safely in the background.
+          Choose a starting point. Presentation building continues in the background.
         </p>
       </div>
     </div>

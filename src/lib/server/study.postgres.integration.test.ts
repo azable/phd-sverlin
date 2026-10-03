@@ -80,7 +80,7 @@ it.skipIf(!enabled)(
     const [run] = await database()
       .insert(schema.studyRuns)
       .values({
-        mode: 'participant',
+        kind: 'participant',
         ownerUserId: userId,
         studyId: mainStudy.id,
         studyVersion: mainStudy.version,
@@ -137,7 +137,7 @@ it.skipIf(!enabled)(
       ref: { id: mainStudy.id, version: mainStudy.version },
       armId: 'sverlin-first'
     });
-    expect(initial).toMatchObject({ mode: 'preview', phase: { id: 'welcome' }, completed: false });
+    expect(initial).toMatchObject({ kind: 'preview', phase: { id: 'welcome' }, completed: false });
     const taskProjectId = studyTaskProjectId(initial.runId, 'task-one');
     projects.push(taskProjectId);
     await new PostgresProjectRepository().create(readyComparison(taskProjectId), adminId);
@@ -184,7 +184,7 @@ it.skipIf(!enabled)('reveals a configured gift card only at completion', async (
   const [run] = await database()
     .insert(schema.studyRuns)
     .values({
-      mode: 'participant',
+      kind: 'participant',
       ownerUserId: userId,
       studyId: mainStudy.id,
       studyVersion: mainStudy.version,
@@ -216,7 +216,7 @@ function readyComparison(projectId: string): ProjectDocument {
   const render = recorded(JSON.stringify({ steps: [{ label: 'Only step' }] }), 'application/json');
   const displaySetId = randomUUID();
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId,
     events: [
       {
@@ -229,7 +229,7 @@ function readyComparison(projectId: string): ProjectDocument {
           title: 'Prepared study project',
           entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
-          creation: { templateId: 'blank', renderer: 'sverlin' }
+          creation: { templateId: 'blank', mode: 'sverlin' }
         }
       },
       {

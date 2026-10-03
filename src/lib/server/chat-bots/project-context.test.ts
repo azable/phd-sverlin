@@ -14,7 +14,7 @@ const recorded = (text: string, mediaType = 'text/plain') => ({ text, sha256, me
 
 function document(): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId: 'project-test',
     events: [
       {
@@ -27,7 +27,7 @@ function document(): ProjectDocument {
           title: 'Test',
           entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
-          creation: { templateId: 'blank', renderer: 'sverlin' }
+          creation: { templateId: 'blank', mode: 'sverlin' }
         }
       },
       {

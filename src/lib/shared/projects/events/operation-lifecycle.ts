@@ -6,12 +6,12 @@ import { eventEnvelope, textSchema } from './values';
 
 /** Stable project operation kinds understood outside the execution mechanism. */
 export const projectOperationKindSchema = v.picklist([
-  'initial-render',
+  'initial-build',
   'rename',
   'feedback',
   'assistant-turn',
   'advance-presentations',
-  'render',
+  'rebuild',
   'resample',
   'presentation-refill',
   'prefer',

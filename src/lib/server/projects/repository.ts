@@ -3,9 +3,18 @@
 import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 
 import { summarizeProject } from '$lib/shared/projects/projection';
-import type { NewProjectEvent, ProjectEvent } from '$lib/shared/projects/events';
 import {
-  normalizeProjectV2,
+  activeProjectOperation,
+  pendingAssistantTurnRequests
+} from '$lib/shared/projects/operations';
+import {
+  normalizeProjectEvent,
+  type NewProjectEvent,
+  type ProjectEvent
+} from '$lib/shared/projects/events';
+import {
+  normalizeProject,
+  projectSchemaVersion,
   type ProjectDocument,
   type ProjectId,
   type ProjectSummary
@@ -74,7 +83,7 @@ export class PostgresProjectRepository implements ProjectRepository {
         updatedAt: schema.projects.updatedAt,
         eventCount: schema.projects.head,
         templateId: schema.projects.templateId,
-        renderer: schema.projects.renderer
+        mode: schema.projects.mode
       })
       .from(schema.projects)
       .where(condition)
@@ -84,7 +93,7 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async create(document: ProjectDocument, ownerUserId?: string): Promise<ProjectDocument> {
     assertProjectId(document.projectId);
-    const normalized = normalizeProjectV2(document);
+    const normalized = normalizeProject(document);
     if (!ownerUserId) throw new Error('A project owner is required for PostgreSQL storage.');
     const summary = summarizeProject(normalized);
     await database().transaction(async (transaction) => {
@@ -94,7 +103,7 @@ export class PostgresProjectRepository implements ProjectRepository {
         head: summary.eventCount,
         title: summary.title,
         templateId: summary.templateId,
-        renderer: summary.renderer ?? 'sverlin',
+        mode: summary.mode,
         createdAt: new Date(normalized.events[0].createdAt),
         updatedAt: new Date(summary.updatedAt)
       });
@@ -124,8 +133,8 @@ export class PostgresProjectRepository implements ProjectRepository {
       .from(schema.projectEvents)
       .where(eq(schema.projectEvents.projectId, projectId))
       .orderBy(asc(schema.projectEvents.eventId));
-    return normalizeProjectV2({
-      schemaVersion: 2,
+    return normalizeProject({
+      schemaVersion: projectSchemaVersion,
       projectId,
       events: rows.map(({ event }) => event)
     });
@@ -157,8 +166,8 @@ export class PostgresProjectRepository implements ProjectRepository {
         .from(schema.projectEvents)
         .where(eq(schema.projectEvents.projectId, projectId))
         .orderBy(asc(schema.projectEvents.eventId));
-      const document = normalizeProjectV2({
-        schemaVersion: 2,
+      const document = normalizeProject({
+        schemaVersion: projectSchemaVersion,
         projectId,
         events: [...rows.map(({ event }) => event), ...events]
       });
@@ -181,7 +190,7 @@ export class PostgresProjectRepository implements ProjectRepository {
           head: summary.eventCount,
           title: summary.title,
           templateId: summary.templateId,
-          renderer: summary.renderer ?? 'sverlin',
+          mode: summary.mode,
           updatedAt: new Date(summary.updatedAt)
         })
         .where(eq(schema.projects.id, projectId));
@@ -204,7 +213,7 @@ export class PostgresProjectRepository implements ProjectRepository {
         and(eq(schema.projectEvents.projectId, projectId), gt(schema.projectEvents.eventId, after))
       )
       .orderBy(asc(schema.projectEvents.eventId));
-    return rows.map(({ event }) => event);
+    return rows.map(({ event }) => normalizeProjectEvent(event));
   }
 
   async deleteAll(): Promise<void> {
@@ -214,6 +223,18 @@ export class PostgresProjectRepository implements ProjectRepository {
 
 /** Default repository used by server routes and project operations. */
 export const projectRepository: ProjectRepository = new PostgresProjectRepository();
+
+/** Refuse export or deletion while a selected project's Timeline is still changing. */
+export async function assertNoActiveProjectOperations(ownerUserId?: string): Promise<void> {
+  for (const summary of await projectRepository.list(ownerUserId)) {
+    const document = await projectRepository.load(summary.projectId);
+    if (activeProjectOperation(document) || pendingAssistantTurnRequests(document).length > 0) {
+      throw new Error(
+        'A project operation is currently running. Wait for it to finish and try again.'
+      );
+    }
+  }
+}
 
 function assertProjectId(projectId: string) {
   if (!isProjectId(projectId)) {

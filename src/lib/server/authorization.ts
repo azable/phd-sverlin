@@ -72,8 +72,8 @@ export async function projectInspectionContext(
   const readOnly =
     principal.kind === 'admin'
       ? !!participantLabel ||
-        study?.mode === 'participant' ||
-        (study?.mode === 'preview' &&
+        study?.kind === 'participant' ||
+        (study?.kind === 'preview' &&
           (!study.isCurrent ||
             !study.active ||
             study.expired ||

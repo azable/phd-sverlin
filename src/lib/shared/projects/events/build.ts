@@ -1,4 +1,4 @@
-/** Compilation request and outcome event contracts. */
+/** Source-build request and outcome event contracts. */
 
 import * as v from 'valibot';
 
@@ -9,48 +9,48 @@ import {
   naturalSchema,
   positiveSchema,
   recordedTextSchema,
-  renderPurposeSchema,
+  buildPurposeSchema,
   textSchema
 } from './values';
 
-/** Runtime schema for a compilation request. */
-export const compilationRequestedEventSchema = v.object({
+/** Runtime schema for a source-build request. */
+export const buildRequestedEventSchema = v.object({
   ...eventEnvelope,
-  type: v.literal('compilation.requested'),
+  type: v.literal('build.requested'),
   payload: v.object({
-    purpose: renderPurposeSchema,
+    purpose: buildPurposeSchema,
     input: v.picklist(['committed-artifact', 'assistant-candidate']),
     source: recordedTextSchema,
     sourceLabel: textSchema,
     seed: v.pipe(integerSchema, v.minValue(1)),
     attempt: v.optional(positiveSchema),
-    compilationId: v.optional(v.pipe(v.string(), v.uuid())),
+    buildId: v.optional(v.pipe(v.string(), v.uuid())),
     batchIndex: v.optional(naturalSchema),
     batchSize: v.optional(positiveSchema)
   })
 });
 
-/** Runtime schema for a successful compilation. */
-export const compilationSucceededEventSchema = v.object({
+/** Runtime schema for a successful source build. */
+export const buildSucceededEventSchema = v.object({
   ...eventEnvelope,
-  type: v.literal('compilation.succeeded'),
+  type: v.literal('build.succeeded'),
   payload: v.object({
     durationMs: naturalSchema,
-    compilationId: v.optional(v.pipe(v.string(), v.uuid())),
+    buildId: v.optional(v.pipe(v.string(), v.uuid())),
     seed: v.optional(positiveSchema),
     batchIndex: v.optional(naturalSchema),
     batchSize: v.optional(positiveSchema),
-    render: recordedTextSchema
+    bundle: recordedTextSchema
   })
 });
 
-/** Runtime schema for a failed compilation. */
-export const compilationFailedEventSchema = v.object({
+/** Runtime schema for a failed source build. */
+export const buildFailedEventSchema = v.object({
   ...eventEnvelope,
-  type: v.literal('compilation.failed'),
+  type: v.literal('build.failed'),
   payload: v.object({
     durationMs: naturalSchema,
-    compilationId: v.optional(v.pipe(v.string(), v.uuid())),
+    buildId: v.optional(v.pipe(v.string(), v.uuid())),
     seed: v.optional(positiveSchema),
     batchIndex: v.optional(naturalSchema),
     batchSize: v.optional(positiveSchema),

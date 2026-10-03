@@ -10,7 +10,7 @@ export const projectTemplateIdSchema = v.pipe(v.string(), v.regex(/^[a-z0-9]+(?:
 /** Runtime contract for the template selected when creating a project. */
 export const projectCreationSchema = v.strictObject({
   templateId: projectTemplateIdSchema,
-  renderer: v.optional(visualizationModeSchema)
+  mode: v.optional(visualizationModeSchema)
 });
 
 /** Immutable template selection used for all new projects. */
@@ -24,11 +24,11 @@ export type ProjectTemplateSummary = {
 };
 
 /** Default template for an empty creation request. */
-export const defaultProjectCreation: ProjectCreation = { templateId: 'blank', renderer: 'sverlin' };
+export const defaultProjectCreation: ProjectCreation = { templateId: 'blank', mode: 'sverlin' };
 
-/** Renderer selected by a new or historical project creation record. */
-export function projectCreationRenderer(creation: ProjectCreation): VisualizationMode {
-  return creation.renderer ?? 'sverlin';
+/** Mode selected by a project creation record. */
+export function projectCreationMode(creation: ProjectCreation): VisualizationMode {
+  return creation.mode ?? 'sverlin';
 }
 
 /** Parse an external project-creation request. */

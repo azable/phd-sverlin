@@ -8,16 +8,14 @@ import type {
 import type { StudyInteractionCapturePolicy } from './interactions';
 
 export type StudyCondition = {
-  renderer: VisualizationMode;
+  mode: VisualizationMode;
   presentationBufferTarget?: number;
   workspace: {
     view: WorkspaceView;
     layout: PresentationLayout;
-    artifactEditor: 'collapsible';
   };
   project: {
     templateId: string;
-    artifactFormat?: 'html-frames-json' | 'svelte-component';
   };
   durationSeconds: number;
 };

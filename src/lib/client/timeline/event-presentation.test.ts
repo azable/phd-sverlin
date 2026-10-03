@@ -7,10 +7,10 @@ import { presentProjectEvent } from './event-presentation';
 const operationId = '12345678-1234-4123-8123-123456789abc';
 
 describe('project event presentation', () => {
-  it('describes repairable compilation failures as visible repair progress', () => {
-    expect(presentProjectEvent(compilationFailure())).toMatchObject({
+  it('describes repairable build failures as visible repair progress', () => {
+    expect(presentProjectEvent(buildFailure())).toMatchObject({
       icon: 'failure',
-      progress: 'Compilation failed; checking repair…',
+      progress: 'Build failed; checking repair…',
       tone: 'destructive'
     });
   });
@@ -21,10 +21,10 @@ describe('project event presentation', () => {
   });
 });
 
-function compilationFailure(): ProjectEventOf<'compilation.failed'> {
+function buildFailure(): ProjectEventOf<'build.failed'> {
   return {
     ...base(),
-    type: 'compilation.failed',
+    type: 'build.failed',
     payload: {
       durationMs: 10,
       failureKind: 'source',

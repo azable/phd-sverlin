@@ -308,7 +308,7 @@ function response(resource: unknown): Response {
 
 function workspaceResource(resource: ProjectResource): WorkspaceResource {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     userAuthorLabel: 'You',
     projectId: resource.document.projectId,
     document: resource.document,
@@ -335,7 +335,7 @@ function pollEvents(session: ProjectSession): Promise<void> {
 
 function projectResource(events: ProjectEvent[], title: string): ProjectResource {
   const document: ProjectDocument = {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId: 'project-test',
     events
   };
@@ -347,7 +347,8 @@ function projectResource(events: ProjectEvent[], title: string): ProjectResource
         title,
         updatedAt: events.at(-1)!.createdAt,
         eventCount: events.length,
-        templateId: 'blank'
+        templateId: 'blank',
+        mode: 'sverlin'
       }
     ]
   };

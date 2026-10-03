@@ -25,7 +25,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
         presentationBufferTarget: flowPhase.phase.condition.presentationBufferTarget
       };
       study =
-        state.mode === 'preview'
+        state.kind === 'preview'
           ? {
               ...task,
               context: 'admin-preview' as const,
@@ -61,7 +61,7 @@ export const actions: Actions = {
   forcePreview: async ({ locals, params }) => {
     const principal = requireAdmin(locals);
     const inspection = await projectInspectionContext(locals, params.projectId);
-    if (inspection.study?.mode !== 'preview') error(404, 'Preview run not found.');
+    if (inspection.study?.kind !== 'preview') error(404, 'Preview run not found.');
     let destination: string;
     try {
       const state = await forceStudyPreview(inspection.study.runId, principal.user.id);

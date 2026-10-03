@@ -30,19 +30,17 @@ import {
   renameProject,
   advanceProjectPresentations,
   replenishProjectPresentations,
-  renderInitialProject,
-  renderProject,
-  renderProjectPresentations,
+  buildProjectPresentations,
   restoreProjectArtifacts,
   updateProjectArtifact
 } from './service';
 
-export type InitialRenderCommand = { type: 'initial-render'; seed: number };
+export type InitialBuildCommand = { type: 'initial-build'; seed: number };
 export type PresentationRefillCommand = { type: 'presentation-refill'; target: number };
 export type AssistantTurnCommand = { type: 'assistant-turn'; requestEventIds: number[] };
 export type ProjectOperationCommand =
   | ProjectCommand
-  | InitialRenderCommand
+  | InitialBuildCommand
   | PresentationRefillCommand
   | AssistantTurnCommand;
 
@@ -570,23 +568,6 @@ const executorGlobal = globalThis as typeof globalThis & {
 export const projectOperationExecutor = (executorGlobal[executorKey] ??=
   new ProjectOperationExecutor());
 
-/** Refuse export or deletion while a selected project's Timeline is still changing. */
-export async function assertNoActiveProjectOperations(ownerUserId?: string): Promise<void> {
-  for (const summary of await projectRepository.list(ownerUserId)) {
-    const document = await projectRepository.load(summary.projectId);
-    if (activeProjectOperation(document) || pendingAssistantTurnRequests(document).length > 0) {
-      throw new Error(
-        'A project operation is currently running. Wait for it to finish and try again.'
-      );
-    }
-  }
-}
-
-/** Require every active project Timeline to have a terminal operation boundary. */
-export function assertProjectOperationsIdle(): Promise<void> {
-  return assertNoActiveProjectOperations();
-}
-
 async function executeProjectCommand(options: {
   projectId: string;
   expectedHead: number;
@@ -602,13 +583,16 @@ async function executeProjectCommand(options: {
     operationId: options.operationId
   };
   switch (options.command.type) {
-    case 'initial-render':
-      return renderInitialProject({ ...common, seed: options.command.seed });
+    case 'initial-build':
+      return buildProjectPresentations({
+        ...common,
+        seed: options.command.seed,
+        purpose: 'initial'
+      });
     case 'rename':
       return renameProject({ ...common, title: options.command.title });
     case 'feedback':
-      return projectSnapshotAt(await projectRepository.load(options.projectId)).renderer ===
-        'sverlin'
+      return projectSnapshotAt(await projectRepository.load(options.projectId)).mode === 'sverlin'
         ? queueProjectFeedback({
             ...common,
             content: options.command.content,
@@ -629,10 +613,14 @@ async function executeProjectCommand(options: {
         ...common,
         presentations: options.command.presentations
       });
-    case 'render':
-      return renderProject({ ...common, seed: options.command.seed });
+    case 'rebuild':
+      return buildProjectPresentations({
+        ...common,
+        seed: options.command.seed,
+        purpose: 'seed-change'
+      });
     case 'resample':
-      return renderProjectPresentations({
+      return buildProjectPresentations({
         ...common,
         presentationCount: options.command.presentationCount
       });
@@ -732,11 +720,11 @@ function terminalFailureFor(
         event.type === 'assistant.responded' ||
         event.type === 'visualization.presented' ||
         event.type === 'ai.generation-failed' ||
-        event.type === 'compilation.failed' ||
+        event.type === 'build.failed' ||
         (event.type === 'system.notified' && event.payload.severity === 'error')
       );
     }
-    return event.type === 'visualization.presented' || event.type === 'compilation.failed';
+    return event.type === 'visualization.presented' || event.type === 'build.failed';
   });
   if (!outcome) return undefined;
   const noticeMessage =
@@ -746,7 +734,7 @@ function terminalFailureFor(
   const failure =
     outcome.type === 'system.notified'
       ? (events.findLast(
-          (event) => event.type === 'ai.generation-failed' || event.type === 'compilation.failed'
+          (event) => event.type === 'ai.generation-failed' || event.type === 'build.failed'
         ) ?? outcome)
       : outcome;
   if (failure.type === 'ai.generation-failed') {
@@ -755,7 +743,7 @@ function terminalFailureFor(
       message: noticeMessage ?? failure.payload.message
     };
   }
-  if (failure.type === 'compilation.failed') {
+  if (failure.type === 'build.failed') {
     return {
       failureKind:
         failure.payload.failureKind === 'source'
@@ -767,7 +755,7 @@ function terminalFailureFor(
         noticeMessage ??
         failure.payload.diagnostics[0]?.message ??
         failure.payload.error ??
-        'Compilation failed.'
+        'Presentation build failed.'
     };
   }
   if (failure.type === 'system.notified' && failure.payload.severity === 'error') {

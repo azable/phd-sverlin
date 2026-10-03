@@ -109,9 +109,9 @@ export const retainedMessageContentJsonSchema = {
 } as const;
 
 /** Failed generated source and diagnostics supplied to one repair attempt. */
-export type CompilationFeedback = {
+export type BuildFeedback = {
   attempt: number;
-  compilationEventId: number;
+  buildEventId: number;
   failedSource: string;
   assistantReply: string;
   diagnostics: BuildDiagnostic[];
@@ -132,7 +132,7 @@ export type ChatContextInput<Project> = {
   messages: ConversationMessage[];
   project: Project;
   attempt: ChatAttempt;
-  compilationFeedback?: CompilationFeedback;
+  buildFeedback?: BuildFeedback;
 };
 
 /** Provider-neutral context assembled by a chat bot definition. */
@@ -209,7 +209,7 @@ export type ChatbotRequest<Project> = {
   messages: ConversationMessage[];
   project: Project;
   attempt: number;
-  compilationFeedback?: CompilationFeedback;
+  buildFeedback?: BuildFeedback;
 };
 
 /** Parsed chatbot output enriched with prompt and generation provenance. */

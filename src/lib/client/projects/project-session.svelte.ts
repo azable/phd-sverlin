@@ -8,13 +8,14 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
 import {
-  normalizeProjectEventV2,
+  normalizeProjectEvent,
   type EventId,
   type ProjectEvent,
   type ProjectOperationKind
 } from '$lib/shared/projects/events';
 import {
-  normalizeProjectResourceV2,
+  normalizeProjectResource,
+  projectSchemaVersion,
   type ProjectCommandInput,
   type ProjectId,
   type ProjectResource,
@@ -87,7 +88,7 @@ export class ProjectSession {
     )
       return null;
     return {
-      type: operation.kind === 'initial-render' ? 'render' : operation.kind,
+      type: operation.kind === 'initial-build' ? 'rebuild' : operation.kind,
       operationId: operation.operationId,
       startedAfter: operation.acceptedEventId - 1
     };
@@ -327,7 +328,7 @@ export class ProjectSession {
       );
       if (!response.ok) throw new Error(await responseError(response));
       const value = (await response.json()) as { events?: unknown[] };
-      for (const event of value.events ?? []) this.ingest(normalizeProjectEventV2(event));
+      for (const event of value.events ?? []) this.ingest(normalizeProjectEvent(event));
       this.connection = 'open';
     } catch {
       this.connection = 'reconnecting';
@@ -423,14 +424,14 @@ export class ProjectSession {
     }
     const workspace = value as WorkspaceResource;
     if (
-      workspace?.schemaVersion !== 2 ||
+      workspace?.schemaVersion !== projectSchemaVersion ||
       workspace.projectId !== this.projectId ||
       workspace.document?.projectId !== this.projectId
     ) {
       throw new Error('The server returned an invalid project workspace.');
     }
     this.#workspace = workspace;
-    this.#resource = normalizeProjectResourceV2({
+    this.#resource = normalizeProjectResource({
       document: workspace.document,
       projects: workspace.projects
     });
@@ -500,7 +501,7 @@ export class ProjectSession {
 }
 
 function parseProjectResource(value: unknown): ProjectResource {
-  return normalizeProjectResourceV2(value);
+  return normalizeProjectResource(value);
 }
 
 async function responseError(response: Response): Promise<string> {

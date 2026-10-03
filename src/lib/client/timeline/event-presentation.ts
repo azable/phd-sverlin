@@ -122,28 +122,28 @@ const presenters = {
       false,
       'destructive'
     ),
-  'compilation.requested': (event) =>
+  'build.requested': (event) =>
     details(
-      'Compilation requested',
+      'Presentation build requested',
       `${event.payload.sourceLabel} · seed ${event.payload.seed}`,
       'code',
-      'Compiling generated source…'
+      'Building generated source…'
     ),
-  'compilation.succeeded': (event) =>
+  'build.succeeded': (event) =>
     details(
-      'Compilation succeeded',
-      `${event.payload.durationMs} ms · ${event.payload.render.sha256.slice(0, 8)}`,
+      'Presentation build succeeded',
+      `${event.payload.durationMs} ms · ${event.payload.bundle.sha256.slice(0, 8)}`,
       'code',
-      'Compilation succeeded; activating…'
+      'Build succeeded; activating…'
     ),
-  'compilation.failed': (event) =>
+  'build.failed': (event) =>
     details(
-      'Compilation failed',
+      'Presentation build failed',
       event.payload.diagnostics[0]?.message ?? event.payload.error ?? event.payload.failureKind,
       'failure',
       event.payload.repairEligible
-        ? 'Compilation failed; checking repair…'
-        : 'Recording the compilation failure…',
+        ? 'Build failed; checking repair…'
+        : 'Recording the build failure…',
       false,
       'destructive'
     ),

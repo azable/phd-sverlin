@@ -66,7 +66,7 @@ export async function listParticipants(): Promise<ParticipantListItem[]> {
             updatedAt: projects.updatedAt,
             eventCount: projects.head,
             templateId: projects.templateId,
-            renderer: projects.renderer
+            mode: projects.mode
           })
           .from(studyPhaseRuns)
           .innerJoin(projects, eq(projects.id, studyPhaseRuns.projectId))

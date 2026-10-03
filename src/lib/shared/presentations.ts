@@ -1,11 +1,11 @@
-/** Renderer-neutral presentation, layout, and HTML-frame contracts. */
+/** Mode-neutral presentation, layout, and HTML-frame contracts. */
 
 import * as v from 'valibot';
 import { modeCatalog } from '$lib/modes/catalog';
 
 import { positiveSchema, recordedTextSchema, textSchema } from './projects/events/values';
 
-/** Stable renderer modes available to projects and study conditions. */
+/** Modes available to projects and study conditions. */
 export const visualizationModeSchema = v.picklist(
   Object.keys(modeCatalog) as [keyof typeof modeCatalog, ...(keyof typeof modeCatalog)[]]
 );
@@ -84,7 +84,7 @@ export function presentationMode(presentation: RenderablePresentation): Visualiz
   return presentation.format === 'html-frames-v1' ? 'html' : presentation.mode;
 }
 
-/** Return the labels used by the renderer-neutral playback controls. */
+/** Return the labels used by the mode-neutral playback controls. */
 export function presentationStepLabels(presentation: RenderablePresentation): string[] {
   if (presentation.format === 'browser-bundle-v1') return presentation.labels;
   const parsed = v.parse(htmlFramesManifestSchema, JSON.parse(presentation.rendered.text));

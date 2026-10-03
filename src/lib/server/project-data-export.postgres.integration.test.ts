@@ -70,7 +70,7 @@ it.skipIf(!enabled)(
 
 function rootDocument(projectId: string, operationId: string): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId,
     events: [
       {

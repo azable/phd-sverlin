@@ -45,7 +45,7 @@ describe('project creation API', () => {
       expect.objectContaining({
         projectId: 'project-created',
         expectedHead: 2,
-        command: { type: 'initial-render', seed: expect.any(Number) }
+        command: { type: 'initial-build', seed: expect.any(Number) }
       })
     );
   });
@@ -58,7 +58,7 @@ describe('project creation API', () => {
     await expect(response.json()).resolves.toEqual({ projectId: 'project-created' });
     expect(mocks.createProjectSkeleton).toHaveBeenCalledWith(
       expect.objectContaining({
-        creation: { templateId: 'blank', renderer: 'sverlin' },
+        creation: { templateId: 'blank', mode: 'sverlin' },
         ownerUserId: 'user-test'
       })
     );

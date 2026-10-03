@@ -11,7 +11,7 @@ export type ParticipantIntakeStep = {
   question: string;
 };
 
-/** The exact participant-facing intake used by both visualization renderers. */
+/** The participant-facing intake shared by visualization modes. */
 export const visualizationParticipantIntake = [
   { id: 'algorithm', question: 'What algorithm would you like to visualise?' },
   {

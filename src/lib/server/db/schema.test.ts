@@ -35,7 +35,7 @@ describe('PostgreSQL relations', () => {
   });
 
   it('keys participant enrollment and phase execution through a generic study run', () => {
-    expect(getTableColumns(studyRuns)).toHaveProperty('mode');
+    expect(getTableColumns(studyRuns)).toHaveProperty('kind');
     expect(getTableColumns(studyRuns)).toHaveProperty('startedAt');
     expect(getTableColumns(studyEnrollments)).toHaveProperty('runId');
     expect(getTableColumns(studyEnrollments)).not.toHaveProperty('studyId');

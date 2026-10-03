@@ -21,7 +21,7 @@ describe('starter catalog', () => {
 
   it('rejects unknown templates and mode-incompatible examples', () => {
     expect(() => getProjectTemplate('not-catalogued')).toThrow(UnknownProjectTemplateError);
-    expect(() => resolveProjectTemplate({ templateId: 'linear-search', renderer: 'html' })).toThrow(
+    expect(() => resolveProjectTemplate({ templateId: 'linear-search', mode: 'html' })).toThrow(
       'only for the Svelte-backed mode'
     );
   });

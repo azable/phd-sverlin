@@ -89,7 +89,7 @@ function comparisonDocument(
     javascript: recordText('void 0;', 'text/javascript')
   };
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId,
     events: [
       {
@@ -102,7 +102,7 @@ function comparisonDocument(
           title: 'Comparison',
           entryArtifactId: 'main',
           assistantId: 'sverlin-assistant',
-          creation: { templateId: 'blank', renderer: 'sverlin' }
+          creation: { templateId: 'blank', mode: 'sverlin' }
         }
       },
       {

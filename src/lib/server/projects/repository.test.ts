@@ -38,7 +38,7 @@ describe('MemoryProjectRepository test fake', () => {
 
 function rootDocument(): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId: 'repository-test',
     events: [
       {

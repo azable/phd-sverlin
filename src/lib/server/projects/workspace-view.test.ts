@@ -9,7 +9,7 @@ const operationId = '12345678-1234-4123-8123-123456789abc';
 describe('workspace projection', () => {
   it('returns the complete authorized Timeline for client-side participant projection', () => {
     const document: ProjectDocument = {
-      schemaVersion: 2,
+      schemaVersion: 1,
       projectId: 'workspace-test',
       events: [
         {

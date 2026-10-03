@@ -48,10 +48,7 @@
   async function create(event: SubmitEvent) {
     event.preventDefault();
     if (!selectedTemplate) return;
-    await session.createProject(
-      { templateId: selectedTemplate.id, renderer: selectedMode },
-      devMode
-    );
+    await session.createProject({ templateId: selectedTemplate.id, mode: selectedMode }, devMode);
   }
 </script>
 

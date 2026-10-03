@@ -4,6 +4,7 @@
   import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
   import type { ProjectSummary } from '$lib/shared/projects/model';
+  import { modeCatalog } from '$lib/modes/catalog';
 
   type ListedProject = ProjectSummary & { ownerLabel?: string };
   type Props = { projects: ListedProject[]; emptyMessage: string; showOwner?: boolean };
@@ -25,7 +26,7 @@
             {project.eventCount} event{project.eventCount === 1 ? '' : 's'}
           </p>
         </div>
-        <Badge variant="outline">{project.renderer === 'html' ? 'HTML' : 'Sverlin'}</Badge>
+        <Badge variant="outline">{modeCatalog[project.mode].title}</Badge>
         <Button
           href={resolve('/projects/[projectId]', { projectId: project.projectId })}
           size="sm"

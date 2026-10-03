@@ -1,5 +1,5 @@
 {
-  "id": "cb6948f4-a2b6-489c-a676-23bf88b0566b",
+  "id": "1a7ee03f-3724-4da7-bfc2-5824d2287cc0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -636,8 +636,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "renderer": {
-          "name": "renderer",
+        "mode": {
+          "name": "mode",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -976,8 +976,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "renderer": {
-          "name": "renderer",
+        "mode": {
+          "name": "mode",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1112,8 +1112,8 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "mode": {
-          "name": "mode",
+        "kind": {
+          "name": "kind",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1187,7 +1187,7 @@
           "name": "study_run_protocol_arm_idx",
           "columns": [
             {
-              "expression": "mode",
+              "expression": "kind",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1253,9 +1253,9 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "study_run_mode_check": {
-          "name": "study_run_mode_check",
-          "value": "\"study_run\".\"mode\" in ('participant', 'preview')"
+        "study_run_kind_check": {
+          "name": "study_run_kind_check",
+          "value": "\"study_run\".\"kind\" in ('participant', 'preview')"
         },
         "study_run_current_phase_check": {
           "name": "study_run_current_phase_check",

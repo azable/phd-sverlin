@@ -7,7 +7,7 @@ import StudyFlowWireframe from './StudyFlowWireframe.svelte';
 
 const flow: StudyFlow = {
   runId: 'preview-one',
-  mode: 'preview',
+  kind: 'preview',
   studyId: 'main-study',
   studyVersion: 1,
   studyName: 'Main study',

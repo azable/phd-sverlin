@@ -2,7 +2,7 @@
 
 import { resolveStudyArm, type ResolvedStudyPhase, type StudyDefinition } from './definition';
 
-export type StudyRunMode = 'participant' | 'preview';
+export type StudyRunKind = 'participant' | 'preview';
 export type StudyProgressStatus = 'not-started' | 'in-progress' | 'completed';
 export type StudyPhaseStatus =
   | 'pending'
@@ -19,7 +19,7 @@ export type StudyPhaseEndReason =
 
 export type StudyRunSnapshot = {
   id: string;
-  mode: StudyRunMode;
+  kind: StudyRunKind;
   studyId: string;
   studyVersion: number;
   armId: string;
@@ -54,7 +54,7 @@ export type StudyFlowPhase = {
 
 export type StudyFlow = {
   runId: string;
-  mode: StudyRunMode;
+  kind: StudyRunKind;
   studyId: string;
   studyVersion: number;
   studyName: string;
@@ -87,7 +87,7 @@ export function projectStudyFlow(
 
   return {
     runId: run.id,
-    mode: run.mode,
+    kind: run.kind,
     studyId: run.studyId,
     studyVersion: run.studyVersion,
     studyName: definition.name,

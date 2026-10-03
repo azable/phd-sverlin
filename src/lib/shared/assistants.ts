@@ -1,4 +1,4 @@
-/** Stable visualization-assistant identities and their renderer compatibility. */
+/** Stable visualization-assistant identities derived from the mode catalogue. */
 
 import * as v from 'valibot';
 
@@ -16,7 +16,7 @@ export const assistantIdSchema = v.picklist(
 /** Stable identifier for one configured visualization assistant. */
 export type AssistantId = v.InferOutput<typeof assistantIdSchema>;
 
-/** Return the renderer contract implemented by an assistant. */
+/** Return the mode owned by an assistant. */
 export function assistantMode(id: AssistantId): VisualizationMode {
   const entry = Object.entries(modeCatalog).find(([, mode]) => mode.assistantId === id);
   if (!entry) throw new Error(`Unknown visualization assistant: ${id}`);

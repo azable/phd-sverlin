@@ -15,9 +15,8 @@ import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import {
   assertNoActiveProjectOperations,
-  assertProjectOperationsIdle
-} from '$lib/server/projects/operations';
-import { projectRepository } from '$lib/server/projects/repository';
+  projectRepository
+} from '$lib/server/projects/repository';
 import {
   activeProjectOperation,
   pendingAssistantTurnRequests
@@ -135,7 +134,7 @@ async function assertExportIdle(scope: ExportScope): Promise<void> {
     }
     return;
   }
-  await assertProjectOperationsIdle();
+  await assertNoActiveProjectOperations();
 }
 
 async function resolveParticipant(selector: {

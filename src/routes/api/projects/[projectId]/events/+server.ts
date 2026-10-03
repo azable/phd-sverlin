@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 
 import { requireProjectAccess } from '$lib/server/authorization';
+import { projectSchemaVersion } from '$lib/shared/projects/model';
 import {
   projectRepository,
   ProjectConflictError,
@@ -16,7 +17,13 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
   try {
     const events = await projectRepository.eventsAfter(params.projectId, after);
     return json(
-      { schemaVersion: 2, projectId: params.projectId, after, head: after + events.length, events },
+      {
+        schemaVersion: projectSchemaVersion,
+        projectId: params.projectId,
+        after,
+        head: after + events.length,
+        events
+      },
       { headers: { 'cache-control': 'private, no-store' } }
     );
   } catch (cause) {

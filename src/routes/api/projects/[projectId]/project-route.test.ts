@@ -29,7 +29,7 @@ beforeEach(() => {
   });
   mocks.requireMutation.mockResolvedValue({});
   mocks.loadProjectResource.mockResolvedValue({
-    document: { schemaVersion: 2, projectId: 'project-test', events: [] },
+    document: { schemaVersion: 1, projectId: 'project-test', events: [] },
     projects: []
   });
 });
@@ -67,7 +67,7 @@ describe('project JSON API', () => {
 
   it('returns structured client and conflict errors', async () => {
     const { POST } = await import('./+server');
-    const invalid = await POST(request('POST', { type: 'render', seed: 1 }));
+    const invalid = await POST(request('POST', { type: 'rebuild', seed: 1 }));
     expect(invalid.status).toBe(400);
     await expect(invalid.json()).resolves.toHaveProperty('error');
 
@@ -75,7 +75,7 @@ describe('project JSON API', () => {
     conflict.name = 'ProjectConflictError';
     mocks.accept.mockRejectedValueOnce(conflict);
     const stale = await POST(
-      request('POST', { type: 'render', operationId, expectedHead: 2, seed: 1 })
+      request('POST', { type: 'rebuild', operationId, expectedHead: 2, seed: 1 })
     );
     expect(stale.status).toBe(409);
     await expect(stale.json()).resolves.toEqual({ error: 'stale' });

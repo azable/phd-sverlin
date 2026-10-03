@@ -253,11 +253,11 @@ function fixtureSnapshot(): ExportSnapshot {
         ownerUserId: 'owner-1',
         title: 'Project export fixture',
         templateId: 'blank',
-        renderer: 'sverlin',
+        mode: 'sverlin',
         createdAt: '2026-08-30T10:00:00.000Z',
         updatedAt: '2026-08-30T11:00:00.000Z',
         document: {
-          schemaVersion: 2,
+          schemaVersion: 1,
           projectId: 'project-test',
           events: [
             {

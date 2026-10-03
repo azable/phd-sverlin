@@ -33,7 +33,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
       projectId: document.projectId,
       operationId,
       expectedHead: document.events.length,
-      command: { type: 'initial-render', seed: randomInt(1, 2147483647) }
+      command: { type: 'initial-build', seed: randomInt(1, 2147483647) }
     });
     return json(accepted, { status: 202 });
   } catch (cause) {

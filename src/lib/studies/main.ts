@@ -31,17 +31,17 @@ export const mainStudy = defineStudy({
   },
   conditions: {
     sverlin: {
-      renderer: 'sverlin',
+      mode: 'sverlin',
       // Keep two comparison pairs ready: one visible pair and one ahead-of-time pair.
       presentationBufferTarget: 4,
-      workspace: { view: 'participant', layout: 'comparison', artifactEditor: 'collapsible' },
-      project: { templateId: 'blank', artifactFormat: 'svelte-component' },
+      workspace: { view: 'participant', layout: 'comparison' },
+      project: { templateId: 'blank' },
       durationSeconds: minutes(15)
     },
     html: {
-      renderer: 'html',
-      workspace: { view: 'participant', layout: 'single', artifactEditor: 'collapsible' },
-      project: { templateId: 'blank', artifactFormat: 'html-frames-json' },
+      mode: 'html',
+      workspace: { view: 'participant', layout: 'single' },
+      project: { templateId: 'blank' },
       durationSeconds: minutes(15)
     }
   },

@@ -36,13 +36,13 @@ describe('ProjectOperationExecutor', () => {
       projectId,
       operationId,
       expectedHead: 1,
-      command: { type: 'initial-render', seed: 1 }
+      command: { type: 'initial-build', seed: 1 }
     });
     expect(accepted.acceptedEventId).toBe(2);
     await terminal(repository, projectId, operationId);
 
     const operation = projectOperation(await repository.load(projectId), operationId);
-    expect(operation).toMatchObject({ kind: 'initial-render', status: 'completed' });
+    expect(operation).toMatchObject({ kind: 'initial-build', status: 'completed' });
   });
 
   it('does not rebase an assistant acceptance past a concurrent foreground acceptance', async () => {
@@ -61,7 +61,7 @@ describe('ProjectOperationExecutor', () => {
               actor: { kind: 'user' },
               operationId: foregroundId,
               createdAt: new Date().toISOString(),
-              payload: { kind: 'initial-render' }
+              payload: { kind: 'initial-build' }
             }
           ]);
         }
@@ -130,7 +130,7 @@ describe('ProjectOperationExecutor', () => {
     });
   });
 
-  it('classifies AI and compilation failures by their retained failure kind', async () => {
+  it('classifies AI and build failures by their retained failure kind', async () => {
     const cases = [
       {
         command: 'assistant-turn' as const,
@@ -144,13 +144,13 @@ describe('ProjectOperationExecutor', () => {
         expected: 'infrastructure'
       },
       {
-        command: 'initial-render' as const,
-        event: compilationFailure('source'),
+        command: 'initial-build' as const,
+        event: buildFailure('source'),
         expected: 'domain'
       },
       {
-        command: 'initial-render' as const,
-        event: compilationFailure('infrastructure'),
+        command: 'initial-build' as const,
+        event: buildFailure('infrastructure'),
         expected: 'infrastructure'
       }
     ] as const;
@@ -204,7 +204,7 @@ describe('ProjectOperationExecutor', () => {
       { acquire: async () => ({ release: async () => undefined }) },
       async ({ projectId: id, expectedHead, operationId: correlation }) => {
         const appended = await repository.append(id, expectedHead, [
-          { ...compilationFailure('source'), operationId: correlation },
+          { ...buildFailure('source'), operationId: correlation },
           {
             type: 'system.notified',
             actor: { kind: 'system' },
@@ -278,7 +278,7 @@ describe('ProjectOperationExecutor', () => {
       projectId,
       operationId: participantId,
       expectedHead: 2,
-      command: { type: 'initial-render', seed: 1 }
+      command: { type: 'initial-build', seed: 1 }
     });
     await terminal(repository, projectId, participantId);
 
@@ -333,7 +333,7 @@ describe('ProjectOperationExecutor', () => {
       projectId: participantProjectId,
       operationId: participantId,
       expectedHead: 1,
-      command: { type: 'initial-render', seed: 1 }
+      command: { type: 'initial-build', seed: 1 }
     });
     await terminal(repository, participantProjectId, participantId);
 
@@ -372,7 +372,7 @@ describe('ProjectOperationExecutor', () => {
       projectId,
       operationId,
       expectedHead: 1,
-      command: { type: 'initial-render', seed: 1 },
+      command: { type: 'initial-build', seed: 1 },
       deadlineAt
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -512,14 +512,14 @@ async function eventually(condition: () => boolean | Promise<boolean>): Promise<
   throw new Error('The expected asynchronous state was not reached.');
 }
 
-function commandForFailureCase(kind: 'assistant-turn' | 'initial-render', _operationId: string) {
+function commandForFailureCase(kind: 'assistant-turn' | 'initial-build', _operationId: string) {
   if (kind === 'assistant-turn') return { type: 'assistant-turn' as const, requestEventIds: [1] };
-  return { type: 'initial-render' as const, seed: 1 };
+  return { type: 'initial-build' as const, seed: 1 };
 }
 
 function rootDocument(projectId: string, operationId: string): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId,
     events: [
       {
@@ -555,9 +555,9 @@ function aiFailure(failureKind: 'provider' | 'cancelled') {
   };
 }
 
-function compilationFailure(failureKind: 'source' | 'infrastructure') {
+function buildFailure(failureKind: 'source' | 'infrastructure') {
   return {
-    type: 'compilation.failed' as const,
+    type: 'build.failed' as const,
     actor: { kind: 'system' as const },
     operationId: '',
     createdAt: '2026-08-30T00:00:01.000Z',
@@ -566,7 +566,7 @@ function compilationFailure(failureKind: 'source' | 'infrastructure') {
       failureKind,
       diagnostics: [],
       repairEligible: failureKind === 'source',
-      error: `Compilation ${failureKind}`
+      error: `Build ${failureKind}`
     }
   };
 }

@@ -5,7 +5,7 @@ import { projectStudyFlow, type StudyRunSnapshot } from './projection';
 
 const baseRun: StudyRunSnapshot = {
   id: 'run-one',
-  mode: 'participant',
+  kind: 'participant',
   studyId: mainStudy.id,
   studyVersion: mainStudy.version,
   armId: 'sverlin-first',
@@ -68,7 +68,7 @@ describe('complete study flow projection', () => {
       mainStudy,
       {
         ...baseRun,
-        mode: 'preview',
+        kind: 'preview',
         currentPhaseIndex: 2,
         startPhaseIndex: 2,
         stopAfterPhaseIndex: 2,

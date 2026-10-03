@@ -187,7 +187,7 @@ describe('createProject', () => {
     const { createProject } = await import('./service');
 
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       serviceDependencies
     );
 
@@ -319,7 +319,7 @@ describe('participant intake', () => {
 });
 
 describe('presentation buffer refill', () => {
-  it('does not compile the untouched blank-project source', async () => {
+  it('does not build the untouched blank-project source', async () => {
     const { createProject, replenishProjectPresentations } = await import('./service');
     const created = await createProject(
       { title: 'Untouched blank', creation: { templateId: 'blank' } },
@@ -491,7 +491,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { runQueuedAssistantTurn } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       serviceDependencies
     );
     const feedbackOperationId = crypto.randomUUID();
@@ -633,7 +633,7 @@ describe('submitProjectFeedback', () => {
     ).toHaveLength(2);
   });
 
-  it('compiles a synchronized comparison directly from two distinct fresh seeds', async () => {
+  it('builds a synchronized comparison from two distinct fresh seeds', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue(generation('valid source', 'Ready'));
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
@@ -651,10 +651,8 @@ describe('submitProjectFeedback', () => {
       commandDependencies
     );
 
-    const requested = result.appendedEvents.filter(
-      (event) => event.type === 'compilation.requested'
-    );
-    expect(new Set(requested.map(({ payload }) => payload.seed)).size).toBe(2);
+    const buildRequests = result.appendedEvents.filter((event) => event.type === 'build.requested');
+    expect(new Set(buildRequests.map(({ payload }) => payload.seed)).size).toBe(2);
     const presented = result.appendedEvents.filter(
       (event) => event.type === 'visualization.presented'
     );
@@ -663,22 +661,17 @@ describe('submitProjectFeedback', () => {
     expect(new Set(presented.map(({ payload }) => payload.presentation.presentationId)).size).toBe(
       2
     );
-    const compilationRequests = result.appendedEvents.filter(
-      (event) => event.type === 'compilation.requested'
-    );
-    const compilationResults = result.appendedEvents.filter(
-      (event) => event.type === 'compilation.succeeded'
-    );
-    expect(compilationRequests).toHaveLength(2);
-    expect(compilationResults).toHaveLength(2);
+    const buildResults = result.appendedEvents.filter((event) => event.type === 'build.succeeded');
+    expect(buildRequests).toHaveLength(2);
+    expect(buildResults).toHaveLength(2);
     expect(
       new Set([
-        ...compilationRequests.map(({ payload }) => payload.compilationId),
-        ...compilationResults.map(({ payload }) => payload.compilationId)
+        ...buildRequests.map(({ payload }) => payload.buildId),
+        ...buildResults.map(({ payload }) => payload.buildId)
       ]).size
     ).toBe(1);
     expect(
-      compilationResults.every(({ payload }) => payload.render.mediaType === 'application/json')
+      buildResults.every(({ payload }) => payload.bundle.mediaType === 'application/json')
     ).toBe(true);
   });
 
@@ -703,9 +696,7 @@ describe('submitProjectFeedback', () => {
       commandDependencies
     );
 
-    const requests = result.appendedEvents.filter(
-      (event) => event.type === 'compilation.requested'
-    );
+    const requests = result.appendedEvents.filter((event) => event.type === 'build.requested');
     expect(requests.map(({ payload }) => payload.seed).slice(0, 2)).toEqual(
       requests.map(({ payload }) => payload.seed).slice(2)
     );
@@ -756,16 +747,14 @@ describe('submitProjectFeedback', () => {
       'xhigh',
       'xhigh'
     ]);
-    expect(mocks.preparePrompt.mock.calls[4][0].compilationFeedback).toMatchObject({
+    expect(mocks.preparePrompt.mock.calls[4][0].buildFeedback).toMatchObject({
       attempt: 4,
       priorFailureSummaries: expect.arrayContaining([
         expect.stringContaining('Attempt 1'),
         expect.stringContaining('Attempt 4')
       ])
     });
-    const buildRequests = result.appendedEvents.filter(
-      (event) => event.type === 'compilation.requested'
-    );
+    const buildRequests = result.appendedEvents.filter((event) => event.type === 'build.requested');
     expect(new Set(buildRequests.map(({ payload }) => payload.seed)).size).toBe(1);
     expect(result.appendedEvents.at(-1)).toMatchObject({
       type: 'assistant.responded',
@@ -835,7 +824,7 @@ describe('submitProjectFeedback', () => {
     });
   });
 
-  it('proactively compiles a revised pair when preference evidence is sufficient', async () => {
+  it('proactively builds a revised pair when preference evidence is sufficient', async () => {
     const { submitProjectPreference } = await import('./commands');
     const comparison = await createComparisonProject('Preference adaptation');
     mocks.generatePrepared
@@ -865,11 +854,9 @@ describe('submitProjectFeedback', () => {
     const observationIndex = result.appendedEvents.findIndex(
       ({ type }) => type === 'assistant.responded'
     );
-    const compilationIndex = result.appendedEvents.findIndex(
-      ({ type }) => type === 'compilation.requested'
-    );
+    const buildIndex = result.appendedEvents.findIndex(({ type }) => type === 'build.requested');
     expect(observationIndex).toBeGreaterThanOrEqual(0);
-    expect(observationIndex).toBeLessThan(compilationIndex);
+    expect(observationIndex).toBeLessThan(buildIndex);
     expect(result.appendedEvents[observationIndex]).toMatchObject({
       type: 'assistant.responded',
       payload: { content: markdownMessage('I adapted the spacing.') }
@@ -883,7 +870,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       serviceDependencies
     );
 
@@ -933,7 +920,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html-js' } },
+      { creation: { templateId: 'blank', mode: 'html-js' } },
       serviceDependencies
     );
     const result = await submitProjectFeedback(
@@ -981,7 +968,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html-js' } },
+      { creation: { templateId: 'blank', mode: 'html-js' } },
       serviceDependencies
     );
     const result = await submitProjectFeedback(
@@ -1018,7 +1005,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       serviceDependencies
     );
 
@@ -1051,7 +1038,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       serviceDependencies
     );
 
@@ -1086,7 +1073,7 @@ describe('submitProjectFeedback', () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
-      { creation: { templateId: 'blank', renderer: 'html' } },
+      { creation: { templateId: 'blank', mode: 'html' } },
       serviceDependencies
     );
 
@@ -1139,16 +1126,14 @@ describe('submitProjectFeedback', () => {
     expect(
       result.appendedEvents.filter(({ type }) => type === 'ai.generation-requested')
     ).toHaveLength(5);
-    expect(result.appendedEvents.filter(({ type }) => type === 'compilation.failed')).toHaveLength(
-      5
-    );
+    expect(result.appendedEvents.filter(({ type }) => type === 'build.failed')).toHaveLength(5);
     expect(result.appendedEvents.at(-1)).toMatchObject({
       type: 'system.notified',
       payload: { severity: 'error' }
     });
     expect(result.appendedEvents.every((event) => event.operationId === operationId)).toBe(true);
     const revisionEvents = result.appendedEvents.filter(
-      (event) => event.type === 'ai.generation-requested' || event.type === 'compilation.requested'
+      (event) => event.type === 'ai.generation-requested' || event.type === 'build.requested'
     );
     expect(revisionEvents).toHaveLength(10);
     expect(
@@ -1319,7 +1304,7 @@ describe('submitProjectFeedback', () => {
     });
   });
 
-  it('resolves focused history into historical source and render context', async () => {
+  it('resolves focused history into historical source and presentation context', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue({
       reply: markdownMessage('No source change needed.'),
       action: 'respond',
@@ -1358,9 +1343,9 @@ describe('submitProjectFeedback', () => {
                 }),
                 activePresentations: [
                   expect.objectContaining({
-                    id: presentation.id,
+                    eventId: presentation.id,
                     seed: presentation.payload.presentation.seed,
-                    renderSha256: presentation.payload.presentation.javascript.sha256
+                    contentSha256: presentation.payload.presentation.javascript.sha256
                   })
                 ]
               })
@@ -1418,9 +1403,7 @@ describe('submitProjectFeedback', () => {
               expect.objectContaining({
                 eventId: presentation.id,
                 presentationId,
-                renderSummary: expect.objectContaining({
-                  seed: presentation.payload.presentation.seed
-                })
+                seed: presentation.payload.presentation.seed
               })
             ]
           })

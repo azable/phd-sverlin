@@ -4,7 +4,7 @@ import { projectSnapshotAt } from '$lib/shared/projects/projection';
 import { MemoryProjectRepository } from '$lib/server/projects/memory-repository.test-support';
 import {
   createProjectSkeleton,
-  renderProject,
+  buildProjectPresentations,
   updateProjectArtifact,
   type ProjectServiceDependencies
 } from '$lib/server/projects/service';
@@ -38,16 +38,17 @@ describe('Svelte-backed project lifecycle', () => {
     );
     expect(presentations[0]).toMatchObject({ mode: 'sverlin', labels: ['First', 'Second'] });
 
-    const rerender = await renderProject(
+    const rebuilt = await buildProjectPresentations(
       {
         projectId: created.projectId,
         expectedHead: result.document.events.length,
         seed: 42,
+        purpose: 'seed-change',
         operationId: crypto.randomUUID()
       },
       dependencies
     );
-    expect(rerender.appendedEvents.some((event) => event.type === 'visualization.presented')).toBe(
+    expect(rebuilt.appendedEvents.some((event) => event.type === 'visualization.presented')).toBe(
       true
     );
   });

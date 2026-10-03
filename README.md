@@ -18,9 +18,13 @@ Generated JavaScript is compiled but **never executed by the server** or in the 
 
 Shared project orchestration lives in [`src/lib/server/projects/`](src/lib/server/projects/) and its environment-neutral contracts in [`src/lib/shared/projects/`](src/lib/shared/projects/). The browser workspace lives in [`src/lib/client/projects/`](src/lib/client/projects/). Module-specific code stays under its mode folder; browser-safe contracts do not import server code.
 
+A **mode** owns the authoring workflow, validation/build implementation, and playback component. A **build** validates source and prepares a **presentation**; **playback** displays and steps through that presentation in the browser. Study conditions select a mode and configure its workspace; a study run's **kind** distinguishes participant runs from previews. Labels and artifact formats come from the mode catalogue.
+
 ## Development
 
 Use the Dev Container and its checked-in devenv environment. [`devenv.nix`](devenv.nix) supplies Node 24, pnpm 10, PostgreSQL 17, and the local process manager. Interactive terminals activate the environment through [`.envrc`](.envrc); for a non-interactive command, use `devenv shell -- COMMAND`. If `.env` does not exist, copy [`.env.example`](.env.example) to `.env` and set `OPENAI_API_KEY` for AI-assisted editing. Keep personal values out of Git.
+
+In VS Code, install the recommended Svelte extension. [`.vscode/settings.json`](.vscode/settings.json) enables its TypeScript plugin so `.ts` files can resolve Svelte components and their props. If component imports remain marked as missing, run **TypeScript: Restart TS Server** from the Command Palette. Use `pnpm run check` for project diagnostics; plain `tsc` does not understand Svelte component declarations.
 
 Server commands (`dev`, `dev:web`, `preview`, and `start`) reload the current `.env` through [`scripts/run-with-env.sh`](scripts/run-with-env.sh), overriding stale inherited values. Shells and server launches share [`scripts/load-env.sh`](scripts/load-env.sh); blank database and authentication settings receive development defaults only inside devenv. After editing `.env`, restart the web process (`devenv processes restart web` when managed by devenv); the process manager and PostgreSQL can stay running. Environment changes require a new server launch, rather than relying on Vite's hot reload. PostgreSQL tests keep their isolated database URL because the test runner invokes migrations directly.
 
@@ -47,6 +51,8 @@ pnpm run export:data -- --scope projects
 ```
 
 `test:postgres` creates an isolated test database and requires only PostgreSQL to be running. `pnpm run export:data -- --scope projects --project PROJECT_ID` selects one project. Exports include complete Timelines, versioned study definitions, and interaction telemetry where available; see [`src/lib/server/data-export.ts`](src/lib/server/data-export.ts).
+
+Project and export formats start at version 1. The fresh database baseline uses `mode` for visualization workflows and `kind` for participant/preview study runs.
 
 ## Study and operations
 

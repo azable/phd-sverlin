@@ -83,7 +83,7 @@ CREATE TABLE "project" (
 	"head" integer NOT NULL,
 	"title" text NOT NULL,
 	"template_id" text NOT NULL,
-	"renderer" text DEFAULT 'sverlin' NOT NULL,
+	"mode" text DEFAULT 'sverlin' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"deleted_at" timestamp with time zone
@@ -124,7 +124,7 @@ CREATE TABLE "study_phase_run" (
 	"sequence_index" integer NOT NULL,
 	"kind" text NOT NULL,
 	"condition_id" text,
-	"renderer" text,
+	"mode" text,
 	"layout" text,
 	"view" text,
 	"project_id" varchar(128),
@@ -138,7 +138,7 @@ CREATE TABLE "study_phase_run" (
 --> statement-breakpoint
 CREATE TABLE "study_run" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"mode" text NOT NULL,
+	"kind" text NOT NULL,
 	"owner_user_id" text NOT NULL,
 	"study_id" text NOT NULL,
 	"study_version" integer NOT NULL,
@@ -149,7 +149,7 @@ CREATE TABLE "study_run" (
 	"started_at" timestamp with time zone,
 	"completed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "study_run_mode_check" CHECK ("study_run"."mode" in ('participant', 'preview')),
+	CONSTRAINT "study_run_kind_check" CHECK ("study_run"."kind" in ('participant', 'preview')),
 	CONSTRAINT "study_run_current_phase_check" CHECK ("study_run"."current_phase_index" >= 0),
 	CONSTRAINT "study_run_start_phase_check" CHECK ("study_run"."start_phase_index" >= 0),
 	CONSTRAINT "study_run_stop_phase_check" CHECK ("study_run"."stop_after_phase_index" is null or "study_run"."stop_after_phase_index" >= "study_run"."start_phase_index")
@@ -204,7 +204,7 @@ CREATE INDEX "auth_session_user_idx" ON "auth_session" USING btree ("user_id");-
 CREATE INDEX "study_enrollment_run_idx" ON "study_enrollment" USING btree ("run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "study_phase_run_sequence_unique" ON "study_phase_run" USING btree ("run_id","sequence_index");--> statement-breakpoint
 CREATE UNIQUE INDEX "study_phase_run_project_unique" ON "study_phase_run" USING btree ("project_id");--> statement-breakpoint
-CREATE INDEX "study_run_protocol_arm_idx" ON "study_run" USING btree ("mode","study_id","study_version","arm_id");--> statement-breakpoint
+CREATE INDEX "study_run_protocol_arm_idx" ON "study_run" USING btree ("kind","study_id","study_version","arm_id");--> statement-breakpoint
 CREATE INDEX "study_run_owner_created_idx" ON "study_run" USING btree ("owner_user_id","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "auth_user_username_unique" ON "auth_user" USING btree ("username");--> statement-breakpoint
 CREATE INDEX "auth_verification_identifier_idx" ON "auth_verification" USING btree ("identifier");

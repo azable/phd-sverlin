@@ -63,7 +63,7 @@ it.skipIf(!enabled)(
     const [participantRun] = await database()
       .insert(schema.studyRuns)
       .values({
-        mode: 'participant',
+        kind: 'participant',
         ownerUserId: participantId,
         studyId: mainStudy.id,
         studyVersion: mainStudy.version,
@@ -75,7 +75,7 @@ it.skipIf(!enabled)(
     const [previewRun] = await database()
       .insert(schema.studyRuns)
       .values({
-        mode: 'preview',
+        kind: 'preview',
         ownerUserId: adminId,
         studyId: mainStudy.id,
         studyVersion: mainStudy.version,
@@ -118,7 +118,7 @@ it.skipIf(!enabled)(
     });
     expect(research.projects.map(({ id }) => id)).toEqual([studyProjectId]);
     expect(research.study.runs).toHaveLength(1);
-    expect(research.study.flows[0]).toMatchObject({ mode: 'participant' });
+    expect(research.study.flows[0]).toMatchObject({ kind: 'participant' });
     expect(JSON.stringify(research)).not.toContain('giftCardUrl');
 
     const projects = await source.collect({ type: 'projects' });
@@ -126,7 +126,7 @@ it.skipIf(!enabled)(
       expect.arrayContaining([studyProjectId, ordinaryProjectId, previewProjectId])
     );
     expect(projects.study.runs).toEqual(
-      expect.arrayContaining([expect.objectContaining({ mode: 'preview' })])
+      expect.arrayContaining([expect.objectContaining({ kind: 'preview' })])
     );
     expect(projects.participants).toEqual([
       expect.objectContaining({ id: participantId, participantId: 'P-Export' })
@@ -153,7 +153,7 @@ it.skipIf(!enabled)(
 
 function document(projectId: string): ProjectDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId,
     events: [
       {

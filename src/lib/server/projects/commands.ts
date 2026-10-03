@@ -28,7 +28,7 @@ import {
   getParticipantIntakeClassifier
 } from '$lib/server/chat-bots/registry';
 import { modeCatalog } from '$lib/modes/catalog';
-import { directModeBuilders } from '$lib/modes/server';
+import { modeBuilders } from '$lib/modes/server';
 import {
   nextParticipantIntakeStep,
   participantIntakeStep,
@@ -45,7 +45,7 @@ import type {
   ChatbotPrompt,
   ChatbotResult,
   CandidateAssistantOutput,
-  CompilationFeedback,
+  BuildFeedback,
   GeneratedMessageContent,
   RecoveryExplanation,
   SourceArtifactChatOutput
@@ -62,15 +62,15 @@ import {
 } from './operation-context';
 import { projectRepository, type ProjectRepository } from './repository';
 import {
-  activateCompiledPresentations,
+  activateBuiltPresentations,
   appendProjectEvents,
-  compileProjectSourceBatch,
+  buildProjectSourceBatch,
   defaultProjectServiceDependencies,
   draftEvent,
   freshPresentationSeeds,
   type ProjectServiceDependencies,
-  type RecordedCompilation,
-  type RecordedCompilationBatch
+  type RecordedBuild,
+  type RecordedBuildBatch
 } from './service';
 
 /** Replaceable AI and persistence boundaries used by command unit tests. */
@@ -245,7 +245,7 @@ export async function runQueuedAssistantTurn(
     };
   }
   const document =
-    projectSnapshotAt(intake.document).renderer === 'sverlin'
+    projectSnapshotAt(intake.document).mode === 'sverlin'
       ? await runSverlinAssistantTurn(
           intake.document,
           options.operationId,
@@ -328,7 +328,7 @@ async function submitProjectFeedbackUnlocked(
   );
   document = intake.document;
   if (!intake.author) return finishMutation(before, document);
-  if (projectSnapshotAt(document).renderer !== 'sverlin') {
+  if (projectSnapshotAt(document).mode !== 'sverlin') {
     document = await submitCandidateFeedback(
       document,
       options.operationId,
@@ -396,7 +396,7 @@ export function submitProjectPreference(
 
 type ParticipantIntakeResult = { document: ProjectDocument; author: boolean };
 
-/** Advance the durable blank-project intake before either renderer may author output. */
+/** Advance the durable blank-project intake before its mode may author output. */
 async function handleParticipantIntake(
   document: ProjectDocument,
   operationId: string,
@@ -535,7 +535,7 @@ async function runSverlinAssistantTurn(
   const chatbot = dependencies.getChatbot(projectSnapshotAt(document).assistantId);
   let seeds: readonly number[] | undefined;
   const failureSummaries: string[] = [];
-  let compilationFeedback: CompilationFeedback | undefined;
+  let buildFeedback: BuildFeedback | undefined;
 
   return runAttemptLadder(
     document,
@@ -551,7 +551,7 @@ async function runSverlinAssistantTurn(
           operationId,
           contextSelection,
           presentationCount,
-          ...(compilationFeedback ? { compilationFeedback } : {})
+          ...(buildFeedback ? { buildFeedback } : {})
         },
         dependencies
       );
@@ -585,7 +585,7 @@ async function runSverlinAssistantTurn(
           return { document: advanced.document, done: true };
         }
         failureSummaries.push(`Attempt ${attempt} did not return corrected source.`);
-        if (!compilationFeedback || attempt === chatbot.config.attemptProfiles.length) {
+        if (!buildFeedback || attempt === chatbot.config.attemptProfiles.length) {
           return {
             document: await appendExhaustedSverlinFailure(
               current,
@@ -596,8 +596,8 @@ async function runSverlinAssistantTurn(
             done: true
           };
         }
-        compilationFeedback = {
-          ...compilationFeedback,
+        buildFeedback = {
+          ...buildFeedback,
           attempt,
           assistantReply: generatedReplyText(generation.result.reply),
           priorFailureSummaries: [...failureSummaries]
@@ -606,18 +606,18 @@ async function runSverlinAssistantTurn(
       }
 
       seeds ??= freshPresentationSeeds(presentationCount);
-      const compiled = await compileCandidateBatch(
+      const built = await buildCandidateBatch(
         { document: current, candidate, seeds, operationId, attempt },
         dependencies
       );
-      current = compiled.document;
-      if (batchSucceeded(compiled.recorded)) {
+      current = built.document;
+      if (batchSucceeded(built.recorded)) {
         assertCurrentProjectOperationActive();
         return {
           document: await acceptSverlinCandidate(
             {
               document: current,
-              recorded: compiled.recorded,
+              recorded: built.recorded,
               generationEvent: generation.generationEvent,
               candidate,
               operationId,
@@ -631,13 +631,13 @@ async function runSverlinAssistantTurn(
         };
       }
 
-      const failed = firstFailure(compiled.recorded);
-      if (!failed || failed.compileEvent.type !== 'compilation.failed') {
-        throw new Error('A failed compilation batch had no failure event.');
+      const failed = firstFailure(built.recorded);
+      if (!failed || failed.buildEvent.type !== 'build.failed') {
+        throw new Error('A failed build batch had no failure event.');
       }
       const summary = formatDiagnosticSummary(failed.result.diagnostics);
       failureSummaries.push(`Attempt ${attempt}: ${summary}`);
-      if (!failed.compileEvent.payload.repairEligible) {
+      if (!failed.buildEvent.payload.repairEligible) {
         return {
           document: await appendSystemFailure(
             current,
@@ -659,11 +659,11 @@ async function runSverlinAssistantTurn(
           done: true
         };
       }
-      compilationFeedback = {
+      buildFeedback = {
         attempt,
-        compilationEventId:
+        buildEventId:
           current.events.findLast(
-            (event) => event.operationId === operationId && event.type === 'compilation.failed'
+            (event) => event.operationId === operationId && event.type === 'build.failed'
           )?.id ?? projectHead(current).id,
         failedSource: candidate,
         assistantReply: generatedReplyText(generation.result.reply),
@@ -681,7 +681,7 @@ async function submitCandidateFeedback(
   contextSelection: AiContextSelection,
   dependencies: ProjectCommandDependencies
 ): Promise<ProjectDocument> {
-  const mode = projectSnapshotAt(document).renderer;
+  const mode = projectSnapshotAt(document).mode;
   const chatbot = dependencies.getCandidateChatbot(projectSnapshotAt(document).assistantId);
   const failureSummaries: string[] = [];
   let correction: string | undefined;
@@ -744,8 +744,8 @@ async function submitCandidateFeedback(
           ),
           presentations: await Promise.all(
             generation.result.candidates.map(async ({ manifest }) => {
-              const builder = directModeBuilders[mode];
-              if (!builder) throw new Error(`Mode ${mode} cannot build a direct artifact.`);
+              const builder = modeBuilders[mode].buildPresentation;
+              if (!builder) throw new Error(`Mode ${mode} cannot build a presentation.`);
               const presentation = await builder(
                 JSON.stringify(manifest),
                 1,
@@ -853,7 +853,7 @@ async function runSverlinGeneration(
     operationId: string;
     contextSelection: AiContextSelection;
     presentationCount: 1 | 2;
-    compilationFeedback?: CompilationFeedback;
+    buildFeedback?: BuildFeedback;
   },
   dependencies: ProjectCommandDependencies
 ) {
@@ -863,7 +863,7 @@ async function runSverlinGeneration(
       messages: projectConversationMessages(options.document.events),
       project: projectAiContext(options.document, options.contextSelection),
       attempt: options.attempt,
-      ...(options.compilationFeedback ? { compilationFeedback: options.compilationFeedback } : {})
+      ...(options.buildFeedback ? { buildFeedback: options.buildFeedback } : {})
     });
   } catch (error) {
     return generationPreparationFailure(options, error, dependencies);
@@ -1072,7 +1072,7 @@ async function runPreparedGeneration<Output extends object>(
   }
 }
 
-async function compileCandidateBatch(
+async function buildCandidateBatch(
   options: {
     document: ProjectDocument;
     candidate: string;
@@ -1086,7 +1086,7 @@ async function compileCandidateBatch(
   const entry = snapshot.artifacts[snapshot.entryArtifactId];
   if (!entry) throw new Error('The project has no entry artifact.');
   const source = recordText(options.candidate, entry.content.mediaType);
-  const recorded = await compileProjectSourceBatch(
+  const recorded = await buildProjectSourceBatch(
     {
       document: options.document,
       sourceContent: options.candidate,
@@ -1106,7 +1106,7 @@ async function compileCandidateBatch(
 async function acceptSverlinCandidate(
   options: {
     document: ProjectDocument;
-    recorded: RecordedCompilationBatch;
+    recorded: RecordedBuildBatch;
     generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
     candidate: string;
     operationId: string;
@@ -1135,7 +1135,7 @@ async function acceptSverlinCandidate(
     ],
     dependencies.projectService
   );
-  document = await activateCompiledPresentations(
+  document = await activateBuiltPresentations(
     { ...options.recorded, document },
     dependencies.projectService,
     options.generationEvent.actor
@@ -1167,10 +1167,10 @@ async function advanceCandidatesForAgent(
   if (remaining.length < presentationCount) {
     const snapshot = projectSnapshotAt(document);
     const artifact = snapshot.artifacts[snapshot.entryArtifactId];
-    if (!artifact || snapshot.renderer !== 'sverlin') {
+    if (!artifact || snapshot.mode !== 'sverlin') {
       throw new Error('Only Sverlin projects can generate buffered candidates from source.');
     }
-    const recorded = await compileProjectSourceBatch(
+    const recorded = await buildProjectSourceBatch(
       {
         document,
         sourceContent: artifact.content.text,
@@ -1185,9 +1185,9 @@ async function advanceCandidatesForAgent(
     );
     document = recorded.document;
     if (!batchSucceeded(recorded)) {
-      throw new Error('The next visualization candidates could not be compiled.');
+      throw new Error('The next visualization candidates could not be built.');
     }
-    document = await activateCompiledPresentations(recorded, dependencies.projectService);
+    document = await activateBuiltPresentations(recorded, dependencies.projectService);
     available = presentationBufferState(document, 0).available;
   }
   if (current.length > 0) {
@@ -1300,15 +1300,15 @@ function generatedReplyText(reply: GeneratedMessageContent): string {
     .join(' ');
 }
 
-function batchSucceeded(batch: RecordedCompilationBatch): boolean {
-  return batch.compilations.length > 0 && batch.compilations.every(({ result }) => result.ok);
+function batchSucceeded(batch: RecordedBuildBatch): boolean {
+  return batch.builds.length > 0 && batch.builds.every(({ result }) => result.ok);
 }
 
 function firstFailure(
-  batch: RecordedCompilationBatch
-): Extract<RecordedCompilation, { result: { ok: false } }> | undefined {
-  return batch.compilations.find(({ result }) => !result.ok) as
-    | Extract<RecordedCompilation, { result: { ok: false } }>
+  batch: RecordedBuildBatch
+): Extract<RecordedBuild, { result: { ok: false } }> | undefined {
+  return batch.builds.find(({ result }) => !result.ok) as
+    | Extract<RecordedBuild, { result: { ok: false } }>
     | undefined;
 }
 
@@ -1387,7 +1387,7 @@ function appendExhaustedSverlinFailure(
 ) {
   return appendSystemFailure(
     document,
-    `I could not make the requested visualization compile after several repairs and a simpler fallback, so I kept the last working visualization.${finalDifficulty ? ` The remaining difficulty was: ${plainFailureSummary(finalDifficulty)}` : ''}`,
+    `I could not build the requested visualization after several repairs and a simpler fallback, so I kept the last working visualization.${finalDifficulty ? ` The remaining difficulty was: ${plainFailureSummary(finalDifficulty)}` : ''}`,
     operationId,
     dependencies
   );

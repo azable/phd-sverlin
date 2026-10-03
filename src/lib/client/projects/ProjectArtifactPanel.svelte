@@ -124,7 +124,7 @@
             {#if session.pending?.type === 'save'}
               <Spinner data-icon="inline-start" />Compiling
             {:else}
-              <SaveIcon data-icon="inline-start" />Save & render
+              <SaveIcon data-icon="inline-start" />Save & build
             {/if}
           </Button>
         {/if}

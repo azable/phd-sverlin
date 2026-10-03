@@ -48,19 +48,19 @@ export type AiWorkspace = {
 };
 
 /** Compact identity of one activated visualization. */
-export type AiRenderSummary = {
-  id: EventId;
+export type AiPresentationSummary = {
+  eventId: EventId;
   presentationId: string;
-  seed: number;
+  seed?: number;
   sourceSha256: string;
-  renderSha256: string;
+  contentSha256: string;
 };
 
 /** Full details resolved for an event explicitly selected by the user. */
 export type AiEventDetail = {
   event: ProjectEvent;
   workspace: AiWorkspace;
-  activePresentations: AiRenderSummary[];
+  activePresentations: AiPresentationSummary[];
 };
 
 /** Explicit expansion request supplied by the feedback command. */
@@ -92,12 +92,9 @@ export type AiInteraction =
     };
 
 /** Compact retained presentation explicitly visible when the user submitted feedback. */
-export type AiSelectedPresentation = {
-  eventId: EventId;
+export type AiSelectedPresentation = AiPresentationSummary & {
   displaySetId?: string;
-  presentationId: string;
   format: RenderablePresentation['format'];
-  renderSummary?: AiRenderSummary;
   steps: Array<{ label: string }>;
 };
 
@@ -107,7 +104,7 @@ export type AiProjectContext = {
   title: string;
   headEventId: EventId;
   currentWorkspace: AiWorkspace;
-  activePresentations: AiRenderSummary[];
+  activePresentations: AiPresentationSummary[];
   interfaceCapabilities: string[];
   interaction: AiInteraction;
   timelineWindow: {
@@ -122,7 +119,7 @@ export type AiProjectContext = {
 };
 
 // The bounded five-call repair ladder can emit at most 30 generation and
-// two-seed compilation events. Forty-eight retains that full ladder plus its
+// two-seed build events. Forty-eight retains that full ladder plus its
 // surrounding interaction events without resending an unbounded event log.
 const recentTimelineEventLimit = 48;
 
@@ -150,12 +147,12 @@ const timelineCases = {
     `Generation attempt ${event.payload.attempt} succeeded in ${event.payload.durationMs} ms with ${event.payload.model ?? event.payload.requestedModel}; response ${shortHash(event.payload.response.sha256)}.`,
   'ai.generation-failed': (event) =>
     `Generation attempt ${event.payload.attempt} failed (${event.payload.failureKind}): ${event.payload.message}`,
-  'compilation.requested': (event) =>
-    `Requested ${event.payload.purpose} compilation of ${event.payload.sourceLabel} at seed ${event.payload.seed}; source ${shortHash(event.payload.source.sha256)}.`,
-  'compilation.succeeded': (event) =>
-    `Compilation succeeded in ${event.payload.durationMs} ms; render ${shortHash(event.payload.render.sha256)}.`,
-  'compilation.failed': (event) =>
-    `Compilation failed (${event.payload.failureKind}) with ${event.payload.diagnostics.length} diagnostic(s).`,
+  'build.requested': (event) =>
+    `Requested ${event.payload.purpose} build of ${event.payload.sourceLabel} at seed ${event.payload.seed}; source ${shortHash(event.payload.source.sha256)}.`,
+  'build.succeeded': (event) =>
+    `Build succeeded in ${event.payload.durationMs} ms; bundle ${shortHash(event.payload.bundle.sha256)}.`,
+  'build.failed': (event) =>
+    `Build failed (${event.payload.failureKind}) with ${event.payload.diagnostics.length} diagnostic(s).`,
   'artifact.version-created': (event) =>
     `Created ${event.payload.origin.kind} artifact version with ${event.payload.changes.length} change(s).`,
   'visualization.presented': (event) =>
@@ -180,9 +177,9 @@ const conversationCases = {
   'ai.generation-requested': () => [],
   'ai.generation-succeeded': () => [],
   'ai.generation-failed': () => [],
-  'compilation.requested': () => [],
-  'compilation.succeeded': () => [],
-  'compilation.failed': () => [],
+  'build.requested': () => [],
+  'build.succeeded': () => [],
+  'build.failed': () => [],
   'artifact.version-created': () => [],
   'visualization.presented': () => [],
   'visualization.preference-recorded': (event) => [
@@ -302,15 +299,10 @@ function selectedPresentation(document: ProjectDocument, id: string): AiSelected
       event.payload.presentation.presentationId === id
     ) {
       const presentation = event.payload.presentation;
-      const common = {
-        eventId: event.id,
-        displaySetId: event.payload.displaySetId,
-        presentationId: presentation.presentationId,
-        format: presentation.format
-      };
       return {
-        ...common,
-        renderSummary: renderSummary(event),
+        ...presentationSummary(event),
+        displaySetId: event.payload.displaySetId,
+        format: presentation.format,
         steps: presentationStepLabels(presentation).map((label) => ({ label }))
       };
     }
@@ -350,27 +342,22 @@ function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
   return details.filter(Boolean).join('\n\n');
 }
 
-function renderSummary(
+function presentationSummary(
   event: ProjectEventOf<'visualization.presented'>
-): AiRenderSummary | undefined {
+): AiPresentationSummary {
   const presentation = event.payload.presentation;
-  if (presentation.format === 'browser-bundle-v1') {
-    return {
-      id: event.id,
-      presentationId: presentation.presentationId,
-      seed: presentation.seed,
-      sourceSha256: presentation.source.sha256,
-      renderSha256: presentation.javascript.sha256
-    };
-  }
-  return undefined;
+  const scripted = presentation.format === 'browser-bundle-v1';
+  return {
+    eventId: event.id,
+    presentationId: presentation.presentationId,
+    ...(scripted ? { seed: presentation.seed } : {}),
+    sourceSha256: (scripted ? presentation.source : presentation.authored).sha256,
+    contentSha256: (scripted ? presentation.javascript : presentation.rendered).sha256
+  };
 }
 
-function activePresentationSummaries(snapshot: ProjectSnapshot): AiRenderSummary[] {
-  return (snapshot.activePresentationSet?.presentations ?? []).flatMap((event) => {
-    const summary = renderSummary(event);
-    return summary ? [summary] : [];
-  });
+function activePresentationSummaries(snapshot: ProjectSnapshot): AiPresentationSummary[] {
+  return (snapshot.activePresentationSet?.presentations ?? []).map(presentationSummary);
 }
 
 function shortHash(sha256: string): string {

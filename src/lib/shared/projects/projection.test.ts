@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   InvalidProjectDocumentError,
-  normalizeProjectEventV2,
+  normalizeProjectEvent,
   type ProjectEvent,
   type ProjectEventOf
 } from './events';
-import { normalizeProjectV2, parseProjectCommand, type ProjectDocument } from './model';
+import { normalizeProject, parseProjectCommand, type ProjectDocument } from './model';
 import { projectSnapshotAt, summarizeProject } from './projection';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
@@ -16,14 +16,14 @@ const hash = '0'.repeat(64);
 const recorded = { text: '{}', sha256: hash, mediaType: 'application/json' };
 
 describe('project model and projection', () => {
-  it('accepts only version-two documents with stable 1-based event IDs', () => {
+  it('accepts only version-one documents with stable 1-based event IDs', () => {
     const document = documentWithHistory();
-    expect(normalizeProjectV2(document)).toEqual(document);
-    expect(() => normalizeProjectV2({ ...document, schemaVersion: 1 })).toThrow(
+    expect(normalizeProject(document)).toEqual(document);
+    expect(() => normalizeProject({ ...document, schemaVersion: 0 })).toThrow(
       InvalidProjectDocumentError
     );
     expect(() =>
-      normalizeProjectV2({
+      normalizeProject({
         ...document,
         events: document.events.map((event, index) => (index === 2 ? { ...event, id: 4 } : event))
       })
@@ -32,7 +32,7 @@ describe('project model and projection', () => {
 
   it('validates structured presentation references', () => {
     expect(() =>
-      normalizeProjectEventV2({ ...documentWithHistory().events[0], operationId: 'not-a-uuid' })
+      normalizeProjectEvent({ ...documentWithHistory().events[0], operationId: 'not-a-uuid' })
     ).toThrow(InvalidProjectDocumentError);
 
     expect(
@@ -56,7 +56,7 @@ describe('project model and projection', () => {
       operationId,
       actor: { kind: 'system' },
       createdAt: '2026-01-01T00:00:02.000Z',
-      type: 'compilation.requested',
+      type: 'build.requested',
       payload: {
         purpose: 'manual-edit',
         input: 'committed-artifact',
@@ -65,9 +65,9 @@ describe('project model and projection', () => {
         seed: 1
       }
     };
-    expect(normalizeProjectEventV2(request)).toEqual(request);
+    expect(normalizeProjectEvent(request)).toEqual(request);
     expect(() =>
-      normalizeProjectEventV2({
+      normalizeProjectEvent({
         ...request,
         payload: {
           ...request.payload,
@@ -107,7 +107,7 @@ describe('project model and projection', () => {
 function documentWithHistory(): ProjectDocument {
   const edited = { ...recorded, text: 'edited', sha256: '1'.repeat(64) };
   return {
-    schemaVersion: 2,
+    schemaVersion: 1,
     projectId: 'project-test',
     events: [
       event(1, 'project.created', {

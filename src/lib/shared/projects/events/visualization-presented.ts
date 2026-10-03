@@ -1,4 +1,4 @@
-/** Renderer-neutral visualization presentation and preference event contracts. */
+/** Mode-neutral visualization presentation and preference event contracts. */
 
 import * as v from 'valibot';
 

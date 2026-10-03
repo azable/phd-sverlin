@@ -57,7 +57,7 @@ export const load: PageServerLoad = async ({ locals }) => {
           definition,
           {
             id: `configured:${definition.id}:${definition.version}`,
-            mode: 'participant',
+            kind: 'participant',
             studyId: definition.id,
             studyVersion: definition.version,
             armId: definition.assignment.tieBreakOrder[0]!,

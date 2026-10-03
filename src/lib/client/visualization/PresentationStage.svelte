@@ -32,10 +32,10 @@
   let preferencePending = $state<string>();
 
   const visualizationOperationKinds: readonly ProjectOperationKind[] = [
-    'initial-render',
+    'initial-build',
     'feedback',
     'prefer',
-    'render',
+    'rebuild',
     'resample',
     'save',
     'restore'
@@ -197,7 +197,7 @@
         Next pair
       </Button>
     {/if}
-    {#if !selection.buffered && session.snapshot.renderer === 'sverlin'}
+    {#if !selection.buffered && session.snapshot.mode === 'sverlin'}
       <Button
         size="sm"
         variant="outline"

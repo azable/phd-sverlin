@@ -5,10 +5,7 @@ import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { auth } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
-import {
-  assertNoActiveProjectOperations,
-  assertProjectOperationsIdle
-} from '$lib/server/projects/operations';
+import { assertNoActiveProjectOperations } from '$lib/server/projects/repository';
 import { setParticipantEnabled } from '$lib/server/participants';
 
 export async function purgeParticipantResearchData(
@@ -26,7 +23,7 @@ export async function purgeParticipantResearchData(
 }
 
 export async function purgeStudyResearchData(headers: Headers): Promise<number> {
-  await assertProjectOperationsIdle();
+  await assertNoActiveProjectOperations();
   const participants = await database()
     .select({ id: schema.user.id, name: schema.user.name, username: schema.user.username })
     .from(schema.user)

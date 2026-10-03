@@ -141,7 +141,7 @@
   const busy = $derived(!!session.pending || session.creating);
   const mutationsDisabled = $derived(busy || expired || session.readOnly || editMode === 'editing');
   const presentationCount = $derived<1 | 2>(
-    session.loaded && session.snapshot.renderer === 'sverlin' && layout === 'comparison' ? 2 : 1
+    session.loaded && session.snapshot.mode === 'sverlin' && layout === 'comparison' ? 2 : 1
   );
   const visiblePresentations = $derived(presentationSelection.selected(session.events, layout));
   const playbackContext = $derived(presentationPlaybackContext(visiblePresentations));

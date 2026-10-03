@@ -7,7 +7,7 @@
 import type { EventId, ProjectEvent, ProjectEventOf, ProjectEventType } from './events';
 import type { ProjectDocument, ProjectSnapshot, ProjectSummary } from './model';
 import { defaultAssistantId } from '$lib/shared/assistants';
-import { defaultProjectCreation, projectCreationRenderer } from './creation';
+import { defaultProjectCreation, projectCreationMode } from './creation';
 
 type SnapshotDraft = Omit<ProjectSnapshot, 'at'>;
 type StateTransition<Type extends ProjectEventType> =
@@ -23,7 +23,7 @@ const stateTransitions = {
     state.entryArtifactId = event.payload.entryArtifactId;
     state.assistantId = event.payload.assistantId;
     state.creation = event.payload.creation;
-    state.renderer = projectCreationRenderer(state.creation);
+    state.mode = projectCreationMode(state.creation);
   },
   'project.renamed': (state, event) => {
     state.title = event.payload.title;
@@ -39,9 +39,9 @@ const stateTransitions = {
   'ai.generation-requested': null,
   'ai.generation-succeeded': null,
   'ai.generation-failed': null,
-  'compilation.requested': null,
-  'compilation.succeeded': null,
-  'compilation.failed': null,
+  'build.requested': null,
+  'build.succeeded': null,
+  'build.failed': null,
   'artifact.version-created': (state, event) => {
     state.activePresentationSet = undefined;
     for (const change of event.payload.changes) {
@@ -84,7 +84,7 @@ export function projectSnapshotAt(
     entryArtifactId: '',
     assistantId: defaultAssistantId('sverlin'),
     creation: defaultProjectCreation,
-    renderer: 'sverlin',
+    mode: projectCreationMode(defaultProjectCreation),
     artifacts: {}
   };
   for (const event of document.events.slice(0, at)) applyProjectEvent(state, event);
@@ -101,7 +101,7 @@ export function summarizeProject(document: ProjectDocument): ProjectSummary {
     updatedAt: projectHead(document).createdAt,
     eventCount: document.events.length,
     templateId: snapshot.creation.templateId,
-    renderer: snapshot.renderer
+    mode: snapshot.mode
   };
 }
 

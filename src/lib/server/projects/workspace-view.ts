@@ -1,7 +1,8 @@
-import type {
-  ProjectDocument,
-  ProjectSummary,
-  WorkspaceResource
+import {
+  projectSchemaVersion,
+  type ProjectDocument,
+  type ProjectSummary,
+  type WorkspaceResource
 } from '$lib/shared/projects/model';
 import type { PresentationLayout, WorkspaceView } from '$lib/shared/presentations';
 
@@ -17,7 +18,7 @@ export function projectWorkspace(options: {
   at?: number;
 }): WorkspaceResource {
   return {
-    schemaVersion: 2,
+    schemaVersion: projectSchemaVersion,
     projectId: options.document.projectId,
     document: options.document,
     view: options.view,

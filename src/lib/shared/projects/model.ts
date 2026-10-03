@@ -35,9 +35,12 @@ import {
 import { messageContentSchema } from './events/message-content';
 import { projectTemplateIdSchema, type ProjectCreation } from './creation';
 
+/** Current project document and transport format version. */
+export const projectSchemaVersion = 1;
+
 /** Runtime schema for a complete persisted project document. */
 export const projectDocumentSchema = v.object({
-  schemaVersion: v.literal(2),
+  schemaVersion: v.literal(projectSchemaVersion),
   projectId: textSchema,
   events: v.pipe(v.array(projectEventSchema), v.minLength(1))
 });
@@ -49,7 +52,7 @@ export const projectSummarySchema = v.object({
   updatedAt: v.pipe(v.string(), v.isoTimestamp()),
   eventCount: naturalSchema,
   templateId: projectTemplateIdSchema,
-  renderer: v.optional(visualizationModeSchema)
+  mode: visualizationModeSchema
 });
 
 /** Runtime schema for the complete project API resource. */
@@ -75,7 +78,7 @@ export const projectCommandSchema = v.variant('type', [
     type: v.literal('advance-presentations'),
     presentations: v.pipe(v.array(presentationIdSchema), v.minLength(1), v.maxLength(2))
   }),
-  v.strictObject({ ...commandBase, type: v.literal('render'), seed: positiveSchema }),
+  v.strictObject({ ...commandBase, type: v.literal('rebuild'), seed: positiveSchema }),
   v.strictObject({
     ...commandBase,
     type: v.literal('resample'),
@@ -124,7 +127,7 @@ export type ProjectSnapshot = {
   entryArtifactId: ArtifactId;
   assistantId: AssistantId;
   creation: ProjectCreation;
-  renderer: VisualizationMode;
+  mode: VisualizationMode;
   artifacts: Record<ArtifactId, ProjectArtifact>;
   activePresentationSet?: {
     displaySetId: string;
@@ -134,7 +137,7 @@ export type ProjectSnapshot = {
 
 /** Authorized workspace response with the complete immutable project Timeline. */
 export type WorkspaceResource = {
-  schemaVersion: 2;
+  schemaVersion: typeof projectSchemaVersion;
   projectId: ProjectId;
   document: ProjectDocument;
   view: v.InferOutput<typeof workspaceViewSchema>;
@@ -161,8 +164,8 @@ export type ProjectCommandResult = {
   appendedEvents: ProjectEvent[];
 };
 
-/** Parse and validate a complete version-two project document. */
-export function normalizeProjectV2(value: unknown): ProjectDocument {
+/** Parse and validate a complete project document. */
+export function normalizeProject(value: unknown): ProjectDocument {
   const parsed = v.safeParse(projectDocumentSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   validateEventIds(parsed.output);
@@ -170,7 +173,7 @@ export function normalizeProjectV2(value: unknown): ProjectDocument {
 }
 
 /** Parse and validate a complete project transport resource. */
-export function normalizeProjectResourceV2(value: unknown): ProjectResource {
+export function normalizeProjectResource(value: unknown): ProjectResource {
   const parsed = v.safeParse(projectResourceSchema, value);
   if (!parsed.success) throw new InvalidProjectDocumentError(v.summarize(parsed.issues));
   validateEventIds(parsed.output.document);

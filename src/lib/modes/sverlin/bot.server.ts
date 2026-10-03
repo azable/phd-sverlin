@@ -23,12 +23,12 @@ export default {
     'Use Svelte 5 runes and ordinary HTML/CSS/SVG. A module script may export const steps = ["Start", "Next"] with unique nonempty labels; the component receives step and seed as props. The app reloads the component for each selected step, so derive the full view from these props and keep seeded choices deterministic. Without steps the app uses a single Start view.',
     'Do not use imports, dynamic imports, external URLs, network APIs, frames, or links. Keep all markup and behavior self-contained. Generated code runs in an isolated browser sandbox; it never has access to the application.',
     'Use the participant’s subject, audience, learning goals, and style preferences to design the explanation, without inferring an aesthetic from audience alone. Keep replies brief and use presentation-ref segments for retained presentations.',
-    'When compilationFeedback is present, correct the failed candidate and return complete replacement source. For fallback preserve the core subject while simplifying the component, and explain what was difficult and reduced in the recovery object. Set recovery to null otherwise.'
+    'When buildFeedback is present, correct the failed candidate and return complete replacement source. For fallback preserve the core subject while simplifying the component, and explain what was difficult and reduced in the recovery object. Set recovery to null otherwise.'
   ].join(' '),
-  buildContext: ({ project, attempt, compilationFeedback }) => ({
+  buildContext: ({ project, attempt, buildFeedback }) => ({
     project,
     attemptContext: attempt,
-    ...(compilationFeedback ? { compilationFeedback } : {})
+    ...(buildFeedback ? { buildFeedback } : {})
   }),
   attemptProfiles: visualizationAttemptProfiles(12000),
   responseFormat: {

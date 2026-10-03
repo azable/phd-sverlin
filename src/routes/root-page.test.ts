@@ -78,7 +78,7 @@ describe('application root', () => {
               title: 'Administrator project',
               updatedAt: '2026-08-30T00:00:00.000Z',
               eventCount: 1,
-              renderer: 'sverlin'
+              mode: 'sverlin'
             }
           ],
           templates: [
