@@ -1,0 +1,378 @@
+/**
+ * AI-owned projections from complete project history into bounded model context.
+ *
+ * The event document remains lossless. This module deliberately gives the model
+ * a compact index, the current source, and details for explicitly selected events.
+ *
+ * @packageDocumentation
+ */
+
+import {
+  matchProjectEvent,
+  type EventId,
+  type ProjectEvent,
+  type ProjectEventCases,
+  type ProjectEventOf,
+  type ProjectEventType
+} from '$lib/shared/projects/events';
+import { plainMessageText } from '$lib/shared/projects/events/message-content';
+import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
+import type { RenderablePresentation } from '$lib/shared/presentations';
+import { presentationStepLabels } from '$lib/shared/presentations';
+import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
+import type { ConversationMessage } from '$lib/server/chat-bots/types';
+
+/** Compact, body-free entry that lets the AI identify one retained event. */
+export type AiTimelineEntry = {
+  id: EventId;
+  type: ProjectEventType;
+  actor: ProjectEvent['actor'];
+  createdAt: string;
+  operationId: string;
+  summary: string;
+};
+
+/** Immutable source artifact exposed to the AI. */
+export type AiArtifact = {
+  artifactId: string;
+  path: string;
+  language: 'svelte' | 'json';
+  source: string;
+  sha256: string;
+};
+
+/** Source state at one event position. */
+export type AiWorkspace = {
+  entryArtifactId: string;
+  artifacts: AiArtifact[];
+};
+
+/** Compact identity of one activated visualization. */
+export type AiRenderSummary = {
+  id: EventId;
+  presentationId: string;
+  seed: number;
+  sourceSha256: string;
+  renderSha256: string;
+};
+
+/** Full details resolved for an event explicitly selected by the user. */
+export type AiEventDetail = {
+  event: ProjectEvent;
+  workspace: AiWorkspace;
+  activePresentations: AiRenderSummary[];
+};
+
+/** Explicit expansion request supplied by the feedback command. */
+export type AiContextSelection = {
+  eventIds: readonly EventId[];
+  presentationIds?: readonly string[];
+  interactionEventIds?: readonly EventId[];
+};
+
+/** Why the current assistant turn was started. */
+export type AiInteraction =
+  | { kind: 'feedback'; eventIds: EventId[] }
+  | {
+      kind: 'preference';
+      eventId: EventId;
+      preferredPresentationId: string;
+      alternativePresentationId: string;
+      step: number;
+    }
+  | {
+      kind: 'batch';
+      eventIds: EventId[];
+      preferences: Array<{
+        eventId: EventId;
+        preferredPresentationId: string;
+        alternativePresentationId: string;
+        step: number;
+      }>;
+    };
+
+/** Compact retained presentation explicitly visible when the user submitted feedback. */
+export type AiSelectedPresentation = {
+  eventId: EventId;
+  displaySetId?: string;
+  presentationId: string;
+  format: RenderablePresentation['format'];
+  renderSummary?: AiRenderSummary;
+  steps: Array<{ label: string }>;
+};
+
+/** Strongly typed, consumer-specific context supplied to the AI assistant. */
+export type AiProjectContext = {
+  projectId: string;
+  title: string;
+  headEventId: EventId;
+  currentWorkspace: AiWorkspace;
+  activePresentations: AiRenderSummary[];
+  interfaceCapabilities: string[];
+  interaction: AiInteraction;
+  timelineWindow: {
+    totalEventCount: number;
+    omittedEventCount: number;
+  };
+  timeline: AiTimelineEntry[];
+  selected: {
+    events: AiEventDetail[];
+    presentations: AiSelectedPresentation[];
+  };
+};
+
+// The bounded five-call repair ladder can emit at most 30 generation and
+// two-seed compilation events. Forty-eight retains that full ladder plus its
+// surrounding interaction events without resending an unbounded event log.
+const recentTimelineEventLimit = 48;
+
+const timelineCases = {
+  'project.created': (event) => `Created project “${event.payload.title}”.`,
+  'project.renamed': (event) =>
+    `Renamed project from “${event.payload.previousTitle}” to “${event.payload.title}”.`,
+  'operation.accepted': (event) => `Accepted ${event.payload.kind} operation.`,
+  'operation.completed': (event) => `Completed ${event.payload.kind} operation.`,
+  'operation.failed': (event) =>
+    `${event.payload.kind} operation failed (${event.payload.failureKind}): ${event.payload.message}`,
+  'feedback.submitted': (event) =>
+    `Submitted structured feedback with ${event.payload.content.length} segment(s)${event.payload.focus.length ? ` focused on events ${event.payload.focus.join(', ')}` : ''}.`,
+  'assistant.turn-requested': (event) =>
+    `Queued assistant consideration of interaction ${event.payload.interactionEventId}.`,
+  'assistant.turn-started': (event) =>
+    `Started assistant consideration of interactions ${event.payload.interactionEventIds.join(', ')}.`,
+  'assistant.intake-completed': (event) =>
+    `Completed participant intake (${event.payload.outcome}) at interaction ${event.payload.interactionEventId}.`,
+  'visualization.candidates-advanced': (event) =>
+    `Advanced past presentations ${event.payload.presentations.join(', ')} (${event.payload.reason}).`,
+  'ai.generation-requested': (event) =>
+    `Requested ${event.payload.purpose} generation attempt ${event.payload.attempt} from ${event.payload.requestedModel}; prompt ${shortHash(event.payload.prompt.sha256)}.`,
+  'ai.generation-succeeded': (event) =>
+    `Generation attempt ${event.payload.attempt} succeeded in ${event.payload.durationMs} ms with ${event.payload.model ?? event.payload.requestedModel}; response ${shortHash(event.payload.response.sha256)}.`,
+  'ai.generation-failed': (event) =>
+    `Generation attempt ${event.payload.attempt} failed (${event.payload.failureKind}): ${event.payload.message}`,
+  'compilation.requested': (event) =>
+    `Requested ${event.payload.purpose} compilation of ${event.payload.sourceLabel} at seed ${event.payload.seed}; source ${shortHash(event.payload.source.sha256)}.`,
+  'compilation.succeeded': (event) =>
+    `Compilation succeeded in ${event.payload.durationMs} ms; render ${shortHash(event.payload.render.sha256)}.`,
+  'compilation.failed': (event) =>
+    `Compilation failed (${event.payload.failureKind}) with ${event.payload.diagnostics.length} diagnostic(s).`,
+  'artifact.version-created': (event) =>
+    `Created ${event.payload.origin.kind} artifact version with ${event.payload.changes.length} change(s).`,
+  'visualization.presented': (event) =>
+    `Presented ${event.payload.presentation.format} visualization ${event.payload.presentation.presentationId} in display set ${event.payload.displaySetId}.`,
+  'visualization.preference-recorded': (event) =>
+    `Preferred presentation ${event.payload.preferred} over ${event.payload.presentations.find((id) => id !== event.payload.preferred) ?? 'the alternative'} at step ${event.payload.step}.`,
+  'assistant.responded': () => 'Assistant responded to the user.',
+  'system.notified': (event) => `System ${event.payload.severity}: ${event.payload.message}`
+} satisfies ProjectEventCases<string>;
+
+const conversationCases = {
+  'project.created': () => [],
+  'project.renamed': () => [],
+  'operation.accepted': () => [],
+  'operation.completed': () => [],
+  'operation.failed': () => [],
+  'feedback.submitted': (event) => [{ role: 'user', content: feedbackMessage(event) } as const],
+  'assistant.turn-requested': () => [],
+  'assistant.turn-started': () => [],
+  'assistant.intake-completed': () => [],
+  'visualization.candidates-advanced': () => [],
+  'ai.generation-requested': () => [],
+  'ai.generation-succeeded': () => [],
+  'ai.generation-failed': () => [],
+  'compilation.requested': () => [],
+  'compilation.succeeded': () => [],
+  'compilation.failed': () => [],
+  'artifact.version-created': () => [],
+  'visualization.presented': () => [],
+  'visualization.preference-recorded': (event) => [
+    {
+      role: 'user',
+      content: `I preferred presentation ${event.payload.preferred} over the alternative${event.payload.displaySetId ? ` in display set ${event.payload.displaySetId}` : ''} at step ${event.payload.step}.`
+    } as const
+  ],
+  'assistant.responded': (event) => [
+    {
+      role: 'assistant',
+      content: `${event.payload.inReplyTo?.length ? `[In reply to interaction events ${event.payload.inReplyTo.join(', ')}]\n` : ''}${plainMessageText(event.payload.content)}`
+    } as const
+  ],
+  'system.notified': () => []
+} satisfies ProjectEventCases<ConversationMessage[]>;
+
+/** Project one immutable event into the AI's compact, body-free timeline index. */
+export function projectAiTimelineEntry(event: ProjectEvent): AiTimelineEntry {
+  return {
+    id: event.id,
+    type: event.type,
+    actor: event.actor,
+    createdAt: event.createdAt,
+    operationId: event.operationId,
+    summary: matchProjectEvent(event, timelineCases)
+  };
+}
+
+/** Project event history into conversational user and assistant messages. */
+export function projectConversationMessages(
+  events: readonly ProjectEvent[]
+): ConversationMessage[] {
+  return events.flatMap((event) =>
+    matchProjectEvent<ConversationMessage[]>(event, conversationCases)
+  );
+}
+
+/** Build the pure, explicitly bounded project context supplied to the AI assistant. */
+export function projectAiContext(
+  document: ProjectDocument,
+  selection: AiContextSelection = { eventIds: [] }
+): AiProjectContext {
+  const snapshot = projectSnapshotAt(document);
+  const interaction = assistantInteraction(document, selection.interactionEventIds ?? []);
+  const timelineEvents = document.events.slice(-recentTimelineEventLimit);
+
+  return {
+    projectId: document.projectId,
+    title: snapshot.title,
+    headEventId: projectHead(document).id,
+    currentWorkspace: projectWorkspace(snapshot),
+    activePresentations: activePresentationSummaries(snapshot),
+    interaction,
+    timelineWindow: {
+      totalEventCount: document.events.length,
+      omittedEventCount: document.events.length - timelineEvents.length
+    },
+    interfaceCapabilities: [
+      'The application owns previous/next step playback controls; never draw replacement controls inside a visualization.',
+      'The participant can select compatible retained Sverlin presentations to compare a pair.',
+      'A visible pair has preference controls; participants can reference retained presentations inline in messages.',
+      'Sverlin projects may keep another pair generated ahead of time; ordinary conversation does not advance the visible pair.'
+    ],
+    timeline: timelineEvents.map(projectAiTimelineEntry),
+    selected: {
+      events: selection.eventIds.map((id) => eventDetail(document, id)),
+      presentations: (selection.presentationIds ?? []).map((id) =>
+        selectedPresentation(document, id)
+      )
+    }
+  };
+}
+
+function assistantInteraction(
+  document: ProjectDocument,
+  eventIds: readonly EventId[]
+): AiInteraction {
+  const interactions = eventIds.map((id) => {
+    const event = document.events[id - 1];
+    if (
+      event?.type !== 'feedback.submitted' &&
+      event?.type !== 'visualization.preference-recorded'
+    ) {
+      throw new Error('The assistant turn references an unknown interaction event.');
+    }
+    return event;
+  });
+  const preferences = interactions.flatMap((event) => {
+    if (event.type !== 'visualization.preference-recorded') return [];
+    const alternativePresentationId = event.payload.presentations.find(
+      (id) => id !== event.payload.preferred
+    );
+    if (!alternativePresentationId) {
+      throw new Error('The preference interaction has no alternative presentation.');
+    }
+    return [
+      {
+        eventId: event.id,
+        preferredPresentationId: event.payload.preferred,
+        alternativePresentationId,
+        step: event.payload.step
+      }
+    ];
+  });
+  if (interactions.length === 1 && preferences[0]) {
+    return { kind: 'preference', ...preferences[0] };
+  }
+  if (interactions.length <= 1) return { kind: 'feedback', eventIds: [...eventIds] };
+  return { kind: 'batch', eventIds: [...eventIds], preferences };
+}
+
+function selectedPresentation(document: ProjectDocument, id: string): AiSelectedPresentation {
+  for (const event of document.events) {
+    if (
+      event.type === 'visualization.presented' &&
+      event.payload.presentation.presentationId === id
+    ) {
+      const presentation = event.payload.presentation;
+      const common = {
+        eventId: event.id,
+        displaySetId: event.payload.displaySetId,
+        presentationId: presentation.presentationId,
+        format: presentation.format
+      };
+      return {
+        ...common,
+        renderSummary: renderSummary(event),
+        steps: presentationStepLabels(presentation).map((label) => ({ label }))
+      };
+    }
+  }
+  throw new Error(`Unknown selected presentation ${id}.`);
+}
+
+function eventDetail(document: ProjectDocument, id: EventId): AiEventDetail {
+  const event = document.events[id - 1];
+  if (!event) throw new Error(`Unknown selected event ${id}.`);
+  const snapshot = projectSnapshotAt(document, id);
+  return {
+    event,
+    workspace: projectWorkspace(snapshot),
+    activePresentations: activePresentationSummaries(snapshot)
+  };
+}
+
+function projectWorkspace(snapshot: ProjectSnapshot): AiWorkspace {
+  return {
+    entryArtifactId: snapshot.entryArtifactId,
+    artifacts: Object.values(snapshot.artifacts).map((artifact) => ({
+      artifactId: artifact.artifactId,
+      path: artifact.path,
+      language: artifact.language,
+      source: artifact.content.text,
+      sha256: artifact.content.sha256
+    }))
+  };
+}
+
+function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {
+  const details = [plainMessageText(event.payload.content)];
+  if (event.payload.focus.length > 0) {
+    details.push(`Focused timeline events: ${event.payload.focus.join(', ')}`);
+  }
+  return details.filter(Boolean).join('\n\n');
+}
+
+function renderSummary(
+  event: ProjectEventOf<'visualization.presented'>
+): AiRenderSummary | undefined {
+  const presentation = event.payload.presentation;
+  if (presentation.format === 'browser-bundle-v1') {
+    return {
+      id: event.id,
+      presentationId: presentation.presentationId,
+      seed: presentation.seed,
+      sourceSha256: presentation.source.sha256,
+      renderSha256: presentation.javascript.sha256
+    };
+  }
+  return undefined;
+}
+
+function activePresentationSummaries(snapshot: ProjectSnapshot): AiRenderSummary[] {
+  return (snapshot.activePresentationSet?.presentations ?? []).flatMap((event) => {
+    const summary = renderSummary(event);
+    return summary ? [summary] : [];
+  });
+}
+
+function shortHash(sha256: string): string {
+  return sha256.slice(0, 12);
+}

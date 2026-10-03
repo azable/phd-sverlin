@@ -1,9 +1,6 @@
-import { createHash } from 'node:crypto';
-
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  verifyExportResource,
   writeDataExport,
   type ExportDataSource,
   type ExportSink,
@@ -11,10 +8,8 @@ import {
 } from './data-export';
 
 describe('project data export traversal', () => {
-  it('writes one canonical, resource-verified tree without authentication data', async () => {
-    const bytes = Buffer.from('project resource');
-    const digest = createHash('sha256').update(bytes).digest('hex');
-    const snapshot = fixtureSnapshot(digest, bytes.byteLength);
+  it('writes one canonical project and interaction tree without authentication data', async () => {
+    const snapshot = fixtureSnapshot();
     const files = new Map<string, Uint8Array>();
     const sink: ExportSink = {
       write(pathname, value) {
@@ -71,8 +66,7 @@ describe('project data export traversal', () => {
             deliveryEndsAt: '2026-08-31T11:00:00.000Z'
           }
         ]
-      })),
-      readResource: vi.fn(async () => bytes)
+      }))
     };
 
     const manifest = await writeDataExport(
@@ -91,8 +85,6 @@ describe('project data export traversal', () => {
       'study/phases.json',
       'study/flows.json',
       'projects/project-test/project.json',
-      'projects/project-test/resources.json',
-      `projects/project-test/resources/sha256-${digest}`,
       'interactions/sessions.json',
       'interactions/events.jsonl',
       'sensitive/unsent-feedback-drafts.jsonl',
@@ -104,7 +96,7 @@ describe('project data export traversal', () => {
       ownerCount: 1,
       projectCount: 1
     });
-    expect(manifest.files).toHaveLength(14);
+    expect(manifest.files).toHaveLength(12);
     expect(manifest.interactions).toMatchObject({
       status: 'included',
       sessionCount: 1,
@@ -136,7 +128,6 @@ describe('project data export traversal', () => {
       type: 'projects',
       projectId: 'project-test'
     });
-    expect(source.readResource).toHaveBeenCalledWith('project-test', `sha256-${digest}`);
     const publicInteractions = Buffer.from(files.get('interactions/events.jsonl')!).toString();
     expect(publicInteractions).not.toContain('unsent research draft');
     expect(publicInteractions).toContain('sensitiveDraftRecordId');
@@ -157,15 +148,14 @@ describe('project data export traversal', () => {
   });
 
   it('keeps the primary export usable when interaction collection fails', async () => {
-    const snapshot = fixtureSnapshot('0'.repeat(64), 0);
+    const snapshot = fixtureSnapshot();
     snapshot.projects = [];
     const files = new Map<string, Uint8Array>();
     const source: ExportDataSource = {
       collect: vi.fn(async () => snapshot),
       collectInteractions: vi.fn(async () => {
         throw new Error('telemetry database unavailable');
-      }),
-      readResource: vi.fn(async () => new Uint8Array())
+      })
     };
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
@@ -184,7 +174,7 @@ describe('project data export traversal', () => {
   });
 
   it('reports incomplete sessions, dropped observations, and started projects with no session', async () => {
-    const snapshot = fixtureSnapshot('0'.repeat(64), 0);
+    const snapshot = fixtureSnapshot();
     snapshot.projects = [];
     const files = new Map<string, Uint8Array>();
     const source: ExportDataSource = {
@@ -225,8 +215,7 @@ describe('project data export traversal', () => {
           captureEndedAt: '2026-08-30T11:00:00.000Z',
           deliveryEndsAt: '2026-08-31T11:00:00.000Z'
         }))
-      })),
-      readResource: vi.fn(async () => new Uint8Array())
+      }))
     };
 
     const manifest = await writeDataExport(
@@ -253,20 +242,9 @@ describe('project data export traversal', () => {
       droppedByReason: { 'outbox-limit': 2 }
     });
   });
-
-  it('rejects substituted resource bytes before completing an export', () => {
-    const digest = createHash('sha256').update('expected').digest('hex');
-    expect(() =>
-      verifyExportResource(Buffer.from('wrong'), {
-        resourceId: `sha256-${digest}`,
-        sha256: digest,
-        byteLength: Buffer.byteLength('expected')
-      })
-    ).toThrow(/byte length|SHA-256/);
-  });
 });
 
-function fixtureSnapshot(digest: string, byteLength: number): ExportSnapshot {
+function fixtureSnapshot(): ExportSnapshot {
   return {
     owners: [{ id: 'owner-1', label: 'P001', role: 'user', enabled: true }],
     projects: [
@@ -334,17 +312,7 @@ function fixtureSnapshot(digest: string, byteLength: number): ExportSnapshot {
               }
             }
           ]
-        },
-        resources: [
-          {
-            projectId: 'project-test',
-            resourceId: `sha256-${digest}`,
-            sha256: digest,
-            byteLength,
-            mediaType: 'application/octet-stream',
-            createdAt: '2026-08-30T11:00:00.000Z'
-          }
-        ]
+        }
       }
     ],
     participants: [],

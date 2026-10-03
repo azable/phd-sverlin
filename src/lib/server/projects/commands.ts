@@ -1,4 +1,4 @@
-/** AI-assisted feedback orchestration for Sverlin and direct-HTML projects. */
+/** Mode-neutral AI feedback, candidate validation, and bounded attempt orchestration. */
 
 import { randomUUID } from 'node:crypto';
 
@@ -17,24 +17,22 @@ import {
 } from '$lib/shared/projects/events/message-content';
 import type {
   ArtifactChange,
-  DslRevision,
+  RecordedText,
   VisualSelection
 } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
-import type {
-  HtmlFramesPresentation,
-  HtmlFramesManifest,
-  RenderablePresentation
-} from '$lib/shared/presentations';
+import type { RenderablePresentation } from '$lib/shared/presentations';
+import { presentationMode } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { assistantTurnClaim, projectOperation } from '$lib/shared/projects/operations';
 import {
   getChatbot,
-  getHtmlChatbot,
+  getCandidateChatbot,
   getParticipantIntakeClassifier
 } from '$lib/server/chat-bots/registry';
-import type { HtmlAssistantOutput } from '$lib/server/chat-bots/html-assistant';
+import { modeCatalog } from '$lib/visualization-modes/catalog';
+import { directModeBuilders } from '$lib/visualization-modes/server';
 import {
   nextParticipantIntakeStep,
   participantIntakeStep,
@@ -45,21 +43,21 @@ import {
   projectConversationMessages,
   type AiContextSelection,
   type AiProjectContext
-} from '$lib/server/chat-bots/sverlin-assistant/project-context';
+} from '$lib/server/chat-bots/project-context';
 import type {
   Chatbot,
   ChatbotPrompt,
   ChatbotResult,
+  CandidateAssistantOutput,
   CompilationFeedback,
   GeneratedMessageContent,
   RecoveryExplanation,
   SourceArtifactChatOutput
 } from '$lib/server/chat-bots/types';
-import { formatDiagnosticSummary } from '$lib/server/compiler';
-import { createHtmlPresentation } from '$lib/server/visualization-modes';
 
 import { runProjectCommand } from './command-lock';
-import { readDslRevision, recordText, sourceSha256 } from './fingerprints';
+import { formatDiagnosticSummary } from './diagnostics';
+import { recordText, sourceSha256 } from './fingerprints';
 import { appendProjectPreference } from './presentations';
 import {
   assertCurrentProjectOperationActive,
@@ -78,25 +76,22 @@ import {
   type RecordedCompilation,
   type RecordedCompilationBatch
 } from './service';
-import { resolveProjectVisualSelection } from './visual-selection';
 
 /** Replaceable AI and persistence boundaries used by command unit tests. */
 export type ProjectCommandDependencies = {
   repository: typeof projectRepository;
   projectService: ProjectServiceDependencies;
   getChatbot: typeof getChatbot;
-  getHtmlChatbot: typeof getHtmlChatbot;
+  getCandidateChatbot: typeof getCandidateChatbot;
   getParticipantIntakeClassifier: typeof getParticipantIntakeClassifier;
-  readDslRevision: typeof readDslRevision;
 };
 
 export const defaultProjectCommandDependencies: ProjectCommandDependencies = {
   repository: projectRepository,
   projectService: defaultProjectServiceDependencies,
   getChatbot,
-  getHtmlChatbot,
-  getParticipantIntakeClassifier,
-  readDslRevision
+  getCandidateChatbot,
+  getParticipantIntakeClassifier
 };
 
 /** Validate and durably queue participant feedback without waiting for the assistant. */
@@ -138,7 +133,6 @@ export function queueProjectFeedback(
           }
         })
       ],
-      [],
       dependencies.projectService
     );
     return finishMutation(before, document);
@@ -185,7 +179,6 @@ export function queueProjectPreference(
           }
         })
       ],
-      [],
       dependencies.projectService
     );
     return finishMutation(before, document);
@@ -193,7 +186,7 @@ export function queueProjectPreference(
 }
 
 /** Process one durable claim while allowing new participant interactions to append concurrently. */
-export async function runQueuedSverlinAssistantTurn(
+export async function runQueuedAssistantTurn(
   options: { projectId: string; operationId: string },
   dependencies: ProjectCommandDependencies = defaultProjectCommandDependencies
 ): Promise<ProjectCommandResult> {
@@ -234,10 +227,6 @@ export async function runQueuedSverlinAssistantTurn(
         ...preferences.flatMap((event) => event.payload.presentations)
       ])
     ],
-    visualSelections: deduplicateVisualSelections([
-      ...referencedVisualSelections(content),
-      ...preferences.flatMap((event) => event.payload.visualSelections ?? [])
-    ]),
     interactionEventIds: claim.payload.interactionEventIds
   };
   const presentationCount = Math.max(
@@ -260,14 +249,22 @@ export async function runQueuedSverlinAssistantTurn(
       )
     };
   }
-  const document = await runSverlinAssistantTurn(
-    intake.document,
-    options.operationId,
-    contextSelection,
-    presentationCount,
-    concurrentDependencies,
-    claim.payload.interactionEventIds
-  );
+  const document =
+    projectSnapshotAt(intake.document).renderer === 'sverlin'
+      ? await runSverlinAssistantTurn(
+          intake.document,
+          options.operationId,
+          contextSelection,
+          presentationCount,
+          concurrentDependencies,
+          claim.payload.interactionEventIds
+        )
+      : await submitCandidateFeedback(
+          intake.document,
+          options.operationId,
+          contextSelection,
+          concurrentDependencies
+        );
   return {
     document,
     appendedEvents: document.events.filter(
@@ -309,7 +306,6 @@ async function submitProjectFeedbackUnlocked(
   const focus = validateFocus(before, options.focus);
   const content = await validateMessageContent(before, options.content);
   const presentations = referencedPresentations(content);
-  const visualSelections = referencedVisualSelections(content);
 
   let document = await appendProjectEvents(
     before,
@@ -321,7 +317,6 @@ async function submitProjectFeedbackUnlocked(
         payload: { content, focus }
       })
     ],
-    [],
     dependencies.projectService
   );
   const interaction = document.events.findLast(
@@ -338,14 +333,13 @@ async function submitProjectFeedbackUnlocked(
   );
   document = intake.document;
   if (!intake.author) return finishMutation(before, document);
-  if (projectSnapshotAt(document).renderer === 'html') {
-    document = await submitHtmlFeedback(
+  if (projectSnapshotAt(document).renderer !== 'sverlin') {
+    document = await submitCandidateFeedback(
       document,
       options.operationId,
       {
         eventIds: focus,
-        presentationIds: presentations,
-        visualSelections
+        presentationIds: presentations
       },
       dependencies
     );
@@ -354,8 +348,7 @@ async function submitProjectFeedbackUnlocked(
 
   const contextSelection: AiContextSelection = {
     eventIds: focus,
-    presentationIds: presentations,
-    visualSelections
+    presentationIds: presentations
   };
   document = await runSverlinAssistantTurn(
     document,
@@ -398,7 +391,6 @@ export function submitProjectPreference(
       {
         eventIds: [],
         presentationIds: options.presentations,
-        visualSelections: preference.payload.visualSelections ?? [],
         interactionEventIds: [preference.id]
       },
       2,
@@ -534,7 +526,6 @@ function completeParticipantIntake(
         payload: { interactionEventId, outcome }
       })
     ],
-    [],
     dependencies.projectService
   );
 }
@@ -690,13 +681,14 @@ async function runSverlinAssistantTurn(
   );
 }
 
-async function submitHtmlFeedback(
+async function submitCandidateFeedback(
   document: ProjectDocument,
   operationId: string,
   contextSelection: AiContextSelection,
   dependencies: ProjectCommandDependencies
 ): Promise<ProjectDocument> {
-  const chatbot = dependencies.getHtmlChatbot(projectSnapshotAt(document).assistantId);
+  const mode = projectSnapshotAt(document).renderer;
+  const chatbot = dependencies.getCandidateChatbot(projectSnapshotAt(document).assistantId);
   const failureSummaries: string[] = [];
   let correction: string | undefined;
 
@@ -706,7 +698,7 @@ async function submitHtmlFeedback(
     chatbot,
     dependencies,
     async (current, attempt) => {
-      const generation = await runHtmlGeneration(
+      const generation = await runCandidateGeneration(
         {
           chatbot,
           document: current,
@@ -736,24 +728,39 @@ async function submitHtmlFeedback(
         failureSummaries.push(summary);
         if (attempt === chatbot.config.attemptProfiles.length) {
           return {
-            document: await appendExhaustedHtmlFailure(
+            document: await appendExhaustedCandidateFailure(
               current,
               operationId,
-              'the generated HTML still did not pass the visualization safety checks',
+              'the generated artifact still did not pass the visualization checks',
               dependencies
             ),
             done: true
           };
         }
-        correction = htmlCorrection([], summary, failureSummaries);
+        correction = candidateCorrection([], summary, failureSummaries);
         return { document: current, done: false };
       }
 
-      let accepted: AcceptedHtmlTurn;
+      let accepted: AcceptedCandidateTurn;
       try {
         accepted = {
-          presentations: generation.result.candidates.map(({ manifest }) =>
-            createHtmlPresentation(manifest, projectHead(current).id)
+          source: recordText(
+            JSON.stringify(generation.result.candidates[0].manifest),
+            modeCatalog[mode].starter.mediaType
+          ),
+          presentations: await Promise.all(
+            generation.result.candidates.map(async ({ manifest }) => {
+              const builder = directModeBuilders[mode];
+              if (!builder) throw new Error(`Mode ${mode} cannot build a direct artifact.`);
+              const presentation = await builder(
+                JSON.stringify(manifest),
+                1,
+                projectHead(current).id
+              );
+              if (presentationMode(presentation) !== mode)
+                throw new Error('The mode builder returned a presentation for a different mode.');
+              return presentation;
+            })
           ),
           reply: replyWithRecovery(generation.result.reply, generation.result.recovery),
           generationEvent: generation.generationEvent
@@ -763,36 +770,37 @@ async function submitHtmlFeedback(
         failureSummaries.push(`Attempt ${attempt}: ${summary}`);
         if (attempt === chatbot.config.attemptProfiles.length) {
           return {
-            document: await appendExhaustedHtmlFailure(
+            document: await appendExhaustedCandidateFailure(
               current,
               operationId,
-              'the generated HTML still did not pass the visualization safety checks',
+              'the generated artifact still did not pass the visualization checks',
               dependencies
             ),
             done: true
           };
         }
-        correction = htmlCorrection(generation.result.candidates, cause, failureSummaries);
+        correction = candidateCorrection(generation.result.candidates, cause, failureSummaries);
         return { document: current, done: false };
       }
       assertCurrentProjectOperationActive();
       return {
-        document: await acceptHtmlTurn(current, accepted, operationId, dependencies),
+        document: await acceptCandidateTurn(current, accepted, operationId, dependencies),
         done: true
       };
     }
   );
 }
 
-type AcceptedHtmlTurn = {
-  presentations: HtmlFramesPresentation[];
+type AcceptedCandidateTurn = {
+  source: RecordedText;
+  presentations: RenderablePresentation[];
   reply: GeneratedMessageContent;
   generationEvent: NewProjectEvent<'ai.generation-succeeded'>;
 };
 
-async function acceptHtmlTurn(
+async function acceptCandidateTurn(
   document: ProjectDocument,
-  accepted: AcceptedHtmlTurn,
+  accepted: AcceptedCandidateTurn,
   operationId: string,
   dependencies: ProjectCommandDependencies
 ): Promise<ProjectDocument> {
@@ -800,7 +808,7 @@ async function acceptHtmlTurn(
   const current = snapshot.artifacts[snapshot.entryArtifactId];
   if (!current) throw new Error('The project has no entry artifact.');
   const first = accepted.presentations[0];
-  if (!first) throw new Error('An accepted HTML turn needs at least one presentation.');
+  if (!first) throw new Error('An accepted candidate turn needs at least one presentation.');
   const displaySetId = randomUUID();
   document = await appendProjectEvents(
     document,
@@ -814,7 +822,11 @@ async function acceptHtmlTurn(
           changes: [
             {
               operation: 'upsert',
-              artifact: { ...current, language: 'json', content: first.authored }
+              artifact: {
+                ...current,
+                language: 'json',
+                content: accepted.source
+              }
             }
           ]
         }
@@ -828,7 +840,6 @@ async function acceptHtmlTurn(
         })
       )
     ],
-    [],
     dependencies.projectService
   );
   return appendAssistantResponse(
@@ -869,7 +880,6 @@ async function runSverlinGeneration(
       attempt: options.attempt,
       operationId: options.operationId,
       prompt,
-      dslRevision: await dependencies.readDslRevision(),
       generate: () =>
         options.chatbot.generatePrepared(prompt, { signal: currentProjectOperationSignal() }),
       validateResult: (result) => {
@@ -900,9 +910,9 @@ async function runSverlinGeneration(
   );
 }
 
-async function runHtmlGeneration(
+async function runCandidateGeneration(
   options: {
-    chatbot: Chatbot<AiProjectContext, HtmlAssistantOutput>;
+    chatbot: Chatbot<AiProjectContext, CandidateAssistantOutput>;
     document: ProjectDocument;
     attempt: number;
     operationId: string;
@@ -924,7 +934,7 @@ async function runHtmlGeneration(
   } catch (error) {
     return generationPreparationFailure(options, error, dependencies);
   }
-  return runPreparedGeneration(
+  return runPreparedGeneration<CandidateAssistantOutput>(
     {
       document: options.document,
       attempt: options.attempt,
@@ -973,7 +983,6 @@ async function generationPreparationFailure(
   const document = await appendProjectEvents(
     options.document,
     [failed],
-    [],
     dependencies.projectService
   );
   return {
@@ -993,7 +1002,6 @@ async function runPreparedGeneration<Output extends object>(
     attempt: number;
     operationId: string;
     prompt: ChatbotPrompt;
-    dslRevision?: DslRevision;
     generate: () => Promise<ChatbotResult<Output>>;
     validateResult: (result: ChatbotResult<Output>) => void;
     fallbackResponse: (result: ChatbotResult<Output>) => unknown;
@@ -1010,7 +1018,6 @@ async function runPreparedGeneration<Output extends object>(
       purpose: options.prompt.attempt.purpose,
       prompt: recordText(JSON.stringify(options.prompt), 'application/json'),
       promptTemplateSha256: sourceSha256(options.prompt.initialPrompt),
-      ...(options.dslRevision ? { dslRevision: options.dslRevision } : {}),
       requestedModel: options.prompt.parameters.model,
       parameters: { ...options.prompt.parameters }
     }
@@ -1018,7 +1025,6 @@ async function runPreparedGeneration<Output extends object>(
   let document = await appendProjectEvents(
     options.document,
     [request],
-    [],
     dependencies.projectService
   );
   const startedAt = performance.now();
@@ -1043,12 +1049,7 @@ async function runPreparedGeneration<Output extends object>(
         )
       }
     });
-    document = await appendProjectEvents(
-      document,
-      [generationEvent],
-      [],
-      dependencies.projectService
-    );
+    document = await appendProjectEvents(document, [generationEvent], dependencies.projectService);
     return { ok: true as const, document, result, generationEvent };
   } catch (error) {
     const details = generationErrorDetails(error);
@@ -1064,7 +1065,7 @@ async function runPreparedGeneration<Output extends object>(
         details: recordText(details.value, details.mediaType)
       }
     });
-    document = await appendProjectEvents(document, [failed], [], dependencies.projectService);
+    document = await appendProjectEvents(document, [failed], dependencies.projectService);
     if (options.notifyFailure !== false) {
       document = await appendSystemFailure(
         document,
@@ -1087,13 +1088,16 @@ async function compileCandidateBatch(
   },
   dependencies: ProjectCommandDependencies
 ) {
-  const source = recordText(options.candidate, 'text/x-sverlin');
+  const snapshot = projectSnapshotAt(options.document);
+  const entry = snapshot.artifacts[snapshot.entryArtifactId];
+  if (!entry) throw new Error('The project has no entry artifact.');
+  const source = recordText(options.candidate, entry.content.mediaType);
   const recorded = await compileProjectSourceBatch(
     {
       document: options.document,
       sourceContent: options.candidate,
       source,
-      sourceLabel: 'Main.sverlin',
+      sourceLabel: entry.path,
       seeds: options.seeds,
       purpose: 'assistant-edit',
       input: 'assistant-candidate',
@@ -1123,7 +1127,7 @@ async function acceptSverlinCandidate(
   if (!current) throw new Error('The project has no entry artifact.');
   const change: ArtifactChange = {
     operation: 'upsert',
-    artifact: { ...current, content: recordText(options.candidate, 'text/x-sverlin') }
+    artifact: { ...current, content: recordText(options.candidate, current.content.mediaType) }
   };
   let document = await appendProjectEvents(
     options.document,
@@ -1135,7 +1139,6 @@ async function acceptSverlinCandidate(
         payload: { origin: { kind: 'assistant-edit' }, changes: [change] }
       })
     ],
-    [],
     dependencies.projectService
   );
   document = await activateCompiledPresentations(
@@ -1207,7 +1210,6 @@ async function advanceCandidatesForAgent(
           }
         })
       ],
-      [],
       dependencies.projectService
     );
     available = presentationBufferState(document, 0).available;
@@ -1239,7 +1241,6 @@ function resolveAssistantContent(
   ).map((segment) => {
     if (segment.type === 'markdown') return segment;
     if (segment.type === 'presentation-ref') return segment;
-    if (segment.type === 'element-ref') return segment;
     const presentation = candidates[segment.slot];
     if (!presentation) {
       throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
@@ -1264,16 +1265,6 @@ function validateGeneratedReply(
       )
     );
     for (const segment of reply) {
-      if (segment.type === 'element-ref') {
-        const resolved = resolveProjectVisualSelection(document, {
-          presentationEvent: segment.presentationEvent,
-          step: segment.step,
-          instances: segment.instances
-        });
-        if (resolved.event.payload.presentation.presentationId !== segment.presentationId) {
-          throw new Error('The assistant element reference does not match its presentation.');
-        }
-      }
       if (segment.type === 'candidate-ref' && segment.slot >= candidateCount) {
         throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
       }
@@ -1310,9 +1301,6 @@ function generatedReplyText(reply: GeneratedMessageContent): string {
     .map((segment) => {
       if (segment.type === 'markdown') return segment.text;
       if (segment.type === 'presentation-ref') return `[Presentation ${segment.presentationId}]`;
-      if (segment.type === 'element-ref') {
-        return `[Elements ${segment.instances.join(', ')} in presentation ${segment.presentationId}, step ${segment.step + 1}]`;
-      }
       return `[Candidate ${segment.slot + 1}]`;
     })
     .join(' ');
@@ -1353,7 +1341,6 @@ function appendAssistantResponse(
         }
       })
     ],
-    [],
     dependencies.projectService
   );
 }
@@ -1381,7 +1368,6 @@ function appendSystemFailure(
         payload: { severity: 'error', message }
       })
     ],
-    [],
     dependencies.projectService
   );
 }
@@ -1413,7 +1399,7 @@ function appendExhaustedSverlinFailure(
   );
 }
 
-function appendExhaustedHtmlFailure(
+function appendExhaustedCandidateFailure(
   document: ProjectDocument,
   operationId: string,
   finalDifficulty: string,
@@ -1515,20 +1501,6 @@ async function validateMessageContent(
     if (!known.has(segment.presentationId)) {
       throw new Error(`Unknown referenced presentation ${segment.presentationId}.`);
     }
-    if (segment.type === 'element-ref') {
-      const resolved = await validateSelection(document, {
-        presentationEvent: segment.presentationEvent,
-        step: segment.step,
-        instances: segment.instances
-      });
-      const event = document.events[resolved.presentationEvent - 1];
-      if (
-        event?.type !== 'visualization.presented' ||
-        event.payload.presentation.presentationId !== segment.presentationId
-      ) {
-        throw new Error('The element reference does not match its presentation.');
-      }
-    }
   }
   return content;
 }
@@ -1539,30 +1511,6 @@ function referencedPresentations(content: MessageContent): string[] {
       content.flatMap((segment) => (segment.type === 'markdown' ? [] : [segment.presentationId]))
     )
   ];
-}
-
-function referencedVisualSelections(content: MessageContent): VisualSelection[] {
-  const selections = new Map<string, VisualSelection>();
-  for (const segment of content) {
-    if (segment.type !== 'element-ref') continue;
-    const selection = {
-      presentationEvent: segment.presentationEvent,
-      step: segment.step,
-      instances: segment.instances
-    } satisfies VisualSelection;
-    selections.set(
-      `${selection.presentationEvent}:${selection.step}:${selection.instances.join(',')}`,
-      selection
-    );
-  }
-  return [...selections.values()];
-}
-
-async function validateSelection(
-  document: ProjectDocument,
-  selection: VisualSelection
-): Promise<VisualSelection> {
-  return resolveProjectVisualSelection(document, selection).selection;
 }
 
 function finishMutation(before: ProjectDocument, document: ProjectDocument): ProjectCommandResult {
@@ -1585,17 +1533,6 @@ function assertAcceptedInteraction(
   }
 }
 
-function deduplicateVisualSelections(selections: readonly VisualSelection[]): VisualSelection[] {
-  const unique = new Map<string, VisualSelection>();
-  for (const selection of selections) {
-    unique.set(
-      `${selection.presentationEvent}:${selection.step}:${selection.instances.join(',')}`,
-      selection
-    );
-  }
-  return [...unique.values()];
-}
-
 function rebasingDependencies(
   dependencies: ProjectCommandDependencies
 ): ProjectCommandDependencies {
@@ -1613,13 +1550,12 @@ function rebasingRepository(repository: ProjectRepository): ProjectRepository {
     create: (document, ownerUserId) => repository.create(document, ownerUserId),
     list: (ownerUserId) => repository.list(ownerUserId),
     load: (projectId) => repository.load(projectId),
-    readResource: (projectId, resourceId) => repository.readResource(projectId, resourceId),
     eventsAfter: (projectId, after) => repository.eventsAfter(projectId, after),
     deleteAll: () => repository.deleteAll(),
-    append: (projectId, _expectedHead, events, resources) =>
+    append: (projectId, _expectedHead, events) =>
       runProjectCommand(projectId, async () => {
         const current = await repository.load(projectId);
-        return repository.append(projectId, projectHead(current).id, events, resources);
+        return repository.append(projectId, projectHead(current).id, events);
       })
   };
 }
@@ -1632,12 +1568,12 @@ function assertHead(document: ProjectDocument, expectedHead: EventId) {
   }
 }
 
-function htmlCorrection(
-  candidates: Array<{ label: string; manifest: HtmlFramesManifest }>,
+function candidateCorrection(
+  candidates: Array<{ label: string; manifest: unknown }>,
   cause: unknown,
   failureSummaries: readonly string[]
 ): string {
-  return `The previous candidate batch failed static safety validation: ${errorMessage(cause)}. Return one complete corrected batch of up to two candidates. Previous candidates: ${JSON.stringify(candidates)}. Failure history: ${JSON.stringify(failureSummaries.map((summary) => summary.slice(0, 2_000)))}`;
+  return `The previous candidate batch failed validation: ${errorMessage(cause)}. Return one complete corrected batch of up to two candidates. Previous candidates: ${JSON.stringify(candidates)}. Failure history: ${JSON.stringify(failureSummaries.map((summary) => summary.slice(0, 2_000)))}`;
 }
 
 function generationFailureKind(error: unknown) {

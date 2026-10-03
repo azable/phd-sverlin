@@ -1,1 +1,0 @@
-ALTER TABLE "study_enrollment" ADD COLUMN "gift_card_url" text;

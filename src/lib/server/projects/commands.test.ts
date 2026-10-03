@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
-import { projectCompilationMetrics } from '$lib/shared/projects/compilation-metrics';
 import { markdownMessage } from '$lib/shared/projects/events/message-content';
 import type { ProjectEventOf } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
-import type { SverlinPresentation } from '$lib/shared/presentations';
+import type { BrowserBundlePresentation } from '$lib/shared/presentations';
 
 import type { ProjectCommandDependencies } from './commands';
 import { MemoryProjectRepository } from './memory-repository.test-support';
@@ -35,8 +34,6 @@ const mocks = vi.hoisted(() => ({
       parameters: { model: 'gpt-5.6-sol', reasoningEffort: 'xhigh' as const }
     }
   ],
-  compileSource: vi.fn(),
-  generateBatch: vi.fn(),
   preparePrompt: vi.fn(),
   generatePrepared: vi.fn()
 }));
@@ -52,7 +49,7 @@ vi.mock('$lib/server/chat-bots/registry', () => ({
     generatePrepared: mocks.generatePrepared,
     requestTimeoutMs: () => 180_000
   }),
-  getHtmlChatbot: () => ({
+  getCandidateChatbot: () => ({
     config: { attemptProfiles: mocks.attemptProfiles },
     preparePrompt: mocks.preparePrompt,
     generatePrepared: mocks.generatePrepared,
@@ -74,11 +71,6 @@ vi.mock('$lib/server/chat-bots/registry', () => ({
   })
 }));
 vi.mock('./fingerprints', () => ({
-  readDslRevision: vi.fn(async () => ({
-    contentSha256: 'f'.repeat(64),
-    repositoryCommit: 'a'.repeat(40),
-    workingTree: 'clean'
-  })),
   sourceSha256: (_value: string) => 'e'.repeat(64),
   recordText: (text: string, mediaType: string) => ({
     text,
@@ -91,89 +83,6 @@ let serviceDependencies: ProjectServiceDependencies;
 let commandDependencies: ProjectCommandDependencies;
 
 beforeEach(() => {
-  mocks.compileSource.mockReset().mockImplementation(async ({ seed, source }) => {
-    const execution = {
-      durationMs: 5,
-      exitCode: source.content.startsWith('broken') ? 1 : 0,
-      stdout: '',
-      stderr: source.content.startsWith('broken') ? 'Main.sverlin:1:1: error: broken' : '',
-      timedOut: false
-    };
-    if (source.content.startsWith('broken')) {
-      return {
-        ok: false,
-        seed,
-        error: 'Compile backend exited with code 1.',
-        execution,
-        failureKind: 'source',
-        diagnostics: [
-          {
-            severity: 'error',
-            sourcePath: 'Main.sverlin',
-            line: 1,
-            column: 1,
-            message: 'broken',
-            raw: 'Main.sverlin:1:1: error: broken'
-          }
-        ]
-      };
-    }
-    return {
-      ok: true,
-      seed,
-      execution,
-      resources: [],
-      targetDiagnostics: [],
-      provenance: {
-        packageVersion: 1,
-        textRunFormatVersion: 2,
-        shapingEngine: 'test',
-        shapingEngineVersion: '1'
-      },
-      visualization: {
-        irVersion: 1,
-        seed,
-        sourcePath: 'Main.sverlin',
-        coordinates: {
-          systemName: 'sverlin-logical-y-down',
-          systemOrigin: 'top-left',
-          systemYAxis: 'down'
-        },
-        root: -1,
-        resources: [],
-        findings: [],
-        variables: [],
-        elements: [
-          {
-            id: -1,
-            role: 'Canvas',
-            box: {
-              bounds: { rectX: 0, rectY: 0, rectWidth: 640, rectHeight: 360 },
-              padding: { top: 0, right: 0, bottom: 0, left: 0 },
-              margin: { top: 0, right: 0, bottom: 0, left: 0 }
-            },
-            children: [0],
-            style: {},
-            styleVariables: []
-          },
-          {
-            id: 0,
-            role: 'Value',
-            box: {
-              bounds: { rectX: 20, rectY: 20, rectWidth: 120, rectHeight: 40 },
-              padding: { top: 0, right: 0, bottom: 0, left: 0 },
-              margin: { top: 0, right: 0, bottom: 0, left: 0 }
-            },
-            children: [],
-            content: { kind: 'legacyTextContent', textSource: 'Value' },
-            style: {},
-            styleVariables: []
-          }
-        ],
-        steps: [{ label: 'Initial view', instances: [{ id: 0, elementId: 0 }] }]
-      }
-    };
-  });
   mocks.preparePrompt.mockReset().mockImplementation(async ({ attempt = 1 }) => {
     const profile = mocks.attemptProfiles[attempt - 1];
     return {
@@ -196,27 +105,10 @@ beforeEach(() => {
           : undefined
       )
     );
-  mocks.generateBatch
-    .mockReset()
-    .mockImplementation(async ({ source, seeds, signal }) =>
-      Promise.all(seeds.map((seed: number) => mocks.compileSource({ source, seed, signal })))
-    );
 
   const repository = new MemoryProjectRepository();
   serviceDependencies = {
-    repository,
-    compiler: {
-      generate: mocks.compileSource,
-      generateBatch: mocks.generateBatch,
-      readiness: vi.fn(),
-      status: vi.fn(),
-      shutdown: vi.fn()
-    },
-    readDslRevision: vi.fn(async () => ({
-      contentSha256: 'f'.repeat(64),
-      repositoryCommit: 'a'.repeat(40),
-      workingTree: 'clean' as const
-    }))
+    repository
   };
   commandDependencies = {
     repository,
@@ -228,13 +120,13 @@ beforeEach(() => {
         generatePrepared: mocks.generatePrepared,
         requestTimeoutMs: () => 180_000
       }) as unknown as ReturnType<ProjectCommandDependencies['getChatbot']>,
-    getHtmlChatbot: () =>
+    getCandidateChatbot: () =>
       ({
         config: { attemptProfiles: mocks.attemptProfiles },
         preparePrompt: mocks.preparePrompt,
         generatePrepared: mocks.generatePrepared,
         requestTimeoutMs: () => 180_000
-      }) as unknown as ReturnType<ProjectCommandDependencies['getHtmlChatbot']>,
+      }) as unknown as ReturnType<ProjectCommandDependencies['getCandidateChatbot']>,
     getParticipantIntakeClassifier: () =>
       ({
         config: {
@@ -249,13 +141,12 @@ beforeEach(() => {
         preparePrompt: mocks.preparePrompt,
         generatePrepared: mocks.generatePrepared,
         requestTimeoutMs: () => 180_000
-      }) as unknown as ReturnType<ProjectCommandDependencies['getParticipantIntakeClassifier']>,
-    readDslRevision: serviceDependencies.readDslRevision
+      }) as unknown as ReturnType<ProjectCommandDependencies['getParticipantIntakeClassifier']>
   };
 });
 
 describe('createProject', () => {
-  it('copies an exact example, records its creation profile, and chooses a valid seed', async () => {
+  it('records its creation profile and bundles a Svelte starter with a valid seed', async () => {
     const { getProjectTemplate } = await import('./starter-catalog');
     const { createProject } = await import('./service');
     const template = getProjectTemplate('linear-search');
@@ -276,15 +167,18 @@ describe('createProject', () => {
     });
     expect(snapshot.assistantId).toBe('sverlin-assistant');
     expect(snapshot.creation).toEqual({ templateId: template.id });
-    expect(snapshot.artifacts[snapshot.entryArtifactId].content.text).toBe(template.source);
+    expect(snapshot.artifacts[snapshot.entryArtifactId]).toMatchObject({
+      path: 'Main.svelte',
+      language: 'svelte'
+    });
     expect(created.events.some(({ type }) => type === 'assistant.responded')).toBe(false);
-    expect(mocks.compileSource).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: expect.objectContaining({ content: template.source }),
-        seed: expect.any(Number)
-      })
-    );
-    const seed = mocks.compileSource.mock.calls[0][0].seed as number;
+    const presentation = created.events.find((event) => event.type === 'visualization.presented');
+    if (
+      presentation?.type !== 'visualization.presented' ||
+      presentation.payload.presentation.format !== 'browser-bundle-v1'
+    )
+      throw new Error('Expected a browser bundle.');
+    const seed = presentation.payload.presentation.seed;
     expect(Number.isSafeInteger(seed)).toBe(true);
     expect(seed).toBeGreaterThan(0);
   });
@@ -334,7 +228,6 @@ describe('participant intake', () => {
       type: 'assistant.responded',
       payload: { intakeStep: 'audience' }
     });
-    expect(mocks.compileSource).not.toHaveBeenCalled();
 
     const audience = await submitProjectFeedback(
       feedbackOptions(
@@ -349,7 +242,6 @@ describe('participant intake', () => {
       type: 'assistant.responded',
       payload: { intakeStep: 'style' }
     });
-    expect(mocks.compileSource).not.toHaveBeenCalled();
 
     mocks.preparePrompt.mockImplementation(async () => generationPrompt('initial'));
     mocks.generatePrepared.mockResolvedValue(
@@ -433,7 +325,6 @@ describe('presentation buffer refill', () => {
       { title: 'Untouched blank', creation: { templateId: 'blank' } },
       serviceDependencies
     );
-    mocks.generateBatch.mockClear();
 
     const unchanged = await replenishProjectPresentations(
       {
@@ -446,7 +337,6 @@ describe('presentation buffer refill', () => {
     );
 
     expect(unchanged.appendedEvents).toEqual([]);
-    expect(mocks.generateBatch).not.toHaveBeenCalled();
   });
 
   it('fills the exact current-source deficit and becomes idempotent at the target', async () => {
@@ -459,7 +349,6 @@ describe('presentation buffer refill', () => {
       },
       serviceDependencies
     );
-    mocks.generateBatch.mockClear();
 
     const filled = await replenishProjectPresentations(
       {
@@ -474,7 +363,6 @@ describe('presentation buffer refill', () => {
     expect(
       filled.appendedEvents.filter(({ type }) => type === 'visualization.presented')
     ).toHaveLength(2);
-    expect(mocks.generateBatch).toHaveBeenCalledTimes(1);
     const unchanged = await replenishProjectPresentations(
       {
         projectId: created.projectId,
@@ -485,7 +373,6 @@ describe('presentation buffer refill', () => {
       serviceDependencies
     );
     expect(unchanged.appendedEvents).toEqual([]);
-    expect(mocks.generateBatch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -540,7 +427,7 @@ describe('submitProjectFeedback', () => {
 
   it('processes a claimed interaction and correlates the early assistant observation', async () => {
     const { createProject } = await import('./service');
-    const { runQueuedSverlinAssistantTurn } = await import('./commands');
+    const { runQueuedAssistantTurn } = await import('./commands');
     const created = await createProject({ title: 'Claimed feedback' }, serviceDependencies);
     const feedbackOperationId = '12345678-1234-4123-8123-123456789abc';
     const assistantOperationId = '12345678-1234-4123-8123-123456789abd';
@@ -581,7 +468,7 @@ describe('submitProjectFeedback', () => {
     ]);
     mocks.generatePrepared.mockReset().mockResolvedValue(generation(undefined, 'I am looking.'));
 
-    const result = await runQueuedSverlinAssistantTurn(
+    const result = await runQueuedAssistantTurn(
       { projectId: created.projectId, operationId: assistantOperationId },
       commandDependencies
     );
@@ -598,6 +485,75 @@ describe('submitProjectFeedback', () => {
       }
     });
     expect(projectHead(queued.document).id).toBe(head + 4);
+  });
+
+  it('processes queued HTML feedback through its own assistant after intake', async () => {
+    const { createProject } = await import('./service');
+    const { runQueuedAssistantTurn } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html' } },
+      serviceDependencies
+    );
+    const feedbackOperationId = crypto.randomUUID();
+    const assistantOperationId = crypto.randomUUID();
+    const withStyle = await serviceDependencies.repository.append(
+      created.projectId,
+      projectHead(created).id,
+      [
+        {
+          type: 'assistant.responded',
+          actor: { kind: 'assistant', botId: 'html-assistant' },
+          operationId: feedbackOperationId,
+          createdAt: new Date().toISOString(),
+          payload: { content: markdownMessage('Which visual style?'), intakeStep: 'style' }
+        }
+      ]
+    );
+    const head = projectHead(withStyle.document).id;
+    await serviceDependencies.repository.append(created.projectId, head, [
+      {
+        type: 'feedback.submitted',
+        actor: { kind: 'user' },
+        operationId: feedbackOperationId,
+        createdAt: new Date().toISOString(),
+        payload: { content: markdownMessage('Show a comparison'), focus: [], presentationCount: 1 }
+      },
+      {
+        type: 'assistant.turn-requested',
+        actor: { kind: 'system' },
+        operationId: feedbackOperationId,
+        createdAt: new Date().toISOString(),
+        payload: { interactionEventId: head + 1, presentationCount: 1 }
+      },
+      {
+        type: 'operation.accepted',
+        actor: { kind: 'system' },
+        operationId: assistantOperationId,
+        createdAt: new Date().toISOString(),
+        payload: { kind: 'assistant-turn' }
+      },
+      {
+        type: 'assistant.turn-started',
+        actor: { kind: 'system' },
+        operationId: assistantOperationId,
+        createdAt: new Date().toISOString(),
+        payload: { requestEventIds: [head + 2], interactionEventIds: [head + 1] }
+      }
+    ]);
+    mocks.generatePrepared
+      .mockReset()
+      .mockResolvedValue(htmlGeneration(manifest('<main><h1>Done</h1></main>'), 'Created it'));
+    const result = await runQueuedAssistantTurn(
+      { projectId: created.projectId, operationId: assistantOperationId },
+      commandDependencies
+    );
+    expect(result.appendedEvents.map(({ type }) => type)).toContain('visualization.presented');
+    expect(result.appendedEvents.some((event) => event.type === 'assistant.intake-completed')).toBe(
+      true
+    );
+    expect(
+      result.appendedEvents.find((event) => event.type === 'visualization.presented')
+    ).toMatchObject({ payload: { presentation: { format: 'html-frames-v1' } } });
   });
 
   it('generates the first candidate pair from accepted blank-project source on request', async () => {
@@ -679,32 +635,6 @@ describe('submitProjectFeedback', () => {
 
   it('compiles a synchronized comparison directly from two distinct fresh seeds', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue(generation('valid source', 'Ready'));
-    mocks.generateBatch.mockImplementationOnce(async ({ compilationId, source, seeds, signal }) => {
-      const results = await Promise.all(
-        seeds.map((seed: number) => mocks.compileSource({ source, seed, signal }))
-      );
-      return results.map((result) => ({
-        ...result,
-        execution: {
-          ...result.execution,
-          metrics: {
-            schemaVersion: 1,
-            compilationId,
-            viewSeeds: seeds,
-            requestedViewCount: seeds.length,
-            producedViewCount: results.filter(({ ok }) => ok).length,
-            service: {
-              totalMs: 12,
-              requestPreparationMs: 1,
-              queueWaitMs: 2,
-              compilerProcessMs: 6,
-              outputValidationMs: 2,
-              cleanupMs: 1
-            }
-          }
-        }
-      }));
-    });
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject({ title: 'Comparison' }, serviceDependencies);
@@ -721,9 +651,10 @@ describe('submitProjectFeedback', () => {
       commandDependencies
     );
 
-    const request = mocks.generateBatch.mock.calls[0][0] as { seeds: number[] };
-    expect(request.seeds).toHaveLength(2);
-    expect(new Set(request.seeds).size).toBe(2);
+    const requested = result.appendedEvents.filter(
+      (event) => event.type === 'compilation.requested'
+    );
+    expect(new Set(requested.map(({ payload }) => payload.seed)).size).toBe(2);
     const presented = result.appendedEvents.filter(
       (event) => event.type === 'visualization.presented'
     );
@@ -746,29 +677,16 @@ describe('submitProjectFeedback', () => {
         ...compilationResults.map(({ payload }) => payload.compilationId)
       ]).size
     ).toBe(1);
-    expect(projectCompilationMetrics(result.document)).toEqual([
-      compilationResults[0].payload.metrics
-    ]);
+    expect(
+      compilationResults.every(({ payload }) => payload.render.mediaType === 'application/json')
+    ).toBe(true);
   });
 
-  it('repairs a partial batch once using the same two seeds', async () => {
+  it('repairs a failed component batch using the same two seeds', async () => {
     mocks.generatePrepared
       .mockReset()
-      .mockResolvedValueOnce(generation('first source', 'First'))
+      .mockResolvedValueOnce(generation('broken first source', 'First'))
       .mockResolvedValueOnce(generation('repaired source', 'Repaired'));
-    mocks.generateBatch
-      .mockReset()
-      .mockImplementationOnce(async ({ source, seeds, signal }) => [
-        await mocks.compileSource({ source, seed: seeds[0], signal }),
-        await mocks.compileSource({
-          source: { ...source, content: 'broken partial' },
-          seed: seeds[1],
-          signal
-        })
-      ])
-      .mockImplementationOnce(async ({ source, seeds, signal }) =>
-        Promise.all(seeds.map((seed: number) => mocks.compileSource({ source, seed, signal })))
-      );
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject({ title: 'Partial batch' }, serviceDependencies);
@@ -785,9 +703,11 @@ describe('submitProjectFeedback', () => {
       commandDependencies
     );
 
-    expect(mocks.generateBatch).toHaveBeenCalledTimes(2);
-    expect(mocks.generateBatch.mock.calls[1][0].seeds).toEqual(
-      mocks.generateBatch.mock.calls[0][0].seeds
+    const requests = result.appendedEvents.filter(
+      (event) => event.type === 'compilation.requested'
+    );
+    expect(requests.map(({ payload }) => payload.seed).slice(0, 2)).toEqual(
+      requests.map(({ payload }) => payload.seed).slice(2)
     );
     expect(
       result.appendedEvents.filter((event) => event.type === 'visualization.presented')
@@ -843,13 +763,10 @@ describe('submitProjectFeedback', () => {
         expect.stringContaining('Attempt 4')
       ])
     });
-    expect(
-      mocks.generateBatch.mock.calls.every(
-        ([request]) =>
-          JSON.stringify(request.seeds) ===
-          JSON.stringify(mocks.generateBatch.mock.calls[0][0].seeds)
-      )
-    ).toBe(true);
+    const buildRequests = result.appendedEvents.filter(
+      (event) => event.type === 'compilation.requested'
+    );
+    expect(new Set(buildRequests.map(({ payload }) => payload.seed)).size).toBe(1);
     expect(result.appendedEvents.at(-1)).toMatchObject({
       type: 'assistant.responded',
       payload: {
@@ -873,11 +790,7 @@ describe('submitProjectFeedback', () => {
     mocks.generatePrepared
       .mockReset()
       .mockResolvedValue(generation(undefined, 'The preference suggests clearer spacing.'));
-    const visualSelections = comparison.presentations.map(({ id }) => ({
-      presentationEvent: id,
-      step: 0,
-      instances: [0]
-    }));
+    const visualSelections: [] = [];
 
     const result = await submitProjectPreference(
       {
@@ -905,7 +818,6 @@ describe('submitProjectFeedback', () => {
     expect(result.appendedEvents.some(({ type }) => type === 'artifact.version-created')).toBe(
       false
     );
-    expect(mocks.generateBatch).toHaveBeenCalledTimes(1);
     expect(mocks.preparePrompt.mock.calls.at(-1)?.[0].project).toMatchObject({
       interaction: {
         kind: 'preference',
@@ -917,10 +829,6 @@ describe('submitProjectFeedback', () => {
         presentations: [
           { eventId: comparison.presentations[0].id },
           { eventId: comparison.presentations[1].id }
-        ],
-        visualizations: [
-          { presentationEvent: comparison.presentations[0].id, elements: [{ instanceId: 0 }] },
-          { presentationEvent: comparison.presentations[1].id, elements: [{ instanceId: 0 }] }
         ]
       }
     });
@@ -1004,6 +912,107 @@ describe('submitProjectFeedback', () => {
     expect(
       result.appendedEvents.filter(({ type }) => type === 'artifact.version-created')
     ).toHaveLength(1);
+  });
+
+  it('accepts a separate HTML/JS candidate through its dedicated assistant', async () => {
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: markdownMessage('Created an interactive visualization.'),
+      candidates: [
+        {
+          label: 'Interactive',
+          manifest: {
+            format: 'html-js-v1',
+            html: '<main onclick="unsafe()">Demo</main>',
+            javascript: 'document.querySelector("main").textContent = "Ready";'
+          }
+        }
+      ],
+      prompt: {},
+      generation: { botId: 'html-js-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html-js' } },
+      serviceDependencies
+    );
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Make it interactive'),
+        focus: [],
+        presentationCount: 1,
+        operationId: crypto.randomUUID()
+      },
+      commandDependencies
+    );
+    const presentation = result.appendedEvents.find(
+      (event) => event.type === 'visualization.presented'
+    );
+    expect(presentation?.type).toBe('visualization.presented');
+    if (
+      presentation?.type !== 'visualization.presented' ||
+      presentation.payload.presentation.format !== 'browser-bundle-v1'
+    )
+      throw new Error('Expected HTML/JS bundle.');
+    expect(presentation.payload.presentation.mode).toBe('html-js');
+    expect(presentation.payload.presentation.html.text).toBe('<main>Demo</main>');
+    expect(projectSnapshotAt(result.document).artifacts['dsl-main'].content.text).toContain(
+      'html-js-v1'
+    );
+  });
+
+  it('repairs an HTML/JS import violation without activating the rejected candidate', async () => {
+    const reply = markdownMessage('Here is the corrected version.');
+    const candidate = (javascript: string) => ({
+      reply,
+      candidates: [
+        {
+          label: 'Interactive',
+          manifest: { format: 'html-js-v1', html: '<main>Safe</main>', javascript }
+        }
+      ],
+      prompt: {},
+      generation: { botId: 'html-js-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+    mocks.generatePrepared
+      .mockReset()
+      .mockResolvedValueOnce(candidate('import(window.remote);'))
+      .mockResolvedValueOnce(candidate('document.querySelector("main").textContent = "Ready";'));
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { creation: { templateId: 'blank', renderer: 'html-js' } },
+      serviceDependencies
+    );
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Make it interactive'),
+        focus: [],
+        presentationCount: 1,
+        operationId: crypto.randomUUID()
+      },
+      commandDependencies
+    );
+    expect(
+      result.appendedEvents.filter(({ type }) => type === 'ai.generation-requested')
+    ).toHaveLength(2);
+    const presentations = result.appendedEvents.filter(
+      (event) => event.type === 'visualization.presented'
+    );
+    expect(presentations).toHaveLength(1);
+    expect(
+      presentations[0].payload.presentation.format === 'browser-bundle-v1' &&
+        presentations[0].payload.presentation.javascript.text
+    ).toContain('Ready');
+    expect(mocks.preparePrompt.mock.calls[1][0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: expect.stringContaining('cannot import') })
+      ])
+    );
   });
 
   it('keeps a conversational HTML reply without forcing a visualization change', async () => {
@@ -1145,14 +1154,6 @@ describe('submitProjectFeedback', () => {
     );
     expect(revisionEvents).toHaveLength(10);
     expect(
-      revisionEvents.every(
-        (event) =>
-          event.payload.dslRevision?.contentSha256 === 'f'.repeat(64) &&
-          event.payload.dslRevision.repositoryCommit === 'a'.repeat(40) &&
-          event.payload.dslRevision.workingTree === 'clean'
-      )
-    ).toBe(true);
-    expect(
       result.document.events.filter(({ type }) => type === 'artifact.version-created')
     ).toHaveLength(1);
     expect(
@@ -1281,51 +1282,6 @@ describe('submitProjectFeedback', () => {
     expect(JSON.parse(failed.payload.details.text).providerResponse).toEqual(providerResponse);
   });
 
-  it('retains valid assistant-authored element references for granular questions', async () => {
-    const { createProject } = await import('./service');
-    const { submitProjectFeedback } = await import('./commands');
-    const created = await createProject(
-      { title: 'Assistant element reference', creation: { templateId: 'linear-search' } },
-      serviceDependencies
-    );
-    const presentation = presentedEvent(created);
-    const presentationId = presentation.payload.presentation.presentationId;
-    mocks.generatePrepared.mockReset().mockResolvedValue({
-      reply: [
-        {
-          type: 'element-ref',
-          presentationId,
-          presentationEvent: presentation.id,
-          step: 0,
-          instances: [0]
-        },
-        { type: 'markdown', text: 'Is this the part you prefer?' }
-      ],
-      action: 'respond',
-      prompt: {},
-      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
-    });
-
-    const result = await submitProjectFeedback(
-      {
-        projectId: created.projectId,
-        expectedHead: projectHead(created).id,
-        content: markdownMessage('The preferred candidate feels clearer.'),
-        focus: [],
-        presentationCount: 2,
-        operationId: '12345678-1234-4123-8123-123456789abc'
-      },
-      commandDependencies
-    );
-
-    expect(result.appendedEvents.at(-1)).toMatchObject({
-      type: 'assistant.responded',
-      payload: {
-        content: expect.arrayContaining([expect.objectContaining({ type: 'element-ref' })])
-      }
-    });
-  });
-
   it('turns a known presentation UUID in assistant Markdown into a retained reference', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
@@ -1406,7 +1362,7 @@ describe('submitProjectFeedback', () => {
                   expect.objectContaining({
                     id: presentation.id,
                     seed: presentation.payload.presentation.seed,
-                    renderSha256: presentation.payload.presentation.render.sha256
+                    renderSha256: presentation.payload.presentation.javascript.sha256
                   })
                 ]
               })
@@ -1475,14 +1431,13 @@ describe('submitProjectFeedback', () => {
     );
   });
 
-  it('rejects an inline element reference that does not exist in the presentation', async () => {
+  it('rejects an unknown presentation reference before prompting the assistant', async () => {
     const { createProject } = await import('./service');
     const { submitProjectFeedback } = await import('./commands');
     const created = await createProject(
       { title: 'Selection validation', creation: { templateId: 'linear-search' } },
       serviceDependencies
     );
-    const presentation = presentedEvent(created);
 
     await expect(
       submitProjectFeedback(
@@ -1492,11 +1447,8 @@ describe('submitProjectFeedback', () => {
           focus: [],
           content: [
             {
-              type: 'element-ref',
-              presentationId: presentation.payload.presentation.presentationId,
-              presentationEvent: presentation.id,
-              step: 99,
-              instances: [1]
+              type: 'presentation-ref',
+              presentationId: '32345678-1234-4123-8123-123456789abc'
             }
           ],
           presentationCount: 1,
@@ -1504,7 +1456,7 @@ describe('submitProjectFeedback', () => {
         },
         commandDependencies
       )
-    ).rejects.toThrow('unknown visualization step');
+    ).rejects.toThrow('Unknown selected presentation');
     expect(mocks.generatePrepared).not.toHaveBeenCalled();
   });
 });
@@ -1517,7 +1469,12 @@ function generation(
   return {
     reply: markdownMessage(reply),
     action: sourceArtifactContent === undefined ? ('respond' as const) : ('revise' as const),
-    sourceArtifactContent,
+    sourceArtifactContent:
+      sourceArtifactContent === undefined
+        ? undefined
+        : sourceArtifactContent.startsWith('broken')
+          ? '<script>import unavailable from "elsewhere";</script><h1>Broken</h1>'
+          : `<h1>${sourceArtifactContent}</h1>`,
     ...(recovery ? { recovery } : {}),
     prompt: {
       initialPrompt: 'test prompt',
@@ -1674,7 +1631,7 @@ function htmlGeneration(
 
 type SverlinPresentedEvent = Omit<ProjectEventOf<'visualization.presented'>, 'payload'> & {
   payload: Omit<ProjectEventOf<'visualization.presented'>['payload'], 'presentation'> & {
-    presentation: SverlinPresentation;
+    presentation: BrowserBundlePresentation;
   };
 };
 
@@ -1684,7 +1641,7 @@ function presentedEvent(document: ProjectDocument): SverlinPresentedEvent {
   );
   if (
     event?.type !== 'visualization.presented' ||
-    event.payload.presentation.format !== 'sverlin-ir-v1'
+    event.payload.presentation.format !== 'browser-bundle-v1'
   ) {
     throw new Error('Expected a Sverlin presentation event.');
   }

@@ -46,8 +46,7 @@ describe('canonical data export service', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'sverlin-export-service-test-'));
     temporaryRoots.push(root);
     const source: ExportDataSource = {
-      collect: vi.fn(async () => emptySnapshot()),
-      readResource: vi.fn()
+      collect: vi.fn(async () => emptySnapshot())
     };
     const assertIdle = vi.fn(async () => undefined);
     const exportedAt = '2026-08-30T12:00:00.000Z';

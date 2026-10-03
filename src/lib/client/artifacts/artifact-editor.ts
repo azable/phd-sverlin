@@ -5,15 +5,15 @@
  */
 
 import { basicSetup, EditorView } from 'codemirror';
-import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
-import { haskell } from '@codemirror/legacy-modes/mode/haskell';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { html } from '@codemirror/lang-html';
+import { javascript } from '@codemirror/lang-javascript';
 import type { Extension } from '@codemirror/state';
 import { tags } from '@lezer/highlight';
 
 /** Source languages supported by the project artifact editor. */
-export type ArtifactLanguage = 'sverlin';
+export type ArtifactLanguage = 'svelte' | 'json';
 
-const haskellLanguage = StreamLanguage.define(haskell);
 const sverlinHighlightStyle = HighlightStyle.define([
   {
     tag: [
@@ -61,8 +61,10 @@ const sverlinHighlightStyle = HighlightStyle.define([
 /** Return CodeMirror language support for a project artifact language. */
 export function artifactLanguageSupport(language: ArtifactLanguage): Extension {
   switch (language) {
-    case 'sverlin':
-      return haskellLanguage;
+    case 'svelte':
+      return html();
+    case 'json':
+      return javascript();
   }
 }
 

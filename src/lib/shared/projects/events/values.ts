@@ -6,8 +6,6 @@
 
 import * as v from 'valibot';
 
-import type { RenderInstanceId } from '$lib/shared/visualization';
-
 /** Runtime schema for non-empty text stored in project events. */
 export const textSchema = v.pipe(v.string(), v.nonEmpty());
 /** Runtime schema for safe integer values. */
@@ -18,12 +16,8 @@ export const naturalSchema = v.pipe(integerSchema, v.minValue(0));
 export const positiveSchema = v.pipe(integerSchema, v.minValue(1));
 /** Runtime schema for lowercase SHA-256 digests. */
 export const sha256Schema = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/));
-/** Runtime schema for content-addressed resource identifiers. */
-export const resourceIdSchema = v.pipe(v.string(), v.regex(/^sha256-[a-f0-9]{64}$/));
 /** Runtime schema for project operation UUIDs. */
 export const operationIdSchema = v.pipe(v.string(), v.uuid());
-
-const gitCommitSchema = v.pipe(v.string(), v.regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/));
 
 /** Runtime schema for immutable text embedded directly in project history. */
 export const recordedTextSchema = v.object({
@@ -39,7 +33,7 @@ export const actorSchema = v.variant('kind', [
   v.object({ kind: v.literal('system') })
 ]);
 
-/** Runtime schema for compiler diagnostics recorded in project history. */
+/** Runtime schema for source-build diagnostics recorded in project history. */
 export const diagnosticSchema = v.object({
   severity: v.picklist(['error', 'warning', 'unknown']),
   code: v.optional(v.string()),
@@ -50,36 +44,11 @@ export const diagnosticSchema = v.object({
   raw: v.string()
 });
 
-/** Runtime schema for an immutable compiler resource stored outside the event log. */
-export const compilationResourceSchema = v.object({
-  id: resourceIdSchema,
-  kind: v.picklist(['fontResource', 'textRunResource', 'vectorResource']),
-  sha256: sha256Schema,
-  mediaType: textSchema,
-  byteLength: naturalSchema
-});
-
-/** Runtime schema for the deterministic compiler package/toolchain contract. */
-export const compilationProvenanceSchema = v.object({
-  packageVersion: positiveSchema,
-  textRunFormatVersion: positiveSchema,
-  shapingEngine: textSchema,
-  shapingEngineVersion: textSchema,
-  fontCatalogSha256: v.optional(sha256Schema)
-});
-
-/** Runtime schema for a successful output target's non-fatal diagnostic. */
-export const targetDiagnosticSchema = v.object({
-  severity: v.picklist(['info', 'warning']),
-  code: textSchema,
-  message: v.string()
-});
-
 /** Runtime schema for source artifacts tracked by a project. */
 export const projectArtifactSchema = v.object({
   artifactId: textSchema,
   path: textSchema,
-  language: v.picklist(['sverlin', 'json']),
+  language: v.picklist(['svelte', 'json']),
   content: recordedTextSchema
 });
 
@@ -104,13 +73,6 @@ export const visualSelectionSchema = v.object({
   instances: v.pipe(v.array(naturalSchema), v.minLength(1))
 });
 
-/** Runtime schema identifying the authored DSL contract used for a compilation. */
-export const dslRevisionSchema = v.object({
-  contentSha256: sha256Schema,
-  repositoryCommit: v.optional(gitCommitSchema),
-  workingTree: v.picklist(['clean', 'dirty', 'unknown'])
-});
-
 /** Runtime schema for the reason a visualization render was requested. */
 export const renderPurposeSchema = v.picklist([
   'initial',
@@ -130,28 +92,15 @@ export const eventEnvelope = {
 
 /** Immutable text and its provenance embedded directly in a project event. */
 export type RecordedText = v.InferOutput<typeof recordedTextSchema>;
-/** Structured compiler diagnostic retained in project history. */
-export type CompilerDiagnostic = v.InferOutput<typeof diagnosticSchema>;
-/** Content-addressed compiler resource referenced by project events. */
-export type CompilationResource = v.InferOutput<typeof compilationResourceSchema>;
-/** Versioned compiler package and shaping-engine provenance. */
-export type CompilationProvenance = v.InferOutput<typeof compilationProvenanceSchema>;
-/** Non-fatal diagnostic emitted by a concrete output target. */
-export type TargetDiagnostic = v.InferOutput<typeof targetDiagnosticSchema>;
+/** Structured build diagnostic retained in project history. */
+export type BuildDiagnostic = v.InferOutput<typeof diagnosticSchema>;
 /** Metadata for one versioned project source artifact. */
 export type ProjectArtifact = v.InferOutput<typeof projectArtifactSchema>;
 /** Upsert or deletion applied by an artifact-version event. */
 export type ArtifactChange = v.InferOutput<typeof artifactChangeSchema>;
 /** Provenance of an artifact version. */
 export type ArtifactVersionOrigin = v.InferOutput<typeof artifactOriginSchema>;
-type ParsedVisualSelection = v.InferOutput<typeof visualSelectionSchema>;
-/** Feedback selection tied to presentation instances at a specific visualization step. */
-export type VisualSelection = ParsedVisualSelection extends infer Selection
-  ? Selection extends { instances: number[] }
-    ? Omit<Selection, 'instances'> & { instances: RenderInstanceId[] }
-    : never
-  : never;
-/** Fingerprint of the authored DSL contract used to compile a visualization. */
-export type DslRevision = v.InferOutput<typeof dslRevisionSchema>;
+/** Historical telemetry shape retained for study export compatibility. */
+export type VisualSelection = v.InferOutput<typeof visualSelectionSchema>;
 /** Reason a visualization render was requested. */
 export type RenderPurpose = v.InferOutput<typeof renderPurposeSchema>;

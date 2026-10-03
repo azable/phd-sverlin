@@ -30,38 +30,28 @@ import {
   projectCreationRenderer,
   type ProjectCreation
 } from '$lib/shared/projects/creation';
-import type { CompilerPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
-import {
-  isSverlinPresentation,
-  presentationScenarioKey,
-  presentationViewSeed
-} from '$lib/shared/presentations';
+import type { BrowserBundlePresentation } from '$lib/shared/presentations';
+import { presentationMode } from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
-import { visualizationService, type VisualizationGenerationResult } from '$lib/server/compiler';
 import { assistantIntroduction } from '$lib/server/chat-bots/registry';
 
 import { runProjectCommand } from './command-lock';
 import { currentProjectOperationSignal } from './operation-context';
-import { readDslRevision, recordText } from './fingerprints';
-import { projectRepository, type ProjectResourceBlob } from './repository';
+import { recordText } from './fingerprints';
+import { projectRepository } from './repository';
 import { resolveProjectTemplate } from './starter-catalog';
-import { createHtmlPresentation, stepSignature } from '$lib/server/visualization-modes';
+import { stepSignature } from '$lib/visualization-modes/signature.server';
+import {
+  directModeBuilders,
+  sourceModeBuilders,
+  type ModeBuildResult
+} from '$lib/visualization-modes/server';
+import { modeCatalog } from '$lib/visualization-modes/catalog';
 
 const minSeed = 1;
 const maxSeedExclusive = 2147483647;
 const entryArtifactId = 'dsl-main';
-const initialHtmlManifest: HtmlFramesManifest = {
-  format: 'sverlin-html-frames',
-  version: 1,
-  frames: [
-    {
-      label: 'Start',
-      html: '<main><h1>Start your visualization</h1><p>Describe what you would like to create in the timeline.</p></main>'
-    }
-  ]
-};
-
 type RecordedCompilationBase = {
   document: ProjectDocument;
   source: RecordedText;
@@ -75,12 +65,12 @@ type RecordedCompilationBase = {
 export type RecordedCompilation = RecordedCompilationBase &
   (
     | {
-        result: Extract<VisualizationGenerationResult, { ok: true }>;
+        result: Extract<ModeBuildResult, { ok: true }>;
         compileEvent: NewProjectEvent<'compilation.succeeded'>;
         render: RecordedText;
       }
     | {
-        result: Extract<VisualizationGenerationResult, { ok: false }>;
+        result: Extract<ModeBuildResult, { ok: false }>;
         compileEvent: NewProjectEvent<'compilation.failed'>;
       }
   );
@@ -98,14 +88,10 @@ type CreateProjectOptions = {
 /** Replaceable project-side effects used by database-free domain tests. */
 export type ProjectServiceDependencies = {
   repository: typeof projectRepository;
-  compiler: typeof visualizationService;
-  readDslRevision: typeof readDslRevision;
 };
 
 export const defaultProjectServiceDependencies: ProjectServiceDependencies = {
-  repository: projectRepository,
-  compiler: visualizationService,
-  readDslRevision
+  repository: projectRepository
 };
 
 /** Create a project, leaving blank conversational templates unrendered until first use. */
@@ -144,10 +130,10 @@ export async function createProjectSkeleton(
     createdAt: new Date().toISOString(),
     payload: { title, entryArtifactId, assistantId, creation }
   };
-  const html = renderer === 'html';
+  const starter = modeCatalog[renderer].starter;
   const content = recordText(
-    html ? JSON.stringify(initialHtmlManifest) : template.source,
-    html ? 'application/vnd.sverlin.html-frames+json' : 'text/x-sverlin'
+    modeCatalog[renderer].authoring === 'source' ? template.source : starter.source,
+    starter.mediaType
   );
   const artifact: ProjectEventOf<'artifact.version-created'> = {
     id: 2,
@@ -162,8 +148,8 @@ export async function createProjectSkeleton(
             operation: 'upsert',
             artifact: {
               artifactId: entryArtifactId,
-              path: html ? 'Visualization.html.json' : 'Main.sverlin',
-              language: html ? 'json' : 'sverlin',
+              path: starter.path,
+              language: starter.language,
               content
             }
           }
@@ -292,9 +278,10 @@ export function replenishProjectPresentations(
       const count = Math.min(2, state.deficit) as 1 | 2;
       const usedSeeds = document.events.flatMap((event) =>
         event.type === 'visualization.presented' &&
-        isSverlinPresentation(event.payload.presentation) &&
+        event.payload.presentation.format === 'browser-bundle-v1' &&
+        event.payload.presentation.mode === 'sverlin' &&
         event.payload.presentation.source.sha256 === state.sourceSha256
-          ? [presentationViewSeed(event.payload.presentation)]
+          ? [event.payload.presentation.seed]
           : []
       );
       const next = await renderDocument(
@@ -344,7 +331,6 @@ export function advanceProjectPresentations(
           payload: { presentations: options.presentations, reason: 'next' }
         })
       ],
-      [],
       dependencies
     );
     return commandResult(before, document);
@@ -377,7 +363,6 @@ export function renameProject(
           payload: { previousTitle: snapshot.title, title }
         })
       ],
-      [],
       dependencies
     );
     return commandResult(before, document);
@@ -398,9 +383,15 @@ export function updateProjectArtifact(
 ): Promise<ProjectCommandResult> {
   return runProjectCommand(options.projectId, async () => {
     const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const current = projectSnapshotAt(before).artifacts[options.artifactId];
+    const snapshot = projectSnapshotAt(before);
+    const current = snapshot.artifacts[options.artifactId];
     if (!current) throw new Error(`Unknown artifact ${options.artifactId}.`);
-    const content = recordText(options.source, 'text/x-sverlin');
+    if (modeCatalog[snapshot.renderer].authoring === 'candidates') {
+      const builder = directModeBuilders[snapshot.renderer];
+      if (!builder) throw new Error(`Mode ${snapshot.renderer} has no direct builder.`);
+      await builder(options.source, 1);
+    }
+    const content = recordText(options.source, current.content.mediaType);
     let document = await appendProjectEvents(
       before,
       [
@@ -410,7 +401,6 @@ export function updateProjectArtifact(
           changes: [{ operation: 'upsert', artifact: { ...current, content } }]
         })
       ],
-      [],
       dependencies
     );
     document = await renderDocument(
@@ -456,7 +446,6 @@ export function restoreProjectArtifacts(
           changes
         })
       ],
-      [],
       dependencies
     );
     document = await renderDocument(
@@ -474,16 +463,10 @@ export function restoreProjectArtifacts(
 export async function appendProjectEvents(
   document: ProjectDocument,
   events: NewProjectEvent[],
-  resources: readonly ProjectResourceBlob[] = [],
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<ProjectDocument> {
   return (
-    await dependencies.repository.append(
-      document.projectId,
-      projectHead(document).id,
-      events,
-      resources
-    )
+    await dependencies.repository.append(document.projectId, projectHead(document).id, events)
   ).document;
 }
 
@@ -504,10 +487,12 @@ async function renderDocument(
   const snapshot = projectSnapshotAt(document);
   const artifact = snapshot.artifacts[snapshot.entryArtifactId];
   if (!artifact) throw new Error('The project has no entry artifact.');
-  if (snapshot.renderer === 'html') {
-    const presentation = createHtmlPresentation(
-      JSON.parse(artifact.content.text) as HtmlFramesManifest
-    );
+  if (modeCatalog[snapshot.renderer].authoring === 'candidates') {
+    const directBuilder = directModeBuilders[snapshot.renderer];
+    if (!directBuilder) throw new Error(`Mode ${snapshot.renderer} has no direct builder.`);
+    const presentation = await directBuilder(artifact.content.text, seeds[0] ?? 1);
+    if (presentationMode(presentation) !== snapshot.renderer)
+      throw new Error('The mode builder returned a presentation for a different mode.');
     return appendProjectEvents(
       document,
       [
@@ -515,14 +500,9 @@ async function renderDocument(
           type: 'visualization.presented',
           actor: { kind: 'system' },
           operationId,
-          payload: {
-            displaySetId: randomUUID(),
-            slot: 0,
-            presentation
-          }
+          payload: { displaySetId: randomUUID(), slot: 0, presentation }
         })
       ],
-      [],
       dependencies
     );
   }
@@ -550,7 +530,7 @@ export type RecordedCompilationBatch = {
   compilations: RecordedCompilation[];
 };
 
-/** Compile one source for several seeds through the public batch service and record each result. */
+/** Build one component for several seeds and record each requested presentation. */
 export async function compileProjectSourceBatch(
   options: {
     document: ProjectDocument;
@@ -566,8 +546,12 @@ export async function compileProjectSourceBatch(
   dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
 ): Promise<RecordedCompilationBatch> {
   if (options.seeds.length === 0) throw new Error('At least one seed is required.');
+  const mode = projectSnapshotAt(options.document).renderer;
+  if (options.sourceLabel !== modeCatalog[mode].starter.path)
+    throw new Error(`Mode ${mode} has an unexpected source artifact.`);
+  const builder = sourceModeBuilders[mode];
+  if (!builder) throw new Error(`Mode ${mode} has no source builder.`);
   const compilationId = randomUUID();
-  const dslRevision = await dependencies.readDslRevision();
   const requests = options.seeds.map((seed, batchIndex) =>
     draftEvent<'compilation.requested'>({
       type: 'compilation.requested',
@@ -582,18 +566,23 @@ export async function compileProjectSourceBatch(
         compilationId,
         batchIndex,
         batchSize: options.seeds.length,
-        ...(options.attempt ? { attempt: options.attempt } : {}),
-        ...(dslRevision ? { dslRevision } : {})
+        ...(options.attempt ? { attempt: options.attempt } : {})
       }
     })
   );
-  let document = await appendProjectEvents(options.document, requests, [], dependencies);
-  const results = await dependencies.compiler.generateBatch({
-    compilationId,
-    source: { name: logicalSourceName(options.sourceLabel), content: options.sourceContent },
-    seeds: options.seeds,
-    signal: currentProjectOperationSignal()
-  });
+  let document = await appendProjectEvents(options.document, requests, dependencies);
+  const results = await builder(
+    options.sourceContent,
+    options.seeds,
+    currentProjectOperationSignal()
+  );
+  if (
+    results.some(
+      (result) => result.ok && (result.bundle.mode !== mode || !modeCatalog[mode].scriptedPlayback)
+    )
+  ) {
+    throw new Error('The mode builder returned a bundle for a different playback contract.');
+  }
   if (results.length !== options.seeds.length) {
     throw new Error('The visualization service returned an incomplete batch.');
   }
@@ -622,64 +611,10 @@ export async function compileProjectSourceBatch(
   return { document, compilations };
 }
 
-/** Compile source and immutably record the request, diagnostics, and output blobs. */
-export async function compileProjectSource(
-  options: {
-    document: ProjectDocument;
-    sourceContent: string;
-    source: RecordedText;
-    sourceLabel: string;
-    seed: number;
-    purpose: RenderPurpose;
-    input: 'committed-artifact' | 'assistant-candidate';
-    operationId: string;
-    attempt?: number;
-  },
-  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
-): Promise<RecordedCompilation> {
-  const compilationId = randomUUID();
-  const dslRevision = await dependencies.readDslRevision();
-  const request = draftEvent<'compilation.requested'>({
-    type: 'compilation.requested',
-    actor: { kind: 'system' },
-    operationId: options.operationId,
-    payload: {
-      purpose: options.purpose,
-      input: options.input,
-      source: options.source,
-      sourceLabel: options.sourceLabel,
-      seed: options.seed,
-      compilationId,
-      batchIndex: 0,
-      batchSize: 1,
-      ...(options.attempt ? { attempt: options.attempt } : {}),
-      ...(dslRevision ? { dslRevision } : {})
-    }
-  });
-  const document = await appendProjectEvents(options.document, [request], [], dependencies);
-  const result = await dependencies.compiler.generate({
-    compilationId,
-    source: { name: logicalSourceName(options.sourceLabel), content: options.sourceContent },
-    seed: options.seed,
-    signal: currentProjectOperationSignal()
-  });
-  return recordCompileResult(
-    {
-      ...options,
-      document,
-      result,
-      compilationId,
-      batchIndex: 0,
-      batchSize: 1
-    },
-    dependencies
-  );
-}
-
 async function recordCompileResult(
   options: {
     document: ProjectDocument;
-    result: VisualizationGenerationResult;
+    result: ModeBuildResult;
     source: RecordedText;
     sourceLabel: string;
     seed: number;
@@ -704,20 +639,18 @@ async function recordCompileResult(
         seed: options.seed,
         batchIndex: options.batchIndex,
         batchSize: options.batchSize,
-        ...(options.result.execution.metrics ? { metrics: options.result.execution.metrics } : {}),
         exitCode: options.result.execution.exitCode,
-        failureKind: options.result.failureKind ?? 'pipeline',
+        failureKind: options.result.failureKind,
         diagnostics: options.result.diagnostics,
         stdout,
         stderr,
         timedOut: options.result.execution.timedOut,
-        repairEligible:
-          options.result.failureKind === 'source' || options.result.failureKind === 'pipeline',
-        ...(options.result.error ? { error: options.result.error } : {})
+        repairEligible: options.result.failureKind === 'source',
+        error: options.result.error
       }
     });
     return {
-      document: await appendProjectEvents(options.document, [compileEvent], [], dependencies),
+      document: await appendProjectEvents(options.document, [compileEvent], dependencies),
       result: options.result,
       compileEvent,
       source: options.source,
@@ -728,8 +661,7 @@ async function recordCompileResult(
     };
   }
 
-  const render = recordText(JSON.stringify(options.result.visualization), 'application/json');
-  const resources = options.result.resources.map(({ bytes: _bytes, ...resource }) => resource);
+  const render = recordText(JSON.stringify(options.result.bundle), 'application/json');
   const compileEvent = draftEvent<'compilation.succeeded'>({
     type: 'compilation.succeeded',
     actor: { kind: 'system' },
@@ -740,22 +672,13 @@ async function recordCompileResult(
       seed: options.seed,
       batchIndex: options.batchIndex,
       batchSize: options.batchSize,
-      ...(options.result.execution.metrics ? { metrics: options.result.execution.metrics } : {}),
       stdout,
       stderr,
-      render,
-      resources,
-      provenance: options.result.provenance,
-      targetDiagnostics: options.result.targetDiagnostics
+      render
     }
   });
   return {
-    document: await appendProjectEvents(
-      options.document,
-      [compileEvent],
-      options.result.resources,
-      dependencies
-    ),
+    document: await appendProjectEvents(options.document, [compileEvent], dependencies),
     result: options.result,
     compileEvent,
     render,
@@ -779,41 +702,24 @@ export async function activateCompiledPresentations(
   if (recorded.compilations.length > 2) {
     throw new Error('A display set supports at most two presentations.');
   }
-  const presentations = recorded.compilations.map((item): CompilerPresentation => {
+  const presentations = recorded.compilations.map((item): BrowserBundlePresentation => {
     if (!item.result.ok || !('render' in item)) {
       throw new Error('A failed compilation cannot become a presentation.');
     }
-    const common = {
-      presentationId: randomUUID(),
-      source: item.source,
-      render: item.render,
-      resources: item.result.resources.map(({ bytes: _bytes, ...resource }) => resource),
-      provenance: item.result.provenance,
-      targetDiagnostics: item.result.targetDiagnostics
-    };
-    const visualization = item.result.visualization;
-    if (
-      visualization.irVersion === 2 &&
-      visualization.scenarioKey &&
-      visualization.scenarioSeed !== undefined &&
-      visualization.viewSeed !== undefined
-    ) {
-      return {
-        ...common,
-        format: 'sverlin-ir-v2',
-        scenarioKey: visualization.scenarioKey,
-        scenarioSeed: visualization.scenarioSeed,
-        viewSeed: visualization.viewSeed
-      };
-    }
+    const { bundle } = item.result;
     return {
-      ...common,
-      format: 'sverlin-ir-v1',
-      stepSignature: stepSignature(visualization.steps.map(({ label }) => label)),
-      seed: item.seed
+      presentationId: randomUUID(),
+      format: 'browser-bundle-v1',
+      mode: bundle.mode,
+      stepSignature: stepSignature(bundle.labels),
+      labels: bundle.labels,
+      seed: item.seed,
+      source: item.source,
+      html: recordText(bundle.html, 'text/html'),
+      javascript: recordText(bundle.javascript, 'text/javascript')
     };
   });
-  if (new Set(presentations.map(presentationScenarioKey)).size !== 1) {
+  if (new Set(presentations.map(({ stepSignature }) => stepSignature)).size !== 1) {
     throw new Error('Synchronized presentations must come from the same scenario.');
   }
   const displaySetId = randomUUID();
@@ -828,14 +734,8 @@ export async function activateCompiledPresentations(
         payload: { displaySetId, slot: slot as 0 | 1, presentation }
       })
     ),
-    [],
     dependencies
   );
-}
-
-function logicalSourceName(sourceLabel: string): string {
-  const name = sourceLabel.split(/[\\/]/).at(-1) || 'Main.sverlin';
-  return name.endsWith('.sverlin') ? name : `${name}.sverlin`;
 }
 
 function artifactVersionEvent(options: {

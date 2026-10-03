@@ -1,3 +1,0 @@
-Unbounded - objective value 0.00000000
-**       0 x                      0                       0
-      1 y                      0                    -1.5

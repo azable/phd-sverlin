@@ -1,11 +1,10 @@
-/** PostgreSQL schema for Better Auth, projects, events, and resource metadata. */
+/** PostgreSQL schema for Better Auth, project Timelines, and study data. */
 
 import { relations, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
   check,
-  customType,
   doublePrecision,
   index,
   integer,
@@ -32,10 +31,6 @@ const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull()
 };
-
-const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
-  dataType: () => 'bytea'
-});
 
 // Better Auth core and plugin tables. Property names intentionally match its
 // Drizzle adapter model fields while SQL names remain conventional snake_case.
@@ -327,22 +322,6 @@ export const projectEvents = pgTable(
     primaryKey({ columns: [table.projectId, table.eventId] }),
     index('project_event_operation_idx').on(table.projectId, table.operationId)
   ]
-);
-
-export const projectResources = pgTable(
-  'project_resource',
-  {
-    projectId: varchar('project_id', { length: 128 })
-      .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    resourceId: varchar('resource_id', { length: 80 }).notNull(),
-    bytes: bytea('bytes').notNull(),
-    sha256: varchar('sha256', { length: 64 }).notNull(),
-    byteLength: integer('byte_length').notNull(),
-    mediaType: text('media_type').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull()
-  },
-  (table) => [primaryKey({ columns: [table.projectId, table.resourceId] })]
 );
 
 // Better Auth enables joined session queries, so its Drizzle adapter needs

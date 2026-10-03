@@ -11,7 +11,6 @@
   import { Badge } from '$lib/client/components/ui/badge';
   import { Button } from '$lib/client/components/ui/button';
   import { Spinner } from '$lib/client/components/ui/spinner';
-  import type { HtmlFramesManifest } from '$lib/shared/presentations';
 
   import type { ProjectSession } from './project-session.svelte';
 
@@ -66,25 +65,12 @@
 
   async function saveDraft() {
     if (!artifact || !dirty || session.pending || !session.atHead || session.readOnly) return;
-    let succeeded = false;
-    if (session.snapshot.renderer === 'html') {
-      try {
-        succeeded = await session.runCommand({
-          type: 'save-html',
-          artifactId: artifact.artifactId,
-          manifest: JSON.parse(draft) as HtmlFramesManifest
-        });
-      } catch {
-        session.error = 'The HTML artifact must be a valid frames manifest.';
-      }
-    } else {
-      succeeded = await session.runCommand({
-        type: 'save',
-        artifactId: artifact.artifactId,
-        source: draft,
-        presentationCount
-      });
-    }
+    const succeeded = await session.runCommand({
+      type: 'save',
+      artifactId: artifact.artifactId,
+      source: draft,
+      presentationCount
+    });
     if (succeeded) {
       editMode = 'readonly';
     }
@@ -135,7 +121,7 @@
             onclick={saveDraft}
             disabled={!dirty || !!session.pending || session.readOnly}
           >
-            {#if session.pending?.type === 'save' || session.pending?.type === 'save-html'}
+            {#if session.pending?.type === 'save'}
               <Spinner data-icon="inline-start" />Compiling
             {:else}
               <SaveIcon data-icon="inline-start" />Save & render
@@ -156,6 +142,7 @@
           <CodeMirrorEditor
             bind:this={editor}
             value={displayedSource}
+            language={artifact.language}
             editable={editMode === 'editing' &&
               session.atHead &&
               !session.pending &&

@@ -370,12 +370,12 @@ function bufferedProjectResource(): ProjectResource {
               operation: 'upsert',
               artifact: {
                 artifactId: 'dsl-main',
-                path: 'Main.sverlin',
-                language: 'sverlin',
+                path: 'Main.svelte',
+                language: 'svelte',
                 content: {
                   text: 'source',
                   sha256: 'a'.repeat(64),
-                  mediaType: 'text/x-sverlin'
+                  mediaType: 'text/x-svelte'
                 }
               }
             }
@@ -401,14 +401,17 @@ function presentedEvent(id: number, slot: 0 | 1): ProjectEventOf<'visualization.
       slot,
       presentation: {
         presentationId: `12345678-1234-4123-8123-123456789ac${slot + 1}`,
-        format: 'sverlin-ir-v1',
+        format: 'browser-bundle-v1',
+        mode: 'sverlin',
         stepSignature: 'shared',
+        labels: ['Overview'],
         seed: slot + 1,
-        source: { text: 'source', sha256: 'a'.repeat(64), mediaType: 'text/x-sverlin' },
-        render: {
-          text: JSON.stringify({ steps: [{ label: 'Overview' }] }),
+        source: { text: 'source', sha256: 'a'.repeat(64), mediaType: 'text/x-svelte' },
+        html: { text: '', sha256: '0'.repeat(64), mediaType: 'text/html' },
+        javascript: {
+          text: 'document.body.textContent="Overview";',
           sha256: String(slot + 1).repeat(64),
-          mediaType: 'application/json'
+          mediaType: 'text/javascript'
         }
       }
     }

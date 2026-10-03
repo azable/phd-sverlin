@@ -31,8 +31,6 @@ import {
   projectOperations
 } from '$lib/shared/projects/operations';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
-import { isSverlinPresentation } from '$lib/shared/presentations';
-import { decodeVisualization, type Visualization } from '$lib/shared/visualization';
 
 /** Browser-visible state of the project's durable event polling connection. */
 export type ProjectConnectionState = 'connecting' | 'open' | 'reconnecting';
@@ -137,16 +135,6 @@ export class ProjectSession {
   get snapshot(): ProjectSnapshot {
     if (!this.#resource) throw new Error('The project has not loaded.');
     return projectSnapshotAt(this.#resource.document, this.#selectedAt);
-  }
-
-  /** Visualization decoded from the render active at the selected position. */
-  get visualization(): Visualization | undefined {
-    const presentation = this.loaded
-      ? this.snapshot.activePresentationSet?.presentations[0]?.payload.presentation
-      : undefined;
-    return presentation && isSverlinPresentation(presentation)
-      ? decodeVisualization(presentation.render.text)
-      : undefined;
   }
 
   /** Available projects ordered by the server. */

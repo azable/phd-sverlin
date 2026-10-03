@@ -4,7 +4,7 @@ import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 
 import { MemoryProjectRepository } from './memory-repository.test-support';
-import { ProjectConflictError, type ProjectResourceBlob } from './repository';
+import { ProjectConflictError } from './repository';
 
 const operationId = '12345678-1234-4123-8123-123456789abc';
 describe('MemoryProjectRepository test fake', () => {
@@ -33,26 +33,6 @@ describe('MemoryProjectRepository test fake', () => {
       reason: expect.any(ProjectConflictError)
     });
     expect((await repository.load('repository-test')).events.map(({ id }) => id)).toEqual([1, 2]);
-  });
-
-  it('verifies, deduplicates, and serves immutable content-addressed resources', async () => {
-    const repository = new MemoryProjectRepository();
-    await repository.create(rootDocument());
-    const resource = resourceBlob('font bytes');
-
-    await repository.append('repository-test', 1, [renameEvent('A')], [resource, resource]);
-
-    expect(Buffer.from(await repository.readResource('repository-test', resource.id))).toEqual(
-      Buffer.from(resource.bytes)
-    );
-    await expect(
-      repository.append(
-        'repository-test',
-        2,
-        [renameEvent('B')],
-        [{ ...resource, byteLength: resource.byteLength + 1 }]
-      )
-    ).rejects.toThrow('unexpected byte length');
   });
 });
 
@@ -87,17 +67,3 @@ function renameEvent(title: string): NewProjectEvent<'project.renamed'> {
     payload: { previousTitle: 'Repository test', title }
   };
 }
-
-function resourceBlob(value: string): ProjectResourceBlob {
-  const bytes = new TextEncoder().encode(value);
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  return {
-    id: `sha256-${sha256}`,
-    kind: 'fontResource',
-    sha256,
-    mediaType: 'font/ttf',
-    byteLength: bytes.byteLength,
-    bytes
-  };
-}
-import { createHash } from 'node:crypto';

@@ -102,7 +102,7 @@ describe('project JSON API', () => {
     );
   });
 
-  it('accepts zero-based instance IDs in inline element references', async () => {
+  it('rejects obsolete inline element references at the request boundary', async () => {
     const { POST } = await import('./+server');
     const response = await POST(
       request('POST', {
@@ -124,20 +124,8 @@ describe('project JSON API', () => {
       })
     );
 
-    expect(response.status).toBe(202);
-    expect(mocks.accept).toHaveBeenCalledWith(
-      expect.objectContaining({
-        command: expect.objectContaining({
-          content: expect.arrayContaining([
-            expect.objectContaining({
-              type: 'element-ref',
-              presentationEvent: 3,
-              instances: [0]
-            })
-          ])
-        })
-      })
-    );
+    expect(response.status).toBe(400);
+    expect(mocks.accept).not.toHaveBeenCalled();
   });
 
   it('accepts a request for fresh variants of the unchanged Sverlin source', async () => {

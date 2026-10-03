@@ -27,10 +27,6 @@
     layout: PresentationLayout;
     onPresentationChange?: () => void;
     onReferenceRequest?: (presentation: TimelinePresentation) => void;
-    onElementReferenceActivate?: (
-      reference: Extract<MessageContentSegment, { type: 'element-ref' }>,
-      extend: boolean
-    ) => void;
   };
 
   let {
@@ -38,8 +34,7 @@
     selection,
     layout,
     onPresentationChange = () => {},
-    onReferenceRequest = () => {},
-    onElementReferenceActivate = () => {}
+    onReferenceRequest = () => {}
   }: Props = $props();
   const items = $derived(participantTimeline(session.events));
   const activityProgress = $derived.by(() => {
@@ -71,13 +66,8 @@
       ({ presentation: value }) => value.presentationId === reference.presentationId
     );
     if (!presentation) return;
-    if (reference.type === 'presentation-ref') {
-      onPresentationChange();
-      selection.activate(presentation, session.events, layout, extend);
-      return;
-    }
-    selection.activate(presentation, session.events, layout);
-    onElementReferenceActivate(reference, extend);
+    onPresentationChange();
+    selection.activate(presentation, session.events, layout, extend);
   }
 </script>
 

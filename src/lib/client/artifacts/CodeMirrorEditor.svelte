@@ -17,7 +17,7 @@
   let {
     value = $bindable(''),
     editable = false,
-    language = 'sverlin',
+    language = 'svelte',
     ariaLabel = 'Source code editor',
     onChange
   }: Props = $props();

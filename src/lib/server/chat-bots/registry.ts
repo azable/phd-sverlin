@@ -1,23 +1,23 @@
-/**
- * Assembly and runtime selection of configured chatbots.
- *
- * @packageDocumentation
- */
+/** Provider assembly for mode-owned assistants and the shared intake classifier. */
 
 import { openAIAdapter } from '$lib/server/chat-adapters/openai';
+import { InvalidChatbotResponseError, type ChatAdapter } from '$lib/server/chat-adapters/types';
 import { assistantMode, type AssistantId } from '$lib/shared/assistants';
 import type { ParticipantIntakeStepId } from '$lib/shared/projects/events';
+import { modeCatalog } from '$lib/visualization-modes/catalog';
 
-import type { ChatAdapter } from '$lib/server/chat-adapters/types';
-import { InvalidChatbotResponseError } from '$lib/server/chat-adapters/types';
-import type { AiProjectContext } from './sverlin-assistant/project-context';
-import type { ChatBotConfig, Chatbot, ChatbotRequest } from './types';
-import sverlinAssistantBot from './sverlin-assistant';
-import htmlAssistantBot, { type HtmlAssistantOutput } from './html-assistant';
 import {
   participantIntakeClassifier,
   type ParticipantIntakeClassifierOutput
 } from './participant-intake';
+import type { AiProjectContext } from './project-context';
+import type {
+  CandidateAssistantOutput,
+  ChatBotConfig,
+  Chatbot,
+  ChatbotRequest,
+  SourceArtifactChatOutput
+} from './types';
 
 /** Combine a bot definition with a provider adapter into an executable chatbot. */
 export function createChatbot<Project, Output extends object>(
@@ -26,9 +26,8 @@ export function createChatbot<Project, Output extends object>(
 ): Chatbot<Project, Output> {
   const preparePrompt = async (request: ChatbotRequest<Project>) => {
     const profile = config.attemptProfiles[request.attempt - 1];
-    if (!Number.isSafeInteger(request.attempt) || request.attempt < 1 || !profile) {
+    if (!Number.isSafeInteger(request.attempt) || request.attempt < 1 || !profile)
       throw new Error(`Chatbot attempt ${request.attempt} is outside the configured ladder.`);
-    }
     const attempt = { number: request.attempt, purpose: profile.purpose };
     return {
       messages: request.messages,
@@ -57,11 +56,7 @@ export function createChatbot<Project, Output extends object>(
       ...output,
       providerResponse: result.providerResponse,
       prompt,
-      generation: {
-        botId: config.id,
-        adapterId: adapter.id,
-        ...result.generation
-      }
+      generation: { botId: config.id, adapterId: adapter.id, ...result.generation }
     };
   };
   return {
@@ -73,43 +68,42 @@ export function createChatbot<Project, Output extends object>(
   } satisfies Chatbot<Project, Output>;
 }
 
-const sverlinChatbot = createChatbot(sverlinAssistantBot, openAIAdapter);
-const configuredChatbots: Partial<Record<AssistantId, Chatbot<AiProjectContext>>> = {
-  [sverlinAssistantBot.id]: sverlinChatbot
-};
-
-const htmlChatbot: Chatbot<AiProjectContext, HtmlAssistantOutput> = createChatbot(
-  htmlAssistantBot,
-  openAIAdapter
+type ModeOutput = SourceArtifactChatOutput | CandidateAssistantOutput;
+const modules = import.meta.glob<{ default: ChatBotConfig<AiProjectContext, ModeOutput> }>(
+  '../../visualization-modes/*/bot.server.ts',
+  { eager: true }
 );
-const intakeClassifier: Chatbot<
-  Record<string, never>,
-  ParticipantIntakeClassifierOutput
-> = createChatbot(participantIntakeClassifier, openAIAdapter);
+const modeChatbots = Object.fromEntries(
+  Object.keys(modeCatalog).map((mode) => {
+    const config = modules[`../../visualization-modes/${mode}/bot.server.ts`]?.default;
+    if (!config || config.id !== modeCatalog[mode as keyof typeof modeCatalog].assistantId)
+      throw new Error(`Visualization mode ${mode} needs its own matching assistant.`);
+    return [mode, createChatbot(config, openAIAdapter)];
+  })
+) as Record<keyof typeof modeCatalog, Chatbot<AiProjectContext, ModeOutput>>;
 
-/** Return the Sverlin-source assistant recorded by a project. */
-export function getChatbot(assistantId: AssistantId): Chatbot<AiProjectContext> {
-  const chatbot =
-    assistantMode(assistantId) === 'sverlin' ? configuredChatbots[assistantId] : undefined;
+const intakeClassifier = createChatbot(participantIntakeClassifier, openAIAdapter);
 
-  if (!chatbot) {
-    throw new Error(`Unknown Sverlin assistant: ${assistantId}`);
-  }
-
-  return chatbot;
-}
-
-/** Return the HTML assistant recorded by a project. */
-export function getHtmlChatbot(
+/** Return the source-authoring bot recorded by a Sverlin project. */
+export function getChatbot(
   assistantId: AssistantId
-): Chatbot<AiProjectContext, HtmlAssistantOutput> {
-  if (assistantId !== htmlAssistantBot.id || assistantMode(assistantId) !== 'html') {
-    throw new Error(`Unknown HTML assistant: ${assistantId}`);
-  }
-  return htmlChatbot;
+): Chatbot<AiProjectContext, SourceArtifactChatOutput> {
+  const mode = assistantMode(assistantId);
+  if (modeCatalog[mode].authoring !== 'source')
+    throw new Error(`Unknown Sverlin assistant: ${assistantId}`);
+  return modeChatbots[mode] as Chatbot<AiProjectContext, SourceArtifactChatOutput>;
 }
 
-/** Return the shared classifier for exceptional requests to leave participant intake early. */
+/** Return the candidate-authoring bot recorded by a direct-artifact mode. */
+export function getCandidateChatbot(
+  assistantId: AssistantId
+): Chatbot<AiProjectContext, CandidateAssistantOutput> {
+  const mode = assistantMode(assistantId);
+  if (modeCatalog[mode].authoring !== 'candidates')
+    throw new Error(`Unknown candidate assistant: ${assistantId}`);
+  return modeChatbots[mode] as Chatbot<AiProjectContext, CandidateAssistantOutput>;
+}
+
 export function getParticipantIntakeClassifier(): Chatbot<
   Record<string, never>,
   ParticipantIntakeClassifierOutput
@@ -117,13 +111,12 @@ export function getParticipantIntakeClassifier(): Chatbot<
   return intakeClassifier;
 }
 
-/** Return participant-facing identity and guidance owned by the mode's recorded assistant. */
 export function assistantIntroduction(assistantId: AssistantId): {
   botId: string;
   text: string;
   step: ParticipantIntakeStepId;
 } {
-  const config = assistantId === 'html-assistant' ? htmlAssistantBot : sverlinAssistantBot;
-  const first = config.participantIntake[0];
-  return { botId: config.id, text: first.question, step: first.id };
+  const bot = modeChatbots[assistantMode(assistantId)];
+  const first = bot.config.participantIntake[0];
+  return { botId: bot.id, text: first.question, step: first.id };
 }

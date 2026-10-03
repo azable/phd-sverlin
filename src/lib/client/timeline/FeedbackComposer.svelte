@@ -7,26 +7,17 @@
   import * as Field from '$lib/client/components/ui/field';
   import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
-  import {
-    timelinePresentations,
-    type TimelinePresentation
-  } from '$lib/client/visualization/presentation-history';
+  import { type TimelinePresentation } from '$lib/client/visualization/presentation-history';
   import type { MessageContent } from '$lib/shared/projects/events/message-content';
-  import type { VisualSelection } from '$lib/shared/projects/events/values';
 
   import MessageContentView from './MessageContent.svelte';
   import { automaticFeedbackContext, feedbackSubmissionContent } from './feedback-context';
-  import {
-    referenceChipLabel,
-    singletonReferenceSegments,
-    type ReferenceSegment
-  } from './reference-labels';
+  import { referenceChipLabel, type ReferenceSegment } from './reference-labels';
 
   type Props = {
     session: ProjectSession;
     presentationCount: 1 | 2;
     presentations: TimelinePresentation[];
-    visualSelections?: readonly VisualSelection[];
     onSubmitted?: () => void;
     onDraftChange?: (content: MessageContent, focused: boolean) => void;
   };
@@ -35,7 +26,6 @@
     session,
     presentationCount,
     presentations,
-    visualSelections = [],
     onSubmitted = () => {},
     onDraftChange = (_content: MessageContent, _focused: boolean) => {}
   }: Props = $props();
@@ -45,34 +35,12 @@
   let hasExplicitReferences = $state(false);
   let editorRevision = $state(0);
   let focused = $state(false);
-  const automaticContext = $derived(automaticFeedbackContext(presentations, visualSelections));
+  const automaticContext = $derived(automaticFeedbackContext(presentations));
 
   export function referencePresentation(presentation: TimelinePresentation): void {
     insertReference({
       type: 'presentation-ref',
       presentationId: presentation.presentation.presentationId
-    });
-  }
-
-  export function referenceSelection(selection: VisualSelection): void {
-    insertReferences(selectionReferences(selection));
-  }
-
-  export function referenceSelections(selections: readonly VisualSelection[]): void {
-    insertReferences(selections.flatMap(selectionReferences));
-  }
-
-  function selectionReferences(selection: VisualSelection): ReferenceSegment[] {
-    const presentation = timelinePresentations(session.events).find(
-      ({ eventId }) => eventId === selection.presentationEvent
-    );
-    if (!presentation) return [];
-    return singletonReferenceSegments({
-      type: 'element-ref',
-      presentationId: presentation.presentation.presentationId,
-      presentationEvent: selection.presentationEvent,
-      step: selection.step,
-      instances: selection.instances
     });
   }
 

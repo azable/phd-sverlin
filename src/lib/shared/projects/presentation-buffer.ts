@@ -40,7 +40,8 @@ export function presentationBufferState(
     if (event.type === 'visualization.presented') {
       const presentation = event.payload.presentation;
       if (
-        !isSverlinPresentation(presentation) ||
+        (!isSverlinPresentation(presentation) &&
+          !(presentation.format === 'browser-bundle-v1' && presentation.mode === 'sverlin')) ||
         presentation.source.sha256 !== currentSourceSha256
       ) {
         return [];

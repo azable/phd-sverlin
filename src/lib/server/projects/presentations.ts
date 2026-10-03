@@ -1,25 +1,17 @@
-/** Renderer-neutral preference and manual HTML presentation commands. */
+/** Preference commands for compatible retained presentations. */
 
-import { randomUUID } from 'node:crypto';
-
-import type { EventId, NewProjectEvent } from '$lib/shared/projects/events';
+import type { EventId } from '$lib/shared/projects/events';
 import type { VisualSelection } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
-import type { CompilerPresentation, HtmlFramesManifest } from '$lib/shared/presentations';
 import {
   isSverlinPresentation,
   presentationScenarioKey,
   presentationStepLabels
 } from '$lib/shared/presentations';
-import { decodeVisualization } from '$lib/shared/visualization';
-import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
-import { validateHtmlFramesManifest } from '$lib/server/visualization-modes/html-safety';
-import { stepSignature } from '$lib/server/visualization-modes';
+import { projectHead } from '$lib/shared/projects/projection';
 
 import { runProjectCommand } from './command-lock';
-import { recordText } from './fingerprints';
 import { projectRepository } from './repository';
-import { resolveProjectVisualSelection } from './visual-selection';
 import {
   appendProjectEvents,
   defaultProjectServiceDependencies,
@@ -96,29 +88,16 @@ export async function appendProjectPreference(
   ) {
     throw new Error('Only compatible versions of the same visualization can be compared.');
   }
-  const localSteps = alignedLocalSteps([leftPresentation, rightPresentation], options.step);
-  if (!localSteps) {
+  if (
+    options.step < 0 ||
+    [leftPresentation, rightPresentation].some(
+      (presentation) => options.step >= presentationStepLabels(presentation).length
+    )
+  ) {
     throw new Error('The preference references an unknown presentation step.');
   }
-  const allowedEvents = new Set([left.id, right.id]);
-  const visualSelections = options.visualSelections.map((selection) => {
-    const resolved = resolveProjectVisualSelection(document, selection).selection;
-    const presentationIndex = resolved.presentationEvent === left.id ? 0 : 1;
-    if (
-      !allowedEvents.has(resolved.presentationEvent) ||
-      resolved.step !== localSteps[presentationIndex]
-    ) {
-      throw new Error('Preference focus must belong to the compared presentations and step.');
-    }
-    return resolved;
-  });
-  if (
-    visualSelections.length > 2 ||
-    new Set(visualSelections.map(({ presentationEvent }) => presentationEvent)).size !==
-      visualSelections.length
-  ) {
-    throw new Error('A preference may focus each compared presentation at most once.');
-  }
+  if (options.visualSelections.length)
+    throw new Error('Browser presentations do not expose selectable elements.');
   const displaySetId =
     left.payload.displaySetId === right.payload.displaySetId
       ? left.payload.displaySetId
@@ -135,105 +114,12 @@ export async function appendProjectPreference(
           presentations: options.presentations,
           preferred: options.preferred,
           step: options.step,
-          visualSelections
+          visualSelections: []
         }
       })
     ],
-    [],
     dependencies
   );
-}
-
-function alignedLocalSteps(
-  presentations: readonly [CompilerPresentation, CompilerPresentation],
-  unionStep: number
-): [number, number] | undefined {
-  if (presentations.every(({ format }) => format === 'sverlin-ir-v1')) {
-    return presentations.every(
-      (presentation) => unionStep < presentationStepLabels(presentation).length
-    )
-      ? [unionStep, unionStep]
-      : undefined;
-  }
-  if (!presentations.every(({ format }) => format === 'sverlin-ir-v2')) return undefined;
-  const visualizations = presentations.map((presentation) =>
-    decodeVisualization(presentation.render.text)
-  );
-  const ordinals = [
-    ...new Set(
-      visualizations.flatMap(({ steps }) =>
-        steps.flatMap(({ ordinal }) => (ordinal === undefined ? [] : [ordinal]))
-      )
-    )
-  ].toSorted((left, right) => left - right);
-  const ordinal = ordinals[unionStep];
-  if (ordinal === undefined) return undefined;
-  return visualizations.map(({ steps }) =>
-    steps.findLastIndex((step) => step.ordinal !== undefined && step.ordinal <= ordinal)
-  ) as [number, number];
-}
-
-/** Save and immediately present one complete editable HTML manifest. */
-export function saveHtmlProjectArtifact(
-  options: {
-    projectId: string;
-    expectedHead: EventId;
-    artifactId: string;
-    manifest: HtmlFramesManifest;
-    operationId: string;
-  },
-  dependencies: PresentationCommandDependencies = defaultDependencies
-): Promise<ProjectCommandResult> {
-  return runProjectCommand(options.projectId, async () => {
-    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
-    const snapshot = projectSnapshotAt(before);
-    if (snapshot.renderer !== 'html') throw new Error('This project does not use HTML frames.');
-    const current = snapshot.artifacts[options.artifactId];
-    if (!current) throw new Error(`Unknown artifact ${options.artifactId}.`);
-    const { authored, rendered } = validateHtmlFramesManifest(options.manifest);
-    const authoredText = recordText(
-      JSON.stringify(authored),
-      'application/vnd.sverlin.html-frames+json'
-    );
-    const renderedText = recordText(
-      JSON.stringify(rendered),
-      'application/vnd.sverlin.html-frames+json'
-    );
-    const events: NewProjectEvent[] = [
-      draftEvent({
-        type: 'artifact.version-created',
-        actor: { kind: 'user' },
-        operationId: options.operationId,
-        payload: {
-          origin: { kind: 'manual-edit' },
-          changes: [
-            {
-              operation: 'upsert',
-              artifact: { ...current, language: 'json', content: authoredText }
-            }
-          ]
-        }
-      }),
-      draftEvent({
-        type: 'visualization.presented',
-        actor: { kind: 'user' },
-        operationId: options.operationId,
-        payload: {
-          displaySetId: randomUUID(),
-          slot: 0,
-          presentation: {
-            presentationId: randomUUID(),
-            format: 'html-frames-v1',
-            stepSignature: stepSignature(rendered.frames.map(({ label }) => label)),
-            authored: authoredText,
-            rendered: renderedText
-          }
-        }
-      })
-    ];
-    const document = await appendProjectEvents(before, events, [], dependencies.projectService);
-    return { document, appendedEvents: document.events.slice(before.events.length) };
-  });
 }
 
 async function checkedDocument(

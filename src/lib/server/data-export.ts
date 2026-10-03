@@ -13,11 +13,7 @@ import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 
 import { database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
-import {
-  projectRepository,
-  ProjectNotFoundError,
-  type ProjectReader
-} from '$lib/server/projects/repository';
+import { ProjectNotFoundError } from '$lib/server/projects/repository';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 import {
   activeProjectOperation,
@@ -29,7 +25,7 @@ import { projectStudyFlow, type StudyFlow } from '$lib/shared/study/projection';
 import { registeredStudyDefinitions, studyDefinition } from '$lib/shared/study/registry';
 
 const exportFormat = 'sverlin-data-export';
-const exportVersion = 3;
+const exportVersion = 4;
 
 export type ExportScope =
   | { type: 'projects'; projectId?: string }
@@ -43,14 +39,6 @@ export type ExportParticipant = {
   enabled: boolean;
   createdAt: string;
 };
-export type ExportResource = {
-  projectId: string;
-  resourceId: string;
-  sha256: string;
-  byteLength: number;
-  mediaType: string;
-  createdAt: string;
-};
 export type ExportProject = {
   id: string;
   ownerUserId: string;
@@ -60,7 +48,6 @@ export type ExportProject = {
   createdAt: string;
   updatedAt: string;
   document: ProjectDocument;
-  resources: ExportResource[];
 };
 export type ExportSnapshot = {
   owners: ExportOwner[];
@@ -122,7 +109,6 @@ export type ExportInteractionSnapshot = {
 export interface ExportDataSource {
   collect(scope: ExportScope): Promise<ExportSnapshot>;
   collectInteractions?(scope: ExportScope): Promise<ExportInteractionSnapshot>;
-  readResource(projectId: string, resourceId: string): Promise<Uint8Array>;
 }
 
 export interface ExportSink {
@@ -162,8 +148,6 @@ export type PreparedDataExport = {
 
 /** PostgreSQL source with one safe allowlist and phase-link-based research selection. */
 export class PostgresExportDataSource implements ExportDataSource {
-  constructor(private readonly repository: ProjectReader = projectRepository) {}
-
   async collect(scope: ExportScope): Promise<ExportSnapshot> {
     return database().transaction(
       async (transaction) => {
@@ -326,24 +310,6 @@ export class PostgresExportDataSource implements ExportDataSource {
               .where(inArray(schema.projectEvents.projectId, projectIds))
               .orderBy(asc(schema.projectEvents.projectId), asc(schema.projectEvents.eventId))
           : [];
-        const resourceRows = projectIds.length
-          ? await transaction
-              .select({
-                projectId: schema.projectResources.projectId,
-                resourceId: schema.projectResources.resourceId,
-                sha256: schema.projectResources.sha256,
-                byteLength: schema.projectResources.byteLength,
-                mediaType: schema.projectResources.mediaType,
-                createdAt: schema.projectResources.createdAt
-              })
-              .from(schema.projectResources)
-              .where(inArray(schema.projectResources.projectId, projectIds))
-              .orderBy(
-                asc(schema.projectResources.projectId),
-                asc(schema.projectResources.resourceId)
-              )
-          : [];
-
         const projectDocuments = new Map(
           projectRows.map((project) => {
             const document: ProjectDocument = {
@@ -428,10 +394,7 @@ export class PostgresExportDataSource implements ExportDataSource {
             ...project,
             createdAt: project.createdAt.toISOString(),
             updatedAt: project.updatedAt.toISOString(),
-            document: requiredProjectDocument(projectDocuments, project.id),
-            resources: resourceRows
-              .filter((row) => row.projectId === project.id)
-              .map((row) => ({ ...row, createdAt: row.createdAt.toISOString() }))
+            document: requiredProjectDocument(projectDocuments, project.id)
           })),
           study: {
             definitions,
@@ -448,10 +411,6 @@ export class PostgresExportDataSource implements ExportDataSource {
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' }
     );
-  }
-
-  readResource(projectId: string, resourceId: string): Promise<Uint8Array> {
-    return this.repository.readResource(projectId, resourceId);
   }
 
   async collectInteractions(scope: ExportScope): Promise<ExportInteractionSnapshot> {
@@ -650,18 +609,6 @@ export async function writeDataExport(
       updatedAt: project.updatedAt,
       document: project.document
     });
-    await appendJson(sink, files, `${root}/resources.json`, project.resources);
-    for (const resource of project.resources) {
-      const bytes = await source.readResource(project.id, resource.resourceId);
-      verifyExportResource(bytes, resource);
-      await appendBytes(
-        sink,
-        files,
-        `${root}/resources/${safePathSegment(resource.resourceId)}`,
-        bytes,
-        resource.mediaType
-      );
-    }
   }
   const interactionExport = await prepareInteractionExport(source, scope, exportedAt);
   for (const file of interactionExport.files) {
@@ -674,8 +621,7 @@ export async function writeDataExport(
     exportedAt,
     application: {
       version: process.env.npm_package_version ?? '0.0.1',
-      buildSha:
-        process.env.RENDER_GIT_COMMIT?.trim() || process.env.SVERLIN_BUILD_SHA?.trim() || null
+      buildSha: process.env.SVERLIN_BUILD_SHA?.trim() || null
     },
     ownerCount: snapshot.owners.length,
     participantCount: snapshot.participants.length,
@@ -962,19 +908,6 @@ export async function prepareDataExport(
       await rm(root, { recursive: true, force: true });
     }
   };
-}
-
-export function verifyExportResource(
-  bytes: Uint8Array,
-  expected: Pick<ExportResource, 'resourceId' | 'sha256' | 'byteLength'>
-): void {
-  if (bytes.byteLength !== expected.byteLength) {
-    throw new Error(`Resource ${expected.resourceId} has an unexpected byte length.`);
-  }
-  const digest = sha256(bytes);
-  if (digest !== expected.sha256 || expected.resourceId !== `sha256-${digest}`) {
-    throw new Error(`Resource ${expected.resourceId} failed SHA-256 verification.`);
-  }
 }
 
 function zipSink(zip: Archiver): ExportSink {

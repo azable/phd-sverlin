@@ -42,10 +42,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
                 ? {
                     interactionCapture: inspection.study.interactionCapture,
                     applicationVersion: process.env.npm_package_version ?? '0.0.1',
-                    buildSha:
-                      process.env.RENDER_GIT_COMMIT?.trim() ||
-                      process.env.SVERLIN_BUILD_SHA?.trim() ||
-                      undefined
+                    buildSha: process.env.SVERLIN_BUILD_SHA?.trim() || undefined
                   }
                 : {})
             };

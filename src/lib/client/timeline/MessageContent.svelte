@@ -32,7 +32,7 @@
       <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       <span class="message-markdown">{@html renderSafeMarkdown(segment.text)}</span>
     {:else}
-      {#each singletonReferenceSegments(segment) as reference (reference.type === 'presentation-ref' ? `presentation:${reference.presentationId}` : `element:${reference.presentationEvent}:${reference.step}:${reference.instances[0]}`)}
+      {#each singletonReferenceSegments(segment) as reference (reference.presentationId)}
         {#if interactive}
           <Button
             type="button"

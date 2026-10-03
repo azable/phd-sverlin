@@ -21,60 +21,17 @@ describe('automatic feedback context', () => {
     ]);
   });
 
-  it('uses one exact chip per selected element inside an automatic comparison', () => {
+  it('references both visible presentations in a comparison', () => {
     expect(
-      automaticFeedbackContext(
-        [presentation(4, presentationIds[0]), presentation(5, presentationIds[1])],
-        [{ presentationEvent: 4, step: 2, instances: [7, 2] }]
-      )
+      automaticFeedbackContext([
+        presentation(4, presentationIds[0]),
+        presentation(5, presentationIds[1])
+      ])
     ).toEqual([
       { type: 'markdown', text: 'Comparing ' },
-      {
-        type: 'element-ref',
-        presentationId: presentationIds[0],
-        presentationEvent: 4,
-        step: 2,
-        instances: [7]
-      },
-      {
-        type: 'element-ref',
-        presentationId: presentationIds[0],
-        presentationEvent: 4,
-        step: 2,
-        instances: [2]
-      },
+      { type: 'presentation-ref', presentationId: presentationIds[0] },
       { type: 'markdown', text: ' with ' },
       { type: 'presentation-ref', presentationId: presentationIds[1] },
-      { type: 'markdown', text: '.' }
-    ]);
-  });
-
-  it('retains exact element references from both visible candidates', () => {
-    expect(
-      automaticFeedbackContext(
-        [presentation(4, presentationIds[0]), presentation(5, presentationIds[1])],
-        [
-          { presentationEvent: 4, step: 2, instances: [7] },
-          { presentationEvent: 5, step: 2, instances: [9] }
-        ]
-      )
-    ).toEqual([
-      { type: 'markdown', text: 'Comparing ' },
-      {
-        type: 'element-ref',
-        presentationId: presentationIds[0],
-        presentationEvent: 4,
-        step: 2,
-        instances: [7]
-      },
-      { type: 'markdown', text: ' with ' },
-      {
-        type: 'element-ref',
-        presentationId: presentationIds[1],
-        presentationEvent: 5,
-        step: 2,
-        instances: [9]
-      },
       { type: 'markdown', text: '.' }
     ]);
   });

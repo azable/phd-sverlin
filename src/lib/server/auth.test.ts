@@ -25,8 +25,7 @@ describe('Better Auth configuration', () => {
     expect(authenticationRequired()).toBe(true);
 
     delete process.env.BETTER_AUTH_URL;
-    process.env.RENDER_EXTERNAL_HOSTNAME = 'sverlin-web.onrender.com';
-    expect(() => validateAuthenticationConfiguration()).not.toThrow();
+    expect(() => validateAuthenticationConfiguration()).toThrow('BETTER_AUTH_URL');
   });
 
   it('allows only same-origin, non-auth return paths', () => {

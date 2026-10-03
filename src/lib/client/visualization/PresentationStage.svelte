@@ -10,7 +10,6 @@
   import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import type { ProjectOperationKind } from '$lib/shared/projects/events';
-  import type { VisualSelection } from '$lib/shared/projects/events/values';
   import type { PresentationLayout } from '$lib/shared/presentations';
 
   import type { PresentationSelection } from './presentation-selection.svelte';
@@ -27,29 +26,9 @@
     playback: PresentationPlayback;
     layout: PresentationLayout;
     disabled?: boolean;
-    visualSelections?: readonly VisualSelection[];
-    onVisualSelectionsChange?: (selections: VisualSelection[]) => void;
-    onReferenceSelections?: (selections: VisualSelection[]) => void;
-    onViewportChange?: (
-      presentationId: string,
-      viewport: { zoom: number; panX: number; panY: number }
-    ) => void;
   };
 
-  let {
-    session,
-    selection,
-    playback,
-    layout,
-    disabled = false,
-    visualSelections = [],
-    onVisualSelectionsChange = (_selections: VisualSelection[]) => {},
-    onReferenceSelections = (_selections: VisualSelection[]) => {},
-    onViewportChange = (
-      _presentationId: string,
-      _viewport: { zoom: number; panX: number; panY: number }
-    ) => {}
-  }: Props = $props();
+  let { session, selection, playback, layout, disabled = false }: Props = $props();
   let preferencePending = $state<string>();
 
   const visualizationOperationKinds: readonly ProjectOperationKind[] = [
@@ -59,7 +38,6 @@
     'render',
     'resample',
     'save',
-    'save-html',
     'restore'
   ];
   const visible = $derived(selection.selected(session.events, layout));
@@ -75,14 +53,6 @@
   const step = $derived(playback.stepFor(playbackContext));
   const stepCount = $derived(playbackContext.stepCount);
   const selectedIds = $derived(visible.map(({ presentation }) => presentation.presentationId));
-  const visibleSelections = $derived(
-    visible.flatMap((entry) =>
-      visualSelections.filter(
-        (selection) =>
-          selection.presentationEvent === entry.eventId && selection.step === localStep(entry)
-      )
-    )
-  );
   const preferred = $derived.by(() => {
     if (visible.length !== 2) return undefined;
     const preference = session.events.findLast(
@@ -98,7 +68,6 @@
 
   function seek(next: number) {
     playback.seek(playbackContext, next);
-    onVisualSelectionsChange([]);
   }
 
   async function prefer(preferred: string) {
@@ -111,10 +80,9 @@
         presentations: [selectedIds[0], selectedIds[1]],
         preferred,
         step,
-        visualSelections: visibleSelections
+        visualSelections: []
       });
       if (succeeded) {
-        onVisualSelectionsChange([]);
         selection.returnToLatest();
       }
     } finally {
@@ -129,7 +97,6 @@
       presentations: selectedIds
     });
     if (succeeded) {
-      onVisualSelectionsChange([]);
       selection.returnToLatest();
     }
   }
@@ -140,38 +107,12 @@
       presentationCount: layout === 'comparison' ? 2 : 1
     });
     if (succeeded) {
-      onVisualSelectionsChange([]);
       selection.returnToLatest();
     }
   }
 
   function returnToCurrent() {
-    onVisualSelectionsChange([]);
     selection.returnToLatest();
-  }
-
-  function selectedInstances(entry: (typeof visible)[number]) {
-    return (
-      visualSelections.find(
-        (selection) =>
-          selection.presentationEvent === entry.eventId && selection.step === localStep(entry)
-      )?.instances ?? []
-    );
-  }
-
-  function selectInstances(entry: (typeof visible)[number], instances: number[]) {
-    const entryStep = localStep(entry);
-    if (entryStep < 0) return;
-    const retained = visualSelections.filter(
-      (selection) =>
-        visible.some(({ eventId }) => eventId === selection.presentationEvent) &&
-        selection.presentationEvent !== entry.eventId
-    );
-    onVisualSelectionsChange(
-      instances.length
-        ? [...retained, { presentationEvent: entry.eventId, step: entryStep, instances }]
-        : retained
-    );
   }
 
   function localStep(entry: (typeof visible)[number]) {
@@ -275,17 +216,6 @@
         {/if}
       </Button>
     {/if}
-    {#if visibleSelections.length}
-      <Button
-        size="sm"
-        variant="outline"
-        aria-label="Reference selected visualization elements"
-        onclick={() => onReferenceSelections(visibleSelections)}
-        {disabled}
-      >
-        Reference {visibleSelections.length === 1 ? 'selection' : 'selections'}
-      </Button>
-    {/if}
   </div>
   {#if selection.notice}
     <p class="border-b bg-muted px-3 py-2 text-center text-sm text-muted-foreground" role="status">
@@ -309,12 +239,7 @@
           <PresentationViewport
             presentation={entry.presentation}
             step={localStep(entry)}
-            projectId={session.projectId}
             label={`Visualization ${index + 1}`}
-            selectedIds={selectedInstances(entry)}
-            onSelectionChange={(instances) => selectInstances(entry, instances)}
-            onViewportChange={(viewport) =>
-              onViewportChange(entry.presentation.presentationId, viewport)}
           />
         </div>
       </div>

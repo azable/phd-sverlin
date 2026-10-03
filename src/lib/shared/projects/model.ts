@@ -11,7 +11,6 @@ import * as v from 'valibot';
 
 import type { AssistantId } from '$lib/shared/assistants';
 import {
-  htmlFramesManifestSchema,
   presentationLayoutSchema,
   presentationIdSchema,
   visualizationModeSchema,
@@ -97,12 +96,6 @@ export const projectCommandSchema = v.variant('type', [
     artifactId: textSchema,
     source: v.string(),
     presentationCount: v.picklist([1, 2])
-  }),
-  v.strictObject({
-    ...commandBase,
-    type: v.literal('save-html'),
-    artifactId: textSchema,
-    manifest: htmlFramesManifestSchema
   }),
   v.strictObject({
     ...commandBase,

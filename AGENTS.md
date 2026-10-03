@@ -1,184 +1,46 @@
 # AGENTS.md
 
-## Project Context
+## Project context
 
-This repo contains a SvelteKit application (root), and a Haskell application
-under `compile/`. The SvelteKit app stores projects as immutable event Timelines
-in PostgreSQL. The web process accepts asynchronous operations into those
-Timelines and executes them through a bounded in-process executor; interrupted
-work is explicitly failed and retried by the user. The compiler is exposed to
-server code only as a service that accepts `.sverlin` content and one or more
-seeds. The Haskell application generates the data that the SvelteKit application
-displays, but that implementation detail does not cross the compiler service
-boundary.
+This repository contains one SvelteKit application. Projects are immutable event Timelines in PostgreSQL. The web process accepts asynchronous operations into those Timelines and executes them through a bounded in-process executor; interrupted work is explicitly failed and retried by the user.
 
-## Communication and Documentation
+Visualization modes are developer-registered in `src/lib/visualization-modes/catalog.ts`. The `sverlin` mode authors one self-contained Svelte component, `html` authors script-free frames, and `html-js` authors separate HTML and JavaScript. Each mode folder owns its assistant, starter artifact, validation/build implementation, and playback component. The `main-study` v2 protocol compares `sverlin` and `html`; `html-js` is outside that study. JavaScript from authored artifacts executes only in an opaque-origin sandboxed browser frame, never in the server process or application origin. Sanitize authored HTML with a library and reject external imports; an iframe alone cannot prove that arbitrary JS will never attempt navigation.
 
-- Write explanations for a developer with in-depth programming knowledge but only
-  basic DevOps and Render knowledge. Be concise, but include the context needed to
-  understand why an operational step or constraint exists; do not assume familiarity
-  with infrastructure-specific terminology.
-- Prefer plain language. Define an unavoidable specialist term at its first meaningful
-  use when the intended reader may not know it. In repository documentation, link that
-  first use to an authoritative source when the definition would otherwise interrupt
-  the explanation, prioritizing official product documentation, standards, research
-  papers, and then a suitable reference such as Wikipedia.
-- Do not add links for ordinary programming terms, repeat the same explanatory link
-  throughout a document, or link a term whose meaning is already clear from nearby
-  text. The goal is reader understanding rather than exhaustive annotation.
-- If a terminology choice remains ambiguous after applying these guidelines, ask for
-  clarification. When the same user preference recurs across tasks, suggest adding it
-  to this file, but do not modify the standing instructions without approval.
-- In Markdown documentation, link references to repository files with relative
-  Markdown links so that they remain navigable in GitHub and can be opened directly
-  from the documentation in VS Code. Prefer a named heading or symbol when a specific
-  passage matters; use a line anchor only for a fixed revision where its line numbers
-  cannot drift. Otherwise, link to the file. Use inline code, not a link, for
-  illustrative or nonexistent paths.
-- When documenting behavior, keep the explanation close to its source of truth. Name
-  the relevant source file, configuration, test, or external documentation, and make
-  clear whether a statement is established behavior, a recommendation, or an
-  assumption. If sources conflict or the behavior cannot be verified, state the
-  uncertainty and ask before turning it into a durable instruction.
-- During guided external-service setup, account explicitly for every warning or error
-  in command output before giving the next step. Classify it as blocking, actionable,
-  or harmless; follow any applicable skill remediation; and verify the resulting
-  external state with a read-only check where possible.
-- Keep human-facing project documentation in the root `README.md`; do not add a
-  `docs/` directory or separate project guides without developer approval. Keep
-  the README concise, current, and free of duplicated source-level detail.
-  Machine-consumed prompt/index files, installed skill instructions, licenses,
-  source-adjacent provenance, and a temporary `HANDOVER.md` are not project
-  guides. Identify conflicting or stale material before consolidating it.
-- Document the rationale and source for operational constants, limits, timeouts, retry
-  counts, and other non-obvious numeric choices.
-- In response code examples, keep expressions on one line when they remain readable;
-  do not mechanically split ordinary function applications across several lines. For
-  example, prefer `Selected limits <- select @Number (#limit <&> payload limitLabel)`
-  over a vertically expanded equivalent. Use multiple lines when the expression's
-  length or structure makes that materially clearer.
+## Communication and documentation
 
-## How To Navigate
+- Write for developers familiar with programming but only basic DevOps. Be concise and explain operational constraints in plain language. Define unavoidable specialist terms at first meaningful use and link to authoritative sources when a definition would interrupt the explanation.
+- In Markdown, link to existing repository files with relative links. Prefer a named heading or symbol to a drifting line anchor. Keep behavior claims close to their source of truth and distinguish established behavior from recommendations or assumptions.
+- During guided external-service setup, account for every warning or error as blocking, actionable, or harmless before the next step. Verify external state with a read-only check when possible.
+- Keep human-facing project documentation in the root `README.md`; do not add `docs/` or separate guides without approval. Avoid duplicating source-level detail. Temporary `HANDOVER.md`, machine-consumed prompt/index files, licenses, installed skills, and source-adjacent provenance are not project guides.
+- Document the rationale and source for operational constants, limits, timeouts, and retry counts.
+- In response code examples, keep ordinary readable expressions on one line rather than expanding every application vertically.
 
-- The SvelteKit application is located in the root directory, and its source code can be found in the `src/` directory.
-- Environment-neutral project contracts, event schemas, projections, and generated visualization IR types live under `src/lib/shared/`; browser sessions, bundled presentation assets, and UI live under `src/lib/client/`; persistence, AI providers, project commands, and compilation live under `src/lib/server/`. Files requiring stable public URLs live under `static/`. Preserve this one-way boundary and its ESLint rules.
-- The Haskell application is located in the `compile/` directory. Reusable Haskell library modules live in `compile/src/`; executable-only modules live in `compile/app/`.
-- Stable direct solver fixtures live in `compile/test-support/Solver/TestFixtures.hs`; use these for solver tests and benchmarks instead of depending on the editable frontend artifact.
-- Use the top-level `Solver` module as the solver API. It intentionally exposes opaque numeric expressions/constraints, finite categorical choices, preprocessing diagnostics, and solve/compile entrypoints; modules under `compile/src/Solver/` are implementation modules unless a task explicitly requires changing solver internals.
+## Navigation and boundaries
 
-## Commands
+- Environment-neutral schemas, Timeline projections, study definitions, and transport contracts belong under `src/lib/shared/`; browser sessions and UI under `src/lib/client/`; persistence, AI providers, and project commands under `src/lib/server/`.
+- Each mode's browser-safe contract and starter, server build/bot, and playback live together under `src/lib/visualization-modes/<mode>/`. Keep server-only and browser-only entry points separate; preserve the one-way import rules in `eslint.config.js`.
+- Stable direct URLs belong under `static/`. Generated shadcn-svelte component source belongs under `src/lib/client/components/ui/` with helper `src/lib/client/components/utils.ts`; `components.json` is authoritative for aliases. Use `pnpm dlx shadcn-svelte@latest` when adding or updating those components.
+- The public Svelte component source contract is the mode starter and build implementation in `src/lib/visualization-modes/sverlin/`. Its assistant prompt belongs in the same folder. The static HTML and HTML/JS modes have distinct assistants; never make one bot serve more than one mode.
 
-- Run project commands inside the Dev Container. Its checked-in `.envrc` activates
-  the devenv environment in interactive terminals; use `devenv shell -- COMMAND`
-  for non-interactive execution. Container creation runs
-  `devenv tasks run sverlin:setup`; use `devenv up` for PostgreSQL plus the
-  application. For database-backed tests, start only PostgreSQL with
-  `devenv up -d postgres`; stop managed processes with `devenv down`.
+## Commands and operational state
 
-- Prepare the Haskell executable with `pnpm run prepare:compiler` after changing compiler inputs. The frontend development command prepares it automatically.
-- To run the Haskell application manually with a seed-based workspace output path, use `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory. `--source FILE` is required. Pass `--output FILE` for an explicit path or when omitting `--seed`; the web app no longer reads `static/compiled.json`.
-- To run the SvelteKit application, use `pnpm run dev` from the root directory. It applies pending database migrations, prepares the compiler, and starts the development server with hot-reloading.
-- `pnpm run dev:web` skips migration and compiler preparation but still includes asynchronous project-operation execution; there is no separate worker process.
-- To inspect complete project Timelines or retained operation failures, use the canonical data export command (`pnpm run export:data -- --scope projects`, optionally with `--project PROJECT_ID` and `--output PATH`). Do not issue ad hoc PostgreSQL queries for this work. If the export omits data that would materially help an investigation, add that data to the canonical export rather than bypassing it; this keeps the command-line and administrator export paths complete and consistent.
+- Run project commands inside the Dev Container. `.envrc` activates devenv in interactive terminals; for non-interactive execution use `devenv shell -- COMMAND`. Container setup runs `devenv tasks run sverlin:setup`. `devenv up` starts PostgreSQL and the app; `devenv up -d postgres` starts only PostgreSQL for tests; `devenv down` stops managed processes.
+- `pnpm run dev` migrates the database and starts the SvelteKit server. `pnpm run dev:web` skips migrations but still executes asynchronous project operations. There is no separate worker or Haskell compiler. `pnpm run build` builds the Node application.
+- Use `pnpm run export:data -- --scope projects` (optionally `--project PROJECT_ID` and `--output PATH`) to inspect complete project Timelines or retained operation failures. Do not bypass the canonical export with ad hoc PostgreSQL queries for that work; extend the export if important data is missing.
+- The consolidated `drizzle/0000_lying_jean_grey.sql` is a fresh-database baseline. It does not migrate older compiler-era projects or authentication data. Verify the target database before any reset and never reset it implicitly during ordinary development.
 
-## Engineering Rules
+## Engineering rules
 
-- Before starting a local development server or a check that starts or connects to
-  one, test whether `.local/state/sverlin/.server.lock` is currently held. If it is,
-  tell the developer that their existing server must be stopped with Ctrl+C and wait
-  for confirmation before continuing. Do not bypass the guard, remove the lock file,
-  or start with another `SVERLIN_STATE_DIR` unless the developer explicitly confirms
-  that the previous server has stopped and asks for that recovery action.
-- If completing an active task requires a development-environment restart or agent restart,
-  create or update a temporary root `HANDOVER.md` before stopping. Record the
-  task objective, completed work, current working-tree changes and their
-  ownership, the next safe action, remaining work or blockers, validations
-  already run, and relevant operational state. Do not create a handover for
-  completed work or use it as a chronological log.
-- On the first turn after a development-environment restart or agent restart, read
-  `HANDOVER.md` completely when it exists, inspect `git status` and the relevant
-  diffs, and verify any recorded operational state before changing files.
-  Continue from the recorded next safe action, rerun only checks invalidated by
-  the restart, and preserve user and concurrent-worker changes. Delete
-  `HANDOVER.md` once the resumed task is complete so stale instructions cannot
-  affect later work.
-- Repository-local skills are available under `.agents/skills/`; their `SKILL.md`
-  files describe when and how to use them. Review the available skills for work that
-  matches their scope, follow every applicable skill, and consider whether a suitable
-  skill exists when the repository does not already provide one. Before adding a skill,
-  explain the expected benefit and ask the developer for approval. Manage skills with
-  the `skills` CLI, normally invoked through `npx skills`; it installs skill directories
-  under `.agents/skills/` and records their source and content hash in the root
-  `skills-lock.json`. Use the CLI to add, update, or remove skills rather than editing
-  installed skill directories or the lockfile by hand. Treat either file set as a normal
-  repository change that must be reviewed and committed. A newly added, removed, or
-  updated skill may require a fresh agent session before its availability changes.
-- This project uses shadcn-svelte for reusable Svelte UI components. Generated component source intentionally lives under the client boundary at `src/lib/client/components/ui/`, with its helper module at `src/lib/client/components/utils.ts`. The aliases in `components.json` are authoritative for this layout.
-- When adding or updating shadcn-svelte UI components, use `pnpm dlx shadcn-svelte@latest` from the repository root and keep imports aligned with the aliases in `components.json`.
-- When edits change project structure, commands, generated artifacts, setup steps, or user-facing development workflow, update `README.md` in the same change where necessary.
-- `pnpm run test:unit` is the fast TypeScript suite. `pnpm run test` additionally compiles every catalogued example through the real compiler. After Svelte behavior changes, run `pnpm run check` and manually verify the affected browser interactions; there is currently no automated E2E suite.
-- When changing solver behavior, constraint lowering, or seeded initialization, run `pnpm run test:solver`.
-- When changing solver performance, constraint lowering, or initialization, prefer `pnpm run bench:solver` for stable before/after timings. It reports compile/lowering, backend solve, total duration, problem size, native bounds, energy terms, raw/canonical/eliminated counts, optimizer iterations, and function/gradient evaluation counts for fixed fixtures, including the app-shaped fixture. Write benchmark result JSON to `outputs/` unless the user explicitly asks to save it in the repo.
-- `pnpm run compile -- --source examples/Minimal.sverlin --seed 1 --details` includes phase timings for source loading, the view graph, solver, materialization, JSON encoding, and JSON writing. Seeded manual, compile server, and benchmark paths use generated JSON paths grouped under the ignored workspace `outputs/seed-<seed>/` directory by default; stdout/stderr are diagnostic logs.
-- AI-generated Sverlin source is compiled through the complete visualization pipeline for one or two fresh server-selected seeds before it can become the active artifact. Each operation has five explicit model calls at most: Luna/low initially; Sol/medium, Sol/high, and Sol/xhigh for repairs; then Sol/xhigh once more for a deliberately simpler fallback that must explain what proved difficult and what it reduced. Repairs reuse the initial seeds, batches activate atomically, provider retries and open-ended orchestration loops are disabled, and a study repair starts only when the full configured provider timeout remains before its phase deadline. The 180-second default request ceiling bounds each call within the 15-minute task phase; the operation deadline also cancels in-flight provider and compiler work. Generated source, prompts, responses, compiler output, failures, accepted artifacts, recovery explanations, and successful presentations are stored inline in the complete project event log with hashes for provenance. Direct HTML turns use the same bounded ladder and retain the last accepted visualization when every safe candidate fails.
-- The visualization path intentionally uses a tuned solver config rather than raw `defaultSolveConfig`; preserve this separation so direct solver tests stay conservative while regeneration avoids long L-BFGS-B tails.
-- Keep solver tests focused on the top-level `Solver` facade unless the behavior under test is deliberately internal. Add or update stable fixtures in `compile/test-support/Solver/TestFixtures.hs` when solver preprocessing, categorical choices, or backend optimization behavior needs repeatable coverage.
-
-## DSL LLM Authoring Context
-
-- For current implemented behavior, use `compile/src/Sverlin.hs`,
-  `compile/app/Sverlin/Source.hs`, and the generated DSL API index described
-  below. For proposed API changes, consult
-  [`compile/plan/API_plan_final.md`](compile/plan/API_plan_final.md); it
-  describes a target design and does not override current behavior until implemented.
-- `compile/src/Sverlin.hs` is the canonical public-name and
-  per-symbol behavior contract. Keep one Haddock description on every explicit
-  facade export. `scripts/dsl-api-index.mjs` validates and indexes those comments
-  together with GHC-inferred public signatures; run
-  `pnpm run generate:dsl-api-index` after changing them. Never edit the
-  generated `src/lib/server/chat-bots/sverlin-assistant/dsl-api-index.md` by hand.
-- `src/lib/server/chat-bots/sverlin-assistant/dsl-interface.md` is intentionally a
-  neutral pointer to the generated index, not a second authoring contract. Do not
-  expand it into an opinionated guide without developer approval. Both files are
-  read from disk for every local model request; the sibling `index.ts` owns the
-  role prompt, authoring policy, model configuration, structured response
-  contract, and bundled fallbacks for packaged deployments.
-- Keep this context synchronized in the same change whenever the public DSL
-  changes. At minimum, review it when editing
-  `compile/src/Sverlin.hs`, `compile/src/Sverlin/Linear.hs`, the body-only source
-  wrapper, trace lifecycle operations, visual selection and rendering, style
-  fields, layout variables, or constraint operators.
-- Also review it whenever the body-only Sverlin source contract changes, including
-  required declarations, supplied imports/extensions, payload conventions, or
-  the shape of the generated visual runner. Remove stale API names and add new public API
-  before merging the corresponding implementation change.
-- Derive API statements from the public `Sverlin` facade and the frontend's
-  minimal starting example. Do not document private implementation details as if
-  they were stable DSL affordances, and do not invent helpers that are not
-  exported by the facade. `pnpm run check:dsl-api-index` must pass; the normal
-  lint command also enforces generated-index drift and missing export docs.
-- Apply OpenAI code-generation prompting best practices: put the role and public
-  contract first; state each invariant once; make scope, success criteria,
-  validation expectations, and complete-source output requirements explicit; and
-  keep examples only where they clarify a measured or likely failure mode. Do
-  not bury critical constraints in prose or repeat the same instruction in
-  multiple sections.
-- Keep the prompt context independent from transient artefact history. The
-  context defines the stable DSL contract; the artefact supplied by the server
-  defines the current source of truth. If an API change requires a new editing
-  rule, update the context rather than relying on an example hidden in history.
-- When changing only the prompt context, run the Svelte checks, lint the bot
-  module, and run the project command tests. When changing the DSL or its public API,
-  also follow the Haskell compile, compiler-test, solver-test, lint, and formatter requirements
-  below.
+- Before starting a local development server or a check that starts or connects to one, test whether `.local/state/sverlin/.server.lock` is held. If held, tell the developer to stop their server with Ctrl+C and wait for confirmation. Do not bypass or remove the lock or switch state directories without their explicit confirmation and recovery request.
+- If completing an active task requires a development-environment or agent restart, create/update a temporary root `HANDOVER.md` before stopping. Record objective, completed work, current working-tree ownership, next safe action, remaining blockers, validation, and operational state. On the first turn after restart, read it fully, inspect Git status/relevant diffs, verify recorded state, continue safely, and delete it after the resumed task is complete.
+- Repository-local skills under `.agents/skills/` describe specialized work. Review applicable skills and follow them. Before adding a skill, explain the benefit and ask approval. Manage installed skills using `npx skills`, not manual edits to installed skill directories or `skills-lock.json`.
+- Treat unfamiliar files and modifications as possible user work. Preserve the browser/server import boundary and project style. Update `README.md` in the same change when commands, setup, structure, generated artifacts, or user-facing workflow change.
+- A new mode should add one folder plus one catalogue registration, not another cross-cutting assistant/mode mapping. Keep project intake, operations, attempts, persistence, and workspace controls mode-neutral; only mode-specific build, source, bot, and playback behavior belong in the mode folder.
+- AI-generated source is validated/built before activation. Each operation has at most five explicit model calls: one initial Luna/low call, three Sol repairs (medium, high, xhigh), then one Sol/xhigh simpler fallback that explains the difficulty and reduction. Repairs reuse initial seeds; a batch activates atomically. Provider retries and open-ended loops are disabled. The default 180-second request ceiling fits inside the 15-minute study phase, and a repair starts only if its full timeout remains before the deadline. Timelines retain prompts, responses, diagnostics, source, accepted artifacts, and presentations.
+- Generated JavaScript must not execute on the server or application origin. The authored HTML validator and the isolated iframe/CSP serve different purposes. Preserve the opaque origin (`sandbox="allow-scripts"` without `allow-same-origin`), no external imports, and restrictive resource/network directives. Do not claim HTML sanitization alone vets JS or that an iframe absolutely prevents own-frame navigation requests.
 
 ## Verification
 
-Before finishing:
-
-- If modifying the Haskell application, run `pnpm run compile -- --source examples/Minimal.sverlin --seed 1` from the root directory to compile and run the Haskell application.
-- For compiler or source-wrapper changes, run `pnpm run test:compiler`.
-- For solver or view-solver changes, run `pnpm run test:solver`.
-- Use `hlint compile/src compile/app compile/test compile/bench compile/test-support` to check for any Haskell code style issues.
-- After any Haskell source change, run the same formatter pipeline as VSCode on project-owned Haskell source directories (`compile/app compile/src compile/test compile/bench compile/test-support`): first `hindent`, then `stylish-haskell -i`. Run this full formatting pipeline exactly once per task, at the very end after the implementation, lint-driven fixes, and other source changes are complete. Do not run it speculatively or repeatedly during development. The `stylish-haskell -i` pass should be the final source-modifying step; afterward, perform only non-modifying verification unless a necessary source correction requires another final formatting pass.
-- For performance-sensitive solver changes, also run `pnpm run bench:solver`.
+- `pnpm run test:unit` is the fast TypeScript suite; `pnpm run test` also runs PostgreSQL integration tests. Use `devenv up -d postgres` first for the latter. Run `pnpm run check`, `pnpm run lint`, and focused mode/build tests after relevant changes.
+- After Svelte component or module changes, run `pnpm run check`, the `@sveltejs/mcp` autofixer required by the repository skill, and manually verify affected browser interactions. There is no automated E2E suite. Do not add tests for reversible, low-impact changes that merely mirror implementation.
+- For source compilation or sandbox changes, verify at least one real Svelte component build, static HTML sanitization, HTML/JS import rejection, and presentation playback behavior. For database schema changes, regenerate the baseline only with the developer-authorized fresh database workflow and run `pnpm run test:postgres`.

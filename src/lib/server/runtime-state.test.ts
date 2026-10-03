@@ -11,7 +11,7 @@ describe('runtime crash recovery', () => {
         purpose: 'seed-change',
         input: 'committed-artifact',
         source: recorded('source'),
-        sourceLabel: 'Main.sverlin',
+        sourceLabel: 'Main.svelte',
         seed: 1
       }),
       event('compilation.failed', 2, '11111111-1111-4111-8111-111111111111', {
@@ -36,7 +36,7 @@ describe('runtime crash recovery', () => {
         purpose: 'seed-change',
         input: 'committed-artifact',
         source: recorded('source'),
-        sourceLabel: 'Main.sverlin',
+        sourceLabel: 'Main.svelte',
         seed: 2
       })
     ] as ProjectEvent[];

@@ -5,11 +5,11 @@
  */
 
 import type { ParticipantIntakeStepId } from '$lib/shared/projects/events';
-import type { CompilerDiagnostic } from '$lib/shared/projects/events/values';
+import type { BuildDiagnostic } from '$lib/shared/projects/events/values';
 import * as v from 'valibot';
 
 import { presentationIdSchema } from '$lib/shared/presentations';
-import { naturalSchema, positiveSchema, textSchema } from '$lib/shared/projects/events/values';
+import { textSchema } from '$lib/shared/projects/events/values';
 
 /** User or assistant message retained as conversational context. */
 export type ConversationMessage = {
@@ -21,13 +21,6 @@ export type ConversationMessage = {
 export const generatedMessageSegmentSchema = v.variant('type', [
   v.strictObject({ type: v.literal('markdown'), text: textSchema }),
   v.strictObject({ type: v.literal('presentation-ref'), presentationId: presentationIdSchema }),
-  v.strictObject({
-    type: v.literal('element-ref'),
-    presentationId: presentationIdSchema,
-    presentationEvent: positiveSchema,
-    step: naturalSchema,
-    instances: v.pipe(v.array(naturalSchema), v.minLength(1))
-  }),
   v.strictObject({ type: v.literal('candidate-ref'), slot: v.picklist([0, 1]) })
 ]);
 
@@ -100,18 +93,6 @@ export const generatedMessageContentJsonSchema = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          type: { type: 'string', enum: ['element-ref'] },
-          presentationId: { type: 'string', format: 'uuid' },
-          presentationEvent: { type: 'integer', minimum: 1 },
-          step: { type: 'integer', minimum: 0 },
-          instances: { type: 'array', minItems: 1, items: { type: 'integer', minimum: 0 } }
-        },
-        required: ['type', 'presentationId', 'presentationEvent', 'step', 'instances']
-      },
-      {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
           type: { type: 'string', enum: ['candidate-ref'] },
           slot: { type: 'integer', enum: [0, 1] }
         },
@@ -124,7 +105,7 @@ export const generatedMessageContentJsonSchema = {
 /** Reply schema for background Sverlin observations, which can reference only retained output. */
 export const retainedMessageContentJsonSchema = {
   ...generatedMessageContentJsonSchema,
-  items: { anyOf: generatedMessageContentJsonSchema.items.anyOf.slice(0, 3) }
+  items: { anyOf: generatedMessageContentJsonSchema.items.anyOf.slice(0, 2) }
 } as const;
 
 /** Failed generated source and diagnostics supplied to one repair attempt. */
@@ -133,7 +114,7 @@ export type CompilationFeedback = {
   compilationEventId: number;
   failedSource: string;
   assistantReply: string;
-  diagnostics: CompilerDiagnostic[];
+  diagnostics: BuildDiagnostic[];
   priorFailureSummaries: string[];
 };
 
@@ -192,6 +173,13 @@ export type SourceArtifactChatOutput =
       sourceArtifactContent: string;
       recovery?: RecoveryExplanation;
     };
+
+/** Candidate-based modes share one orchestration shape; each mode validates its own manifest. */
+export type CandidateAssistantOutput = {
+  reply: GeneratedMessageContent;
+  candidates: Array<{ label: string; manifest: unknown }>;
+  recovery?: RecoveryExplanation;
+};
 
 export type ChatBotConfig<Project, Output extends object = SourceArtifactChatOutput> = {
   id: string;

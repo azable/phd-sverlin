@@ -5,21 +5,13 @@ import { plainMessageText, structureKnownPresentationReferences } from './messag
 const presentationId = '12345678-1234-4123-8123-123456789ac1';
 
 describe('plain message text', () => {
-  it('identifies every referenced render instance separately', () => {
+  it('identifies the retained presentation in plain text', () => {
     expect(
       plainMessageText([
         { type: 'markdown', text: 'Compare' },
-        {
-          type: 'element-ref',
-          presentationId,
-          presentationEvent: 4,
-          step: 2,
-          instances: [7, 2]
-        }
+        { type: 'presentation-ref', presentationId }
       ])
-    ).toBe(
-      `Compare [Element E7 in presentation ${presentationId}, step 3] [Element E2 in presentation ${presentationId}, step 3]`
-    );
+    ).toBe(`Compare [Presentation ${presentationId}]`);
   });
 });
 

@@ -7,9 +7,9 @@ export function runtimeRoot(): string {
   return path.resolve(process.env.SVERLIN_REPOSITORY_ROOT?.trim() || process.cwd());
 }
 
-/** Disposable compiler workspace root. */
-export function runtimeScratchDir(): string {
-  const configured =
-    process.env.SVERLIN_SCRATCH_DIR?.trim() || process.env.SVERLIN_OUTPUT_DIR?.trim();
-  return configured ? path.resolve(configured) : path.join(runtimeRoot(), 'outputs');
+/** Persistent local state shared with the single-server guard. */
+export function runtimeStateDir(): string {
+  return path.resolve(
+    process.env.SVERLIN_STATE_DIR?.trim() || path.join(runtimeRoot(), '.local', 'state', 'sverlin')
+  );
 }

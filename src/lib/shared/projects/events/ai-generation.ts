@@ -3,7 +3,6 @@
 import * as v from 'valibot';
 
 import {
-  dslRevisionSchema,
   eventEnvelope,
   naturalSchema,
   positiveSchema,
@@ -21,7 +20,6 @@ export const aiGenerationRequestedEventSchema = v.object({
     purpose: v.picklist(['intake', 'initial', 'repair', 'fallback']),
     prompt: recordedTextSchema,
     promptTemplateSha256: sha256Schema,
-    dslRevision: v.optional(dslRevisionSchema),
     requestedModel: textSchema,
     parameters: v.record(v.string(), v.unknown())
   })

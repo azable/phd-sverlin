@@ -1,19 +1,15 @@
 import type { TimelinePresentation } from '$lib/client/visualization/presentation-history';
 import type { MessageContent } from '$lib/shared/projects/events/message-content';
-import type { VisualSelection } from '$lib/shared/projects/events/values';
-
-import { singletonReferenceSegments, type ReferenceSegment } from './reference-labels';
 
 /** Describe the currently visible visualization context with retained inline references. */
 export function automaticFeedbackContext(
-  presentations: readonly TimelinePresentation[],
-  visualSelections: readonly VisualSelection[] = []
+  presentations: readonly TimelinePresentation[]
 ): MessageContent {
   const visible = presentations.slice(0, 2);
   if (visible.length === 0) return [];
-  const references = visible.map((presentation) =>
-    automaticReference(presentation, visualSelections)
-  );
+  const references = visible.map(({ presentation }) => [
+    { type: 'presentation-ref' as const, presentationId: presentation.presentationId }
+  ]);
   if (references.length === 1) {
     return [
       { type: 'markdown', text: 'Viewing ' },
@@ -49,28 +45,4 @@ export function feedbackSubmissionContent(
       ? { ...segment, text: `${segment.text}\n\n${prose}` }
       : segment
   );
-}
-
-function automaticReference(
-  presentation: TimelinePresentation,
-  visualSelections: readonly VisualSelection[]
-): ReferenceSegment[] {
-  const visualSelection = visualSelections.find(
-    (selection) => selection.presentationEvent === presentation.eventId
-  );
-  if (visualSelection?.presentationEvent === presentation.eventId) {
-    return singletonReferenceSegments({
-      type: 'element-ref',
-      presentationId: presentation.presentation.presentationId,
-      presentationEvent: visualSelection.presentationEvent,
-      step: visualSelection.step,
-      instances: visualSelection.instances
-    });
-  }
-  return [
-    {
-      type: 'presentation-ref',
-      presentationId: presentation.presentation.presentationId
-    }
-  ];
 }

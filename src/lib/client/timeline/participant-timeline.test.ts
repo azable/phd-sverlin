@@ -39,7 +39,7 @@ describe('participant Timeline projection', () => {
     });
   });
 
-  it('retains exact comparison and canvas references inline', () => {
+  it('retains exact comparison references inline', () => {
     const values = events().slice(1, 5);
     values.push({
       id: 6,
@@ -53,14 +53,7 @@ describe('participant Timeline projection', () => {
           { type: 'markdown', text: 'Compare' },
           { type: 'presentation-ref', presentationId: presentationIds[0] },
           { type: 'markdown', text: 'with' },
-          { type: 'presentation-ref', presentationId: presentationIds[1] },
-          {
-            type: 'element-ref',
-            presentationId: presentationIds[0],
-            presentationEvent: 3,
-            step: 0,
-            instances: [0, 2]
-          }
+          { type: 'presentation-ref', presentationId: presentationIds[1] }
         ]
       }
     });
@@ -68,7 +61,7 @@ describe('participant Timeline projection', () => {
       kind: 'message',
       actor: 'user',
       content: expect.arrayContaining([
-        expect.objectContaining({ type: 'element-ref', instances: [0, 2] })
+        expect.objectContaining({ type: 'presentation-ref', presentationId: presentationIds[0] })
       ])
     });
   });
@@ -100,14 +93,13 @@ function events(): ProjectEvent[] {
   const operationId = '12345678-1234-4123-8123-123456789abc';
   const displaySetId = '12345678-1234-4123-8123-123456789abd';
   const base = {
-    format: 'sverlin-ir-v1' as const,
+    format: 'browser-bundle-v1' as const,
+    mode: 'sverlin' as const,
     stepSignature: 'shared',
-    source: { text: 'source', sha256: 'a'.repeat(64), mediaType: 'text/x-sverlin' },
-    render: {
-      text: JSON.stringify({ steps: [{ label: 'Only step' }] }),
-      sha256: 'b'.repeat(64),
-      mediaType: 'application/json'
-    }
+    labels: ['Only step'],
+    source: { text: 'source', sha256: 'a'.repeat(64), mediaType: 'text/x-svelte' },
+    html: { text: '', sha256: 'c'.repeat(64), mediaType: 'text/html' },
+    javascript: { text: 'void 0;', sha256: 'b'.repeat(64), mediaType: 'text/javascript' }
   };
   return [
     {

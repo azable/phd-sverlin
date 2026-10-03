@@ -1,6 +1,0 @@
-ALTER TABLE "project_interaction_session" ADD COLUMN "client_stopped_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "project_interaction_session" ADD COLUMN "recorded_through" integer;--> statement-breakpoint
-ALTER TABLE "project_interaction_session" ADD COLUMN "delivery_completed_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "project_interaction_session" ADD CONSTRAINT "project_interaction_session_terminal_pair_check" CHECK (("project_interaction_session"."client_stopped_at" is null) = ("project_interaction_session"."recorded_through" is null));--> statement-breakpoint
-ALTER TABLE "project_interaction_session" ADD CONSTRAINT "project_interaction_session_recorded_sequence_check" CHECK ("project_interaction_session"."recorded_through" is null or ("project_interaction_session"."recorded_through" >= 0 and "project_interaction_session"."accepted_through" <= "project_interaction_session"."recorded_through"));--> statement-breakpoint
-ALTER TABLE "project_interaction_session" ADD CONSTRAINT "project_interaction_session_completion_check" CHECK ("project_interaction_session"."delivery_completed_at" is null or ("project_interaction_session"."recorded_through" is not null and "project_interaction_session"."accepted_through" = "project_interaction_session"."recorded_through"));

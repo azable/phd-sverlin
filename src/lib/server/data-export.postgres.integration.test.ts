@@ -110,7 +110,7 @@ it.skipIf(!enabled)(
         }
       ]);
 
-    const source = new PostgresExportDataSource(repository);
+    const source = new PostgresExportDataSource();
     const research = await source.collect({
       type: 'study',
       studyId: mainStudyV1.id,

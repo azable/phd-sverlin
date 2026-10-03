@@ -19,10 +19,9 @@ import { sqlClient } from '$lib/server/db';
 import {
   queueProjectFeedback,
   queueProjectPreference,
-  runQueuedSverlinAssistantTurn,
+  runQueuedAssistantTurn,
   submitProjectFeedback
 } from './commands';
-import { saveHtmlProjectArtifact } from './presentations';
 import { runProjectCommand } from './command-lock';
 import { projectOperationDeadlineError, runWithProjectOperationSignal } from './operation-context';
 import { recoveryEventsForInterruptedOperations } from './recovery';
@@ -111,11 +110,8 @@ export class ProjectOperationExecutor {
     }
     const deadlineAt = parseDeadline(options.deadlineAt);
     const kind = commandKind(options.command);
-    const initial = await this.repository.load(options.projectId);
-    if (
-      (options.command.type === 'feedback' && projectSnapshotAt(initial).renderer === 'sverlin') ||
-      options.command.type === 'prefer'
-    ) {
+    await this.repository.load(options.projectId);
+    if (options.command.type === 'feedback' || options.command.type === 'prefer') {
       return this.acceptInteraction({
         ...options,
         kind: options.command.type,
@@ -674,7 +670,7 @@ async function executeProjectCommand(options: {
           }
         ]);
       });
-      return runQueuedSverlinAssistantTurn(common);
+      return runQueuedAssistantTurn(common);
     }
     case 'save':
       return updateProjectArtifact({
@@ -682,12 +678,6 @@ async function executeProjectCommand(options: {
         artifactId: options.command.artifactId,
         source: options.command.source,
         presentationCount: options.command.presentationCount
-      });
-    case 'save-html':
-      return saveHtmlProjectArtifact({
-        ...common,
-        artifactId: options.command.artifactId,
-        manifest: options.command.manifest
       });
     case 'restore':
       return restoreProjectArtifacts({
@@ -736,8 +726,7 @@ function terminalFailureFor(
   kind: ProjectOperationKind,
   events: readonly ProjectEvent[]
 ): { failureKind: 'domain' | 'infrastructure' | 'cancelled'; message: string } | undefined {
-  if (kind === 'rename' || kind === 'save-html' || kind === 'advance-presentations')
-    return undefined;
+  if (kind === 'rename' || kind === 'advance-presentations') return undefined;
   const outcome = events.findLast((event) => {
     if (kind === 'feedback' || kind === 'prefer' || kind === 'assistant-turn') {
       return (

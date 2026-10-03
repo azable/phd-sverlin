@@ -16,7 +16,6 @@ export const projectOperationKindSchema = v.picklist([
   'presentation-refill',
   'prefer',
   'save',
-  'save-html',
   'restore'
 ]);
 

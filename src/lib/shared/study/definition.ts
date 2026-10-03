@@ -17,7 +17,7 @@ export type StudyCondition = {
   };
   project: {
     templateId: string;
-    artifactFormat?: 'html-frames-json';
+    artifactFormat?: 'html-frames-json' | 'svelte-component';
   };
   durationSeconds: number;
 };

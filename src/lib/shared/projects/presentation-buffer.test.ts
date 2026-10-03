@@ -124,14 +124,17 @@ function presented(
       slot,
       presentation: {
         presentationId,
-        format: 'sverlin-ir-v1',
+        format: 'browser-bundle-v1',
+        mode: 'sverlin',
         stepSignature: 'shared',
+        labels: ['Only step'],
         seed: id,
-        source: { text: 'source', sha256: sourceSha256, mediaType: 'text/x-sverlin' },
-        render: {
-          text: JSON.stringify({ steps: [{ label: 'Only step' }] }),
+        source: { text: 'source', sha256: sourceSha256, mediaType: 'text/x-svelte' },
+        html: { text: '', sha256: '0'.repeat(64), mediaType: 'text/html' },
+        javascript: {
+          text: 'document.body.textContent="Only step";',
           sha256: String(id).repeat(64).slice(0, 64),
-          mediaType: 'application/json'
+          mediaType: 'text/javascript'
         }
       }
     }

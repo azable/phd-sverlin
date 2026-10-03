@@ -37,7 +37,6 @@
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { EventId } from '$lib/shared/projects/events';
   import type { MessageContent } from '$lib/shared/projects/events/message-content';
-  import type { VisualSelection } from '$lib/shared/projects/events/values';
   import { activeProjectOperation } from '$lib/shared/projects/operations';
   import type {
     StudyInteractionCapturePolicy,
@@ -126,30 +125,15 @@
   // svelte-ignore state_referenced_locally
   let expired = $state(study?.expired ?? false);
   let studyAdvancing = $state(false);
-  let visualSelections = $state.raw<VisualSelection[]>([]);
   let workspaceRoot = $state<HTMLElement>();
   let interactionRecorder = $state.raw<ProjectInteractionRecorder>();
   let timelineObservation = $state<StudyWorkspaceObservation['timeline']>();
-  let viewportObservations = $state.raw<StudyWorkspaceObservation['viewports']>([]);
   let draftObservation = $state<StudyWorkspaceObservation['draft']>({
     hasContent: false,
     characterCount: 0,
     referenceCount: 0,
     focused: false
   });
-
-  function toggleInstances(
-    current: VisualSelection['instances'],
-    toggled: VisualSelection['instances']
-  ): VisualSelection['instances'] {
-    const next = [...current];
-    for (const instance of toggled) {
-      const index = next.indexOf(instance);
-      if (index >= 0) next.splice(index, 1);
-      else next.push(instance);
-    }
-    return next;
-  }
 
   const adminPreview = $derived(study?.context === 'admin-preview');
   const showAdminControls = $derived(isAdmin && !adminPreview && !session.readOnly);
@@ -236,13 +220,9 @@
               }
             }
           : {}),
-        visualSelections,
+        visualSelections: [],
         ...(timelineObservation ? { timeline: timelineObservation } : {}),
-        viewports: viewportObservations.filter(({ presentationId }) =>
-          visiblePresentations.some(
-            ({ presentation }) => presentation.presentationId === presentationId
-          )
-        ),
+        viewports: [],
         draft: draftObservation,
         document: {
           visibility: document.visibilityState === 'hidden' ? 'hidden' : 'visible',
@@ -309,24 +289,6 @@
       focused
     };
     interactionRecorder?.recordDraft(content, focused);
-  }
-
-  function recordViewport(
-    presentationId: string,
-    viewport: Omit<StudyWorkspaceObservation['viewports'][number], 'presentationId'>
-  ) {
-    const current = viewportObservations.find((entry) => entry.presentationId === presentationId);
-    if (
-      current?.zoom === viewport.zoom &&
-      current.panX === viewport.panX &&
-      current.panY === viewport.panY
-    ) {
-      return;
-    }
-    viewportObservations = [
-      ...viewportObservations.filter((entry) => entry.presentationId !== presentationId),
-      { presentationId, ...viewport }
-    ];
   }
 
   function recordTimeline(value: NonNullable<StudyWorkspaceObservation['timeline']>) {
@@ -504,50 +466,9 @@
                 selection={presentationSelection}
                 {layout}
                 inspect={developerView}
-                onPresentationChange={() => (visualSelections = [])}
                 onViewportChange={recordTimeline}
                 onReferenceRequest={(presentation) =>
                   feedbackComposer?.referencePresentation(presentation)}
-                onElementReferenceActivate={(reference, extend) => {
-                  const context = presentationPlaybackContext(
-                    presentationSelection.selected(session.events, layout)
-                  );
-                  const step = presentationPlayback.seek(context, reference.step);
-                  const visibleEventIds = new Set(
-                    presentationSelection
-                      .selected(session.events, layout)
-                      .map(({ eventId }) => eventId)
-                  );
-                  const visualSelection = visualSelections.find(
-                    (selection) =>
-                      selection.presentationEvent === reference.presentationEvent &&
-                      selection.step === step
-                  );
-                  const sameSelection =
-                    extend &&
-                    visualSelection?.presentationEvent === reference.presentationEvent &&
-                    visualSelection.step === step;
-                  const instances =
-                    sameSelection && visualSelection
-                      ? toggleInstances(visualSelection.instances, reference.instances)
-                      : reference.instances;
-                  const retained = visualSelections.filter(
-                    (selection) =>
-                      selection.step === step &&
-                      visibleEventIds.has(selection.presentationEvent) &&
-                      selection.presentationEvent !== reference.presentationEvent
-                  );
-                  visualSelections = instances.length
-                    ? [
-                        ...retained,
-                        {
-                          presentationEvent: reference.presentationEvent,
-                          step,
-                          instances
-                        }
-                      ]
-                    : retained;
-                }}
               />
               {#if !expired && !session.readOnly}
                 <FeedbackComposer
@@ -555,9 +476,7 @@
                   {session}
                   {presentationCount}
                   presentations={visiblePresentations}
-                  {visualSelections}
                   onSubmitted={() => {
-                    visualSelections = [];
                     presentationSelection.returnToLatest();
                   }}
                   onDraftChange={recordDraft}
@@ -619,11 +538,6 @@
             playback={presentationPlayback}
             {layout}
             disabled={mutationsDisabled}
-            {visualSelections}
-            onVisualSelectionsChange={(selections) => (visualSelections = selections)}
-            onReferenceSelections={(selections) =>
-              feedbackComposer?.referenceSelections(selections)}
-            onViewportChange={recordViewport}
           />
           <div class="contents" data-replay-region="artifact">
             <ProjectArtifactPanel {session} {presentationCount} bind:editMode />

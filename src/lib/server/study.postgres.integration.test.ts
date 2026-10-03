@@ -5,6 +5,7 @@ import { afterAll, expect, it } from 'vitest';
 
 import type { ProjectDocument } from '$lib/shared/projects/model';
 import { mainStudyV1 } from '$lib/shared/study/main-v1';
+import { mainStudyV2 } from '$lib/shared/study/main-v2';
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { PostgresProjectRepository } from '$lib/server/projects/repository';
@@ -48,7 +49,7 @@ it.skipIf(!enabled)('makes concurrent enrollment idempotent for one participant'
       role: 'user'
     });
 
-  const ref = { id: mainStudyV1.id, version: mainStudyV1.version };
+  const ref = { id: mainStudyV2.id, version: mainStudyV2.version };
   const runIds = await Promise.all([
     enrollParticipant(userId, ref),
     enrollParticipant(userId, ref)
@@ -245,8 +246,8 @@ function readyComparison(projectId: string): ProjectDocument {
               operation: 'upsert',
               artifact: {
                 artifactId: 'dsl-main',
-                path: 'Main.sverlin',
-                language: 'sverlin',
+                path: 'Main.svelte',
+                language: 'svelte',
                 content: source
               }
             }
@@ -264,11 +265,14 @@ function readyComparison(projectId: string): ProjectDocument {
           slot,
           presentation: {
             presentationId: randomUUID(),
-            format: 'sverlin-ir-v1' as const,
+            format: 'browser-bundle-v1' as const,
+            mode: 'sverlin' as const,
             stepSignature: 'shared-step-signature',
+            labels: ['Overview'],
             seed: slot + 1,
             source,
-            render
+            html: recorded('', 'text/html'),
+            javascript: render
           }
         }
       }))

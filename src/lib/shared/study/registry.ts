@@ -2,6 +2,7 @@
 
 import type { StudyDefinition } from './definition';
 import { mainStudyV1 } from './main-v1';
+import { mainStudyV2 } from './main-v2';
 
 export type StudyRef = { id: string; version: number };
 export type StudyRegistration = {
@@ -9,7 +10,10 @@ export type StudyRegistration = {
   enrollment: 'open' | 'closed';
 };
 
-const registrations = registerStudies([{ definition: mainStudyV1, enrollment: 'open' }]);
+const registrations = registerStudies([
+  { definition: mainStudyV1, enrollment: 'closed' },
+  { definition: mainStudyV2, enrollment: 'open' }
+]);
 const registry = new Map(
   registrations.map((registration) => [
     key(registration.definition.id, registration.definition.version),

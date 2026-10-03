@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import { inArray } from 'drizzle-orm';
 import { afterAll, expect, it } from 'vitest';
@@ -7,10 +7,7 @@ import type { NewProjectEvent } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 import { closeDatabase, database } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
-import {
-  PostgresProjectRepository,
-  type ProjectResourceBlob
-} from '$lib/server/projects/repository';
+import { PostgresProjectRepository } from '$lib/server/projects/repository';
 
 import { PostgresExportDataSource } from './data-export';
 
@@ -29,14 +26,13 @@ afterAll(async () => {
 });
 
 it.skipIf(!enabled)(
-  'collects active project data with minimal owner identity and resource metadata',
+  'collects active project Timelines with minimal owner identity',
   async () => {
     const suffix = randomUUID();
     const ownerUserId = `project-owner-${suffix}`;
     const projectId = `project-export-${suffix}`;
     const operationId = randomUUID();
     const repository = new PostgresProjectRepository();
-    const resource = resourceBlob('project bytes');
     createdUsers.push(ownerUserId);
     createdProjects.push(projectId);
     await database()
@@ -49,9 +45,9 @@ it.skipIf(!enabled)(
         role: 'admin'
       });
     await repository.create(rootDocument(projectId, operationId), ownerUserId);
-    await repository.append(projectId, 1, [renameEvent(operationId)], [resource]);
+    await repository.append(projectId, 1, [renameEvent(operationId)]);
 
-    const source = new PostgresExportDataSource(repository);
+    const source = new PostgresExportDataSource();
     const snapshot = await source.collect({ type: 'projects', projectId });
 
     expect(snapshot.owners).toEqual([
@@ -65,13 +61,9 @@ it.skipIf(!enabled)(
     expect(snapshot.projects[0]).toMatchObject({
       id: projectId,
       ownerUserId,
-      document: { projectId, events: [{ id: 1 }, { id: 2 }] },
-      resources: [{ resourceId: resource.id, byteLength: resource.byteLength }]
+      document: { projectId, events: [{ id: 1 }, { id: 2 }] }
     });
     expect(snapshot.owners[0]).not.toHaveProperty('email');
-    expect(Buffer.from(await source.readResource(projectId, resource.id))).toEqual(
-      Buffer.from(resource.bytes)
-    );
   },
   30_000
 );
@@ -105,18 +97,5 @@ function renameEvent(operationId: string): NewProjectEvent<'project.renamed'> {
     operationId,
     createdAt: '2026-08-30T00:00:01.000Z',
     payload: { previousTitle: 'Project export integration', title: 'Ready to inspect' }
-  };
-}
-
-function resourceBlob(value: string): ProjectResourceBlob {
-  const bytes = new TextEncoder().encode(value);
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
-  return {
-    id: `sha256-${sha256}`,
-    kind: 'fontResource',
-    sha256,
-    mediaType: 'font/ttf',
-    byteLength: bytes.byteLength,
-    bytes
   };
 }

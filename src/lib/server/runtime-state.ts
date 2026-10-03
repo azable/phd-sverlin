@@ -1,21 +1,15 @@
 /** Process lifecycle, readiness, and crash recovery for the packaged Svelte server. */
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { validateAuthenticationConfiguration } from '$lib/server/auth';
-import { visualizationService } from '$lib/server/compiler';
 import { closeDatabase, sqlClient } from '$lib/server/db';
 import { projectOperationExecutor } from '$lib/server/projects/operations';
 import { projectRepository } from '$lib/server/projects/repository';
 
-import { runtimeScratchDir } from './runtime-config';
-
-type PreparedCompilerSummary = {
-  sourceSha256: string;
-  preparedAt: string;
-};
+import { runtimeStateDir } from './runtime-config';
 
 type RuntimeLifecycle = {
   initialized: boolean;
@@ -23,8 +17,6 @@ type RuntimeLifecycle = {
   error?: string;
   warnings: string[];
   recoveredOperations: number;
-  compiler?: PreparedCompilerSummary;
-  compilerCheckedAt: number;
 };
 
 type SharedRuntimeState = {
@@ -40,8 +32,6 @@ export type RuntimeReadiness = {
   error?: string;
   warnings: string[];
   recoveredOperations: number;
-  compiler: PreparedCompilerSummary | undefined;
-  compilerQueue: ReturnType<typeof visualizationService.status>;
   operations: ReturnType<typeof projectOperationExecutor.status>;
 };
 
@@ -54,13 +44,12 @@ const sharedRuntime = (runtimeGlobal[runtimeStateKey] ??= {
     initialized: false,
     draining: false,
     warnings: [],
-    recoveredOperations: 0,
-    compilerCheckedAt: 0
+    recoveredOperations: 0
   }
 });
 const lifecycle = sharedRuntime.lifecycle;
 
-/** Validate writable state and the prepared compiler before accepting requests. */
+/** Validate writable state and persistence before accepting requests. */
 export function initializeRuntime(): Promise<void> {
   if (!sharedRuntime.initialization) {
     const attempt = initializeRuntimeOnce();
@@ -76,12 +65,11 @@ export function initializeRuntime(): Promise<void> {
 export async function shutdownRuntime(): Promise<void> {
   lifecycle.draining = true;
   await projectOperationExecutor.shutdown(shutdownTimeoutMs());
-  visualizationService.shutdown();
   await closeDatabase();
 }
 
 /** Return a fresh, non-sensitive readiness snapshot. */
-export async function runtimeReadiness(forceCompilerCheck = false): Promise<RuntimeReadiness> {
+export async function runtimeReadiness(): Promise<RuntimeReadiness> {
   if (!sharedRuntime.initialization) {
     try {
       await initializeRuntime();
@@ -89,12 +77,6 @@ export async function runtimeReadiness(forceCompilerCheck = false): Promise<Runt
       // Initialization records the non-sensitive error exposed below. A later
       // readiness request retries after transient dependency failures.
     }
-  }
-  if (
-    lifecycle.initialized &&
-    (forceCompilerCheck || Date.now() - lifecycle.compilerCheckedAt >= compilerCheckIntervalMs())
-  ) {
-    await checkPreparedCompiler();
   }
   const databaseError = await databaseReadinessError();
   const activeError = lifecycle.error ?? databaseError;
@@ -106,8 +88,6 @@ export async function runtimeReadiness(forceCompilerCheck = false): Promise<Runt
     ...(activeError ? { error: activeError } : {}),
     warnings: [...lifecycle.warnings],
     recoveredOperations: lifecycle.recoveredOperations,
-    compiler: lifecycle.compiler,
-    compilerQueue: visualizationService.status(),
     operations: projectOperationExecutor.status()
   };
 }
@@ -115,10 +95,8 @@ export async function runtimeReadiness(forceCompilerCheck = false): Promise<Runt
 async function initializeRuntimeOnce() {
   try {
     validateAuthenticationConfiguration();
-    await Promise.all([assertWritableDirectory(runtimeScratchDir()), assertDatabaseReady()]);
+    await Promise.all([assertWritableDirectory(runtimeStateDir()), assertDatabaseReady()]);
     await projectRepository.initialize();
-    await cleanupAbandonedCompilerOutputs();
-    await checkPreparedCompiler();
     lifecycle.recoveredOperations = await projectOperationExecutor.recoverInterrupted();
     projectOperationExecutor.startRecovery();
     delete lifecycle.error;
@@ -142,22 +120,6 @@ async function databaseReadinessError() {
   }
 }
 
-async function checkPreparedCompiler() {
-  try {
-    const prepared = await visualizationService.readiness();
-    lifecycle.compiler = {
-      sourceSha256: prepared.sourceSha256,
-      preparedAt: prepared.preparedAt
-    };
-    lifecycle.compilerCheckedAt = Date.now();
-    if (lifecycle.initialized) delete lifecycle.error;
-  } catch (error) {
-    lifecycle.compilerCheckedAt = Date.now();
-    lifecycle.error = error instanceof Error ? error.message : String(error);
-    if (!lifecycle.initialized) throw error;
-  }
-}
-
 async function assertWritableDirectory(directory: string) {
   await mkdir(directory, { recursive: true });
   const temporary = path.join(directory, `.write-probe.${randomUUID()}.tmp`);
@@ -174,26 +136,6 @@ async function assertWritableDirectory(directory: string) {
   } finally {
     await Promise.all([rm(temporary, { force: true }), rm(published, { force: true })]);
   }
-}
-
-async function cleanupAbandonedCompilerOutputs() {
-  const scratch = runtimeScratchDir();
-  const seeds = await readdir(scratch, { withFileTypes: true });
-  for (const seed of seeds) {
-    if (!seed.isDirectory() || !/^seed-[1-9][0-9]*$/.test(seed.name)) continue;
-    const seedDirectory = path.join(scratch, seed.name);
-    const entries = await readdir(seedDirectory, { withFileTypes: true });
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory() && entry.name.startsWith('visualization-service-'))
-        .map((entry) => rm(path.join(seedDirectory, entry.name), { recursive: true, force: true }))
-    );
-  }
-}
-
-function compilerCheckIntervalMs() {
-  const configured = Number(process.env.SVERLIN_COMPILER_HEALTH_INTERVAL_MS ?? '30000');
-  return Number.isSafeInteger(configured) && configured >= 1_000 ? configured : 30_000;
 }
 
 function shutdownTimeoutMs(): number {

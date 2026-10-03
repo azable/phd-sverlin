@@ -16,12 +16,7 @@ const bootstrapAdminId = 'sverlin-admin';
 
 function configuredBaseUrl(): string {
   return (
-    process.env.BETTER_AUTH_URL?.trim() ||
-    process.env.ORIGIN?.trim() ||
-    (process.env.RENDER_EXTERNAL_HOSTNAME
-      ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`
-      : undefined) ||
-    'http://localhost:5173'
+    process.env.BETTER_AUTH_URL?.trim() || process.env.ORIGIN?.trim() || 'http://localhost:5173'
   );
 }
 
@@ -186,9 +181,7 @@ export function safeReturnPath(value: string | null | undefined): string {
 export function validateAuthenticationConfiguration(): void {
   if (process.env.NODE_ENV !== 'production') return;
   if (!process.env.DATABASE_URL?.trim()) throw new Error('DATABASE_URL is required.');
-  if (!process.env.BETTER_AUTH_URL?.trim() && !process.env.RENDER_EXTERNAL_HOSTNAME?.trim()) {
-    throw new Error('BETTER_AUTH_URL or RENDER_EXTERNAL_HOSTNAME is required.');
-  }
+  if (!process.env.BETTER_AUTH_URL?.trim()) throw new Error('BETTER_AUTH_URL is required.');
   if (Buffer.byteLength(process.env.BETTER_AUTH_SECRET ?? '') < 32) {
     throw new Error('BETTER_AUTH_SECRET must contain at least 32 bytes.');
   }

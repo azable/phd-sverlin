@@ -51,7 +51,7 @@ export default defineConfig(
   },
   {
     files: ['src/**/*.ts', 'src/**/*.svelte'],
-    ignores: ['src/lib/client/components/ui/**', 'src/lib/shared/visualization/generated/**'],
+    ignores: ['src/lib/client/components/ui/**'],
     rules: {
       '@typescript-eslint/explicit-module-boundary-types': 'error'
     }
@@ -89,8 +89,28 @@ export default defineConfig(
     }
   },
   {
+    files: [
+      'src/lib/visualization-modes/**/contract.ts',
+      'src/lib/visualization-modes/**/Viewport.svelte',
+      'src/lib/visualization-modes/catalog.ts',
+      'src/lib/visualization-modes/sandbox.ts'
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['$lib/server/**', '$env/**', 'node:*'],
+              message: 'Browser-safe mode contracts and playback cannot import server code.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
     files: ['src/lib/server/**/*.{ts,js}'],
-    ignores: ['src/lib/server/compiler/**'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -99,10 +119,6 @@ export default defineConfig(
             {
               group: ['$lib/client/**'],
               message: 'Server modules cannot depend on browser-only code.'
-            },
-            {
-              group: ['$lib/server/compiler/*', '$lib/server/compiler/**'],
-              message: 'Use the public $lib/server/compiler service boundary.'
             }
           ]
         }

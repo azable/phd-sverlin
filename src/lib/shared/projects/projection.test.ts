@@ -30,7 +30,7 @@ describe('project model and projection', () => {
     ).toThrow(InvalidProjectDocumentError);
   });
 
-  it('validates structured message references and compact visual selections', () => {
+  it('validates structured presentation references', () => {
     expect(() =>
       normalizeProjectEventV2({ ...documentWithHistory().events[0], operationId: 'not-a-uuid' })
     ).toThrow(InvalidProjectDocumentError);
@@ -41,14 +41,8 @@ describe('project model and projection', () => {
         operationId,
         expectedHead: 5,
         content: [
-          { type: 'markdown', text: 'Prefer this element' },
-          {
-            type: 'element-ref',
-            presentationId,
-            presentationEvent: 5,
-            step: 0,
-            instances: [0]
-          }
+          { type: 'markdown', text: 'Prefer this presentation' },
+          { type: 'presentation-ref', presentationId }
         ],
         focus: [2],
         presentationCount: 1
@@ -56,7 +50,7 @@ describe('project model and projection', () => {
     ).toMatchObject({ type: 'feedback', focus: [2] });
   });
 
-  it('validates DSL content and repository revision metadata', () => {
+  it('validates build source and positive presentation seeds', () => {
     const request = {
       id: 2,
       operationId,
@@ -67,13 +61,8 @@ describe('project model and projection', () => {
         purpose: 'manual-edit',
         input: 'committed-artifact',
         source: recorded,
-        sourceLabel: 'Main.sverlin',
-        seed: 1,
-        dslRevision: {
-          contentSha256: hash,
-          repositoryCommit: 'a'.repeat(40),
-          workingTree: 'clean'
-        }
+        sourceLabel: 'Main.svelte',
+        seed: 1
       }
     };
     expect(normalizeProjectEventV2(request)).toEqual(request);
@@ -82,7 +71,7 @@ describe('project model and projection', () => {
         ...request,
         payload: {
           ...request.payload,
-          dslRevision: { ...request.payload.dslRevision, repositoryCommit: 'not-a-commit' }
+          seed: 0
         }
       })
     ).toThrow(InvalidProjectDocumentError);
@@ -134,9 +123,9 @@ function documentWithHistory(): ProjectDocument {
             operation: 'upsert',
             artifact: {
               artifactId: 'dsl-main',
-              path: 'Main.sverlin',
-              language: 'sverlin',
-              content: { ...recorded, text: 'initial', mediaType: 'text/x-sverlin' }
+              path: 'Main.svelte',
+              language: 'svelte',
+              content: { ...recorded, text: 'initial', mediaType: 'text/x-svelte' }
             }
           }
         ]
@@ -149,9 +138,9 @@ function documentWithHistory(): ProjectDocument {
             operation: 'upsert',
             artifact: {
               artifactId: 'dsl-main',
-              path: 'Main.sverlin',
-              language: 'sverlin',
-              content: { ...edited, mediaType: 'text/x-sverlin' }
+              path: 'Main.svelte',
+              language: 'svelte',
+              content: { ...edited, mediaType: 'text/x-svelte' }
             }
           }
         ]
@@ -171,11 +160,14 @@ function presented(
     slot: 0,
     presentation: {
       presentationId: idValue,
-      format: 'sverlin-ir-v1',
+      format: 'browser-bundle-v1',
+      mode: 'sverlin',
       stepSignature: 'one-step',
+      labels: ['Only step'],
       seed: id,
       source,
-      render: recorded
+      html: recorded,
+      javascript: recorded
     }
   });
 }

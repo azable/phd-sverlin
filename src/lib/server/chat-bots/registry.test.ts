@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ChatBotConfig } from './types';
-import { assistantIntroduction, createChatbot, getChatbot, getHtmlChatbot } from './registry';
+import { assistantIntroduction, createChatbot, getChatbot, getCandidateChatbot } from './registry';
 
 describe('chatbot registry', () => {
   it('resolves only assistants compatible with the requested execution contract', () => {
     expect(getChatbot('sverlin-assistant').id).toBe('sverlin-assistant');
-    expect(getHtmlChatbot('html-assistant').id).toBe('html-assistant');
+    expect(getCandidateChatbot('html-assistant').id).toBe('html-assistant');
+    expect(getCandidateChatbot('html-js-assistant').id).toBe('html-js-assistant');
     expect(() => getChatbot('html-assistant')).toThrow('Unknown Sverlin assistant');
-    expect(() => getHtmlChatbot('sverlin-assistant')).toThrow('Unknown HTML assistant');
+    expect(() => getCandidateChatbot('sverlin-assistant')).toThrow('Unknown candidate assistant');
   });
 
   it('uses the resolved assistant identity for participant introductions', () => {
@@ -21,6 +22,10 @@ describe('chatbot registry', () => {
       botId: 'html-assistant',
       step: 'algorithm',
       text: 'What algorithm would you like to visualise?'
+    });
+    expect(assistantIntroduction('html-js-assistant')).toMatchObject({
+      botId: 'html-js-assistant',
+      step: 'algorithm'
     });
   });
 

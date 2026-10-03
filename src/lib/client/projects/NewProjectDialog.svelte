@@ -9,6 +9,8 @@
   import { Spinner } from '$lib/client/components/ui/spinner';
   import * as ToggleGroup from '$lib/client/components/ui/toggle-group';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
+  import type { VisualizationMode } from '$lib/shared/presentations';
+  import { modeCatalog } from '$lib/visualization-modes/catalog';
 
   import type { ProjectSession } from './project-session.svelte';
 
@@ -22,17 +24,34 @@
   let { session, templates, devMode, disabled = false }: Props = $props();
   let open = $state(false);
   let selectedTemplateId = $state('blank');
+  let selectedMode = $state<VisualizationMode>('sverlin');
+  const modes = Object.entries(modeCatalog) as Array<
+    [VisualizationMode, (typeof modeCatalog)[VisualizationMode]]
+  >;
 
   const selectedTemplate = $derived(templates.find(({ id }) => id === selectedTemplateId));
+  const availableTemplates = $derived(
+    selectedMode === 'sverlin' ? templates : templates.filter(({ id }) => id === 'blank')
+  );
 
   function selectTemplate(value: string | string[]) {
     if (typeof value === 'string' && value) selectedTemplateId = value;
   }
 
+  function selectMode(value: string | string[]) {
+    if (typeof value === 'string' && value in modeCatalog) {
+      selectedMode = value as VisualizationMode;
+      if (selectedMode !== 'sverlin') selectedTemplateId = 'blank';
+    }
+  }
+
   async function create(event: SubmitEvent) {
     event.preventDefault();
     if (!selectedTemplate) return;
-    await session.createProject({ templateId: selectedTemplate.id }, devMode);
+    await session.createProject(
+      { templateId: selectedTemplate.id, renderer: selectedMode },
+      devMode
+    );
   }
 </script>
 
@@ -54,6 +73,23 @@
     </Dialog.Header>
 
     <form class="flex min-h-0 min-w-0 flex-col gap-4" onsubmit={create}>
+      <Field.FieldSet disabled={session.creating}>
+        <Field.FieldLegend>Visualization mode</Field.FieldLegend>
+        <ToggleGroup.Root
+          value={selectedMode}
+          onValueChange={selectMode}
+          type="single"
+          variant="outline"
+          spacing={2}
+          aria-label="Visualization mode"
+        >
+          {#each modes as [id, mode] (id)}
+            <ToggleGroup.Item value={id} aria-label={`Use ${mode.title}`}
+              >{mode.title}</ToggleGroup.Item
+            >
+          {/each}
+        </ToggleGroup.Root>
+      </Field.FieldSet>
       <Field.FieldSet class="min-w-0" disabled={session.creating}>
         <Field.FieldLegend>Starting template</Field.FieldLegend>
         <Field.FieldDescription>
@@ -71,7 +107,7 @@
             class="w-full min-w-0 flex-col items-stretch overflow-hidden"
             aria-label="Starting template"
           >
-            {#each templates as template (template.id)}
+            {#each availableTemplates as template (template.id)}
               <ToggleGroup.Item
                 value={template.id}
                 aria-label={`Use ${template.title}`}

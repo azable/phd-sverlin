@@ -4,8 +4,6 @@
     "jnoortheen.nix-ide",
     "svelte.svelte-vscode",
     "dbaeumer.vscode-eslint",
-    "esbenp.prettier-vscode",
-    "justusadam.language-haskell",
-    "haskell.haskell"
+    "esbenp.prettier-vscode"
   ]
 }

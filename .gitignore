@@ -5,7 +5,6 @@ node_modules
 /.direnv/
 /devenv.local.nix
 /devenv.local.yaml
-**/.stack-work/
 
 # Output
 /outputs/
@@ -20,8 +19,6 @@ node_modules
 /build
 /build-analysis
 /build-data
-/build-migrate
-/build-worker
 
 # OS
 .DS_Store
@@ -38,8 +35,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 *.tmp
-compiled.json
 
 temp.txt
-/temp.md
 /sandbox
