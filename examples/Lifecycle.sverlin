@@ -1,66 +1,109 @@
+-- Variables remain stable while their numeric values come and go.
+data Variable
+instance Traceable Variable where
+  type Payload Variable = LUnit Variable
+
 data Value
 instance Traceable Value where
   type Payload Value = LInt Value
 
--- Relations connect Slots; each visible value owns an invisible link token.
-data LinkToken
-instance Traceable LinkToken where
-  type Payload LinkToken = LUnit LinkToken
-
+data VariableRole
 data ValueRole
-data LinkRole
 data NextRole
 data ValueLive
 data ValueDestroyed
 
+variableKind :: Kind Variable
+variableKind = kind @VariableRole
+
 valueKind :: Kind Value
 valueKind = kind @ValueRole
 
-linkKind :: Kind LinkToken
-linkKind = kind @LinkRole
-
-nextValue :: RelationKind Value Value
-nextValue = orderedRelation @NextRole
+nextVariable :: RelationKind Variable Variable
+nextVariable = orderedRelation @NextRole
 
 data Initial where
   Initial ::
-    Block Value %1 ->
-    Slot Value LinkToken %1 ->
-    Block Value %1 ->
-    Slot Value LinkToken %1 ->
+    Block Variable %1 ->
+    Slot Variable Value %1 ->
+    Block Variable %1 ->
+    Slot Variable Value %1 ->
+    Block Variable %1 ->
+    Slot Variable Value %1 ->
+    Block Variable %1 ->
+    Slot Variable Value %1 ->
+    Block Variable %1 ->
+    Slot Variable Value %1 ->
     Initial
 
 domain :: Domain Initial
 domain = do
+  declareKind variableKind
   declareKind valueKind
-  declareKind linkKind
-  declareRelation nextValue
+  declareRelation nextVariable
   declareSteps @'[ValueLive, ValueDestroyed]
+  Create firstVariablePending <- create LUnit
+  firstVariable <- materialize variableKind firstVariablePending
   Create firstPending <- create (LInt 7)
   firstValue <- materialize valueKind firstPending
-  Create firstLinkPending <- create LUnit
-  firstLink <- materialize linkKind firstLinkPending
-  Seal firstOwner firstSlot <- seal firstValue firstLink
+  Seal firstOwner firstSlot <- seal firstVariable firstValue
 
+  Create secondVariablePending <- create LUnit
+  secondVariable <- materialize variableKind secondVariablePending
   Create secondPending <- create (LInt 9)
   secondValue <- materialize valueKind secondPending
-  Create secondLinkPending <- create LUnit
-  secondLink <- materialize linkKind secondLinkPending
-  Seal secondOwner secondSlot <- seal secondValue secondLink
+  Seal secondOwner secondSlot <- seal secondVariable secondValue
 
-  Relate firstSlot1 secondSlot1 <- relate nextValue firstSlot secondSlot
-  pure (Initial firstOwner firstSlot1 secondOwner secondSlot1)
+  Create thirdVariablePending <- create LUnit
+  thirdVariable <- materialize variableKind thirdVariablePending
+  Create thirdPending <- create (LInt 4)
+  thirdValue <- materialize valueKind thirdPending
+  Seal thirdOwner thirdSlot <- seal thirdVariable thirdValue
+
+  Create fourthVariablePending <- create LUnit
+  fourthVariable <- materialize variableKind fourthVariablePending
+  Create fourthPending <- create (LInt 12)
+  fourthValue <- materialize valueKind fourthPending
+  Seal fourthOwner fourthSlot <- seal fourthVariable fourthValue
+
+  Create fifthVariablePending <- create LUnit
+  fifthVariable <- materialize variableKind fifthVariablePending
+  Create fifthPending <- create (LInt 6)
+  fifthValue <- materialize valueKind fifthPending
+  Seal fifthOwner fifthSlot <- seal fifthVariable fifthValue
+
+  Relate firstSlot1 secondSlot1 <- relate nextVariable firstSlot secondSlot
+  Relate secondSlot2 thirdSlot1 <- relate nextVariable secondSlot1 thirdSlot
+  Relate thirdSlot2 fourthSlot1 <- relate nextVariable thirdSlot1 fourthSlot
+  Relate fourthSlot2 fifthSlot1 <- relate nextVariable fourthSlot1 fifthSlot
+  pure
+    (Initial
+       firstOwner firstSlot1
+       secondOwner secondSlot2
+       thirdOwner thirdSlot2
+       fourthOwner fourthSlot2
+       fifthOwner fifthSlot1)
 
 program :: Initial %1 -> Program ()
 program initial = do
-  Initial first firstSlot second secondSlot <- step @ValueLive (pure initial)
+  Initial first firstSlot second secondSlot third thirdSlot fourth fourthSlot fifth fifthSlot <-
+    step @ValueLive (pure initial)
   step @ValueDestroyed $ do
-    Unseal first1 firstLink <- unseal first firstSlot
-    Unseal second1 secondLink <- unseal second secondSlot
-    Destroy <- destroy firstLink
-    Destroy <- destroy secondLink
+    Unseal first1 firstValue <- unseal first firstSlot
+    Unseal second1 secondValue <- unseal second secondSlot
+    Unseal third1 thirdValue <- unseal third thirdSlot
+    Unseal fourth1 fourthValue <- unseal fourth fourthSlot
+    Unseal fifth1 fifthValue <- unseal fifth fifthSlot
+    Destroy <- destroy firstValue
+    Destroy <- destroy secondValue
+    Destroy <- destroy thirdValue
+    Destroy <- destroy fourthValue
+    Destroy <- destroy fifthValue
     Destroy <- destroy first1
     Destroy <- destroy second1
+    Destroy <- destroy third1
+    Destroy <- destroy fourth1
+    Destroy <- destroy fifth1
     pure ()
 
 render :: Render ()
@@ -69,12 +112,14 @@ render = do
   always $ frame @ValueDestroyed
   width (by 800)
   height (by 450)
-  values <- select valueKind
-  node values $ do
-    label <- bindContent
-    content label
+  variables <- select variableKind
+  node variables $ do
+    values <- select valueKind
+    node values $ do
+      label <- bindContent
+      content label
 
-  links <- select nextValue
+  links <- select nextVariable
   relation links $ do
     earlier <- first links
     later <- second links

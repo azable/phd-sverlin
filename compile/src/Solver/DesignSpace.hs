@@ -802,11 +802,11 @@ compileMipBranchWithHint numericHint compiled index assignment decisions = do
       , branchInspection = inspection
       }
   where
-    -- Each projection sweep touches every affine inequality. Sixty-four is
-    -- enough for ordinary fitted-text/theme midpoint repair while keeping a
-    -- failed optional hint much cheaper than the guaranteed-feasible HiGHS
-    -- fallback on large visualization graphs.
-    midpointProjectionSweeps = 64
+    -- Each projection sweep touches every affine inequality. Up to 512
+    -- sweeps admit interior starts for nested visual mappings; preparation
+    -- stops as soon as it is feasible and retains the HiGHS fallback when
+    -- deeply constrained branches cannot converge within this budget.
+    midpointProjectionSweeps = 512
 
 numericHintDiagnostic :: Map String Double -> AffineProblem -> String
 numericHintDiagnostic hint problem =

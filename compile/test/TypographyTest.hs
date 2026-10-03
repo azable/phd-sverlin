@@ -415,6 +415,34 @@ tests =
         assertBool
           "font sizes and placement should vary across the feasible region"
           (length (nub sizes) > 8 && length (nub positions) > 8)
+    , testCase "nested connected values keep readable fitted text" $ do
+        plan <- expectPlan nestedConnectedValuesPlan
+        marker <- referenceMarker plan
+        compiled <-
+          Compile.compileRenderBatch
+            "TypographyTest.sverlin"
+            "nested connected values"
+            [1 .. 8]
+            (nestedConnectedValuesTrace marker)
+            plan
+        visualizations <-
+          case compiled of
+            Left problem -> assertFailure (show problem)
+            Right package ->
+              pure (Resource.compilationPackageVisualizations package)
+        let sizes = concatMap textLayoutSizes visualizations
+        length sizes @?= 40
+        assertBool
+          "most nested values should not remain at the minimum font"
+          (length (filter (> 48) sizes) >= 30)
+        assertBool
+          "nested values should retain font variation"
+          (length (nub sizes) >= 4)
+        mapM_
+          (\visualization -> do
+             length (IR.visualizationElements visualization) @?= 11
+             connectorCount visualization @?= 4)
+          visualizations
     , testCase "absent shared Hug mappings have no visible peers" $ do
         visualizations <-
           compilePeerPlan "optional peer Hug" [1 .. 24] optionalPeerHugPlan
@@ -1052,6 +1080,80 @@ connectedPeerTrace marker =
         , Semantic.traceBlockBorn = 0
         , Semantic.traceBlockEnded = Nothing
         , Semantic.traceBlockOccupancies = []
+        }
+
+nestedConnectedValuesPlan :: Either Render.RenderDiagnostic Render.RenderPlan
+nestedConnectedValuesPlan =
+  Render.buildRenderPlan $ do
+    Render.always (Render.frame @PeerFrame)
+    Render.width (Render.by 800)
+    Render.height (Render.by 450)
+    owners <-
+      Render.selectKind "variable" :: Render.Render (Render.Selected Parent)
+    links <-
+      Render.selectRelation "next" True :: Render.Render
+        (Render.Relations Parent Parent)
+    Render.node owners $ do
+      values <-
+        Render.selectKind "value" :: Render.Render (Render.Selected Child)
+      Render.node values (Render.bindContent >>= Render.content)
+    Render.relation links $ do
+      earlier <- Render.first links
+      later <- Render.second links
+      Render.ensure (Render.right earlier Render..<=. Render.left later)
+      Render.ensure (Render.y earlier Render..==. Render.y later)
+      Render.connector
+        (Render.anchor Render.AtBoundary earlier)
+        (Render.anchor Render.AtBoundary later)
+        (pure ())
+
+nestedConnectedValuesTrace :: Semantic.TraceMarker -> Semantic.SemanticTrace
+nestedConnectedValuesTrace marker =
+  Semantic.SemanticTrace
+    { Semantic.semanticTraceScenarioSeed = 1
+    , Semantic.semanticTraceDeclarations = [(marker, "nested connected frame")]
+    , Semantic.semanticTraceVariables = []
+    , Semantic.semanticTraceBlocks =
+        [ block
+          identifier
+          "variable"
+          ""
+          [ Semantic.TraceOccupancy
+              (Semantic.BlockId (identifier + 5))
+              0
+              Nothing
+          ]
+        | identifier <- [0 .. 4]
+        ]
+          ++ [ block identifier "value" payload []
+             | (identifier, payload) <- zip [5 .. 9] ["7", "9", "4", "12", "6"]
+             ]
+    , Semantic.semanticTraceRelations =
+        [ Semantic.TraceRelation
+          { Semantic.traceRelationId = identifier
+          , Semantic.traceRelationKind = Semantic.TraceMarker "next"
+          , Semantic.traceRelationDirection = Semantic.OrderedRelation
+          , Semantic.traceRelationSource = Semantic.BlockId identifier
+          , Semantic.traceRelationTarget = Semantic.BlockId (identifier + 1)
+          , Semantic.traceRelationStart = 0
+          , Semantic.traceRelationEnd = Nothing
+          }
+        | identifier <- [0 .. 3]
+        ]
+    , Semantic.semanticTraceSteps = [Semantic.StepOccurrence marker [0] 0 1]
+    , Semantic.semanticTraceEvents = []
+    }
+  where
+    block identifier kind payload occupancies =
+      Semantic.TraceBlock
+        { Semantic.traceBlockId = Semantic.BlockId identifier
+        , Semantic.traceBlockKind = Semantic.TraceMarker kind
+        , Semantic.traceBlockType = Semantic.TraceMarker kind
+        , Semantic.traceBlockPayloadText = payload
+        , Semantic.traceBlockPayloadScalar = Nothing
+        , Semantic.traceBlockBorn = 0
+        , Semantic.traceBlockEnded = Nothing
+        , Semantic.traceBlockOccupancies = occupancies
         }
 
 structuralStylePlan :: Either Render.RenderDiagnostic Render.RenderPlan
