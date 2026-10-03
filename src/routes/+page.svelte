@@ -3,15 +3,22 @@
   import { resolve } from '$app/paths';
 
   import AdminProjectList from '$lib/client/admin/AdminProjectList.svelte';
+  import ModePicker from '$lib/client/projects/ModePicker.svelte';
   import * as Alert from '$lib/client/components/ui/alert';
   import { Button } from '$lib/client/components/ui/button';
   import * as Card from '$lib/client/components/ui/card';
   import { Separator } from '$lib/client/components/ui/separator';
+  import { defaultProjectCreation, projectCreationMode } from '$lib/shared/projects/creation';
+  import type { VisualizationMode } from '$lib/shared/presentations';
 
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   let creating = $state(false);
+  let selectedMode = $state<VisualizationMode>(projectCreationMode(defaultProjectCreation));
+  const availableTemplates = $derived(
+    selectedMode === 'sverlin' ? data.templates : data.templates.filter(({ id }) => id === 'blank')
+  );
   let error = $state<string | null>(null);
 
   async function createProject(templateId: string) {
@@ -22,7 +29,7 @@
       const response = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ templateId })
+        body: JSON.stringify({ templateId, mode: selectedMode })
       });
       const value = (await response.json()) as {
         projectId?: string;
@@ -79,10 +86,12 @@
       <div>
         <h2 id="create-project-title" class="text-xl font-medium">Create a project</h2>
         <p class="mt-2 text-muted-foreground">
-          Choose a starting point. Presentation building continues in the background.
+          Choose a visualization mode and starting point. Presentation building continues in the
+          background.
         </p>
       </div>
     </div>
+    <ModePicker bind:value={selectedMode} disabled={creating} />
     {#if error}
       <Alert.Root variant="destructive">
         <Alert.Title>Project creation failed</Alert.Title>
@@ -90,7 +99,7 @@
       </Alert.Root>
     {/if}
     <div class="grid gap-4 sm:grid-cols-2">
-      {#each data.templates as template (template.id)}
+      {#each availableTemplates as template (template.id)}
         <Card.Root>
           <Card.Header>
             <Card.Title>{template.title}</Card.Title>

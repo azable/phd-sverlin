@@ -14,6 +14,8 @@ Developer-registered modes are listed in [`src/lib/modes/catalog.ts`](src/lib/mo
 
 Administrator projects offer a blank starter in every mode and one populated Svelte example, [linear search](src/lib/modes/sverlin/contract.ts). No other example programs are bundled.
 
+Choose the visualization mode before a starting template on the Projects page or in the workspace's **New project** dialog. HTML and HTML/JavaScript modes offer the blank starter; Sverlin also offers linear search.
+
 Generated JavaScript is compiled but **never executed by the server** or in the application origin. Authored HTML is vetted with [`sanitize-html`](https://github.com/apostrophecms/sanitize-html); executable presentations use an opaque-origin, sandboxed iframe and a restrictive [Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP) that blocks external imports, resource loads, and network APIs. A browser sandbox alone cannot guarantee that arbitrary JavaScript never attempts to navigate its own frame to an external URL. The static HTML condition forbids scripts entirely. Source limits and import checks are in the mode build files, and iframe policy is in [`src/lib/modes/sandbox.ts`](src/lib/modes/sandbox.ts).
 
 Shared project orchestration lives in [`src/lib/server/projects/`](src/lib/server/projects/) and its environment-neutral contracts in [`src/lib/shared/projects/`](src/lib/shared/projects/). The browser workspace lives in [`src/lib/client/projects/`](src/lib/client/projects/). Module-specific code stays under its mode folder; browser-safe contracts do not import server code.
