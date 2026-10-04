@@ -1,21 +1,18 @@
-/** Parse, restrict, and interpret Sverlin domain, input, design, and algorithm blocks. */
+/** Interpret Sverlin input, design, and algorithm blocks into recorded state and steps. */
 
-import {
-  parse,
-  type AnyNode,
-  type BlockStatement,
-  type CallExpression,
-  type Expression,
-  type FunctionDeclaration,
-  type MemberExpression,
-  type Pattern,
-  type SpreadElement,
-  type Statement
+import type {
+  AnyNode,
+  BlockStatement,
+  CallExpression,
+  Expression,
+  MemberExpression,
+  Pattern,
+  SpreadElement,
+  Statement
 } from 'acorn';
 
 import {
   Atom,
-  atomBases,
   atomProblem,
   combinedType,
   noAtoms,
@@ -25,6 +22,13 @@ import {
   type AtomRegistry,
   type AtomType
 } from './atoms.server';
+import { drawFunctions, drawValue, keyedDraws } from './random.server';
+import { AlgorithmError, describe, forbiddenProperties, type BlockKind } from './block.server';
+import { parseBlock } from './parse.server';
+
+// The domain block and the shared block vocabulary, for callers of this module.
+export { interpretDomain } from './domain.server';
+export { AlgorithmError, type BlockKind } from './block.server';
 
 /** JSON-compatible state recorded for one step and passed to the view as props. */
 export type TraceValue =
@@ -50,12 +54,6 @@ export type MasterStep = {
   types: TypeMap;
 };
 
-/**
- * Domain: atomic type definitions. Input: fixed initial state. Design: seeded presentation choices.
- * Algorithm: the yielding steps.
- */
-export type BlockKind = 'domain' | 'input' | 'design' | 'algorithm';
-
 // Bounds keep interpretation short, memory small, and the embedded trace well inside the bundle limit.
 export const algorithmLimits = {
   maximumSteps: 200,
@@ -65,152 +63,18 @@ export const algorithmLimits = {
   maximumTraceValues: 200_000
 } as const;
 
-/** Names the view receives from the application rather than from the algorithm. */
-const reservedNames = new Set(['step', 'seed']);
-const forbiddenProperties = new Set(['__proto__', 'prototype', 'constructor']);
-
-export class AlgorithmError extends Error {
-  /** Offset into the algorithm body, when known. */
-  readonly offset?: number;
-
-  constructor(message: string, offset?: number) {
-    super(message);
-    this.name = 'AlgorithmError';
-    if (offset !== undefined) this.offset = offset;
-  }
-}
-
-// A strict-mode generator wrapper lets acorn parse top-level yield; it shares the body's first line.
-const wrapperPrefix = "function* algorithm() {'use strict';";
-
-/**
- * Read the domain block's atomic type definitions. Nothing is predefined: a type is a primitive
- * kind (`type('integer')`), a refinement of a defined type (`type(Int, { unit: 'cm' })`), or an
- * enumeration (`type(['♠', '♥'])`).
- */
-export function interpretDomain(body: string): AtomRegistry {
-  const { root, offset } = parseBlock(body, 'domain');
-  const fail = (node: AnyNode, message: string): never => {
-    throw new AlgorithmError(message, offset(node));
-  };
-  const atoms: Record<string, AtomType> = {};
-  for (const statement of root.body) {
-    // The parsing wrapper's 'use strict' directive is not part of the authored block.
-    if (statement.type === 'ExpressionStatement' && 'directive' in statement) continue;
-    if (statement.type !== 'VariableDeclaration' || statement.kind !== 'const')
-      fail(statement, 'The domain block only defines types, as in const Height = type(Int);');
-    for (const declarator of (statement as { declarations: { id: Pattern; init?: unknown }[] })
-      .declarations) {
-      const name = (declarator.id as { name: string }).name;
-      const init = declarator.init as Expression | undefined | null;
-      if (init?.type !== 'CallExpression' || (init.callee as { name?: string }).name !== 'type')
-        fail(
-          declarator as AnyNode,
-          `Define ${name} with type(...), as in const ${name} = type(Int);`
-        );
-      const call = init as CallExpression;
-      if (name in atoms) fail(declarator as AnyNode, `"${name}" is already a type.`);
-      const [definition, options, extra] = call.arguments as Expression[];
-      if (!definition || extra)
-        fail(
-          call,
-          'type() takes a kind, a type, or a list of allowed values, then optional options.'
-        );
-      let type: AtomType;
-      if (definition.type === 'Literal' && typeof definition.value === 'string') {
-        if (!atomBases.includes(definition.value as AtomBase))
-          fail(
-            definition,
-            `Unknown kind "${definition.value}"; use one of ${atomBases.join(', ')}.`
-          );
-        type = { name, base: definition.value as AtomBase };
-      } else if (definition.type === 'Identifier') {
-        const parent = atoms[definition.name];
-        if (!parent)
-          fail(
-            definition,
-            `Unknown type ${definition.name}; define it first, as in const ${definition.name} = type('integer');`
-          );
-        type = { ...parent, name, parent: parent.name };
-      } else if (definition.type === 'ArrayExpression') {
-        const values = definition.elements.map((element) => {
-          const value = element ? literalValue(element as Expression) : undefined;
-          if (typeof value !== 'string' && typeof value !== 'number')
-            fail(element ?? definition, 'Enumeration values must be text or number literals.');
-          return value as string | number;
-        });
-        if (values.length === 0 || new Set(values).size !== values.length)
-          fail(definition, 'An enumeration needs at least one value, each listed once.');
-        const base: AtomBase = values.every((value) => typeof value === 'string')
-          ? 'text'
-          : values.every((value) => typeof value === 'number')
-            ? values.every(Number.isInteger)
-              ? 'integer'
-              : 'number'
-            : fail(definition, 'Enumeration values must be all text or all numbers.');
-        type = { name, base, values };
-      } else {
-        type = fail(
-          definition,
-          `type() takes a kind such as 'integer', a defined type, or a list of allowed values.`
-        );
-      }
-      if (options) applyAtomOptions(type, options, fail);
-      atoms[name] = type;
-    }
-  }
-  return atoms;
-}
-
-function applyAtomOptions(
-  type: AtomType,
-  options: Expression,
-  fail: (node: AnyNode, message: string) => never
-): void {
-  if (options.type !== 'ObjectExpression')
-    fail(options, 'type() options are an object such as { unit: "cm", min: 0 }.');
-  for (const property of (options as { properties: AnyNode[] }).properties) {
-    if (property.type !== 'Property' || property.key.type !== 'Identifier')
-      fail(property, 'type() options are plain name: value pairs.');
-    const { key, value } = property as unknown as { key: { name: string }; value: Expression };
-    const literal = literalValue(value);
-    if (key.name === 'unit') {
-      if (typeof literal !== 'string' || !literal.trim()) fail(value, 'unit must be text.');
-      type.unit = literal as string;
-    } else if (key.name === 'min' || key.name === 'max') {
-      if (type.base !== 'integer' && type.base !== 'number')
-        fail(property, `${key.name} only applies to integer and number types.`);
-      if (typeof literal !== 'number' || !Number.isFinite(literal))
-        fail(value, `${key.name} must be a number.`);
-      type[key.name] = literal as number;
-    } else {
-      fail(property, `Unknown type() option "${key.name}"; use unit, min, or max.`);
-    }
-  }
-  if (type.min !== undefined && type.max !== undefined && type.min > type.max)
-    fail(options, 'min must not exceed max.');
-}
-
-/** A literal's value, including negative numbers; undefined for anything else. */
-function literalValue(node: Expression): unknown {
-  if (node.type === 'Literal') return node.value;
-  if (node.type === 'UnaryExpression' && node.operator === '-' && node.argument.type === 'Literal')
-    return typeof node.argument.value === 'number' ? -node.argument.value : undefined;
-  return undefined;
-}
-
 /** Interpret the input block into the fixed initial state shared by every presentation. */
 export function interpretInput(body: string, atoms: AtomRegistry = noAtoms): TypedState {
   const { root, offset } = parseBlock(body, 'input', atoms);
   return new Interpreter(root, offset, { kind: 'input', atoms }).bindings();
 }
 
-/** Interpret the design block with draws from the presentation seed. */
+/** Interpret the design block with keyed draws from the presentation seed (see random.server.ts). */
 export function interpretDesign(body: string, seed: number): TraceState {
   const { root, offset } = parseBlock(body, 'design');
   return new Interpreter(root, offset, {
     kind: 'design',
-    random: seededRandom(seed, designStream)
+    random: keyedDraws(root, seed)
   }).bindings().state;
 }
 
@@ -232,217 +96,6 @@ export function interpretAlgorithm(
 ): MasterStep[] {
   const { root, offset } = parseBlock(body, 'algorithm', atoms);
   return new Interpreter(root, offset, { kind: 'algorithm', initial: input, atoms }).run();
-}
-
-// Changing this generator or its stream changes every rebuilt presentation; version it if needed.
-const designStream = 1;
-
-/**
- * Deterministic mulberry32 generator for one seed and stream, returning values in [0, 1). The
- * seed and stream are hashed first so that neighbouring seeds give unrelated sequences.
- */
-export function seededRandom(seed: number, stream: number): () => number {
-  let state = mix32(mix32(seed) ^ Math.imul(stream, 0x9e3779b9));
-  return () => {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
-    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** A 32-bit integer hash with full avalanche (the murmur3 finaliser with tuned constants). */
-function mix32(value: number): number {
-  let mixed = value >>> 0;
-  mixed = Math.imul(mixed ^ (mixed >>> 16), 0x7feb352d);
-  mixed = Math.imul(mixed ^ (mixed >>> 15), 0x846ca68b);
-  return (mixed ^ (mixed >>> 16)) >>> 0;
-}
-
-function parseBlock(
-  body: string,
-  kind: BlockKind,
-  atoms?: AtomRegistry
-): { root: BlockStatement; offset: (node: AnyNode) => number } {
-  let program;
-  try {
-    program = parse(`${wrapperPrefix}${body}\n}`, { ecmaVersion: 2022, sourceType: 'script' });
-  } catch (cause) {
-    const position = (cause as { pos?: unknown }).pos;
-    const message = cause instanceof Error ? cause.message : String(cause);
-    throw new AlgorithmError(
-      message.replace(/\s*\(\d+:\d+\)$/u, ''),
-      typeof position === 'number'
-        ? Math.min(Math.max(position - wrapperPrefix.length, 0), body.length)
-        : undefined
-    );
-  }
-  const root = (program.body[0] as FunctionDeclaration).body;
-  const offset = (node: AnyNode) => node.start - wrapperPrefix.length;
-  checkSubset(root, offset, kind, new Set(Object.keys(atoms ?? {})));
-  return { root, offset };
-}
-
-// ---------------------------------------------------------------------------------------------
-// Static subset check: everything outside this list is rejected before any statement runs.
-
-const allowedBinary = new Set(['+', '-', '*', '/', '%', '**', '<', '<=', '>', '>=', '===', '!==']);
-const allowedAssignment = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
-
-function checkSubset(
-  root: BlockStatement,
-  offset: (node: AnyNode) => number,
-  kind: BlockKind,
-  constructors: ReadonlySet<string>
-): void {
-  const reject = (node: AnyNode, message: string): never => {
-    throw new AlgorithmError(message, offset(node));
-  };
-  const visit = (node: AnyNode, ancestors: readonly AnyNode[]): void => {
-    const parent = ancestors.at(-1);
-    switch (node.type) {
-      case 'BlockStatement':
-      case 'ExpressionStatement':
-      case 'IfStatement':
-      case 'ForStatement':
-      case 'WhileStatement':
-      case 'DoWhileStatement':
-      case 'EmptyStatement':
-      case 'ArrayExpression':
-      case 'SpreadElement':
-      case 'ConditionalExpression':
-      case 'LogicalExpression':
-      case 'SequenceExpression':
-      case 'TemplateLiteral':
-      case 'TemplateElement':
-      case 'VariableDeclarator':
-      case 'ObjectExpression':
-        break;
-      case 'CallExpression':
-        if (node.callee.type === 'Identifier') checkBuiltin(node, node.callee.name, ancestors);
-        break;
-      case 'ReturnStatement':
-        if (node.argument) reject(node, 'return stops the algorithm and cannot return a value.');
-        break;
-      case 'BreakStatement':
-      case 'ContinueStatement':
-        if (node.label) reject(node, 'Labelled break and continue are not supported.');
-        break;
-      case 'VariableDeclaration':
-        if (node.kind === 'var') reject(node, 'Use let or const instead of var.');
-        for (const declarator of node.declarations) {
-          if (declarator.id.type !== 'Identifier')
-            reject(declarator, 'Destructuring declarations are not supported.');
-          else if (reservedNames.has(declarator.id.name))
-            reject(declarator, `"${declarator.id.name}" is reserved for the view.`);
-        }
-        break;
-      case 'ForOfStatement':
-        if (
-          node.await ||
-          node.left.type !== 'VariableDeclaration' ||
-          node.left.declarations[0]?.id.type !== 'Identifier'
-        )
-          reject(node, 'for...of must declare one variable, as in for (const x of items).');
-        break;
-      case 'Identifier':
-        break;
-      case 'Literal':
-        if ('regex' in node || 'bigint' in node)
-          reject(node, 'Regular expressions and BigInt are not supported.');
-        break;
-      case 'Property':
-        if (node.kind !== 'init' || node.method || node.computed)
-          reject(node, 'Object properties must be plain name: value pairs.');
-        if (
-          (node.key.type === 'Identifier' && forbiddenProperties.has(node.key.name)) ||
-          (node.key.type === 'Literal' && forbiddenProperties.has(String(node.key.value)))
-        )
-          reject(node, 'That property name is not allowed.');
-        break;
-      case 'MemberExpression':
-        if (node.optional) reject(node, 'Optional chaining is not supported.');
-        if (node.object.type === 'Super') reject(node, 'super is not supported.');
-        if (!node.computed && node.property.type === 'Identifier') {
-          if (forbiddenProperties.has(node.property.name))
-            reject(node, 'That property name is not allowed.');
-        }
-        break;
-      case 'UnaryExpression':
-        if (!['!', '-', '+'].includes(node.operator))
-          reject(node, `The ${node.operator} operator is not supported.`);
-        break;
-      case 'BinaryExpression':
-        if (node.operator === '==' || node.operator === '!=')
-          reject(node, `Use ${node.operator}= instead of ${node.operator}.`);
-        if (!allowedBinary.has(node.operator))
-          reject(node, `The ${node.operator} operator is not supported.`);
-        break;
-      case 'AssignmentExpression':
-        if (!allowedAssignment.has(node.operator))
-          reject(node, `The ${node.operator} operator is not supported.`);
-        if (node.left.type !== 'Identifier' && node.left.type !== 'MemberExpression')
-          reject(node, 'Only variables, elements, and properties can be assigned.');
-        break;
-      case 'UpdateExpression':
-        if (node.argument.type !== 'Identifier' && node.argument.type !== 'MemberExpression')
-          reject(node, 'Only variables, elements, and properties can be incremented.');
-        break;
-      case 'YieldExpression':
-        if (kind !== 'algorithm')
-          reject(node, `yield belongs in the algorithm block, not the ${kind} block.`);
-        if (node.delegate) reject(node, 'yield* is not supported.');
-        if (parent?.type !== 'ExpressionStatement')
-          reject(node, 'yield must be a statement of its own, as in yield "label";');
-        break;
-      default:
-        reject(node, `${describe(node.type)} is not supported in ${kind} blocks.`);
-    }
-    for (const [key, child] of Object.entries(node)) {
-      if (key === 'loc') continue;
-      for (const item of Array.isArray(child) ? child : [child]) {
-        if (item && typeof item === 'object' && typeof (item as AnyNode).type === 'string')
-          visit(item as AnyNode, [...ancestors, node]);
-      }
-    }
-  };
-  const checkBuiltin = (node: AnyNode, name: string, ancestors: readonly AnyNode[]): void => {
-    if (name === 'type') {
-      if (kind !== 'domain') reject(node, 'type() defines a type and belongs in the domain block.');
-    } else if (constructors.has(name)) {
-      if (kind !== 'input' && kind !== 'algorithm')
-        reject(node, `${name}(...) creates a typed value in the input or algorithm block.`);
-    } else if (drawFunctions.has(name)) {
-      // A draw is the value of a top-level const, or sits inside object and array literals that
-      // make up that value, such as const look = { cells: pick([...]) }.
-      const [, topDeclaration, topDeclarator, ...within] = ancestors;
-      if (
-        kind !== 'design' ||
-        topDeclaration?.type !== 'VariableDeclaration' ||
-        topDeclaration.kind !== 'const' ||
-        topDeclarator?.type !== 'VariableDeclarator' ||
-        !within.every((ancestor) =>
-          ['ObjectExpression', 'Property', 'ArrayExpression'].includes(ancestor.type)
-        )
-      )
-        reject(
-          node,
-          `${name}() is a design draw; use it only in the value of a top-level const in the design block, such as const layout = ${name}(...).`
-        );
-    } else {
-      reject(
-        node,
-        `${name}() is not available; only Math functions and array methods can be called.`
-      );
-    }
-  };
-  root.body.forEach((statement) => visit(statement, [root]));
-}
-
-const drawFunctions = new Set(['pick', 'int', 'real', 'chance']);
-
-function describe(type: string): string {
-  return type.replace(/([a-z])([A-Z])/gu, '$1 $2').replace(/^./u, (first) => first.toUpperCase());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -484,7 +137,8 @@ class Interpreter {
   readonly #topLevel = new Scope(this.#globals);
   readonly #topLevelNames: string[];
   readonly #kind: BlockKind;
-  readonly #random?: () => number;
+  /** The random number for one design draw. */
+  readonly #random?: (draw: AnyNode) => number;
   readonly #atoms: AtomRegistry;
   readonly #trace: MasterStep[] = [];
   readonly #labels = new Set<string>();
@@ -497,7 +151,7 @@ class Interpreter {
     options: {
       kind: BlockKind;
       initial?: TypedState;
-      random?: () => number;
+      random?: (draw: AnyNode) => number;
       atoms?: AtomRegistry;
     }
   ) {
@@ -978,35 +632,20 @@ class Interpreter {
     }
   }
 
-  /** Seeded design draws: pick(items), int(min, max) inclusive, real(min, max), chance(p). */
+  /** A design draw: its arguments, and exactly one number from its own keyed stream. */
   #draw(name: string, node: CallExpression, scope: Scope): Value {
-    const random = this.#random as () => number;
     const args = node.arguments.map((argument) => {
       if (argument.type === 'SpreadElement')
         this.#fail(argument, 'Spread arguments are not supported.');
-      return this.#expression(argument, scope);
+      return unwrap(this.#expression(argument, scope));
     });
-    if (name === 'pick') {
-      const [items] = args;
-      if (!Array.isArray(items) || items.length === 0 || args.length !== 1)
-        this.#fail(node, 'pick() takes one non-empty array of choices.');
-      return items[Math.floor(random() * items.length)];
+    try {
+      return drawValue(name, args, () =>
+        (this.#random as (draw: AnyNode) => number)(node)
+      ) as Value;
+    } catch (cause) {
+      return this.#fail(node, cause instanceof Error ? cause.message : String(cause));
     }
-    if (name === 'chance') {
-      const probability = this.#number(args[0], node);
-      if (args.length !== 1 || !(probability >= 0 && probability <= 1))
-        this.#fail(node, 'chance() takes one probability from 0 to 1.');
-      return random() < probability;
-    }
-    const [min, max] = args.map((argument) => this.#number(argument, node));
-    if (args.length !== 2 || !Number.isFinite(min) || !Number.isFinite(max) || min > max)
-      this.#fail(node, `${name}() takes a finite minimum and maximum, with minimum ≤ maximum.`);
-    if (name === 'int') {
-      if (!Number.isInteger(min) || !Number.isInteger(max))
-        this.#fail(node, 'int() bounds must be integers.');
-      return min + Math.floor(random() * (max - min + 1));
-    }
-    return min + random() * (max - min);
   }
 
   /**

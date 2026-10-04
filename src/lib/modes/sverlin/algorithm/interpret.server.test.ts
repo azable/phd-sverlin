@@ -4,8 +4,7 @@ import {
   algorithmLimits,
   interpretAlgorithm,
   interpretDesign,
-  interpretInput,
-  seededRandom
+  interpretInput
 } from './interpret.server';
 
 describe('algorithm interpretation', () => {
@@ -158,6 +157,32 @@ describe('input, design, and step selection', () => {
     expect(run).toThrow(/design draw|not available/);
   });
 
+  it('keys each draw by its name, so other draws never change it', () => {
+    const before = 'const a = pick([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]); const b = real(0, 1);';
+    const after =
+      'const extra = int(0, 100); const b = real(0, 1); const late = chance(0.5); const a = pick([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);';
+    for (const seed of [1, 2, 3, 99, 123456]) {
+      const first = interpretDesign(before, seed);
+      const second = interpretDesign(after, seed);
+      expect(second.a).toBe(first.a);
+      expect(second.b).toBe(first.b);
+    }
+  });
+
+  it('keys nested draws by their path, independently of each other and of order', () => {
+    const one = interpretDesign(
+      'const look = { x: real(0, 1), y: real(0, 1) }; const sizes = [real(0, 1), real(0, 1)]; const p = real(0, 1); const q = real(0, 1);',
+      7
+    );
+    const reordered = interpretDesign('const look = { y: real(0, 1), x: real(0, 1) };', 7);
+    const look = one.look as { x: number; y: number };
+    const sizes = one.sizes as number[];
+    expect(look.x).not.toBe(look.y);
+    expect(sizes[0]).not.toBe(sizes[1]);
+    expect(one.p).not.toBe(one.q);
+    expect(reordered.look).toEqual(one.look);
+  });
+
   it('allows draws inside the object and array literals of a top-level const', () => {
     const design = interpretDesign(
       'const look = { cells: { shape: pick(["circle"]), size: real(1, 1) } }; const sizes = [int(2, 2)];',
@@ -176,24 +201,5 @@ describe('input, design, and step selection', () => {
     expect(() => interpretAlgorithm('for (let i = 0; i < 2; i++) yield "Compare";')).toThrow(
       /must be unique.*Compare/
     );
-  });
-
-  it('gives neighbouring seeds unrelated draws', () => {
-    const first = Array.from({ length: 1000 }, (_, seed) => seededRandom(seed + 1, 1)());
-    const mean = first.reduce((total, value) => total + value, 0) / first.length;
-    expect(mean).toBeGreaterThan(0.45);
-    expect(mean).toBeLessThan(0.55);
-    // For independent uniform draws, about 19% of neighbouring pairs fall within 0.1 of each other.
-    const close = first.slice(1).filter((value, index) => Math.abs(value - first[index]) < 0.1);
-    expect(close.length / (first.length - 1)).toBeGreaterThan(0.14);
-    expect(close.length / (first.length - 1)).toBeLessThan(0.24);
-  });
-
-  it('generates values in [0, 1) that depend on seed and stream', () => {
-    const values = Array.from({ length: 1000 }, seededRandom(9, 1));
-    expect(values.every((value) => value >= 0 && value < 1)).toBe(true);
-    expect(seededRandom(9, 1)()).toBe(values[0]);
-    expect(seededRandom(9, 2)()).not.toBe(values[0]);
-    expect(seededRandom(10, 1)()).not.toBe(values[0]);
   });
 });
