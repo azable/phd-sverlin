@@ -112,7 +112,13 @@
     readOnly
   );
   const presentationSelection = new PresentationSelection(
-    untrack(() => !!study?.presentationBufferTarget)
+    untrack(() => !!study?.presentationBufferTarget),
+    // Outside studies the selection implies the layout: two variants compare, one is shown alone.
+    (next) => {
+      if (!showAdminControls || busy) return false;
+      layout = next;
+      return true;
+    }
   );
   const presentationPlayback = new PresentationPlayback();
   let feedbackComposer = $state<FeedbackComposer>();
@@ -495,16 +501,6 @@
         >
           {#if showAdminControls}
             <div class="flex items-center gap-2 border-b px-3 py-1.5 text-sm">
-              <span class="text-muted-foreground">Presentation layout</span>
-              <select
-                class="h-7 rounded-md border bg-background px-2"
-                aria-label="Presentation layout"
-                bind:value={layout}
-                disabled={busy}
-              >
-                <option value="single">Single</option>
-                <option value="comparison">Comparison</option>
-              </select>
               <div class="ml-auto flex items-center gap-1">
                 <div class="flex items-center gap-1">
                   <Switch

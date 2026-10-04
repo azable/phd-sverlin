@@ -65,6 +65,58 @@ describe('presentation history', () => {
     expect(selection.selectedIds).toEqual([presentationIds[2]]);
   });
 
+  it('implies the layout from how many variants are selected', () => {
+    const events = comparisonEvents();
+    const entries = timelinePresentations(events);
+    let layout: 'single' | 'comparison' = 'single';
+    const selection = new PresentationSelection(false, (next) => {
+      layout = next;
+      return true;
+    });
+
+    selection.activate(entries[2], events, layout);
+    selection.activate(entries[3], events, layout, true);
+    expect(layout).toBe('comparison');
+    expect(selection.selectedIds).toEqual([presentationIds[2], presentationIds[3]]);
+    expect(
+      selection.selected(events, layout).map(({ presentation }) => presentation.presentationId)
+    ).toEqual([presentationIds[2], presentationIds[3]]);
+    expect(selection.notice).toBeNull();
+
+    // Shift-deselecting back to one variant, or plainly selecting one, returns to single view.
+    selection.activate(entries[3], events, layout, true);
+    expect(layout).toBe('single');
+    expect(selection.selectedIds).toEqual([presentationIds[2]]);
+    selection.activate(entries[3], events, layout, true);
+    expect(layout).toBe('comparison');
+    selection.activate(entries[0], events, layout);
+    expect(layout).toBe('single');
+    expect(
+      selection.selected(events, layout).map(({ presentation }) => presentation.presentationId)
+    ).toEqual([presentationIds[0]]);
+  });
+
+  it('keeps a fixed single layout and rejects incompatible second variants', () => {
+    const events = comparisonEvents();
+    const entries = timelinePresentations(events);
+    const fixed = new PresentationSelection(false, () => false);
+    fixed.activate(entries[2], events, 'single');
+    fixed.activate(entries[3], events, 'single', true);
+    expect(fixed.selectedIds).toEqual([presentationIds[2]]);
+    expect(fixed.notice).toContain('unavailable in single-view mode');
+
+    let switched = false;
+    const adjustable = new PresentationSelection(false, () => (switched = true));
+    const incompatible = {
+      ...entries[3],
+      presentation: { ...entries[3].presentation, stepSignature: 'another-scenario' }
+    } as (typeof entries)[number];
+    adjustable.activate(entries[2], events, 'single');
+    adjustable.activate(incompatible, events, 'single', true);
+    expect(switched).toBe(false);
+    expect(adjustable.notice).toContain('Only compatible versions');
+  });
+
   it('advances the automatic comparison after a committed preference consumes a pair', () => {
     const events = comparisonEvents();
     events.push({

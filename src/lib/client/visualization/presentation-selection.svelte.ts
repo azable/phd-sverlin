@@ -18,7 +18,15 @@ export class PresentationSelection {
   followingLatest = $state(true);
   notice = $state<string | null>(null);
 
-  constructor(readonly buffered = false) {}
+  /**
+   * @param requestLayout Lets the selection imply the layout: Shift-selecting a second variant asks
+   *   for comparison and selecting a single variant asks for single view. It returns false where
+   *   the layout is fixed, such as study conditions.
+   */
+  constructor(
+    readonly buffered = false,
+    private readonly requestLayout?: (layout: PresentationLayout) => boolean
+  ) {}
 
   /** Presentations currently shown on the stage. */
   selected(events: readonly ProjectEvent[], layout: PresentationLayout): TimelinePresentation[] {
@@ -36,23 +44,30 @@ export class PresentationSelection {
   ): void {
     const all = timelinePresentations(events);
     if (extend) {
+      const activeIds = (
+        this.followingLatest
+          ? this.automatic(events, all, layout).map(
+              ({ presentation: value }) => value.presentationId
+            )
+          : this.selectedIds
+      ).slice(0, layout === 'comparison' ? 2 : 1);
       if (layout !== 'comparison') {
-        this.notice = 'Comparisons are unavailable in single-view mode.';
+        this.extendIntoComparison(presentation, all, activeIds);
         return;
       }
-      const activeIds = this.followingLatest
-        ? this.automatic(events, all, layout).map(({ presentation: value }) => value.presentationId)
-        : this.selectedIds;
       this.extend(presentation, all, activeIds);
       return;
     }
     const next = [presentation.presentation.presentationId];
+    const effective = layout === 'comparison' && this.requestLayout?.('single') ? 'single' : layout;
     this.setIds(next);
     this.followingLatest =
-      layout === 'single' &&
+      effective === 'single' &&
       sameIds(
         next,
-        this.automatic(events, all, layout).map(({ presentation: value }) => value.presentationId)
+        this.automatic(events, all, effective).map(
+          ({ presentation: value }) => value.presentationId
+        )
       );
     this.notice = null;
   }
@@ -80,6 +95,28 @@ export class PresentationSelection {
       : latestPresentations(all, layout);
   }
 
+  /** In single view, Shift adds a compatible second variant and switches to comparison. */
+  private extendIntoComparison(
+    selected: TimelinePresentation,
+    all: readonly TimelinePresentation[],
+    activeIds: readonly string[]
+  ): void {
+    const id = selected.presentation.presentationId;
+    if (activeIds.includes(id)) return;
+    const problem = this.extensionProblem(selected, all, activeIds);
+    if (problem) {
+      this.notice = problem;
+      return;
+    }
+    if (!this.requestLayout?.('comparison')) {
+      this.notice = 'Comparisons are unavailable in single-view mode.';
+      return;
+    }
+    this.setIds([...activeIds, id]);
+    this.followingLatest = false;
+    this.notice = null;
+  }
+
   private extend(
     selected: TimelinePresentation,
     all: readonly TimelinePresentation[],
@@ -87,27 +124,35 @@ export class PresentationSelection {
   ): void {
     const id = selected.presentation.presentationId;
     if (activeIds.includes(id)) {
-      this.setIds(activeIds.filter((selectedId) => selectedId !== id));
+      const remaining = activeIds.filter((selectedId) => selectedId !== id);
+      if (remaining.length === 1) this.requestLayout?.('single');
+      this.setIds(remaining);
       this.followingLatest = false;
       this.notice = null;
       return;
     }
-    if (!isSverlinPresentation(selected.presentation)) {
-      this.notice = 'HTML visualizations can only be viewed one at a time.';
-      return;
-    }
-    if (activeIds.length >= 2) {
-      this.notice = 'Deselect one visualization before adding another.';
-      return;
-    }
-    const current = presentationsById(all, activeIds);
-    if (current.length === 1 && !compatibleSverlinPair(current[0], selected)) {
-      this.notice = 'Only compatible versions of the same visualization can be compared.';
+    const problem = this.extensionProblem(selected, all, activeIds);
+    if (problem) {
+      this.notice = problem;
       return;
     }
     this.setIds([...activeIds, id]);
     this.followingLatest = false;
     this.notice = null;
+  }
+
+  private extensionProblem(
+    selected: TimelinePresentation,
+    all: readonly TimelinePresentation[],
+    activeIds: readonly string[]
+  ): string | undefined {
+    if (!isSverlinPresentation(selected.presentation))
+      return 'HTML visualizations can only be viewed one at a time.';
+    if (activeIds.length >= 2) return 'Deselect one visualization before adding another.';
+    const current = presentationsById(all, activeIds);
+    if (current.length === 1 && !compatibleSverlinPair(current[0], selected))
+      return 'Only compatible versions of the same visualization can be compared.';
+    return undefined;
   }
 
   private setIds(ids: readonly string[]): void {
