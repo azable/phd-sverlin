@@ -8,7 +8,7 @@ The components say nothing about what a structure means: a `Node` with items lai
 - `<Node …>`: every other part of a visualization. A node is one of three things:
   - a value: `<Node value={7} />` shows a primitive (a number, string, boolean, or `null`);
   - content: `<Node>any text or markup</Node>` shows its children, for explanations, captions, and labels;
-  - a collection: `<Node items={values} layout="row" />` arranges child nodes. Without an `item` snippet, each primitive item becomes a value node and each array item a nested collection; to control each item, give `{#snippet item(value, index)} <Node {value} … /> {/snippet}`.
+  - a collection: `<Node items={values} layout="row" />` arranges child nodes. Without an `item` snippet, each primitive item becomes a value node (drawn by its type's renderer, if typed) and each array item a nested collection; to control each item, give `{#snippet item(value, index, type)} <Node {value} {type} … /> {/snippet}`, where `type` is the item's atomic type name or `undefined`.
 - Props for nodes with `items`:
   - `items`: an array of values.
   - `layout`: `'row'` (default), `'column'`, `'wrap'` (a row that wraps onto new lines), or `'grid'`.
@@ -21,15 +21,20 @@ The components say nothing about what a structure means: a `Node` with items lai
   - `marker`: text attached to the node, such as a pointer name; it hangs below the node, or sits beside it inside a column.
   - `font`: `'sans'`, `'serif'`, or `'mono'`; nested nodes inherit it unless they set their own.
   - `size`: `'small'`, `'medium'`, `'large'`, `'xlarge'`, or a number of rem such as `1.2`, so it can come from `pick([...])` or `real(0.9, 1.4)`; nested nodes scale with it.
+  - `type`: an atomic type name, such as `'Int'`. If the view defines a renderer snippet for that type, or for a type it refines, the node is drawn by it (see the block guide's Type renderers); otherwise it draws its default box with the type's `unit` after the value.
   - Every prop is a natural design dimension, especially `layout`, `shape`, `font`, and `size`.
 
-Component props are a natural place for design values: draw them in the design block and pass them through, such as `layout={flow}`, `shape={shape}`, or `label={showIndices ? index : undefined}`, so seeded presentations differ in presentation while showing the same steps.
+Component props are a natural place for design values: draw them in the design block and pass them through, such as `layout={flow}` or `label={showIndices ? index : undefined}`, and type renderers can use them too, so seeded presentations differ in presentation while showing the same steps.
 
 Example, with input, algorithm, design, and a script-free view:
 
 ```svelte
+<script lang="sverlin" domain>
+  const Int = type('integer');
+</script>
+
 <script lang="sverlin" input>
-  const values = [3, 8, 5];
+  const values = [Int(3), Int(8), Int(5)];
 </script>
 
 <script lang="sverlin">
@@ -42,16 +47,22 @@ Example, with input, algorithm, design, and a script-free view:
 </script>
 
 <script lang="sverlin" design>
+  const intShape = pick(['box', 'circle']);
   const flow = pick(['row', 'column']);
   const showIndices = chance(0.5);
   const textSize = real(0.9, 1.3);
 </script>
 
+{#snippet Int(value, node)}
+  <Node shape={intShape} {value} {...node} />
+{/snippet}
+
 <Stage title="Array walk">
   <Node items={values} layout={flow}>
-    {#snippet item(value, index)}
+    {#snippet item(value, index, type)}
       <Node
         {value}
+        {type}
         label={showIndices ? index : undefined}
         marker={index === i ? 'i' : undefined}
         role={index < i ? 'visited' : index === i ? 'active' : 'idle'}

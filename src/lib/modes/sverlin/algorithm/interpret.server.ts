@@ -1,4 +1,4 @@
-/** Parse, restrict, and interpret Sverlin input, design, and algorithm blocks. */
+/** Parse, restrict, and interpret Sverlin domain, input, design, and algorithm blocks. */
 
 import {
   parse,
@@ -13,6 +13,19 @@ import {
   type Statement
 } from 'acorn';
 
+import {
+  Atom,
+  atomBases,
+  atomProblem,
+  combinedType,
+  noAtoms,
+  numericResult,
+  refines,
+  type AtomBase,
+  type AtomRegistry,
+  type AtomType
+} from './atoms.server';
+
 /** JSON-compatible state recorded for one step and passed to the view as props. */
 export type TraceValue =
   | null
@@ -24,14 +37,24 @@ export type TraceValue =
 
 export type TraceState = Record<string, TraceValue>;
 
+/** Atomic type names by value path, such as { "values[2]": "Int" }; values stay plain. */
+export type TypeMap = Record<string, string>;
+
+/** Plain recorded values with the atomic types of the typed ones. */
+export type TypedState = { state: TraceState; types: TypeMap };
+
 /** One uniquely labelled step of the master trace that every presentation of a source shares. */
 export type MasterStep = {
   label: string;
   state: TraceState;
+  types: TypeMap;
 };
 
-/** Input: fixed initial state. Design: seeded presentation choices. Algorithm: the yielding steps. */
-export type BlockKind = 'input' | 'design' | 'algorithm';
+/**
+ * Domain: atomic type definitions. Input: fixed initial state. Design: seeded presentation choices.
+ * Algorithm: the yielding steps.
+ */
+export type BlockKind = 'domain' | 'input' | 'design' | 'algorithm';
 
 // Bounds keep interpretation short, memory small, and the embedded trace well inside the bundle limit.
 export const algorithmLimits = {
@@ -60,10 +83,126 @@ export class AlgorithmError extends Error {
 // A strict-mode generator wrapper lets acorn parse top-level yield; it shares the body's first line.
 const wrapperPrefix = "function* algorithm() {'use strict';";
 
+/**
+ * Read the domain block's atomic type definitions. Nothing is predefined: a type is a primitive
+ * kind (`type('integer')`), a refinement of a defined type (`type(Int, { unit: 'cm' })`), or an
+ * enumeration (`type(['♠', '♥'])`).
+ */
+export function interpretDomain(body: string): AtomRegistry {
+  const { root, offset } = parseBlock(body, 'domain');
+  const fail = (node: AnyNode, message: string): never => {
+    throw new AlgorithmError(message, offset(node));
+  };
+  const atoms: Record<string, AtomType> = {};
+  for (const statement of root.body) {
+    // The parsing wrapper's 'use strict' directive is not part of the authored block.
+    if (statement.type === 'ExpressionStatement' && 'directive' in statement) continue;
+    if (statement.type !== 'VariableDeclaration' || statement.kind !== 'const')
+      fail(statement, 'The domain block only defines types, as in const Height = type(Int);');
+    for (const declarator of (statement as { declarations: { id: Pattern; init?: unknown }[] })
+      .declarations) {
+      const name = (declarator.id as { name: string }).name;
+      const init = declarator.init as Expression | undefined | null;
+      if (init?.type !== 'CallExpression' || (init.callee as { name?: string }).name !== 'type')
+        fail(
+          declarator as AnyNode,
+          `Define ${name} with type(...), as in const ${name} = type(Int);`
+        );
+      const call = init as CallExpression;
+      if (name in atoms) fail(declarator as AnyNode, `"${name}" is already a type.`);
+      const [definition, options, extra] = call.arguments as Expression[];
+      if (!definition || extra)
+        fail(
+          call,
+          'type() takes a kind, a type, or a list of allowed values, then optional options.'
+        );
+      let type: AtomType;
+      if (definition.type === 'Literal' && typeof definition.value === 'string') {
+        if (!atomBases.includes(definition.value as AtomBase))
+          fail(
+            definition,
+            `Unknown kind "${definition.value}"; use one of ${atomBases.join(', ')}.`
+          );
+        type = { name, base: definition.value as AtomBase };
+      } else if (definition.type === 'Identifier') {
+        const parent = atoms[definition.name];
+        if (!parent)
+          fail(
+            definition,
+            `Unknown type ${definition.name}; define it first, as in const ${definition.name} = type('integer');`
+          );
+        type = { ...parent, name, parent: parent.name };
+      } else if (definition.type === 'ArrayExpression') {
+        const values = definition.elements.map((element) => {
+          const value = element ? literalValue(element as Expression) : undefined;
+          if (typeof value !== 'string' && typeof value !== 'number')
+            fail(element ?? definition, 'Enumeration values must be text or number literals.');
+          return value as string | number;
+        });
+        if (values.length === 0 || new Set(values).size !== values.length)
+          fail(definition, 'An enumeration needs at least one value, each listed once.');
+        const base: AtomBase = values.every((value) => typeof value === 'string')
+          ? 'text'
+          : values.every((value) => typeof value === 'number')
+            ? values.every(Number.isInteger)
+              ? 'integer'
+              : 'number'
+            : fail(definition, 'Enumeration values must be all text or all numbers.');
+        type = { name, base, values };
+      } else {
+        type = fail(
+          definition,
+          `type() takes a kind such as 'integer', a defined type, or a list of allowed values.`
+        );
+      }
+      if (options) applyAtomOptions(type, options, fail);
+      atoms[name] = type;
+    }
+  }
+  return atoms;
+}
+
+function applyAtomOptions(
+  type: AtomType,
+  options: Expression,
+  fail: (node: AnyNode, message: string) => never
+): void {
+  if (options.type !== 'ObjectExpression')
+    fail(options, 'type() options are an object such as { unit: "cm", min: 0 }.');
+  for (const property of (options as { properties: AnyNode[] }).properties) {
+    if (property.type !== 'Property' || property.key.type !== 'Identifier')
+      fail(property, 'type() options are plain name: value pairs.');
+    const { key, value } = property as unknown as { key: { name: string }; value: Expression };
+    const literal = literalValue(value);
+    if (key.name === 'unit') {
+      if (typeof literal !== 'string' || !literal.trim()) fail(value, 'unit must be text.');
+      type.unit = literal as string;
+    } else if (key.name === 'min' || key.name === 'max') {
+      if (type.base !== 'integer' && type.base !== 'number')
+        fail(property, `${key.name} only applies to integer and number types.`);
+      if (typeof literal !== 'number' || !Number.isFinite(literal))
+        fail(value, `${key.name} must be a number.`);
+      type[key.name] = literal as number;
+    } else {
+      fail(property, `Unknown type() option "${key.name}"; use unit, min, or max.`);
+    }
+  }
+  if (type.min !== undefined && type.max !== undefined && type.min > type.max)
+    fail(options, 'min must not exceed max.');
+}
+
+/** A literal's value, including negative numbers; undefined for anything else. */
+function literalValue(node: Expression): unknown {
+  if (node.type === 'Literal') return node.value;
+  if (node.type === 'UnaryExpression' && node.operator === '-' && node.argument.type === 'Literal')
+    return typeof node.argument.value === 'number' ? -node.argument.value : undefined;
+  return undefined;
+}
+
 /** Interpret the input block into the fixed initial state shared by every presentation. */
-export function interpretInput(body: string): TraceState {
-  const { root, offset } = parseBlock(body, 'input');
-  return new Interpreter(root, offset, { kind: 'input' }).bindings();
+export function interpretInput(body: string, atoms: AtomRegistry = noAtoms): TypedState {
+  const { root, offset } = parseBlock(body, 'input', atoms);
+  return new Interpreter(root, offset, { kind: 'input', atoms }).bindings();
 }
 
 /** Interpret the design block with draws from the presentation seed. */
@@ -72,12 +211,12 @@ export function interpretDesign(body: string, seed: number): TraceState {
   return new Interpreter(root, offset, {
     kind: 'design',
     random: seededRandom(seed, designStream)
-  }).bindings();
+  }).bindings().state;
 }
 
 /** Names a block declares at its top level, read without running it. */
-export function declaredNames(body: string, kind: BlockKind): string[] {
-  const { root } = parseBlock(body, kind);
+export function declaredNames(body: string, kind: BlockKind, atoms?: AtomRegistry): string[] {
+  const { root } = parseBlock(body, kind, atoms);
   return root.body.flatMap((statement) =>
     statement.type === 'VariableDeclaration'
       ? statement.declarations.map((declarator) => (declarator.id as { name: string }).name)
@@ -86,9 +225,13 @@ export function declaredNames(body: string, kind: BlockKind): string[] {
 }
 
 /** Interpret the algorithm from the input state; every top-level binding is recorded at each yield. */
-export function interpretAlgorithm(body: string, input: TraceState = {}): MasterStep[] {
-  const { root, offset } = parseBlock(body, 'algorithm');
-  return new Interpreter(root, offset, { kind: 'algorithm', initial: input }).run();
+export function interpretAlgorithm(
+  body: string,
+  input: TypedState = { state: {}, types: {} },
+  atoms: AtomRegistry = noAtoms
+): MasterStep[] {
+  const { root, offset } = parseBlock(body, 'algorithm', atoms);
+  return new Interpreter(root, offset, { kind: 'algorithm', initial: input, atoms }).run();
 }
 
 // Changing this generator or its stream changes every rebuilt presentation; version it if needed.
@@ -107,7 +250,8 @@ export function seededRandom(seed: number, stream: number): () => number {
 
 function parseBlock(
   body: string,
-  kind: BlockKind
+  kind: BlockKind,
+  atoms?: AtomRegistry
 ): { root: BlockStatement; offset: (node: AnyNode) => number } {
   let program;
   try {
@@ -124,7 +268,7 @@ function parseBlock(
   }
   const root = (program.body[0] as FunctionDeclaration).body;
   const offset = (node: AnyNode) => node.start - wrapperPrefix.length;
-  checkSubset(root, offset, kind);
+  checkSubset(root, offset, kind, new Set(Object.keys(atoms ?? {})));
   return { root, offset };
 }
 
@@ -137,7 +281,8 @@ const allowedAssignment = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 function checkSubset(
   root: BlockStatement,
   offset: (node: AnyNode) => number,
-  kind: BlockKind
+  kind: BlockKind,
+  constructors: ReadonlySet<string>
 ): void {
   const reject = (node: AnyNode, message: string): never => {
     throw new AlgorithmError(message, offset(node));
@@ -251,19 +396,27 @@ function checkSubset(
     }
   };
   const checkBuiltin = (node: AnyNode, name: string, ancestors: readonly AnyNode[]): void => {
-    const [declaration, declarator] = ancestors.slice(-2);
-    if (drawFunctions.has(name)) {
+    if (name === 'type') {
+      if (kind !== 'domain') reject(node, 'type() defines a type and belongs in the domain block.');
+    } else if (constructors.has(name)) {
+      if (kind !== 'input' && kind !== 'algorithm')
+        reject(node, `${name}(...) creates a typed value in the input or algorithm block.`);
+    } else if (drawFunctions.has(name)) {
+      // A draw is the value of a top-level const, or sits inside object and array literals that
+      // make up that value, such as const look = { cells: pick([...]) }.
+      const [, topDeclaration, topDeclarator, ...within] = ancestors;
       if (
         kind !== 'design' ||
-        ancestors.length !== 3 ||
-        declaration.type !== 'VariableDeclaration' ||
-        declaration.kind !== 'const' ||
-        declarator.type !== 'VariableDeclarator' ||
-        declarator.init !== node
+        topDeclaration?.type !== 'VariableDeclaration' ||
+        topDeclaration.kind !== 'const' ||
+        topDeclarator?.type !== 'VariableDeclarator' ||
+        !within.every((ancestor) =>
+          ['ObjectExpression', 'Property', 'ArrayExpression'].includes(ancestor.type)
+        )
       )
         reject(
           node,
-          `${name}() is a design draw; use it only as const name = ${name}(...) at the top of the design block.`
+          `${name}() is a design draw; use it only in the value of a top-level const in the design block, such as const layout = ${name}(...).`
         );
     } else {
       reject(
@@ -282,10 +435,10 @@ function describe(type: string): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Interpreter: values are primitives, plain arrays, and null-prototype objects created here.
+// Interpreter: values are primitives, typed atoms, plain arrays, and null-prototype objects.
 
 type ObjectValue = { [key: string]: Value };
-type Value = undefined | null | boolean | number | string | Value[] | ObjectValue;
+type Value = undefined | null | boolean | number | string | Atom | Value[] | ObjectValue;
 type Binding = { value: Value; constant: boolean };
 type Completion = 'normal' | 'break' | 'continue' | 'return';
 
@@ -321,6 +474,7 @@ class Interpreter {
   readonly #topLevelNames: string[];
   readonly #kind: BlockKind;
   readonly #random?: () => number;
+  readonly #atoms: AtomRegistry;
   readonly #trace: MasterStep[] = [];
   readonly #labels = new Set<string>();
   #operations = 0;
@@ -329,20 +483,30 @@ class Interpreter {
   constructor(
     root: BlockStatement,
     offset: (node: AnyNode) => number,
-    options: { kind: BlockKind; initial?: TraceState; random?: () => number }
+    options: {
+      kind: BlockKind;
+      initial?: TypedState;
+      random?: () => number;
+      atoms?: AtomRegistry;
+    }
   ) {
     this.#root = root;
     this.#offset = offset;
     this.#kind = options.kind;
     this.#random = options.random;
+    this.#atoms = options.atoms ?? noAtoms;
     this.#globals.bindings.set('Math', { value: mathMarker, constant: true });
     this.#globals.bindings.set('undefined', { value: undefined, constant: true });
     this.#globals.bindings.set('Infinity', { value: Infinity, constant: true });
     this.#globals.bindings.set('NaN', { value: NaN, constant: true });
-    // Input values become ordinary top-level variables the algorithm may update.
-    const initial = Object.entries(options.initial ?? {});
+    // Input values become ordinary top-level variables the algorithm may update, keeping types.
+    const initial = Object.entries(options.initial?.state ?? {});
+    const initialTypes = options.initial?.types ?? {};
     for (const [name, value] of initial)
-      this.#topLevel.bindings.set(name, { value: fromTrace(value), constant: false });
+      this.#topLevel.bindings.set(name, {
+        value: fromTrace(value, name, initialTypes, this.#atoms),
+        constant: false
+      });
     this.#topLevelNames = [
       ...initial.map(([name]) => name),
       ...root.body.flatMap((statement) =>
@@ -361,8 +525,8 @@ class Interpreter {
     return this.#trace;
   }
 
-  /** Run a input or design block and return its top-level bindings. */
-  bindings(): TraceState {
+  /** Run an input or design block and return its top-level bindings. */
+  bindings(): TypedState {
     this.#execute();
     return this.#state(this.#root);
   }
@@ -375,13 +539,33 @@ class Interpreter {
       throw new AlgorithmError(`return belongs in the algorithm block.`, this.#offset(this.#root));
   }
 
-  #state(node: AnyNode): TraceState {
+  #state(node: AnyNode): TypedState {
     const state: TraceState = {};
+    const types: TypeMap = {};
     for (const name of this.#topLevelNames) {
       const binding = this.#topLevel.bindings.get(name);
-      state[name] = binding ? this.#snapshot(binding.value, node) : null;
+      state[name] = binding ? this.#snapshot(binding.value, node, name, types) : null;
     }
-    return state;
+    return { state, types };
+  }
+
+  /** Conditions read an atom's underlying value, so Bool(false) is false. */
+  #truthy(value: Value): boolean {
+    return value instanceof Atom ? Boolean(value.value) : Boolean(value);
+  }
+
+  /** Create a typed value from a constructor call such as Int(3). */
+  #construct(node: CallExpression, type: AtomType, scope: Scope): Atom {
+    if (node.arguments.length !== 1 || node.arguments[0].type === 'SpreadElement')
+      this.#fail(node, `${type.name}(...) takes exactly one value.`);
+    const argument = this.#expression(node.arguments[0] as Expression, scope);
+    if (argument instanceof Atom && !refines(type, argument.type, this.#atoms))
+      if (atomBase(argument.type) !== atomBase(type) || argument.type.values)
+        this.#fail(node, `A ${argument.type.name} cannot become a ${type.name}.`);
+    const value = argument instanceof Atom ? argument.value : argument;
+    const problem = atomProblem(type, value);
+    if (problem) this.#fail(node, problem);
+    return new Atom(type, value as string | number | boolean);
   }
 
   #fail(node: AnyNode, message: string): never {
@@ -434,10 +618,11 @@ class Interpreter {
         }
         return 'normal';
       case 'IfStatement':
-        if (this.#expression(node.test, scope)) return this.#statement(node.consequent, scope);
+        if (this.#truthy(this.#expression(node.test, scope)))
+          return this.#statement(node.consequent, scope);
         return node.alternate ? this.#statement(node.alternate, scope) : 'normal';
       case 'WhileStatement':
-        while (this.#expression(node.test, scope)) {
+        while (this.#truthy(this.#expression(node.test, scope))) {
           const completion = this.#statement(node.body, scope);
           if (completion === 'return') return completion;
           if (completion === 'break') break;
@@ -448,7 +633,7 @@ class Interpreter {
           const completion = this.#statement(node.body, scope);
           if (completion === 'return') return completion;
           if (completion === 'break') break;
-        } while (this.#expression(node.test, scope));
+        } while (this.#truthy(this.#expression(node.test, scope)));
         return 'normal';
       case 'ForStatement': {
         const loopScope = new Scope(scope);
@@ -456,7 +641,7 @@ class Interpreter {
           if (node.init.type === 'VariableDeclaration') this.#statement(node.init, loopScope);
           else this.#expression(node.init, loopScope);
         }
-        while (!node.test || this.#expression(node.test, loopScope)) {
+        while (!node.test || this.#truthy(this.#expression(node.test, loopScope))) {
           const completion = this.#statement(node.body, loopScope);
           if (completion === 'return') return completion;
           if (completion === 'break') break;
@@ -494,8 +679,9 @@ class Interpreter {
   }
 
   #yield(argument: Expression | undefined, node: AnyNode, scope: Scope): void {
-    const label =
-      argument === undefined ? `Step ${this.#trace.length + 1}` : this.#expression(argument, scope);
+    const label = unwrap(
+      argument === undefined ? `Step ${this.#trace.length + 1}` : this.#expression(argument, scope)
+    );
     if (typeof label !== 'string' || !label.trim())
       this.#fail(node, 'yield labels must be non-empty strings.');
     const trimmed = label.trim();
@@ -507,20 +693,31 @@ class Interpreter {
     if (this.#trace.length >= algorithmLimits.maximumSteps)
       this.#fail(node, `The algorithm yielded more than ${algorithmLimits.maximumSteps} steps.`);
     this.#labels.add(trimmed);
-    this.#trace.push({ label: trimmed, state: this.#state(node) });
+    this.#trace.push({ label: trimmed, ...this.#state(node) });
   }
 
-  /** Deep copy with a total node budget, which also stops shared structure from multiplying. */
-  #snapshot(value: Value, node: AnyNode): TraceValue {
+  /**
+   * Deep copy with a total node budget, which also stops shared structure from multiplying. Atoms
+   * become plain values, with their type recorded by path.
+   */
+  #snapshot(value: Value, node: AnyNode, path: string, types: TypeMap): TraceValue {
     this.#traceValues += 1;
     if (this.#traceValues > algorithmLimits.maximumTraceValues)
       this.#fail(node, 'The recorded steps are too large; use smaller state or fewer steps.');
     if (value === undefined) return null;
-    if (Array.isArray(value)) return Array.from(value, (item) => this.#snapshot(item, node));
+    if (value instanceof Atom) {
+      types[path] = value.type.name;
+      return value.value;
+    }
+    if (Array.isArray(value))
+      return Array.from(value, (item, index) =>
+        this.#snapshot(item, node, `${path}[${index}]`, types)
+      );
     if (value === mathMarker) return null;
     if (value !== null && typeof value === 'object') {
       const copy: Record<string, TraceValue> = {};
-      for (const [key, item] of Object.entries(value)) copy[key] = this.#snapshot(item, node);
+      for (const [key, item] of Object.entries(value))
+        copy[key] = this.#snapshot(item, node, `${path}.${key}`, types);
       return copy;
     }
     return typeof value === 'number' && !Number.isFinite(value) ? null : value;
@@ -578,8 +775,11 @@ class Interpreter {
         return this.#call(node, scope);
       case 'UnaryExpression': {
         const value = this.#expression(node.argument, scope);
-        if (node.operator === '!') return !value;
-        return node.operator === '-' ? -this.#number(value, node) : this.#number(value, node);
+        if (node.operator === '!') return !this.#truthy(value);
+        const number = this.#number(value, node);
+        return node.operator === '-'
+          ? this.#numeric(value instanceof Atom ? value.type : undefined, -number, node)
+          : value;
       }
       case 'BinaryExpression':
         return this.#binary(
@@ -590,12 +790,14 @@ class Interpreter {
         );
       case 'LogicalExpression': {
         const left = this.#expression(node.left, scope);
-        if (node.operator === '&&') return left ? this.#expression(node.right, scope) : left;
-        if (node.operator === '||') return left ? left : this.#expression(node.right, scope);
+        if (node.operator === '&&')
+          return this.#truthy(left) ? this.#expression(node.right, scope) : left;
+        if (node.operator === '||')
+          return this.#truthy(left) ? left : this.#expression(node.right, scope);
         return left ?? this.#expression(node.right, scope);
       }
       case 'ConditionalExpression':
-        return this.#expression(node.test, scope)
+        return this.#truthy(this.#expression(node.test, scope))
           ? this.#expression(node.consequent, scope)
           : this.#expression(node.alternate, scope);
       case 'SequenceExpression': {
@@ -616,10 +818,15 @@ class Interpreter {
       }
       case 'UpdateExpression': {
         const target = this.#reference(node.argument, scope);
-        const before = this.#number(target.get(), node);
-        const after = node.operator === '++' ? before + 1 : before - 1;
+        const current = target.get();
+        const before = this.#number(current, node);
+        const after = this.#numeric(
+          current instanceof Atom ? current.type : undefined,
+          node.operator === '++' ? before + 1 : before - 1,
+          node
+        );
         target.set(after);
-        return node.prefix ? after : before;
+        return node.prefix ? after : current;
       }
       default:
         return this.#fail(node, `${describe(node.type)} is not supported in algorithm blocks.`);
@@ -654,7 +861,12 @@ class Interpreter {
         }
       };
     }
-    if (object === null || typeof object !== 'object' || object === mathMarker)
+    if (
+      object === null ||
+      typeof object !== 'object' ||
+      object === mathMarker ||
+      object instanceof Atom
+    )
       this.#fail(target, 'Only arrays and objects can have elements or properties assigned.');
     const name = String(key);
     if (forbiddenProperties.has(name)) this.#fail(target, 'That property name is not allowed.');
@@ -669,14 +881,18 @@ class Interpreter {
 
   #key(node: MemberExpression, scope: Scope): Value {
     if (!node.computed) return (node.property as { name: string }).name;
-    const key = this.#expression(node.property as Expression, scope);
+    const key = unwrap(this.#expression(node.property as Expression, scope));
     if (typeof key !== 'number' && typeof key !== 'string')
       this.#fail(node.property, 'Indexes must be numbers or strings.');
     return key;
   }
 
-  #read(object: Value, node: MemberExpression, scope: Scope): Value {
+  #read(target: Value, node: MemberExpression, scope: Scope): Value {
     const key = this.#key(node, scope);
+    // Typed text reads like text; other atoms have no properties.
+    const object = target instanceof Atom && target.type.base === 'text' ? target.value : target;
+    if (object instanceof Atom)
+      this.#fail(node, `A ${object.type.name} value has no "${String(key)}".`);
     if (object === mathMarker) {
       if (typeof key === 'string' && key in mathConstants) return mathConstants[key];
       return this.#fail(node, `Math.${String(key)} can only be called, or does not exist.`);
@@ -698,6 +914,8 @@ class Interpreter {
     const callee = node.callee;
     if (callee.type === 'Identifier' && this.#random && drawFunctions.has(callee.name))
       return this.#draw(callee.name, node, scope);
+    if (callee.type === 'Identifier' && Object.hasOwn(this.#atoms, callee.name))
+      return this.#construct(node, this.#atoms[callee.name], scope);
     if (callee.type !== 'MemberExpression' || callee.computed || node.optional)
       this.#fail(node, 'Only Math functions and array methods can be called.');
     const object = this.#expression(callee.object as Expression, scope);
@@ -730,10 +948,11 @@ class Interpreter {
           args[0] === undefined ? undefined : this.#number(args[0], node),
           args[1] === undefined ? undefined : this.#number(args[1], node)
         );
+      // Typed values are found by value, as === compares them.
       case 'indexOf':
-        return object.indexOf(args[0]);
+        return object.findIndex((item) => this.#equal(item, args[0], node));
       case 'includes':
-        return object.includes(args[0]);
+        return object.some((item) => this.#equal(item, args[0], node));
       case 'reverse':
         return object.reverse();
       case 'join': {
@@ -779,46 +998,108 @@ class Interpreter {
     return min + random() * (max - min);
   }
 
+  /**
+   * Operators on typed values: results keep the more specific of two related types, an untyped
+   * operand adopts the other's type, and unrelated types cannot be combined or compared.
+   */
   #binary(operator: string, left: Value, right: Value, node: AnyNode): Value {
     switch (operator) {
       case '===':
-        return left === right;
+        return this.#equal(left, right, node);
       case '!==':
-        return left !== right;
-      case '+':
-        if (typeof left === 'string' || typeof right === 'string')
-          return this.#checkString(this.#text(left, node) + this.#text(right, node), node);
-        return this.#number(left, node) + this.#number(right, node);
+        return !this.#equal(left, right, node);
+      case '+': {
+        const a = unwrap(left);
+        const b = unwrap(right);
+        if (typeof a === 'string' || typeof b === 'string') {
+          const text = this.#checkString(this.#text(left, node) + this.#text(right, node), node);
+          // Joining text keeps a text type, unless the result is outside an enumeration.
+          const [leftType, rightType] = [left, right].map((value) =>
+            value instanceof Atom && value.type.base === 'text' ? value : undefined
+          );
+          const type = this.#combined(leftType, rightType, node);
+          return type && !atomProblem(type, text) ? new Atom(type, text) : text;
+        }
+        return this.#arithmetic(operator, left, right, node);
+      }
       case '<':
       case '<=':
       case '>':
       case '>=': {
-        const bothStrings = typeof left === 'string' && typeof right === 'string';
-        const a = bothStrings ? left : this.#number(left, node);
-        const b = bothStrings ? right : this.#number(right, node);
+        this.#combined(left, right, node);
+        const plainLeft = unwrap(left);
+        const plainRight = unwrap(right);
+        const bothStrings = typeof plainLeft === 'string' && typeof plainRight === 'string';
+        const a = bothStrings ? plainLeft : this.#number(left, node);
+        const b = bothStrings ? plainRight : this.#number(right, node);
         if (operator === '<') return a < b;
         if (operator === '<=') return a <= b;
         return operator === '>' ? a > b : a >= b;
       }
-      default: {
-        const a = this.#number(left, node);
-        const b = this.#number(right, node);
-        if (operator === '-') return a - b;
-        if (operator === '*') return a * b;
-        if (operator === '/') return a / b;
-        if (operator === '%') return a % b;
-        if (operator === '**') return a ** b;
-        return this.#fail(node, `The ${operator} operator is not supported.`);
-      }
+      default:
+        return this.#arithmetic(operator, left, right, node);
     }
   }
 
+  #arithmetic(operator: string, left: Value, right: Value, node: AnyNode): Value {
+    const type = this.#combined(left, right, node);
+    if (type && (type.values || (type.base !== 'integer' && type.base !== 'number')))
+      this.#fail(node, `${type.name} values cannot be used in arithmetic.`);
+    const a = this.#number(left, node);
+    const b = this.#number(right, node);
+    let result: number;
+    if (operator === '+') result = a + b;
+    else if (operator === '-') result = a - b;
+    else if (operator === '*') result = a * b;
+    else if (operator === '/') result = a / b;
+    else if (operator === '%') result = a % b;
+    else if (operator === '**') result = a ** b;
+    else return this.#fail(node, `The ${operator} operator is not supported.`);
+    return this.#numeric(type, result, node);
+  }
+
+  /** The result type of two operands, failing for unrelated types. */
+  #combined(left: Value, right: Value, node: AnyNode): AtomType | undefined {
+    try {
+      return combinedType(
+        left instanceof Atom ? left.type : undefined,
+        right instanceof Atom ? right.type : undefined,
+        this.#atoms
+      );
+    } catch (cause) {
+      return this.#fail(node, cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  /** Wrap a computed number in a type, failing when it leaves the type's range. */
+  #numeric(type: AtomType | undefined, value: number, node: AnyNode): Value {
+    try {
+      return numericResult(type, value);
+    } catch (cause) {
+      return this.#fail(node, cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  /** Atoms compare by value; unrelated types are an error rather than silently unequal. */
+  #equal(left: Value, right: Value, node: AnyNode): boolean {
+    if (left instanceof Atom || right instanceof Atom) this.#combined(left, right, node);
+    return unwrap(left) === unwrap(right);
+  }
+
   #number(value: Value, node: AnyNode): number {
-    if (typeof value !== 'number') this.#fail(node, `Expected a number but found ${kind(value)}.`);
-    return value;
+    const plain = value instanceof Atom ? value.value : value;
+    if (typeof plain !== 'number')
+      this.#fail(
+        node,
+        value instanceof Atom
+          ? `Expected a number but found a ${value.type.name} value.`
+          : `Expected a number but found ${kind(value)}.`
+      );
+    return plain;
   }
 
   #text(value: Value, node: AnyNode): string {
+    if (value instanceof Atom) return String(value.value);
     if (value !== null && typeof value === 'object')
       this.#fail(node, `Cannot turn ${kind(value)} into text; use .join() for arrays.`);
     return String(value);
@@ -841,16 +1122,34 @@ class Interpreter {
 
 function kind(value: Value): string {
   if (value === null) return 'null';
+  if (value instanceof Atom) return `a ${value.type.name} value`;
   if (Array.isArray(value)) return 'an array';
   return typeof value === 'object' ? 'an object' : typeof value;
 }
 
-/** Rebuild interpreter values from recorded input state, with null-prototype objects. */
-function fromTrace(value: TraceValue): Value {
-  if (Array.isArray(value)) return value.map(fromTrace);
+/** The plain value of an atom; other values unchanged. */
+function unwrap(value: Value): Value {
+  return value instanceof Atom ? value.value : value;
+}
+
+function atomBase(type: AtomType): AtomBase {
+  return type.base;
+}
+
+/**
+ * Rebuild interpreter values from recorded input state: null-prototype objects, and atoms wherever
+ * the recorded types name one.
+ */
+function fromTrace(value: TraceValue, path: string, types: TypeMap, atoms: AtomRegistry): Value {
+  const typeName = types[path];
+  if (typeName && atoms[typeName] && !Array.isArray(value) && typeof value !== 'object')
+    return new Atom(atoms[typeName], value);
+  if (Array.isArray(value))
+    return value.map((item, index) => fromTrace(item, `${path}[${index}]`, types, atoms));
   if (value !== null && typeof value === 'object') {
     const object = Object.create(null) as ObjectValue;
-    for (const [key, item] of Object.entries(value)) object[key] = fromTrace(item);
+    for (const [key, item] of Object.entries(value))
+      object[key] = fromTrace(item, `${path}.${key}`, types, atoms);
     return object;
   }
   return value;

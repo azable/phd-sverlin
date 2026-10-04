@@ -6,8 +6,14 @@ declare module 'virtual:component' {
   export default Main;
 }
 
-/** Top-level algorithm bindings recorded at each yield; one empty object per step without one. */
+/** Each step's recorded values and design values, with atomic types by path under __types. */
 declare module 'virtual:trace' {
   const states: Record<string, unknown>[];
   export default states;
+}
+
+/** The component's atomic types by name, including built-in Int, Real, Bool, and Text. */
+declare module 'virtual:atoms' {
+  const atoms: Record<string, { name: string; base: string; parent?: string; unit?: string }>;
+  export default atoms;
 }

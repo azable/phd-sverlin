@@ -177,6 +177,45 @@ describe('single-component Svelte compilation', () => {
     expect(result.javascript).toContain('sv-node');
   });
 
+  it('embeds atomic types and registers renderer snippets named after types', async () => {
+    const result = await compileSvelteComponent(
+      '<script lang="sverlin" domain>const Int = type("integer"); const Height = type(Int, { unit: "cm" });</script><script lang="sverlin" input>const people = [Height(150), Height(170)];</script><script lang="sverlin">yield "A";</script>{#snippet Int(value, node)}<Node shape="circle" {value} {...node} />{/snippet}{#snippet helper(x)}{x}{/snippet}<Node items={people} />'
+    );
+    expect(result.javascript).toContain('people[1]');
+    expect(result.javascript).toContain('sverlin:renderers');
+  });
+
+  it('rejects invalid domain blocks, renderers, and clashing names', async () => {
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script>\n<script lang="sverlin" domain>\nconst A = type(Integer);\n</script>'
+      )
+    ).rejects.toMatchObject({
+      code: 'algorithm_error',
+      line: 3,
+      message: expect.stringContaining('Unknown type Integer')
+    });
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin" domain>const Int = type("integer");</script><script lang="sverlin">yield "A";</script>\n{#snippet Int(value, node, extra)}{value}{/snippet}'
+      )
+    ).rejects.toMatchObject({
+      code: 'type_renderer',
+      line: 2,
+      message: expect.stringContaining('at most (value, node)')
+    });
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin" domain>const Text = type("text");</script><script lang="sverlin">const Text = 1; yield "A";</script>'
+      )
+    ).rejects.toThrow('"Text" names an atomic type');
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin" domain>const Node = type("integer");</script><script lang="sverlin">yield "A";</script>'
+      )
+    ).rejects.toThrow('"Node" names a library component');
+  });
+
   it('rejects authored library imports', async () => {
     await expect(
       compileSvelteComponent('<script>import { Stage } from "sverlin";</script><Stage title="x" />')

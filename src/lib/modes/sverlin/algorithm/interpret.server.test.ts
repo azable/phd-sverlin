@@ -60,7 +60,8 @@ describe('algorithm interpretation', () => {
     expect(trace).toEqual([
       {
         label: '2-3-4',
-        state: { stack: [2, 3, 4], point: { x: 2, y: 2 }, total: 29, k: 3, i: 1, a: [5, 0] }
+        state: { stack: [2, 3, 4], point: { x: 2, y: 2 }, total: 29, k: 3, i: 1, a: [5, 0] },
+        types: {}
       }
     ]);
   });
@@ -124,7 +125,7 @@ describe('input, design, and step selection', () => {
       { values: [2, 1], label: 'pair', swapped: null },
       { values: [1, 2], label: 'pair', swapped: true }
     ]);
-    expect(input.values).toEqual([2, 1]);
+    expect(input.state.values).toEqual([2, 1]);
     expect(() => interpretAlgorithm('let values = []; yield "A";', input)).toThrow(
       /already declared here or in the input/
     );
@@ -149,12 +150,20 @@ describe('input, design, and step selection', () => {
   it.each([
     ['draws outside the design block', () => interpretAlgorithm('const a = pick([1]); yield "A";')],
     ['draws not assigned to a top-level const', () => interpretDesign('let a = pick([1]);', 1)],
-    ['nested draws', () => interpretDesign('const a = [pick([1])];', 1)],
+    ['draws inside expressions', () => interpretDesign('const a = pick([1]) + 1;', 1)],
     ['draws inside blocks', () => interpretDesign('if (true) { const a = int(1, 2); }', 1)],
     ['removed optional yields', () => interpretAlgorithm('yield optional("x");')],
     ['unknown functions', () => interpretDesign('const a = shuffle([1]);', 1)]
   ])('rejects %s', (_name, run) => {
     expect(run).toThrow(/design draw|not available/);
+  });
+
+  it('allows draws inside the object and array literals of a top-level const', () => {
+    const design = interpretDesign(
+      'const look = { cells: { shape: pick(["circle"]), size: real(1, 1) } }; const sizes = [int(2, 2)];',
+      3
+    );
+    expect(design).toEqual({ look: { cells: { shape: 'circle', size: 1 } }, sizes: [2] });
   });
 
   it('validates draw arguments', () => {

@@ -4,10 +4,11 @@
   any children content. Every visual difference is a prop.
 -->
 <script lang="ts" generics="T">
-  import type { Snippet } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
 
   import Node from './Node.svelte';
   import { currentLayout, provideLayout } from './layout-context';
+  import { markRendering, rendererFor, typeContext, type NodeProps } from './type-context';
   import type { Layout, NodeFont, NodeRole, NodeShape, NodeSize, Primitive } from './types';
 
   let {
@@ -17,8 +18,9 @@
     columns,
     nested = 'row',
     item,
+    type,
     shape,
-    role = 'idle',
+    role,
     label,
     marker,
     font,
@@ -35,10 +37,13 @@
     columns?: number;
     /** Layout for items that are themselves arrays, when no item snippet is given. */
     nested?: Layout;
-    /** Renders each item of a collection from its value and index. */
-    item?: Snippet<[T, number]>;
+    /** Renders each item of a collection from its value, index, and atomic type name, if typed. */
+    item?: Snippet<[T, number, string | undefined]>;
+    /** An atomic type name, such as 'Int'; its renderer snippet, if the view defines one, draws the value. */
+    type?: string;
     /** Defaults to 'box' for a value and 'plain' for a collection or children. */
     shape?: NodeShape;
+    /** Defaults to 'idle'. */
     role?: NodeRole;
     /** Small text: a corner label such as an index, or a collection's caption. */
     label?: string | number;
@@ -55,6 +60,25 @@
   const parentLayout = currentLayout();
   provideLayout(() => layout);
 
+  const types = typeContext();
+  // A typed value node draws through its type's renderer, if the view defines one. Resolved once:
+  // each step mounts afresh, and the renderer is marked so nodes inside it never call it again.
+  const rendered = untrack(() =>
+    type !== undefined && items === undefined && children === undefined
+      ? rendererFor(type)
+      : undefined
+  );
+  if (rendered) markRendering(rendered.name);
+  // Only the props the caller set, so a renderer can spread them over its own defaults.
+  const callerProps = $derived(
+    Object.fromEntries(
+      Object.entries({ role, label, marker, shape, font, size }).filter(
+        ([, setting]) => setting !== undefined
+      )
+    ) as NodeProps
+  );
+  const unit = $derived(type ? types?.unit(type) : undefined);
+
   const namedSizes: Record<NodeSize, number> = { small: 0.85, medium: 1, large: 1.25, xlarge: 1.6 };
   const collection = $derived(items !== undefined);
   const resolvedShape = $derived(shape ?? (collection || children ? 'plain' : 'box'));
@@ -69,40 +93,49 @@
   const hasLabel = $derived(label !== undefined && label !== null && label !== '');
 </script>
 
-<div class="sv-node" class:beside={parentLayout === 'column'}>
-  <div
-    class="content {resolvedShape} {role} {font ?? ''}"
-    class:collection
-    style:font-size={rem === undefined ? undefined : `${rem}rem`}
-  >
-    {#if collection}
-      {#if hasLabel}<span class="caption">{label}</span>{/if}
-      <div class="items {layout}" style:--sv-columns={gridColumns}>
-        {#each items ?? [] as child, index (index)}
-          {#if item}
-            {@render item(child, index)}
-          {:else if Array.isArray(child)}
-            <Node items={child} layout={nested} />
-          {:else}
-            <Node
-              value={child !== null && typeof child === 'object'
-                ? JSON.stringify(child)
-                : (child as Primitive)}
-            />
-          {/if}
-        {/each}
-      </div>
-    {:else}
-      {#if hasLabel}<span class="label">{label}</span>{/if}
-      {#if children}
-        {@render children()}
+{#if rendered}
+  {@render rendered.snippet(value ?? null, callerProps)}
+{:else}
+  <div class="sv-node" class:beside={parentLayout === 'column'}>
+    <div
+      class="content {resolvedShape} {role ?? 'idle'} {font ?? ''}"
+      class:collection
+      style:font-size={rem === undefined ? undefined : `${rem}rem`}
+    >
+      {#if collection}
+        {#if hasLabel}<span class="caption">{label}</span>{/if}
+        <div class="items {layout}" style:--sv-columns={gridColumns}>
+          {#each items ?? [] as child, index (index)}
+            {#if item}
+              {@render item(child, index, types?.itemType(items, index))}
+            {:else if Array.isArray(child)}
+              <Node items={child} layout={nested} />
+            {:else}
+              <Node
+                value={child !== null && typeof child === 'object'
+                  ? JSON.stringify(child)
+                  : (child as Primitive)}
+                type={types?.itemType(items, index)}
+              />
+            {/if}
+          {/each}
+        </div>
       {:else}
-        <span class="value">{value === null || value === undefined ? '∅' : String(value)}</span>
+        {#if hasLabel}<span class="label">{label}</span>{/if}
+        {#if children}
+          {@render children()}
+        {:else}
+          <span class="value"
+            >{value === null || value === undefined ? '∅' : String(value)}{#if unit}<span
+                class="unit">{unit}</span
+              >{/if}</span
+          >
+        {/if}
       {/if}
-    {/if}
+    </div>
+    {#if marker}<span class="marker">{marker}</span>{/if}
   </div>
-  {#if marker}<span class="marker">{marker}</span>{/if}
-</div>
+{/if}
 
 <style>
   .sv-node {
@@ -203,6 +236,12 @@
   }
   .value {
     white-space: nowrap;
+  }
+  .unit {
+    margin-left: 0.2em;
+    color: var(--sv-muted);
+    font-size: 0.6em;
+    font-weight: 400;
   }
   .marker {
     color: var(--sv-muted);

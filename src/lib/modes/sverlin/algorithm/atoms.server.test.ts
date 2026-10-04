@@ -1,0 +1,153 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  interpretAlgorithm,
+  interpretDesign,
+  interpretDomain,
+  interpretInput
+} from './interpret.server';
+
+const domain = interpretDomain(`
+  const Int = type('integer');
+  const Real = type('number');
+  const Bool = type('boolean');
+  const Text = type('text');
+  const Height = type(Int, { unit: 'cm', min: 0, max: 300 });
+  const Weight = type(Int, { unit: 'kg' });
+  const Suit = type(['♠', '♥', '♦', '♣']);
+  const Grade = type([1, 2, 3]);
+`);
+
+/** Run an algorithm with the test domain and return its last step. */
+function last(body: string) {
+  const trace = interpretAlgorithm(body, { state: {}, types: {} }, domain);
+  return trace[trace.length - 1];
+}
+
+describe('atomic type definitions', () => {
+  it('defines primitive kinds, refinements, and enumerations', () => {
+    expect(domain.Int).toEqual({ name: 'Int', base: 'integer' });
+    expect(domain.Height).toEqual({
+      name: 'Height',
+      base: 'integer',
+      parent: 'Int',
+      unit: 'cm',
+      min: 0,
+      max: 300
+    });
+    expect(domain.Suit).toEqual({ name: 'Suit', base: 'text', values: ['♠', '♥', '♦', '♣'] });
+    expect(domain.Grade.base).toBe('integer');
+    expect(interpretDomain('')).toEqual({});
+  });
+
+  it.each([
+    ['undefined base types', 'const A = type(Int);', /Unknown type Int; define it first/],
+    ['unknown kinds', 'const A = type("float");', /Unknown kind "float"/],
+    ['anything but type()', 'const A = 3;', /Define A with type/],
+    ['statements', 'let A = type(Int);', /only defines types/],
+    ['mixed enumerations', 'const A = type(["x", 1]);', /all text or all numbers/],
+    ['repeated enumeration values', 'const A = type(["x", "x"]);', /each listed once/],
+    ['unknown options', 'const A = type("integer", { colour: "red" });', /Unknown type\(\) option/],
+    ['ranges on text', 'const A = type("text", { min: 1 });', /only applies to integer and number/],
+    ['inverted ranges', 'const A = type("integer", { min: 5, max: 1 });', /min must not exceed max/]
+  ])('rejects %s', (_name, body, message) => {
+    expect(() => interpretDomain(body)).toThrow(message);
+  });
+});
+
+describe('typed values', () => {
+  it('records the type of every typed value by path, carried from the input', () => {
+    const input = interpretInput(
+      'const values = [Int(3), Int(8)]; const person = { height: Height(170) }; const plain = 4;',
+      domain
+    );
+    expect(input.types).toEqual({
+      'values[0]': 'Int',
+      'values[1]': 'Int',
+      'person.height': 'Height'
+    });
+    const trace = interpretAlgorithm(
+      'yield "Start"; const t = values[0]; values[0] = values[1]; values[1] = t; yield "Swapped";',
+      input,
+      domain
+    );
+    expect(trace[1].state.values).toEqual([8, 3]);
+    expect(trace[1].types).toMatchObject({ 'values[0]': 'Int', 'values[1]': 'Int', t: 'Int' });
+  });
+
+  it('checks values when they are created', () => {
+    expect(() => last('const a = Int(3.5); yield "A";')).toThrow(/whole numbers/);
+    expect(() => last('const a = Height(-1); yield "A";')).toThrow(/at least 0/);
+    expect(() => last('const a = Suit("x"); yield "A";')).toThrow(/not a Suit/);
+    expect(() => last('const a = Bool(1); yield "A";')).toThrow(/true or false/);
+    expect(() => last('const a = Height(Suit("♠")); yield "A";')).toThrow(/cannot become/);
+  });
+
+  it('carries types through arithmetic and adopts the more specific type', () => {
+    const step = last(`
+      const a = Int(7) + Int(2);
+      const b = Int(7) / Int(2);
+      const c = Int(7) + 0.5;
+      const d = Height(150) + Int(5);
+      const e = Height(150) * 2;
+      let f = Int(1);
+      f++;
+      const g = -Weight(5);
+      yield 'Done';
+    `);
+    expect(step.state).toMatchObject({ a: 9, b: 3.5, c: 7.5, d: 155, e: 300, f: 2, g: -5 });
+    // b and c are no longer whole, so they leave the integer type and stay untyped.
+    expect(step.types).toEqual({
+      a: 'Int',
+      d: 'Height',
+      e: 'Height',
+      f: 'Int',
+      g: 'Weight'
+    });
+  });
+
+  it.each([
+    ['combining unrelated types', 'const a = Height(1) + Weight(1);', /cannot be combined/],
+    ['comparing unrelated types', 'const a = Height(1) < Weight(1);', /cannot be combined/],
+    ['equating unrelated types', 'const a = Height(1) === Weight(1);', /cannot be combined/],
+    ['arithmetic on enumerations', 'const a = Grade(1) + 1;', /cannot be used in arithmetic/],
+    ['arithmetic on Bool', 'const a = Bool(true) + 1;', /cannot be used in arithmetic/],
+    ['leaving a range', 'const a = Height(10) - 20;', /at least 0/]
+  ])('rejects %s', (_name, statement, message) => {
+    expect(() => last(`${statement} yield "A";`)).toThrow(message);
+  });
+
+  it('compares, tests, and searches typed values by value', () => {
+    const step = last(`
+      const values = [Int(3), Int(8), Int(5)];
+      const target = Int(8);
+      const equal = values[1] === target;
+      const plainEqual = values[1] === 8;
+      const position = values.indexOf(target);
+      const present = values.includes(Int(5));
+      const falsy = Bool(false) ? 'yes' : 'no';
+      let count = 0;
+      if (Bool(true)) count += 1;
+      const name = Text('ab') + 'c';
+      const length = Text('abc').length;
+      yield \`Found \${target} at \${position}\`;
+    `);
+    expect(step.label).toBe('Found 8 at 1');
+    expect(step.state).toMatchObject({
+      equal: true,
+      plainEqual: true,
+      position: 1,
+      present: true,
+      falsy: 'no',
+      count: 1,
+      name: 'abc',
+      length: 3
+    });
+    expect(step.types.name).toBe('Text');
+  });
+
+  it('keeps constructors and type definitions in their blocks', () => {
+    expect(() => interpretDesign('const a = Int(3);', 1)).toThrow(/Int\(\) is not available/);
+    expect(() => last('const A = type(Int); yield "A";')).toThrow(/belongs in the domain block/);
+  });
+});

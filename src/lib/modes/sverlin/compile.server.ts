@@ -12,11 +12,13 @@ import {
   declaredNames,
   interpretAlgorithm,
   interpretDesign,
+  interpretDomain,
   interpretInput,
   type BlockKind,
   type MasterStep,
   type TraceState
 } from './algorithm/interpret.server';
+import { noAtoms, type AtomRegistry } from './algorithm/atoms.server';
 
 // One component should be much smaller; these ceilings bound compilation and inline Timeline storage.
 const maximumSourceBytes = 256 * 1024;
@@ -87,6 +89,7 @@ export type PreparedComponent = {
   source: string;
   component: string;
   master: MasterStep[];
+  atoms: AtomRegistry;
   design?: Block;
 };
 
@@ -146,11 +149,19 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
       throw new InvalidSvelteSourceError(
         'Add a <script lang="sverlin"> algorithm block whose yield statements mark the steps, such as yield "Start";'
       );
+    const atoms = blocks.domain
+      ? interpretBlock(source, blocks.domain, (body) => interpretDomain(body))
+      : noAtoms;
+    const shadowed = Object.keys(atoms).find((name) => libraryNames.includes(name));
+    if (shadowed)
+      throw new InvalidSvelteSourceError(
+        `"${shadowed}" names a library component; choose another type name.`
+      );
     const input = blocks.input
-      ? interpretBlock(source, blocks.input, (body) => interpretInput(body))
-      : {};
+      ? interpretBlock(source, blocks.input, (body) => interpretInput(body, atoms))
+      : { state: {}, types: {} };
     const master = interpretBlock(source, blocks.algorithm, (body) =>
-      interpretAlgorithm(body, input)
+      interpretAlgorithm(body, input, atoms)
     );
     const stateNames = Object.keys(master[0].state);
     const designNames = blocks.design
@@ -162,18 +173,30 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
         `"${clash}" is defined in the design block and in the input or algorithm block.`
       );
     const props = [...stateNames, ...designNames];
+    const typeName = props.find((name) => Object.hasOwn(atoms, name));
+    if (typeName)
+      throw new InvalidSvelteSourceError(
+        `"${typeName}" names an atomic type; choose another variable name.`
+      );
     const library = props.find((name) => libraryNames.includes(name));
     if (library)
       throw new InvalidSvelteSourceError(
         `"${library}" names a library component; choose another variable name.`
       );
-    const component = compile(withGeneratedScripts(svelteSource, props), {
+    const renderers = typeRenderers(ast, atoms, source);
+    const component = compile(withGeneratedScripts(svelteSource, props, renderers), {
       filename: 'Main.svelte',
       generate: 'client',
       css: 'injected',
       dev: false
     }).js.code;
-    return { source, component, master, ...(blocks.design ? { design: blocks.design } : {}) };
+    return {
+      source,
+      component,
+      master,
+      atoms,
+      ...(blocks.design ? { design: blocks.design } : {})
+    };
   } catch (cause) {
     if (cause instanceof InvalidSvelteSourceError) throw cause;
     throw new InvalidSvelteSourceError(
@@ -194,8 +217,17 @@ export async function bundlePresentation(
     : {};
   // Every presentation shows every master step until steps can be mapped to frames.
   const masterSteps = master.map((_, index) => index);
-  const states = masterSteps.map((index) => ({ ...master[index].state, ...parameters }));
-  const result = await bundle(prepared.component, JSON.stringify(states));
+  // Each step's state carries its atomic types for the view, under a key no variable can use.
+  const states = masterSteps.map((index) => ({
+    ...master[index].state,
+    ...parameters,
+    __types: master[index].types
+  }));
+  const result = await bundle(
+    prepared.component,
+    JSON.stringify(states),
+    JSON.stringify(prepared.atoms)
+  );
   const output = result.outputFiles[0];
   if (output.contents.byteLength > maximumBundleBytes) {
     throw new InvalidSvelteSourceError('The compiled Svelte presentation is too large.');
@@ -210,7 +242,7 @@ export async function bundlePresentation(
 }
 
 const sverlinBlock =
-  /<script\s+lang\s*=\s*(["'])sverlin\1(?:\s+(input|design))?\s*>([\s\S]*?)<\/script\s*>/giu;
+  /<script\s+lang\s*=\s*(["'])sverlin\1(?:\s+(domain|input|design))?\s*>([\s\S]*?)<\/script\s*>/giu;
 
 /** Remove the Sverlin blocks for Svelte, keeping every offset and line in place. */
 function extractBlocks(source: string): {
@@ -233,7 +265,7 @@ function extractBlocks(source: string): {
   const unrecognized = /<script\b[^>]*\blang\s*=\s*(["'])sverlin\1[^>]*>/iu.exec(svelteSource);
   if (unrecognized)
     throw new InvalidSvelteSourceError(
-      `Unrecognized sverlin block ${unrecognized[0]}; use <script lang="sverlin">, <script lang="sverlin" input>, or <script lang="sverlin" design>.`,
+      `Unrecognized sverlin block ${unrecognized[0]}; use <script lang="sverlin">, or add domain, input, or design, as in <script lang="sverlin" input>.`,
       { code: 'sverlin_block', start: sourcePosition(source, unrecognized.index) }
     );
   return { svelteSource, blocks };
@@ -261,14 +293,49 @@ function sourcePosition(source: string, offset: number): { line: number; column:
  * Give the script-free view its scripts: the library prelude and every recorded or design value,
  * plus step and seed, as props. Both share the first line so authored line numbers are unchanged.
  */
-function withGeneratedScripts(source: string, props: readonly string[]): string {
+function withGeneratedScripts(
+  source: string,
+  props: readonly string[],
+  renderers: readonly string[]
+): string {
   const names = [...props, 'step', 'seed'].join(', ');
-  return `<script module>${prelude}</script><script>let { ${names} } = $props();</script>${source}`;
+  // Type renderers are the view's own top-level snippets, which its script may refer to.
+  const registration = renderers.length
+    ? `import { setContext as __sverlinSetContext } from 'svelte'; __sverlinSetContext('sverlin:renderers', { ${renderers.join(', ')} });`
+    : '';
+  return `<script module>${prelude}</script><script>let { ${names} } = $props(); ${registration}</script>${source}`;
 }
 
-async function bundle(component: string, states: string) {
+/**
+ * Top-level snippets named after a domain type render every value of that type, taking the value
+ * and the props its node was given, as in {#snippet Int(value, node)} … {/snippet}.
+ */
+function typeRenderers(
+  ast: { html?: { children?: unknown[] } },
+  atoms: AtomRegistry,
+  source: string
+): string[] {
+  return (ast.html?.children ?? []).flatMap((node) => {
+    const snippet = node as {
+      type: string;
+      start: number;
+      expression?: { name?: string };
+      parameters?: unknown[];
+    };
+    const name = snippet.expression?.name;
+    if (snippet.type !== 'SnippetBlock' || !name || !Object.hasOwn(atoms, name)) return [];
+    if ((snippet.parameters?.length ?? 0) > 2)
+      throw new InvalidSvelteSourceError(
+        `The ${name} renderer takes at most (value, node), as in {#snippet ${name}(value, node)}.`,
+        { code: 'type_renderer', start: sourcePosition(source, snippet.start) }
+      );
+    return [name];
+  });
+}
+
+async function bundle(component: string, states: string, atoms: string) {
   try {
-    return await bundleComponent(component, states);
+    return await bundleComponent(component, states, atoms);
   } catch (cause) {
     // Failures located in the authored component, such as a blocked require(), are source errors.
     const authored = (cause as Partial<BuildFailure>).errors?.find(
@@ -284,12 +351,13 @@ const runtime = (path: string) => /^svelte(?:\/[\w-]+)*$/u.test(path);
 
 /** Modules each sandbox namespace may reach; packages inside node_modules resolve normally. */
 const allowedImports: Record<string, (path: string) => boolean> = {
-  entry: (path) => runtime(path) || path === 'virtual:component' || path === 'virtual:trace',
+  entry: (path) =>
+    runtime(path) || ['virtual:component', 'virtual:trace', 'virtual:atoms'].includes(path),
   component: (path) => runtime(path) || path === 'sverlin',
   library: (path) => runtime(path) || /^\.\.?\//u.test(path)
 };
 
-function sandboxModules(component: string, states: string): Plugin {
+function sandboxModules(component: string, states: string, atoms: string): Plugin {
   return {
     name: 'sandbox-modules',
     setup(plugin) {
@@ -301,6 +369,7 @@ function sandboxModules(component: string, states: string): Plugin {
         if (args.path === 'virtual:component')
           return { path: 'Main.svelte', namespace: 'component' };
         if (args.path === 'virtual:trace') return { path: 'states.json', namespace: 'trace' };
+        if (args.path === 'virtual:atoms') return { path: 'atoms.json', namespace: 'atoms' };
         if (args.path === 'sverlin') return { path: 'index.ts', namespace: 'library' };
         if (args.namespace === 'library' && !runtime(args.path)) {
           const path = libraryPath(posix.join(posix.dirname(args.importer), args.path));
@@ -324,6 +393,10 @@ function sandboxModules(component: string, states: string): Plugin {
         loader: 'js',
         resolveDir: process.cwd()
       }));
+      plugin.onLoad({ filter: /.*/, namespace: 'atoms' }, () => ({
+        contents: atoms,
+        loader: 'json'
+      }));
       plugin.onLoad({ filter: /.*/, namespace: 'trace' }, () => ({
         contents: states,
         loader: 'json'
@@ -336,10 +409,10 @@ function sandboxModules(component: string, states: string): Plugin {
   };
 }
 
-function bundleComponent(component: string, states: string) {
+function bundleComponent(component: string, states: string, atoms: string) {
   return build({
     entryPoints: ['virtual:entry'],
-    plugins: [sandboxModules(component, states)],
+    plugins: [sandboxModules(component, states, atoms)],
     bundle: true,
     write: false,
     platform: 'browser',

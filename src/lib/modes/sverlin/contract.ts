@@ -9,9 +9,12 @@ export const sverlinStarter = {
 } as const;
 
 /** A small self-contained algorithm example for administrator projects. */
-export const linearSearchSource = `<script lang="sverlin" input>
-  const values = [3, 8, 5, 2, 7];
-  const target = 2;
+export const linearSearchSource = `<script lang="sverlin" domain>
+  const Int = type('integer');
+</script>
+<script lang="sverlin" input>
+  const values = [Int(3), Int(8), Int(5), Int(2), Int(7)];
+  const target = Int(2);
 </script>
 <script lang="sverlin">
   let i = -1;
@@ -28,17 +31,22 @@ export const linearSearchSource = `<script lang="sverlin" input>
   if (!found) yield 'Not found';
 </script>
 <script lang="sverlin" design>
+  const intShape = pick(['box', 'circle']);
   const flow = pick(['row', 'column']);
   const showIndices = chance(0.5);
   const pointerName = pick(['i', 'index']);
   const font = pick(['sans', 'serif']);
   const textSize = pick(['medium', 'large']);
 </script>
+{#snippet Int(value, node)}
+  <Node shape={intShape} {value} {...node} />
+{/snippet}
 <Stage title="Linear search" subtitle="Find {target} by checking each cell in order.">
   <Node items={values} layout={flow}>
-    {#snippet item(value, index)}
+    {#snippet item(value, index, type)}
       <Node
         {value}
+        {type}
         label={showIndices ? index : undefined}
         marker={index === i ? pointerName : undefined}
         role={index < i ? 'visited' : index === i ? (found ? 'found' : 'active') : 'idle'}
