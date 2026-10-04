@@ -3,9 +3,15 @@
 // atomic types of their values, and each type's parent and unit, through the 'sverlin:types' context.
 
 import { mount } from 'svelte';
+import { themeCss } from 'sverlin';
 import Main from 'virtual:component';
 import atoms from 'virtual:atoms';
 import states from 'virtual:trace';
+
+// The page theme every node draws on: colour tokens, the canvas, and spacing for the page itself.
+const theme = document.createElement('style');
+theme.textContent = themeCss;
+document.head.append(theme);
 
 const playback = window as typeof window & { __sverlinStep?: number; __sverlinSeed?: number };
 const step = Math.min(Math.max(playback.__sverlinStep ?? 0, 0), states.length - 1);

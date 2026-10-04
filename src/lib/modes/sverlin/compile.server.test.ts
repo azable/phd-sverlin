@@ -53,7 +53,7 @@ describe('single-component Svelte compilation', () => {
       expect(bundle.masterLabels).toEqual(master);
       expect(bundle.labels).toEqual(master);
       expect(bundle.masterSteps).toEqual([0, 1, 2, 3, 4]);
-      expect(['i', 'index']).toContain(bundle.parameters.pointerName);
+      expect(['i', 'index', '↑']).toContain(bundle.parameters.pointerName);
     }
     expect(new Set(bundles.map(({ parameters }) => parameters.showIndices))).toEqual(
       new Set([true, false])
@@ -126,19 +126,18 @@ describe('single-component Svelte compilation', () => {
 
   it('injects the sverlin library components without authored imports', async () => {
     const result = await compileSvelteComponent(linearSearchSource);
-    expect(result.javascript).toContain('sv-stage');
     expect(result.javascript).toContain('sv-node');
     expect(result.javascript).toContain('sv-node');
     const withoutModuleScript = await compileSvelteComponent(
-      '<script lang="sverlin">yield "Start";</script><Stage title="Hi">x</Stage>'
+      '<script lang="sverlin">yield "Start";</script><Node>x</Node>'
     );
     expect(withoutModuleScript.labels).toEqual(['Start']);
-    expect(withoutModuleScript.javascript).toContain('sv-stage');
+    expect(withoutModuleScript.javascript).toContain('sv-node');
   });
 
   it('puts every recorded and design value in scope for a script-free view', async () => {
     const result = await compileSvelteComponent(
-      '<script lang="sverlin" input>const values = [4, 9];</script>\n<script lang="sverlin">let total = 0; yield "Start"; for (const v of values) total += v; yield "Summed";</script>\n<script lang="sverlin" design>const accent = pick(["red"]);</script>\n<Stage title="Sum">{@const doubled = total * 2}<p style:color={accent}>{values.join("+")} = {total}; doubled {doubled}; step {step}, seed {seed}</p></Stage>',
+      '<script lang="sverlin" input>const values = [4, 9];</script>\n<script lang="sverlin">let total = 0; yield "Start"; for (const v of values) total += v; yield "Summed";</script>\n<script lang="sverlin" design>const accent = pick(["red"]);</script>\n<Node layout="column">{@const doubled = total * 2}<p style:color={accent}>{values.join("+")} = {total}; doubled {doubled}; step {step}, seed {seed}</p></Node>',
       5
     );
     expect(result.labels).toEqual(['Start', 'Summed']);
@@ -166,13 +165,13 @@ describe('single-component Svelte compilation', () => {
       )
     ).rejects.toMatchObject({ code: 'sverlin_block', line: 2 });
     await expect(
-      compileSvelteComponent('<script lang="sverlin">const Stage = 1; yield "A";</script><p>x</p>')
-    ).rejects.toThrow('"Stage" names a library component');
+      compileSvelteComponent('<script lang="sverlin">const Node = 1; yield "A";</script><p>x</p>')
+    ).rejects.toThrow('"Node" names a library component');
   });
 
   it('renders nested arrays as nested nodes without an item snippet', async () => {
     const result = await compileSvelteComponent(
-      '<script lang="sverlin" input>const grid = [[1, 2], [3, 4]];</script><script lang="sverlin">yield "A";</script><Stage title="Matrix"><Node items={grid} layout="column" nested="row" /><Node items={[1, 2, 3, 4]} layout="grid" columns={2} /></Stage>'
+      '<script lang="sverlin" input>const grid = [[1, 2], [3, 4]];</script><script lang="sverlin">yield "A";</script><Node layout="column"><Node items={grid} layout="column" nested="row" /><Node items={[1, 2, 3, 4]} layout="grid" columns={2} /></Node>'
     );
     expect(result.javascript).toContain('sv-node');
   });
@@ -218,7 +217,7 @@ describe('single-component Svelte compilation', () => {
 
   it('rejects authored library imports', async () => {
     await expect(
-      compileSvelteComponent('<script>import { Stage } from "sverlin";</script><Stage title="x" />')
+      compileSvelteComponent('<script>import { Node } from "sverlin";</script><Node value={1} />')
     ).rejects.toThrow('cannot import');
   });
 

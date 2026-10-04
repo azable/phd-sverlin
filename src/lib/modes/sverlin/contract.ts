@@ -31,35 +31,62 @@ export const linearSearchSource = `<script lang="sverlin" domain>
   if (!found) yield 'Not found';
 </script>
 <script lang="sverlin" design>
-  const intShape = pick(['box', 'circle']);
-  const flow = pick(['row', 'column']);
+  // Layout of the array.
+  const flow = pick(['row', 'column', 'wrap']);
+  const spacing = pick(['small', 'medium', 'large']);
+  // How every Int cell is drawn, through the Int renderer below.
+  const cellRadius = pick(['small', 'medium', 'full']);
+  const cellBorder = pick(['thin', 'thick']);
+  const cellPadding = pick(['small', 'medium']);
+  const cellFont = pick(['sans', 'mono']);
+  // What the colours mean stays fixed; which colours show it is drawn.
+  const visitedColour = pick(['blue', 'purple']);
+  const currentColour = pick(['amber', 'red']);
+  const fadeUnchecked = chance(0.5);
+  // Annotations.
   const showIndices = chance(0.5);
-  const pointerName = pick(['i', 'index']);
-  const font = pick(['sans', 'serif']);
-  const textSize = pick(['medium', 'large']);
-  const current = pick(['amber', 'red']);
+  const pointerName = pick(['i', 'index', '↑']);
+  // Text.
+  const titleSize = pick(['large', 'xlarge']);
+  const textFont = pick(['sans', 'serif']);
+  const noteShape = pick(['card', 'plain']);
+  const textSize = real(0.95, 1.2);
 </script>
 {#snippet Int(value, node)}
-  <Node shape={intShape} {value} {...node} />
-{/snippet}
-<Stage title="Linear search" subtitle="Find {target} by checking each cell in order.">
-  <Node items={values} layout={flow}>
-    {#snippet item(value, index, type)}
-      <Node layout="column">
-        {@const colour = index === i ? (found ? 'green' : current) : index < i ? 'blue' : undefined}
-        {#if showIndices}<Node size="small">{index}</Node>{/if}
-        <Node {value} {type} fill={colour} stroke={colour} />
-        {#if index === i}<Node size="small">{pointerName}</Node>{/if}
-      </Node>
-    {/snippet}
-  </Node>
   <Node
-    shape="card"
-    fill={found ? 'green' : undefined}
-    stroke={found ? 'green' : undefined}
-    {font}
-    size={textSize}
-  >
-    {#if i < 0}Start at the first cell.{:else if found}Found {target} at index {i}.{:else if i < values.length}{values[i]} is not {target}; move right.{:else}{target} is not in the array.{/if}
-  </Node>
-</Stage>`;
+    radius={cellRadius}
+    border={cellBorder}
+    padding={cellPadding}
+    font={cellFont}
+    {value}
+    {...node}
+  />
+{/snippet}
+<Node size={titleSize} weight="bold" font={textFont}>Linear search</Node>
+<Node color="neutral" font={textFont}>Find {target} by checking each cell in order.</Node>
+<Node items={values} layout={flow} gap={spacing}>
+  {#snippet item(value, index, type)}
+    <Node layout="column" gap="small">
+      {@const colour =
+        index === i ? (found ? 'green' : currentColour) : index < i ? visitedColour : undefined}
+      {#if showIndices}<Node size="small" color="neutral">{index}</Node>{/if}
+      <Node
+        {value}
+        {type}
+        fill={colour}
+        stroke={colour}
+        opacity={fadeUnchecked && i >= 0 && index > i ? 0.45 : undefined}
+      />
+      {#if index === i}<Node size="small" color="neutral" weight="bold">{pointerName}</Node>{/if}
+    </Node>
+  {/snippet}
+</Node>
+<Node
+  shape={noteShape}
+  fill={found ? 'green' : undefined}
+  stroke={found ? 'green' : undefined}
+  font={textFont}
+  size={textSize}
+>
+  {#if i < 0}Start at the first cell.{:else if found}Found {target} at index {i}.{:else if i < values.length}{values[i]} is not {target}; move right.{:else}{target} is not in the array.{/if}
+</Node>`;

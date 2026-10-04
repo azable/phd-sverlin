@@ -8,12 +8,12 @@ A component describes its visualization in `<script lang="sverlin">` blocks, wri
 
 ## View
 
-The view is markup and an optional `<style>` only; it has no `<script>` of its own. Every top-level input and algorithm variable (as it was at the selected step), every design value, `step`, `seed`, and the library components are already in scope, so markup uses them directly: `{values[i]}`, `<Node items={values} layout={flow} />`.
+The view is markup and an optional `<style>` only; it has no `<script>` of its own. Every top-level input and algorithm variable (as it was at the selected step), every design value, `step`, `seed`, and the library's `Node` are already in scope, so markup uses them directly: `{values[i]}`, `<Node items={values} layout={flow} />`.
 
-Compute everything inline in markup. Svelte re-evaluates template expressions whenever the values they read change, so inline derivations stay correct. For a value used more than once or too long to read inline, use `{@const name = expression}` as the first child of the nearest component or block, such as directly inside `<Stage>`, `{#if}`, or `{#each}`:
+Compute everything inline in markup. Svelte re-evaluates template expressions whenever the values they read change, so inline derivations stay correct. For a value used more than once or too long to read inline, use `{@const name = expression}` as the first child of the nearest component or block, such as directly inside a `<Node>`, `{#if}`, or `{#each}`:
 
 ```svelte
-<Stage title="Linear search">
+<Node layout="column" align="start">
   {@const current = i >= 0 && i < values.length ? values[i] : null}
   <Node items={values}>
     {#snippet item(value, index)}
@@ -25,7 +25,7 @@ Compute everything inline in markup. Svelte re-evaluates template expressions wh
     {/snippet}
   </Node>
   <Node>{current === null ? 'Not started' : `Checking ${current}`}</Node>
-</Stage>
+</Node>
 ```
 
 Facts about the algorithm, such as which cells were checked, are often clearer recorded as algorithm variables; keep purely visual choices in the view and design block. Values must not reuse the library component names.

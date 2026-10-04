@@ -352,7 +352,8 @@ const runtime = (path: string) => /^svelte(?:\/[\w-]+)*$/u.test(path);
 /** Modules each sandbox namespace may reach; packages inside node_modules resolve normally. */
 const allowedImports: Record<string, (path: string) => boolean> = {
   entry: (path) =>
-    runtime(path) || ['virtual:component', 'virtual:trace', 'virtual:atoms'].includes(path),
+    runtime(path) ||
+    ['virtual:component', 'virtual:trace', 'virtual:atoms', 'sverlin'].includes(path),
   component: (path) => runtime(path) || path === 'sverlin',
   library: (path) => runtime(path) || /^\.\.?\//u.test(path)
 };

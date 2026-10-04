@@ -5,7 +5,18 @@
 
 import { getContext, setContext, type Snippet } from 'svelte';
 
-import type { NodeColor, NodeFont, NodeShape, NodeSize, Primitive } from './types';
+import type {
+  Border,
+  MinSize,
+  NodeColor,
+  NodeFont,
+  NodeShape,
+  NodeSize,
+  Primitive,
+  Radius,
+  Spacing,
+  Weight
+} from './types';
 
 export type TypeContext = {
   /** The atomic type name of item `index` of a container taken from the props, if typed. */
@@ -18,12 +29,18 @@ export type TypeContext = {
 
 /** The props a node was given, passed to its type's renderer so the caller's settings win. */
 export type NodeProps = {
+  shape?: NodeShape;
   fill?: NodeColor;
   stroke?: NodeColor;
   opacity?: number;
-  shape?: NodeShape;
+  color?: NodeColor;
   font?: NodeFont;
   size?: NodeSize | number;
+  weight?: Weight;
+  padding?: Spacing;
+  radius?: Radius;
+  border?: Border;
+  minSize?: MinSize;
 };
 
 export type Renderer = Snippet<[Primitive, NodeProps]>;
