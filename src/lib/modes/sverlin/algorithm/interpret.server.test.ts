@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { algorithmLimits, interpretAlgorithm } from './interpret.server';
+import {
+  algorithmLimits,
+  interpretAlgorithm,
+  interpretDesign,
+  interpretInput,
+  seededRandom,
+  selectSteps
+} from './interpret.server';
 
 describe('algorithm interpretation', () => {
   it('records every top-level binding at each yield', () => {
@@ -90,7 +97,9 @@ describe('algorithm interpretation', () => {
       interpretAlgorithm('let a = [1, 2]; for (let i = 0; i < 40; i++) { a = [a, a]; } yield "A";')
     ).toThrow(/too large/);
     expect(() =>
-      interpretAlgorithm(`for (let i = 0; i <= ${algorithmLimits.maximumSteps}; i++) yield "S";`)
+      interpretAlgorithm(
+        `for (let i = 0; i <= ${algorithmLimits.maximumSteps}; i++) yield \`S\${i}\`;`
+      )
     ).toThrow(/more than/);
   });
 
@@ -102,5 +111,93 @@ describe('algorithm interpretation', () => {
     expect(() => interpretAlgorithm('let x = ;')).toThrow(
       expect.objectContaining({ name: 'AlgorithmError', offset: 8 })
     );
+  });
+});
+
+describe('input, design, and step selection', () => {
+  it('starts the algorithm from the input and records input variables', () => {
+    const input = interpretInput('const values = [2, 1]; const label = "pair";');
+    const trace = interpretAlgorithm(
+      'yield "Start"; values.reverse(); let swapped = true; yield "Swapped";',
+      input
+    );
+    expect(trace.map(({ state }) => state)).toEqual([
+      { values: [2, 1], label: 'pair', swapped: null },
+      { values: [1, 2], label: 'pair', swapped: true }
+    ]);
+    expect(input.values).toEqual([2, 1]);
+    expect(() => interpretAlgorithm('let values = []; yield "A";', input)).toThrow(
+      /already declared here or in the input/
+    );
+    expect(() => interpretInput('const x = 1; yield "A";')).toThrow(/algorithm block/);
+  });
+
+  it('draws design values deterministically from the seed', () => {
+    const body =
+      'const layout = pick(["row", "grid", "stack"]); const size = int(3, 6); const scale = real(0.5, 1.5); const bold = chance(0.5); const doubled = size * 2;';
+    const first = interpretDesign(body, 42);
+    expect(interpretDesign(body, 42)).toEqual(first);
+    expect(['row', 'grid', 'stack']).toContain(first.layout);
+    expect(first.size).toBeGreaterThanOrEqual(3);
+    expect(first.size).toBeLessThanOrEqual(6);
+    expect(first.doubled).toBe((first.size as number) * 2);
+    const layouts = new Set(
+      Array.from({ length: 30 }, (_, seed) => interpretDesign(body, seed + 1).layout)
+    );
+    expect(layouts.size).toBe(3);
+  });
+
+  it.each([
+    ['draws outside the design block', () => interpretAlgorithm('const a = pick([1]); yield "A";')],
+    ['draws not assigned to a top-level const', () => interpretDesign('let a = pick([1]);', 1)],
+    ['nested draws', () => interpretDesign('const a = [pick([1])];', 1)],
+    ['draws inside blocks', () => interpretDesign('if (true) { const a = int(1, 2); }', 1)],
+    ['optional outside yield', () => interpretAlgorithm('const a = optional("x"); yield "A";')],
+    ['unknown functions', () => interpretDesign('const a = shuffle([1]);', 1)]
+  ])('rejects %s', (_name, run) => {
+    expect(run).toThrow(/design draw|only wrap a yield|not available/);
+  });
+
+  it('validates draw arguments and the detail value', () => {
+    expect(() => interpretDesign('const a = int(5, 1);', 1)).toThrow(/minimum ≤ maximum/);
+    expect(() => interpretDesign('const a = int(1.5, 3);', 1)).toThrow(/integers/);
+    expect(() => interpretDesign('const a = pick([]);', 1)).toThrow(/non-empty array/);
+    expect(() => interpretDesign('const detail = "medium";', 1)).toThrow(/coarse" or "fine/);
+  });
+
+  it('requires unique step labels', () => {
+    expect(() => interpretAlgorithm('for (let i = 0; i < 2; i++) yield "Compare";')).toThrow(
+      /must be unique.*Compare/
+    );
+  });
+
+  it('keeps optional steps by detail or probability, always keeping the anchors', () => {
+    const master = interpretAlgorithm(`
+      yield optional('First');
+      for (let i = 0; i < 4; i++) yield optional(\`Fine \${i}\`);
+      yield optional('Maybe', 0.5);
+      yield 'Core';
+      yield optional('Last');
+    `);
+    expect(master[1].optional).toEqual({});
+    expect(master[5].optional).toEqual({ probability: 0.5 });
+    expect(selectSteps(master, { detail: 'coarse' }, 7).filter((index) => index !== 5)).toEqual([
+      0, 6, 7
+    ]);
+    expect(selectSteps(master, { detail: 'fine' }, 7).slice(0, 5)).toEqual([0, 1, 2, 3, 4]);
+    expect(selectSteps(master, {}, 7)).toEqual(selectSteps(master, {}, 7));
+    const maybeKept = Array.from({ length: 40 }, (_, seed) =>
+      selectSteps(master, {}, seed + 1).includes(5)
+    );
+    expect(maybeKept).toContain(true);
+    expect(maybeKept).toContain(false);
+  });
+
+  it('generates values in [0, 1) that depend on seed and stream', () => {
+    const values = Array.from({ length: 1000 }, seededRandom(9, 1));
+    expect(values.every((value) => value >= 0 && value < 1)).toBe(true);
+    expect(seededRandom(9, 1)()).toBe(values[0]);
+    expect(seededRandom(9, 2)()).not.toBe(values[0]);
+    expect(seededRandom(10, 1)()).not.toBe(values[0]);
   });
 });

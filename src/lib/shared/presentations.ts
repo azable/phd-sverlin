@@ -3,7 +3,12 @@
 import * as v from 'valibot';
 import { modeCatalog } from '$lib/modes/catalog';
 
-import { positiveSchema, recordedTextSchema, textSchema } from './projects/events/values';
+import {
+  naturalSchema,
+  positiveSchema,
+  recordedTextSchema,
+  textSchema
+} from './projects/events/values';
 
 /** Modes available to projects and study conditions. */
 export const visualizationModeSchema = v.picklist(
@@ -61,6 +66,18 @@ export const browserBundlePresentationSchema = v.strictObject({
   source: recordedTextSchema,
   html: recordedTextSchema,
   javascript: recordedTextSchema,
+  /** Master trace index of each label, ascending; absent when steps are not aligned. */
+  masterSteps: v.optional(
+    v.pipe(
+      v.array(naturalSchema),
+      v.check(
+        (steps) => steps.every((step, index) => index === 0 || step > steps[index - 1]),
+        'Master steps must be strictly increasing.'
+      )
+    )
+  ),
+  /** Design values drawn from the seed for this presentation. */
+  parameters: v.optional(v.record(v.string(), v.unknown())),
   generationEventId: v.optional(positiveSchema)
 });
 
@@ -89,6 +106,60 @@ export function presentationStepLabels(presentation: RenderablePresentation): st
   if (presentation.format === 'browser-bundle-v1') return presentation.labels;
   const parsed = v.parse(htmlFramesManifestSchema, JSON.parse(presentation.rendered.text));
   return parsed.frames.map(({ label }) => label);
+}
+
+/** One shared playback position across simultaneously displayed presentations. */
+export type AlignedFrame = {
+  label: string;
+  /** Local step each presentation shows at this position, by presentation ID. */
+  localSteps: Record<string, number>;
+  /** Presentations that omit this step and keep showing their previous one. */
+  held: string[];
+};
+
+/**
+ * Align presentations for playback. Presentations of one master trace (same step signature,
+ * each keeping a subset of master steps) align by master step, holding their previous step
+ * where they omit one. Others align by position, up to the shortest.
+ */
+export function alignPresentationFrames(
+  presentations: readonly RenderablePresentation[]
+): AlignedFrame[] {
+  const labels = presentations.map(presentationStepLabels);
+  const masters = presentations.map((presentation, index) =>
+    presentation.format === 'browser-bundle-v1' &&
+    presentation.masterSteps?.length === labels[index].length &&
+    presentation.stepSignature === presentations[0].stepSignature
+      ? presentation.masterSteps
+      : undefined
+  );
+  if (presentations.length > 1 && masters.every((steps) => steps !== undefined)) {
+    const union = [...new Set(masters.flat())].toSorted((left, right) => left - right);
+    return union.map((master) => {
+      const localSteps: Record<string, number> = {};
+      const held: string[] = [];
+      let label = '';
+      presentations.forEach(({ presentationId }, index) => {
+        const steps = masters[index] as number[];
+        const local = Math.max(
+          steps.findLastIndex((step) => step <= master),
+          0
+        );
+        localSteps[presentationId] = local;
+        if (steps[local] === master) label ||= labels[index][local];
+        else held.push(presentationId);
+      });
+      return { label, localSteps, held };
+    });
+  }
+  const stepCount = Math.min(...labels.map((steps) => steps.length));
+  return Array.from({ length: Number.isFinite(stepCount) ? stepCount : 0 }, (_, step) => ({
+    label: labels[0][step] ?? `Step ${step + 1}`,
+    localSteps: Object.fromEntries(
+      presentations.map(({ presentationId }) => [presentationId, step])
+    ),
+    held: []
+  }));
 }
 
 /** Whether this mode supports seeded side-by-side comparison. */

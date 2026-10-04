@@ -5,7 +5,7 @@ import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects
 import {
   isSverlinPresentation,
   presentationScenarioKey,
-  presentationStepLabels
+  alignPresentationFrames
 } from '$lib/shared/presentations';
 import { projectHead } from '$lib/shared/projects/projection';
 
@@ -87,9 +87,7 @@ export async function appendProjectPreference(
   }
   if (
     options.step < 0 ||
-    [leftPresentation, rightPresentation].some(
-      (presentation) => options.step >= presentationStepLabels(presentation).length
-    )
+    options.step >= alignPresentationFrames([leftPresentation, rightPresentation]).length
   ) {
     throw new Error('The preference references an unknown presentation step.');
   }

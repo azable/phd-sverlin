@@ -10,28 +10,42 @@ The components `Stage`, `ArrayCells`, and `Note` are already in scope in every c
   - `indices`: show index numbers above values (default `true`).
 - `<Note tone?>children</Note>`: a short explanation for the current step. `tone` is `'neutral'` (default), `'info'`, `'success'`, or `'warning'`.
 
-Example:
+Component props are a natural place for design values: draw them in the design block and pass them through, such as `indices={showIndices}` or `tone={noteTone}`, so seeded presentations differ in presentation while showing the same steps.
+
+Example, with input, algorithm, design, and view:
 
 ```svelte
-<script lang="sverlin">
+<script lang="sverlin" input>
   const values = [3, 8, 5];
+</script>
+
+<script lang="sverlin">
   let i = -1;
   yield 'Start';
   for (i = 0; i < values.length; i++) {
-    yield `Visit ${values[i]}`;
+    yield optional(`Visit index ${i}`);
   }
+  yield 'Done';
+</script>
+
+<script lang="sverlin" design>
+  const detail = pick(['coarse', 'fine']);
+  const showIndices = chance(0.5);
 </script>
 
 <script>
-  let { values, i } = $props();
+  let { values, i, showIndices } = $props();
 </script>
 
 <Stage title="Array walk">
   <ArrayCells
     {values}
+    indices={showIndices}
     states={values.map((_, index) => (index < i ? 'visited' : index === i ? 'active' : 'idle'))}
-    pointers={i < 0 ? {} : { i }}
+    pointers={i < 0 || i >= values.length ? {} : { i }}
   />
-  <Note tone="info">{i < 0 ? 'Start at the left.' : `Visiting index ${i}.`}</Note>
+  <Note tone="info">
+    {i < 0 ? 'Start at the left.' : i < values.length ? `Visiting index ${i}.` : 'Every cell visited.'}
+  </Note>
 </Stage>
 ```

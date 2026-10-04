@@ -1,4 +1,4 @@
-/** Parse, restrict, and interpret a Sverlin algorithm block into a trace of labelled state snapshots. */
+/** Parse, restrict, and interpret Sverlin input, design, and algorithm blocks. */
 
 import {
   parse,
@@ -22,7 +22,17 @@ export type TraceValue =
   | TraceValue[]
   | { [key: string]: TraceValue };
 
-export type TraceStep = { label: string; state: Record<string, TraceValue> };
+export type TraceState = Record<string, TraceValue>;
+
+/** One step of the master trace; optional steps may be omitted by a presentation's design. */
+export type MasterStep = {
+  label: string;
+  state: TraceState;
+  optional?: { probability?: number };
+};
+
+/** Input: fixed initial state. Design: seeded presentation choices. Algorithm: the yielding steps. */
+export type BlockKind = 'input' | 'design' | 'algorithm';
 
 // Bounds keep interpretation short, memory small, and the embedded trace well inside the bundle limit.
 export const algorithmLimits = {
@@ -51,8 +61,66 @@ export class AlgorithmError extends Error {
 // A strict-mode generator wrapper lets acorn parse top-level yield; it shares the body's first line.
 const wrapperPrefix = "function* algorithm() {'use strict';";
 
-/** Interpret one algorithm body; every top-level binding is recorded at each yield. */
-export function interpretAlgorithm(body: string): TraceStep[] {
+/** Interpret the input block into the fixed initial state shared by every presentation. */
+export function interpretInput(body: string): TraceState {
+  const { root, offset } = parseBlock(body, 'input');
+  return new Interpreter(root, offset, { kind: 'input' }).bindings();
+}
+
+/** Interpret the design block with draws from the presentation seed. */
+export function interpretDesign(body: string, seed: number): TraceState {
+  const { root, offset } = parseBlock(body, 'design');
+  return new Interpreter(root, offset, {
+    kind: 'design',
+    random: seededRandom(seed, designStream)
+  }).bindings();
+}
+
+/** Interpret the algorithm from the input state; every top-level binding is recorded at each yield. */
+export function interpretAlgorithm(body: string, input: TraceState = {}): MasterStep[] {
+  const { root, offset } = parseBlock(body, 'algorithm');
+  return new Interpreter(root, offset, { kind: 'algorithm', initial: input }).run();
+}
+
+/**
+ * Choose the master steps one presentation keeps. The first and last steps anchor every
+ * presentation; optional steps follow their probability or else the design's `detail`.
+ */
+export function selectSteps(
+  master: readonly MasterStep[],
+  design: TraceState,
+  seed: number
+): number[] {
+  const random = seededRandom(seed, stepStream);
+  return master.flatMap((step, index) => {
+    // Draw for every probabilistic step so one step's position never shifts another's outcome.
+    const draw = step.optional?.probability === undefined ? undefined : random();
+    if (!step.optional || index === 0 || index === master.length - 1) return [index];
+    const kept =
+      draw === undefined ? design.detail !== 'coarse' : draw < (step.optional.probability ?? 1);
+    return kept ? [index] : [];
+  });
+}
+
+// Changing this generator or its streams changes every rebuilt presentation; version it if needed.
+const designStream = 1;
+const stepStream = 2;
+
+/** Deterministic splitmix32-style generator for one seed and stream, returning values in [0, 1). */
+export function seededRandom(seed: number, stream: number): () => number {
+  let state = (Math.imul(seed >>> 0, 0x9e3779b1) ^ Math.imul(stream, 0x85ebca77)) >>> 0;
+  return () => {
+    state = (state + 0x9e3779b9) | 0;
+    let mixed = Math.imul(state ^ (state >>> 16), 0x85ebca6b);
+    mixed = Math.imul(mixed ^ (mixed >>> 13), 0xc2b2ae35);
+    return ((mixed ^ (mixed >>> 16)) >>> 0) / 4294967296;
+  };
+}
+
+function parseBlock(
+  body: string,
+  kind: BlockKind
+): { root: BlockStatement; offset: (node: AnyNode) => number } {
   let program;
   try {
     program = parse(`${wrapperPrefix}${body}\n}`, { ecmaVersion: 2022, sourceType: 'script' });
@@ -66,10 +134,10 @@ export function interpretAlgorithm(body: string): TraceStep[] {
         : undefined
     );
   }
-  const algorithm = program.body[0] as FunctionDeclaration;
+  const root = (program.body[0] as FunctionDeclaration).body;
   const offset = (node: AnyNode) => node.start - wrapperPrefix.length;
-  checkSubset(algorithm.body, offset);
-  return new Interpreter(algorithm.body, offset).run();
+  checkSubset(root, offset, kind);
+  return { root, offset };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -78,11 +146,16 @@ export function interpretAlgorithm(body: string): TraceStep[] {
 const allowedBinary = new Set(['+', '-', '*', '/', '%', '**', '<', '<=', '>', '>=', '===', '!==']);
 const allowedAssignment = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 
-function checkSubset(root: BlockStatement, offset: (node: AnyNode) => number): void {
+function checkSubset(
+  root: BlockStatement,
+  offset: (node: AnyNode) => number,
+  kind: BlockKind
+): void {
   const reject = (node: AnyNode, message: string): never => {
     throw new AlgorithmError(message, offset(node));
   };
-  const visit = (node: AnyNode, parent?: AnyNode): void => {
+  const visit = (node: AnyNode, ancestors: readonly AnyNode[]): void => {
+    const parent = ancestors.at(-1);
     switch (node.type) {
       case 'BlockStatement':
       case 'ExpressionStatement':
@@ -100,7 +173,9 @@ function checkSubset(root: BlockStatement, offset: (node: AnyNode) => number): v
       case 'TemplateElement':
       case 'VariableDeclarator':
       case 'ObjectExpression':
+        break;
       case 'CallExpression':
+        if (node.callee.type === 'Identifier') checkBuiltin(node, node.callee.name, ancestors);
         break;
       case 'ReturnStatement':
         if (node.argument) reject(node, 'return stops the algorithm and cannot return a value.');
@@ -170,23 +245,52 @@ function checkSubset(root: BlockStatement, offset: (node: AnyNode) => number): v
           reject(node, 'Only variables, elements, and properties can be incremented.');
         break;
       case 'YieldExpression':
+        if (kind !== 'algorithm')
+          reject(node, `yield belongs in the algorithm block, not the ${kind} block.`);
         if (node.delegate) reject(node, 'yield* is not supported.');
         if (parent?.type !== 'ExpressionStatement')
           reject(node, 'yield must be a statement of its own, as in yield "label";');
         break;
       default:
-        reject(node, `${describe(node.type)} is not supported in algorithm blocks.`);
+        reject(node, `${describe(node.type)} is not supported in ${kind} blocks.`);
     }
     for (const [key, child] of Object.entries(node)) {
       if (key === 'loc') continue;
       for (const item of Array.isArray(child) ? child : [child]) {
         if (item && typeof item === 'object' && typeof (item as AnyNode).type === 'string')
-          visit(item as AnyNode, node);
+          visit(item as AnyNode, [...ancestors, node]);
       }
     }
   };
-  root.body.forEach((statement) => visit(statement, root));
+  const checkBuiltin = (node: AnyNode, name: string, ancestors: readonly AnyNode[]): void => {
+    const [declaration, declarator] = ancestors.slice(-2);
+    if (name === 'optional') {
+      if (kind !== 'algorithm' || ancestors.at(-1)?.type !== 'YieldExpression')
+        reject(node, 'optional() can only wrap a yield label, as in yield optional("label");');
+    } else if (drawFunctions.has(name)) {
+      if (
+        kind !== 'design' ||
+        ancestors.length !== 3 ||
+        declaration.type !== 'VariableDeclaration' ||
+        declaration.kind !== 'const' ||
+        declarator.type !== 'VariableDeclarator' ||
+        declarator.init !== node
+      )
+        reject(
+          node,
+          `${name}() is a design draw; use it only as const name = ${name}(...) at the top of the design block.`
+        );
+    } else {
+      reject(
+        node,
+        `${name}() is not available; only Math functions and array methods can be called.`
+      );
+    }
+  };
+  root.body.forEach((statement) => visit(statement, [root]));
 }
+
+const drawFunctions = new Set(['pick', 'int', 'real', 'chance']);
 
 function describe(type: string): string {
   return type.replace(/([a-z])([A-Z])/gu, '$1 $2').replace(/^./u, (first) => first.toUpperCase());
@@ -230,31 +334,69 @@ class Interpreter {
   readonly #globals = new Scope();
   readonly #topLevel = new Scope(this.#globals);
   readonly #topLevelNames: string[];
-  readonly #trace: TraceStep[] = [];
+  readonly #kind: BlockKind;
+  readonly #random?: () => number;
+  readonly #trace: MasterStep[] = [];
+  readonly #labels = new Set<string>();
   #operations = 0;
   #traceValues = 0;
 
-  constructor(root: BlockStatement, offset: (node: AnyNode) => number) {
+  constructor(
+    root: BlockStatement,
+    offset: (node: AnyNode) => number,
+    options: { kind: BlockKind; initial?: TraceState; random?: () => number }
+  ) {
     this.#root = root;
     this.#offset = offset;
+    this.#kind = options.kind;
+    this.#random = options.random;
     this.#globals.bindings.set('Math', { value: mathMarker, constant: true });
     this.#globals.bindings.set('undefined', { value: undefined, constant: true });
     this.#globals.bindings.set('Infinity', { value: Infinity, constant: true });
     this.#globals.bindings.set('NaN', { value: NaN, constant: true });
-    this.#topLevelNames = root.body.flatMap((statement) =>
-      statement.type === 'VariableDeclaration'
-        ? statement.declarations.map((declarator) => (declarator.id as { name: string }).name)
-        : []
-    );
+    // Input values become ordinary top-level variables the algorithm may update.
+    const initial = Object.entries(options.initial ?? {});
+    for (const [name, value] of initial)
+      this.#topLevel.bindings.set(name, { value: fromTrace(value), constant: false });
+    this.#topLevelNames = [
+      ...initial.map(([name]) => name),
+      ...root.body.flatMap((statement) =>
+        statement.type === 'VariableDeclaration'
+          ? statement.declarations.map((declarator) => (declarator.id as { name: string }).name)
+          : []
+      )
+    ];
   }
 
-  run(): TraceStep[] {
-    const completion = this.#block(this.#root.body, this.#topLevel);
-    if (completion === 'break' || completion === 'continue')
-      throw new AlgorithmError(`${completion} must be inside a loop.`, this.#offset(this.#root));
+  /** Run the algorithm block and return its master trace. */
+  run(): MasterStep[] {
+    this.#execute();
     if (this.#trace.length === 0)
       throw new AlgorithmError('The algorithm must yield at least one step, as in yield "Start";');
     return this.#trace;
+  }
+
+  /** Run a input or design block and return its top-level bindings. */
+  bindings(): TraceState {
+    this.#execute();
+    return this.#state(this.#root);
+  }
+
+  #execute(): void {
+    const completion = this.#block(this.#root.body, this.#topLevel);
+    if (completion === 'break' || completion === 'continue')
+      throw new AlgorithmError(`${completion} must be inside a loop.`, this.#offset(this.#root));
+    if (completion === 'return' && this.#kind !== 'algorithm')
+      throw new AlgorithmError(`return belongs in the algorithm block.`, this.#offset(this.#root));
+  }
+
+  #state(node: AnyNode): TraceState {
+    const state: TraceState = {};
+    for (const name of this.#topLevelNames) {
+      const binding = this.#topLevel.bindings.get(name);
+      state[name] = binding ? this.#snapshot(binding.value, node) : null;
+    }
+    return state;
   }
 
   #fail(node: AnyNode, message: string): never {
@@ -295,8 +437,22 @@ class Interpreter {
       case 'VariableDeclaration':
         for (const declarator of node.declarations) {
           const name = (declarator.id as { name: string }).name;
-          if (scope.bindings.has(name)) this.#fail(declarator, `"${name}" is already declared.`);
+          if (scope.bindings.has(name))
+            this.#fail(
+              declarator,
+              this.#kind === 'algorithm' && scope === this.#topLevel
+                ? `"${name}" is already declared here or in the input block.`
+                : `"${name}" is already declared.`
+            );
           const value = declarator.init ? this.#expression(declarator.init, scope) : undefined;
+          if (
+            this.#kind === 'design' &&
+            name === 'detail' &&
+            scope === this.#topLevel &&
+            value !== 'coarse' &&
+            value !== 'fine'
+          )
+            this.#fail(declarator, 'The design value detail must be "coarse" or "fine".');
           scope.bindings.set(name, { value, constant: node.kind === 'const' });
         }
         return 'normal';
@@ -361,18 +517,42 @@ class Interpreter {
   }
 
   #yield(argument: Expression | undefined, node: AnyNode, scope: Scope): void {
+    let optional: MasterStep['optional'];
+    let labelExpression = argument;
+    if (argument?.type === 'CallExpression' && argument.callee.type === 'Identifier') {
+      // optional(label, probability?) marks a step a presentation's design may omit.
+      const [label, probability] = argument.arguments as Expression[];
+      if (!label || argument.arguments.length > 2)
+        this.#fail(argument, 'optional() takes a label and an optional probability.');
+      labelExpression = label;
+      if (probability === undefined) optional = {};
+      else {
+        const value = this.#expression(probability, scope);
+        if (typeof value !== 'number' || !(value >= 0 && value <= 1))
+          this.#fail(probability, 'optional() probabilities must be numbers from 0 to 1.');
+        optional = { probability: value };
+      }
+    }
     const label =
-      argument === undefined ? `Step ${this.#trace.length + 1}` : this.#expression(argument, scope);
+      labelExpression === undefined
+        ? `Step ${this.#trace.length + 1}`
+        : this.#expression(labelExpression, scope);
     if (typeof label !== 'string' || !label.trim())
       this.#fail(node, 'yield labels must be non-empty strings.');
+    const trimmed = label.trim();
+    if (this.#labels.has(trimmed))
+      this.#fail(
+        node,
+        `Step labels must be unique, but "${trimmed}" was already used; include what distinguishes the step, such as \`Compare index \${i}\`.`
+      );
     if (this.#trace.length >= algorithmLimits.maximumSteps)
       this.#fail(node, `The algorithm yielded more than ${algorithmLimits.maximumSteps} steps.`);
-    const state: Record<string, TraceValue> = {};
-    for (const name of this.#topLevelNames) {
-      const binding = this.#topLevel.bindings.get(name);
-      state[name] = binding ? this.#snapshot(binding.value, node) : null;
-    }
-    this.#trace.push({ label: label.trim(), state });
+    this.#labels.add(trimmed);
+    this.#trace.push({
+      label: trimmed,
+      state: this.#state(node),
+      ...(optional ? { optional } : {})
+    });
   }
 
   /** Deep copy with a total node budget, which also stops shared structure from multiplying. */
@@ -561,6 +741,8 @@ class Interpreter {
 
   #call(node: CallExpression, scope: Scope): Value {
     const callee = node.callee;
+    if (callee.type === 'Identifier' && this.#random && drawFunctions.has(callee.name))
+      return this.#draw(callee.name, node, scope);
     if (callee.type !== 'MemberExpression' || callee.computed || node.optional)
       this.#fail(node, 'Only Math functions and array methods can be called.');
     const object = this.#expression(callee.object as Expression, scope);
@@ -609,6 +791,37 @@ class Interpreter {
       default:
         return this.#fail(callee, `Array method .${name}() is not available.`);
     }
+  }
+
+  /** Seeded design draws: pick(items), int(min, max) inclusive, real(min, max), chance(p). */
+  #draw(name: string, node: CallExpression, scope: Scope): Value {
+    const random = this.#random as () => number;
+    const args = node.arguments.map((argument) => {
+      if (argument.type === 'SpreadElement')
+        this.#fail(argument, 'Spread arguments are not supported.');
+      return this.#expression(argument, scope);
+    });
+    if (name === 'pick') {
+      const [items] = args;
+      if (!Array.isArray(items) || items.length === 0 || args.length !== 1)
+        this.#fail(node, 'pick() takes one non-empty array of choices.');
+      return items[Math.floor(random() * items.length)];
+    }
+    if (name === 'chance') {
+      const probability = this.#number(args[0], node);
+      if (args.length !== 1 || !(probability >= 0 && probability <= 1))
+        this.#fail(node, 'chance() takes one probability from 0 to 1.');
+      return random() < probability;
+    }
+    const [min, max] = args.map((argument) => this.#number(argument, node));
+    if (args.length !== 2 || !Number.isFinite(min) || !Number.isFinite(max) || min > max)
+      this.#fail(node, `${name}() takes a finite minimum and maximum, with minimum ≤ maximum.`);
+    if (name === 'int') {
+      if (!Number.isInteger(min) || !Number.isInteger(max))
+        this.#fail(node, 'int() bounds must be integers.');
+      return min + Math.floor(random() * (max - min + 1));
+    }
+    return min + random() * (max - min);
   }
 
   #binary(operator: string, left: Value, right: Value, node: AnyNode): Value {
@@ -675,4 +888,15 @@ function kind(value: Value): string {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'an array';
   return typeof value === 'object' ? 'an object' : typeof value;
+}
+
+/** Rebuild interpreter values from recorded input state, with null-prototype objects. */
+function fromTrace(value: TraceValue): Value {
+  if (Array.isArray(value)) return value.map(fromTrace);
+  if (value !== null && typeof value === 'object') {
+    const object = Object.create(null) as ObjectValue;
+    for (const [key, item] of Object.entries(value)) object[key] = fromTrace(item);
+    return object;
+  }
+  return value;
 }

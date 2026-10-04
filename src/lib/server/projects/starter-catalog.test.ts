@@ -15,8 +15,14 @@ describe('starter catalog', () => {
     const blank = resolveProjectTemplate({ templateId: 'blank' });
     expect((await compileSvelteComponent(blank.source)).labels).toEqual(['Start']);
     expect(
-      (await compileSvelteComponent(getProjectTemplate('linear-search').source)).labels
-    ).toEqual(['Start', 'Compare 3', 'Compare 8', 'Compare 5', 'Compare 2', 'Found 2']);
+      (await compileSvelteComponent(getProjectTemplate('linear-search').source)).masterLabels
+    ).toEqual([
+      'Start',
+      'Compare index 0',
+      'Compare index 1',
+      'Compare index 2',
+      'Found 2 at index 3'
+    ]);
   });
 
   it('rejects unknown templates and mode-incompatible examples', () => {

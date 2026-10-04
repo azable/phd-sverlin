@@ -15,7 +15,16 @@ export type ModeBuildResult =
       ok: true;
       seed: number;
       durationMs: number;
-      bundle: { mode: VisualizationMode; html: string; javascript: string; labels: string[] };
+      bundle: {
+        mode: VisualizationMode;
+        html: string;
+        javascript: string;
+        labels: string[];
+        // Aligned modes: every master step label, the master index of each kept step, and design values.
+        masterLabels?: string[];
+        masterSteps?: number[];
+        parameters?: Record<string, unknown>;
+      };
     }
   | {
       ok: false;

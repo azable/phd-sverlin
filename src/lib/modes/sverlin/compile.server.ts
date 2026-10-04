@@ -7,7 +7,16 @@ import { compile, parse } from 'svelte/compiler';
 
 import entrySource from './assembly/entry.ts?raw';
 import preludeSource from './assembly/prelude.ts?raw';
-import { AlgorithmError, interpretAlgorithm, type TraceStep } from './algorithm/interpret.server';
+import {
+  AlgorithmError,
+  interpretAlgorithm,
+  interpretDesign,
+  interpretInput,
+  selectSteps,
+  type BlockKind,
+  type MasterStep,
+  type TraceState
+} from './algorithm/interpret.server';
 
 // One component should be much smaller; these ceilings bound compilation and inline Timeline storage.
 const maximumSourceBytes = 256 * 1024;
@@ -50,7 +59,28 @@ function loadLibraryModule(path: string): { contents: string; loader: 'js' | 'ts
   return { contents, loader: 'js' };
 }
 
-export type SvelteBundle = { javascript: string; labels: string[] };
+/** One seeded presentation of a prepared component. */
+export type SvelteBundle = {
+  javascript: string;
+  /** Labels of the steps this presentation keeps. */
+  labels: string[];
+  /** Labels of every master step, shared by all presentations of the source. */
+  masterLabels: string[];
+  /** Master step index of each kept step. */
+  masterSteps: number[];
+  /** Design values drawn for this presentation. */
+  parameters: TraceState;
+};
+
+type Block = { body: string; offset: number };
+
+/** Seed-independent result of checking, interpreting, and compiling one component. */
+export type PreparedComponent = {
+  source: string;
+  component: string;
+  master: MasterStep[];
+  design?: Block;
+};
 
 export class InvalidSvelteSourceError extends Error {
   readonly code?: string;
@@ -71,16 +101,21 @@ export class InvalidSvelteSourceError extends Error {
   }
 }
 
-/** Only a single component is accepted; its runtime and the component library are bundled locally. */
-export async function compileSvelteComponent(source: string): Promise<SvelteBundle> {
+/** Compile one seeded presentation; batch builds prepare once and bundle per seed instead. */
+export async function compileSvelteComponent(source: string, seed = 1): Promise<SvelteBundle> {
+  return bundlePresentation(prepareSvelteComponent(source), seed);
+}
+
+/**
+ * Check, interpret, and compile once per source. Only a single component is accepted; its
+ * runtime and the component library are bundled locally, and only the design depends on the seed.
+ */
+export function prepareSvelteComponent(source: string): PreparedComponent {
   if (Buffer.byteLength(source, 'utf8') > maximumSourceBytes) {
     throw new InvalidSvelteSourceError('The Svelte component is too large.');
   }
-  let labels: string[];
-  let states: TraceStep['state'][];
-  let component: string;
   try {
-    const { svelteSource, algorithm } = extractAlgorithm(source);
+    const { svelteSource, blocks } = extractBlocks(source);
     const ast = parse(svelteSource, { filename: 'Main.svelte' });
     visit(ast, (node) => {
       if (
@@ -93,25 +128,23 @@ export async function compileSvelteComponent(source: string): Promise<SvelteBund
           'Generated components cannot import modules; library components are already in scope.'
         );
     });
-    const exportedSteps = componentLabels(ast.module?.content.body ?? []);
-    if (algorithm) {
-      if (exportedSteps)
-        throw new InvalidSvelteSourceError(
-          'Use yield in the algorithm block or export const steps, not both.'
-        );
-      const trace = traceAlgorithm(source, algorithm);
-      labels = trace.map(({ label }) => label);
-      states = trace.map(({ state }) => state);
-    } else {
-      labels = exportedSteps ?? ['Start'];
-      states = labels.map(() => ({}));
-    }
-    component = compile(withPrelude(svelteSource, ast.module?.start), {
+    if (!blocks.algorithm)
+      throw new InvalidSvelteSourceError(
+        'Add a <script lang="sverlin"> algorithm block whose yield statements mark the steps, such as yield "Start";'
+      );
+    const input = blocks.input
+      ? interpretBlock(source, blocks.input, (body) => interpretInput(body))
+      : {};
+    const master = interpretBlock(source, blocks.algorithm, (body) =>
+      interpretAlgorithm(body, input)
+    );
+    const component = compile(withPrelude(svelteSource, ast.module?.start), {
       filename: 'Main.svelte',
       generate: 'client',
       css: 'injected',
       dev: false
     }).js.code;
+    return { source, component, master, ...(blocks.design ? { design: blocks.design } : {}) };
   } catch (cause) {
     if (cause instanceof InvalidSvelteSourceError) throw cause;
     throw new InvalidSvelteSourceError(
@@ -119,46 +152,70 @@ export async function compileSvelteComponent(source: string): Promise<SvelteBund
       cause
     );
   }
-  const result = await bundle(component, JSON.stringify(states));
+}
+
+/** Draw one seed's design, keep its steps, and bundle the presentation with those states. */
+export async function bundlePresentation(
+  prepared: PreparedComponent,
+  seed: number
+): Promise<SvelteBundle> {
+  const { master } = prepared;
+  const parameters = prepared.design
+    ? interpretBlock(prepared.source, prepared.design, (body) => interpretDesign(body, seed))
+    : {};
+  const clash = Object.keys(master[0]?.state ?? {}).find((name) => name in parameters);
+  if (clash)
+    throw new InvalidSvelteSourceError(
+      `"${clash}" is defined in the design block and in the input or algorithm block.`
+    );
+  const masterSteps = selectSteps(master, parameters, seed);
+  const states = masterSteps.map((index) => ({ ...master[index].state, ...parameters }));
+  const result = await bundle(prepared.component, JSON.stringify(states));
   const output = result.outputFiles[0];
   if (output.contents.byteLength > maximumBundleBytes) {
     throw new InvalidSvelteSourceError('The compiled Svelte presentation is too large.');
   }
-  return { javascript: output.text, labels };
-}
-
-const algorithmBlock = /<script\s+lang\s*=\s*(["'])sverlin\1\s*>([\s\S]*?)<\/script\s*>/giu;
-
-/** Remove the algorithm block for Svelte, keeping every offset and line in place. */
-function extractAlgorithm(source: string): {
-  svelteSource: string;
-  algorithm?: { body: string; offset: number };
-} {
-  const blocks = [...source.matchAll(algorithmBlock)];
-  if (blocks.length === 0) return { svelteSource: source };
-  if (blocks.length > 1)
-    throw new InvalidSvelteSourceError('A component can have only one algorithm block.');
-  const [block] = blocks;
-  const start = block.index;
   return {
-    svelteSource:
-      source.slice(0, start) +
-      block[0].replace(/[^\n]/gu, ' ') +
-      source.slice(start + block[0].length),
-    algorithm: { body: block[2], offset: start + block[0].indexOf('>') + 1 }
+    javascript: output.text,
+    labels: masterSteps.map((index) => master[index].label),
+    masterLabels: master.map(({ label }) => label),
+    masterSteps,
+    parameters
   };
 }
 
-/** Interpret the algorithm, reporting failures at their position in the authored source. */
-function traceAlgorithm(source: string, algorithm: { body: string; offset: number }): TraceStep[] {
+const sverlinBlock =
+  /<script\s+lang\s*=\s*(["'])sverlin\1(?:\s+(input|design))?\s*>([\s\S]*?)<\/script\s*>/giu;
+
+/** Remove the Sverlin blocks for Svelte, keeping every offset and line in place. */
+function extractBlocks(source: string): {
+  svelteSource: string;
+  blocks: Partial<Record<BlockKind, Block>>;
+} {
+  const blocks: Partial<Record<BlockKind, Block>> = {};
+  let svelteSource = source;
+  for (const match of source.matchAll(sverlinBlock)) {
+    const kind = (match[2] ?? 'algorithm') as BlockKind;
+    if (blocks[kind])
+      throw new InvalidSvelteSourceError(`A component can have only one ${kind} block.`);
+    const start = match.index;
+    blocks[kind] = { body: match[3], offset: start + match[0].indexOf('>') + 1 };
+    svelteSource =
+      svelteSource.slice(0, start) +
+      match[0].replace(/[^\n]/gu, ' ') +
+      svelteSource.slice(start + match[0].length);
+  }
+  return { svelteSource, blocks };
+}
+
+/** Interpret one block, reporting failures at their position in the authored source. */
+function interpretBlock<T>(source: string, block: Block, run: (body: string) => T): T {
   try {
-    return interpretAlgorithm(algorithm.body);
+    return run(block.body);
   } catch (cause) {
     if (!(cause instanceof AlgorithmError)) throw cause;
     const position =
-      cause.offset === undefined
-        ? undefined
-        : sourcePosition(source, algorithm.offset + cause.offset);
+      cause.offset === undefined ? undefined : sourcePosition(source, block.offset + cause.offset);
     throw new InvalidSvelteSourceError(cause.message, { code: 'algorithm_error', start: position });
   }
 }
@@ -271,41 +328,4 @@ function visit(value: unknown, check: (node: { type: string }) => void): void {
   for (const [key, child] of Object.entries(node)) {
     if (key !== 'parent' && key !== 'metadata') visit(child, check);
   }
-}
-
-function componentLabels(body: readonly { type: string }[]): string[] | undefined {
-  for (const statement of body) {
-    if (statement.type !== 'ExportNamedDeclaration') continue;
-    const declaration = (
-      statement as {
-        declaration?: {
-          declarations?: Array<{
-            id: { name?: string };
-            init?: { type: string; elements?: Array<{ type: string; value?: unknown }> };
-          }>;
-        };
-      }
-    ).declaration;
-    for (const item of declaration?.declarations ?? []) {
-      if (item.id.name !== 'steps') continue;
-      const elements = item.init?.type === 'ArrayExpression' ? item.init.elements : undefined;
-      if (
-        !elements ||
-        elements.length === 0 ||
-        elements.length > 100 ||
-        elements.some(
-          (element) =>
-            element.type !== 'Literal' || typeof element.value !== 'string' || !element.value.trim()
-        )
-      ) {
-        throw new Error('Exported steps must be a nonempty array of up to 100 string labels.');
-      }
-      const labels = elements.map((element) => element.value as string);
-      if (new Set(labels).size !== labels.length) {
-        throw new Error('Exported step labels must be unique.');
-      }
-      return labels;
-    }
-  }
-  return undefined;
 }

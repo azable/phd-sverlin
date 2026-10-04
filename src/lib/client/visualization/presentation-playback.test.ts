@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { TimelinePresentation } from './presentation-history';
 import {
   localPresentationStep,
+  presentationHeld,
   presentationPlaybackContext,
   PresentationPlayback
 } from './presentation-playback.svelte';
@@ -40,7 +41,45 @@ describe('presentation playback', () => {
     expect(localPresentationStep(context, left.presentation.presentationId, 2)).toBe(2);
     expect(localPresentationStep(context, right.presentation.presentationId, 2)).toBe(2);
   });
+
+  it('aligns subsets of one master trace, holding the previous step where one is omitted', () => {
+    const fine = aligned(1, ['Start', 'Compare 0', 'Compare 1', 'Found'], [0, 1, 2, 3]);
+    const coarse = aligned(2, ['Start', 'Compare 1', 'Found'], [0, 2, 3]);
+    const context = presentationPlaybackContext([fine, coarse]);
+    expect(context.frames.map(({ label }) => label)).toEqual([
+      'Start',
+      'Compare 0',
+      'Compare 1',
+      'Found'
+    ]);
+    const coarseId = coarse.presentation.presentationId;
+    expect([0, 1, 2, 3].map((step) => localPresentationStep(context, coarseId, step))).toEqual([
+      0, 0, 1, 2
+    ]);
+    expect([0, 1, 2, 3].map((step) => presentationHeld(context, coarseId, step))).toEqual([
+      false,
+      true,
+      false,
+      false
+    ]);
+    expect(presentationHeld(context, fine.presentation.presentationId, 1)).toBe(false);
+  });
+
+  it('falls back to positional alignment without shared master steps', () => {
+    const left = aligned(1, ['A', 'B', 'C'], [0, 1, 2]);
+    const right = { ...aligned(2, ['A', 'B'], [0, 1]) };
+    right.presentation = { ...right.presentation, stepSignature: 'other' };
+    const context = presentationPlaybackContext([left, right]);
+    expect(context.stepCount).toBe(2);
+    expect(context.frames.every(({ held }) => held.length === 0)).toBe(true);
+  });
 });
+
+function aligned(id: number, labels: string[], masterSteps: number[]): TimelinePresentation {
+  const entry = presentation(id, 'a'.repeat(64), labels.length);
+  if (entry.presentation.format !== 'browser-bundle-v1') throw new Error('Expected a bundle.');
+  return { ...entry, presentation: { ...entry.presentation, labels, masterSteps } };
+}
 
 function presentation(id: number, sourceSha256: string, stepCount: number): TimelinePresentation {
   return {

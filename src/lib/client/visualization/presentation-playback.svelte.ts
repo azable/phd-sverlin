@@ -1,12 +1,14 @@
 /** Reactive, mode-neutral playback position for one or two retained presentations. */
 
-import { presentationScenarioKey, presentationStepLabels } from '$lib/shared/presentations';
+import { alignPresentationFrames, presentationScenarioKey } from '$lib/shared/presentations';
 import type { TimelinePresentation } from './presentation-history';
 
 export type PresentationPlaybackFrame = {
   key: string;
   label: string;
   localSteps: Readonly<Record<string, number>>;
+  /** Presentations that omit this step and keep showing their previous one. */
+  held: readonly string[];
 };
 
 export type PresentationPlaybackContext = {
@@ -19,15 +21,9 @@ export function presentationPlaybackContext(
   presentations: readonly TimelinePresentation[]
 ): PresentationPlaybackContext {
   if (presentations.length === 0) return { key: '', stepCount: 0, frames: [] };
-  const labels = presentations.map(({ presentation }) => presentationStepLabels(presentation));
-  const stepCount = Math.min(...labels.map((steps) => steps.length));
-  const frames = Array.from({ length: stepCount }, (_, step) => ({
-    key: `step:${step}`,
-    label: labels[0][step] ?? `Step ${step + 1}`,
-    localSteps: Object.fromEntries(
-      presentations.map(({ presentation }) => [presentation.presentationId, step])
-    )
-  }));
+  const frames = alignPresentationFrames(presentations.map(({ presentation }) => presentation)).map(
+    (frame, step) => ({ ...frame, key: `step:${step}` })
+  );
   const scenarios = presentations.map(({ presentation }) =>
     presentation.format === 'browser-bundle-v1' ? presentationScenarioKey(presentation) : undefined
   );
@@ -36,9 +32,18 @@ export function presentationPlaybackContext(
     key: sameSource
       ? `source:${scenarios[0]}`
       : `presentations:${presentations.map(({ presentation }) => presentation.presentationId).join(':')}`,
-    stepCount,
+    stepCount: frames.length,
     frames
   };
+}
+
+/** Whether a presentation omits the current step and is holding its previous one. */
+export function presentationHeld(
+  context: PresentationPlaybackContext,
+  presentationId: string,
+  step: number
+): boolean {
+  return context.frames[clampStep(step, context.stepCount)]?.held.includes(presentationId) ?? false;
 }
 
 export function localPresentationStep(

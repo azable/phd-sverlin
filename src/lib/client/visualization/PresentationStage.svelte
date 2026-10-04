@@ -15,6 +15,7 @@
   import type { PresentationSelection } from './presentation-selection.svelte';
   import {
     localPresentationStep,
+    presentationHeld,
     presentationPlaybackContext,
     type PresentationPlayback
   } from './presentation-playback.svelte';
@@ -116,6 +117,10 @@
 
   function localStep(entry: (typeof visible)[number]) {
     return localPresentationStep(playbackContext, entry.presentation.presentationId, step);
+  }
+
+  function held(entry: (typeof visible)[number]) {
+    return presentationHeld(playbackContext, entry.presentation.presentationId, step);
   }
 </script>
 
@@ -233,8 +238,16 @@
         in:fly={{ x: 24, duration: 180 }}
       >
         <div
-          class="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border bg-white shadow-sm"
+          class="relative flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border bg-white shadow-sm"
         >
+          {#if held(entry)}
+            <p
+              class="absolute top-2 right-2 z-10 rounded-md border bg-background/95 px-2 py-1 text-xs text-muted-foreground shadow-sm"
+              role="status"
+            >
+              This version skips this step; showing its previous step.
+            </p>
+          {/if}
           <PresentationViewport
             presentation={entry.presentation}
             step={localStep(entry)}

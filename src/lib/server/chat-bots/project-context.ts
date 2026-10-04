@@ -96,6 +96,8 @@ export type AiSelectedPresentation = AiPresentationSummary & {
   displaySetId?: string;
   format: RenderablePresentation['format'];
   steps: Array<{ label: string }>;
+  /** Design values this presentation drew from its seed. */
+  parameters?: Record<string, unknown>;
 };
 
 /** Strongly typed, consumer-specific context supplied to the AI assistant. */
@@ -303,7 +305,10 @@ function selectedPresentation(document: ProjectDocument, id: string): AiSelected
         ...presentationSummary(event),
         displaySetId: event.payload.displaySetId,
         format: presentation.format,
-        steps: presentationStepLabels(presentation).map((label) => ({ label }))
+        steps: presentationStepLabels(presentation).map((label) => ({ label })),
+        ...(presentation.format === 'browser-bundle-v1' && presentation.parameters
+          ? { parameters: presentation.parameters }
+          : {})
       };
     }
   }

@@ -7,7 +7,11 @@ import type {
   ProjectEvent,
   ProjectOperationKind
 } from '$lib/shared/projects/events';
-import type { ProjectCommand, ProjectCommandResult } from '$lib/shared/projects/model';
+import type {
+  ProjectCommand,
+  ProjectCommandResult,
+  ProjectDocument
+} from '$lib/shared/projects/model';
 import {
   activeProjectOperation,
   pendingAssistantTurnRequests,
@@ -88,9 +92,9 @@ export class ProjectOperationExecutor {
   #assistantDrain?: Promise<void>;
 
   constructor(
-    private readonly repository: ProjectRepository = projectRepository,
-    private readonly lock: OperationLock = postgresOperationLock,
-    private readonly execute: ExecuteCommand = (options) => latestCommand()(options),
+    private readonly repository: ProjectRepository = latestModule((loaded) => loaded.repository),
+    private readonly lock: OperationLock = latestModule((loaded) => loaded.lock),
+    private readonly execute: ExecuteCommand = (options) => latestLoaded().execute(options),
     private readonly capacity = 2
   ) {}
 
@@ -352,7 +356,14 @@ export class ProjectOperationExecutor {
       const projectId = this.#assistantProjects.values().next().value as string | undefined;
       if (!projectId) return;
       this.#assistantProjects.delete(projectId);
-      const document = await this.repository.load(projectId);
+      let document: ProjectDocument;
+      try {
+        document = await this.repository.load(projectId);
+      } catch (cause) {
+        // One unreadable project must not reject the drain, which would end the whole process.
+        console.error(`Could not load project ${projectId} for queued assistant turns.`, cause);
+        continue;
+      }
       if (activeProjectOperation(document)) continue;
       const requests = pendingAssistantTurnRequests(document);
       if (requests.length === 0) continue;
@@ -562,16 +573,34 @@ const postgresOperationLock: OperationLock = {
 };
 
 const executorKey = Symbol.for('sverlin.project-operation-executor');
-const commandKey = Symbol.for('sverlin.project-operation-command');
+const loadedKey = Symbol.for('sverlin.project-operation-module');
+type LoadedModule = { repository: ProjectRepository; lock: OperationLock; execute: ExecuteCommand };
 const executorGlobal = globalThis as typeof globalThis & {
   [executorKey]?: ProjectOperationExecutor;
-  [commandKey]?: ExecuteCommand;
+  [loadedKey]?: LoadedModule;
 };
-// The executor outlives development reloads; route commands through the latest loaded module.
-executorGlobal[commandKey] = executeProjectCommand;
+// The executor outlives development reloads. Its repository, lock, and commands resolve through
+// the most recently loaded module so one process never mixes old and new event schemas; only the
+// executor class itself needs a restart to change.
+executorGlobal[loadedKey] = {
+  repository: projectRepository,
+  lock: postgresOperationLock,
+  execute: executeProjectCommand
+};
 
-function latestCommand(): ExecuteCommand {
-  return executorGlobal[commandKey] ?? executeProjectCommand;
+function latestLoaded(): LoadedModule {
+  return executorGlobal[loadedKey] as LoadedModule;
+}
+
+/** Forward every member access to the latest loaded module's instance. */
+function latestModule<T extends object>(select: (loaded: LoadedModule) => T): T {
+  return new Proxy({} as T, {
+    get(_target, key) {
+      const current = select(latestLoaded());
+      const value: unknown = Reflect.get(current, key);
+      return typeof value === 'function' ? value.bind(current) : value;
+    }
+  });
 }
 export const projectOperationExecutor = (executorGlobal[executorKey] ??=
   new ProjectOperationExecutor());
