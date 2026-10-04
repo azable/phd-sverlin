@@ -28,6 +28,29 @@ describe('HTML frame safety', () => {
     expect(() => validateHtmlFramesManifest(manifest(html))).toThrow(/static|remote/i);
   });
 
+  it.each([
+    '<div style="background:url(https://example.com/a.png)">x</div>',
+    '<div style="background:url(\'//example.com/a.png\')">x</div>',
+    '<style>.a{background:url(https://example.com/a.png</style>'
+  ])('rejects remote CSS urls', (html) => {
+    expect(() => validateHtmlFramesManifest(manifest(html))).toThrow(/remote/i);
+  });
+
+  it('keeps inline image urls', () => {
+    const result = validateHtmlFramesManifest(
+      manifest('<div style="background:url(\'data:image/png;base64,AAAA\')">x</div>')
+    );
+    expect(result.rendered.frames[0].html).toContain('data:image/png');
+  });
+
+  it('rejects many unclosed url( openings in linear time', () => {
+    const start = performance.now();
+    expect(() => validateHtmlFramesManifest(manifest('url('.repeat(120 * 1024)))).toThrow(
+      /remote/i
+    );
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
   it('wraps fragments in a script- and network-denying policy', () => {
     const document = htmlFrameSourceDocument('<p>Safe</p>');
     expect(document).toContain("default-src 'none'");

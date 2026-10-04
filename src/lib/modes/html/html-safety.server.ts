@@ -13,7 +13,8 @@ import {
 const maximumManifestBytes = 512 * 1024;
 const forbiddenMarkup =
   /<(?:script|iframe|frame|object|embed|form|input|button|textarea|select|base|meta|link)\b|\son[a-z]+\s*=|javascript\s*:|data\s*:\s*text\/html|@import\b/iu;
-const remoteCssUrl = /url\s*\(\s*(['"]?)(?!data:image\/)[^)]+\1\s*\)/iu;
+// Any url( whose argument is not an inline image; a lookahead keeps matching linear in input size.
+const remoteCssUrl = /url\s*\(\s*(?!['"]?data:image\/)/iu;
 const remoteMarkupUrl = /\s(?:src|href)\s*=\s*(['"])(?!data:|#)[^'"]+\1/iu;
 
 const allowedTags = [
