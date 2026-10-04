@@ -127,7 +127,8 @@ describe('single-component Svelte compilation', () => {
   it('injects the sverlin library components without authored imports', async () => {
     const result = await compileSvelteComponent(linearSearchSource);
     expect(result.javascript).toContain('sv-stage');
-    expect(result.javascript).toContain('sv-array');
+    expect(result.javascript).toContain('sv-node');
+    expect(result.javascript).toContain('sv-node');
     const withoutModuleScript = await compileSvelteComponent(
       '<script lang="sverlin">yield "Start";</script><Stage title="Hi">x</Stage>'
     );
@@ -167,6 +168,13 @@ describe('single-component Svelte compilation', () => {
     await expect(
       compileSvelteComponent('<script lang="sverlin">const Stage = 1; yield "A";</script><p>x</p>')
     ).rejects.toThrow('"Stage" names a library component');
+  });
+
+  it('renders nested arrays as nested nodes without an item snippet', async () => {
+    const result = await compileSvelteComponent(
+      '<script lang="sverlin" input>const grid = [[1, 2], [3, 4]];</script><script lang="sverlin">yield "A";</script><Stage title="Matrix"><Node items={grid} layout="column" nested="row" /><Node items={[1, 2, 3, 4]} layout="grid" columns={2} /></Stage>'
+    );
+    expect(result.javascript).toContain('sv-node');
   });
 
   it('rejects authored library imports', async () => {

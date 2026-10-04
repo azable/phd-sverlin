@@ -28,15 +28,24 @@ export const linearSearchSource = `<script lang="sverlin" input>
   if (!found) yield 'Not found';
 </script>
 <script lang="sverlin" design>
+  const flow = pick(['row', 'column']);
   const showIndices = chance(0.5);
   const pointerName = pick(['i', 'index']);
+  const font = pick(['sans', 'serif']);
+  const textSize = pick(['medium', 'large']);
 </script>
 <Stage title="Linear search" subtitle="Find {target} by checking each cell in order.">
-  {@const states = values.map((_, index) =>
-    index < i ? 'visited' : index === i ? (found ? 'found' : 'active') : 'idle'
-  )}
-  <ArrayCells {values} {states} indices={showIndices} pointers={i < 0 ? {} : { [pointerName]: i }} />
-  <Note tone={found ? 'success' : 'info'}>
+  <Node items={values} layout={flow}>
+    {#snippet item(value, index)}
+      <Node
+        {value}
+        label={showIndices ? index : undefined}
+        marker={index === i ? pointerName : undefined}
+        role={index < i ? 'visited' : index === i ? (found ? 'found' : 'active') : 'idle'}
+      />
+    {/snippet}
+  </Node>
+  <Node shape="card" role={found ? 'found' : 'idle'} {font} size={textSize}>
     {#if i < 0}Start at the first cell.{:else if found}Found {target} at index {i}.{:else if i < values.length}{values[i]} is not {target}; move right.{:else}{target} is not in the array.{/if}
-  </Note>
+  </Node>
 </Stage>`;
