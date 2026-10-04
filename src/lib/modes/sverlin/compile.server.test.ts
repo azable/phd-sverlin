@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { compileSvelteComponent, InvalidSvelteSourceError } from './compile.server';
+import { linearSearchSource } from './contract';
 
 describe('single-component Svelte compilation', () => {
   it('bundles a component and its playback input without executing it', async () => {
@@ -29,6 +30,40 @@ describe('single-component Svelte compilation', () => {
     await expect(compileSvelteComponent('<h1>{import(window.target)}</h1>')).rejects.toThrow(
       'cannot import'
     );
+  });
+
+  it('injects the sverlin library components without authored imports', async () => {
+    const result = await compileSvelteComponent(linearSearchSource);
+    expect(result.labels).toEqual(['Start', 'Compare', 'Result']);
+    expect(result.javascript).toContain('sv-stage');
+    expect(result.javascript).toContain('sv-array');
+    const withoutModuleScript = await compileSvelteComponent('<Stage title="Hi">x</Stage>');
+    expect(withoutModuleScript.labels).toEqual(['Start']);
+    expect(withoutModuleScript.javascript).toContain('sv-stage');
+  });
+
+  it('rejects authored library imports', async () => {
+    await expect(
+      compileSvelteComponent('<script>import { Stage } from "sverlin";</script><Stage title="x" />')
+    ).rejects.toThrow('cannot import');
+  });
+
+  it.each(['./package.json', 'esbuild/package.json', '/etc/hostname', 'svelte/../../package.json'])(
+    'refuses to bundle require(%j) from the server file system',
+    async (path) => {
+      await expect(
+        compileSvelteComponent(`<script>const p = require(${JSON.stringify(path)});</script>{p}`)
+      ).rejects.toMatchObject({
+        name: 'InvalidSvelteSourceError',
+        message: expect.stringContaining('cannot load module')
+      });
+    }
+  );
+
+  it('keeps authored line numbers after prelude injection', async () => {
+    await expect(
+      compileSvelteComponent('<script module>\nexport const steps = ["A"];\n</script>\n{#if}')
+    ).rejects.toMatchObject({ line: 4 });
   });
 
   it('rejects ambiguous step labels before storing playback metadata', async () => {

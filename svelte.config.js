@@ -5,7 +5,9 @@ const config = {
   kit: {
     adapter: adapter(),
     alias: {
-      $lib: './src/lib'
+      $lib: './src/lib',
+      // Editor resolution for the sandbox-only component library; see modes/sverlin/assembly.
+      sverlin: './src/lib/modes/sverlin/library'
     }
   },
   compilerOptions: {

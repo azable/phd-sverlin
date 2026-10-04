@@ -15,21 +15,13 @@ export const linearSearchSource = `<script module>export const steps = ['Start',
   const values = [3, 8, 5, 2, 7];
   const target = values[seed % values.length];
   const match = values.indexOf(target);
+  const states = values.map((_, index) =>
+    step === 0 || index > match ? 'idle' : index < match ? 'visited' : step === 1 ? 'active' : 'found'
+  );
 </script>
-<main>
-  <h1>Linear search</h1>
-  <p>Find {target} in the array by checking each cell in order.</p>
-  <div class="cells">
-    {#each values as value, index (index)}
-      <span class:active={step > 0 && index <= match} class:found={step === 2 && index === match}>{value}</span>
-    {/each}
-  </div>
-  <p>{steps[step] ?? steps[0]}</p>
-</main>
-<style>
-  main { padding: 2rem; font-family: system-ui, sans-serif; }
-  .cells { display: flex; flex-wrap: wrap; gap: 1rem; }
-  span { display: grid; place-items: center; width: 3rem; height: 3rem; border: 1px solid #334155; border-radius: .5rem; }
-  .active { background: #dbeafe; }
-  .found { background: #bbf7d0; }
-</style>`;
+<Stage title="Linear search" subtitle="Find {target} by checking each cell in order.">
+  <ArrayCells {values} {states} pointers={step === 0 ? {} : { i: match }} />
+  <Note tone={step === 2 ? 'success' : 'info'}>
+    {#if step === 0}Start at the first cell.{:else if step === 1}Compare cells left to right until one equals {target}.{:else}Found {target} at index {match}.{/if}
+  </Note>
+</Stage>`;

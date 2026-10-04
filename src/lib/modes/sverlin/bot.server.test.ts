@@ -26,6 +26,7 @@ describe('single-component Svelte assistant', () => {
     expect(aiAssistant.initialPrompt).toContain('complete, self-contained Svelte 5 component');
     expect(aiAssistant.initialPrompt).toContain('step and seed as props');
     expect(aiAssistant.initialPrompt).toContain('Do not use imports');
+    expect(aiAssistant.initialPrompt).toContain('already in scope');
   });
 
   it('rejects empty source and reply text consistently with its provider schema', () => {

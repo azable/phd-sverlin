@@ -110,6 +110,23 @@ export default defineConfig(
     }
   },
   {
+    files: ['src/lib/modes/sverlin/{library,assembly}/**/*.{ts,svelte}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['$lib/**', '$app/**', '$env/**', 'node:*'],
+              message:
+                'Sandbox library and assembly files are bundled alone; import only svelte and library files.'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
     files: ['src/lib/server/**/*.{ts,js}'],
     rules: {
       'no-restricted-imports': [

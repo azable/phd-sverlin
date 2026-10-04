@@ -90,7 +90,7 @@ export class ProjectOperationExecutor {
   constructor(
     private readonly repository: ProjectRepository = projectRepository,
     private readonly lock: OperationLock = postgresOperationLock,
-    private readonly execute: ExecuteCommand = executeProjectCommand,
+    private readonly execute: ExecuteCommand = (options) => latestCommand()(options),
     private readonly capacity = 2
   ) {}
 
@@ -562,9 +562,17 @@ const postgresOperationLock: OperationLock = {
 };
 
 const executorKey = Symbol.for('sverlin.project-operation-executor');
+const commandKey = Symbol.for('sverlin.project-operation-command');
 const executorGlobal = globalThis as typeof globalThis & {
   [executorKey]?: ProjectOperationExecutor;
+  [commandKey]?: ExecuteCommand;
 };
+// The executor outlives development reloads; route commands through the latest loaded module.
+executorGlobal[commandKey] = executeProjectCommand;
+
+function latestCommand(): ExecuteCommand {
+  return executorGlobal[commandKey] ?? executeProjectCommand;
+}
 export const projectOperationExecutor = (executorGlobal[executorKey] ??=
   new ProjectOperationExecutor());
 
