@@ -12,7 +12,7 @@ import libraryGuide from './library/README.md?raw';
 describe('single-component Svelte compilation', () => {
   it('bundles a component and its playback input without executing it', async () => {
     const result = await compileSvelteComponent(
-      '<script lang="sverlin">yield "First"; yield "Second";</script><script>let { step = 0 } = $props();</script><h1>{step}</h1>'
+      '<script lang="sverlin">yield "First"; yield "Second";</script><h1>{step}</h1>'
     );
     expect(result.labels).toEqual(['First', 'Second']);
     expect(result.javascript).toContain('__sverlinStep');
@@ -36,7 +36,7 @@ describe('single-component Svelte compilation', () => {
     );
   });
 
-  it('derives master steps from yield and keeps a seeded subset per presentation', async () => {
+  it('derives master steps from yield and varies only the design between seeds', async () => {
     const master = [
       'Start',
       'Compare index 0',
@@ -51,17 +51,15 @@ describe('single-component Svelte compilation', () => {
     );
     for (const bundle of bundles) {
       expect(bundle.masterLabels).toEqual(master);
-      expect(bundle.labels).toEqual(bundle.masterSteps.map((index) => master[index]));
-      expect(bundle.masterSteps.at(0)).toBe(0);
-      expect(bundle.masterSteps.at(-1)).toBe(master.length - 1);
-      expect(bundle.masterSteps).toHaveLength(bundle.parameters.detail === 'coarse' ? 2 : 5);
+      expect(bundle.labels).toEqual(master);
+      expect(bundle.masterSteps).toEqual([0, 1, 2, 3, 4]);
       expect(['i', 'index']).toContain(bundle.parameters.pointerName);
     }
-    expect(new Set(bundles.map(({ parameters }) => parameters.detail))).toEqual(
-      new Set(['coarse', 'fine'])
+    expect(new Set(bundles.map(({ parameters }) => parameters.showIndices))).toEqual(
+      new Set([true, false])
     );
     expect(bundles[0].javascript).toContain('[3,8,5,2,7]');
-    expect(bundles[0].javascript).not.toContain('yield optional(');
+    expect(bundles[0].javascript).not.toContain('yield `Compare');
     const again = await bundlePresentation(prepared, 1);
     expect(again.parameters).toEqual(bundles[0].parameters);
   });
@@ -116,9 +114,9 @@ describe('single-component Svelte compilation', () => {
   });
 
   it('requires exactly one algorithm block', async () => {
-    await expect(
-      compileSvelteComponent('<script module>export const steps = ["A"];</script><h1>Hi</h1>')
-    ).rejects.toThrow('Add a <script lang="sverlin"> algorithm block');
+    await expect(compileSvelteComponent('<h1>Hi</h1>')).rejects.toThrow(
+      'Add a <script lang="sverlin"> algorithm block'
+    );
     await expect(
       compileSvelteComponent(
         '<script lang="sverlin">yield "A";</script><script lang="sverlin">yield "B";</script>'
@@ -137,6 +135,40 @@ describe('single-component Svelte compilation', () => {
     expect(withoutModuleScript.javascript).toContain('sv-stage');
   });
 
+  it('puts every recorded and design value in scope for a script-free view', async () => {
+    const result = await compileSvelteComponent(
+      '<script lang="sverlin" input>const values = [4, 9];</script>\n<script lang="sverlin">let total = 0; yield "Start"; for (const v of values) total += v; yield "Summed";</script>\n<script lang="sverlin" design>const accent = pick(["red"]);</script>\n<Stage title="Sum">{@const doubled = total * 2}<p style:color={accent}>{values.join("+")} = {total}; doubled {doubled}; step {step}, seed {seed}</p></Stage>',
+      5
+    );
+    expect(result.labels).toEqual(['Start', 'Summed']);
+    expect(result.parameters).toEqual({ accent: 'red' });
+  });
+
+  it('rejects view scripts and values that shadow library components', async () => {
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script>\n\n<script>const x = 1;</script>\n<p>{x}</p>'
+      )
+    ).rejects.toMatchObject({
+      code: 'view_script',
+      line: 3,
+      message: expect.stringContaining('Views cannot have their own <script>')
+    });
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script><script module>const x = 1;</script>'
+      )
+    ).rejects.toThrow('Views cannot have their own <script>');
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script>\n<script lang="sverlin" inputs>const x = 1;</script>'
+      )
+    ).rejects.toMatchObject({ code: 'sverlin_block', line: 2 });
+    await expect(
+      compileSvelteComponent('<script lang="sverlin">const Stage = 1; yield "A";</script><p>x</p>')
+    ).rejects.toThrow('"Stage" names a library component');
+  });
+
   it('rejects authored library imports', async () => {
     await expect(
       compileSvelteComponent('<script>import { Stage } from "sverlin";</script><Stage title="x" />')
@@ -148,7 +180,7 @@ describe('single-component Svelte compilation', () => {
     async (path) => {
       await expect(
         compileSvelteComponent(
-          `<script lang="sverlin">yield "A";</script><script>const p = require(${JSON.stringify(path)});</script>{p}`
+          `<script lang="sverlin">yield "A";</script><p>{require(${JSON.stringify(path)})}</p>`
         )
       ).rejects.toMatchObject({
         name: 'InvalidSvelteSourceError',
@@ -159,10 +191,8 @@ describe('single-component Svelte compilation', () => {
 
   it('keeps authored line numbers after prelude injection', async () => {
     await expect(
-      compileSvelteComponent(
-        '<script lang="sverlin">yield "A";</script>\n<script module>\nconst a = 1;\n</script>\n<script>\nlet { b } = $props();\nlet { c } = $props();\n</script>'
-      )
-    ).rejects.toMatchObject({ line: 7 });
+      compileSvelteComponent('<script lang="sverlin">yield "A";</script>\n<p>\n{$state(1)}</p>')
+    ).rejects.toMatchObject({ line: 3, column: 2 });
   });
 
   it('rejects ambiguous step labels before storing playback metadata', async () => {

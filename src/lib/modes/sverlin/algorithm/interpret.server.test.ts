@@ -5,8 +5,7 @@ import {
   interpretAlgorithm,
   interpretDesign,
   interpretInput,
-  seededRandom,
-  selectSteps
+  seededRandom
 } from './interpret.server';
 
 describe('algorithm interpretation', () => {
@@ -152,45 +151,22 @@ describe('input, design, and step selection', () => {
     ['draws not assigned to a top-level const', () => interpretDesign('let a = pick([1]);', 1)],
     ['nested draws', () => interpretDesign('const a = [pick([1])];', 1)],
     ['draws inside blocks', () => interpretDesign('if (true) { const a = int(1, 2); }', 1)],
-    ['optional outside yield', () => interpretAlgorithm('const a = optional("x"); yield "A";')],
+    ['removed optional yields', () => interpretAlgorithm('yield optional("x");')],
     ['unknown functions', () => interpretDesign('const a = shuffle([1]);', 1)]
   ])('rejects %s', (_name, run) => {
-    expect(run).toThrow(/design draw|only wrap a yield|not available/);
+    expect(run).toThrow(/design draw|not available/);
   });
 
-  it('validates draw arguments and the detail value', () => {
+  it('validates draw arguments', () => {
     expect(() => interpretDesign('const a = int(5, 1);', 1)).toThrow(/minimum ≤ maximum/);
     expect(() => interpretDesign('const a = int(1.5, 3);', 1)).toThrow(/integers/);
     expect(() => interpretDesign('const a = pick([]);', 1)).toThrow(/non-empty array/);
-    expect(() => interpretDesign('const detail = "medium";', 1)).toThrow(/coarse" or "fine/);
   });
 
   it('requires unique step labels', () => {
     expect(() => interpretAlgorithm('for (let i = 0; i < 2; i++) yield "Compare";')).toThrow(
       /must be unique.*Compare/
     );
-  });
-
-  it('keeps optional steps by detail or probability, always keeping the anchors', () => {
-    const master = interpretAlgorithm(`
-      yield optional('First');
-      for (let i = 0; i < 4; i++) yield optional(\`Fine \${i}\`);
-      yield optional('Maybe', 0.5);
-      yield 'Core';
-      yield optional('Last');
-    `);
-    expect(master[1].optional).toEqual({});
-    expect(master[5].optional).toEqual({ probability: 0.5 });
-    expect(selectSteps(master, { detail: 'coarse' }, 7).filter((index) => index !== 5)).toEqual([
-      0, 6, 7
-    ]);
-    expect(selectSteps(master, { detail: 'fine' }, 7).slice(0, 5)).toEqual([0, 1, 2, 3, 4]);
-    expect(selectSteps(master, {}, 7)).toEqual(selectSteps(master, {}, 7));
-    const maybeKept = Array.from({ length: 40 }, (_, seed) =>
-      selectSteps(master, {}, seed + 1).includes(5)
-    );
-    expect(maybeKept).toContain(true);
-    expect(maybeKept).toContain(false);
   });
 
   it('generates values in [0, 1) that depend on seed and stream', () => {

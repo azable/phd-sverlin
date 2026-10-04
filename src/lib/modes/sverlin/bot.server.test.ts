@@ -27,6 +27,7 @@ describe('single-component Svelte assistant', () => {
     expect(aiAssistant.initialPrompt).toContain('step and seed as props');
     expect(aiAssistant.initialPrompt).toContain('Do not use imports');
     expect(aiAssistant.initialPrompt).toContain('already in scope');
+    expect(aiAssistant.initialPrompt).toContain('script-free');
   });
 
   it('rejects empty source and reply text consistently with its provider schema', () => {

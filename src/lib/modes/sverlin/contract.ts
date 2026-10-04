@@ -5,7 +5,7 @@ export const sverlinStarter = {
   language: 'svelte',
   mediaType: 'text/x-svelte',
   source:
-    '<script lang="sverlin">\n  yield "Start";\n</script>\n<script>let { step = 0, seed = 1 } = $props();</script>\n<main><h1>Start your visualization</h1><p>Step {step + 1} · seed {seed}</p></main>\n'
+    '<script lang="sverlin">\n  yield "Start";\n</script>\n<main><h1>Start your visualization</h1><p>Step {step + 1} · seed {seed}</p></main>\n'
 } as const;
 
 /** A small self-contained algorithm example for administrator projects. */
@@ -23,22 +23,18 @@ export const linearSearchSource = `<script lang="sverlin" input>
       yield \`Found \${target} at index \${i}\`;
       break;
     }
-    yield optional(\`Compare index \${i}\`);
+    yield \`Compare index \${i}\`;
   }
   if (!found) yield 'Not found';
 </script>
 <script lang="sverlin" design>
-  const detail = pick(['coarse', 'fine']);
   const showIndices = chance(0.5);
   const pointerName = pick(['i', 'index']);
 </script>
-<script>
-  let { values, target, i, found, showIndices, pointerName } = $props();
-  const states = values.map((_, index) =>
-    index < i ? 'visited' : index === i ? (found ? 'found' : 'active') : 'idle'
-  );
-</script>
 <Stage title="Linear search" subtitle="Find {target} by checking each cell in order.">
+  {@const states = values.map((_, index) =>
+    index < i ? 'visited' : index === i ? (found ? 'found' : 'active') : 'idle'
+  )}
   <ArrayCells {values} {states} indices={showIndices} pointers={i < 0 ? {} : { [pointerName]: i }} />
   <Note tone={found ? 'success' : 'info'}>
     {#if i < 0}Start at the first cell.{:else if found}Found {target} at index {i}.{:else if i < values.length}{values[i]} is not {target}; move right.{:else}{target} is not in the array.{/if}

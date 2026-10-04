@@ -12,7 +12,7 @@ The components `Stage`, `ArrayCells`, and `Note` are already in scope in every c
 
 Component props are a natural place for design values: draw them in the design block and pass them through, such as `indices={showIndices}` or `tone={noteTone}`, so seeded presentations differ in presentation while showing the same steps.
 
-Example, with input, algorithm, design, and view:
+Example, with input, algorithm, design, and a script-free view:
 
 ```svelte
 <script lang="sverlin" input>
@@ -23,25 +23,21 @@ Example, with input, algorithm, design, and view:
   let i = -1;
   yield 'Start';
   for (i = 0; i < values.length; i++) {
-    yield optional(`Visit index ${i}`);
+    yield `Visit index ${i}`;
   }
   yield 'Done';
 </script>
 
 <script lang="sverlin" design>
-  const detail = pick(['coarse', 'fine']);
   const showIndices = chance(0.5);
 </script>
 
-<script>
-  let { values, i, showIndices } = $props();
-</script>
-
 <Stage title="Array walk">
+  {@const states = values.map((_, index) => (index < i ? 'visited' : index === i ? 'active' : 'idle'))}
   <ArrayCells
     {values}
+    {states}
     indices={showIndices}
-    states={values.map((_, index) => (index < i ? 'visited' : index === i ? 'active' : 'idle'))}
     pointers={i < 0 || i >= values.length ? {} : { i }}
   />
   <Note tone="info">

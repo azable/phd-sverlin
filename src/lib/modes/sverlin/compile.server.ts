@@ -9,10 +9,10 @@ import entrySource from './assembly/entry.ts?raw';
 import preludeSource from './assembly/prelude.ts?raw';
 import {
   AlgorithmError,
+  declaredNames,
   interpretAlgorithm,
   interpretDesign,
   interpretInput,
-  selectSteps,
   type BlockKind,
   type MasterStep,
   type TraceState
@@ -38,6 +38,14 @@ const compiledLibrary = new Map<string, string>();
 const prelude = (preludeSource.match(/^import[\s\S]*?;/gmu) ?? [])
   .map((statement) => statement.replace(/\s+/gu, ' '))
   .join(' ');
+
+/** Component names the prelude brings into scope, which values must not shadow. */
+const libraryNames = [...prelude.matchAll(/import\s*\{([^}]*)\}/gu)].flatMap(([, names]) =>
+  names
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+);
 
 function libraryPath(path: string): string | undefined {
   return [path, `${path}.ts`, `${path}/index.ts`].find((candidate) => candidate in librarySources);
@@ -128,6 +136,12 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
           'Generated components cannot import modules; library components are already in scope.'
         );
     });
+    const authoredScript = ast.instance ?? ast.module;
+    if (authoredScript)
+      throw new InvalidSvelteSourceError(
+        'Views cannot have their own <script>: input, algorithm, and design values, step, seed, and the library components are already in scope. Compute in markup, using {@const} inside a block or component for reuse.',
+        { code: 'view_script', start: sourcePosition(source, authoredScript.start) }
+      );
     if (!blocks.algorithm)
       throw new InvalidSvelteSourceError(
         'Add a <script lang="sverlin"> algorithm block whose yield statements mark the steps, such as yield "Start";'
@@ -138,7 +152,22 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
     const master = interpretBlock(source, blocks.algorithm, (body) =>
       interpretAlgorithm(body, input)
     );
-    const component = compile(withPrelude(svelteSource, ast.module?.start), {
+    const stateNames = Object.keys(master[0].state);
+    const designNames = blocks.design
+      ? interpretBlock(source, blocks.design, (body) => declaredNames(body, 'design'))
+      : [];
+    const clash = designNames.find((name) => stateNames.includes(name));
+    if (clash)
+      throw new InvalidSvelteSourceError(
+        `"${clash}" is defined in the design block and in the input or algorithm block.`
+      );
+    const props = [...stateNames, ...designNames];
+    const library = props.find((name) => libraryNames.includes(name));
+    if (library)
+      throw new InvalidSvelteSourceError(
+        `"${library}" names a library component; choose another variable name.`
+      );
+    const component = compile(withGeneratedScripts(svelteSource, props), {
       filename: 'Main.svelte',
       generate: 'client',
       css: 'injected',
@@ -154,7 +183,7 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
   }
 }
 
-/** Draw one seed's design, keep its steps, and bundle the presentation with those states. */
+/** Draw one seed's design and bundle the presentation with every step's state. */
 export async function bundlePresentation(
   prepared: PreparedComponent,
   seed: number
@@ -163,12 +192,8 @@ export async function bundlePresentation(
   const parameters = prepared.design
     ? interpretBlock(prepared.source, prepared.design, (body) => interpretDesign(body, seed))
     : {};
-  const clash = Object.keys(master[0]?.state ?? {}).find((name) => name in parameters);
-  if (clash)
-    throw new InvalidSvelteSourceError(
-      `"${clash}" is defined in the design block and in the input or algorithm block.`
-    );
-  const masterSteps = selectSteps(master, parameters, seed);
+  // Every presentation shows every master step until steps can be mapped to frames.
+  const masterSteps = master.map((_, index) => index);
   const states = masterSteps.map((index) => ({ ...master[index].state, ...parameters }));
   const result = await bundle(prepared.component, JSON.stringify(states));
   const output = result.outputFiles[0];
@@ -205,6 +230,12 @@ function extractBlocks(source: string): {
       match[0].replace(/[^\n]/gu, ' ') +
       svelteSource.slice(start + match[0].length);
   }
+  const unrecognized = /<script\b[^>]*\blang\s*=\s*(["'])sverlin\1[^>]*>/iu.exec(svelteSource);
+  if (unrecognized)
+    throw new InvalidSvelteSourceError(
+      `Unrecognized sverlin block ${unrecognized[0]}; use <script lang="sverlin">, <script lang="sverlin" input>, or <script lang="sverlin" design>.`,
+      { code: 'sverlin_block', start: sourcePosition(source, unrecognized.index) }
+    );
   return { svelteSource, blocks };
 }
 
@@ -226,11 +257,13 @@ function sourcePosition(source: string, offset: number): { line: number; column:
   return { line: before.split('\n').length, column: offset - lineStart };
 }
 
-/** Insert the prelude right after the module script's opening tag, or add a module script. */
-function withPrelude(source: string, moduleStart: number | undefined): string {
-  if (moduleStart === undefined) return `<script module>${prelude}</script>${source}`;
-  const contentStart = source.indexOf('>', moduleStart) + 1;
-  return `${source.slice(0, contentStart)}${prelude}${source.slice(contentStart)}`;
+/**
+ * Give the script-free view its scripts: the library prelude and every recorded or design value,
+ * plus step and seed, as props. Both share the first line so authored line numbers are unchanged.
+ */
+function withGeneratedScripts(source: string, props: readonly string[]): string {
+  const names = [...props, 'step', 'seed'].join(', ');
+  return `<script module>${prelude}</script><script>let { ${names} } = $props();</script>${source}`;
 }
 
 async function bundle(component: string, states: string) {

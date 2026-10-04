@@ -1,25 +1,38 @@
-# Input, design, and algorithm blocks
+# Input, algorithm, design, and view
 
-A component describes its visualization in `<script lang="sverlin">` blocks, written in a restricted subset of JavaScript, followed by an ordinary Svelte view. The algorithm block is required, even for a single step (`yield 'Start';`); the input and design blocks are optional.
+A component describes its visualization in `<script lang="sverlin">` blocks, written in a restricted subset of JavaScript, followed by a script-free Svelte view. The algorithm block is required, even for a single step (`yield 'Start';`); the input and design blocks are optional.
 
 1. `<script lang="sverlin" input>`: the fixed starting data. Declare the initial state with `const` or `let`, such as `const values = [3, 8, 5, 2, 7];`. Every presentation shares it.
 2. `<script lang="sverlin">`: the algorithm. It starts from the input variables, may update them and declare more, and marks steps with `yield`. It runs once; every presentation shows the same algorithm.
 3. `<script lang="sverlin" design>`: presentation choices drawn from each presentation's seed, so the two presentations in a comparison can differ. Each top-level `const` is a design value.
 
-The view receives every top-level input and algorithm variable as it was at the selected step, every design value, and `step` and `seed`, as props: `let { values, i, found, layout } = $props();`.
+## View
+
+The view is markup and an optional `<style>` only; it has no `<script>` of its own. Every top-level input and algorithm variable (as it was at the selected step), every design value, `step`, `seed`, and the library components are already in scope, so markup uses them directly: `{values[i]}`, `<ArrayCells {values} indices={showIndices} />`.
+
+Compute everything inline in markup. Svelte re-evaluates template expressions whenever the values they read change, so inline derivations stay correct. For a value used more than once or too long to read inline, use `{@const name = expression}` as the first child of the nearest component or block, such as directly inside `<Stage>`, `{#if}`, or `{#each}`:
+
+```svelte
+<Stage title="Linear search">
+  {@const states = values.map((_, index) =>
+    index < i ? 'visited' : index === i ? 'active' : 'idle'
+  )}
+  <ArrayCells {values} {states} />
+</Stage>
+```
+
+Facts about the algorithm, such as which cells were checked, are often clearer recorded as algorithm variables; keep purely visual choices in the view and design block. Values must not reuse the library component names.
 
 ## Steps
 
 - `yield 'label';` records a step: a copy of every top-level input and algorithm variable. Variables declared inside loops or blocks are not recorded; declare a loop index at the top level (`let i = -1;`) and write `for (i = 0; ...)` when the view needs it. A top-level variable not yet declared at a step is `null`.
-- Labels must be unique across the whole algorithm, because comparisons align steps by label. Inside loops, include what distinguishes the step, such as ``yield `Compare index ${i}`;``.
-- `yield optional('label');` marks a step a presentation may omit. With the design value `const detail = pick(['coarse', 'fine']);`, coarse presentations omit every optional step; without `detail`, optional steps are kept. `yield optional('label', 0.5);` keeps the step with that probability, drawn from the seed. The first and last steps are always kept.
-- When a presentation omits a step, it keeps showing its previous step while the other advances, so the view should read the state it receives rather than assume which step came before.
+- Labels must be unique across the whole algorithm, because they identify steps when presentations are compared. Inside loops, include what distinguishes the step, such as ``yield `Compare index ${i}`;``.
 - `return;` stops the algorithm early.
 
 ## Design values
 
 - Draws are `pick(['row', 'grid'])`, `int(3, 6)` (inclusive), `real(0.5, 1.5)`, and `chance(0.3)`, each only as the whole value of a top-level `const`, such as `const layout = pick(['row', 'grid']);`. Other design constants may combine earlier ones.
-- Use design values for styling, layout, wording, library component props, and `detail`. The input and algorithm cannot see them, so steps never depend on the seed.
+- Use design values for styling, layout, wording, and library component props. The input and algorithm cannot see them, so steps never depend on the seed.
 - Design names must differ from input and algorithm names.
 
 ## The subset

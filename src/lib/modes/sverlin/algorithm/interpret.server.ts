@@ -24,11 +24,10 @@ export type TraceValue =
 
 export type TraceState = Record<string, TraceValue>;
 
-/** One step of the master trace; optional steps may be omitted by a presentation's design. */
+/** One uniquely labelled step of the master trace that every presentation of a source shares. */
 export type MasterStep = {
   label: string;
   state: TraceState;
-  optional?: { probability?: number };
 };
 
 /** Input: fixed initial state. Design: seeded presentation choices. Algorithm: the yielding steps. */
@@ -76,35 +75,24 @@ export function interpretDesign(body: string, seed: number): TraceState {
   }).bindings();
 }
 
+/** Names a block declares at its top level, read without running it. */
+export function declaredNames(body: string, kind: BlockKind): string[] {
+  const { root } = parseBlock(body, kind);
+  return root.body.flatMap((statement) =>
+    statement.type === 'VariableDeclaration'
+      ? statement.declarations.map((declarator) => (declarator.id as { name: string }).name)
+      : []
+  );
+}
+
 /** Interpret the algorithm from the input state; every top-level binding is recorded at each yield. */
 export function interpretAlgorithm(body: string, input: TraceState = {}): MasterStep[] {
   const { root, offset } = parseBlock(body, 'algorithm');
   return new Interpreter(root, offset, { kind: 'algorithm', initial: input }).run();
 }
 
-/**
- * Choose the master steps one presentation keeps. The first and last steps anchor every
- * presentation; optional steps follow their probability or else the design's `detail`.
- */
-export function selectSteps(
-  master: readonly MasterStep[],
-  design: TraceState,
-  seed: number
-): number[] {
-  const random = seededRandom(seed, stepStream);
-  return master.flatMap((step, index) => {
-    // Draw for every probabilistic step so one step's position never shifts another's outcome.
-    const draw = step.optional?.probability === undefined ? undefined : random();
-    if (!step.optional || index === 0 || index === master.length - 1) return [index];
-    const kept =
-      draw === undefined ? design.detail !== 'coarse' : draw < (step.optional.probability ?? 1);
-    return kept ? [index] : [];
-  });
-}
-
-// Changing this generator or its streams changes every rebuilt presentation; version it if needed.
+// Changing this generator or its stream changes every rebuilt presentation; version it if needed.
 const designStream = 1;
-const stepStream = 2;
 
 /** Deterministic splitmix32-style generator for one seed and stream, returning values in [0, 1). */
 export function seededRandom(seed: number, stream: number): () => number {
@@ -264,10 +252,7 @@ function checkSubset(
   };
   const checkBuiltin = (node: AnyNode, name: string, ancestors: readonly AnyNode[]): void => {
     const [declaration, declarator] = ancestors.slice(-2);
-    if (name === 'optional') {
-      if (kind !== 'algorithm' || ancestors.at(-1)?.type !== 'YieldExpression')
-        reject(node, 'optional() can only wrap a yield label, as in yield optional("label");');
-    } else if (drawFunctions.has(name)) {
+    if (drawFunctions.has(name)) {
       if (
         kind !== 'design' ||
         ancestors.length !== 3 ||
@@ -445,14 +430,6 @@ class Interpreter {
                 : `"${name}" is already declared.`
             );
           const value = declarator.init ? this.#expression(declarator.init, scope) : undefined;
-          if (
-            this.#kind === 'design' &&
-            name === 'detail' &&
-            scope === this.#topLevel &&
-            value !== 'coarse' &&
-            value !== 'fine'
-          )
-            this.#fail(declarator, 'The design value detail must be "coarse" or "fine".');
           scope.bindings.set(name, { value, constant: node.kind === 'const' });
         }
         return 'normal';
@@ -517,26 +494,8 @@ class Interpreter {
   }
 
   #yield(argument: Expression | undefined, node: AnyNode, scope: Scope): void {
-    let optional: MasterStep['optional'];
-    let labelExpression = argument;
-    if (argument?.type === 'CallExpression' && argument.callee.type === 'Identifier') {
-      // optional(label, probability?) marks a step a presentation's design may omit.
-      const [label, probability] = argument.arguments as Expression[];
-      if (!label || argument.arguments.length > 2)
-        this.#fail(argument, 'optional() takes a label and an optional probability.');
-      labelExpression = label;
-      if (probability === undefined) optional = {};
-      else {
-        const value = this.#expression(probability, scope);
-        if (typeof value !== 'number' || !(value >= 0 && value <= 1))
-          this.#fail(probability, 'optional() probabilities must be numbers from 0 to 1.');
-        optional = { probability: value };
-      }
-    }
     const label =
-      labelExpression === undefined
-        ? `Step ${this.#trace.length + 1}`
-        : this.#expression(labelExpression, scope);
+      argument === undefined ? `Step ${this.#trace.length + 1}` : this.#expression(argument, scope);
     if (typeof label !== 'string' || !label.trim())
       this.#fail(node, 'yield labels must be non-empty strings.');
     const trimmed = label.trim();
@@ -548,11 +507,7 @@ class Interpreter {
     if (this.#trace.length >= algorithmLimits.maximumSteps)
       this.#fail(node, `The algorithm yielded more than ${algorithmLimits.maximumSteps} steps.`);
     this.#labels.add(trimmed);
-    this.#trace.push({
-      label: trimmed,
-      state: this.#state(node),
-      ...(optional ? { optional } : {})
-    });
+    this.#trace.push({ label: trimmed, state: this.#state(node) });
   }
 
   /** Deep copy with a total node budget, which also stops shared structure from multiplying. */
