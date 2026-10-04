@@ -19,7 +19,6 @@ in
   packages = with pkgs; [
     nodejs_24 pnpm_10
     git jq curl
-    claude-code opencode
   ];
 
   env = {
