@@ -15,7 +15,10 @@
   } from '$lib/client/visualization/presentation-history';
   import type { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
-  import type { MessageContentSegment } from '$lib/shared/projects/events/message-content';
+  import type {
+    ElementReference,
+    MessageContentSegment
+  } from '$lib/shared/projects/events/message-content';
 
   import MessageContent from './MessageContent.svelte';
   import { presentProjectEvent } from './event-presentation';
@@ -27,6 +30,8 @@
     layout: PresentationLayout;
     onPresentationChange?: () => void;
     onReferenceRequest?: (presentation: TimelinePresentation) => void;
+    /** Show an element reference: seek to its step and select it in its presentation. */
+    onElementReference?: (reference: ElementReference) => void;
   };
 
   let {
@@ -34,7 +39,8 @@
     selection,
     layout,
     onPresentationChange = () => {},
-    onReferenceRequest = () => {}
+    onReferenceRequest = () => {},
+    onElementReference = () => {}
   }: Props = $props();
   const items = $derived(participantTimeline(session.events));
   const activityProgress = $derived.by(() => {
@@ -68,6 +74,7 @@
     if (!presentation) return;
     onPresentationChange();
     selection.activate(presentation, session.events, layout, extend);
+    if (reference.type === 'element-ref') onElementReference(reference);
   }
 </script>
 

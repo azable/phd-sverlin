@@ -72,6 +72,10 @@ export type NodeProps = {
   radius?: Radius;
   strokeWidth?: StrokeWidth;
   minSize?: MinSize;
+  /** Internal: the caller's selection id, so the renderer's node stands for it. */
+  __id?: string;
+  /** Internal: the caller's atomic type. */
+  __type?: string;
 };
 
 /** Defaults one presentation drew for a framed shape (see defaults.ts). */

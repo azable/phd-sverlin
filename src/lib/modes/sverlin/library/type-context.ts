@@ -47,3 +47,27 @@ export function markRendering(name: string): void {
 export function defaultsContext(): NodeDefaults | undefined {
   return getContext<NodeDefaults | undefined>('sverlin:defaults');
 }
+
+/** Hands out the ids rendered nodes carry for selection; see provideNodeIds. */
+export type NodeIds = { claim(ref: string): string };
+
+/**
+ * Give the nodes of one rendered step their ids. A node's id is its tag's source position (its
+ * __ref, such as 12:5), then #2, #3, … for later renders of the same tag, such as inside a loop;
+ * items a collection draws itself extend their collection's id with /index. Each step mounts
+ * afresh and renders in the same order, so the same state always gives the same ids.
+ */
+export function provideNodeIds(): void {
+  const counts = new Map<string, number>();
+  setContext<NodeIds>('sverlin:node-ids', {
+    claim(ref) {
+      const count = (counts.get(ref) ?? 0) + 1;
+      counts.set(ref, count);
+      return count === 1 ? ref : `${ref}#${count}`;
+    }
+  });
+}
+
+export function nodeIdsContext(): NodeIds | undefined {
+  return getContext<NodeIds | undefined>('sverlin:node-ids');
+}

@@ -13,13 +13,18 @@ import {
   markdownMessage,
   plainMessageText,
   structureKnownPresentationReferences,
+  type ElementReference,
   type MessageContent
 } from '$lib/shared/projects/events/message-content';
 import type { ArtifactChange, RecordedText } from '$lib/shared/projects/events/values';
 import type { ProjectCommandResult, ProjectDocument } from '$lib/shared/projects/model';
 import { presentationBufferState } from '$lib/shared/projects/presentation-buffer';
 import type { RenderablePresentation } from '$lib/shared/presentations';
-import { presentationMode } from '$lib/shared/presentations';
+import {
+  isSverlinPresentation,
+  presentationMode,
+  presentationStepLabels
+} from '$lib/shared/presentations';
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
 import { assistantTurnClaim, projectOperation } from '$lib/shared/projects/operations';
 import {
@@ -28,6 +33,7 @@ import {
   getParticipantIntakeClassifier
 } from '$lib/server/chat-bots/registry';
 import { modeCatalog } from '$lib/modes/catalog';
+import { locateElement } from '$lib/modes/sverlin/element-ref';
 import { modeBuilders } from '$lib/modes/server';
 import {
   nextParticipantIntakeStep,
@@ -222,6 +228,7 @@ export async function runQueuedAssistantTurn(
         ...preferences.flatMap((event) => event.payload.presentations)
       ])
     ],
+    elements: referencedElements(content),
     interactionEventIds: claim.payload.interactionEventIds
   };
   const presentationCount = Math.max(
@@ -343,7 +350,8 @@ async function submitProjectFeedbackUnlocked(
 
   const contextSelection: AiContextSelection = {
     eventIds: focus,
-    presentationIds: presentations
+    presentationIds: presentations,
+    elements: referencedElements(content)
   };
   document = await runSverlinAssistantTurn(
     document,
@@ -890,7 +898,7 @@ async function runSverlinGeneration(
             result.providerResponse
           );
         }
-        validateGeneratedReply(options.document, result.reply, 0, result.providerResponse);
+        validateGeneratedReply(result.reply, 0, result.providerResponse);
       },
       fallbackResponse: (result) => ({
         reply: result.reply,
@@ -937,12 +945,7 @@ async function runCandidateGeneration(
       generate: () =>
         options.chatbot.generatePrepared(prompt, { signal: currentProjectOperationSignal() }),
       validateResult: (result) => {
-        validateGeneratedReply(
-          options.document,
-          result.reply,
-          result.candidates.length,
-          result.providerResponse
-        );
+        validateGeneratedReply(result.reply, result.candidates.length, result.providerResponse);
         validateRecoveryExplanation(prompt, result.recovery, result.providerResponse);
       },
       fallbackResponse: (result) => ({
@@ -1233,31 +1236,48 @@ function resolveAssistantContent(
     reply,
     knownPresentationIds
   ).map((segment) => {
-    if (segment.type === 'markdown') return segment;
-    if (segment.type === 'presentation-ref') return segment;
+    if (segment.type === 'presentation-ref') {
+      const presentationId = repairedPresentationId(segment.presentationId, knownPresentationIds);
+      return presentationId
+        ? { type: 'presentation-ref', presentationId }
+        : { type: 'markdown', text: 'that presentation' };
+    }
+    if (segment.type !== 'candidate-ref') return segment;
     const presentation = candidates[segment.slot];
     if (!presentation) {
       throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
     }
     return { type: 'presentation-ref', presentationId: presentation.presentationId };
   });
-  validatePresentations(document, referencedPresentations(content));
   return content;
 }
 
+/**
+ * The retained presentation a reply's reference means. Models sometimes copy a presentation id's
+ * start and garble the rest, so an unknown id resolves to the one known presentation sharing its
+ * first group, if exactly one does; otherwise it names none, and the reply keeps its prose.
+ */
+function repairedPresentationId(
+  presentationId: string,
+  knownPresentationIds: readonly string[]
+): string | undefined {
+  const id = presentationId.toLowerCase();
+  const exact = knownPresentationIds.find((known) => known.toLowerCase() === id);
+  if (exact) return exact;
+  const prefix = id.split('-')[0];
+  const matches = knownPresentationIds.filter((known) =>
+    known.toLowerCase().startsWith(`${prefix}-`)
+  );
+  return prefix.length === 8 && matches.length === 1 ? matches[0] : undefined;
+}
+
 function validateGeneratedReply(
-  document: ProjectDocument,
   reply: GeneratedMessageContent,
   candidateCount: number,
   providerResponse?: unknown
 ): void {
+  // Unknown presentation ids are repaired or dropped when the reply is resolved, not rejected.
   try {
-    validatePresentations(
-      document,
-      reply.flatMap((segment) =>
-        segment.type === 'presentation-ref' ? [segment.presentationId] : []
-      )
-    );
     for (const segment of reply) {
       if (segment.type === 'candidate-ref' && segment.slot >= candidateCount) {
         throw new Error(`The assistant referenced unavailable candidate slot ${segment.slot}.`);
@@ -1495,8 +1515,31 @@ async function validateMessageContent(
     if (!known.has(segment.presentationId)) {
       throw new Error(`Unknown referenced presentation ${segment.presentationId}.`);
     }
+    if (segment.type === 'element-ref') validateElementReference(document, segment);
   }
   return content;
+}
+
+/** An element reference must name a step of a Sverlin presentation and a <Node> in its source. */
+function validateElementReference(document: ProjectDocument, reference: ElementReference): void {
+  const presentation = document.events.find(
+    (event) =>
+      event.type === 'visualization.presented' &&
+      event.payload.presentation.presentationId === reference.presentationId
+  );
+  if (presentation?.type !== 'visualization.presented') return;
+  const value = presentation.payload.presentation;
+  if (!isSverlinPresentation(value))
+    throw new Error('Only Sverlin presentations support element references.');
+  if (reference.step >= presentationStepLabels(value).length)
+    throw new Error(`Presentation ${reference.presentationId} has no step ${reference.step + 1}.`);
+  if (!locateElement(value.source.text, reference.element.id))
+    throw new Error(`Element ${reference.element.id} is not a node of that presentation.`);
+}
+
+/** Element references in a message. */
+function referencedElements(content: MessageContent): ElementReference[] {
+  return content.filter((segment): segment is ElementReference => segment.type === 'element-ref');
 }
 
 function referencedPresentations(content: MessageContent): string[] {

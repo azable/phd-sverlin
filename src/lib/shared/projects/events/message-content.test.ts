@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { plainMessageText, structureKnownPresentationReferences } from './message-content';
+import * as v from 'valibot';
+
+import {
+  messageContentSegmentSchema,
+  plainMessageText,
+  structureKnownPresentationReferences
+} from './message-content';
 
 const presentationId = '12345678-1234-4123-8123-123456789ac1';
 
@@ -12,6 +18,39 @@ describe('plain message text', () => {
         { type: 'presentation-ref', presentationId }
       ])
     ).toBe(`Compare [Presentation ${presentationId}]`);
+  });
+});
+
+describe('element references', () => {
+  it('identifies the element, step, and presentation in plain text', () => {
+    expect(
+      plainMessageText([
+        { type: 'markdown', text: 'Make this bigger:' },
+        {
+          type: 'element-ref',
+          presentationId,
+          step: 2,
+          element: { id: '62:7#2', label: 'Int 8' }
+        }
+      ])
+    ).toBe(
+      `Make this bigger: [Element "Int 8" (62:7#2) at step 3 of presentation ${presentationId}]`
+    );
+  });
+
+  it('accepts only well-formed element ids and short labels', () => {
+    const reference = (id: string, label = 'Int 8') => ({
+      type: 'element-ref',
+      presentationId,
+      step: 0,
+      element: { id, label }
+    });
+    for (const id of ['62:7', '62:7#2', '56:1/3', '56:1#2/3/0'])
+      expect(v.is(messageContentSegmentSchema, reference(id))).toBe(true);
+    for (const id of ['', '62', 'a:b', '62:7#', '62:7 ', '<script>'])
+      expect(v.is(messageContentSegmentSchema, reference(id))).toBe(false);
+    expect(v.is(messageContentSegmentSchema, reference('62:7', 'x'.repeat(121)))).toBe(false);
+    expect(v.is(messageContentSegmentSchema, reference('62:7', '  '))).toBe(false);
   });
 });
 

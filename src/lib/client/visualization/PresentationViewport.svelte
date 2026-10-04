@@ -2,28 +2,38 @@
   import type { Component } from 'svelte';
   import { Skeleton } from '$lib/client/components/ui/skeleton';
   import { modeCatalog } from '$lib/modes/catalog';
+  import type { SelectedElement } from './visual-selection.svelte';
+  import type { CanvasView } from '$lib/modes/sandbox';
   import {
     presentationMode,
     type RenderablePresentation,
     type VisualizationMode
   } from '$lib/shared/presentations';
 
+  type ViewportProps = {
+    presentation: RenderablePresentation;
+    step: number;
+    label: string;
+    /** Ids of the elements to show selected, in modes that support selection. */
+    selection?: readonly string[];
+    onSelectionChange?: (elements: SelectedElement[]) => void;
+    onViewChange?: (view: CanvasView) => void;
+  };
+
   let {
     presentation,
     step,
-    label
-  }: { presentation?: RenderablePresentation; step: number; label: string } = $props();
+    label,
+    selection,
+    onSelectionChange,
+    onViewChange
+  }: Omit<ViewportProps, 'presentation'> & { presentation?: RenderablePresentation } = $props();
   const viewports = import.meta.glob<{
-    default: Component<{ presentation: RenderablePresentation; step: number; label: string }>;
+    default: Component<ViewportProps>;
   }>('../../modes/*/Viewport.svelte', { eager: true });
   const registered = Object.fromEntries(
     Object.entries(viewports).map(([file, module]) => [file.split('/').at(-2), module.default])
-  ) as Partial<
-    Record<
-      VisualizationMode,
-      Component<{ presentation: RenderablePresentation; step: number; label: string }>
-    >
-  >;
+  ) as Partial<Record<VisualizationMode, Component<ViewportProps>>>;
   for (const mode of Object.keys(modeCatalog) as VisualizationMode[]) {
     if (!registered[mode])
       throw new Error(`Visualization mode ${mode} needs a playback component.`);
@@ -33,7 +43,7 @@
 
 <section class="relative min-h-0 flex-1 overflow-hidden bg-white" aria-label={label}>
   {#if presentation && Viewport}
-    <Viewport {presentation} {step} {label} />
+    <Viewport {presentation} {step} {label} {selection} {onSelectionChange} {onViewChange} />
   {:else}
     <div class="flex min-h-full items-center justify-center p-6">
       <div class="flex w-full max-w-md flex-col gap-3">

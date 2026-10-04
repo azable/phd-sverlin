@@ -2,7 +2,10 @@
 
 import * as v from 'valibot';
 
-import { messageContentSegmentSchema } from '$lib/shared/projects/events/message-content';
+import {
+  elementIdSchema,
+  messageContentSegmentSchema
+} from '$lib/shared/projects/events/message-content';
 import { naturalSchema, positiveSchema } from '$lib/shared/projects/events/values';
 import { presentationIdSchema } from '$lib/shared/presentations';
 
@@ -94,6 +97,19 @@ export const studyWorkspaceObservationSchema = v.strictObject({
   playback: v.optional(playbackStateSchema),
   timeline: v.optional(timelineViewportSchema),
   viewports: v.pipe(v.array(visualizationViewportSchema), v.maxLength(2)),
+  /** Elements selected in the visible presentations, by id. */
+  selections: v.optional(
+    v.pipe(
+      v.array(
+        v.strictObject({
+          presentationId: presentationIdSchema,
+          step: naturalSchema,
+          elements: v.pipe(v.array(elementIdSchema), v.minLength(1), v.maxLength(50))
+        })
+      ),
+      v.maxLength(2)
+    )
+  ),
   draft: v.strictObject({
     hasContent: v.boolean(),
     characterCount: boundedNatural(100_000),

@@ -20,16 +20,31 @@
     type PresentationPlayback
   } from './presentation-playback.svelte';
   import PresentationViewport from './PresentationViewport.svelte';
+  import type { VisualSelection, VisualSelections } from './visual-selection.svelte';
+  import type { CanvasView } from '$lib/modes/sandbox';
 
   type Props = {
     session: ProjectSession;
     selection: PresentationSelection;
     playback: PresentationPlayback;
     layout: PresentationLayout;
+    /** Elements selected in the visible presentations, to reference in feedback. */
+    visualSelections: VisualSelections;
+    onReferenceSelection?: (selection: VisualSelection) => void;
+    onViewChange?: (presentationId: string, view: CanvasView) => void;
     disabled?: boolean;
   };
 
-  let { session, selection, playback, layout, disabled = false }: Props = $props();
+  let {
+    session,
+    selection,
+    playback,
+    layout,
+    visualSelections,
+    onReferenceSelection = () => {},
+    onViewChange = () => {},
+    disabled = false
+  }: Props = $props();
   let preferencePending = $state<string>();
 
   const visualizationOperationKinds: readonly ProjectOperationKind[] = [
@@ -54,6 +69,12 @@
   const step = $derived(playback.stepFor(playbackContext));
   const stepCount = $derived(playbackContext.stepCount);
   const selectedIds = $derived(visible.map(({ presentation }) => presentation.presentationId));
+  // A selection belongs to its step and its presentation; stepping or switching drops it.
+  $effect(() => {
+    const ids = selectedIds;
+    const current = step;
+    untrack(() => visualSelections.retain(ids, current));
+  });
   const preferred = $derived.by(() => {
     if (visible.length !== 2) return undefined;
     const preference = session.events.findLast(
@@ -231,6 +252,8 @@
 <section class="flex min-h-0 flex-1 flex-col" aria-label="Visualization presentations">
   {#if visible.length}
     {#each visible as entry, index (entry.presentation.presentationId)}
+      {@const presentationId = entry.presentation.presentationId}
+      {@const selected = visualSelections.for(presentationId, step)}
       <div
         class="flex min-h-0 flex-1 overflow-hidden bg-muted/30 p-2"
         data-replay-region={`candidate-${index + 1}`}
@@ -248,10 +271,25 @@
               This version skips this step; showing its previous step.
             </p>
           {/if}
+          {#if selected && !session.readOnly}
+            <Button
+              size="xs"
+              variant="secondary"
+              class="absolute bottom-2 left-2 z-10 max-w-[70%] truncate shadow-sm"
+              onclick={() => onReferenceSelection(selected)}
+            >
+              Reference {selected.elements.length === 1
+                ? selected.elements[0].label
+                : `${selected.elements.length} elements`}
+            </Button>
+          {/if}
           <PresentationViewport
             presentation={entry.presentation}
             step={localStep(entry)}
             label={`Visualization ${index + 1}`}
+            selection={selected?.elements.map(({ id }) => id) ?? []}
+            onSelectionChange={(elements) => visualSelections.set(presentationId, step, elements)}
+            onViewChange={(view) => onViewChange(presentationId, view)}
           />
         </div>
       </div>

@@ -3,7 +3,7 @@
 import * as v from 'valibot';
 
 import { presentationIdSchema } from '$lib/shared/presentations';
-import { textSchema } from './values';
+import { naturalSchema, textSchema } from './values';
 
 export const markdownMessageSegmentSchema = v.strictObject({
   type: v.literal('markdown'),
@@ -15,10 +15,33 @@ export const presentationReferenceSegmentSchema = v.strictObject({
   presentationId: presentationIdSchema
 });
 
+/**
+ * A rendered element's id within one step of a presentation. Only Sverlin presentations support
+ * selection; their ids are a node's tag position (line:column), then #n for its nth render, then
+ * /index for each item a collection drew itself, as in 12:5#2/3.
+ */
+export const elementIdSchema = v.pipe(
+  v.string(),
+  v.maxLength(64),
+  v.regex(/^\d{1,5}:\d{1,5}(?:#\d{1,5})?(?:\/\d{1,5}){0,8}$/u)
+);
+
+/** A short label for a selected element, taken from what it showed. */
+export const elementLabelSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(120));
+
+/** One element a participant selected in a presentation at a step, referenced in a message. */
+export const elementReferenceSegmentSchema = v.strictObject({
+  type: v.literal('element-ref'),
+  presentationId: presentationIdSchema,
+  step: v.pipe(naturalSchema, v.maxValue(100_000)),
+  element: v.strictObject({ id: elementIdSchema, label: elementLabelSchema })
+});
+
 /** Runtime schema for one Markdown or exact visualization reference segment. */
 export const messageContentSegmentSchema = v.variant('type', [
   markdownMessageSegmentSchema,
-  presentationReferenceSegmentSchema
+  presentationReferenceSegmentSchema,
+  elementReferenceSegmentSchema
 ]);
 
 /** Runtime schema for a non-empty structured message. */
@@ -26,6 +49,7 @@ export const messageContentSchema = v.pipe(v.array(messageContentSegmentSchema),
 
 export type MessageContentSegment = v.InferOutput<typeof messageContentSegmentSchema>;
 export type MessageContent = MessageContentSegment[];
+export type ElementReference = Extract<MessageContentSegment, { type: 'element-ref' }>;
 
 /** Construct the canonical representation of a text-only Markdown message. */
 export function markdownMessage(text: string): MessageContent {
@@ -75,6 +99,10 @@ export function plainMessageText(content: MessageContent): string {
   return content
     .flatMap((segment) => {
       if (segment.type === 'markdown') return [segment.text];
+      if (segment.type === 'element-ref')
+        return [
+          `[Element "${segment.element.label}" (${segment.element.id}) at step ${segment.step + 1} of presentation ${segment.presentationId}]`
+        ];
       return [`[Presentation ${segment.presentationId}]`];
     })
     .join(' ')

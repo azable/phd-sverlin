@@ -13,5 +13,6 @@ export function singletonReferenceSegments(reference: ReferenceSegment): Referen
 /** Return the compact, participant-facing label for one reference chip. */
 export function referenceChipLabel(reference: ReferenceSegment): string {
   const presentation = presentationDisplayId(reference.presentationId);
-  return presentation;
+  if (reference.type === 'presentation-ref') return presentation;
+  return `${presentation} / S${reference.step + 1} / ${reference.element.label}`;
 }

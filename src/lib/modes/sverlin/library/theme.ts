@@ -19,6 +19,7 @@ export const themeCss = `
   --sv-purple: #f1e8fd;
   --sv-purple-line: #8b5cf6;
   --sv-radius: 10px;
+  --sv-select: #2563eb;
   font-family: system-ui, sans-serif;
 }
 body {

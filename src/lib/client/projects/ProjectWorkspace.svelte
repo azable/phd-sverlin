@@ -29,6 +29,7 @@
     PresentationPlayback
   } from '$lib/client/visualization/presentation-playback.svelte';
   import { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
+  import { VisualSelections } from '$lib/client/visualization/visual-selection.svelte';
   import {
     isSverlinPresentation,
     presentationViewSeed,
@@ -36,7 +37,10 @@
   } from '$lib/shared/presentations';
   import type { ProjectTemplateSummary } from '$lib/shared/projects/creation';
   import type { EventId } from '$lib/shared/projects/events';
-  import type { MessageContent } from '$lib/shared/projects/events/message-content';
+  import type {
+    ElementReference,
+    MessageContent
+  } from '$lib/shared/projects/events/message-content';
   import { activeProjectOperation } from '$lib/shared/projects/operations';
   import type {
     StudyInteractionCapturePolicy,
@@ -121,6 +125,17 @@
     }
   );
   const presentationPlayback = new PresentationPlayback();
+  // Elements selected in the visible presentations, to reference in feedback.
+  const visualSelections = new VisualSelections();
+
+  /** After the timeline shows an element reference's presentation, seek its step and select it. */
+  function showElementReference(reference: ElementReference) {
+    const context = presentationPlaybackContext(
+      presentationSelection.selected(session.events, layout)
+    );
+    const step = presentationPlayback.seek(context, reference.step);
+    visualSelections.set(reference.presentationId, step, [reference.element]);
+  }
   let feedbackComposer = $state<FeedbackComposer>();
   let editMode = $state<ProjectArtifactEditMode>('readonly');
   let renaming = $state(false);
@@ -133,6 +148,8 @@
   let studyAdvancing = $state(false);
   let workspaceRoot = $state<HTMLElement>();
   let interactionRecorder = $state.raw<ProjectInteractionRecorder>();
+  // The canvas view each visible presentation was last left at, for study observations.
+  let canvasViews = $state.raw<Record<string, { zoom: number; panX: number; panY: number }>>({});
   let timelineObservation = $state<StudyWorkspaceObservation['timeline']>();
   let draftObservation = $state<StudyWorkspaceObservation['draft']>({
     hasContent: false,
@@ -227,7 +244,19 @@
             }
           : {}),
         ...(timelineObservation ? { timeline: timelineObservation } : {}),
-        viewports: [],
+        viewports: visiblePresentations.flatMap(({ presentation }) => {
+          const view = canvasViews[presentation.presentationId];
+          return view ? [{ presentationId: presentation.presentationId, ...view }] : [];
+        }),
+        ...(visualSelections.current.length
+          ? {
+              selections: visualSelections.current.map(({ presentationId, step, elements }) => ({
+                presentationId,
+                step,
+                elements: elements.map(({ id }) => id)
+              }))
+            }
+          : {}),
         draft: draftObservation,
         document: {
           visibility: document.visibilityState === 'hidden' ? 'hidden' : 'visible',
@@ -474,6 +503,7 @@
                 onViewportChange={recordTimeline}
                 onReferenceRequest={(presentation) =>
                   feedbackComposer?.referencePresentation(presentation)}
+                onElementReference={showElementReference}
               />
               {#if !expired && !session.readOnly}
                 <FeedbackComposer
@@ -481,6 +511,7 @@
                   {session}
                   {presentationCount}
                   presentations={visiblePresentations}
+                  visualSelections={visualSelections.current}
                   onSubmitted={() => {
                     presentationSelection.returnToLatest();
                   }}
@@ -532,6 +563,10 @@
             selection={presentationSelection}
             playback={presentationPlayback}
             {layout}
+            {visualSelections}
+            onReferenceSelection={(selected) => feedbackComposer?.referenceSelection(selected)}
+            onViewChange={(presentationId, view) =>
+              (canvasViews = { ...canvasViews, [presentationId]: view })}
             disabled={mutationsDisabled}
           />
           <div class="contents" data-replay-region="artifact">

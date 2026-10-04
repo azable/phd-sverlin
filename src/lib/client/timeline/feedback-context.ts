@@ -1,15 +1,27 @@
 import type { TimelinePresentation } from '$lib/client/visualization/presentation-history';
+import type { VisualSelection } from '$lib/client/visualization/visual-selection.svelte';
 import type { MessageContent } from '$lib/shared/projects/events/message-content';
 
-/** Describe the currently visible visualization context with retained inline references. */
+import type { ReferenceSegment } from './reference-labels';
+
+/**
+ * Describe the currently visible visualization context with retained inline references: the
+ * elements selected in a presentation, if any, or else the presentation itself.
+ */
 export function automaticFeedbackContext(
-  presentations: readonly TimelinePresentation[]
+  presentations: readonly TimelinePresentation[],
+  selections: readonly VisualSelection[] = []
 ): MessageContent {
   const visible = presentations.slice(0, 2);
   if (visible.length === 0) return [];
-  const references = visible.map(({ presentation }) => [
-    { type: 'presentation-ref' as const, presentationId: presentation.presentationId }
-  ]);
+  const references = visible.map(({ presentation }) => {
+    const selection = selections.find(
+      ({ presentationId }) => presentationId === presentation.presentationId
+    );
+    return selection
+      ? selectionReferences(selection)
+      : [{ type: 'presentation-ref' as const, presentationId: presentation.presentationId }];
+  });
   if (references.length === 1) {
     return [
       { type: 'markdown', text: 'Viewing ' },
@@ -45,4 +57,14 @@ export function feedbackSubmissionContent(
       ? { ...segment, text: `${segment.text}\n\n${prose}` }
       : segment
   );
+}
+
+/** One element reference per selected element. */
+export function selectionReferences(selection: VisualSelection): ReferenceSegment[] {
+  return selection.elements.map((element) => ({
+    type: 'element-ref',
+    presentationId: selection.presentationId,
+    step: selection.step,
+    element
+  }));
 }

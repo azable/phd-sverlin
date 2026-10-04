@@ -2,7 +2,8 @@
  * AI-owned projections from complete project history into bounded model context.
  *
  * The event document remains lossless. This module deliberately gives the model
- * a compact index, the current source, and details for explicitly selected events.
+ * a compact index, the current source, and details for explicitly selected events,
+ * presentations, and elements.
  *
  * @packageDocumentation
  */
@@ -15,7 +16,11 @@ import {
   type ProjectEventOf,
   type ProjectEventType
 } from '$lib/shared/projects/events';
-import { plainMessageText } from '$lib/shared/projects/events/message-content';
+import {
+  plainMessageText,
+  type ElementReference
+} from '$lib/shared/projects/events/message-content';
+import { locateElement, type ElementLocation } from '$lib/modes/sverlin/element-ref';
 import type { ProjectDocument, ProjectSnapshot } from '$lib/shared/projects/model';
 import type { RenderablePresentation } from '$lib/shared/presentations';
 import { presentationStepLabels } from '$lib/shared/presentations';
@@ -67,6 +72,8 @@ export type AiEventDetail = {
 export type AiContextSelection = {
   eventIds: readonly EventId[];
   presentationIds?: readonly string[];
+  /** Elements the participant selected and referenced in feedback. */
+  elements?: readonly ElementReference[];
   interactionEventIds?: readonly EventId[];
 };
 
@@ -100,6 +107,19 @@ export type AiSelectedPresentation = AiPresentationSummary & {
   parameters?: Record<string, unknown>;
 };
 
+/**
+ * An element the participant selected in a presentation and referenced in feedback, traced to the
+ * <Node> tag in that presentation's source that drew it. The label is what the participant saw.
+ */
+export type AiSelectedElement = {
+  presentationId: string;
+  step: number;
+  stepLabel: string;
+  elementId: string;
+  label: string;
+  source: ElementLocation;
+};
+
 /** Strongly typed, consumer-specific context supplied to the AI assistant. */
 export type AiProjectContext = {
   projectId: string;
@@ -117,6 +137,7 @@ export type AiProjectContext = {
   selected: {
     events: AiEventDetail[];
     presentations: AiSelectedPresentation[];
+    elements: AiSelectedElement[];
   };
 };
 
@@ -244,6 +265,7 @@ export function projectAiContext(
       'The application owns previous/next step playback controls; never draw replacement controls inside a visualization.',
       'The participant can select compatible retained Sverlin presentations to compare a pair.',
       'A visible pair has preference controls; participants can reference retained presentations inline in messages.',
+      'Participants can select elements of a Sverlin presentation and reference them in messages; selected.elements traces each to the <Node> tag that drew it.',
       'Sverlin projects may keep another pair generated ahead of time; ordinary conversation does not advance the visible pair.'
     ],
     timeline: timelineEvents.map(projectAiTimelineEntry),
@@ -251,6 +273,9 @@ export function projectAiContext(
       events: selection.eventIds.map((id) => eventDetail(document, id)),
       presentations: (selection.presentationIds ?? []).map((id) =>
         selectedPresentation(document, id)
+      ),
+      elements: (selection.elements ?? []).flatMap((reference) =>
+        selectedElement(document, reference)
       )
     }
   };
@@ -313,6 +338,32 @@ function selectedPresentation(document: ProjectDocument, id: string): AiSelected
     }
   }
   throw new Error(`Unknown selected presentation ${id}.`);
+}
+
+function selectedElement(
+  document: ProjectDocument,
+  reference: ElementReference
+): AiSelectedElement[] {
+  const event = document.events.find(
+    (candidate) =>
+      candidate.type === 'visualization.presented' &&
+      candidate.payload.presentation.presentationId === reference.presentationId
+  );
+  if (event?.type !== 'visualization.presented') return [];
+  const presentation = event.payload.presentation;
+  if (presentation.format !== 'browser-bundle-v1') return [];
+  const source = locateElement(presentation.source.text, reference.element.id);
+  if (!source) return [];
+  return [
+    {
+      presentationId: reference.presentationId,
+      step: reference.step,
+      stepLabel: presentationStepLabels(presentation)[reference.step] ?? '',
+      elementId: reference.element.id,
+      label: reference.element.label,
+      source
+    }
+  ];
 }
 
 function eventDetail(document: ProjectDocument, id: EventId): AiEventDetail {

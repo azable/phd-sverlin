@@ -251,6 +251,18 @@ describe('single-component Svelte compilation', () => {
     ).rejects.toThrow('frame.padding must be one of');
   });
 
+  it('tags every Node with its source position and reserves __ props', async () => {
+    const algorithm = '<script lang="sverlin">yield "A";</script>';
+    const { component } = prepareSvelteComponent(
+      `${algorithm}\n<Node layout="column">\n  {#if true}<Node value={1} />{/if}\n</Node>`
+    );
+    expect(component).toMatch(/__ref: ['"]2:1['"]/u);
+    expect(component).toMatch(/__ref: ['"]3:13['"]/u);
+    expect(() => prepareSvelteComponent(`${algorithm}\n<Node __id="x" />`)).toThrow(
+      expect.objectContaining({ code: 'reserved_prop', line: 2 })
+    );
+  });
+
   it('rejects authored library imports', async () => {
     await expect(
       compileSvelteComponent('<script>import { Node } from "sverlin";</script><Node value={1} />')

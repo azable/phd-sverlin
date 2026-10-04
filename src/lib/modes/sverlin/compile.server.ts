@@ -188,12 +188,15 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
         `"${library}" names a library component; choose another variable name.`
       );
     const renderers = typeRenderers(ast, atoms, source);
-    const component = compile(withGeneratedScripts(svelteSource, props, renderers), {
-      filename: 'Main.svelte',
-      generate: 'client',
-      css: 'injected',
-      dev: false
-    }).js.code;
+    const component = compile(
+      withGeneratedScripts(withNodeRefs(svelteSource, ast, source), props, renderers),
+      {
+        filename: 'Main.svelte',
+        generate: 'client',
+        css: 'injected',
+        dev: false
+      }
+    ).js.code;
     return {
       source,
       component,
@@ -322,6 +325,39 @@ function withGeneratedScripts(
     ? `import { setContext as __sverlinSetContext } from 'svelte'; __sverlinSetContext('sverlin:renderers', { ${renderers.join(', ')} });`
     : '';
   return `<script module>${prelude}</script><script>let { ${names} } = $props(); ${registration}</script>${source}`;
+}
+
+/**
+ * Tag every <Node> in the view with the line and column (both from 1) of its tag in the authored
+ * source, as the hidden prop __ref, so a rendered node can be traced back to the markup that drew
+ * it when a participant selects it for feedback. The prop goes on the tag's own line, so line
+ * numbers are unchanged.
+ */
+function withNodeRefs(svelteSource: string, ast: unknown, source: string): string {
+  const tags: number[] = [];
+  visit(ast, (node) => {
+    const tag = node as {
+      type: string;
+      name?: string;
+      start?: number;
+      attributes?: { name?: string; start?: number }[];
+    };
+    if (tag.type !== 'InlineComponent' || tag.name !== 'Node' || tag.start === undefined) return;
+    const reserved = tag.attributes?.find(({ name }) => name?.startsWith('__'));
+    if (reserved)
+      throw new InvalidSvelteSourceError(
+        `Node props starting with __, such as , are reserved for the library.`,
+        { code: 'reserved_prop', start: sourcePosition(source, reserved.start ?? tag.start) }
+      );
+    tags.push(tag.start);
+  });
+  let tagged = svelteSource;
+  for (const start of tags.sort((a, b) => b - a)) {
+    const { line, column } = sourcePosition(source, start);
+    const end = start + '<Node'.length;
+    tagged = `${tagged.slice(0, end)} __ref="${line}:${column + 1}"${tagged.slice(end)}`;
+  }
+  return tagged;
 }
 
 /**

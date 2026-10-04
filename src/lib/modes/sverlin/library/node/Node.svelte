@@ -8,7 +8,13 @@
   import { untrack, type Snippet } from 'svelte';
 
   import Node from './Node.svelte';
-  import { defaultsContext, markRendering, rendererFor, typeContext } from '../type-context';
+  import {
+    defaultsContext,
+    markRendering,
+    nodeIdsContext,
+    rendererFor,
+    typeContext
+  } from '../type-context';
   import { paletteColor } from './palette';
   import {
     alignments,
@@ -62,7 +68,10 @@
     radius,
     strokeWidth,
     minSize,
-    children
+    children,
+    __ref,
+    __id,
+    __type
   }: {
     /** A primitive to display, when the node has neither items nor children. */
     value?: Primitive;
@@ -107,11 +116,20 @@
     /** The smallest width and height. */
     minSize?: MinSize;
     children?: Snippet;
+    /** Internal: the source position of this node's tag, added by the compiler. */
+    __ref?: string;
+    /** Internal: an id given by the node this one stands for, such as a collection or a renderer's caller. */
+    __id?: string;
+    /** Internal: the type of the node a renderer draws. */
+    __type?: string;
   } = $props();
 
   const types = typeContext();
   // The presentation's drawn defaults sit between this node's own props and its shape's preset.
   const drawn = defaultsContext();
+  // The id a participant's selection refers to this node by (see provideNodeIds).
+  const nodeIds = nodeIdsContext();
+  const id = untrack(() => __id ?? (__ref ? nodeIds?.claim(__ref) : undefined));
   // A typed value node draws through its type's renderer, if the view defines one. Resolved once:
   // each step mounts afresh, and the renderer is marked so nodes inside it never call it again.
   const rendered = untrack(() =>
@@ -135,7 +153,10 @@
         padding,
         radius,
         strokeWidth,
-        minSize
+        minSize,
+        // A renderer's node takes this node's identity and type, so a selection names the value.
+        __id: id,
+        __type: type
       }).filter(([, setting]) => setting !== undefined)
     ) as NodeProps
   );
@@ -190,6 +211,8 @@
 {:else}
   <div
     class="sv-node {font ?? ''}"
+    data-sv-node={id}
+    data-sv-type={type ?? __type}
     class:cell={!arrangement && resolvedShape === 'box'}
     style:font-size={fontSize}
     style:font-weight={resolvedWeight === undefined
@@ -222,13 +245,14 @@
             {#if item}
               {@render item(child, index, types?.itemType(items, index))}
             {:else if Array.isArray(child)}
-              <Node items={child} layout={nested} />
+              <Node items={child} layout={nested} __id={id && `${id}/${index}`} />
             {:else}
               <Node
                 value={child !== null && typeof child === 'object'
                   ? JSON.stringify(child)
                   : (child as Primitive)}
                 type={types?.itemType(items, index)}
+                __id={id && `${id}/${index}`}
               />
             {/if}
           {/each}

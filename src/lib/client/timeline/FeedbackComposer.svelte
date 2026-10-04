@@ -8,16 +8,23 @@
   import { Spinner } from '$lib/client/components/ui/spinner';
   import type { ProjectSession } from '$lib/client/projects/project-session.svelte';
   import { type TimelinePresentation } from '$lib/client/visualization/presentation-history';
+  import type { VisualSelection } from '$lib/client/visualization/visual-selection.svelte';
   import type { MessageContent } from '$lib/shared/projects/events/message-content';
 
   import MessageContentView from './MessageContent.svelte';
-  import { automaticFeedbackContext, feedbackSubmissionContent } from './feedback-context';
+  import {
+    automaticFeedbackContext,
+    feedbackSubmissionContent,
+    selectionReferences
+  } from './feedback-context';
   import { referenceChipLabel, type ReferenceSegment } from './reference-labels';
 
   type Props = {
     session: ProjectSession;
     presentationCount: 1 | 2;
     presentations: TimelinePresentation[];
+    /** Elements selected in the visible presentations. */
+    visualSelections?: readonly VisualSelection[];
     onSubmitted?: () => void;
     onDraftChange?: (content: MessageContent, focused: boolean) => void;
   };
@@ -26,6 +33,7 @@
     session,
     presentationCount,
     presentations,
+    visualSelections = [],
     onSubmitted = () => {},
     onDraftChange = (_content: MessageContent, _focused: boolean) => {}
   }: Props = $props();
@@ -35,13 +43,17 @@
   let hasExplicitReferences = $state(false);
   let editorRevision = $state(0);
   let focused = $state(false);
-  const automaticContext = $derived(automaticFeedbackContext(presentations));
+  const automaticContext = $derived(automaticFeedbackContext(presentations, visualSelections));
 
   export function referencePresentation(presentation: TimelinePresentation): void {
     insertReference({
       type: 'presentation-ref',
       presentationId: presentation.presentation.presentationId
     });
+  }
+
+  export function referenceSelection(selection: VisualSelection): void {
+    insertReferences(selectionReferences(selection));
   }
 
   async function submit(event: SubmitEvent) {

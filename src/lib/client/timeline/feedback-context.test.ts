@@ -21,6 +21,22 @@ describe('automatic feedback context', () => {
     ]);
   });
 
+  it('references selected elements in place of their presentation', () => {
+    const element = { id: '62:7#2', label: 'Int 8' };
+    expect(
+      automaticFeedbackContext(
+        [presentation(4, presentationIds[0]), presentation(5, presentationIds[1])],
+        [{ presentationId: presentationIds[1], step: 2, elements: [element] }]
+      )
+    ).toEqual([
+      { type: 'markdown', text: 'Comparing ' },
+      { type: 'presentation-ref', presentationId: presentationIds[0] },
+      { type: 'markdown', text: ' with ' },
+      { type: 'element-ref', presentationId: presentationIds[1], step: 2, element },
+      { type: 'markdown', text: '.' }
+    ]);
+  });
+
   it('references both visible presentations in a comparison', () => {
     expect(
       automaticFeedbackContext([

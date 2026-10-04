@@ -10,6 +10,7 @@
   import type { PresentationSelection } from '$lib/client/visualization/presentation-selection.svelte';
   import type { PresentationLayout } from '$lib/shared/presentations';
   import type { TimelinePresentation } from '$lib/client/visualization/presentation-history';
+  import type { ElementReference } from '$lib/shared/projects/events/message-content';
 
   import ParticipantTimeline from './ParticipantTimeline.svelte';
   import TimelineEventCard from './TimelineEventCard.svelte';
@@ -31,6 +32,8 @@
       normalized: number;
     }) => void;
     onReferenceRequest?: (presentation: TimelinePresentation) => void;
+    /** Show an element reference: seek to its step and select it in its presentation. */
+    onElementReference?: (reference: ElementReference) => void;
   };
 
   let {
@@ -41,7 +44,8 @@
     inspect = false,
     onPresentationChange = () => {},
     onViewportChange = () => {},
-    onReferenceRequest = () => {}
+    onReferenceRequest = () => {},
+    onElementReference = () => {}
   }: Props = $props();
   let viewport = $state<HTMLElement | null>(null);
   let timelineEnd = $state<HTMLElement | null>(null);
@@ -120,6 +124,7 @@
           {layout}
           {onPresentationChange}
           {onReferenceRequest}
+          {onElementReference}
         />
       {/if}
       <li class="h-px" aria-hidden="true"><span bind:this={timelineEnd}></span></li>

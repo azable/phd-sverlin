@@ -1304,6 +1304,56 @@ describe('submitProjectFeedback', () => {
     });
   });
 
+  it('repairs a garbled presentation reference in a reply instead of failing the turn', async () => {
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { title: 'Garbled reference', creation: { templateId: 'linear-search' } },
+      serviceDependencies
+    );
+    const presentationId = presentedEvent(created).payload.presentation.presentationId;
+    // The model kept the first group of the id and invented the rest.
+    const garbled = `${presentationId.split('-')[0]}-4e6e-45d3-8e43-c9be3d3e3c9a`;
+    const unrelated = '99999999-4e6e-45d3-8e43-c9be3d3e3c9a';
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: [
+        { type: 'markdown', text: 'I kept ' },
+        { type: 'presentation-ref', presentationId: garbled },
+        { type: 'markdown', text: ' over ' },
+        { type: 'presentation-ref', presentationId: unrelated },
+        { type: 'markdown', text: '.' }
+      ],
+      action: 'respond',
+      prompt: {},
+      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+
+    const result = await submitProjectFeedback(
+      {
+        projectId: created.projectId,
+        expectedHead: projectHead(created).id,
+        content: markdownMessage('Which one?'),
+        focus: [],
+        presentationCount: 1,
+        operationId: '12345678-1234-4123-8123-123456789abc'
+      },
+      commandDependencies
+    );
+
+    expect(result.appendedEvents.at(-1)).toMatchObject({
+      type: 'assistant.responded',
+      payload: {
+        content: [
+          { type: 'markdown', text: 'I kept ' },
+          { type: 'presentation-ref', presentationId },
+          { type: 'markdown', text: ' over ' },
+          { type: 'markdown', text: 'that presentation' },
+          { type: 'markdown', text: '.' }
+        ]
+      }
+    });
+  });
+
   it('resolves focused history into historical source and presentation context', async () => {
     mocks.generatePrepared.mockReset().mockResolvedValue({
       reply: markdownMessage('No source change needed.'),
@@ -1439,6 +1489,74 @@ describe('submitProjectFeedback', () => {
       )
     ).rejects.toThrow('Unknown selected presentation');
     expect(mocks.generatePrepared).not.toHaveBeenCalled();
+  });
+
+  it('traces a referenced element to its node in the presentation source for the assistant', async () => {
+    mocks.generatePrepared.mockReset().mockResolvedValue({
+      reply: markdownMessage('Noted.'),
+      action: 'respond',
+      prompt: {},
+      generation: { botId: 'sverlin-assistant', adapterId: 'test-adapter', model: 'test-model' }
+    });
+    const { createProject } = await import('./service');
+    const { submitProjectFeedback } = await import('./commands');
+    const created = await createProject(
+      { title: 'Element context', creation: { templateId: 'linear-search' } },
+      serviceDependencies
+    );
+    const presentation = presentedEvent(created).payload.presentation;
+    if (presentation.format !== 'browser-bundle-v1') throw new Error('Expected a Sverlin bundle.');
+    const lines = presentation.source.text.split('\n');
+    const line = lines.findIndex((text) => text.startsWith('<Node size={titleSize}')) + 1;
+    const reference = {
+      type: 'element-ref' as const,
+      presentationId: presentation.presentationId,
+      step: 1,
+      element: { id: `${line}:1`, label: 'Linear search' }
+    };
+    const submit = (content: (typeof reference)[]) =>
+      submitProjectFeedback(
+        {
+          projectId: created.projectId,
+          expectedHead: projectHead(created).id,
+          content: [...markdownMessage('Make this larger'), ...content],
+          focus: [],
+          presentationCount: 1,
+          operationId: '12345678-1234-4123-8123-123456789abc'
+        },
+        commandDependencies
+      );
+
+    await expect(
+      submit([{ ...reference, element: { id: `${line}:2`, label: 'x' } }])
+    ).rejects.toThrow('is not a node of that presentation');
+    await expect(submit([{ ...reference, step: 99 }])).rejects.toThrow('has no step 100');
+    expect(mocks.generatePrepared).not.toHaveBeenCalled();
+
+    await submit([reference]);
+    expect(mocks.preparePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: expect.objectContaining({
+          selected: expect.objectContaining({
+            elements: [
+              {
+                presentationId: presentation.presentationId,
+                step: 1,
+                stepLabel: presentation.labels[1],
+                elementId: `${line}:1`,
+                label: 'Linear search',
+                source: expect.objectContaining({
+                  line,
+                  column: 1,
+                  occurrence: 1,
+                  markup: expect.stringContaining('Linear search')
+                })
+              }
+            ]
+          })
+        })
+      })
+    );
   });
 });
 
