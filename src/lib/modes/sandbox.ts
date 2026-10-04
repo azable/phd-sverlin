@@ -1,6 +1,15 @@
 /** Render executable artifacts in an opaque-origin iframe with a restrictive CSP. */
 
-export function sandboxDocument(html: string, javascript: string, step = 0, seed = 1): string {
+/** A canvas view (zoom and pan) a presentation reported, restored when the frame reloads. */
+export type CanvasView = { zoom: number; panX: number; panY: number };
+
+export function sandboxDocument(
+  html: string,
+  javascript: string,
+  step = 0,
+  seed = 1,
+  view?: CanvasView
+): string {
   const policy = [
     "default-src 'none'",
     "script-src 'unsafe-inline'",
@@ -15,7 +24,7 @@ export function sandboxDocument(html: string, javascript: string, step = 0, seed
     "form-action 'none'"
   ].join('; ');
   const script =
-    `window.__sverlinStep=${JSON.stringify(step)};window.__sverlinSeed=${JSON.stringify(seed)};\n${javascript}`.replace(
+    `window.__sverlinStep=${JSON.stringify(step)};window.__sverlinSeed=${JSON.stringify(seed)};${view ? `window.__sverlinView=${JSON.stringify({ zoom: Number(view.zoom), panX: Number(view.panX), panY: Number(view.panY) })};` : ''}\n${javascript}`.replace(
       /<\/script/giu,
       '<\\/script'
     );

@@ -1,9 +1,9 @@
-// Fixed browser entry for every presentation: mount the authored component with the state recorded
-// for the selected step, plus the step and seed that the sandbox document injects. Nodes find the
+// Fixed browser entry for every presentation: mount the authored component inside the page frame,
+// with the state recorded for the selected step, plus the step and seed that the sandbox document injects. Nodes find the
 // atomic types of their values, and each type's parent and unit, through the 'sverlin:types' context.
 
-import { mount } from 'svelte';
-import { themeCss } from 'sverlin';
+import { mount, type Component } from 'svelte';
+import { Frame, themeCss, type FrameSettings } from 'sverlin';
 import Main from 'virtual:component';
 import atoms from 'virtual:atoms';
 import states from 'virtual:trace';
@@ -18,10 +18,12 @@ const step = Math.min(Math.max(playback.__sverlinStep ?? 0, 0), states.length - 
 const {
   __types: types = {},
   __defaults: defaults,
+  __frame: frame,
   ...state
 } = states[step] as Record<string, unknown> & {
   __types?: Record<string, string>;
   __defaults?: { font?: string } & Record<string, unknown>;
+  __frame: FrameSettings;
 };
 
 // The drawn font applies page-wide, so every node inherits it unless it sets its own.
@@ -50,9 +52,13 @@ function unitOf(typeName: string): string | undefined {
   return undefined;
 }
 
-mount(Main, {
+mount(Frame, {
   target: document.getElementById('app') ?? document.body,
-  props: { ...state, step, seed: playback.__sverlinSeed ?? 1 },
+  props: {
+    view: Main as Component<Record<string, unknown>>,
+    props: { ...state, step, seed: playback.__sverlinSeed ?? 1 },
+    settings: frame
+  },
   context: new Map<string, unknown>([
     ['sverlin:defaults', defaults],
     [

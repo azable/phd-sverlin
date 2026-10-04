@@ -1,4 +1,5 @@
-/** Page theme for every presentation: colour tokens, the canvas, and the page's own layout. */
+/** Page theme for every presentation: colour tokens and the page background. The page frame, which
+ * lays out the view, is library/Frame.svelte. */
 
 export const themeCss = `
 :root {
@@ -24,15 +25,5 @@ body {
   margin: 0;
   background: var(--sv-canvas);
   color: var(--sv-ink);
-}
-#app {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1.5rem;
-  box-sizing: border-box;
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 2rem;
 }
 `;

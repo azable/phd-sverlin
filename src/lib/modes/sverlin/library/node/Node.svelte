@@ -12,6 +12,7 @@
   import { paletteColor } from './palette';
   import {
     alignments,
+    justifications,
     measure,
     minSizes,
     namedSizes,
@@ -22,6 +23,7 @@
   } from './presets';
   import type {
     Align,
+    Justify,
     Layout,
     MinSize,
     NodeColor,
@@ -56,6 +58,7 @@
     padding,
     gap,
     align,
+    justify,
     radius,
     strokeWidth,
     minSize,
@@ -96,6 +99,8 @@
     gap?: Spacing;
     /** How arranged items line up across the layout direction. */
     align?: Align;
+    /** How arranged items spread along the layout direction. */
+    justify?: Justify;
     radius?: Radius;
     /** Stroke width: 'none', 'thin', 'thick', or a number of pixels. */
     strokeWidth?: StrokeWidth;
@@ -177,6 +182,7 @@
     columns ?? Math.max(1, Math.ceil(Math.sqrt(items?.length ?? (arrangement === 'grid' ? 4 : 1))))
   );
   const alignment = $derived(alignments[align ?? (arrangement === 'column' ? 'center' : 'start')]);
+  const justification = $derived(justifications[justify ?? 'start']);
 </script>
 
 {#if rendered}
@@ -209,6 +215,7 @@
         style:--sv-columns={gridColumns}
         style:gap={measure(spacings, gap ?? drawn?.gap ?? 'medium')}
         style:align-items={alignment}
+        style:justify-content={justification}
       >
         {#if collection}
           {#each items ?? [] as child, index (index)}

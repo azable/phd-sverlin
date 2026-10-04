@@ -17,4 +17,10 @@ describe('isolated browser document', () => {
     expect(document).toContain("form-action 'none'");
     expect(document).toContain('window.__sverlinStep=2;window.__sverlinSeed=7');
   });
+
+  it('carries a saved canvas view into the next document as plain numbers', () => {
+    const document = sandboxDocument('', '', 0, 1, { zoom: 1.5, panX: -20, panY: 8 });
+    expect(document).toContain('window.__sverlinView={"zoom":1.5,"panX":-20,"panY":8};');
+    expect(sandboxDocument('', '', 0, 1)).not.toContain('__sverlinView');
+  });
 });

@@ -1,6 +1,6 @@
 # sverlin component library
 
-The component `Node` is already in scope in every component; use it without importing. Never write `import` statements, and never declare your own variables or components named `Node`. Build every part of a visualization from nodes; the page already has a theme, a canvas, and spacing between its top-level nodes.
+The component `Node` is already in scope in every component; use it without importing. Never write `import` statements, and never declare your own variables or components named `Node`. Build every part of a visualization from nodes; the page already has a theme and a frame that arranges the view's top-level nodes in a column.
 
 Nodes say nothing about what a structure means: a node with items laid out as a row can show an array, a list of linked nodes, a queue, or anything else. Decide the meaning from the participant's request, and when they leave it open, express the open choice as a design value so the two presentations of a pair can show different interpretations.
 
@@ -20,11 +20,16 @@ Titles and annotations are nodes too: `<Node size="xlarge" weight="bold">Linear 
 
 - `shape`: `'box'` (a cell: small padding, medium radius, thin neutral stroke and fill, a minimum size, and bold, slightly larger text; the default for a value), `'card'` (a framed surface with medium padding), or `'plain'` (no frame or padding; the default for content and collections). A framed node with a layout draws its frame around the whole group.
 
+Page:
+
+Every view sits in a page frame: a 16:9 canvas laid out at a fixed logical size (1200 pixels wide) and scaled to fit, so every presentation renders identically whatever the pane size. Participants can scroll to zoom, drag to pan, and double-click to reset, and the view is kept as they step through. The frame arranges the view's top-level nodes in a column; shape and place them with the design value `frame` (see the block guide), such as `const frame = { justify: 'between' };` to put a title at the top and a note at the bottom. Prefer the 16:9 default unless the participant asks for another shape. Write the top-level nodes directly rather than wrapping the whole view in one node.
+
 Arrangement:
 
 - `layout`: `'row'`, `'column'`, `'wrap'` (a row that wraps onto new lines), or `'grid'`; arranges a collection's items (default `'row'`) or, when set, a node's children.
 - `gap`: space between arranged items (default `'medium'`).
 - `align`: `'start'`, `'center'`, or `'end'`; how arranged items line up across the layout direction (rows default to `'start'`, columns to `'center'`).
+- `justify`: `'start'`, `'center'`, `'end'`, `'between'`, `'around'`, or `'evenly'`; how arranged items spread along the layout direction (default `'start'`).
 - `columns`: the number of grid columns; defaults to a near-square grid.
 - `nested`: the layout for items that are themselves arrays, such as the rows of a matrix (default `'row'`).
 
@@ -50,7 +55,7 @@ Types:
 
 - `type`: an atomic type name, such as `'Int'`. If the view defines a renderer snippet for that type, or for a type it refines, the node is drawn by it (see the block guide's Type renderers); otherwise it draws its default box with the type's `unit` after the value.
 
-Unspecified props vary by themselves: every presentation draws its own `radius`, `strokeWidth` (sometimes none at all), `padding`, and a pale fill and stroke tint for boxes and cards, plus the gap between arranged items and the page font, so two presentations of a pair look different even when no prop is set. Set a prop whenever its value matters, such as a colour that shows which element is current; a node's own props and its type's renderer always win over drawn defaults. To use the plain presets instead, put `const defaults = 'fixed';` in the design block, for example once the participant has settled on a look.
+Unspecified props vary by themselves: every presentation draws its own `radius`, `strokeWidth` (sometimes none at all), `padding`, and a pale fill and stroke tint for boxes and cards, the page frame's `justify` and `align`, the gap between arranged items, and the page font, so two presentations of a pair look different even when no prop is set. Set a prop whenever its value matters, such as a colour that shows which element is current; a node's own props and its type's renderer always win over drawn defaults. To use the plain presets instead, put `const defaults = 'fixed';` in the design block, for example once the participant has settled on a look.
 
 Every prop is a natural design dimension, especially `layout`, `gap`, `radius`, `font`, and `size`: draw values in the design block and pass them through, such as `layout={flow}`, or use them to decide which annotation nodes to show. Type renderers can use them too, so seeded presentations differ in presentation while showing the same steps. Prefer a few drawn values used consistently over ad hoc values on individual nodes.
 

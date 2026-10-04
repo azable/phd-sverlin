@@ -5,7 +5,16 @@
  * takes its randomness from the caller, which keeps this module free of server code.
  */
 
-import type { NodeDefaults, NodeFont, Radius, ShapeDefaults, Spacing, StrokeWidth } from './props';
+import type {
+  Align,
+  Justify,
+  NodeDefaults,
+  NodeFont,
+  Radius,
+  ShapeDefaults,
+  Spacing,
+  StrokeWidth
+} from './props';
 
 /** Choose one of a list of options. */
 type Choice = { pick: readonly string[] };
@@ -43,6 +52,9 @@ export const defaultsPolicy = {
   'card.strokeWidth': { pick: ['none', 'thin', 'thick'] },
   'card.padding': { pick: ['small', 'medium', 'large'] },
   'card.tint': tint,
+  // How a frame spreads and aligns its children, where the frame leaves them unset.
+  'frame.justify': { pick: ['start', 'center', 'between', 'evenly'] },
+  'frame.align': { pick: ['start', 'center'] },
   gap: { pick: ['small', 'medium', 'large'] },
   font: { pick: ['sans', 'serif', 'mono'] }
 } satisfies Record<string, Choice | TintRange>;
@@ -79,6 +91,7 @@ export function drawDefaults(random: (key: string) => number): NodeDefaults {
   return {
     box: shape('box'),
     card: shape('card'),
+    frame: { justify: choose('frame.justify') as Justify, align: choose('frame.align') as Align },
     gap: choose('gap') as Spacing,
     font: choose('font') as NodeFont
   };

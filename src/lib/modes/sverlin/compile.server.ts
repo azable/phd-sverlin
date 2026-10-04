@@ -20,6 +20,8 @@ import {
 } from './algorithm/interpret.server';
 import { noAtoms, type AtomRegistry } from './algorithm/atoms.server';
 import { drawDefaults } from './library/node/defaults';
+import { alignments, frameRatios, justifications, spacings } from './library/node/presets';
+import type { FrameSettings } from './library/node/props';
 import { keyedRandom } from './algorithm/random.server';
 
 // One component should be much smaller; these ceilings bound compilation and inline Timeline storage.
@@ -226,14 +228,16 @@ export async function bundlePresentation(
     throw new InvalidSvelteSourceError('The design value defaults must be "fixed" or "drawn".');
   const defaults =
     parameters.defaults === 'fixed' ? undefined : drawDefaults((key) => keyedRandom(seed, key));
+  const frame = frameSettings(parameters.frame);
   // Every presentation shows every master step until steps can be mapped to frames.
   const masterSteps = master.map((_, index) => index);
-  // Each step's state carries its atomic types and the drawn defaults for the view, under keys no
-  // variable can use.
+  // Each step's state carries its atomic types, the page frame, and the drawn defaults for the view,
+  // under keys no variable can use.
   const states = masterSteps.map((index) => ({
     ...master[index].state,
     ...parameters,
     __types: master[index].types,
+    __frame: frame,
     ...(defaults ? { __defaults: defaults } : {})
   }));
   const result = await bundle(
@@ -449,4 +453,45 @@ function visit(value: unknown, check: (node: { type: string }) => void): void {
   for (const [key, child] of Object.entries(node)) {
     if (key !== 'parent' && key !== 'metadata') visit(child, check);
   }
+}
+
+/**
+ * The page frame from the design value `frame`: absent, a ratio such as '4:3', or an object with any
+ * of ratio, justify, align, and padding. Unset justify and align come from the drawn defaults.
+ */
+function frameSettings(value: unknown): FrameSettings {
+  const given: Record<string, unknown> =
+    value === undefined
+      ? {}
+      : typeof value === 'string'
+        ? { ratio: value }
+        : value !== null && typeof value === 'object' && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : { ratio: value };
+  const choice = (key: string, allowed: object, fallback?: string) => {
+    const setting = given[key] ?? fallback;
+    if (setting === undefined || (typeof setting === 'string' && Object.hasOwn(allowed, setting)))
+      return setting;
+    throw new InvalidSvelteSourceError(
+      `The design value frame.${key} must be one of ${Object.keys(allowed)
+        .map((name) => `"${name}"`)
+        .join(', ')}.`
+    );
+  };
+  const unknown = Object.keys(given).find(
+    (key) => !['ratio', 'justify', 'align', 'padding'].includes(key)
+  );
+  if (unknown)
+    throw new InvalidSvelteSourceError(
+      `The design value frame has no setting ${unknown}; use ratio, justify, align, or padding.`
+    );
+  const padding = given.padding ?? 'large';
+  if (!(typeof padding === 'number' && Number.isFinite(padding)))
+    choice('padding', spacings, 'large');
+  return {
+    ratio: choice('ratio', frameRatios, '16:9') as FrameSettings['ratio'],
+    justify: choice('justify', justifications) as FrameSettings['justify'],
+    align: choice('align', alignments) as FrameSettings['align'],
+    padding: padding as FrameSettings['padding']
+  };
 }

@@ -1,9 +1,16 @@
-/** The `sverlin` module; ../assembly/prelude.ts imports Node from it into every authored component. */
+/**
+ * The `sverlin` module: ../assembly/prelude.ts imports Node from it into every authored component,
+ * and ../assembly/entry.ts mounts every view inside Frame.
+ */
 
+export { default as Frame } from './Frame.svelte';
 export { default as Node } from './node/Node.svelte';
 export { themeCss } from './theme';
 export type {
   Align,
+  FrameRatio,
+  FrameSettings,
+  Justify,
   Layout,
   MinSize,
   NodeColor,

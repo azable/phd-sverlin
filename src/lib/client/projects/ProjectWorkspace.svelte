@@ -316,7 +316,7 @@
   data-replay-region="workspace"
 >
   {#if session.loaded}
-    <main class="flex h-full min-w-[72rem] flex-col overflow-hidden">
+    <main class="flex h-full min-w-0 flex-col overflow-hidden">
       {#if study}
         <header
           class="flex items-center gap-3 border-b bg-card px-4 py-2"

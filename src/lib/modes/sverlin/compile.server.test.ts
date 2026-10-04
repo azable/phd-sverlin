@@ -231,6 +231,26 @@ describe('single-component Svelte compilation', () => {
     ).rejects.toThrow('defaults must be "fixed" or "drawn"');
   });
 
+  it('resolves the page frame from the design value frame', async () => {
+    const algorithm = '<script lang="sverlin">yield "A";</script><Node>a</Node>';
+    const design = (body: string) => `${algorithm}<script lang="sverlin" design>${body}</script>`;
+    await expect(compileSvelteComponent(design("const frame = '4:3';"))).resolves.toBeDefined();
+    await expect(
+      compileSvelteComponent(
+        design("const frame = { justify: pick(['start', 'between']), padding: 2 };")
+      )
+    ).resolves.toBeDefined();
+    await expect(compileSvelteComponent(design("const frame = '5:4';"))).rejects.toThrow(
+      'frame.ratio must be one of'
+    );
+    await expect(
+      compileSvelteComponent(design("const frame = { layout: 'row' };"))
+    ).rejects.toThrow('frame has no setting layout');
+    await expect(
+      compileSvelteComponent(design("const frame = { padding: 'huge' };"))
+    ).rejects.toThrow('frame.padding must be one of');
+  });
+
   it('rejects authored library imports', async () => {
     await expect(
       compileSvelteComponent('<script>import { Node } from "sverlin";</script><Node value={1} />')

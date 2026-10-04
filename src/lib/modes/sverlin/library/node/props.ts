@@ -9,6 +9,23 @@ export type Layout = 'row' | 'column' | 'wrap' | 'grid';
 /** How arranged items line up across the layout direction. */
 export type Align = 'start' | 'center' | 'end';
 
+/** How arranged items spread along the layout direction. */
+export type Justify = 'start' | 'center' | 'end' | 'between' | 'around' | 'evenly';
+
+/** The page frame's aspect ratio; it lays out at a fixed logical size and scales to fit the page. */
+export type FrameRatio = '16:9' | '4:3' | '3:2' | '1:1' | '3:4' | '9:16';
+
+/** A preset of frame, spacing, and text defaults that a node's own props override. */
+/** How the page frame is shaped and arranges the view's top-level nodes (resolved from the design value `frame`). */
+export type FrameSettings = {
+  ratio: FrameRatio;
+  /** Unset, it comes from the drawn defaults. */
+  justify?: Justify;
+  /** Unset, it comes from the drawn defaults. */
+  align?: Align;
+  padding: Spacing;
+};
+
 /** A preset of frame, spacing, and text defaults that a node's own props override. */
 export type NodeShape = 'box' | 'card' | 'plain';
 
@@ -66,10 +83,14 @@ export type ShapeDefaults = {
   stroke: string;
 };
 
-/** Defaults one presentation drew: per framed shape, the gap between items, and the page font. */
+/**
+ * Defaults one presentation drew: per framed shape, how a frame spreads and aligns its children,
+ * the gap between items, and the page font.
+ */
 export type NodeDefaults = {
   box: ShapeDefaults;
   card: ShapeDefaults;
+  frame: { justify: Justify; align: Align };
   gap: Spacing;
   font: NodeFont;
 };
