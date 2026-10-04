@@ -7,6 +7,7 @@ import { compile, parse } from 'svelte/compiler';
 
 import entrySource from './assembly/entry.ts?raw';
 import preludeSource from './assembly/prelude.ts?raw';
+import { AlgorithmError, interpretAlgorithm, type TraceStep } from './algorithm/interpret.server';
 
 // One component should be much smaller; these ceilings bound compilation and inline Timeline storage.
 const maximumSourceBytes = 256 * 1024;
@@ -76,9 +77,11 @@ export async function compileSvelteComponent(source: string): Promise<SvelteBund
     throw new InvalidSvelteSourceError('The Svelte component is too large.');
   }
   let labels: string[];
+  let states: TraceStep['state'][];
   let component: string;
   try {
-    const ast = parse(source, { filename: 'Main.svelte' });
+    const { svelteSource, algorithm } = extractAlgorithm(source);
+    const ast = parse(svelteSource, { filename: 'Main.svelte' });
     visit(ast, (node) => {
       if (
         node.type === 'ImportDeclaration' ||
@@ -90,8 +93,20 @@ export async function compileSvelteComponent(source: string): Promise<SvelteBund
           'Generated components cannot import modules; library components are already in scope.'
         );
     });
-    labels = componentLabels(ast.module?.content.body ?? []);
-    component = compile(withPrelude(source, ast.module?.start), {
+    const exportedSteps = componentLabels(ast.module?.content.body ?? []);
+    if (algorithm) {
+      if (exportedSteps)
+        throw new InvalidSvelteSourceError(
+          'Use yield in the algorithm block or export const steps, not both.'
+        );
+      const trace = traceAlgorithm(source, algorithm);
+      labels = trace.map(({ label }) => label);
+      states = trace.map(({ state }) => state);
+    } else {
+      labels = exportedSteps ?? ['Start'];
+      states = labels.map(() => ({}));
+    }
+    component = compile(withPrelude(svelteSource, ast.module?.start), {
       filename: 'Main.svelte',
       generate: 'client',
       css: 'injected',
@@ -104,12 +119,54 @@ export async function compileSvelteComponent(source: string): Promise<SvelteBund
       cause
     );
   }
-  const result = await bundle(component);
+  const result = await bundle(component, JSON.stringify(states));
   const output = result.outputFiles[0];
   if (output.contents.byteLength > maximumBundleBytes) {
     throw new InvalidSvelteSourceError('The compiled Svelte presentation is too large.');
   }
   return { javascript: output.text, labels };
+}
+
+const algorithmBlock = /<script\s+lang\s*=\s*(["'])sverlin\1\s*>([\s\S]*?)<\/script\s*>/giu;
+
+/** Remove the algorithm block for Svelte, keeping every offset and line in place. */
+function extractAlgorithm(source: string): {
+  svelteSource: string;
+  algorithm?: { body: string; offset: number };
+} {
+  const blocks = [...source.matchAll(algorithmBlock)];
+  if (blocks.length === 0) return { svelteSource: source };
+  if (blocks.length > 1)
+    throw new InvalidSvelteSourceError('A component can have only one algorithm block.');
+  const [block] = blocks;
+  const start = block.index;
+  return {
+    svelteSource:
+      source.slice(0, start) +
+      block[0].replace(/[^\n]/gu, ' ') +
+      source.slice(start + block[0].length),
+    algorithm: { body: block[2], offset: start + block[0].indexOf('>') + 1 }
+  };
+}
+
+/** Interpret the algorithm, reporting failures at their position in the authored source. */
+function traceAlgorithm(source: string, algorithm: { body: string; offset: number }): TraceStep[] {
+  try {
+    return interpretAlgorithm(algorithm.body);
+  } catch (cause) {
+    if (!(cause instanceof AlgorithmError)) throw cause;
+    const position =
+      cause.offset === undefined
+        ? undefined
+        : sourcePosition(source, algorithm.offset + cause.offset);
+    throw new InvalidSvelteSourceError(cause.message, { code: 'algorithm_error', start: position });
+  }
+}
+
+function sourcePosition(source: string, offset: number): { line: number; column: number } {
+  const before = source.slice(0, offset);
+  const lineStart = before.lastIndexOf('\n') + 1;
+  return { line: before.split('\n').length, column: offset - lineStart };
 }
 
 /** Insert the prelude right after the module script's opening tag, or add a module script. */
@@ -119,9 +176,9 @@ function withPrelude(source: string, moduleStart: number | undefined): string {
   return `${source.slice(0, contentStart)}${prelude}${source.slice(contentStart)}`;
 }
 
-async function bundle(component: string) {
+async function bundle(component: string, states: string) {
   try {
-    return await bundleComponent(component);
+    return await bundleComponent(component, states);
   } catch (cause) {
     // Failures located in the authored component, such as a blocked require(), are source errors.
     const authored = (cause as Partial<BuildFailure>).errors?.find(
@@ -137,12 +194,12 @@ const runtime = (path: string) => /^svelte(?:\/[\w-]+)*$/u.test(path);
 
 /** Modules each sandbox namespace may reach; packages inside node_modules resolve normally. */
 const allowedImports: Record<string, (path: string) => boolean> = {
-  entry: (path) => runtime(path) || path === 'virtual:component',
+  entry: (path) => runtime(path) || path === 'virtual:component' || path === 'virtual:trace',
   component: (path) => runtime(path) || path === 'sverlin',
   library: (path) => runtime(path) || /^\.\.?\//u.test(path)
 };
 
-function sandboxModules(component: string): Plugin {
+function sandboxModules(component: string, states: string): Plugin {
   return {
     name: 'sandbox-modules',
     setup(plugin) {
@@ -153,6 +210,7 @@ function sandboxModules(component: string): Plugin {
           return { errors: [{ text: `Presentations cannot load module "${args.path}".` }] };
         if (args.path === 'virtual:component')
           return { path: 'Main.svelte', namespace: 'component' };
+        if (args.path === 'virtual:trace') return { path: 'states.json', namespace: 'trace' };
         if (args.path === 'sverlin') return { path: 'index.ts', namespace: 'library' };
         if (args.namespace === 'library' && !runtime(args.path)) {
           const path = libraryPath(posix.join(posix.dirname(args.importer), args.path));
@@ -176,6 +234,10 @@ function sandboxModules(component: string): Plugin {
         loader: 'js',
         resolveDir: process.cwd()
       }));
+      plugin.onLoad({ filter: /.*/, namespace: 'trace' }, () => ({
+        contents: states,
+        loader: 'json'
+      }));
       plugin.onLoad({ filter: /.*/, namespace: 'library' }, (args) => ({
         ...loadLibraryModule(args.path),
         resolveDir: process.cwd()
@@ -184,10 +246,10 @@ function sandboxModules(component: string): Plugin {
   };
 }
 
-function bundleComponent(component: string) {
+function bundleComponent(component: string, states: string) {
   return build({
     entryPoints: ['virtual:entry'],
-    plugins: [sandboxModules(component)],
+    plugins: [sandboxModules(component, states)],
     bundle: true,
     write: false,
     platform: 'browser',
@@ -211,7 +273,7 @@ function visit(value: unknown, check: (node: { type: string }) => void): void {
   }
 }
 
-function componentLabels(body: readonly { type: string }[]): string[] {
+function componentLabels(body: readonly { type: string }[]): string[] | undefined {
   for (const statement of body) {
     if (statement.type !== 'ExportNamedDeclaration') continue;
     const declaration = (
@@ -245,5 +307,5 @@ function componentLabels(body: readonly { type: string }[]): string[] {
       return labels;
     }
   }
-  return ['Start'];
+  return undefined;
 }

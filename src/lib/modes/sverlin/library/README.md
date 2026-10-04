@@ -13,21 +13,25 @@ The components `Stage`, `ArrayCells`, and `Note` are already in scope in every c
 Example:
 
 ```svelte
-<script module>
-  export const steps = ['Start', 'Compare', 'Result'];
+<script lang="sverlin">
+  const values = [3, 8, 5];
+  let i = -1;
+  yield 'Start';
+  for (i = 0; i < values.length; i++) {
+    yield `Visit ${values[i]}`;
+  }
 </script>
 
 <script>
-  let { step = 0 } = $props();
-  const values = [3, 8, 5];
+  let { values, i } = $props();
 </script>
 
-<Stage title="Linear search">
+<Stage title="Array walk">
   <ArrayCells
     {values}
-    states={step === 0 ? [] : ['visited', step === 1 ? 'active' : 'found']}
-    pointers={step === 0 ? {} : { i: 1 }}
+    states={values.map((_, index) => (index < i ? 'visited' : index === i ? 'active' : 'idle'))}
+    pointers={i < 0 ? {} : { i }}
   />
-  <Note tone={step === 2 ? 'success' : 'info'}>{steps[step]}</Note>
+  <Note tone="info">{i < 0 ? 'Start at the left.' : `Visiting index ${i}.`}</Note>
 </Stage>
 ```

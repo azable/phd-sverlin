@@ -32,9 +32,53 @@ describe('single-component Svelte compilation', () => {
     );
   });
 
+  it('derives steps and per-step state from yield in the algorithm block', async () => {
+    const result = await compileSvelteComponent(linearSearchSource);
+    expect(result.labels).toEqual([
+      'Start',
+      'Compare 3',
+      'Compare 8',
+      'Compare 5',
+      'Compare 2',
+      'Found 2'
+    ]);
+    expect(result.javascript).toContain('[3,8,5,2,7]');
+    expect(result.javascript).not.toContain('yield `Compare');
+  });
+
+  it('reports algorithm errors at their authored line and column', async () => {
+    const source =
+      '<script lang="sverlin">\n  let x = 1;\n  yield "A";\n  x = missing;\n</script>\n<p>{x}</p>';
+    await expect(compileSvelteComponent(source)).rejects.toMatchObject({
+      name: 'InvalidSvelteSourceError',
+      code: 'algorithm_error',
+      line: 4,
+      column: 7,
+      message: expect.stringContaining('"missing" is not defined')
+    });
+  });
+
+  it('keeps Svelte error positions after removing the algorithm block', async () => {
+    await expect(
+      compileSvelteComponent('<script lang="sverlin">\nyield "A";\n</script>\n\n{#if}')
+    ).rejects.toMatchObject({ line: 5 });
+  });
+
+  it('rejects mixing yield steps with exported steps or several algorithm blocks', async () => {
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script><script module>export const steps = ["A"];</script>'
+      )
+    ).rejects.toThrow('not both');
+    await expect(
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script><script lang="sverlin">yield "B";</script>'
+      )
+    ).rejects.toThrow('only one algorithm block');
+  });
+
   it('injects the sverlin library components without authored imports', async () => {
     const result = await compileSvelteComponent(linearSearchSource);
-    expect(result.labels).toEqual(['Start', 'Compare', 'Result']);
     expect(result.javascript).toContain('sv-stage');
     expect(result.javascript).toContain('sv-array');
     const withoutModuleScript = await compileSvelteComponent('<Stage title="Hi">x</Stage>');

@@ -12,6 +12,7 @@ import { visualizationParticipantIntake } from '$lib/server/chat-bots/participan
 import * as v from 'valibot';
 import type { AiProjectContext } from '$lib/server/chat-bots/project-context';
 
+import algorithmGuide from './algorithm/README.md?raw';
 import libraryGuide from './library/README.md?raw';
 
 /** Primary visualization-authoring chatbot definition. */
@@ -22,10 +23,11 @@ export default {
     'You are Sverlin’s visualization designer. Author exactly one complete, self-contained Svelte 5 component as Main.svelte per revision.',
     'The application owns playback, comparison, preference, and reference controls. Do not draw substitute navigation inside the visualization.',
     'Treat project.currentWorkspace as the current accepted source and the participant’s latest interaction as authoritative. Use revise with complete replacement source when changing the visualization, resample only on an explicit request for new views of unchanged source, and respond for conversation only.',
-    'Use Svelte 5 runes and ordinary HTML/CSS/SVG. A module script may export const steps = ["Start", "Next"] with unique nonempty labels; the component receives step and seed as props. The app reloads the component for each selected step, so derive the full view from these props and keep seeded choices deterministic. Without steps the app uses a single Start view.',
+    'Use Svelte 5 runes and ordinary HTML/CSS/SVG. Describe an algorithm’s steps with yield in a <script lang="sverlin"> block as explained below; the component receives the recorded variables, plus step and seed as props. The app reloads the component for each selected step, so derive the full view from these props and keep seeded choices deterministic.',
     'Do not use imports (the sverlin library components below are already in scope), dynamic imports, external URLs, network APIs, frames, or links. Keep all markup and behavior self-contained. Generated code runs in an isolated browser sandbox; it never has access to the application.',
     'Use the participant’s subject, audience, learning goals, and style preferences to design the explanation, without inferring an aesthetic from audience alone. Keep replies brief and use presentation-ref segments for retained presentations.',
     'When buildFeedback is present, correct the failed candidate and return complete replacement source. For fallback preserve the core subject while simplifying the component, and explain what was difficult and reduced in the recovery object. Set recovery to null otherwise.',
+    algorithmGuide,
     libraryGuide
   ].join(' '),
   buildContext: ({ project, attempt, buildFeedback }) => ({

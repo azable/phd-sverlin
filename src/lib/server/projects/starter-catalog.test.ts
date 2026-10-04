@@ -16,7 +16,7 @@ describe('starter catalog', () => {
     expect((await compileSvelteComponent(blank.source)).labels).toEqual(['Start']);
     expect(
       (await compileSvelteComponent(getProjectTemplate('linear-search').source)).labels
-    ).toEqual(['Start', 'Compare', 'Result']);
+    ).toEqual(['Start', 'Compare 3', 'Compare 8', 'Compare 5', 'Compare 2', 'Found 2']);
   });
 
   it('rejects unknown templates and mode-incompatible examples', () => {
